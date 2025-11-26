@@ -500,12 +500,26 @@ export class Editor implements Component {
 			if (char === "/" && this.isAtStartOfMessage()) {
 				this.tryTriggerAutocomplete();
 			}
+			// Auto-trigger for "@" file reference (fuzzy search)
+			else if (char === "@") {
+				const currentLine = this.state.lines[this.state.cursorLine] || "";
+				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
+				// Only trigger if @ is after whitespace or at start of line
+				const charBeforeAt = textBeforeCursor[textBeforeCursor.length - 2];
+				if (textBeforeCursor.length === 1 || charBeforeAt === " " || charBeforeAt === "\t") {
+					this.tryTriggerAutocomplete();
+				}
+			}
 			// Also auto-trigger when typing letters in a slash command context
 			else if (/[a-zA-Z0-9]/.test(char)) {
 				const currentLine = this.state.lines[this.state.cursorLine] || "";
 				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
 				// Check if we're in a slash command (with or without space for arguments)
 				if (textBeforeCursor.trimStart().startsWith("/")) {
+					this.tryTriggerAutocomplete();
+				}
+				// Check if we're in an @ file reference context
+				else if (textBeforeCursor.match(/(?:^|[\s])@[^\s]*$/)) {
 					this.tryTriggerAutocomplete();
 				}
 			}
@@ -651,10 +665,15 @@ export class Editor implements Component {
 		if (this.isAutocompleting) {
 			this.updateAutocomplete();
 		} else {
-			// If autocomplete was cancelled (no matches), re-trigger if we're in slash command context
+			// If autocomplete was cancelled (no matches), re-trigger if we're in a completable context
 			const currentLine = this.state.lines[this.state.cursorLine] || "";
 			const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
+			// Slash command context
 			if (textBeforeCursor.trimStart().startsWith("/")) {
+				this.tryTriggerAutocomplete();
+			}
+			// @ file reference context
+			else if (textBeforeCursor.match(/(?:^|[\s])@[^\s]*$/)) {
 				this.tryTriggerAutocomplete();
 			}
 		}
@@ -773,6 +792,22 @@ export class Editor implements Component {
 
 		if (this.onChange) {
 			this.onChange(this.getText());
+		}
+
+		// Update or re-trigger autocomplete after forward delete
+		if (this.isAutocompleting) {
+			this.updateAutocomplete();
+		} else {
+			const currentLine = this.state.lines[this.state.cursorLine] || "";
+			const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
+			// Slash command context
+			if (textBeforeCursor.trimStart().startsWith("/")) {
+				this.tryTriggerAutocomplete();
+			}
+			// @ file reference context
+			else if (textBeforeCursor.match(/(?:^|[\s])@[^\s]*$/)) {
+				this.tryTriggerAutocomplete();
+			}
 		}
 	}
 
@@ -970,12 +1005,13 @@ https://github.com/EsotericSoftware/spine-runtimes/actions/runs/19536643416/job/
 
 		if (suggestions && suggestions.items.length > 0) {
 			this.autocompletePrefix = suggestions.prefix;
-			if (this.autocompleteList) {
-				// Update the existing list with new items
-				this.autocompleteList = new SelectList(suggestions.items, 5, this.theme.selectList);
-			}
+			// Always create new SelectList to ensure update
+			this.autocompleteList = new SelectList(suggestions.items, 5, this.theme.selectList);
 		} else {
-			// No more matches, cancel autocomplete
+			// No matches - check if we're still in a valid context before cancelling
+			const currentLine = this.state.lines[this.state.cursorLine] || "";
+			const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
+
 			this.cancelAutocomplete();
 		}
 	}

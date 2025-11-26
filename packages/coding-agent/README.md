@@ -460,6 +460,19 @@ Aborts any in-flight agent work, clears all messages, and creates a new session 
 
 The interactive input editor includes several productivity features:
 
+### File Reference (`@`)
+
+Type **`@`** to fuzzy-search for files and folders in your project:
+- `@editor` → finds files/folders with "editor" in the name
+- `@readme` → finds README files anywhere in the project
+- `@src` → finds folders like `src/`, `resources/`, etc.
+- Directories are prioritized and shown with trailing `/`
+- Autocomplete triggers immediately when you type `@`
+- Use **Up/Down arrows** to navigate, **Tab**/**Enter** to select
+- Only shows attachable files (text, code, images) and directories
+
+Uses `fdfind`/`fd` for fast searching if available, falls back to `find` on all Unix systems.
+
 ### Path Completion
 
 Press **Tab** to autocomplete file and directory paths:

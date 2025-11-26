@@ -1,3 +1,4 @@
+import { execSync } from "child_process";
 import { readdirSync, statSync } from "fs";
 import mimeTypes from "mime-types";
 import { homedir } from "os";
@@ -130,6 +131,7 @@ export interface AutocompleteProvider {
 export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	private commands: (SlashCommand | AutocompleteItem)[];
 	private basePath: string;
+	private fdCommand: string | null | undefined = undefined; // undefined = not checked yet
 
 	constructor(commands: (SlashCommand | AutocompleteItem)[] = [], basePath: string = process.cwd()) {
 		this.commands = commands;
@@ -143,6 +145,20 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	): { items: AutocompleteItem[]; prefix: string } | null {
 		const currentLine = lines[cursorLine] || "";
 		const textBeforeCursor = currentLine.slice(0, cursorCol);
+
+		// Check for @ file reference (fuzzy search) - must be after a space or at start
+		const atMatch = textBeforeCursor.match(/(?:^|[\s])(@[^\s]*)$/);
+		if (atMatch) {
+			const prefix = atMatch[1] ?? "@"; // The @... part
+			const query = prefix.slice(1); // Remove the @
+			const suggestions = this.getFuzzyFileSuggestions(query);
+			if (suggestions.length === 0) return null;
+
+			return {
+				items: suggestions,
+				prefix: prefix,
+			};
+		}
 
 		// Check for slash commands
 		if (textBeforeCursor.startsWith("/")) {
@@ -475,6 +491,169 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		} catch (e) {
 			// Directory doesn't exist or not accessible
 			return [];
+		}
+	}
+
+	// Score an entry against the query (higher = better match)
+	// isDirectory adds bonus to prioritize folders
+	private scoreEntry(filePath: string, query: string, isDirectory: boolean): number {
+		const fileName = basename(filePath);
+		const lowerFileName = fileName.toLowerCase();
+		const lowerQuery = query.toLowerCase();
+
+		let score = 0;
+
+		// Exact filename match (highest)
+		if (lowerFileName === lowerQuery) score = 100;
+		// Filename starts with query
+		else if (lowerFileName.startsWith(lowerQuery)) score = 80;
+		// Substring match in filename
+		else if (lowerFileName.includes(lowerQuery)) score = 50;
+		// Substring match in full path
+		else if (filePath.toLowerCase().includes(lowerQuery)) score = 30;
+
+		// Directories get a bonus to appear first
+		if (isDirectory && score > 0) score += 10;
+
+		return score;
+	}
+
+	// Fuzzy file search using fdfind, fd, or find (fallback)
+	private getFuzzyFileSuggestions(query: string): AutocompleteItem[] {
+		try {
+			let result: string;
+			const fdCommand = this.getFdCommand();
+
+			if (fdCommand) {
+				const args = ["--max-results", "100"];
+
+				if (query) {
+					args.push(query);
+				}
+
+				result = execSync(`${fdCommand} ${args.join(" ")}`, {
+					cwd: this.basePath,
+					encoding: "utf-8",
+					timeout: 2000,
+					maxBuffer: 1024 * 1024,
+				});
+			} else {
+				// Fallback to find
+				const pattern = query ? `*${query}*` : "*";
+
+				const cmd = [
+					"find",
+					".",
+					"-iname",
+					`'${pattern}'`,
+					"!",
+					"-path",
+					"'*/.git/*'",
+					"!",
+					"-path",
+					"'*/node_modules/*'",
+					"!",
+					"-path",
+					"'*/__pycache__/*'",
+					"!",
+					"-path",
+					"'*/.venv/*'",
+					"!",
+					"-path",
+					"'*/dist/*'",
+					"!",
+					"-path",
+					"'*/build/*'",
+					"2>/dev/null",
+					"|",
+					"head",
+					"-100",
+				].join(" ");
+
+				result = execSync(cmd, {
+					cwd: this.basePath,
+					encoding: "utf-8",
+					timeout: 3000,
+					maxBuffer: 1024 * 1024,
+					shell: "/bin/bash",
+				});
+			}
+
+			const entries = result
+				.trim()
+				.split("\n")
+				.filter((f) => f.length > 0)
+				.map((f) => (f.startsWith("./") ? f.slice(2) : f));
+
+			// Score and filter entries (files and directories)
+			const scoredEntries: { path: string; score: number; isDirectory: boolean }[] = [];
+
+			for (const entryPath of entries) {
+				const fullPath = join(this.basePath, entryPath);
+
+				let isDirectory: boolean;
+				try {
+					isDirectory = statSync(fullPath).isDirectory();
+				} catch {
+					continue; // Skip if we can't stat
+				}
+
+				// For files, check if attachable
+				if (!isDirectory && !isAttachableFile(fullPath)) {
+					continue;
+				}
+
+				const score = query ? this.scoreEntry(entryPath, query, isDirectory) : 1;
+				if (score > 0) {
+					scoredEntries.push({ path: entryPath, score, isDirectory });
+				}
+			}
+
+			// Sort by score (descending) and take top 20
+			scoredEntries.sort((a, b) => b.score - a.score);
+			const topEntries = scoredEntries.slice(0, 20);
+
+			// Build suggestions
+			const suggestions: AutocompleteItem[] = [];
+			for (const { path: entryPath, isDirectory } of topEntries) {
+				const entryName = basename(entryPath);
+				// Normalize path - remove trailing slash if present, we'll add it back for dirs
+				const normalizedPath = entryPath.endsWith("/") ? entryPath.slice(0, -1) : entryPath;
+				const valuePath = isDirectory ? normalizedPath + "/" : normalizedPath;
+
+				suggestions.push({
+					value: "@" + valuePath,
+					label: entryName + (isDirectory ? "/" : ""),
+					description: normalizedPath,
+				});
+			}
+
+			return suggestions;
+		} catch (e) {
+			return [];
+		}
+	}
+
+	// Check which fd command is available (fdfind on Debian/Ubuntu, fd elsewhere)
+	// Result is cached after first check
+	private getFdCommand(): string | null {
+		if (this.fdCommand !== undefined) {
+			return this.fdCommand;
+		}
+
+		try {
+			execSync("fdfind --version", { encoding: "utf-8", timeout: 1000 });
+			this.fdCommand = "fdfind";
+			return this.fdCommand;
+		} catch {
+			try {
+				execSync("fd --version", { encoding: "utf-8", timeout: 1000 });
+				this.fdCommand = "fd";
+				return this.fdCommand;
+			} catch {
+				this.fdCommand = null;
+				return null;
+			}
 		}
 	}
 
