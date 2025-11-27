@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Reduced tool verbosity in main Slack messages (#65)
+  - During execution: show tool labels (with → prefix), thinking, and text
+  - After completion: replace main message with only final assistant response
+  - Full audit trail preserved in thread (tool details, thinking, text)
+  - Added promise queue to ensure message updates execute in correct order
+
 ## [0.10.0] - 2025-11-27
 
 ### Added

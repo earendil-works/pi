@@ -421,7 +421,7 @@ export function createAgentRunner(sandboxConfig: SandboxConfig): AgentRunner {
 						});
 
 						// Show label in main message only
-						queue.enqueue(() => ctx.respond(`_${label}_`));
+						queue.enqueue(() => ctx.respond(`_→ ${label}_`));
 						break;
 					}
 
