@@ -1,6 +1,16 @@
 import type { AgentState } from "@mariozechner/pi-agent-core";
 import { randomBytes } from "crypto";
-import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "fs";
+import {
+	appendFileSync,
+	closeSync,
+	existsSync,
+	mkdirSync,
+	openSync,
+	readdirSync,
+	readFileSync,
+	readSync,
+	statSync,
+} from "fs";
 import { homedir } from "os";
 import { join, resolve } from "path";
 
@@ -286,6 +296,77 @@ export class SessionManager {
 
 	getSessionFile(): string {
 		return this.sessionFile;
+	}
+
+	/**
+	 * Check if the session has been initialized (has content saved to disk)
+	 */
+	isInitialized(): boolean {
+		return this.sessionInitialized;
+	}
+
+	/**
+	 * Find a session file by UUID in the current workspace's session directory.
+	 * Matches by filename pattern (*_uuid.jsonl) and optionally verifies session header.
+	 * Returns the full path if found, null otherwise.
+	 */
+	findSessionByUuid(uuid: string): string | null {
+		try {
+			const files = readdirSync(this.sessionDir).filter((f) => f.endsWith(".jsonl"));
+
+			// First try filename match (faster)
+			for (const file of files) {
+				if (file.includes(uuid)) {
+					const fullPath = join(this.sessionDir, file);
+					// Verify by checking session header
+					if (this.verifySessionUuid(fullPath, uuid)) {
+						return fullPath;
+					}
+				}
+			}
+
+			// Fallback: scan all files and check headers (slower but handles edge cases)
+			for (const file of files) {
+				const fullPath = join(this.sessionDir, file);
+				if (this.verifySessionUuid(fullPath, uuid)) {
+					return fullPath;
+				}
+			}
+
+			return null;
+		} catch {
+			return null;
+		}
+	}
+
+	/**
+	 * Verify that a session file contains the expected UUID in its header.
+	 * Only reads the first 1KB to avoid loading large session files into memory.
+	 */
+	private verifySessionUuid(filePath: string, uuid: string): boolean {
+		try {
+			if (!existsSync(filePath)) return false;
+
+			// Read only the first 1KB to get the header line
+			const buffer = Buffer.alloc(1024);
+			const fd = openSync(filePath, "r");
+			let firstLine = "";
+
+			try {
+				const bytesRead = readSync(fd, buffer, 0, 1024, 0);
+				const content = buffer.toString("utf8", 0, bytesRead);
+				firstLine = content.split("\n")[0];
+			} finally {
+				closeSync(fd);
+			}
+
+			if (!firstLine) return false;
+
+			const entry = JSON.parse(firstLine);
+			return entry.type === "session" && entry.id === uuid;
+		} catch {
+			return false;
+		}
 	}
 
 	/**
