@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Added
+
+- **CLI File Arguments (`@file`)**: Include files in your initial message using the `@` prefix (e.g., `pi @prompt.md @image.png "Do this"`). All `@file` arguments are combined into the first message. Text files are wrapped in `<file name="path">content</file>` tags. Images (`.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`) are attached as base64-encoded attachments. Supports `~` expansion, relative/absolute paths. Empty files are skipped. Works in interactive, `--print`, and `--mode text/json` modes. Not supported in `--mode rpc`. ([#54](https://github.com/badlogic/pi-mono/issues/54))
+
+### Fixed
+
+- **Editor Cursor Navigation**: Fixed broken up/down arrow key navigation in the editor when lines wrap. Previously, pressing up/down would move between logical lines instead of visual (wrapped) lines, causing the cursor to jump unexpectedly. Now cursor navigation is based on rendered lines. Also fixed a bug where the cursor would appear on two lines simultaneously when positioned at a wrap boundary. Added word by word navigation via Option+Left/Right or Ctrl+Left/Right. ([#61](https://github.com/badlogic/pi-mono/pull/61))
+- **Edit Diff Line Number Alignment**: Fixed two issues with diff display in the edit tool:
+  1. Line numbers were incorrect for edits far from the start of a file (e.g., showing 1, 2, 3 instead of 336, 337, 338). The skip count for context lines was being added after displaying lines instead of before.
+  2. When diff lines wrapped due to terminal width, the line number prefix lost its leading space alignment, and code indentation (spaces/tabs after line numbers) was lost. Rewrote `splitIntoTokensWithAnsi` in `pi-tui` to preserve whitespace as separate tokens instead of discarding it, so wrapped lines maintain proper alignment and indentation.
+
+### Improved
+
+- **Git Branch Display**: Footer now shows the active git branch after the directory path (e.g., `~/project (main)`). Branch is detected by reading `.git/HEAD` directly (fast, synchronous). Cache is refreshed after each assistant message to detect branch changes from git commands executed by the agent. ([#55](https://github.com/badlogic/pi-mono/issues/55))
+- **HTML Export**: Added timestamps to each message, fixed text clipping with proper word-wrapping CSS, improved font selection (`ui-monospace`, `Cascadia Code`, `Source Code Pro`), reduced font sizes for more compact display (12px base), added model switch indicators in conversation timeline, created dedicated Tokens & Cost section with cumulative statistics (input/output/cache tokens, cost breakdown by type), added context usage display showing token count and percentage for the last model used, and now displays all models used during the session. ([#51](https://github.com/badlogic/pi-mono/issues/51), [#52](https://github.com/badlogic/pi-mono/issues/52))
+
 ## [0.10.0] - 2025-11-27
 
 ### Added
