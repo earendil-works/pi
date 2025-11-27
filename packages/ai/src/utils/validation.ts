@@ -59,7 +59,44 @@ export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 			})
 			.join("\n") || "Unknown validation error";
 
-	const errorMessage = `Validation failed for tool "${toolCall.name}":\n${errors}\n\nReceived arguments:\n${JSON.stringify(toolCall.arguments, null, 2)}`;
+	// Extract schema info to help the model self-correct
+	const schema = tool.parameters as Record<string, unknown>;
+	const schemaInfo = formatSchemaInfo(schema);
+
+	// Truncate arguments if too large (e.g., write_file with big content)
+	const argsStr = JSON.stringify(toolCall.arguments, null, 2);
+	const maxArgsLength = 2000;
+	const truncatedArgs =
+		argsStr.length > maxArgsLength
+			? `${argsStr.substring(0, maxArgsLength)}...\n[truncated, ${argsStr.length - maxArgsLength} more chars]`
+			: argsStr;
+
+	const errorMessage = `Validation failed for tool "${toolCall.name}":\n${errors}\n\n${schemaInfo}\nReceived arguments:\n${truncatedArgs}\n\nPlease correct the arguments and try again.`;
 
 	throw new Error(errorMessage);
+}
+
+/**
+ * Format schema information for error messages to help models self-correct
+ */
+function formatSchemaInfo(schema: Record<string, unknown>): string {
+	const lines: string[] = ["Expected schema:"];
+
+	// Extract properties
+	if (schema.properties && typeof schema.properties === "object") {
+		lines.push("  Properties:");
+		for (const [key, value] of Object.entries(schema.properties as Record<string, unknown>)) {
+			const prop = value as Record<string, unknown>;
+			const typeInfo = prop.type || (prop.enum ? `enum(${(prop.enum as unknown[]).join("|")})` : "unknown");
+			const description = prop.description ? ` - ${prop.description}` : "";
+			lines.push(`    ${key}: ${typeInfo}${description}`);
+		}
+	}
+
+	// Extract required fields
+	if (Array.isArray(schema.required) && schema.required.length > 0) {
+		lines.push(`  Required: [${(schema.required as string[]).join(", ")}]`);
+	}
+
+	return lines.join("\n");
 }
