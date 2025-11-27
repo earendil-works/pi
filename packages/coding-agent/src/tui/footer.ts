@@ -188,7 +188,7 @@ export class FooterComponent implements Component {
 		}
 
 		// Return two lines: pwd (or exit hint) and stats
-		const firstLine = this.showExitHint ? theme.fg("warning", "Press Ctrl+C again to exit") : theme.fg("dim", pwd);
+		const firstLine = this.showExitHint ? theme.fg("text", "Press Ctrl+C again to exit") : theme.fg("dim", pwd);
 		return [firstLine, theme.fg("dim", statsLine)];
 	}
 }
