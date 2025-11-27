@@ -264,4 +264,173 @@ describe("Editor component", () => {
 			assert.strictEqual(text, "hello    Xworld");
 		});
 	});
+
+	describe("Display-line cursor navigation (soft wrap)", () => {
+		it("moves up/down through wrapped display lines", () => {
+			const editor = new Editor(defaultEditorTheme);
+			// Create a line that will wrap at width 10
+			// "abcdefghij" = 10 chars, "klmno" = 5 chars
+			// At width 10, this wraps into 2 display lines
+			editor.setText("abcdefghijklmno");
+
+			// Render at width 10 to trigger wrapping
+			editor.render(10);
+
+			// Cursor starts at end (position 15)
+			// Move to position 3 (within first display line)
+			editor.handleInput("\x01"); // Start of line
+			editor.handleInput("\x1b[C"); // Right 1
+			editor.handleInput("\x1b[C"); // Right 2
+			editor.handleInput("\x1b[C"); // Right 3 -> cursor at position 3 ("d")
+
+			// Now move down - should go to position 13 (3 within second display line)
+			editor.handleInput("\x1b[B"); // Down
+
+			// Insert X to verify position
+			editor.handleInput("X");
+			assert.strictEqual(editor.getText(), "abcdefghijklmXno");
+		});
+
+		it("wraps left at start of wrapped display line to end of previous", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.setText("abcdefghijklmno");
+
+			// Render at width 10 to trigger wrapping
+			editor.render(10);
+
+			// Move cursor to start of second display line (position 10)
+			editor.handleInput("\x01"); // Start
+			for (let i = 0; i < 10; i++) {
+				editor.handleInput("\x1b[C"); // Move right to position 10
+			}
+
+			// Now left arrow should go to last character of first display line (position 9)
+			editor.handleInput("\x1b[D"); // Left
+
+			// Insert X to verify position - X goes at position 9
+			editor.handleInput("X");
+			assert.strictEqual(editor.getText(), "abcdefghiXjklmno");
+		});
+
+		it("wraps right at end of wrapped display line to start of next", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.setText("abcdefghijklmno");
+
+			// Render at width 10 to trigger wrapping
+			editor.render(10);
+
+			// Move cursor to end of first display line (position 10)
+			editor.handleInput("\x01"); // Start
+			for (let i = 0; i < 10; i++) {
+				editor.handleInput("\x1b[C"); // Move right to position 10
+			}
+
+			// Now right arrow should go to start of second display line (which is position 10 or 11)
+			editor.handleInput("\x1b[C"); // Right
+
+			// Insert X to verify position
+			editor.handleInput("X");
+			// After position 10 we insert X, so text becomes "abcdefghijkXlmno"
+			assert.strictEqual(editor.getText(), "abcdefghijkXlmno");
+		});
+
+		it("preserves target column when moving vertically through wrapped lines", () => {
+			const editor = new Editor(defaultEditorTheme);
+			// Create text that wraps: 3 display lines at width 10
+			// Line 1: "0123456789" (indices 0-9)
+			// Line 2: "0123456789" (indices 10-19)
+			// Line 3: "01234" (indices 20-24)
+			editor.setText("012345678901234567890123456789");
+
+			// Render at width 10 to trigger wrapping
+			editor.render(10);
+
+			// Start at column 5 of first display line
+			editor.handleInput("\x01"); // Start
+			for (let i = 0; i < 5; i++) {
+				editor.handleInput("\x1b[C");
+			}
+
+			// Move down twice
+			editor.handleInput("\x1b[B"); // Down to second display line
+			editor.handleInput("\x1b[B"); // Down to third display line
+
+			// Insert X to verify - should be at column 5 within third line
+			// Third display line starts at index 20, so position should be 25
+			// X gets inserted BEFORE position 25, so it appears at index 25
+			editor.handleInput("X");
+			assert.strictEqual(editor.getText(), "0123456789012345678901234X56789");
+		});
+
+		it("clamps target column when moving to shorter wrapped line", () => {
+			const editor = new Editor(defaultEditorTheme);
+			// Create text with varying wrapped line lengths
+			// At width 10: "0123456789" (10 chars) + "012" (3 chars)
+			editor.setText("0123456789012");
+
+			// Render at width 10 to trigger wrapping
+			editor.render(10);
+
+			// Start at column 8 of first display line
+			editor.handleInput("\x01"); // Start
+			for (let i = 0; i < 8; i++) {
+				editor.handleInput("\x1b[C");
+			}
+
+			// Move down to shorter line (only 3 chars)
+			editor.handleInput("\x1b[B"); // Down
+
+			// Insert X - should be at end of second line (position 13)
+			editor.handleInput("X");
+			assert.strictEqual(editor.getText(), "0123456789012X");
+		});
+
+		it("handles navigation with emojis (wide characters)", () => {
+			const editor = new Editor(defaultEditorTheme);
+			// Each emoji is 2 display columns wide
+			// At width 10: "😀😀😀😀😀" = 10 display columns (5 emojis, 10 chars)
+			// Then "😀" on next line
+			editor.setText("😀😀😀😀😀😀");
+
+			// Render at width 10 to trigger wrapping
+			editor.render(10);
+
+			// Start at position 0 and move right by 2 emojis
+			editor.handleInput("\x01");
+			editor.handleInput("\x1b[C"); // First emoji (2 code units each)
+			editor.handleInput("\x1b[C");
+			editor.handleInput("\x1b[C"); // Second emoji
+			editor.handleInput("\x1b[C");
+
+			// Insert X
+			editor.handleInput("X");
+			assert.strictEqual(editor.getText(), "😀😀X😀😀😀😀");
+		});
+
+		it("clamps to end of wrapped line when target column exceeds width", () => {
+			const editor = new Editor(defaultEditorTheme);
+			// Create text that wraps: 2 display lines at width 10
+			// Line 1: "0123456789" (10 chars, indices 0-9)
+			// Line 2: "01234" (5 chars, indices 10-14)
+			editor.setText("012345678901234");
+
+			// Render at width 10 to trigger wrapping
+			editor.render(10);
+
+			// Move cursor to position 9 (within first display line)
+			editor.handleInput("\x01"); // Start
+			for (let i = 0; i < 9; i++) {
+				editor.handleInput("\x1b[C");
+			}
+			// Now at position 9 (near end of first display line content)
+
+			// Move down - targetDisplayCol is 9, but second line only has 5 chars
+			// Should clamp to end of second line (position 15)
+			editor.handleInput("\x1b[B"); // Down
+
+			// Insert X - should be at end of second line (position 15)
+			editor.handleInput("X");
+			assert.strictEqual(editor.getText(), "012345678901234X");
+		});
+	});
 });

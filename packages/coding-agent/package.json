@@ -17,6 +17,7 @@
 		"build": "tsgo -p tsconfig.build.json && chmod +x dist/cli.js && npm run copy-theme-assets",
 		"copy-theme-assets": "cp src/theme/*.json dist/theme/",
 		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+		"start": "npx tsx src/cli.ts",
 		"check": "tsgo --noEmit",
 		"test": "vitest --run",
 		"prepublishOnly": "npm run clean && npm run build"

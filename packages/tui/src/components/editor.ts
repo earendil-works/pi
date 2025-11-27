@@ -1,5 +1,6 @@
 import type { AutocompleteProvider, CombinedAutocompleteProvider } from "../autocomplete.js";
 import type { Component } from "../tui.js";
+import { visibleWidth } from "../utils.js";
 import { SelectList, type SelectListTheme } from "./select-list.js";
 
 interface EditorState {
@@ -12,6 +13,14 @@ interface LayoutLine {
 	text: string;
 	hasCursor: boolean;
 	cursorPos?: number;
+}
+
+/** Maps a wrapped display line to its buffer position. endCol is exclusive. */
+interface DisplaySlice {
+	text: string;
+	bufferLine: number;
+	startCol: number;
+	endCol: number;
 }
 
 export interface EditorTheme {
@@ -45,6 +54,10 @@ export class Editor implements Component {
 	private pasteBuffer: string = "";
 	private isInPaste: boolean = false;
 
+	private displaySlices: DisplaySlice[] = [];
+	private lastRenderWidth: number = 0;
+	private targetDisplayCol: number | undefined = undefined; // preserved across vertical moves
+
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
 	public disableSubmit: boolean = false;
@@ -59,13 +72,15 @@ export class Editor implements Component {
 	}
 
 	invalidate(): void {
-		// No cached state to invalidate currently
+		this.displaySlices = [];
+		this.lastRenderWidth = 0;
+		this.targetDisplayCol = undefined;
 	}
 
 	render(width: number): string[] {
 		const horizontal = this.borderColor("─");
 
-		// Layout the text - use full width
+		this.lastRenderWidth = width;
 		const layoutLines = this.layoutText(width);
 
 		const result: string[] = [];
@@ -76,7 +91,7 @@ export class Editor implements Component {
 		// Render each layout line
 		for (const layoutLine of layoutLines) {
 			let displayText = layoutLine.text;
-			let visibleLength = layoutLine.text.length;
+			let visLen = visibleWidth(layoutLine.text);
 
 			// Add cursor if this line has it
 			if (layoutLine.hasCursor && layoutLine.cursorPos !== undefined) {
@@ -84,34 +99,25 @@ export class Editor implements Component {
 				const after = displayText.slice(layoutLine.cursorPos);
 
 				if (after.length > 0) {
-					// Cursor is on a character - replace it with highlighted version
 					const cursor = `\x1b[7m${after[0]}\x1b[0m`;
 					const restAfter = after.slice(1);
 					displayText = before + cursor + restAfter;
-					// visibleLength stays the same - we're replacing, not adding
 				} else {
-					// Cursor is at the end - check if we have room for the space
-					if (layoutLine.text.length < width) {
-						// We have room - add highlighted space
+					if (visLen < width) {
 						const cursor = "\x1b[7m \x1b[0m";
 						displayText = before + cursor;
-						// visibleLength increases by 1 - we're adding a space
-						visibleLength = layoutLine.text.length + 1;
-					} else {
-						// Line is at full width - use reverse video on last character if possible
-						// or just show cursor at the end without adding space
-						if (before.length > 0) {
-							const lastChar = before[before.length - 1];
-							const cursor = `\x1b[7m${lastChar}\x1b[0m`;
-							displayText = before.slice(0, -1) + cursor;
-						}
-						// visibleLength stays the same
+						visLen = visLen + 1;
+					} else if (before.length > 0) {
+						// No room for cursor space; highlight last char instead
+						const lastChar = before[before.length - 1];
+						const cursor = `\x1b[7m${lastChar}\x1b[0m`;
+						displayText = before.slice(0, -1) + cursor;
 					}
 				}
 			}
 
 			// Calculate padding based on actual visible length
-			const padding = " ".repeat(Math.max(0, width - visibleLength));
+			const padding = " ".repeat(Math.max(0, width - visLen));
 
 			// Render the line (no side borders, just horizontal lines above and below)
 			result.push(displayText + padding);
@@ -393,65 +399,49 @@ export class Editor implements Component {
 
 	private layoutText(contentWidth: number): LayoutLine[] {
 		const layoutLines: LayoutLine[] = [];
+		this.displaySlices = [];
 
 		if (this.state.lines.length === 0 || (this.state.lines.length === 1 && this.state.lines[0] === "")) {
-			// Empty editor
-			layoutLines.push({
-				text: "",
-				hasCursor: true,
-				cursorPos: 0,
-			});
+			layoutLines.push({ text: "", hasCursor: true, cursorPos: 0 });
+			this.displaySlices.push({ text: "", bufferLine: 0, startCol: 0, endCol: 0 });
 			return layoutLines;
 		}
 
-		// Process each logical line
-		for (let i = 0; i < this.state.lines.length; i++) {
-			const line = this.state.lines[i] || "";
-			const isCurrentLine = i === this.state.cursorLine;
-			const maxLineLength = contentWidth;
+		for (let bufferLine = 0; bufferLine < this.state.lines.length; bufferLine++) {
+			const line = this.state.lines[bufferLine] || "";
+			const isCurrentLine = bufferLine === this.state.cursorLine;
+			const lineVisibleWidth = visibleWidth(line);
 
-			if (line.length <= maxLineLength) {
-				// Line fits in one layout line
-				if (isCurrentLine) {
-					layoutLines.push({
-						text: line,
-						hasCursor: true,
-						cursorPos: this.state.cursorCol,
-					});
-				} else {
-					layoutLines.push({
-						text: line,
-						hasCursor: false,
-					});
-				}
+			if (lineVisibleWidth <= contentWidth) {
+				const hasCursor = isCurrentLine;
+				const cursorDisplayCol = hasCursor ? this.state.cursorCol : undefined;
+
+				layoutLines.push({ text: line, hasCursor, cursorPos: cursorDisplayCol });
+				this.displaySlices.push({ text: line, bufferLine, startCol: 0, endCol: line.length });
 			} else {
-				// Line needs wrapping
-				const chunks = [];
-				for (let pos = 0; pos < line.length; pos += maxLineLength) {
-					chunks.push(line.slice(pos, pos + maxLineLength));
-				}
+				const slices = this.wrapLineByVisibleWidth(line, contentWidth);
 
-				for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
-					const chunk = chunks[chunkIndex];
-					if (!chunk) continue;
+				for (let sliceIdx = 0; sliceIdx < slices.length; sliceIdx++) {
+					const slice = slices[sliceIdx];
+					const isLastSlice = sliceIdx === slices.length - 1;
 
-					const chunkStart = chunkIndex * maxLineLength;
-					const chunkEnd = chunkStart + chunk.length;
-					const cursorPos = this.state.cursorCol;
-					const hasCursorInChunk = isCurrentLine && cursorPos >= chunkStart && cursorPos <= chunkEnd;
-
-					if (hasCursorInChunk) {
-						layoutLines.push({
-							text: chunk,
-							hasCursor: true,
-							cursorPos: cursorPos - chunkStart,
-						});
-					} else {
-						layoutLines.push({
-							text: chunk,
-							hasCursor: false,
-						});
+					// Non-last slices use exclusive end; last slice includes end-of-line cursor position
+					let hasCursorInSlice = false;
+					if (isCurrentLine && this.state.cursorCol >= slice.startCol) {
+						hasCursorInSlice = isLastSlice
+							? this.state.cursorCol <= slice.endCol
+							: this.state.cursorCol < slice.endCol;
 					}
+
+					const cursorDisplayCol = hasCursorInSlice ? this.state.cursorCol - slice.startCol : undefined;
+
+					layoutLines.push({ text: slice.text, hasCursor: hasCursorInSlice, cursorPos: cursorDisplayCol });
+					this.displaySlices.push({
+						text: slice.text,
+						bufferLine,
+						startCol: slice.startCol,
+						endCol: slice.endCol,
+					});
 				}
 			}
 		}
@@ -459,36 +449,66 @@ export class Editor implements Component {
 		return layoutLines;
 	}
 
+	/** Wrap line by visible width (character-based, breaks at width boundary). */
+	private wrapLineByVisibleWidth(
+		line: string,
+		maxWidth: number,
+	): Array<{ text: string; startCol: number; endCol: number }> {
+		const result: Array<{ text: string; startCol: number; endCol: number }> = [];
+		let currentSliceStart = 0;
+		let currentSliceText = "";
+		let currentWidth = 0;
+
+		for (let i = 0; i < line.length; i++) {
+			const char = line[i];
+			const charWidth = visibleWidth(char);
+
+			if (currentWidth + charWidth > maxWidth && currentSliceText.length > 0) {
+				result.push({ text: currentSliceText, startCol: currentSliceStart, endCol: i });
+				currentSliceStart = i;
+				currentSliceText = "";
+				currentWidth = 0;
+			}
+
+			currentSliceText += char;
+			currentWidth += charWidth;
+		}
+
+		if (currentSliceText.length > 0 || result.length === 0) {
+			result.push({ text: currentSliceText, startCol: currentSliceStart, endCol: line.length });
+		}
+
+		return result;
+	}
+
 	getText(): string {
 		return this.state.lines.join("\n");
 	}
 
 	setText(text: string): void {
-		// Split text into lines, handling different line endings
 		const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
-
-		// Ensure at least one empty line
 		this.state.lines = lines.length === 0 ? [""] : lines;
-
-		// Reset cursor to end of text
 		this.state.cursorLine = this.state.lines.length - 1;
 		this.state.cursorCol = this.state.lines[this.state.cursorLine]?.length || 0;
+		this.targetDisplayCol = undefined;
 
-		// Notify of change
 		if (this.onChange) {
 			this.onChange(this.getText());
 		}
 	}
 
-	// All the editor methods from before...
+	private clearTargetColumn(): void {
+		this.targetDisplayCol = undefined;
+	}
+
 	private insertCharacter(char: string): void {
 		const line = this.state.lines[this.state.cursorLine] || "";
-
 		const before = line.slice(0, this.state.cursorCol);
 		const after = line.slice(this.state.cursorCol);
 
 		this.state.lines[this.state.cursorLine] = before + char + after;
-		this.state.cursorCol += char.length; // Fix: increment by the length of the inserted string
+		this.state.cursorCol += char.length;
+		this.clearTargetColumn();
 
 		if (this.onChange) {
 			this.onChange(this.getText());
@@ -610,6 +630,8 @@ export class Editor implements Component {
 		this.state.cursorLine += pastedLines.length - 1;
 		this.state.cursorCol = (pastedLines[pastedLines.length - 1] || "").length;
 
+		this.clearTargetColumn();
+
 		// Notify of change
 		if (this.onChange) {
 			this.onChange(this.getText());
@@ -629,6 +651,8 @@ export class Editor implements Component {
 		// Move cursor to start of new line
 		this.state.cursorLine++;
 		this.state.cursorCol = 0;
+
+		this.clearTargetColumn();
 
 		if (this.onChange) {
 			this.onChange(this.getText());
@@ -657,6 +681,8 @@ export class Editor implements Component {
 			this.state.cursorCol = previousLine.length;
 		}
 
+		this.clearTargetColumn();
+
 		if (this.onChange) {
 			this.onChange(this.getText());
 		}
@@ -681,11 +707,13 @@ export class Editor implements Component {
 
 	private moveToLineStart(): void {
 		this.state.cursorCol = 0;
+		this.clearTargetColumn();
 	}
 
 	private moveToLineEnd(): void {
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 		this.state.cursorCol = currentLine.length;
+		this.clearTargetColumn();
 	}
 
 	private deleteToStartOfLine(): void {
@@ -704,6 +732,8 @@ export class Editor implements Component {
 			this.state.cursorCol = previousLine.length;
 		}
 
+		this.clearTargetColumn();
+
 		if (this.onChange) {
 			this.onChange(this.getText());
 		}
@@ -721,6 +751,8 @@ export class Editor implements Component {
 			this.state.lines[this.state.cursorLine] = currentLine + nextLine;
 			this.state.lines.splice(this.state.cursorLine + 1, 1);
 		}
+
+		this.clearTargetColumn();
 
 		if (this.onChange) {
 			this.onChange(this.getText());
@@ -770,6 +802,8 @@ export class Editor implements Component {
 			this.state.cursorCol = deleteFrom;
 		}
 
+		this.clearTargetColumn();
+
 		if (this.onChange) {
 			this.onChange(this.getText());
 		}
@@ -789,6 +823,8 @@ export class Editor implements Component {
 			this.state.lines[this.state.cursorLine] = currentLine + nextLine;
 			this.state.lines.splice(this.state.cursorLine + 1, 1);
 		}
+
+		this.clearTargetColumn();
 
 		if (this.onChange) {
 			this.onChange(this.getText());
@@ -811,23 +847,106 @@ export class Editor implements Component {
 		}
 	}
 
+	/** Display-line-aware cursor movement. Falls back to logical if no layout exists. */
 	private moveCursor(deltaLine: number, deltaCol: number): void {
+		if (this.displaySlices.length === 0 || this.lastRenderWidth === 0) {
+			this.moveCursorLogical(deltaLine, deltaCol);
+			return;
+		}
+		if (deltaLine !== 0) this.moveCursorVertical(deltaLine);
+		if (deltaCol !== 0) this.moveCursorHorizontal(deltaCol);
+	}
+
+	private moveCursorLogical(deltaLine: number, deltaCol: number): void {
 		if (deltaLine !== 0) {
 			const newLine = this.state.cursorLine + deltaLine;
 			if (newLine >= 0 && newLine < this.state.lines.length) {
 				this.state.cursorLine = newLine;
-				// Clamp cursor column to new line length
 				const line = this.state.lines[this.state.cursorLine] || "";
 				this.state.cursorCol = Math.min(this.state.cursorCol, line.length);
 			}
 		}
 
 		if (deltaCol !== 0) {
-			// Move column
 			const newCol = this.state.cursorCol + deltaCol;
 			const currentLine = this.state.lines[this.state.cursorLine] || "";
 			const maxCol = currentLine.length;
 			this.state.cursorCol = Math.max(0, Math.min(maxCol, newCol));
+		}
+	}
+
+	/** Cursor at slice boundary belongs to NEXT slice, unless at end of buffer line. */
+	private findCurrentDisplayLine(): number {
+		const bufferLine = this.state.cursorLine;
+		const cursorCol = this.state.cursorCol;
+
+		const slicesForLine: number[] = [];
+		for (let i = 0; i < this.displaySlices.length; i++) {
+			if (this.displaySlices[i].bufferLine === bufferLine) {
+				slicesForLine.push(i);
+			}
+		}
+		if (slicesForLine.length === 0) return 0;
+
+		for (const idx of slicesForLine) {
+			const slice = this.displaySlices[idx];
+			const isLastSliceForLine = idx === slicesForLine[slicesForLine.length - 1];
+			if (cursorCol >= slice.startCol) {
+				if (isLastSliceForLine && cursorCol <= slice.endCol) return idx;
+				if (!isLastSliceForLine && cursorCol < slice.endCol) return idx;
+			}
+		}
+
+		return slicesForLine[slicesForLine.length - 1];
+	}
+
+	private moveCursorVertical(delta: number): void {
+		const currentDisplayLine = this.findCurrentDisplayLine();
+		const currentSlice = this.displaySlices[currentDisplayLine];
+		const currentDisplayCol = this.state.cursorCol - currentSlice.startCol;
+
+		if (this.targetDisplayCol === undefined) {
+			this.targetDisplayCol = currentDisplayCol;
+		}
+
+		const newDisplayLine = currentDisplayLine + delta;
+		if (newDisplayLine < 0 || newDisplayLine >= this.displaySlices.length) return;
+
+		const newSlice = this.displaySlices[newDisplayLine];
+		const sliceLength = newSlice.endCol - newSlice.startCol;
+
+		// Clamp to sliceLength-1 for non-last slices to avoid landing on wrap boundary
+		const isLastSliceForLine =
+			newDisplayLine === this.displaySlices.length - 1 ||
+			this.displaySlices[newDisplayLine + 1].bufferLine !== newSlice.bufferLine;
+		const maxCol = isLastSliceForLine ? sliceLength : Math.max(0, sliceLength - 1);
+		const targetCol = Math.min(this.targetDisplayCol, maxCol);
+
+		this.state.cursorLine = newSlice.bufferLine;
+		this.state.cursorCol = newSlice.startCol + targetCol;
+	}
+
+	private moveCursorHorizontal(delta: number): void {
+		this.targetDisplayCol = undefined;
+		const currentDisplayLine = this.findCurrentDisplayLine();
+		const currentSlice = this.displaySlices[currentDisplayLine];
+
+		if (delta < 0) {
+			if (this.state.cursorCol > currentSlice.startCol) {
+				this.state.cursorCol += delta;
+			} else if (currentDisplayLine > 0) {
+				const prevSlice = this.displaySlices[currentDisplayLine - 1];
+				this.state.cursorLine = prevSlice.bufferLine;
+				this.state.cursorCol = Math.max(prevSlice.startCol, prevSlice.endCol - 1); // endCol is exclusive
+			}
+		} else {
+			if (this.state.cursorCol < currentSlice.endCol) {
+				this.state.cursorCol += delta;
+			} else if (currentDisplayLine < this.displaySlices.length - 1) {
+				const nextSlice = this.displaySlices[currentDisplayLine + 1];
+				this.state.cursorLine = nextSlice.bufferLine;
+				this.state.cursorCol = nextSlice.startCol;
+			}
 		}
 	}
 
@@ -840,6 +959,7 @@ export class Editor implements Component {
 				this.state.cursorLine--;
 				this.state.cursorCol = (this.state.lines[this.state.cursorLine] || "").length;
 			}
+			this.clearTargetColumn();
 			return;
 		}
 
@@ -862,6 +982,7 @@ export class Editor implements Component {
 		}
 
 		this.state.cursorCol = newCol;
+		this.clearTargetColumn();
 	}
 
 	private moveWordRight(): void {
@@ -872,6 +993,7 @@ export class Editor implements Component {
 				this.state.cursorLine++;
 				this.state.cursorCol = 0;
 			}
+			this.clearTargetColumn();
 			return;
 		}
 
@@ -893,6 +1015,7 @@ export class Editor implements Component {
 		while (newCol < currentLine.length && isWhitespace(currentLine[newCol] ?? "")) newCol++;
 
 		this.state.cursorCol = newCol;
+		this.clearTargetColumn();
 	}
 
 	// Helper method to check if cursor is at start of message (for slash command detection)
