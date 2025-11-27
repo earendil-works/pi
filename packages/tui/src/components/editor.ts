@@ -136,17 +136,19 @@ export class Editor implements Component {
 				const after = displayText.slice(layoutLine.cursorPos);
 
 				if (after.length > 0) {
+					// Character under cursor - use reverse video block
 					const cursor = `\x1b[7m${after[0]}\x1b[0m`;
 					const restAfter = after.slice(1);
 					displayText = before + cursor + restAfter;
 				} else {
+					// Cursor at end of line - use underline
 					if (visLen < contentWidth) {
-						const cursor = "\x1b[7m \x1b[0m";
+						const cursor = "\x1b[4m \x1b[0m";
 						displayText = before + cursor;
 						visLen = visLen + 1;
 					} else if (before.length > 0) {
 						const lastChar = before[before.length - 1];
-						const cursor = `\x1b[7m${lastChar}\x1b[0m`;
+						const cursor = `\x1b[4m${lastChar}\x1b[0m`;
 						displayText = before.slice(0, -1) + cursor;
 					}
 				}
