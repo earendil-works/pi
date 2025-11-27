@@ -757,6 +757,13 @@ export class TuiRenderer {
 		if (timeSinceLastCtrlC < 500) {
 			// Second Ctrl+C within 500ms - exit
 			this.stop();
+
+			// Print resume hint if session was initialized
+			if (this.sessionManager.isInitialized()) {
+				const sessionId = this.sessionManager.getSessionId();
+				console.log(`\nResume this conversation via: pi --resume ${sessionId}\n`);
+			}
+
 			process.exit(0);
 		} else {
 			// First Ctrl+C - clear the editor and show exit hint
