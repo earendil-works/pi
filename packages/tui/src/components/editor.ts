@@ -16,7 +16,7 @@ interface LayoutLine {
 	cursorPos?: number;
 }
 
-/** Wrapped display line mapped to buffer position. endCol is exclusive. */
+/** endCol is exclusive */
 interface DisplaySlice {
 	text: string;
 	bufferLine: number;
@@ -58,6 +58,9 @@ export class Editor implements Component {
 	private lastLayoutWidth: number = 0;
 	private lastRenderHeight: number = 0;
 	private targetDisplayCol: number | undefined = undefined;
+
+	private isBatchingInput: boolean = false;
+	private pendingEscapeBuffer: string = "";
 
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
@@ -136,12 +139,10 @@ export class Editor implements Component {
 				const after = displayText.slice(layoutLine.cursorPos);
 
 				if (after.length > 0) {
-					// Character under cursor - use reverse video block
-					const cursor = `\x1b[7m${after[0]}\x1b[0m`;
+					const cursor = `\x1b[7m${after[0]}\x1b[0m`; // reverse video
 					const restAfter = after.slice(1);
 					displayText = before + cursor + restAfter;
 				} else {
-					// Cursor at end of line - use underline
 					if (visLen < contentWidth) {
 						const cursor = "\x1b[4m \x1b[0m";
 						displayText = before + cursor;
@@ -176,6 +177,7 @@ export class Editor implements Component {
 	}
 
 	handleInput(data: string): void {
+		// Bracketed paste mode
 		if (data.includes("\x1b[200~")) {
 			this.isInPaste = true;
 			this.pasteBuffer = "";
@@ -205,9 +207,7 @@ export class Editor implements Component {
 			}
 		}
 
-		if (data.charCodeAt(0) === 3) {
-			return;
-		}
+		if (data.charCodeAt(0) === 3) return; // Ctrl+C
 
 		if (this.isAutocompleting && this.autocompleteList) {
 			if (data === "\x1b") {
@@ -290,87 +290,388 @@ export class Editor implements Component {
 			return;
 		}
 
-		if (data.charCodeAt(0) === 11) {
-			this.deleteToEndOfLine();
-		} else if (data.charCodeAt(0) === 21) {
-			this.deleteToStartOfLine();
-		} else if (data.charCodeAt(0) === 23) {
-			this.deleteWordBackwards();
-		} else if (data === "\x1b\x7f") {
-			this.deleteWordBackwards();
-		} else if (data === "\x1b[1;3D" || data === "\x1b[1;5D" || data === "\x1bb") {
-			this.moveWordLeft();
-		} else if (data === "\x1b[1;3C" || data === "\x1b[1;5C" || data === "\x1bf") {
-			this.moveWordRight();
-		} else if (data.charCodeAt(0) === 1) {
-			this.moveToLineStart();
-		} else if (data.charCodeAt(0) === 5) {
-			this.moveToLineEnd();
-		} else if (
-			(data.charCodeAt(0) === 10 && data.length > 1) ||
-			data === "\x1b\r" ||
-			data === "\x1b[13;2~" ||
-			(data.length > 1 && data.includes("\x1b") && data.includes("\r")) ||
-			(data === "\n" && data.length === 1) ||
-			data === "\\\r"
-		) {
-			this.addNewLine();
-		} else if (data.charCodeAt(0) === 13 && data.length === 1) {
-			if (this.disableSubmit) {
-				return;
+		this.processInputBatch(data);
+	}
+
+	/**
+	 * Process batched input (e.g. from text expanders that send backspaces + text in one chunk).
+	 * Defers layout/onChange until batch completes. Matches escape sequences longest-first.
+	 */
+	private processInputBatch(data: string): void {
+		if (this.pendingEscapeBuffer.length > 0) {
+			data = this.pendingEscapeBuffer + data;
+			this.pendingEscapeBuffer = "";
+		}
+
+		let textChanged = false;
+		let cursorMoved = false;
+		let i = 0;
+
+		this.isBatchingInput = true;
+
+		// Cursor operations need fresh layout after text mutations
+		const ensureLayoutForCursor = (): void => {
+			if (textChanged && this.lastRenderWidth > 0) {
+				const layoutWidth = this.maxHeight !== undefined ? this.lastRenderWidth - 1 : this.lastRenderWidth;
+				this.layoutText(layoutWidth);
 			}
+		};
 
-			let result = this.state.lines.join("\n").trim();
+		try {
+			while (i < data.length) {
+				const remaining = data.slice(i);
+				const code = data.charCodeAt(i);
 
-			for (const [pasteId, pasteContent] of this.pastes) {
-				const markerRegex = new RegExp(`\\[paste #${pasteId}( (\\+\\d+ lines|\\d+ chars))?\\]`, "g");
-				result = result.replace(markerRegex, pasteContent);
+				// Match longest escape sequences first to avoid prefix conflicts
+
+				if (remaining.startsWith("\x1b[1;3D")) {
+					ensureLayoutForCursor();
+					this.moveWordLeft();
+					cursorMoved = true;
+					i += 6;
+					continue;
+				}
+				if (remaining.startsWith("\x1b[1;5D")) {
+					ensureLayoutForCursor();
+					this.moveWordLeft();
+					cursorMoved = true;
+					i += 6;
+					continue;
+				}
+				if (remaining.startsWith("\x1b[1;3C")) {
+					ensureLayoutForCursor();
+					this.moveWordRight();
+					cursorMoved = true;
+					i += 6;
+					continue;
+				}
+				if (remaining.startsWith("\x1b[1;5C")) {
+					ensureLayoutForCursor();
+					this.moveWordRight();
+					cursorMoved = true;
+					i += 6;
+					continue;
+				}
+
+				if (remaining.startsWith("\x1b[13;2~")) {
+					this.addNewLineCore();
+					textChanged = true;
+					i += 7;
+					continue;
+				}
+
+				// Mouse scroll (variable length)
+				if (remaining.startsWith("\x1b[<64;")) {
+					const endMatch = remaining.match(/^\x1b\[<64;\d+;\d+[Mm]/);
+					if (endMatch) {
+						this.scroll(-3);
+						cursorMoved = true;
+						i += endMatch[0].length;
+						continue;
+					}
+				}
+				if (remaining.startsWith("\x1b[<65;")) {
+					const endMatch = remaining.match(/^\x1b\[<65;\d+;\d+[Mm]/);
+					if (endMatch) {
+						this.scroll(3);
+						cursorMoved = true;
+						i += endMatch[0].length;
+						continue;
+					}
+				}
+				if (remaining.startsWith("\x1b[<0;") && this.maxHeight !== undefined) {
+					const endMatch = remaining.match(/^\x1b\[<0;\d+;\d+[Mm]/);
+					if (endMatch) {
+						this.handleScrollbarClick(endMatch[0]);
+						cursorMoved = true;
+						i += endMatch[0].length;
+						continue;
+					}
+				}
+
+				if (remaining.startsWith("\x1b[1~")) {
+					ensureLayoutForCursor();
+					this.moveToLineStart();
+					cursorMoved = true;
+					i += 4;
+					continue;
+				}
+				if (remaining.startsWith("\x1b[4~")) {
+					ensureLayoutForCursor();
+					this.moveToLineEnd();
+					cursorMoved = true;
+					i += 4;
+					continue;
+				}
+				if (remaining.startsWith("\x1b[7~")) {
+					ensureLayoutForCursor();
+					this.moveToLineStart();
+					cursorMoved = true;
+					i += 4;
+					continue;
+				}
+				if (remaining.startsWith("\x1b[8~")) {
+					ensureLayoutForCursor();
+					this.moveToLineEnd();
+					cursorMoved = true;
+					i += 4;
+					continue;
+				}
+				if (remaining.startsWith("\x1b[3~")) {
+					this.handleForwardDeleteCore();
+					textChanged = true;
+					i += 4;
+					continue;
+				}
+				if (remaining.startsWith("\x1b[5~")) {
+					ensureLayoutForCursor();
+					this.scrollPage(-1);
+					cursorMoved = true;
+					i += 4;
+					continue;
+				}
+				if (remaining.startsWith("\x1b[6~")) {
+					ensureLayoutForCursor();
+					this.scrollPage(1);
+					cursorMoved = true;
+					i += 4;
+					continue;
+				}
+
+				if (remaining.startsWith("\x1b[A")) {
+					ensureLayoutForCursor();
+					this.moveCursor(-1, 0);
+					cursorMoved = true;
+					i += 3;
+					continue;
+				}
+				if (remaining.startsWith("\x1b[B")) {
+					ensureLayoutForCursor();
+					this.moveCursor(1, 0);
+					cursorMoved = true;
+					i += 3;
+					continue;
+				}
+				if (remaining.startsWith("\x1b[C")) {
+					ensureLayoutForCursor();
+					this.moveCursor(0, 1);
+					cursorMoved = true;
+					i += 3;
+					continue;
+				}
+				if (remaining.startsWith("\x1b[D")) {
+					ensureLayoutForCursor();
+					this.moveCursor(0, -1);
+					cursorMoved = true;
+					i += 3;
+					continue;
+				}
+				if (remaining.startsWith("\x1b[H")) {
+					ensureLayoutForCursor();
+					this.moveToLineStart();
+					cursorMoved = true;
+					i += 3;
+					continue;
+				}
+				if (remaining.startsWith("\x1b[F")) {
+					ensureLayoutForCursor();
+					this.moveToLineEnd();
+					cursorMoved = true;
+					i += 3;
+					continue;
+				}
+				if (remaining.startsWith("\x1bb")) {
+					ensureLayoutForCursor();
+					this.moveWordLeft();
+					cursorMoved = true;
+					i += 2;
+					continue;
+				}
+				if (remaining.startsWith("\x1bf")) {
+					ensureLayoutForCursor();
+					this.moveWordRight();
+					cursorMoved = true;
+					i += 2;
+					continue;
+				}
+				if (remaining.startsWith("\x1b\x7f")) {
+					this.deleteWordBackwardsCore();
+					textChanged = true;
+					i += 2;
+					continue;
+				}
+				if (remaining.startsWith("\x1b\r")) {
+					this.addNewLineCore();
+					textChanged = true;
+					i += 2;
+					continue;
+				}
+				if (remaining.startsWith("\\\r")) {
+					this.addNewLineCore();
+					textChanged = true;
+					i += 2;
+					continue;
+				}
+
+				// Unknown/incomplete escape sequences
+				if (code === 0x1b) {
+					if (remaining.length === 1) {
+						this.pendingEscapeBuffer = "\x1b";
+						break;
+					}
+					// CSI sequence: ESC[ params final-byte
+					if (remaining[1] === "[") {
+						let j = 2;
+						let foundFinalByte = false;
+						while (j < remaining.length) {
+							const c = remaining.charCodeAt(j);
+							if (c >= 0x40 && c <= 0x7e) {
+								i += j + 1;
+								foundFinalByte = true;
+								break;
+							}
+							if ((c >= 0x30 && c <= 0x3f) || (c >= 0x20 && c <= 0x2f)) {
+								j++;
+								continue;
+							}
+							i += 2;
+							foundFinalByte = true;
+							break;
+						}
+						if (!foundFinalByte) {
+							this.pendingEscapeBuffer = remaining;
+							break;
+						}
+						continue;
+					}
+					i += 2;
+					continue;
+				}
+
+				if (code === 11) {
+					// Ctrl+K
+					this.deleteToEndOfLineCore();
+					textChanged = true;
+					i++;
+					continue;
+				}
+				if (code === 21) {
+					// Ctrl+U
+					this.deleteToStartOfLineCore();
+					textChanged = true;
+					i++;
+					continue;
+				}
+				if (code === 23) {
+					// Ctrl+W
+					this.deleteWordBackwardsCore();
+					textChanged = true;
+					i++;
+					continue;
+				}
+				if (code === 1) {
+					// Ctrl+A
+					ensureLayoutForCursor();
+					this.moveToLineStart();
+					cursorMoved = true;
+					i++;
+					continue;
+				}
+				if (code === 5) {
+					// Ctrl+E
+					ensureLayoutForCursor();
+					this.moveToLineEnd();
+					cursorMoved = true;
+					i++;
+					continue;
+				}
+				if (code === 10) {
+					this.addNewLineCore();
+					textChanged = true;
+					i++;
+					continue;
+				}
+
+				// Enter: submit unless text expander is mid-replacement (has pending input after CR)
+				if (code === 13) {
+					const hasMoreInput = i < data.length - 1;
+					const shouldSubmit = !this.disableSubmit && (!textChanged || !hasMoreInput);
+					if (shouldSubmit) {
+						this.isBatchingInput = false;
+						this.handleSubmit();
+						return;
+					}
+					i++;
+					continue;
+				}
+				if (code === 127 || code === 8) {
+					this.handleBackspaceCore();
+					textChanged = true;
+					i++;
+					continue;
+				}
+				if (code >= 32) {
+					this.insertCharacterCore(data[i]);
+					textChanged = true;
+					i++;
+					continue;
+				}
+				i++;
 			}
+		} finally {
+			this.isBatchingInput = false;
+		}
 
-			this.state = {
-				lines: [""],
-				cursorLine: 0,
-				cursorCol: 0,
-				scrollOffset: 0,
-			};
-			this.pastes.clear();
-			this.pasteCounter = 0;
+		if (textChanged && this.lastRenderWidth > 0) {
+			const layoutWidth = this.maxHeight !== undefined ? this.lastRenderWidth - 1 : this.lastRenderWidth;
+			this.layoutText(layoutWidth);
+			this.ensureCursorVisible();
+		} else if (cursorMoved) {
+			this.ensureCursorVisible();
+		}
 
-			if (this.onChange) {
-				this.onChange("");
+		if (textChanged && this.onChange) {
+			this.onChange(this.getText());
+		}
+
+		if (textChanged) {
+			if (this.isAutocompleting) {
+				this.updateAutocomplete();
+			} else {
+				const currentLine = this.state.lines[this.state.cursorLine] || "";
+				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
+				if (textBeforeCursor.trimStart().startsWith("/") && this.isAtStartOfMessage()) {
+					this.tryTriggerAutocomplete();
+				} else if (textBeforeCursor.match(/(?:^|[\s])@[^\s]*$/)) {
+					this.tryTriggerAutocomplete();
+				}
 			}
+		}
+	}
 
-			if (this.onSubmit) {
-				this.onSubmit(result);
-			}
-		} else if (data.charCodeAt(0) === 127 || data.charCodeAt(0) === 8) {
-			this.handleBackspace();
-		} else if (data === "\x1b[H" || data === "\x1b[1~" || data === "\x1b[7~") {
-			this.moveToLineStart();
-		} else if (data === "\x1b[F" || data === "\x1b[4~" || data === "\x1b[8~") {
-			this.moveToLineEnd();
-		} else if (data === "\x1b[3~") {
-			this.handleForwardDelete();
-		} else if (data === "\x1b[5~") {
-			this.scrollPage(-1);
-		} else if (data === "\x1b[6~") {
-			this.scrollPage(1);
-		} else if (data.startsWith("\x1b[<64;")) {
-			this.scroll(-3);
-		} else if (data.startsWith("\x1b[<65;")) {
-			this.scroll(3);
-		} else if (data.startsWith("\x1b[<0;") && this.maxHeight !== undefined) {
-			this.handleScrollbarClick(data);
-		} else if (data === "\x1b[A") {
-			this.moveCursor(-1, 0);
-		} else if (data === "\x1b[B") {
-			this.moveCursor(1, 0);
-		} else if (data === "\x1b[C") {
-			this.moveCursor(0, 1);
-		} else if (data === "\x1b[D") {
-			this.moveCursor(0, -1);
-		} else if (data.charCodeAt(0) >= 32) {
-			this.insertCharacter(data);
+	private handleSubmit(): void {
+		let result = this.state.lines.join("\n").trim();
+
+		for (const [pasteId, pasteContent] of this.pastes) {
+			const markerRegex = new RegExp(`\\[paste #${pasteId}( (\\+\\d+ lines|\\d+ chars))?\\]`, "g");
+			result = result.replace(markerRegex, pasteContent);
+		}
+
+		this.state = {
+			lines: [""],
+			cursorLine: 0,
+			cursorCol: 0,
+			scrollOffset: 0,
+		};
+		this.pastes.clear();
+		this.pasteCounter = 0;
+
+		if (this.onChange) {
+			this.onChange("");
+		}
+
+		if (this.onSubmit) {
+			this.onSubmit(result);
 		}
 	}
 
@@ -414,11 +715,9 @@ export class Editor implements Component {
 			const slice = this.displaySlices[i];
 			const isCurrentLine = slice.bufferLine === this.state.cursorLine;
 
-			// Determine if this slice is the last one for its buffer line
 			const isLastSliceForLine =
 				i === this.displaySlices.length - 1 || this.displaySlices[i + 1].bufferLine !== slice.bufferLine;
 
-			// Check if cursor is in this slice
 			let hasCursorInSlice = false;
 			if (isCurrentLine && this.state.cursorCol >= slice.startCol) {
 				hasCursorInSlice = isLastSliceForLine
@@ -487,7 +786,47 @@ export class Editor implements Component {
 		this.targetDisplayCol = undefined;
 	}
 
+	/** Used by handlePaste (non-batched path) */
 	private insertCharacter(char: string): void {
+		this.insertCharacterCore(char);
+
+		if (!this.isBatchingInput) {
+			if (this.lastRenderWidth > 0) {
+				const layoutWidth = this.maxHeight !== undefined ? this.lastRenderWidth - 1 : this.lastRenderWidth;
+				this.layoutText(layoutWidth);
+				this.ensureCursorVisible();
+			}
+
+			if (this.onChange) {
+				this.onChange(this.getText());
+			}
+
+			if (!this.isAutocompleting) {
+				if (char === "/" && this.isAtStartOfMessage()) {
+					this.tryTriggerAutocomplete();
+				} else if (char === "@") {
+					const currentLine = this.state.lines[this.state.cursorLine] || "";
+					const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
+					const charBeforeAt = textBeforeCursor[textBeforeCursor.length - 2];
+					if (textBeforeCursor.length === 1 || charBeforeAt === " " || charBeforeAt === "\t") {
+						this.tryTriggerAutocomplete();
+					}
+				} else if (/[a-zA-Z0-9]/.test(char)) {
+					const currentLine = this.state.lines[this.state.cursorLine] || "";
+					const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
+					if (textBeforeCursor.trimStart().startsWith("/")) {
+						this.tryTriggerAutocomplete();
+					} else if (textBeforeCursor.match(/(?:^|[\s])@[^\s]*$/)) {
+						this.tryTriggerAutocomplete();
+					}
+				}
+			} else {
+				this.updateAutocomplete();
+			}
+		}
+	}
+
+	private insertCharacterCore(char: string): void {
 		const line = this.state.lines[this.state.cursorLine] || "";
 		const before = line.slice(0, this.state.cursorCol);
 		const after = line.slice(this.state.cursorCol);
@@ -495,39 +834,6 @@ export class Editor implements Component {
 		this.state.lines[this.state.cursorLine] = before + char + after;
 		this.state.cursorCol += char.length;
 		this.clearTargetColumn();
-
-		if (this.lastRenderWidth > 0) {
-			const layoutWidth = this.maxHeight !== undefined ? this.lastRenderWidth - 1 : this.lastRenderWidth;
-			this.layoutText(layoutWidth);
-			this.ensureCursorVisible();
-		}
-
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
-
-		if (!this.isAutocompleting) {
-			if (char === "/" && this.isAtStartOfMessage()) {
-				this.tryTriggerAutocomplete();
-			} else if (char === "@") {
-				const currentLine = this.state.lines[this.state.cursorLine] || "";
-				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-				const charBeforeAt = textBeforeCursor[textBeforeCursor.length - 2];
-				if (textBeforeCursor.length === 1 || charBeforeAt === " " || charBeforeAt === "\t") {
-					this.tryTriggerAutocomplete();
-				}
-			} else if (/[a-zA-Z0-9]/.test(char)) {
-				const currentLine = this.state.lines[this.state.cursorLine] || "";
-				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-				if (textBeforeCursor.trimStart().startsWith("/")) {
-					this.tryTriggerAutocomplete();
-				} else if (textBeforeCursor.match(/(?:^|[\s])@[^\s]*$/)) {
-					this.tryTriggerAutocomplete();
-				}
-			}
-		} else {
-			this.updateAutocomplete();
-		}
 	}
 
 	private handlePaste(pastedText: string): void {
@@ -605,7 +911,7 @@ export class Editor implements Component {
 		}
 	}
 
-	private addNewLine(): void {
+	private addNewLineCore(): void {
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 		const before = currentLine.slice(0, this.state.cursorCol);
 		const after = currentLine.slice(this.state.cursorCol);
@@ -617,19 +923,9 @@ export class Editor implements Component {
 		this.state.cursorCol = 0;
 
 		this.clearTargetColumn();
-
-		if (this.lastRenderWidth > 0) {
-			const layoutWidth = this.maxHeight !== undefined ? this.lastRenderWidth - 1 : this.lastRenderWidth;
-			this.layoutText(layoutWidth);
-			this.ensureCursorVisible();
-		}
-
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
 	}
 
-	private handleBackspace(): void {
+	private handleBackspaceCore(): void {
 		if (this.state.cursorCol > 0) {
 			const line = this.state.lines[this.state.cursorLine] || "";
 			const before = line.slice(0, this.state.cursorCol - 1);
@@ -649,28 +945,6 @@ export class Editor implements Component {
 		}
 
 		this.clearTargetColumn();
-
-		if (this.lastRenderWidth > 0) {
-			const layoutWidth = this.maxHeight !== undefined ? this.lastRenderWidth - 1 : this.lastRenderWidth;
-			this.layoutText(layoutWidth);
-			this.ensureCursorVisible();
-		}
-
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
-
-		if (this.isAutocompleting) {
-			this.updateAutocomplete();
-		} else {
-			const currentLine = this.state.lines[this.state.cursorLine] || "";
-			const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-			if (textBeforeCursor.trimStart().startsWith("/")) {
-				this.tryTriggerAutocomplete();
-			} else if (textBeforeCursor.match(/(?:^|[\s])@[^\s]*$/)) {
-				this.tryTriggerAutocomplete();
-			}
-		}
 	}
 
 	private moveToLineStart(): void {
@@ -684,15 +958,13 @@ export class Editor implements Component {
 		this.clearTargetColumn();
 	}
 
-	private deleteToStartOfLine(): void {
+	private deleteToStartOfLineCore(): void {
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
 		if (this.state.cursorCol > 0) {
-			// Delete from start of line up to cursor
 			this.state.lines[this.state.cursorLine] = currentLine.slice(this.state.cursorCol);
 			this.state.cursorCol = 0;
 		} else if (this.state.cursorLine > 0) {
-			// At start of line - merge with previous line
 			const previousLine = this.state.lines[this.state.cursorLine - 1] || "";
 			this.state.lines[this.state.cursorLine - 1] = previousLine + currentLine;
 			this.state.lines.splice(this.state.cursorLine, 1);
@@ -701,50 +973,25 @@ export class Editor implements Component {
 		}
 
 		this.clearTargetColumn();
-
-		// Rebuild display slices and ensure cursor stays visible
-		if (this.lastRenderWidth > 0) {
-			const layoutWidth = this.maxHeight !== undefined ? this.lastRenderWidth - 1 : this.lastRenderWidth;
-			this.layoutText(layoutWidth);
-			this.ensureCursorVisible();
-		}
-
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
 	}
 
-	private deleteToEndOfLine(): void {
+	private deleteToEndOfLineCore(): void {
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
 		if (this.state.cursorCol < currentLine.length) {
-			// Delete from cursor to end of line
 			this.state.lines[this.state.cursorLine] = currentLine.slice(0, this.state.cursorCol);
 		} else if (this.state.cursorLine < this.state.lines.length - 1) {
-			// At end of line - merge with next line
 			const nextLine = this.state.lines[this.state.cursorLine + 1] || "";
 			this.state.lines[this.state.cursorLine] = currentLine + nextLine;
 			this.state.lines.splice(this.state.cursorLine + 1, 1);
 		}
 
 		this.clearTargetColumn();
-
-		// Rebuild display slices and ensure cursor stays visible
-		if (this.lastRenderWidth > 0) {
-			const layoutWidth = this.maxHeight !== undefined ? this.lastRenderWidth - 1 : this.lastRenderWidth;
-			this.layoutText(layoutWidth);
-			this.ensureCursorVisible();
-		}
-
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
 	}
 
-	private deleteWordBackwards(): void {
+	private deleteWordBackwardsCore(): void {
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
-		// If at start of line, behave like backspace at column 0 (merge with previous line)
 		if (this.state.cursorCol === 0) {
 			if (this.state.cursorLine > 0) {
 				const previousLine = this.state.lines[this.state.cursorLine - 1] || "";
@@ -757,10 +1004,7 @@ export class Editor implements Component {
 			const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
 
 			const isWhitespace = (char: string): boolean => /\s/.test(char);
-			const isPunctuation = (char: string): boolean => {
-				// Treat obvious code punctuation as boundaries
-				return /[(){}[\]<>.,;:'"!?+\-=*/\\|&%^$#@~`]/.test(char);
-			};
+			const isPunctuation = (char: string): boolean => /[(){}[\]<>.,;:'"!?+\-=*/\\|&%^$#@~`]/.test(char);
 
 			let deleteFrom = this.state.cursorCol;
 			const lastChar = textBeforeCursor[deleteFrom - 1] ?? "";
@@ -785,62 +1029,22 @@ export class Editor implements Component {
 		}
 
 		this.clearTargetColumn();
-
-		// Rebuild display slices and ensure cursor stays visible
-		if (this.lastRenderWidth > 0) {
-			const layoutWidth = this.maxHeight !== undefined ? this.lastRenderWidth - 1 : this.lastRenderWidth;
-			this.layoutText(layoutWidth);
-			this.ensureCursorVisible();
-		}
-
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
 	}
 
-	private handleForwardDelete(): void {
+	private handleForwardDeleteCore(): void {
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 
 		if (this.state.cursorCol < currentLine.length) {
-			// Delete character at cursor position (forward delete)
 			const before = currentLine.slice(0, this.state.cursorCol);
 			const after = currentLine.slice(this.state.cursorCol + 1);
 			this.state.lines[this.state.cursorLine] = before + after;
 		} else if (this.state.cursorLine < this.state.lines.length - 1) {
-			// At end of line - merge with next line
 			const nextLine = this.state.lines[this.state.cursorLine + 1] || "";
 			this.state.lines[this.state.cursorLine] = currentLine + nextLine;
 			this.state.lines.splice(this.state.cursorLine + 1, 1);
 		}
 
 		this.clearTargetColumn();
-
-		// Rebuild display slices and ensure cursor stays visible
-		if (this.lastRenderWidth > 0) {
-			const layoutWidth = this.maxHeight !== undefined ? this.lastRenderWidth - 1 : this.lastRenderWidth;
-			this.layoutText(layoutWidth);
-			this.ensureCursorVisible();
-		}
-
-		if (this.onChange) {
-			this.onChange(this.getText());
-		}
-
-		// Update or re-trigger autocomplete after forward delete
-		if (this.isAutocompleting) {
-			this.updateAutocomplete();
-		} else {
-			const currentLine = this.state.lines[this.state.cursorLine] || "";
-			const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-			// Slash command context
-			if (textBeforeCursor.trimStart().startsWith("/")) {
-				this.tryTriggerAutocomplete();
-			}
-			// @ file reference context
-			else if (textBeforeCursor.match(/(?:^|[\s])@[^\s]*$/)) {
-				this.tryTriggerAutocomplete();
-			}
-		}
 	}
 
 	private moveCursor(deltaLine: number, deltaCol: number): void {
@@ -1167,13 +1371,7 @@ export class Editor implements Component {
 		this.clearTargetColumn();
 	}
 
-	/**
-	 * Handle click on scrollbar to jump to position.
-	 *
-	 * LIMITATION: Assumes Editor is rendered at top of terminal. If placed lower in UI,
-	 * mouse coordinates won't map correctly. Fix requires component to know its absolute
-	 * screen position, which TUI architecture doesn't support.
-	 */
+	/** LIMITATION: Assumes Editor at top of terminal; mouse coords won't map correctly otherwise. */
 	private handleScrollbarClick(data: string): void {
 		const match = data.match(/\x1b\[<0;(\d+);(\d+)([Mm])/);
 		if (!match) return;
