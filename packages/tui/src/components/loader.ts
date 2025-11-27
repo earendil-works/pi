@@ -5,7 +5,7 @@ import { Text } from "./text.js";
  * Loader component that updates every 80ms with spinning animation
  */
 export class Loader extends Text {
-	private frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+	private frames = ["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"];
 	private currentFrame = 0;
 	private intervalId: NodeJS.Timeout | null = null;
 	private ui: TUI | null = null;
