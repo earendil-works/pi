@@ -247,10 +247,31 @@ function formatToolExecution(
 }
 
 /**
+ * Format timestamp for display
+ */
+function formatTimestamp(timestamp: number | string | undefined): string {
+	if (!timestamp) return "";
+	const date = new Date(typeof timestamp === "string" ? timestamp : timestamp);
+	return date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}
+
+/**
+ * Format model change event
+ */
+function formatModelChange(event: any): string {
+	const timestamp = formatTimestamp(event.timestamp);
+	const timestampHtml = timestamp ? `<div class="message-timestamp">${timestamp}</div>` : "";
+	const modelInfo = `${event.provider}/${event.modelId}`;
+	return `<div class="model-change">${timestampHtml}<div class="model-change-text">Switched to model: <span class="model-name">${escapeHtml(modelInfo)}</span></div></div>`;
+}
+
+/**
  * Format a message as HTML (matching TUI component styling)
  */
 function formatMessage(message: Message, toolResultsMap: Map<string, ToolResultMessage>): string {
 	let html = "";
+	const timestamp = (message as any).timestamp;
+	const timestampHtml = timestamp ? `<div class="message-timestamp">${formatTimestamp(timestamp)}</div>` : "";
 
 	if (message.role === "user") {
 		const userMsg = message as UserMessage;
@@ -264,10 +285,11 @@ function formatMessage(message: Message, toolResultsMap: Map<string, ToolResultM
 		}
 
 		if (textContent.trim()) {
-			html += `<div class="user-message">${escapeHtml(textContent).replace(/\n/g, "<br>")}</div>`;
+			html += `<div class="user-message">${timestampHtml}${escapeHtml(textContent).replace(/\n/g, "<br>")}</div>`;
 		}
 	} else if (message.role === "assistant") {
 		const assistantMsg = message as AssistantMessage;
+		html += timestampHtml ? `<div class="assistant-message">${timestampHtml}` : "";
 
 		// Render text and thinking content
 		for (const content of assistantMsg.content) {
@@ -297,6 +319,11 @@ function formatMessage(message: Message, toolResultsMap: Map<string, ToolResultM
 				html += `<div class="error-text">Error: ${escapeHtml(errorMsg)}</div>`;
 			}
 		}
+
+		// Close the assistant message wrapper if we opened one
+		if (timestampHtml) {
+			html += "</div>";
+		}
 	}
 
 	return html;
@@ -322,17 +349,61 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
 	let sessionHeader: any = null;
 	const messages: Message[] = [];
 	const toolResultsMap = new Map<string, ToolResultMessage>();
+	const sessionEvents: any[] = []; // Track all events including model changes
+	const modelsUsed = new Set<string>(); // Track unique models used
+
+	// Cumulative token and cost stats
+	const tokenStats = {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+	};
+	const costStats = {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+	};
 
 	for (const line of lines) {
 		try {
 			const entry = JSON.parse(line);
 			if (entry.type === "session") {
 				sessionHeader = entry;
+				// Track initial model from session header
+				if (entry.modelId) {
+					const modelInfo = entry.provider ? `${entry.provider}/${entry.modelId}` : entry.modelId;
+					modelsUsed.add(modelInfo);
+				}
 			} else if (entry.type === "message") {
 				messages.push(entry.message);
+				sessionEvents.push(entry);
 				// Build map of tool call ID to result
 				if (entry.message.role === "toolResult") {
 					toolResultsMap.set(entry.message.toolCallId, entry.message);
+				}
+				// Accumulate token and cost stats from assistant messages
+				if (entry.message.role === "assistant" && entry.message.usage) {
+					const usage = entry.message.usage;
+					tokenStats.input += usage.input || 0;
+					tokenStats.output += usage.output || 0;
+					tokenStats.cacheRead += usage.cacheRead || 0;
+					tokenStats.cacheWrite += usage.cacheWrite || 0;
+
+					if (usage.cost) {
+						costStats.input += usage.cost.input || 0;
+						costStats.output += usage.cost.output || 0;
+						costStats.cacheRead += usage.cost.cacheRead || 0;
+						costStats.cacheWrite += usage.cost.cacheWrite || 0;
+					}
+				}
+			} else if (entry.type === "model_change") {
+				sessionEvents.push(entry);
+				// Track model from model change event
+				if (entry.modelId) {
+					const modelInfo = entry.provider ? `${entry.provider}/${entry.modelId}` : entry.modelId;
+					modelsUsed.add(modelInfo);
 				}
 			}
 		} catch {
@@ -355,12 +426,38 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
 		}
 	}
 
-	// Generate messages HTML
+	// Get last assistant message for context percentage calculation (skip aborted messages)
+	const lastAssistantMessage = messages
+		.slice()
+		.reverse()
+		.find((m) => m.role === "assistant" && (m as AssistantMessage).stopReason !== "aborted") as
+		| AssistantMessage
+		| undefined;
+
+	// Calculate context percentage from last message (input + output + cacheRead + cacheWrite)
+	const contextTokens = lastAssistantMessage
+		? lastAssistantMessage.usage.input +
+			lastAssistantMessage.usage.output +
+			lastAssistantMessage.usage.cacheRead +
+			lastAssistantMessage.usage.cacheWrite
+		: 0;
+
+	// Get the model info from the last assistant message
+	const lastModel = lastAssistantMessage?.model || state.model?.id || "unknown";
+	const lastProvider = lastAssistantMessage?.provider || "";
+	const lastModelInfo = lastProvider ? `${lastProvider}/${lastModel}` : lastModel;
+
+	const contextWindow = state.model?.contextWindow || 0;
+	const contextPercent = contextWindow > 0 ? ((contextTokens / contextWindow) * 100).toFixed(1) : "0.0";
+
+	// Generate messages HTML (including model changes in chronological order)
 	let messagesHtml = "";
-	for (const message of messages) {
-		if (message.role !== "toolResult") {
+	for (const event of sessionEvents) {
+		if (event.type === "message" && event.message.role !== "toolResult") {
 			// Skip toolResult messages as they're rendered with their tool calls
-			messagesHtml += formatMessage(message, toolResultsMap);
+			messagesHtml += formatMessage(event.message, toolResultsMap);
+		} else if (event.type === "model_change") {
+			messagesHtml += formatModelChange(event);
 		}
 	}
 
@@ -379,8 +476,8 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
         }
 
         body {
-            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
-            font-size: 14px;
+            font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            font-size: 12px;
             line-height: 1.6;
             color: ${COLORS.text};
             background: ${COLORS.bodyBg};
@@ -400,7 +497,7 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
         }
 
         .header h1 {
-            font-size: 16px;
+            font-size: 14px;
             font-weight: bold;
             margin-bottom: 12px;
             color: ${COLORS.cyan};
@@ -409,8 +506,8 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
         .header-info {
             display: flex;
             flex-direction: column;
-            gap: 6px;
-            font-size: 13px;
+            gap: 3px;
+            font-size: 11px;
         }
 
         .info-item {
@@ -422,7 +519,7 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
         .info-label {
             font-weight: 600;
             margin-right: 8px;
-            min-width: 80px;
+            min-width: 100px;
         }
 
         .info-value {
@@ -430,10 +527,22 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
             flex: 1;
         }
 
+        .info-value.cost {
+            font-family: 'SF Mono', monospace;
+        }
+
         .messages {
             display: flex;
             flex-direction: column;
             gap: 16px;
+        }
+
+        /* Message timestamp */
+        .message-timestamp {
+            font-size: 10px;
+            color: ${COLORS.textDim};
+            margin-bottom: 4px;
+            opacity: 0.8;
         }
 
         /* User message - matching TUI UserMessageComponent */
@@ -443,6 +552,13 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
             border-radius: 4px;
             white-space: pre-wrap;
             word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+
+        /* Assistant message wrapper */
+        .assistant-message {
+            padding: 0;
         }
 
         /* Assistant text - matching TUI AssistantMessageComponent */
@@ -450,6 +566,8 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
             padding: 12px 16px;
             white-space: pre-wrap;
             word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
         }
 
         /* Thinking text - gray italic */
@@ -459,6 +577,25 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
             font-style: italic;
             white-space: pre-wrap;
             word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+
+        /* Model change */
+        .model-change {
+            padding: 8px 16px;
+            background: rgb(40, 40, 50);
+            border-radius: 4px;
+        }
+
+        .model-change-text {
+            color: ${COLORS.textDim};
+            font-size: 11px;
+        }
+
+        .model-name {
+            color: ${COLORS.cyan};
+            font-weight: bold;
         }
 
         /* Tool execution - matching TUI ToolExecutionComponent */
@@ -478,6 +615,7 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
 
         .tool-path {
             color: ${COLORS.cyan};
+            word-break: break-all;
         }
 
         .line-count {
@@ -486,13 +624,21 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
 
         .tool-command {
             font-weight: bold;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
         }
 
         .tool-output {
             margin-top: 12px;
             color: ${COLORS.textDim};
             white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
             font-family: inherit;
+            overflow-x: auto;
         }
 
         .tool-output > div {
@@ -503,6 +649,9 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
             margin: 0;
             font-family: inherit;
             color: inherit;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
         }
 
         /* Expandable tool output */
@@ -550,7 +699,9 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
             color: ${COLORS.textDim};
             white-space: pre-wrap;
             word-wrap: break-word;
-            font-size: 13px;
+            overflow-wrap: break-word;
+            word-break: break-word;
+            font-size: 11px;
         }
 
         .tools-list {
@@ -568,7 +719,7 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
 
         .tools-content {
             color: ${COLORS.textDim};
-            font-size: 13px;
+            font-size: 11px;
         }
 
         .tool-item {
@@ -583,25 +734,31 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
         /* Diff styling */
         .tool-diff {
             margin-top: 12px;
-            font-size: 13px;
-            font-family: 'SF Mono', Monaco, 'Cascadia Code', 'Roboto Mono', Consolas, 'Courier New', monospace;
+            font-size: 11px;
+            font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
             overflow-x: auto;
             max-width: 100%;
         }
 
         .diff-line-old {
             color: ${COLORS.red};
-            white-space: pre;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
         }
 
         .diff-line-new {
             color: ${COLORS.green};
-            white-space: pre;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
         }
 
         .diff-line-context {
             color: ${COLORS.textDim};
-            white-space: pre;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
         }
 
         /* Error text */
@@ -615,7 +772,7 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
             padding: 20px;
             text-align: center;
             color: ${COLORS.textDim};
-            font-size: 12px;
+            font-size: 10px;
         }
 
         @media print {
@@ -643,8 +800,12 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
                     <span class="info-value">${sessionHeader?.timestamp ? new Date(sessionHeader.timestamp).toLocaleString() : timestamp}</span>
                 </div>
                 <div class="info-item">
-                    <span class="info-label">Model:</span>
-                    <span class="info-value">${escapeHtml(sessionHeader?.model || state.model.id)}</span>
+                    <span class="info-label">Models:</span>
+                    <span class="info-value">${
+								Array.from(modelsUsed)
+									.map((m) => escapeHtml(m))
+									.join(", ") || escapeHtml(sessionHeader?.model || state.model.id)
+							}</span>
                 </div>
             </div>
         </div>
@@ -664,21 +825,55 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
                     <span class="info-label">Tool Calls:</span>
                     <span class="info-value">${toolCallsCount}</span>
                 </div>
+            </div>
+        </div>
+
+        <div class="header">
+            <h1>Tokens & Cost</h1>
+            <div class="header-info">
                 <div class="info-item">
-                    <span class="info-label">Tool Results:</span>
-                    <span class="info-value">${toolResultMessages}</span>
+                    <span class="info-label">Input:</span>
+                    <span class="info-value">${tokenStats.input.toLocaleString()} tokens</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Output:</span>
+                    <span class="info-value">${tokenStats.output.toLocaleString()} tokens</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Cache Read:</span>
+                    <span class="info-value">${tokenStats.cacheRead.toLocaleString()} tokens</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Cache Write:</span>
+                    <span class="info-value">${tokenStats.cacheWrite.toLocaleString()} tokens</span>
                 </div>
                 <div class="info-item">
                     <span class="info-label">Total:</span>
-                    <span class="info-value">${totalMessages}</span>
+                    <span class="info-value">${(tokenStats.input + tokenStats.output + tokenStats.cacheRead + tokenStats.cacheWrite).toLocaleString()} tokens</span>
                 </div>
                 <div class="info-item">
-                    <span class="info-label">Directory:</span>
-                    <span class="info-value">${escapeHtml(shortenPath(sessionHeader?.cwd || process.cwd()))}</span>
+                    <span class="info-label">Input Cost:</span>
+                    <span class="info-value cost">$${costStats.input.toFixed(4)}</span>
                 </div>
                 <div class="info-item">
-                    <span class="info-label">Thinking:</span>
-                    <span class="info-value">${escapeHtml(sessionHeader?.thinkingLevel || state.thinkingLevel)}</span>
+                    <span class="info-label">Output Cost:</span>
+                    <span class="info-value cost">$${costStats.output.toFixed(4)}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Cache Read Cost:</span>
+                    <span class="info-value cost">$${costStats.cacheRead.toFixed(4)}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Cache Write Cost:</span>
+                    <span class="info-value cost">$${costStats.cacheWrite.toFixed(4)}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Total Cost:</span>
+                    <span class="info-value cost"><strong>$${(costStats.input + costStats.output + costStats.cacheRead + costStats.cacheWrite).toFixed(4)}</strong></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Context Usage:</span>
+                    <span class="info-value">${contextTokens.toLocaleString()} / ${contextWindow.toLocaleString()} tokens (${contextPercent}%) - ${escapeHtml(lastModelInfo)}</span>
                 </div>
             </div>
         </div>
