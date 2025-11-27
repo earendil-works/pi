@@ -26,6 +26,122 @@ import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { validateToolArguments } from "../utils/validation.js";
 import { transformMessages } from "./transorm-messages.js";
 
+// State machine for parsing <think> tags from streaming content
+// Many open-source models (DeepSeek, Qwen, etc.) output reasoning in <think> tags
+interface ThinkParseState {
+	mode: "text" | "think";
+	buffer: string;
+}
+
+interface ThinkSegment {
+	kind: "text" | "thinking";
+	chunk: string;
+}
+
+function createThinkParseState(): ThinkParseState {
+	return { mode: "text", buffer: "" };
+}
+
+// Parse streaming content for <think> tags, returning segments with their types
+function splitThinkSegments(input: string, state: ThinkParseState): ThinkSegment[] {
+	const segments: ThinkSegment[] = [];
+	state.buffer += input;
+
+	while (state.buffer.length > 0) {
+		if (state.mode === "text") {
+			// Look for opening <think> tag
+			const thinkStart = state.buffer.indexOf("<think>");
+			if (thinkStart === -1) {
+				// No <think> tag found - check if we might be in the middle of one
+				// Keep potential partial tag in buffer (at most 6 chars: "<think")
+				const potentialTagStart = state.buffer.lastIndexOf("<");
+				if (potentialTagStart !== -1 && potentialTagStart > state.buffer.length - 7) {
+					// Might be start of <think>, emit everything before it
+					if (potentialTagStart > 0) {
+						segments.push({ kind: "text", chunk: state.buffer.substring(0, potentialTagStart) });
+					}
+					state.buffer = state.buffer.substring(potentialTagStart);
+					break;
+				}
+				// Emit all as text
+				if (state.buffer.length > 0) {
+					segments.push({ kind: "text", chunk: state.buffer });
+				}
+				state.buffer = "";
+				break;
+			}
+
+			// Found <think> tag
+			if (thinkStart > 0) {
+				segments.push({ kind: "text", chunk: state.buffer.substring(0, thinkStart) });
+			}
+			state.buffer = state.buffer.substring(thinkStart + 7); // Skip "<think>"
+			state.mode = "think";
+		} else {
+			// In think mode - look for closing </think> tag
+			const thinkEnd = state.buffer.indexOf("</think>");
+			if (thinkEnd === -1) {
+				// No closing tag yet - check for partial
+				const potentialTagStart = state.buffer.lastIndexOf("<");
+				if (potentialTagStart !== -1 && potentialTagStart > state.buffer.length - 8) {
+					// Might be start of </think>, emit everything before it
+					if (potentialTagStart > 0) {
+						segments.push({ kind: "thinking", chunk: state.buffer.substring(0, potentialTagStart) });
+					}
+					state.buffer = state.buffer.substring(potentialTagStart);
+					break;
+				}
+				// Emit all as thinking
+				if (state.buffer.length > 0) {
+					segments.push({ kind: "thinking", chunk: state.buffer });
+				}
+				state.buffer = "";
+				break;
+			}
+
+			// Found </think> tag
+			if (thinkEnd > 0) {
+				segments.push({ kind: "thinking", chunk: state.buffer.substring(0, thinkEnd) });
+			}
+			state.buffer = state.buffer.substring(thinkEnd + 8); // Skip "</think>"
+			state.mode = "text";
+		}
+	}
+
+	return segments;
+}
+
+// Flush any remaining content in the buffer when stream ends
+function flushThinkParseState(state: ThinkParseState): ThinkSegment[] {
+	if (state.buffer.length === 0) return [];
+
+	const segment: ThinkSegment = {
+		kind: state.mode === "think" ? "thinking" : "text",
+		chunk: state.buffer,
+	};
+	state.buffer = "";
+	return [segment];
+}
+
+// Parse JSON that might be double-encoded (some models produce this)
+function parsePossiblyDoubleEncoded(jsonStr: string | undefined): Record<string, unknown> {
+	const first = parseStreamingJson<unknown>(jsonStr);
+	// If first parse returned a string, try parsing it again
+	if (typeof first === "string") {
+		try {
+			return JSON.parse(first) as Record<string, unknown>;
+		} catch {
+			// Double-parse failed, return empty object to maintain type safety
+			return {};
+		}
+	}
+	// Ensure we return an object, not a primitive
+	if (first === null || typeof first !== "object") {
+		return {};
+	}
+	return first as Record<string, unknown>;
+}
+
 export interface OpenAICompletionsOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "required" | { type: "function"; function: { name: string } };
 	reasoningEffort?: "minimal" | "low" | "medium" | "high";
@@ -65,6 +181,8 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 			let currentBlock: TextContent | ThinkingContent | (ToolCall & { partialArgs?: string }) | null = null;
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
+			// State machine for parsing <think> tags embedded in content
+			const thinkParseState = createThinkParseState();
 			const finishCurrentBlock = (block?: typeof currentBlock) => {
 				if (block) {
 					if (block.type === "text") {
@@ -82,7 +200,8 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 							partial: output,
 						});
 					} else if (block.type === "toolCall") {
-						block.arguments = JSON.parse(block.partialArgs || "{}");
+						// Handle double-encoded JSON (some models produce this)
+						block.arguments = parsePossiblyDoubleEncoded(block.partialArgs);
 
 						// Validate tool arguments if tool definition is available
 						if (context.tools) {
@@ -136,21 +255,45 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 						choice.delta.content !== undefined &&
 						choice.delta.content.length > 0
 					) {
-						if (!currentBlock || currentBlock.type !== "text") {
-							finishCurrentBlock(currentBlock);
-							currentBlock = { type: "text", text: "" };
-							output.content.push(currentBlock);
-							stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
-						}
+						// Parse <think> tags from content (used by DeepSeek, Qwen, etc.)
+						const segments = splitThinkSegments(choice.delta.content, thinkParseState);
 
-						if (currentBlock.type === "text") {
-							currentBlock.text += choice.delta.content;
-							stream.push({
-								type: "text_delta",
-								contentIndex: blockIndex(),
-								delta: choice.delta.content,
-								partial: output,
-							});
+						for (const segment of segments) {
+							if (segment.kind === "thinking") {
+								// Switch to thinking block if needed
+								if (!currentBlock || currentBlock.type !== "thinking") {
+									finishCurrentBlock(currentBlock);
+									currentBlock = { type: "thinking", thinking: "", thinkingSignature: "think_tag" };
+									output.content.push(currentBlock);
+									stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+								}
+								if (currentBlock.type === "thinking") {
+									currentBlock.thinking += segment.chunk;
+									stream.push({
+										type: "thinking_delta",
+										contentIndex: blockIndex(),
+										delta: segment.chunk,
+										partial: output,
+									});
+								}
+							} else {
+								// Text segment - switch to text block if needed
+								if (!currentBlock || currentBlock.type !== "text") {
+									finishCurrentBlock(currentBlock);
+									currentBlock = { type: "text", text: "" };
+									output.content.push(currentBlock);
+									stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+								}
+								if (currentBlock.type === "text") {
+									currentBlock.text += segment.chunk;
+									stream.push({
+										type: "text_delta",
+										contentIndex: blockIndex(),
+										delta: segment.chunk,
+										partial: output,
+									});
+								}
+							}
 						}
 					}
 
@@ -223,6 +366,44 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 								});
 							}
 						}
+					}
+				}
+			}
+
+			// Flush any remaining content in the think parse buffer
+			const remainingSegments = flushThinkParseState(thinkParseState);
+			for (const segment of remainingSegments) {
+				if (segment.kind === "thinking") {
+					if (!currentBlock || currentBlock.type !== "thinking") {
+						finishCurrentBlock(currentBlock);
+						currentBlock = { type: "thinking", thinking: "", thinkingSignature: "think_tag" };
+						output.content.push(currentBlock);
+						stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+					}
+					if (currentBlock.type === "thinking") {
+						currentBlock.thinking += segment.chunk;
+						stream.push({
+							type: "thinking_delta",
+							contentIndex: blockIndex(),
+							delta: segment.chunk,
+							partial: output,
+						});
+					}
+				} else {
+					if (!currentBlock || currentBlock.type !== "text") {
+						finishCurrentBlock(currentBlock);
+						currentBlock = { type: "text", text: "" };
+						output.content.push(currentBlock);
+						stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+					}
+					if (currentBlock.type === "text") {
+						currentBlock.text += segment.chunk;
+						stream.push({
+							type: "text_delta",
+							contentIndex: blockIndex(),
+							delta: segment.chunk,
+							partial: output,
+						});
 					}
 				}
 			}
@@ -323,15 +504,12 @@ function convertMessages(model: Model<"openai-completions">, context: Context): 
 	const transformedMessages = transformMessages(context.messages, model);
 
 	if (context.systemPrompt) {
-		// Cerebras/xAi/Mistral/Chutes don't like the "developer" role
-		const useDeveloperRole =
-			model.reasoning &&
-			!model.baseUrl.includes("cerebras.ai") &&
-			!model.baseUrl.includes("api.x.ai") &&
-			!model.baseUrl.includes("mistral.ai") &&
-			!model.baseUrl.includes("chutes.ai");
-		const role = useDeveloperRole ? "developer" : "system";
-		params.push({ role: role, content: sanitizeSurrogates(context.systemPrompt) });
+		// Default to "system" role - only native OpenAI reasoning models use "developer"
+		let role: "system" | "developer" = "system";
+		if (model.reasoning && model.baseUrl.includes("api.openai.com")) {
+			role = "developer";
+		}
+		params.push({ role, content: sanitizeSurrogates(context.systemPrompt) });
 	}
 
 	for (const msg of transformedMessages) {
