@@ -336,10 +336,10 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
 	const sessionFile = sessionManager.getSessionFile();
 	const timestamp = new Date().toISOString();
 
-	// Use session filename + .html if no output path provided
+	// Use pi-session- prefix + session filename + .html if no output path provided
 	if (!outputPath) {
 		const sessionBasename = basename(sessionFile, ".jsonl");
-		outputPath = `${sessionBasename}.html`;
+		outputPath = `pi-session-${sessionBasename}.html`;
 	}
 
 	// Read and parse session data

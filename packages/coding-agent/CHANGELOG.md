@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **HTML Export Prefix**: Exported session files now use `pi-session-` prefix (e.g., `pi-session-2025-11-13T12-27-53-866Z_xxx.html`) for easier `.gitignore` filtering ([#72](https://github.com/badlogic/pi-mono/issues/72))
+
+## [0.10.1] - 2025-11-27
 ### Added
 
 - **CLI File Arguments (`@file`)**: Include files in your initial message using the `@` prefix (e.g., `pi @prompt.md @image.png "Do this"`). All `@file` arguments are combined into the first message. Text files are wrapped in `<file name="path">content</file>` tags. Images (`.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`) are attached as base64-encoded attachments. Supports `~` expansion, relative/absolute paths. Empty files are skipped. Works in interactive, `--print`, and `--mode text/json` modes. Not supported in `--mode rpc`. ([#54](https://github.com/badlogic/pi-mono/issues/54))
