@@ -148,6 +148,18 @@ export const streamAnthropic: StreamFunction<"anthropic-messages"> = (
 						};
 						output.content.push(block);
 						stream.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
+					} else if (event.content_block.type === "redacted_thinking") {
+						// Handle redacted thinking blocks - Anthropic withholds some reasoning
+						// Store with placeholder text and the encrypted data in signature
+						// Note: We don't emit thinking_end here - the content_block_stop handler will do it
+						const block: Block = {
+							type: "thinking",
+							thinking: "[Reasoning redacted by Anthropic]",
+							thinkingSignature: `redacted:${event.content_block.data}`,
+							index: event.index,
+						};
+						output.content.push(block);
+						stream.push({ type: "thinking_start", contentIndex: output.content.length - 1, partial: output });
 					} else if (event.content_block.type === "tool_use") {
 						const block: Block = {
 							type: "toolCall",
