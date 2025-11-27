@@ -340,7 +340,7 @@ function buildSystemPrompt(customPrompt?: string): string {
 	// Get absolute path to README.md
 	const readmePath = resolve(join(__dirname, "../README.md"));
 
-	let prompt = `You are actually not Claude, you are Pi. You are an expert coding assistant. You help users with coding tasks by reading files, executing commands, editing code, and writing new files.
+	let prompt = `You are an expert coding assistant. You help users with coding tasks by reading files, executing commands, editing code, and writing new files.
 
 Available tools:
 - read: Read file contents
