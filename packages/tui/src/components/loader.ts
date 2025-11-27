@@ -5,19 +5,8 @@ import { Text } from "./text.js";
  * Loader component that updates every 80ms with spinning animation
  */
 export class Loader extends Text {
-	// Multiple braille patterns that cycle through
-	private patterns = [
-		// Matrix rain (down)
-		["⡇", "⣇", "⣧", "⣷", "⣿", "⣾", "⣴", "⣠", "⣀"],
-		// Matrix rain (up)
-		["⣀", "⣠", "⣴", "⣾", "⣿", "⣷", "⣧", "⣇", "⡇"],
-		// Clockwise spinner
-		["⣷", "⣯", "⣟", "⡿", "⢿", "⣻", "⣽", "⣾"],
-		// Counter-clockwise spinner
-		["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"],
-		// Breathing
-		["⠀", "⠄", "⠆", "⠖", "⠶", "⣶", "⣿", "⣶", "⠶", "⠖", "⠆", "⠄"],
-	];
+	// Matrix rain (up)
+	private patterns = [["⣀", "⣠", "⣴", "⣾", "⣿", "⣷", "⣧", "⣇", "⡇"]];
 	private currentPattern = 0;
 	private currentFrame = 0;
 	private patternLoops = 0;
