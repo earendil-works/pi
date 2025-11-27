@@ -295,6 +295,14 @@ async function generateModels() {
 	// Combine models (models.dev has priority)
 	const allModels = [...modelsDevModels, ...openRouterModels];
 
+	// Fix incorrect cache pricing for Claude Opus 4.5 from models.dev
+	// models.dev has 3x the correct pricing (1.5/18.75 instead of 0.5/6.25)
+	const opus45 = allModels.find(m => m.provider === "anthropic" && m.id === "claude-opus-4-5");
+	if (opus45) {
+		opus45.cost.cacheRead = 0.5;
+		opus45.cost.cacheWrite = 6.25;
+	}
+
 	// Add missing gpt models
 	if (!allModels.some(m => m.provider === "openai" && m.id === "gpt-5-chat-latest")) {
 		allModels.push({

@@ -1,89 +1,111 @@
-import { execSync } from "child_process";
-import { readdirSync, statSync } from "fs";
-import mimeTypes from "mime-types";
+import { type Dirent, readdirSync, readFileSync } from "fs";
+import { minimatch } from "minimatch";
 import { homedir } from "os";
-import { basename, dirname, extname, join } from "path";
+import { basename, dirname, join, relative } from "path";
 
-function isAttachableFile(filePath: string): boolean {
-	const mimeType = mimeTypes.lookup(filePath);
+// Parse gitignore-style file into patterns
+function parseIgnoreFile(filePath: string): string[] {
+	try {
+		const content = readFileSync(filePath, "utf-8");
+		return content
+			.split("\n")
+			.map((line) => line.trim())
+			.filter((line) => line && !line.startsWith("#"));
+	} catch {
+		return [];
+	}
+}
 
-	// Check file extension for common text files that might be misidentified
-	const textExtensions = [
-		".txt",
-		".md",
-		".markdown",
-		".js",
-		".ts",
-		".tsx",
-		".jsx",
-		".py",
-		".java",
-		".c",
-		".cpp",
-		".h",
-		".hpp",
-		".cs",
-		".php",
-		".rb",
-		".go",
-		".rs",
-		".swift",
-		".kt",
-		".scala",
-		".sh",
-		".bash",
-		".zsh",
-		".fish",
-		".html",
-		".htm",
-		".css",
-		".scss",
-		".sass",
-		".less",
-		".xml",
-		".json",
-		".yaml",
-		".yml",
-		".toml",
-		".ini",
-		".cfg",
-		".conf",
-		".log",
-		".sql",
-		".r",
-		".R",
-		".m",
-		".pl",
-		".lua",
-		".vim",
-		".dockerfile",
-		".makefile",
-		".cmake",
-		".gradle",
-		".maven",
-		".properties",
-		".env",
-	];
+// Check if a path matches gitignore patterns
+function isIgnored(filePath: string, patterns: string[]): boolean {
+	const pathWithoutSlash = filePath.endsWith("/") ? filePath.slice(0, -1) : filePath;
+	const isDir = filePath.endsWith("/");
 
-	const ext = extname(filePath).toLowerCase();
-	if (textExtensions.includes(ext)) return true;
+	let ignored = false;
 
-	if (!mimeType) return false;
+	for (const pattern of patterns) {
+		let p = pattern;
+		const negated = p.startsWith("!");
+		if (negated) p = p.slice(1);
 
-	if (mimeType.startsWith("image/")) return true;
-	if (mimeType.startsWith("text/")) return true;
+		// Directory-only pattern
+		const dirOnly = p.endsWith("/");
+		if (dirOnly) {
+			if (!isDir) continue;
+			p = p.slice(0, -1);
+		}
 
-	// Special cases for common text files that might not be detected as text/
-	const commonTextTypes = [
-		"application/json",
-		"application/javascript",
-		"application/typescript",
-		"application/xml",
-		"application/yaml",
-		"application/x-yaml",
-	];
+		// Remove leading slash (means anchored to root)
+		const anchored = p.startsWith("/");
+		if (anchored) p = p.slice(1);
 
-	return commonTextTypes.includes(mimeType);
+		// Match - either at any level or anchored
+		const matchPattern = anchored ? p : "**/" + p;
+		const matches = minimatch(pathWithoutSlash, matchPattern, { dot: true });
+
+		if (matches) {
+			ignored = !negated;
+		}
+	}
+
+	return ignored;
+}
+
+// Walk directory tree respecting .gitignore, similar to fd
+function walkDirectory(
+	baseDir: string,
+	query: string,
+	maxResults: number,
+): Array<{ path: string; isDirectory: boolean }> {
+	const results: Array<{ path: string; isDirectory: boolean }> = [];
+	const rootIgnorePatterns = parseIgnoreFile(join(baseDir, ".gitignore"));
+
+	function walk(currentDir: string, ignorePatterns: string[]): void {
+		if (results.length >= maxResults) return;
+
+		// Load local .gitignore if exists
+		const localPatterns = parseIgnoreFile(join(currentDir, ".gitignore"));
+		const combinedPatterns = [...ignorePatterns, ...localPatterns];
+
+		let entries: Dirent[];
+		try {
+			entries = readdirSync(currentDir, { withFileTypes: true });
+		} catch {
+			return; // Can't read directory, skip
+		}
+
+		for (const entry of entries) {
+			if (results.length >= maxResults) return;
+
+			// Skip hidden files/dirs
+			if (entry.name.startsWith(".")) continue;
+
+			const fullPath = join(currentDir, entry.name);
+			const relativePath = relative(baseDir, fullPath);
+
+			// Check if ignored
+			const pathToCheck = entry.isDirectory() ? relativePath + "/" : relativePath;
+			if (isIgnored(pathToCheck, combinedPatterns)) continue;
+
+			if (entry.isDirectory()) {
+				// Check if dir matches query
+				if (!query || entry.name.toLowerCase().includes(query.toLowerCase())) {
+					results.push({ path: relativePath + "/", isDirectory: true });
+				}
+
+				// Recurse
+				walk(fullPath, combinedPatterns);
+			} else {
+				// Check if file matches query
+				if (!query || entry.name.toLowerCase().includes(query.toLowerCase())) {
+					results.push({ path: relativePath, isDirectory: false });
+				}
+			}
+		}
+	}
+
+	walk(baseDir, rootIgnorePatterns);
+	return results;
 }
 
 export interface AutocompleteItem {
@@ -131,7 +153,6 @@ export interface AutocompleteProvider {
 export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	private commands: (SlashCommand | AutocompleteItem)[];
 	private basePath: string;
-	private fdCommand: string | null | undefined = undefined; // undefined = not checked yet
 
 	constructor(commands: (SlashCommand | AutocompleteItem)[] = [], basePath: string = process.cwd()) {
 		this.commands = commands;
@@ -398,82 +419,71 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 				searchPrefix = file;
 			}
 
-			const entries = readdirSync(searchDir);
+			const entries = readdirSync(searchDir, { withFileTypes: true });
 			const suggestions: AutocompleteItem[] = [];
 
 			for (const entry of entries) {
-				if (!entry.toLowerCase().startsWith(searchPrefix.toLowerCase())) {
+				if (!entry.name.toLowerCase().startsWith(searchPrefix.toLowerCase())) {
 					continue;
 				}
 
-				const fullPath = join(searchDir, entry);
-				let isDirectory: boolean;
-				try {
-					isDirectory = statSync(fullPath).isDirectory();
-				} catch (e) {
-					// Skip files we can't stat (permission issues, broken symlinks, etc.)
-					continue;
-				}
-
-				// For @ prefix, filter to only show directories and attachable files
-				if (isAtPrefix && !isDirectory && !isAttachableFile(fullPath)) {
-					continue;
-				}
+				const isDirectory = entry.isDirectory();
 
 				let relativePath: string;
+				const name = entry.name;
 
 				// Handle @ prefix path construction
 				if (isAtPrefix) {
 					const pathWithoutAt = expandedPrefix;
 					if (pathWithoutAt.endsWith("/")) {
-						relativePath = "@" + pathWithoutAt + entry;
+						relativePath = "@" + pathWithoutAt + name;
 					} else if (pathWithoutAt.includes("/")) {
 						if (pathWithoutAt.startsWith("~/")) {
 							const homeRelativeDir = pathWithoutAt.slice(2); // Remove ~/
 							const dir = dirname(homeRelativeDir);
-							relativePath = "@~/" + (dir === "." ? entry : join(dir, entry));
+							relativePath = "@~/" + (dir === "." ? name : join(dir, name));
 						} else {
-							relativePath = "@" + join(dirname(pathWithoutAt), entry);
+							relativePath = "@" + join(dirname(pathWithoutAt), name);
 						}
 					} else {
 						if (pathWithoutAt.startsWith("~")) {
-							relativePath = "@~/" + entry;
+							relativePath = "@~/" + name;
 						} else {
-							relativePath = "@" + entry;
+							relativePath = "@" + name;
 						}
 					}
 				} else if (prefix.endsWith("/")) {
 					// If prefix ends with /, append entry to the prefix
-					relativePath = prefix + entry;
+					relativePath = prefix + name;
 				} else if (prefix.includes("/")) {
 					// Preserve ~/ format for home directory paths
 					if (prefix.startsWith("~/")) {
 						const homeRelativeDir = prefix.slice(2); // Remove ~/
 						const dir = dirname(homeRelativeDir);
-						relativePath = "~/" + (dir === "." ? entry : join(dir, entry));
+						relativePath = "~/" + (dir === "." ? name : join(dir, name));
 					} else if (prefix.startsWith("/")) {
 						// Absolute path - construct properly
 						const dir = dirname(prefix);
 						if (dir === "/") {
-							relativePath = "/" + entry;
+							relativePath = "/" + name;
 						} else {
-							relativePath = dir + "/" + entry;
+							relativePath = dir + "/" + name;
 						}
 					} else {
-						relativePath = join(dirname(prefix), entry);
+						relativePath = join(dirname(prefix), name);
 					}
 				} else {
 					// For standalone entries, preserve ~/ if original prefix was ~/
 					if (prefix.startsWith("~")) {
-						relativePath = "~/" + entry;
+						relativePath = "~/" + name;
 					} else {
-						relativePath = entry;
+						relativePath = name;
 					}
 				}
 
 				suggestions.push({
 					value: isDirectory ? relativePath + "/" : relativePath,
-					label: entry,
+					label: name,
 					description: isDirectory ? "directory" : "file",
 				});
 			}
@@ -518,96 +528,18 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		return score;
 	}
 
-	// Fuzzy file search using fdfind, fd, or find (fallback)
+	// Fuzzy file search using pure Node.js directory walking (respects .gitignore)
 	private getFuzzyFileSuggestions(query: string): AutocompleteItem[] {
 		try {
-			let result: string;
-			const fdCommand = this.getFdCommand();
+			const entries = walkDirectory(this.basePath, query, 100);
 
-			if (fdCommand) {
-				const args = ["--max-results", "100"];
-
-				if (query) {
-					args.push(query);
-				}
-
-				result = execSync(`${fdCommand} ${args.join(" ")}`, {
-					cwd: this.basePath,
-					encoding: "utf-8",
-					timeout: 2000,
-					maxBuffer: 1024 * 1024,
-				});
-			} else {
-				// Fallback to find
-				const pattern = query ? `*${query}*` : "*";
-
-				const cmd = [
-					"find",
-					".",
-					"-iname",
-					`'${pattern}'`,
-					"!",
-					"-path",
-					"'*/.git/*'",
-					"!",
-					"-path",
-					"'*/node_modules/*'",
-					"!",
-					"-path",
-					"'*/__pycache__/*'",
-					"!",
-					"-path",
-					"'*/.venv/*'",
-					"!",
-					"-path",
-					"'*/dist/*'",
-					"!",
-					"-path",
-					"'*/build/*'",
-					"2>/dev/null",
-					"|",
-					"head",
-					"-100",
-				].join(" ");
-
-				result = execSync(cmd, {
-					cwd: this.basePath,
-					encoding: "utf-8",
-					timeout: 3000,
-					maxBuffer: 1024 * 1024,
-					shell: "/bin/bash",
-				});
-			}
-
-			const entries = result
-				.trim()
-				.split("\n")
-				.filter((f) => f.length > 0)
-				.map((f) => (f.startsWith("./") ? f.slice(2) : f));
-
-			// Score and filter entries (files and directories)
-			const scoredEntries: { path: string; score: number; isDirectory: boolean }[] = [];
-
-			for (const entryPath of entries) {
-				const fullPath = join(this.basePath, entryPath);
-
-				let isDirectory: boolean;
-				try {
-					isDirectory = statSync(fullPath).isDirectory();
-				} catch {
-					continue; // Skip if we can't stat
-				}
-
-				// For files, check if attachable
-				if (!isDirectory && !isAttachableFile(fullPath)) {
-					continue;
-				}
-
-				const score = query ? this.scoreEntry(entryPath, query, isDirectory) : 1;
-				if (score > 0) {
-					scoredEntries.push({ path: entryPath, score, isDirectory });
-				}
-			}
+			// Score entries
+			const scoredEntries = entries
+				.map((entry) => ({
+					...entry,
+					score: query ? this.scoreEntry(entry.path, query, entry.isDirectory) : 1,
+				}))
+				.filter((entry) => entry.score > 0);
 
 			// Sort by score (descending) and take top 20
 			scoredEntries.sort((a, b) => b.score - a.score);
@@ -616,8 +548,7 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			// Build suggestions
 			const suggestions: AutocompleteItem[] = [];
 			for (const { path: entryPath, isDirectory } of topEntries) {
-				const entryName = basename(entryPath);
-				// Normalize path - remove trailing slash if present, we'll add it back for dirs
+				const entryName = basename(entryPath.endsWith("/") ? entryPath.slice(0, -1) : entryPath);
 				const normalizedPath = entryPath.endsWith("/") ? entryPath.slice(0, -1) : entryPath;
 				const valuePath = isDirectory ? normalizedPath + "/" : normalizedPath;
 
@@ -629,31 +560,8 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			}
 
 			return suggestions;
-		} catch (e) {
-			return [];
-		}
-	}
-
-	// Check which fd command is available (fdfind on Debian/Ubuntu, fd elsewhere)
-	// Result is cached after first check
-	private getFdCommand(): string | null {
-		if (this.fdCommand !== undefined) {
-			return this.fdCommand;
-		}
-
-		try {
-			execSync("fdfind --version", { encoding: "utf-8", timeout: 1000 });
-			this.fdCommand = "fdfind";
-			return this.fdCommand;
 		} catch {
-			try {
-				execSync("fd --version", { encoding: "utf-8", timeout: 1000 });
-				this.fdCommand = "fd";
-				return this.fdCommand;
-			} catch {
-				this.fdCommand = null;
-				return null;
-			}
+			return [];
 		}
 	}
 

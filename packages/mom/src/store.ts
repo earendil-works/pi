@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync } from "fs";
 import { appendFile, writeFile } from "fs/promises";
 import { join } from "path";
+import * as log from "./log.js";
 
 export interface Attachment {
 	original: string; // original filename from uploader
@@ -8,7 +9,8 @@ export interface Attachment {
 }
 
 export interface LoggedMessage {
-	ts: string; // slack timestamp
+	date: string; // ISO 8601 date (e.g., "2025-11-26T10:44:00.000Z") for easy grepping
+	ts: string; // slack timestamp or epoch ms
 	user: string; // user ID (or "bot" for bot responses)
 	userName?: string; // handle (e.g., "mario")
 	displayName?: string; // display name (e.g., "Mario Zechner")
@@ -104,6 +106,21 @@ export class ChannelStore {
 	 */
 	async logMessage(channelId: string, message: LoggedMessage): Promise<void> {
 		const logPath = join(this.getChannelDir(channelId), "log.jsonl");
+
+		// Ensure message has a date field
+		if (!message.date) {
+			// Parse timestamp to get date
+			let date: Date;
+			if (message.ts.includes(".")) {
+				// Slack timestamp format (1234567890.123456)
+				date = new Date(parseFloat(message.ts) * 1000);
+			} else {
+				// Epoch milliseconds
+				date = new Date(parseInt(message.ts, 10));
+			}
+			message.date = date.toISOString();
+		}
+
 		const line = JSON.stringify(message) + "\n";
 		await appendFile(logPath, line, "utf-8");
 	}
@@ -113,6 +130,7 @@ export class ChannelStore {
 	 */
 	async logBotResponse(channelId: string, text: string, ts: string): Promise<void> {
 		await this.logMessage(channelId, {
+			date: new Date().toISOString(),
 			ts,
 			user: "bot",
 			text,
@@ -135,10 +153,10 @@ export class ChannelStore {
 
 			try {
 				await this.downloadAttachment(item.localPath, item.url);
-				console.log(`Downloaded: ${item.localPath}`);
+				// Success - could add success logging here if we have context
 			} catch (error) {
-				console.error(`Failed to download ${item.localPath}:`, error);
-				// Could re-queue for retry here
+				const errorMsg = error instanceof Error ? error.message : String(error);
+				log.logWarning(`Failed to download attachment`, `${item.localPath}: ${errorMsg}`);
 			}
 		}
 

@@ -203,33 +203,60 @@ function wrapSingleLine(line: string, width: number): string[] {
 	return wrapped.length > 0 ? wrapped : [""];
 }
 
+// Grapheme segmenter for proper Unicode iteration (handles emojis, etc.)
+const segmenter = new Intl.Segmenter();
+
 function breakLongWord(word: string, width: number, tracker: AnsiCodeTracker): string[] {
 	const lines: string[] = [];
 	let currentLine = tracker.getActiveCodes();
 	let currentWidth = 0;
+
+	// First, separate ANSI codes from visible content
+	// We need to handle ANSI codes specially since they're not graphemes
 	let i = 0;
+	const segments: Array<{ type: "ansi" | "grapheme"; value: string }> = [];
 
 	while (i < word.length) {
 		const ansiResult = extractAnsiCode(word, i);
 		if (ansiResult) {
-			currentLine += ansiResult.code;
-			tracker.process(ansiResult.code);
+			segments.push({ type: "ansi", value: ansiResult.code });
 			i += ansiResult.length;
+		} else {
+			// Find the next ANSI code or end of string
+			let end = i;
+			while (end < word.length) {
+				const nextAnsi = extractAnsiCode(word, end);
+				if (nextAnsi) break;
+				end++;
+			}
+			// Segment this non-ANSI portion into graphemes
+			const textPortion = word.slice(i, end);
+			for (const seg of segmenter.segment(textPortion)) {
+				segments.push({ type: "grapheme", value: seg.segment });
+			}
+			i = end;
+		}
+	}
+
+	// Now process segments
+	for (const seg of segments) {
+		if (seg.type === "ansi") {
+			currentLine += seg.value;
+			tracker.process(seg.value);
 			continue;
 		}
 
-		const char = word[i];
-		const charWidth = visibleWidth(char);
+		const grapheme = seg.value;
+		const graphemeWidth = visibleWidth(grapheme);
 
-		if (currentWidth + charWidth > width) {
+		if (currentWidth + graphemeWidth > width) {
 			lines.push(currentLine);
 			currentLine = tracker.getActiveCodes();
 			currentWidth = 0;
 		}
 
-		currentLine += char;
-		currentWidth += charWidth;
-		i++;
+		currentLine += grapheme;
+		currentWidth += graphemeWidth;
 	}
 
 	if (currentLine) {

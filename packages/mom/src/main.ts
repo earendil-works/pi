@@ -2,6 +2,7 @@
 
 import { join, resolve } from "path";
 import { type AgentRunner, createAgentRunner } from "./agent.js";
+import * as log from "./log.js";
 import { parseSandboxArg, type SandboxConfig, validateSandbox } from "./sandbox.js";
 import { MomBot, type SlackContext } from "./slack.js";
 
@@ -53,9 +54,7 @@ function parseArgs(): { workingDir: string; sandbox: SandboxConfig } {
 
 const { workingDir, sandbox } = parseArgs();
 
-console.log("Starting mom bot...");
-console.log(`  Working directory: ${workingDir}`);
-console.log(`  Sandbox: ${sandbox.type === "host" ? "host" : `docker:${sandbox.container}`}`);
+log.logStartup(workingDir, sandbox.type === "host" ? "host" : `docker:${sandbox.container}`);
 
 if (!MOM_SLACK_APP_TOKEN || !MOM_SLACK_BOT_TOKEN || (!ANTHROPIC_API_KEY && !ANTHROPIC_OAUTH_TOKEN)) {
 	console.error("Missing required environment variables:");
@@ -69,19 +68,29 @@ if (!MOM_SLACK_APP_TOKEN || !MOM_SLACK_BOT_TOKEN || (!ANTHROPIC_API_KEY && !ANTH
 await validateSandbox(sandbox);
 
 // Track active agent runs per channel
-const activeRuns = new Map<string, AgentRunner>();
+const activeRuns = new Map<string, { runner: AgentRunner; context: SlackContext; stopContext?: SlackContext }>();
 
-async function handleMessage(ctx: SlackContext, source: "channel" | "dm"): Promise<void> {
+async function handleMessage(ctx: SlackContext, _source: "channel" | "dm"): Promise<void> {
 	const channelId = ctx.message.channel;
 	const messageText = ctx.message.text.toLowerCase().trim();
 
+	const logCtx = {
+		channelId: ctx.message.channel,
+		userName: ctx.message.userName,
+		channelName: ctx.channelName,
+	};
+
 	// Check for stop command
 	if (messageText === "stop") {
-		const runner = activeRuns.get(channelId);
-		if (runner) {
-			console.log(`Stop requested for channel ${channelId}`);
-			runner.abort();
+		const active = activeRuns.get(channelId);
+		if (active) {
+			log.logStopRequest(logCtx);
+			// Post a NEW message saying "Stopping..."
 			await ctx.respond("_Stopping..._");
+			// Store this context to update it to "Stopped" later
+			active.stopContext = ctx;
+			// Abort the runner
+			active.runner.abort();
 		} else {
 			await ctx.respond("_Nothing running._");
 		}
@@ -94,27 +103,35 @@ async function handleMessage(ctx: SlackContext, source: "channel" | "dm"): Promi
 		return;
 	}
 
-	console.log(`${source === "channel" ? "Channel mention" : "DM"} from <@${ctx.message.user}>: ${ctx.message.text}`);
+	log.logUserMessage(logCtx, ctx.message.text);
 	const channelDir = join(workingDir, channelId);
 
 	const runner = createAgentRunner(sandbox);
-	activeRuns.set(channelId, runner);
+	activeRuns.set(channelId, { runner, context: ctx });
 
 	await ctx.setTyping(true);
-	try {
-		await runner.run(ctx, channelDir, ctx.store);
-	} catch (error) {
-		// Don't report abort errors
-		const msg = error instanceof Error ? error.message : String(error);
-		if (msg.includes("aborted") || msg.includes("Aborted")) {
-			// Already said "Stopping..." - nothing more to say
-		} else {
-			console.error("Agent error:", error);
-			await ctx.respond(`❌ Error: ${msg}`);
+	await ctx.setWorking(true);
+
+	const result = await runner.run(ctx, channelDir, ctx.store);
+
+	// Remove working indicator
+	await ctx.setWorking(false);
+
+	// Handle different stop reasons
+	const active = activeRuns.get(channelId);
+	if (result.stopReason === "aborted") {
+		// Replace the STOP message with "Stopped"
+		if (active?.stopContext) {
+			await active.stopContext.setWorking(false);
+			await active.stopContext.replaceMessage("_Stopped_");
 		}
-	} finally {
-		activeRuns.delete(channelId);
+	} else if (result.stopReason === "error") {
+		// Agent encountered an error
+		log.logAgentError(logCtx, "Agent stopped with error");
 	}
+	// "stop", "length", "toolUse" are normal completions - nothing extra to do
+
+	activeRuns.delete(channelId);
 }
 
 const bot = new MomBot(

@@ -2,8 +2,15 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2025-11-27
+
+### Added
+
+- **Fuzzy File Search (`@`)**: Type `@` followed by a search term to fuzzy-search files and folders across your project. Respects `.gitignore` and skips hidden files. Directories are prioritized in results. Based on [PR #60](https://github.com/badlogic/pi-mono/pull/60) by [@fightbulc](https://github.com/fightbulc), reimplemented with pure Node.js for fast, dependency-free searching.
+
 ### Fixed
 
+- **Emoji Text Wrapping Crash**: Fixed crash when rendering text containing emojis (e.g., 😂) followed by long content like URLs. The `breakLongWord` function in `pi-tui` was iterating over UTF-16 code units instead of grapheme clusters, causing emojis (which are surrogate pairs) to be miscounted during line wrapping. Now uses `Intl.Segmenter` to properly handle multi-codepoint characters.
 - **Footer Cost Display**: Added `$` prefix to cost display in footer. Now shows `$0.078` instead of `0.078`. ([#53](https://github.com/badlogic/pi-mono/issues/53))
 
 ## [0.9.3] - 2025-11-24

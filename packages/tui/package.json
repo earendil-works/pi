@@ -1,6 +1,6 @@
 {
 	"name": "@mariozechner/pi-tui",
-	"version": "0.9.4",
+	"version": "0.10.0",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"type": "module",
 	"main": "dist/index.js",
@@ -41,6 +41,7 @@
 		"chalk": "^5.5.0",
 		"marked": "^15.0.12",
 		"mime-types": "^3.0.1",
+		"minimatch": "^10.1.1",
 		"string-width": "^8.1.0"
 	},
 	"devDependencies": {

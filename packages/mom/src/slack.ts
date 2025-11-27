@@ -2,12 +2,14 @@ import { SocketModeClient } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 import { readFileSync } from "fs";
 import { basename } from "path";
+import * as log from "./log.js";
 import { type Attachment, ChannelStore } from "./store.js";
 
 export interface SlackMessage {
 	text: string; // message content (mentions stripped)
 	rawText: string; // original text with mentions
 	user: string; // user ID
+	userName?: string; // user handle
 	channel: string; // channel ID
 	ts: string; // timestamp (for threading)
 	attachments: Attachment[]; // file attachments
@@ -15,15 +17,20 @@ export interface SlackMessage {
 
 export interface SlackContext {
 	message: SlackMessage;
+	channelName?: string; // channel name for logging (e.g., #dev-team)
 	store: ChannelStore;
 	/** Send/update the main message (accumulates text) */
 	respond(text: string): Promise<void>;
+	/** Replace the entire message text (not append) */
+	replaceMessage(text: string): Promise<void>;
 	/** Post a message in the thread under the main message (for verbose details) */
 	respondInThread(text: string): Promise<void>;
 	/** Show/hide typing indicator */
 	setTyping(isTyping: boolean): Promise<void>;
 	/** Upload a file to the channel */
 	uploadFile(filePath: string, title?: string): Promise<void>;
+	/** Set working state (adds/removes working indicator emoji) */
+	setWorking(working: boolean): Promise<void>;
 }
 
 export interface MomHandler {
@@ -92,7 +99,7 @@ export class MomBot {
 			// Log the mention (message event may not fire for app_mention)
 			await this.logMessage(slackEvent);
 
-			const ctx = this.createContext(slackEvent);
+			const ctx = await this.createContext(slackEvent);
 			await this.handler.onChannelMention(ctx);
 		});
 
@@ -133,7 +140,7 @@ export class MomBot {
 
 			// Only trigger handler for DMs (channel mentions are handled by app_mention event)
 			if (slackEvent.channel_type === "im") {
-				const ctx = this.createContext({
+				const ctx = await this.createContext({
 					text: slackEvent.text || "",
 					channel: slackEvent.channel,
 					user: slackEvent.user,
@@ -156,6 +163,7 @@ export class MomBot {
 		const { userName, displayName } = await this.getUserInfo(event.user);
 
 		await this.store.logMessage(event.channel, {
+			date: new Date(parseFloat(event.ts) * 1000).toISOString(),
 			ts: event.ts,
 			user: event.user,
 			userName,
@@ -166,15 +174,29 @@ export class MomBot {
 		});
 	}
 
-	private createContext(event: {
+	private async createContext(event: {
 		text: string;
 		channel: string;
 		user: string;
 		ts: string;
 		files?: Array<{ name: string; url_private_download?: string; url_private?: string }>;
-	}): SlackContext {
+	}): Promise<SlackContext> {
 		const rawText = event.text;
 		const text = rawText.replace(/<@[A-Z0-9]+>/gi, "").trim();
+
+		// Get user info for logging
+		const { userName } = await this.getUserInfo(event.user);
+
+		// Get channel name for logging (best effort)
+		let channelName: string | undefined;
+		try {
+			if (event.channel.startsWith("C")) {
+				const result = await this.webClient.conversations.info({ channel: event.channel });
+				channelName = result.channel?.name ? `#${result.channel.name}` : undefined;
+			}
+		} catch {
+			// Ignore errors - we'll just use the channel ID
+		}
 
 		// Process attachments (for context, already logged by message handler)
 		const attachments = event.files ? this.store.processAttachments(event.channel, event.files, event.ts) : [];
@@ -183,6 +205,8 @@ export class MomBot {
 		let messageTs: string | null = null;
 		let accumulatedText = "";
 		let isThinking = true; // Track if we're still in "thinking" state
+		let isWorking = true; // Track if still processing
+		const workingIndicator = " ...";
 		let updatePromise: Promise<void> = Promise.resolve();
 
 		return {
@@ -190,10 +214,12 @@ export class MomBot {
 				text,
 				rawText,
 				user: event.user,
+				userName,
 				channel: event.channel,
 				ts: event.ts,
 				attachments,
 			},
+			channelName,
 			store: this.store,
 			respond: async (responseText: string) => {
 				// Queue updates to avoid race conditions
@@ -207,18 +233,21 @@ export class MomBot {
 						accumulatedText += "\n" + responseText;
 					}
 
+					// Add working indicator if still working
+					const displayText = isWorking ? accumulatedText + workingIndicator : accumulatedText;
+
 					if (messageTs) {
 						// Update existing message
 						await this.webClient.chat.update({
 							channel: event.channel,
 							ts: messageTs,
-							text: accumulatedText,
+							text: displayText,
 						});
 					} else {
 						// Post initial message
 						const result = await this.webClient.chat.postMessage({
 							channel: event.channel,
-							text: accumulatedText,
+							text: displayText,
 						});
 						messageTs = result.ts as string;
 					}
@@ -247,8 +276,8 @@ export class MomBot {
 			},
 			setTyping: async (isTyping: boolean) => {
 				if (isTyping && !messageTs) {
-					// Post initial "thinking" message
-					accumulatedText = "_Thinking..._";
+					// Post initial "thinking" message (... auto-appended by working indicator)
+					accumulatedText = "_Thinking_";
 					const result = await this.webClient.chat.postMessage({
 						channel: event.channel,
 						text: accumulatedText,
@@ -268,6 +297,46 @@ export class MomBot {
 					title: fileName,
 				});
 			},
+			replaceMessage: async (text: string) => {
+				updatePromise = updatePromise.then(async () => {
+					// Replace the accumulated text entirely
+					accumulatedText = text;
+
+					const displayText = isWorking ? accumulatedText + workingIndicator : accumulatedText;
+
+					if (messageTs) {
+						await this.webClient.chat.update({
+							channel: event.channel,
+							ts: messageTs,
+							text: displayText,
+						});
+					} else {
+						// Post initial message
+						const result = await this.webClient.chat.postMessage({
+							channel: event.channel,
+							text: displayText,
+						});
+						messageTs = result.ts as string;
+					}
+				});
+				await updatePromise;
+			},
+			setWorking: async (working: boolean) => {
+				updatePromise = updatePromise.then(async () => {
+					isWorking = working;
+
+					// If we have a message, update it to add/remove indicator
+					if (messageTs) {
+						const displayText = isWorking ? accumulatedText + workingIndicator : accumulatedText;
+						await this.webClient.chat.update({
+							channel: event.channel,
+							ts: messageTs,
+							text: displayText,
+						});
+					}
+				});
+				await updatePromise;
+			},
 		};
 	}
 
@@ -275,11 +344,11 @@ export class MomBot {
 		const auth = await this.webClient.auth.test();
 		this.botUserId = auth.user_id as string;
 		await this.socketClient.start();
-		console.log("⚡️ Mom bot connected and listening!");
+		log.logConnected();
 	}
 
 	async stop(): Promise<void> {
 		await this.socketClient.disconnect();
-		console.log("Mom bot disconnected.");
+		log.logDisconnected();
 	}
 }

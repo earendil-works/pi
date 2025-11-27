@@ -609,7 +609,7 @@ async function runRpcMode(agent: Agent, _sessionManager: SessionManager): Promis
 
 			// Handle different RPC commands
 			if (input.type === "prompt" && input.message) {
-				await agent.prompt(input.message);
+				await agent.prompt(input.message, input.attachments);
 			} else if (input.type === "abort") {
 				agent.abort();
 			}

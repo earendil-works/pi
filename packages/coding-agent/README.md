@@ -469,9 +469,8 @@ Type **`@`** to fuzzy-search for files and folders in your project:
 - Directories are prioritized and shown with trailing `/`
 - Autocomplete triggers immediately when you type `@`
 - Use **Up/Down arrows** to navigate, **Tab**/**Enter** to select
-- Only shows attachable files (text, code, images) and directories
 
-Uses `fdfind`/`fd` for fast searching if available, falls back to `find` on all Unix systems.
+Respects `.gitignore` files and skips hidden files/directories.
 
 ### Path Completion
 
@@ -539,7 +538,7 @@ Change queue mode with `/queue` command. Setting is saved in `~/.pi/agent/settin
 
 ## Project Context Files
 
-The agent automatically loads context from `AGENTS.md` or `CLAUDE.md` files at the start of new sessions (not when continuing/resuming). These files are loaded in hierarchical order to support both global preferences and monorepo structures.
+The agent automatically loads context from `AGENTS.md` or `CLAUDE.md` files at startup. These files are loaded in hierarchical order to support both global preferences and monorepo structures.
 
 ### File Locations
 
