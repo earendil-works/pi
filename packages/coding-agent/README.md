@@ -643,8 +643,57 @@ pi --session /path/to/my-session.jsonl
 ## CLI Options
 
 ```bash
-pi [options] [messages...]
+pi [options] [@files...] [messages...]
 ```
+
+### File Arguments (`@file`)
+
+You can include files directly in your initial message using the `@` prefix:
+
+```bash
+# Include a text file in your prompt
+pi @prompt.md "Answer the question"
+
+# Include multiple files
+pi @requirements.md @context.txt "Summarize these"
+
+# Include images (vision-capable models only)
+pi @screenshot.png "What's in this image?"
+
+# Mix text and images
+pi @prompt.md @diagram.png "Explain based on the diagram"
+
+# Files without additional text
+pi @task.md
+```
+
+**How it works:**
+- All `@file` arguments are combined into the first user message
+- Text files are wrapped in `<file name="path">content</file>` tags
+- Images (`.jpg`, `.jpeg`, `.png`, `.gif`, `.webp`) are attached as base64-encoded attachments
+- Paths support `~` for home directory and relative/absolute paths
+- Empty files are skipped
+- Non-existent files cause an immediate error
+
+**Examples:**
+```bash
+# All files go into first message, regardless of position
+pi @file1.md @file2.txt "prompt" @file3.md
+
+# This sends:
+# Message 1: file1 + file2 + file3 + "prompt"
+# (Any additional plain text arguments become separate messages)
+
+# Home directory expansion works
+pi @~/Documents/notes.md "Summarize"
+
+# Combine with other options
+pi --print @requirements.md "List the main points"
+```
+
+**Limitations:**
+- Not supported in `--mode rpc` (will error)
+- Images require vision-capable models (e.g., Claude, GPT-4o, Gemini)
 
 ### Options
 
@@ -720,8 +769,14 @@ pi
 # Interactive mode with initial prompt (stays running after completion)
 pi "List all .ts files in src/"
 
+# Include files in your prompt
+pi @requirements.md @design.png "Implement this feature"
+
 # Non-interactive mode (process prompt and exit)
 pi -p "List all .ts files in src/"
+
+# Non-interactive with files
+pi -p @code.ts "Review this code for bugs"
 
 # JSON mode - stream all agent events (non-interactive)
 pi --mode json "List all .ts files in src/"

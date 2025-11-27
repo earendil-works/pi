@@ -1,10 +1,10 @@
-import { Agent, ProviderTransport, type ThinkingLevel } from "@mariozechner/pi-agent-core";
+import { Agent, type Attachment, ProviderTransport, type ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { Api, KnownProvider, Model } from "@mariozechner/pi-ai";
 import { ProcessTerminal, TUI } from "@mariozechner/pi-tui";
 import chalk from "chalk";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
-import { dirname, join, resolve } from "path";
+import { dirname, extname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getChangelogPath, getNewEntries, parseChangelog } from "./changelog.js";
 import { findModel, getApiKeyForModel, getAvailableModels } from "./model-config.js";
@@ -49,11 +49,13 @@ interface Args {
 	models?: string[];
 	print?: boolean;
 	messages: string[];
+	fileArgs: string[];
 }
 
 function parseArgs(args: string[]): Args {
 	const result: Args = {
 		messages: [],
+		fileArgs: [],
 	};
 
 	for (let i = 0; i < args.length; i++) {
@@ -97,6 +99,8 @@ function parseArgs(args: string[]): Args {
 			}
 		} else if (arg === "--print" || arg === "-p") {
 			result.print = true;
+		} else if (arg.startsWith("@")) {
+			result.fileArgs.push(arg.slice(1)); // Remove @ prefix
 		} else if (!arg.startsWith("-")) {
 			result.messages.push(arg);
 		}
@@ -105,11 +109,103 @@ function parseArgs(args: string[]): Args {
 	return result;
 }
 
+/**
+ * Map of file extensions to MIME types for common image formats
+ */
+const IMAGE_MIME_TYPES: Record<string, string> = {
+	".jpg": "image/jpeg",
+	".jpeg": "image/jpeg",
+	".png": "image/png",
+	".gif": "image/gif",
+	".webp": "image/webp",
+};
+
+/**
+ * Check if a file is an image based on its extension
+ */
+function isImageFile(filePath: string): string | null {
+	const ext = extname(filePath).toLowerCase();
+	return IMAGE_MIME_TYPES[ext] || null;
+}
+
+/**
+ * Expand ~ to home directory
+ */
+function expandPath(filePath: string): string {
+	if (filePath === "~") {
+		return homedir();
+	}
+	if (filePath.startsWith("~/")) {
+		return homedir() + filePath.slice(1);
+	}
+	return filePath;
+}
+
+/**
+ * Process @file arguments into text content and image attachments
+ */
+function processFileArguments(fileArgs: string[]): { textContent: string; imageAttachments: Attachment[] } {
+	let textContent = "";
+	const imageAttachments: Attachment[] = [];
+
+	for (const fileArg of fileArgs) {
+		// Expand and resolve path
+		const expandedPath = expandPath(fileArg);
+		const absolutePath = resolve(expandedPath);
+
+		// Check if file exists
+		if (!existsSync(absolutePath)) {
+			console.error(chalk.red(`Error: File not found: ${absolutePath}`));
+			process.exit(1);
+		}
+
+		// Check if file is empty
+		const stats = statSync(absolutePath);
+		if (stats.size === 0) {
+			// Skip empty files
+			continue;
+		}
+
+		const mimeType = isImageFile(absolutePath);
+
+		if (mimeType) {
+			// Handle image file
+			const content = readFileSync(absolutePath);
+			const base64Content = content.toString("base64");
+
+			const attachment: Attachment = {
+				id: `file-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+				type: "image",
+				fileName: absolutePath.split("/").pop() || absolutePath,
+				mimeType,
+				size: stats.size,
+				content: base64Content,
+			};
+
+			imageAttachments.push(attachment);
+
+			// Add text reference to image
+			textContent += `<file name="${absolutePath}"></file>\n`;
+		} else {
+			// Handle text file
+			try {
+				const content = readFileSync(absolutePath, "utf-8");
+				textContent += `<file name="${absolutePath}">\n${content}\n</file>\n`;
+			} catch (error: any) {
+				console.error(chalk.red(`Error: Could not read file ${absolutePath}: ${error.message}`));
+				process.exit(1);
+			}
+		}
+	}
+
+	return { textContent, imageAttachments };
+}
+
 function printHelp() {
 	console.log(`${chalk.bold("pi")} - AI coding assistant with read, bash, edit, write tools
 
 ${chalk.bold("Usage:")}
-  pi [options] [messages...]
+  pi [options] [@files...] [messages...]
 
 ${chalk.bold("Options:")}
   --provider <name>       Provider name (default: google)
@@ -132,6 +228,9 @@ ${chalk.bold("Examples:")}
 
   # Interactive mode with initial prompt
   pi "List all .ts files in src/"
+
+  # Include files in initial message
+  pi @prompt.md @image.png "What color is the sky?"
 
   # Non-interactive mode (process and exit)
   pi -p "List all .ts files in src/"
@@ -511,6 +610,8 @@ async function runInteractiveMode(
 	newVersion: string | null = null,
 	scopedModels: Array<{ model: Model<Api>; thinkingLevel: ThinkingLevel }> = [],
 	initialMessages: string[] = [],
+	initialMessage?: string,
+	initialAttachments?: Attachment[],
 ): Promise<void> {
 	const renderer = new TuiRenderer(
 		agent,
@@ -533,7 +634,17 @@ async function runInteractiveMode(
 		renderer.showWarning(modelFallbackMessage);
 	}
 
-	// Process initial messages if provided (from CLI args)
+	// Process initial message with attachments if provided (from @file args)
+	if (initialMessage) {
+		try {
+			await agent.prompt(initialMessage, initialAttachments);
+		} catch (error: unknown) {
+			const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+			renderer.showError(errorMessage);
+		}
+	}
+
+	// Process remaining initial messages if provided (from CLI args)
 	for (const message of initialMessages) {
 		try {
 			await agent.prompt(message);
@@ -563,6 +674,8 @@ async function runSingleShotMode(
 	_sessionManager: SessionManager,
 	messages: string[],
 	mode: "text" | "json",
+	initialMessage?: string,
+	initialAttachments?: Attachment[],
 ): Promise<void> {
 	if (mode === "json") {
 		// Subscribe to all events and output as JSON
@@ -572,6 +685,12 @@ async function runSingleShotMode(
 		});
 	}
 
+	// Send initial message with attachments if provided
+	if (initialMessage) {
+		await agent.prompt(initialMessage, initialAttachments);
+	}
+
+	// Send remaining messages
 	for (const message of messages) {
 		await agent.prompt(message);
 	}
@@ -629,6 +748,30 @@ export async function main(args: string[]) {
 	if (parsed.help) {
 		printHelp();
 		return;
+	}
+
+	// Validate: RPC mode doesn't support @file arguments
+	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {
+		console.error(chalk.red("Error: @file arguments are not supported in RPC mode"));
+		process.exit(1);
+	}
+
+	// Process @file arguments if any
+	let initialMessage: string | undefined;
+	let initialAttachments: Attachment[] | undefined;
+
+	if (parsed.fileArgs.length > 0) {
+		const { textContent, imageAttachments } = processFileArguments(parsed.fileArgs);
+
+		// Combine file content with first plain text message (if any)
+		if (parsed.messages.length > 0) {
+			initialMessage = textContent + parsed.messages[0];
+			parsed.messages.shift(); // Remove first message as it's been combined
+		} else {
+			initialMessage = textContent;
+		}
+
+		initialAttachments = imageAttachments.length > 0 ? imageAttachments : undefined;
 	}
 
 	// Initialize theme (before any TUI rendering)
@@ -1001,9 +1144,11 @@ export async function main(args: string[]) {
 			newVersion,
 			scopedModels,
 			parsed.messages,
+			initialMessage,
+			initialAttachments,
 		);
 	} else {
 		// Non-interactive mode (--print flag or --mode flag)
-		await runSingleShotMode(agent, sessionManager, parsed.messages, mode);
+		await runSingleShotMode(agent, sessionManager, parsed.messages, mode, initialMessage, initialAttachments);
 	}
 }
