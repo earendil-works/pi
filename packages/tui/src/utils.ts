@@ -75,39 +75,39 @@ function updateTrackerFromText(text: string, tracker: AnsiCodeTracker): void {
 /**
  * Split text into words while keeping ANSI codes attached.
  */
-function splitIntoWordsWithAnsi(text: string): string[] {
-	const words: string[] = [];
-	let currentWord = "";
+function splitIntoTokensWithAnsi(text: string): string[] {
+	const tokens: string[] = [];
+	let current = "";
+	let inWhitespace = false;
 	let i = 0;
 
 	while (i < text.length) {
-		const char = text[i];
-
 		const ansiResult = extractAnsiCode(text, i);
 		if (ansiResult) {
-			currentWord += ansiResult.code;
+			current += ansiResult.code;
 			i += ansiResult.length;
 			continue;
 		}
 
-		if (char === " ") {
-			if (currentWord) {
-				words.push(currentWord);
-				currentWord = "";
-			}
-			i++;
-			continue;
+		const char = text[i];
+		const charIsSpace = char === " ";
+
+		if (charIsSpace !== inWhitespace && current) {
+			// Switching between whitespace and non-whitespace, push current token
+			tokens.push(current);
+			current = "";
 		}
 
-		currentWord += char;
+		inWhitespace = charIsSpace;
+		current += char;
 		i++;
 	}
 
-	if (currentWord) {
-		words.push(currentWord);
+	if (current) {
+		tokens.push(current);
 	}
 
-	return words;
+	return tokens;
 }
 
 /**
@@ -149,51 +149,52 @@ function wrapSingleLine(line: string, width: number): string[] {
 
 	const wrapped: string[] = [];
 	const tracker = new AnsiCodeTracker();
-	const words = splitIntoWordsWithAnsi(line);
+	const tokens = splitIntoTokensWithAnsi(line);
 
 	let currentLine = "";
 	let currentVisibleLength = 0;
 
-	for (const word of words) {
-		const wordVisibleLength = visibleWidth(word);
+	for (const token of tokens) {
+		const tokenVisibleLength = visibleWidth(token);
+		const isWhitespace = token.trim() === "";
 
-		// Word itself is too long - break it character by character
-		if (wordVisibleLength > width) {
+		// Token itself is too long - break it character by character
+		if (tokenVisibleLength > width && !isWhitespace) {
 			if (currentLine) {
 				wrapped.push(currentLine);
 				currentLine = "";
 				currentVisibleLength = 0;
 			}
 
-			// Break long word
-			const broken = breakLongWord(word, width, tracker);
+			// Break long token
+			const broken = breakLongWord(token, width, tracker);
 			wrapped.push(...broken.slice(0, -1));
 			currentLine = broken[broken.length - 1];
 			currentVisibleLength = visibleWidth(currentLine);
 			continue;
 		}
 
-		// Check if adding this word would exceed width
-		const spaceNeeded = currentVisibleLength > 0 ? 1 : 0;
-		const totalNeeded = currentVisibleLength + spaceNeeded + wordVisibleLength;
+		// Check if adding this token would exceed width
+		const totalNeeded = currentVisibleLength + tokenVisibleLength;
 
 		if (totalNeeded > width && currentVisibleLength > 0) {
-			// Wrap to next line
+			// Wrap to next line - don't carry trailing whitespace
 			wrapped.push(currentLine);
-			currentLine = tracker.getActiveCodes() + word;
-			currentVisibleLength = wordVisibleLength;
+			if (isWhitespace) {
+				// Don't start new line with whitespace
+				currentLine = tracker.getActiveCodes();
+				currentVisibleLength = 0;
+			} else {
+				currentLine = tracker.getActiveCodes() + token;
+				currentVisibleLength = tokenVisibleLength;
+			}
 		} else {
 			// Add to current line
-			if (currentVisibleLength > 0) {
-				currentLine += " " + word;
-				currentVisibleLength += 1 + wordVisibleLength;
-			} else {
-				currentLine += word;
-				currentVisibleLength = wordVisibleLength;
-			}
+			currentLine += token;
+			currentVisibleLength += tokenVisibleLength;
 		}
 
-		updateTrackerFromText(word, tracker);
+		updateTrackerFromText(token, tracker);
 	}
 
 	if (currentLine) {

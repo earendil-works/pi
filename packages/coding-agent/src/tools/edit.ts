@@ -82,6 +82,9 @@ function generateDiffString(oldContent: string, newContent: string, contextLines
 				// Add ellipsis if we skipped lines at start
 				if (skipStart > 0) {
 					output.push(` ${"".padStart(lineNumWidth, " ")} ...`);
+					// Update line numbers for the skipped leading context
+					oldLineNum += skipStart;
+					newLineNum += skipStart;
 				}
 
 				for (const line of linesToShow) {
@@ -94,11 +97,10 @@ function generateDiffString(oldContent: string, newContent: string, contextLines
 				// Add ellipsis if we skipped lines at end
 				if (skipEnd > 0) {
 					output.push(` ${"".padStart(lineNumWidth, " ")} ...`);
+					// Update line numbers for the skipped trailing context
+					oldLineNum += skipEnd;
+					newLineNum += skipEnd;
 				}
-
-				// Update line numbers for skipped lines
-				oldLineNum += skipStart + skipEnd;
-				newLineNum += skipStart + skipEnd;
 			} else {
 				// Skip these context lines entirely
 				oldLineNum += raw.length;
