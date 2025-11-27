@@ -4,6 +4,9 @@ import chalk from "chalk";
 import { Markdown } from "../src/components/markdown.js";
 import { defaultMarkdownTheme } from "./test-themes.js";
 
+// Force color output in tests (chalk disables colors when not in TTY)
+chalk.level = 3;
+
 describe("Markdown component", () => {
 	describe("Nested lists", () => {
 		it("should render simple nested list", () => {
@@ -218,9 +221,9 @@ describe("Markdown component", () => {
 			assert.ok(joinedOutput.includes("\x1b[90m"), "Should have gray color code");
 			assert.ok(joinedOutput.includes("\x1b[3m"), "Should have italic code");
 
-			// Verify that after the inline code (cyan text), we reapply gray italic
-			const hasCyan = joinedOutput.includes("\x1b[36m"); // cyan
-			assert.ok(hasCyan, "Should have cyan for inline code");
+			// Verify that after the inline code (yellow text per theme), we reapply gray italic
+			const hasYellow = joinedOutput.includes("\x1b[33m"); // yellow
+			assert.ok(hasYellow, "Should have yellow for inline code");
 		});
 
 		it("should preserve gray italic styling after bold text", () => {

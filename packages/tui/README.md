@@ -103,10 +103,13 @@ editor.onSubmit = (text) => console.log(text);
 editor.onChange = (text) => console.log("Changed:", text);
 editor.disableSubmit = true; // Disable submit temporarily
 editor.setAutocompleteProvider(provider);
+editor.maxHeight = 10; // Optional: constrain editor height with scrolling
 ```
 
 **Features:**
 - Multi-line editing with word wrap
+- Height-constrained mode with automatic scrolling
+- Visual scrollbar when content exceeds height
 - Slash command autocomplete (type `/`)
 - File path autocomplete (press `Tab`)
 - Large paste handling (>10 lines creates `[paste #1 +50 lines]` marker)
@@ -117,9 +120,11 @@ editor.setAutocompleteProvider(provider);
 - `Enter` - Submit
 - `Shift+Enter`, `Ctrl+Enter`, or `Alt+Enter` - New line (terminal-dependent, Alt+Enter most reliable)
 - `Tab` - Autocomplete
+- `PageUp` / `PageDown` - Scroll by page (with 2-line overlap for context)
 - `Ctrl+K` - Delete line
 - `Ctrl+A` / `Ctrl+E` - Line start/end
 - Arrow keys, Backspace, Delete work as expected
+- Mouse wheel scrolling (when terminal supports SGR mouse mode)
 
 ### Markdown
 

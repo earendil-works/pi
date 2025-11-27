@@ -4,6 +4,9 @@ import chalk from "chalk";
 import { TruncatedText } from "../src/components/truncated-text.js";
 import { visibleWidth } from "../src/utils.js";
 
+// Force color output in tests (chalk disables colors when not in TTY)
+chalk.level = 3;
+
 describe("TruncatedText component", () => {
 	it("pads output lines to exactly match width", () => {
 		const text = new TruncatedText("Hello world", 1, 0);

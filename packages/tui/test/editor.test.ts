@@ -268,6 +268,7 @@ describe("Editor component", () => {
 	describe("Display-line cursor navigation (soft wrap)", () => {
 		it("moves up/down through wrapped display lines", () => {
 			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = undefined; // Disable scrollbar to get exact width
 			// Create a line that will wrap at width 10
 			// "abcdefghij" = 10 chars, "klmno" = 5 chars
 			// At width 10, this wraps into 2 display lines
@@ -293,6 +294,7 @@ describe("Editor component", () => {
 
 		it("wraps left at start of wrapped display line to end of previous", () => {
 			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = undefined;
 			editor.setText("abcdefghijklmno");
 
 			// Render at width 10 to trigger wrapping
@@ -314,6 +316,7 @@ describe("Editor component", () => {
 
 		it("wraps right at end of wrapped display line to start of next", () => {
 			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = undefined;
 			editor.setText("abcdefghijklmno");
 
 			// Render at width 10 to trigger wrapping
@@ -336,6 +339,7 @@ describe("Editor component", () => {
 
 		it("preserves target column when moving vertically through wrapped lines", () => {
 			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = undefined;
 			// Create text that wraps: 3 display lines at width 10
 			// Line 1: "0123456789" (indices 0-9)
 			// Line 2: "0123456789" (indices 10-19)
@@ -364,6 +368,7 @@ describe("Editor component", () => {
 
 		it("clamps target column when moving to shorter wrapped line", () => {
 			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = undefined;
 			// Create text with varying wrapped line lengths
 			// At width 10: "0123456789" (10 chars) + "012" (3 chars)
 			editor.setText("0123456789012");
@@ -387,6 +392,7 @@ describe("Editor component", () => {
 
 		it("handles navigation with emojis (wide characters)", () => {
 			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = undefined;
 			// Each emoji is 2 display columns wide
 			// At width 10: "😀😀😀😀😀" = 10 display columns (5 emojis, 10 chars)
 			// Then "😀" on next line
@@ -409,6 +415,7 @@ describe("Editor component", () => {
 
 		it("clamps to end of wrapped line when target column exceeds width", () => {
 			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = undefined;
 			// Create text that wraps: 2 display lines at width 10
 			// Line 1: "0123456789" (10 chars, indices 0-9)
 			// Line 2: "01234" (5 chars, indices 10-14)
@@ -431,6 +438,176 @@ describe("Editor component", () => {
 			// Insert X - should be at end of second line (position 15)
 			editor.handleInput("X");
 			assert.strictEqual(editor.getText(), "012345678901234X");
+		});
+	});
+
+	describe("Height awareness and scrolling", () => {
+		it("renders all lines when maxHeight is not set", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.setText("line1\nline2\nline3\nline4\nline5");
+
+			const result = editor.render(20);
+			// Should have: top border + 5 content lines + bottom border = 7 lines
+			assert.strictEqual(result.length, 7);
+		});
+
+		it("constrains visible lines when maxHeight is set", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = 3;
+			editor.setText("line1\nline2\nline3\nline4\nline5");
+
+			const result = editor.render(20);
+			// Should have: top border + 3 visible lines + bottom border = 5 lines
+			assert.strictEqual(result.length, 5);
+		});
+
+		it("shows scrollbar when content exceeds maxHeight", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = 3;
+			editor.setText("line1\nline2\nline3\nline4\nline5");
+
+			const result = editor.render(20);
+			// Content lines should have scrollbar characters at the end
+			// Check that the content lines (not borders) contain scrollbar chars
+			const contentLines = result.slice(1, -1);
+			const hasScrollbar = contentLines.some((line) => line.includes("█") || line.includes("░"));
+			assert.strictEqual(hasScrollbar, true);
+		});
+
+		it("auto-scrolls when cursor moves below viewport", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = 3;
+			editor.setText("line1\nline2\nline3\nline4\nline5");
+
+			// Render to initialize displaySlices
+			editor.render(20);
+
+			// Move cursor down multiple times
+			editor.handleInput("\x1b[B"); // Down
+			editor.handleInput("\x1b[B"); // Down
+			editor.handleInput("\x1b[B"); // Down - should trigger scroll
+			editor.handleInput("\x1b[B"); // Down - should scroll more
+
+			// Scroll offset should have increased
+			assert.ok(editor.getScrollOffset() > 0, "Scroll offset should be > 0 after moving cursor down");
+		});
+
+		it("auto-scrolls when cursor moves above viewport", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = 3;
+			editor.setText("line1\nline2\nline3\nline4\nline5");
+
+			// Render to initialize displaySlices
+			editor.render(20);
+
+			// Scroll down first
+			editor.setScrollOffset(2);
+
+			// Move cursor to top of document (cursor starts at line 4)
+			editor.handleInput("\x01"); // Start of line (Ctrl+A)
+			editor.handleInput("\x1b[A"); // Up to line 3
+			editor.handleInput("\x1b[A"); // Up to line 2
+			editor.handleInput("\x1b[A"); // Up to line 1
+			editor.handleInput("\x1b[A"); // Up to line 0
+
+			// Scroll offset should have decreased to show cursor
+			assert.strictEqual(editor.getScrollOffset(), 0, "Scroll offset should be 0 when cursor is at top");
+		});
+
+		it("PageDown scrolls by page minus overlap", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = 5;
+			editor.setText("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10");
+
+			// Render to initialize
+			editor.render(20);
+
+			const initialOffset = editor.getScrollOffset();
+			assert.strictEqual(initialOffset, 0);
+
+			// PageDown
+			editor.handleInput("\x1b[6~");
+
+			// Should scroll by (5 - 2) = 3 lines
+			assert.strictEqual(editor.getScrollOffset(), 3);
+		});
+
+		it("PageUp scrolls by page minus overlap", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = 5;
+			editor.setText("line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10");
+
+			// Render to initialize
+			editor.render(20);
+
+			// Scroll down first
+			editor.setScrollOffset(5);
+
+			// PageUp
+			editor.handleInput("\x1b[5~");
+
+			// Should scroll by (5 - 2) = 3 lines
+			assert.strictEqual(editor.getScrollOffset(), 2);
+		});
+
+		it("scroll() method respects bounds", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = 3;
+			editor.setText("line1\nline2\nline3\nline4\nline5");
+
+			// Render to initialize
+			editor.render(20);
+
+			// Try to scroll past the end
+			editor.scroll(100);
+			// Max scroll should be 5 - 3 = 2
+			assert.strictEqual(editor.getScrollOffset(), 2);
+
+			// Try to scroll past the beginning
+			editor.scroll(-100);
+			assert.strictEqual(editor.getScrollOffset(), 0);
+		});
+
+		it("handles wrapped lines with height constraint", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = 3;
+			// Long line that wraps at width 10
+			editor.setText("abcdefghijklmnopqrstuvwxyz");
+
+			// Render at width 10 - should create 3 wrapped display lines
+			const result = editor.render(10);
+
+			// Should have: top border + 3 visible lines + bottom border = 5 lines
+			assert.strictEqual(result.length, 5);
+		});
+
+		it("cursor visibility works with soft-wrapped content", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = 2;
+			// Long line that wraps multiple times at width 10
+			editor.setText("abcdefghijklmnopqrstuvwxyz0123456789");
+
+			// Render at width 10
+			editor.render(10);
+
+			// After setText, scroll is at 0. Move cursor to trigger auto-scroll
+			editor.handleInput("\x1b[B"); // Down (no-op at end, but triggers ensureCursorVisible)
+
+			const scrollOffset = editor.getScrollOffset();
+			// The text creates 4 display lines at width 9 (10-1 for scrollbar), cursor at end should scroll
+			assert.ok(scrollOffset > 0, "Should have scrolled to show cursor at end");
+		});
+
+		it("does not show scrollbar when content fits in maxHeight", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = 10;
+			editor.setText("line1\nline2\nline3");
+
+			const result = editor.render(20);
+			// Content lines should NOT have scrollbar characters
+			const contentLines = result.slice(1, -1);
+			const hasScrollbar = contentLines.some((line) => line.includes("█") || line.includes("░"));
+			assert.strictEqual(hasScrollbar, false);
 		});
 	});
 });
