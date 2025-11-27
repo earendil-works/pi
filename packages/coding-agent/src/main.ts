@@ -42,6 +42,7 @@ interface Args {
 	thinking?: ThinkingLevel;
 	continue?: boolean;
 	resume?: boolean;
+	resumeUuid?: string;
 	help?: boolean;
 	mode?: Mode;
 	noSession?: boolean;
@@ -72,6 +73,10 @@ function parseArgs(args: string[]): Args {
 			result.continue = true;
 		} else if (arg === "--resume" || arg === "-r") {
 			result.resume = true;
+			// Check if next arg is a UUID (not a flag)
+			if (i + 1 < args.length && !args[i + 1].startsWith("-")) {
+				result.resumeUuid = args[++i];
+			}
 		} else if (arg === "--provider" && i + 1 < args.length) {
 			result.provider = args[++i];
 		} else if (arg === "--model" && i + 1 < args.length) {
@@ -215,7 +220,7 @@ ${chalk.bold("Options:")}
   --mode <mode>           Output mode: text (default), json, or rpc
   --print, -p             Non-interactive mode: process prompt and exit
   --continue, -c          Continue previous session
-  --resume, -r            Select a session to resume
+  --resume, -r [uuid]     Resume session (by UUID or pick from list)
   --session <path>        Use specific session file
   --no-session            Don't save session (ephemeral)
   --models <patterns>     Comma-separated model patterns for quick cycling with Ctrl+P
@@ -240,6 +245,9 @@ ${chalk.bold("Examples:")}
 
   # Continue previous session
   pi --continue "What did we discuss?"
+
+  # Resume a specific session by ID (shown on exit)
+  pi --resume abc12345-1234-5678-9abc-def012345678
 
   # Use different model
   pi --provider openai --model gpt-4o-mini "Help me refactor this code"
@@ -787,15 +795,26 @@ export async function main(args: string[]) {
 		sessionManager.disable();
 	}
 
-	// Handle --resume flag: show session selector
+	// Handle resume: either by UUID or interactive selector
 	if (parsed.resume) {
-		const selectedSession = await selectSession(sessionManager);
-		if (!selectedSession) {
-			console.log(chalk.dim("No session selected"));
-			return;
+		if (parsed.resumeUuid) {
+			// Resume by specific UUID: pi resume <uuid>
+			const sessionPath = sessionManager.findSessionByUuid(parsed.resumeUuid);
+			if (!sessionPath) {
+				console.error(chalk.red(`Session not found: ${parsed.resumeUuid}`));
+				console.error(chalk.dim("Use 'pi --resume' to browse available sessions"));
+				process.exit(1);
+			}
+			sessionManager.setSessionFile(sessionPath);
+		} else {
+			// Interactive session selector: pi --resume or pi -r
+			const selectedSession = await selectSession(sessionManager);
+			if (!selectedSession) {
+				console.log(chalk.dim("No session selected"));
+				return;
+			}
+			sessionManager.setSessionFile(selectedSession);
 		}
-		// Set the selected session as the active session
-		sessionManager.setSessionFile(selectedSession);
 	}
 
 	// Resolve model scope early if provided (needed for initial model selection)
