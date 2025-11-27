@@ -368,7 +368,11 @@ function convertMessages(model: Model<"openai-responses">, context: Context): Re
 	const transformedMessages = transformMessages(context.messages, model);
 
 	if (context.systemPrompt) {
-		const role = model.reasoning ? "developer" : "system";
+		// Default to "system" role - only native OpenAI reasoning models use "developer"
+		let role: "system" | "developer" = "system";
+		if (model.reasoning && model.baseUrl.includes("api.openai.com")) {
+			role = "developer";
+		}
 		messages.push({
 			role,
 			content: sanitizeSurrogates(context.systemPrompt),
