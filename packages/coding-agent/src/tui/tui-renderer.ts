@@ -589,6 +589,9 @@ export class TuiRenderer {
 
 					// Keep the streaming component - it's now the final assistant message
 					this.streamingComponent = null;
+
+					// Invalidate footer cache to refresh git branch (in case agent executed git commands)
+					this.footer.invalidate();
 				}
 				this.ui.requestRender();
 				break;

@@ -1,6 +1,8 @@
 import type { AgentState } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { type Component, visibleWidth } from "@mariozechner/pi-tui";
+import { readFileSync } from "fs";
+import { join } from "path";
 import { theme } from "../theme/theme.js";
 
 /**
@@ -8,6 +10,7 @@ import { theme } from "../theme/theme.js";
  */
 export class FooterComponent implements Component {
 	private state: AgentState;
+	private cachedBranch: string | null | undefined = undefined; // undefined = not checked yet, null = not in git repo, string = branch name
 
 	constructor(state: AgentState) {
 		this.state = state;
@@ -18,7 +21,37 @@ export class FooterComponent implements Component {
 	}
 
 	invalidate(): void {
-		// No cached state to invalidate currently
+		// Invalidate cached branch so it gets re-read on next render
+		this.cachedBranch = undefined;
+	}
+
+	/**
+	 * Get current git branch by reading .git/HEAD directly.
+	 * Returns null if not in a git repo, branch name otherwise.
+	 */
+	private getCurrentBranch(): string | null {
+		// Return cached value if available
+		if (this.cachedBranch !== undefined) {
+			return this.cachedBranch;
+		}
+
+		try {
+			const gitHeadPath = join(process.cwd(), ".git", "HEAD");
+			const content = readFileSync(gitHeadPath, "utf8").trim();
+
+			if (content.startsWith("ref: refs/heads/")) {
+				// Normal branch: extract branch name
+				this.cachedBranch = content.slice(16);
+			} else {
+				// Detached HEAD state
+				this.cachedBranch = "detached";
+			}
+		} catch {
+			// Not in a git repo or error reading file
+			this.cachedBranch = null;
+		}
+
+		return this.cachedBranch;
 	}
 
 	render(width: number): string[] {
@@ -69,6 +102,12 @@ export class FooterComponent implements Component {
 		const home = process.env.HOME || process.env.USERPROFILE;
 		if (home && pwd.startsWith(home)) {
 			pwd = "~" + pwd.slice(home.length);
+		}
+
+		// Add git branch if available
+		const branch = this.getCurrentBranch();
+		if (branch) {
+			pwd = `${pwd} (${branch})`;
 		}
 
 		// Truncate path if too long to fit width
