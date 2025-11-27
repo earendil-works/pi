@@ -759,9 +759,23 @@ export class TuiRenderer {
 			this.stop();
 			process.exit(0);
 		} else {
-			// First Ctrl+C - clear the editor
+			// First Ctrl+C - clear the editor and show exit hint
 			this.clearEditor();
 			this.lastSigintTime = now;
+
+			// Show exit hint in footer
+			this.footer.setShowExitHint(true);
+			this.ui.requestRender();
+
+			// Clear hint after 500ms if no second Ctrl+C
+			const capturedTime = now;
+			setTimeout(() => {
+				// Only clear if this is still the same Ctrl+C cycle
+				if (this.lastSigintTime === capturedTime) {
+					this.footer.setShowExitHint(false);
+					this.ui.requestRender();
+				}
+			}, 500);
 		}
 	}
 

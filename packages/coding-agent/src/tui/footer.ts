@@ -11,6 +11,7 @@ import { theme } from "../theme/theme.js";
 export class FooterComponent implements Component {
 	private state: AgentState;
 	private cachedBranch: string | null | undefined = undefined; // undefined = not checked yet, null = not in git repo, string = branch name
+	private showExitHint = false;
 
 	constructor(state: AgentState) {
 		this.state = state;
@@ -18,6 +19,13 @@ export class FooterComponent implements Component {
 
 	updateState(state: AgentState): void {
 		this.state = state;
+	}
+
+	/**
+	 * Set whether to show the "Press Ctrl+C again to exit" hint in place of the pwd line.
+	 */
+	setShowExitHint(show: boolean): void {
+		this.showExitHint = show;
 	}
 
 	invalidate(): void {
@@ -179,7 +187,8 @@ export class FooterComponent implements Component {
 			}
 		}
 
-		// Return two lines: pwd and stats
-		return [theme.fg("dim", pwd), theme.fg("dim", statsLine)];
+		// Return two lines: pwd (or exit hint) and stats
+		const firstLine = this.showExitHint ? theme.fg("warning", "Press Ctrl+C again to exit") : theme.fg("dim", pwd);
+		return [firstLine, theme.fg("dim", statsLine)];
 	}
 }
