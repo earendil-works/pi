@@ -1084,16 +1084,8 @@ export async function main(args: string[]) {
 		// RPC mode - headless operation
 		await runRpcMode(agent, sessionManager);
 	} else if (isInteractive) {
-		// Check for new version (don't block startup if it takes too long)
-		let newVersion: string | null = null;
-		try {
-			newVersion = await Promise.race([
-				checkForNewVersion(VERSION),
-				new Promise<null>((resolve) => setTimeout(() => resolve(null), 1000)), // 1 second timeout
-			]);
-		} catch (e) {
-			// Ignore errors
-		}
+		// Skip version check - we're on a fork
+		const newVersion: string | null = null;
 
 		// Check if we should show changelog (only in interactive mode, only for new sessions)
 		let changelogMarkdown: string | null = null;
