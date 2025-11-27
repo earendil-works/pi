@@ -377,6 +377,22 @@ export function createAgentRunner(sandboxConfig: SandboxConfig): AgentRunner {
 			// Track stop reason
 			let stopReason = "stop";
 
+			// Promise queue to ensure ctx.respond/respondInThread calls execute in order
+			const queue = {
+				chain: Promise.resolve(),
+				enqueue<T>(fn: () => Promise<T>): Promise<T> {
+					const result = this.chain.then(fn);
+					this.chain = result.then(
+						() => {},
+						() => {},
+					); // swallow errors for chain
+					return result;
+				},
+				flush(): Promise<void> {
+					return this.chain;
+				},
+			};
+
 			// Subscribe to events
 			agent.subscribe(async (event: AgentEvent) => {
 				switch (event.type) {
@@ -405,7 +421,7 @@ export function createAgentRunner(sandboxConfig: SandboxConfig): AgentRunner {
 						});
 
 						// Show label in main message only
-						await ctx.respond(`_${label}_`);
+						queue.enqueue(() => ctx.respond(`_${label}_`));
 						break;
 					}
 
@@ -453,11 +469,11 @@ export function createAgentRunner(sandboxConfig: SandboxConfig): AgentRunner {
 
 						threadMessage += "*Result:*\n```\n" + threadResult + "\n```";
 
-						await ctx.respondInThread(threadMessage);
+						queue.enqueue(() => ctx.respondInThread(threadMessage));
 
 						// Show brief error in main message if failed
 						if (event.isError) {
-							await ctx.respond(`_Error: ${truncate(resultStr, 200)}_`);
+							queue.enqueue(() => ctx.respond(`_Error: ${truncate(resultStr, 200)}_`));
 						}
 						break;
 					}
@@ -495,17 +511,32 @@ export function createAgentRunner(sandboxConfig: SandboxConfig): AgentRunner {
 								totalUsage.cost.total += assistantMsg.usage.cost.total;
 							}
 
-							// Extract text from assistant message
+							// Extract thinking and text from assistant message
 							const content = event.message.content;
-							let text = "";
+							const thinkingParts: string[] = [];
+							const textParts: string[] = [];
 							for (const part of content) {
-								if (part.type === "text") {
-									text += part.text;
+								if (part.type === "thinking") {
+									thinkingParts.push(part.thinking);
+								} else if (part.type === "text") {
+									textParts.push(part.text);
 								}
 							}
+
+							const text = textParts.join("\n");
+
+							// Post thinking to main message and thread
+							for (const thinking of thinkingParts) {
+								log.logThinking(logCtx, thinking);
+								queue.enqueue(() => ctx.respond(`_${thinking}_`));
+								queue.enqueue(() => ctx.respondInThread(`_${thinking}_`));
+							}
+
+							// Post text to main message and thread
 							if (text.trim()) {
-								await ctx.respond(text);
-								log.logResponseComplete(logCtx, text.length);
+								log.logResponse(logCtx, text);
+								queue.enqueue(() => ctx.respond(text));
+								queue.enqueue(() => ctx.respondInThread(text));
 							}
 						}
 						break;
@@ -523,10 +554,26 @@ export function createAgentRunner(sandboxConfig: SandboxConfig): AgentRunner {
 
 			await agent.prompt(userPrompt);
 
+			// Wait for all queued respond calls to complete
+			await queue.flush();
+
+			// Get final assistant message text from agent state and replace main message
+			const messages = agent.state.messages;
+			const lastAssistant = messages.filter((m) => m.role === "assistant").pop();
+			const finalText =
+				lastAssistant?.content
+					.filter((c): c is { type: "text"; text: string } => c.type === "text")
+					.map((c) => c.text)
+					.join("\n") || "";
+			if (finalText.trim()) {
+				await ctx.replaceMessage(finalText);
+			}
+
 			// Log usage summary if there was any usage
 			if (totalUsage.cost.total > 0) {
 				const summary = log.logUsageSummary(logCtx, totalUsage);
-				await ctx.respondInThread(summary);
+				queue.enqueue(() => ctx.respondInThread(summary));
+				await queue.flush();
 			}
 
 			return { stopReason };

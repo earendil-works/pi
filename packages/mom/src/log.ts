@@ -118,10 +118,24 @@ export function logResponseStart(ctx: LogContext): void {
 	console.log(chalk.yellow(`${timestamp()} ${formatContext(ctx)} → Streaming response...`));
 }
 
-export function logResponseComplete(ctx: LogContext, charCount: number): void {
-	console.log(
-		chalk.yellow(`${timestamp()} ${formatContext(ctx)} ✓ Response sent (${charCount.toLocaleString()} chars)`),
-	);
+export function logThinking(ctx: LogContext, thinking: string): void {
+	console.log(chalk.yellow(`${timestamp()} ${formatContext(ctx)} 💭 Thinking`));
+	const truncated = truncate(thinking, 1000);
+	const indented = truncated
+		.split("\n")
+		.map((line) => `           ${line}`)
+		.join("\n");
+	console.log(chalk.dim(indented));
+}
+
+export function logResponse(ctx: LogContext, text: string): void {
+	console.log(chalk.yellow(`${timestamp()} ${formatContext(ctx)} 💬 Response`));
+	const truncated = truncate(text, 1000);
+	const indented = truncated
+		.split("\n")
+		.map((line) => `           ${line}`)
+		.join("\n");
+	console.log(chalk.dim(indented));
 }
 
 // Attachments
