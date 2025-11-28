@@ -12,6 +12,7 @@ import { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
 import { initTheme } from "./theme/theme.js";
 import { codingTools } from "./tools/index.js";
+import { ensureTool } from "./tools-manager.js";
 import { SessionSelectorComponent } from "./tui/session-selector.js";
 import { TuiRenderer } from "./tui/tui-renderer.js";
 
@@ -620,6 +621,7 @@ async function runInteractiveMode(
 	initialMessages: string[] = [],
 	initialMessage?: string,
 	initialAttachments?: Attachment[],
+	fdPath: string | null = null,
 ): Promise<void> {
 	const renderer = new TuiRenderer(
 		agent,
@@ -629,6 +631,7 @@ async function runInteractiveMode(
 		changelogMarkdown,
 		newVersion,
 		scopedModels,
+		fdPath,
 	);
 
 	// Initialize TUI (subscribes to agent events internally)
@@ -1144,6 +1147,9 @@ export async function main(args: string[]) {
 			console.log(chalk.dim(`Model scope: ${modelList} ${chalk.gray("(Ctrl+P to cycle)")}`));
 		}
 
+		// Ensure fd tool is available for file autocomplete
+		const fdPath = await ensureTool("fd");
+
 		// Interactive mode - use TUI (may have initial messages from CLI args)
 		await runInteractiveMode(
 			agent,
@@ -1157,6 +1163,7 @@ export async function main(args: string[]) {
 			parsed.messages,
 			initialMessage,
 			initialAttachments,
+			fdPath,
 		);
 	} else {
 		// Non-interactive mode (--print flag or --mode flag)

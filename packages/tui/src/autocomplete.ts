@@ -1,110 +1,44 @@
-import { type Dirent, readdirSync, readFileSync } from "fs";
-import { minimatch } from "minimatch";
+import { spawnSync } from "child_process";
+import { readdirSync } from "fs";
 import { homedir } from "os";
-import { basename, dirname, join, relative } from "path";
+import { basename, dirname, join } from "path";
 
-// Parse gitignore-style file into patterns
-function parseIgnoreFile(filePath: string): string[] {
-	try {
-		const content = readFileSync(filePath, "utf-8");
-		return content
-			.split("\n")
-			.map((line) => line.trim())
-			.filter((line) => line && !line.startsWith("#"));
-	} catch {
-		return [];
-	}
-}
-
-// Check if a path matches gitignore patterns
-function isIgnored(filePath: string, patterns: string[]): boolean {
-	const pathWithoutSlash = filePath.endsWith("/") ? filePath.slice(0, -1) : filePath;
-	const isDir = filePath.endsWith("/");
-
-	let ignored = false;
-
-	for (const pattern of patterns) {
-		let p = pattern;
-		const negated = p.startsWith("!");
-		if (negated) p = p.slice(1);
-
-		// Directory-only pattern
-		const dirOnly = p.endsWith("/");
-		if (dirOnly) {
-			if (!isDir) continue;
-			p = p.slice(0, -1);
-		}
-
-		// Remove leading slash (means anchored to root)
-		const anchored = p.startsWith("/");
-		if (anchored) p = p.slice(1);
-
-		// Match - either at any level or anchored
-		const matchPattern = anchored ? p : "**/" + p;
-		const matches = minimatch(pathWithoutSlash, matchPattern, { dot: true });
-
-		if (matches) {
-			ignored = !negated;
-		}
-	}
-
-	return ignored;
-}
-
-// Walk directory tree respecting .gitignore, similar to fd
-function walkDirectory(
+// Use fd to walk directory tree (fast, respects .gitignore)
+function walkDirectoryWithFd(
 	baseDir: string,
+	fdPath: string,
 	query: string,
 	maxResults: number,
 ): Array<{ path: string; isDirectory: boolean }> {
-	const results: Array<{ path: string; isDirectory: boolean }> = [];
-	const rootIgnorePatterns = parseIgnoreFile(join(baseDir, ".gitignore"));
+	const args = ["--base-directory", baseDir, "--max-results", String(maxResults), "--type", "f", "--type", "d"];
 
-	function walk(currentDir: string, ignorePatterns: string[]): void {
-		if (results.length >= maxResults) return;
-
-		// Load local .gitignore if exists
-		const localPatterns = parseIgnoreFile(join(currentDir, ".gitignore"));
-		const combinedPatterns = [...ignorePatterns, ...localPatterns];
-
-		let entries: Dirent[];
-		try {
-			entries = readdirSync(currentDir, { withFileTypes: true });
-		} catch {
-			return; // Can't read directory, skip
-		}
-
-		for (const entry of entries) {
-			if (results.length >= maxResults) return;
-
-			// Skip hidden files/dirs
-			if (entry.name.startsWith(".")) continue;
-
-			const fullPath = join(currentDir, entry.name);
-			const relativePath = relative(baseDir, fullPath);
-
-			// Check if ignored
-			const pathToCheck = entry.isDirectory() ? relativePath + "/" : relativePath;
-			if (isIgnored(pathToCheck, combinedPatterns)) continue;
-
-			if (entry.isDirectory()) {
-				// Check if dir matches query
-				if (!query || entry.name.toLowerCase().includes(query.toLowerCase())) {
-					results.push({ path: relativePath + "/", isDirectory: true });
-				}
-
-				// Recurse
-				walk(fullPath, combinedPatterns);
-			} else {
-				// Check if file matches query
-				if (!query || entry.name.toLowerCase().includes(query.toLowerCase())) {
-					results.push({ path: relativePath, isDirectory: false });
-				}
-			}
-		}
+	// Add query as pattern if provided
+	if (query) {
+		args.push(query);
 	}
 
-	walk(baseDir, rootIgnorePatterns);
+	const result = spawnSync(fdPath, args, {
+		encoding: "utf-8",
+		stdio: ["pipe", "pipe", "pipe"],
+		maxBuffer: 10 * 1024 * 1024,
+	});
+
+	if (result.status !== 0 || !result.stdout) {
+		return [];
+	}
+
+	const lines = result.stdout.trim().split("\n").filter(Boolean);
+	const results: Array<{ path: string; isDirectory: boolean }> = [];
+
+	for (const line of lines) {
+		// fd outputs directories with trailing /
+		const isDirectory = line.endsWith("/");
+		results.push({
+			path: line,
+			isDirectory,
+		});
+	}
+
 	return results;
 }
 
@@ -153,10 +87,16 @@ export interface AutocompleteProvider {
 export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	private commands: (SlashCommand | AutocompleteItem)[];
 	private basePath: string;
+	private fdPath: string | null;
 
-	constructor(commands: (SlashCommand | AutocompleteItem)[] = [], basePath: string = process.cwd()) {
+	constructor(
+		commands: (SlashCommand | AutocompleteItem)[] = [],
+		basePath: string = process.cwd(),
+		fdPath: string | null = null,
+	) {
 		this.commands = commands;
 		this.basePath = basePath;
+		this.fdPath = fdPath;
 	}
 
 	getSuggestions(
@@ -528,10 +468,15 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		return score;
 	}
 
-	// Fuzzy file search using pure Node.js directory walking (respects .gitignore)
+	// Fuzzy file search using fd (fast, respects .gitignore)
 	private getFuzzyFileSuggestions(query: string): AutocompleteItem[] {
+		if (!this.fdPath) {
+			// fd not available, return empty results
+			return [];
+		}
+
 		try {
-			const entries = walkDirectory(this.basePath, query, 100);
+			const entries = walkDirectoryWithFd(this.basePath, this.fdPath, query, 100);
 
 			// Score entries
 			const scoredEntries = entries
@@ -548,14 +493,14 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			// Build suggestions
 			const suggestions: AutocompleteItem[] = [];
 			for (const { path: entryPath, isDirectory } of topEntries) {
-				const entryName = basename(entryPath.endsWith("/") ? entryPath.slice(0, -1) : entryPath);
-				const normalizedPath = entryPath.endsWith("/") ? entryPath.slice(0, -1) : entryPath;
-				const valuePath = isDirectory ? normalizedPath + "/" : normalizedPath;
+				// fd already includes trailing / for directories
+				const pathWithoutSlash = isDirectory ? entryPath.slice(0, -1) : entryPath;
+				const entryName = basename(pathWithoutSlash);
 
 				suggestions.push({
-					value: "@" + valuePath,
+					value: "@" + entryPath,
 					label: entryName + (isDirectory ? "/" : ""),
-					description: normalizedPath,
+					description: pathWithoutSlash,
 				});
 			}
 

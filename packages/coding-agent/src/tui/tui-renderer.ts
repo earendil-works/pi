@@ -110,6 +110,7 @@ export class TuiRenderer {
 		changelogMarkdown: string | null = null,
 		newVersion: string | null = null,
 		scopedModels: Array<{ model: Model<any>; thinkingLevel: ThinkingLevel }> = [],
+		fdPath: string | null = null,
 	) {
 		this.agent = agent;
 		this.sessionManager = sessionManager;
@@ -199,6 +200,7 @@ export class TuiRenderer {
 				clearCommand,
 			],
 			process.cwd(),
+			fdPath,
 		);
 		this.editor.setAutocompleteProvider(autocompleteProvider);
 	}

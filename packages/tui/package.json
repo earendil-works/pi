@@ -41,7 +41,6 @@
 		"chalk": "^5.5.0",
 		"marked": "^15.0.12",
 		"mime-types": "^3.0.1",
-		"minimatch": "^10.1.1",
 		"string-width": "^8.1.0"
 	},
 	"devDependencies": {

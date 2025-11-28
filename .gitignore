@@ -3,7 +3,7 @@ dist/
 *.log
 .DS_Store
 *.tsbuildinfo
-packages/*/node_modules/
+# packages/*/node_modules/
 packages/*/dist/
 packages/*/dist-chrome/
 packages/*/dist-firefox/
