@@ -126,12 +126,21 @@ function mapOptionsForApi<TApi extends Api>(
 		case "anthropic-messages": {
 			if (!options?.reasoning) return base satisfies AnthropicOptions;
 
-			const anthropicBudgets = {
-				minimal: 1024,
-				low: 2048,
-				medium: 8192,
-				high: 16384,
-			};
+			// Opus 4.5 supports larger thinking budgets - geometric 4x progression, 1024-aligned
+			const isOpus45 = model.id.includes("opus-4-5") || model.id.includes("opus-4.5");
+			const anthropicBudgets = isOpus45
+				? {
+						minimal: 1024, // 1KB
+						low: 4096, // 4KB
+						medium: 16384, // 16KB
+						high: 32768, // 32KB
+					}
+				: {
+						minimal: 1024,
+						low: 2048,
+						medium: 8192,
+						high: 16384,
+					};
 
 			return {
 				...base,

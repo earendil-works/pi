@@ -295,11 +295,15 @@ function createClient(
 	model: Model<"anthropic-messages">,
 	apiKey: string,
 ): { client: Anthropic; isOAuthToken: boolean } {
+	const isOpus45 = model.id.includes("opus-4-5") || model.id.includes("opus-4.5");
+	const baseBetas = "fine-grained-tool-streaming-2025-05-14";
+	const opus45Betas = isOpus45 ? ",effort-2025-11-24" : "";
+
 	if (apiKey.includes("sk-ant-oat")) {
 		const defaultHeaders = {
 			accept: "application/json",
 			"anthropic-dangerous-direct-browser-access": "true",
-			"anthropic-beta": "oauth-2025-04-20,fine-grained-tool-streaming-2025-05-14",
+			"anthropic-beta": `oauth-2025-04-20,${baseBetas}${opus45Betas}`,
 			...(model.headers || {}),
 		};
 
@@ -321,7 +325,7 @@ function createClient(
 		const defaultHeaders = {
 			accept: "application/json",
 			"anthropic-dangerous-direct-browser-access": "true",
-			"anthropic-beta": "fine-grained-tool-streaming-2025-05-14",
+			"anthropic-beta": `${baseBetas}${opus45Betas}`,
 			...(model.headers || {}),
 		};
 
@@ -342,11 +346,14 @@ function buildParams(
 	isOAuthToken: boolean,
 	options?: AnthropicOptions,
 ): MessageCreateParamsStreaming {
+	const isOpus45 = model.id.includes("opus-4-5") || model.id.includes("opus-4.5");
+
 	const params: MessageCreateParamsStreaming = {
 		model: model.id,
 		messages: convertMessages(context.messages, model),
 		max_tokens: options?.maxTokens || (model.maxTokens / 3) | 0,
 		stream: true,
+		...(isOpus45 && { output_config: { effort: "high" as const } }),
 	};
 
 	// For OAuth tokens, we MUST include Claude Code identity
