@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Prompt Restoration on API Key Error**: When submitting a message fails due to missing API key, the prompt is now restored to the editor instead of being lost. ([#77](https://github.com/badlogic/pi-mono/issues/77))
+
 ### Changed
 
 - **HTML Export Prefix**: Exported session files now use `pi-session-` prefix (e.g., `pi-session-2025-11-13T12-27-53-866Z_xxx.html`) for easier `.gitignore` filtering ([#72](https://github.com/badlogic/pi-mono/issues/72))

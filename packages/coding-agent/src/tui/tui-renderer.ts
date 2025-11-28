@@ -471,6 +471,7 @@ export class TuiRenderer {
 					`No API key found for ${currentModel.provider}.\n\n` +
 						`Set the appropriate environment variable or update ~/.pi/agent/models.json`,
 				);
+				this.editor.setText(text);
 				return;
 			}
 
