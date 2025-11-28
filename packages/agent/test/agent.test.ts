@@ -100,16 +100,16 @@ describe("Agent", () => {
 		expect(agent.state.messages).toEqual([]);
 	});
 
-	it("should support message queueing", async () => {
+	it("should support message queueing", () => {
 		const agent = new Agent({
 			transport: new ProviderTransport(),
 		});
 
-		const message = { role: "user" as const, content: "Queued message", timestamp: Date.now() };
-		await agent.queueMessage(message);
+		agent.queueMessage("Queued message");
 
 		// The message is queued but not yet in state.messages
-		expect(agent.state.messages).not.toContainEqual(message);
+		// (queue is internal, messages only appear after prompt processes them)
+		expect(agent.state.messages).toEqual([]);
 	});
 
 	it("should handle abort controller", () => {

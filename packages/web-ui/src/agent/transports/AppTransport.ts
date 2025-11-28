@@ -352,7 +352,6 @@ export class AppTransport implements AgentTransport {
 		const pc: AgentLoopConfig = {
 			model: cfg.model,
 			reasoning: cfg.reasoning,
-			getQueuedMessages: cfg.getQueuedMessages,
 		};
 
 		// Yield events from the upstream agentLoop iterator

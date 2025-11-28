@@ -9,6 +9,8 @@ export class CustomEditor extends Editor {
 	public onShiftTab?: () => void;
 	public onCtrlP?: () => void;
 	public onCtrlO?: () => void;
+	public onOptionUp?: () => void;
+	public onOptionDown?: () => void;
 
 	handleInput(data: string): void {
 		// Intercept Ctrl+O for tool output expansion
@@ -20,6 +22,18 @@ export class CustomEditor extends Editor {
 		// Intercept Ctrl+P for model cycling
 		if (data === "\x10" && this.onCtrlP) {
 			this.onCtrlP();
+			return;
+		}
+
+		// Intercept Option/Alt+Up for queue navigation
+		if (data === "\x1b[1;3A" && this.onOptionUp) {
+			this.onOptionUp();
+			return;
+		}
+
+		// Intercept Option/Alt+Down for queue navigation
+		if (data === "\x1b[1;3B" && this.onOptionDown) {
+			this.onOptionDown();
 			return;
 		}
 

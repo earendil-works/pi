@@ -1,7 +1,15 @@
-import type { ImageContent, Message, QueuedMessage, TextContent } from "@mariozechner/pi-ai";
+import type { ImageContent, Message, TextContent } from "@mariozechner/pi-ai";
 import { getModel } from "@mariozechner/pi-ai";
 import type { AgentTransport } from "./transports/types.js";
 import type { AgentEvent, AgentState, AppMessage, Attachment, ThinkingLevel } from "./types.js";
+
+/**
+ * Internal representation of a queued message with its attachments.
+ */
+interface QueuedAppMessage {
+	text: string;
+	attachments?: Attachment[];
+}
 
 /**
  * Default message transformer: Keep only LLM-compatible messages, strip app-specific fields.
@@ -75,10 +83,11 @@ export class Agent {
 	private abortController?: AbortController;
 	private transport: AgentTransport;
 	private messageTransformer: (messages: AppMessage[]) => Message[] | Promise<Message[]>;
-	private messageQueue: Array<QueuedMessage<AppMessage>> = [];
+	private messageQueue: QueuedAppMessage[] = [];
 	private queueMode: "all" | "one-at-a-time";
 	private runningPrompt?: Promise<void>;
 	private resolveRunningPrompt?: () => void;
+	private isDraining = false; // Guard against re-entrant queue draining
 
 	constructor(opts: AgentOptions) {
 		this._state = { ...this._state, ...opts.initialState };
@@ -129,13 +138,24 @@ export class Agent {
 		this._state.messages = [...this._state.messages, m];
 	}
 
-	async queueMessage(m: AppMessage) {
-		// Transform message and queue it for injection at next turn
-		const transformed = await this.messageTransformer([m]);
-		this.messageQueue.push({
-			original: m,
-			llm: transformed[0], // undefined if filtered out
-		});
+	queueMessage(text: string, attachments?: Attachment[]) {
+		this.messageQueue.push({ text, attachments });
+	}
+
+	getQueuedMessages(): ReadonlyArray<{ text: string; attachments?: Attachment[] }> {
+		return this.messageQueue;
+	}
+
+	updateQueuedMessage(index: number, text: string, attachments?: Attachment[]) {
+		if (index >= 0 && index < this.messageQueue.length) {
+			this.messageQueue[index] = { text, attachments };
+		}
+	}
+
+	removeQueuedMessage(index: number) {
+		if (index >= 0 && index < this.messageQueue.length) {
+			this.messageQueue.splice(index, 1);
+		}
 	}
 
 	clearMessageQueue() {
@@ -150,17 +170,16 @@ export class Agent {
 		this.abortController?.abort();
 	}
 
-	/**
-	 * Returns a promise that resolves when the current prompt completes.
-	 * Returns immediately resolved promise if no prompt is running.
-	 */
-	waitForIdle(): Promise<void> {
-		return this.runningPrompt ?? Promise.resolve();
+	/** Waits for both current prompt and any queued message draining to complete. */
+	async waitForIdle(): Promise<void> {
+		await (this.runningPrompt ?? Promise.resolve());
+		while (this.isDraining || this.messageQueue.length > 0) {
+			await (this.runningPrompt ?? Promise.resolve());
+			await new Promise((resolve) => setTimeout(resolve, 10));
+		}
 	}
 
-	/**
-	 * Clear all messages and state. Call abort() first if a prompt is in flight.
-	 */
+	/** Clear all messages and state. Call abort() first if a prompt is in flight. */
 	reset() {
 		this._state.messages = [];
 		this._state.isStreaming = false;
@@ -176,12 +195,10 @@ export class Agent {
 			throw new Error("No model configured");
 		}
 
-		// Set up running prompt tracking
 		this.runningPrompt = new Promise<void>((resolve) => {
 			this.resolveRunningPrompt = resolve;
 		});
 
-		// Build user message with attachments
 		const content: Array<TextContent | ImageContent> = [{ type: "text", text: input }];
 		if (attachments?.length) {
 			for (const a of attachments) {
@@ -221,23 +238,6 @@ export class Agent {
 			tools: this._state.tools,
 			model,
 			reasoning,
-			getQueuedMessages: async <T>() => {
-				// Return queued messages based on queue mode
-				if (this.queueMode === "one-at-a-time") {
-					// Return only first message
-					if (this.messageQueue.length > 0) {
-						const first = this.messageQueue[0];
-						this.messageQueue = this.messageQueue.slice(1);
-						return [first] as QueuedMessage<T>[];
-					}
-					return [];
-				} else {
-					// Return all queued messages at once
-					const queued = this.messageQueue.slice();
-					this.messageQueue = [];
-					return queued as QueuedMessage<T>[];
-				}
-			},
 		};
 
 		// Track all messages generated in this prompt
@@ -352,6 +352,36 @@ export class Agent {
 			this.resolveRunningPrompt?.();
 			this.runningPrompt = undefined;
 			this.resolveRunningPrompt = undefined;
+		}
+
+		// After prompt completes, process queued messages if any
+		// Only start draining if not already draining (prevents re-entrancy)
+		if (!this.isDraining) {
+			await this.drainQueueAfterPrompt();
+		}
+	}
+
+	private async drainQueueAfterPrompt(): Promise<void> {
+		if (this.messageQueue.length === 0) return;
+
+		this.isDraining = true;
+		try {
+			if (this.queueMode === "one-at-a-time") {
+				const first = this.messageQueue.shift();
+				if (first) {
+					await this.prompt(first.text, first.attachments);
+				}
+			} else {
+				// User abort clears messageQueue, so loop exits naturally
+				while (this.messageQueue.length > 0) {
+					const next = this.messageQueue.shift();
+					if (next) {
+						await this.prompt(next.text, next.attachments);
+					}
+				}
+			}
+		} finally {
+			this.isDraining = false;
 		}
 	}
 

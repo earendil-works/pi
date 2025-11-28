@@ -44,7 +44,7 @@ export type AgentEvent =
 	| { type: "turn_start" }
 	// Emitted when a user, assistant or tool result message starts
 	| { type: "message_start"; message: Message }
-	// Emitted when an asssitant messages is updated due to streaming
+	// Emitted when an assistant message is updated due to streaming
 	| { type: "message_update"; assistantMessageEvent: AssistantMessageEvent; message: AssistantMessage }
 	// Emitted when a user, assistant or tool result message is complete
 	| { type: "message_end"; message: Message }
@@ -64,15 +64,8 @@ export type AgentEvent =
 	// contained in messages, which can be appended to the context
 	| { type: "agent_end"; messages: AgentContext["messages"] };
 
-// Queued message with optional LLM representation
-export interface QueuedMessage<TApp = Message> {
-	original: TApp; // Original message for UI events
-	llm?: Message; // Optional transformed message for loop context (undefined if filtered)
-}
-
 // Configuration for agent loop execution
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
 	preprocessor?: (messages: AgentContext["messages"], abortSignal?: AbortSignal) => Promise<AgentContext["messages"]>;
-	getQueuedMessages?: <T>() => Promise<QueuedMessage<T>[]>;
 }

@@ -61,6 +61,11 @@ export class TuiRenderer {
 	// Message queueing
 	private queuedMessages: string[] = [];
 
+	// Queue editing state
+	private editingQueueIndex: number | null = null;
+	private savedEditorText: string | null = null;
+	private isHandlingQueueEditChange = false;
+
 	// Streaming message tracking
 	private streamingComponent: AssistantMessageComponent | null = null;
 
@@ -225,6 +230,9 @@ export class TuiRenderer {
 			theme.fg("dim", "ctrl+o") +
 			theme.fg("muted", " to expand tools") +
 			"\n" +
+			theme.fg("dim", "opt+up/down") +
+			theme.fg("muted", " to edit queue") +
+			"\n" +
 			theme.fg("dim", "/") +
 			theme.fg("muted", " for commands") +
 			"\n" +
@@ -287,8 +295,11 @@ export class TuiRenderer {
 				// Put back in editor
 				this.editor.setText(combinedText);
 
-				// Clear queued messages
+				// Clear queued messages and editing state
 				this.queuedMessages = [];
+				this.editingQueueIndex = null;
+				this.savedEditorText = null;
+				this.isHandlingQueueEditChange = false;
 				this.updatePendingMessagesDisplay();
 
 				// Clear agent's queue too
@@ -315,9 +326,51 @@ export class TuiRenderer {
 			this.toggleToolOutputExpansion();
 		};
 
+		this.editor.onOptionUp = () => {
+			this.handleOptionUp();
+		};
+
+		this.editor.onOptionDown = () => {
+			this.handleOptionDown();
+		};
+
+		// Auto-save queue edits to prevent race with drain; only sync non-empty text to avoid
+		// deleting items on submit-triggered onChange("")
+		this.editor.onChange = (text: string) => {
+			if (this.isHandlingQueueEditChange) return;
+
+			if (this.editingQueueIndex !== null && this.editingQueueIndex < this.queuedMessages.length) {
+				const trimmed = text.trim();
+				if (trimmed) {
+					this.queuedMessages[this.editingQueueIndex] = trimmed;
+					this.agent.updateQueuedMessage(this.editingQueueIndex, trimmed);
+					this.updatePendingMessagesDisplay();
+				}
+			}
+		};
+
 		// Handle editor submission
 		this.editor.onSubmit = async (text: string) => {
 			text = text.trim();
+
+			if (this.editingQueueIndex !== null) {
+				// text parameter holds content before handleSubmit cleared the editor
+				if (text) {
+					this.queuedMessages[this.editingQueueIndex] = text;
+					this.agent.updateQueuedMessage(this.editingQueueIndex, text);
+				} else {
+					this.queuedMessages.splice(this.editingQueueIndex, 1);
+					this.agent.removeQueuedMessage(this.editingQueueIndex);
+				}
+
+				this.editingQueueIndex = null;
+				this.savedEditorText = null;
+				this.editor.invalidate(); // handleSubmit cleared state but not layout
+				this.updatePendingMessagesDisplay();
+				this.ui.requestRender();
+				return;
+			}
+
 			if (!text) return;
 
 			// Check for /thinking command
@@ -426,12 +479,8 @@ export class TuiRenderer {
 				// Queue the message instead of submitting
 				this.queuedMessages.push(text);
 
-				// Queue in agent
-				await this.agent.queueMessage({
-					role: "user",
-					content: [{ type: "text", text }],
-					timestamp: Date.now(),
-				});
+				// Queue in agent (simple text, no attachments for queued messages)
+				this.agent.queueMessage(text);
 
 				// Update pending messages display
 				this.updatePendingMessagesDisplay();
@@ -516,6 +565,18 @@ export class TuiRenderer {
 
 					const queuedIndex = this.queuedMessages.indexOf(messageText);
 					if (queuedIndex !== -1) {
+						// Handle queue editing state when item is consumed
+						if (this.editingQueueIndex !== null) {
+							if (queuedIndex === this.editingQueueIndex) {
+								// Currently editing item was consumed - exit edit mode and restore editor
+								this.editor.setText(this.savedEditorText || "");
+								this.editingQueueIndex = null;
+								this.savedEditorText = null;
+							} else if (queuedIndex < this.editingQueueIndex) {
+								// Item before current edit was consumed - shift index down
+								this.editingQueueIndex--;
+							}
+						}
 						// Remove from queued messages
 						this.queuedMessages.splice(queuedIndex, 1);
 						this.updatePendingMessagesDisplay();
@@ -942,6 +1003,91 @@ export class TuiRenderer {
 		}
 
 		this.ui.requestRender();
+	}
+
+	private handleOptionUp(): void {
+		if (this.queuedMessages.length === 0) {
+			return;
+		}
+
+		if (this.editingQueueIndex === null) {
+			this.savedEditorText = this.editor.getText();
+			this.editingQueueIndex = this.queuedMessages.length - 1;
+			this.editor.setText(this.queuedMessages[this.editingQueueIndex]);
+		} else if (this.editingQueueIndex > 0) {
+			this.saveCurrentQueueEdit();
+			// saveCurrentQueueEdit may delete item and reset editingQueueIndex
+			if (this.queuedMessages.length === 0 || this.editingQueueIndex === null) {
+				const savedText = this.savedEditorText || "";
+				this.editingQueueIndex = null;
+				this.savedEditorText = null;
+				this.editor.setText(savedText);
+			} else {
+				this.editingQueueIndex = Math.max(0, this.editingQueueIndex - 1);
+				this.editor.setText(this.queuedMessages[this.editingQueueIndex] || "");
+			}
+		} else {
+			this.saveCurrentQueueEdit();
+			// Clear state before setText to prevent onChange from modifying queue
+			const savedText = this.savedEditorText || "";
+			this.editingQueueIndex = null;
+			this.savedEditorText = null;
+			this.editor.setText(savedText);
+		}
+
+		this.updatePendingMessagesDisplay();
+		this.ui.requestRender();
+	}
+
+	private handleOptionDown(): void {
+		if (this.editingQueueIndex === null) {
+			return;
+		}
+
+		if (this.editingQueueIndex < this.queuedMessages.length - 1) {
+			this.saveCurrentQueueEdit();
+			if (this.queuedMessages.length === 0 || this.editingQueueIndex === null) {
+				const savedText = this.savedEditorText || "";
+				this.editingQueueIndex = null;
+				this.savedEditorText = null;
+				this.editor.setText(savedText);
+			} else {
+				this.editingQueueIndex = Math.min(this.queuedMessages.length - 1, this.editingQueueIndex + 1);
+				this.editor.setText(this.queuedMessages[this.editingQueueIndex] || "");
+			}
+		} else {
+			this.saveCurrentQueueEdit();
+			const savedText = this.savedEditorText || "";
+			this.editingQueueIndex = null;
+			this.savedEditorText = null;
+			this.editor.setText(savedText);
+		}
+
+		this.updatePendingMessagesDisplay();
+		this.ui.requestRender();
+	}
+
+	private saveCurrentQueueEdit(): void {
+		if (this.editingQueueIndex === null || this.editingQueueIndex >= this.queuedMessages.length) {
+			return;
+		}
+
+		const editedText = this.editor.getText().trim();
+
+		if (editedText === "") {
+			this.queuedMessages.splice(this.editingQueueIndex, 1);
+			this.agent.removeQueuedMessage(this.editingQueueIndex);
+
+			if (this.queuedMessages.length === 0) {
+				this.editingQueueIndex = null;
+				this.savedEditorText = null;
+			} else if (this.editingQueueIndex >= this.queuedMessages.length) {
+				this.editingQueueIndex = this.queuedMessages.length - 1;
+			}
+		} else {
+			this.queuedMessages[this.editingQueueIndex] = editedText;
+			this.agent.updateQueuedMessage(this.editingQueueIndex, editedText);
+		}
 	}
 
 	clearEditor(): void {
@@ -1510,6 +1656,9 @@ export class TuiRenderer {
 		this.chatContainer.clear();
 		this.pendingMessagesContainer.clear();
 		this.queuedMessages = [];
+		this.editingQueueIndex = null;
+		this.savedEditorText = null;
+		this.isHandlingQueueEditChange = false;
 		this.streamingComponent = null;
 		this.pendingTools.clear();
 		this.isFirstUserMessage = true;
@@ -1529,9 +1678,18 @@ export class TuiRenderer {
 		if (this.queuedMessages.length > 0) {
 			this.pendingMessagesContainer.addChild(new Spacer(1));
 
-			for (const message of this.queuedMessages) {
-				const queuedText = theme.fg("dim", "Queued: " + message);
-				this.pendingMessagesContainer.addChild(new TruncatedText(queuedText, 1, 0));
+			for (let i = 0; i < this.queuedMessages.length; i++) {
+				const message = this.queuedMessages[i];
+				const isEditing = this.editingQueueIndex === i;
+				if (isEditing) {
+					const prefix = theme.fg("accent", "> Editing #" + (i + 1) + " ");
+					const hint = theme.fg("muted", "(in textarea below)");
+					this.pendingMessagesContainer.addChild(new TruncatedText(prefix + hint, 1, 0));
+				} else {
+					const prefix = theme.fg("dim", "Queued: ");
+					const messageColor = theme.fg("dim", message);
+					this.pendingMessagesContainer.addChild(new TruncatedText(prefix + messageColor, 1, 0));
+				}
 			}
 		}
 	}

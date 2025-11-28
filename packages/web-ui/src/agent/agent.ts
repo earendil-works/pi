@@ -1,4 +1,4 @@
-import type { Context, QueuedMessage } from "@mariozechner/pi-ai";
+import type { Context } from "@mariozechner/pi-ai";
 import {
 	type AgentTool,
 	type AssistantMessage as AssistantMessageType,
@@ -12,6 +12,14 @@ import type { AppMessage } from "../components/Messages.js";
 import type { Attachment } from "../utils/attachment-utils.js";
 import type { AgentRunConfig, AgentTransport } from "./transports/types.js";
 import type { DebugLogEntry } from "./types.js";
+
+/**
+ * Internal representation of a queued message with its attachments.
+ */
+interface QueuedAppMessage {
+	text: string;
+	attachments?: Attachment[];
+}
 
 // Default transformer: Keep only LLM-compatible messages, strip app-specific fields
 function defaultMessageTransformer(messages: AppMessage[]): Message[] {
@@ -76,7 +84,9 @@ export class Agent {
 	private transport: AgentTransport;
 	private debugListener?: (entry: DebugLogEntry) => void;
 	private messageTransformer: (messages: AppMessage[]) => Message[] | Promise<Message[]>;
-	private messageQueue: Array<QueuedMessage<AppMessage>> = [];
+	private messageQueue: QueuedAppMessage[] = [];
+	private queueMode: "all" | "one-at-a-time" = "one-at-a-time";
+	private isDraining = false;
 
 	constructor(opts: AgentOptions) {
 		this._state = { ...this._state, ...opts.initialState };
@@ -114,13 +124,18 @@ export class Agent {
 	appendMessage(m: AppMessage) {
 		this.patch({ messages: [...this._state.messages, m] });
 	}
-	async queueMessage(m: AppMessage) {
-		// Transform message and queue it for injection at next turn
-		const transformed = await this.messageTransformer([m]);
-		this.messageQueue.push({
-			original: m,
-			llm: transformed[0], // undefined if filtered out
-		});
+	queueMessage(text: string, attachments?: Attachment[]) {
+		// Queue message for processing after current prompt completes
+		this.messageQueue.push({ text, attachments });
+	}
+	clearMessageQueue() {
+		this.messageQueue = [];
+	}
+	setQueueMode(mode: "all" | "one-at-a-time") {
+		this.queueMode = mode;
+	}
+	getQueueMode(): "all" | "one-at-a-time" {
+		return this.queueMode;
 	}
 	clearMessages() {
 		this.patch({ messages: [] });
@@ -180,12 +195,6 @@ export class Agent {
 			tools: this._state.tools,
 			model,
 			reasoning,
-			getQueuedMessages: async <T>() => {
-				// Return queued messages (they'll be added to state via message_end event)
-				const queued = this.messageQueue.slice();
-				this.messageQueue = [];
-				return queued as QueuedMessage<T>[];
-			},
 		};
 
 		try {
@@ -323,6 +332,39 @@ export class Agent {
 			this.emit({ type: "completed" });
 		}
 		this.logState("final state:");
+
+		// After prompt completes, process queued messages if any
+		if (!this.isDraining) {
+			await this.drainQueueAfterPrompt();
+		}
+	}
+
+	/**
+	 * Process queued messages after a prompt completes.
+	 */
+	private async drainQueueAfterPrompt(): Promise<void> {
+		if (this.messageQueue.length === 0) return;
+
+		this.isDraining = true;
+		try {
+			if (this.queueMode === "one-at-a-time") {
+				const first = this.messageQueue.shift();
+				if (first) {
+					await this.prompt(first.text, first.attachments);
+				}
+			} else {
+				// Process all queued messages sequentially
+				// Note: If user aborts, the caller should clear the messageQueue
+				while (this.messageQueue.length > 0) {
+					const next = this.messageQueue.shift();
+					if (next) {
+						await this.prompt(next.text, next.attachments);
+					}
+				}
+			}
+		} finally {
+			this.isDraining = false;
+		}
 	}
 
 	private patch(p: Partial<AgentState>): void {
