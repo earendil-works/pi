@@ -11,7 +11,7 @@ import { findModel, getApiKeyForModel, getAvailableModels } from "./model-config
 import { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
 import { initTheme } from "./theme/theme.js";
-import { codingTools } from "./tools/index.js";
+import { allTools, codingTools, type ToolName } from "./tools/index.js";
 import { ensureTool } from "./tools-manager.js";
 import { SessionSelectorComponent } from "./tui/session-selector.js";
 import { TuiRenderer } from "./tui/tui-renderer.js";
@@ -49,6 +49,7 @@ interface Args {
 	noSession?: boolean;
 	session?: string;
 	models?: string[];
+	tools?: ToolName[];
 	print?: boolean;
 	messages: string[];
 	fileArgs: string[];
@@ -92,6 +93,19 @@ function parseArgs(args: string[]): Args {
 			result.session = args[++i];
 		} else if (arg === "--models" && i + 1 < args.length) {
 			result.models = args[++i].split(",").map((s) => s.trim());
+		} else if (arg === "--tools" && i + 1 < args.length) {
+			const toolNames = args[++i].split(",").map((s) => s.trim());
+			const validTools: ToolName[] = [];
+			for (const name of toolNames) {
+				if (name in allTools) {
+					validTools.push(name as ToolName);
+				} else {
+					console.error(
+						chalk.yellow(`Warning: Unknown tool "${name}". Valid tools: ${Object.keys(allTools).join(", ")}`),
+					);
+				}
+			}
+			result.tools = validTools;
 		} else if (arg === "--thinking" && i + 1 < args.length) {
 			const level = args[++i];
 			if (level === "off" || level === "minimal" || level === "low" || level === "medium" || level === "high") {
@@ -225,6 +239,8 @@ ${chalk.bold("Options:")}
   --session <path>        Use specific session file
   --no-session            Don't save session (ephemeral)
   --models <patterns>     Comma-separated model patterns for quick cycling with Ctrl+P
+  --tools <tools>         Comma-separated list of tools to enable (default: read,bash,edit,write)
+                          Available: read, bash, edit, write, grep, find, ls
   --thinking <level>      Set thinking level: off, minimal, low, medium, high
   --help, -h              Show this help
 
@@ -262,6 +278,9 @@ ${chalk.bold("Examples:")}
   # Start with a specific thinking level
   pi --thinking high "Solve this complex problem"
 
+  # Read-only mode (no file modifications possible)
+  pi --tools read,grep,find,ls -p "Review the code in src/"
+
 ${chalk.bold("Environment Variables:")}
   ANTHROPIC_API_KEY       - Anthropic Claude API key
   ANTHROPIC_OAUTH_TOKEN   - Anthropic OAuth token (alternative to API key)
@@ -274,15 +293,29 @@ ${chalk.bold("Environment Variables:")}
   ZAI_API_KEY             - ZAI API key
   PI_CODING_AGENT_DIR     - Session storage directory (default: ~/.pi/agent)
 
-${chalk.bold("Available Tools:")}
+${chalk.bold("Available Tools (default: read, bash, edit, write):")}
   read   - Read file contents
   bash   - Execute bash commands
   edit   - Edit files with find/replace
   write  - Write files (creates/overwrites)
+  grep   - Search file contents (read-only, off by default)
+  find   - Find files by glob pattern (read-only, off by default)
+  ls     - List directory contents (read-only, off by default)
 `);
 }
 
-function buildSystemPrompt(customPrompt?: string): string {
+// Tool descriptions for system prompt
+const toolDescriptions: Record<ToolName, string> = {
+	read: "Read file contents",
+	bash: "Execute bash commands (ls, grep, find, etc.)",
+	edit: "Make surgical edits to files (find exact text and replace)",
+	write: "Create or overwrite files",
+	grep: "Search file contents for patterns (respects .gitignore)",
+	find: "Find files by glob pattern (respects .gitignore)",
+	ls: "List directory contents",
+};
+
+function buildSystemPrompt(customPrompt?: string, selectedTools?: ToolName[]): string {
 	// Check if customPrompt is a file path that exists
 	if (customPrompt && existsSync(customPrompt)) {
 		try {
@@ -341,22 +374,75 @@ function buildSystemPrompt(customPrompt?: string): string {
 	// Get absolute path to README.md
 	const readmePath = resolve(join(__dirname, "../README.md"));
 
+	// Build tools list based on selected tools
+	const tools = selectedTools || (["read", "bash", "edit", "write"] as ToolName[]);
+	const toolsList = tools.map((t) => `- ${t}: ${toolDescriptions[t]}`).join("\n");
+
+	// Build guidelines based on which tools are actually available
+	const guidelinesList: string[] = [];
+
+	const hasBash = tools.includes("bash");
+	const hasEdit = tools.includes("edit");
+	const hasWrite = tools.includes("write");
+	const hasGrep = tools.includes("grep");
+	const hasFind = tools.includes("find");
+	const hasLs = tools.includes("ls");
+	const hasRead = tools.includes("read");
+
+	// Read-only mode notice (no bash, edit, or write)
+	if (!hasBash && !hasEdit && !hasWrite) {
+		guidelinesList.push("You are in READ-ONLY mode - you cannot modify files or execute arbitrary commands");
+	}
+
+	// Bash without edit/write = read-only bash mode
+	if (hasBash && !hasEdit && !hasWrite) {
+		guidelinesList.push(
+			"Use bash ONLY for read-only operations (git log, gh issue view, curl, etc.) - do NOT modify any files",
+		);
+	}
+
+	// File exploration guidelines
+	if (hasBash && !hasGrep && !hasFind && !hasLs) {
+		guidelinesList.push("Use bash for file operations like ls, grep, find");
+	} else if (hasBash && (hasGrep || hasFind || hasLs)) {
+		guidelinesList.push("Prefer grep/find/ls tools over bash for file exploration (faster, respects .gitignore)");
+	}
+
+	// Read before edit guideline
+	if (hasRead && hasEdit) {
+		guidelinesList.push("Use read to examine files before editing");
+	}
+
+	// Edit guideline
+	if (hasEdit) {
+		guidelinesList.push("Use edit for precise changes (old text must match exactly)");
+	}
+
+	// Write guideline
+	if (hasWrite) {
+		guidelinesList.push("Use write only for new files or complete rewrites");
+	}
+
+	// Output guideline (only when actually writing/executing)
+	if (hasEdit || hasWrite) {
+		guidelinesList.push(
+			"When summarizing your actions, output plain text directly - do NOT use cat or bash to display what you did",
+		);
+	}
+
+	// Always include these
+	guidelinesList.push("Be concise in your responses");
+	guidelinesList.push("Show file paths clearly when working with files");
+
+	const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
+
 	let prompt = `You are an expert coding assistant. You help users with coding tasks by reading files, executing commands, editing code, and writing new files.
 
 Available tools:
-- read: Read file contents
-- bash: Execute bash commands (ls, grep, find, etc.)
-- edit: Make surgical edits to files (find exact text and replace)
-- write: Create or overwrite files
+${toolsList}
 
 Guidelines:
-- Always use bash tool for file operations like ls, grep, find
-- Use read to examine files before editing
-- Use edit for precise changes (old text must match exactly)
-- Use write only for new files or complete rewrites
-- Be concise in your responses
-- Show file paths clearly when working with files
-- When summarizing your actions, output plain text directly - do NOT use cat or bash to display what you did
+${guidelines}
 
 Documentation:
 - Your own documentation (including custom model setup and theme creation) is at: ${readmePath}
@@ -932,7 +1018,7 @@ export async function main(args: string[]) {
 		}
 	}
 
-	const systemPrompt = buildSystemPrompt(parsed.systemPrompt);
+	const systemPrompt = buildSystemPrompt(parsed.systemPrompt, parsed.tools);
 
 	// Load previous messages if continuing or resuming
 	// This may update initialModel if restoring from session
@@ -1015,13 +1101,16 @@ export async function main(args: string[]) {
 		initialThinking = parsed.thinking;
 	}
 
+	// Determine which tools to use
+	const selectedTools = parsed.tools ? parsed.tools.map((name) => allTools[name]) : codingTools;
+
 	// Create agent (initialModel can be null in interactive mode)
 	const agent = new Agent({
 		initialState: {
 			systemPrompt,
 			model: initialModel as any, // Can be null
 			thinkingLevel: initialThinking,
-			tools: codingTools,
+			tools: selectedTools,
 		},
 		queueMode: settingsManager.getQueueMode(),
 		transport: new ProviderTransport({

@@ -750,6 +750,22 @@ Examples:
 - `--models sonnet:high,haiku:low` - Sonnet with high thinking, Haiku with low thinking
 - `--models sonnet,haiku` - Partial match for any model containing "sonnet" or "haiku"
 
+**--tools <tools>**
+Comma-separated list of tools to enable. By default, pi uses `read,bash,edit,write`. This flag allows restricting or changing the available tools.
+
+Available tools:
+- `read` - Read file contents
+- `bash` - Execute bash commands
+- `edit` - Make surgical edits to files
+- `write` - Create or overwrite files
+- `grep` - Search file contents for patterns (read-only, off by default)
+- `find` - Find files by glob pattern (read-only, off by default)
+- `ls` - List directory contents (read-only, off by default)
+
+Examples:
+- `--tools read,grep,find,ls` - Read-only mode for code review/exploration
+- `--tools read,bash` - Only allow reading and bash commands
+
 **--thinking <level>**
 Set thinking level for reasoning-capable models. Valid values: `off`, `minimal`, `low`, `medium`, `high`. Takes highest priority over all other thinking level sources (saved settings, `--models` pattern levels, session restore).
 
@@ -803,13 +819,21 @@ pi --models sonnet:high,haiku:low
 
 # Start with specific thinking level
 pi --thinking high "Solve this complex algorithm problem"
+
+# Read-only mode (no file modifications possible)
+pi --tools read,grep,find,ls -p "Review the architecture in src/"
+
+# Oracle-style subagent (bash for git/gh, no file modifications)
+pi --tools read,bash,grep,find,ls \
+   --no-session \
+   -p "Use bash only for read-only operations. Read issue #74 with gh, then review the implementation"
 ```
 
 ## Tools
 
-### Built-in Tools
+### Default Tools
 
-The agent has access to four core tools for working with your codebase:
+By default, the agent has access to four core tools:
 
 **read**
 Read file contents. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, defaults to first 2000 lines. Use offset/limit parameters for large files. Lines longer than 2000 characters are truncated.
@@ -822,6 +846,19 @@ Edit a file by replacing exact text. The oldText must match exactly (including w
 
 **bash**
 Execute a bash command in the current working directory. Returns stdout and stderr. Optionally accepts a `timeout` parameter (in seconds) - no default timeout.
+
+### Read-Only Exploration Tools
+
+These tools are available via `--tools` flag for read-only code exploration:
+
+**grep**
+Search file contents for a pattern (regex or literal). Returns matching lines with file paths and line numbers. Respects `.gitignore`. Parameters: `pattern` (required), `path`, `glob`, `ignoreCase`, `literal`, `context`, `limit`.
+
+**find**
+Search for files by glob pattern (e.g., `**/*.ts`). Returns matching file paths relative to the search directory. Respects `.gitignore`. Parameters: `pattern` (required), `path`, `limit`.
+
+**ls**
+List directory contents. Returns entries sorted alphabetically with `/` suffix for directories. Includes dotfiles. Parameters: `path`, `limit`.
 
 ### MCP & Adding Your Own Tools
 

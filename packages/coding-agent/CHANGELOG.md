@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Added
+
+- **Read-Only Exploration Tools**: Added `grep`, `find`, and `ls` tools for safe code exploration without modification risk. These tools are available via the new `--tools` flag.
+  - `grep`: Uses `ripgrep` (auto-downloaded) for fast regex searching. Respects `.gitignore` (including nested), supports glob filtering, context lines, and hidden files.
+  - `find`: Uses `fd` (auto-downloaded) for fast file finding. Respects `.gitignore`, supports glob patterns, and hidden files.
+  - `ls`: Lists directory contents with proper sorting and indicators.
+- **`--tools` Flag**: New CLI flag to specify available tools (e.g., `--tools read,grep,find,ls` for read-only mode). Default behavior remains unchanged (`read,bash,edit,write`).
+- **Dynamic System Prompt**: The system prompt now adapts to the selected tools, showing relevant guidelines and warnings (e.g., "READ-ONLY mode" when write tools are disabled).
+
 ### Fixed
 
 - **Prompt Restoration on API Key Error**: When submitting a message fails due to missing API key, the prompt is now restored to the editor instead of being lost. ([#77](https://github.com/badlogic/pi-mono/issues/77))

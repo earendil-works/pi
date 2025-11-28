@@ -4,6 +4,9 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bashTool } from "../src/tools/bash.js";
 import { editTool } from "../src/tools/edit.js";
+import { findTool } from "../src/tools/find.js";
+import { grepTool } from "../src/tools/grep.js";
+import { lsTool } from "../src/tools/ls.js";
 import { readTool } from "../src/tools/read.js";
 import { writeTool } from "../src/tools/write.js";
 
@@ -246,5 +249,91 @@ describe("Coding Agent Tools", () => {
 
 			expect(getTextOutput(result)).toContain("Command failed");
 		}, 35000);
+	});
+
+	describe("grep tool", () => {
+		it("should include filename when searching a single file", async () => {
+			const testFile = join(testDir, "example.txt");
+			writeFileSync(testFile, "first line\nmatch line\nlast line");
+
+			const result = await grepTool.execute("test-call-11", {
+				pattern: "match",
+				path: testFile,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("example.txt:2: match line");
+		});
+
+		it("should respect global limit and include context lines", async () => {
+			const testFile = join(testDir, "context.txt");
+			const content = ["before", "match one", "after", "middle", "match two", "after two"].join("\n");
+			writeFileSync(testFile, content);
+
+			const result = await grepTool.execute("test-call-12", {
+				pattern: "match",
+				path: testFile,
+				limit: 1,
+				context: 1,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("context.txt-1- before");
+			expect(output).toContain("context.txt:2: match one");
+			expect(output).toContain("context.txt-3- after");
+			expect(output).toContain("(truncated, limit of 1 matches reached)");
+			// Ensure second match is not present
+			expect(output).not.toContain("match two");
+		});
+	});
+
+	describe("find tool", () => {
+		it("should include hidden files that are not gitignored", async () => {
+			const hiddenDir = join(testDir, ".secret");
+			mkdirSync(hiddenDir);
+			writeFileSync(join(hiddenDir, "hidden.txt"), "hidden");
+			writeFileSync(join(testDir, "visible.txt"), "visible");
+
+			const result = await findTool.execute("test-call-13", {
+				pattern: "**/*.txt",
+				path: testDir,
+			});
+
+			const outputLines = getTextOutput(result)
+				.split("\n")
+				.map((line) => line.trim())
+				.filter(Boolean);
+
+			expect(outputLines).toContain("visible.txt");
+			expect(outputLines).toContain(".secret/hidden.txt");
+		});
+
+		it("should respect .gitignore", async () => {
+			writeFileSync(join(testDir, ".gitignore"), "ignored.txt\n");
+			writeFileSync(join(testDir, "ignored.txt"), "ignored");
+			writeFileSync(join(testDir, "kept.txt"), "kept");
+
+			const result = await findTool.execute("test-call-14", {
+				pattern: "**/*.txt",
+				path: testDir,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("kept.txt");
+			expect(output).not.toContain("ignored.txt");
+		});
+	});
+
+	describe("ls tool", () => {
+		it("should list dotfiles and directories", async () => {
+			writeFileSync(join(testDir, ".hidden-file"), "secret");
+			mkdirSync(join(testDir, ".hidden-dir"));
+
+			const result = await lsTool.execute("test-call-15", { path: testDir });
+			const output = getTextOutput(result);
+
+			expect(output).toContain(".hidden-file");
+			expect(output).toContain(".hidden-dir/");
+		});
 	});
 });

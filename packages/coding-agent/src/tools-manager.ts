@@ -12,6 +12,7 @@ interface ToolConfig {
 	name: string;
 	repo: string; // GitHub repo (e.g., "sharkdp/fd")
 	binaryName: string; // Name of the binary inside the archive
+	tagPrefix: string; // Prefix for tags (e.g., "v" for v1.0.0, "" for 1.0.0)
 	getAssetName: (version: string, plat: string, architecture: string) => string | null;
 }
 
@@ -20,6 +21,7 @@ const TOOLS: Record<string, ToolConfig> = {
 		name: "fd",
 		repo: "sharkdp/fd",
 		binaryName: "fd",
+		tagPrefix: "v",
 		getAssetName: (version, plat, architecture) => {
 			if (plat === "darwin") {
 				const archStr = architecture === "arm64" ? "aarch64" : "x86_64";
@@ -34,20 +36,42 @@ const TOOLS: Record<string, ToolConfig> = {
 			return null;
 		},
 	},
+	rg: {
+		name: "ripgrep",
+		repo: "BurntSushi/ripgrep",
+		binaryName: "rg",
+		tagPrefix: "",
+		getAssetName: (version, plat, architecture) => {
+			if (plat === "darwin") {
+				const archStr = architecture === "arm64" ? "aarch64" : "x86_64";
+				return `ripgrep-${version}-${archStr}-apple-darwin.tar.gz`;
+			} else if (plat === "linux") {
+				if (architecture === "arm64") {
+					return `ripgrep-${version}-aarch64-unknown-linux-gnu.tar.gz`;
+				}
+				return `ripgrep-${version}-x86_64-unknown-linux-musl.tar.gz`;
+			} else if (plat === "win32") {
+				const archStr = architecture === "arm64" ? "aarch64" : "x86_64";
+				return `ripgrep-${version}-${archStr}-pc-windows-msvc.zip`;
+			}
+			return null;
+		},
+	},
 };
 
 // Check if a command exists in PATH by trying to run it
 function commandExists(cmd: string): boolean {
 	try {
-		spawnSync(cmd, ["--version"], { stdio: "pipe" });
-		return true;
+		const result = spawnSync(cmd, ["--version"], { stdio: "pipe" });
+		// Check for ENOENT error (command not found)
+		return result.error === undefined || result.error === null;
 	} catch {
 		return false;
 	}
 }
 
 // Get the path to a tool (system-wide or in our tools dir)
-export function getToolPath(tool: "fd"): string | null {
+export function getToolPath(tool: "fd" | "rg"): string | null {
 	const config = TOOLS[tool];
 	if (!config) return null;
 
@@ -75,7 +99,7 @@ async function getLatestVersion(repo: string): Promise<string> {
 		throw new Error(`GitHub API error: ${response.status}`);
 	}
 
-	const data = await response.json();
+	const data = (await response.json()) as { tag_name: string };
 	return data.tag_name.replace(/^v/, "");
 }
 
@@ -96,7 +120,7 @@ async function downloadFile(url: string, dest: string): Promise<void> {
 }
 
 // Download and install a tool
-async function downloadTool(tool: "fd"): Promise<string> {
+async function downloadTool(tool: "fd" | "rg"): Promise<string> {
 	const config = TOOLS[tool];
 	if (!config) throw new Error(`Unknown tool: ${tool}`);
 
@@ -115,7 +139,7 @@ async function downloadTool(tool: "fd"): Promise<string> {
 	// Create tools directory
 	mkdirSync(TOOLS_DIR, { recursive: true });
 
-	const downloadUrl = `https://github.com/${config.repo}/releases/download/v${version}/${assetName}`;
+	const downloadUrl = `https://github.com/${config.repo}/releases/download/${config.tagPrefix}${version}/${assetName}`;
 	const archivePath = join(TOOLS_DIR, assetName);
 	const binaryExt = plat === "win32" ? ".exe" : "";
 	const binaryPath = join(TOOLS_DIR, config.binaryName + binaryExt);
@@ -159,7 +183,7 @@ async function downloadTool(tool: "fd"): Promise<string> {
 
 // Ensure a tool is available, downloading if necessary
 // Returns the path to the tool, or null if unavailable
-export async function ensureTool(tool: "fd", silent: boolean = false): Promise<string | null> {
+export async function ensureTool(tool: "fd" | "rg", silent: boolean = false): Promise<string | null> {
 	const existingPath = getToolPath(tool);
 	if (existingPath) {
 		return existingPath;

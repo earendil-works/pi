@@ -198,6 +198,89 @@ export class ToolExecutionComponent extends Container {
 					text += "\n\n" + coloredLines.join("\n");
 				}
 			}
+		} else if (this.toolName === "ls") {
+			const path = shortenPath(this.args?.path || ".");
+			const limit = this.args?.limit;
+
+			text = theme.fg("toolTitle", theme.bold("ls")) + " " + theme.fg("accent", path);
+			if (limit !== undefined) {
+				text += theme.fg("toolOutput", ` (limit ${limit})`);
+			}
+
+			if (this.result) {
+				const output = this.getTextOutput().trim();
+				if (output) {
+					const lines = output.split("\n");
+					const maxLines = this.expanded ? lines.length : 20;
+					const displayLines = lines.slice(0, maxLines);
+					const remaining = lines.length - maxLines;
+
+					text += "\n\n" + displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n");
+					if (remaining > 0) {
+						text += theme.fg("toolOutput", `\n... (${remaining} more lines)`);
+					}
+				}
+			}
+		} else if (this.toolName === "find") {
+			const pattern = this.args?.pattern || "";
+			const path = shortenPath(this.args?.path || ".");
+			const limit = this.args?.limit;
+
+			text =
+				theme.fg("toolTitle", theme.bold("find")) +
+				" " +
+				theme.fg("accent", pattern) +
+				theme.fg("toolOutput", ` in ${path}`);
+			if (limit !== undefined) {
+				text += theme.fg("toolOutput", ` (limit ${limit})`);
+			}
+
+			if (this.result) {
+				const output = this.getTextOutput().trim();
+				if (output) {
+					const lines = output.split("\n");
+					const maxLines = this.expanded ? lines.length : 20;
+					const displayLines = lines.slice(0, maxLines);
+					const remaining = lines.length - maxLines;
+
+					text += "\n\n" + displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n");
+					if (remaining > 0) {
+						text += theme.fg("toolOutput", `\n... (${remaining} more lines)`);
+					}
+				}
+			}
+		} else if (this.toolName === "grep") {
+			const pattern = this.args?.pattern || "";
+			const path = shortenPath(this.args?.path || ".");
+			const glob = this.args?.glob;
+			const limit = this.args?.limit;
+
+			text =
+				theme.fg("toolTitle", theme.bold("grep")) +
+				" " +
+				theme.fg("accent", `/${pattern}/`) +
+				theme.fg("toolOutput", ` in ${path}`);
+			if (glob) {
+				text += theme.fg("toolOutput", ` (${glob})`);
+			}
+			if (limit !== undefined) {
+				text += theme.fg("toolOutput", ` limit ${limit}`);
+			}
+
+			if (this.result) {
+				const output = this.getTextOutput().trim();
+				if (output) {
+					const lines = output.split("\n");
+					const maxLines = this.expanded ? lines.length : 15;
+					const displayLines = lines.slice(0, maxLines);
+					const remaining = lines.length - maxLines;
+
+					text += "\n\n" + displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n");
+					if (remaining > 0) {
+						text += theme.fg("toolOutput", `\n... (${remaining} more lines)`);
+					}
+				}
+			}
 		} else {
 			// Generic tool
 			text = theme.fg("toolTitle", theme.bold(this.toolName));
