@@ -3,6 +3,26 @@ import { Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
 import { existsSync } from "fs";
 
+const MAX_OUTPUT_BYTES = 25000;
+
+/**
+ * Truncate output to MAX_OUTPUT_BYTES with a warning if exceeded
+ */
+function truncateOutput(output: string): string {
+	const byteLength = Buffer.byteLength(output, "utf-8");
+	if (byteLength <= MAX_OUTPUT_BYTES) {
+		return output;
+	}
+	// Truncate by characters, then verify byte length
+	// Start with a rough estimate based on ratio
+	let truncated = output.slice(0, Math.floor((MAX_OUTPUT_BYTES / byteLength) * output.length));
+	// Adjust if still over (can happen with multi-byte chars)
+	while (Buffer.byteLength(truncated, "utf-8") > MAX_OUTPUT_BYTES && truncated.length > 0) {
+		truncated = truncated.slice(0, -100);
+	}
+	return `${truncated}\n\n... (output truncated from ${byteLength} to ${MAX_OUTPUT_BYTES} bytes)`;
+}
+
 /**
  * Get shell configuration based on platform
  */
@@ -140,7 +160,7 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 					}
 					if (output) output += "\n\n";
 					output += "Command aborted";
-					_reject(new Error(output));
+					_reject(new Error(truncateOutput(output)));
 					return;
 				}
 
@@ -153,7 +173,7 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 					}
 					if (output) output += "\n\n";
 					output += `Command timed out after ${effectiveTimeout} seconds`;
-					_reject(new Error(output));
+					_reject(new Error(truncateOutput(output)));
 					return;
 				}
 
@@ -166,9 +186,12 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 
 				if (code !== 0 && code !== null) {
 					if (output) output += "\n\n";
-					_reject(new Error(`${output}Command exited with code ${code}`));
+					_reject(new Error(truncateOutput(`${output}Command exited with code ${code}`)));
 				} else {
-					resolve({ content: [{ type: "text", text: output || "(no output)" }], details: undefined });
+					resolve({
+						content: [{ type: "text", text: truncateOutput(output) || "(no output)" }],
+						details: undefined,
+					});
 				}
 			});
 
