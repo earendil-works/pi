@@ -186,6 +186,11 @@ export class TuiRenderer {
 			description: "Clear context and start a fresh session",
 		};
 
+		const newCommand: SlashCommand = {
+			name: "new",
+			description: "Start a fresh session (alias for /clear)",
+		};
+
 		const undoCommand: SlashCommand = {
 			name: "undo",
 			description: "Undo the last turn and revert file edits",
@@ -205,6 +210,7 @@ export class TuiRenderer {
 				logoutCommand,
 				queueCommand,
 				clearCommand,
+				newCommand,
 				undoCommand,
 			],
 			process.cwd(),
@@ -455,8 +461,8 @@ export class TuiRenderer {
 				return;
 			}
 
-			// Check for /clear command
-			if (text === "/clear") {
+			// Check for /clear or /new command
+			if (text === "/clear" || text === "/new") {
 				this.handleClearCommand();
 				this.editor.setText("");
 				return;
