@@ -574,6 +574,11 @@ export class TuiRenderer {
 			this.updateEditorBorderColor();
 			this.ui.requestRender();
 		});
+
+		// Set up git branch watcher
+		this.footer.watchBranch(() => {
+			this.ui.requestRender();
+		});
 	}
 
 	private subscribeToAgent(): void {
@@ -2187,6 +2192,7 @@ export class TuiRenderer {
 			this.loadingAnimation.stop();
 			this.loadingAnimation = null;
 		}
+		this.footer.dispose();
 		if (this.isInitialized) {
 			this.ui.stop();
 			this.isInitialized = false;

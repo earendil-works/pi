@@ -1,7 +1,7 @@
 import type { AgentState } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { type Component, visibleWidth } from "@mariozechner/pi-tui";
-import { readFileSync } from "fs";
+import { existsSync, type FSWatcher, readFileSync, watch } from "fs";
 import { join } from "path";
 import { theme } from "../theme/theme.js";
 
@@ -12,9 +12,54 @@ export class FooterComponent implements Component {
 	private state: AgentState;
 	private cachedBranch: string | null | undefined = undefined; // undefined = not checked yet, null = not in git repo, string = branch name
 	private showExitHint = false;
+	private gitWatcher: FSWatcher | null = null;
+	private onBranchChange: (() => void) | null = null;
 
 	constructor(state: AgentState) {
 		this.state = state;
+	}
+
+	/**
+	 * Set up a file watcher on .git/HEAD to detect branch changes.
+	 * Call the provided callback when branch changes.
+	 */
+	watchBranch(onBranchChange: () => void): void {
+		this.onBranchChange = onBranchChange;
+		this.setupGitWatcher();
+	}
+
+	private setupGitWatcher(): void {
+		// Clean up existing watcher
+		if (this.gitWatcher) {
+			this.gitWatcher.close();
+			this.gitWatcher = null;
+		}
+
+		const gitHeadPath = join(process.cwd(), ".git", "HEAD");
+		if (!existsSync(gitHeadPath)) {
+			return;
+		}
+
+		try {
+			this.gitWatcher = watch(gitHeadPath, () => {
+				this.cachedBranch = undefined; // Invalidate cache
+				if (this.onBranchChange) {
+					this.onBranchChange();
+				}
+			});
+		} catch {
+			// Silently fail if we can't watch
+		}
+	}
+
+	/**
+	 * Clean up the file watcher
+	 */
+	dispose(): void {
+		if (this.gitWatcher) {
+			this.gitWatcher.close();
+			this.gitWatcher = null;
+		}
 	}
 
 	updateState(state: AgentState): void {
