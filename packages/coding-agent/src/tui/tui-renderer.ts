@@ -15,6 +15,8 @@ import {
 } from "@mariozechner/pi-tui";
 
 import { exec } from "child_process";
+import { readFile, unlink, writeFile } from "fs/promises";
+import { relative } from "path";
 import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { exportSessionToHtml } from "../export-html.js";
 import { getApiKeyForModel, getAvailableModels } from "../model-config.js";
@@ -184,6 +186,11 @@ export class TuiRenderer {
 			description: "Clear context and start a fresh session",
 		};
 
+		const undoCommand: SlashCommand = {
+			name: "undo",
+			description: "Undo the last turn and revert file edits",
+		};
+
 		// Setup autocomplete for file paths and slash commands
 		const autocompleteProvider = new CombinedAutocompleteProvider(
 			[
@@ -198,6 +205,7 @@ export class TuiRenderer {
 				logoutCommand,
 				queueCommand,
 				clearCommand,
+				undoCommand,
 			],
 			process.cwd(),
 			fdPath,
@@ -454,6 +462,13 @@ export class TuiRenderer {
 				return;
 			}
 
+			// Check for /undo command
+			if (text === "/undo") {
+				this.handleUndoCommand();
+				this.editor.setText("");
+				return;
+			}
+
 			// Normal message submission - validate model and API key first
 			const currentModel = this.agent.state.model;
 			if (!currentModel) {
@@ -520,13 +535,23 @@ export class TuiRenderer {
 			// Handle UI updates
 			await this.handleEvent(event, this.agent.state);
 
-			// Save messages to session
 			if (event.type === "message_end") {
 				this.sessionManager.saveMessage(event.message);
 
-				// Check if we should initialize session now (after first user+assistant exchange)
 				if (this.sessionManager.shouldInitializeSession(this.agent.state.messages)) {
 					this.sessionManager.startSession(this.agent.state);
+				}
+
+				// Strip undo data from memory - will be lazily loaded from session file
+				if (event.message.role === "toolResult" && this.sessionManager.isEnabled()) {
+					const details = (event.message as any).details;
+					if (details) {
+						if (details.previousContent !== undefined) details.previousContent = undefined;
+						if (details.oldText !== undefined) {
+							details.oldText = undefined;
+							details.newText = undefined;
+						}
+					}
 				}
 			}
 		});
@@ -1671,6 +1696,223 @@ export class TuiRenderer {
 		this.chatContainer.addChild(
 			new Text(theme.fg("accent", "✓ Context cleared") + "\n" + theme.fg("muted", "Started fresh session"), 1, 1),
 		);
+
+		this.ui.requestRender();
+	}
+
+	private async handleUndoCommand(): Promise<void> {
+		const messages = this.agent.state.messages;
+
+		// Find the index of the last user message
+		let lastUserIndex = -1;
+		for (let i = messages.length - 1; i >= 0; i--) {
+			if (messages[i].role === "user") {
+				lastUserIndex = i;
+				break;
+			}
+		}
+
+		if (lastUserIndex === -1) {
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(theme.fg("dim", "Nothing to undo"), 1, 0));
+			this.ui.requestRender();
+			return;
+		}
+
+		const lastUserMessage = messages[lastUserIndex] as any;
+		const textBlocks = lastUserMessage.content.filter((c: any) => c.type === "text");
+		const lastUserText = textBlocks.map((c: any) => c.text).join("");
+
+		const messagesToUndo = messages.slice(lastUserIndex);
+
+		const toolCallNames = new Map<string, string>();
+		for (const msg of messagesToUndo) {
+			if (msg.role === "assistant") {
+				const assistantMsg = msg as AssistantMessage;
+				for (const content of assistantMsg.content) {
+					if (content.type === "toolCall") {
+						toolCallNames.set(content.id, content.name);
+					}
+				}
+			}
+		}
+
+		// Content fields may be undefined (stripped from memory) - lazily loaded when needed
+		type UndoOperation =
+			| {
+					type: "edit";
+					toolCallId: string;
+					path: string;
+					oldText: string | undefined;
+					newText: string | undefined;
+					index: number | undefined;
+			  }
+			| {
+					type: "write";
+					toolCallId: string;
+					path: string;
+					created: boolean;
+					previousContent: string | null | undefined;
+			  };
+
+		const undoOperations: UndoOperation[] = [];
+
+		for (const msg of messagesToUndo) {
+			if (msg.role === "toolResult") {
+				const toolResult = msg as any;
+				const toolName = toolCallNames.get(toolResult.toolCallId);
+
+				if (toolName === "edit" && toolResult.details) {
+					const details = toolResult.details as {
+						path?: string;
+						oldText?: string;
+						newText?: string;
+						index?: number;
+					};
+					if (details.path) {
+						undoOperations.push({
+							type: "edit",
+							toolCallId: toolResult.toolCallId,
+							path: details.path,
+							oldText: details.oldText,
+							newText: details.newText,
+							index: details.index,
+						});
+					}
+				} else if (toolName === "write" && toolResult.details) {
+					const details = toolResult.details as {
+						path?: string;
+						created?: boolean;
+						previousContent?: string | null;
+					};
+					if (details.path && details.created !== undefined) {
+						undoOperations.push({
+							type: "write",
+							toolCallId: toolResult.toolCallId,
+							path: details.path,
+							created: details.created,
+							previousContent: details.previousContent,
+						});
+					}
+				}
+			}
+		}
+
+		let revertedCount = 0;
+		const errors: string[] = [];
+		const revertedDetails: string[] = [];
+
+		// Revert in reverse order (newest first)
+		for (let i = undoOperations.length - 1; i >= 0; i--) {
+			const op = undoOperations[i];
+			const relPath = relative(process.cwd(), op.path);
+
+			if (op.type === "edit") {
+				try {
+					let { oldText, newText } = op;
+					if (oldText === undefined || newText === undefined) {
+						const storedDetails = this.sessionManager.findToolResultDetails(op.toolCallId);
+						if (storedDetails) {
+							oldText = storedDetails.oldText;
+							newText = storedDetails.newText;
+						}
+					}
+
+					if (oldText === undefined || newText === undefined) {
+						errors.push(`${relPath}: undo data not available`);
+						continue;
+					}
+
+					const currentContent = await readFile(op.path, "utf-8");
+
+					// Use index if available, fall back to indexOf (avoids String.replace $ issues)
+					let revertIndex: number;
+					if (op.index !== undefined) {
+						const atIndex = currentContent.substring(op.index, op.index + newText.length);
+						revertIndex = atIndex === newText ? op.index : currentContent.indexOf(newText);
+					} else {
+						revertIndex = currentContent.indexOf(newText);
+					}
+
+					if (revertIndex === -1) {
+						errors.push(`${relPath}: content has changed, cannot revert edit`);
+						continue;
+					}
+
+					const revertedContent =
+						currentContent.substring(0, revertIndex) +
+						oldText +
+						currentContent.substring(revertIndex + newText.length);
+
+					await writeFile(op.path, revertedContent, "utf-8");
+					revertedCount++;
+
+					const linesRemoved = (newText.match(/\n/g) || []).length + 1;
+					const linesAdded = (oldText.match(/\n/g) || []).length + 1;
+					revertedDetails.push(`${relPath} (-${linesRemoved}/+${linesAdded})`);
+				} catch (err: any) {
+					errors.push(`${relPath}: ${err.message}`);
+				}
+			} else if (op.type === "write") {
+				try {
+					let { previousContent } = op;
+					if (previousContent === undefined && !op.created) {
+						const storedDetails = this.sessionManager.findToolResultDetails(op.toolCallId);
+						if (storedDetails) {
+							previousContent = storedDetails.previousContent;
+						}
+					}
+
+					if (op.created) {
+						await unlink(op.path);
+						revertedCount++;
+						revertedDetails.push(`${relPath} (deleted)`);
+					} else if (previousContent !== null && previousContent !== undefined) {
+						await writeFile(op.path, previousContent, "utf-8");
+						revertedCount++;
+						revertedDetails.push(`${relPath} (restored)`);
+					} else {
+						errors.push(`${relPath}: cannot undo overwrite (original content not captured)`);
+					}
+				} catch (err: any) {
+					errors.push(`${relPath}: ${err.message}`);
+				}
+			}
+		}
+
+		const newSessionFile = this.sessionManager.createBranchedSession(this.agent.state, lastUserIndex - 1);
+		this.sessionManager.setSessionFile(newSessionFile);
+
+		const truncatedMessages = messages.slice(0, lastUserIndex);
+		this.agent.replaceMessages(truncatedMessages);
+
+		this.chatContainer.clear();
+		this.isFirstUserMessage = true;
+		this.renderInitialMessages(this.agent.state);
+
+		this.editor.setText(lastUserText);
+
+		this.chatContainer.addChild(new Spacer(1));
+		if (revertedDetails.length > 0 || errors.length > 0) {
+			let statusText = theme.fg("accent", "✓ Undid last turn");
+			if (revertedDetails.length > 0) {
+				statusText += "\n" + theme.fg("muted", revertedDetails.map((d) => `  ${d}`).join("\n"));
+			}
+			if (errors.length > 0) {
+				statusText += "\n" + theme.fg("warning", `Warnings:\n  ${errors.join("\n  ")}`);
+			}
+			this.chatContainer.addChild(new Text(statusText, 1, 0));
+		} else if (undoOperations.length === 0) {
+			this.chatContainer.addChild(
+				new Text(
+					theme.fg("accent", "✓ Undid last turn") + "\n" + theme.fg("muted", "No file operations to revert"),
+					1,
+					0,
+				),
+			);
+		} else {
+			this.chatContainer.addChild(new Text(theme.fg("accent", "✓ Undid last turn"), 1, 0));
+		}
 
 		this.ui.requestRender();
 	}

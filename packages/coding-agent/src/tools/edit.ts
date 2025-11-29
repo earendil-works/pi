@@ -6,9 +6,6 @@ import { constants } from "fs";
 import { access, readFile, writeFile } from "fs/promises";
 import { resolve as resolvePath } from "path";
 
-/**
- * Expand ~ to home directory
- */
 function expandPath(filePath: string): string {
 	if (filePath === "~") {
 		return os.homedir();
@@ -19,9 +16,6 @@ function expandPath(filePath: string): string {
 	return filePath;
 }
 
-/**
- * Generate a unified diff string with line numbers and context
- */
 function generateDiffString(oldContent: string, newContent: string, contextLines = 4): string {
 	const parts = Diff.diffLines(oldContent, newContent);
 	const output: string[] = [];
@@ -43,14 +37,12 @@ function generateDiffString(oldContent: string, newContent: string, contextLines
 		}
 
 		if (part.added || part.removed) {
-			// Show the change
 			for (const line of raw) {
 				if (part.added) {
 					const lineNum = String(newLineNum).padStart(lineNumWidth, " ");
 					output.push(`+${lineNum} ${line}`);
 					newLineNum++;
 				} else {
-					// removed
 					const lineNum = String(oldLineNum).padStart(lineNumWidth, " ");
 					output.push(`-${lineNum} ${line}`);
 					oldLineNum++;
@@ -58,31 +50,25 @@ function generateDiffString(oldContent: string, newContent: string, contextLines
 			}
 			lastWasChange = true;
 		} else {
-			// Context lines - only show a few before/after changes
 			const nextPartIsChange = i < parts.length - 1 && (parts[i + 1].added || parts[i + 1].removed);
 
 			if (lastWasChange || nextPartIsChange) {
-				// Show context
 				let linesToShow = raw;
 				let skipStart = 0;
 				let skipEnd = 0;
 
 				if (!lastWasChange) {
-					// Show only last N lines as leading context
 					skipStart = Math.max(0, raw.length - contextLines);
 					linesToShow = raw.slice(skipStart);
 				}
 
 				if (!nextPartIsChange && linesToShow.length > contextLines) {
-					// Show only first N lines as trailing context
 					skipEnd = linesToShow.length - contextLines;
 					linesToShow = linesToShow.slice(0, contextLines);
 				}
 
-				// Add ellipsis if we skipped lines at start
 				if (skipStart > 0) {
 					output.push(` ${"".padStart(lineNumWidth, " ")} ...`);
-					// Update line numbers for the skipped leading context
 					oldLineNum += skipStart;
 					newLineNum += skipStart;
 				}
@@ -94,15 +80,12 @@ function generateDiffString(oldContent: string, newContent: string, contextLines
 					newLineNum++;
 				}
 
-				// Add ellipsis if we skipped lines at end
 				if (skipEnd > 0) {
 					output.push(` ${"".padStart(lineNumWidth, " ")} ...`);
-					// Update line numbers for the skipped trailing context
 					oldLineNum += skipEnd;
 					newLineNum += skipEnd;
 				}
 			} else {
-				// Skip these context lines entirely
 				oldLineNum += raw.length;
 				newLineNum += raw.length;
 			}
@@ -135,17 +118,14 @@ export const editTool: AgentTool<typeof editSchema> = {
 
 		return new Promise<{
 			content: Array<{ type: "text"; text: string }>;
-			details: { diff: string } | undefined;
+			details: { diff: string; path: string; oldText: string; newText: string; index: number } | undefined;
 		}>((resolve, reject) => {
-			// Check if already aborted
 			if (signal?.aborted) {
 				reject(new Error("Operation aborted"));
 				return;
 			}
 
 			let aborted = false;
-
-			// Set up abort handler
 			const onAbort = () => {
 				aborted = true;
 				reject(new Error("Operation aborted"));
@@ -155,10 +135,8 @@ export const editTool: AgentTool<typeof editSchema> = {
 				signal.addEventListener("abort", onAbort, { once: true });
 			}
 
-			// Perform the edit operation
 			(async () => {
 				try {
-					// Check if file exists
 					try {
 						await access(absolutePath, constants.R_OK | constants.W_OK);
 					} catch {
@@ -169,20 +147,12 @@ export const editTool: AgentTool<typeof editSchema> = {
 						return;
 					}
 
-					// Check if aborted before reading
-					if (aborted) {
-						return;
-					}
+					if (aborted) return;
 
-					// Read the file
 					const content = await readFile(absolutePath, "utf-8");
 
-					// Check if aborted after reading
-					if (aborted) {
-						return;
-					}
+					if (aborted) return;
 
-					// Check if old text exists
 					if (!content.includes(oldText)) {
 						if (signal) {
 							signal.removeEventListener("abort", onAbort);
@@ -195,7 +165,6 @@ export const editTool: AgentTool<typeof editSchema> = {
 						return;
 					}
 
-					// Count occurrences
 					const occurrences = content.split(oldText).length - 1;
 
 					if (occurrences > 1) {
@@ -210,17 +179,12 @@ export const editTool: AgentTool<typeof editSchema> = {
 						return;
 					}
 
-					// Check if aborted before writing
-					if (aborted) {
-						return;
-					}
+					if (aborted) return;
 
-					// Perform replacement using indexOf + substring (raw string replace, no special character interpretation)
-					// String.replace() interprets $ in the replacement string, so we do manual replacement
+					// Use indexOf+substring instead of String.replace() to avoid $ interpretation
 					const index = content.indexOf(oldText);
 					const newContent = content.substring(0, index) + newText + content.substring(index + oldText.length);
 
-					// Verify the replacement actually changed something
 					if (content === newContent) {
 						if (signal) {
 							signal.removeEventListener("abort", onAbort);
@@ -235,12 +199,8 @@ export const editTool: AgentTool<typeof editSchema> = {
 
 					await writeFile(absolutePath, newContent, "utf-8");
 
-					// Check if aborted after writing
-					if (aborted) {
-						return;
-					}
+					if (aborted) return;
 
-					// Clean up abort handler
 					if (signal) {
 						signal.removeEventListener("abort", onAbort);
 					}
@@ -252,14 +212,18 @@ export const editTool: AgentTool<typeof editSchema> = {
 								text: `Successfully replaced text in ${path}. Changed ${oldText.length} characters to ${newText.length} characters.`,
 							},
 						],
-						details: { diff: generateDiffString(content, newContent) },
+						details: {
+							diff: generateDiffString(content, newContent),
+							path: absolutePath,
+							oldText,
+							newText,
+							index,
+						},
 					});
 				} catch (error: any) {
-					// Clean up abort handler
 					if (signal) {
 						signal.removeEventListener("abort", onAbort);
 					}
-
 					if (!aborted) {
 						reject(error);
 					}

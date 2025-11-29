@@ -1,12 +1,9 @@
 import * as os from "node:os";
 import type { AgentTool } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
-import { mkdir, writeFile } from "fs/promises";
+import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname, resolve as resolvePath } from "path";
 
-/**
- * Expand ~ to home directory
- */
 function expandPath(filePath: string): string {
 	if (filePath === "~") {
 		return os.homedir();
@@ -32,16 +29,16 @@ export const writeTool: AgentTool<typeof writeSchema> = {
 		const absolutePath = resolvePath(expandPath(path));
 		const dir = dirname(absolutePath);
 
-		return new Promise<{ content: Array<{ type: "text"; text: string }>; details: undefined }>((resolve, reject) => {
-			// Check if already aborted
+		return new Promise<{
+			content: Array<{ type: "text"; text: string }>;
+			details: { path: string; created: boolean; previousContent: string | null } | undefined;
+		}>((resolve, reject) => {
 			if (signal?.aborted) {
 				reject(new Error("Operation aborted"));
 				return;
 			}
 
 			let aborted = false;
-
-			// Set up abort handler
 			const onAbort = () => {
 				aborted = true;
 				reject(new Error("Operation aborted"));
@@ -51,40 +48,51 @@ export const writeTool: AgentTool<typeof writeSchema> = {
 				signal.addEventListener("abort", onAbort, { once: true });
 			}
 
-			// Perform the write operation
 			(async () => {
 				try {
-					// Create parent directories if needed
+					// Capture file state for undo support
+					let previousContent: string | null = null;
+					let created = false;
+
+					try {
+						previousContent = await readFile(absolutePath, "utf-8");
+						created = false;
+					} catch (error: any) {
+						if (error.code === "ENOENT") {
+							created = true;
+						} else {
+							// Unreadable file - proceed but undo won't work
+							previousContent = null;
+							created = false;
+						}
+					}
+
+					if (aborted) return;
+
 					await mkdir(dir, { recursive: true });
 
-					// Check if aborted before writing
-					if (aborted) {
-						return;
-					}
+					if (aborted) return;
 
-					// Write the file
 					await writeFile(absolutePath, content, "utf-8");
 
-					// Check if aborted after writing
-					if (aborted) {
-						return;
-					}
+					if (aborted) return;
 
-					// Clean up abort handler
 					if (signal) {
 						signal.removeEventListener("abort", onAbort);
 					}
 
 					resolve({
 						content: [{ type: "text", text: `Successfully wrote ${content.length} bytes to ${path}` }],
-						details: undefined,
+						details: {
+							path: absolutePath,
+							created,
+							previousContent,
+						},
 					});
 				} catch (error: any) {
-					// Clean up abort handler
 					if (signal) {
 						signal.removeEventListener("abort", onAbort);
 					}
-
 					if (!aborted) {
 						reject(error);
 					}

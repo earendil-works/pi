@@ -13,6 +13,7 @@ import {
 } from "fs";
 import { homedir } from "os";
 import { join, resolve } from "path";
+import { StringDecoder } from "string_decoder";
 
 function uuidv4(): string {
 	const bytes = randomBytes(16);
@@ -298,18 +299,10 @@ export class SessionManager {
 		return this.sessionFile;
 	}
 
-	/**
-	 * Check if the session has been initialized (has content saved to disk)
-	 */
 	isInitialized(): boolean {
 		return this.sessionInitialized;
 	}
 
-	/**
-	 * Find a session file by UUID in the current workspace's session directory.
-	 * Matches by filename pattern (*_uuid.jsonl) and optionally verifies session header.
-	 * Returns the full path if found, null otherwise.
-	 */
 	findSessionByUuid(uuid: string): string | null {
 		try {
 			const files = readdirSync(this.sessionDir).filter((f) => f.endsWith(".jsonl"));
@@ -339,10 +332,6 @@ export class SessionManager {
 		}
 	}
 
-	/**
-	 * Verify that a session file contains the expected UUID in its header.
-	 * Only reads the first 1KB to avoid loading large session files into memory.
-	 */
 	private verifySessionUuid(filePath: string, uuid: string): boolean {
 		try {
 			if (!existsSync(filePath)) return false;
@@ -369,9 +358,6 @@ export class SessionManager {
 		}
 	}
 
-	/**
-	 * Load all sessions for the current directory with metadata
-	 */
 	loadAllSessions(): Array<{
 		path: string;
 		id: string;
@@ -468,20 +454,72 @@ export class SessionManager {
 		return sessions;
 	}
 
-	/**
-	 * Set the session file to an existing session
-	 */
 	setSessionFile(path: string): void {
 		this.sessionFile = path;
 		this.loadSessionId();
-		// Mark as initialized since we're loading an existing session
 		this.sessionInitialized = existsSync(path);
 	}
 
-	/**
-	 * Check if we should initialize the session based on message history.
-	 * Session is initialized when we have at least 1 user message and 1 assistant message.
-	 */
+	/** Lazily load undo data from session file (chunked to avoid memory spike) */
+	findToolResultDetails(toolCallId: string): any | null {
+		if (!this.enabled || !existsSync(this.sessionFile)) return null;
+
+		const fd = openSync(this.sessionFile, "r");
+		const CHUNK_SIZE = 64 * 1024; // 64KB chunks
+		const buffer = Buffer.alloc(CHUNK_SIZE);
+		const decoder = new StringDecoder("utf8");
+		let remainder = "";
+
+		try {
+			for (;;) {
+				const bytesRead = readSync(fd, buffer, 0, CHUNK_SIZE, null);
+				if (bytesRead === 0) {
+					const final = decoder.end();
+					if (final) remainder += final;
+					break;
+				}
+				// StringDecoder handles multi-byte UTF-8 chars split across chunk boundaries
+				const chunk = remainder + decoder.write(buffer.subarray(0, bytesRead));
+				const lines = chunk.split("\n");
+				remainder = lines.pop() || "";
+
+				for (const line of lines) {
+					if (!line.trim()) continue;
+					try {
+						const entry = JSON.parse(line);
+						if (entry.type === "message" && entry.message?.role === "toolResult") {
+							if (entry.message.toolCallId === toolCallId) {
+								return entry.message.details;
+							}
+						}
+					} catch {
+						// Skip malformed lines
+					}
+				}
+			}
+
+			if (remainder.trim()) {
+				try {
+					const entry = JSON.parse(remainder);
+					if (entry.type === "message" && entry.message?.role === "toolResult") {
+						if (entry.message.toolCallId === toolCallId) {
+							return entry.message.details;
+						}
+					}
+				} catch {
+					// Skip malformed line
+				}
+			}
+		} finally {
+			closeSync(fd);
+		}
+
+		return null;
+	}
+
+	isEnabled(): boolean {
+		return this.enabled;
+	}
 	shouldInitializeSession(messages: any[]): boolean {
 		if (this.sessionInitialized) return false;
 
@@ -491,18 +529,12 @@ export class SessionManager {
 		return userMessages.length >= 1 && assistantMessages.length >= 1;
 	}
 
-	/**
-	 * Create a branched session from a specific message index.
-	 * If branchFromIndex is -1, creates an empty session.
-	 * Returns the new session file path.
-	 */
+	/** Streams messages from session file to preserve full undo data (stripped from memory) */
 	createBranchedSession(state: any, branchFromIndex: number): string {
-		// Create a new session ID for the branch
 		const newSessionId = uuidv4();
 		const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 		const newSessionFile = join(this.sessionDir, `${timestamp}_${newSessionId}.jsonl`);
 
-		// Write session header
 		const entry: SessionHeader = {
 			type: "session",
 			id: newSessionId,
@@ -514,8 +546,9 @@ export class SessionManager {
 		};
 		appendFileSync(newSessionFile, JSON.stringify(entry) + "\n");
 
-		// Write messages up to and including the branch point (if >= 0)
-		if (branchFromIndex >= 0) {
+		if (branchFromIndex >= 0 && existsSync(this.sessionFile)) {
+			this.streamMessagesToFile(this.sessionFile, newSessionFile, branchFromIndex);
+		} else if (branchFromIndex >= 0) {
 			const messagesToWrite = state.messages.slice(0, branchFromIndex + 1);
 			for (const message of messagesToWrite) {
 				const messageEntry: SessionMessageEntry = {
@@ -528,5 +561,68 @@ export class SessionManager {
 		}
 
 		return newSessionFile;
+	}
+
+	private streamMessagesToFile(sourceFile: string, destFile: string, maxMessageIndex: number): void {
+		const fd = openSync(sourceFile, "r");
+		const CHUNK_SIZE = 64 * 1024;
+		const buffer = Buffer.alloc(CHUNK_SIZE);
+		const decoder = new StringDecoder("utf8");
+		let remainder = "";
+		let messageCount = 0;
+
+		try {
+			for (;;) {
+				const bytesRead = readSync(fd, buffer, 0, CHUNK_SIZE, null);
+				if (bytesRead === 0) {
+					const final = decoder.end();
+					if (final) remainder += final;
+					break;
+				}
+
+				const chunk = remainder + decoder.write(buffer.subarray(0, bytesRead));
+				const lines = chunk.split("\n");
+				remainder = lines.pop() || "";
+
+				for (const line of lines) {
+					if (!line.trim()) continue;
+					try {
+						const entry = JSON.parse(line);
+						if (entry.type === "message") {
+							if (messageCount > maxMessageIndex) return;
+							const messageEntry: SessionMessageEntry = {
+								type: "message",
+								timestamp: new Date().toISOString(),
+								message: entry.message,
+							};
+							appendFileSync(destFile, JSON.stringify(messageEntry) + "\n");
+							messageCount++;
+						}
+					} catch {
+						// Skip malformed lines
+					}
+				}
+
+				if (messageCount > maxMessageIndex) return;
+			}
+
+			if (remainder.trim() && messageCount <= maxMessageIndex) {
+				try {
+					const entry = JSON.parse(remainder);
+					if (entry.type === "message") {
+						const messageEntry: SessionMessageEntry = {
+							type: "message",
+							timestamp: new Date().toISOString(),
+							message: entry.message,
+						};
+						appendFileSync(destFile, JSON.stringify(messageEntry) + "\n");
+					}
+				} catch {
+					// Skip malformed line
+				}
+			}
+		} finally {
+			closeSync(fd);
+		}
 	}
 }
