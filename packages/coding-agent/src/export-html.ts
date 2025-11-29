@@ -1,6 +1,6 @@
 import type { AgentState } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "@mariozechner/pi-ai";
-import { readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { basename, dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -907,6 +907,714 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
 </html>`;
 
 	// Write HTML file
+	writeFileSync(outputPath, html, "utf8");
+
+	return outputPath;
+}
+
+/**
+ * Parsed session data structure for HTML generation
+ */
+interface ParsedSessionData {
+	sessionId: string;
+	timestamp: string;
+	cwd?: string;
+	systemPrompt?: string;
+	modelsUsed: Set<string>;
+	messages: Message[];
+	toolResultsMap: Map<string, ToolResultMessage>;
+	sessionEvents: any[];
+	tokenStats: { input: number; output: number; cacheRead: number; cacheWrite: number };
+	costStats: { input: number; output: number; cacheRead: number; cacheWrite: number };
+	tools?: { name: string; description: string }[];
+	isStreamingFormat?: boolean;
+}
+
+/**
+ * Parse session manager format (type: "session", "message", "model_change")
+ */
+function parseSessionManagerFormat(lines: string[]): ParsedSessionData {
+	const data: ParsedSessionData = {
+		sessionId: "unknown",
+		timestamp: new Date().toISOString(),
+		modelsUsed: new Set(),
+		messages: [],
+		toolResultsMap: new Map(),
+		sessionEvents: [],
+		tokenStats: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		costStats: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+	};
+
+	for (const line of lines) {
+		try {
+			const entry = JSON.parse(line);
+			if (entry.type === "session") {
+				data.sessionId = entry.id || "unknown";
+				data.timestamp = entry.timestamp || data.timestamp;
+				data.cwd = entry.cwd;
+				data.systemPrompt = entry.systemPrompt;
+				if (entry.modelId) {
+					const modelInfo = entry.provider ? `${entry.provider}/${entry.modelId}` : entry.modelId;
+					data.modelsUsed.add(modelInfo);
+				}
+			} else if (entry.type === "message") {
+				data.messages.push(entry.message);
+				data.sessionEvents.push(entry);
+				if (entry.message.role === "toolResult") {
+					data.toolResultsMap.set(entry.message.toolCallId, entry.message);
+				}
+				if (entry.message.role === "assistant" && entry.message.usage) {
+					const usage = entry.message.usage;
+					data.tokenStats.input += usage.input || 0;
+					data.tokenStats.output += usage.output || 0;
+					data.tokenStats.cacheRead += usage.cacheRead || 0;
+					data.tokenStats.cacheWrite += usage.cacheWrite || 0;
+					if (usage.cost) {
+						data.costStats.input += usage.cost.input || 0;
+						data.costStats.output += usage.cost.output || 0;
+						data.costStats.cacheRead += usage.cost.cacheRead || 0;
+						data.costStats.cacheWrite += usage.cost.cacheWrite || 0;
+					}
+				}
+			} else if (entry.type === "model_change") {
+				data.sessionEvents.push(entry);
+				if (entry.modelId) {
+					const modelInfo = entry.provider ? `${entry.provider}/${entry.modelId}` : entry.modelId;
+					data.modelsUsed.add(modelInfo);
+				}
+			}
+		} catch {
+			// Skip malformed lines
+		}
+	}
+
+	return data;
+}
+
+/**
+ * Parse streaming event format (type: "agent_start", "message_start", "message_end", etc.)
+ */
+function parseStreamingEventFormat(lines: string[]): ParsedSessionData {
+	const data: ParsedSessionData = {
+		sessionId: "unknown",
+		timestamp: new Date().toISOString(),
+		modelsUsed: new Set(),
+		messages: [],
+		toolResultsMap: new Map(),
+		sessionEvents: [],
+		tokenStats: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		costStats: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		isStreamingFormat: true,
+	};
+
+	let timestampSet = false;
+
+	// Track messages by collecting message_end events (which have the final state)
+	for (const line of lines) {
+		try {
+			const entry = JSON.parse(line);
+
+			if (entry.type === "message_end" && entry.message) {
+				const msg = entry.message;
+				data.messages.push(msg);
+				data.sessionEvents.push({ type: "message", message: msg, timestamp: msg.timestamp });
+
+				// Build tool results map
+				if (msg.role === "toolResult") {
+					data.toolResultsMap.set(msg.toolCallId, msg);
+				}
+
+				// Track models and accumulate stats from assistant messages
+				if (msg.role === "assistant") {
+					if (msg.model) {
+						const modelInfo = msg.provider ? `${msg.provider}/${msg.model}` : msg.model;
+						data.modelsUsed.add(modelInfo);
+					}
+					if (msg.usage) {
+						data.tokenStats.input += msg.usage.input || 0;
+						data.tokenStats.output += msg.usage.output || 0;
+						data.tokenStats.cacheRead += msg.usage.cacheRead || 0;
+						data.tokenStats.cacheWrite += msg.usage.cacheWrite || 0;
+						if (msg.usage.cost) {
+							data.costStats.input += msg.usage.cost.input || 0;
+							data.costStats.output += msg.usage.cost.output || 0;
+							data.costStats.cacheRead += msg.usage.cost.cacheRead || 0;
+							data.costStats.cacheWrite += msg.usage.cost.cacheWrite || 0;
+						}
+					}
+				}
+
+				// Use first message timestamp as session timestamp
+				if (!timestampSet && msg.timestamp) {
+					data.timestamp = new Date(msg.timestamp).toISOString();
+					timestampSet = true;
+				}
+			}
+		} catch {
+			// Skip malformed lines
+		}
+	}
+
+	// Generate a session ID from the timestamp
+	data.sessionId = `stream-${data.timestamp.replace(/[:.]/g, "-")}`;
+
+	return data;
+}
+
+/**
+ * Detect the format of a session file by examining the first valid JSON line
+ */
+function detectFormat(lines: string[]): "session-manager" | "streaming-events" | "unknown" {
+	for (const line of lines) {
+		try {
+			const entry = JSON.parse(line);
+			if (entry.type === "session") return "session-manager";
+			if (entry.type === "agent_start" || entry.type === "message_start" || entry.type === "turn_start") {
+				return "streaming-events";
+			}
+		} catch {
+			// Skip malformed lines
+		}
+	}
+	return "unknown";
+}
+
+/**
+ * Generate HTML from parsed session data
+ */
+function generateHtml(data: ParsedSessionData, inputFilename: string): string {
+	// Calculate message stats
+	const userMessages = data.messages.filter((m) => m.role === "user").length;
+	const assistantMessages = data.messages.filter((m) => m.role === "assistant").length;
+
+	// Count tool calls from assistant messages
+	let toolCallsCount = 0;
+	for (const message of data.messages) {
+		if (message.role === "assistant") {
+			const assistantMsg = message as AssistantMessage;
+			toolCallsCount += assistantMsg.content.filter((c) => c.type === "toolCall").length;
+		}
+	}
+
+	// Get last assistant message for context info
+	const lastAssistantMessage = data.messages
+		.slice()
+		.reverse()
+		.find((m) => m.role === "assistant" && (m as AssistantMessage).stopReason !== "aborted") as
+		| AssistantMessage
+		| undefined;
+
+	const contextTokens = lastAssistantMessage
+		? lastAssistantMessage.usage.input +
+			lastAssistantMessage.usage.output +
+			lastAssistantMessage.usage.cacheRead +
+			lastAssistantMessage.usage.cacheWrite
+		: 0;
+
+	const lastModel = lastAssistantMessage?.model || "unknown";
+	const lastProvider = lastAssistantMessage?.provider || "";
+	const lastModelInfo = lastProvider ? `${lastProvider}/${lastModel}` : lastModel;
+
+	// Generate messages HTML
+	let messagesHtml = "";
+	for (const event of data.sessionEvents) {
+		if (event.type === "message" && event.message.role !== "toolResult") {
+			messagesHtml += formatMessage(event.message, data.toolResultsMap);
+		} else if (event.type === "model_change") {
+			messagesHtml += formatModelChange(event);
+		}
+	}
+
+	// Tools section (only if tools info available)
+	const toolsHtml = data.tools
+		? `
+        <div class="tools-list">
+            <div class="tools-header">Available Tools</div>
+            <div class="tools-content">
+                ${data.tools.map((tool) => `<div class="tool-item"><span class="tool-item-name">${escapeHtml(tool.name)}</span> - ${escapeHtml(tool.description)}</div>`).join("")}
+            </div>
+        </div>`
+		: "";
+
+	// System prompt section (only if available)
+	const systemPromptHtml = data.systemPrompt
+		? `
+        <div class="system-prompt">
+            <div class="system-prompt-header">System Prompt</div>
+            <div class="system-prompt-content">${escapeHtml(data.systemPrompt)}</div>
+        </div>`
+		: "";
+
+	return `<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Session Export - ${escapeHtml(inputFilename)}</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            color: ${COLORS.text};
+            background: ${COLORS.bodyBg};
+            padding: 24px;
+        }
+
+        .container {
+            max-width: 700px;
+            margin: 0 auto;
+        }
+
+        .header {
+            margin-bottom: 24px;
+            padding: 16px;
+            background: ${COLORS.containerBg};
+            border-radius: 4px;
+        }
+
+        .header h1 {
+            font-size: 14px;
+            font-weight: bold;
+            margin-bottom: 12px;
+            color: ${COLORS.cyan};
+        }
+
+        .header-info {
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            font-size: 11px;
+        }
+
+        .info-item {
+            color: ${COLORS.textDim};
+            display: flex;
+            align-items: baseline;
+        }
+
+        .info-label {
+            font-weight: 600;
+            margin-right: 8px;
+            min-width: 100px;
+        }
+
+        .info-value {
+            color: ${COLORS.text};
+            flex: 1;
+        }
+
+        .info-value.cost {
+            font-family: 'SF Mono', monospace;
+        }
+
+        .messages {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .message-timestamp {
+            font-size: 10px;
+            color: ${COLORS.textDim};
+            margin-bottom: 4px;
+            opacity: 0.8;
+        }
+
+        .user-message {
+            background: ${COLORS.userMessageBg};
+            padding: 12px 16px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+
+        .assistant-message {
+            padding: 0;
+        }
+
+        .assistant-text {
+            padding: 12px 16px;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+
+        .thinking-text {
+            padding: 12px 16px;
+            color: ${COLORS.italic};
+            font-style: italic;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+
+        .model-change {
+            padding: 8px 16px;
+            background: rgb(40, 40, 50);
+            border-radius: 4px;
+        }
+
+        .model-change-text {
+            color: ${COLORS.textDim};
+            font-size: 11px;
+        }
+
+        .model-name {
+            color: ${COLORS.cyan};
+            font-weight: bold;
+        }
+
+        .tool-execution {
+            padding: 12px 16px;
+            border-radius: 4px;
+            margin-top: 8px;
+        }
+
+        .tool-header {
+            font-weight: bold;
+        }
+
+        .tool-name {
+            font-weight: bold;
+        }
+
+        .tool-path {
+            color: ${COLORS.cyan};
+            word-break: break-all;
+        }
+
+        .line-count {
+            color: ${COLORS.textDim};
+        }
+
+        .tool-command {
+            font-weight: bold;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+        }
+
+        .tool-output {
+            margin-top: 12px;
+            color: ${COLORS.textDim};
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+            font-family: inherit;
+            overflow-x: auto;
+        }
+
+        .tool-output > div {
+            line-height: 1.4;
+        }
+
+        .tool-output pre {
+            margin: 0;
+            font-family: inherit;
+            color: inherit;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+
+        .tool-output.expandable {
+            cursor: pointer;
+        }
+
+        .tool-output.expandable:hover {
+            opacity: 0.9;
+        }
+
+        .tool-output.expandable .output-full {
+            display: none;
+        }
+
+        .tool-output.expandable.expanded .output-preview {
+            display: none;
+        }
+
+        .tool-output.expandable.expanded .output-full {
+            display: block;
+        }
+
+        .expand-hint {
+            color: ${COLORS.cyan};
+            font-style: italic;
+            margin-top: 4px;
+        }
+
+        .system-prompt {
+            background: rgb(60, 55, 40);
+            padding: 12px 16px;
+            border-radius: 4px;
+            margin-bottom: 16px;
+        }
+
+        .system-prompt-header {
+            font-weight: bold;
+            color: ${COLORS.yellow};
+            margin-bottom: 8px;
+        }
+
+        .system-prompt-content {
+            color: ${COLORS.textDim};
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+            word-break: break-word;
+            font-size: 11px;
+        }
+
+        .tools-list {
+            background: rgb(60, 55, 40);
+            padding: 12px 16px;
+            border-radius: 4px;
+            margin-bottom: 16px;
+        }
+
+        .tools-header {
+            font-weight: bold;
+            color: ${COLORS.yellow};
+            margin-bottom: 8px;
+        }
+
+        .tools-content {
+            color: ${COLORS.textDim};
+            font-size: 11px;
+        }
+
+        .tool-item {
+            margin: 4px 0;
+        }
+
+        .tool-item-name {
+            font-weight: bold;
+            color: ${COLORS.text};
+        }
+
+        .tool-diff {
+            margin-top: 12px;
+            font-size: 11px;
+            font-family: ui-monospace, 'Cascadia Code', 'Source Code Pro', Menlo, Consolas, 'DejaVu Sans Mono', monospace;
+            overflow-x: auto;
+            max-width: 100%;
+        }
+
+        .diff-line-old {
+            color: ${COLORS.red};
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+
+        .diff-line-new {
+            color: ${COLORS.green};
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+
+        .diff-line-context {
+            color: ${COLORS.textDim};
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            overflow-wrap: break-word;
+        }
+
+        .error-text {
+            color: ${COLORS.red};
+            padding: 12px 16px;
+        }
+
+        .footer {
+            margin-top: 48px;
+            padding: 20px;
+            text-align: center;
+            color: ${COLORS.textDim};
+            font-size: 10px;
+        }
+
+        .streaming-notice {
+            background: rgb(50, 45, 35);
+            padding: 12px 16px;
+            border-radius: 4px;
+            margin-bottom: 16px;
+            color: ${COLORS.textDim};
+            font-size: 11px;
+        }
+
+        @media print {
+            body {
+                background: white;
+                color: black;
+            }
+            .tool-execution {
+                border: 1px solid #ddd;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>pi v${VERSION}</h1>
+            <div class="header-info">
+                <div class="info-item">
+                    <span class="info-label">Session:</span>
+                    <span class="info-value">${escapeHtml(data.sessionId)}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Date:</span>
+                    <span class="info-value">${new Date(data.timestamp).toLocaleString()}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Models:</span>
+                    <span class="info-value">${
+								Array.from(data.modelsUsed)
+									.map((m) => escapeHtml(m))
+									.join(", ") || "unknown"
+							}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="header">
+            <h1>Messages</h1>
+            <div class="header-info">
+                <div class="info-item">
+                    <span class="info-label">User:</span>
+                    <span class="info-value">${userMessages}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Assistant:</span>
+                    <span class="info-value">${assistantMessages}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Tool Calls:</span>
+                    <span class="info-value">${toolCallsCount}</span>
+                </div>
+            </div>
+        </div>
+
+        <div class="header">
+            <h1>Tokens & Cost</h1>
+            <div class="header-info">
+                <div class="info-item">
+                    <span class="info-label">Input:</span>
+                    <span class="info-value">${data.tokenStats.input.toLocaleString()} tokens</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Output:</span>
+                    <span class="info-value">${data.tokenStats.output.toLocaleString()} tokens</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Cache Read:</span>
+                    <span class="info-value">${data.tokenStats.cacheRead.toLocaleString()} tokens</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Cache Write:</span>
+                    <span class="info-value">${data.tokenStats.cacheWrite.toLocaleString()} tokens</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Total:</span>
+                    <span class="info-value">${(data.tokenStats.input + data.tokenStats.output + data.tokenStats.cacheRead + data.tokenStats.cacheWrite).toLocaleString()} tokens</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Input Cost:</span>
+                    <span class="info-value cost">$${data.costStats.input.toFixed(4)}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Output Cost:</span>
+                    <span class="info-value cost">$${data.costStats.output.toFixed(4)}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Cache Read Cost:</span>
+                    <span class="info-value cost">$${data.costStats.cacheRead.toFixed(4)}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Cache Write Cost:</span>
+                    <span class="info-value cost">$${data.costStats.cacheWrite.toFixed(4)}</span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Total Cost:</span>
+                    <span class="info-value cost"><strong>$${(data.costStats.input + data.costStats.output + data.costStats.cacheRead + data.costStats.cacheWrite).toFixed(4)}</strong></span>
+                </div>
+                <div class="info-item">
+                    <span class="info-label">Context Usage:</span>
+                    <span class="info-value">${contextTokens.toLocaleString()} tokens (last turn) - ${escapeHtml(lastModelInfo)}</span>
+                </div>
+            </div>
+        </div>
+
+        ${systemPromptHtml}
+        ${toolsHtml}
+
+        ${
+				data.isStreamingFormat
+					? `<div class="streaming-notice">
+            <em>Note: This session was reconstructed from raw agent event logs, which do not contain system prompt or tool definitions.</em>
+        </div>`
+					: ""
+			}
+
+        <div class="messages">
+            ${messagesHtml}
+        </div>
+
+        <div class="footer">
+            Generated by pi coding-agent on ${new Date().toLocaleString()}
+        </div>
+    </div>
+</body>
+</html>`;
+}
+
+/**
+ * Export a session file to HTML (standalone, without AgentState or SessionManager)
+ * Auto-detects format: session manager format or streaming event format
+ */
+export function exportFromFile(inputPath: string, outputPath?: string): string {
+	if (!existsSync(inputPath)) {
+		throw new Error(`File not found: ${inputPath}`);
+	}
+
+	const content = readFileSync(inputPath, "utf8");
+	const lines = content
+		.trim()
+		.split("\n")
+		.filter((l) => l.trim());
+
+	if (lines.length === 0) {
+		throw new Error(`Empty file: ${inputPath}`);
+	}
+
+	const format = detectFormat(lines);
+	if (format === "unknown") {
+		throw new Error(`Unknown session file format: ${inputPath}`);
+	}
+
+	const data = format === "session-manager" ? parseSessionManagerFormat(lines) : parseStreamingEventFormat(lines);
+
+	// Generate output path if not provided
+	if (!outputPath) {
+		const inputBasename = basename(inputPath, ".jsonl");
+		outputPath = `pi-session-${inputBasename}.html`;
+	}
+
+	const html = generateHtml(data, basename(inputPath));
 	writeFileSync(outputPath, html, "utf8");
 
 	return outputPath;

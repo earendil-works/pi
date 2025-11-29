@@ -4,6 +4,10 @@
 
 ### Added
 
+- **`--export` CLI Flag**: Export session files to self-contained HTML files from the command line. Auto-detects format (session manager format or streaming event format). Usage: `pi --export session.jsonl` or `pi --export session.jsonl output.html`. Note: Streaming event logs (from `--mode json`) don't contain system prompt or tool definitions, so those sections are omitted with a notice in the HTML. ([#80](https://github.com/badlogic/pi-mono/issues/80))
+
+- **Git Branch File Watcher**: Footer now auto-updates when the git branch changes externally (e.g., running `git checkout` in another terminal). Watches `.git/HEAD` for changes and refreshes the branch display automatically. ([#79](https://github.com/badlogic/pi-mono/pull/79) by [@fightbulc](https://github.com/fightbulc))
+
 - **Read-Only Exploration Tools**: Added `grep`, `find`, and `ls` tools for safe code exploration without modification risk. These tools are available via the new `--tools` flag.
   - `grep`: Uses `ripgrep` (auto-downloaded) for fast regex searching. Respects `.gitignore` (including nested), supports glob filtering, context lines, and hidden files.
   - `find`: Uses `fd` (auto-downloaded) for fast file finding. Respects `.gitignore`, supports glob patterns, and hidden files.

@@ -773,6 +773,15 @@ Examples:
 - `--thinking high` - Start with high thinking level
 - `--thinking off` - Disable thinking even if saved setting was different
 
+**--export <file>**
+Export a session file to a self-contained HTML file and exit. Auto-detects format (session manager format or streaming event format). Optionally provide an output filename as the second argument.
+
+**Note:** When exporting streaming event logs (e.g., `pi-output.jsonl` from `--mode json`), the system prompt and tool definitions are not available since they are not recorded in the event stream. The exported HTML will include a notice about this.
+
+Examples:
+- `--export session.jsonl` - Export to `pi-session-session.html`
+- `--export session.jsonl output.html` - Export to custom filename
+
 **--help, -h**
 Show help message
 
@@ -827,6 +836,10 @@ pi --tools read,grep,find,ls -p "Review the architecture in src/"
 pi --tools read,bash,grep,find,ls \
    --no-session \
    -p "Use bash only for read-only operations. Read issue #74 with gh, then review the implementation"
+
+# Export a session file to HTML
+pi --export ~/.pi/agent/sessions/--myproject--/session.jsonl
+pi --export session.jsonl my-export.html
 ```
 
 ## Tools

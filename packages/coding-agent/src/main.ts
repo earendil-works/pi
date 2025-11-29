@@ -7,6 +7,7 @@ import { homedir } from "os";
 import { dirname, extname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { getChangelogPath, getNewEntries, parseChangelog } from "./changelog.js";
+import { exportFromFile } from "./export-html.js";
 import { findModel, getApiKeyForModel, getAvailableModels } from "./model-config.js";
 import { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
@@ -51,6 +52,7 @@ interface Args {
 	models?: string[];
 	tools?: ToolName[];
 	print?: boolean;
+	export?: string;
 	messages: string[];
 	fileArgs: string[];
 }
@@ -119,6 +121,8 @@ function parseArgs(args: string[]): Args {
 			}
 		} else if (arg === "--print" || arg === "-p") {
 			result.print = true;
+		} else if (arg === "--export" && i + 1 < args.length) {
+			result.export = args[++i];
 		} else if (arg.startsWith("@")) {
 			result.fileArgs.push(arg.slice(1)); // Remove @ prefix
 		} else if (!arg.startsWith("-")) {
@@ -242,6 +246,7 @@ ${chalk.bold("Options:")}
   --tools <tools>         Comma-separated list of tools to enable (default: read,bash,edit,write)
                           Available: read, bash, edit, write, grep, find, ls
   --thinking <level>      Set thinking level: off, minimal, low, medium, high
+  --export <file>         Export session file to HTML and exit
   --help, -h              Show this help
 
 ${chalk.bold("Examples:")}
@@ -280,6 +285,10 @@ ${chalk.bold("Examples:")}
 
   # Read-only mode (no file modifications possible)
   pi --tools read,grep,find,ls -p "Review the code in src/"
+
+  # Export a session file to HTML
+  pi --export ~/.pi/agent/sessions/--path--/session.jsonl
+  pi --export session.jsonl output.html
 
 ${chalk.bold("Environment Variables:")}
   ANTHROPIC_API_KEY       - Anthropic Claude API key
@@ -845,6 +854,20 @@ export async function main(args: string[]) {
 	if (parsed.help) {
 		printHelp();
 		return;
+	}
+
+	// Handle --export flag: convert session file to HTML and exit
+	if (parsed.export) {
+		try {
+			// Use first message as output path if provided
+			const outputPath = parsed.messages.length > 0 ? parsed.messages[0] : undefined;
+			const result = exportFromFile(parsed.export, outputPath);
+			console.log(`Exported to: ${result}`);
+			return;
+		} catch (error: any) {
+			console.error(chalk.red(`Error: ${error.message || "Failed to export session"}`));
+			process.exit(1);
+		}
 	}
 
 	// Validate: RPC mode doesn't support @file arguments
