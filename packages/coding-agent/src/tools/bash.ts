@@ -61,16 +61,18 @@ function killProcessTree(pid: number): void {
 	}
 }
 
+const DEFAULT_TIMEOUT = 5 * 60; // 5 minutes in seconds
+
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
-	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
+	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (default: 300 seconds / 5 minutes)" })),
 });
 
 export const bashTool: AgentTool<typeof bashSchema> = {
 	name: "bash",
 	label: "bash",
 	description:
-		"Execute a bash command in the current working directory. Returns stdout and stderr. Optionally provide a timeout in seconds.",
+		"Execute a bash command in the current working directory. Returns stdout and stderr. Optionally provide a timeout in seconds (default: 300 seconds / 5 minutes).",
 	parameters: bashSchema,
 	execute: async (
 		_toolCallId: string,
@@ -88,13 +90,14 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 			let stderr = "";
 			let timedOut = false;
 
-			// Set timeout if provided
+			// Set timeout (use default if not provided)
+			const effectiveTimeout = timeout ?? DEFAULT_TIMEOUT;
 			let timeoutHandle: NodeJS.Timeout | undefined;
-			if (timeout !== undefined && timeout > 0) {
+			if (effectiveTimeout > 0) {
 				timeoutHandle = setTimeout(() => {
 					timedOut = true;
 					onAbort();
-				}, timeout * 1000);
+				}, effectiveTimeout * 1000);
 			}
 
 			// Collect stdout
@@ -149,7 +152,7 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 						output += stderr;
 					}
 					if (output) output += "\n\n";
-					output += `Command timed out after ${timeout} seconds`;
+					output += `Command timed out after ${effectiveTimeout} seconds`;
 					_reject(new Error(output));
 					return;
 				}
