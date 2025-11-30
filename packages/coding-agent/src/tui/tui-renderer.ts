@@ -1,5 +1,5 @@
 import type { Agent, AgentEvent, AgentState, ThinkingLevel } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage, Message, Model } from "@mariozechner/pi-ai";
+import type { AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import type { SlashCommand } from "@mariozechner/pi-tui";
 import {
 	CombinedAutocompleteProvider,
@@ -13,8 +13,8 @@ import {
 	TruncatedText,
 	TUI,
 } from "@mariozechner/pi-tui";
-
 import { exec } from "child_process";
+import { randomUUID } from "crypto";
 import { readFile, unlink, writeFile } from "fs/promises";
 import { relative } from "path";
 import { getChangelogPath, parseChangelog } from "../changelog.js";
@@ -25,6 +25,7 @@ import { PromptHistoryManager } from "../prompt-history-manager.js";
 import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
+import { bashTool } from "../tools/bash.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
 import { CustomEditor } from "./custom-editor.js";
 import { DynamicBorder } from "./dynamic-border.js";
@@ -102,12 +103,13 @@ export class TuiRenderer {
 	// Tool output expansion state
 	private toolOutputExpanded = false;
 
-	// Prompt history navigation state
 	private promptHistory: PromptHistoryManager;
-	private historyIndex: number = -1; // -1 means "current" (not browsing history)
-	private currentDraft: string = ""; // Stores unsaved text when navigating history
+	private historyIndex: number = -1;
+	private currentDraft: string = "";
 
-	// Agent subscription unsubscribe function
+	private bashAbortController: AbortController | null = null;
+	private bashModeIndicatorContainer: Container = new Container();
+
 	private unsubscribe?: () => void;
 
 	constructor(
@@ -298,37 +300,30 @@ export class TuiRenderer {
 		this.ui.addChild(this.pendingMessagesContainer);
 		this.ui.addChild(this.statusContainer);
 		this.ui.addChild(new Spacer(1));
-		this.ui.addChild(this.editorContainer); // Use container that can hold editor or selector
+		this.ui.addChild(this.bashModeIndicatorContainer);
+		this.ui.addChild(this.editorContainer);
 		this.ui.addChild(this.footer);
 		this.ui.setFocus(this.editor);
 
-		// Set up custom key handlers on the editor
 		this.editor.onEscape = () => {
-			// Intercept Escape key when processing
+			if (this.bashAbortController) {
+				this.bashAbortController.abort();
+				return;
+			}
+
 			if (this.loadingAnimation) {
-				// Get all queued messages
+				// Restore queued messages to editor on abort
 				const queuedText = this.queuedMessages.join("\n\n");
-
-				// Get current editor text
 				const currentText = this.editor.getText();
-
-				// Combine: queued messages + current editor text
 				const combinedText = [queuedText, currentText].filter((t) => t.trim()).join("\n\n");
-
-				// Put back in editor
 				this.editor.setText(combinedText);
 
-				// Clear queued messages and editing state
 				this.queuedMessages = [];
 				this.editingQueueIndex = null;
 				this.savedEditorText = null;
 				this.isHandlingQueueEditChange = false;
 				this.updatePendingMessagesDisplay();
-
-				// Clear agent's queue too
 				this.agent.clearMessageQueue();
-
-				// Abort
 				this.agent.abort();
 			}
 		};
@@ -357,7 +352,6 @@ export class TuiRenderer {
 			this.handleOptionDown();
 		};
 
-		// History navigation handlers
 		this.editor.onHistoryUp = () => {
 			this.navigateHistoryUp();
 		};
@@ -366,8 +360,17 @@ export class TuiRenderer {
 			this.navigateHistoryDown();
 		};
 
-		// Auto-save queue edits to prevent race with drain; only sync non-empty text to avoid
-		// deleting items on submit-triggered onChange("")
+		this.editor.onBashModeChange = (enabled: boolean) => {
+			this.updateBashModeIndicator(enabled);
+			this.updateEditorBorderColor();
+			this.ui.requestRender();
+		};
+
+		this.editor.onBashSubmit = (command: string) => {
+			this.handleBashExecution(command);
+		};
+
+		// Sync edits to queued messages (skip empty to avoid clearing on submit)
 		this.editor.onChange = (text: string) => {
 			if (this.isHandlingQueueEditChange) return;
 
@@ -952,7 +955,137 @@ export class TuiRenderer {
 		}
 	}
 
+	/** Execute user-initiated bash command and record as synthetic tool call messages. */
+	private async handleBashExecution(command: string): Promise<void> {
+		const model = this.agent.state.model;
+		if (!model) {
+			this.showError("No model selected - unable to record bash execution in conversation");
+			return;
+		}
+
+		const toolCallId = randomUUID();
+		const timestamp = Date.now();
+		this.bashAbortController = new AbortController();
+
+		if (this.loadingAnimation) {
+			this.loadingAnimation.stop();
+		}
+		this.statusContainer.clear();
+		this.loadingAnimation = new Loader(
+			this.ui,
+			(spinner) => theme.fg("warning", spinner),
+			(text) => theme.fg("muted", text),
+			`$ ${command}`,
+		);
+		this.statusContainer.addChild(this.loadingAnimation);
+		this.ui.requestRender();
+
+		this.chatContainer.addChild(new Text("", 0, 0));
+		const toolComponent = new ToolExecutionComponent("bash", { command });
+		this.chatContainer.addChild(toolComponent);
+		this.ui.requestRender();
+
+		let result: { content: Array<{ type: "text"; text: string }>; details?: unknown };
+		let isError = false;
+
+		try {
+			result = (await bashTool.execute(toolCallId, { command }, this.bashAbortController.signal)) as {
+				content: Array<{ type: "text"; text: string }>;
+				details?: unknown;
+			};
+		} catch (err: unknown) {
+			isError = true;
+			const errorMessage = err instanceof Error ? err.message : String(err);
+			result = { content: [{ type: "text", text: errorMessage }] };
+		} finally {
+			this.bashAbortController = null;
+		}
+
+		if (this.loadingAnimation) {
+			this.loadingAnimation.stop();
+			this.loadingAnimation = null;
+		}
+		this.statusContainer.clear();
+
+		toolComponent.updateResult({
+			content: result.content,
+			details: result.details,
+			isError,
+		});
+
+		// Synthetic messages so the execution appears in conversation history
+		const userMessage: Message = {
+			role: "user",
+			content: [{ type: "text", text: `[User executed shell command: ${command}]` }],
+			timestamp,
+		};
+
+		const toolCall: ToolCall = {
+			type: "toolCall",
+			id: toolCallId,
+			name: "bash",
+			arguments: { command },
+		};
+
+		const assistantMessage: AssistantMessage = {
+			role: "assistant",
+			content: [toolCall],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "toolUse",
+			timestamp,
+		};
+
+		const toolResultMessage: ToolResultMessage = {
+			role: "toolResult",
+			toolCallId,
+			toolName: "bash",
+			content: result.content,
+			details: result.details,
+			isError,
+			timestamp,
+		};
+
+		this.agent.appendMessage(userMessage as any);
+		this.agent.appendMessage(assistantMessage as any);
+		this.agent.appendMessage(toolResultMessage as any);
+
+		this.sessionManager.saveMessage(userMessage);
+		this.sessionManager.saveMessage(assistantMessage);
+		this.sessionManager.saveMessage(toolResultMessage);
+
+		if (this.sessionManager.shouldInitializeSession(this.agent.state.messages)) {
+			this.sessionManager.startSession(this.agent.state);
+		}
+
+		this.footer.invalidate();
+		this.ui.requestRender();
+	}
+
+	private updateBashModeIndicator(enabled: boolean): void {
+		this.bashModeIndicatorContainer.clear();
+		if (enabled) {
+			const indicatorText =
+				theme.fg("warning", theme.bold("$ Shell Mode")) +
+				theme.fg("muted", " — type command and press Enter, Esc to cancel");
+			this.bashModeIndicatorContainer.addChild(new Text(indicatorText, 1, 0));
+		}
+	}
+
 	private updateEditorBorderColor(): void {
+		if (this.editor.bashMode) {
+			this.editor.borderColor = (str: string) => theme.fg("warning", str);
+			this.ui.requestRender();
+			return;
+		}
 		const level = this.agent.state.thinkingLevel || "off";
 		this.editor.borderColor = theme.getThinkingBorderColor(level);
 		this.ui.requestRender();

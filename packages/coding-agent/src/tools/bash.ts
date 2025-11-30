@@ -110,7 +110,10 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 			let stderr = "";
 			let timedOut = false;
 
-			// Set timeout (use default if not provided)
+			child.on("error", (err) => {
+				_reject(err instanceof Error ? err : new Error(String(err)));
+			});
+
 			const effectiveTimeout = timeout ?? DEFAULT_TIMEOUT;
 			let timeoutHandle: NodeJS.Timeout | undefined;
 			if (effectiveTimeout > 0) {
@@ -120,29 +123,24 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 				}, effectiveTimeout * 1000);
 			}
 
-			// Collect stdout
 			if (child.stdout) {
 				child.stdout.on("data", (data) => {
 					stdout += data.toString();
-					// Limit buffer size
 					if (stdout.length > 10 * 1024 * 1024) {
 						stdout = stdout.slice(0, 10 * 1024 * 1024);
 					}
 				});
 			}
 
-			// Collect stderr
 			if (child.stderr) {
 				child.stderr.on("data", (data) => {
 					stderr += data.toString();
-					// Limit buffer size
 					if (stderr.length > 10 * 1024 * 1024) {
 						stderr = stderr.slice(0, 10 * 1024 * 1024);
 					}
 				});
 			}
 
-			// Handle process exit
 			child.on("close", (code) => {
 				if (timeoutHandle) {
 					clearTimeout(timeoutHandle);
