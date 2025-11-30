@@ -21,6 +21,7 @@ import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { exportSessionToHtml } from "../export-html.js";
 import { getApiKeyForModel, getAvailableModels } from "../model-config.js";
 import { listOAuthProviders, login, logout } from "../oauth/index.js";
+import { PromptHistoryManager } from "../prompt-history-manager.js";
 import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
@@ -101,6 +102,11 @@ export class TuiRenderer {
 	// Tool output expansion state
 	private toolOutputExpanded = false;
 
+	// Prompt history navigation state
+	private promptHistory: PromptHistoryManager;
+	private historyIndex: number = -1; // -1 means "current" (not browsing history)
+	private currentDraft: string = ""; // Stores unsaved text when navigating history
+
 	// Agent subscription unsubscribe function
 	private unsubscribe?: () => void;
 
@@ -118,6 +124,7 @@ export class TuiRenderer {
 		this.sessionManager = sessionManager;
 		this.settingsManager = settingsManager;
 		this.version = version;
+		this.promptHistory = new PromptHistoryManager();
 		this.newVersion = newVersion;
 		this.changelogMarkdown = changelogMarkdown;
 		this.scopedModels = scopedModels;
@@ -350,6 +357,15 @@ export class TuiRenderer {
 			this.handleOptionDown();
 		};
 
+		// History navigation handlers
+		this.editor.onHistoryUp = () => {
+			this.navigateHistoryUp();
+		};
+
+		this.editor.onHistoryDown = () => {
+			this.navigateHistoryDown();
+		};
+
 		// Auto-save queue edits to prevent race with drain; only sync non-empty text to avoid
 		// deleting items on submit-triggered onChange("")
 		this.editor.onChange = (text: string) => {
@@ -368,6 +384,10 @@ export class TuiRenderer {
 		// Handle editor submission
 		this.editor.onSubmit = async (text: string) => {
 			text = text.trim();
+
+			// Reset history navigation state on any submission
+			this.historyIndex = -1;
+			this.currentDraft = "";
 
 			if (this.editingQueueIndex !== null) {
 				// text parameter holds content before handleSubmit cleared the editor
@@ -516,6 +536,9 @@ export class TuiRenderer {
 			}
 
 			// All good, proceed with submission
+			// Save to prompt history (savePrompt filters out slash commands and empty)
+			this.promptHistory.savePrompt(text);
+
 			if (this.onInputCallback) {
 				this.onInputCallback(text);
 			}
@@ -842,6 +865,54 @@ export class TuiRenderer {
 				resolve(text);
 			};
 		});
+	}
+
+	private navigateHistoryUp(): void {
+		const historyLength = this.promptHistory.getHistoryLength();
+		if (historyLength === 0) return;
+
+		if (this.historyIndex === -1) {
+			// First time pressing up - save current draft and go to most recent history
+			this.currentDraft = this.editor.getText();
+			this.historyIndex = historyLength - 1;
+		} else if (this.historyIndex > 0) {
+			// Move to older history entry
+			this.historyIndex--;
+		} else {
+			// Already at oldest entry, do nothing
+			return;
+		}
+
+		const prompt = this.promptHistory.getPromptAt(this.historyIndex);
+		if (prompt !== null) {
+			this.editor.setText(prompt);
+			this.ui.requestRender();
+		}
+	}
+
+	private navigateHistoryDown(): void {
+		if (this.historyIndex === -1) {
+			// Not browsing history, nothing to do
+			return;
+		}
+
+		const historyLength = this.promptHistory.getHistoryLength();
+
+		if (this.historyIndex < historyLength - 1) {
+			// Move to newer history entry
+			this.historyIndex++;
+			const prompt = this.promptHistory.getPromptAt(this.historyIndex);
+			if (prompt !== null) {
+				this.editor.setText(prompt);
+				this.ui.requestRender();
+			}
+		} else {
+			// At most recent history entry, return to current draft
+			this.historyIndex = -1;
+			this.editor.setText(this.currentDraft);
+			this.currentDraft = "";
+			this.ui.requestRender();
+		}
 	}
 
 	private handleCtrlC(): void {

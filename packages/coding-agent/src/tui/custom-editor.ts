@@ -11,8 +11,22 @@ export class CustomEditor extends Editor {
 	public onCtrlO?: () => void;
 	public onOptionUp?: () => void;
 	public onOptionDown?: () => void;
+	public onHistoryUp?: () => void;
+	public onHistoryDown?: () => void;
 
 	handleInput(data: string): void {
+		// Intercept Up arrow for history navigation when at first line
+		if (data === "\x1b[A" && this.onHistoryUp && this.isAtFirstLine()) {
+			this.onHistoryUp();
+			return;
+		}
+
+		// Intercept Down arrow for history navigation when at last line
+		if (data === "\x1b[B" && this.onHistoryDown && this.isAtLastLine()) {
+			this.onHistoryDown();
+			return;
+		}
+
 		// Intercept Ctrl+O for tool output expansion
 		if (data === "\x0f" && this.onCtrlO) {
 			this.onCtrlO();

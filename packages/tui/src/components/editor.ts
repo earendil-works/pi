@@ -1221,6 +1221,16 @@ export class Editor implements Component {
 		return beforeCursor.trim() === "" || beforeCursor.trim() === "/";
 	}
 
+	isAtFirstLine(): boolean {
+		return this.state.cursorLine === 0 && this.state.cursorCol === 0;
+	}
+
+	isAtLastLine(): boolean {
+		const lastLineIndex = this.state.lines.length - 1;
+		const lastLine = this.state.lines[lastLineIndex] || "";
+		return this.state.cursorLine === lastLineIndex && this.state.cursorCol === lastLine.length;
+	}
+
 	private tryTriggerAutocomplete(explicitTab: boolean = false): void {
 		if (!this.autocompleteProvider) return;
 
