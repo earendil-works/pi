@@ -3158,7 +3158,7 @@ export const MODELS = {
 			cost: {
 				input: 0.48,
 				output: 1.44,
-				cacheRead: 0.11,
+				cacheRead: 0.088,
 				cacheWrite: 0,
 			},
 			contextWindow: 65536,
@@ -4314,7 +4314,7 @@ export const MODELS = {
 			cost: {
 				input: 0.19999999999999998,
 				output: 0.88,
-				cacheRead: 0,
+				cacheRead: 0.135,
 				cacheWrite: 0,
 			},
 			contextWindow: 163840,
