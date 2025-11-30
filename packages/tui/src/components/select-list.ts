@@ -145,25 +145,22 @@ export class SelectList implements Component {
 	}
 
 	handleInput(keyData: string): void {
-		// Up arrow
 		if (keyData === "\x1b[A") {
-			this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+			if (this.filteredItems.length > 0) {
+				this.selectedIndex = this.selectedIndex === 0 ? this.filteredItems.length - 1 : this.selectedIndex - 1;
+			}
 			this.notifySelectionChange();
-		}
-		// Down arrow
-		else if (keyData === "\x1b[B") {
-			this.selectedIndex = Math.min(this.filteredItems.length - 1, this.selectedIndex + 1);
+		} else if (keyData === "\x1b[B") {
+			if (this.filteredItems.length > 0) {
+				this.selectedIndex = this.selectedIndex >= this.filteredItems.length - 1 ? 0 : this.selectedIndex + 1;
+			}
 			this.notifySelectionChange();
-		}
-		// Enter
-		else if (keyData === "\r") {
+		} else if (keyData === "\r") {
 			const selectedItem = this.filteredItems[this.selectedIndex];
 			if (selectedItem && this.onSelect) {
 				this.onSelect(selectedItem);
 			}
-		}
-		// Escape or Ctrl+C
-		else if (keyData === "\x1b" || keyData === "\x03") {
+		} else if (keyData === "\x1b" || keyData === "\x03") {
 			if (this.onCancel) {
 				this.onCancel();
 			}
