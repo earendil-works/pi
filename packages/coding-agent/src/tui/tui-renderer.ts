@@ -20,6 +20,7 @@ import { relative } from "path";
 import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { exportSessionToHtml } from "../export-html.js";
 import { getApiKeyForModel, getAvailableModels } from "../model-config.js";
+import { sendNotification } from "../notification.js";
 import { listOAuthProviders, login, logout } from "../oauth/index.js";
 import { PromptHistoryManager } from "../prompt-history-manager.js";
 import type { SessionManager } from "../session-manager.js";
@@ -205,6 +206,11 @@ export class TuiRenderer {
 			description: "Undo the last turn and revert file edits",
 		};
 
+		const notifyCommand: SlashCommand = {
+			name: "notify",
+			description: "Toggle macOS notifications on agent completion",
+		};
+
 		// Setup autocomplete for file paths and slash commands
 		const autocompleteProvider = new CombinedAutocompleteProvider(
 			[
@@ -221,6 +227,7 @@ export class TuiRenderer {
 				clearCommand,
 				newCommand,
 				undoCommand,
+				notifyCommand,
 			],
 			process.cwd(),
 			fdPath,
@@ -498,6 +505,13 @@ export class TuiRenderer {
 				return;
 			}
 
+			// Check for /notify command
+			if (text === "/notify") {
+				this.handleNotifyCommand();
+				this.editor.setText("");
+				return;
+			}
+
 			// Normal message submission - validate model and API key first
 			const currentModel = this.agent.state.model;
 			if (!currentModel) {
@@ -766,6 +780,12 @@ export class TuiRenderer {
 				this.pendingTools.clear();
 				// Note: Don't need to re-enable submit - we never disable it
 				this.ui.requestRender();
+
+				// Send macOS notification if enabled
+				if (this.settingsManager.getNotifications()) {
+					const modelName = this.agent.state.model?.name || this.agent.state.model?.id || "Agent";
+					sendNotification("pi", `${modelName} finished`);
+				}
 				break;
 		}
 	}
@@ -2124,6 +2144,19 @@ export class TuiRenderer {
 			this.chatContainer.addChild(new Text(theme.fg("accent", "✓ Undid last turn"), 1, 0));
 		}
 
+		this.ui.requestRender();
+	}
+
+	private handleNotifyCommand(): void {
+		// Toggle notifications
+		const current = this.settingsManager.getNotifications();
+		const next = !current;
+		this.settingsManager.setNotifications(next);
+
+		// Show confirmation message
+		this.chatContainer.addChild(new Spacer(1));
+		const status = next ? "enabled" : "disabled";
+		this.chatContainer.addChild(new Text(theme.fg("dim", `Notifications: ${status}`), 1, 0));
 		this.ui.requestRender();
 	}
 

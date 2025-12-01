@@ -9,6 +9,7 @@ export interface Settings {
 	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high";
 	queueMode?: "all" | "one-at-a-time";
 	theme?: string;
+	notifications?: boolean;
 }
 
 export class SettingsManager {
@@ -106,6 +107,15 @@ export class SettingsManager {
 
 	setDefaultThinkingLevel(level: "off" | "minimal" | "low" | "medium" | "high"): void {
 		this.settings.defaultThinkingLevel = level;
+		this.save();
+	}
+
+	getNotifications(): boolean {
+		return this.settings.notifications ?? true;
+	}
+
+	setNotifications(enabled: boolean): void {
+		this.settings.notifications = enabled;
 		this.save();
 	}
 }
