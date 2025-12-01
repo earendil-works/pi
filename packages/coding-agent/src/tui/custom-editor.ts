@@ -27,8 +27,11 @@ export class CustomEditor extends Editor {
 		}
 	}
 
+	/**
+	 * Intercepts keys before parent Editor. Autocomplete checks required for arrow/escape
+	 * keys to allow parent's SelectList navigation when menu is open.
+	 */
 	handleInput(data: string): void {
-		// --- Bash mode handling ---
 		if (data === "!" && !this._bashMode && this.getText().trim() === "" && this.isAtFirstLine()) {
 			this.setBashMode(true);
 			return;
@@ -54,12 +57,11 @@ export class CustomEditor extends Editor {
 			return;
 		}
 
-		// --- Key interception (order matters: check specific sequences before generic ones) ---
-		if (data === "\x1b[A" && this.onHistoryUp && this.isAtFirstLine()) {
+		if (data === "\x1b[A" && this.onHistoryUp && this.isAtFirstLine() && !this.isShowingAutocomplete()) {
 			this.onHistoryUp();
 			return;
 		}
-		if (data === "\x1b[B" && this.onHistoryDown && this.isAtLastLine()) {
+		if (data === "\x1b[B" && this.onHistoryDown && this.isAtLastLine() && !this.isShowingAutocomplete()) {
 			this.onHistoryDown();
 			return;
 		}
@@ -83,7 +85,6 @@ export class CustomEditor extends Editor {
 			this.onShiftTab();
 			return;
 		}
-		// Let parent handle Escape for autocomplete cancellation
 		if (data === "\x1b" && this.onEscape && !this.isShowingAutocomplete()) {
 			this.onEscape();
 			return;
