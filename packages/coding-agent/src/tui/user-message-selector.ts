@@ -78,13 +78,13 @@ class UserMessageList implements Component {
 	}
 
 	handleInput(keyData: string): void {
-		// Up arrow - go to previous (older) message
+		// Up arrow - go to previous (older) message, wrap to bottom when at top
 		if (keyData === "\x1b[A") {
-			this.selectedIndex = Math.max(0, this.selectedIndex - 1);
+			this.selectedIndex = this.selectedIndex === 0 ? this.messages.length - 1 : this.selectedIndex - 1;
 		}
-		// Down arrow - go to next (newer) message
+		// Down arrow - go to next (newer) message, wrap to top when at bottom
 		else if (keyData === "\x1b[B") {
-			this.selectedIndex = Math.min(this.messages.length - 1, this.selectedIndex + 1);
+			this.selectedIndex = this.selectedIndex === this.messages.length - 1 ? 0 : this.selectedIndex + 1;
 		}
 		// Enter - select message and branch
 		else if (keyData === "\r") {
