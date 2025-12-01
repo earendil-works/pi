@@ -3,7 +3,7 @@ import { Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
 import { existsSync } from "fs";
 
-const MAX_OUTPUT_BYTES = 25000;
+const MAX_OUTPUT_BYTES = 32768;
 
 /**
  * Truncate output to MAX_OUTPUT_BYTES with a warning if exceeded
