@@ -675,10 +675,24 @@ async function runSingleShotMode(
 	}
 }
 
-async function runRpcMode(agent: Agent, _sessionManager: SessionManager): Promise<void> {
-	// Subscribe to all events and output as JSON
-	agent.subscribe((event) => {
+async function runRpcMode(agent: Agent, sessionManager: SessionManager): Promise<void> {
+	// Subscribe to all events and output as JSON (same pattern as tui-renderer)
+	agent.subscribe(async (event) => {
 		console.log(JSON.stringify(event));
+
+		// Save messages to session
+		if (event.type === "message_end") {
+			sessionManager.saveMessage(event.message);
+
+			// Yield to microtask queue to allow agent state to update
+			// (tui-renderer does this implicitly via await handleEvent)
+			await Promise.resolve();
+
+			// Check if we should initialize session now (after first user+assistant exchange)
+			if (sessionManager.shouldInitializeSession(agent.state.messages)) {
+				sessionManager.startSession(agent.state);
+			}
+		}
 	});
 
 	// Listen for JSON input on stdin
