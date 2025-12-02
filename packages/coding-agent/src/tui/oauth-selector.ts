@@ -1,5 +1,6 @@
 import { Container, Spacer, TruncatedText } from "@mariozechner/pi-tui";
 import { getOAuthProviders, type OAuthProviderInfo } from "../oauth/index.js";
+import { loadOAuthCredentials } from "../oauth/storage.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 
@@ -61,14 +62,19 @@ export class OAuthSelectorComponent extends Container {
 			const isSelected = i === this.selectedIndex;
 			const isAvailable = provider.available;
 
+			// Check if user is logged in for this provider
+			const credentials = loadOAuthCredentials(provider.id);
+			const isLoggedIn = credentials !== null;
+			const statusIndicator = isLoggedIn ? theme.fg("success", " ✓ logged in") : "";
+
 			let line = "";
 			if (isSelected) {
 				const prefix = theme.fg("accent", "→ ");
 				const text = isAvailable ? theme.fg("accent", provider.name) : theme.fg("dim", provider.name);
-				line = prefix + text;
+				line = prefix + text + statusIndicator;
 			} else {
 				const text = isAvailable ? `  ${provider.name}` : theme.fg("dim", `  ${provider.name}`);
-				line = text;
+				line = text + statusIndicator;
 			}
 
 			this.listContainer.addChild(new TruncatedText(line, 0, 0));
