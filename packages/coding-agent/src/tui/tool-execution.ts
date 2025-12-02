@@ -106,8 +106,9 @@ export class ToolExecutionComponent extends Container {
 		const textBlocks = this.result.content?.filter((c: any) => c.type === "text") || [];
 		const imageBlocks = this.result.content?.filter((c: any) => c.type === "image") || [];
 
-		// Strip ANSI codes from raw output (bash may emit colors/formatting)
-		let output = textBlocks.map((c: any) => stripAnsi(c.text || "")).join("\n");
+		// Strip ANSI codes and carriage returns from raw output
+		// (bash may emit colors/formatting, and Windows may include \r)
+		let output = textBlocks.map((c: any) => stripAnsi(c.text || "").replace(/\r/g, "")).join("\n");
 
 		// Add indicator for images
 		if (imageBlocks.length > 0) {

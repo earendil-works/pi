@@ -1021,6 +1021,19 @@ Things that might happen eventually:
   - Switch to a model with bigger context (e.g., Gemini) using `/model` and either continue with that model, or let it summarize the session to a .md file to be loaded in a new session
 - **Better RPC mode docs**: It works, you'll figure it out (see `test/rpc-example.ts`)
 
+### Debug Command
+
+The `/debug` command is a hidden development feature (not shown in autocomplete) that writes all currently rendered lines with their visible widths and ANSI escape sequences to `~/.pi/agent/pi-debug.log`. This is useful for debugging TUI rendering issues, especially when lines don't extend to the terminal edge or contain unexpected invisible characters.
+
+```
+/debug
+```
+
+The debug log includes:
+- Terminal width at time of capture
+- Total number of rendered lines
+- Each line with its index, visible width, and JSON-escaped content showing all ANSI codes
+
 ## License
 
 MIT

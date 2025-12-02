@@ -1,3 +1,6 @@
+import * as fs from "node:fs";
+import * as os from "node:os";
+import * as path from "node:path";
 import type { Agent, AgentEvent, AgentState, ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import type { SlashCommand } from "@mariozechner/pi-tui";
@@ -12,6 +15,7 @@ import {
 	Text,
 	TruncatedText,
 	TUI,
+	visibleWidth,
 } from "@mariozechner/pi-tui";
 import { exec } from "child_process";
 import { randomUUID } from "crypto";
@@ -514,6 +518,13 @@ export class TuiRenderer {
 			// Check for /notify command
 			if (text === "/notify") {
 				this.handleNotifyCommand();
+				this.editor.setText("");
+				return;
+			}
+
+			// Check for /debug command
+			if (text === "/debug") {
+				this.handleDebugCommand();
 				this.editor.setText("");
 				return;
 			}
@@ -2217,6 +2228,41 @@ export class TuiRenderer {
 		this.chatContainer.addChild(new Spacer(1));
 		const status = next ? "enabled" : "disabled";
 		this.chatContainer.addChild(new Text(theme.fg("dim", `Notifications: ${status}`), 1, 0));
+		this.ui.requestRender();
+	}
+
+	private handleDebugCommand(): void {
+		// Force a render and capture all lines with their widths
+		const width = (this.ui as any).terminal.columns;
+		const allLines = this.ui.render(width);
+
+		const debugLogPath = path.join(os.homedir(), ".pi", "agent", "pi-debug.log");
+		const debugData = [
+			`Debug output at ${new Date().toISOString()}`,
+			`Terminal width: ${width}`,
+			`Total lines: ${allLines.length}`,
+			"",
+			"=== All rendered lines with visible widths ===",
+			...allLines.map((line, idx) => {
+				const vw = visibleWidth(line);
+				const escaped = JSON.stringify(line);
+				return `[${idx}] (w=${vw}) ${escaped}`;
+			}),
+			"",
+		].join("\n");
+
+		fs.mkdirSync(path.dirname(debugLogPath), { recursive: true });
+		fs.writeFileSync(debugLogPath, debugData);
+
+		// Show confirmation
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(
+			new Text(
+				theme.fg("accent", "✓ Debug log written") + "\n" + theme.fg("muted", `~/.pi/agent/pi-debug.log`),
+				1,
+				1,
+			),
+		);
 		this.ui.requestRender();
 	}
 
