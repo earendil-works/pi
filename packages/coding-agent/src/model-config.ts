@@ -22,6 +22,7 @@ const ModelDefinitionSchema = Type.Object({
 		]),
 	),
 	reasoning: Type.Boolean(),
+	reasoningFormat: Type.Optional(Type.Union([Type.Literal("think_tags"), Type.Literal("reasoning_content")])),
 	input: Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")])),
 	cost: Type.Object({
 		input: Type.Number(),
@@ -32,6 +33,7 @@ const ModelDefinitionSchema = Type.Object({
 	contextWindow: Type.Number(),
 	maxTokens: Type.Number(),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+	extraBody: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 });
 
 const ProviderConfigSchema = Type.Object({
@@ -187,10 +189,12 @@ function parseModels(config: ModelsConfig): Model<Api>[] {
 				provider: providerName,
 				baseUrl: providerConfig.baseUrl,
 				reasoning: modelDef.reasoning,
+				reasoningFormat: modelDef.reasoningFormat,
 				input: modelDef.input as ("text" | "image")[],
 				cost: modelDef.cost,
 				contextWindow: modelDef.contextWindow,
 				maxTokens: modelDef.maxTokens,
+				extraBody: modelDef.extraBody,
 				headers,
 			});
 		}

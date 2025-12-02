@@ -159,6 +159,7 @@ export interface Model<TApi extends Api> {
 	provider: Provider;
 	baseUrl: string;
 	reasoning: boolean;
+	reasoningFormat?: "think_tags" | "reasoning_content"; // How to send thinking back: inline <think> tags (default) or reasoning_content field
 	input: ("text" | "image")[];
 	cost: {
 		input: number; // $/million tokens
@@ -169,4 +170,5 @@ export interface Model<TApi extends Api> {
 	contextWindow: number;
 	maxTokens: number;
 	headers?: Record<string, string>;
+	extraBody?: Record<string, unknown>; // Extra fields to merge into API request body
 }
