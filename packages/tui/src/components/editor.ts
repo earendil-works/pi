@@ -236,6 +236,13 @@ export class Editor implements Component {
 
 						this.cancelAutocomplete();
 
+						// Refresh layout so the completion is visible immediately
+						if (this.lastRenderWidth > 0) {
+							const layoutWidth = this.maxHeight !== undefined ? this.lastRenderWidth - 1 : this.lastRenderWidth;
+							this.layoutText(layoutWidth);
+							this.ensureCursorVisible();
+						}
+
 						if (this.onChange) {
 							this.onChange(this.getText());
 						}
@@ -259,6 +266,13 @@ export class Editor implements Component {
 						this.state.cursorCol = result.cursorCol;
 					}
 					this.cancelAutocomplete();
+
+					// Refresh layout so the completion is visible immediately
+					if (this.lastRenderWidth > 0) {
+						const layoutWidth = this.maxHeight !== undefined ? this.lastRenderWidth - 1 : this.lastRenderWidth;
+						this.layoutText(layoutWidth);
+						this.ensureCursorVisible();
+					}
 				} else if (data === "\r") {
 					const selected = this.autocompleteList.getSelectedItem();
 					if (selected && this.autocompleteProvider) {
@@ -275,6 +289,13 @@ export class Editor implements Component {
 						this.state.cursorCol = result.cursorCol;
 
 						this.cancelAutocomplete();
+
+						// Refresh layout so the completion is visible immediately
+						if (this.lastRenderWidth > 0) {
+							const layoutWidth = this.maxHeight !== undefined ? this.lastRenderWidth - 1 : this.lastRenderWidth;
+							this.layoutText(layoutWidth);
+							this.ensureCursorVisible();
+						}
 
 						if (this.onChange) {
 							this.onChange(this.getText());

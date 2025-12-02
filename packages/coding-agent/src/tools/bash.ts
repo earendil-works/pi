@@ -3,7 +3,7 @@ import { Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
 import { existsSync } from "fs";
 
-const MAX_OUTPUT_BYTES = 32768;
+const MAX_OUTPUT_BYTES = 65536;
 
 /**
  * Truncate output to MAX_OUTPUT_BYTES with a warning if exceeded
@@ -81,18 +81,18 @@ function killProcessTree(pid: number): void {
 	}
 }
 
-const DEFAULT_TIMEOUT = 5 * 60; // 5 minutes in seconds
+const DEFAULT_TIMEOUT = 10 * 60; // 10 minutes in seconds
 
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
-	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (default: 300 seconds / 5 minutes)" })),
+	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (default: 600 seconds / 10 minutes)" })),
 });
 
 export const bashTool: AgentTool<typeof bashSchema> = {
 	name: "bash",
 	label: "bash",
 	description:
-		"Execute a bash command in the current working directory. Returns stdout and stderr. Optionally provide a timeout in seconds (default: 300 seconds / 5 minutes).",
+		"Execute a bash command in the current working directory. Returns stdout and stderr. Optionally provide a timeout in seconds (default: 600 seconds / 10 minutes).",
 	parameters: bashSchema,
 	execute: async (
 		_toolCallId: string,

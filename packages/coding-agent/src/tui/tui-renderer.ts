@@ -27,10 +27,12 @@ import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
 import { bashTool } from "../tools/bash.js";
+import { formatElapsed } from "../utils/format-elapsed.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
 import { CustomEditor } from "./custom-editor.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { FooterComponent } from "./footer.js";
+import { LabeledBorder } from "./labeled-border.js";
 import { ModelSelectorComponent } from "./model-selector.js";
 import { OAuthSelectorComponent } from "./oauth-selector.js";
 import { QueueModeSelectorComponent } from "./queue-mode-selector.js";
@@ -112,6 +114,10 @@ export class TuiRenderer {
 	private bashModeIndicatorContainer: Container = new Container();
 
 	private unsubscribe?: () => void;
+
+	// Timer tracking for agent work duration
+	private agentStartTime: number | null = null;
+	private timerIntervalId: NodeJS.Timeout | null = null;
 
 	constructor(
 		agent: Agent,
@@ -618,20 +624,38 @@ export class TuiRenderer {
 
 		switch (event.type) {
 			case "agent_start":
-				// Show loading animation
+				// Show loading animation with timer
 				// Note: Don't disable submit - we handle queuing in onSubmit callback
-				// Stop old loader before clearing
+				// Stop old loader and timer before clearing
 				if (this.loadingAnimation) {
 					this.loadingAnimation.stop();
 				}
+				if (this.timerIntervalId) {
+					clearInterval(this.timerIntervalId);
+					this.timerIntervalId = null;
+				}
 				this.statusContainer.clear();
+
+				// Start timer
+				this.agentStartTime = Date.now();
+
+				// Create loader with initial message
 				this.loadingAnimation = new Loader(
 					this.ui,
 					(spinner) => theme.fg("accent", spinner),
 					(text) => theme.fg("muted", text),
-					"Working... (esc to interrupt)",
+					"Working (0s • esc to interrupt)",
 				);
 				this.statusContainer.addChild(this.loadingAnimation);
+
+				// Update timer every second
+				this.timerIntervalId = setInterval(() => {
+					if (this.loadingAnimation && this.agentStartTime) {
+						const elapsed = formatElapsed(Date.now() - this.agentStartTime);
+						this.loadingAnimation.setMessage(`Working (${elapsed} • esc to interrupt)`);
+					}
+				}, 1000);
+
 				this.ui.requestRender();
 				break;
 
@@ -771,7 +795,18 @@ export class TuiRenderer {
 				break;
 			}
 
-			case "agent_end":
+			case "agent_end": {
+				// Calculate elapsed time before clearing timer
+				const elapsedMs = this.agentStartTime ? Date.now() - this.agentStartTime : 0;
+				const elapsedStr = formatElapsed(elapsedMs);
+
+				// Stop timer interval
+				if (this.timerIntervalId) {
+					clearInterval(this.timerIntervalId);
+					this.timerIntervalId = null;
+				}
+				this.agentStartTime = null;
+
 				// Stop loading animation
 				if (this.loadingAnimation) {
 					this.loadingAnimation.stop();
@@ -783,6 +818,10 @@ export class TuiRenderer {
 					this.streamingComponent = null;
 				}
 				this.pendingTools.clear();
+
+				// Add "Done after Xs" label
+				this.chatContainer.addChild(new LabeledBorder(`Done after ${elapsedStr}`));
+
 				// Note: Don't need to re-enable submit - we never disable it
 				this.ui.requestRender();
 
@@ -792,6 +831,7 @@ export class TuiRenderer {
 					sendNotification("pi", `${modelName} finished`);
 				}
 				break;
+			}
 		}
 	}
 
@@ -1901,7 +1941,12 @@ export class TuiRenderer {
 		this.agent.abort();
 		await this.agent.waitForIdle();
 
-		// Stop loading animation
+		// Stop timer and loading animation
+		if (this.timerIntervalId) {
+			clearInterval(this.timerIntervalId);
+			this.timerIntervalId = null;
+		}
+		this.agentStartTime = null;
 		if (this.loadingAnimation) {
 			this.loadingAnimation.stop();
 			this.loadingAnimation = null;
@@ -2188,6 +2233,10 @@ export class TuiRenderer {
 	}
 
 	stop(): void {
+		if (this.timerIntervalId) {
+			clearInterval(this.timerIntervalId);
+			this.timerIntervalId = null;
+		}
 		if (this.loadingAnimation) {
 			this.loadingAnimation.stop();
 			this.loadingAnimation = null;
