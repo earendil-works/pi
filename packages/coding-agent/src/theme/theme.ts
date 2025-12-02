@@ -137,6 +137,10 @@ function detectColorMode(): ColorMode {
 	if (colorterm === "truecolor" || colorterm === "24bit") {
 		return "truecolor";
 	}
+	// Windows Terminal supports truecolor
+	if (process.env.WT_SESSION) {
+		return "truecolor";
+	}
 	const term = process.env.TERM || "";
 	if (term.includes("256color")) {
 		return "256color";

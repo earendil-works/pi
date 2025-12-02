@@ -85,6 +85,7 @@
 ### Fixed
 
 - **Windows Binary Path Resolution**: Fixed Bun compiled binary on Windows failing to find `package.json` and other assets. The binary was incorrectly using the Bun runtime's virtual filesystem path (`B:\~BUN\`) instead of the actual executable location. Now uses `process.execPath` which correctly points to the compiled binary, and updated detection to check for `%7EBUN` (URL-encoded `~BUN`) in `import.meta.url`.
+- **Windows Terminal Truecolor Support**: Fixed theme colors appearing washed out in Windows Terminal. The color mode detection now checks for `WT_SESSION` environment variable to enable truecolor (24-bit RGB) support instead of falling back to 256-color mode.
 
 ## [0.12.1] - 2025-12-02
 
