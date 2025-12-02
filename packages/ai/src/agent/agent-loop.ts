@@ -4,6 +4,29 @@ import { EventStream } from "../utils/event-stream.js";
 import { validateToolArguments } from "../utils/validation.js";
 import type { AgentContext, AgentEvent, AgentLoopConfig, AgentTool, AgentToolResult } from "./types.js";
 
+// Strip thinking blocks from assistant messages at agent_end.
+// Within a turn, thinking is needed for <think> tags in prompts.
+// After a run completes, thinking should not be sent back in future turns.
+function stripThinkingFromMessages(messages: AgentContext["messages"]): AgentContext["messages"] {
+	return messages.map((msg) => {
+		if (msg.role !== "assistant") {
+			return msg;
+		}
+
+		const filteredContent = msg.content.filter((block) => block.type !== "thinking");
+
+		// If no thinking blocks, avoid allocating a new object
+		if (filteredContent.length === msg.content.length) {
+			return msg;
+		}
+
+		return {
+			...msg,
+			content: filteredContent,
+		};
+	});
+}
+
 // Main prompt function - returns a stream of events
 export function agentLoop(
 	prompt: UserMessage,
@@ -54,8 +77,9 @@ export function agentLoop(
 			if (message.stopReason === "error" || message.stopReason === "aborted") {
 				// Stop the loop on error or abort
 				stream.push({ type: "turn_end", message, toolResults: [] });
-				stream.push({ type: "agent_end", messages: newMessages });
-				stream.end(newMessages);
+				const cleanedMessages = stripThinkingFromMessages(newMessages);
+				stream.push({ type: "agent_end", messages: cleanedMessages });
+				stream.end(cleanedMessages);
 				return;
 			}
 
@@ -72,8 +96,9 @@ export function agentLoop(
 			}
 			stream.push({ type: "turn_end", message, toolResults: toolResults });
 		}
-		stream.push({ type: "agent_end", messages: newMessages });
-		stream.end(newMessages);
+		const cleanedMessages = stripThinkingFromMessages(newMessages);
+		stream.push({ type: "agent_end", messages: cleanedMessages });
+		stream.end(cleanedMessages);
 	})();
 
 	return stream;
