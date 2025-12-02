@@ -1,4 +1,4 @@
-import { Container, Spacer, Text } from "@mariozechner/pi-tui";
+import { Container, Spacer, TruncatedText } from "@mariozechner/pi-tui";
 import { getOAuthProviders, type OAuthProviderInfo } from "../oauth/index.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
@@ -30,7 +30,7 @@ export class OAuthSelectorComponent extends Container {
 
 		// Add title
 		const title = mode === "login" ? "Select provider to login:" : "Select provider to logout:";
-		this.addChild(new Text(theme.bold(title), 0, 0));
+		this.addChild(new TruncatedText(theme.bold(title)));
 		this.addChild(new Spacer(1));
 
 		// Create list container
@@ -71,14 +71,14 @@ export class OAuthSelectorComponent extends Container {
 				line = text;
 			}
 
-			this.listContainer.addChild(new Text(line, 0, 0));
+			this.listContainer.addChild(new TruncatedText(line, 0, 0));
 		}
 
 		// Show "no providers" if empty
 		if (this.allProviders.length === 0) {
 			const message =
 				this.mode === "login" ? "No OAuth providers available" : "No OAuth providers logged in. Use /login first.";
-			this.listContainer.addChild(new Text(theme.fg("muted", `  ${message}`), 0, 0));
+			this.listContainer.addChild(new TruncatedText(theme.fg("muted", `  ${message}`), 0, 0));
 		}
 	}
 
