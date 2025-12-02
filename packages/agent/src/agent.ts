@@ -366,13 +366,15 @@ export class Agent {
 
 		this.isDraining = true;
 		try {
-			if (this.queueMode === "one-at-a-time") {
-				const first = this.messageQueue.shift();
-				if (first) {
-					await this.prompt(first.text, first.attachments);
-				}
+			if (this.queueMode === "all") {
+				// Combine all queued messages into a single prompt
+				const allMessages = this.messageQueue.splice(0);
+				const combinedText = allMessages.map((m) => m.text).join("\n\n");
+				const combinedAttachments = allMessages.flatMap((m) => m.attachments || []);
+				await this.prompt(combinedText, combinedAttachments.length > 0 ? combinedAttachments : undefined);
 			} else {
-				// User abort clears messageQueue, so loop exits naturally
+				// "one-at-a-time": process each message sequentially
+				// User abort clears messageQueue, so loop exits naturally.
 				while (this.messageQueue.length > 0) {
 					const next = this.messageQueue.shift();
 					if (next) {
