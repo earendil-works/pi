@@ -3,6 +3,7 @@ import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { type Component, visibleWidth } from "@mariozechner/pi-tui";
 import { existsSync, type FSWatcher, readFileSync, watch } from "fs";
 import { join } from "path";
+import { isModelUsingOAuth } from "../model-config.js";
 import { theme } from "../theme/theme.js";
 
 /**
@@ -177,7 +178,13 @@ export class FooterComponent implements Component {
 		if (totalOutput) statsParts.push(`↓${formatTokens(totalOutput)}`);
 		if (totalCacheRead) statsParts.push(`R${formatTokens(totalCacheRead)}`);
 		if (totalCacheWrite) statsParts.push(`W${formatTokens(totalCacheWrite)}`);
-		if (totalCost) statsParts.push(`$${totalCost.toFixed(3)}`);
+
+		// Show cost with "(sub)" indicator if using OAuth subscription
+		const usingSubscription = this.state.model ? isModelUsingOAuth(this.state.model) : false;
+		if (totalCost || usingSubscription) {
+			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
+			statsParts.push(costStr);
+		}
 
 		// Colorize context percentage based on usage
 		let contextPercentStr: string;

@@ -24,7 +24,7 @@ import { relative } from "path";
 import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
 import { exportSessionToHtml } from "../export-html.js";
-import { getApiKeyForModel, getAvailableModels } from "../model-config.js";
+import { getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
 import { sendNotification } from "../notification.js";
 import { listOAuthProviders, login, logout } from "../oauth/index.js";
 import { PromptHistoryManager } from "../prompt-history-manager.js";
@@ -1798,7 +1798,8 @@ export class TuiRenderer {
 							},
 						);
 
-						// Success
+						// Success - invalidate OAuth cache so footer updates
+						invalidateOAuthCache();
 						this.chatContainer.addChild(new Spacer(1));
 						this.chatContainer.addChild(
 							new Text(theme.fg("success", `✓ Successfully logged in to ${providerId}`), 1, 0),
@@ -1815,6 +1816,8 @@ export class TuiRenderer {
 					try {
 						await logout(providerId);
 
+						// Invalidate OAuth cache so footer updates
+						invalidateOAuthCache();
 						this.chatContainer.addChild(new Spacer(1));
 						this.chatContainer.addChild(
 							new Text(theme.fg("success", `✓ Successfully logged out of ${providerId}`), 1, 0),

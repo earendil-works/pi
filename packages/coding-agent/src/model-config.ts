@@ -4,7 +4,8 @@ import AjvModule from "ajv";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { getOAuthToken } from "./oauth/index.js";
+import { getOAuthToken, type SupportedOAuthProvider } from "./oauth/index.js";
+import { loadOAuthCredentials } from "./oauth/storage.js";
 
 // Handle both default and named exports
 const Ajv = (AjvModule as any).default || AjvModule;
@@ -295,4 +296,57 @@ export function findModel(provider: string, modelId: string): { model: Model<Api
 
 	const model = allModels.find((m) => m.provider === provider && m.id === modelId) || null;
 	return { model, error: null };
+}
+
+/**
+ * Mapping from model provider to OAuth provider ID.
+ * Only providers that support OAuth are listed here.
+ */
+const providerToOAuthProvider: Record<string, SupportedOAuthProvider> = {
+	anthropic: "anthropic",
+	// Add more mappings as OAuth support is added for other providers
+};
+
+// Cache for OAuth status per provider (avoids file reads on every render)
+const oauthStatusCache: Map<string, boolean> = new Map();
+
+/**
+ * Invalidate the OAuth status cache.
+ * Call this after login/logout operations.
+ */
+export function invalidateOAuthCache(): void {
+	oauthStatusCache.clear();
+}
+
+/**
+ * Check if a model is using OAuth credentials (subscription).
+ * This checks if OAuth credentials exist and would be used for the model,
+ * without actually fetching or refreshing the token.
+ * Results are cached until invalidateOAuthCache() is called.
+ */
+export function isModelUsingOAuth(model: Model<Api>): boolean {
+	const oauthProvider = providerToOAuthProvider[model.provider];
+	if (!oauthProvider) {
+		return false;
+	}
+
+	// Check cache first
+	if (oauthStatusCache.has(oauthProvider)) {
+		return oauthStatusCache.get(oauthProvider)!;
+	}
+
+	// Check if OAuth credentials exist for this provider
+	let usingOAuth = false;
+	const credentials = loadOAuthCredentials(oauthProvider);
+	if (credentials) {
+		usingOAuth = true;
+	}
+
+	// Also check for manual OAuth token env var (for Anthropic)
+	if (!usingOAuth && model.provider === "anthropic" && process.env.ANTHROPIC_OAUTH_TOKEN) {
+		usingOAuth = true;
+	}
+
+	oauthStatusCache.set(oauthProvider, usingOAuth);
+	return usingOAuth;
 }
