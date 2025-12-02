@@ -495,6 +495,11 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 		params.reasoning_effort = options.reasoningEffort;
 	}
 
+	// Merge extra body fields from model config
+	if (model.extraBody) {
+		Object.assign(params, model.extraBody);
+	}
+
 	return params;
 }
 
@@ -551,23 +556,46 @@ function convertMessages(model: Model<"openai-completions">, context: Context): 
 			};
 
 			const textBlocks = msg.content.filter((b) => b.type === "text") as TextContent[];
-			if (textBlocks.length > 0) {
-				assistantMsg.content = textBlocks.map((b) => {
-					return { type: "text", text: sanitizeSurrogates(b.text) };
-				});
-			}
-
-			// Handle thinking blocks for llama.cpp server + gpt-oss
 			const thinkingBlocks = msg.content.filter((b) => b.type === "thinking") as ThinkingContent[];
+			const toolCalls = msg.content.filter((b) => b.type === "toolCall") as ToolCall[];
+
+			// Build content parts: thinking first, then text
+			const contentParts: { type: "text"; text: string }[] = [];
+
+			// Handle thinking blocks based on model's reasoningFormat
 			if (thinkingBlocks.length > 0) {
-				// Use the signature from the first thinking block if available
-				const signature = thinkingBlocks[0].thinkingSignature;
-				if (signature && signature.length > 0) {
-					(assistantMsg as any)[signature] = thinkingBlocks.map((b) => b.thinking).join("\n");
+				const joinedThinking = thinkingBlocks
+					.map((b) => b.thinking)
+					.join("\n")
+					.trim();
+				if (joinedThinking.length > 0) {
+					if (model.reasoningFormat === "reasoning_content") {
+						// DeepSeek-style: separate field on assistant message
+						(assistantMsg as any).reasoning_content = joinedThinking;
+					} else {
+						// Default: inline <think> tags
+						contentParts.push({
+							type: "text",
+							text: sanitizeSurrogates(`<think>\n${joinedThinking}\n</think>`),
+						});
+					}
 				}
 			}
 
-			const toolCalls = msg.content.filter((b) => b.type === "toolCall") as ToolCall[];
+			// Regular text follows
+			for (const block of textBlocks) {
+				if (!block.text) continue;
+				contentParts.push({
+					type: "text",
+					text: sanitizeSurrogates(block.text),
+				});
+			}
+
+			if (contentParts.length > 0) {
+				assistantMsg.content = contentParts;
+			}
+
+			// Tool calls mapped as before
 			if (toolCalls.length > 0) {
 				assistantMsg.tool_calls = toolCalls.map((tc) => ({
 					id: tc.id,
@@ -578,6 +606,7 @@ function convertMessages(model: Model<"openai-completions">, context: Context): 
 					},
 				}));
 			}
+
 			if (assistantMsg.content === null && !assistantMsg.tool_calls) {
 				continue;
 			}
