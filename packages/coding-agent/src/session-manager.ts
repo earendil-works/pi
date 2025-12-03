@@ -31,6 +31,7 @@ export interface SessionHeader {
 	provider: string;
 	modelId: string;
 	thinkingLevel: string;
+	branchedFrom?: string; // Path to the session file this was branched from
 }
 
 export interface SessionMessageEntry {
@@ -642,6 +643,7 @@ export class SessionManager {
 			provider: state.model.provider,
 			modelId: state.model.id,
 			thinkingLevel: state.thinkingLevel,
+			branchedFrom: this.sessionFile,
 		};
 		appendFileSync(newSessionFile, JSON.stringify(entry) + "\n");
 

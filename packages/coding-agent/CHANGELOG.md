@@ -2,6 +2,138 @@
 
 ## [Unreleased]
 
+## [0.12.1] - 2025-12-02
+
+### Changed
+
+- **Binary Archive Structure**: Binary downloads now contain `pi` (or `pi.exe` on Windows) instead of platform-suffixed names like `pi-darwin-arm64`, making it easier to use after extraction.
+
+## [0.12.0] - 2025-12-02
+
+### Added
+
+- **Standalone Binary Support**: Build a self-contained binary using Bun with `npm run build:binary`. Pre-built binaries for macOS (arm64/x64), Linux (x64/arm64), and Windows (x64) are available on GitHub Releases. Based on [#89](https://github.com/badlogic/pi-mono/pull/89) by [@steipete](https://github.com/steipete), extended with cross-platform path resolution and GitHub Actions for automated release builds.
+
+## [0.11.6] - 2025-12-02
+
+### Added
+
+- **OAuth Login Status Indicator**: The `/login` provider selector now shows "✓ logged in" next to providers where you're already authenticated. This makes it clear at a glance whether you're using your Claude Pro/Max subscription. ([#88](https://github.com/badlogic/pi-mono/pull/88) by [@steipete](https://github.com/steipete))
+- **Subscription Cost Indicator**: The footer now shows "(sub)" next to the cost when using an OAuth subscription (e.g., `$0.123 (sub)`). This makes it visible without needing `/login` that you're using your Claude Pro/Max subscription.
+
+## [0.11.5] - 2025-12-01
+
+### Added
+
+- **Custom Slash Commands**: Define reusable prompt templates as Markdown files. Place files in `~/.pi/agent/commands/` (global) or `.pi/commands/` (project-specific). Commands appear in `/` autocomplete with source indicators like `(user)` or `(project)`. Supports bash-style arguments (`$1`, `$2`, `$@`) with quote-aware parsing. Subdirectories create namespaced commands (e.g., `.pi/commands/frontend/component.md` shows as `(project:frontend)`). Optional `description` field in YAML frontmatter. Works from CLI as well (`pi -p "/review"`). ([#86](https://github.com/badlogic/pi-mono/issues/86))
+
+## [0.11.4] - 2025-12-01
+
+### Improved
+
+- **TUI Crash Diagnostics**: When a render error occurs (line exceeds terminal width), all rendered lines are now written to `~/.pi/agent/pi-crash.log` with their indices and visible widths for easier debugging.
+
+### Fixed
+
+- **Session Selector Crash with Wide Characters**: Fixed crash when running `pi -r` to resume sessions containing emojis, CJK characters, or other wide Unicode characters. The session list was using character count instead of visible terminal width for truncation, causing lines to exceed terminal width. Added `truncateToWidth()` utility that properly handles ANSI codes and wide characters. ([#85](https://github.com/badlogic/pi-mono/issues/85))
+
+## [0.11.3] - 2025-12-01
+
+### Added
+
+- **Circular Menu Navigation**: All menus (model selector, message history, file picker) now wrap around when navigating past the first or last item. Pressing up at the top jumps to the bottom, and pressing down at the bottom jumps to the top. ([#82](https://github.com/badlogic/pi-mono/pull/82) by [@butelo](https://github.com/butelo))
+
+### Fixed
+
+- **RPC Mode Session Management**: Fixed session files not being saved in RPC mode (`--mode rpc`). Since version 0.9.0, the `agent.subscribe()` call with session management logic was only present in the TUI renderer, causing RPC mode to skip saving messages to session files. RPC mode now properly saves sessions just like interactive mode. ([#83](https://github.com/badlogic/pi-mono/issues/83))
+
+## [0.11.1] - 2025-11-29
+
+=======
+### Added
+
+- **Branch Source Tracking**: Branched sessions now store `branchedFrom` in the session header, containing the path to the original session file. Useful for tracing session lineage.
+
+## [0.12.5] - 2025-12-03
+
+### Added
+
+- **Forking/Rebranding Support**: All branding (app name, config directory, environment variable names) is now configurable via `piConfig` in `package.json`. Forks can change `piConfig.name` and `piConfig.configDir` to rebrand the CLI without code changes. Affects CLI banner, help text, config paths, and error messages. ([#95](https://github.com/badlogic/pi-mono/pull/95))
+
+### Fixed
+
+- **Bun Binary Detection**: Fixed Bun compiled binary failing to start after Bun updated its virtual filesystem path format from `%7EBUN` to `$bunfs`. ([#95](https://github.com/badlogic/pi-mono/pull/95))
+
+## [0.12.4] - 2025-12-02
+
+### Added
+
+- **`/debug` Command**: New slash command that writes debug information to `~/.pi/agent/pi-debug.log`, including terminal width and all rendered lines with their visible widths. Useful for diagnosing rendering issues.
+
+### Fixed
+
+- **Windows Carriage Return Handling**: Fixed tool output containing stray `\r` characters on Windows, which could cause rendering issues. Carriage returns are now stripped from bash output.
+
+## [0.12.3] - 2025-12-02
+
+### Fixed
+
+- **Windows Terminal Truecolor Support**: Fixed theme colors appearing washed out in Windows Terminal. The color mode detection now checks for `WT_SESSION` environment variable to enable truecolor (24-bit RGB) support instead of falling back to 256-color mode.
+
+## [0.12.2] - 2025-12-02
+
+### Fixed
+
+- **Windows Binary Path Resolution**: Fixed Bun compiled binary on Windows failing to find `package.json` and other assets. The binary was incorrectly using the Bun runtime's virtual filesystem path (`B:\~BUN\`) instead of the actual executable location. Now uses `process.execPath` which correctly points to the compiled binary, and updated detection to check for `%7EBUN` (URL-encoded `~BUN`) in `import.meta.url`.
+
+## [0.12.1] - 2025-12-02
+
+### Changed
+
+- **Binary Archive Structure**: Binary downloads now contain `pi` (or `pi.exe` on Windows) instead of platform-suffixed names like `pi-darwin-arm64`, making it easier to use after extraction.
+
+## [0.12.0] - 2025-12-02
+
+### Added
+
+- **Standalone Binary Support**: Build a self-contained binary using Bun with `npm run build:binary`. Pre-built binaries for macOS (arm64/x64), Linux (x64/arm64), and Windows (x64) are available on GitHub Releases. Based on [#89](https://github.com/badlogic/pi-mono/pull/89) by [@steipete](https://github.com/steipete), extended with cross-platform path resolution and GitHub Actions for automated release builds.
+
+## [0.11.6] - 2025-12-02
+
+### Added
+
+- **OAuth Login Status Indicator**: The `/login` provider selector now shows "✓ logged in" next to providers where you're already authenticated. This makes it clear at a glance whether you're using your Claude Pro/Max subscription. ([#88](https://github.com/badlogic/pi-mono/pull/88) by [@steipete](https://github.com/steipete))
+- **Subscription Cost Indicator**: The footer now shows "(sub)" next to the cost when using an OAuth subscription (e.g., `$0.123 (sub)`). This makes it visible without needing `/login` that you're using your Claude Pro/Max subscription.
+
+## [0.11.5] - 2025-12-01
+
+### Added
+
+- **Custom Slash Commands**: Define reusable prompt templates as Markdown files. Place files in `~/.pi/agent/commands/` (global) or `.pi/commands/` (project-specific). Commands appear in `/` autocomplete with source indicators like `(user)` or `(project)`. Supports bash-style arguments (`$1`, `$2`, `$@`) with quote-aware parsing. Subdirectories create namespaced commands (e.g., `.pi/commands/frontend/component.md` shows as `(project:frontend)`). Optional `description` field in YAML frontmatter. Works from CLI as well (`pi -p "/review"`). ([#86](https://github.com/badlogic/pi-mono/issues/86))
+
+## [0.11.4] - 2025-12-01
+
+### Improved
+
+- **TUI Crash Diagnostics**: When a render error occurs (line exceeds terminal width), all rendered lines are now written to `~/.pi/agent/pi-crash.log` with their indices and visible widths for easier debugging.
+
+### Fixed
+
+- **Session Selector Crash with Wide Characters**: Fixed crash when running `pi -r` to resume sessions containing emojis, CJK characters, or other wide Unicode characters. The session list was using character count instead of visible terminal width for truncation, causing lines to exceed terminal width. Added `truncateToWidth()` utility that properly handles ANSI codes and wide characters. ([#85](https://github.com/badlogic/pi-mono/issues/85))
+
+## [0.11.3] - 2025-12-01
+
+### Added
+
+- **Circular Menu Navigation**: All menus (model selector, message history, file picker) now wrap around when navigating past the first or last item. Pressing up at the top jumps to the bottom, and pressing down at the bottom jumps to the top. ([#82](https://github.com/badlogic/pi-mono/pull/82) by [@butelo](https://github.com/butelo))
+
+### Fixed
+
+- **RPC Mode Session Management**: Fixed session files not being saved in RPC mode (`--mode rpc`). Since version 0.9.0, the `agent.subscribe()` call with session management logic was only present in the TUI renderer, causing RPC mode to skip saving messages to session files. RPC mode now properly saves sessions just like interactive mode. ([#83](https://github.com/badlogic/pi-mono/issues/83))
+
+## [0.11.1] - 2025-11-29
+
+>>>>>>> 989af79 (fix: normalize OpenAI token counting, add branch source tracking)
 ### Added
 
 - **`--export` CLI Flag**: Export session files to self-contained HTML files from the command line. Auto-detects format (session manager format or streaming event format). Usage: `pi --export session.jsonl` or `pi --export session.jsonl output.html`. Note: Streaming event logs (from `--mode json`) don't contain system prompt or tool definitions, so those sections are omitted with a notice in the HTML. ([#80](https://github.com/badlogic/pi-mono/issues/80))

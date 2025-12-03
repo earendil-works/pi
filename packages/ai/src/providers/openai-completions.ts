@@ -224,12 +224,14 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 
 			for await (const chunk of openaiStream) {
 				if (chunk.usage) {
+					const cachedTokens = chunk.usage.prompt_tokens_details?.cached_tokens || 0;
 					output.usage = {
-						input: chunk.usage.prompt_tokens || 0,
+						// OpenAI includes cached tokens in prompt_tokens, so subtract to get non-cached input
+						input: (chunk.usage.prompt_tokens || 0) - cachedTokens,
 						output:
 							(chunk.usage.completion_tokens || 0) +
 							(chunk.usage.completion_tokens_details?.reasoning_tokens || 0),
-						cacheRead: chunk.usage.prompt_tokens_details?.cached_tokens || 0,
+						cacheRead: cachedTokens,
 						cacheWrite: 0,
 						cost: {
 							input: 0,

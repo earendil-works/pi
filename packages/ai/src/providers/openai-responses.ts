@@ -253,10 +253,12 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 				else if (event.type === "response.completed") {
 					const response = event.response;
 					if (response?.usage) {
+						const cachedTokens = response.usage.input_tokens_details?.cached_tokens || 0;
 						output.usage = {
-							input: response.usage.input_tokens || 0,
+							// OpenAI includes cached tokens in input_tokens, so subtract to get non-cached input
+							input: (response.usage.input_tokens || 0) - cachedTokens,
 							output: response.usage.output_tokens || 0,
-							cacheRead: response.usage.input_tokens_details?.cached_tokens || 0,
+							cacheRead: cachedTokens,
 							cacheWrite: 0,
 							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 						};
