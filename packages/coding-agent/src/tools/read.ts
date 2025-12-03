@@ -4,6 +4,7 @@ import { Type } from "@sinclair/typebox";
 import { constants } from "fs";
 import { access, readFile } from "fs/promises";
 import { extname, resolve as resolvePath } from "path";
+import { getToolDescription } from "../prompts/index.js";
 
 /**
  * Expand ~ to home directory
@@ -49,8 +50,7 @@ const MAX_LINE_LENGTH = 2000;
 export const readTool: AgentTool<typeof readSchema> = {
 	name: "read",
 	label: "read",
-	description:
-		"Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, defaults to first 2000 lines. Use offset/limit for large files.",
+	description: getToolDescription("read"),
 	parameters: readSchema,
 	execute: async (
 		_toolCallId: string,

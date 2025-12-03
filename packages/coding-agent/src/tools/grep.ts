@@ -5,6 +5,7 @@ import { spawn } from "child_process";
 import { readFileSync, type Stats, statSync } from "fs";
 import { homedir } from "os";
 import path from "path";
+import { getToolDescription } from "../prompts/index.js";
 import { ensureTool } from "../tools-manager.js";
 
 /**
@@ -39,8 +40,7 @@ const DEFAULT_LIMIT = 100;
 export const grepTool: AgentTool<typeof grepSchema> = {
 	name: "grep",
 	label: "grep",
-	description:
-		"Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore.",
+	description: getToolDescription("grep"),
 	parameters: grepSchema,
 	execute: async (
 		_toolCallId: string,

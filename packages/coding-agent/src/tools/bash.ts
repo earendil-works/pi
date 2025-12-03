@@ -2,6 +2,7 @@ import type { AgentTool } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
 import { existsSync } from "fs";
+import { getToolDescription } from "../prompts/index.js";
 
 const MAX_OUTPUT_BYTES = 65536;
 
@@ -91,8 +92,7 @@ const bashSchema = Type.Object({
 export const bashTool: AgentTool<typeof bashSchema> = {
 	name: "bash",
 	label: "bash",
-	description:
-		"Execute a bash command in the current working directory. Returns stdout and stderr. Optionally provide a timeout in seconds (default: 600 seconds / 10 minutes).",
+	description: getToolDescription("bash"),
 	parameters: bashSchema,
 	execute: async (
 		_toolCallId: string,

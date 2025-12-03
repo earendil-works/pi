@@ -3,6 +3,7 @@ import type { AgentTool } from "@mariozechner/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname, resolve as resolvePath } from "path";
+import { getToolDescription } from "../prompts/index.js";
 
 function expandPath(filePath: string): string {
 	if (filePath === "~") {
@@ -22,8 +23,7 @@ const writeSchema = Type.Object({
 export const writeTool: AgentTool<typeof writeSchema> = {
 	name: "write",
 	label: "write",
-	description:
-		"Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.",
+	description: getToolDescription("write"),
 	parameters: writeSchema,
 	execute: async (_toolCallId: string, { path, content }: { path: string; content: string }, signal?: AbortSignal) => {
 		const absolutePath = resolvePath(expandPath(path));

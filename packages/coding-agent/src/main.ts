@@ -9,6 +9,7 @@ import { fileURLToPath } from "url";
 import { getChangelogPath, getNewEntries, parseChangelog } from "./changelog.js";
 import { exportFromFile } from "./export-html.js";
 import { findModel, getApiKeyForModel, getAvailableModels } from "./model-config.js";
+import { buildSystemPrompt as buildSystemPromptFromYaml } from "./prompts/index.js";
 import { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
 import { initTheme } from "./theme/theme.js";
@@ -313,165 +314,25 @@ ${chalk.bold("Available Tools (default: read, bash, edit, write):")}
 `);
 }
 
-// Tool descriptions for system prompt
-const toolDescriptions: Record<ToolName, string> = {
-	read: "Read file contents",
-	bash: "Execute bash commands (ls, grep, find, etc.)",
-	edit: "Make surgical edits to files (find exact text and replace)",
-	write: "Create or overwrite files",
-	grep: "Search file contents for patterns (respects .gitignore)",
-	find: "Find files by glob pattern (respects .gitignore)",
-	ls: "List directory contents",
-};
-
 function buildSystemPrompt(customPrompt?: string, selectedTools?: ToolName[]): string {
 	// Check if customPrompt is a file path that exists
+	let resolvedCustomPrompt = customPrompt;
 	if (customPrompt && existsSync(customPrompt)) {
 		try {
-			customPrompt = readFileSync(customPrompt, "utf-8");
+			resolvedCustomPrompt = readFileSync(customPrompt, "utf-8");
 		} catch (error) {
 			console.error(chalk.yellow(`Warning: Could not read system prompt file ${customPrompt}: ${error}`));
 			// Fall through to use as literal string
 		}
 	}
 
-	if (customPrompt) {
-		// Use custom prompt as base, then add context/datetime
-		const now = new Date();
-		const dateTime = now.toLocaleString("en-US", {
-			weekday: "long",
-			year: "numeric",
-			month: "long",
-			day: "numeric",
-			hour: "2-digit",
-			minute: "2-digit",
-			second: "2-digit",
-			timeZoneName: "short",
-		});
-
-		let prompt = customPrompt;
-
-		// Append project context files
-		const contextFiles = loadProjectContextFiles();
-		if (contextFiles.length > 0) {
-			prompt += "\n\n# Project Context\n\n";
-			prompt += "The following project context files have been loaded:\n\n";
-			for (const { path: filePath, content } of contextFiles) {
-				prompt += `## ${filePath}\n\n${content}\n\n`;
-			}
-		}
-
-		// Add date/time and working directory last
-		prompt += `\nCurrent date and time: ${dateTime}`;
-		prompt += `\nCurrent working directory: ${process.cwd()}`;
-
-		return prompt;
-	}
-
-	const now = new Date();
-	const dateTime = now.toLocaleString("en-US", {
-		weekday: "long",
-		year: "numeric",
-		month: "long",
-		day: "numeric",
-		hour: "2-digit",
-		minute: "2-digit",
-		second: "2-digit",
-		timeZoneName: "short",
-	});
-
-	// Get absolute path to README.md
-	const readmePath = resolve(join(__dirname, "../README.md"));
-
-	// Build tools list based on selected tools
-	const tools = selectedTools || (["read", "bash", "edit", "write"] as ToolName[]);
-	const toolsList = tools.map((t) => `- ${t}: ${toolDescriptions[t]}`).join("\n");
-
-	// Build guidelines based on which tools are actually available
-	const guidelinesList: string[] = [];
-
-	const hasBash = tools.includes("bash");
-	const hasEdit = tools.includes("edit");
-	const hasWrite = tools.includes("write");
-	const hasGrep = tools.includes("grep");
-	const hasFind = tools.includes("find");
-	const hasLs = tools.includes("ls");
-	const hasRead = tools.includes("read");
-
-	// Read-only mode notice (no bash, edit, or write)
-	if (!hasBash && !hasEdit && !hasWrite) {
-		guidelinesList.push("You are in READ-ONLY mode - you cannot modify files or execute arbitrary commands");
-	}
-
-	// Bash without edit/write = read-only bash mode
-	if (hasBash && !hasEdit && !hasWrite) {
-		guidelinesList.push(
-			"Use bash ONLY for read-only operations (git log, gh issue view, curl, etc.) - do NOT modify any files",
-		);
-	}
-
-	// File exploration guidelines
-	if (hasBash && !hasGrep && !hasFind && !hasLs) {
-		guidelinesList.push("Use bash for file operations like ls, grep, find");
-	} else if (hasBash && (hasGrep || hasFind || hasLs)) {
-		guidelinesList.push("Prefer grep/find/ls tools over bash for file exploration (faster, respects .gitignore)");
-	}
-
-	// Read before edit guideline
-	if (hasRead && hasEdit) {
-		guidelinesList.push("Use read to examine files before editing");
-	}
-
-	// Edit guideline
-	if (hasEdit) {
-		guidelinesList.push("Use edit for precise changes (old text must match exactly)");
-	}
-
-	// Write guideline
-	if (hasWrite) {
-		guidelinesList.push("Use write only for new files or complete rewrites");
-	}
-
-	// Output guideline (only when actually writing/executing)
-	if (hasEdit || hasWrite) {
-		guidelinesList.push(
-			"When summarizing your actions, output plain text directly - do NOT use cat or bash to display what you did",
-		);
-	}
-
-	// Always include these
-	guidelinesList.push("Be concise in your responses");
-	guidelinesList.push("Show file paths clearly when working with files");
-
-	const guidelines = guidelinesList.map((g) => `- ${g}`).join("\n");
-
-	let prompt = `You are an expert coding assistant. You help users with coding tasks by reading files, executing commands, editing code, and writing new files.
-
-Available tools:
-${toolsList}
-
-Guidelines:
-${guidelines}
-
-Documentation:
-- Your own documentation (including custom model setup and theme creation) is at: ${readmePath}
-- Read it when users ask about features, configuration, or setup, and especially if the user asks you to add a custom model or provider, or create a custom theme.`;
-
-	// Append project context files
 	const contextFiles = loadProjectContextFiles();
-	if (contextFiles.length > 0) {
-		prompt += "\n\n# Project Context\n\n";
-		prompt += "The following project context files have been loaded:\n\n";
-		for (const { path: filePath, content } of contextFiles) {
-			prompt += `## ${filePath}\n\n${content}\n\n`;
-		}
-	}
 
-	// Add date/time and working directory last
-	prompt += `\nCurrent date and time: ${dateTime}`;
-	prompt += `\nCurrent working directory: ${process.cwd()}`;
-
-	return prompt;
+	return buildSystemPromptFromYaml({
+		customPrompt: resolvedCustomPrompt,
+		selectedTools,
+		contextFiles,
+	});
 }
 
 /**

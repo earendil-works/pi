@@ -1,0 +1,23 @@
+# Full tool descriptions sent to the LLM as part of tool definitions
+# These are the detailed descriptions that help the model understand how to use each tool
+
+read: |
+  Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, defaults to first 2000 lines. Use offset/limit for large files.
+
+bash: |
+  Execute a bash command in the current working directory. Returns stdout and stderr. Optionally provide a timeout in seconds (default: 600 seconds / 10 minutes).
+
+edit: |
+  Edit a file by replacing exact text. The oldText must match exactly (including whitespace). Use this for precise, surgical edits.
+
+write: |
+  Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.
+
+grep: |
+  Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore.
+
+find: |
+  Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore.
+
+ls: |
+  List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles.

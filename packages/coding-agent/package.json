@@ -15,7 +15,7 @@
 	"scripts": {
 		"clean": "rm -rf dist",
 		"build": "tsgo -p tsconfig.build.json && chmod +x dist/cli.js && npm run copy-theme-assets",
-		"copy-theme-assets": "cp src/theme/*.json dist/theme/",
+		"copy-theme-assets": "cp src/theme/*.json dist/theme/ && mkdir -p dist/prompts && cp src/prompts/*.yaml dist/prompts/",
 		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
 		"start": "npx tsx src/cli.ts",
 		"check": "tsgo --noEmit",
@@ -28,7 +28,8 @@
 		"@mariozechner/pi-tui": "^0.11.0",
 		"chalk": "^5.5.0",
 		"diff": "^8.0.2",
-		"glob": "^11.0.3"
+		"glob": "^11.0.3",
+		"yaml": "^2.8.2"
 	},
 	"devDependencies": {
 		"@types/diff": "^7.0.2",

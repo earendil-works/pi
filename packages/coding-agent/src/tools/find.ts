@@ -5,6 +5,7 @@ import { existsSync } from "fs";
 import { globSync } from "glob";
 import { homedir } from "os";
 import path from "path";
+import { getToolDescription } from "../prompts/index.js";
 import { ensureTool } from "../tools-manager.js";
 
 /**
@@ -33,8 +34,7 @@ const DEFAULT_LIMIT = 1000;
 export const findTool: AgentTool<typeof findSchema> = {
 	name: "find",
 	label: "find",
-	description:
-		"Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore.",
+	description: getToolDescription("find"),
 	parameters: findSchema,
 	execute: async (
 		_toolCallId: string,

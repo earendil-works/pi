@@ -3,6 +3,7 @@ import { Type } from "@sinclair/typebox";
 import { existsSync, readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import nodePath from "path";
+import { getToolDescription } from "../prompts/index.js";
 
 /**
  * Expand ~ to home directory
@@ -27,8 +28,7 @@ const DEFAULT_LIMIT = 500;
 export const lsTool: AgentTool<typeof lsSchema> = {
 	name: "ls",
 	label: "ls",
-	description:
-		"List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles.",
+	description: getToolDescription("ls"),
 	parameters: lsSchema,
 	execute: async (_toolCallId: string, { path, limit }: { path?: string; limit?: number }, signal?: AbortSignal) => {
 		return new Promise((resolve, reject) => {

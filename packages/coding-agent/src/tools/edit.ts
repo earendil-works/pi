@@ -5,6 +5,7 @@ import * as Diff from "diff";
 import { constants } from "fs";
 import { access, readFile, writeFile } from "fs/promises";
 import { resolve as resolvePath } from "path";
+import { getToolDescription } from "../prompts/index.js";
 
 function expandPath(filePath: string): string {
 	if (filePath === "~") {
@@ -106,8 +107,7 @@ const editSchema = Type.Object({
 export const editTool: AgentTool<typeof editSchema> = {
 	name: "edit",
 	label: "edit",
-	description:
-		"Edit a file by replacing exact text. The oldText must match exactly (including whitespace). Use this for precise, surgical edits.",
+	description: getToolDescription("edit"),
 	parameters: editSchema,
 	execute: async (
 		_toolCallId: string,
