@@ -227,7 +227,7 @@ function processFileArguments(fileArgs: string[]): { textContent: string; imageA
 }
 
 function printHelp() {
-	console.log(`${chalk.bold("pi")} - AI coding assistant with read, bash, edit, write tools
+	console.log(`${chalk.bold("pi")} - AI assistant with read, bash, edit, write tools
 
 ${chalk.bold("Usage:")}
   pi [options] [@files...] [messages...]
@@ -236,7 +236,7 @@ ${chalk.bold("Options:")}
   --provider <name>       Provider name (default: google)
   --model <id>            Model ID (default: gemini-2.5-flash)
   --api-key <key>         API key (defaults to env vars)
-  --system-prompt <text>  System prompt (default: coding assistant prompt)
+  --system-prompt <text>  System prompt (default: built-in assistant prompt)
   --mode <mode>           Output mode: text (default), json, or rpc
   --print, -p             Non-interactive mode: process prompt and exit
   --continue, -c          Continue previous session

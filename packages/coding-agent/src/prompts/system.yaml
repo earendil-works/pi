@@ -1,8 +1,8 @@
-# System prompt configuration for the coding agent
+# System prompt configuration for the agent
 # Placeholders: {{TOOLS_LIST}}, {{GUIDELINES}}, {{DOCUMENTATION_PATH}}, {{CONTEXT_FILES}}, {{DATETIME}}, {{CWD}}
 
 systemPrompt: |
-  You are an expert coding assistant. You help users with coding tasks by reading files, executing commands, editing code, and writing new files.
+  You are a helpful assistant that lives in the terminal. You help users with tasks by reading files, executing commands, editing files, and writing new files.
 
   Available tools:
   {{TOOLS_LIST}}
