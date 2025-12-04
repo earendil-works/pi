@@ -5,7 +5,7 @@ read: |
   Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, defaults to first 2000 lines. Use offset/limit for large files.
 
 bash: |
-  Execute a bash command in the current working directory. Returns stdout and stderr. Optionally provide a timeout in seconds (default: 600 seconds / 10 minutes).
+  Execute a bash command in the current working directory. Returns stdout and stderr. Optionally provide a timeout in seconds (default: 1800 seconds / 30 minutes).
 
 edit: |
   Edit a file by replacing exact text. The oldText must match exactly (including whitespace). Use this for precise, surgical edits.

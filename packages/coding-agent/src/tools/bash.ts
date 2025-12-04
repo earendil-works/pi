@@ -82,11 +82,11 @@ function killProcessTree(pid: number): void {
 	}
 }
 
-const DEFAULT_TIMEOUT = 10 * 60; // 10 minutes in seconds
+const DEFAULT_TIMEOUT = 30 * 60; // 30 minutes in seconds
 
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
-	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (default: 600 seconds / 10 minutes)" })),
+	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (default: 1800 seconds / 30 minutes)" })),
 });
 
 // Throttle delay for progress events (ms)

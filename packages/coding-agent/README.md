@@ -858,7 +858,7 @@ Write content to a file. Creates the file if it doesn't exist, overwrites if it 
 Edit a file by replacing exact text. The oldText must match exactly (including whitespace). Use this for precise, surgical edits. Returns an error if the text appears multiple times or isn't found.
 
 **bash**
-Execute a bash command in the current working directory. Returns stdout and stderr. Optionally accepts a `timeout` parameter (in seconds) - no default timeout.
+Execute a bash command in the current working directory. Returns stdout and stderr. Optionally accepts a `timeout` parameter in seconds (default: 1800 seconds / 30 minutes).
 
 ### Read-Only Exploration Tools
 
