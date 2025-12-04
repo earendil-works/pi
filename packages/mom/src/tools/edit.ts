@@ -104,6 +104,7 @@ export function createEditTool(executor: Executor): AgentTool<typeof editSchema>
 			_toolCallId: string,
 			{ path, oldText, newText }: { label: string; path: string; oldText: string; newText: string },
 			signal?: AbortSignal,
+			_onProgress?: (chunk: string) => void,
 		) => {
 			// Read the file
 			const readResult = await executor.exec(`cat ${shellEscape(path)}`, { signal });

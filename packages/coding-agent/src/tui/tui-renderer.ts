@@ -771,6 +771,16 @@ export class TuiRenderer {
 				break;
 			}
 
+			case "tool_execution_progress": {
+				// Handle streaming output from tools (e.g., bash stdout/stderr)
+				const component = this.pendingTools.get(event.toolCallId);
+				if (component) {
+					component.appendOutput(event.output);
+					this.ui.requestRender();
+				}
+				break;
+			}
+
 			case "tool_execution_end": {
 				// Update the existing tool component with the result
 				const component = this.pendingTools.get(event.toolCallId);

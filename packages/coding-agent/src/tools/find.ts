@@ -40,6 +40,7 @@ export const findTool: AgentTool<typeof findSchema> = {
 		_toolCallId: string,
 		{ pattern, path: searchDir, limit }: { pattern: string; path?: string; limit?: number },
 		signal?: AbortSignal,
+		_onProgress?: (chunk: string) => void,
 	) => {
 		return new Promise((resolve, reject) => {
 			if (signal?.aborted) {

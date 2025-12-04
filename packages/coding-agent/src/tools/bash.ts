@@ -89,6 +89,11 @@ const bashSchema = Type.Object({
 	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (default: 600 seconds / 10 minutes)" })),
 });
 
+// Throttle delay for progress events (ms)
+const PROGRESS_FLUSH_DELAY = 100;
+// Flush immediately if pending chunk exceeds this size
+const PROGRESS_MAX_PENDING_SIZE = 4096;
+
 export const bashTool: AgentTool<typeof bashSchema> = {
 	name: "bash",
 	label: "bash",
@@ -98,6 +103,7 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 		_toolCallId: string,
 		{ command, timeout }: { command: string; timeout?: number },
 		signal?: AbortSignal,
+		onProgress?: (chunk: string) => void,
 	) => {
 		return new Promise((resolve, _reject) => {
 			const { shell, args } = getShellConfig();
@@ -110,7 +116,44 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 			let stderr = "";
 			let timedOut = false;
 
+			// Throttling state for progress events
+			let pendingChunk = "";
+			let flushTimer: NodeJS.Timeout | null = null;
+
+			const flushProgress = () => {
+				if (onProgress && pendingChunk) {
+					onProgress(pendingChunk);
+					pendingChunk = "";
+				}
+				flushTimer = null;
+			};
+
+			const scheduleFlush = () => {
+				if (!flushTimer) {
+					flushTimer = setTimeout(flushProgress, PROGRESS_FLUSH_DELAY);
+				}
+			};
+
+			const handleData = (text: string) => {
+				pendingChunk += text;
+
+				// Immediate flush if pending gets too large
+				if (pendingChunk.length > PROGRESS_MAX_PENDING_SIZE) {
+					if (flushTimer) {
+						clearTimeout(flushTimer);
+						flushTimer = null;
+					}
+					flushProgress();
+				} else {
+					scheduleFlush();
+				}
+			};
+
 			child.on("error", (err) => {
+				if (flushTimer) {
+					clearTimeout(flushTimer);
+					flushTimer = null;
+				}
 				_reject(err instanceof Error ? err : new Error(String(err)));
 			});
 
@@ -125,23 +168,34 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 
 			if (child.stdout) {
 				child.stdout.on("data", (data) => {
-					stdout += data.toString();
+					const text = data.toString();
+					stdout += text;
 					if (stdout.length > 10 * 1024 * 1024) {
 						stdout = stdout.slice(0, 10 * 1024 * 1024);
 					}
+					handleData(text);
 				});
 			}
 
 			if (child.stderr) {
 				child.stderr.on("data", (data) => {
-					stderr += data.toString();
+					const text = data.toString();
+					stderr += text;
 					if (stderr.length > 10 * 1024 * 1024) {
 						stderr = stderr.slice(0, 10 * 1024 * 1024);
 					}
+					handleData(text);
 				});
 			}
 
 			child.on("close", (code) => {
+				// Clear any pending timer and flush final chunk
+				if (flushTimer) {
+					clearTimeout(flushTimer);
+					flushTimer = null;
+				}
+				flushProgress();
+
 				if (timeoutHandle) {
 					clearTimeout(timeoutHandle);
 				}
@@ -195,6 +249,11 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 
 			// Handle abort signal - kill entire process tree
 			const onAbort = () => {
+				// Clear flush timer on abort
+				if (flushTimer) {
+					clearTimeout(flushTimer);
+					flushTimer = null;
+				}
 				if (child.pid) {
 					killProcessTree(child.pid);
 				}

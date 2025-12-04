@@ -21,6 +21,9 @@ function replaceTabs(text: string): string {
 	return text.replace(/\t/g, "   ");
 }
 
+// Maximum size for partial output buffer (keeps last N bytes to avoid memory issues)
+const MAX_PARTIAL_OUTPUT_SIZE = 64 * 1024; // 64KB
+
 /**
  * Component that renders a tool call with its result (updateable)
  */
@@ -29,6 +32,7 @@ export class ToolExecutionComponent extends Container {
 	private toolName: string;
 	private args: any;
 	private expanded = false;
+	private partialOutput = ""; // Accumulated streaming output (rolling buffer)
 	private result?: {
 		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 		isError: boolean;
@@ -51,12 +55,31 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	/**
+	 * Append streaming output chunk (for bash progress events).
+	 * Uses a rolling buffer to avoid unbounded memory growth.
+	 */
+	appendOutput(chunk: string): void {
+		this.partialOutput += chunk;
+		// Trim to rolling buffer size if exceeded
+		if (this.partialOutput.length > MAX_PARTIAL_OUTPUT_SIZE) {
+			// Keep the last MAX_PARTIAL_OUTPUT_SIZE characters, starting at a newline if possible
+			const trimStart = this.partialOutput.length - MAX_PARTIAL_OUTPUT_SIZE;
+			const newlineIdx = this.partialOutput.indexOf("\n", trimStart);
+			const cutPoint = newlineIdx !== -1 && newlineIdx < trimStart + 1000 ? newlineIdx + 1 : trimStart;
+			this.partialOutput = this.partialOutput.slice(cutPoint);
+		}
+		this.updateDisplay();
+	}
+
 	updateResult(result: {
 		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 		details?: any;
 		isError: boolean;
 	}): void {
 		this.result = result;
+		// Clear partial output since final result overrides it
+		this.partialOutput = "";
 		this.updateDisplay();
 	}
 
@@ -103,19 +126,23 @@ export class ToolExecutionComponent extends Container {
 			const command = this.args?.command || "";
 			text = theme.fg("toolTitle", theme.bold(`$ ${command || theme.fg("toolOutput", "...")}`));
 
+			// Use final result if available, otherwise show streaming partial output
+			let output = "";
 			if (this.result) {
-				// Show output without code fences - more minimal
-				const output = this.getTextOutput().trim();
-				if (output) {
-					const lines = output.split("\n");
-					const maxLines = this.expanded ? lines.length : 5;
-					const displayLines = lines.slice(0, maxLines);
-					const remaining = lines.length - maxLines;
+				output = this.getTextOutput().trim();
+			} else if (this.partialOutput) {
+				output = stripAnsi(this.partialOutput).trim();
+			}
 
-					text += "\n\n" + displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n");
-					if (remaining > 0) {
-						text += theme.fg("toolOutput", `\n... (${remaining} more lines)`);
-					}
+			if (output) {
+				const lines = output.split("\n");
+				const maxLines = this.expanded ? lines.length : 5;
+				const displayLines = lines.slice(0, maxLines);
+				const remaining = lines.length - maxLines;
+
+				text += "\n\n" + displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n");
+				if (remaining > 0) {
+					text += theme.fg("toolOutput", `\n... (${remaining} more lines)`);
 				}
 			}
 		} else if (this.toolName === "read") {

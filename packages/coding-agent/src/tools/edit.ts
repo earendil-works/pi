@@ -113,6 +113,7 @@ export const editTool: AgentTool<typeof editSchema> = {
 		_toolCallId: string,
 		{ path, oldText, newText }: { path: string; oldText: string; newText: string },
 		signal?: AbortSignal,
+		_onProgress?: (chunk: string) => void,
 	) => {
 		const absolutePath = resolvePath(expandPath(path));
 

@@ -25,7 +25,12 @@ export const writeTool: AgentTool<typeof writeSchema> = {
 	label: "write",
 	description: getToolDescription("write"),
 	parameters: writeSchema,
-	execute: async (_toolCallId: string, { path, content }: { path: string; content: string }, signal?: AbortSignal) => {
+	execute: async (
+		_toolCallId: string,
+		{ path, content }: { path: string; content: string },
+		signal?: AbortSignal,
+		_onProgress?: (chunk: string) => void,
+	) => {
 		const absolutePath = resolvePath(expandPath(path));
 		const dir = dirname(absolutePath);
 

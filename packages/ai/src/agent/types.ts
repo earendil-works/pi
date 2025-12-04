@@ -26,6 +26,8 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 		toolCallId: string,
 		params: Static<TParameters>,
 		signal?: AbortSignal,
+		// Optional callback for streaming progress updates (e.g., bash stdout/stderr)
+		onProgress?: (chunk: string) => void,
 	) => Promise<AgentToolResult<TDetails>>;
 }
 
@@ -50,6 +52,8 @@ export type AgentEvent =
 	| { type: "message_end"; message: Message }
 	// Emitted when a tool execution starts
 	| { type: "tool_execution_start"; toolCallId: string; toolName: string; args: any }
+	// Emitted when a tool execution produces streaming output (e.g., bash stdout/stderr)
+	| { type: "tool_execution_progress"; toolCallId: string; toolName: string; output: string }
 	// Emitted when a tool execution completes
 	| {
 			type: "tool_execution_end";

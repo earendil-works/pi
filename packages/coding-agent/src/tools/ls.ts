@@ -30,7 +30,12 @@ export const lsTool: AgentTool<typeof lsSchema> = {
 	label: "ls",
 	description: getToolDescription("ls"),
 	parameters: lsSchema,
-	execute: async (_toolCallId: string, { path, limit }: { path?: string; limit?: number }, signal?: AbortSignal) => {
+	execute: async (
+		_toolCallId: string,
+		{ path, limit }: { path?: string; limit?: number },
+		signal?: AbortSignal,
+		_onProgress?: (chunk: string) => void,
+	) => {
 		return new Promise((resolve, reject) => {
 			if (signal?.aborted) {
 				reject(new Error("Operation aborted"));

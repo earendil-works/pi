@@ -24,6 +24,7 @@ export const attachTool: AgentTool<typeof attachSchema> = {
 		_toolCallId: string,
 		{ path, title }: { label: string; path: string; title?: string },
 		signal?: AbortSignal,
+		_onProgress?: (chunk: string) => void,
 	) => {
 		if (!uploadFn) {
 			throw new Error("Upload function not configured");

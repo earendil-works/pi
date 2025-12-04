@@ -56,6 +56,7 @@ export const readTool: AgentTool<typeof readSchema> = {
 		_toolCallId: string,
 		{ path, offset, limit }: { path: string; offset?: number; limit?: number },
 		signal?: AbortSignal,
+		_onProgress?: (chunk: string) => void,
 	) => {
 		const absolutePath = resolvePath(expandPath(path));
 		const mimeType = isImageFile(absolutePath);

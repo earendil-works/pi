@@ -19,6 +19,7 @@ export function createBashTool(executor: Executor): AgentTool<typeof bashSchema>
 			_toolCallId: string,
 			{ command, timeout }: { label: string; command: string; timeout?: number },
 			signal?: AbortSignal,
+			_onProgress?: (chunk: string) => void,
 		) => {
 			const result = await executor.exec(command, { timeout, signal });
 			let output = "";

@@ -41,7 +41,12 @@ export const getCurrentTimeTool: AgentTool<typeof getCurrentTimeSchema, { utcTim
 	name: "get_current_time",
 	description: "Get the current date and time",
 	parameters: getCurrentTimeSchema,
-	execute: async (_toolCallId: string, args: GetCurrentTimeParams) => {
+	execute: async (
+		_toolCallId: string,
+		args: GetCurrentTimeParams,
+		_signal?: AbortSignal,
+		_onProgress?: (chunk: string) => void,
+	) => {
 		return getCurrentTime(args.timezone);
 	},
 };

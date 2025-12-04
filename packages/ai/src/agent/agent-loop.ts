@@ -210,8 +210,18 @@ async function executeToolCalls<T>(
 			// Validate arguments using shared validation function
 			const validatedArgs = validateToolArguments(tool, toolCall);
 
-			// Execute with validated, typed arguments
-			resultOrError = await tool.execute(toolCall.id, validatedArgs, signal);
+			// Create progress callback that pushes events to the stream
+			const onProgress = (chunk: string) => {
+				stream.push({
+					type: "tool_execution_progress",
+					toolCallId: toolCall.id,
+					toolName: toolCall.name,
+					output: chunk,
+				});
+			};
+
+			// Execute with validated, typed arguments and progress callback
+			resultOrError = await tool.execute(toolCall.id, validatedArgs, signal, onProgress);
 		} catch (e) {
 			resultOrError = e instanceof Error ? e.message : String(e);
 			isError = true;
