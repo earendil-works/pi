@@ -26,7 +26,7 @@ import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
 import { exportSessionToHtml } from "../export-html.js";
 import { getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
-import { sendNotification } from "../notification.js";
+import { playNotificationSound, sendNotification } from "../notification.js";
 import { listOAuthProviders, login, logout } from "../oauth/index.js";
 import { PromptHistoryManager } from "../prompt-history-manager.js";
 import { getHandoffPrompt } from "../prompts/index.js";
@@ -232,7 +232,7 @@ export class TuiRenderer {
 
 		const notifyCommand: SlashCommand = {
 			name: "notify",
-			description: "Toggle macOS notifications on agent completion",
+			description: "Toggle completion notifications (sound + native alerts on macOS)",
 		};
 
 		// Setup autocomplete for file paths and slash commands
@@ -886,8 +886,9 @@ export class TuiRenderer {
 				// Note: Don't need to re-enable submit - we never disable it
 				this.ui.requestRender();
 
-				// Send macOS notification if enabled
+				// Send notification and play sound if enabled (macOS only)
 				if (this.settingsManager.getNotifications()) {
+					playNotificationSound();
 					const modelName = this.agent.state.model?.name || this.agent.state.model?.id || "Agent";
 					sendNotification("pi", `${modelName} finished`);
 				}

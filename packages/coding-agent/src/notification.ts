@@ -27,3 +27,20 @@ export function sendNotification(title: string, message: string): void {
 		}
 	});
 }
+
+/**
+ * Play a subtle notification sound on macOS.
+ * No-op on non-macOS platforms.
+ * Uses a built-in system sound (Tink) via afplay.
+ * Fire-and-forget: does not block and ignores errors.
+ */
+export function playNotificationSound(): void {
+	if (process.platform !== "darwin") return;
+
+	const soundPath = "/System/Library/Sounds/Tink.aiff";
+
+	// Fire-and-forget; ignore errors (e.g., afplay missing)
+	exec(`afplay '${soundPath}'`, () => {
+		// Silently ignore errors - sound is best-effort
+	});
+}
