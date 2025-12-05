@@ -376,16 +376,18 @@ export class SessionManager {
 									if (part.type === "text") {
 										text += part.text + "\n";
 									} else if (part.type === "toolCall") {
-										text += `[Tool Call: ${part.name}]\n`;
+										text += `\n> Used tool \`${part.name}\``;
 										if (part.arguments && Object.keys(part.arguments).length > 0) {
 											const argsStr = JSON.stringify(part.arguments, null, 2);
 											// Truncate very long arguments
 											const MAX_ARGS_LEN = 500;
 											if (argsStr.length > MAX_ARGS_LEN) {
-												text += `Input: ${argsStr.substring(0, MAX_ARGS_LEN)}... [truncated]\n`;
+												text += ` with arguments: ${argsStr.substring(0, MAX_ARGS_LEN)}... (truncated)\n`;
 											} else {
-												text += `Input: ${argsStr}\n`;
+												text += ` with arguments: ${argsStr}\n`;
 											}
+										} else {
+											text += "\n";
 										}
 									}
 								}
@@ -403,16 +405,15 @@ export class SessionManager {
 								resultContent = msg.content || "";
 							}
 
-							const name = msg.toolName || "Unknown Tool";
-							const header = `## Tool Result: ${name}`;
+							const name = msg.toolName || "unknown";
 
 							const MAX_LEN = 2000;
 							if (resultContent.length > MAX_LEN) {
 								resultContent =
 									resultContent.substring(0, MAX_LEN) +
-									`\n... [Output truncated. Total length: ${resultContent.length} chars]`;
+									`\n... (output truncated, total length: ${resultContent.length} chars)`;
 							}
-							output.push(`${header}\n${resultContent}`);
+							output.push(`> Output from \`${name}\`:\n${resultContent}`);
 						}
 					}
 				} catch {

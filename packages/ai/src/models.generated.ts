@@ -1991,6 +1991,23 @@ export const MODELS = {
 		} satisfies Model<"anthropic-messages">,
 	},
 	openrouter: {
+		"openai/gpt-5.1-codex-max": {
+			id: "openai/gpt-5.1-codex-max",
+			name: "OpenAI: GPT-5.1-Codex-Max",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 1.25,
+				output: 10,
+				cacheRead: 0.125,
+				cacheWrite: 0,
+			},
+			contextWindow: 400000,
+			maxTokens: 128000,
+		} satisfies Model<"openai-completions">,
 		"amazon/nova-2-lite-v1:free": {
 			id: "amazon/nova-2-lite-v1:free",
 			name: "Amazon: Nova 2 Lite (free)",
@@ -3401,6 +3418,23 @@ export const MODELS = {
 			},
 			contextWindow: 400000,
 			maxTokens: 128000,
+		} satisfies Model<"openai-completions">,
+		"openai/gpt-oss-120b:free": {
+			id: "openai/gpt-oss-120b:free",
+			name: "OpenAI: gpt-oss-120b (free)",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 131072,
+			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
 		"openai/gpt-oss-120b": {
 			id: "openai/gpt-oss-120b",
