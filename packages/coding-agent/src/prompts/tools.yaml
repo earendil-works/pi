@@ -21,3 +21,9 @@ find: |
 
 ls: |
   List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles.
+
+list_threads: |
+  List past conversation threads. Returns thread IDs, relative dates, message counts, and preview text. Supports optional keyword search and project path.
+
+read_thread: |
+  Read the full transcript of a specific thread by its ID. Returns markdown-formatted conversation with user messages, assistant responses, and tool results (truncated for large outputs). Supports optional project path.

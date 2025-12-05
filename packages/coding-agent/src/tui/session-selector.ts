@@ -71,7 +71,7 @@ class SessionList implements Component {
 		lines.push(""); // Blank line after search
 
 		if (this.filteredSessions.length === 0) {
-			lines.push(theme.fg("muted", "  No sessions found"));
+			lines.push(theme.fg("muted", "  No threads found"));
 			return lines;
 		}
 
@@ -181,7 +181,7 @@ export class SessionSelectorComponent extends Container {
 
 		// Add header
 		this.addChild(new Spacer(1));
-		this.addChild(new Text(theme.bold("Resume Session"), 1, 0));
+		this.addChild(new Text(theme.bold("Resume Thread"), 1, 0));
 		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));

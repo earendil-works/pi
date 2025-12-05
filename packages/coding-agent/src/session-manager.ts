@@ -59,9 +59,16 @@ export class SessionManager {
 	private enabled: boolean = true;
 	private sessionInitialized: boolean = false;
 	private pendingMessages: any[] = [];
+	private readOnly: boolean = false;
 
-	constructor(continueSession: boolean = false, customSessionPath?: string) {
-		this.sessionDir = this.getSessionDirectory();
+	constructor(
+		continueSession: boolean = false,
+		customSessionPath?: string,
+		readOnly: boolean = false,
+		projectPath?: string,
+	) {
+		this.readOnly = readOnly;
+		this.sessionDir = this.getSessionDirectory(projectPath);
 
 		if (customSessionPath) {
 			// Use custom session file path
@@ -76,10 +83,10 @@ export class SessionManager {
 				this.loadSessionId();
 				// Mark as initialized since we're loading an existing session
 				this.sessionInitialized = true;
-			} else {
+			} else if (!readOnly) {
 				this.initNewSession();
 			}
-		} else {
+		} else if (!readOnly) {
 			this.initNewSession();
 		}
 	}
@@ -89,14 +96,14 @@ export class SessionManager {
 		this.enabled = false;
 	}
 
-	private getSessionDirectory(): string {
-		const cwd = process.cwd();
+	private getSessionDirectory(projectPath?: string): string {
+		const cwd = projectPath ? resolve(projectPath) : process.cwd();
 		// Replace all path separators and colons (for Windows drive letters) with dashes
 		const safePath = "--" + cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-") + "--";
 
 		const configDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi/agent/"));
 		const sessionDir = join(configDir, "sessions", safePath);
-		if (!existsSync(sessionDir)) {
+		if (!existsSync(sessionDir) && !this.readOnly) {
 			mkdirSync(sessionDir, { recursive: true });
 		}
 		return sessionDir;
@@ -305,6 +312,7 @@ export class SessionManager {
 
 	findSessionByUuid(uuid: string): string | null {
 		try {
+			if (!existsSync(this.sessionDir)) return null;
 			const files = readdirSync(this.sessionDir).filter((f) => f.endsWith(".jsonl"));
 
 			// First try filename match (faster)
@@ -327,6 +335,89 @@ export class SessionManager {
 			}
 
 			return null;
+		} catch {
+			return null;
+		}
+	}
+
+	/** Get formatted thread content as markdown for a given session/thread ID */
+	getThreadContent(sessionId: string): string | null {
+		const sessionPath = this.findSessionByUuid(sessionId);
+		if (!sessionPath) return null;
+
+		try {
+			const content = readFileSync(sessionPath, "utf8");
+			const lines = content.trim().split("\n");
+			const output: string[] = [];
+
+			for (const line of lines) {
+				try {
+					const entry = JSON.parse(line);
+					if (entry.type === "message") {
+						const msg = entry.message;
+						const role = msg.role;
+
+						if (role === "user") {
+							let text = "";
+							if (Array.isArray(msg.content)) {
+								text = msg.content
+									.map((c: { type: string; text?: string }) => c.text || (c.type === "image" ? "[Image]" : ""))
+									.join("\n");
+							} else {
+								text = msg.content;
+							}
+							output.push(`## User\n${text}`);
+						} else if (role === "assistant") {
+							let text = "";
+							if (Array.isArray(msg.content)) {
+								for (const part of msg.content) {
+									if (part.type === "text") {
+										text += part.text + "\n";
+									} else if (part.type === "toolCall") {
+										text += `[Tool Call: ${part.name}]\n`;
+										if (part.arguments && Object.keys(part.arguments).length > 0) {
+											const argsStr = JSON.stringify(part.arguments, null, 2);
+											// Truncate very long arguments
+											const MAX_ARGS_LEN = 500;
+											if (argsStr.length > MAX_ARGS_LEN) {
+												text += `Input: ${argsStr.substring(0, MAX_ARGS_LEN)}... [truncated]\n`;
+											} else {
+												text += `Input: ${argsStr}\n`;
+											}
+										}
+									}
+								}
+							} else {
+								text = msg.content;
+							}
+							output.push(`## Assistant\n${text.trim()}`);
+						} else if (role === "toolResult") {
+							let resultContent = "";
+							if (Array.isArray(msg.content)) {
+								resultContent = msg.content
+									.map((c: { type: string; text?: string }) => c.text || "")
+									.join("\n");
+							} else {
+								resultContent = msg.content || "";
+							}
+
+							const name = msg.toolName || "Unknown Tool";
+							const header = `## Tool Result: ${name}`;
+
+							const MAX_LEN = 2000;
+							if (resultContent.length > MAX_LEN) {
+								resultContent =
+									resultContent.substring(0, MAX_LEN) +
+									`\n... [Output truncated. Total length: ${resultContent.length} chars]`;
+							}
+							output.push(`${header}\n${resultContent}`);
+						}
+					}
+				} catch {
+					// Skip malformed lines
+				}
+			}
+			return output.join("\n\n");
 		} catch {
 			return null;
 		}
@@ -378,6 +469,9 @@ export class SessionManager {
 		}> = [];
 
 		try {
+			if (!existsSync(this.sessionDir)) {
+				return sessions;
+			}
 			const files = readdirSync(this.sessionDir)
 				.filter((f) => f.endsWith(".jsonl"))
 				.map((f) => join(this.sessionDir, f));
@@ -410,10 +504,15 @@ export class SessionManager {
 
 								// Extract text from user and assistant messages
 								if (entry.message.role === "user" || entry.message.role === "assistant") {
-									const textContent = entry.message.content
-										.filter((c: any) => c.type === "text")
-										.map((c: any) => c.text)
-										.join(" ");
+									const msgContent = entry.message.content;
+									const textContent = Array.isArray(msgContent)
+										? msgContent
+												.filter((c: any) => c.type === "text")
+												.map((c: any) => c.text)
+												.join(" ")
+										: typeof msgContent === "string"
+											? msgContent
+											: "";
 
 									if (textContent) {
 										allMessages.push(textContent);

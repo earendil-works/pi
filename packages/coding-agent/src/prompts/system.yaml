@@ -26,6 +26,8 @@ toolDescriptions:
   grep: Search file contents for patterns (respects .gitignore)
   find: Find files by glob pattern (respects .gitignore)
   ls: List directory contents
+  list_threads: List past conversation threads with search
+  read_thread: Read a specific thread's conversation history
 
 # Guidelines that are conditionally included based on enabled tools
 # Each guideline has a condition (which tools must be present/absent) and the text
