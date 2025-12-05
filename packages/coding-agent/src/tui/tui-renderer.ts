@@ -2529,15 +2529,19 @@ export class TuiRenderer {
 				const message = this.queuedMessages[i];
 				const isEditing = this.editingQueueIndex === i;
 				if (isEditing) {
-					const prefix = theme.fg("accent", "> Editing #" + (i + 1) + " ");
+					const prefix = theme.fg("accent", "↳ Editing #" + (i + 1) + ": ");
 					const hint = theme.fg("muted", "(in textarea below)");
 					this.pendingMessagesContainer.addChild(new TruncatedText(prefix + hint, 1, 0));
 				} else {
-					const prefix = theme.fg("dim", "Queued: ");
+					const prefix = theme.fg("dim", "↳ Queued: ");
 					const messageColor = theme.fg("dim", message);
 					this.pendingMessagesContainer.addChild(new TruncatedText(prefix + messageColor, 1, 0));
 				}
 			}
+
+			// Add edit hint at the end
+			const editHint = "  " + theme.fg("dim", "⌥ + ↑") + theme.fg("muted", " edit");
+			this.pendingMessagesContainer.addChild(new TruncatedText(editHint, 1, 0));
 		}
 	}
 
