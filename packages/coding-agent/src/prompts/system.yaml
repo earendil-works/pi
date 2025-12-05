@@ -20,7 +20,7 @@ systemPrompt: |
 # Short tool descriptions shown in the system prompt's "Available tools" list
 toolDescriptions:
   read: Read file contents
-  bash: Execute bash commands (ls, grep, find, etc.)
+  bash: Execute bash commands (ls, rg, fd, sg, etc.)
   edit: Edit files with flexible matching (exact, unescape, whitespace-tolerant)
   write: Create or overwrite files
   grep: Search file contents for patterns (respects .gitignore)
@@ -44,7 +44,7 @@ guidelines:
   - condition:
       present: [bash]
       absent: [grep, find, ls]
-    text: Use bash for file operations like ls, grep, find
+    text: Use bash for file operations like ls, rg (ripgrep), fd, sg (ast-grep)
 
   - condition:
       present: [bash]
