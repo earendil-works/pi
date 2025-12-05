@@ -143,7 +143,11 @@ export class ToolExecutionComponent extends Container {
 
 				text += "\n\n" + displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n");
 				if (remaining > 0) {
-					text += theme.fg("toolOutput", `\n... (${remaining} more lines)`);
+					text +=
+						theme.fg("toolOutput", `\n(${remaining} more lines `) +
+						theme.fg("dim", "·") +
+						theme.fg("muted", " ctrl+o to expand") +
+						theme.fg("toolOutput", ")");
 				}
 			}
 		} else if (this.toolName === "read") {
@@ -169,7 +173,11 @@ export class ToolExecutionComponent extends Container {
 
 				text += "\n\n" + displayLines.map((line: string) => theme.fg("toolOutput", replaceTabs(line))).join("\n");
 				if (remaining > 0) {
-					text += theme.fg("toolOutput", `\n... (${remaining} more lines)`);
+					text +=
+						theme.fg("toolOutput", `\n(${remaining} more lines `) +
+						theme.fg("dim", "·") +
+						theme.fg("muted", " ctrl+o to expand") +
+						theme.fg("toolOutput", ")");
 				}
 			}
 		} else if (this.toolName === "write") {
@@ -194,7 +202,11 @@ export class ToolExecutionComponent extends Container {
 
 				text += "\n\n" + displayLines.map((line: string) => theme.fg("toolOutput", replaceTabs(line))).join("\n");
 				if (remaining > 0) {
-					text += theme.fg("toolOutput", `\n... (${remaining} more lines)`);
+					text +=
+						theme.fg("toolOutput", `\n(${remaining} more lines `) +
+						theme.fg("dim", "·") +
+						theme.fg("muted", " ctrl+o to expand") +
+						theme.fg("toolOutput", ")");
 				}
 			}
 		} else if (this.toolName === "edit") {
@@ -245,7 +257,11 @@ export class ToolExecutionComponent extends Container {
 
 					text += "\n\n" + displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n");
 					if (remaining > 0) {
-						text += theme.fg("toolOutput", `\n... (${remaining} more lines)`);
+						text +=
+							theme.fg("toolOutput", `\n(${remaining} more lines `) +
+							theme.fg("dim", "·") +
+							theme.fg("muted", " ctrl+o to expand") +
+							theme.fg("toolOutput", ")");
 					}
 				}
 			}
@@ -273,7 +289,11 @@ export class ToolExecutionComponent extends Container {
 
 					text += "\n\n" + displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n");
 					if (remaining > 0) {
-						text += theme.fg("toolOutput", `\n... (${remaining} more lines)`);
+						text +=
+							theme.fg("toolOutput", `\n(${remaining} more lines `) +
+							theme.fg("dim", "·") +
+							theme.fg("muted", " ctrl+o to expand") +
+							theme.fg("toolOutput", ")");
 					}
 				}
 			}
@@ -305,7 +325,11 @@ export class ToolExecutionComponent extends Container {
 
 					text += "\n\n" + displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n");
 					if (remaining > 0) {
-						text += theme.fg("toolOutput", `\n... (${remaining} more lines)`);
+						text +=
+							theme.fg("toolOutput", `\n(${remaining} more lines `) +
+							theme.fg("dim", "·") +
+							theme.fg("muted", " ctrl+o to expand") +
+							theme.fg("toolOutput", ")");
 					}
 				}
 			}

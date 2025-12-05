@@ -50,10 +50,7 @@ describe("Coding Agent Tools", () => {
 		it("should handle non-existent files", async () => {
 			const testFile = join(testDir, "nonexistent.txt");
 
-			const result = await readTool.execute("test-call-2", { path: testFile });
-
-			expect(getTextOutput(result)).toContain("Error");
-			expect(getTextOutput(result)).toContain("File not found");
+			await expect(readTool.execute("test-call-2", { path: testFile })).rejects.toThrow();
 		});
 
 		it("should truncate files exceeding line limit", async () => {
@@ -139,11 +136,9 @@ describe("Coding Agent Tools", () => {
 			const testFile = join(testDir, "short.txt");
 			writeFileSync(testFile, "Line 1\nLine 2\nLine 3");
 
-			const result = await readTool.execute("test-call-8", { path: testFile, offset: 100 });
-			const output = getTextOutput(result);
-
-			expect(output).toContain("Error: Offset 100 is beyond end of file");
-			expect(output).toContain("3 lines total");
+			await expect(readTool.execute("test-call-8", { path: testFile, offset: 100 })).rejects.toThrow(
+				/Offset 100 is beyond end of file.*3 lines total/,
+			);
 		});
 
 		it("should show both truncation notices when applicable", async () => {
@@ -168,8 +163,9 @@ describe("Coding Agent Tools", () => {
 			const result = await writeTool.execute("test-call-3", { path: testFile, content });
 
 			expect(getTextOutput(result)).toContain("Successfully wrote");
-			expect(getTextOutput(result)).toContain(testFile);
-			expect(result.details).toBeUndefined();
+			expect(result.details).toBeDefined();
+			expect(result.details?.created).toBe(true);
+			expect(result.details?.previousContent).toBeNull();
 		});
 
 		it("should create parent directories", async () => {
@@ -315,16 +311,16 @@ describe("Coding Agent Tools", () => {
 		});
 
 		it("should handle command errors", async () => {
-			const result = await bashTool.execute("test-call-9", { command: "exit 1" });
-
-			expect(getTextOutput(result)).toContain("Command failed");
+			await expect(bashTool.execute("test-call-9", { command: "exit 1" })).rejects.toThrow(
+				/Command exited with code 1/,
+			);
 		});
 
 		it("should respect timeout", async () => {
-			const result = await bashTool.execute("test-call-10", { command: "sleep 35" });
-
-			expect(getTextOutput(result)).toContain("Command failed");
-		}, 35000);
+			await expect(bashTool.execute("test-call-10", { command: "sleep 10", timeout: 1 })).rejects.toThrow(
+				/Command timed out/,
+			);
+		}, 5000);
 	});
 
 	describe("grep tool", () => {
