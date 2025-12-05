@@ -213,3 +213,28 @@ export function buildSystemPrompt(options: {
 
 	return prompt;
 }
+
+/**
+ * Get the prompt for generating a handoff document
+ */
+export function getHandoffPrompt(goal: string): string {
+	return `You are generating a handoff document for a new coding session.
+
+TARGET GOAL: "${goal}"
+
+Based on the conversation history, output a Markdown document with these sections:
+
+## Context Summary
+High-level architectural context and key decisions made.
+
+## Current Status
+What was just completed and the current state of the code.
+
+## Relevant Files
+List of file paths crucial for the goal (full paths as bullet points).
+
+## Next Steps
+Concrete instructions to achieve the target goal.
+
+IMPORTANT: Output ONLY the Markdown document. Do NOT include any preamble, introduction, or conversational text like "Here is the handoff document" or "I'll generate...". Start directly with "## Context Summary".`;
+}

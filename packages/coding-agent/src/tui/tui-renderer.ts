@@ -3,6 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Agent, AgentEvent, AgentState, ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
+import { complete } from "@mariozechner/pi-ai";
 import type { SlashCommand } from "@mariozechner/pi-tui";
 import {
 	CombinedAutocompleteProvider,
@@ -28,6 +29,7 @@ import { getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../
 import { sendNotification } from "../notification.js";
 import { listOAuthProviders, login, logout } from "../oauth/index.js";
 import { PromptHistoryManager } from "../prompt-history-manager.js";
+import { getHandoffPrompt } from "../prompts/index.js";
 import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
@@ -116,6 +118,7 @@ export class TuiRenderer {
 	private currentDraft: string = "";
 
 	private bashAbortController: AbortController | null = null;
+	private handoffAbortController: AbortController | null = null;
 	private bashModeIndicatorContainer: Container = new Container();
 
 	private unsubscribe?: () => void;
@@ -187,6 +190,11 @@ export class TuiRenderer {
 			description: "Create a new branch from a previous message",
 		};
 
+		const handoffCommand: SlashCommand = {
+			name: "handoff",
+			description: "Hand off to a new focused thread with a goal",
+		};
+
 		const loginCommand: SlashCommand = {
 			name: "login",
 			description: "Login with OAuth provider",
@@ -238,6 +246,7 @@ export class TuiRenderer {
 				sessionCommand,
 				changelogCommand,
 				branchCommand,
+				handoffCommand,
 				loginCommand,
 				logoutCommand,
 				queueCommand,
@@ -332,6 +341,11 @@ export class TuiRenderer {
 		this.editor.onEscape = () => {
 			if (this.bashAbortController) {
 				this.bashAbortController.abort();
+				return;
+			}
+
+			if (this.handoffAbortController) {
+				this.handoffAbortController.abort();
 				return;
 			}
 
@@ -484,6 +498,18 @@ export class TuiRenderer {
 			if (text === "/branch") {
 				this.showUserMessageSelector();
 				this.editor.setText("");
+				return;
+			}
+
+			// Check for /handoff command
+			if (text.startsWith("/handoff")) {
+				const goal = text.substring(8).trim(); // "/handoff".length = 8
+				if (!goal) {
+					this.showError("Usage: /handoff <goal>\nExample: /handoff implement the login page");
+					return;
+				}
+				this.editor.setText(""); // Clear before async operation
+				await this.handleHandoffCommand(goal);
 				return;
 			}
 
@@ -2009,6 +2035,175 @@ export class TuiRenderer {
 		this.chatContainer.addChild(new Markdown(changelogMarkdown, 1, 1, getMarkdownTheme()));
 		this.chatContainer.addChild(new DynamicBorder());
 		this.ui.requestRender();
+	}
+
+	private async handleHandoffCommand(goal: string): Promise<void> {
+		const parentId = this.sessionManager.getSessionId();
+		const messages = this.agent.state.messages;
+
+		if (messages.length === 0) {
+			this.showError("Nothing to hand off (no messages yet)");
+			return;
+		}
+
+		// Prevent execution if agent is busy
+		if (this.agent.state.isStreaming) {
+			this.showError("Cannot handoff while agent is busy");
+			return;
+		}
+
+		// Validate model and API key
+		const model = this.agent.state.model;
+		if (!model) {
+			this.showError("No model selected");
+			return;
+		}
+
+		const apiKey = await getApiKeyForModel(model);
+		if (!apiKey) {
+			this.showError(`No API key for ${model.provider}`);
+			return;
+		}
+
+		// Show loading state
+		if (this.loadingAnimation) {
+			this.loadingAnimation.stop();
+		}
+		this.statusContainer.clear();
+		this.loadingAnimation = new Loader(
+			this.ui,
+			(spinner) => theme.fg("accent", spinner),
+			(text) => theme.fg("muted", text),
+			"Generating handoff... (esc to cancel)",
+		);
+		this.statusContainer.addChild(this.loadingAnimation);
+		this.ui.requestRender();
+
+		this.handoffAbortController = new AbortController();
+
+		try {
+			// Format messages for handoff
+			const historyText = this.formatMessagesForHandoff(messages);
+			const systemPrompt = getHandoffPrompt(goal);
+
+			// Call LLM to generate handoff document
+			const result = await complete(
+				model,
+				{
+					systemPrompt,
+					messages: [
+						{
+							role: "user" as const,
+							content: [{ type: "text" as const, text: historyText }],
+							timestamp: Date.now(),
+						},
+					],
+					tools: [],
+				},
+				{
+					apiKey,
+					signal: this.handoffAbortController.signal,
+				},
+			);
+
+			// Check for errors
+			if (result.stopReason === "error" || result.stopReason === "aborted") {
+				throw new Error(result.errorMessage || `LLM returned ${result.stopReason}`);
+			}
+
+			// Extract text content from response
+			const handoffSummary = result.content
+				.filter((c): c is { type: "text"; text: string } => c.type === "text")
+				.map((c) => c.text)
+				.join("");
+
+			if (!handoffSummary.trim()) {
+				throw new Error("Generated handoff summary is empty - the model returned no text content");
+			}
+
+			// Build final draft with header
+			let finalDraft = `# Handoff: ${goal}\n\n`;
+			if (parentId) {
+				finalDraft += `**Parent Thread:** \`${parentId}\`\n`;
+				finalDraft += `*Use \`read_thread\` with this ID to reference the original conversation.*\n\n`;
+			}
+			finalDraft += `---\n\n${handoffSummary}`;
+
+			// Create new session
+			const newSessionPath = this.sessionManager.createHandoffSession(this.agent.state, parentId);
+			this.sessionManager.setSessionFile(newSessionPath);
+
+			// Clear agent messages for fresh start
+			this.agent.replaceMessages([]);
+			this.queuedMessages = [];
+			this.agent.clearMessageQueue();
+			this.updatePendingMessagesDisplay();
+
+			// Clear and reset UI
+			this.chatContainer.clear();
+			this.isFirstUserMessage = true;
+
+			// Show success message
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(theme.fg("accent", "✓ Handed off to new session"), 1, 0));
+			if (parentId) {
+				this.chatContainer.addChild(new Text(theme.fg("dim", `Parent: ${parentId}`), 1, 0));
+			}
+			this.chatContainer.addChild(new Spacer(1));
+
+			// Put draft in editor for user to review
+			this.editor.setText(finalDraft);
+		} catch (err: unknown) {
+			const error = err as Error;
+			if (error.name === "AbortError") {
+				this.showWarning("Handoff cancelled");
+			} else {
+				this.showError(`Handoff failed: ${error.message}`);
+			}
+		} finally {
+			if (this.loadingAnimation) {
+				this.loadingAnimation.stop();
+				this.loadingAnimation = null;
+			}
+			this.statusContainer.clear();
+			this.handoffAbortController = null;
+			this.ui.requestRender();
+		}
+	}
+
+	private formatMessagesForHandoff(messages: Message[]): string {
+		return messages
+			.map((msg) => {
+				if (msg.role === "user") {
+					const text = (msg.content as Array<{ type: string; text?: string }>)
+						.filter((c) => c.type === "text")
+						.map((c) => c.text || "")
+						.join("");
+					return `User: ${text}`;
+				} else if (msg.role === "assistant") {
+					const assistantMsg = msg as AssistantMessage;
+					const textParts = assistantMsg.content
+						.filter((c): c is { type: "text"; text: string } => c.type === "text")
+						.map((c) => c.text)
+						.join("");
+					const toolCalls = assistantMsg.content
+						.filter((c): c is ToolCall => c.type === "toolCall")
+						.map((c) => `[Tool: ${c.name}]`)
+						.join(" ");
+					return `Assistant: ${textParts}${toolCalls ? "\n" + toolCalls : ""}`;
+				} else if (msg.role === "toolResult") {
+					const toolResult = msg as ToolResultMessage;
+					const text = toolResult.content
+						.filter((c): c is { type: "text"; text: string } => c.type === "text")
+						.map((c) => c.text)
+						.join("");
+					const truncated = text.length > 500 ? text.substring(0, 500) + "..." : text;
+					return `Tool (${toolResult.toolName}): ${truncated}`;
+				}
+				return "";
+			})
+			.filter((line) => line.length > 0)
+			.join("\n\n");
 	}
 
 	private async handleClearCommand(): Promise<void> {

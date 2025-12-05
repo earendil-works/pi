@@ -32,6 +32,7 @@ export interface SessionHeader {
 	modelId: string;
 	thinkingLevel: string;
 	branchedFrom?: string; // Path to the session file this was branched from
+	handoffFrom?: string; // UUID of parent session (for handoff feature)
 }
 
 export interface SessionMessageEntry {
@@ -725,5 +726,26 @@ export class SessionManager {
 		} finally {
 			closeSync(fd);
 		}
+	}
+
+	/** Create a new session for handoff with reference to parent session. No messages are copied. */
+	createHandoffSession(state: AgentState, handoffFromId?: string): string {
+		const newSessionId = uuidv4();
+		const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+		const newSessionFile = join(this.sessionDir, `${timestamp}_${newSessionId}.jsonl`);
+
+		const entry: SessionHeader = {
+			type: "session",
+			id: newSessionId,
+			timestamp: new Date().toISOString(),
+			cwd: process.cwd(),
+			provider: state.model.provider,
+			modelId: state.model.id,
+			thinkingLevel: state.thinkingLevel,
+			handoffFrom: handoffFromId,
+		};
+		appendFileSync(newSessionFile, JSON.stringify(entry) + "\n");
+
+		return newSessionFile;
 	}
 }
