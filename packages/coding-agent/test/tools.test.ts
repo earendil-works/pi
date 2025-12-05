@@ -206,27 +206,103 @@ describe("Coding Agent Tools", () => {
 			const originalContent = "Hello, world!";
 			writeFileSync(testFile, originalContent);
 
-			const result = await editTool.execute("test-call-6", {
-				path: testFile,
-				oldText: "nonexistent",
-				newText: "testing",
-			});
-
-			expect(getTextOutput(result)).toContain("Could not find the exact text");
+			await expect(
+				editTool.execute("test-call-6", {
+					path: testFile,
+					oldText: "nonexistent",
+					newText: "testing",
+				}),
+			).rejects.toThrow("Could not find the text");
 		});
 
-		it("should fail if text appears multiple times", async () => {
+		it("should fail if text appears multiple times without all flag", async () => {
 			const testFile = join(testDir, "edit-test.txt");
 			const originalContent = "foo foo foo";
 			writeFileSync(testFile, originalContent);
 
-			const result = await editTool.execute("test-call-7", {
+			await expect(
+				editTool.execute("test-call-7", {
+					path: testFile,
+					oldText: "foo",
+					newText: "bar",
+				}),
+			).rejects.toThrow("Found 3 occurrences");
+		});
+
+		it("should replace all occurrences when all flag is true", async () => {
+			const testFile = join(testDir, "edit-all.txt");
+			writeFileSync(testFile, "foo bar foo baz foo");
+
+			const result = await editTool.execute("test-call-all", {
 				path: testFile,
 				oldText: "foo",
-				newText: "bar",
+				newText: "qux",
+				all: true,
 			});
 
-			expect(getTextOutput(result)).toContain("Found 3 occurrences");
+			expect(getTextOutput(result)).toContain("Successfully replaced");
+			expect(getTextOutput(result)).toContain("3 occurrences");
+			const { readFileSync } = await import("fs");
+			const newContent = readFileSync(testFile, "utf-8");
+			expect(newContent).toBe("qux bar qux baz qux");
+		});
+
+		it("should handle escaped newlines from LLM (unescape fallback)", async () => {
+			const testFile = join(testDir, "edit-escape.txt");
+			writeFileSync(testFile, "Line 1\nLine 2\nLine 3");
+
+			const result = await editTool.execute("test-call-escape", {
+				path: testFile,
+				oldText: "Line 1\\nLine 2", // Model sent escaped newline
+				newText: "Header\nBody",
+			});
+
+			expect(getTextOutput(result)).toContain("Successfully replaced");
+			expect(getTextOutput(result)).toContain("unescaped match");
+			const { readFileSync } = await import("fs");
+			const newContent = readFileSync(testFile, "utf-8");
+			expect(newContent).toBe("Header\nBody\nLine 3");
+		});
+
+		it("should handle flexible whitespace matching", async () => {
+			const testFile = join(testDir, "edit-whitespace.txt");
+			writeFileSync(testFile, "function   hello(  )  {\n    return  'world';\n}");
+
+			const result = await editTool.execute("test-call-whitespace", {
+				path: testFile,
+				oldText: "function hello( ) { return 'world'; }", // Different whitespace
+				newText: "const hello = () => 'world';",
+			});
+
+			expect(getTextOutput(result)).toContain("Successfully replaced");
+			expect(getTextOutput(result)).toContain("flexible match");
+		});
+
+		it("should provide suggestion when text not found but similar exists", async () => {
+			const testFile = join(testDir, "edit-suggest.txt");
+			writeFileSync(testFile, "function calculateTotal(items) {\n  return items.reduce((a,b) => a+b, 0);\n}");
+
+			await expect(
+				editTool.execute("test-call-suggest", {
+					path: testFile,
+					oldText: "function calulateTotal(items)", // typo: calulate
+					newText: "function computeTotal(items)",
+				}),
+			).rejects.toThrow(/Did you mean/);
+		});
+
+		it("should provide multi-line block suggestion when similar exists", async () => {
+			const testFile = join(testDir, "edit-block-suggest.txt");
+			// Create content where 4 out of 5 lines match (80% Jaccard similarity)
+			writeFileSync(testFile, "Line 1\nLine 2\nLine 3\nLine 4\nLine 5");
+
+			await expect(
+				editTool.execute("test-call-block-suggest", {
+					path: testFile,
+					oldText: "Line 1\nLine 2\nLine 3\nLine 4\nLine X", // 4 of 5 lines match
+					newText: "New content",
+				}),
+			).rejects.toThrow(/Did you mean/);
 		});
 	});
 

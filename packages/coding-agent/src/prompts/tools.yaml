@@ -8,7 +8,7 @@ bash: |
   Execute a bash command in the current working directory. Returns stdout and stderr. Optionally provide a timeout in seconds (default: 1800 seconds / 30 minutes).
 
 edit: |
-  Edit a file by replacing exact text. The oldText must match exactly (including whitespace). Use this for precise, surgical edits.
+  Edit a file by replacing text. Supports whitespace-flexible matching: if exact match fails, tries unescaping (\\n→newline) and flexible whitespace. Use 'all: true' to replace multiple occurrences. Provides suggestions if text not found.
 
 write: |
   Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.
