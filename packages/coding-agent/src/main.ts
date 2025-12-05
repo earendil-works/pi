@@ -6,7 +6,7 @@ import { existsSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
 import { dirname, extname, join, resolve } from "path";
 import { fileURLToPath } from "url";
-import { getChangelogPath, getNewEntries, parseChangelog } from "./changelog.js";
+
 import { exportFromFile } from "./export-html.js";
 import { findModel, getApiKeyForModel, getAvailableModels } from "./model-config.js";
 import { buildSystemPrompt as buildSystemPromptFromYaml } from "./prompts/index.js";
@@ -1082,32 +1082,8 @@ export async function main(args: string[]) {
 		// Skip version check - we're on a fork
 		const newVersion: string | null = null;
 
-		// Check if we should show changelog (only in interactive mode, only for new sessions)
-		let changelogMarkdown: string | null = null;
-		if (!parsed.continue && !parsed.resume) {
-			const lastVersion = settingsManager.getLastChangelogVersion();
-
-			// Check if we need to show changelog
-			if (!lastVersion) {
-				// First run - show all entries
-				const changelogPath = getChangelogPath();
-				const entries = parseChangelog(changelogPath);
-				if (entries.length > 0) {
-					changelogMarkdown = entries.map((e) => e.content).join("\n\n");
-					settingsManager.setLastChangelogVersion(VERSION);
-				}
-			} else {
-				// Parse current and last versions
-				const changelogPath = getChangelogPath();
-				const entries = parseChangelog(changelogPath);
-				const newEntries = getNewEntries(entries, lastVersion);
-
-				if (newEntries.length > 0) {
-					changelogMarkdown = newEntries.map((e) => e.content).join("\n\n");
-					settingsManager.setLastChangelogVersion(VERSION);
-				}
-			}
-		}
+		// Changelog popup disabled - use /changelog command to view
+		const changelogMarkdown: string | null = null;
 
 		// Show model scope if provided
 		if (scopedModels.length > 0) {
