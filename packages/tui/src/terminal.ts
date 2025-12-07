@@ -51,20 +51,12 @@ export class ProcessTerminal implements Terminal {
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		process.stdout.write("\x1b[?2004h");
 
-		// Enable SGR extended mouse mode for scroll wheel
-		process.stdout.write("\x1b[?1000h"); // Mouse button tracking
-		process.stdout.write("\x1b[?1006h"); // SGR extended mode
-
 		// Set up event handlers
 		process.stdin.on("data", this.inputHandler);
 		process.stdout.on("resize", this.resizeHandler);
 	}
 
 	stop(): void {
-		// Disable mouse mode
-		process.stdout.write("\x1b[?1006l"); // Disable SGR extended mode
-		process.stdout.write("\x1b[?1000l"); // Disable mouse button tracking
-
 		// Disable bracketed paste mode
 		process.stdout.write("\x1b[?2004l");
 
