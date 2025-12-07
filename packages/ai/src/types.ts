@@ -171,14 +171,4 @@ export interface Model<TApi extends Api> {
 	maxTokens: number;
 	headers?: Record<string, string>;
 	extraBody?: Record<string, unknown>; // Extra fields to merge into API request body
-	/**
-	 * When true, enables Roo Code compatibility mode (openai-completions API only):
-	 * - Sets Roo Code identification headers (HTTP-Referer, X-Title, User-Agent)
-	 * - Uses legacy OpenAI message format (simple string content instead of content arrays)
-	 * - Forces max_tokens to be included in requests
-	 *
-	 * Useful for providers that offer special features/pricing for Roo Code users
-	 * (e.g., Kimi For Coding: https://api.kimi.com/coding/v1)
-	 */
-	roocodeCompatible?: boolean;
 }

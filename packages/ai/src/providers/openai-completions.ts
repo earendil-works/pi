@@ -142,28 +142,9 @@ function parsePossiblyDoubleEncoded(jsonStr: string | undefined): Record<string,
 	return first as Record<string, unknown>;
 }
 
-// Roo Code identification headers - used to make requests appear as coming from Roo Code
-// See: https://github.com/RooCodeInc/Roo-Code/blob/main/src/api/providers/constants.ts
-const ROOCODE_VERSION = "3.36.2";
-export const ROOCODE_HEADERS = {
-	"HTTP-Referer": "https://github.com/RooVetGit/Roo-Cline",
-	"X-Title": "Roo Code",
-	"User-Agent": `RooCode/${ROOCODE_VERSION}`,
-} as const;
-
 export interface OpenAICompletionsOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "required" | { type: "function"; function: { name: string } };
 	reasoningEffort?: "minimal" | "low" | "medium" | "high";
-	/**
-	 * When true, enables Roo Code compatibility mode:
-	 * - Sets Roo Code identification headers (HTTP-Referer, X-Title, User-Agent)
-	 * - Uses legacy OpenAI message format (simple string content instead of content arrays)
-	 * - Forces max_tokens to be included in requests
-	 *
-	 * Useful for providers that offer special features/pricing for Roo Code users
-	 * (e.g., Kimi For Coding: https://api.kimi.com/coding/v1)
-	 */
-	roocodeCompatible?: boolean;
 }
 
 export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
@@ -192,7 +173,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 		};
 
 		try {
-			const client = createClient(model, options);
+			const client = createClient(model, options?.apiKey);
 			const params = buildParams(model, context, options);
 			const openaiStream = await client.chat.completions.create(params, { signal: options?.signal });
 			stream.push({ type: "start", partial: output });
@@ -453,8 +434,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 	return stream;
 };
 
-function createClient(model: Model<"openai-completions">, options?: OpenAICompletionsOptions) {
-	let apiKey = options?.apiKey;
+function createClient(model: Model<"openai-completions">, apiKey?: string) {
 	if (!apiKey) {
 		if (!process.env.OPENAI_API_KEY) {
 			throw new Error(
@@ -463,29 +443,16 @@ function createClient(model: Model<"openai-completions">, options?: OpenAIComple
 		}
 		apiKey = process.env.OPENAI_API_KEY;
 	}
-
-	// Check roocodeCompatible from model config or options (options takes precedence)
-	const roocodeCompatible = options?.roocodeCompatible ?? model.roocodeCompatible ?? false;
-
-	// Merge headers: model headers first, then Roo Code headers if enabled
-	const headers: Record<string, string> = { ...model.headers };
-	if (roocodeCompatible) {
-		Object.assign(headers, ROOCODE_HEADERS);
-	}
-
 	return new OpenAI({
 		apiKey,
 		baseURL: model.baseUrl,
 		dangerouslyAllowBrowser: true,
-		defaultHeaders: Object.keys(headers).length > 0 ? headers : undefined,
+		defaultHeaders: model.headers,
 	});
 }
 
 function buildParams(model: Model<"openai-completions">, context: Context, options?: OpenAICompletionsOptions) {
-	// Check roocodeCompatible from model config or options (options takes precedence)
-	const roocodeCompatible = options?.roocodeCompatible ?? model.roocodeCompatible ?? false;
-
-	const messages = convertMessages(model, context, options, roocodeCompatible);
+	const messages = convertMessages(model, context);
 
 	const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
 		model: model.id,
@@ -504,14 +471,12 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 		params.store = false;
 	}
 
-	// Handle max tokens - roocodeCompatible forces it to be included (uses legacy max_tokens)
-	const maxTokens = options?.maxTokens ?? (roocodeCompatible ? model.maxTokens : undefined);
-	if (maxTokens) {
-		// Mistral/Chutes and roocodeCompatible use legacy max_tokens instead of max_completion_tokens
-		if (model.baseUrl.includes("mistral.ai") || model.baseUrl.includes("chutes.ai") || roocodeCompatible) {
-			(params as any).max_tokens = maxTokens;
+	if (options?.maxTokens) {
+		// Mistral/Chutes uses max_tokens instead of max_completion_tokens
+		if (model.baseUrl.includes("mistral.ai") || model.baseUrl.includes("chutes.ai")) {
+			(params as any).max_tokens = options?.maxTokens;
 		} else {
-			params.max_completion_tokens = maxTokens;
+			params.max_completion_tokens = options?.maxTokens;
 		}
 	}
 
@@ -540,14 +505,8 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 	return params;
 }
 
-function convertMessages(
-	model: Model<"openai-completions">,
-	context: Context,
-	options?: OpenAICompletionsOptions,
-	roocodeCompatible?: boolean,
-): ChatCompletionMessageParam[] {
+function convertMessages(model: Model<"openai-completions">, context: Context): ChatCompletionMessageParam[] {
 	const params: ChatCompletionMessageParam[] = [];
-	const useLegacyFormat = roocodeCompatible ?? options?.roocodeCompatible ?? model.roocodeCompatible ?? false;
 
 	const transformedMessages = transformMessages(context.messages, model);
 
@@ -567,22 +526,6 @@ function convertMessages(
 					role: "user",
 					content: sanitizeSurrogates(msg.content),
 				});
-			} else if (useLegacyFormat) {
-				// Legacy format: convert complex content to simple string
-				const textContent = msg.content
-					.map((item) => {
-						if (item.type === "text") return item.text;
-						if (item.type === "image") return "[Image]";
-						return "";
-					})
-					.filter(Boolean)
-					.join("\n");
-				if (textContent.length > 0) {
-					params.push({
-						role: "user",
-						content: sanitizeSurrogates(textContent),
-					});
-				}
 			} else {
 				const content: ChatCompletionContentPart[] = msg.content.map((item): ChatCompletionContentPart => {
 					if (item.type === "text") {
@@ -618,94 +561,52 @@ function convertMessages(
 			const thinkingBlocks = msg.content.filter((b) => b.type === "thinking") as ThinkingContent[];
 			const toolCalls = msg.content.filter((b) => b.type === "toolCall") as ToolCall[];
 
-			if (useLegacyFormat) {
-				// Legacy format: convert all content to simple string
-				const parts: string[] = [];
+			// Build content parts: thinking first, then text
+			const contentParts: { type: "text"; text: string }[] = [];
 
-				// Thinking as inline <think> tags
-				if (thinkingBlocks.length > 0) {
-					const joinedThinking = thinkingBlocks
-						.map((b) => b.thinking)
-						.join("\n")
-						.trim();
-					if (joinedThinking.length > 0) {
-						parts.push(`<think>\n${joinedThinking}\n</think>`);
+			// Handle thinking blocks based on model's reasoningFormat
+			if (thinkingBlocks.length > 0) {
+				const joinedThinking = thinkingBlocks
+					.map((b) => b.thinking)
+					.join("\n")
+					.trim();
+				if (joinedThinking.length > 0) {
+					if (model.reasoningFormat === "reasoning_content") {
+						// DeepSeek-style: separate field on assistant message
+						(assistantMsg as any).reasoning_content = joinedThinking;
+					} else {
+						// Default: inline <think> tags
+						contentParts.push({
+							type: "text",
+							text: sanitizeSurrogates(`<think>\n${joinedThinking}\n</think>`),
+						});
 					}
 				}
+			}
 
-				// Text content
-				for (const block of textBlocks) {
-					if (block.text) parts.push(block.text);
-				}
+			// Regular text follows
+			for (const block of textBlocks) {
+				if (!block.text) continue;
+				contentParts.push({
+					type: "text",
+					text: sanitizeSurrogates(block.text),
+				});
+			}
 
-				// Tool calls as placeholders
-				for (const tc of toolCalls) {
-					parts.push(`[Tool Use: ${tc.name}]`);
-				}
+			if (contentParts.length > 0) {
+				assistantMsg.content = contentParts;
+			}
 
-				if (parts.length > 0) {
-					assistantMsg.content = sanitizeSurrogates(parts.join("\n"));
-				}
-
-				// Tool calls still need to be included for function calling to work
-				if (toolCalls.length > 0) {
-					assistantMsg.tool_calls = toolCalls.map((tc) => ({
-						id: tc.id,
-						type: "function" as const,
-						function: {
-							name: tc.name,
-							arguments: JSON.stringify(tc.arguments),
-						},
-					}));
-				}
-			} else {
-				// Build content parts: thinking first, then text
-				const contentParts: { type: "text"; text: string }[] = [];
-
-				// Handle thinking blocks based on model's reasoningFormat
-				if (thinkingBlocks.length > 0) {
-					const joinedThinking = thinkingBlocks
-						.map((b) => b.thinking)
-						.join("\n")
-						.trim();
-					if (joinedThinking.length > 0) {
-						if (model.reasoningFormat === "reasoning_content") {
-							// DeepSeek-style: separate field on assistant message
-							(assistantMsg as any).reasoning_content = joinedThinking;
-						} else {
-							// Default: inline <think> tags
-							contentParts.push({
-								type: "text",
-								text: sanitizeSurrogates(`<think>\n${joinedThinking}\n</think>`),
-							});
-						}
-					}
-				}
-
-				// Regular text follows
-				for (const block of textBlocks) {
-					if (!block.text) continue;
-					contentParts.push({
-						type: "text",
-						text: sanitizeSurrogates(block.text),
-					});
-				}
-
-				if (contentParts.length > 0) {
-					assistantMsg.content = contentParts;
-				}
-
-				// Tool calls mapped as before
-				if (toolCalls.length > 0) {
-					assistantMsg.tool_calls = toolCalls.map((tc) => ({
-						id: tc.id,
-						type: "function" as const,
-						function: {
-							name: tc.name,
-							arguments: JSON.stringify(tc.arguments),
-						},
-					}));
-				}
+			// Tool calls mapped as before
+			if (toolCalls.length > 0) {
+				assistantMsg.tool_calls = toolCalls.map((tc) => ({
+					id: tc.id,
+					type: "function" as const,
+					function: {
+						name: tc.name,
+						arguments: JSON.stringify(tc.arguments),
+					},
+				}));
 			}
 
 			if (assistantMsg.content === null && !assistantMsg.tool_calls) {
