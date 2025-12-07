@@ -35,6 +35,7 @@ const ModelDefinitionSchema = Type.Object({
 	maxTokens: Type.Number(),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
 	extraBody: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+	roocodeCompatible: Type.Optional(Type.Boolean()),
 });
 
 const ProviderConfigSchema = Type.Object({
@@ -197,6 +198,7 @@ function parseModels(config: ModelsConfig): Model<Api>[] {
 				maxTokens: modelDef.maxTokens,
 				extraBody: modelDef.extraBody,
 				headers,
+				roocodeCompatible: modelDef.roocodeCompatible,
 			});
 		}
 	}
