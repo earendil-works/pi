@@ -51,6 +51,12 @@ export class ProcessTerminal implements Terminal {
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		process.stdout.write("\x1b[?2004h");
 
+		// Force disable mouse tracking to ensure clean state and restore text selection
+		// Terminal modes persist between process executions, so a previous run (or crash)
+		// that enabled mouse reporting leaves the terminal in that state.
+		// 1000: Mouse click/release, 1002: Drag, 1003: Move, 1006: SGR coords
+		process.stdout.write("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l");
+
 		// Set up event handlers
 		process.stdin.on("data", this.inputHandler);
 		process.stdout.on("resize", this.resizeHandler);
@@ -59,6 +65,9 @@ export class ProcessTerminal implements Terminal {
 	stop(): void {
 		// Disable bracketed paste mode
 		process.stdout.write("\x1b[?2004l");
+
+		// Force disable mouse tracking to ensure clean exit state
+		process.stdout.write("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l");
 
 		// Remove event handlers
 		if (this.inputHandler) {

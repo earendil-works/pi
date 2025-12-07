@@ -34,11 +34,15 @@ export class VirtualTerminal implements Terminal {
 		this.resizeHandler = onResize;
 		// Enable bracketed paste mode for consistency with ProcessTerminal
 		this.xterm.write("\x1b[?2004h");
+		// Force disable mouse tracking for consistency with ProcessTerminal
+		this.xterm.write("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l");
 	}
 
 	stop(): void {
 		// Disable bracketed paste mode
 		this.xterm.write("\x1b[?2004l");
+		// Force disable mouse tracking
+		this.xterm.write("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l");
 		this.inputHandler = undefined;
 		this.resizeHandler = undefined;
 	}
