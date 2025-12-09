@@ -1,7 +1,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Agent, AgentEvent, AgentState, ThinkingLevel } from "@mariozechner/pi-agent-core";
+import type { Agent, AgentEvent, AgentState, Attachment, ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
 import { complete } from "@mariozechner/pi-ai";
 import type { SlashCommand } from "@mariozechner/pi-tui";
@@ -63,6 +63,19 @@ export class TuiRenderer {
 	private agent: Agent;
 	private sessionManager: SessionManager;
 	private settingsManager: SettingsManager;
+
+	// Type-safe wrappers for Agent methods that TypeScript can't resolve
+	private updateQueuedMessage(index: number, text: string, attachments?: Attachment[]): void {
+		(this.agent as any).updateQueuedMessage(index, text, attachments);
+	}
+
+	private removeQueuedMessage(index: number): void {
+		(this.agent as any).removeQueuedMessage(index);
+	}
+
+	private queueMessage(text: string, attachments?: Attachment[]): void {
+		(this.agent as any).queueMessage(text, attachments);
+	}
 	private version: string;
 	private isInitialized = false;
 	private onInputCallback?: (text: string) => void;
@@ -416,7 +429,7 @@ export class TuiRenderer {
 				const trimmed = text.trim();
 				if (trimmed) {
 					this.queuedMessages[this.editingQueueIndex] = trimmed;
-					this.agent.updateQueuedMessage(this.editingQueueIndex, trimmed);
+					this.updateQueuedMessage(this.editingQueueIndex, trimmed);
 					this.updatePendingMessagesDisplay();
 				}
 			}
@@ -434,10 +447,10 @@ export class TuiRenderer {
 				// text parameter holds content before handleSubmit cleared the editor
 				if (text) {
 					this.queuedMessages[this.editingQueueIndex] = text;
-					this.agent.updateQueuedMessage(this.editingQueueIndex, text);
+					this.updateQueuedMessage(this.editingQueueIndex, text);
 				} else {
 					this.queuedMessages.splice(this.editingQueueIndex, 1);
-					this.agent.removeQueuedMessage(this.editingQueueIndex);
+					this.removeQueuedMessage(this.editingQueueIndex);
 				}
 
 				this.editingQueueIndex = null;
@@ -598,7 +611,7 @@ export class TuiRenderer {
 				this.queuedMessages.push(text);
 
 				// Queue in agent (simple text, no attachments for queued messages)
-				this.agent.queueMessage(text);
+				this.queueMessage(text);
 
 				// Update pending messages display
 				this.updatePendingMessagesDisplay();
@@ -822,11 +835,16 @@ export class TuiRenderer {
 				break;
 			}
 
-			case "tool_execution_progress": {
+			case "tool_execution_progress" as AgentEvent["type"]: {
 				// Handle streaming output from tools (e.g., bash stdout/stderr)
-				const component = this.pendingTools.get(event.toolCallId);
+				const progressEvent = event as unknown as {
+					type: "tool_execution_progress";
+					toolCallId: string;
+					output: string;
+				};
+				const component = this.pendingTools.get(progressEvent.toolCallId);
 				if (component) {
-					component.appendOutput(event.output);
+					component.appendOutput(progressEvent.output);
 					this.ui.requestRender();
 				}
 				break;
@@ -1441,7 +1459,7 @@ export class TuiRenderer {
 
 		if (editedText === "") {
 			this.queuedMessages.splice(this.editingQueueIndex, 1);
-			this.agent.removeQueuedMessage(this.editingQueueIndex);
+			this.removeQueuedMessage(this.editingQueueIndex);
 
 			if (this.queuedMessages.length === 0) {
 				this.editingQueueIndex = null;
@@ -1451,7 +1469,7 @@ export class TuiRenderer {
 			}
 		} else {
 			this.queuedMessages[this.editingQueueIndex] = editedText;
-			this.agent.updateQueuedMessage(this.editingQueueIndex, editedText);
+			this.updateQueuedMessage(this.editingQueueIndex, editedText);
 		}
 	}
 

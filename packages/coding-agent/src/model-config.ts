@@ -190,13 +190,14 @@ function parseModels(config: ModelsConfig): Model<Api>[] {
 				provider: providerName,
 				baseUrl: providerConfig.baseUrl,
 				reasoning: modelDef.reasoning,
-				reasoningFormat: modelDef.reasoningFormat,
 				input: modelDef.input as ("text" | "image")[],
 				cost: modelDef.cost,
 				contextWindow: modelDef.contextWindow,
 				maxTokens: modelDef.maxTokens,
-				extraBody: modelDef.extraBody,
 				headers,
+				// Only include optional properties if they exist in modelDef
+				...(modelDef.reasoningFormat && { reasoningFormat: modelDef.reasoningFormat }),
+				...(modelDef.extraBody && { extraBody: modelDef.extraBody }),
 			});
 		}
 	}

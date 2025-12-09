@@ -28,6 +28,22 @@ export class CustomEditor extends Editor {
 	}
 
 	/**
+	 * Check if cursor is at the first line
+	 */
+	isAtFirstLine(): boolean {
+		// @ts-expect-error - accessing protected state property
+		return this.state.cursorLine === 0;
+	}
+
+	/**
+	 * Check if cursor is at the last line
+	 */
+	isAtLastLine(): boolean {
+		// @ts-expect-error - accessing protected state property
+		return this.state.cursorLine === this.state.lines.length - 1;
+	}
+
+	/**
 	 * Intercepts keys before parent Editor. Autocomplete checks required for arrow/escape
 	 * keys to allow parent's SelectList navigation when menu is open.
 	 */
