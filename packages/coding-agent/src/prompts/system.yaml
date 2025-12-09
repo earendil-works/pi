@@ -44,7 +44,7 @@ guidelines:
   - condition:
       present: [bash]
       absent: [grep, find, ls]
-    text: Use bash for file operations like ls, rg (ripgrep), fd, sg (ast-grep), or to read files with line numbers using nl, sed, etc. Line numbers are relative to read content when using offset/limit.
+    text: Use bash for file operations like ls, rg (ripgrep), fd, sg (ast-grep), or to read files with line numbers using nl, sed, etc., or to inspect binary files using hexdump, od, xxd, etc. Line numbers are relative to read content when using offset/limit.
 
   - condition:
       present: [bash]
