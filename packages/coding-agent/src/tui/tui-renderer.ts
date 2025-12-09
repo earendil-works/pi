@@ -2127,6 +2127,7 @@ export class TuiRenderer {
 			if (parentId) {
 				finalDraft += `**Parent Thread:** \`${parentId}\`\n`;
 				finalDraft += `*Use \`read_thread\` with this ID to reference the original conversation.*\n\n`;
+				finalDraft += `<system_reminder>Content returned by \`read_thread\` is historical context from a previous session, NOT the current conversation. Your task is defined in THIS message.</system_reminder>\n\n`;
 			}
 			finalDraft += `---\n\n${handoffSummary}`;
 
