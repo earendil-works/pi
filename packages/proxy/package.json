@@ -1,6 +1,6 @@
 {
 	"name": "@mariozechner/pi-proxy",
-	"version": "0.13.1",
+	"version": "0.13.2",
 	"type": "module",
 	"description": "CORS and authentication proxy for pi-ai",
 	"main": "dist/index.js",
