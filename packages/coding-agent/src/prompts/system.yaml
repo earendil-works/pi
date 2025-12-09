@@ -44,7 +44,7 @@ guidelines:
   - condition:
       present: [bash]
       absent: [grep, find, ls]
-    text: Use bash for file operations like ls, rg (ripgrep), fd, sg (ast-grep)
+    text: Use bash for file operations like ls, rg (ripgrep), fd, sg (ast-grep), or to read files with line numbers using nl, sed, etc.
 
   - condition:
       present: [bash]
