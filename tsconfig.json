@@ -6,7 +6,7 @@
 			"@mariozechner/pi-tui": ["./packages/tui/src/index.ts"],
 			"@mariozechner/pi-ai": ["./packages/ai/src/index.ts"],
 			"@mariozechner/pi-web-ui": ["./packages/web-ui/src/index.ts"],
-			"@mariozechner/pi-agent": ["./packages/agent/src/index.ts"],
+			"@mariozechner/pi-agent-core": ["./packages/agent/src/index.ts"],
 			"@mariozechner/pi-agent-old": ["./packages/agent-old/src/index.ts"],
 			"@mariozechner/coding-agent": ["./packages/coding-agent/src/index.ts"],
 			"@mariozechner/pi": ["./packages/pods/src/index.ts"],
