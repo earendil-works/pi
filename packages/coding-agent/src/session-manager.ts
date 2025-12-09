@@ -342,85 +342,135 @@ export class SessionManager {
 		}
 	}
 
-	/** Get formatted thread content as markdown for a given session/thread ID */
-	getThreadContent(sessionId: string): string | null {
+	/**
+	 * Get formatted thread content as markdown for a given session/thread ID.
+	 *
+	 * @param options.maxMessages Max messages to return (default: 50)
+	 * @param options.startIndex Message index to start from (default: 0)
+	 * @param options.detailed If false (default), returns a "clean transcript" containing only
+	 *                         User and Assistant text, omitting all tool calls and outputs.
+	 */
+	getThreadContent(
+		sessionId: string,
+		options: {
+			maxMessages?: number;
+			startIndex?: number;
+			detailed?: boolean;
+		} = {},
+	): { content: string; totalMessages: number; returnedMessages: number } | null {
 		const sessionPath = this.findSessionByUuid(sessionId);
 		if (!sessionPath) return null;
+
+		const { maxMessages = 50, startIndex = 0, detailed = false } = options;
 
 		try {
 			const content = readFileSync(sessionPath, "utf8");
 			const lines = content.trim().split("\n");
 			const output: string[] = [];
+			const messages: Array<{ role: string; content: unknown }> = [];
 
+			// 1. Parse all message entries
 			for (const line of lines) {
 				try {
 					const entry = JSON.parse(line);
 					if (entry.type === "message") {
-						const msg = entry.message;
-						const role = msg.role;
-
-						if (role === "user") {
-							let text = "";
-							if (Array.isArray(msg.content)) {
-								text = msg.content
-									.map((c: { type: string; text?: string }) => c.text || (c.type === "image" ? "[Image]" : ""))
-									.join("\n");
-							} else {
-								text = msg.content;
-							}
-							output.push(`## User\n${text}`);
-						} else if (role === "assistant") {
-							let text = "";
-							if (Array.isArray(msg.content)) {
-								for (const part of msg.content) {
-									if (part.type === "text") {
-										text += part.text + "\n";
-									} else if (part.type === "toolCall") {
-										text += `\n> Used tool \`${part.name}\``;
-										if (part.arguments && Object.keys(part.arguments).length > 0) {
-											const argsStr = JSON.stringify(part.arguments, null, 2);
-											// Truncate very long arguments
-											const MAX_ARGS_LEN = 500;
-											if (argsStr.length > MAX_ARGS_LEN) {
-												text += ` with arguments: ${argsStr.substring(0, MAX_ARGS_LEN)}... (truncated)\n`;
-											} else {
-												text += ` with arguments: ${argsStr}\n`;
-											}
-										} else {
-											text += "\n";
-										}
-									}
-								}
-							} else {
-								text = msg.content;
-							}
-							output.push(`## Assistant\n${text.trim()}`);
-						} else if (role === "toolResult") {
-							let resultContent = "";
-							if (Array.isArray(msg.content)) {
-								resultContent = msg.content
-									.map((c: { type: string; text?: string }) => c.text || "")
-									.join("\n");
-							} else {
-								resultContent = msg.content || "";
-							}
-
-							const name = msg.toolName || "unknown";
-
-							const MAX_LEN = 2000;
-							if (resultContent.length > MAX_LEN) {
-								resultContent =
-									resultContent.substring(0, MAX_LEN) +
-									`\n... (output truncated, total length: ${resultContent.length} chars)`;
-							}
-							output.push(`> Output from \`${name}\`:\n${resultContent}`);
-						}
+						messages.push(entry.message);
 					}
 				} catch {
 					// Skip malformed lines
 				}
 			}
-			return output.join("\n\n");
+
+			const totalMessages = messages.length;
+
+			// 2. Apply pagination
+			const slicedMessages = messages.slice(startIndex, startIndex + maxMessages);
+			const returnedMessages = slicedMessages.length;
+
+			// 3. Format messages
+			for (const msg of slicedMessages) {
+				const role = msg.role;
+
+				if (role === "user") {
+					let text = "";
+					if (Array.isArray(msg.content)) {
+						text = (msg.content as Array<{ type: string; text?: string }>)
+							.map((c) => c.text || (c.type === "image" ? "[Image]" : ""))
+							.join("\n");
+					} else {
+						text = msg.content as string;
+					}
+					output.push(`## User\n${text}`);
+				} else if (role === "assistant") {
+					let text = "";
+					let hasToolCalls = false;
+
+					if (Array.isArray(msg.content)) {
+						for (const part of msg.content as Array<{
+							type: string;
+							text?: string;
+							name?: string;
+							arguments?: Record<string, unknown>;
+						}>) {
+							if (part.type === "text") {
+								text += part.text + "\n";
+							} else if (part.type === "toolCall") {
+								hasToolCalls = true;
+								if (detailed) {
+									// Detailed mode: Show tool call with simplified args
+									text += `\n> Used tool \`${part.name}\``;
+									if (part.arguments && Object.keys(part.arguments).length > 0) {
+										const argsStr = JSON.stringify(part.arguments, null, 2);
+										const MAX_ARGS_LEN = 500;
+										if (argsStr.length > MAX_ARGS_LEN) {
+											text += ` with arguments: ${argsStr.substring(0, MAX_ARGS_LEN)}... (truncated)\n`;
+										} else {
+											text += ` with arguments: ${argsStr}\n`;
+										}
+									} else {
+										text += "\n";
+									}
+								}
+								// Non-detailed mode: completely omit tool calls
+							}
+						}
+					} else {
+						text = msg.content as string;
+					}
+
+					// Only output if there is text, or if detailed mode shows tool calls
+					if (text.trim() || (detailed && hasToolCalls)) {
+						output.push(`## Assistant\n${text.trim()}`);
+					}
+				} else if (role === "toolResult" && detailed) {
+					// Only show tool results in detailed mode
+					const toolMsg = msg as { content: unknown; toolName?: string };
+					let resultContent = "";
+					if (Array.isArray(toolMsg.content)) {
+						resultContent = (toolMsg.content as Array<{ type: string; text?: string }>)
+							.map((c) => c.text || "")
+							.join("\n");
+					} else {
+						resultContent = (toolMsg.content as string) || "";
+					}
+
+					const name = toolMsg.toolName || "unknown";
+					const limit = 2000;
+
+					if (resultContent.length > limit) {
+						resultContent =
+							resultContent.substring(0, limit) +
+							`\n... (output truncated, total length: ${resultContent.length} chars)`;
+					}
+					output.push(`> Output from \`${name}\`:\n${resultContent}`);
+				}
+			}
+
+			return {
+				content: output.join("\n\n"),
+				totalMessages,
+				returnedMessages,
+			};
 		} catch {
 			return null;
 		}
