@@ -910,6 +910,9 @@ export class TuiRenderer {
 					const modelName = this.agent.state.model?.name || this.agent.state.model?.id || "Agent";
 					sendNotification("pi", `${modelName} finished`);
 				}
+
+				// Update footer to clear "Working" status
+				this.footer.updateState(state);
 				break;
 			}
 		}

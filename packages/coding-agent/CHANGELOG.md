@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [0.13.4] - 2025-12-10
+
+### Changed
+
+- **Notification Sound**: Changed from Tink.aiff to Pop.aiff for better audibility.
+
+### Added
+
+- **Ghostty-native Notifications**: Use OSC 9 escape sequences for terminal-native notifications when running in Ghostty terminal (falls back to osascript for other terminals).
+
+### Fixed
+
+- **"Working" Indicator**: Fixed bug where "Working" indicator remained visible after agent completion.
+
 ## [0.12.1] - 2025-12-02
 
 ### Changed
