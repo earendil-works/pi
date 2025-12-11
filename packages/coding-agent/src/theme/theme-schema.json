@@ -72,7 +72,11 @@
 				"syntaxNumber",
 				"syntaxType",
 				"syntaxOperator",
-				"syntaxPunctuation"
+				"syntaxPunctuation",
+				"budgetGreen",
+				"budgetYellow",
+				"budgetOrange",
+				"budgetRed"
 			],
 			"properties": {
 				"accent": {
@@ -226,6 +230,22 @@
 				"syntaxPunctuation": {
 					"$ref": "#/$defs/colorValue",
 					"description": "Syntax highlighting: punctuation"
+				},
+				"budgetGreen": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Context budget indicator: healthy (<60%)"
+				},
+				"budgetYellow": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Context budget indicator: moderate (60-80%)"
+				},
+				"budgetOrange": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Context budget indicator: high (80-90%)"
+				},
+				"budgetRed": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Context budget indicator: critical (>90%)"
 				}
 			},
 			"additionalProperties": false

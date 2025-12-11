@@ -9,6 +9,10 @@
 		"yellow": "#d7af5f",
 		"orange": "#d78700",
 		"mediumGray": "#6c6c6c",
+		"budgetGreen": "#5a8a5a",
+		"budgetYellow": "#9a8a40",
+		"budgetOrange": "#9a6a30",
+		"budgetRed": "#8a4a4a",
 		"dimGray": "#8a8a8a",
 		"lightGray": "#b0b0b0",
 		"userMsgBg": "#e8e8e8",
@@ -66,6 +70,11 @@
 		"thinkingMinimal": "#9e9e9e",
 		"thinkingLow": "#5f87af",
 		"thinkingMedium": "#5f8787",
-		"thinkingHigh": "#875f87"
+		"thinkingHigh": "#875f87",
+
+		"budgetGreen": "budgetGreen",
+		"budgetYellow": "budgetYellow",
+		"budgetOrange": "budgetOrange",
+		"budgetRed": "budgetRed"
 	}
 }

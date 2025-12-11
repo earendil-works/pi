@@ -17,7 +17,12 @@
 		"yellow": "#ffd866",
 		"green": "#a9dc76",
 		"cyan": "#78dce8",
-		"purple": "#ab9df2"
+		"purple": "#ab9df2",
+
+		"budgetGreen": "#6a9a4a",
+		"budgetYellow": "#a89040",
+		"budgetOrange": "#a06840",
+		"budgetRed": "#a04850"
 	},
 	"colors": {
 		"accent": "cyan",
@@ -69,6 +74,11 @@
 		"thinkingMinimal": "dimmed4",
 		"thinkingLow": "dimmed3",
 		"thinkingMedium": "cyan",
-		"thinkingHigh": "purple"
+		"thinkingHigh": "purple",
+
+		"budgetGreen": "budgetGreen",
+		"budgetYellow": "budgetYellow",
+		"budgetOrange": "budgetOrange",
+		"budgetRed": "budgetRed"
 	}
 }

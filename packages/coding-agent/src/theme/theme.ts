@@ -76,6 +76,11 @@ const ThemeJsonSchema = Type.Object({
 		thinkingLow: ColorValueSchema,
 		thinkingMedium: ColorValueSchema,
 		thinkingHigh: ColorValueSchema,
+		// Context Budget Indicators (4 colors)
+		budgetGreen: ColorValueSchema,
+		budgetYellow: ColorValueSchema,
+		budgetOrange: ColorValueSchema,
+		budgetRed: ColorValueSchema,
 	}),
 });
 
@@ -124,7 +129,11 @@ export type ThemeColor =
 	| "thinkingMinimal"
 	| "thinkingLow"
 	| "thinkingMedium"
-	| "thinkingHigh";
+	| "thinkingHigh"
+	| "budgetGreen"
+	| "budgetYellow"
+	| "budgetOrange"
+	| "budgetRed";
 
 export type ThemeBg = "userMessageBg" | "toolPendingBg" | "toolSuccessBg" | "toolErrorBg";
 
