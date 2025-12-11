@@ -6,11 +6,6 @@ import { SessionManager } from "../session-manager.js";
 const listThreadsSchema = Type.Object({
 	search: Type.Optional(Type.String({ description: "Filter threads by keyword" })),
 	limit: Type.Optional(Type.Number({ description: "Max threads to return (default: 10)" })),
-	projectPath: Type.Optional(
-		Type.String({
-			description: "Path to the project directory to list threads from (defaults to current directory)",
-		}),
-	),
 });
 
 function getRelativeDate(date: Date): string {
@@ -32,11 +27,8 @@ export const listThreadsTool: AgentTool<typeof listThreadsSchema> = {
 	label: "list_threads",
 	description: getToolDescription("list_threads"),
 	parameters: listThreadsSchema,
-	execute: async (
-		_toolCallId: string,
-		{ search, limit, projectPath }: { search?: string; limit?: number; projectPath?: string },
-	) => {
-		const mgr = new SessionManager(false, undefined, true, projectPath);
+	execute: async (_toolCallId: string, { search, limit }: { search?: string; limit?: number }) => {
+		const mgr = new SessionManager(false, undefined, true);
 
 		try {
 			const sessions = mgr.loadAllSessions();

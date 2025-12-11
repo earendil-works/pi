@@ -10,6 +10,7 @@ import { fileURLToPath } from "url";
 import { exportFromFile } from "./export-html.js";
 import { findModel, getApiKeyForModel, getAvailableModels } from "./model-config.js";
 import { buildSystemPrompt as buildSystemPromptFromYaml } from "./prompts/index.js";
+import { setCurrentModel } from "./runtime-state.js";
 import { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
 import { initTheme } from "./theme/theme.js";
@@ -594,6 +595,16 @@ async function runInteractiveMode(
 	// Initialize TUI (subscribes to agent events internally)
 	await renderer.init();
 
+	// Keep runtime state updated with current model for tools (e.g., read_thread RAG)
+	if (agent.state.model) {
+		setCurrentModel(agent.state.model);
+	}
+	agent.subscribe((event) => {
+		if (event.type === "turn_start" && agent.state.model) {
+			setCurrentModel(agent.state.model);
+		}
+	});
+
 	// Render any existing messages (from --continue mode)
 	renderer.renderInitialMessages(agent.state);
 
@@ -645,13 +656,21 @@ async function runSingleShotMode(
 	initialMessage?: string,
 	initialAttachments?: Attachment[],
 ): Promise<void> {
-	if (mode === "json") {
-		// Subscribe to all events and output as JSON
-		agent.subscribe((event) => {
-			// Output event as JSON (same format as session manager)
-			console.log(JSON.stringify(event));
-		});
+	// Keep runtime state updated with current model for tools (e.g., read_thread RAG)
+	if (agent.state.model) {
+		setCurrentModel(agent.state.model);
 	}
+
+	// Subscribe to track model changes during execution
+	agent.subscribe((event) => {
+		if (event.type === "turn_start" && agent.state.model) {
+			setCurrentModel(agent.state.model);
+		}
+		// In JSON mode, also output events
+		if (mode === "json") {
+			console.log(JSON.stringify(event));
+		}
+	});
 
 	// Send initial message with attachments if provided
 	if (initialMessage) {
@@ -677,8 +696,16 @@ async function runSingleShotMode(
 }
 
 async function runRpcMode(agent: Agent, sessionManager: SessionManager): Promise<void> {
+	// Keep runtime state updated with current model for tools (e.g., read_thread RAG)
+	if (agent.state.model) {
+		setCurrentModel(agent.state.model);
+	}
+
 	// Subscribe to all events and output as JSON (same pattern as tui-renderer)
 	agent.subscribe(async (event) => {
+		if (event.type === "turn_start" && agent.state.model) {
+			setCurrentModel(agent.state.model);
+		}
 		console.log(JSON.stringify(event));
 
 		// Save messages to session

@@ -23,7 +23,13 @@ ls: |
   List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles.
 
 list_threads: |
-  List past conversation threads. Returns thread IDs, relative dates, message counts, and preview text. Supports optional keyword search and project path.
+  List past conversation threads. Returns thread IDs, relative dates, message counts, and preview text. Supports optional keyword search.
 
 read_thread: |
-  Read the conversation history of a specific thread by its ID. Returns content wrapped in <reference_thread> tags with pagination metadata (total_messages, returned_messages, start_index). Default output is a clean transcript (User/Assistant text only, no tool calls/outputs). Use 'detailed: true' to include tool execution details. Supports pagination via max_messages and start_index.
+  Read the conversation history of a specific thread by its ID.
+  
+  IMPORTANT: 'goal' is REQUIRED - describe what information you need from the thread. An AI will extract only the relevant parts.
+  
+  Use 'raw: true' ONLY when you need the full unfiltered transcript (e.g., for complete context or debugging).
+  
+  Returns <thread_extract> (default) or <reference_thread> (raw mode).
