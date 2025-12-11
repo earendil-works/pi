@@ -31,6 +31,7 @@ export interface SessionHeader {
 	provider: string;
 	modelId: string;
 	thinkingLevel: string;
+	title?: string; // Auto-generated conversation title
 	branchedFrom?: string; // Path to the session file this was branched from
 	handoffFrom?: string; // UUID of parent session (for handoff feature)
 }
@@ -52,6 +53,12 @@ export interface ModelChangeEntry {
 	timestamp: string;
 	provider: string;
 	modelId: string;
+}
+
+export interface TitleChangeEntry {
+	type: "title_change";
+	timestamp: string;
+	title: string;
 }
 
 export class SessionManager {
@@ -298,6 +305,42 @@ export class SessionManager {
 			return { provider: lastProvider, modelId: lastModelId };
 		}
 		return null;
+	}
+
+	saveTitle(title: string): void {
+		if (!this.enabled) return;
+		const entry: TitleChangeEntry = {
+			type: "title_change",
+			timestamp: new Date().toISOString(),
+			title,
+		};
+
+		if (!this.sessionInitialized) {
+			this.pendingMessages.push(entry);
+		} else {
+			appendFileSync(this.sessionFile, JSON.stringify(entry) + "\n");
+		}
+	}
+
+	loadTitle(): string | null {
+		if (!existsSync(this.sessionFile)) return null;
+
+		const lines = readFileSync(this.sessionFile, "utf8").trim().split("\n");
+		let lastTitle: string | null = null;
+
+		for (const line of lines) {
+			try {
+				const entry = JSON.parse(line);
+				if (entry.type === "session" && entry.title) {
+					lastTitle = entry.title;
+				} else if (entry.type === "title_change" && entry.title) {
+					lastTitle = entry.title;
+				}
+			} catch {
+				// Skip malformed lines
+			}
+		}
+		return lastTitle;
 	}
 
 	getSessionId(): string {

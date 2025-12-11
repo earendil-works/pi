@@ -34,6 +34,7 @@ import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
 import { bashTool } from "../tools/bash.js";
+import { generateTitle } from "../utils/auto-title.js";
 import { formatElapsed } from "../utils/format-elapsed.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
 import { CustomEditor } from "./custom-editor.js";
@@ -119,6 +120,9 @@ export class TuiRenderer {
 
 	// Track if this is the first user message (to skip spacer)
 	private isFirstUserMessage = true;
+
+	// Track if conversation has a title (to avoid regenerating)
+	private hasTitle = false;
 
 	// Model scope for quick cycling
 	private scopedModels: Array<{ model: Model<any>; thinkingLevel: ThinkingLevel }> = [];
@@ -276,6 +280,13 @@ export class TuiRenderer {
 
 	async init(): Promise<void> {
 		if (this.isInitialized) return;
+
+		// Load existing title if available (for --continue mode)
+		const existingTitle = this.sessionManager.loadTitle();
+		if (existingTitle) {
+			this.footer.setTitle(existingTitle);
+			this.hasTitle = true;
+		}
 
 		// Add header with logo and instructions
 		const logo = theme.bold(theme.fg("accent", "pi")) + theme.fg("dim", ` v${this.version}`);
@@ -913,6 +924,30 @@ export class TuiRenderer {
 
 				// Update footer to clear "Working" status
 				this.footer.updateState(state);
+
+				// Trigger auto-titling if not yet titled and we have context
+				if (!this.hasTitle && !state.error) {
+					// Check message count (1 user + 1 assistant minimum)
+					const userMsgs = state.messages.filter((m) => m.role === "user").length;
+					const assistantMsgs = state.messages.filter((m) => m.role === "assistant").length;
+
+					if (userMsgs >= 1 && assistantMsgs >= 1) {
+						// Fire and forget - don't await to block UI
+						generateTitle(state)
+							.then((title) => {
+								if (title) {
+									this.footer.setTitle(title);
+									this.sessionManager.saveTitle(title);
+									this.hasTitle = true;
+									this.ui.requestRender();
+								}
+							})
+							.catch(() => {
+								/* ignore errors */
+							});
+					}
+				}
+
 				break;
 			}
 		}
@@ -2267,6 +2302,10 @@ export class TuiRenderer {
 		this.streamingComponent = null;
 		this.pendingTools.clear();
 		this.isFirstUserMessage = true;
+
+		// Reset title state
+		this.hasTitle = false;
+		this.footer.setTitle(null);
 
 		// Show confirmation
 		this.chatContainer.addChild(new Spacer(1));

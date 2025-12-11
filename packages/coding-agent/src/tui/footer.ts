@@ -35,9 +35,17 @@ export class FooterComponent implements Component {
 	private showExitHint = false;
 	private gitWatcher: FSWatcher | null = null;
 	private onBranchChange: (() => void) | null = null;
+	private title: string | null = null;
 
 	constructor(state: AgentState) {
 		this.state = state;
+	}
+
+	/**
+	 * Set the conversation title to display in the footer.
+	 */
+	setTitle(title: string | null): void {
+		this.title = title;
 	}
 
 	/**
@@ -270,8 +278,45 @@ export class FooterComponent implements Component {
 			}
 		}
 
-		// Return two lines: pwd (or exit hint) and stats
-		const firstLine = this.showExitHint ? theme.fg("text", "Press Ctrl+C again to exit") : theme.fg("dim", pwd);
+		// Build first line: pwd on left, title on right (if available)
+		let firstLine: string;
+
+		if (this.showExitHint) {
+			firstLine = theme.fg("text", "Press Ctrl+C again to exit");
+		} else {
+			const pwdStr = theme.fg("dim", pwd);
+			const pwdWidth = visibleWidth(pwdStr);
+
+			if (this.title) {
+				// Show pwd on left, title on right
+				const titleStr = theme.fg("dim", this.title);
+				const titleWidth = visibleWidth(titleStr);
+				const minGap = 2;
+				const totalNeeded = pwdWidth + minGap + titleWidth;
+
+				if (totalNeeded <= width) {
+					// Both fit - add padding to right-align title
+					const padding = " ".repeat(width - pwdWidth - titleWidth);
+					firstLine = pwdStr + padding + titleStr;
+				} else {
+					// Not enough space - truncate title
+					const availableForTitle = width - pwdWidth - minGap;
+					if (availableForTitle > 10) {
+						const truncatedTitle = this.title.substring(0, availableForTitle - 3) + "...";
+						const truncatedTitleStr = theme.fg("dim", truncatedTitle);
+						const padding = " ".repeat(width - pwdWidth - visibleWidth(truncatedTitleStr));
+						firstLine = pwdStr + padding + truncatedTitleStr;
+					} else {
+						// No space for title, just show pwd
+						firstLine = pwdStr;
+					}
+				}
+			} else {
+				// No title, just show pwd
+				firstLine = pwdStr;
+			}
+		}
+
 		return [firstLine, theme.fg("dim", statsLine)];
 	}
 }
