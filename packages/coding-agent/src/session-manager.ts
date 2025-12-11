@@ -553,6 +553,7 @@ export class SessionManager {
 		messageCount: number;
 		firstMessage: string;
 		allMessagesText: string;
+		cwd: string;
 	}> {
 		const sessions: Array<{
 			path: string;
@@ -562,6 +563,7 @@ export class SessionManager {
 			messageCount: number;
 			firstMessage: string;
 			allMessagesText: string;
+			cwd: string;
 		}> = [];
 
 		try {
@@ -582,16 +584,18 @@ export class SessionManager {
 					let created = stats.birthtime;
 					let messageCount = 0;
 					let firstMessage = "";
+					let cwd = "";
 					const allMessages: string[] = [];
 
 					for (const line of lines) {
 						try {
 							const entry = JSON.parse(line);
 
-							// Extract session ID from first session entry
+							// Extract session ID and cwd from first session entry
 							if (entry.type === "session" && !sessionId) {
 								sessionId = entry.id;
 								created = new Date(entry.timestamp);
+								cwd = entry.cwd || "";
 							}
 
 							// Count messages and collect all text
@@ -633,6 +637,7 @@ export class SessionManager {
 						messageCount,
 						firstMessage: firstMessage || "(no messages)",
 						allMessagesText: allMessages.join(" "),
+						cwd,
 					});
 				} catch (error) {
 					// Skip files that can't be read

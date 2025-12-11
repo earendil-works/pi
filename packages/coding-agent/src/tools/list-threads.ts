@@ -50,6 +50,7 @@ export const listThreadsTool: AgentTool<typeof listThreadsSchema> = {
 				date: s.modified.toISOString(),
 				relativeDate: getRelativeDate(s.modified),
 				messageCount: s.messageCount,
+				workspace: s.cwd,
 				preview: s.firstMessage.substring(0, 200) + (s.firstMessage.length > 200 ? "..." : ""),
 			}));
 
