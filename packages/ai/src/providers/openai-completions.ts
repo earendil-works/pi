@@ -90,6 +90,7 @@ function detectCompatFromUrl(baseUrl: string): Required<OpenAICompat> {
 		supportsStore: !isNonStandard,
 		supportsDeveloperRole: !isNonStandard,
 		supportsReasoningEffort: !isGrok,
+		reasoningEffortFormat: isFireworks ? "boolean" : "string",
 		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
 		requiresToolResultName: isMistral,
 		requiresAssistantAfterToolResult: false, // Mistral no longer requires this as of Dec 2024
@@ -111,6 +112,7 @@ function getCompat(model: Model<"openai-completions">): Required<OpenAICompat> {
 		supportsStore: model.compat.supportsStore ?? detected.supportsStore,
 		supportsDeveloperRole: model.compat.supportsDeveloperRole ?? detected.supportsDeveloperRole,
 		supportsReasoningEffort: model.compat.supportsReasoningEffort ?? detected.supportsReasoningEffort,
+		reasoningEffortFormat: model.compat.reasoningEffortFormat ?? detected.reasoningEffortFormat,
 		maxTokensField: model.compat.maxTokensField ?? detected.maxTokensField,
 		requiresToolResultName: model.compat.requiresToolResultName ?? detected.requiresToolResultName,
 		requiresAssistantAfterToolResult:
@@ -585,9 +587,17 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 	}
 
 	if (options?.reasoningEffort && model.reasoning && compat.supportsReasoningEffort) {
-		// Map 'xhigh' to 'high' for OpenAI compatibility as 'xhigh' is not a standard OpenAI value
-		const effort = options.reasoningEffort === "xhigh" ? "high" : options.reasoningEffort;
-		params.reasoning_effort = effort;
+		if (compat.reasoningEffortFormat === "boolean") {
+			// Fireworks uses boolean: any effort level (minimal/low/medium/high/xhigh) maps to true
+			(params as any).reasoning_effort = true;
+		} else {
+			// OpenAI uses string: low/medium/high
+			// Map 'minimal' to 'low' and 'xhigh' to 'high' for OpenAI compatibility
+			let effort: string = options.reasoningEffort;
+			if (effort === "minimal") effort = "low";
+			if (effort === "xhigh") effort = "high";
+			params.reasoning_effort = effort as "low" | "medium" | "high";
+		}
 	}
 
 	// Merge extra body fields from model config

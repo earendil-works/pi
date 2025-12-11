@@ -169,6 +169,8 @@ export interface OpenAICompat {
 	supportsDeveloperRole?: boolean;
 	/** Whether the provider supports `reasoning_effort`. Default: auto-detected from URL. */
 	supportsReasoningEffort?: boolean;
+	/** Format for reasoning_effort param: 'string' for OpenAI (low/medium/high), 'boolean' for Fireworks (true/false). Default: 'string'. */
+	reasoningEffortFormat?: "string" | "boolean";
 	/** Which field to use for max tokens. Default: auto-detected from URL. */
 	maxTokensField?: "max_completion_tokens" | "max_tokens";
 	/** Whether tool results require the `name` field. Default: auto-detected from URL. */
