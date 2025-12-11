@@ -1,6 +1,6 @@
 {
 	"name": "@mariozechner/pi-coding-agent",
-	"version": "0.13.13",
+	"version": "0.13.14",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"bin": {

@@ -1,6 +1,6 @@
 {
 	"name": "@mariozechner/pi",
-	"version": "0.13.13",
+	"version": "0.13.14",
 	"description": "CLI tool for managing vLLM deployments on GPU pods",
 	"type": "module",
 	"bin": {
