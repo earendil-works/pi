@@ -105,6 +105,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages"> = (
 				output: 0,
 				cacheRead: 0,
 				cacheWrite: 0,
+				totalTokens: 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			},
 			stopReason: "stop",
@@ -129,6 +130,8 @@ export const streamAnthropic: StreamFunction<"anthropic-messages"> = (
 					output.usage.output = event.message.usage.output_tokens || 0;
 					output.usage.cacheRead = event.message.usage.cache_read_input_tokens || 0;
 					output.usage.cacheWrite = event.message.usage.cache_creation_input_tokens || 0;
+					output.usage.totalTokens =
+						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
 					calculateCost(model, output.usage);
 				} else if (event.type === "content_block_start") {
 					if (event.content_block.type === "text") {
@@ -265,6 +268,8 @@ export const streamAnthropic: StreamFunction<"anthropic-messages"> = (
 					output.usage.output = event.usage.output_tokens || 0;
 					output.usage.cacheRead = event.usage.cache_read_input_tokens || 0;
 					output.usage.cacheWrite = event.usage.cache_creation_input_tokens || 0;
+					output.usage.totalTokens =
+						output.usage.input + output.usage.output + output.usage.cacheRead + output.usage.cacheWrite;
 					calculateCost(model, output.usage);
 				}
 			}

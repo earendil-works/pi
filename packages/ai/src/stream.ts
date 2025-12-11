@@ -39,6 +39,7 @@ export function getApiKey(provider: any): string | undefined {
 		xai: "XAI_API_KEY",
 		openrouter: "OPENROUTER_API_KEY",
 		zai: "ZAI_API_KEY",
+		mistral: "MISTRAL_API_KEY",
 	};
 
 	const envVar = envMap[provider];
@@ -134,12 +135,14 @@ function mapOptionsForApi<TApi extends Api>(
 						low: 4096, // 4KB
 						medium: 16384, // 16KB
 						high: 32768, // 32KB
+						xhigh: 65536, // 64KB
 					}
 				: {
 						minimal: 1024,
 						low: 2048,
 						medium: 8192,
 						high: 16384,
+						xhigh: 32768,
 					};
 
 			return {
@@ -190,6 +193,7 @@ function getGoogleBudget(model: Model<"google-generative-ai">, effort: Reasoning
 			low: 2048,
 			medium: 8192,
 			high: 32768,
+			xhigh: 65536,
 		};
 		return budgets[effort];
 	}
@@ -201,6 +205,7 @@ function getGoogleBudget(model: Model<"google-generative-ai">, effort: Reasoning
 			low: 2048,
 			medium: 8192,
 			high: 24576,
+			xhigh: 49152,
 		};
 		return budgets[effort];
 	}

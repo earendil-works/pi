@@ -32,7 +32,7 @@ import { transformMessages } from "./transorm-messages.js";
 
 // OpenAI Responses-specific options
 export interface OpenAIResponsesOptions extends StreamOptions {
-	reasoningEffort?: "minimal" | "low" | "medium" | "high";
+	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
 }
 
@@ -59,6 +59,7 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 				output: 0,
 				cacheRead: 0,
 				cacheWrite: 0,
+				totalTokens: 0,
 				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 			},
 			stopReason: "stop",
@@ -254,12 +255,15 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 					const response = event.response;
 					if (response?.usage) {
 						const cachedTokens = response.usage.input_tokens_details?.cached_tokens || 0;
+						const input = (response.usage.input_tokens || 0) - cachedTokens;
+						const outputTokens = response.usage.output_tokens || 0;
 						output.usage = {
 							// OpenAI includes cached tokens in input_tokens, so subtract to get non-cached input
-							input: (response.usage.input_tokens || 0) - cachedTokens,
-							output: response.usage.output_tokens || 0,
+							input,
+							output: outputTokens,
 							cacheRead: cachedTokens,
 							cacheWrite: 0,
+							totalTokens: input + outputTokens + cachedTokens,
 							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 						};
 					}
@@ -340,8 +344,10 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 
 	if (model.reasoning) {
 		if (options?.reasoningEffort || options?.reasoningSummary) {
+			// Map 'xhigh' to 'high' for OpenAI compatibility as 'xhigh' is not a standard OpenAI value
+			const effort = options?.reasoningEffort === "xhigh" ? "high" : options?.reasoningEffort || "medium";
 			params.reasoning = {
-				effort: options?.reasoningEffort || "medium",
+				effort: effort as "minimal" | "low" | "medium" | "high",
 				summary: options?.reasoningSummary || "auto",
 			};
 			params.include = ["reasoning.encrypted_content"];

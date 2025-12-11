@@ -118,6 +118,8 @@ export interface SessionMetadata {
 		cacheRead: number;
 		/** Total cache write tokens */
 		cacheWrite: number;
+		/** Total of all tokens */
+		totalTokens: number;
 		/** Total cost breakdown */
 		cost: {
 			input: number;

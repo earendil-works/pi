@@ -2,9 +2,29 @@ import type { AgentState } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { type Component, visibleWidth } from "@mariozechner/pi-tui";
 import { existsSync, type FSWatcher, readFileSync, watch } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
 import { isModelUsingOAuth } from "../model-config.js";
 import { theme } from "../theme/theme.js";
+
+/**
+ * Find the git root directory by walking up from cwd.
+ * Returns the path to .git/HEAD if found, null otherwise.
+ */
+function findGitHeadPath(): string | null {
+	let dir = process.cwd();
+	while (true) {
+		const gitHeadPath = join(dir, ".git", "HEAD");
+		if (existsSync(gitHeadPath)) {
+			return gitHeadPath;
+		}
+		const parent = dirname(dir);
+		if (parent === dir) {
+			// Reached filesystem root
+			return null;
+		}
+		dir = parent;
+	}
+}
 
 /**
  * Footer component that shows pwd, token stats, and context usage
@@ -36,8 +56,8 @@ export class FooterComponent implements Component {
 			this.gitWatcher = null;
 		}
 
-		const gitHeadPath = join(process.cwd(), ".git", "HEAD");
-		if (!existsSync(gitHeadPath)) {
+		const gitHeadPath = findGitHeadPath();
+		if (!gitHeadPath) {
 			return;
 		}
 
@@ -90,7 +110,11 @@ export class FooterComponent implements Component {
 		}
 
 		try {
-			const gitHeadPath = join(process.cwd(), ".git", "HEAD");
+			const gitHeadPath = findGitHeadPath();
+			if (!gitHeadPath) {
+				this.cachedBranch = null;
+				return this.cachedBranch;
+			}
 			const content = readFileSync(gitHeadPath, "utf8").trim();
 
 			if (content.startsWith("ref: refs/heads/")) {
