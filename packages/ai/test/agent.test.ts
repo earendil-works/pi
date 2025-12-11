@@ -1,9 +1,11 @@
+import { Type } from "@sinclair/typebox";
 import { describe, expect, it } from "vitest";
 import { agentLoop } from "../src/agent/agent-loop.js";
 import { calculateTool } from "../src/agent/tools/calculate.js";
-import type { AgentContext, AgentEvent, AgentLoopConfig } from "../src/agent/types.js";
+import type { AgentContext, AgentEvent, AgentLoopConfig, AgentTool } from "../src/agent/types.js";
 import { getModel } from "../src/models.js";
-import type { Api, Message, Model, OptionsForApi, UserMessage } from "../src/types.js";
+import type { Api, AssistantMessage, Message, Model, OptionsForApi, UserMessage } from "../src/types.js";
+import { AssistantMessageEventStream } from "../src/utils/event-stream.js";
 
 async function calculateTest<TApi extends Api>(model: Model<TApi>, options: OptionsForApi<TApi> = {}) {
 	// Create the agent context with the calculator tool
@@ -349,5 +351,93 @@ describe("Agent Calculator Tests", () => {
 			const result = await abortTest(model);
 			expect(result.toolCallCount).toBeGreaterThanOrEqual(1);
 		}, 30000);
+	});
+});
+
+describe("Agent Parallel Execution", () => {
+	it("should execute tools in parallel", async () => {
+		// Mock tool that simulates a delay
+		const delaySchema = Type.Object({ ms: Type.Number() });
+		const delayTool: AgentTool<typeof delaySchema> = {
+			name: "delay",
+			label: "delay",
+			description: "waits for ms",
+			parameters: delaySchema,
+			execute: async (_id, args) => {
+				await new Promise((resolve) => setTimeout(resolve, args.ms));
+				return {
+					content: [{ type: "text" as const, text: `slept ${args.ms}ms` }],
+					details: undefined,
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [delayTool],
+		};
+
+		// Mock stream function that returns a message requesting 2 parallel tool calls
+		// This bypasses the need for a real LLM
+		const mockStreamFn = () => {
+			const stream = new AssistantMessageEventStream();
+			// Simulate slight network delay
+			setTimeout(() => {
+				const msg: AssistantMessage = {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "call_1", name: "delay", arguments: { ms: 100 } },
+						{ type: "toolCall", id: "call_2", name: "delay", arguments: { ms: 100 } },
+					],
+					stopReason: "toolUse",
+					api: "openai-completions",
+					provider: "mock",
+					model: "mock",
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					timestamp: Date.now(),
+				};
+				stream.push({ type: "done", reason: "toolUse", message: msg });
+				stream.end();
+			}, 10);
+			return stream;
+		};
+
+		const start = Date.now();
+		const stream = agentLoop(
+			{ role: "user", content: [{ type: "text", text: "run parallel" }], timestamp: Date.now() },
+			context,
+			{ model: { id: "mock" } as Model<"openai-completions"> },
+			undefined,
+			mockStreamFn as typeof import("../src/stream.js").streamSimple,
+		);
+
+		let turnCount = 0;
+		for await (const event of stream) {
+			if (event.type === "turn_end") {
+				turnCount++;
+				// Stop after the first turn (tool execution) to prevent infinite loop
+				// (agentLoop normally calls streamFn again after tools)
+				break;
+			}
+		}
+
+		const duration = Date.now() - start;
+
+		// Verification:
+		// 2 tools x 100ms each.
+		// Sequential would be > 200ms.
+		// Parallel should be ~100ms + overhead.
+		// We allow a generous buffer for CI slowness (190ms), but it must be clearly less than sequential sum.
+		console.log(`Parallel execution took ${duration}ms`);
+		expect(duration).toBeLessThan(190);
+		expect(turnCount).toBe(1);
 	});
 });

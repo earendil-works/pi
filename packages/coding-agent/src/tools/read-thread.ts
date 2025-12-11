@@ -63,6 +63,8 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 			start_index?: number;
 			detailed?: boolean;
 		},
+		signal?: AbortSignal,
+		onProgress?: (message: string) => void,
 	) => {
 		// Validate: goal is required unless raw mode
 		if (!raw && !goal) {
@@ -76,6 +78,11 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 				details: undefined,
 				isError: true,
 			};
+		}
+
+		// Check for early abort
+		if (signal?.aborted) {
+			throw new Error("Aborted");
 		}
 
 		const mgr = new SessionManager(false, undefined, true);
@@ -153,6 +160,11 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 			}
 
 			try {
+				// Report progress for extraction
+				if (onProgress) {
+					onProgress(`Extracting from thread ${id} using ${extractionModel.id}...`);
+				}
+
 				const systemPrompt = `You are an expert researcher. Extract information relevant to the user's goal from the provided conversation transcript.
 
 CRITICAL CONSTRAINTS:
@@ -210,7 +222,7 @@ The API is failing due to a "Database connection failed" error found in logs.txt
 							},
 						],
 					},
-					{ apiKey },
+					{ apiKey, signal },
 				);
 
 				const rawText = extraction.content
@@ -235,6 +247,11 @@ The API is failing due to a "Database connection failed" error found in logs.txt
 					details: undefined,
 				};
 			} catch (error: unknown) {
+				// Re-throw aborts so they propagate properly
+				if (signal?.aborted) {
+					throw error;
+				}
+
 				// Fallback to raw content on failure
 				const errorMessage = error instanceof Error ? error.message : String(error);
 				const raw = wrapContent(

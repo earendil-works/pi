@@ -191,15 +191,29 @@ async function executeToolCalls<T>(
 	const toolCalls = assistantMessage.content.filter((c) => c.type === "toolCall");
 	const results: ToolResultMessage<any>[] = [];
 
+	// 1. Emit all start events upfront (FIFO order preserved)
 	for (const toolCall of toolCalls) {
-		const tool = tools?.find((t) => t.name === toolCall.name);
-
 		stream.push({
 			type: "tool_execution_start",
 			toolCallId: toolCall.id,
 			toolName: toolCall.name,
 			args: toolCall.arguments,
 		});
+	}
+
+	// 2. Execute all tools in parallel
+	const executionPromises = toolCalls.map(async (toolCall) => {
+		const tool = tools?.find((t) => t.name === toolCall.name);
+
+		// Progress callback specific to this tool call
+		const onProgress = (chunk: string) => {
+			stream.push({
+				type: "tool_execution_progress",
+				toolCallId: toolCall.id,
+				toolName: toolCall.name,
+				output: chunk,
+			});
+		};
 
 		let resultOrError: AgentToolResult<T> | string;
 		let isError = false;
@@ -210,16 +224,6 @@ async function executeToolCalls<T>(
 			// Validate arguments using shared validation function
 			const validatedArgs = validateToolArguments(tool, toolCall);
 
-			// Create progress callback that pushes events to the stream
-			const onProgress = (chunk: string) => {
-				stream.push({
-					type: "tool_execution_progress",
-					toolCallId: toolCall.id,
-					toolName: toolCall.name,
-					output: chunk,
-				});
-			};
-
 			// Execute with validated, typed arguments and progress callback
 			resultOrError = await tool.execute(toolCall.id, validatedArgs, signal, onProgress);
 		} catch (e) {
@@ -227,6 +231,13 @@ async function executeToolCalls<T>(
 			isError = true;
 		}
 
+		return { toolCall, resultOrError, isError };
+	});
+
+	const executionResults = await Promise.all(executionPromises);
+
+	// 3. Process results and emit end events (FIFO order preserved)
+	for (const { toolCall, resultOrError, isError } of executionResults) {
 		stream.push({
 			type: "tool_execution_end",
 			toolCallId: toolCall.id,
