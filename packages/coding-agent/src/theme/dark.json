@@ -27,6 +27,7 @@
 		"success": "green",
 		"error": "pink",
 		"warning": "yellow",
+		"orange": "orange",
 		"muted": "dimmed2",
 		"dim": "dimmed3",
 		"text": "",

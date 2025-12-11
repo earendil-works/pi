@@ -42,6 +42,7 @@
 				"success",
 				"error",
 				"warning",
+				"orange",
 				"muted",
 				"dim",
 				"text",
@@ -101,6 +102,10 @@
 				"warning": {
 					"$ref": "#/$defs/colorValue",
 					"description": "Warning states"
+				},
+				"orange": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Orange color for alerts between warning and error"
 				},
 				"muted": {
 					"$ref": "#/$defs/colorValue",

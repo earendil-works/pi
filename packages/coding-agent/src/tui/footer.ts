@@ -213,12 +213,14 @@ export class FooterComponent implements Component {
 		// Colorize context percentage based on usage
 		let contextPercentStr: string;
 		const contextPercentDisplay = `${contextPercent}% of ${formatTokens(contextWindow)}`;
-		if (contextPercentValue > 90) {
-			contextPercentStr = theme.fg("error", contextPercentDisplay);
-		} else if (contextPercentValue > 70) {
-			contextPercentStr = theme.fg("warning", contextPercentDisplay);
+		if (contextPercentValue >= 90) {
+			contextPercentStr = theme.fg("error", contextPercentDisplay); // red
+		} else if (contextPercentValue >= 80) {
+			contextPercentStr = theme.fg("orange", contextPercentDisplay); // orange
+		} else if (contextPercentValue >= 60) {
+			contextPercentStr = theme.fg("warning", contextPercentDisplay); // yellow
 		} else {
-			contextPercentStr = contextPercentDisplay;
+			contextPercentStr = theme.fg("success", contextPercentDisplay); // green
 		}
 		statsParts.push(contextPercentStr);
 
