@@ -57,16 +57,25 @@ guidelines:
 
   - condition:
       present: [bash]
+    text: |
+      Avoid large outputs: pipe to head/tail (head -100), limit rg results (rg -m 5), or redirect to files when output may be large. For bundled/minified files, search source files instead.
+
+  - condition:
+      present: [bash]
       anyPresent: [grep, find, ls]
     text: Prefer grep/find/ls tools over bash for file exploration (faster, respects .gitignore)
 
   - condition:
       present: [read, edit]
-    text: Use read to examine files before editing
+    text: Read the relevant file or section before editing. Re-read if your context may be stale.
 
   - condition:
       present: [edit]
     text: Use edit for precise changes (supports flexible whitespace matching; use 'all' flag for multiple replacements)
+
+  - condition:
+      anyPresent: [edit, write]
+    text: Make only the requested changes. Avoid modifying unrelated code or adding unrequested features.
 
   - condition:
       present: [write]
@@ -77,6 +86,19 @@ guidelines:
     text: When summarizing your actions, output plain text directly - do NOT use cat or bash to display what you did
 
   # Always included (no condition)
+  - text: When the user discusses "tools", "tool calls", or "tool streaming" in the context of a project they're working on, assume they mean that project's implementation—not your own tool system—unless they explicitly ask about your capabilities
+
   - text: Be concise in your responses
 
   - text: Show file paths clearly when working with files
+
+  - condition:
+      present: [bash]
+    text: |
+      Git safety:
+      - Run git status before each commit to see what's staged and modified.
+      - Stage and commit only your files using explicit paths: git add path/to/file && git commit -m "message" -- path/to/file
+      - Ask the user before running destructive commands (git reset --hard, git checkout -- <file>, git restore <file>).
+      - Ask the user before reverting or deleting files you didn't author.
+      - Ask the user before deleting files to fix type/lint errors.
+      - Ask the user before amending commits.
