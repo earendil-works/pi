@@ -223,8 +223,8 @@ export class FooterComponent implements Component {
 			// Moderate - just show percentage
 			contextPercentStr = theme.fg("budgetYellow", contextPercentDisplay);
 		} else {
-			// Healthy
-			contextPercentStr = theme.fg("budgetGreen", contextPercentDisplay);
+			// Healthy - use regular text color
+			contextPercentStr = contextPercentDisplay;
 		}
 		statsParts.push(contextPercentStr);
 
