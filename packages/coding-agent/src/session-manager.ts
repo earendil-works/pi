@@ -118,6 +118,12 @@ export class SessionManager {
 		return sessionDir;
 	}
 
+	/** Get the root sessions directory (~/.pi/agent/sessions/) */
+	private getSessionsRootDir(): string {
+		const configDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi/agent/"));
+		return join(configDir, "sessions");
+	}
+
 	private initNewSession(): void {
 		this.sessionId = uuidv4();
 		const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
@@ -355,15 +361,16 @@ export class SessionManager {
 		return this.sessionInitialized;
 	}
 
-	findSessionByUuid(uuid: string): string | null {
+	/** Helper to find a session by UUID in a specific directory */
+	private findSessionInDir(dir: string, uuid: string): string | null {
 		try {
-			if (!existsSync(this.sessionDir)) return null;
-			const files = readdirSync(this.sessionDir).filter((f) => f.endsWith(".jsonl"));
+			if (!existsSync(dir)) return null;
+			const files = readdirSync(dir).filter((f) => f.endsWith(".jsonl"));
 
 			// First try filename match (faster)
 			for (const file of files) {
 				if (file.includes(uuid)) {
-					const fullPath = join(this.sessionDir, file);
+					const fullPath = join(dir, file);
 					// Verify by checking session header
 					if (this.verifySessionUuid(fullPath, uuid)) {
 						return fullPath;
@@ -373,7 +380,7 @@ export class SessionManager {
 
 			// Fallback: scan all files and check headers (slower but handles edge cases)
 			for (const file of files) {
-				const fullPath = join(this.sessionDir, file);
+				const fullPath = join(dir, file);
 				if (this.verifySessionUuid(fullPath, uuid)) {
 					return fullPath;
 				}
@@ -385,6 +392,40 @@ export class SessionManager {
 		}
 	}
 
+	/** Find a session by UUID in the current workspace directory */
+	findSessionByUuid(uuid: string): string | null {
+		return this.findSessionInDir(this.sessionDir, uuid);
+	}
+
+	/** Find a session by UUID across ALL workspace directories */
+	findSessionByUuidGlobal(uuid: string): string | null {
+		// First check current workspace (optimization for common case)
+		const inCurrent = this.findSessionInDir(this.sessionDir, uuid);
+		if (inCurrent) return inCurrent;
+
+		// Search all workspace directories
+		const rootDir = this.getSessionsRootDir();
+		if (!existsSync(rootDir)) return null;
+
+		try {
+			const entries = readdirSync(rootDir, { withFileTypes: true });
+			for (const entry of entries) {
+				if (entry.isDirectory() && entry.name.startsWith("--")) {
+					const workspaceDir = join(rootDir, entry.name);
+					// Skip current workspace (already checked)
+					if (workspaceDir === this.sessionDir) continue;
+
+					const found = this.findSessionInDir(workspaceDir, uuid);
+					if (found) return found;
+				}
+			}
+		} catch {
+			// Root directory access failed
+		}
+
+		return null;
+	}
+
 	/**
 	 * Get formatted thread content as markdown for a given session/thread ID.
 	 *
@@ -392,6 +433,7 @@ export class SessionManager {
 	 * @param options.startIndex Message index to start from (default: 0)
 	 * @param options.detailed If false (default), returns a "clean transcript" containing only
 	 *                         User and Assistant text, omitting all tool calls and outputs.
+	 * @param options.globalSearch If true, search across all workspaces (default: false)
 	 */
 	getThreadContent(
 		sessionId: string,
@@ -399,9 +441,12 @@ export class SessionManager {
 			maxMessages?: number;
 			startIndex?: number;
 			detailed?: boolean;
+			globalSearch?: boolean;
 		} = {},
 	): { content: string; totalMessages: number; returnedMessages: number } | null {
-		const sessionPath = this.findSessionByUuid(sessionId);
+		const sessionPath = options.globalSearch
+			? this.findSessionByUuidGlobal(sessionId)
+			: this.findSessionByUuid(sessionId);
 		if (!sessionPath) return null;
 
 		const { maxMessages = 50, startIndex = 0, detailed = false } = options;
@@ -545,7 +590,8 @@ export class SessionManager {
 		}
 	}
 
-	loadAllSessions(): Array<{
+	/** Helper to load sessions from a specific directory */
+	private loadSessionsFromDir(dir: string): Array<{
 		path: string;
 		id: string;
 		created: Date;
@@ -567,12 +613,12 @@ export class SessionManager {
 		}> = [];
 
 		try {
-			if (!existsSync(this.sessionDir)) {
+			if (!existsSync(dir)) {
 				return sessions;
 			}
-			const files = readdirSync(this.sessionDir)
+			const files = readdirSync(dir)
 				.filter((f) => f.endsWith(".jsonl"))
-				.map((f) => join(this.sessionDir, f));
+				.map((f) => join(dir, f));
 
 			for (const file of files) {
 				try {
@@ -639,19 +685,76 @@ export class SessionManager {
 						allMessagesText: allMessages.join(" "),
 						cwd,
 					});
-				} catch (error) {
+				} catch {
 					// Skip files that can't be read
-					console.error(`Failed to read session file ${file}:`, error);
 				}
 			}
-
-			// Sort by modified date (most recent first)
-			sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
-		} catch (error) {
-			console.error("Failed to load sessions:", error);
+		} catch {
+			// Directory access failed
 		}
 
 		return sessions;
+	}
+
+	/** Load sessions from the current workspace directory */
+	loadAllSessions(): Array<{
+		path: string;
+		id: string;
+		created: Date;
+		modified: Date;
+		messageCount: number;
+		firstMessage: string;
+		allMessagesText: string;
+		cwd: string;
+	}> {
+		const sessions = this.loadSessionsFromDir(this.sessionDir);
+		sessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+		return sessions;
+	}
+
+	/** Load sessions from ALL workspace directories */
+	loadAllSessionsGlobal(): Array<{
+		path: string;
+		id: string;
+		created: Date;
+		modified: Date;
+		messageCount: number;
+		firstMessage: string;
+		allMessagesText: string;
+		cwd: string;
+	}> {
+		const allSessions: Array<{
+			path: string;
+			id: string;
+			created: Date;
+			modified: Date;
+			messageCount: number;
+			firstMessage: string;
+			allMessagesText: string;
+			cwd: string;
+		}> = [];
+
+		const rootDir = this.getSessionsRootDir();
+		if (!existsSync(rootDir)) {
+			return allSessions;
+		}
+
+		try {
+			const entries = readdirSync(rootDir, { withFileTypes: true });
+			for (const entry of entries) {
+				if (entry.isDirectory() && entry.name.startsWith("--")) {
+					const workspaceDir = join(rootDir, entry.name);
+					const sessions = this.loadSessionsFromDir(workspaceDir);
+					allSessions.push(...sessions);
+				}
+			}
+		} catch {
+			// Root directory access failed
+		}
+
+		// Sort all sessions by modified date (most recent first)
+		allSessions.sort((a, b) => b.modified.getTime() - a.modified.getTime());
+		return allSessions;
 	}
 
 	setSessionFile(path: string): void {

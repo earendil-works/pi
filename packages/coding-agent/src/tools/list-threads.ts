@@ -31,7 +31,7 @@ export const listThreadsTool: AgentTool<typeof listThreadsSchema> = {
 		const mgr = new SessionManager(false, undefined, true);
 
 		try {
-			const sessions = mgr.loadAllSessions();
+			const sessions = mgr.loadAllSessionsGlobal();
 
 			let filtered = sessions;
 			if (search) {

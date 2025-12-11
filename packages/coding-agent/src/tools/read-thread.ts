@@ -95,6 +95,7 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 			maxMessages: limit,
 			startIndex: start,
 			detailed: detailed ?? false,
+			globalSearch: true,
 		});
 
 		if (!result) {
