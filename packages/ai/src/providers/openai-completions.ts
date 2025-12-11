@@ -74,13 +74,17 @@ function detectCompatFromUrl(baseUrl: string): Required<OpenAICompat> {
 		baseUrl.includes("cerebras.ai") ||
 		baseUrl.includes("api.x.ai") ||
 		baseUrl.includes("mistral.ai") ||
-		baseUrl.includes("chutes.ai");
+		baseUrl.includes("chutes.ai") ||
+		baseUrl.includes("fireworks.ai");
 
-	const useMaxTokens = baseUrl.includes("mistral.ai") || baseUrl.includes("chutes.ai");
+	const useMaxTokens =
+		baseUrl.includes("mistral.ai") || baseUrl.includes("chutes.ai") || baseUrl.includes("fireworks.ai");
 
 	const isGrok = baseUrl.includes("api.x.ai");
 
 	const isMistral = baseUrl.includes("mistral.ai");
+
+	const isFireworks = baseUrl.includes("fireworks.ai");
 
 	return {
 		supportsStore: !isNonStandard,
@@ -91,6 +95,7 @@ function detectCompatFromUrl(baseUrl: string): Required<OpenAICompat> {
 		requiresAssistantAfterToolResult: false, // Mistral no longer requires this as of Dec 2024
 		requiresThinkingAsText: isMistral,
 		requiresMistralToolIds: isMistral,
+		supportsStreamOptions: !isFireworks,
 	};
 }
 
@@ -112,6 +117,7 @@ function getCompat(model: Model<"openai-completions">): Required<OpenAICompat> {
 			model.compat.requiresAssistantAfterToolResult ?? detected.requiresAssistantAfterToolResult,
 		requiresThinkingAsText: model.compat.requiresThinkingAsText ?? detected.requiresThinkingAsText,
 		requiresMistralToolIds: model.compat.requiresMistralToolIds ?? detected.requiresMistralToolIds,
+		supportsStreamOptions: model.compat.supportsStreamOptions ?? detected.supportsStreamOptions,
 	};
 }
 
@@ -544,8 +550,12 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 		model: model.id,
 		messages,
 		stream: true,
-		stream_options: { include_usage: true },
 	};
+
+	// Only include stream_options if supported (not supported by Fireworks, etc.)
+	if (compat.supportsStreamOptions) {
+		params.stream_options = { include_usage: true };
+	}
 
 	if (compat.supportsStore) {
 		params.store = false;

@@ -179,6 +179,8 @@ export interface OpenAICompat {
 	requiresThinkingAsText?: boolean;
 	/** Whether tool call IDs must be normalized to Mistral format (exactly 9 alphanumeric chars). Default: auto-detected from URL. */
 	requiresMistralToolIds?: boolean;
+	/** Whether the provider supports `stream_options`. Default: auto-detected from URL. */
+	supportsStreamOptions?: boolean;
 }
 
 // Model interface for the unified model system
