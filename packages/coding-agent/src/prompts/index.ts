@@ -1,5 +1,5 @@
 import { readFileSync } from "fs";
-import { dirname, join, resolve } from "path";
+import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { parse } from "yaml";
 import type { ToolName } from "../tools/index.js";
@@ -189,9 +189,6 @@ export function buildSystemPrompt(options: {
 		.map((g) => `- ${g}`)
 		.join("\n");
 
-	// Get documentation path
-	const readmePath = resolve(join(__dirname, "../../README.md"));
-
 	// Build context files section
 	let contextFilesSection = "";
 	if (contextFiles.length > 0) {
@@ -206,7 +203,6 @@ export function buildSystemPrompt(options: {
 	const prompt = config.systemPrompt
 		.replace("{{TOOLS_LIST}}", toolsList)
 		.replace("{{GUIDELINES}}", guidelinesText)
-		.replace("{{DOCUMENTATION_PATH}}", readmePath)
 		.replace("{{CONTEXT_FILES}}", contextFilesSection)
 		.replace("{{DATETIME}}", dateTime)
 		.replace("{{CWD}}", process.cwd());
