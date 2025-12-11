@@ -1,6 +1,6 @@
 {
 	"name": "@mariozechner/pi-web-ui",
-	"version": "0.13.9",
+	"version": "0.13.10",
 	"description": "Reusable web UI components for AI chat interfaces powered by @mariozechner/pi-ai",
 	"type": "module",
 	"main": "dist/index.js",
