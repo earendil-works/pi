@@ -4,7 +4,7 @@ import { spawn } from "child_process";
 import { existsSync } from "fs";
 import { getToolDescription } from "../prompts/index.js";
 
-const MAX_OUTPUT_BYTES = 65536;
+const MAX_OUTPUT_BYTES = 16 * 1024; // 16KB
 
 /**
  * Truncate output to MAX_OUTPUT_BYTES with a warning if exceeded
