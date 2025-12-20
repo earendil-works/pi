@@ -233,19 +233,19 @@
 				},
 				"budgetGreen": {
 					"$ref": "#/$defs/colorValue",
-					"description": "Context budget indicator: healthy (<60%)"
+					"description": "Context budget indicator: healthy (<100k tokens)"
 				},
 				"budgetYellow": {
 					"$ref": "#/$defs/colorValue",
-					"description": "Context budget indicator: moderate (60-80%)"
+					"description": "Context budget indicator: moderate (100k-133k tokens)"
 				},
 				"budgetOrange": {
 					"$ref": "#/$defs/colorValue",
-					"description": "Context budget indicator: high (80-90%)"
+					"description": "Context budget indicator: high (133k-166k tokens)"
 				},
 				"budgetRed": {
 					"$ref": "#/$defs/colorValue",
-					"description": "Context budget indicator: critical (>90%)"
+					"description": "Context budget indicator: critical (>166k tokens)"
 				}
 			},
 			"additionalProperties": false
