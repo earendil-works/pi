@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **Google Provider Reliability**: Implemented exponential backoff with jitter for Google Gemini provider. Automatically retries on `500 INTERNAL`, `503 SERVICE UNAVAILABLE`, and `429 RESOURCE_EXHAUSTED` errors. Retries are safely limited to the initial connection phase before any content is yielded to the stream, and fully respect `AbortSignal`.
+
 ## [0.13.4] - 2025-12-10
 
 ### Changed

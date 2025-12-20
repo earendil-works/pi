@@ -34,6 +34,47 @@ export interface GoogleOptions extends StreamOptions {
 	};
 }
 
+const RETRY_CONFIG = {
+	maxRetries: 3,
+	baseDelayMs: 500,
+	maxDelayMs: 8000,
+	jitterRatio: 0.2,
+} as const;
+
+function getRetryDecision(error: unknown): { shouldRetry: boolean; retryAfterMs?: number } {
+	const message = error instanceof Error ? error.message : String(error);
+	if (/abort|cancel/i.test(message)) return { shouldRetry: false };
+
+	const status = (error as any)?.status || (error as any)?.code || (error as any)?.error?.code;
+	const statusString = (error as any)?.statusText || (error as any)?.error?.status;
+
+	const isTransient = status === 500 || status === 503 || statusString === "INTERNAL";
+	const isRateLimit = status === 429 || statusString === "RESOURCE_EXHAUSTED";
+
+	const retryAfter = (error as any)?.response?.headers?.get?.("retry-after");
+	const retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : undefined;
+
+	return {
+		shouldRetry: isTransient || isRateLimit,
+		retryAfterMs,
+	};
+}
+
+async function sleepWithAbort(ms: number, signal?: AbortSignal) {
+	if (signal?.aborted) throw new Error("Aborted");
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			signal?.removeEventListener("abort", onAbort);
+			resolve(undefined);
+		}, ms);
+		const onAbort = () => {
+			clearTimeout(timer);
+			reject(new Error("Aborted"));
+		};
+		signal?.addEventListener("abort", onAbort, { once: true });
+	});
+}
+
 // Counter for generating unique tool call IDs
 let toolCallCounter = 0;
 
@@ -63,31 +104,99 @@ export const streamGoogle: StreamFunction<"google-generative-ai"> = (
 			timestamp: Date.now(),
 		};
 
-		try {
-			const client = createClient(model, options?.apiKey);
-			const params = buildParams(model, context, options);
-			const googleStream = await client.models.generateContentStream(params);
+		let hasYieldedContent = false;
+		let attempt = 0;
 
-			stream.push({ type: "start", partial: output });
-			let currentBlock: TextContent | ThinkingContent | null = null;
-			const blocks = output.content;
-			const blockIndex = () => blocks.length - 1;
-			for await (const chunk of googleStream) {
-				const candidate = chunk.candidates?.[0];
-				if (candidate?.content?.parts) {
-					for (const part of candidate.content.parts) {
-						if (part.text !== undefined) {
-							const isThinking = part.thought === true;
-							if (
-								!currentBlock ||
-								(isThinking && currentBlock.type !== "thinking") ||
-								(!isThinking && currentBlock.type !== "text")
-							) {
+		while (attempt <= RETRY_CONFIG.maxRetries) {
+			// Reset output for each attempt to avoid duplicate content/usage
+			output.content = [];
+			output.usage = {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			};
+
+			try {
+				const client = createClient(model, options?.apiKey);
+				const params = buildParams(model, context, options);
+				const googleStream = await client.models.generateContentStream(params);
+
+				if (attempt === 0) {
+					stream.push({ type: "start", partial: output });
+				}
+
+				let currentBlock: TextContent | ThinkingContent | null = null;
+				const blocks = output.content;
+				const blockIndex = () => blocks.length - 1;
+				for await (const chunk of googleStream) {
+					const candidate = chunk.candidates?.[0];
+					if (candidate?.content?.parts) {
+						for (const part of candidate.content.parts) {
+							if (part.text !== undefined) {
+								hasYieldedContent = true;
+								const isThinking = part.thought === true;
+								if (
+									!currentBlock ||
+									(isThinking && currentBlock.type !== "thinking") ||
+									(!isThinking && currentBlock.type !== "text")
+								) {
+									if (currentBlock) {
+										if (currentBlock.type === "text") {
+											stream.push({
+												type: "text_end",
+												contentIndex: blocks.length - 1,
+												content: currentBlock.text,
+												partial: output,
+											});
+										} else {
+											stream.push({
+												type: "thinking_end",
+												contentIndex: blockIndex(),
+												content: currentBlock.thinking,
+												partial: output,
+											});
+										}
+									}
+									if (isThinking) {
+										currentBlock = { type: "thinking", thinking: "", thinkingSignature: undefined };
+										output.content.push(currentBlock);
+										stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+									} else {
+										currentBlock = { type: "text", text: "" };
+										output.content.push(currentBlock);
+										stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+									}
+								}
+								if (currentBlock.type === "thinking") {
+									currentBlock.thinking += part.text;
+									currentBlock.thinkingSignature = part.thoughtSignature;
+									stream.push({
+										type: "thinking_delta",
+										contentIndex: blockIndex(),
+										delta: part.text,
+										partial: output,
+									});
+								} else {
+									currentBlock.text += part.text;
+									stream.push({
+										type: "text_delta",
+										contentIndex: blockIndex(),
+										delta: part.text,
+										partial: output,
+									});
+								}
+							}
+
+							if (part.functionCall) {
+								hasYieldedContent = true;
 								if (currentBlock) {
 									if (currentBlock.type === "text") {
 										stream.push({
 											type: "text_end",
-											contentIndex: blocks.length - 1,
+											contentIndex: blockIndex(),
 											content: currentBlock.text,
 											partial: output,
 										});
@@ -99,158 +208,132 @@ export const streamGoogle: StreamFunction<"google-generative-ai"> = (
 											partial: output,
 										});
 									}
+									currentBlock = null;
 								}
-								if (isThinking) {
-									currentBlock = { type: "thinking", thinking: "", thinkingSignature: undefined };
-									output.content.push(currentBlock);
-									stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
-								} else {
-									currentBlock = { type: "text", text: "" };
-									output.content.push(currentBlock);
-									stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+
+								// Generate unique ID if not provided or if it's a duplicate
+								const providedId = part.functionCall.id;
+								const needsNewId =
+									!providedId || output.content.some((b) => b.type === "toolCall" && b.id === providedId);
+								const toolCallId = needsNewId
+									? `${part.functionCall.name}_${Date.now()}_${++toolCallCounter}`
+									: providedId;
+
+								const toolCall: ToolCall = {
+									type: "toolCall",
+									id: toolCallId,
+									name: part.functionCall.name || "",
+									arguments: part.functionCall.args as Record<string, any>,
+									...(part.thoughtSignature && { thoughtSignature: part.thoughtSignature }),
+								};
+
+								// Validate tool arguments if tool definition is available
+								if (context.tools) {
+									const tool = context.tools.find((t) => t.name === toolCall.name);
+									if (tool) {
+										toolCall.arguments = validateToolArguments(tool, toolCall);
+									}
 								}
-							}
-							if (currentBlock.type === "thinking") {
-								currentBlock.thinking += part.text;
-								currentBlock.thinkingSignature = part.thoughtSignature;
+
+								output.content.push(toolCall);
+								stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
 								stream.push({
-									type: "thinking_delta",
+									type: "toolcall_delta",
 									contentIndex: blockIndex(),
-									delta: part.text,
+									delta: JSON.stringify(toolCall.arguments),
 									partial: output,
 								});
-							} else {
-								currentBlock.text += part.text;
-								stream.push({
-									type: "text_delta",
-									contentIndex: blockIndex(),
-									delta: part.text,
-									partial: output,
-								});
+								stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
 							}
 						}
+					}
 
-						if (part.functionCall) {
-							if (currentBlock) {
-								if (currentBlock.type === "text") {
-									stream.push({
-										type: "text_end",
-										contentIndex: blockIndex(),
-										content: currentBlock.text,
-										partial: output,
-									});
-								} else {
-									stream.push({
-										type: "thinking_end",
-										contentIndex: blockIndex(),
-										content: currentBlock.thinking,
-										partial: output,
-									});
-								}
-								currentBlock = null;
-							}
-
-							// Generate unique ID if not provided or if it's a duplicate
-							const providedId = part.functionCall.id;
-							const needsNewId =
-								!providedId || output.content.some((b) => b.type === "toolCall" && b.id === providedId);
-							const toolCallId = needsNewId
-								? `${part.functionCall.name}_${Date.now()}_${++toolCallCounter}`
-								: providedId;
-
-							const toolCall: ToolCall = {
-								type: "toolCall",
-								id: toolCallId,
-								name: part.functionCall.name || "",
-								arguments: part.functionCall.args as Record<string, any>,
-								...(part.thoughtSignature && { thoughtSignature: part.thoughtSignature }),
-							};
-
-							// Validate tool arguments if tool definition is available
-							if (context.tools) {
-								const tool = context.tools.find((t) => t.name === toolCall.name);
-								if (tool) {
-									toolCall.arguments = validateToolArguments(tool, toolCall);
-								}
-							}
-
-							output.content.push(toolCall);
-							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
-							stream.push({
-								type: "toolcall_delta",
-								contentIndex: blockIndex(),
-								delta: JSON.stringify(toolCall.arguments),
-								partial: output,
-							});
-							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+					if (candidate?.finishReason) {
+						output.stopReason = mapStopReason(candidate.finishReason);
+						if (output.content.some((b) => b.type === "toolCall")) {
+							output.stopReason = "toolUse";
 						}
 					}
-				}
 
-				if (candidate?.finishReason) {
-					output.stopReason = mapStopReason(candidate.finishReason);
-					if (output.content.some((b) => b.type === "toolCall")) {
-						output.stopReason = "toolUse";
-					}
-				}
-
-				if (chunk.usageMetadata) {
-					const input = chunk.usageMetadata.promptTokenCount || 0;
-					const outputTokens =
-						(chunk.usageMetadata.candidatesTokenCount || 0) + (chunk.usageMetadata.thoughtsTokenCount || 0);
-					const cacheRead = chunk.usageMetadata.cachedContentTokenCount || 0;
-					output.usage = {
-						input,
-						output: outputTokens,
-						cacheRead,
-						cacheWrite: 0,
-						totalTokens: input + outputTokens + cacheRead,
-						cost: {
-							input: 0,
-							output: 0,
-							cacheRead: 0,
+					if (chunk.usageMetadata) {
+						const input = chunk.usageMetadata.promptTokenCount || 0;
+						const outputTokens =
+							(chunk.usageMetadata.candidatesTokenCount || 0) + (chunk.usageMetadata.thoughtsTokenCount || 0);
+						const cacheRead = chunk.usageMetadata.cachedContentTokenCount || 0;
+						output.usage = {
+							input,
+							output: outputTokens,
+							cacheRead,
 							cacheWrite: 0,
-							total: 0,
-						},
-					};
-					calculateCost(model, output.usage);
+							totalTokens: input + outputTokens + cacheRead,
+							cost: {
+								input: 0,
+								output: 0,
+								cacheRead: 0,
+								cacheWrite: 0,
+								total: 0,
+							},
+						};
+						calculateCost(model, output.usage);
+					}
 				}
-			}
 
-			if (currentBlock) {
-				if (currentBlock.type === "text") {
-					stream.push({
-						type: "text_end",
-						contentIndex: blockIndex(),
-						content: currentBlock.text,
-						partial: output,
-					});
-				} else {
-					stream.push({
-						type: "thinking_end",
-						contentIndex: blockIndex(),
-						content: currentBlock.thinking,
-						partial: output,
-					});
+				if (currentBlock) {
+					if (currentBlock.type === "text") {
+						stream.push({
+							type: "text_end",
+							contentIndex: blockIndex(),
+							content: currentBlock.text,
+							partial: output,
+						});
+					} else {
+						stream.push({
+							type: "thinking_end",
+							contentIndex: blockIndex(),
+							content: currentBlock.thinking,
+							partial: output,
+						});
+					}
 				}
-			}
 
-			if (options?.signal?.aborted) {
-				throw new Error("Request was aborted");
-			}
+				if (options?.signal?.aborted) {
+					throw new Error("Request was aborted");
+				}
 
-			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new Error("An unkown error ocurred");
-			}
+				if (output.stopReason === "aborted" || output.stopReason === "error") {
+					throw new Error("An unkown error ocurred");
+				}
 
-			stream.push({ type: "done", reason: output.stopReason, message: output });
-			stream.end();
-		} catch (error) {
-			for (const block of output.content) delete (block as any).index;
-			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
-			stream.push({ type: "error", reason: output.stopReason, error: output });
-			stream.end();
+				stream.push({ type: "done", reason: output.stopReason, message: output });
+				stream.end();
+				return;
+			} catch (error) {
+				const decision = getRetryDecision(error);
+
+				const canRetry =
+					decision.shouldRetry &&
+					!hasYieldedContent &&
+					!options?.signal?.aborted &&
+					attempt < RETRY_CONFIG.maxRetries;
+
+				if (!canRetry) {
+					for (const block of output.content) delete (block as any).index;
+					output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+					output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+					stream.push({ type: "error", reason: output.stopReason, error: output });
+					stream.end();
+					return;
+				}
+
+				attempt++;
+				const backoff =
+					decision.retryAfterMs ??
+					Math.min(RETRY_CONFIG.maxDelayMs, RETRY_CONFIG.baseDelayMs * 2 ** (attempt - 1));
+				const jitter = backoff * RETRY_CONFIG.jitterRatio;
+				const delay = backoff + (Math.random() * 2 - 1) * jitter;
+
+				await sleepWithAbort(delay, options?.signal);
+			}
 		}
 	})();
 
