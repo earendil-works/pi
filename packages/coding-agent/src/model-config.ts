@@ -258,6 +258,18 @@ export async function getApiKeyForModel(model: Model<Api>): Promise<string | und
 		// 3. Fall back to ANTHROPIC_API_KEY env var
 	}
 
+	// For Google Cloud Code Assist, check OAuth and encode projectId with token
+	if (model.provider === "google-cloud-code-assist") {
+		const oauthToken = await getOAuthToken("google-cloud-code-assist");
+		if (oauthToken) {
+			const credentials = loadOAuthCredentials("google-cloud-code-assist");
+			if (credentials?.projectId) {
+				return JSON.stringify({ token: oauthToken, projectId: credentials.projectId });
+			}
+		}
+		return undefined;
+	}
+
 	// For built-in providers, use getApiKey from @mariozechner/pi-ai
 	return getApiKey(model.provider as KnownProvider);
 }
@@ -305,7 +317,8 @@ export function findModel(provider: string, modelId: string): { model: Model<Api
  */
 const providerToOAuthProvider: Record<string, SupportedOAuthProvider> = {
 	anthropic: "anthropic",
-	// Add more mappings as OAuth support is added for other providers
+	google: "google-cloud-code-assist",
+	"google-cloud-code-assist": "google-cloud-code-assist",
 };
 
 // Cache for OAuth status per provider (avoids file reads on every render)

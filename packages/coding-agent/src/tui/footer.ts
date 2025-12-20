@@ -211,10 +211,11 @@ export class FooterComponent implements Component {
 		if (totalCacheRead) statsParts.push(`R${formatTokens(totalCacheRead)}`);
 		if (totalCacheWrite) statsParts.push(`W${formatTokens(totalCacheWrite)}`);
 
-		// Show cost with "(sub)" indicator if using OAuth subscription
+		// Show cost with (sub) or (api) indicator
 		const usingSubscription = this.state.model ? isModelUsingOAuth(this.state.model) : false;
-		if (totalCost || usingSubscription) {
-			const costStr = `$${totalCost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
+		if (totalCost || usingSubscription || this.state.model) {
+			const type = usingSubscription ? " (sub)" : " (api)";
+			const costStr = `$${totalCost.toFixed(3)}${type}`;
 			statsParts.push(costStr);
 		}
 
