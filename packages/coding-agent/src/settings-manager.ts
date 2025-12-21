@@ -10,6 +10,8 @@ export interface Settings {
 	queueMode?: "all" | "one-at-a-time";
 	theme?: string;
 	notifications?: boolean;
+	googleClientId?: string;
+	googleClientSecret?: string;
 }
 
 export class SettingsManager {
@@ -116,6 +118,24 @@ export class SettingsManager {
 
 	setNotifications(enabled: boolean): void {
 		this.settings.notifications = enabled;
+		this.save();
+	}
+
+	getGoogleClientId(): string | undefined {
+		return this.settings.googleClientId;
+	}
+
+	setGoogleClientId(clientId: string): void {
+		this.settings.googleClientId = clientId;
+		this.save();
+	}
+
+	getGoogleClientSecret(): string | undefined {
+		return this.settings.googleClientSecret;
+	}
+
+	setGoogleClientSecret(clientSecret: string): void {
+		this.settings.googleClientSecret = clientSecret;
 		this.save();
 	}
 }
