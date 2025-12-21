@@ -2552,7 +2552,7 @@ export const MODELS = {
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
-			maxTokens: 262144,
+			maxTokens: 65536,
 		} satisfies Model<"openai-completions">,
 		"nvidia/nemotron-3-nano-30b-a3b:free": {
 			id: "nvidia/nemotron-3-nano-30b-a3b:free",
@@ -2871,7 +2871,7 @@ export const MODELS = {
 			cost: {
 				input: 0.24,
 				output: 0.38,
-				cacheRead: 0.11,
+				cacheRead: 0.02,
 				cacheWrite: 0,
 			},
 			contextWindow: 163840,

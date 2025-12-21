@@ -1,18 +1,25 @@
 import type { AnthropicOptions } from "./providers/anthropic.js";
 import type { GoogleOptions } from "./providers/google.js";
+import type { GoogleCloudCodeAssistOptions } from "./providers/google-cloud-code-assist.js";
 import type { OpenAICompletionsOptions } from "./providers/openai-completions.js";
 import type { OpenAIResponsesOptions } from "./providers/openai-responses.js";
 import type { AssistantMessageEventStream } from "./utils/event-stream.js";
 
 export type { AssistantMessageEventStream } from "./utils/event-stream.js";
 
-export type Api = "openai-completions" | "openai-responses" | "anthropic-messages" | "google-generative-ai";
+export type Api =
+	| "openai-completions"
+	| "openai-responses"
+	| "anthropic-messages"
+	| "google-generative-ai"
+	| "google-cloud-code-assist";
 
 export interface ApiOptionsMap {
 	"anthropic-messages": AnthropicOptions;
 	"openai-completions": OpenAICompletionsOptions;
 	"openai-responses": OpenAIResponsesOptions;
 	"google-generative-ai": GoogleOptions;
+	"google-cloud-code-assist": GoogleCloudCodeAssistOptions;
 }
 
 // Compile-time exhaustiveness check - this will fail if ApiOptionsMap doesn't have all KnownApi keys

@@ -414,6 +414,45 @@ async function generateModels() {
 		});
 	}
 
+	// Add Google Cloud Code Assist models
+	const cloudCodeAssistModels: Model<"google-cloud-code-assist">[] = [
+		{
+			id: "gemini-2.0-flash",
+			name: "Gemini 2.0 Flash (Cloud Code Assist)",
+			api: "google-cloud-code-assist",
+			provider: "google-cloud-code-assist",
+			baseUrl: "https://cloudcode-pa.googleapis.com",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
+			id: "gemini-2.0-pro-exp-02-05",
+			name: "Gemini 2.0 Pro Exp (Cloud Code Assist)",
+			api: "google-cloud-code-assist",
+			provider: "google-cloud-code-assist",
+			baseUrl: "https://cloudcode-pa.googleapis.com",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+	];
+	allModels.push(...cloudCodeAssistModels);
+
 	// Group by provider and deduplicate by model ID
 	const providers: Record<string, Record<string, Model<any>>> = {};
 	for (const model of allModels) {
@@ -438,7 +477,7 @@ export const MODELS = {
 
 	// Generate provider sections
 	for (const [providerId, models] of Object.entries(providers)) {
-		output += `\t${providerId}: {\n`;
+		output += `\t"${providerId}": {\n`;
 
 		for (const model of Object.values(models)) {
 			output += `\t\t"${model.id}": {\n`;

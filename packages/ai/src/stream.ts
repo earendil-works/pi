@@ -1,5 +1,9 @@
 import { type AnthropicOptions, streamAnthropic } from "./providers/anthropic.js";
 import { type GoogleOptions, streamGoogle } from "./providers/google.js";
+import {
+	type GoogleCloudCodeAssistOptions,
+	streamGoogleCloudCodeAssist,
+} from "./providers/google-cloud-code-assist.js";
 import { type OpenAICompletionsOptions, streamOpenAICompletions } from "./providers/openai-completions.js";
 import { type OpenAIResponsesOptions, streamOpenAIResponses } from "./providers/openai-responses.js";
 import type {
@@ -70,6 +74,13 @@ export function stream<TApi extends Api>(
 
 		case "google-generative-ai":
 			return streamGoogle(model as Model<"google-generative-ai">, context, providerOptions);
+
+		case "google-cloud-code-assist":
+			return streamGoogleCloudCodeAssist(
+				model as Model<"google-cloud-code-assist">,
+				context,
+				providerOptions as any,
+			);
 
 		default: {
 			// This should never be reached if all Api cases are handled
@@ -175,6 +186,19 @@ function mapOptionsForApi<TApi extends Api>(
 					budgetTokens: googleBudget,
 				},
 			} satisfies GoogleOptions;
+		}
+
+		case "google-cloud-code-assist": {
+			if (!options?.reasoning) return base as any;
+
+			const googleBudget = getGoogleBudget(model as any, options.reasoning);
+			return {
+				...base,
+				thinking: {
+					enabled: true,
+					budgetTokens: googleBudget,
+				},
+			} satisfies GoogleCloudCodeAssistOptions;
 		}
 
 		default: {
