@@ -1845,24 +1845,29 @@ export class TuiRenderer {
 					try {
 						await login(
 							providerId,
-							(url: string) => {
+							(info: { url: string; instructions?: string }) => {
 								// Show auth URL to user
 								this.chatContainer.addChild(new Spacer(1));
-								this.chatContainer.addChild(new Text(theme.fg("accent", "Opening browser to:"), 1, 0));
-								this.chatContainer.addChild(new Text(theme.fg("accent", url), 1, 0));
+								this.chatContainer.addChild(new Text(theme.fg("accent", "Please visit:"), 1, 0));
+								this.chatContainer.addChild(new Text(theme.fg("accent", info.url), 1, 0));
+								if (info.instructions) {
+									this.chatContainer.addChild(new Text(theme.fg("dim", info.instructions), 1, 0));
+								}
 								this.chatContainer.addChild(new Spacer(1));
-								this.chatContainer.addChild(
-									new Text(theme.fg("warning", "Paste the authorization code below:"), 1, 0),
-								);
 								this.ui.requestRender();
 
 								// Open URL in browser
 								const openCmd =
 									process.platform === "darwin" ? "open" : process.platform === "win32" ? "start" : "xdg-open";
-								exec(`${openCmd} "${url}"`);
+								exec(`${openCmd} "${info.url}"`);
 							},
 							async () => {
-								// Prompt for code with a simple Input
+								// Prompt for code with a simple Input (for Anthropic)
+								this.chatContainer.addChild(
+									new Text(theme.fg("warning", "Paste the authorization code below:"), 1, 0),
+								);
+								this.ui.requestRender();
+
 								return new Promise<string>((resolve) => {
 									const codeInput = new Input();
 									codeInput.onSubmit = () => {
@@ -1879,6 +1884,11 @@ export class TuiRenderer {
 									this.ui.setFocus(codeInput);
 									this.ui.requestRender();
 								});
+							},
+							(message: string) => {
+								this.statusContainer.clear();
+								this.statusContainer.addChild(new Text(theme.fg("dim", message), 1, 0));
+								this.ui.requestRender();
 							},
 						);
 
