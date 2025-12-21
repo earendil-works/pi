@@ -41,21 +41,118 @@ const RETRY_CONFIG = {
 	jitterRatio: 0.2,
 } as const;
 
+function asRecord(v: unknown): Record<string, unknown> | null {
+	return typeof v === "object" && v !== null ? (v as Record<string, unknown>) : null;
+}
+
+function getProp(obj: unknown, key: string): unknown {
+	const rec = asRecord(obj);
+	return rec ? rec[key] : undefined;
+}
+
+function getNested(obj: unknown, path: string[]): unknown {
+	let cur: unknown = obj;
+	for (const key of path) cur = getProp(cur, key);
+	return cur;
+}
+
+function toNumber(v: unknown): number | undefined {
+	if (typeof v === "number") return v;
+	if (typeof v === "string" && v.trim()) {
+		const parsed = Number(v);
+		if (!Number.isNaN(parsed)) return parsed;
+	}
+	return undefined;
+}
+
+function toStringSafe(v: unknown): string | undefined {
+	return typeof v === "string" ? v : undefined;
+}
+
+function collectErrorChain(err: unknown, maxDepth = 4): unknown[] {
+	const chain: unknown[] = [];
+	let cur: unknown = err;
+	for (let i = 0; i < maxDepth && cur; i++) {
+		chain.push(cur);
+		cur = getProp(cur, "cause");
+	}
+	return chain;
+}
+
+function extractRetryAfterMs(errs: unknown[]): number | undefined {
+	for (const e of errs) {
+		const response = getProp(e, "response");
+		const headers = getProp(response, "headers");
+		if (!headers) continue;
+
+		// handle fetch Headers-like or plain object
+		const getFn = getProp(headers, "get");
+		let raw: string | null = null;
+		if (typeof getFn === "function") {
+			raw = (getFn as (name: string) => string | null).call(headers, "retry-after");
+		} else {
+			raw = toStringSafe(getProp(headers, "retry-after")) ?? toStringSafe(getProp(headers, "Retry-After")) ?? null;
+		}
+
+		if (raw) {
+			const seconds = Number(raw);
+			if (Number.isFinite(seconds)) return seconds * 1000;
+			const date = Date.parse(raw);
+			if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
+		}
+	}
+	return undefined;
+}
+
 function getRetryDecision(error: unknown): { shouldRetry: boolean; retryAfterMs?: number } {
-	const message = error instanceof Error ? error.message : String(error);
-	if (/abort|cancel/i.test(message)) return { shouldRetry: false };
+	const errs = collectErrorChain(error);
 
-	const status = (error as any)?.status || (error as any)?.code || (error as any)?.error?.code;
-	const statusString = (error as any)?.statusText || (error as any)?.error?.status;
+	const messages = errs
+		.map((e) => (e instanceof Error ? e.message : (toStringSafe(getProp(e, "message")) ?? String(e))))
+		.join(" | ");
 
-	const isTransient = status === 500 || status === 503 || statusString === "INTERNAL";
-	const isRateLimit = status === 429 || statusString === "RESOURCE_EXHAUSTED";
+	const names = errs.map((e) => (e instanceof Error ? e.name : (toStringSafe(getProp(e, "name")) ?? ""))).join(" | ");
 
-	const retryAfter = (error as any)?.response?.headers?.get?.("retry-after");
-	const retryAfterMs = retryAfter ? parseInt(retryAfter, 10) * 1000 : undefined;
+	if (/abort|cancel/i.test(messages) || /AbortError/i.test(names)) return { shouldRetry: false };
+
+	// collect numeric codes
+	const numericCandidates = [
+		...errs.map((e) => toNumber(getProp(e, "status"))),
+		...errs.map((e) => toNumber(getProp(e, "code"))),
+		...errs.map((e) => toNumber(getNested(e, ["error", "code"]))),
+		...errs.map((e) => toNumber(getNested(e, ["error", "error", "code"]))),
+	].filter((n): n is number => typeof n === "number" && Number.isFinite(n));
+
+	// collect status strings
+	const statusStrings = [
+		...errs.map((e) => toStringSafe(getProp(e, "status"))),
+		...errs.map((e) => toStringSafe(getProp(e, "statusText"))),
+		...errs.map((e) => toStringSafe(getNested(e, ["error", "status"]))),
+		...errs.map((e) => toStringSafe(getNested(e, ["error", "error", "status"]))),
+	]
+		.filter((s): s is string => typeof s === "string" && s.length > 0)
+		.map((s) => s.toUpperCase());
+
+	const code = numericCandidates[0];
+	const retryAfterMs = extractRetryAfterMs(errs);
+
+	const isRateLimit =
+		code === 429 ||
+		statusStrings.includes("RESOURCE_EXHAUSTED") ||
+		/\b(429)\b/.test(messages) ||
+		/RESOURCE_EXHAUSTED/i.test(messages);
+
+	const isTransientHttp = code === 500 || code === 502 || code === 503 || code === 504;
+	const isTransientStatus =
+		statusStrings.includes("INTERNAL") ||
+		statusStrings.includes("UNAVAILABLE") ||
+		statusStrings.includes("DEADLINE_EXCEEDED") ||
+		/INTERNAL|UNAVAILABLE|DEADLINE_EXCEEDED/i.test(messages);
+
+	const isNetworkish = /ECONNRESET|ETIMEDOUT|EAI_AGAIN|fetch failed|network error/i.test(messages);
 
 	return {
-		shouldRetry: isTransient || isRateLimit,
+		shouldRetry: isRateLimit || isTransientHttp || isTransientStatus || isNetworkish,
 		retryAfterMs,
 	};
 }
@@ -104,8 +201,15 @@ export const streamGoogle: StreamFunction<"google-generative-ai"> = (
 			timestamp: Date.now(),
 		};
 
-		let hasYieldedContent = false;
+		let hasEmittedStart = false;
 		let attempt = 0;
+
+		const ensureStarted = () => {
+			if (!hasEmittedStart) {
+				stream.push({ type: "start", partial: output });
+				hasEmittedStart = true;
+			}
+		};
 
 		while (attempt <= RETRY_CONFIG.maxRetries) {
 			// Reset output for each attempt to avoid duplicate content/usage
@@ -124,19 +228,16 @@ export const streamGoogle: StreamFunction<"google-generative-ai"> = (
 				const params = buildParams(model, context, options);
 				const googleStream = await client.models.generateContentStream(params);
 
-				if (attempt === 0) {
-					stream.push({ type: "start", partial: output });
-				}
-
 				let currentBlock: TextContent | ThinkingContent | null = null;
 				const blocks = output.content;
 				const blockIndex = () => blocks.length - 1;
+
 				for await (const chunk of googleStream) {
 					const candidate = chunk.candidates?.[0];
 					if (candidate?.content?.parts) {
 						for (const part of candidate.content.parts) {
 							if (part.text !== undefined) {
-								hasYieldedContent = true;
+								ensureStarted();
 								const isThinking = part.thought === true;
 								if (
 									!currentBlock ||
@@ -191,7 +292,7 @@ export const streamGoogle: StreamFunction<"google-generative-ai"> = (
 							}
 
 							if (part.functionCall) {
-								hasYieldedContent = true;
+								ensureStarted();
 								if (currentBlock) {
 									if (currentBlock.type === "text") {
 										stream.push({
@@ -301,25 +402,23 @@ export const streamGoogle: StreamFunction<"google-generative-ai"> = (
 				}
 
 				if (output.stopReason === "aborted" || output.stopReason === "error") {
-					throw new Error("An unkown error ocurred");
+					throw new Error("An unknown error occurred");
 				}
 
+				ensureStarted();
 				stream.push({ type: "done", reason: output.stopReason, message: output });
 				stream.end();
 				return;
 			} catch (error) {
 				const decision = getRetryDecision(error);
 
-				const canRetry =
-					decision.shouldRetry &&
-					!hasYieldedContent &&
-					!options?.signal?.aborted &&
-					attempt < RETRY_CONFIG.maxRetries;
+				const canRetry = decision.shouldRetry && !options?.signal?.aborted && attempt < RETRY_CONFIG.maxRetries;
 
 				if (!canRetry) {
 					for (const block of output.content) delete (block as any).index;
 					output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 					output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+					ensureStarted();
 					stream.push({ type: "error", reason: output.stopReason, error: output });
 					stream.end();
 					return;
