@@ -1,4 +1,5 @@
 import { loginAnthropic, refreshAnthropicToken } from "./anthropic.js";
+import { loginGoogleCloud, refreshGoogleCloudToken } from "./google-cloud.js";
 import {
 	listOAuthProviders as listOAuthProvidersFromStorage,
 	loadOAuthCredentials,
@@ -10,13 +11,21 @@ import {
 // Re-export for convenience
 export { listOAuthProvidersFromStorage as listOAuthProviders };
 
-export type SupportedOAuthProvider = "anthropic" | "github-copilot";
+export type SupportedOAuthProvider = "anthropic" | "github-copilot" | "google-cloud-code-assist";
 
 export interface OAuthProviderInfo {
 	id: SupportedOAuthProvider;
 	name: string;
 	available: boolean;
 }
+
+export interface PromptRequest {
+	message: string;
+	kind?: "text" | "secret";
+	placeholder?: string;
+}
+
+export type OnPrompt = (req: PromptRequest) => Promise<string>;
 
 /**
  * Get list of OAuth providers
@@ -26,6 +35,11 @@ export function getOAuthProviders(): OAuthProviderInfo[] {
 		{
 			id: "anthropic",
 			name: "Anthropic (Claude Pro/Max)",
+			available: true,
+		},
+		{
+			id: "google-cloud-code-assist",
+			name: "Google Cloud Code Assist",
 			available: true,
 		},
 		{
@@ -41,12 +55,16 @@ export function getOAuthProviders(): OAuthProviderInfo[] {
  */
 export async function login(
 	provider: SupportedOAuthProvider,
-	onAuthUrl: (url: string) => void,
+	onAuth: (info: { url: string; instructions?: string }) => void,
 	onPromptCode: () => Promise<string>,
+	onProgress?: (message: string) => void,
 ): Promise<void> {
 	switch (provider) {
 		case "anthropic":
-			await loginAnthropic(onAuthUrl, onPromptCode);
+			await loginAnthropic((url) => onAuth({ url }), onPromptCode);
+			break;
+		case "google-cloud-code-assist":
+			await loginGoogleCloud(onAuth, onProgress);
 			break;
 		case "github-copilot":
 			throw new Error("GitHub Copilot OAuth is not yet implemented");
@@ -76,6 +94,9 @@ export async function refreshToken(provider: SupportedOAuthProvider): Promise<st
 	switch (provider) {
 		case "anthropic":
 			newCredentials = await refreshAnthropicToken(credentials.refresh);
+			break;
+		case "google-cloud-code-assist":
+			newCredentials = await refreshGoogleCloudToken(credentials.refresh, credentials.projectId);
 			break;
 		case "github-copilot":
 			throw new Error("GitHub Copilot OAuth is not yet implemented");
