@@ -43,3 +43,14 @@ export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage
 	usage.cost.total = usage.cost.input + usage.cost.output + usage.cost.cacheRead + usage.cost.cacheWrite;
 	return usage.cost;
 }
+
+/** Models that support xhigh thinking level */
+const XHIGH_MODELS = new Set(["gpt-5.1-codex-max", "gpt-5.2", "gpt-5.2-codex"]);
+
+/**
+ * Check if a model supports xhigh thinking level.
+ * Currently only certain OpenAI models support this.
+ */
+export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
+	return XHIGH_MODELS.has(model.id);
+}

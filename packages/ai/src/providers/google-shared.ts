@@ -1,5 +1,5 @@
 /**
- * Shared utilities for Google Generative AI and Google Cloud Code Assist providers.
+ * Shared utilities for Google Generative AI and Google Gemini CLI providers.
  */
 
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part, type Schema } from "@google/genai";
@@ -7,7 +7,7 @@ import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { transformMessages } from "./transorm-messages.js";
 
-type GoogleApiType = "google-generative-ai" | "google-cloud-code-assist";
+type GoogleApiType = "google-generative-ai" | "google-gemini-cli";
 
 /**
  * Convert internal messages to Gemini Content[] format.

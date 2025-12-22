@@ -4,8 +4,7 @@ import AjvModule from "ajv";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { getOAuthToken, type SupportedOAuthProvider } from "./oauth/index.js";
-import { loadOAuthCredentials } from "./oauth/storage.js";
+import { getOAuthProviderForModelProvider, loadOAuthCredentials } from "../../ai/src/utils/oauth/index.js";
 
 // Handle both default and named exports
 const Ajv = (AjvModule as any).default || AjvModule;
@@ -241,33 +240,23 @@ export async function getApiKeyForModel(model: Model<Api>): Promise<string | und
 		return resolveApiKey(customKeyConfig);
 	}
 
-	// For Anthropic, check OAuth first
-	if (model.provider === "anthropic") {
-		// 1. Check OAuth storage (auto-refresh if needed)
-		const oauthToken = await getOAuthToken("anthropic");
-		if (oauthToken) {
-			return oauthToken;
+	// For OAuth providers (Anthropic, Google Gemini CLI, Antigravity, GitHub Copilot)
+	// Check OAuth storage (auto-refresh if needed)
+	const oauthProvider = getOAuthProviderForModelProvider(model.provider);
+	if (oauthProvider) {
+		const { getOAuthApiKey } = await import("../../ai/src/utils/oauth/index.js");
+		const oauthKey = await getOAuthApiKey(oauthProvider);
+		if (oauthKey) {
+			return oauthKey;
 		}
+	}
 
-		// 2. Check ANTHROPIC_OAUTH_TOKEN env var (manual OAuth token)
+	// For Anthropic, also check ANTHROPIC_OAUTH_TOKEN env var (manual OAuth token)
+	if (model.provider === "anthropic") {
 		const oauthEnv = process.env.ANTHROPIC_OAUTH_TOKEN;
 		if (oauthEnv) {
 			return oauthEnv;
 		}
-
-		// 3. Fall back to ANTHROPIC_API_KEY env var
-	}
-
-	// For Google Cloud Code Assist, check OAuth and encode projectId with token
-	if (model.provider === "google-cloud-code-assist") {
-		const oauthToken = await getOAuthToken("google-cloud-code-assist");
-		if (oauthToken) {
-			const credentials = loadOAuthCredentials("google-cloud-code-assist");
-			if (credentials?.projectId) {
-				return JSON.stringify({ token: oauthToken, projectId: credentials.projectId });
-			}
-		}
-		return undefined;
 	}
 
 	// For built-in providers, use getApiKey from @mariozechner/pi-ai
@@ -315,10 +304,11 @@ export function findModel(provider: string, modelId: string): { model: Model<Api
  * Mapping from model provider to OAuth provider ID.
  * Only providers that support OAuth are listed here.
  */
-const providerToOAuthProvider: Record<string, SupportedOAuthProvider> = {
+const providerToOAuthProvider: Record<string, string> = {
 	anthropic: "anthropic",
-	google: "google-cloud-code-assist",
-	"google-cloud-code-assist": "google-cloud-code-assist",
+	"github-copilot": "github-copilot",
+	"google-gemini-cli": "google-gemini-cli",
+	"google-antigravity": "google-antigravity",
 };
 
 // Cache for OAuth status per provider (avoids file reads on every render)

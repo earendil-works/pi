@@ -1,6 +1,6 @@
 import type { AnthropicOptions } from "./providers/anthropic.js";
 import type { GoogleOptions } from "./providers/google.js";
-import type { GoogleCloudCodeAssistOptions } from "./providers/google-cloud-code-assist.js";
+import type { GoogleGeminiCliOptions } from "./providers/google-gemini-cli.js";
 import type { OpenAICompletionsOptions } from "./providers/openai-completions.js";
 import type { OpenAIResponsesOptions } from "./providers/openai-responses.js";
 import type { AssistantMessageEventStream } from "./utils/event-stream.js";
@@ -12,14 +12,14 @@ export type Api =
 	| "openai-responses"
 	| "anthropic-messages"
 	| "google-generative-ai"
-	| "google-cloud-code-assist";
+	| "google-gemini-cli";
 
 export interface ApiOptionsMap {
 	"anthropic-messages": AnthropicOptions;
 	"openai-completions": OpenAICompletionsOptions;
 	"openai-responses": OpenAIResponsesOptions;
 	"google-generative-ai": GoogleOptions;
-	"google-cloud-code-assist": GoogleCloudCodeAssistOptions;
+	"google-gemini-cli": GoogleGeminiCliOptions;
 }
 
 // Compile-time exhaustiveness check - this will fail if ApiOptionsMap doesn't have all KnownApi keys
@@ -36,6 +36,8 @@ export type OptionsForApi<TApi extends Api> = ApiOptionsMap[TApi];
 export type KnownProvider =
 	| "anthropic"
 	| "google"
+	| "google-gemini-cli"
+	| "google-antigravity"
 	| "openai"
 	| "xai"
 	| "groq"

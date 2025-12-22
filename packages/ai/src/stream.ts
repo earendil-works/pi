@@ -1,9 +1,7 @@
+import { supportsXhigh } from "./models.js";
 import { type AnthropicOptions, streamAnthropic } from "./providers/anthropic.js";
 import { type GoogleOptions, streamGoogle } from "./providers/google.js";
-import {
-	type GoogleCloudCodeAssistOptions,
-	streamGoogleCloudCodeAssist,
-} from "./providers/google-cloud-code-assist.js";
+import { type GoogleGeminiCliOptions, streamGoogleGeminiCli } from "./providers/google-gemini-cli.js";
 import { type OpenAICompletionsOptions, streamOpenAICompletions } from "./providers/openai-completions.js";
 import { type OpenAIResponsesOptions, streamOpenAIResponses } from "./providers/openai-responses.js";
 import type {
@@ -17,6 +15,7 @@ import type {
 	ReasoningEffort,
 	SimpleStreamOptions,
 } from "./types.js";
+import { getOAuthApiKey, getOAuthProviderForModelProvider } from "./utils/oauth/index.js";
 
 const apiKeys: Map<string, string> = new Map();
 
@@ -26,6 +25,10 @@ export function setApiKey(provider: any, key: string): void {
 	apiKeys.set(provider, key);
 }
 
+/**
+ * Get API key from environment variables (sync).
+ * Does NOT check OAuth credentials - use resolveApiKey() for OAuth support.
+ */
 export function getApiKey(provider: KnownProvider): string | undefined;
 export function getApiKey(provider: string): string | undefined;
 export function getApiKey(provider: any): string | undefined {
@@ -34,6 +37,10 @@ export function getApiKey(provider: any): string | undefined {
 	if (key) return key;
 
 	// Fall back to environment variables
+	if (provider === "github-copilot") {
+		return process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+	}
+
 	const envMap: Record<string, string> = {
 		openai: "OPENAI_API_KEY",
 		anthropic: "ANTHROPIC_API_KEY",
@@ -48,6 +55,33 @@ export function getApiKey(provider: any): string | undefined {
 
 	const envVar = envMap[provider];
 	return envVar ? process.env[envVar] : undefined;
+}
+
+/**
+ * Resolve API key from OAuth credentials or environment (async).
+ * Automatically refreshes expired OAuth tokens.
+ *
+ * Priority:
+ * 1. Explicitly set keys (via setApiKey)
+ * 2. OAuth credentials from ~/.pi/agent/oauth.json
+ * 3. Environment variables
+ */
+export async function resolveApiKey(provider: KnownProvider): Promise<string | undefined>;
+export async function resolveApiKey(provider: string): Promise<string | undefined>;
+export async function resolveApiKey(provider: any): Promise<string | undefined> {
+	// Check explicit keys first
+	const key = apiKeys.get(provider);
+	if (key) return key;
+
+	// Check OAuth credentials (auto-refresh if expired)
+	const oauthProvider = getOAuthProviderForModelProvider(provider);
+	if (oauthProvider) {
+		const oauthKey = await getOAuthApiKey(oauthProvider);
+		if (oauthKey) return oauthKey;
+	}
+
+	// Fall back to sync getApiKey for env vars
+	return getApiKey(provider);
 }
 
 export function stream<TApi extends Api>(
@@ -75,11 +109,11 @@ export function stream<TApi extends Api>(
 		case "google-generative-ai":
 			return streamGoogle(model as Model<"google-generative-ai">, context, providerOptions);
 
-		case "google-cloud-code-assist":
-			return streamGoogleCloudCodeAssist(
-				model as Model<"google-cloud-code-assist">,
+		case "google-gemini-cli":
+			return streamGoogleGeminiCli(
+				model as Model<"google-gemini-cli">,
 				context,
-				providerOptions as any,
+				providerOptions as GoogleGeminiCliOptions,
 			);
 
 		default: {
@@ -134,71 +168,84 @@ function mapOptionsForApi<TApi extends Api>(
 		apiKey: apiKey || options?.apiKey,
 	};
 
+	// Helper to clamp xhigh to high for providers that don't support it
+	const clampReasoning = (effort: ReasoningEffort | undefined) => (effort === "xhigh" ? "high" : effort);
+
 	switch (model.api) {
 		case "anthropic-messages": {
-			if (!options?.reasoning) return base satisfies AnthropicOptions;
+			// Explicitly disable thinking when reasoning is not specified
+			if (!options?.reasoning) {
+				return { ...base, thinkingEnabled: false } satisfies AnthropicOptions;
+			}
 
-			// Opus 4.5 supports larger thinking budgets - geometric 4x progression, 1024-aligned
-			const isOpus45 = model.id.includes("opus-4-5") || model.id.includes("opus-4.5");
-			const anthropicBudgets = isOpus45
-				? {
-						minimal: 1024, // 1KB
-						low: 4096, // 4KB
-						medium: 16384, // 16KB
-						high: 32768, // 32KB
-						xhigh: 65536, // 64KB
-					}
-				: {
-						minimal: 1024,
-						low: 2048,
-						medium: 8192,
-						high: 16384,
-						xhigh: 32768,
-					};
+			const anthropicBudgets = {
+				minimal: 1024,
+				low: 2048,
+				medium: 8192,
+				high: 16384,
+			};
 
 			return {
 				...base,
 				thinkingEnabled: true,
-				thinkingBudgetTokens: anthropicBudgets[options.reasoning],
+				thinkingBudgetTokens: anthropicBudgets[clampReasoning(options.reasoning)!],
 			} satisfies AnthropicOptions;
 		}
 
 		case "openai-completions":
 			return {
 				...base,
-				reasoningEffort: options?.reasoning,
+				reasoningEffort: supportsXhigh(model) ? options?.reasoning : clampReasoning(options?.reasoning),
 			} satisfies OpenAICompletionsOptions;
 
 		case "openai-responses":
 			return {
 				...base,
-				reasoningEffort: options?.reasoning,
+				reasoningEffort: supportsXhigh(model) ? options?.reasoning : clampReasoning(options?.reasoning),
 			} satisfies OpenAIResponsesOptions;
 
 		case "google-generative-ai": {
-			if (!options?.reasoning) return base as any;
+			// Explicitly disable thinking when reasoning is not specified
+			// This is needed because Gemini has "dynamic thinking" enabled by default
+			if (!options?.reasoning) {
+				return { ...base, thinking: { enabled: false } } satisfies GoogleOptions;
+			}
 
-			const googleBudget = getGoogleBudget(model as Model<"google-generative-ai">, options.reasoning);
+			const googleModel = model as Model<"google-generative-ai">;
+			const effort = clampReasoning(options.reasoning)!;
+
+			// Use budgetTokens for thinking (compatible with local @google/genai)
 			return {
 				...base,
 				thinking: {
 					enabled: true,
-					budgetTokens: googleBudget,
+					budgetTokens: getGoogleBudget(googleModel, effort),
 				},
 			} satisfies GoogleOptions;
 		}
 
-		case "google-cloud-code-assist": {
-			if (!options?.reasoning) return base as any;
+		case "google-gemini-cli": {
+			if (!options?.reasoning) {
+				return { ...base, thinking: { enabled: false } } satisfies GoogleGeminiCliOptions;
+			}
 
-			const googleBudget = getGoogleBudget(model as any, options.reasoning);
+			const effort = clampReasoning(options.reasoning)!;
+
+			// Use budgetTokens for all models (simpler approach compatible with local @google/genai)
+			const budgets: Record<ClampedReasoningEffort, number> = {
+				minimal: 1024,
+				low: 2048,
+				medium: 8192,
+				high: 16384,
+			};
+
 			return {
 				...base,
 				thinking: {
 					enabled: true,
-					budgetTokens: googleBudget,
+					budgetTokens: budgets[effort],
 				},
-			} satisfies GoogleCloudCodeAssistOptions;
+			} satisfies GoogleGeminiCliOptions;
 		}
 
 		default: {
@@ -209,27 +256,27 @@ function mapOptionsForApi<TApi extends Api>(
 	}
 }
 
-function getGoogleBudget(model: Model<"google-generative-ai">, effort: ReasoningEffort): number {
+type ClampedReasoningEffort = Exclude<ReasoningEffort, "xhigh">;
+
+function getGoogleBudget(model: Model<"google-generative-ai">, effort: ClampedReasoningEffort): number {
 	// See https://ai.google.dev/gemini-api/docs/thinking#set-budget
 	if (model.id.includes("2.5-pro")) {
-		const budgets = {
+		const budgets: Record<ClampedReasoningEffort, number> = {
 			minimal: 128,
 			low: 2048,
 			medium: 8192,
 			high: 32768,
-			xhigh: 65536,
 		};
 		return budgets[effort];
 	}
 
 	if (model.id.includes("2.5-flash")) {
 		// Covers 2.5-flash-lite as well
-		const budgets = {
+		const budgets: Record<ClampedReasoningEffort, number> = {
 			minimal: 128,
 			low: 2048,
 			medium: 8192,
 			high: 24576,
-			xhigh: 49152,
 		};
 		return budgets[effort];
 	}

@@ -1,6 +1,5 @@
 import { Container, Spacer, TruncatedText } from "@mariozechner/pi-tui";
-import { getOAuthProviders, type OAuthProviderInfo } from "../oauth/index.js";
-import { loadOAuthCredentials } from "../oauth/storage.js";
+import { getOAuthProviders, loadOAuthCredentials, type OAuthProviderInfo } from "../oauth/index.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 
