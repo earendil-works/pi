@@ -98,11 +98,72 @@ function generateDiffString(oldContent: string, newContent: string, contextLines
 	return output.join("\n");
 }
 
-/**
- * Escape string for use in RegExp
- */
 function escapeRegExp(str: string): string {
 	return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// LLMs often produce these instead of ASCII. Length-preserving (1:1) for safe index matching.
+const CONFUSABLE_MAP: Readonly<Record<string, string>> = {
+	"\u2018": "'",
+	"\u2019": "'",
+	"\u201C": '"',
+	"\u201D": '"', // curly quotes
+	"\u201A": "'",
+	"\u201E": '"',
+	"\u00AB": '"',
+	"\u00BB": '"', // low-9, guillemets
+	"\u2039": "'",
+	"\u203A": "'", // single angle quotes
+	"\u2013": "-",
+	"\u2014": "-",
+	"\u2010": "-",
+	"\u2011": "-", // en/em dash, hyphens
+	"\u2012": "-",
+	"\u2015": "-",
+	"\u2212": "-", // figure dash, bar, minus
+	"\u00A0": " ",
+	"\u2002": " ",
+	"\u2003": " ",
+	"\u2007": " ", // nbsp, en/em/figure space
+	"\u2009": " ",
+	"\u200A": " ",
+	"\u202F": " ",
+	"\u205F": " ",
+	"\u3000": " ", // thin/hair/narrow/math/ideo space
+	"\u2024": ".",
+	"\uFF0E": ".",
+	"\uFF0C": ",", // dot leader, fullwidth period/comma
+};
+
+// Zero-width chars that break matching invisibly
+const INVISIBLE_CHARS: ReadonlySet<string> = new Set([
+	"\u200B",
+	"\u200C",
+	"\u200D",
+	"\u200E",
+	"\u200F",
+	"\uFEFF",
+	"\u2060",
+]);
+
+function normalizeConfusables(input: string): string {
+	let result = input;
+	for (const char of INVISIBLE_CHARS) {
+		result = result.split(char).join("");
+	}
+	for (const [from, to] of Object.entries(CONFUSABLE_MAP)) {
+		result = result.split(from).join(to);
+	}
+	return result;
+}
+
+// Expand quotes/dashes to character classes matching all variants (straight + curly)
+function makeConfusableFlexiblePattern(escapedLiteral: string): string {
+	return escapedLiteral
+		.replace(/['\u2018\u2019\u201A\u2039\u203A]/g, "['\u2018\u2019\u201A\u2039\u203A]")
+		.replace(/["\u201C\u201D\u201E\u00AB\u00BB]/g, '["\u201C\u201D\u201E\u00AB\u00BB]')
+		.replace(/[-\u2010\u2011\u2012\u2013\u2014\u2015\u2212]/g, "[-\u2010\u2011\u2012\u2013\u2014\u2015\u2212]")
+		.replace(/\\\.\\\.\\\./g, "(?:\\.{3}|\u2026)");
 }
 
 /**
@@ -320,12 +381,38 @@ export const editTool: AgentTool<typeof editSchema> = {
 						}
 					}
 
-					// --- TIER 3: Flexible Whitespace Match ---
-					// If still no matches, try ignoring whitespace differences
+					// --- TIER 2.5: Confusable Normalization ---
+					if (matches.length === 0) {
+						const normalizedOld = normalizeConfusables(oldText);
+						const normalizedFile = normalizeConfusables(fileContent);
+
+						// Length must be preserved for index safety (invisible char removal can break this)
+						const oldChanged = normalizedOld !== oldText;
+						const fileChanged = normalizedFile !== fileContent;
+						const oldLengthPreserved = oldText.length === normalizedOld.length;
+						const fileLengthPreserved = fileContent.length === normalizedFile.length;
+
+						if ((oldChanged || fileChanged) && oldLengthPreserved && fileLengthPreserved) {
+							idx = normalizedFile.indexOf(normalizedOld);
+							while (idx !== -1) {
+								matches.push({
+									index: idx,
+									length: oldText.length,
+									content: fileContent.slice(idx, idx + oldText.length),
+								});
+								idx = normalizedFile.indexOf(normalizedOld, idx + 1);
+							}
+							if (matches.length > 0) {
+								matchSource = "normalized";
+							}
+						}
+					}
+
+					// --- TIER 3: Flexible Whitespace + Confusables ---
 					if (matches.length === 0) {
 						const parts = oldText.trim().split(/\s+/);
 						if (parts.length > 0 && parts[0].length > 0) {
-							const pattern = parts.map(escapeRegExp).join("\\s+");
+							const pattern = parts.map((p) => makeConfusableFlexiblePattern(escapeRegExp(p))).join("\\s+");
 							const regex = new RegExp(pattern, "g");
 
 							let match: RegExpExecArray | null;
@@ -342,7 +429,6 @@ export const editTool: AgentTool<typeof editSchema> = {
 					// --- Result Handling ---
 
 					if (matches.length === 0) {
-						// No match found - provide suggestion
 						const suggestion = findNearestMatch(fileContent, oldText);
 						let errorMsg = `Could not find the text in ${path}.`;
 

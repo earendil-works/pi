@@ -300,6 +300,133 @@ describe("Coding Agent Tools", () => {
 				}),
 			).rejects.toThrow(/Did you mean/);
 		});
+
+		it("should handle curly single quotes in oldText when file uses straight quotes", async () => {
+			const testFile = join(testDir, "edit-curly-single.txt");
+			writeFileSync(testFile, "return 'hello';");
+
+			const result = await editTool.execute("test-curly-single", {
+				path: testFile,
+				oldText: "return \u2018hello\u2019;", // curly quotes
+				newText: "return 'world';",
+			});
+
+			expect(getTextOutput(result)).toContain("Successfully replaced");
+			expect(getTextOutput(result)).toContain("normalized");
+			const { readFileSync } = await import("fs");
+			expect(readFileSync(testFile, "utf-8")).toBe("return 'world';");
+		});
+
+		it("should handle straight quotes in oldText when file uses curly quotes", async () => {
+			const testFile = join(testDir, "edit-curly-reverse.txt");
+			writeFileSync(testFile, "return \u2018hello\u2019;");
+
+			const result = await editTool.execute("test-curly-reverse", {
+				path: testFile,
+				oldText: "return 'hello';",
+				newText: "return 'world';",
+			});
+
+			expect(getTextOutput(result)).toContain("Successfully replaced");
+			expect(getTextOutput(result)).toContain("normalized");
+		});
+
+		it("should handle curly double quotes in oldText", async () => {
+			const testFile = join(testDir, "edit-curly-double.txt");
+			writeFileSync(testFile, 'const x = "hello";');
+
+			const result = await editTool.execute("test-curly-double", {
+				path: testFile,
+				oldText: "const x = \u201Chello\u201D;", // curly double quotes
+				newText: 'const x = "world";',
+			});
+
+			expect(getTextOutput(result)).toContain("Successfully replaced");
+			expect(getTextOutput(result)).toContain("normalized");
+		});
+
+		it("should handle guillemets (angle quotes)", async () => {
+			const testFile = join(testDir, "edit-guillemets.txt");
+			writeFileSync(testFile, 'say "bonjour"');
+
+			const result = await editTool.execute("test-guillemets", {
+				path: testFile,
+				oldText: "say \u00ABbonjour\u00BB", // « »
+				newText: 'say "hello"',
+			});
+
+			expect(getTextOutput(result)).toContain("Successfully replaced");
+			expect(getTextOutput(result)).toContain("normalized");
+		});
+
+		it("should handle em dash in oldText when file uses hyphen", async () => {
+			const testFile = join(testDir, "edit-em-dash.txt");
+			writeFileSync(testFile, "value = a - b;");
+
+			const result = await editTool.execute("test-em-dash", {
+				path: testFile,
+				oldText: "value = a \u2014 b;", // em dash
+				newText: "value = a + b;",
+			});
+
+			expect(getTextOutput(result)).toContain("Successfully replaced");
+			expect(getTextOutput(result)).toContain("normalized");
+		});
+
+		it("should handle en dash in oldText", async () => {
+			const testFile = join(testDir, "edit-en-dash.txt");
+			writeFileSync(testFile, "pages 10-20");
+
+			const result = await editTool.execute("test-en-dash", {
+				path: testFile,
+				oldText: "pages 10\u201320", // en dash
+				newText: "pages 10-25",
+			});
+
+			expect(getTextOutput(result)).toContain("Successfully replaced");
+			expect(getTextOutput(result)).toContain("normalized");
+		});
+
+		it("should handle non-breaking space in oldText", async () => {
+			const testFile = join(testDir, "edit-nbsp.txt");
+			writeFileSync(testFile, "hello world");
+
+			const result = await editTool.execute("test-nbsp", {
+				path: testFile,
+				oldText: "hello\u00A0world", // nbsp
+				newText: "hello there",
+			});
+
+			expect(getTextOutput(result)).toContain("Successfully replaced");
+			expect(getTextOutput(result)).toContain("normalized");
+		});
+
+		it("should handle confusables combined with flexible whitespace", async () => {
+			const testFile = join(testDir, "edit-confusable-ws.txt");
+			writeFileSync(testFile, "const  x  =  'hello';");
+
+			const result = await editTool.execute("test-confusable-ws", {
+				path: testFile,
+				oldText: "const x = \u2018hello\u2019;",
+				newText: "const y = 'world';",
+			});
+
+			expect(getTextOutput(result)).toContain("Successfully replaced");
+			expect(getTextOutput(result)).toContain("flexible");
+		});
+
+		it("should handle multiple confusable types together", async () => {
+			const testFile = join(testDir, "edit-multi-confusable.txt");
+			writeFileSync(testFile, 'const msg = "hello - world";');
+
+			const result = await editTool.execute("test-multi-confusable", {
+				path: testFile,
+				oldText: "const msg = \u201Chello \u2014 world\u201D;", // curly quotes + em dash
+				newText: 'const msg = "goodbye";',
+			});
+
+			expect(getTextOutput(result)).toContain("Successfully replaced");
+		});
 	});
 
 	describe("bash tool", () => {
