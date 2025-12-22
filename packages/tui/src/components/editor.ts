@@ -1252,6 +1252,23 @@ export class Editor implements Component {
 		return this.state.cursorLine === lastLineIndex && this.state.cursorCol === lastLine.length;
 	}
 
+	isAtFirstVisualLine(): boolean {
+		if (this.displaySlices.length === 0 || this.lastLayoutWidth === 0) {
+			// Fall back to logical line check if layout not computed
+			return this.state.cursorLine === 0;
+		}
+		return this.findCurrentDisplayLine() === 0;
+	}
+
+	isAtLastVisualLine(): boolean {
+		if (this.displaySlices.length === 0 || this.lastLayoutWidth === 0) {
+			// Fall back to logical line check if layout not computed
+			const lastLineIndex = this.state.lines.length - 1;
+			return this.state.cursorLine === lastLineIndex;
+		}
+		return this.findCurrentDisplayLine() === this.displaySlices.length - 1;
+	}
+
 	private tryTriggerAutocomplete(explicitTab: boolean = false): void {
 		if (!this.autocompleteProvider) return;
 

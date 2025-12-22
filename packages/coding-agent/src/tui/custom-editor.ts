@@ -28,22 +28,6 @@ export class CustomEditor extends Editor {
 	}
 
 	/**
-	 * Check if cursor is at the first line
-	 */
-	isAtFirstLine(): boolean {
-		// @ts-expect-error - accessing protected state property
-		return this.state.cursorLine === 0;
-	}
-
-	/**
-	 * Check if cursor is at the last line
-	 */
-	isAtLastLine(): boolean {
-		// @ts-expect-error - accessing protected state property
-		return this.state.cursorLine === this.state.lines.length - 1;
-	}
-
-	/**
 	 * Intercepts keys before parent Editor. Autocomplete checks required for arrow/escape
 	 * keys to allow parent's SelectList navigation when menu is open.
 	 */
@@ -73,11 +57,12 @@ export class CustomEditor extends Editor {
 			return;
 		}
 
-		if (data === "\x1b[A" && this.onHistoryUp && this.isAtFirstLine() && !this.isShowingAutocomplete()) {
+		// Use visual line methods for history navigation to handle wrapped text correctly
+		if (data === "\x1b[A" && this.onHistoryUp && this.isAtFirstVisualLine() && !this.isShowingAutocomplete()) {
 			this.onHistoryUp();
 			return;
 		}
-		if (data === "\x1b[B" && this.onHistoryDown && this.isAtLastLine() && !this.isShowingAutocomplete()) {
+		if (data === "\x1b[B" && this.onHistoryDown && this.isAtLastVisualLine() && !this.isShowingAutocomplete()) {
 			this.onHistoryDown();
 			return;
 		}
