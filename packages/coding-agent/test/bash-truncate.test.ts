@@ -1,5 +1,4 @@
-import { spawn } from "child_process";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 
 // Test the UTF-8 truncation logic in isolation
 describe("bash tool output truncation", () => {
