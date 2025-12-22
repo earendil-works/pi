@@ -18,8 +18,8 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-		"@mariozechner/pi-ai": "^0.19.1",
-		"@mariozechner/pi-tui": "^0.19.1"
+		"@mariozechner/pi-ai": "file:../ai",
+		"@mariozechner/pi-tui": "file:../tui"
 	},
 	"keywords": [
 		"ai",

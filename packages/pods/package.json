@@ -34,7 +34,7 @@
 		"node": ">=20.0.0"
 	},
 	"dependencies": {
-		"@mariozechner/pi-agent-core": "^0.19.1",
+		"@mariozechner/pi-agent-core": "file:../agent",
 		"chalk": "^5.5.0"
 	},
 	"devDependencies": {}
