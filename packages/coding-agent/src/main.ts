@@ -51,6 +51,7 @@ interface Args {
 	resume?: boolean;
 	resumeUuid?: string;
 	help?: boolean;
+	version?: boolean;
 	mode?: Mode;
 	noSession?: boolean;
 	session?: string;
@@ -73,6 +74,8 @@ function parseArgs(args: string[]): Args {
 
 		if (arg === "--help" || arg === "-h") {
 			result.help = true;
+		} else if (arg === "--version" || arg === "-v") {
+			result.version = true;
 		} else if (arg === "--mode" && i + 1 < args.length) {
 			const mode = args[++i];
 			if (mode === "text" || mode === "json" || mode === "rpc") {
@@ -755,6 +758,11 @@ async function runRpcMode(agent: Agent, sessionManager: SessionManager): Promise
 
 export async function main(args: string[]) {
 	const parsed = parseArgs(args);
+
+	if (parsed.version) {
+		console.log(VERSION);
+		return;
+	}
 
 	if (parsed.help) {
 		printHelp();
