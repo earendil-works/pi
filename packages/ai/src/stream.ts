@@ -14,6 +14,7 @@ import type {
 	OptionsForApi,
 	ReasoningEffort,
 	SimpleStreamOptions,
+	ZAICompletionsOptions,
 } from "./types.js";
 import { getOAuthApiKey, getOAuthProviderForModelProvider } from "./utils/oauth/index.js";
 
@@ -115,6 +116,10 @@ export function stream<TApi extends Api>(
 				context,
 				providerOptions as GoogleGeminiCliOptions,
 			);
+
+		case "zai-completions":
+			// Z.ai uses OpenAI-compatible completions API
+			return streamOpenAICompletions(model as Model<"openai-completions">, context, providerOptions as any);
 
 		default: {
 			// This should never be reached if all Api cases are handled
@@ -247,6 +252,9 @@ function mapOptionsForApi<TApi extends Api>(
 				},
 			} satisfies GoogleGeminiCliOptions;
 		}
+
+		case "zai-completions":
+			return base as ZAICompletionsOptions;
 
 		default: {
 			// Exhaustiveness check
