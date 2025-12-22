@@ -303,8 +303,8 @@ export class TuiRenderer {
 			theme.fg("dim", "ctrl+k") +
 			theme.fg("muted", " to delete line") +
 			"\n" +
-			theme.fg("dim", "shift+tab") +
-			theme.fg("muted", " to cycle thinking") +
+			theme.fg("dim", "tab") +
+			theme.fg("muted", " to toggle thinking") +
 			"\n" +
 			theme.fg("dim", "ctrl+p") +
 			theme.fg("muted", " to cycle models") +
@@ -394,8 +394,8 @@ export class TuiRenderer {
 			this.handleCtrlC();
 		};
 
-		this.editor.onShiftTab = () => {
-			this.cycleThinkingLevel();
+		this.editor.onTab = () => {
+			this.toggleThinkingLevel();
 		};
 
 		this.editor.onCtrlP = () => {
@@ -1275,8 +1275,8 @@ export class TuiRenderer {
 		this.ui.requestRender();
 	}
 
-	private cycleThinkingLevel(): void {
-		// Only cycle if model supports thinking
+	private toggleThinkingLevel(): void {
+		// Only toggle if model supports thinking
 		if (!this.agent.state.model?.reasoning) {
 			this.chatContainer.addChild(new Spacer(1));
 			this.chatContainer.addChild(new Text(theme.fg("dim", "Current model does not support thinking"), 1, 0));
@@ -1284,11 +1284,9 @@ export class TuiRenderer {
 			return;
 		}
 
-		const levels: ThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
 		const currentLevel = this.agent.state.thinkingLevel || "off";
-		const currentIndex = levels.indexOf(currentLevel);
-		const nextIndex = (currentIndex + 1) % levels.length;
-		const nextLevel = levels[nextIndex];
+		// Toggle: off ↔ medium
+		const nextLevel = currentLevel === "off" ? "medium" : "off";
 
 		// Apply the new thinking level
 		this.agent.setThinkingLevel(nextLevel);

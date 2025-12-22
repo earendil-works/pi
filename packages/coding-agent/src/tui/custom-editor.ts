@@ -4,7 +4,7 @@ import { Editor } from "@mariozechner/pi-tui";
 export class CustomEditor extends Editor {
 	public onEscape?: () => void;
 	public onCtrlC?: () => void;
-	public onShiftTab?: () => void;
+	public onTab?: () => void;
 	public onCtrlP?: () => void;
 	public onCtrlO?: () => void;
 	public onOptionUp?: () => void;
@@ -97,8 +97,9 @@ export class CustomEditor extends Editor {
 			this.onOptionDown();
 			return;
 		}
-		if (data === "\x1b[Z" && this.onShiftTab) {
-			this.onShiftTab();
+		// Intercept Tab for thinking toggle (only when not autocompleting)
+		if (data === "\t" && this.onTab && !this.isShowingAutocomplete()) {
+			this.onTab();
 			return;
 		}
 		if (data === "\x1b" && this.onEscape && !this.isShowingAutocomplete()) {
