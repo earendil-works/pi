@@ -7,21 +7,80 @@ import { getToolDescription } from "../prompts/index.js";
 const MAX_OUTPUT_BYTES = 16 * 1024; // 16KB
 
 /**
- * Truncate output to MAX_OUTPUT_BYTES with a warning if exceeded
+ * UTF-8 decoder that handles partial characters across chunks
  */
-function truncateOutput(output: string): string {
-	const byteLength = Buffer.byteLength(output, "utf-8");
-	if (byteLength <= MAX_OUTPUT_BYTES) {
-		return output;
+class Utf8Decoder {
+	private buffer = Buffer.alloc(0);
+
+	/**
+	 * Feed raw bytes and get complete UTF-8 strings
+	 * Returns the complete portion that can be decoded without partial characters
+	 */
+	feed(data: Buffer): string {
+		// Combine with existing buffer
+		this.buffer = Buffer.concat([this.buffer, data]);
+
+		// Find valid complete characters by scanning forward
+		let validEnd = 0;
+		let i = 0;
+
+		while (i < this.buffer.length) {
+			const byte = this.buffer[i];
+
+			if ((byte & 0x80) === 0) {
+				// ASCII (0xxxxxxx)
+				i += 1;
+			} else if ((byte & 0xe0) === 0xc0) {
+				// 2-byte sequence (110xxxxx 10xxxxxx)
+				if (i + 2 > this.buffer.length) break; // Need more bytes
+				if ((this.buffer[i + 1] & 0xc0) !== 0x80) {
+					i++;
+					continue;
+				}
+				i += 2;
+			} else if ((byte & 0xf0) === 0xe0) {
+				// 3-byte sequence (1110xxxx 10xxxxxx 10xxxxxx)
+				if (i + 3 > this.buffer.length) break; // Need more bytes
+				if ((this.buffer[i + 1] & 0xc0) !== 0x80 || (this.buffer[i + 2] & 0xc0) !== 0x80) {
+					i++;
+					continue;
+				}
+				i += 3;
+			} else if ((byte & 0xf8) === 0xf0) {
+				// 4-byte sequence (11110xxx 10xxxxxx 10xxxxxx 10xxxxxx)
+				if (i + 4 > this.buffer.length) break; // Need more bytes
+				if (
+					(this.buffer[i + 1] & 0xc0) !== 0x80 ||
+					(this.buffer[i + 2] & 0xc0) !== 0x80 ||
+					(this.buffer[i + 3] & 0xc0) !== 0x80
+				) {
+					i++;
+					continue;
+				}
+				i += 4;
+			} else {
+				// Invalid byte - skip it
+				i++;
+			}
+
+			validEnd = i;
+		}
+
+		// Only extract complete characters
+		const complete = this.buffer.slice(0, validEnd);
+		this.buffer = this.buffer.slice(validEnd);
+
+		// Convert to string - complete is guaranteed to be valid UTF-8
+		return complete.toString("utf-8");
 	}
-	// Truncate by characters, then verify byte length
-	// Start with a rough estimate based on ratio
-	let truncated = output.slice(0, Math.floor((MAX_OUTPUT_BYTES / byteLength) * output.length));
-	// Adjust if still over (can happen with multi-byte chars)
-	while (Buffer.byteLength(truncated, "utf-8") > MAX_OUTPUT_BYTES && truncated.length > 0) {
-		truncated = truncated.slice(0, -100);
+
+	/**
+	 * Decode all remaining data (may include incomplete sequences)
+	 * Used when process finishes to get any leftover data
+	 */
+	flush(): string {
+		return this.buffer.toString("utf-8");
 	}
-	return `${truncated}\n\n... (output truncated from ${byteLength} to ${MAX_OUTPUT_BYTES} bytes)`;
 }
 
 /**
@@ -117,9 +176,15 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 
+			// Use raw buffers and decode UTF-8 manually to handle partial characters
+			const stdoutDecoder = new Utf8Decoder();
+			const stderrDecoder = new Utf8Decoder();
+
 			let stdout = "";
 			let stderr = "";
 			let timedOut = false;
+			let totalOutputBytes = 0;
+			let limitReached = false;
 
 			// Throttling state for progress events
 			let pendingChunk = "";
@@ -154,6 +219,93 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 				}
 			};
 
+			/**
+			 * Truncate a string to fit within a byte limit, ensuring valid UTF-8
+			 * Uses binary search on byte positions, not character positions
+			 */
+			const truncateToBytes = (str: string, maxBytes: number): string => {
+				if (maxBytes <= 0) return "";
+				const buf = Buffer.from(str, "utf-8");
+
+				// If string fits within limit, return as-is
+				// The buffer is guaranteed to be valid UTF-8 (from Utf8Decoder.feed)
+				if (buf.length <= maxBytes) {
+					return str;
+				}
+
+				// Binary search for the right byte position
+				let left = 0;
+				let right = buf.length;
+
+				while (left < right) {
+					const mid = Math.floor((left + right + 1) / 2);
+					if (mid <= maxBytes) {
+						left = mid;
+					} else {
+						right = mid - 1;
+					}
+				}
+
+				// Ensure we don't cut in the middle of a multi-byte character
+				// by validating the byte at 'left' is a lead byte, not a continuation
+				while (left > 0) {
+					const byte = buf[left];
+					// In UTF-8, continuation bytes are 10xxxxxx (0x80-0xBF)
+					if ((byte & 0xc0) !== 0x80) {
+						break; // Found a valid lead byte or start of string
+					}
+					left--; // Skip back to find the start of the character
+				}
+
+				return buf.slice(0, left).toString("utf-8");
+			};
+
+			/**
+			 * Process output chunk, checking limit and handling early termination
+			 */
+			const processOutput = (data: Buffer, source: "stdout" | "stderr") => {
+				if (limitReached) return;
+
+				// Decode complete UTF-8 sequences, buffering partial characters
+				const text = source === "stdout" ? stdoutDecoder.feed(data) : stderrDecoder.feed(data);
+				const chunkBytes = Buffer.byteLength(text, "utf-8");
+
+				if (chunkBytes === 0) return; // Nothing complete to process
+
+				const remainingBytes = MAX_OUTPUT_BYTES - totalOutputBytes;
+
+				if (chunkBytes >= remainingBytes) {
+					// Truncate to fit within remaining bytes
+					const truncated = truncateToBytes(text, remainingBytes);
+
+					// Append truncated content
+					if (source === "stdout") {
+						stdout += truncated;
+					} else {
+						stderr += truncated;
+					}
+					handleData(truncated);
+
+					// Mark limit reached and terminate
+					limitReached = true;
+					totalOutputBytes = MAX_OUTPUT_BYTES;
+
+					// Kill the process
+					if (child.pid) {
+						killProcessTree(child.pid);
+					}
+				} else {
+					// Fits within limit, append normally
+					totalOutputBytes += chunkBytes;
+					if (source === "stdout") {
+						stdout += text;
+					} else {
+						stderr += text;
+					}
+					handleData(text);
+				}
+			};
+
 			child.on("error", (err) => {
 				if (flushTimer) {
 					clearTimeout(flushTimer);
@@ -172,24 +324,14 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 			}
 
 			if (child.stdout) {
-				child.stdout.on("data", (data) => {
-					const text = data.toString();
-					stdout += text;
-					if (stdout.length > 10 * 1024 * 1024) {
-						stdout = stdout.slice(0, 10 * 1024 * 1024);
-					}
-					handleData(text);
+				child.stdout.on("data", (data: Buffer) => {
+					processOutput(data, "stdout");
 				});
 			}
 
 			if (child.stderr) {
-				child.stderr.on("data", (data) => {
-					const text = data.toString();
-					stderr += text;
-					if (stderr.length > 10 * 1024 * 1024) {
-						stderr = stderr.slice(0, 10 * 1024 * 1024);
-					}
-					handleData(text);
+				child.stderr.on("data", (data: Buffer) => {
+					processOutput(data, "stderr");
 				});
 			}
 
@@ -217,7 +359,7 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 					}
 					if (output) output += "\n\n";
 					output += "Command aborted";
-					_reject(new Error(truncateOutput(output)));
+					_reject(new Error(output));
 					return;
 				}
 
@@ -230,8 +372,16 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 					}
 					if (output) output += "\n\n";
 					output += `Command timed out after ${effectiveTimeout} seconds`;
-					_reject(new Error(truncateOutput(output)));
+					_reject(new Error(output));
 					return;
+				}
+
+				// Flush any remaining partial data from decoders
+				// Only flush if limit was NOT reached - otherwise partial characters
+				// from incomplete UTF-8 sequences would be decoded as U+FFFD
+				if (!limitReached) {
+					stdout += stdoutDecoder.flush();
+					stderr += stderrDecoder.flush();
 				}
 
 				let output = "";
@@ -241,12 +391,22 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 					output += stderr;
 				}
 
+				// Check if limit was reached during execution
+				if (limitReached) {
+					output += `\n\n... (output truncated to ${MAX_OUTPUT_BYTES} bytes)`;
+					resolve({
+						content: [{ type: "text", text: output || "(no output)" }],
+						details: undefined,
+					});
+					return;
+				}
+
 				if (code !== 0 && code !== null) {
 					if (output) output += "\n\n";
-					_reject(new Error(truncateOutput(`${output}Command exited with code ${code}`)));
+					_reject(new Error(`${output}Command exited with code ${code}`));
 				} else {
 					resolve({
-						content: [{ type: "text", text: truncateOutput(output) || "(no output)" }],
+						content: [{ type: "text", text: output || "(no output)" }],
 						details: undefined,
 					});
 				}
