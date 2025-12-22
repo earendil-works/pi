@@ -106,6 +106,55 @@ async function fetchImageFromUrl(
 }
 
 /**
+ * Load an image from a local path or URL and return base64 encoded data with MIME type
+ */
+async function loadImageSource(
+	source: string,
+	signal?: AbortSignal,
+	abortState?: { current: boolean },
+): Promise<{ base64: string; mimeType: string; source: string } | { error: string; source: string }> {
+	// Sync abort state with signal at start
+	if (signal?.aborted) {
+		abortState!.current = true;
+	}
+
+	// Check if aborted before loading
+	if (abortState?.current) {
+		return { error: "Operation aborted", source };
+	}
+
+	if (isUrl(source)) {
+		// Fetch from URL (with abort signal support)
+		const fetchResult = await fetchImageFromUrl(source, signal);
+		if ("error" in fetchResult) {
+			return { error: fetchResult.error, source };
+		}
+		return { ...fetchResult, source };
+	} else {
+		// Handle local file path
+		const absolutePath = resolvePath(expandPath(source));
+		const fileMimeType = isImageFile(absolutePath);
+
+		if (!fileMimeType) {
+			return { error: `Unsupported image format: ${extname(source)}`, source };
+		}
+
+		// Check if file exists
+		await access(absolutePath, constants.R_OK);
+
+		// Check if aborted before reading
+		if (abortState?.current) {
+			return { error: "Operation aborted", source };
+		}
+
+		// Read the image file
+		const buffer = await readFile(absolutePath);
+		const base64 = buffer.toString("base64");
+		return { base64, mimeType: fileMimeType, source };
+	}
+}
+
+/**
  * Determine auth type based on provider and API key characteristics
  */
 function determineAuthType(provider: string, apiKey: string): "sub" | "api" {
@@ -135,7 +184,21 @@ function determineAuthType(provider: string, apiKey: string): "sub" | "api" {
 
 const readImageSchema = Type.Object({
 	path: Type.String({ description: "Path to the image file to read (local file path or remote URL)" }),
-	goal: Type.String({ description: "What to extract or analyze from the image" }),
+	objective: Type.String({
+		description: "Natural-language description of the analysis goal (e.g., summarize, extract data, describe image).",
+	}),
+	context: Type.Optional(
+		Type.String({
+			description:
+				"The broader goal and context for the analysis. Include relevant background information about what you are trying to achieve and why this analysis is needed.",
+		}),
+	),
+	referenceFiles: Type.Optional(
+		Type.Array(Type.String(), {
+			description:
+				"Optional list of workspace-relative or absolute paths to reference files for comparison (e.g., to compare two screenshots or documents).",
+		}),
+	),
 	model: Type.Optional(
 		Type.Union(
 			[
@@ -156,7 +219,19 @@ export const readImageTool: AgentTool<typeof readImageSchema> = {
 	parameters: readImageSchema,
 	execute: async (
 		_toolCallId: string,
-		{ path, goal, model }: { path: string; goal: string; model?: "claude" | "gemini" },
+		{
+			path,
+			objective,
+			context,
+			referenceFiles,
+			model,
+		}: {
+			path: string;
+			objective: string;
+			context?: string;
+			referenceFiles?: string[];
+			model?: "claude" | "gemini";
+		},
 		signal?: AbortSignal,
 		_onProgress?: (chunk: string) => void,
 	) => {
@@ -176,7 +251,7 @@ export const readImageTool: AgentTool<typeof readImageSchema> = {
 					content: [
 						{
 							type: "text" as const,
-							text: `<image_extract goal="${escapeXmlAttr(goal)}" source="${escapeXmlAttr(path)}"><error>Model claude-haiku-4-5 not found</error></image_extract>`,
+							text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>Model claude-haiku-4-5 not found</error></image_extract>`,
 						},
 					],
 					details: undefined,
@@ -193,7 +268,7 @@ export const readImageTool: AgentTool<typeof readImageSchema> = {
 					content: [
 						{
 							type: "text" as const,
-							text: `<image_extract goal="${escapeXmlAttr(goal)}" source="${escapeXmlAttr(path)}"><error>No API key or OAuth token available for anthropic</error></image_extract>`,
+							text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>No API key or OAuth token available for anthropic</error></image_extract>`,
 						},
 					],
 					details: undefined,
@@ -226,7 +301,7 @@ export const readImageTool: AgentTool<typeof readImageSchema> = {
 						content: [
 							{
 								type: "text" as const,
-								text: `<image_extract goal="${escapeXmlAttr(goal)}" source="${escapeXmlAttr(path)}"><error>Model gemini-3-flash-preview not found</error></image_extract>`,
+								text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>Model gemini-3-flash-preview not found</error></image_extract>`,
 							},
 						],
 						details: undefined,
@@ -240,7 +315,7 @@ export const readImageTool: AgentTool<typeof readImageSchema> = {
 						content: [
 							{
 								type: "text" as const,
-								text: `<image_extract goal="${escapeXmlAttr(goal)}" source="${escapeXmlAttr(path)}"><error>No API key or OAuth token available for google</error></image_extract>`,
+								text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>No API key or OAuth token available for google</error></image_extract>`,
 							},
 						],
 						details: undefined,
@@ -260,7 +335,7 @@ export const readImageTool: AgentTool<typeof readImageSchema> = {
 				content: [
 					{
 						type: "text" as const,
-						text: `<image_extract goal="${escapeXmlAttr(goal)}" source="${escapeXmlAttr(path)}"><error>Operation aborted</error></image_extract>`,
+						text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>Operation aborted</error></image_extract>`,
 					},
 				],
 				details: undefined,
@@ -268,11 +343,12 @@ export const readImageTool: AgentTool<typeof readImageSchema> = {
 			};
 		}
 
-		let aborted = false;
+		// Shared state object for abort tracking (mutable, shared between caller and loadImageSource)
+		const abortState = { current: false };
 
-		// Set up abort handler - only sets flag, doesn't throw
+		// Set up abort handler to update shared state
 		const onAbort = () => {
-			aborted = true;
+			abortState.current = true;
 		};
 
 		if (signal) {
@@ -280,76 +356,14 @@ export const readImageTool: AgentTool<typeof readImageSchema> = {
 		}
 
 		try {
-			// Determine if path is a URL or local file
-			let base64: string;
-			let mimeType: string;
-
-			if (isUrl(path)) {
-				// Fetch from URL (with abort signal support)
-				const fetchResult = await fetchImageFromUrl(path, signal);
-				if ("error" in fetchResult) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `<image_extract goal="${escapeXmlAttr(goal)}" source="${escapeXmlAttr(path)}"><error>${escapeXmlAttr(fetchResult.error)}</error></image_extract>`,
-							},
-						],
-						details: undefined,
-						isError: true,
-					};
-				}
-				base64 = fetchResult.base64;
-				mimeType = fetchResult.mimeType;
-			} else {
-				// Handle local file path
-				const absolutePath = resolvePath(expandPath(path));
-				const fileMimeType = isImageFile(absolutePath);
-
-				if (!fileMimeType) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `<image_extract goal="${escapeXmlAttr(goal)}" source="${escapeXmlAttr(path)}"><error>Unsupported image format: ${extname(path)}</error></image_extract>`,
-							},
-						],
-						details: undefined,
-						isError: true,
-					};
-				}
-
-				mimeType = fileMimeType;
-
-				// Check if file exists
-				await access(absolutePath, constants.R_OK);
-
-				// Check if aborted before reading
-				if (aborted) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `<image_extract goal="${escapeXmlAttr(goal)}" source="${escapeXmlAttr(path)}"><error>Operation aborted</error></image_extract>`,
-							},
-						],
-						details: undefined,
-						isError: true,
-					};
-				}
-
-				// Read the image file
-				const buffer = await readFile(absolutePath);
-				base64 = buffer.toString("base64");
-			}
-
-			// Check if aborted after reading
-			if (aborted) {
+			// Load the primary image
+			const primaryImageResult = await loadImageSource(path, signal, abortState);
+			if ("error" in primaryImageResult) {
 				return {
 					content: [
 						{
 							type: "text" as const,
-							text: `<image_extract goal="${escapeXmlAttr(goal)}" source="${escapeXmlAttr(path)}"><error>Operation aborted</error></image_extract>`,
+							text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>${escapeXmlAttr(primaryImageResult.error)}</error></image_extract>`,
 						},
 					],
 					details: undefined,
@@ -357,26 +371,97 @@ export const readImageTool: AgentTool<typeof readImageSchema> = {
 				};
 			}
 
+			// Load reference images if provided
+			const referenceImages: Array<{ base64: string; mimeType: string; source: string }> = [];
+			if (referenceFiles && referenceFiles.length > 0) {
+				// Limit the number of reference files to prevent excessive API costs
+				const MAX_REFERENCE_FILES = 10;
+				if (referenceFiles.length > MAX_REFERENCE_FILES) {
+					return {
+						content: [
+							{
+								type: "text" as const,
+								text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>Too many reference files (${referenceFiles.length}). Maximum allowed: ${MAX_REFERENCE_FILES}</error></image_extract>`,
+							},
+						],
+						details: undefined,
+						isError: true,
+					};
+				}
+
+				// Load each reference image
+				for (const refFile of referenceFiles) {
+					const refImageResult = await loadImageSource(refFile, signal, abortState);
+					if ("error" in refImageResult) {
+						return {
+							content: [
+								{
+									type: "text" as const,
+									text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>Failed to load reference file: ${escapeXmlAttr(refFile)} - ${escapeXmlAttr(refImageResult.error)}</error></image_extract>`,
+								},
+							],
+							details: undefined,
+							isError: true,
+						};
+					}
+					referenceImages.push(refImageResult);
+				}
+			}
+
+			// Check if aborted after loading images
+			if (abortState.current) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>Operation aborted</error></image_extract>`,
+						},
+					],
+					details: undefined,
+					isError: true,
+				};
+			}
+
+			// Build the user message content with primary image and optional reference images
+			const messageContent: Array<
+				{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
+			> = [];
+
+			// Add primary image label and image
+			messageContent.push({ type: "text" as const, text: `Primary image (source): ${path}` });
+			messageContent.push({
+				type: "image" as const,
+				data: primaryImageResult.base64,
+				mimeType: primaryImageResult.mimeType,
+			});
+
+			// Add reference images if present
+			if (referenceImages.length > 0) {
+				messageContent.push({ type: "text" as const, text: `\nReference images for comparison:` });
+				referenceImages.forEach((ref, index) => {
+					messageContent.push({ type: "text" as const, text: `\nReference ${index + 1}: ${ref.source}` });
+					messageContent.push({ type: "image" as const, data: ref.base64, mimeType: ref.mimeType });
+				});
+			}
+
 			// Call the LLM to analyze the image
-			const systemPrompt = `You are an expert image analyst. Extract information relevant to the user's goal from the provided image.
+			const hasReferences = referenceImages.length > 0;
+			const systemPrompt = `You are an expert image analyst. Extract information relevant to the user's objective from the provided image(s).
 
 CRITICAL CONSTRAINTS:
-1. NO tool access - you can only analyze the image
+1. NO tool access - you can only analyze the image(s)
 2. Output ONLY in this XML format:
 <analysis>
 [Your extracted information]
 </analysis>
-3. Only include information relevant to the goal; omit everything else
-4. If the goal is about text, prioritize exact transcription with line breaks; if unreadable, say "Unclear"
-5. Do not mention tools, files, or external actions; analyze only the provided image`;
+3. Only include information relevant to the objective; omit everything else
+4. If the objective is about text, prioritize exact transcription with line breaks; if unreadable, say "Unclear"
+5. Do not mention tools, files, or external actions; analyze only the provided image(s)${context ? `\n\nContext for this analysis: ${context}` : ""}${hasReferences ? "\n\nWhen reference images are provided, compare them against the primary image and report any relevant differences or similarities that help achieve the objective. Attribute observations to 'primary' or 'reference N'." : ""}`;
 
 			const messages = [
 				{
 					role: "user" as const,
-					content: [
-						{ type: "text" as const, text: `Goal: ${goal}` },
-						{ type: "image" as const, data: base64, mimeType },
-					],
+					content: messageContent,
 					timestamp: Date.now(),
 				},
 			];
@@ -387,7 +472,7 @@ CRITICAL CONSTRAINTS:
 					content: [
 						{
 							type: "text" as const,
-							text: `<image_extract goal="${escapeXmlAttr(goal)}" source="${escapeXmlAttr(path)}"><error>Failed to get API key for ${selectedModel.id}</error></image_extract>`,
+							text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>Failed to get API key for ${selectedModel.id}</error></image_extract>`,
 						},
 					],
 					details: undefined,
@@ -418,22 +503,32 @@ CRITICAL CONSTRAINTS:
 			// Escape the extracted text to ensure valid XML
 			const safeExtractedText = escapeXmlText(extractedText);
 
+			// Build reference metadata XML if references exist
+			let referencesXml = "";
+			if (referenceImages.length > 0) {
+				referencesXml = "\n<references>";
+				referenceImages.forEach((ref, index) => {
+					referencesXml += `\n  <reference index="${index + 1}" source="${escapeXmlAttr(ref.source)}" mimeType="${ref.mimeType}"/>`;
+				});
+				referencesXml += "\n</references>";
+			}
+
 			return {
 				content: [
 					{
 						type: "text" as const,
-						text: `<image_extract goal="${escapeXmlAttr(goal)}" source="${escapeXmlAttr(path)}" model="${selectedModel.id}" type="${authType}" provider="${provider}">\n<analysis>\n${safeExtractedText}\n</analysis>\n</image_extract>`,
+						text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}" model="${selectedModel.id}" type="${authType}" provider="${provider}"${referenceImages.length > 0 ? ` references="${referenceImages.length}"` : ""}>${referencesXml}\n<analysis>\n${safeExtractedText}\n</analysis>\n</image_extract>`,
 					},
 				],
 				details: undefined,
 			};
 		} catch (error: unknown) {
-			if (aborted) {
+			if (abortState.current) {
 				return {
 					content: [
 						{
 							type: "text" as const,
-							text: `<image_extract goal="${escapeXmlAttr(goal)}" source="${escapeXmlAttr(path)}"><error>Operation aborted</error></image_extract>`,
+							text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>Operation aborted</error></image_extract>`,
 						},
 					],
 					details: undefined,
@@ -441,13 +536,13 @@ CRITICAL CONSTRAINTS:
 				};
 			}
 
-			if (!aborted) {
+			if (!abortState.current) {
 				const errorMessage = error instanceof Error ? error.message : String(error);
 				return {
 					content: [
 						{
 							type: "text" as const,
-							text: `<image_extract goal="${escapeXmlAttr(goal)}" source="${escapeXmlAttr(path)}"><error>${escapeXmlAttr(errorMessage)}</error></image_extract>`,
+							text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>${escapeXmlAttr(errorMessage)}</error></image_extract>`,
 						},
 					],
 					details: undefined,
@@ -460,7 +555,7 @@ CRITICAL CONSTRAINTS:
 				content: [
 					{
 						type: "text" as const,
-						text: `<image_extract goal="${escapeXmlAttr(goal)}" source="${escapeXmlAttr(path)}"><error>Operation aborted</error></image_extract>`,
+						text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>Operation aborted</error></image_extract>`,
 					},
 				],
 				details: undefined,

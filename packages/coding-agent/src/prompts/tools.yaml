@@ -7,7 +7,19 @@ read: |
   For image analysis tasks, use the `read_image` tool instead of `read`.
 
 read_image: |
-  Analyze an image and extract information based on a goal. Accepts a local file path or remote URL. Returns XML-delimited analysis output.
+  Analyze an image and extract information based on an objective. Accepts a local file path or remote URL. Returns XML-delimited analysis output.
+
+  Parameters:
+  - path: Path to the image file (local or URL)
+  - objective: What to extract/analyze from the image
+  - context (optional): Why this analysis matters (helps focus the analysis)
+  - referenceFiles (optional): Paths to reference images for comparison
+  - model (optional): "claude" or "gemini" (default: gemini)
+
+  Examples:
+  {"path":"docs/specs/system-design.png","objective":"Summarize main architectural decisions","context":"Evaluating this system for a new project"}
+
+  {"path":"screenshots/before.png","objective":"Identify all visual differences","context":"Reviewing UI changes","referenceFiles":["screenshots/after.png"]}
 
 bash: |
   Execute a bash command in the current working directory. Returns stdout and stderr. Optionally provide a timeout in seconds (default: 1800 seconds / 30 minutes). Minimum timeout is 1800 seconds; lower values are ignored.

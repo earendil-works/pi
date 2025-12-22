@@ -6,6 +6,10 @@
 
 - **read_image Tool**: New tool for analyzing images with vision-capable models. Accepts local file paths or remote URLs, supports Claude Haiku 4.5 or Gemini 3 Flash Preview, uses OAuth by default with API key fallback, and returns structured XML output.
 
+### Changed
+
+- **read_image Tool**: Upgraded to look_at-style interface with `objective`, `context`, and `referenceFiles` parameters. Added support for image comparison workflows with multiple reference files.
+
 ### Fixed
 
 - **Google Provider Reliability**: Implemented exponential backoff with jitter for Google Gemini provider. Automatically retries on `500 INTERNAL`, `503 SERVICE UNAVAILABLE`, and `429 RESOURCE_EXHAUSTED` errors. Retries are safely limited to the initial connection phase before any content is yielded to the stream, and fully respect `AbortSignal`.
