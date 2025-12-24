@@ -486,20 +486,26 @@ function convertMessages(messages: Message[], model: Model<"anthropic-messages">
 					});
 				} else if (block.type === "thinking") {
 					if (block.thinking.trim().length === 0) continue;
-					// If thinking signature is missing/empty (e.g., from aborted stream),
-					// convert to text block to avoid API rejection
-					if (!block.thinkingSignature || block.thinkingSignature.trim().length === 0) {
-						blocks.push({
-							type: "text",
-							text: sanitizeSurrogates(`<thinking>\n${block.thinking}\n</thinking>`),
-						});
-					} else {
+					// Native Anthropic requires signature, non-Anthropic APIs (like Synthetic) don't
+					const isNativeAnthropic = model.baseUrl?.includes("api.anthropic.com") ?? true;
+					const hasValidSignature = block.thinkingSignature && block.thinkingSignature.trim().length > 0;
+
+					if (isNativeAnthropic && hasValidSignature) {
+						// Native Anthropic with valid signature
 						blocks.push({
 							type: "thinking",
 							thinking: sanitizeSurrogates(block.thinking),
-							signature: block.thinkingSignature,
+							signature: block.thinkingSignature as string,
 						});
+					} else if (!isNativeAnthropic) {
+						// Non-Anthropic APIs: send thinking block without signature
+						blocks.push({
+							type: "thinking",
+							thinking: sanitizeSurrogates(block.thinking),
+						} as ContentBlockParam);
 					}
+					// Native Anthropic without valid signature: skip the thinking block
+					// (it can't be sent without a valid signature)
 				} else if (block.type === "toolCall") {
 					blocks.push({
 						type: "tool_use",
