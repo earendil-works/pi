@@ -12,7 +12,7 @@ To bump versions, use one of these npm scripts:
 
 **These scripts will:**
 1. Update all `packages/*/package.json` versions
-2. Update inter-package dependencies (e.g., `@mariozechner/pi-ai` → `^0.19.5`)
+2. Update inter-package dependencies (e.g., `@kennyfrc/pi-ai` → `^0.19.5`)
 3. Update root `package.json` version to match
 
 ## After Bumping

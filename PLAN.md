@@ -60,7 +60,7 @@ Refactor the `execute` function to handle the branching logic.
 
 **Imports needed:**
 ```typescript
-import { complete, getModel, type Context } from "@mariozechner/pi-ai";
+import { complete, getModel, type Context } from "@kennyfrc/pi-ai";
 ```
 
 ### Step 3: Implement Extraction Helper (`read-thread.ts`)
@@ -149,7 +149,7 @@ Since this is a refactor of an existing tool:
 ## 6. Implementation Checklist
 
 - [ ] Update `readThreadSchema` with `goal` parameter
-- [ ] Add imports for `complete`, `getModel`, `Context` from `@mariozechner/pi-ai`
+- [ ] Add imports for `complete`, `getModel`, `Context` from `@kennyfrc/pi-ai`
 - [ ] Implement `extractRelevantInfo()` helper function
 - [ ] Update `execute()` with branching logic
 - [ ] Update `tools.yaml` description

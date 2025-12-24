@@ -7,9 +7,9 @@
 	],
 	"scripts": {
 		"clean": "npm run clean --workspaces",
-		"build": "npm run build -w @mariozechner/pi-tui && npm run build -w @mariozechner/pi-ai && npm run build -w @mariozechner/pi-agent-core && npm run build -w @mariozechner/pi-coding-agent && npm run build -w @mariozechner/pi-proxy && npm run build -w @mariozechner/pi",
-		"dev": "concurrently --names \"ai,agent,coding-agent,tui,proxy\" --prefix-colors \"cyan,yellow,red,magenta,blue\" \"npm run dev -w @mariozechner/pi-ai\" \"npm run dev -w @mariozechner/pi-agent-core\" \"npm run dev -w @mariozechner/pi-coding-agent\" \"npm run dev -w @mariozechner/pi-tui\" \"npm run dev -w @mariozechner/pi-proxy\"",
-		"dev:tsc": "npm run dev:tsc -w @mariozechner/pi-ai",
+		"build": "npm run build -w @kennyfrc/pi-tui && npm run build -w @kennyfrc/pi-ai && npm run build -w @kennyfrc/pi-agent-core && npm run build -w @kennyfrc/pi-coding-agent && npm run build -w @kennyfrc/pi-proxy && npm run build -w @kennyfrc/pi",
+		"dev": "concurrently --names \"ai,agent,coding-agent,tui,proxy\" --prefix-colors \"cyan,yellow,red,magenta,blue\" \"npm run dev -w @kennyfrc/pi-ai\" \"npm run dev -w @kennyfrc/pi-agent-core\" \"npm run dev -w @kennyfrc/pi-coding-agent\" \"npm run dev -w @kennyfrc/pi-tui\" \"npm run dev -w @kennyfrc/pi-proxy\"",
+		"dev:tsc": "npm run dev:tsc -w @kennyfrc/pi-ai",
 		"check": "biome check --write . && npm run check --workspaces && tsgo --noEmit",
 		"test": "npm run test --workspaces --if-present",
 		"version:patch": "npm version patch -ws --no-git-tag-version && node scripts/sync-versions.js",

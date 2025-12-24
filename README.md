@@ -6,13 +6,15 @@ Tools for building AI agents and managing LLM deployments.
 
 | Package | Description |
 |---------|-------------|
-| **[@mariozechner/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
-| **[@mariozechner/pi-agent](packages/agent)** | Agent runtime with tool calling and state management |
-| **[@mariozechner/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
-| **[@mariozechner/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
-| **[@mariozechner/pi-web-ui](packages/web-ui)** | Web components for AI chat interfaces |
-| **[@mariozechner/pi-proxy](packages/proxy)** | CORS proxy for browser-based LLM API calls |
-| **[@mariozechner/pi](packages/pods)** | CLI for managing vLLM deployments on GPU pods |
+| **[@kennyfrc/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
+| **[@kennyfrc/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
+| **[@kennyfrc/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
+| **[@kennyfrc/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
+| **[@kennyfrc/pi-web-ui](packages/web-ui)** | Web components for AI chat interfaces |
+| **[@kennyfrc/pi-proxy](packages/proxy)** | CORS proxy for browser-based LLM API calls |
+| **[@kennyfrc/pi](packages/pods)** | CLI for managing vLLM deployments on GPU pods |
+
+**Note:** Both `pi-coding-agent` and `pi` packages provide a `pi` CLI command. If you globally install both, whichever is installed last will take precedence. Install only the one you need, or use `npx @kennyfrc/pi-coding-agent` or `npx @kennyfrc/pi` to avoid conflicts.
 
 ## Development
 
