@@ -559,6 +559,12 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 		stream: true,
 	};
 
+	// Merge extra body fields first as defaults (model-specific params from models.json)
+	// These can include temperature, max_tokens, top_p, etc. per provider/model
+	if (model.extraBody) {
+		Object.assign(params, model.extraBody);
+	}
+
 	// Only include stream_options if supported (not supported by Fireworks, etc.)
 	if (compat.supportsStreamOptions) {
 		params.stream_options = { include_usage: true };
@@ -568,6 +574,7 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 		params.store = false;
 	}
 
+	// Options override defaults from extraBody
 	if (options?.maxTokens) {
 		if (compat.maxTokensField === "max_tokens") {
 			(params as any).max_tokens = options.maxTokens;
@@ -603,11 +610,6 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 			if (effort === "xhigh") effort = "high";
 			params.reasoning_effort = effort as "low" | "medium" | "high";
 		}
-	}
-
-	// Merge extra body fields from model config
-	if (model.extraBody) {
-		Object.assign(params, model.extraBody);
 	}
 
 	return params;
