@@ -125,8 +125,8 @@ describe("bash tool output truncation", () => {
 	});
 });
 
-// Integration test to verify early termination
-describe("bash tool early termination", () => {
+// Integration test to verify output capture behavior
+describe("bash tool output capture behavior", () => {
 	const childPid: number | null = null;
 	const killedPids = new Set<number>();
 
@@ -135,9 +135,10 @@ describe("bash tool early termination", () => {
 		killedPids.clear();
 	});
 
-	it("should kill process when output exceeds limit", async () => {
-		// This is a manual test - run with: npm test -- --run bash-truncate
-		// The actual behavior would need to be tested with a real bash command
-		console.log("Integration test: Run 'npm test -- --run' and check bash-truncate test file");
+	it("should stop capturing when output exceeds limit", async () => {
+		// Note: The bash tool no longer kills processes at 16KB limit.
+		// Instead, it stops capturing output and lets the process continue.
+		// See test/bash-output-limit.test.ts for verification of this behavior.
+		console.log("See test/bash-output-limit.test.ts for integration tests");
 	});
 });

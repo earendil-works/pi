@@ -184,7 +184,9 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 			let stderr = "";
 			let timedOut = false;
 			let totalOutputBytes = 0;
-			let limitReached = false;
+			let active = true;
+			let didTruncate = false;
+			let truncationProgressShown = false;
 
 			// Throttling state for progress events
 			let pendingChunk = "";
@@ -222,6 +224,7 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 			/**
 			 * Truncate a string to fit within a byte limit, ensuring valid UTF-8
 			 * Uses binary search on byte positions, not character positions
+			 * Ensures we never cut in the middle of a UTF-8 codepoint or end with incomplete sequence
 			 */
 			const truncateToBytes = (str: string, maxBytes: number): string => {
 				if (maxBytes <= 0) return "";
@@ -246,25 +249,29 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 					}
 				}
 
-				// Ensure we don't cut in the middle of a multi-byte character
-				// by validating the byte at 'left' is a lead byte, not a continuation
+				// Walk back to find a safe UTF-8 boundary
+				// We need to ensure the slice [0, left) contains only complete UTF-8 sequences
 				while (left > 0) {
-					const byte = buf[left];
-					// In UTF-8, continuation bytes are 10xxxxxx (0x80-0xBF)
-					if ((byte & 0xc0) !== 0x80) {
-						break; // Found a valid lead byte or start of string
+					// Try to decode the current slice - if valid UTF-8, we're done
+					try {
+						new TextDecoder("utf-8", { fatal: true }).decode(buf.slice(0, left));
+						return buf.slice(0, left).toString("utf-8");
+					} catch {
+						// Invalid UTF-8 (truncated in middle of codepoint), move back 1 byte and retry
+						left--;
 					}
-					left--; // Skip back to find the start of the character
 				}
 
-				return buf.slice(0, left).toString("utf-8");
+				// If left reached 0 and all above failed, return empty string
+				return "";
 			};
 
 			/**
-			 * Process output chunk, checking limit and handling early termination
+			 * Process output chunk, checking limit and stopping capture when reached
+			 * Note: We do NOT kill the process - it continues to completion naturally
 			 */
 			const processOutput = (data: Buffer, source: "stdout" | "stderr") => {
-				if (limitReached) return;
+				if (!active) return;
 
 				// Decode complete UTF-8 sequences, buffering partial characters
 				const text = source === "stdout" ? stdoutDecoder.feed(data) : stderrDecoder.feed(data);
@@ -274,9 +281,15 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 
 				const remainingBytes = MAX_OUTPUT_BYTES - totalOutputBytes;
 
-				if (chunkBytes >= remainingBytes) {
+				if (chunkBytes > remainingBytes) {
 					// Truncate to fit within remaining bytes
 					const truncated = truncateToBytes(text, remainingBytes);
+					const truncatedBytes = Buffer.byteLength(truncated, "utf-8");
+
+					// Track if we actually dropped bytes
+					if (truncatedBytes < chunkBytes) {
+						didTruncate = true;
+					}
 
 					// Append truncated content
 					if (source === "stdout") {
@@ -286,13 +299,14 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 					}
 					handleData(truncated);
 
-					// Mark limit reached and terminate
-					limitReached = true;
+					// Stop capturing, but let process continue running
+					active = false;
 					totalOutputBytes = MAX_OUTPUT_BYTES;
 
-					// Kill the process
-					if (child.pid) {
-						killProcessTree(child.pid);
+					// Emit progress message so user knows command is still running
+					if (onProgress && !truncationProgressShown) {
+						truncationProgressShown = true;
+						handleData("\n[... command still running; output truncated ...]");
 					}
 				} else {
 					// Fits within limit, append normally
@@ -377,9 +391,10 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 				}
 
 				// Flush any remaining partial data from decoders
-				// Only flush if limit was NOT reached - otherwise partial characters
-				// from incomplete UTF-8 sequences would be decoded as U+FFFD
-				if (!limitReached) {
+				// Only flush if we didn't hit the output limit
+				// Note: flush() may use replacement characters (�) for incomplete UTF-8 at EOF,
+				// but this is acceptable as it only affects the very last bytes
+				if (!didTruncate) {
 					stdout += stdoutDecoder.flush();
 					stderr += stderrDecoder.flush();
 				}
@@ -391,19 +406,14 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 					output += stderr;
 				}
 
-				// Check if limit was reached during execution
-				if (limitReached) {
+				// Show truncation notice only if we actually dropped bytes
+				if (didTruncate) {
 					output += `\n\n... (output truncated to ${MAX_OUTPUT_BYTES} bytes)`;
-					resolve({
-						content: [{ type: "text", text: output || "(no output)" }],
-						details: undefined,
-					});
-					return;
 				}
 
 				if (code !== 0 && code !== null) {
 					if (output) output += "\n\n";
-					_reject(new Error(`${output}Command exited with code ${code}`));
+					_reject(new Error(output + `Command exited with code ${code}`));
 				} else {
 					resolve({
 						content: [{ type: "text", text: output || "(no output)" }],
