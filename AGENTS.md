@@ -1,3 +1,41 @@
+# Version Bumping
+
+This monorepo uses lockstep versioning - all packages and the root `package.json` must have the same version.
+
+## Bumping Versions
+
+To bump versions, use one of these npm scripts:
+
+- `npm run version:patch` - Bump patch version (e.g., 0.19.4 → 0.19.5)
+- `npm run version:minor` - Bump minor version (e.g., 0.19.4 → 0.20.0)
+- `npm run version:major` - Bump major version (e.g., 0.19.4 → 1.0.0)
+
+**These scripts will:**
+1. Update all `packages/*/package.json` versions
+2. Update inter-package dependencies (e.g., `@mariozechner/pi-ai` → `^0.19.5`)
+3. Update root `package.json` version to match
+
+## After Bumping
+
+Always build and commit after bumping:
+
+```bash
+npm run build
+git add -A
+git commit -m "chore: bump version to X.Y.Z"
+npm link  # If you want to test locally
+```
+
+## Notes
+
+- Never manually edit version numbers in package.json files - use the scripts above
+- The `scripts/sync-versions.js` script ensures root and packages stay in sync
+- This is a fork of upstream, so we maintain our own versioning
+
+---
+
+## General Guidelines
+
 - When receiving the first user message, you MUST read README.md in full. Then ask the user which module(s) they want to work on. Then you MUST read the corresponding README.md files in full, in parallel:
     - packages/ai/README.md
     - packages/tui/README.md
