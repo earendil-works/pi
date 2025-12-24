@@ -50,23 +50,26 @@ function detectCompatFromUrl(baseUrl) {
 		baseUrl.includes("api.x.ai") ||
 		baseUrl.includes("mistral.ai") ||
 		baseUrl.includes("chutes.ai") ||
-		baseUrl.includes("fireworks.ai");
+		baseUrl.includes("fireworks.ai") ||
+		baseUrl.includes("api.z.ai");
 	const useMaxTokens =
 		baseUrl.includes("mistral.ai") || baseUrl.includes("chutes.ai") || baseUrl.includes("fireworks.ai");
 	const isGrok = baseUrl.includes("api.x.ai");
 	const isMistral = baseUrl.includes("mistral.ai");
 	const isFireworks = baseUrl.includes("fireworks.ai");
+	const isZAI = baseUrl.includes("api.z.ai");
 	return {
 		supportsStore: !isNonStandard,
-		supportsDeveloperRole: !isNonStandard,
-		supportsReasoningEffort: !isGrok,
+		supportsDeveloperRole: !isNonStandard && !isZAI,
+		supportsReasoningEffort: !isGrok && !isZAI,
 		reasoningEffortFormat: isFireworks ? "boolean" : "string",
 		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
 		requiresToolResultName: isMistral,
 		requiresAssistantAfterToolResult: false, // Mistral no longer requires this as of Dec 2024
-		requiresThinkingAsText: isMistral,
+		requiresThinkingAsText: isMistral || isZAI,
 		requiresMistralToolIds: isMistral,
-		supportsStreamOptions: !isFireworks,
+		supportsStreamOptions: !isFireworks && !isZAI,
+		isZAI,
 	};
 }
 /**
@@ -88,6 +91,7 @@ function getCompat(model) {
 		requiresThinkingAsText: model.compat.requiresThinkingAsText ?? detected.requiresThinkingAsText,
 		requiresMistralToolIds: model.compat.requiresMistralToolIds ?? detected.requiresMistralToolIds,
 		supportsStreamOptions: model.compat.supportsStreamOptions ?? detected.supportsStreamOptions,
+		isZAI: model.compat.isZAI ?? detected.isZAI,
 	};
 }
 function createThinkParseState() {
@@ -468,6 +472,11 @@ function buildParams(model, context, options) {
 		messages,
 		stream: true,
 	};
+	// Merge extra body fields first as defaults (model-specific params from models.json)
+	// These can include temperature, max_tokens, top_p, etc. per provider/model
+	if (model.extraBody) {
+		Object.assign(params, model.extraBody);
+	}
 	// Only include stream_options if supported (not supported by Fireworks, etc.)
 	if (compat.supportsStreamOptions) {
 		params.stream_options = { include_usage: true };
@@ -475,6 +484,7 @@ function buildParams(model, context, options) {
 	if (compat.supportsStore) {
 		params.store = false;
 	}
+	// Options override defaults from extraBody
 	if (options?.maxTokens) {
 		if (compat.maxTokensField === "max_tokens") {
 			params.max_tokens = options.maxTokens;
@@ -506,10 +516,6 @@ function buildParams(model, context, options) {
 			if (effort === "xhigh") effort = "high";
 			params.reasoning_effort = effort;
 		}
-	}
-	// Merge extra body fields from model config
-	if (model.extraBody) {
-		Object.assign(params, model.extraBody);
 	}
 	return params;
 }

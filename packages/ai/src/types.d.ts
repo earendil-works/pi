@@ -4,19 +4,42 @@ import type { GoogleGeminiCliOptions } from "./providers/google-gemini-cli.js";
 import type { OpenAICompletionsOptions } from "./providers/openai-completions.js";
 import type { OpenAIResponsesOptions } from "./providers/openai-responses.js";
 import type { AssistantMessageEventStream } from "./utils/event-stream.js";
+export type {
+	AnthropicOptions,
+	GoogleOptions,
+	GoogleGeminiCliOptions,
+	OpenAICompletionsOptions,
+	OpenAIResponsesOptions,
+};
 export type { AssistantMessageEventStream } from "./utils/event-stream.js";
 export type Api =
 	| "openai-completions"
 	| "openai-responses"
 	| "anthropic-messages"
 	| "google-generative-ai"
-	| "google-gemini-cli";
+	| "google-gemini-cli"
+	| "zai-completions";
 export interface ApiOptionsMap {
 	"anthropic-messages": AnthropicOptions;
 	"openai-completions": OpenAICompletionsOptions;
 	"openai-responses": OpenAIResponsesOptions;
 	"google-generative-ai": GoogleOptions;
 	"google-gemini-cli": GoogleGeminiCliOptions;
+	"zai-completions": ZAICompletionsOptions;
+}
+export interface ZAICompletionsOptions extends StreamOptions {
+	webSearch?: boolean;
+	webSearchEngine?: "search_pro_jina";
+	webSearchCount?: number;
+	webSearchDomainFilter?: string;
+	webSearchRecencyFilter?: "oneDay" | "oneWeek" | "oneMonth" | "oneYear" | "noLimit";
+	webSearchContentSize?: "medium" | "high";
+	webSearchResultSequence?: "before" | "after";
+	webSearchReturnResults?: boolean;
+	webSearchRequireSearch?: boolean;
+	webSearchPrompt?: string;
+	knowledgeBaseId?: string;
+	knowledgeBasePromptTemplate?: string;
 }
 export type OptionsForApi<TApi extends Api> = ApiOptionsMap[TApi];
 export type KnownProvider =
@@ -209,6 +232,8 @@ export interface OpenAICompat {
 	requiresMistralToolIds?: boolean;
 	/** Whether the provider supports `stream_options`. Default: auto-detected from URL. */
 	supportsStreamOptions?: boolean;
+	/** Whether this is Z.ai API (requires special message handling). Default: auto-detected from URL. */
+	isZAI?: boolean;
 }
 export interface Model<TApi extends Api> {
 	id: string;

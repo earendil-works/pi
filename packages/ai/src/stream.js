@@ -63,6 +63,9 @@ export function stream(model, context, options) {
 			return streamGoogle(model, context, providerOptions);
 		case "google-gemini-cli":
 			return streamGoogleGeminiCli(model, context, providerOptions);
+		case "zai-completions":
+			// Z.ai uses OpenAI-compatible completions API
+			return streamOpenAICompletions(model, context, providerOptions);
 		default: {
 			// This should never be reached if all Api cases are handled
 			const _exhaustive = api;
@@ -160,6 +163,8 @@ function mapOptionsForApi(model, options, apiKey) {
 				},
 			};
 		}
+		case "zai-completions":
+			return base;
 		default: {
 			// Exhaustiveness check
 			const _exhaustive = model.api;

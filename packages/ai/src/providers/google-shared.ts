@@ -178,8 +178,6 @@ export function mapStopReason(reason: FinishReason): StopReason {
 		case FinishReason.NO_IMAGE:
 		case FinishReason.IMAGE_SAFETY:
 		case FinishReason.IMAGE_PROHIBITED_CONTENT:
-		case FinishReason.IMAGE_RECITATION:
-		case FinishReason.IMAGE_OTHER:
 			return "error";
 		default: {
 			const _exhaustive: never = reason;

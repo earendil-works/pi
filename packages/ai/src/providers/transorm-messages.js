@@ -15,10 +15,12 @@ export function transformMessages(messages, model) {
 				// Transform message from different provider/model
 				const transformedContent = assistantMsg.content.map((block) => {
 					if (block.type === "thinking") {
-						// Convert thinking block to text block with <thinking> tags
+						// Pass thinking block through, but strip signature for cross-provider compatibility
+						// (signatures are provider-specific and won't be valid for other providers)
 						return {
-							type: "text",
-							text: `<thinking>\n${block.thinking}\n</thinking>`,
+							type: "thinking",
+							thinking: block.thinking,
+							thinkingSignature: "",
 						};
 					}
 					// All other blocks (text, toolCall) pass through unchanged
