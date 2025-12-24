@@ -1,6 +1,6 @@
 {
-	"name": "@mariozechner/pi",
-	"version": "0.19.5",
+	"name": "@kennyfrc/pi",
+	"version": "0.20.0",
 	"description": "CLI tool for managing vLLM deployments on GPU pods",
 	"type": "module",
 	"bin": {
@@ -27,14 +27,14 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/badlogic/pi-mono.git",
+		"url": "git+https://github.com/kennyfrc/pi-mono.git",
 		"directory": "packages/pods"
 	},
 	"engines": {
 		"node": ">=20.0.0"
 	},
 	"dependencies": {
-		"@mariozechner/pi-agent-core": "^0.19.5",
+		"@kennyfrc/pi-agent-core": "^0.20.0",
 		"chalk": "^5.5.0"
 	},
 	"devDependencies": {}

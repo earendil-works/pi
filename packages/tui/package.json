@@ -1,6 +1,6 @@
 {
-	"name": "@mariozechner/pi-tui",
-	"version": "0.19.5",
+	"name": "@kennyfrc/pi-tui",
+	"version": "0.20.0",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"type": "module",
 	"main": "dist/index.js",
@@ -29,7 +29,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/badlogic/pi-mono.git",
+		"url": "git+https://github.com/kennyfrc/pi-mono.git",
 		"directory": "packages/tui"
 	},
 	"engines": {

@@ -1,5 +1,5 @@
 import * as os from "node:os";
-import type { AgentTool } from "@mariozechner/pi-ai";
+import type { AgentTool } from "@kennyfrc/pi-ai";
 import { Type } from "@sinclair/typebox";
 import * as Diff from "diff";
 import { constants } from "fs";

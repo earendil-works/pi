@@ -1,5 +1,5 @@
 import * as os from "node:os";
-import { Container, Spacer, Text } from "@mariozechner/pi-tui";
+import { Container, Spacer, Text } from "@kennyfrc/pi-tui";
 import stripAnsi from "strip-ansi";
 import { theme } from "../theme/theme.js";
 

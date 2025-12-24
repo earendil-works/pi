@@ -1,4 +1,4 @@
-import type { AgentTool } from "@mariozechner/pi-ai";
+import type { AgentTool } from "@kennyfrc/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { getToolDescription } from "../prompts/index.js";
 import { SessionManager } from "../session-manager.js";

@@ -1,4 +1,4 @@
-import { Container, Markdown, Spacer } from "@mariozechner/pi-tui";
+import { Container, Markdown, Spacer } from "@kennyfrc/pi-tui";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
 
 /**

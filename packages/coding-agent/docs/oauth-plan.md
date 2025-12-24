@@ -17,7 +17,7 @@ Many users have Claude Pro/Max or GitHub Copilot subscriptions but can't use the
 ## Phase 1: Anthropic OAuth (Initial Implementation)
 
 We'll start with Anthropic OAuth because:
-1. The `@mariozechner/pi-ai` Anthropic provider already handles OAuth tokens (checks for `sk-ant-oat` prefix)
+1. The `@kennyfrc/pi-ai` Anthropic provider already handles OAuth tokens (checks for `sk-ant-oat` prefix)
 2. No custom headers needed - just return the token
 3. Simpler flow - only needs refresh token exchange
 

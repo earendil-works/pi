@@ -1,4 +1,4 @@
-import type { StopReason, Usage } from "@mariozechner/pi-ai";
+import type { StopReason, Usage } from "@kennyfrc/pi-ai";
 
 /**
  * Event types emitted by the proxy server.

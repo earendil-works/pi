@@ -1,6 +1,6 @@
 {
-	"name": "@mariozechner/pi-ai",
-	"version": "0.19.5",
+	"name": "@kennyfrc/pi-ai",
+	"version": "0.20.0",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -43,7 +43,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/badlogic/pi-mono.git",
+		"url": "git+https://github.com/kennyfrc/pi-mono.git",
 		"directory": "packages/ai"
 	},
 	"engines": {

@@ -1,4 +1,4 @@
-import type { AgentState } from "@mariozechner/pi-agent-core";
+import type { AgentState } from "@kennyfrc/pi-agent-core";
 import { randomBytes } from "crypto";
 import {
 	appendFileSync,

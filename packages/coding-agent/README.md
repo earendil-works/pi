@@ -32,7 +32,7 @@ Works on Linux, macOS, and Windows (barely tested, needs Git Bash running in the
 ## Installation
 
 ```bash
-npm install -g @mariozechner/pi-coding-agent
+npm install -g @kennyfrc/pi-coding-agent
 ```
 
 ## Quick Start
@@ -316,9 +316,9 @@ Create custom themes in `~/.pi/agent/themes/*.json`. Custom themes support **liv
    ```bash
    mkdir -p ~/.pi/agent/themes
    # Copy dark theme
-   cp $(npm root -g)/@mariozechner/pi-coding-agent/dist/theme/dark.json ~/.pi/agent/themes/my-theme.json
+   cp $(npm root -g)/@kennyfrc/pi-coding-agent/dist/theme/dark.json ~/.pi/agent/themes/my-theme.json
    # Or copy light theme
-   cp $(npm root -g)/@mariozechner/pi-coding-agent/dist/theme/light.json ~/.pi/agent/themes/my-theme.json
+   cp $(npm root -g)/@kennyfrc/pi-coding-agent/dist/theme/light.json ~/.pi/agent/themes/my-theme.json
    ```
 2. Use `/theme` to select "my-theme"
 3. Edit `~/.pi/agent/themes/my-theme.json` - changes apply immediately on save
@@ -716,7 +716,7 @@ If the argument is a valid file path, the file contents will be used as the syst
 **--mode <mode>**
 Output mode for non-interactive usage (implies `--print`). Options:
 - `text` (default): Output only the final assistant message text
-- `json`: Stream all agent events as JSON (one event per line). Events are emitted by `@mariozechner/pi-agent` and include message updates, tool executions, and completions
+- `json`: Stream all agent events as JSON (one event per line). Events are emitted by `@kennyfrc/pi-agent` and include message updates, tool executions, and completions
 - `rpc`: JSON mode plus stdin listener for headless operation. Send JSON commands on stdin: `{"type":"prompt","message":"..."}` or `{"type":"abort"}`. See [test/rpc-example.ts](test/rpc-example.ts) for a complete example
 
 **--print, -p**
@@ -1040,5 +1040,5 @@ MIT
 
 ## See Also
 
-- [@mariozechner/pi-ai](https://www.npmjs.com/package/@mariozechner/pi-ai): Core LLM toolkit with multi-provider support
-- [@mariozechner/pi-agent](https://www.npmjs.com/package/@mariozechner/pi-agent): Agent framework with tool execution
+- [@kennyfrc/pi-ai](https://www.npmjs.com/package/@kennyfrc/pi-ai): Core LLM toolkit with multi-provider support
+- [@kennyfrc/pi-agent](https://www.npmjs.com/package/@kennyfrc/pi-agent): Agent framework with tool execution

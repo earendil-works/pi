@@ -1,4 +1,4 @@
-import { Editor } from "@mariozechner/pi-tui";
+import { Editor } from "@kennyfrc/pi-tui";
 
 /** Editor with app-specific key bindings and bash mode ("!" prefix executes shell commands). */
 export class CustomEditor extends Editor {

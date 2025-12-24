@@ -1,5 +1,5 @@
 import * as os from "node:os";
-import type { AgentTool } from "@mariozechner/pi-ai";
+import type { AgentTool } from "@kennyfrc/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname, resolve as resolvePath } from "path";

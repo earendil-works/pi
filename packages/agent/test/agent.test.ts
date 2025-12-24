@@ -1,4 +1,4 @@
-import { getModel } from "@mariozechner/pi-ai";
+import { getModel } from "@kennyfrc/pi-ai";
 import { describe, expect, it } from "vitest";
 import { Agent, ProviderTransport } from "../src/index.js";
 

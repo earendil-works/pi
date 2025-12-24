@@ -1,5 +1,5 @@
-import type { Model } from "@mariozechner/pi-ai";
-import { calculateTool, getModel } from "@mariozechner/pi-ai";
+import type { Model } from "@kennyfrc/pi-ai";
+import { calculateTool, getModel } from "@kennyfrc/pi-ai";
 import { describe, expect, it } from "vitest";
 import { Agent, ProviderTransport } from "../src/index.js";
 

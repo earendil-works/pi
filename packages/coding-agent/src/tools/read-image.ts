@@ -1,6 +1,6 @@
 import * as os from "node:os";
-import type { AgentTool } from "@mariozechner/pi-ai";
-import { completeSimple } from "@mariozechner/pi-ai";
+import type { AgentTool } from "@kennyfrc/pi-ai";
+import { completeSimple } from "@kennyfrc/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { access, constants, readFile } from "fs/promises";
 import { extname, resolve as resolvePath } from "path";

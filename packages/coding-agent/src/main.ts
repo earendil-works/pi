@@ -1,6 +1,6 @@
-import { Agent, type Attachment, ProviderTransport, type ThinkingLevel } from "@mariozechner/pi-agent-core";
-import type { Api, KnownProvider, Model } from "@mariozechner/pi-ai";
-import { ProcessTerminal, TUI } from "@mariozechner/pi-tui";
+import { Agent, type Attachment, ProviderTransport, type ThinkingLevel } from "@kennyfrc/pi-agent-core";
+import type { Api, KnownProvider, Model } from "@kennyfrc/pi-ai";
+import { ProcessTerminal, TUI } from "@kennyfrc/pi-tui";
 import chalk from "chalk";
 import { existsSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
@@ -411,7 +411,7 @@ function loadProjectContextFiles(): Array<{ path: string; content: string }> {
 
 async function checkForNewVersion(currentVersion: string): Promise<string | null> {
 	try {
-		const response = await fetch("https://registry.npmjs.org/@mariozechner/pi-coding-agent/latest");
+		const response = await fetch("https://registry.npmjs.org/@kennyfrc/pi-coding-agent/latest");
 		if (!response.ok) return null;
 
 		const data = (await response.json()) as { version?: string };

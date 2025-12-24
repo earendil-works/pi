@@ -1,6 +1,6 @@
-import type { AgentState } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage } from "@mariozechner/pi-ai";
-import { type Component, visibleWidth } from "@mariozechner/pi-tui";
+import type { AgentState } from "@kennyfrc/pi-agent-core";
+import type { AssistantMessage } from "@kennyfrc/pi-ai";
+import { type Component, visibleWidth } from "@kennyfrc/pi-tui";
 import { existsSync, type FSWatcher, readFileSync, watch } from "fs";
 import { dirname, join } from "path";
 import { isModelUsingOAuth } from "../model-config.js";

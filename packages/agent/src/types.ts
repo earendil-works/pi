@@ -1,11 +1,4 @@
-import type {
-	AgentTool,
-	AssistantMessage,
-	AssistantMessageEvent,
-	Message,
-	Model,
-	UserMessage,
-} from "@mariozechner/pi-ai";
+import type { AgentTool, AssistantMessage, AssistantMessageEvent, Message, Model, UserMessage } from "@kennyfrc/pi-ai";
 
 /**
  * Attachment type definition.
@@ -38,7 +31,7 @@ export type UserMessageWithAttachments = UserMessage & { attachments?: Attachmen
  *
  * @example
  * ```typescript
- * declare module "@mariozechner/agent" {
+ * declare module "@kennyfrc/pi-agent-core" {
  *   interface CustomMessages {
  *     artifact: ArtifactMessage;
  *     notification: NotificationMessage;

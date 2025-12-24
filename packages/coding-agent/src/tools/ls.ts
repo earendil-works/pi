@@ -1,4 +1,4 @@
-import type { AgentTool } from "@mariozechner/pi-ai";
+import type { AgentTool } from "@kennyfrc/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { existsSync, readdirSync, statSync } from "fs";
 import { homedir } from "os";

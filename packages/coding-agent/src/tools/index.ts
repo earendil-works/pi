@@ -1,4 +1,4 @@
-import type { AgentTool } from "@mariozechner/pi-ai";
+import type { AgentTool } from "@kennyfrc/pi-ai";
 
 export { bashTool } from "./bash.js";
 export { editTool } from "./edit.js";

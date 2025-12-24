@@ -1,5 +1,5 @@
-import type { AgentState } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "@mariozechner/pi-ai";
+import type { AgentState } from "@kennyfrc/pi-agent-core";
+import type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "@kennyfrc/pi-ai";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { basename, dirname, join } from "path";

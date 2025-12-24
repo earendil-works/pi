@@ -1,4 +1,4 @@
-import { type Api, getApiKey, getModels, getProviders, type KnownProvider, type Model } from "@mariozechner/pi-ai";
+import { type Api, getApiKey, getModels, getProviders, type KnownProvider, type Model } from "@kennyfrc/pi-ai";
 import { type Static, Type } from "@sinclair/typebox";
 import AjvModule from "ajv";
 import { existsSync, readFileSync } from "fs";
@@ -261,7 +261,7 @@ export async function getApiKeyForModel(model: Model<Api>): Promise<string | und
 		}
 	}
 
-	// For built-in providers, use getApiKey from @mariozechner/pi-ai
+	// For built-in providers, use getApiKey from @kennyfrc/pi-ai
 	return getApiKey(model.provider as KnownProvider);
 }
 

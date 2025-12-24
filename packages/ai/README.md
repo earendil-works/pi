@@ -1,4 +1,4 @@
-# @mariozechner/pi-ai
+# @kennyfrc/pi-ai
 
 Unified LLM API with automatic model discovery, provider configuration, token and cost tracking, and simple context persistence and hand-off to other models mid-session.
 
@@ -18,13 +18,13 @@ Unified LLM API with automatic model discovery, provider configuration, token an
 ## Installation
 
 ```bash
-npm install @mariozechner/pi-ai
+npm install @kennyfrc/pi-ai
 ```
 
 ## Quick Start
 
 ```typescript
-import { Type, getModel, stream, complete, Context, Tool, StringEnum } from '@mariozechner/pi-ai';
+import { Type, getModel, stream, complete, Context, Tool, StringEnum } from '@kennyfrc/pi-ai';
 
 // Fully typed with auto-complete support for both providers and models
 const model = getModel('openai', 'gpt-4o-mini');
@@ -150,7 +150,7 @@ Tools enable LLMs to interact with external systems. This library uses TypeBox s
 ### Defining Tools
 
 ```typescript
-import { Type, Tool, StringEnum } from '@mariozechner/pi-ai';
+import { Type, Tool, StringEnum } from '@kennyfrc/pi-ai';
 
 // Define tool parameters with TypeBox
 const weatherTool: Tool = {
@@ -295,7 +295,7 @@ Models with vision capabilities can process images. You can check if a model sup
 
 ```typescript
 import { readFileSync } from 'fs';
-import { getModel, complete } from '@mariozechner/pi-ai';
+import { getModel, complete } from '@kennyfrc/pi-ai';
 
 const model = getModel('openai', 'gpt-4o-mini');
 
@@ -332,7 +332,7 @@ Many models support thinking/reasoning capabilities where they can show their in
 ### Unified Interface (streamSimple/completeSimple)
 
 ```typescript
-import { getModel, streamSimple, completeSimple } from '@mariozechner/pi-ai';
+import { getModel, streamSimple, completeSimple } from '@kennyfrc/pi-ai';
 
 // Many models across providers support thinking/reasoning
 const model = getModel('anthropic', 'claude-sonnet-4-20250514');
@@ -370,7 +370,7 @@ for (const block of response.content) {
 For fine-grained control, use the provider-specific options:
 
 ```typescript
-import { getModel, complete } from '@mariozechner/pi-ai';
+import { getModel, complete } from '@kennyfrc/pi-ai';
 
 // OpenAI Reasoning (o1, o3, gpt-5)
 const openaiModel = getModel('openai', 'gpt-5-mini');
@@ -457,7 +457,7 @@ if (message.stopReason === 'error' || message.stopReason === 'aborted') {
 The abort signal allows you to cancel in-progress requests. Aborted requests have `stopReason === 'aborted'`:
 
 ```typescript
-import { getModel, stream } from '@mariozechner/pi-ai';
+import { getModel, stream } from '@kennyfrc/pi-ai';
 
 const model = getModel('openai', 'gpt-4o-mini');
 const controller = new AbortController();
@@ -534,7 +534,7 @@ A **provider** offers models through a specific API. For example:
 ### Querying Providers and Models
 
 ```typescript
-import { getProviders, getModels, getModel } from '@mariozechner/pi-ai';
+import { getProviders, getModels, getModel } from '@kennyfrc/pi-ai';
 
 // Get all available providers
 const providers = getProviders();
@@ -560,7 +560,7 @@ console.log(`Using ${model.name} via ${model.api} API`);
 You can create custom models for local inference servers or custom endpoints:
 
 ```typescript
-import { Model, stream } from '@mariozechner/pi-ai';
+import { Model, stream } from '@kennyfrc/pi-ai';
 
 // Example: Ollama using OpenAI-compatible API
 const ollamaModel: Model<'openai-completions'> = {
@@ -632,7 +632,7 @@ When messages from one provider are sent to a different provider, the library au
 ### Example: Multi-Provider Conversation
 
 ```typescript
-import { getModel, complete, Context } from '@mariozechner/pi-ai';
+import { getModel, complete, Context } from '@kennyfrc/pi-ai';
 
 // Start with Claude
 const claude = getModel('anthropic', 'claude-sonnet-4-20250514');
@@ -677,7 +677,7 @@ This enables flexible workflows where you can:
 The `Context` object can be easily serialized and deserialized using standard JSON methods, making it simple to persist conversations, implement chat history, or transfer contexts between services:
 
 ```typescript
-import { Context, getModel, complete } from '@mariozechner/pi-ai';
+import { Context, getModel, complete } from '@kennyfrc/pi-ai';
 
 // Create and use a context
 const context: Context = {
@@ -727,7 +727,7 @@ This continues until the assistant produces a response without tool calls.
 Given a prompt asking to calculate two expressions and sum them:
 
 ```typescript
-import { agentLoop, AgentContext, calculateTool } from '@mariozechner/pi-ai';
+import { agentLoop, AgentContext, calculateTool } from '@kennyfrc/pi-ai';
 
 const context: AgentContext = {
   systemPrompt: 'You are a helpful math assistant.',
@@ -832,7 +832,7 @@ context.messages.push(...messages);
 Tools use TypeBox schemas for runtime validation and type inference:
 
 ```typescript
-import { Type, Static, AgentTool, AgentToolResult, StringEnum } from '@mariozechner/pi-ai';
+import { Type, Static, AgentTool, AgentToolResult, StringEnum } from '@kennyfrc/pi-ai';
 
 const weatherSchema = Type.Object({
   city: Type.String({ minLength: 1 }),
@@ -901,7 +901,7 @@ Received arguments:
 The library includes example tools for common operations:
 
 ```typescript
-import { calculateTool, getCurrentTimeTool } from '@mariozechner/pi-ai';
+import { calculateTool, getCurrentTimeTool } from '@kennyfrc/pi-ai';
 
 const context: AgentContext = {
   systemPrompt: 'You are a helpful assistant.',
@@ -915,7 +915,7 @@ const context: AgentContext = {
 The library supports browser environments. You must pass the API key explicitly since environment variables are not available in browsers:
 
 ```typescript
-import { getModel, complete } from '@mariozechner/pi-ai';
+import { getModel, complete } from '@kennyfrc/pi-ai';
 
 // API key must be passed explicitly in browser
 const model = getModel('anthropic', 'claude-3-5-haiku-20241022');
@@ -962,7 +962,7 @@ const response = await complete(model, context, {
 You can also set and get API keys programmatically:
 
 ```typescript
-import { setApiKey, getApiKey } from '@mariozechner/pi-ai';
+import { setApiKey, getApiKey } from '@kennyfrc/pi-ai';
 
 // Set API key for a provider
 setApiKey('openai', 'sk-...');

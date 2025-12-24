@@ -1,5 +1,5 @@
-import type { Model } from "@mariozechner/pi-ai";
-import { Container, Input, Spacer, Text, type TUI } from "@mariozechner/pi-tui";
+import type { Model } from "@kennyfrc/pi-ai";
+import { Container, Input, Spacer, Text, type TUI } from "@kennyfrc/pi-tui";
 import { getAvailableModels } from "../model-config.js";
 import type { SettingsManager } from "../settings-manager.js";
 import { theme } from "../theme/theme.js";

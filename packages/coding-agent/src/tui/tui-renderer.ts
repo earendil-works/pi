@@ -1,10 +1,10 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Agent, AgentEvent, AgentState, Attachment, ThinkingLevel } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@mariozechner/pi-ai";
-import { complete } from "@mariozechner/pi-ai";
-import type { SlashCommand } from "@mariozechner/pi-tui";
+import type { Agent, AgentEvent, AgentState, Attachment, ThinkingLevel } from "@kennyfrc/pi-agent-core";
+import type { AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@kennyfrc/pi-ai";
+import { complete } from "@kennyfrc/pi-ai";
+import type { SlashCommand } from "@kennyfrc/pi-tui";
 import {
 	CombinedAutocompleteProvider,
 	Container,
@@ -17,7 +17,7 @@ import {
 	TruncatedText,
 	TUI,
 	visibleWidth,
-} from "@mariozechner/pi-tui";
+} from "@kennyfrc/pi-tui";
 import { exec } from "child_process";
 import { randomUUID } from "crypto";
 import { readFile, unlink, writeFile } from "fs/promises";
@@ -335,7 +335,7 @@ export class TuiRenderer {
 					theme.bold(theme.fg("warning", "Update Available")) +
 						"\n" +
 						theme.fg("muted", `New version ${this.newVersion} is available. Run: `) +
-						theme.fg("accent", "npm install -g @mariozechner/pi-coding-agent"),
+						theme.fg("accent", "npm install -g @kennyfrc/pi-coding-agent"),
 					1,
 					0,
 				),

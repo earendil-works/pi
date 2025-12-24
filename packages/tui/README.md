@@ -1,4 +1,4 @@
-# @mariozechner/pi-tui
+# @kennyfrc/pi-tui
 
 Minimal terminal UI framework with differential rendering and synchronized output for flicker-free interactive CLI applications.
 
@@ -14,7 +14,7 @@ Minimal terminal UI framework with differential rendering and synchronized outpu
 ## Quick Start
 
 ```typescript
-import { TUI, Text, Editor, ProcessTerminal } from "@mariozechner/pi-tui";
+import { TUI, Text, Editor, ProcessTerminal } from "@kennyfrc/pi-tui";
 
 // Create terminal
 const terminal = new ProcessTerminal();
@@ -194,7 +194,7 @@ const spacer = new Spacer(2); // 2 empty lines (default: 1)
 Supports both slash commands and file paths.
 
 ```typescript
-import { CombinedAutocompleteProvider } from "@mariozechner/pi-tui";
+import { CombinedAutocompleteProvider } from "@kennyfrc/pi-tui";
 
 const provider = new CombinedAutocompleteProvider(
 	[

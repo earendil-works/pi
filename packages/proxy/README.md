@@ -1,4 +1,4 @@
-# @mariozechner/pi-proxy
+# @kennyfrc/pi-proxy
 
 CORS and authentication proxy for pi-ai. Enables browser clients to access OAuth-protected endpoints.
 
@@ -13,10 +13,10 @@ Zero-config CORS proxy for development:
 npx tsx packages/proxy/src/cors-proxy.ts 3001
 
 # Or use npm script
-npm run dev -w @mariozechner/pi-proxy
+npm run dev -w @kennyfrc/pi-proxy
 
 # Or install globally and use CLI
-npm install -g @mariozechner/pi-proxy
+npm install -g @kennyfrc/pi-proxy
 pi-proxy 3001
 ```
 

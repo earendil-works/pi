@@ -1,5 +1,5 @@
-import type { ImageContent, Message, TextContent } from "@mariozechner/pi-ai";
-import { getModel } from "@mariozechner/pi-ai";
+import type { ImageContent, Message, TextContent } from "@kennyfrc/pi-ai";
+import { getModel } from "@kennyfrc/pi-ai";
 import type { AgentTransport } from "./transports/types.js";
 import type { AgentEvent, AgentState, AppMessage, Attachment, ThinkingLevel } from "./types.js";
 

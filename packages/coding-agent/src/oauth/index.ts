@@ -1,6 +1,6 @@
 /**
  * OAuth management for coding-agent.
- * Re-exports from @mariozechner/pi-ai and adds convenience wrappers.
+ * Re-exports from @kennyfrc/pi-ai and adds convenience wrappers.
  */
 
 import {
@@ -19,7 +19,7 @@ import {
 	resetOAuthStorage,
 	saveOAuthCredentials,
 	setOAuthStorage,
-} from "@mariozechner/pi-ai";
+} from "@kennyfrc/pi-ai";
 
 // Re-export types and functions
 export type { OAuthCredentials, OAuthProvider, OAuthStorageBackend };

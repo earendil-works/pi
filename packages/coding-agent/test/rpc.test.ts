@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
-import type { AgentEvent } from "@mariozechner/pi-agent-core";
+import type { AgentEvent } from "@kennyfrc/pi-agent-core";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
