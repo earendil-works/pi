@@ -23,7 +23,6 @@ import type {
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
-import { validateToolArguments } from "../utils/validation.js";
 import { transformMessages } from "./transorm-messages.js";
 
 export interface GoogleOptions extends StreamOptions {
@@ -327,14 +326,6 @@ export const streamGoogle: StreamFunction<"google-generative-ai"> = (
 									arguments: part.functionCall.args as Record<string, any>,
 									...(part.thoughtSignature && { thoughtSignature: part.thoughtSignature }),
 								};
-
-								// Validate tool arguments if tool definition is available
-								if (context.tools) {
-									const tool = context.tools.find((t) => t.name === toolCall.name);
-									if (tool) {
-										toolCall.arguments = validateToolArguments(tool, toolCall);
-									}
-								}
 
 								output.content.push(toolCall);
 								stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
