@@ -75,12 +75,22 @@ export type Provider = KnownProvider | string;
 
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 
+export interface RetryOptions {
+	/** Maximum number of retry attempts. Default: 3. */
+	maxRetries?: number;
+	/** Initial delay in milliseconds for exponential backoff. Default: 1000. */
+	baseDelay?: number;
+	/** Maximum delay in milliseconds between retries. Default: 60000. */
+	maxDelay?: number;
+}
+
 // Base options all providers share
 export interface StreamOptions {
 	temperature?: number;
 	maxTokens?: number;
 	signal?: AbortSignal;
 	apiKey?: string;
+	retry?: RetryOptions;
 }
 
 // Unified options with reasoning passed to streamSimple() and completeSimple()

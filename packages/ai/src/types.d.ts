@@ -56,11 +56,20 @@ export type KnownProvider =
 	| "mistral";
 export type Provider = KnownProvider | string;
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
+export interface RetryOptions {
+	/** Maximum number of retry attempts. Default: 3. */
+	maxRetries?: number;
+	/** Initial delay in milliseconds for exponential backoff. Default: 1000. */
+	baseDelay?: number;
+	/** Maximum delay in milliseconds between retries. Default: 60000. */
+	maxDelay?: number;
+}
 export interface StreamOptions {
 	temperature?: number;
 	maxTokens?: number;
 	signal?: AbortSignal;
 	apiKey?: string;
+	retry?: RetryOptions;
 }
 export interface SimpleStreamOptions extends StreamOptions {
 	reasoning?: ReasoningEffort;

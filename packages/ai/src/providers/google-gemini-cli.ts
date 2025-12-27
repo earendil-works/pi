@@ -18,6 +18,7 @@ import type {
 	ToolCall,
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
+import { getExponentialBackoff, parseGeminiRetryAfter, sleep } from "../utils/retry.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { convertMessages, convertTools, mapStopReasonString, mapToolChoice } from "./google-shared.js";
 
@@ -171,21 +172,70 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 			const isAntigravity = endpoint.includes("sandbox.googleapis.com");
 			const headers = isAntigravity ? ANTIGRAVITY_HEADERS : GEMINI_CLI_HEADERS;
 
-			const response = await fetch(url, {
-				method: "POST",
-				headers: {
-					Authorization: `Bearer ${accessToken}`,
-					"Content-Type": "application/json",
-					Accept: "text/event-stream",
-					...headers,
-				},
-				body: JSON.stringify(requestBody),
-				signal: options?.signal,
-			});
+			let response: Response | undefined;
+			const maxRetries = options?.retry?.maxRetries ?? 3;
+			const baseDelay = options?.retry?.baseDelay ?? 1000;
+			const maxDelay = options?.retry?.maxDelay ?? 60000;
 
-			if (!response.ok) {
-				const errorText = await response.text();
-				throw new Error(`Cloud Code Assist API error (${response.status}): ${errorText}`);
+			for (let attempt = 0; attempt <= maxRetries; attempt++) {
+				try {
+					response = await fetch(url, {
+						method: "POST",
+						headers: {
+							Authorization: `Bearer ${accessToken}`,
+							"Content-Type": "application/json",
+							Accept: "text/event-stream",
+							...headers,
+						},
+						body: JSON.stringify(requestBody),
+						signal: options?.signal,
+					});
+
+					if (response.ok) {
+						break;
+					}
+
+					const errorText = await response.text();
+					const isRetryable = response.status === 429 || (response.status >= 500 && response.status <= 504);
+
+					if (isRetryable && attempt < maxRetries) {
+						// Check for Retry-After header or parse Gemini reset hint
+						const retryAfterHeader = response.headers.get("Retry-After");
+						const parsedHint = parseGeminiRetryAfter(errorText);
+						const backoffDelay = getExponentialBackoff(attempt, baseDelay, maxDelay);
+
+						let delay = backoffDelay;
+						if (retryAfterHeader) {
+							const seconds = parseInt(retryAfterHeader, 10);
+							if (!Number.isNaN(seconds)) delay = Math.max(delay, seconds * 1000);
+						}
+						if (parsedHint) {
+							delay = Math.max(delay, parsedHint);
+						}
+
+						// Cap the delay to maxDelay
+						delay = Math.min(delay, maxDelay);
+
+						await sleep(delay, options?.signal);
+						continue;
+					}
+
+					throw new Error(`Cloud Code Assist API error (${response.status}): ${errorText}`);
+				} catch (error) {
+					// If it's a network error (not a Response error) and we have retries left, retry
+					const isAborted = error instanceof Error && (error.name === "AbortError" || error.message === "Aborted");
+					const isNetworkError = error instanceof Error && !error.message.includes("Cloud Code Assist API error");
+
+					if (isNetworkError && !isAborted && attempt < maxRetries) {
+						await sleep(getExponentialBackoff(attempt, baseDelay, maxDelay), options?.signal);
+						continue;
+					}
+					throw error;
+				}
+			}
+
+			if (!response) {
+				throw new Error("Failed to connect to Cloud Code Assist API");
 			}
 
 			if (!response.body) {
