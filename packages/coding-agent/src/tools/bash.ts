@@ -4,7 +4,7 @@ import { spawn } from "child_process";
 import { existsSync } from "fs";
 import { getToolDescription } from "../prompts/index.js";
 
-const MAX_OUTPUT_BYTES = 16 * 1024; // 16KB
+const MAX_OUTPUT_BYTES = 32 * 1024; // 32KB
 
 /**
  * UTF-8 decoder that handles partial characters across chunks

@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 // Test the UTF-8 truncation logic in isolation
 describe("bash tool output truncation", () => {
-	const MAX_OUTPUT_BYTES = 16 * 1024; // 16KB
+	const MAX_OUTPUT_BYTES = 32 * 1024; // 32KB
 
 	/**
 	 * Replicate the truncation logic from processOutput

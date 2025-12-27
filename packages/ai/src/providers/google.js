@@ -2,7 +2,6 @@ import { FinishReason, FunctionCallingConfigMode, GoogleGenAI } from "@google/ge
 import { calculateCost } from "../models.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
-import { validateToolArguments } from "../utils/validation.js";
 import { transformMessages } from "./transorm-messages.js";
 
 const RETRY_CONFIG = {
@@ -261,13 +260,6 @@ export const streamGoogle = (model, context, options) => {
 									arguments: part.functionCall.args,
 									...(part.thoughtSignature && { thoughtSignature: part.thoughtSignature }),
 								};
-								// Validate tool arguments if tool definition is available
-								if (context.tools) {
-									const tool = context.tools.find((t) => t.name === toolCall.name);
-									if (tool) {
-										toolCall.arguments = validateToolArguments(tool, toolCall);
-									}
-								}
 								output.content.push(toolCall);
 								stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
 								stream.push({

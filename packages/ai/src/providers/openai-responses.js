@@ -3,7 +3,6 @@ import { calculateCost } from "../models.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
-import { validateToolArguments } from "../utils/validation.js";
 import { transformMessages } from "./transorm-messages.js";
 /**
  * Generate function for OpenAI Responses API
@@ -198,13 +197,6 @@ export const streamOpenAIResponses = (model, context, options) => {
 							name: item.name,
 							arguments: JSON.parse(item.arguments),
 						};
-						// Validate tool arguments if tool definition is available
-						if (context.tools) {
-							const tool = context.tools.find((t) => t.name === toolCall.name);
-							if (tool) {
-								toolCall.arguments = validateToolArguments(tool, toolCall);
-							}
-						}
 						stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
 					}
 				}

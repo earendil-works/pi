@@ -5745,7 +5745,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "anthropic/claude-3.5-haiku-20241022": {
+		readonly "anthropic/claude-3.5-haiku": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -5762,7 +5762,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "anthropic/claude-3.5-haiku": {
+		readonly "anthropic/claude-3.5-haiku-20241022": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6000,6 +6000,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "meta-llama/llama-3.1-405b-instruct": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: false;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "meta-llama/llama-3.1-70b-instruct": {
 			id: string;
 			name: string;
@@ -6018,23 +6035,6 @@ export declare const MODELS: {
 			maxTokens: number;
 		};
 		readonly "meta-llama/llama-3.1-8b-instruct": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "meta-llama/llama-3.1-405b-instruct": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6357,7 +6357,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4-turbo-preview": {
+		readonly "openai/gpt-3.5-turbo-0613": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6374,7 +6374,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-3.5-turbo-0613": {
+		readonly "openai/gpt-4-turbo-preview": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6476,7 +6476,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4": {
+		readonly "openai/gpt-3.5-turbo": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6493,7 +6493,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-3.5-turbo": {
+		readonly "openai/gpt-4": {
 			id: string;
 			name: string;
 			api: "openai-completions";
