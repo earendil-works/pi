@@ -1,6 +1,6 @@
 import * as os from "node:os";
 import type { AgentTool } from "@kennyfrc/pi-ai";
-import { completeSimple } from "@kennyfrc/pi-ai";
+import { completeSimple, StringEnum } from "@kennyfrc/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { access, constants, readFile } from "fs/promises";
 import { extname, resolve as resolvePath } from "path";
@@ -200,15 +200,9 @@ const readImageSchema = Type.Object({
 		}),
 	),
 	model: Type.Optional(
-		Type.Union(
-			[
-				Type.Literal("claude", { description: "Use Claude Haiku 4.5" }),
-				Type.Literal("gemini", { description: "Use Gemini 3 Flash Preview" }),
-			],
-			{
-				description: "Model to use for image analysis (default: gemini)",
-			},
-		),
+		StringEnum(["claude", "gemini"] as const, {
+			description: "Model to use for image analysis (default: gemini)",
+		}),
 	),
 });
 
