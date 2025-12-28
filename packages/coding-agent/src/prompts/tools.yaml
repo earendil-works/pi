@@ -40,9 +40,9 @@ ls: |
   List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles.
 
 list_threads: |
-  List past conversation threads. Returns thread IDs, relative dates, message counts, workspace paths, and preview text. Supports optional keyword search (message content) and workspace filtering (case-insensitive substring match against workspace path).
+  List past conversation threads. Returns thread IDs, relative dates, message counts, workspace paths, and preview text. Supports keyword search (message content) and workspace filtering (case-insensitive substring match).
 
-  Use longer unique segments for workspace filtering to avoid false matches (e.g., "work/pi-mono" instead of "pi-mono" which could also match "/Users/.pi").
+  **Defaults to current working directory** if workspace is not specified. Use longer unique segments to avoid false matches (e.g., "work/pi-mono" instead of "pi-mono").
 
 read_thread: |
   Read the conversation history of a specific thread by its ID.

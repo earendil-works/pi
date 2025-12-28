@@ -5,8 +5,13 @@ import { SessionManager } from "../session-manager.js";
 
 const listThreadsSchema = Type.Object({
 	search: Type.Optional(Type.String({ description: "Filter threads by keyword (message content)" })),
-	workspace: Type.Optional(Type.String({ description: "Filter threads by workspace path (substring match)" })),
-	limit: Type.Optional(Type.Integer({ minimum: 1, description: "Max threads to return (default: 10)" })),
+	workspace: Type.Optional(
+		Type.String({
+			description:
+				"Filter threads by workspace path (case-insensitive substring match). Defaults to current working directory if not provided.",
+		}),
+	),
+	limit: Type.Optional(Type.Integer({ minimum: 1, description: "Max threads to return (default: 25)" })),
 });
 
 function getRelativeDate(date: Date): string {
@@ -34,6 +39,9 @@ export const listThreadsTool: AgentTool<typeof listThreadsSchema> = {
 	) => {
 		const mgr = new SessionManager(false, undefined, true);
 
+		// Use current workspace if not provided
+		const effectiveWorkspace = workspace?.trim() || process.cwd();
+
 		try {
 			const sessions = mgr.loadAllSessionsGlobal();
 
@@ -45,19 +53,15 @@ export const listThreadsTool: AgentTool<typeof listThreadsSchema> = {
 				);
 			}
 
-			// Apply workspace filter if provided (case-insensitive substring match)
-			const workspaceTerm = workspace?.trim();
-			if (workspaceTerm) {
-				const term = workspaceTerm.toLowerCase();
-				// If search was already applied, filter from those results; otherwise filter from all sessions
-				const sourceSessions = search ? filtered : sessions;
-				filtered = sourceSessions.filter((s) => s.cwd.toLowerCase().includes(term));
-			}
+			// Apply workspace filter (case-insensitive substring match)
+			const workspaceTerm = effectiveWorkspace.toLowerCase();
+			const sourceSessions = search ? filtered : sessions;
+			filtered = sourceSessions.filter((s) => s.cwd.toLowerCase().includes(workspaceTerm));
 
 			// Sort by date desc
 			filtered.sort((a, b) => b.modified.getTime() - a.modified.getTime());
 
-			const max = limit || 10;
+			const max = limit || 25;
 			const results = filtered.slice(0, max).map((s) => ({
 				id: s.id,
 				date: s.modified.toISOString(),
