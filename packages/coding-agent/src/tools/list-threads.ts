@@ -4,8 +4,9 @@ import { getToolDescription } from "../prompts/index.js";
 import { SessionManager } from "../session-manager.js";
 
 const listThreadsSchema = Type.Object({
-	search: Type.Optional(Type.String({ description: "Filter threads by keyword" })),
-	limit: Type.Optional(Type.Number({ description: "Max threads to return (default: 10)" })),
+	search: Type.Optional(Type.String({ description: "Filter threads by keyword (message content)" })),
+	workspace: Type.Optional(Type.String({ description: "Filter threads by workspace path (substring match)" })),
+	limit: Type.Optional(Type.Integer({ minimum: 1, description: "Max threads to return (default: 10)" })),
 });
 
 function getRelativeDate(date: Date): string {
@@ -27,7 +28,10 @@ export const listThreadsTool: AgentTool<typeof listThreadsSchema> = {
 	label: "list_threads",
 	description: getToolDescription("list_threads"),
 	parameters: listThreadsSchema,
-	execute: async (_toolCallId: string, { search, limit }: { search?: string; limit?: number }) => {
+	execute: async (
+		_toolCallId: string,
+		{ search, workspace, limit }: { search?: string; workspace?: string; limit?: number },
+	) => {
 		const mgr = new SessionManager(false, undefined, true);
 
 		try {
@@ -39,6 +43,15 @@ export const listThreadsTool: AgentTool<typeof listThreadsSchema> = {
 				filtered = sessions.filter(
 					(s) => s.firstMessage.toLowerCase().includes(term) || s.allMessagesText.toLowerCase().includes(term),
 				);
+			}
+
+			// Apply workspace filter if provided (case-insensitive substring match)
+			const workspaceTerm = workspace?.trim();
+			if (workspaceTerm) {
+				const term = workspaceTerm.toLowerCase();
+				// If search was already applied, filter from those results; otherwise filter from all sessions
+				const sourceSessions = search ? filtered : sessions;
+				filtered = sourceSessions.filter((s) => s.cwd.toLowerCase().includes(term));
 			}
 
 			// Sort by date desc
