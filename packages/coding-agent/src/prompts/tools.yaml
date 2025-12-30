@@ -44,6 +44,12 @@ list_threads: |
 
   **Defaults to current working directory** if workspace is not specified. Use longer unique segments to avoid false matches (e.g., "work/pi-mono" instead of "pi-mono").
 
+  **Search syntax:**
+  - Space-separated terms use AND logic: `auth login` matches threads with both "auth" AND "login"
+  - Use quotes for exact phrases: `"error handling"` matches that exact phrase
+  - Use `|` for OR within a group: `doc|docs sidebar` matches (doc OR docs) AND sidebar
+  - Example: `auth login|signin "error handling"` matches threads with auth AND (login OR signin) AND "error handling"
+
 read_thread: |
   Read the conversation history of a specific thread by its ID.
   
