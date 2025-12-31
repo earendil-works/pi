@@ -4,6 +4,8 @@ export { bashTool } from "./bash.js";
 export { editTool } from "./edit.js";
 export { findTool } from "./find.js";
 export { grepTool } from "./grep.js";
+export type { HandoffData, HandoffToolContext } from "./handoff.js";
+export { createHandoffTool } from "./handoff.js";
 export { listThreadsTool } from "./list-threads.js";
 export { lsTool } from "./ls.js";
 export { readTool } from "./read.js";
