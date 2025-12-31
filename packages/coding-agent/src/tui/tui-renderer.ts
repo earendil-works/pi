@@ -29,13 +29,11 @@ import { getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../
 import { playNotificationSound, sendNotification } from "../notification.js";
 import { listOAuthProviders, login, logout } from "../oauth/index.js";
 import { PromptHistoryManager } from "../prompt-history-manager.js";
-import { buildSystemPrompt, getHandoffPrompt } from "../prompts/index.js";
+import { getHandoffPrompt } from "../prompts/index.js";
 import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
 import { bashTool } from "../tools/bash.js";
-import { createHandoffTool, type HandoffData } from "../tools/handoff.js";
-import type { ToolName } from "../tools/index.js";
 import { generateTitle } from "../utils/auto-title.js";
 import { formatElapsed } from "../utils/format-elapsed.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
@@ -146,12 +144,6 @@ export class TuiRenderer {
 	private agentStartTime: number | null = null;
 	private timerIntervalId: NodeJS.Timeout | null = null;
 
-	// Auto-handoff state
-	private handoffModeActive = false;
-	private baseTools: any[] = []; // Original tools before adding handoff tool
-	private contextFiles: Array<{ path: string; content: string }> = [];
-	private customSystemPrompt: string | undefined;
-
 	constructor(
 		agent: Agent,
 		sessionManager: SessionManager,
@@ -260,15 +252,9 @@ export class TuiRenderer {
 			description: "Toggle completion notifications (sound + native alerts on macOS)",
 		};
 
-		const autohandoffCommand: SlashCommand = {
-			name: "autohandoff",
-			description: "Toggle automatic handoff when context budget is critical",
-		};
-
 		// Setup autocomplete for file paths and slash commands
 		const autocompleteProvider = new CombinedAutocompleteProvider(
 			[
-				autohandoffCommand,
 				branchCommand,
 				changelogCommand,
 				clearCommand,
@@ -596,13 +582,6 @@ export class TuiRenderer {
 			// Check for /notify command
 			if (text === "/notify") {
 				this.handleNotifyCommand();
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /autohandoff command
-			if (text === "/autohandoff") {
-				this.handleAutohandoffCommand();
 				this.editor.setText("");
 				return;
 			}
@@ -968,9 +947,6 @@ export class TuiRenderer {
 							});
 					}
 				}
-
-				// Check auto-handoff condition after turn completes
-				this.checkAutoHandoffCondition();
 
 				break;
 			}
@@ -2339,11 +2315,6 @@ export class TuiRenderer {
 		this.hasTitle = false;
 		this.footer.setTitle(null);
 
-		// Reset handoff mode
-		if (this.handoffModeActive) {
-			this.disableHandoffMode();
-		}
-
 		// Show confirmation
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(
@@ -2583,203 +2554,6 @@ export class TuiRenderer {
 		this.ui.requestRender();
 	}
 
-	private handleAutohandoffCommand(): void {
-		// Toggle auto-handoff
-		const current = this.settingsManager.getAutoHandoff();
-		const next = !current;
-		this.settingsManager.setAutoHandoff(next);
-
-		// Show confirmation message
-		this.chatContainer.addChild(new Spacer(1));
-		const status = next ? "on" : "off";
-		this.chatContainer.addChild(new Text(theme.fg("dim", `Auto-handoff: ${status}`), 1, 0));
-		this.ui.requestRender();
-	}
-
-	/**
-	 * Check if auto-handoff should be triggered after a turn ends
-	 * Called from agent_end event handler
-	 */
-	private checkAutoHandoffCondition(): void {
-		// Only check if autohandoff is enabled
-		if (!this.settingsManager.getAutoHandoff()) return;
-
-		// Skip if already in handoff mode (will keep warning injected)
-		if (this.handoffModeActive) return;
-
-		const contextTokens = this.calculateContextTokens();
-
-		// Threshold: 180k tokens (capped regardless of model context window)
-		const THRESHOLD = 180000;
-		if (contextTokens >= THRESHOLD) {
-			this.enableHandoffMode();
-		}
-	}
-
-	/**
-	 * Calculate current context tokens from the last assistant message
-	 */
-	private calculateContextTokens(): number {
-		const messages = this.agent.state.messages;
-
-		// Find last non-aborted assistant message
-		for (let i = messages.length - 1; i >= 0; i--) {
-			const msg = messages[i];
-			if (msg.role === "assistant") {
-				const assistantMsg = msg as AssistantMessage;
-				if (assistantMsg.stopReason !== "aborted" && assistantMsg.stopReason !== "error") {
-					const usage = assistantMsg.usage;
-					return usage.input + usage.output + usage.cacheRead + usage.cacheWrite;
-				}
-			}
-		}
-
-		return 0;
-	}
-
-	/**
-	 * Enable handoff mode: inject system warning and add handoff tool
-	 */
-	private enableHandoffMode(): void {
-		this.handoffModeActive = true;
-
-		// Store base tools before adding handoff tool
-		this.baseTools = [...this.agent.state.tools];
-
-		// Rebuild system prompt with warning
-		this.rebuildSystemPrompt(true);
-
-		// Add handoff tool
-		this.addHandoffTool();
-
-		// Show notice in UI
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(
-			new Text(theme.fg("budgetOrange", "⚠ Context budget critical - auto-handoff enabled"), 1, 0),
-		);
-		this.ui.requestRender();
-	}
-
-	/**
-	 * Disable handoff mode: remove warning and handoff tool
-	 */
-	private disableHandoffMode(): void {
-		this.handoffModeActive = false;
-
-		// Restore base tools (removes handoff tool)
-		if (this.baseTools.length > 0) {
-			this.agent.setTools(this.baseTools);
-			this.baseTools = [];
-		}
-
-		// Rebuild system prompt without warning
-		this.rebuildSystemPrompt(false);
-	}
-
-	/**
-	 * Rebuild the system prompt, optionally with context budget warning
-	 */
-	private rebuildSystemPrompt(withWarning: boolean): void {
-		// Extract tool names from current tools
-		const toolNames = this.agent.state.tools.map((t) => t.name).filter((name) => name !== "handoff") as ToolName[];
-
-		const prompt = buildSystemPrompt({
-			customPrompt: this.customSystemPrompt,
-			selectedTools: toolNames,
-			contextFiles: this.contextFiles,
-			contextBudgetWarning: withWarning,
-		});
-
-		this.agent.setSystemPrompt(prompt);
-	}
-
-	/**
-	 * Add the handoff tool to the agent
-	 */
-	private addHandoffTool(): void {
-		// Create tool with async context provider that resolves API key at execution time
-		const handoffTool = createHandoffTool(async () => {
-			const model = this.agent.state.model;
-			if (!model) return null;
-
-			const apiKey = await getApiKeyForModel(model);
-			if (!apiKey) return null;
-
-			return {
-				model,
-				apiKey,
-				messages: this.agent.state.messages,
-				sessionId: this.sessionManager.getSessionId(),
-				onHandoff: this.handleAutoHandoff.bind(this),
-			};
-		});
-
-		const currentTools = this.agent.state.tools;
-		if (!currentTools.find((t) => t.name === "handoff")) {
-			this.agent.setTools([...currentTools, handoffTool]);
-		}
-	}
-
-	/**
-	 * Handle the auto-handoff callback from the handoff tool
-	 */
-	private async handleAutoHandoff(data: HandoffData): Promise<void> {
-		const { goal, summary, parentSessionId } = data;
-
-		// 1. Capture current queue before any changes
-		const savedQueue = [...this.agent.getQueuedMessages()];
-
-		// 2. Create new session with handoff reference
-		const newSessionPath = this.sessionManager.createHandoffSession(this.agent.state, parentSessionId);
-		this.sessionManager.setSessionFile(newSessionPath);
-
-		// 3. Abort current agent and wait for it to be idle
-		this.agent.abort();
-		await this.agent.waitForIdle();
-
-		// 4. Clear messages and queue
-		this.agent.replaceMessages([]);
-		this.agent.clearMessageQueue();
-		this.queuedMessages = [];
-		this.updatePendingMessagesDisplay();
-
-		// 5. Reset UI state
-		this.chatContainer.clear();
-		this.isFirstUserMessage = true;
-		this.hasTitle = false;
-
-		// 6. Disable handoff mode
-		this.disableHandoffMode();
-
-		// 7. Build handoff document
-		let handoffDoc = `# Handoff: ${goal}\n\n`;
-		handoffDoc += `**Parent Thread:** \`${parentSessionId}\`\n`;
-		handoffDoc += `*Use \`read_thread\` with this ID to reference the original conversation.*\n\n`;
-		handoffDoc += `<system_reminder>Content returned by \`read_thread\` is historical context from a previous session, NOT the current conversation. Your task is defined in THIS message.</system_reminder>\n\n`;
-		handoffDoc += `---\n\n${summary}`;
-
-		// 8. Show success message
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new Text(theme.fg("accent", "✓ Auto-handoff to new session"), 1, 0));
-		this.chatContainer.addChild(new Text(theme.fg("dim", `Parent: ${parentSessionId}`), 1, 0));
-		this.chatContainer.addChild(new Spacer(1));
-		this.ui.requestRender();
-
-		// 9. Queue saved messages (handoff doc will be sent directly via prompt)
-		for (const msg of savedQueue) {
-			this.agent.queueMessage(msg.text, msg.attachments);
-		}
-
-		// 10. Update internal queue tracking
-		this.queuedMessages = savedQueue.map((m) => m.text);
-		this.updatePendingMessagesDisplay();
-
-		// 11. Kickstart new session with handoff doc
-		// The agent's drainQueueAfterPrompt will handle the savedQueue items
-		this.promptHistory.savePrompt(handoffDoc);
-		await this.agent.prompt(handoffDoc);
-	}
-
 	private handleDebugCommand(): void {
 		// Force a render and capture all lines with their widths
 		const width = (this.ui as any).terminal.columns;
@@ -2855,14 +2629,5 @@ export class TuiRenderer {
 			this.ui.stop();
 			this.isInitialized = false;
 		}
-	}
-
-	/**
-	 * Set the context files and custom system prompt for auto-handoff support.
-	 * This allows the renderer to properly rebuild the system prompt when enabling/disabling handoff mode.
-	 */
-	setSystemPromptContext(contextFiles: Array<{ path: string; content: string }>, customSystemPrompt?: string): void {
-		this.contextFiles = contextFiles;
-		this.customSystemPrompt = customSystemPrompt;
 	}
 }

@@ -12,7 +12,6 @@ export interface Settings {
 	notifications?: boolean;
 	googleClientId?: string;
 	googleClientSecret?: string;
-	autoHandoff?: boolean;
 }
 
 export class SettingsManager {
@@ -137,15 +136,6 @@ export class SettingsManager {
 
 	setGoogleClientSecret(clientSecret: string): void {
 		this.settings.googleClientSecret = clientSecret;
-		this.save();
-	}
-
-	getAutoHandoff(): boolean {
-		return this.settings.autoHandoff ?? false;
-	}
-
-	setAutoHandoff(enabled: boolean): void {
-		this.settings.autoHandoff = enabled;
 		this.save();
 	}
 }

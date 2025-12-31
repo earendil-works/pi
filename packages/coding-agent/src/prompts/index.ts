@@ -143,9 +143,8 @@ export function buildSystemPrompt(options: {
 	customPrompt?: string;
 	selectedTools?: ToolName[];
 	contextFiles?: Array<{ path: string; content: string }>;
-	contextBudgetWarning?: boolean;
 }): string {
-	const { customPrompt, selectedTools, contextFiles = [], contextBudgetWarning = false } = options;
+	const { customPrompt, selectedTools, contextFiles = [] } = options;
 
 	const now = new Date();
 	const dateTime = now.toLocaleString("en-US", {
@@ -200,26 +199,11 @@ export function buildSystemPrompt(options: {
 		}
 	}
 
-	// Build context budget warning section
-	let contextWarningSection = "";
-	if (contextBudgetWarning) {
-		contextWarningSection = `
-<system_reminder>
-CONTEXT BUDGET CRITICAL: You have used most of the available context window (~180k tokens).
-
-ACTION REQUIRED: Use the \`handoff\` tool to continue work in a fresh session.
-
-The handoff tool will generate a summary and create a new session. Call it with a clear, specific goal describing what to accomplish next.
-</system_reminder>
-`;
-	}
-
 	// Replace placeholders in template
 	const prompt = config.systemPrompt
 		.replace("{{TOOLS_LIST}}", toolsList)
 		.replace("{{GUIDELINES}}", guidelinesText)
 		.replace("{{CONTEXT_FILES}}", contextFilesSection)
-		.replace("{{CONTEXT_WARNING}}", contextWarningSection)
 		.replace("{{DATETIME}}", dateTime)
 		.replace("{{CWD}}", process.cwd());
 

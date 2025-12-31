@@ -58,17 +58,3 @@ read_thread: |
   Use 'raw: true' ONLY when you need the full unfiltered transcript (e.g., for complete context or debugging).
   
   Returns <thread_extract> (default) or <reference_thread> (raw mode).
-
-handoff: |
-  Create a new focused session to continue work when context budget is exhausted. This tool generates a summary of the current conversation and creates a new session with that summary as the starting context.
-  
-  Use this tool when the system indicates context budget is critical (~180k tokens).
-  
-  Parameters:
-  - goal: Clear description of what to accomplish in the new session
-  
-  The tool will:
-  1. Generate a summary of context, status, relevant files, and next steps
-  2. Create a new session linked to this one (for reference via read_thread)
-  3. Preserve any queued user messages
-  4. Start the new session with the handoff document

@@ -321,13 +321,7 @@ ${chalk.bold("Available Tools (default: read, bash, edit, write):")}
 `);
 }
 
-interface SystemPromptResult {
-	prompt: string;
-	contextFiles: Array<{ path: string; content: string }>;
-	customPrompt: string | undefined;
-}
-
-function buildSystemPrompt(customPrompt?: string, selectedTools?: ToolName[]): SystemPromptResult {
+function buildSystemPrompt(customPrompt?: string, selectedTools?: ToolName[]): string {
 	// Check if customPrompt is a file path that exists
 	let resolvedCustomPrompt = customPrompt;
 	if (customPrompt && existsSync(customPrompt)) {
@@ -341,13 +335,11 @@ function buildSystemPrompt(customPrompt?: string, selectedTools?: ToolName[]): S
 
 	const contextFiles = loadProjectContextFiles();
 
-	const prompt = buildSystemPromptFromYaml({
+	return buildSystemPromptFromYaml({
 		customPrompt: resolvedCustomPrompt,
 		selectedTools,
 		contextFiles,
 	});
-
-	return { prompt, contextFiles, customPrompt: resolvedCustomPrompt };
 }
 
 /**
@@ -593,8 +585,6 @@ async function runInteractiveMode(
 	initialMessage?: string,
 	initialAttachments?: Attachment[],
 	fdPath: string | null = null,
-	contextFiles: Array<{ path: string; content: string }> = [],
-	customSystemPrompt?: string,
 ): Promise<void> {
 	const renderer = new TuiRenderer(
 		agent,
@@ -606,9 +596,6 @@ async function runInteractiveMode(
 		scopedModels,
 		fdPath,
 	);
-
-	// Set system prompt context for auto-handoff support
-	renderer.setSystemPromptContext(contextFiles, customSystemPrompt);
 
 	// Initialize TUI (subscribes to agent events internally)
 	await renderer.init();
@@ -967,7 +954,7 @@ export async function main(args: string[]) {
 		}
 	}
 
-	const { prompt: systemPrompt, contextFiles, customPrompt } = buildSystemPrompt(parsed.systemPrompt, parsed.tools);
+	const systemPrompt = buildSystemPrompt(parsed.systemPrompt, parsed.tools);
 
 	// Load previous messages if continuing or resuming
 	// This may update initialModel if restoring from session
@@ -1178,8 +1165,6 @@ export async function main(args: string[]) {
 			initialMessage,
 			initialAttachments,
 			fdPath,
-			contextFiles,
-			customPrompt,
 		);
 	} else {
 		// Non-interactive mode (--print flag or --mode flag)
