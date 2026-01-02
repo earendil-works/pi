@@ -919,7 +919,9 @@ export class TuiRenderer {
 				if (this.settingsManager.getNotifications()) {
 					playNotificationSound();
 					const modelName = this.agent.state.model?.name || this.agent.state.model?.id || "Agent";
-					sendNotification("pi", `${modelName} finished`);
+					const title = this.footer.getTitle();
+					const notificationTitle = title ? `Pi - ${title}` : "Pi";
+					sendNotification(notificationTitle, `${modelName} finished`);
 				}
 
 				// Update footer to clear "Working" status

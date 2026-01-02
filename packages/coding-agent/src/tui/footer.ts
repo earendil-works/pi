@@ -49,6 +49,13 @@ export class FooterComponent implements Component {
 	}
 
 	/**
+	 * Get the current conversation title.
+	 */
+	getTitle(): string | null {
+		return this.title;
+	}
+
+	/**
 	 * Set up a file watcher on .git/HEAD to detect branch changes.
 	 * Call the provided callback when branch changes.
 	 */
