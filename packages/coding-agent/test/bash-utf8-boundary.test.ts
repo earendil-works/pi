@@ -1,18 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { bashTool } from "../src/tools/bash.js";
 
+const MAX_OUTPUT_BYTES = 32 * 1024; // 32KB - must match bash.ts
+
 describe("bash tool UTF-8 boundary conditions", () => {
 	/**
 	 * Verify truncation in the middle of a multi-byte sequence works correctly.
 	 * This addresses the concern from review: we should not corrupt UTF-8 when truncating.
 	 */
 	it("should handle truncation at multi-byte UTF-8 boundary", async () => {
-		// Generate 16380 bytes of emoji (4 bytes each) = 4095 emoji (4 * 4095 = 16380 bytes)
-		// Then add some ASCII to push just over the limit
+		// Generate emoji to push past the 32KB limit
 		const emoji = "🎉"; // 4 bytes in UTF-8
-		const chunk16000 = emoji.repeat(4000); // 16000 bytes
-		const remaining = "A".repeat(383); // 383 bytes (total: 16383 bytes)
-		const testScript = `echo "${chunk16000}${remaining}EXTRA"`; // + 5 bytes = 16388 total
+		const emojiCount = Math.floor((MAX_OUTPUT_BYTES - 100) / 4); // Fill most of limit
+		const chunk = emoji.repeat(emojiCount);
+		const remaining = "A".repeat(200); // Push past limit
+		const testScript = `echo "${chunk}${remaining}EXTRA"`;
 
 		const result = await bashTool.execute("test-utf8-truncation", {
 			command: testScript,
@@ -22,7 +24,7 @@ describe("bash tool UTF-8 boundary conditions", () => {
 		const output = textContent?.text || "";
 
 		// Should show truncation notice
-		expect(output).toContain("(output truncated to 16384 bytes)");
+		expect(output).toContain(`(output truncated to ${MAX_OUTPUT_BYTES} bytes)`);
 
 		// Output should be valid UTF-8 (no corrupted characters)
 		// If we truncated in the middle of an emoji, it should be replaced with � or the emoji should be complete
@@ -41,13 +43,12 @@ describe("bash tool UTF-8 boundary conditions", () => {
 	 */
 	it("should flush partial UTF-8 sequences after truncation", async () => {
 		// Create output with multi-byte characters that will be flush()ed at close()
-		// Strategy: Generate 16380 bytes of emoji (4 bytes each) = 4095 emoji
-		// The echo adds a newline, bringing us to 16381 bytes
-		// We're under the limit, so no truncation happens
+		// Strategy: Generate emoji to stay under the limit
 		// This tests that the decoder.flush() at close() works correctly for multi-byte content
 		const emoji = "🎉";
-		const emojiChunk = emoji.repeat(4095); // 16380 bytes exactly
-		const testScript = `echo "${emojiChunk}"`; // + newline = 16381 bytes
+		const emojiCount = Math.floor((MAX_OUTPUT_BYTES - 100) / 4); // Stay well under limit
+		const emojiChunk = emoji.repeat(emojiCount);
+		const testScript = `echo "${emojiChunk}"`;
 
 		const result = await bashTool.execute("test-utf8-flush", {
 			command: testScript,

@@ -30,7 +30,7 @@ describe("bash tool output truncation", () => {
 	}
 
 	it("should handle ASCII text correctly", () => {
-		const input = "a".repeat(20000); // 20KB of 'a'
+		const input = "a".repeat(MAX_OUTPUT_BYTES + 5000); // Exceed limit
 		const result = truncateToLimit(input, MAX_OUTPUT_BYTES);
 		const byteLength = Buffer.byteLength(result, "utf-8");
 
@@ -89,11 +89,11 @@ describe("bash tool output truncation", () => {
 	});
 
 	it("should handle exact boundary case", () => {
-		const input = "a".repeat(16384); // Exactly 16KB
+		const input = "a".repeat(MAX_OUTPUT_BYTES); // Exactly at limit
 		const result = truncateToLimit(input, MAX_OUTPUT_BYTES);
 
 		expect(Buffer.byteLength(result, "utf-8")).toBe(MAX_OUTPUT_BYTES);
-		expect(result.length).toBe(16384);
+		expect(result.length).toBe(MAX_OUTPUT_BYTES);
 	});
 
 	it("should handle single character exceeding limit", () => {

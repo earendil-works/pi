@@ -1,10 +1,13 @@
 import type { AgentTool } from "@kennyfrc/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
-import { existsSync } from "fs";
+import { createWriteStream, existsSync, unlink, type WriteStream } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { getToolDescription } from "../prompts/index.js";
 
 const MAX_OUTPUT_BYTES = 32 * 1024; // 32KB
+const MAX_LOG_FILE_BYTES = 100 * 1024 * 1024; // 100MB - prevent disk exhaustion
 
 /**
  * UTF-8 decoder that handles partial characters across chunks
@@ -176,6 +179,30 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 
+			// Setup temporary file for full output logging (eager streaming)
+			// This preserves interleaved stdout/stderr ordering for debugging
+			let logStream: WriteStream | null = null;
+			let logPath: string | null = null;
+			let logFileBytes = 0;
+			let logFileExceeded = false;
+
+			try {
+				const tempDir = tmpdir();
+				const randomId = Math.random().toString(36).slice(2, 10);
+				const timestamp = Date.now();
+				logPath = join(tempDir, `pi-bash-${timestamp}-${randomId}.log`);
+				logStream = createWriteStream(logPath);
+
+				// Handle log stream errors gracefully - don't fail the command
+				logStream.on("error", () => {
+					logStream = null;
+				});
+			} catch {
+				// If we can't create the log file, proceed without it
+				logStream = null;
+				logPath = null;
+			}
+
 			// Use raw buffers and decode UTF-8 manually to handle partial characters
 			const stdoutDecoder = new Utf8Decoder();
 			const stderrDecoder = new Utf8Decoder();
@@ -271,6 +298,20 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 			 * Note: We do NOT kill the process - it continues to completion naturally
 			 */
 			const processOutput = (data: Buffer, source: "stdout" | "stderr") => {
+				// Always write raw bytes to log file (preserves interleaved ordering)
+				if (logStream?.writable && !logFileExceeded) {
+					logStream.write(data);
+					logFileBytes += data.length;
+
+					// Enforce 100MB limit to prevent disk exhaustion
+					if (logFileBytes >= MAX_LOG_FILE_BYTES) {
+						logFileExceeded = true;
+						logStream.write(Buffer.from("\n\n... (log file truncated at 100MB limit) ...\n"));
+						logStream.end();
+						logStream = null;
+					}
+				}
+
 				if (!active) return;
 
 				// Decode complete UTF-8 sequences, buffering partial characters
@@ -325,6 +366,15 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 					clearTimeout(flushTimer);
 					flushTimer = null;
 				}
+
+				// Cleanup log file on error
+				if (logStream) {
+					logStream.end();
+				}
+				if (logPath) {
+					unlink(logPath, () => {});
+				}
+
 				_reject(err instanceof Error ? err : new Error(String(err)));
 			});
 
@@ -350,6 +400,11 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 			}
 
 			child.on("close", (code) => {
+				// Finalize log file stream
+				if (logStream) {
+					logStream.end();
+				}
+
 				// Clear any pending timer and flush final chunk
 				if (flushTimer) {
 					clearTimeout(flushTimer);
@@ -373,6 +428,14 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 					}
 					if (output) output += "\n\n";
 					output += "Command aborted";
+
+					// Keep log file if truncated, otherwise delete
+					if (didTruncate && logPath) {
+						output += `\n\nFull output saved to: ${logPath}`;
+					} else if (logPath) {
+						unlink(logPath, () => {});
+					}
+
 					_reject(new Error(output));
 					return;
 				}
@@ -386,6 +449,14 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 					}
 					if (output) output += "\n\n";
 					output += `Command timed out after ${effectiveTimeout} seconds`;
+
+					// Keep log file if truncated, otherwise delete
+					if (didTruncate && logPath) {
+						output += `\n\nFull output saved to: ${logPath}`;
+					} else if (logPath) {
+						unlink(logPath, () => {});
+					}
+
 					_reject(new Error(output));
 					return;
 				}
@@ -409,6 +480,12 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 				// Show truncation notice only if we actually dropped bytes
 				if (didTruncate) {
 					output += `\n\n... (output truncated to ${MAX_OUTPUT_BYTES} bytes)`;
+					if (logPath) {
+						output += `\nFull output saved to: ${logPath}`;
+					}
+				} else if (logPath) {
+					// Not truncated - delete the log file (not needed)
+					unlink(logPath, () => {});
 				}
 
 				if (code !== 0 && code !== null) {
