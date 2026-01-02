@@ -170,8 +170,7 @@ export function buildSystemPrompt(options: {
 			}
 		}
 
-		prompt += `\nCurrent date and time: ${dateTime}`;
-		prompt += `\nCurrent working directory: ${process.cwd()}`;
+		prompt += `\n<metadata>\nCurrent date and time: ${dateTime}\nCurrent working directory: ${process.cwd()}\n</metadata>`;
 
 		return prompt;
 	}

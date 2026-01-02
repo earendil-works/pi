@@ -10,8 +10,10 @@ systemPrompt: |
   Guidelines:
   {{GUIDELINES}}
   {{CONTEXT_FILES}}
+  <metadata>
   Current date and time: {{DATETIME}}
   Current working directory: {{CWD}}
+  </metadata>
 
 # Short tool descriptions shown in the system prompt's "Available tools" list
 toolDescriptions:
