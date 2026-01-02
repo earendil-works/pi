@@ -1,5 +1,54 @@
+/**
+ * Reorder messages so tool results are adjacent to their parent assistant messages.
+ *
+ * When user-initiated bash commands interleave with LLM tool calls, toolResult messages
+ * can end up separated from their parent assistant message. This violates the Anthropic
+ * API requirement that tool_result blocks must immediately follow tool_use blocks.
+ *
+ * This function "hoists" orphaned toolResults to their correct position while preserving
+ * the relative order of other messages.
+ *
+ * Before: [Assistant(A), User(bash), Assistant(B), Result(B), Result(A)]
+ * After:  [Assistant(A), Result(A), User(bash), Assistant(B), Result(B)]
+ */
+function hoistToolResults(messages) {
+	const result = [];
+	for (const msg of messages) {
+		if (msg.role === "toolResult") {
+			const tr = msg;
+			let parentIndex = -1;
+			// Find parent assistant message in result (searching backwards)
+			for (let i = result.length - 1; i >= 0; i--) {
+				const m = result[i];
+				if (m.role === "assistant") {
+					const am = m;
+					if (am.content.some((c) => c.type === "toolCall" && c.id === tr.toolCallId)) {
+						parentIndex = i;
+						break;
+					}
+				}
+			}
+			if (parentIndex !== -1) {
+				// Found parent. Insert after parent and any already-present sibling results.
+				let insertPos = parentIndex + 1;
+				while (insertPos < result.length && result[insertPos].role === "toolResult") {
+					insertPos++;
+				}
+				result.splice(insertPos, 0, msg);
+			} else {
+				// No parent found (truncated history or edge case); append normally
+				result.push(msg);
+			}
+		} else {
+			result.push(msg);
+		}
+	}
+	return result;
+}
 export function transformMessages(messages, model) {
-	return messages
+	// First, hoist orphaned tool results to be adjacent to their parent assistant messages
+	const reorderedMessages = hoistToolResults(messages);
+	return reorderedMessages
 		.map((msg) => {
 			// User and toolResult messages pass through unchanged
 			if (msg.role === "user" || msg.role === "toolResult") {

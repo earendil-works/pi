@@ -3,6 +3,9 @@ import type { Component } from "../tui.js";
 import { visibleWidth } from "../utils.js";
 import { SelectList, type SelectListTheme } from "./select-list.js";
 
+// Grapheme segmenter for proper Unicode iteration (handles emojis, surrogate pairs, etc.)
+const segmenter = new Intl.Segmenter();
+
 interface EditorState {
 	lines: string[];
 	cursorLine: number;
@@ -763,18 +766,19 @@ export class Editor implements Component {
 		let currentSliceText = "";
 		let currentWidth = 0;
 
-		for (let i = 0; i < line.length; i++) {
-			const char = line[i];
-			const charWidth = visibleWidth(char);
+		// Iterate by grapheme clusters (not code units) to properly handle emojis and surrogate pairs
+		for (const { segment, index } of segmenter.segment(line)) {
+			const charWidth = visibleWidth(segment);
 
 			if (currentWidth + charWidth > maxWidth && currentSliceText.length > 0) {
-				result.push({ text: currentSliceText, startCol: currentSliceStart, endCol: i });
-				currentSliceStart = i;
+				// index is the start of current grapheme, which is the end of the previous slice
+				result.push({ text: currentSliceText, startCol: currentSliceStart, endCol: index });
+				currentSliceStart = index;
 				currentSliceText = "";
 				currentWidth = 0;
 			}
 
-			currentSliceText += char;
+			currentSliceText += segment;
 			currentWidth += charWidth;
 		}
 
