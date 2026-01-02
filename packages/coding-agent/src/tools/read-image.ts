@@ -438,6 +438,9 @@ export const readImageTool: AgentTool<typeof readImageSchema> = {
 				});
 			}
 
+			// Add the objective so the sub-model knows what to analyze
+			messageContent.push({ type: "text" as const, text: `\nObjective: ${objective}` });
+
 			// Call the LLM to analyze the image
 			const hasReferences = referenceImages.length > 0;
 			const systemPrompt = `You are an expert image analyst. Extract information relevant to the user's objective from the provided image(s).
