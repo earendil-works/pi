@@ -256,6 +256,21 @@ function formatTimestamp(timestamp: number | string | undefined): string {
 }
 
 /**
+ * Parse user_message_time XML tag from message content.
+ * Returns { timestamp, content } where timestamp may be undefined.
+ */
+function parseMessageTimestamp(text: string): { timestamp: string | undefined; content: string } {
+	const match = text.match(/^<user_message_time>([^<]+)<\/user_message_time>\n\n/);
+	if (match) {
+		return {
+			timestamp: match[1],
+			content: text.slice(match[0].length),
+		};
+	}
+	return { timestamp: undefined, content: text };
+}
+
+/**
  * Format model change event
  */
 function formatModelChange(event: any): string {
@@ -284,8 +299,15 @@ function formatMessage(message: Message, toolResultsMap: Map<string, ToolResultM
 			textContent = textBlocks.map((c: any) => c.text).join("");
 		}
 
-		if (textContent.trim()) {
-			html += `<div class="user-message">${timestampHtml}${escapeHtml(textContent).replace(/\n/g, "<br>")}</div>`;
+		// Parse embedded timestamp from content (preferred over message.timestamp)
+		const { timestamp: embeddedTimestamp, content: cleanContent } = parseMessageTimestamp(textContent);
+		const displayTimestamp = embeddedTimestamp || formatTimestamp(timestamp);
+		const finalTimestampHtml = displayTimestamp
+			? `<div class="message-timestamp">${escapeHtml(displayTimestamp)}</div>`
+			: "";
+
+		if (cleanContent.trim()) {
+			html += `<div class="user-message">${finalTimestampHtml}${escapeHtml(cleanContent).replace(/\n/g, "<br>")}</div>`;
 		}
 	} else if (message.role === "assistant") {
 		const assistantMsg = message as AssistantMessage;

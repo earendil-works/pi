@@ -4,6 +4,23 @@ import type { AgentTransport } from "./transports/types.js";
 import type { AgentEvent, AgentState, AppMessage, Attachment, ThinkingLevel } from "./types.js";
 
 /**
+ * Format a timestamp as a human-readable string for display to LLM and user.
+ * Format: "Saturday, January 3, 2026 at 12:51 PM GMT+8"
+ */
+function formatMessageTimestamp(epochMs: number): string {
+	const date = new Date(epochMs);
+	return date.toLocaleString("en-US", {
+		weekday: "long",
+		year: "numeric",
+		month: "long",
+		day: "numeric",
+		hour: "numeric",
+		minute: "2-digit",
+		timeZoneName: "short",
+	});
+}
+
+/**
  * Internal representation of a queued message with its attachments.
  */
 interface QueuedAppMessage {
@@ -199,7 +216,15 @@ export class Agent {
 			this.resolveRunningPrompt = resolve;
 		});
 
-		const content: Array<TextContent | ImageContent> = [{ type: "text", text: input }];
+		// Capture timestamp and format for LLM visibility
+		const now = Date.now();
+		const formattedTime = formatMessageTimestamp(now);
+		const timestampXml = `<user_message_time>${formattedTime}</user_message_time>`;
+
+		// Prepend timestamp to user input
+		const textWithTimestamp = `${timestampXml}\n\n${input}`;
+
+		const content: Array<TextContent | ImageContent> = [{ type: "text", text: textWithTimestamp }];
 		if (attachments?.length) {
 			for (const a of attachments) {
 				if (a.type === "image") {
@@ -218,7 +243,7 @@ export class Agent {
 			role: "user",
 			content,
 			attachments: attachments?.length ? attachments : undefined,
-			timestamp: Date.now(),
+			timestamp: now,
 		};
 
 		this.abortController = new AbortController();
