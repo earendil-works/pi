@@ -146,18 +146,6 @@ export function buildSystemPrompt(options: {
 }): string {
 	const { customPrompt, selectedTools, contextFiles = [] } = options;
 
-	const now = new Date();
-	const dateTime = now.toLocaleString("en-US", {
-		weekday: "long",
-		year: "numeric",
-		month: "long",
-		day: "numeric",
-		hour: "2-digit",
-		minute: "2-digit",
-		second: "2-digit",
-		timeZoneName: "short",
-	});
-
 	// If custom prompt provided, use it with context appended
 	if (customPrompt) {
 		let prompt = customPrompt;
@@ -170,7 +158,7 @@ export function buildSystemPrompt(options: {
 			}
 		}
 
-		prompt += `\n<metadata>\nCurrent date and time: ${dateTime}\nCurrent working directory: ${process.cwd()}\n</metadata>`;
+		prompt += `\n<metadata>\nCurrent working directory: ${process.cwd()}\n</metadata>`;
 
 		return prompt;
 	}
@@ -203,7 +191,6 @@ export function buildSystemPrompt(options: {
 		.replace("{{TOOLS_LIST}}", toolsList)
 		.replace("{{GUIDELINES}}", guidelinesText)
 		.replace("{{CONTEXT_FILES}}", contextFilesSection)
-		.replace("{{DATETIME}}", dateTime)
 		.replace("{{CWD}}", process.cwd());
 
 	return prompt;
