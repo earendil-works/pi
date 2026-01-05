@@ -741,23 +741,46 @@ export class TuiRenderer {
 					const textBlocks = userMsg.content.filter((c: any) => c.type === "text");
 					const messageText = textBlocks.map((c: any) => c.text).join("");
 
-					const queuedIndex = this.queuedMessages.indexOf(messageText);
-					if (queuedIndex !== -1) {
-						// Handle queue editing state when item is consumed
-						if (this.editingQueueIndex !== null) {
-							if (queuedIndex === this.editingQueueIndex) {
-								// Currently editing item was consumed - exit edit mode and restore editor
-								this.editor.setText(this.savedEditorText || "");
-								this.editingQueueIndex = null;
-								this.savedEditorText = null;
-							} else if (queuedIndex < this.editingQueueIndex) {
-								// Item before current edit was consumed - shift index down
-								this.editingQueueIndex--;
+					// Strip timestamp prefix if present (format: <user_message_time>...</user_message_time>\n\n)
+					const timestampPattern = /^<user_message_time>.*?<\/user_message_time>\n\n/;
+					const rawMessageText = messageText.replace(timestampPattern, "");
+
+					// In "all" queue mode, messages are combined with \n\n separator
+					// Check if any queued messages are contained in the incoming message
+					if (this.queuedMessages.length > 0) {
+						// Check exact match first (one-at-a-time mode)
+						const queuedIndex = this.queuedMessages.indexOf(rawMessageText);
+						if (queuedIndex !== -1) {
+							// Handle queue editing state when item is consumed
+							if (this.editingQueueIndex !== null) {
+								if (queuedIndex === this.editingQueueIndex) {
+									// Currently editing item was consumed - exit edit mode and restore editor
+									this.editor.setText(this.savedEditorText || "");
+									this.editingQueueIndex = null;
+									this.savedEditorText = null;
+								} else if (queuedIndex < this.editingQueueIndex) {
+									// Item before current edit was consumed - shift index down
+									this.editingQueueIndex--;
+								}
+							}
+							// Remove from queued messages
+							this.queuedMessages.splice(queuedIndex, 1);
+							this.updatePendingMessagesDisplay();
+						} else {
+							// Check if this is a combined message ("all" mode)
+							// Combined messages have format: "msg1\n\nmsg2\n\nmsg3"
+							const combinedText = this.queuedMessages.join("\n\n");
+							if (rawMessageText === combinedText) {
+								// All queued messages were combined - clear the queue
+								if (this.editingQueueIndex !== null) {
+									this.editor.setText(this.savedEditorText || "");
+									this.editingQueueIndex = null;
+									this.savedEditorText = null;
+								}
+								this.queuedMessages = [];
+								this.updatePendingMessagesDisplay();
 							}
 						}
-						// Remove from queued messages
-						this.queuedMessages.splice(queuedIndex, 1);
-						this.updatePendingMessagesDisplay();
 					}
 
 					// Show user message immediately and clear editor
