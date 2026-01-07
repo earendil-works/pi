@@ -4,7 +4,11 @@ import AjvModule from "ajv";
 import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
-import { getOAuthProviderForModelProvider, loadOAuthCredentials } from "../../ai/src/utils/oauth/index.js";
+import {
+	getOAuthApiKey,
+	getOAuthProviderForModelProvider,
+	loadOAuthCredentials,
+} from "../../ai/src/utils/oauth/index.js";
 
 // Handle both default and named exports
 const Ajv = (AjvModule as any).default || AjvModule;
@@ -233,7 +237,10 @@ export function loadAndMergeModels(): { models: Model<Api>[]; error: string | nu
 
 /**
  * Get API key for a model (checks custom providers first, then built-in)
- * Now async to support OAuth token refresh
+ * Now async to support OAuth token refresh.
+ *
+ * For Anthropic: OAuth is REQUIRED. Will throw if OAuth is unavailable.
+ * Use --api-key flag to explicitly bypass OAuth enforcement.
  */
 export async function getApiKeyForModel(model: Model<Api>): Promise<string | undefined> {
 	// For custom providers, check their apiKey config
@@ -245,19 +252,44 @@ export async function getApiKeyForModel(model: Model<Api>): Promise<string | und
 	// For OAuth providers (Anthropic, Google Gemini CLI, Antigravity, GitHub Copilot)
 	// Check OAuth storage (auto-refresh if needed)
 	const oauthProvider = getOAuthProviderForModelProvider(model.provider);
-	if (oauthProvider) {
-		const { getOAuthApiKey } = await import("../../ai/src/utils/oauth/index.js");
-		const oauthKey = await getOAuthApiKey(oauthProvider);
-		if (oauthKey) {
-			return oauthKey;
-		}
-	}
 
-	// For Anthropic, also check ANTHROPIC_OAUTH_TOKEN env var (manual OAuth token)
+	// Anthropic: OAuth is MANDATORY - no fallback to ANTHROPIC_API_KEY env var
 	if (model.provider === "anthropic") {
+		const hasStoredCreds = oauthProvider ? !!loadOAuthCredentials(oauthProvider) : false;
+
+		// Try stored OAuth credentials (auto-refresh if needed)
+		if (oauthProvider) {
+			const oauthKey = await getOAuthApiKey(oauthProvider);
+			if (oauthKey) {
+				return oauthKey;
+			}
+		}
+
+		// Try manual OAuth token from env var
 		const oauthEnv = process.env.ANTHROPIC_OAUTH_TOKEN;
 		if (oauthEnv) {
 			return oauthEnv;
+		}
+
+		// No OAuth available - throw actionable error (no silent fallback to API key)
+		if (!hasStoredCreds) {
+			throw new Error(
+				'Anthropic requires OAuth. Run "pi" then "/login" and select Anthropic.\n' +
+					"Or pass --api-key explicitly to use an API key.",
+			);
+		}
+		// Had stored creds but refresh/resolve failed
+		throw new Error(
+			'Anthropic OAuth credentials expired or invalid. Run "/login" again.\n' +
+				"Or pass --api-key explicitly to bypass OAuth.",
+		);
+	}
+
+	// For other OAuth providers (non-Anthropic), try OAuth first then fall back to env vars
+	if (oauthProvider) {
+		const oauthKey = await getOAuthApiKey(oauthProvider);
+		if (oauthKey) {
+			return oauthKey;
 		}
 	}
 
