@@ -207,8 +207,8 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 			const stdoutDecoder = new Utf8Decoder();
 			const stderrDecoder = new Utf8Decoder();
 
-			let stdout = "";
-			let stderr = "";
+			// Single combined output buffer - preserves interleaved stdout/stderr order
+			let output = "";
 			let timedOut = false;
 			let totalOutputBytes = 0;
 			let active = true;
@@ -332,12 +332,8 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 						didTruncate = true;
 					}
 
-					// Append truncated content
-					if (source === "stdout") {
-						stdout += truncated;
-					} else {
-						stderr += truncated;
-					}
+					// Append truncated content to combined buffer (preserves arrival order)
+					output += truncated;
 					handleData(truncated);
 
 					// Stop capturing, but let process continue running
@@ -350,13 +346,9 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 						handleData("\n[... command still running; output truncated ...]");
 					}
 				} else {
-					// Fits within limit, append normally
+					// Fits within limit, append to combined buffer (preserves arrival order)
 					totalOutputBytes += chunkBytes;
-					if (source === "stdout") {
-						stdout += text;
-					} else {
-						stderr += text;
-					}
+					output += text;
 					handleData(text);
 				}
 			};
@@ -420,44 +412,34 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 				}
 
 				if (signal?.aborted) {
-					let output = "";
-					if (stdout) output += stdout;
-					if (stderr) {
-						if (output) output += "\n";
-						output += stderr;
-					}
-					if (output) output += "\n\n";
-					output += "Command aborted";
+					let result = output;
+					if (result) result += "\n\n";
+					result += "Command aborted";
 
 					// Keep log file if truncated, otherwise delete
 					if (didTruncate && logPath) {
-						output += `\n\nFull output saved to: ${logPath}`;
+						result += `\n\nFull output saved to: ${logPath}`;
 					} else if (logPath) {
 						unlink(logPath, () => {});
 					}
 
-					_reject(new Error(output));
+					_reject(new Error(result));
 					return;
 				}
 
 				if (timedOut) {
-					let output = "";
-					if (stdout) output += stdout;
-					if (stderr) {
-						if (output) output += "\n";
-						output += stderr;
-					}
-					if (output) output += "\n\n";
-					output += `Command timed out after ${effectiveTimeout} seconds`;
+					let result = output;
+					if (result) result += "\n\n";
+					result += `Command timed out after ${effectiveTimeout} seconds`;
 
 					// Keep log file if truncated, otherwise delete
 					if (didTruncate && logPath) {
-						output += `\n\nFull output saved to: ${logPath}`;
+						result += `\n\nFull output saved to: ${logPath}`;
 					} else if (logPath) {
 						unlink(logPath, () => {});
 					}
 
-					_reject(new Error(output));
+					_reject(new Error(result));
 					return;
 				}
 
@@ -466,22 +448,17 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 				// Note: flush() may use replacement characters (�) for incomplete UTF-8 at EOF,
 				// but this is acceptable as it only affects the very last bytes
 				if (!didTruncate) {
-					stdout += stdoutDecoder.flush();
-					stderr += stderrDecoder.flush();
+					output += stdoutDecoder.flush();
+					output += stderrDecoder.flush();
 				}
 
-				let output = "";
-				if (stdout) output += stdout;
-				if (stderr) {
-					if (output) output += "\n";
-					output += stderr;
-				}
+				let result = output;
 
 				// Show truncation notice only if we actually dropped bytes
 				if (didTruncate) {
-					output += `\n\n... (output truncated to ${MAX_OUTPUT_BYTES} bytes)`;
+					result += `\n\n... (output truncated to ${MAX_OUTPUT_BYTES} bytes)`;
 					if (logPath) {
-						output += `\nFull output saved to: ${logPath}`;
+						result += `\nFull output saved to: ${logPath}`;
 					}
 				} else if (logPath) {
 					// Not truncated - delete the log file (not needed)
@@ -489,11 +466,11 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 				}
 
 				if (code !== 0 && code !== null) {
-					if (output) output += "\n\n";
-					_reject(new Error(output + `Command exited with code ${code}`));
+					if (result) result += "\n\n";
+					_reject(new Error(result + `Command exited with code ${code}`));
 				} else {
 					resolve({
-						content: [{ type: "text", text: output || "(no output)" }],
+						content: [{ type: "text", text: result || "(no output)" }],
 						details: undefined,
 					});
 				}
