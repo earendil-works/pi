@@ -1538,6 +1538,23 @@ export declare const MODELS: {
 		};
 	};
 	readonly cerebras: {
+		readonly "zai-glm-4.7": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: false;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "qwen-3-235b-a22b-instruct-2507": {
 			id: string;
 			name: string;
@@ -2515,6 +2532,23 @@ export declare const MODELS: {
 		};
 	};
 	readonly openrouter: {
+		readonly "allenai/olmo-3.1-32b-instruct": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: false;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "bytedance-seed/seed-1.6-flash": {
 			id: string;
 			name: string;
@@ -2958,6 +2992,23 @@ export declare const MODELS: {
 			maxTokens: number;
 		};
 		readonly "prime-intellect/intellect-3": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "tngtech/tng-r1t-chimera:free": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -5711,7 +5762,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "anthropic/claude-3.5-haiku-20241022": {
+		readonly "anthropic/claude-3.5-haiku": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -5728,7 +5779,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "anthropic/claude-3.5-haiku": {
+		readonly "anthropic/claude-3.5-haiku-20241022": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -5780,6 +5831,23 @@ export declare const MODELS: {
 			maxTokens: number;
 		};
 		readonly "mistralai/ministral-3b": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: false;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "qwen/qwen-2.5-7b-instruct": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -5932,23 +6000,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "microsoft/phi-3.5-mini-128k-instruct": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "openai/gpt-4o-2024-08-06": {
 			id: string;
 			name: string;
@@ -5983,7 +6034,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "meta-llama/llama-3.1-405b-instruct": {
+		readonly "meta-llama/llama-3.1-70b-instruct": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6000,7 +6051,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "meta-llama/llama-3.1-70b-instruct": {
+		readonly "meta-llama/llama-3.1-405b-instruct": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6034,7 +6085,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4o-mini-2024-07-18": {
+		readonly "openai/gpt-4o-mini": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6051,7 +6102,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4o-mini": {
+		readonly "openai/gpt-4o-mini-2024-07-18": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6119,40 +6170,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "microsoft/phi-3-mini-128k-instruct": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "microsoft/phi-3-medium-128k-instruct": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "openai/gpt-4o-2024-05-13": {
 			id: string;
 			name: string;
@@ -6204,7 +6221,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "meta-llama/llama-3-70b-instruct": {
+		readonly "meta-llama/llama-3-8b-instruct": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6221,7 +6238,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "meta-llama/llama-3-8b-instruct": {
+		readonly "meta-llama/llama-3-70b-instruct": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6289,23 +6306,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "anthropic/claude-3-opus": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "mistralai/mistral-large": {
 			id: string;
 			name: string;
@@ -6323,7 +6323,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-3.5-turbo-0613": {
+		readonly "openai/gpt-4-turbo-preview": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6340,7 +6340,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4-turbo-preview": {
+		readonly "openai/gpt-3.5-turbo-0613": {
 			id: string;
 			name: string;
 			api: "openai-completions";
