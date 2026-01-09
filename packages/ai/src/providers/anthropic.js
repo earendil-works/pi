@@ -1,11 +1,28 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { calculateCost } from "../models.js";
-import { getApiKey } from "../stream.js";
+import { getEnvApiKey } from "../stream.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { transformMessages } from "./transorm-messages.js";
 
+const claudeCodeVersion = "2.1.2";
+const claudeCodeToolNames = {
+	read: "Read",
+	write: "Write",
+	edit: "Edit",
+	bash: "Bash",
+	grep: "Grep",
+	find: "Glob",
+	ls: "Glob",
+};
+const toClaudeCodeName = (name) => claudeCodeToolNames[name] || name;
+const fromClaudeCodeName = (name) => {
+	for (const [piName, ccName] of Object.entries(claudeCodeToolNames)) {
+		if (ccName === name) return piName;
+	}
+	return name;
+};
 /**
  * Convert content blocks to Anthropic API format
  */
@@ -63,8 +80,8 @@ export const streamAnthropic = (model, context, options) => {
 			timestamp: Date.now(),
 		};
 		try {
-			const apiKey = options?.apiKey ?? getApiKey(model.provider) ?? "";
-			const { client, isOAuthToken } = createClient(model, apiKey);
+			const apiKey = options?.apiKey ?? getEnvApiKey(model.provider) ?? "";
+			const { client, isOAuthToken } = createClient(model, apiKey, options?.interleavedThinking ?? true);
 			const params = buildParams(model, context, isOAuthToken, options);
 			const anthropicStream = client.messages.stream({ ...params, stream: true }, { signal: options?.signal });
 			stream.push({ type: "start", partial: output });
@@ -114,7 +131,7 @@ export const streamAnthropic = (model, context, options) => {
 						const block = {
 							type: "toolCall",
 							id: event.content_block.id,
-							name: event.content_block.name,
+							name: fromClaudeCodeName(event.content_block.name),
 							arguments: event.content_block.input,
 							partialJson: "",
 							index: event.index,
@@ -229,21 +246,24 @@ export const streamAnthropic = (model, context, options) => {
 	})();
 	return stream;
 };
-function createClient(model, apiKey) {
-	const isOpus45 = model.id.includes("opus-4-5") || model.id.includes("opus-4.5");
-	const baseBetas = "fine-grained-tool-streaming-2025-05-14";
-	const opus45Betas = isOpus45 ? ",effort-2025-11-24" : "";
-	if (apiKey.includes("sk-ant-oat")) {
+function isOAuthToken(apiKey) {
+	return apiKey.includes("sk-ant-oat");
+}
+function createClient(model, apiKey, interleavedThinking) {
+	const betaFeatures = ["fine-grained-tool-streaming-2025-05-14"];
+	if (interleavedThinking) {
+		betaFeatures.push("interleaved-thinking-2025-05-14");
+	}
+	const oauthToken = isOAuthToken(apiKey);
+	if (oauthToken) {
 		const defaultHeaders = {
 			accept: "application/json",
 			"anthropic-dangerous-direct-browser-access": "true",
-			"anthropic-beta": `oauth-2025-04-20,${baseBetas}${opus45Betas}`,
+			"anthropic-beta": `claude-code-20250219,oauth-2025-04-20,${betaFeatures.join(",")}`,
+			"user-agent": `claude-cli/${claudeCodeVersion} (external, cli)`,
+			"x-app": "cli",
 			...(model.headers || {}),
 		};
-		// Clear the env var if we're in Node.js to prevent SDK from using it
-		if (typeof process !== "undefined" && process.env) {
-			delete process.env.ANTHROPIC_API_KEY;
-		}
 		const client = new Anthropic({
 			apiKey: null,
 			authToken: apiKey,
@@ -252,32 +272,28 @@ function createClient(model, apiKey) {
 			dangerouslyAllowBrowser: true,
 		});
 		return { client, isOAuthToken: true };
-	} else {
-		const defaultHeaders = {
-			accept: "application/json",
-			"anthropic-dangerous-direct-browser-access": "true",
-			"anthropic-beta": `${baseBetas}${opus45Betas}`,
-			...(model.headers || {}),
-		};
-		const client = new Anthropic({
-			apiKey,
-			baseURL: model.baseUrl,
-			dangerouslyAllowBrowser: true,
-			defaultHeaders,
-		});
-		return { client, isOAuthToken: false };
 	}
+	const defaultHeaders = {
+		accept: "application/json",
+		"anthropic-dangerous-direct-browser-access": "true",
+		"anthropic-beta": betaFeatures.join(","),
+		...(model.headers || {}),
+	};
+	const client = new Anthropic({
+		apiKey,
+		baseURL: model.baseUrl,
+		dangerouslyAllowBrowser: true,
+		defaultHeaders,
+	});
+	return { client, isOAuthToken: false };
 }
 function buildParams(model, context, isOAuthToken, options) {
-	const isOpus45 = model.id.includes("opus-4-5") || model.id.includes("opus-4.5");
 	const params = {
 		model: model.id,
 		messages: convertMessages(context.messages, model),
 		max_tokens: options?.maxTokens || (model.maxTokens / 3) | 0,
 		stream: true,
-		...(isOpus45 && { output_config: { effort: "high" } }),
 	};
-	// For OAuth tokens, we MUST include Claude Code identity
 	if (isOAuthToken) {
 		params.system = [
 			{
@@ -325,7 +341,10 @@ function buildParams(model, context, isOAuthToken, options) {
 		if (typeof options.toolChoice === "string") {
 			params.tool_choice = { type: options.toolChoice };
 		} else {
-			params.tool_choice = options.toolChoice;
+			params.tool_choice = {
+				type: "tool",
+				name: toClaudeCodeName(options.toolChoice.name),
+			};
 		}
 	}
 	return params;
@@ -391,30 +410,24 @@ function convertMessages(messages, model) {
 					});
 				} else if (block.type === "thinking") {
 					if (block.thinking.trim().length === 0) continue;
-					// Native Anthropic requires signature, non-Anthropic APIs (like Synthetic) don't
-					const isNativeAnthropic = model.baseUrl?.includes("api.anthropic.com") ?? true;
-					const hasValidSignature = block.thinkingSignature && block.thinkingSignature.trim().length > 0;
-					if (isNativeAnthropic && hasValidSignature) {
-						// Native Anthropic with valid signature
+					// Missing signature => send as text to avoid API rejection.
+					if (!block.thinkingSignature || block.thinkingSignature.trim().length === 0) {
+						blocks.push({
+							type: "text",
+							text: sanitizeSurrogates(block.thinking),
+						});
+					} else {
 						blocks.push({
 							type: "thinking",
 							thinking: sanitizeSurrogates(block.thinking),
 							signature: block.thinkingSignature,
 						});
-					} else if (!isNativeAnthropic) {
-						// Non-Anthropic APIs: send thinking block without signature
-						blocks.push({
-							type: "thinking",
-							thinking: sanitizeSurrogates(block.thinking),
-						});
 					}
-					// Native Anthropic without valid signature: skip the thinking block
-					// (it can't be sent without a valid signature)
 				} else if (block.type === "toolCall") {
 					blocks.push({
 						type: "tool_use",
 						id: sanitizeToolCallId(block.id),
-						name: block.name,
+						name: toClaudeCodeName(block.name),
 						input: block.arguments,
 					});
 				}
@@ -478,7 +491,7 @@ function convertTools(tools) {
 	return tools.map((tool) => {
 		const jsonSchema = tool.parameters; // TypeBox already generates JSON Schema
 		return {
-			name: tool.name,
+			name: toClaudeCodeName(tool.name),
 			description: tool.description,
 			input_schema: {
 				type: "object",

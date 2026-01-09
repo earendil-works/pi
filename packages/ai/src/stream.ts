@@ -26,6 +26,18 @@ export function setApiKey(provider: any, key: string): void {
 	apiKeys.set(provider, key);
 }
 
+const envKeyByProvider: Record<string, string> = {
+	openai: "OPENAI_API_KEY",
+	anthropic: "ANTHROPIC_API_KEY",
+	google: "GEMINI_API_KEY",
+	groq: "GROQ_API_KEY",
+	cerebras: "CEREBRAS_API_KEY",
+	xai: "XAI_API_KEY",
+	openrouter: "OPENROUTER_API_KEY",
+	zai: "ZAI_API_KEY",
+	mistral: "MISTRAL_API_KEY",
+};
+
 /**
  * Get API key from environment variables (sync).
  * Does NOT check OAuth credentials - use resolveApiKey() for OAuth support.
@@ -42,19 +54,18 @@ export function getApiKey(provider: any): string | undefined {
 		return process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
 	}
 
-	const envMap: Record<string, string> = {
-		openai: "OPENAI_API_KEY",
-		anthropic: "ANTHROPIC_API_KEY",
-		google: "GEMINI_API_KEY",
-		groq: "GROQ_API_KEY",
-		cerebras: "CEREBRAS_API_KEY",
-		xai: "XAI_API_KEY",
-		openrouter: "OPENROUTER_API_KEY",
-		zai: "ZAI_API_KEY",
-		mistral: "MISTRAL_API_KEY",
-	};
+	const envVar = envKeyByProvider[provider];
+	return envVar ? process.env[envVar] : undefined;
+}
 
-	const envVar = envMap[provider];
+export function getEnvApiKey(provider: KnownProvider): string | undefined;
+export function getEnvApiKey(provider: string): string | undefined;
+export function getEnvApiKey(provider: KnownProvider | string): string | undefined {
+	if (provider === "github-copilot") {
+		return process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+	}
+
+	const envVar = envKeyByProvider[provider];
 	return envVar ? process.env[envVar] : undefined;
 }
 

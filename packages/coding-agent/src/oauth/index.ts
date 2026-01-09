@@ -7,7 +7,6 @@ import {
 	getOAuthApiKey,
 	listOAuthProviders as listOAuthProvidersFromAi,
 	loadOAuthCredentials,
-	loginAnthropic,
 	loginAntigravity,
 	loginGeminiCli,
 	loginGitHubCopilot,
@@ -20,6 +19,7 @@ import {
 	saveOAuthCredentials,
 	setOAuthStorage,
 } from "@kennyfrc/pi-ai";
+import { loginAnthropic } from "./anthropic.js";
 
 // Re-export types and functions
 export type { OAuthCredentials, OAuthProvider, OAuthStorageBackend };

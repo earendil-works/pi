@@ -10,6 +10,17 @@ const apiKeys = new Map();
 export function setApiKey(provider, key) {
 	apiKeys.set(provider, key);
 }
+const envKeyByProvider = {
+	openai: "OPENAI_API_KEY",
+	anthropic: "ANTHROPIC_API_KEY",
+	google: "GEMINI_API_KEY",
+	groq: "GROQ_API_KEY",
+	cerebras: "CEREBRAS_API_KEY",
+	xai: "XAI_API_KEY",
+	openrouter: "OPENROUTER_API_KEY",
+	zai: "ZAI_API_KEY",
+	mistral: "MISTRAL_API_KEY",
+};
 export function getApiKey(provider) {
 	// Check explicit keys first
 	const key = apiKeys.get(provider);
@@ -18,18 +29,14 @@ export function getApiKey(provider) {
 	if (provider === "github-copilot") {
 		return process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
 	}
-	const envMap = {
-		openai: "OPENAI_API_KEY",
-		anthropic: "ANTHROPIC_API_KEY",
-		google: "GEMINI_API_KEY",
-		groq: "GROQ_API_KEY",
-		cerebras: "CEREBRAS_API_KEY",
-		xai: "XAI_API_KEY",
-		openrouter: "OPENROUTER_API_KEY",
-		zai: "ZAI_API_KEY",
-		mistral: "MISTRAL_API_KEY",
-	};
-	const envVar = envMap[provider];
+	const envVar = envKeyByProvider[provider];
+	return envVar ? process.env[envVar] : undefined;
+}
+export function getEnvApiKey(provider) {
+	if (provider === "github-copilot") {
+		return process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+	}
+	const envVar = envKeyByProvider[provider];
 	return envVar ? process.env[envVar] : undefined;
 }
 export async function resolveApiKey(provider) {

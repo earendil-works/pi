@@ -16,6 +16,8 @@ export declare function setApiKey(provider: string, key: string): void;
  */
 export declare function getApiKey(provider: KnownProvider): string | undefined;
 export declare function getApiKey(provider: string): string | undefined;
+export declare function getEnvApiKey(provider: KnownProvider): string | undefined;
+export declare function getEnvApiKey(provider: string): string | undefined;
 /**
  * Resolve API key from OAuth credentials or environment (async).
  * Automatically refreshes expired OAuth tokens.
