@@ -2821,7 +2821,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "nex-agi/deepseek-v3.1-nex-n1:free": {
+		readonly "nex-agi/deepseek-v3.1-nex-n1": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -5762,7 +5762,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "anthropic/claude-3.5-haiku": {
+		readonly "anthropic/claude-3.5-haiku-20241022": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -5779,7 +5779,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "anthropic/claude-3.5-haiku-20241022": {
+		readonly "anthropic/claude-3.5-haiku": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6034,7 +6034,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "meta-llama/llama-3.1-70b-instruct": {
+		readonly "meta-llama/llama-3.1-405b-instruct": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6051,7 +6051,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "meta-llama/llama-3.1-405b-instruct": {
+		readonly "meta-llama/llama-3.1-70b-instruct": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6085,7 +6085,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4o-mini": {
+		readonly "openai/gpt-4o-mini-2024-07-18": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6102,7 +6102,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4o-mini-2024-07-18": {
+		readonly "openai/gpt-4o-mini": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6221,7 +6221,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "meta-llama/llama-3-8b-instruct": {
+		readonly "meta-llama/llama-3-70b-instruct": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6238,7 +6238,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "meta-llama/llama-3-70b-instruct": {
+		readonly "meta-llama/llama-3-8b-instruct": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6323,7 +6323,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4-turbo-preview": {
+		readonly "openai/gpt-3.5-turbo-0613": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6340,7 +6340,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-3.5-turbo-0613": {
+		readonly "openai/gpt-4-turbo-preview": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6675,6 +6675,93 @@ export declare const MODELS: {
 			baseUrl: string;
 			reasoning: false;
 			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+	};
+	readonly "openai-codex": {
+		readonly "gpt-5.1": {
+			id: string;
+			name: string;
+			api: "openai-codex-responses";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "gpt-5.1-codex-max": {
+			id: string;
+			name: string;
+			api: "openai-codex-responses";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "gpt-5.1-codex-mini": {
+			id: string;
+			name: string;
+			api: "openai-codex-responses";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "gpt-5.2": {
+			id: string;
+			name: string;
+			api: "openai-codex-responses";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "gpt-5.2-codex": {
+			id: string;
+			name: string;
+			api: "openai-codex-responses";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
 			cost: {
 				input: number;
 				output: number;

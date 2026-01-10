@@ -1,5 +1,8 @@
 import { MODELS } from "./models.generated.js";
-import type { Api, KnownProvider, Model, Usage } from "./types.js";
+import type { Api, KnownProvider, Model, Provider, Usage } from "./types.js";
+
+/** Providers that exist in the generated MODELS constant */
+type GeneratedProvider = keyof typeof MODELS;
 
 const modelRegistry: Map<string, Map<string, Model<Api>>> = new Map();
 
@@ -13,26 +16,38 @@ for (const [provider, models] of Object.entries(MODELS)) {
 }
 
 type ModelApi<
-	TProvider extends KnownProvider,
+	TProvider extends GeneratedProvider,
 	TModelId extends keyof (typeof MODELS)[TProvider],
 > = (typeof MODELS)[TProvider][TModelId] extends { api: infer TApi } ? (TApi extends Api ? TApi : never) : never;
 
-export function getModel<TProvider extends KnownProvider, TModelId extends keyof (typeof MODELS)[TProvider]>(
+/**
+ * Get a model by provider and model ID.
+ * For providers in MODELS, this returns a strongly-typed model.
+ */
+export function getModel<TProvider extends GeneratedProvider, TModelId extends keyof (typeof MODELS)[TProvider]>(
 	provider: TProvider,
 	modelId: TModelId,
-): Model<ModelApi<TProvider, TModelId>> {
-	return modelRegistry.get(provider)?.get(modelId as string) as Model<ModelApi<TProvider, TModelId>>;
+): Model<ModelApi<TProvider, TModelId>>;
+/**
+ * Get a model by provider and model ID.
+ * For dynamic providers (OAuth, custom), this returns Model<Api> | undefined.
+ */
+export function getModel(provider: Provider, modelId: string): Model<Api> | undefined;
+export function getModel(provider: Provider, modelId: string): Model<Api> | undefined {
+	return modelRegistry.get(provider)?.get(modelId);
 }
 
 export function getProviders(): KnownProvider[] {
 	return Array.from(modelRegistry.keys()) as KnownProvider[];
 }
 
-export function getModels<TProvider extends KnownProvider>(
+export function getModels<TProvider extends GeneratedProvider>(
 	provider: TProvider,
-): Model<ModelApi<TProvider, keyof (typeof MODELS)[TProvider]>>[] {
+): Model<ModelApi<TProvider, keyof (typeof MODELS)[TProvider]>>[];
+export function getModels(provider: Provider): Model<Api>[];
+export function getModels(provider: Provider): Model<Api>[] {
 	const models = modelRegistry.get(provider);
-	return models ? (Array.from(models.values()) as Model<ModelApi<TProvider, keyof (typeof MODELS)[TProvider]>>[]) : [];
+	return models ? Array.from(models.values()) : [];
 }
 
 export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage): Usage["cost"] {

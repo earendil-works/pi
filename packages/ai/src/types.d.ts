@@ -15,6 +15,7 @@ export type { AssistantMessageEventStream } from "./utils/event-stream.js";
 export type Api =
 	| "openai-completions"
 	| "openai-responses"
+	| "openai-codex-responses"
 	| "anthropic-messages"
 	| "google-generative-ai"
 	| "google-gemini-cli"
@@ -23,6 +24,7 @@ export interface ApiOptionsMap {
 	"anthropic-messages": AnthropicOptions;
 	"openai-completions": OpenAICompletionsOptions;
 	"openai-responses": OpenAIResponsesOptions;
+	"openai-codex-responses": OpenAICodexResponsesOptions;
 	"google-generative-ai": GoogleOptions;
 	"google-gemini-cli": GoogleGeminiCliOptions;
 	"zai-completions": ZAICompletionsOptions;
@@ -41,6 +43,14 @@ export interface ZAICompletionsOptions extends StreamOptions {
 	knowledgeBaseId?: string;
 	knowledgeBasePromptTemplate?: string;
 }
+export interface OpenAICodexResponsesOptions extends StreamOptions {
+	reasoningEffort?: ReasoningEffort;
+	reasoningSummary?: "auto" | "concise" | "detailed" | "off" | "on" | null;
+	textVerbosity?: "low" | "medium" | "high";
+	include?: string[];
+	/** Session ID for prompt caching */
+	sessionId?: string;
+}
 export type OptionsForApi<TApi extends Api> = ApiOptionsMap[TApi];
 export type KnownProvider =
 	| "anthropic"
@@ -48,6 +58,8 @@ export type KnownProvider =
 	| "google-gemini-cli"
 	| "google-antigravity"
 	| "openai"
+	| "openai-codex"
+	| "github-copilot"
 	| "xai"
 	| "groq"
 	| "cerebras"

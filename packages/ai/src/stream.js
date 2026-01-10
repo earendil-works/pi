@@ -2,6 +2,7 @@ import { supportsXhigh } from "./models.js";
 import { streamAnthropic } from "./providers/anthropic.js";
 import { streamGoogle } from "./providers/google.js";
 import { streamGoogleGeminiCli } from "./providers/google-gemini-cli.js";
+import { streamOpenAICodexResponses } from "./providers/openai-codex-responses.js";
 import { streamOpenAICompletions } from "./providers/openai-completions.js";
 import { streamOpenAIResponses } from "./providers/openai-responses.js";
 import { getOAuthApiKey, getOAuthProviderForModelProvider } from "./utils/oauth/index.js";
@@ -66,6 +67,8 @@ export function stream(model, context, options) {
 			return streamOpenAICompletions(model, context, providerOptions);
 		case "openai-responses":
 			return streamOpenAIResponses(model, context, providerOptions);
+		case "openai-codex-responses":
+			return streamOpenAICodexResponses(model, context, providerOptions);
 		case "google-generative-ai":
 			return streamGoogle(model, context, providerOptions);
 		case "google-gemini-cli":
@@ -129,6 +132,11 @@ function mapOptionsForApi(model, options, apiKey) {
 				reasoningEffort: supportsXhigh(model) ? options?.reasoning : clampReasoning(options?.reasoning),
 			};
 		case "openai-responses":
+			return {
+				...base,
+				reasoningEffort: supportsXhigh(model) ? options?.reasoning : clampReasoning(options?.reasoning),
+			};
+		case "openai-codex-responses":
 			return {
 				...base,
 				reasoningEffort: supportsXhigh(model) ? options?.reasoning : clampReasoning(options?.reasoning),

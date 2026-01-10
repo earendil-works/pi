@@ -24,6 +24,8 @@ export {
 export { loginAntigravity, refreshAntigravityToken } from "./google-antigravity.js";
 // Google Gemini CLI
 export { loginGeminiCli, refreshGoogleCloudToken } from "./google-gemini-cli.js";
+// OpenAI Codex (ChatGPT OAuth)
+export { loginOpenAICodex, refreshOpenAICodexToken } from "./openai-codex.js";
 // Storage
 export {
 	getOAuthPath,
@@ -44,6 +46,7 @@ import { refreshAnthropicToken } from "./anthropic.js";
 import { refreshGitHubCopilotToken } from "./github-copilot.js";
 import { refreshAntigravityToken } from "./google-antigravity.js";
 import { refreshGoogleCloudToken } from "./google-gemini-cli.js";
+import { refreshOpenAICodexToken } from "./openai-codex.js";
 import { loadOAuthCredentials, removeOAuthCredentials, saveOAuthCredentials } from "./storage.js";
 /**
  * Refresh token for any OAuth provider.
@@ -74,8 +77,13 @@ export async function refreshToken(provider) {
 			}
 			newCredentials = await refreshAntigravityToken(credentials.refresh, credentials.projectId);
 			break;
-		default:
-			throw new Error(`Unknown OAuth provider: ${provider}`);
+		case "openai-codex":
+			newCredentials = await refreshOpenAICodexToken(credentials.refresh);
+			break;
+		default: {
+			const _exhaustive = provider;
+			throw new Error(`Unknown OAuth provider: ${_exhaustive}`);
+		}
 	}
 	saveOAuthCredentials(provider, newCredentials);
 	return newCredentials.access;
@@ -132,6 +140,7 @@ export function getOAuthProviderForModelProvider(modelProvider) {
 		"github-copilot": "github-copilot",
 		"google-gemini-cli": "google-gemini-cli",
 		"google-antigravity": "google-antigravity",
+		"openai-codex": "openai-codex",
 	};
 	return mapping[modelProvider];
 }
@@ -143,6 +152,11 @@ export function getOAuthProviders() {
 		{
 			id: "anthropic",
 			name: "Anthropic (Claude Pro/Max)",
+			available: true,
+		},
+		{
+			id: "openai-codex",
+			name: "ChatGPT Plus/Pro (Codex)",
 			available: true,
 		},
 		{

@@ -20,6 +20,7 @@ export {
 } from "./github-copilot.js";
 export { type AntigravityCredentials, loginAntigravity, refreshAntigravityToken } from "./google-antigravity.js";
 export { type GoogleCloudCredentials, loginGeminiCli, refreshGoogleCloudToken } from "./google-gemini-cli.js";
+export { loginOpenAICodex, refreshOpenAICodexToken } from "./openai-codex.js";
 export {
 	getOAuthPath,
 	hasOAuthCredentials,
