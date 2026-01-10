@@ -9,6 +9,7 @@ export { lsTool } from "./ls.js";
 export { readTool } from "./read.js";
 export { readImageTool } from "./read-image.js";
 export { readThreadTool } from "./read-thread.js";
+export { todowriteTool } from "./todowrite.js";
 export { writeTool } from "./write.js";
 
 import { bashTool } from "./bash.js";
@@ -20,6 +21,7 @@ import { lsTool } from "./ls.js";
 import { readTool } from "./read.js";
 import { readImageTool } from "./read-image.js";
 import { readThreadTool } from "./read-thread.js";
+import { todowriteTool } from "./todowrite.js";
 import { writeTool } from "./write.js";
 
 // Default tools for full access mode
@@ -31,6 +33,7 @@ export const codingTools: AgentTool<any>[] = [
 	listThreadsTool,
 	readThreadTool,
 	readImageTool,
+	todowriteTool,
 ];
 
 // All available tools (including read-only exploration tools)
@@ -45,6 +48,7 @@ export const allTools = {
 	list_threads: listThreadsTool,
 	read_thread: readThreadTool,
 	read_image: readImageTool,
+	todowrite: todowriteTool,
 };
 
 export type ToolName = keyof typeof allTools;

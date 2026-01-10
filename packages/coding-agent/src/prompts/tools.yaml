@@ -58,3 +58,26 @@ read_thread: |
   Use 'raw: true' ONLY when you need the full unfiltered transcript (e.g., for complete context or debugging).
   
   Returns <thread_extract> (default) or <reference_thread> (raw mode).
+
+todowrite: |
+  Create and manage a structured task list for planning multi-step work. Use this to track progress on complex tasks and demonstrate your approach to the user.
+
+  When to use:
+  - Complex tasks requiring 3+ distinct steps
+  - User provides multiple tasks in one request
+  - You want to show clear progress tracking
+
+  When NOT to use:
+  - Single, trivial tasks
+  - Purely conversational or informational requests
+  - Tasks completable in 1-2 simple steps
+
+  Task states:
+  - pending: Not yet started
+  - in_progress: Currently working on (limit to ONE at a time)
+  - completed: Finished successfully
+  - cancelled: No longer needed
+
+  Priority levels: high, medium (default), low
+
+  The tool replaces the entire todo list each call. Include all current todos when updating status.

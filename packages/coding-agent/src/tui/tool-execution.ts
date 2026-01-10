@@ -333,6 +333,23 @@ export class ToolExecutionComponent extends Container {
 					}
 				}
 			}
+		} else if (this.toolName === "todowrite") {
+			text = theme.fg("toolTitle", theme.bold("todowrite"));
+
+			if (this.result) {
+				const output = this.getTextOutput().trim();
+				if (output) {
+					text +=
+						"\n\n" +
+						output
+							.split("\n")
+							.map((line: string) => theme.fg("toolOutput", line))
+							.join("\n");
+				}
+			} else {
+				const count = this.args?.todos?.length || 0;
+				text += theme.fg("dim", ` (${count} items)`);
+			}
 		} else {
 			// Generic tool
 			text = theme.fg("toolTitle", theme.bold(this.toolName));

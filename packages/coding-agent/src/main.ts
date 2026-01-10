@@ -253,8 +253,8 @@ ${chalk.bold("Options:")}
   --session <path>        Use specific session file
   --no-session            Don't save session (ephemeral)
   --models <patterns>     Comma-separated model patterns for quick cycling with Ctrl+P
-  --tools <tools>         Comma-separated list of tools to enable (default: read,bash,edit,write)
-                          Available: read, bash, edit, write, grep, find, ls
+  --tools <tools>         Comma-separated list of tools to enable (default: read,bash,edit,write,todowrite)
+                          Available: read, bash, edit, write, grep, find, ls, todowrite
   --thinking <level>      Set thinking level: off, minimal, low, medium, high
   --export <file>         Export session file to HTML and exit
   --help, -h              Show this help
@@ -312,14 +312,15 @@ ${chalk.bold("Environment Variables:")}
   ZAI_API_KEY             - ZAI API key
   PI_CODING_AGENT_DIR     - Session storage directory (default: ~/.pi/agent)
 
-${chalk.bold("Available Tools (default: read, bash, edit, write):")}
-  read   - Read file contents
-  bash   - Execute bash commands
-  edit   - Edit files with find/replace
-  write  - Write files (creates/overwrites)
-  grep   - Search file contents (read-only, off by default)
-  find   - Find files by glob pattern (read-only, off by default)
-  ls     - List directory contents (read-only, off by default)
+${chalk.bold("Available Tools (default: read, bash, edit, write, todowrite):")}
+  read      - Read file contents
+  bash      - Execute bash commands
+  edit      - Edit files with find/replace
+  write     - Write files (creates/overwrites)
+  todowrite - Track planning steps and progress
+  grep      - Search file contents (read-only, off by default)
+  find      - Find files by glob pattern (read-only, off by default)
+  ls        - List directory contents (read-only, off by default)
 `);
 }
 
