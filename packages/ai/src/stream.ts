@@ -2,6 +2,7 @@ import { supportsXhigh } from "./models.js";
 import { type AnthropicOptions, streamAnthropic } from "./providers/anthropic.js";
 import { type GoogleOptions, streamGoogle } from "./providers/google.js";
 import { type GoogleGeminiCliOptions, streamGoogleGeminiCli } from "./providers/google-gemini-cli.js";
+import { streamOpenAICodexResponses } from "./providers/openai-codex-responses.js";
 import { type OpenAICompletionsOptions, streamOpenAICompletions } from "./providers/openai-completions.js";
 import { type OpenAIResponsesOptions, streamOpenAIResponses } from "./providers/openai-responses.js";
 import type {
@@ -11,6 +12,7 @@ import type {
 	Context,
 	KnownProvider,
 	Model,
+	OpenAICodexResponsesOptions,
 	OptionsForApi,
 	ReasoningEffort,
 	SimpleStreamOptions,
@@ -118,6 +120,13 @@ export function stream<TApi extends Api>(
 		case "openai-responses":
 			return streamOpenAIResponses(model as Model<"openai-responses">, context, providerOptions as any);
 
+		case "openai-codex-responses":
+			return streamOpenAICodexResponses(
+				model as Model<"openai-codex-responses">,
+				context,
+				providerOptions as OpenAICodexResponsesOptions,
+			);
+
 		case "google-generative-ai":
 			return streamGoogle(model as Model<"google-generative-ai">, context, providerOptions);
 
@@ -219,6 +228,12 @@ function mapOptionsForApi<TApi extends Api>(
 				...base,
 				reasoningEffort: supportsXhigh(model) ? options?.reasoning : clampReasoning(options?.reasoning),
 			} satisfies OpenAIResponsesOptions;
+
+		case "openai-codex-responses":
+			return {
+				...base,
+				reasoningEffort: supportsXhigh(model) ? options?.reasoning : clampReasoning(options?.reasoning),
+			} satisfies OpenAICodexResponsesOptions;
 
 		case "google-generative-ai": {
 			// Explicitly disable thinking when reasoning is not specified

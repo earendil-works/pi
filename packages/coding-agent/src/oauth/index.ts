@@ -10,6 +10,7 @@ import {
 	loginAntigravity,
 	loginGeminiCli,
 	loginGitHubCopilot,
+	loginOpenAICodex,
 	type OAuthCredentials,
 	type OAuthProvider,
 	type OAuthStorageBackend,
@@ -60,6 +61,12 @@ export function getOAuthProviders(): OAuthProviderInfo[] {
 			available: true,
 		},
 		{
+			id: "openai-codex",
+			name: "ChatGPT Plus/Pro (Codex)",
+			description: "Use GPT-5.x Codex models with your ChatGPT subscription",
+			available: true,
+		},
+		{
 			id: "github-copilot",
 			name: "GitHub Copilot",
 			description: "Use models via GitHub Copilot subscription",
@@ -96,6 +103,13 @@ export async function login(
 				async () => onPrompt({ message: "Paste the authorization code below:" }),
 			);
 			break;
+		case "openai-codex":
+			await loginOpenAICodex({
+				onAuth: (info) => onAuth({ url: info.url, instructions: info.instructions }),
+				onPrompt,
+				onProgress,
+			});
+			break;
 		case "github-copilot": {
 			const creds = await loginGitHubCopilot({
 				onAuth: (url, instructions) => onAuth({ url, instructions }),
@@ -113,8 +127,10 @@ export async function login(
 			await loginAntigravity((info) => onAuth({ url: info.url, instructions: info.instructions }), onProgress);
 			break;
 		}
-		default:
-			throw new Error(`Unknown OAuth provider: ${provider}`);
+		default: {
+			const _exhaustive: never = provider;
+			throw new Error(`Unknown OAuth provider: ${_exhaustive}`);
+		}
 	}
 }
 

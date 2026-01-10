@@ -17,13 +17,19 @@ export interface OAuthCredentials {
 	enterpriseUrl?: string;
 	projectId?: string;
 	email?: string;
+	accountId?: string;
 }
 
 export interface OAuthStorage {
 	[provider: string]: OAuthCredentials;
 }
 
-export type OAuthProvider = "anthropic" | "github-copilot" | "google-gemini-cli" | "google-antigravity";
+export type OAuthProvider =
+	| "anthropic"
+	| "github-copilot"
+	| "google-gemini-cli"
+	| "google-antigravity"
+	| "openai-codex";
 
 /**
  * Storage backend interface.

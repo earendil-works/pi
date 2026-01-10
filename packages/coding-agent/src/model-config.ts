@@ -343,6 +343,7 @@ const providerToOAuthProvider: Record<string, string> = {
 	"github-copilot": "github-copilot",
 	"google-gemini-cli": "google-gemini-cli",
 	"google-antigravity": "google-antigravity",
+	"openai-codex": "openai-codex",
 };
 
 // Cache for OAuth status per provider (avoids file reads on every render)

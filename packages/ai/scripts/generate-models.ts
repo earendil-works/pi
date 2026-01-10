@@ -560,6 +560,77 @@ async function generateModels() {
 	];
 	allModels.push(...antigravityModels);
 
+	// OpenAI Codex (ChatGPT OAuth) models
+	// NOTE: These use OAuth authentication, not API keys.
+	// Users must /login with openai-codex provider to use these models.
+	// Context window is based on observed server limits (400s above ~272k), not marketing numbers.
+	const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
+	const CODEX_CONTEXT = 272000;
+	const CODEX_MAX_TOKENS = 128000;
+	const codexModels: Model<"openai-codex-responses">[] = [
+		{
+			id: "gpt-5.1",
+			name: "GPT-5.1 (ChatGPT Sub)",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, // Included with subscription
+			contextWindow: CODEX_CONTEXT,
+			maxTokens: CODEX_MAX_TOKENS,
+		},
+		{
+			id: "gpt-5.1-codex-max",
+			name: "GPT-5.1 Codex Max (ChatGPT Sub)",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: CODEX_CONTEXT,
+			maxTokens: CODEX_MAX_TOKENS,
+		},
+		{
+			id: "gpt-5.1-codex-mini",
+			name: "GPT-5.1 Codex Mini (ChatGPT Sub)",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: CODEX_CONTEXT,
+			maxTokens: CODEX_MAX_TOKENS,
+		},
+		{
+			id: "gpt-5.2",
+			name: "GPT-5.2 (ChatGPT Sub)",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: CODEX_CONTEXT,
+			maxTokens: CODEX_MAX_TOKENS,
+		},
+		{
+			id: "gpt-5.2-codex",
+			name: "GPT-5.2 Codex (ChatGPT Sub)",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: CODEX_CONTEXT,
+			maxTokens: CODEX_MAX_TOKENS,
+		},
+	];
+	allModels.push(...codexModels);
+
 	// Group by provider and deduplicate by model ID
 	const providers: Record<string, Record<string, Model<any>>> = {};
 	for (const model of allModels) {

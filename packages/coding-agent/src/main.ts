@@ -28,6 +28,8 @@ const VERSION = packageJson.version;
 const defaultModelPerProvider: Record<KnownProvider, string> = {
 	anthropic: "claude-sonnet-4-5",
 	openai: "gpt-5.1-codex",
+	"openai-codex": "gpt-5.2-codex",
+	"github-copilot": "gpt-4o",
 	google: "gemini-2.5-pro",
 	"google-gemini-cli": "gemini-2.5-pro",
 	"google-antigravity": "gemini-3-pro-high",

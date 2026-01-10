@@ -4,6 +4,8 @@ export * from "./providers/anthropic.js";
 export * from "./providers/google.js";
 export * from "./providers/google-gemini-cli.js";
 export * from "./providers/google-shared.js";
+export * from "./providers/openai-codex/index.js";
+export * from "./providers/openai-codex-responses.js";
 export * from "./providers/openai-completions.js";
 export * from "./providers/openai-responses.js";
 export * from "./stream.js";

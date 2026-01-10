@@ -13,11 +13,14 @@ export type {
 	OpenAIResponsesOptions,
 };
 
+// OpenAICodexResponsesOptions is defined in this file, exported below
+
 export type { AssistantMessageEventStream } from "./utils/event-stream.js";
 
 export type Api =
 	| "openai-completions"
 	| "openai-responses"
+	| "openai-codex-responses"
 	| "anthropic-messages"
 	| "google-generative-ai"
 	| "google-gemini-cli"
@@ -27,6 +30,7 @@ export interface ApiOptionsMap {
 	"anthropic-messages": AnthropicOptions;
 	"openai-completions": OpenAICompletionsOptions;
 	"openai-responses": OpenAIResponsesOptions;
+	"openai-codex-responses": OpenAICodexResponsesOptions;
 	"google-generative-ai": GoogleOptions;
 	"google-gemini-cli": GoogleGeminiCliOptions;
 	"zai-completions": ZAICompletionsOptions;
@@ -48,6 +52,16 @@ export interface ZAICompletionsOptions extends StreamOptions {
 	knowledgeBasePromptTemplate?: string;
 }
 
+// OpenAI Codex (ChatGPT OAuth) options
+export interface OpenAICodexResponsesOptions extends StreamOptions {
+	reasoningEffort?: ReasoningEffort;
+	reasoningSummary?: "auto" | "concise" | "detailed" | "off" | "on" | null;
+	textVerbosity?: "low" | "medium" | "high";
+	include?: string[];
+	/** Session ID for prompt caching */
+	sessionId?: string;
+}
+
 // Compile-time exhaustiveness check - this will fail if ApiOptionsMap doesn't have all KnownApi keys
 type _CheckExhaustive = ApiOptionsMap extends Record<Api, StreamOptions>
 	? Record<Api, StreamOptions> extends ApiOptionsMap
@@ -65,6 +79,8 @@ export type KnownProvider =
 	| "google-gemini-cli"
 	| "google-antigravity"
 	| "openai"
+	| "openai-codex"
+	| "github-copilot"
 	| "xai"
 	| "groq"
 	| "cerebras"
