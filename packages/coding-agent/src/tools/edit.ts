@@ -304,6 +304,7 @@ export const editTool: AgentTool<typeof editSchema> = {
 	label: "Edit",
 	description: getToolDescription("Edit"),
 	parameters: editSchema,
+	getResourceKey: ({ path }) => `file:${resolvePath(expandPath(path))}`,
 	execute: async (
 		_toolCallId: string,
 		{ path, oldText, newText, all }: { path: string; oldText: string; newText: string; all?: boolean },

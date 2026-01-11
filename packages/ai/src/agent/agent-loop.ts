@@ -1,5 +1,5 @@
 import { streamSimple } from "../stream.js";
-import type { AssistantMessage, Context, Message, ToolResultMessage, UserMessage } from "../types.js";
+import type { AssistantMessage, Context, Message, ToolCall, ToolResultMessage, UserMessage } from "../types.js";
 import { EventStream } from "../utils/event-stream.js";
 import { validateToolArguments } from "../utils/validation.js";
 import type { AgentContext, AgentEvent, AgentLoopConfig, AgentTool, AgentToolResult } from "./types.js";
@@ -182,6 +182,21 @@ async function streamAssistantResponse(
 	return await response.result();
 }
 
+// Internal types for tool execution with resource-based serialization
+interface ToolCallWithMeta<T> {
+	toolCall: ToolCall;
+	originalIndex: number;
+	tool: AgentTool<any, T> | undefined;
+	resourceKey: string | null;
+}
+
+interface ExecutionResult<T> {
+	originalIndex: number;
+	toolCall: ToolCall;
+	resultOrError: AgentToolResult<T> | string;
+	isError: boolean;
+}
+
 async function executeToolCalls<T>(
 	tools: AgentTool<any, T>[] | undefined,
 	assistantMessage: AssistantMessage,
@@ -189,7 +204,6 @@ async function executeToolCalls<T>(
 	stream: EventStream<AgentEvent, Message[]>,
 ): Promise<ToolResultMessage<T>[]> {
 	const toolCalls = assistantMessage.content.filter((c) => c.type === "toolCall");
-	const results: ToolResultMessage<any>[] = [];
 
 	// 1. Emit all start events upfront (FIFO order preserved)
 	for (const toolCall of toolCalls) {
@@ -201,11 +215,35 @@ async function executeToolCalls<T>(
 		});
 	}
 
-	// 2. Execute all tools in parallel
-	const executionPromises = toolCalls.map(async (toolCall) => {
+	// 2. Annotate tool calls with resource keys
+	const toolCallsWithMeta: ToolCallWithMeta<T>[] = toolCalls.map((toolCall, index) => {
 		const tool = tools?.find((t) => t.name === toolCall.name);
+		const resourceKey = tool?.getResourceKey?.(toolCall.arguments) ?? null;
+		return { toolCall, originalIndex: index, tool, resourceKey };
+	});
 
-		// Progress callback specific to this tool call
+	// 3. Group by resource key
+	// null key = parallel group, same non-null key = serial group
+	const parallelGroup: ToolCallWithMeta<T>[] = [];
+	const serialGroups = new Map<string, ToolCallWithMeta<T>[]>();
+
+	for (const item of toolCallsWithMeta) {
+		if (item.resourceKey === null) {
+			parallelGroup.push(item);
+		} else {
+			const group = serialGroups.get(item.resourceKey);
+			if (group) {
+				group.push(item);
+			} else {
+				serialGroups.set(item.resourceKey, [item]);
+			}
+		}
+	}
+
+	// 4. Execute a single tool call
+	const executeSingle = async (item: ToolCallWithMeta<T>): Promise<ExecutionResult<T>> => {
+		const { toolCall, originalIndex, tool } = item;
+
 		const onProgress = (chunk: string) => {
 			stream.push({
 				type: "tool_execution_progress",
@@ -220,24 +258,55 @@ async function executeToolCalls<T>(
 
 		try {
 			if (!tool) throw new Error(`Tool ${toolCall.name} not found`);
-
-			// Validate arguments using shared validation function
 			const validatedArgs = validateToolArguments(tool, toolCall);
-
-			// Execute with validated, typed arguments and progress callback
 			resultOrError = await tool.execute(toolCall.id, validatedArgs, signal, onProgress);
 		} catch (e) {
 			resultOrError = e instanceof Error ? e.message : String(e);
 			isError = true;
 		}
 
-		return { toolCall, resultOrError, isError };
-	});
+		return { originalIndex, toolCall, resultOrError, isError };
+	};
 
-	const executionResults = await Promise.all(executionPromises);
+	// 5. Execute serial group (FIFO order within group)
+	const executeSerial = async (items: ToolCallWithMeta<T>[]): Promise<ExecutionResult<T>[]> => {
+		const results: ExecutionResult<T>[] = [];
+		for (const item of items) {
+			results.push(await executeSingle(item));
+		}
+		return results;
+	};
 
-	// 3. Process results and emit end events (FIFO order preserved)
-	for (const { toolCall, resultOrError, isError } of executionResults) {
+	// 6. Build execution promises for all groups
+	const groupPromises: Promise<ExecutionResult<T>[]>[] = [];
+
+	// Parallel group: execute all concurrently
+	if (parallelGroup.length > 0) {
+		groupPromises.push(Promise.all(parallelGroup.map(executeSingle)));
+	}
+
+	// Serial groups: execute each group sequentially, but groups run in parallel with each other
+	for (const [, items] of serialGroups) {
+		groupPromises.push(executeSerial(items));
+	}
+
+	// 7. Await all groups and flatten results
+	const allResultsNested = await Promise.all(groupPromises);
+	const allResults = allResultsNested.flat();
+
+	// 8. Re-order to original FIFO order
+	const resultMap = new Map(allResults.map((r) => [r.originalIndex, r]));
+	const orderedResults: ExecutionResult<T>[] = [];
+	for (let i = 0; i < toolCalls.length; i++) {
+		const result = resultMap.get(i);
+		if (result) {
+			orderedResults.push(result);
+		}
+	}
+
+	// 9. Emit end events and build result messages (FIFO order)
+	const results: ToolResultMessage<T>[] = [];
+	for (const { toolCall, resultOrError, isError } of orderedResults) {
 		stream.push({
 			type: "tool_execution_end",
 			toolCallId: toolCall.id,
@@ -246,7 +315,6 @@ async function executeToolCalls<T>(
 			isError,
 		});
 
-		// Convert result to content blocks
 		const content: ToolResultMessage<T>["content"] =
 			typeof resultOrError === "string" ? [{ type: "text", text: resultOrError }] : resultOrError.content;
 

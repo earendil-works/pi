@@ -440,4 +440,188 @@ describe("Agent Parallel Execution", () => {
 		expect(duration).toBeLessThan(190);
 		expect(turnCount).toBe(1);
 	});
+
+	it("should serialize tools with the same resource key", async () => {
+		// Track execution order to verify FIFO serialization
+		const executionLog: string[] = [];
+
+		const fileOpSchema = Type.Object({ path: Type.String(), delay: Type.Number() });
+		const fileOpTool: AgentTool<typeof fileOpSchema> = {
+			name: "fileOp",
+			label: "File Operation",
+			description: "Simulates a file operation with delay",
+			parameters: fileOpSchema,
+			// Same path = same resource key = serialized
+			getResourceKey: ({ path }) => `file:${path}`,
+			execute: async (_id, args) => {
+				executionLog.push(`start:${args.path}`);
+				await new Promise((resolve) => setTimeout(resolve, args.delay));
+				executionLog.push(`end:${args.path}`);
+				return {
+					content: [{ type: "text" as const, text: `done ${args.path}` }],
+					details: undefined,
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [fileOpTool],
+		};
+
+		// Mock 3 tool calls: 2 to same file (should serialize), 1 to different file (can parallel)
+		const mockStreamFn = () => {
+			const stream = new AssistantMessageEventStream();
+			setTimeout(() => {
+				const msg: AssistantMessage = {
+					role: "assistant",
+					content: [
+						// These two target the same file - must be serialized
+						{ type: "toolCall", id: "call_1", name: "fileOp", arguments: { path: "/tmp/a.txt", delay: 50 } },
+						{ type: "toolCall", id: "call_2", name: "fileOp", arguments: { path: "/tmp/a.txt", delay: 50 } },
+						// This targets a different file - can run in parallel with the above group
+						{ type: "toolCall", id: "call_3", name: "fileOp", arguments: { path: "/tmp/b.txt", delay: 50 } },
+					],
+					stopReason: "toolUse",
+					api: "openai-completions",
+					provider: "mock",
+					model: "mock",
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					timestamp: Date.now(),
+				};
+				stream.push({ type: "done", reason: "toolUse", message: msg });
+				stream.end();
+			}, 10);
+			return stream;
+		};
+
+		const start = Date.now();
+		const stream = agentLoop(
+			{ role: "user", content: [{ type: "text", text: "test serialization" }], timestamp: Date.now() },
+			context,
+			{ model: { id: "mock" } as Model<"openai-completions"> },
+			undefined,
+			mockStreamFn as typeof import("../src/stream.js").streamSimple,
+		);
+
+		for await (const event of stream) {
+			if (event.type === "turn_end") {
+				break;
+			}
+		}
+
+		const duration = Date.now() - start;
+
+		// Verify FIFO order for same-file operations
+		// call_1 (a.txt) must complete before call_2 (a.txt) starts
+		const startA1 = executionLog.indexOf("start:/tmp/a.txt");
+		const endA1 = executionLog.indexOf("end:/tmp/a.txt");
+		const startA2 = executionLog.lastIndexOf("start:/tmp/a.txt");
+		const endA2 = executionLog.lastIndexOf("end:/tmp/a.txt");
+
+		expect(endA1).toBeLessThan(startA2); // First a.txt must END before second a.txt STARTS
+
+		// Verify b.txt can run in parallel with a.txt group
+		// b.txt should start before both a.txt operations complete (since they take 100ms total)
+		const startB = executionLog.indexOf("start:/tmp/b.txt");
+		expect(startB).toBeLessThan(endA2); // b.txt starts before second a.txt ends
+
+		// Timing verification:
+		// - a.txt operations: 50ms + 50ms = 100ms (serialized)
+		// - b.txt operation: 50ms (parallel with a.txt group)
+		// Total should be ~100ms, not 150ms
+		console.log(`Resource-serialized execution took ${duration}ms`);
+		console.log(`Execution log: ${executionLog.join(" -> ")}`);
+		expect(duration).toBeLessThan(140); // Should be ~100ms + overhead, not 150ms
+	});
+
+	it("should preserve FIFO order in results for serialized tools", async () => {
+		const resultOrder: string[] = [];
+
+		const fileOpSchema = Type.Object({ id: Type.String() });
+		const fileOpTool: AgentTool<typeof fileOpSchema> = {
+			name: "fileOp",
+			label: "File Operation",
+			description: "Returns id",
+			parameters: fileOpSchema,
+			getResourceKey: () => "same-resource", // All calls serialize
+			execute: async (_callId, args) => {
+				// Variable delay to prove ordering isn't by completion time
+				const delay = args.id === "first" ? 30 : args.id === "second" ? 10 : 20;
+				await new Promise((resolve) => setTimeout(resolve, delay));
+				return {
+					content: [{ type: "text" as const, text: args.id }],
+					details: undefined,
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [fileOpTool],
+		};
+
+		const mockStreamFn = () => {
+			const stream = new AssistantMessageEventStream();
+			setTimeout(() => {
+				const msg: AssistantMessage = {
+					role: "assistant",
+					content: [
+						{ type: "toolCall", id: "call_1", name: "fileOp", arguments: { id: "first" } },
+						{ type: "toolCall", id: "call_2", name: "fileOp", arguments: { id: "second" } },
+						{ type: "toolCall", id: "call_3", name: "fileOp", arguments: { id: "third" } },
+					],
+					stopReason: "toolUse",
+					api: "openai-completions",
+					provider: "mock",
+					model: "mock",
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					timestamp: Date.now(),
+				};
+				stream.push({ type: "done", reason: "toolUse", message: msg });
+				stream.end();
+			}, 10);
+			return stream;
+		};
+
+		const stream = agentLoop(
+			{ role: "user", content: [{ type: "text", text: "test order" }], timestamp: Date.now() },
+			context,
+			{ model: { id: "mock" } as Model<"openai-completions"> },
+			undefined,
+			mockStreamFn as typeof import("../src/stream.js").streamSimple,
+		);
+
+		for await (const event of stream) {
+			if (event.type === "tool_execution_end") {
+				const text =
+					typeof event.result === "string"
+						? event.result
+						: event.result.content.find((c) => c.type === "text")?.text;
+				if (text) resultOrder.push(text);
+			}
+			if (event.type === "turn_end") {
+				break;
+			}
+		}
+
+		// Results must be in FIFO order regardless of variable delays
+		expect(resultOrder).toEqual(["first", "second", "third"]);
+	});
 });

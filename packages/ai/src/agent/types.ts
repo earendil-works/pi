@@ -29,6 +29,15 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 		// Optional callback for streaming progress updates (e.g., bash stdout/stderr)
 		onProgress?: (chunk: string) => void,
 	) => Promise<AgentToolResult<TDetails>>;
+	/**
+	 * Returns a resource key for serialization. Tool calls with the same non-null
+	 * resource key are executed sequentially (FIFO order). Tool calls with different
+	 * keys or undefined/null keys execute in parallel.
+	 *
+	 * Example: Edit and Write tools return `file:${absolutePath}` to serialize
+	 * operations on the same file while allowing parallel operations on different files.
+	 */
+	getResourceKey?: (params: Static<TParameters>) => string | undefined;
 }
 
 // AgentContext is like Context but uses AgentTool

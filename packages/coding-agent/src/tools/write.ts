@@ -25,6 +25,7 @@ export const writeTool: AgentTool<typeof writeSchema> = {
 	label: "Write",
 	description: getToolDescription("Write"),
 	parameters: writeSchema,
+	getResourceKey: ({ path }) => `file:${resolvePath(expandPath(path))}`,
 	execute: async (
 		_toolCallId: string,
 		{ path, content }: { path: string; content: string },
