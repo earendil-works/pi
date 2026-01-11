@@ -87,9 +87,11 @@ export async function transformRequestBody(body, options = {}, prompt) {
 	} else {
 		delete body.reasoning;
 	}
+	const modelId = body.model.includes("/") ? body.model.split("/").pop() : body.model;
+	const defaultVerbosity = modelId.includes("codex") ? "medium" : "high";
 	body.text = {
 		...body.text,
-		verbosity: options.textVerbosity || "medium",
+		verbosity: options.textVerbosity || defaultVerbosity,
 	};
 	const include = Array.isArray(options.include) ? [...options.include] : [];
 	include.push("reasoning.encrypted_content");

@@ -153,9 +153,12 @@ export async function transformRequestBody(
 		delete body.reasoning;
 	}
 
+	const modelId = body.model.includes("/") ? body.model.split("/").pop()! : body.model;
+	const defaultVerbosity = modelId.includes("codex") ? "medium" : "high";
+
 	body.text = {
 		...body.text,
-		verbosity: options.textVerbosity || "medium",
+		verbosity: options.textVerbosity || defaultVerbosity,
 	};
 
 	const include = Array.isArray(options.include) ? [...options.include] : [];
