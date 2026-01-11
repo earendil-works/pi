@@ -42,9 +42,9 @@ function wrapContent(
 }
 
 export const readThreadTool: AgentTool<typeof readThreadSchema> = {
-	name: "read_thread",
-	label: "read_thread",
-	description: getToolDescription("read_thread"),
+	name: "ReadThread",
+	label: "ReadThread",
+	description: getToolDescription("ReadThread"),
 	parameters: readThreadSchema,
 	execute: async (
 		_toolCallId: string,

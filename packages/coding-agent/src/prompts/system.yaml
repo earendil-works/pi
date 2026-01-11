@@ -16,36 +16,36 @@ systemPrompt: |
 
 # Short tool descriptions shown in the system prompt's "Available tools" list
 toolDescriptions:
-  read: Read file contents
-  bash: Execute bash commands (ls, rg, fd, sg, etc.)
-  edit: Edit files with flexible matching (exact, unescape, whitespace-tolerant)
-  write: Create or overwrite files
-  grep: Search file contents for patterns (respects .gitignore)
-  find: Find files by glob pattern (respects .gitignore)
-  ls: List directory contents
-  list_threads: List past conversation threads with search
-  read_thread: Read a specific thread's conversation history
-  todowrite: Manage a simple task list
+  Read: Read file contents
+  Bash: Execute bash commands (ls, rg, fd, sg, etc.)
+  Edit: Edit files with flexible matching (exact, unescape, whitespace-tolerant)
+  Write: Create or overwrite files
+  Grep: Search file contents for patterns (respects .gitignore)
+  Glob: Find files by glob pattern or list directory (respects .gitignore)
+  ListThreads: List past conversation threads with search
+  ReadThread: Read a specific thread's conversation history
+  ReadImage: Analyze images and extract information
+  TodoWrite: Manage a simple task list
 
 # Guidelines that are conditionally included based on enabled tools
 # Each guideline has a condition (which tools must be present/absent) and the text
 guidelines:
   - condition:
-      absent: [bash, edit, write]
+      absent: [Bash, Edit, Write]
     text: You are in READ-ONLY mode - you cannot modify files or execute arbitrary commands
 
   - condition:
-      present: [bash]
-      absent: [edit, write]
-    text: Use bash ONLY for read-only operations (git log, gh issue view, curl, etc.) - do NOT modify any files
+      present: [Bash]
+      absent: [Edit, Write]
+    text: Use Bash ONLY for read-only operations (git log, gh issue view, curl, etc.) - do NOT modify any files
 
   - condition:
-      present: [bash]
-      absent: [grep, find, ls]
-    text: Use bash for file operations like ls, rg (ripgrep), fd, sg (ast-grep), or to read files with line numbers using nl, sed, etc., or to inspect binary files using hexdump, od, xxd, etc. Line numbers are relative to read content when using offset/limit.
+      present: [Bash]
+      absent: [Grep, Glob]
+    text: Use Bash for file operations like ls, rg (ripgrep), fd, sg (ast-grep), or to read files with line numbers using nl, sed, etc., or to inspect binary files using hexdump, od, xxd, etc. Line numbers are relative to read content when using offset/limit.
 
   - condition:
-      present: [bash]
+      present: [Bash]
     text: |
       For interactive sessions (servers, REPLs, TUIs, debuggers):
       1. Start in tmux: tmux new-session -d -s <name> '<command>'
@@ -54,34 +54,34 @@ guidelines:
       4. Kill when done: tmux kill-session -t <name>
 
   - condition:
-      present: [bash]
+      present: [Bash]
     text: |
       Avoid large outputs: pipe to head/tail (head -100), limit rg results (rg -m 5), or redirect to files when output may be large. For bundled/minified files, search source files instead.
 
   - condition:
-      present: [bash]
-      anyPresent: [grep, find, ls]
-    text: Prefer grep/find/ls tools over bash for file exploration (faster, respects .gitignore)
+      present: [Bash]
+      anyPresent: [Grep, Glob]
+    text: Prefer Grep/Glob tools over Bash for file exploration (faster, respects .gitignore)
 
   - condition:
-      present: [read, edit]
+      present: [Read, Edit]
     text: Read the relevant file or section before editing. Re-read if your context may be stale.
 
   - condition:
-      present: [edit]
-    text: Use edit for precise changes (supports flexible whitespace matching; use 'all' flag for multiple replacements)
+      present: [Edit]
+    text: Use Edit for precise changes (supports flexible whitespace matching; use 'all' flag for multiple replacements)
 
   - condition:
-      anyPresent: [edit, write]
+      anyPresent: [Edit, Write]
     text: Make only the requested changes. Avoid modifying unrelated code or adding unrequested features.
 
   - condition:
-      present: [write]
-    text: Use write only for new files or complete rewrites
+      present: [Write]
+    text: Use Write only for new files or complete rewrites
 
   - condition:
-      anyPresent: [edit, write]
-    text: When summarizing your actions, output plain text directly - do NOT use cat or bash to display what you did
+      anyPresent: [Edit, Write]
+    text: When summarizing your actions, output plain text directly - do NOT use cat or Bash to display what you did
 
   # Always included (no condition)
   - text: Be concise in your responses
@@ -89,7 +89,7 @@ guidelines:
   - text: Show file paths clearly when working with files
 
   - condition:
-      present: [bash]
+      present: [Bash]
     text: |
       Git safety:
       - Run git status before each commit to see what's staged and modified.

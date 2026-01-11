@@ -48,9 +48,9 @@ const MAX_LINES = 2000;
 const MAX_LINE_LENGTH = 2000;
 
 export const readTool: AgentTool<typeof readSchema> = {
-	name: "read",
-	label: "read",
-	description: getToolDescription("read"),
+	name: "Read",
+	label: "Read",
+	description: getToolDescription("Read"),
 	parameters: readSchema,
 	execute: async (
 		_toolCallId: string,

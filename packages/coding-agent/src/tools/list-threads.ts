@@ -121,9 +121,9 @@ function getRelativeDate(date: Date): string {
 }
 
 export const listThreadsTool: AgentTool<typeof listThreadsSchema> = {
-	name: "list_threads",
-	label: "list_threads",
-	description: getToolDescription("list_threads"),
+	name: "ListThreads",
+	label: "ListThreads",
+	description: getToolDescription("ListThreads"),
 	parameters: listThreadsSchema,
 	execute: async (
 		_toolCallId: string,

@@ -4,9 +4,8 @@ import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { bashTool } from "../src/tools/bash.js";
 import { editTool } from "../src/tools/edit.js";
-import { findTool } from "../src/tools/find.js";
+import { globTool } from "../src/tools/glob.js";
 import { grepTool } from "../src/tools/grep.js";
-import { lsTool } from "../src/tools/ls.js";
 import { readTool } from "../src/tools/read.js";
 import { writeTool } from "../src/tools/write.js";
 
@@ -486,14 +485,14 @@ describe("Coding Agent Tools", () => {
 		});
 	});
 
-	describe("find tool", () => {
+	describe("glob tool (find mode)", () => {
 		it("should include hidden files that are not gitignored", async () => {
 			const hiddenDir = join(testDir, ".secret");
 			mkdirSync(hiddenDir);
 			writeFileSync(join(hiddenDir, "hidden.txt"), "hidden");
 			writeFileSync(join(testDir, "visible.txt"), "visible");
 
-			const result = await findTool.execute("test-call-13", {
+			const result = await globTool.execute("test-call-13", {
 				pattern: "**/*.txt",
 				path: testDir,
 			});
@@ -512,7 +511,7 @@ describe("Coding Agent Tools", () => {
 			writeFileSync(join(testDir, "ignored.txt"), "ignored");
 			writeFileSync(join(testDir, "kept.txt"), "kept");
 
-			const result = await findTool.execute("test-call-14", {
+			const result = await globTool.execute("test-call-14", {
 				pattern: "**/*.txt",
 				path: testDir,
 			});
@@ -523,12 +522,12 @@ describe("Coding Agent Tools", () => {
 		});
 	});
 
-	describe("ls tool", () => {
-		it("should list dotfiles and directories", async () => {
+	describe("glob tool (ls mode)", () => {
+		it("should list dotfiles and directories when no pattern is provided", async () => {
 			writeFileSync(join(testDir, ".hidden-file"), "secret");
 			mkdirSync(join(testDir, ".hidden-dir"));
 
-			const result = await lsTool.execute("test-call-15", { path: testDir });
+			const result = await globTool.execute("test-call-15", { path: testDir });
 			const output = getTextOutput(result);
 
 			expect(output).toContain(".hidden-file");

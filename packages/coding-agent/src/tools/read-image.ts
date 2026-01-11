@@ -207,9 +207,9 @@ const readImageSchema = Type.Object({
 });
 
 export const readImageTool: AgentTool<typeof readImageSchema> = {
-	name: "read_image",
-	label: "read_image",
-	description: getToolDescription("read_image"),
+	name: "ReadImage",
+	label: "ReadImage",
+	description: getToolDescription("ReadImage"),
 	parameters: readImageSchema,
 	execute: async (
 		_toolCallId: string,

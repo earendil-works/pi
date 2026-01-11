@@ -38,9 +38,9 @@ const grepSchema = Type.Object({
 const DEFAULT_LIMIT = 100;
 
 export const grepTool: AgentTool<typeof grepSchema> = {
-	name: "grep",
-	label: "grep",
-	description: getToolDescription("grep"),
+	name: "Grep",
+	label: "Grep",
+	description: getToolDescription("Grep"),
 	parameters: grepSchema,
 	execute: async (
 		_toolCallId: string,

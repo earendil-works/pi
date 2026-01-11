@@ -108,9 +108,9 @@ const todowriteSchema = Type.Object({
 });
 
 export const todowriteTool: AgentTool<typeof todowriteSchema> = {
-	name: "todowrite",
-	label: "todowrite",
-	description: getToolDescription("todowrite"),
+	name: "TodoWrite",
+	label: "TodoWrite",
+	description: getToolDescription("TodoWrite"),
 	parameters: todowriteSchema,
 	execute: async (
 		_toolCallId: string,

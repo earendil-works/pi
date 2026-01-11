@@ -1,12 +1,12 @@
 # Full tool descriptions sent to the LLM as part of tool definitions
 # These are the detailed descriptions that help the model understand how to use each tool
 
-read: |
+Read: |
   Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, defaults to first 2000 lines. Use offset/limit for large files.
   
-  For image analysis tasks, use the `read_image` tool instead of `read`.
+  For image analysis tasks, use the `ReadImage` tool instead of `Read`.
 
-read_image: |
+ReadImage: |
   Analyze an image and extract information based on an objective. Accepts a local file path or remote URL. Returns XML-delimited analysis output.
 
   Parameters:
@@ -21,25 +21,22 @@ read_image: |
 
   {"path":"screenshots/before.png","objective":"Identify all visual differences","context":"Reviewing UI changes","referenceFiles":["screenshots/after.png"]}
 
-bash: |
+Bash: |
   Execute a bash command in the current working directory. Returns stdout and stderr. Optionally provide a timeout in seconds (default: 1800 seconds / 30 minutes). Minimum timeout is 1800 seconds; lower values are ignored.
 
-edit: |
+Edit: |
   Edit a file by replacing text. Supports flexible matching: if exact match fails, tries unescaping (\\n→newline), Unicode normalization (smart quotes↔straight, em dash↔hyphen, etc.), and flexible whitespace. Use 'all: true' to replace multiple occurrences. Provides suggestions if text not found.
 
-write: |
+Write: |
   Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.
 
-grep: |
+Grep: |
   Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore.
 
-find: |
-  Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore.
+Glob: |
+  Find files by glob pattern OR list directory contents. When pattern is provided, searches for matching files (e.g., '*.ts', '**/*.json'). When pattern is omitted, lists directory contents with '/' suffix for directories. Respects .gitignore.
 
-ls: |
-  List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles.
-
-list_threads: |
+ListThreads: |
   List past conversation threads. Returns thread IDs, relative dates, message counts, workspace paths, and preview text. Supports keyword search (message content) and workspace filtering (case-insensitive substring match).
 
   **Defaults to current working directory** if workspace is not specified. Use longer unique segments to avoid false matches (e.g., "work/pi-mono" instead of "pi-mono").
@@ -50,7 +47,7 @@ list_threads: |
   - Use `|` for OR within a group: `doc|docs sidebar` matches (doc OR docs) AND sidebar
   - Example: `auth login|signin "error handling"` matches threads with auth AND (login OR signin) AND "error handling"
 
-read_thread: |
+ReadThread: |
   Read the conversation history of a specific thread by its ID.
   
   IMPORTANT: 'goal' is REQUIRED - describe what information you need from the thread. An AI will extract only the relevant parts.
@@ -59,7 +56,7 @@ read_thread: |
   
   Returns <thread_extract> (default) or <reference_thread> (raw mode).
 
-todowrite: |
+TodoWrite: |
   Create and manage a structured task list for multi-step work.
 
   States: pending, in_progress, completed, cancelled.

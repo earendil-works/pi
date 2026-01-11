@@ -29,24 +29,6 @@ import { transformMessages } from "./transorm-messages.js";
 
 const claudeCodeVersion = "2.1.2";
 
-const claudeCodeToolNames: Record<string, string> = {
-	read: "Read",
-	write: "Write",
-	edit: "Edit",
-	bash: "Bash",
-	grep: "Grep",
-	find: "Glob",
-	ls: "Glob",
-};
-
-const toClaudeCodeName = (name: string) => claudeCodeToolNames[name] || name;
-const fromClaudeCodeName = (name: string) => {
-	for (const [piName, ccName] of Object.entries(claudeCodeToolNames)) {
-		if (ccName === name) return piName;
-	}
-	return name;
-};
-
 /**
  * Convert content blocks to Anthropic API format
  */
@@ -187,7 +169,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages"> = (
 						const block: Block = {
 							type: "toolCall",
 							id: event.content_block.id,
-							name: fromClaudeCodeName(event.content_block.name),
+							name: event.content_block.name,
 							arguments: event.content_block.input as Record<string, any>,
 							partialJson: "",
 							index: event.index,
@@ -427,7 +409,7 @@ function buildParams(
 		} else {
 			params.tool_choice = {
 				type: "tool",
-				name: toClaudeCodeName(options.toolChoice.name),
+				name: options.toolChoice.name,
 			};
 		}
 	}
@@ -518,7 +500,7 @@ function convertMessages(messages: Message[], model: Model<"anthropic-messages">
 					blocks.push({
 						type: "tool_use",
 						id: sanitizeToolCallId(block.id),
-						name: toClaudeCodeName(block.name),
+						name: block.name,
 						input: block.arguments,
 					});
 				}
@@ -591,7 +573,7 @@ function convertTools(tools: Tool[]): Anthropic.Messages.Tool[] {
 		const jsonSchema = tool.parameters as any; // TypeBox already generates JSON Schema
 
 		return {
-			name: toClaudeCodeName(tool.name),
+			name: tool.name,
 			description: tool.description,
 			input_schema: {
 				type: "object" as const,

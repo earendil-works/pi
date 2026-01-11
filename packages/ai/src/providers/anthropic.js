@@ -7,22 +7,6 @@ import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { transformMessages } from "./transorm-messages.js";
 
 const claudeCodeVersion = "2.1.2";
-const claudeCodeToolNames = {
-	read: "Read",
-	write: "Write",
-	edit: "Edit",
-	bash: "Bash",
-	grep: "Grep",
-	find: "Glob",
-	ls: "Glob",
-};
-const toClaudeCodeName = (name) => claudeCodeToolNames[name] || name;
-const fromClaudeCodeName = (name) => {
-	for (const [piName, ccName] of Object.entries(claudeCodeToolNames)) {
-		if (ccName === name) return piName;
-	}
-	return name;
-};
 /**
  * Convert content blocks to Anthropic API format
  */
@@ -131,7 +115,7 @@ export const streamAnthropic = (model, context, options) => {
 						const block = {
 							type: "toolCall",
 							id: event.content_block.id,
-							name: fromClaudeCodeName(event.content_block.name),
+							name: event.content_block.name,
 							arguments: event.content_block.input,
 							partialJson: "",
 							index: event.index,
@@ -343,7 +327,7 @@ function buildParams(model, context, isOAuthToken, options) {
 		} else {
 			params.tool_choice = {
 				type: "tool",
-				name: toClaudeCodeName(options.toolChoice.name),
+				name: options.toolChoice.name,
 			};
 		}
 	}
@@ -427,7 +411,7 @@ function convertMessages(messages, model) {
 					blocks.push({
 						type: "tool_use",
 						id: sanitizeToolCallId(block.id),
-						name: toClaudeCodeName(block.name),
+						name: block.name,
 						input: block.arguments,
 					});
 				}
@@ -491,7 +475,7 @@ function convertTools(tools) {
 	return tools.map((tool) => {
 		const jsonSchema = tool.parameters; // TypeBox already generates JSON Schema
 		return {
-			name: toClaudeCodeName(tool.name),
+			name: tool.name,
 			description: tool.description,
 			input_schema: {
 				type: "object",

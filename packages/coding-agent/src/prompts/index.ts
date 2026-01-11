@@ -165,7 +165,7 @@ export function buildSystemPrompt(options: {
 
 	// Build from template
 	const config = loadSystemPromptConfig();
-	const tools = selectedTools || (["read", "bash", "edit", "write"] as ToolName[]);
+	const tools = selectedTools || (["Read", "Bash", "Edit", "Write"] as ToolName[]);
 
 	// Build tools list
 	const toolDescriptions = config.toolDescriptions;

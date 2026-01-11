@@ -84,7 +84,7 @@ function formatToolExecution(
 	};
 
 	// Format based on tool type (matching TUI logic exactly)
-	if (toolName === "bash") {
+	if (toolName === "Bash") {
 		const command = args?.command || "";
 		html = `<div class="tool-command">$ ${escapeHtml(command || "...")}</div>`;
 
@@ -121,9 +121,9 @@ function formatToolExecution(
 				}
 			}
 		}
-	} else if (toolName === "read") {
+	} else if (toolName === "Read") {
 		const path = shortenPath(args?.file_path || args?.path || "");
-		html = `<div class="tool-header"><span class="tool-name">read</span> <span class="tool-path">${escapeHtml(path || "...")}</span></div>`;
+		html = `<div class="tool-header"><span class="tool-name">Read</span> <span class="tool-path">${escapeHtml(path || "...")}</span></div>`;
 
 		if (result) {
 			const output = getTextOutput();
@@ -156,13 +156,13 @@ function formatToolExecution(
 				html += "</div>";
 			}
 		}
-	} else if (toolName === "write") {
+	} else if (toolName === "Write") {
 		const path = shortenPath(args?.file_path || args?.path || "");
 		const fileContent = args?.content || "";
 		const lines = fileContent ? fileContent.split("\n") : [];
 		const totalLines = lines.length;
 
-		html = `<div class="tool-header"><span class="tool-name">write</span> <span class="tool-path">${escapeHtml(path || "...")}</span>`;
+		html = `<div class="tool-header"><span class="tool-name">Write</span> <span class="tool-path">${escapeHtml(path || "...")}</span>`;
 		if (totalLines > 10) {
 			html += ` <span class="line-count">(${totalLines} lines)</span>`;
 		}
@@ -204,9 +204,9 @@ function formatToolExecution(
 				html += `<div class="tool-output"><div>${escapeHtml(output)}</div></div>`;
 			}
 		}
-	} else if (toolName === "edit") {
+	} else if (toolName === "Edit") {
 		const path = shortenPath(args?.file_path || args?.path || "");
-		html = `<div class="tool-header"><span class="tool-name">edit</span> <span class="tool-path">${escapeHtml(path || "...")}</span></div>`;
+		html = `<div class="tool-header"><span class="tool-name">Edit</span> <span class="tool-path">${escapeHtml(path || "...")}</span></div>`;
 
 		// Show diff if available from result.details.diff
 		if (result?.details?.diff) {

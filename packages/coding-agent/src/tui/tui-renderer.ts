@@ -1189,7 +1189,7 @@ export class TuiRenderer {
 		this.ui.requestRender();
 
 		this.chatContainer.addChild(new Text("", 0, 0));
-		const toolComponent = new ToolExecutionComponent("bash", { command });
+		const toolComponent = new ToolExecutionComponent("Bash", { command });
 		this.chatContainer.addChild(toolComponent);
 		this.ui.requestRender();
 
@@ -1231,7 +1231,7 @@ export class TuiRenderer {
 		const toolCall: ToolCall = {
 			type: "toolCall",
 			id: toolCallId,
-			name: "bash",
+			name: "Bash",
 			arguments: { command },
 		};
 
@@ -1256,7 +1256,7 @@ export class TuiRenderer {
 		const toolResultMessage: ToolResultMessage = {
 			role: "toolResult",
 			toolCallId,
-			toolName: "bash",
+			toolName: "Bash",
 			content: result.content,
 			details: result.details,
 			isError,
@@ -2411,7 +2411,7 @@ export class TuiRenderer {
 				const toolResult = msg as any;
 				const toolName = toolCallNames.get(toolResult.toolCallId);
 
-				if (toolName === "edit" && toolResult.details) {
+				if (toolName === "Edit" && toolResult.details) {
 					const details = toolResult.details as {
 						path?: string;
 						oldText?: string;
@@ -2428,7 +2428,7 @@ export class TuiRenderer {
 							index: details.index,
 						});
 					}
-				} else if (toolName === "write" && toolResult.details) {
+				} else if (toolName === "Write" && toolResult.details) {
 					const details = toolResult.details as {
 						path?: string;
 						created?: boolean;

@@ -300,9 +300,9 @@ const editSchema = Type.Object({
 });
 
 export const editTool: AgentTool<typeof editSchema> = {
-	name: "edit",
-	label: "edit",
-	description: getToolDescription("edit"),
+	name: "Edit",
+	label: "Edit",
+	description: getToolDescription("Edit"),
 	parameters: editSchema,
 	execute: async (
 		_toolCallId: string,

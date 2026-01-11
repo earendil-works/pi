@@ -21,9 +21,9 @@ const writeSchema = Type.Object({
 });
 
 export const writeTool: AgentTool<typeof writeSchema> = {
-	name: "write",
-	label: "write",
-	description: getToolDescription("write"),
+	name: "Write",
+	label: "Write",
+	description: getToolDescription("Write"),
 	parameters: writeSchema,
 	execute: async (
 		_toolCallId: string,

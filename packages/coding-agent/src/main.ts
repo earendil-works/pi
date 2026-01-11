@@ -108,9 +108,29 @@ function parseArgs(args: string[]): Args {
 		} else if (arg === "--tools" && i + 1 < args.length) {
 			const toolNames = args[++i].split(",").map((s) => s.trim());
 			const validTools: ToolName[] = [];
+
+			// Backward compatibility: map legacy lowercase names to TitleCase
+			const legacyToNew: Record<string, ToolName> = {
+				read: "Read",
+				write: "Write",
+				edit: "Edit",
+				bash: "Bash",
+				grep: "Grep",
+				find: "Glob",
+				ls: "Glob",
+				list_threads: "ListThreads",
+				read_thread: "ReadThread",
+				read_image: "ReadImage",
+				todowrite: "TodoWrite",
+			};
+
 			for (const name of toolNames) {
-				if (name in allTools) {
-					validTools.push(name as ToolName);
+				// Try direct match first (TitleCase), then legacy mapping
+				const resolved = name in allTools ? (name as ToolName) : legacyToNew[name.toLowerCase()];
+				if (resolved && resolved in allTools) {
+					if (!validTools.includes(resolved)) {
+						validTools.push(resolved);
+					}
 				} else {
 					console.error(
 						chalk.yellow(`Warning: Unknown tool "${name}". Valid tools: ${Object.keys(allTools).join(", ")}`),
@@ -253,8 +273,8 @@ ${chalk.bold("Options:")}
   --session <path>        Use specific session file
   --no-session            Don't save session (ephemeral)
   --models <patterns>     Comma-separated model patterns for quick cycling with Ctrl+P
-  --tools <tools>         Comma-separated list of tools to enable (default: read,bash,edit,write,todowrite)
-                          Available: read, bash, edit, write, grep, find, ls, todowrite
+  --tools <tools>         Comma-separated list of tools to enable (default: Read,Bash,Edit,Write,TodoWrite)
+                          Available: Read, Bash, Edit, Write, Grep, Glob, ListThreads, ReadThread, ReadImage, TodoWrite
   --thinking <level>      Set thinking level: off, minimal, low, medium, high
   --export <file>         Export session file to HTML and exit
   --help, -h              Show this help
@@ -294,7 +314,7 @@ ${chalk.bold("Examples:")}
   pi --thinking high "Solve this complex problem"
 
   # Read-only mode (no file modifications possible)
-  pi --tools read,grep,find,ls -p "Review the code in src/"
+  pi --tools Read,Grep,Glob -p "Review the code in src/"
 
   # Export a session file to HTML
   pi --export ~/.pi/agent/sessions/--path--/session.jsonl

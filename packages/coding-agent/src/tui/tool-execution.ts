@@ -123,7 +123,7 @@ export class ToolExecutionComponent extends Container {
 		let text = "";
 
 		// Format based on tool type
-		if (this.toolName === "bash") {
+		if (this.toolName === "Bash") {
 			const command = this.args?.command || "";
 			text = theme.fg("toolTitle", theme.bold(`$ ${command || theme.fg("toolOutput", "...")}`));
 
@@ -150,7 +150,7 @@ export class ToolExecutionComponent extends Container {
 						theme.fg("toolOutput", ")");
 				}
 			}
-		} else if (this.toolName === "read") {
+		} else if (this.toolName === "Read") {
 			const path = shortenPath(this.args?.file_path || this.args?.path || "");
 			const offset = this.args?.offset;
 			const limit = this.args?.limit;
@@ -162,7 +162,7 @@ export class ToolExecutionComponent extends Container {
 				pathDisplay += theme.fg("toolOutput", `:${offset}${endLine ? `-${endLine}` : ""}`);
 			}
 
-			text = theme.fg("toolTitle", theme.bold("read")) + " " + pathDisplay;
+			text = theme.fg("toolTitle", theme.bold("Read")) + " " + pathDisplay;
 
 			if (this.result) {
 				const output = this.getTextOutput();
@@ -180,14 +180,14 @@ export class ToolExecutionComponent extends Container {
 						theme.fg("toolOutput", ")");
 				}
 			}
-		} else if (this.toolName === "write") {
+		} else if (this.toolName === "Write") {
 			const path = shortenPath(this.args?.file_path || this.args?.path || "");
 			const fileContent = this.args?.content || "";
 			const lines = fileContent ? fileContent.split("\n") : [];
 			const totalLines = lines.length;
 
 			text =
-				theme.fg("toolTitle", theme.bold("write")) +
+				theme.fg("toolTitle", theme.bold("Write")) +
 				" " +
 				(path ? theme.fg("accent", path) : theme.fg("toolOutput", "..."));
 			if (totalLines > 10) {
@@ -209,10 +209,10 @@ export class ToolExecutionComponent extends Container {
 						theme.fg("toolOutput", ")");
 				}
 			}
-		} else if (this.toolName === "edit") {
+		} else if (this.toolName === "Edit") {
 			const path = shortenPath(this.args?.file_path || this.args?.path || "");
 			text =
-				theme.fg("toolTitle", theme.bold("edit")) +
+				theme.fg("toolTitle", theme.bold("Edit")) +
 				" " +
 				(path ? theme.fg("accent", path) : theme.fg("toolOutput", "..."));
 
@@ -238,43 +238,21 @@ export class ToolExecutionComponent extends Container {
 					text += "\n\n" + coloredLines.join("\n");
 				}
 			}
-		} else if (this.toolName === "ls") {
-			const path = shortenPath(this.args?.path || ".");
-			const limit = this.args?.limit;
-
-			text = theme.fg("toolTitle", theme.bold("ls")) + " " + theme.fg("accent", path);
-			if (limit !== undefined) {
-				text += theme.fg("toolOutput", ` (limit ${limit})`);
-			}
-
-			if (this.result) {
-				const output = this.getTextOutput().trim();
-				if (output) {
-					const lines = output.split("\n");
-					const maxLines = this.expanded ? lines.length : 20;
-					const displayLines = lines.slice(0, maxLines);
-					const remaining = lines.length - maxLines;
-
-					text += "\n\n" + displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n");
-					if (remaining > 0) {
-						text +=
-							theme.fg("toolOutput", `\n(${remaining} more lines `) +
-							theme.fg("dim", "·") +
-							theme.fg("muted", " ctrl+o to expand") +
-							theme.fg("toolOutput", ")");
-					}
-				}
-			}
-		} else if (this.toolName === "find") {
+		} else if (this.toolName === "Glob") {
 			const pattern = this.args?.pattern || "";
 			const path = shortenPath(this.args?.path || ".");
 			const limit = this.args?.limit;
 
-			text =
-				theme.fg("toolTitle", theme.bold("find")) +
-				" " +
-				theme.fg("accent", pattern) +
-				theme.fg("toolOutput", ` in ${path}`);
+			// If pattern is empty, it's "ls mode" - list directory contents
+			if (!pattern) {
+				text = theme.fg("toolTitle", theme.bold("Glob")) + " " + theme.fg("accent", path);
+			} else {
+				text =
+					theme.fg("toolTitle", theme.bold("Glob")) +
+					" " +
+					theme.fg("accent", pattern) +
+					theme.fg("toolOutput", ` in ${path}`);
+			}
 			if (limit !== undefined) {
 				text += theme.fg("toolOutput", ` (limit ${limit})`);
 			}
@@ -297,14 +275,14 @@ export class ToolExecutionComponent extends Container {
 					}
 				}
 			}
-		} else if (this.toolName === "grep") {
+		} else if (this.toolName === "Grep") {
 			const pattern = this.args?.pattern || "";
 			const path = shortenPath(this.args?.path || ".");
 			const glob = this.args?.glob;
 			const limit = this.args?.limit;
 
 			text =
-				theme.fg("toolTitle", theme.bold("grep")) +
+				theme.fg("toolTitle", theme.bold("Grep")) +
 				" " +
 				theme.fg("accent", `/${pattern}/`) +
 				theme.fg("toolOutput", ` in ${path}`);
@@ -333,8 +311,8 @@ export class ToolExecutionComponent extends Container {
 					}
 				}
 			}
-		} else if (this.toolName === "todowrite") {
-			text = theme.fg("toolTitle", theme.bold("todowrite"));
+		} else if (this.toolName === "TodoWrite") {
+			text = theme.fg("toolTitle", theme.bold("TodoWrite"));
 
 			if (this.result) {
 				const output = this.getTextOutput().trim();

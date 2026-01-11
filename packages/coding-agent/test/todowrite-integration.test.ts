@@ -4,42 +4,42 @@ import { allTools, codingTools } from "../src/tools/index.js";
 
 describe("todowrite integration", () => {
 	describe("tool registry", () => {
-		it("allTools includes todowrite", () => {
-			expect("todowrite" in allTools).toBe(true);
-			expect(allTools.todowrite.name).toBe("todowrite");
+		it("allTools includes TodoWrite", () => {
+			expect("TodoWrite" in allTools).toBe(true);
+			expect(allTools.TodoWrite.name).toBe("TodoWrite");
 		});
 
-		it("codingTools includes todowrite", () => {
+		it("codingTools includes TodoWrite", () => {
 			const names = codingTools.map((t) => t.name);
-			expect(names).toContain("todowrite");
+			expect(names).toContain("TodoWrite");
 		});
 	});
 
 	describe("prompt system", () => {
-		it("getToolDescription returns todowrite description without throwing", () => {
-			const desc = getToolDescription("todowrite");
+		it("getToolDescription returns TodoWrite description without throwing", () => {
+			const desc = getToolDescription("TodoWrite");
 			expect(desc).toContain("task list");
 			expect(desc).toContain("pending");
 			expect(desc).toContain("in_progress");
 		});
 
-		it("buildSystemPrompt includes todowrite in tools list", () => {
-			const prompt = buildSystemPrompt({ selectedTools: ["todowrite"] });
-			expect(prompt).toContain("todowrite");
-			expect(prompt).toContain("Track planning steps");
+		it("buildSystemPrompt includes TodoWrite in tools list", () => {
+			const prompt = buildSystemPrompt({ selectedTools: ["TodoWrite"] });
+			expect(prompt).toContain("TodoWrite");
+			expect(prompt).toContain("task list");
 		});
 
-		it("buildSystemPrompt works with todowrite alongside other tools", () => {
-			const prompt = buildSystemPrompt({ selectedTools: ["read", "bash", "todowrite"] });
-			expect(prompt).toContain("read");
-			expect(prompt).toContain("bash");
-			expect(prompt).toContain("todowrite");
+		it("buildSystemPrompt works with TodoWrite alongside other tools", () => {
+			const prompt = buildSystemPrompt({ selectedTools: ["Read", "Bash", "TodoWrite"] });
+			expect(prompt).toContain("Read");
+			expect(prompt).toContain("Bash");
+			expect(prompt).toContain("TodoWrite");
 		});
 	});
 
 	describe("tool schema", () => {
-		it("todowrite has correct parameter schema", () => {
-			const schema = allTools.todowrite.parameters;
+		it("TodoWrite has correct parameter schema", () => {
+			const schema = allTools.TodoWrite.parameters;
 			expect(schema.type).toBe("object");
 			expect(schema.properties).toHaveProperty("todos");
 		});
