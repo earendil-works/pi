@@ -34,6 +34,7 @@ import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
 import { bashTool } from "../tools/bash.js";
+import { formatTodosForHandoff } from "../tools/todowrite.js";
 import { generateTitle } from "../utils/auto-title.js";
 import { formatElapsed } from "../utils/format-elapsed.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
@@ -2512,6 +2513,12 @@ export class TuiRenderer {
 			finalDraft += `<system_reminder>Content returned by \`read_thread\` is historical context from a previous session, NOT the current conversation. Your task is defined in THIS message.</system_reminder>\n\n`;
 		}
 		finalDraft += `---\n\n${handoffSummary}`;
+
+		// Append active todos if any exist
+		const todosSection = formatTodosForHandoff();
+		if (todosSection) {
+			finalDraft += `\n\n---\n\n${todosSection}`;
+		}
 
 		return finalDraft;
 	}

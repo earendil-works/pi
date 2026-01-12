@@ -48,6 +48,45 @@ export function getTodos(): readonly TodoItem[] {
 	return todos;
 }
 
+/**
+ * Format active todos for handoff document.
+ * Returns markdown section with pending/in_progress items and summary counts.
+ * Returns null if no todos exist.
+ */
+export function formatTodosForHandoff(): string | null {
+	if (todos.length === 0) return null;
+
+	const active = todos.filter((t) => t.status === "pending" || t.status === "in_progress");
+	const completedCount = todos.filter((t) => t.status === "completed").length;
+	const cancelledCount = todos.filter((t) => t.status === "cancelled").length;
+
+	// Nothing to report if no active items and no history
+	if (active.length === 0 && completedCount === 0 && cancelledCount === 0) return null;
+
+	const lines: string[] = ["## Active Tasks", ""];
+
+	if (active.length === 0) {
+		lines.push("*No active tasks remaining.*");
+	} else {
+		for (const t of active) {
+			const priority = `[${t.priority}]`;
+			const statusSuffix = t.status === "in_progress" ? " (in_progress)" : "";
+			lines.push(`- [ ] ${priority} ${t.content}${statusSuffix}`);
+		}
+	}
+
+	// Summary line for completed/cancelled
+	const summaryParts: string[] = [];
+	if (completedCount > 0) summaryParts.push(`${completedCount} completed`);
+	if (cancelledCount > 0) summaryParts.push(`${cancelledCount} cancelled`);
+	if (summaryParts.length > 0) {
+		lines.push("");
+		lines.push(`*${summaryParts.join(", ")}*`);
+	}
+
+	return lines.join("\n");
+}
+
 function normalize(input: TodoItemInput, idGenerator: () => string): TodoItem {
 	return {
 		id: input.id?.trim() || idGenerator(),

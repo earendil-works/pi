@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { getTodos, resetTodosForTest, todowriteTool } from "../src/tools/todowrite.js";
+import { formatTodosForHandoff, getTodos, resetTodosForTest, todowriteTool } from "../src/tools/todowrite.js";
 
 describe("todowrite tool", () => {
 	beforeEach(() => {
@@ -186,5 +186,134 @@ describe("todowrite tool", () => {
 			completed: 1,
 			cancelled: 1,
 		});
+	});
+});
+
+describe("formatTodosForHandoff", () => {
+	beforeEach(() => {
+		resetTodosForTest();
+	});
+
+	it("returns null when no todos exist", () => {
+		expect(formatTodosForHandoff()).toBeNull();
+	});
+
+	it("formats pending and in_progress items with markdown checkboxes", async () => {
+		await todowriteTool.execute(
+			"call-1",
+			{
+				todos: [
+					{ content: "Implement login", status: "in_progress", priority: "high" },
+					{ content: "Add tests", status: "pending", priority: "medium" },
+					{ content: "Update docs", status: "pending", priority: "low" },
+				],
+			},
+			undefined,
+			undefined,
+		);
+
+		const result = formatTodosForHandoff();
+		expect(result).not.toBeNull();
+		expect(result).toContain("## Active Tasks");
+		expect(result).toContain("- [ ] [high] Implement login (in_progress)");
+		expect(result).toContain("- [ ] [medium] Add tests");
+		expect(result).toContain("- [ ] [low] Update docs");
+		// pending items should NOT have status suffix
+		expect(result).not.toContain("Add tests (pending)");
+	});
+
+	it("excludes completed and cancelled items from checklist but shows summary", async () => {
+		await todowriteTool.execute(
+			"call-1",
+			{
+				todos: [
+					{ content: "Active task", status: "pending" },
+					{ content: "Done task", status: "completed" },
+					{ content: "Dropped task", status: "cancelled" },
+				],
+			},
+			undefined,
+			undefined,
+		);
+
+		const result = formatTodosForHandoff();
+		expect(result).not.toBeNull();
+		expect(result).toContain("- [ ] [medium] Active task");
+		expect(result).not.toContain("Done task");
+		expect(result).not.toContain("Dropped task");
+		expect(result).toContain("*1 completed, 1 cancelled*");
+	});
+
+	it("shows 'no active tasks' message when only completed/cancelled exist", async () => {
+		await todowriteTool.execute(
+			"call-1",
+			{
+				todos: [
+					{ content: "Done 1", status: "completed" },
+					{ content: "Done 2", status: "completed" },
+					{ content: "Cancelled 1", status: "cancelled" },
+				],
+			},
+			undefined,
+			undefined,
+		);
+
+		const result = formatTodosForHandoff();
+		expect(result).not.toBeNull();
+		expect(result).toContain("*No active tasks remaining.*");
+		expect(result).toContain("*2 completed, 1 cancelled*");
+	});
+
+	it("omits summary line when no completed/cancelled items", async () => {
+		await todowriteTool.execute(
+			"call-1",
+			{
+				todos: [{ content: "Only pending", status: "pending" }],
+			},
+			undefined,
+			undefined,
+		);
+
+		const result = formatTodosForHandoff();
+		expect(result).not.toBeNull();
+		expect(result).toContain("- [ ] [medium] Only pending");
+		expect(result).not.toContain("completed");
+		expect(result).not.toContain("cancelled");
+	});
+
+	it("handles only completed count in summary", async () => {
+		await todowriteTool.execute(
+			"call-1",
+			{
+				todos: [
+					{ content: "Active", status: "pending" },
+					{ content: "Done", status: "completed" },
+				],
+			},
+			undefined,
+			undefined,
+		);
+
+		const result = formatTodosForHandoff();
+		expect(result).toContain("*1 completed*");
+		expect(result).not.toContain("cancelled");
+	});
+
+	it("handles only cancelled count in summary", async () => {
+		await todowriteTool.execute(
+			"call-1",
+			{
+				todos: [
+					{ content: "Active", status: "pending" },
+					{ content: "Dropped", status: "cancelled" },
+				],
+			},
+			undefined,
+			undefined,
+		);
+
+		const result = formatTodosForHandoff();
+		expect(result).toContain("*1 cancelled*");
+		expect(result).not.toContain("completed");
 	});
 });
