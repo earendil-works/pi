@@ -1,12 +1,13 @@
 import type { AgentTool } from "@kennyfrc/pi-ai";
 import { Type } from "@sinclair/typebox";
-import { spawnSync } from "child_process";
+import { spawn } from "child_process";
 import { existsSync, readdirSync, statSync } from "fs";
 import { globSync } from "glob";
 import { homedir } from "os";
 import nodePath from "path";
 import { getToolDescription } from "../prompts/index.js";
 import { ensureTool } from "../tools-manager.js";
+import { DEFAULT_SEARCH_TIMEOUT_MS, killProcessTree } from "./process-utils.js";
 
 function expandPath(filePath: string): string {
 	if (filePath === "~") {
@@ -96,6 +97,44 @@ async function listDirectory(
 	return { content: [{ type: "text", text: output }], details: undefined };
 }
 
+/**
+ * Format raw fd output lines into relativized paths
+ */
+function formatFdOutput(rawOutput: string, searchPath: string, limit: number): { output: string; count: number } {
+	const lines = rawOutput.split("\n");
+	const relativized: string[] = [];
+
+	for (const rawLine of lines) {
+		const line = rawLine.replace(/\r$/, "").trim();
+		if (!line) {
+			continue;
+		}
+
+		const hadTrailingSlash = line.endsWith("/") || line.endsWith("\\");
+		let relativePath = line;
+		if (line.startsWith(searchPath)) {
+			relativePath = line.slice(searchPath.length + 1); // +1 for the /
+		} else {
+			relativePath = nodePath.relative(searchPath, line);
+		}
+
+		if (hadTrailingSlash && !relativePath.endsWith("/")) {
+			relativePath += "/";
+		}
+
+		relativized.push(relativePath);
+	}
+
+	let output = relativized.join("\n");
+	const count = relativized.length;
+
+	if (count >= limit) {
+		output += `\n\n(truncated, ${limit} results shown)`;
+	}
+
+	return { output, count };
+}
+
 async function findByGlob(
 	pattern: string,
 	searchPath: string,
@@ -140,58 +179,110 @@ async function findByGlob(
 
 	args.push(pattern, searchPath);
 
-	const result = spawnSync(fdPath, args, {
-		encoding: "utf-8",
-		maxBuffer: 10 * 1024 * 1024, // 10MB
+	return new Promise((resolve, reject) => {
+		let settled = false;
+		const settle = (fn: () => void) => {
+			if (!settled) {
+				settled = true;
+				fn();
+			}
+		};
+
+		const child = spawn(fdPath, args, {
+			stdio: ["ignore", "pipe", "pipe"],
+			detached: process.platform !== "win32",
+		});
+
+		let stdout = "";
+		let stderr = "";
+		let timedOut = false;
+		let aborted = false;
+		let timeoutHandle: NodeJS.Timeout | undefined;
+
+		const cleanup = () => {
+			if (timeoutHandle) {
+				clearTimeout(timeoutHandle);
+				timeoutHandle = undefined;
+			}
+			signal?.removeEventListener("abort", onAbort);
+		};
+
+		const stopChild = (reason: "timeout" | "abort") => {
+			if (!child.killed && child.pid) {
+				if (reason === "timeout") {
+					timedOut = true;
+				}
+				killProcessTree(child.pid);
+			}
+		};
+
+		const onAbort = () => {
+			aborted = true;
+			stopChild("abort");
+		};
+
+		signal?.addEventListener("abort", onAbort, { once: true });
+
+		// Setup timeout
+		timeoutHandle = setTimeout(() => {
+			stopChild("timeout");
+		}, DEFAULT_SEARCH_TIMEOUT_MS);
+
+		child.stdout?.on("data", (chunk: Buffer) => {
+			stdout += chunk.toString();
+		});
+
+		child.stderr?.on("data", (chunk: Buffer) => {
+			stderr += chunk.toString();
+		});
+
+		child.on("error", (err) => {
+			cleanup();
+			settle(() => reject(new Error(`Failed to run fd: ${err.message}`)));
+		});
+
+		child.on("close", (code) => {
+			cleanup();
+
+			if (aborted) {
+				settle(() => reject(new Error("Operation aborted")));
+				return;
+			}
+
+			if (timedOut) {
+				const trimmed = stdout.trim();
+				let result: string;
+				if (trimmed) {
+					const { output, count } = formatFdOutput(trimmed, searchPath, limit);
+					result =
+						output +
+						`\n\n(search timed out after ${DEFAULT_SEARCH_TIMEOUT_MS / 1000}s, ${count} files found before timeout)`;
+				} else {
+					result = `Search timed out after ${DEFAULT_SEARCH_TIMEOUT_MS / 1000}s with no results`;
+				}
+				settle(() => resolve({ content: [{ type: "text", text: result }], details: undefined }));
+				return;
+			}
+
+			// fd returns exit code 1 when no matches found (not an error)
+			if (code !== 0 && code !== 1 && !stdout.trim()) {
+				const errorMsg = stderr.trim() || `fd exited with code ${code}`;
+				settle(() => reject(new Error(errorMsg)));
+				return;
+			}
+
+			const trimmed = stdout.trim();
+			if (!trimmed) {
+				settle(() =>
+					resolve({ content: [{ type: "text", text: "No files found matching pattern" }], details: undefined }),
+				);
+				return;
+			}
+
+			const { output } = formatFdOutput(trimmed, searchPath, limit);
+			settle(() => resolve({ content: [{ type: "text", text: output }], details: undefined }));
+		});
 	});
-
-	if (result.error) {
-		throw new Error(`Failed to run fd: ${result.error.message}`);
-	}
-
-	let output = result.stdout?.trim() || "";
-
-	if (result.status !== 0 && !output) {
-		const errorMsg = result.stderr?.trim() || `fd exited with code ${result.status}`;
-		throw new Error(errorMsg);
-	}
-
-	if (!output) {
-		output = "No files found matching pattern";
-	} else {
-		const lines = output.split("\n");
-		const relativized: string[] = [];
-
-		for (const rawLine of lines) {
-			const line = rawLine.replace(/\r$/, "").trim();
-			if (!line) {
-				continue;
-			}
-
-			const hadTrailingSlash = line.endsWith("/") || line.endsWith("\\");
-			let relativePath = line;
-			if (line.startsWith(searchPath)) {
-				relativePath = line.slice(searchPath.length + 1); // +1 for the /
-			} else {
-				relativePath = nodePath.relative(searchPath, line);
-			}
-
-			if (hadTrailingSlash && !relativePath.endsWith("/")) {
-				relativePath += "/";
-			}
-
-			relativized.push(relativePath);
-		}
-
-		output = relativized.join("\n");
-
-		const count = relativized.length;
-		if (count >= limit) {
-			output += `\n\n(truncated, ${limit} results shown)`;
-		}
-	}
-
-	return { content: [{ type: "text", text: output }], details: undefined };
 }
 
 export const globTool: AgentTool<typeof globSchema> = {

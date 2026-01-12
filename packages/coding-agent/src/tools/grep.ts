@@ -7,6 +7,7 @@ import { homedir } from "os";
 import path from "path";
 import { getToolDescription } from "../prompts/index.js";
 import { ensureTool } from "../tools-manager.js";
+import { DEFAULT_SEARCH_TIMEOUT_MS, killProcessTree } from "./process-utils.js";
 
 /**
  * Expand ~ to home directory
@@ -140,30 +141,49 @@ export const grepTool: AgentTool<typeof grepSchema> = {
 
 					args.push(pattern, searchPath);
 
-					const child = spawn(rgPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+					const child = spawn(rgPath, args, {
+						stdio: ["ignore", "pipe", "pipe"],
+						detached: process.platform !== "win32",
+					});
 					const rl = createInterface({ input: child.stdout });
 					let stderr = "";
 					let matchCount = 0;
 					let truncated = false;
 					let aborted = false;
+					let timedOut = false;
 					let killedDueToLimit = false;
 					const outputLines: string[] = [];
 
+					let timeoutHandle: NodeJS.Timeout | undefined;
+
 					const cleanup = () => {
+						if (timeoutHandle) {
+							clearTimeout(timeoutHandle);
+							timeoutHandle = undefined;
+						}
 						rl.close();
 						signal?.removeEventListener("abort", onAbort);
 					};
 
-					const stopChild = (dueToLimit: boolean = false) => {
-						if (!child.killed) {
-							killedDueToLimit = dueToLimit;
-							child.kill();
+					const stopChild = (reason: "limit" | "timeout" | "abort") => {
+						if (!child.killed && child.pid) {
+							if (reason === "limit") {
+								killedDueToLimit = true;
+							} else if (reason === "timeout") {
+								timedOut = true;
+							}
+							killProcessTree(child.pid);
 						}
 					};
 
+					// Setup timeout
+					timeoutHandle = setTimeout(() => {
+						stopChild("timeout");
+					}, DEFAULT_SEARCH_TIMEOUT_MS);
+
 					const onAbort = () => {
 						aborted = true;
-						stopChild();
+						stopChild("abort");
 					};
 
 					signal?.addEventListener("abort", onAbort, { once: true });
@@ -221,7 +241,7 @@ export const grepTool: AgentTool<typeof grepSchema> = {
 
 							if (matchCount >= effectiveLimit) {
 								truncated = true;
-								stopChild(true);
+								stopChild("limit");
 							}
 						}
 					});
@@ -236,6 +256,18 @@ export const grepTool: AgentTool<typeof grepSchema> = {
 
 						if (aborted) {
 							settle(() => reject(new Error("Operation aborted")));
+							return;
+						}
+
+						if (timedOut) {
+							let result: string;
+							if (matchCount > 0) {
+								result = outputLines.join("\n");
+								result += `\n\n(search timed out after ${DEFAULT_SEARCH_TIMEOUT_MS / 1000}s, ${matchCount} matches found before timeout)`;
+							} else {
+								result = `Search timed out after ${DEFAULT_SEARCH_TIMEOUT_MS / 1000}s with no matches`;
+							}
+							settle(() => resolve({ content: [{ type: "text", text: result }], details: undefined }));
 							return;
 						}
 

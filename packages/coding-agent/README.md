@@ -751,19 +751,18 @@ Examples:
 - `--models sonnet,haiku` - Partial match for any model containing "sonnet" or "haiku"
 
 **--tools <tools>**
-Comma-separated list of tools to enable. By default, pi uses `read,bash,edit,write`. This flag allows restricting or changing the available tools.
+Comma-separated list of tools to enable. By default, pi uses `read,bash,edit,write,grep,glob`. This flag allows restricting or changing the available tools.
 
 Available tools:
 - `read` - Read file contents
 - `bash` - Execute bash commands
 - `edit` - Make surgical edits to files
 - `write` - Create or overwrite files
-- `grep` - Search file contents for patterns (read-only, off by default)
-- `find` - Find files by glob pattern (read-only, off by default)
-- `ls` - List directory contents (read-only, off by default)
+- `grep` - Search file contents for patterns
+- `glob` - Find files by glob pattern or list directory contents
 
 Examples:
-- `--tools read,grep,find,ls` - Read-only mode for code review/exploration
+- `--tools read,grep,glob` - Read-only mode for code review/exploration
 - `--tools read,bash` - Only allow reading and bash commands
 
 **--thinking <level>**
@@ -830,10 +829,10 @@ pi --models sonnet:high,haiku:low
 pi --thinking high "Solve this complex algorithm problem"
 
 # Read-only mode (no file modifications possible)
-pi --tools read,grep,find,ls -p "Review the architecture in src/"
+pi --tools read,grep,glob -p "Review the architecture in src/"
 
 # Oracle-style subagent (bash for git/gh, no file modifications)
-pi --tools read,bash,grep,find,ls \
+pi --tools read,bash,grep,glob \
    --no-session \
    -p "Use bash only for read-only operations. Read issue #74 with gh, then review the implementation"
 
@@ -860,18 +859,13 @@ Edit a file by replacing exact text. The oldText must match exactly (including w
 **bash**
 Execute a bash command in the current working directory. Returns stdout and stderr. Optionally accepts a `timeout` parameter in seconds (default: 1800 seconds / 30 minutes).
 
-### Read-Only Exploration Tools
-
-These tools are available via `--tools` flag for read-only code exploration:
+### Search Tools
 
 **grep**
-Search file contents for a pattern (regex or literal). Returns matching lines with file paths and line numbers. Respects `.gitignore`. Parameters: `pattern` (required), `path`, `glob`, `ignoreCase`, `literal`, `context`, `limit`.
+Search file contents for a pattern (regex or literal). Returns matching lines with file paths and line numbers. Respects `.gitignore`. Has a 30-second timeout to prevent hanging on slow patterns. Parameters: `pattern` (required), `path`, `glob`, `ignoreCase`, `literal`, `context`, `limit`.
 
-**find**
-Search for files by glob pattern (e.g., `**/*.ts`). Returns matching file paths relative to the search directory. Respects `.gitignore`. Parameters: `pattern` (required), `path`, `limit`.
-
-**ls**
-List directory contents. Returns entries sorted alphabetically with `/` suffix for directories. Includes dotfiles. Parameters: `path`, `limit`.
+**glob**
+Find files by glob pattern (e.g., `**/*.ts`) OR list directory contents. When pattern is provided, searches for matching files. When pattern is omitted, lists directory contents with `/` suffix for directories. Respects `.gitignore`. Has a 30-second timeout to prevent hanging on slow searches. Parameters: `pattern` (optional), `path`, `limit`.
 
 ### MCP & Adding Your Own Tools
 

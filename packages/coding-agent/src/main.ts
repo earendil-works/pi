@@ -273,7 +273,7 @@ ${chalk.bold("Options:")}
   --session <path>        Use specific session file
   --no-session            Don't save session (ephemeral)
   --models <patterns>     Comma-separated model patterns for quick cycling with Ctrl+P
-  --tools <tools>         Comma-separated list of tools to enable (default: Read,Bash,Edit,Write,TodoWrite)
+  --tools <tools>         Comma-separated list of tools to enable (default: Read,Bash,Edit,Write,Grep,Glob,TodoWrite)
                           Available: Read, Bash, Edit, Write, Grep, Glob, ListThreads, ReadThread, ReadImage, TodoWrite
   --thinking <level>      Set thinking level: off, minimal, low, medium, high
   --export <file>         Export session file to HTML and exit
