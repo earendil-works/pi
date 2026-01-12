@@ -855,6 +855,39 @@ export class TuiRenderer {
 
 					// Invalidate footer cache to refresh git branch (in case agent executed git commands)
 					this.footer.invalidate();
+
+					// Check for emergency auto-handoff at 0.97 before tool execution
+					// Note: We calculate from event.message.usage because agent state isn't updated yet
+					if (
+						assistantMsg.stopReason === "toolUse" &&
+						!this.isAutoHandoffInProgress &&
+						this.agent.state.model != null
+					) {
+						const { input, output, cacheRead, cacheWrite } = assistantMsg.usage;
+						const contextTokens = input + output + cacheRead + cacheWrite;
+						const contextWindow = this.agent.state.model.contextWindow || 0;
+						const ratio = contextWindow > 0 ? contextTokens / contextWindow : 0;
+
+						if (ratio >= 0.97) {
+							// Mark pending tool components as aborted
+							for (const component of this.pendingTools.values()) {
+								component.updateResult({
+									content: [{ type: "text", text: "Aborted (context limit)" }],
+									isError: true,
+								});
+							}
+							this.pendingTools.clear();
+
+							// Pause queue drain and abort agent before tool execution
+							this.agent.pauseQueueDrain();
+							this.agent.abort();
+
+							// Fire handoff with emergency flag
+							void this.handleAutoHandoff(true);
+							this.ui.requestRender();
+							break;
+						}
+					}
 				}
 				this.ui.requestRender();
 				break;
@@ -910,6 +943,18 @@ export class TuiRenderer {
 			}
 
 			case "agent_end": {
+				// Skip full handling if emergency handoff already started (this is from aborted run)
+				if (this.isAutoHandoffInProgress) {
+					// Just clean up timer resources
+					if (this.timerIntervalId) {
+						clearInterval(this.timerIntervalId);
+						this.timerIntervalId = null;
+					}
+					this.agentStartTime = null;
+					// Don't touch loadingAnimation - it's owned by handoff now
+					break;
+				}
+
 				// Calculate elapsed time before clearing timer
 				const elapsedMs = this.agentStartTime ? Date.now() - this.agentStartTime : 0;
 				const elapsedStr = formatElapsed(elapsedMs);
@@ -951,16 +996,16 @@ export class TuiRenderer {
 				// Update footer to clear "Working" status
 				this.footer.updateState(state);
 
-				// Check for auto-handoff trigger (95% context threshold)
+				// Check for auto-handoff trigger (90% context threshold)
 				const { ratio } = this.getContextUsage();
 				const shouldAutoHandoff =
-					ratio >= 0.95 && !this.isAutoHandoffInProgress && !state.error && this.agent.state.model != null;
+					ratio >= 0.9 && !this.isAutoHandoffInProgress && !state.error && this.agent.state.model != null;
 
 				if (shouldAutoHandoff) {
 					// Pause queue drain synchronously before any async work
 					this.agent.pauseQueueDrain();
 					// Fire and forget - handleAutoHandoff manages its own lifecycle
-					void this.handleAutoHandoff();
+					void this.handleAutoHandoff(false);
 					// Skip auto-titling since we're switching sessions
 					break;
 				}
@@ -2472,18 +2517,22 @@ export class TuiRenderer {
 	}
 
 	/**
-	 * Handle automatic handoff when context reaches 95%.
+	 * Handle automatic handoff when context reaches threshold.
 	 * Pipeline: generate goal → generate draft → switch session → auto-submit
+	 * @param isEmergency - true if triggered at 97% (before tool execution), false if at 90% (agent_end)
 	 */
-	private async handleAutoHandoff(): Promise<void> {
+	private async handleAutoHandoff(isEmergency: boolean = false): Promise<void> {
 		if (this.isAutoHandoffInProgress) return;
 		this.isAutoHandoffInProgress = true;
 
 		const parentId = this.sessionManager.getSessionId();
+		const threshold = isEmergency ? "97%" : "90%";
 
 		// Show notification in chat
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new Text(theme.fg("warning", "⚡ Auto-handoff triggered (95% context)"), 1, 0));
+		this.chatContainer.addChild(
+			new Text(theme.fg("warning", `⚡ Auto-handoff triggered (${threshold} context)`), 1, 0),
+		);
 		this.ui.requestRender();
 
 		// Setup abort controller
