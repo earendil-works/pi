@@ -9,6 +9,8 @@ import { getToolDescription } from "../prompts/index.js";
 import { ensureTool } from "../tools-manager.js";
 import { DEFAULT_SEARCH_TIMEOUT_MS, killProcessTree } from "./process-utils.js";
 
+const MAX_OUTPUT_BYTES = 16 * 1024; // 16KB
+
 function expandPath(filePath: string): string {
 	if (filePath === "~") {
 		return homedir();
@@ -62,6 +64,8 @@ async function listDirectory(
 
 	const results: string[] = [];
 	let truncated = false;
+	let byteTruncated = false;
+	let totalBytes = 0;
 
 	for (const entry of entries) {
 		if (results.length >= limit) {
@@ -82,11 +86,22 @@ async function listDirectory(
 			continue;
 		}
 
-		results.push(entry + suffix);
+		const line = entry + suffix;
+		const lineBytes = Buffer.byteLength(line, "utf-8") + 1; // +1 for newline
+
+		if (totalBytes + lineBytes > MAX_OUTPUT_BYTES) {
+			byteTruncated = true;
+			break;
+		}
+
+		totalBytes += lineBytes;
+		results.push(line);
 	}
 
 	let output = results.join("\n");
-	if (truncated) {
+	if (byteTruncated) {
+		output += `\n\n(output truncated to ${MAX_OUTPUT_BYTES / 1024}KB)`;
+	} else if (truncated) {
 		const remaining = entries.length - limit;
 		output += `\n\n(truncated, ${remaining} more entries)`;
 	}
@@ -100,9 +115,15 @@ async function listDirectory(
 /**
  * Format raw fd output lines into relativized paths
  */
-function formatFdOutput(rawOutput: string, searchPath: string, limit: number): { output: string; count: number } {
+function formatFdOutput(
+	rawOutput: string,
+	searchPath: string,
+	limit: number,
+): { output: string; count: number; byteTruncated: boolean } {
 	const lines = rawOutput.split("\n");
 	const relativized: string[] = [];
+	let totalBytes = 0;
+	let byteTruncated = false;
 
 	for (const rawLine of lines) {
 		const line = rawLine.replace(/\r$/, "").trim();
@@ -122,17 +143,26 @@ function formatFdOutput(rawOutput: string, searchPath: string, limit: number): {
 			relativePath += "/";
 		}
 
+		const lineBytes = Buffer.byteLength(relativePath, "utf-8") + 1; // +1 for newline
+		if (totalBytes + lineBytes > MAX_OUTPUT_BYTES) {
+			byteTruncated = true;
+			break;
+		}
+
+		totalBytes += lineBytes;
 		relativized.push(relativePath);
 	}
 
 	let output = relativized.join("\n");
 	const count = relativized.length;
 
-	if (count >= limit) {
+	if (byteTruncated) {
+		output += `\n\n(output truncated to ${MAX_OUTPUT_BYTES / 1024}KB)`;
+	} else if (count >= limit) {
 		output += `\n\n(truncated, ${limit} results shown)`;
 	}
 
-	return { output, count };
+	return { output, count, byteTruncated };
 }
 
 async function findByGlob(

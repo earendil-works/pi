@@ -9,6 +9,9 @@ import { getToolDescription } from "../prompts/index.js";
 import { ensureTool } from "../tools-manager.js";
 import { DEFAULT_SEARCH_TIMEOUT_MS, killProcessTree } from "./process-utils.js";
 
+const MAX_LINE_LENGTH = 4096;
+const MAX_OUTPUT_BYTES = 16 * 1024; // 16KB
+
 /**
  * Expand ~ to home directory
  */
@@ -153,6 +156,9 @@ export const grepTool: AgentTool<typeof grepSchema> = {
 					let timedOut = false;
 					let killedDueToLimit = false;
 					const outputLines: string[] = [];
+					let totalOutputBytes = 0;
+					let byteTruncated = false;
+					let hadLineTruncation = false;
 
 					let timeoutHandle: NodeJS.Timeout | undefined;
 
@@ -192,53 +198,81 @@ export const grepTool: AgentTool<typeof grepSchema> = {
 						stderr += chunk.toString();
 					});
 
-					const formatBlock = (filePath: string, lineNumber: number) => {
+					const formatBlock = (
+						filePath: string,
+						lineNumber: number,
+					): { lines: string[]; truncatedLine: boolean } => {
 						const relativePath = formatPath(filePath);
 						const lines = getFileLines(filePath);
 						if (!lines.length) {
-							return [`${relativePath}:${lineNumber}: (unable to read file)`];
+							return { lines: [`${relativePath}:${lineNumber}: (unable to read file)`], truncatedLine: false };
 						}
 
 						const block: string[] = [];
+						let truncatedLine = false;
 						const start = contextValue > 0 ? Math.max(1, lineNumber - contextValue) : lineNumber;
 						const end = contextValue > 0 ? Math.min(lines.length, lineNumber + contextValue) : lineNumber;
 
 						for (let current = start; current <= end; current++) {
 							const lineText = lines[current - 1] ?? "";
 							const sanitized = lineText.replace(/\r/g, "");
-							const isMatchLine = current === lineNumber;
 
+							// Per-line truncation for minified files
+							let displayText = sanitized;
+							if (sanitized.length > MAX_LINE_LENGTH) {
+								displayText = sanitized.slice(0, MAX_LINE_LENGTH) + "...";
+								truncatedLine = true;
+							}
+
+							const isMatchLine = current === lineNumber;
 							if (isMatchLine) {
-								block.push(`${relativePath}:${current}: ${sanitized}`);
+								block.push(`${relativePath}:${current}: ${displayText}`);
 							} else {
-								block.push(`${relativePath}-${current}- ${sanitized}`);
+								block.push(`${relativePath}-${current}- ${displayText}`);
 							}
 						}
 
-						return block;
+						return { lines: block, truncatedLine };
 					};
 
 					rl.on("line", (line) => {
-						if (!line.trim() || matchCount >= effectiveLimit) {
+						if (!line.trim() || matchCount >= effectiveLimit || byteTruncated) {
 							return;
 						}
 
-						let event: any;
+						let event: unknown;
 						try {
 							event = JSON.parse(line);
 						} catch {
 							return;
 						}
 
-						if (event.type === "match") {
-							matchCount++;
-							const filePath = event.data?.path?.text;
-							const lineNumber = event.data?.line_number;
+						const eventObj = event as {
+							type?: string;
+							data?: { path?: { text?: string }; line_number?: number };
+						};
+						if (eventObj.type === "match") {
+							const filePath = eventObj.data?.path?.text;
+							const lineNumber = eventObj.data?.line_number;
 
 							if (filePath && typeof lineNumber === "number") {
-								outputLines.push(...formatBlock(filePath, lineNumber));
+								const { lines: blockLines, truncatedLine } = formatBlock(filePath, lineNumber);
+								if (truncatedLine) hadLineTruncation = true;
+
+								const blockText = blockLines.join("\n");
+								const blockBytes = Buffer.byteLength(blockText, "utf-8") + 1; // +1 for newline
+
+								if (totalOutputBytes + blockBytes > MAX_OUTPUT_BYTES) {
+									byteTruncated = true;
+									stopChild("limit");
+									return;
+								}
+
+								totalOutputBytes += blockBytes;
+								outputLines.push(...blockLines);
 							}
 
+							matchCount++;
 							if (matchCount >= effectiveLimit) {
 								truncated = true;
 								stopChild("limit");
@@ -285,8 +319,19 @@ export const grepTool: AgentTool<typeof grepSchema> = {
 						}
 
 						let output = outputLines.join("\n");
-						if (truncated) {
-							output += `\n\n(truncated, limit of ${effectiveLimit} matches reached)`;
+
+						const notices: string[] = [];
+						if (hadLineTruncation) {
+							notices.push(`some lines truncated to ${MAX_LINE_LENGTH} chars`);
+						}
+						if (byteTruncated) {
+							notices.push(`output truncated to ${MAX_OUTPUT_BYTES / 1024}KB`);
+						} else if (truncated) {
+							notices.push(`limit of ${effectiveLimit} matches reached`);
+						}
+
+						if (notices.length > 0) {
+							output += `\n\n(${notices.join("; ")})`;
 						}
 
 						settle(() => resolve({ content: [{ type: "text", text: output }], details: undefined }));

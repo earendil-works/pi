@@ -479,7 +479,7 @@ describe("Coding Agent Tools", () => {
 			expect(output).toContain("context.txt-1- before");
 			expect(output).toContain("context.txt:2: match one");
 			expect(output).toContain("context.txt-3- after");
-			expect(output).toContain("(truncated, limit of 1 matches reached)");
+			expect(output).toContain("(limit of 1 matches reached)");
 			// Ensure second match is not present
 			expect(output).not.toContain("match two");
 		});
