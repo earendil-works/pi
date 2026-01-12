@@ -105,6 +105,7 @@ export class Agent {
 	private runningPrompt?: Promise<void>;
 	private resolveRunningPrompt?: () => void;
 	private isDraining = false; // Guard against re-entrant queue draining
+	private queueDrainPaused = false; // Pause queue draining during auto-handoff
 
 	constructor(opts: AgentOptions) {
 		this._state = { ...this._state, ...opts.initialState };
@@ -141,6 +142,21 @@ export class Agent {
 
 	getQueueMode(): "all" | "one-at-a-time" {
 		return this.queueMode;
+	}
+
+	/** Pause queue draining (for auto-handoff session switch) */
+	pauseQueueDrain(): void {
+		this.queueDrainPaused = true;
+	}
+
+	/** Resume queue draining (after auto-handoff session switch) */
+	resumeQueueDrain(): void {
+		this.queueDrainPaused = false;
+	}
+
+	/** Check if queue draining is paused */
+	isQueueDrainPaused(): boolean {
+		return this.queueDrainPaused;
 	}
 
 	setTools(t: typeof this._state.tools) {
@@ -389,6 +405,7 @@ export class Agent {
 
 	private async drainQueueAfterPrompt(): Promise<void> {
 		if (this.messageQueue.length === 0) return;
+		if (this.queueDrainPaused) return; // Skip draining during auto-handoff
 
 		this.isDraining = true;
 		try {

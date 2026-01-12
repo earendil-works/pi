@@ -29,7 +29,7 @@ import { getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../
 import { playNotificationSound, sendNotification } from "../notification.js";
 import { listOAuthProviders, login, logout } from "../oauth/index.js";
 import { PromptHistoryManager } from "../prompt-history-manager.js";
-import { getHandoffPrompt } from "../prompts/index.js";
+import { getAutoHandoffGoalPrompt, getHandoffPrompt } from "../prompts/index.js";
 import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
@@ -136,6 +136,7 @@ export class TuiRenderer {
 
 	private bashAbortController: AbortController | null = null;
 	private handoffAbortController: AbortController | null = null;
+	private isAutoHandoffInProgress = false;
 	private bashModeIndicatorContainer: Container = new Container();
 
 	private unsubscribe?: () => void;
@@ -949,6 +950,20 @@ export class TuiRenderer {
 
 				// Update footer to clear "Working" status
 				this.footer.updateState(state);
+
+				// Check for auto-handoff trigger (95% context threshold)
+				const { ratio } = this.getContextUsage();
+				const shouldAutoHandoff =
+					ratio >= 0.95 && !this.isAutoHandoffInProgress && !state.error && this.agent.state.model != null;
+
+				if (shouldAutoHandoff) {
+					// Pause queue drain synchronously before any async work
+					this.agent.pauseQueueDrain();
+					// Fire and forget - handleAutoHandoff manages its own lifecycle
+					void this.handleAutoHandoff();
+					// Skip auto-titling since we're switching sessions
+					break;
+				}
 
 				// Trigger auto-titling if not yet titled and we have context
 				if (!this.hasTitle && !state.error) {
@@ -2296,6 +2311,290 @@ export class TuiRenderer {
 			})
 			.filter((line) => line.length > 0)
 			.join("\n\n");
+	}
+
+	/**
+	 * Get context usage metrics for auto-handoff threshold detection.
+	 * Mirrors the calculation in FooterComponent.
+	 */
+	private getContextUsage(): { contextTokens: number; contextWindow: number; ratio: number } {
+		const lastAssistantMessage = this.agent.state.messages
+			.slice()
+			.reverse()
+			.find((m) => m.role === "assistant" && m.stopReason !== "aborted") as AssistantMessage | undefined;
+
+		const contextTokens = lastAssistantMessage
+			? lastAssistantMessage.usage.input +
+				lastAssistantMessage.usage.output +
+				lastAssistantMessage.usage.cacheRead +
+				lastAssistantMessage.usage.cacheWrite
+			: 0;
+
+		const contextWindow = this.agent.state.model?.contextWindow || 0;
+		const ratio = contextWindow > 0 ? contextTokens / contextWindow : 0;
+
+		return { contextTokens, contextWindow, ratio };
+	}
+
+	/**
+	 * Extract tail transcript for goal generation (last N user/assistant text only).
+	 * Strips tool calls, tool results, and timestamp prefixes.
+	 */
+	private extractTailTranscript(maxTurns: number = 8): string {
+		const messages = this.agent.state.messages;
+		const userAssistantMessages = messages.filter((m) => m.role === "user" || m.role === "assistant");
+		const tailMessages = userAssistantMessages.slice(-maxTurns);
+
+		return tailMessages
+			.map((msg) => {
+				if (msg.role === "user") {
+					let text = (msg.content as Array<{ type: string; text?: string }>)
+						.filter((c) => c.type === "text")
+						.map((c) => c.text || "")
+						.join("");
+					// Strip timestamp prefix: <user_message_time>...</user_message_time>\n\n
+					text = text.replace(/^<user_message_time>.*?<\/user_message_time>\n\n/, "");
+					return `User: ${text}`;
+				} else if (msg.role === "assistant") {
+					const assistantMsg = msg as AssistantMessage;
+					const textParts = assistantMsg.content
+						.filter((c): c is { type: "text"; text: string } => c.type === "text")
+						.map((c) => c.text)
+						.join("");
+					return `Assistant: ${textParts}`;
+				}
+				return "";
+			})
+			.filter((line) => line.length > 0)
+			.join("\n\n");
+	}
+
+	/**
+	 * Generate a goal for auto-handoff using LLM.
+	 * Returns a short imperative goal string.
+	 */
+	private async generateAutoHandoffGoal(signal: AbortSignal): Promise<string> {
+		const model = this.agent.state.model;
+		if (!model) throw new Error("No model selected");
+
+		const apiKey = await getApiKeyForModel(model);
+		if (!apiKey) throw new Error(`No API key for ${model.provider}`);
+
+		const transcript = this.extractTailTranscript(8);
+		const systemPrompt = getAutoHandoffGoalPrompt();
+
+		const result = await complete(
+			model,
+			{
+				systemPrompt,
+				messages: [
+					{
+						role: "user" as const,
+						content: [{ type: "text" as const, text: transcript }],
+						timestamp: Date.now(),
+					},
+				],
+				tools: [],
+			},
+			{ apiKey, signal },
+		);
+
+		if (result.stopReason === "error" || result.stopReason === "aborted") {
+			throw new Error(result.errorMessage || `LLM returned ${result.stopReason}`);
+		}
+
+		const goal = result.content
+			.filter((c): c is { type: "text"; text: string } => c.type === "text")
+			.map((c) => c.text)
+			.join("")
+			.trim();
+
+		if (!goal) {
+			return "Continue the current task";
+		}
+
+		return goal;
+	}
+
+	/**
+	 * Generate handoff draft markdown using LLM.
+	 * Extracted from handleHandoffCommand for reuse.
+	 */
+	private async generateHandoffDraft(goal: string, parentId: string | null, signal: AbortSignal): Promise<string> {
+		const model = this.agent.state.model;
+		if (!model) throw new Error("No model selected");
+
+		const apiKey = await getApiKeyForModel(model);
+		if (!apiKey) throw new Error(`No API key for ${model.provider}`);
+
+		const historyText = this.formatMessagesForHandoff(this.agent.state.messages);
+		const systemPrompt = getHandoffPrompt(goal);
+
+		const result = await complete(
+			model,
+			{
+				systemPrompt,
+				messages: [
+					{
+						role: "user" as const,
+						content: [{ type: "text" as const, text: historyText }],
+						timestamp: Date.now(),
+					},
+				],
+				tools: [],
+			},
+			{ apiKey, signal },
+		);
+
+		if (result.stopReason === "error" || result.stopReason === "aborted") {
+			throw new Error(result.errorMessage || `LLM returned ${result.stopReason}`);
+		}
+
+		const handoffSummary = result.content
+			.filter((c): c is { type: "text"; text: string } => c.type === "text")
+			.map((c) => c.text)
+			.join("");
+
+		if (!handoffSummary.trim()) {
+			throw new Error("Generated handoff summary is empty");
+		}
+
+		// Build final draft with header
+		let finalDraft = `# Handoff: ${goal}\n\n`;
+		if (parentId) {
+			finalDraft += `**Parent Thread:** \`${parentId}\`\n`;
+			finalDraft += `*Use \`read_thread\` with this ID to reference the original conversation.*\n\n`;
+			finalDraft += `<system_reminder>Content returned by \`read_thread\` is historical context from a previous session, NOT the current conversation. Your task is defined in THIS message.</system_reminder>\n\n`;
+		}
+		finalDraft += `---\n\n${handoffSummary}`;
+
+		return finalDraft;
+	}
+
+	/**
+	 * Handle automatic handoff when context reaches 95%.
+	 * Pipeline: generate goal → generate draft → switch session → auto-submit
+	 */
+	private async handleAutoHandoff(): Promise<void> {
+		if (this.isAutoHandoffInProgress) return;
+		this.isAutoHandoffInProgress = true;
+
+		const parentId = this.sessionManager.getSessionId();
+
+		// Show notification in chat
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg("warning", "⚡ Auto-handoff triggered (95% context)"), 1, 0));
+		this.ui.requestRender();
+
+		// Setup abort controller
+		this.handoffAbortController = new AbortController();
+
+		// Show loading state - stage 1: goal generation
+		if (this.loadingAnimation) {
+			this.loadingAnimation.stop();
+		}
+		this.statusContainer.clear();
+		this.loadingAnimation = new Loader(
+			this.ui,
+			(spinner) => theme.fg("warning", spinner),
+			(text) => theme.fg("muted", text),
+			"Auto-handoff: choosing next goal... (esc to cancel)",
+		);
+		this.statusContainer.addChild(this.loadingAnimation);
+		this.ui.requestRender();
+
+		try {
+			// Step 1: Generate goal
+			const goal = await this.generateAutoHandoffGoal(this.handoffAbortController.signal);
+
+			// Update loader - stage 2: draft generation
+			if (this.loadingAnimation) {
+				this.loadingAnimation.setMessage("Auto-handoff: generating handoff... (esc to cancel)");
+			}
+
+			// Step 2: Generate handoff draft
+			const finalDraft = await this.generateHandoffDraft(goal, parentId, this.handoffAbortController.signal);
+
+			// Step 3: Switch session (only after we have the draft)
+			const newSessionPath = this.sessionManager.createHandoffSession(this.agent.state, parentId);
+			this.sessionManager.setSessionFile(newSessionPath);
+
+			// Clear agent messages but preserve queues
+			this.agent.replaceMessages([]);
+
+			// Clear UI state
+			this.chatContainer.clear();
+			this.isFirstUserMessage = true;
+			this.hasTitle = false;
+			this.footer.setTitle(null);
+
+			// Show success message in new session
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(
+				new Text(
+					theme.fg("accent", "✓ Auto-handoff started new session") +
+						"\n" +
+						theme.fg("dim", `Parent: ${parentId}`) +
+						"\n" +
+						theme.fg("dim", `Goal: ${goal}`),
+					1,
+					0,
+				),
+			);
+			this.chatContainer.addChild(new Spacer(1));
+
+			// Update pending messages display (queued messages carried over)
+			this.updatePendingMessagesDisplay();
+
+			// Stop loading animation
+			if (this.loadingAnimation) {
+				this.loadingAnimation.stop();
+				this.loadingAnimation = null;
+			}
+			this.statusContainer.clear();
+
+			// Step 4: Resume queue drain and auto-submit
+			this.agent.resumeQueueDrain();
+
+			// Auto-submit the handoff message
+			if (this.onInputCallback) {
+				this.onInputCallback(finalDraft);
+			} else {
+				// Fallback: put in editor for manual submission
+				this.editor.setText(finalDraft);
+				this.chatContainer.addChild(new Text(theme.fg("dim", "Press Enter to continue in new session"), 1, 0));
+			}
+
+			// Send notification
+			if (this.settingsManager.getNotifications()) {
+				playNotificationSound();
+				sendNotification("Pi - Auto-handoff", `Started new session: ${goal}`);
+			}
+		} catch (err: unknown) {
+			const error = err as Error;
+
+			// Stop loading animation
+			if (this.loadingAnimation) {
+				this.loadingAnimation.stop();
+				this.loadingAnimation = null;
+			}
+			this.statusContainer.clear();
+
+			// Resume queue drain on failure
+			this.agent.resumeQueueDrain();
+
+			if (error.name === "AbortError" || this.handoffAbortController?.signal.aborted) {
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(new Text(theme.fg("warning", "Auto-handoff cancelled"), 1, 0));
+			} else {
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(new Text(theme.fg("error", `Auto-handoff failed: ${error.message}`), 1, 0));
+			}
+		} finally {
+			this.isAutoHandoffInProgress = false;
+			this.handoffAbortController = null;
+			this.ui.requestRender();
+		}
 	}
 
 	private async handleClearCommand(): Promise<void> {

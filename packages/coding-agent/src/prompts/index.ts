@@ -165,7 +165,7 @@ export function buildSystemPrompt(options: {
 
 	// Build from template
 	const config = loadSystemPromptConfig();
-	const tools = selectedTools || (["Read", "Bash", "Edit", "Write"] as ToolName[]);
+	const tools = selectedTools || (["Read", "Bash", "Edit", "Write", "Grep", "Glob"] as ToolName[]);
 
 	// Build tools list
 	const toolDescriptions = config.toolDescriptions;
@@ -219,4 +219,26 @@ List of file paths crucial for the goal (full paths as bullet points).
 Concrete instructions to achieve the target goal.
 
 IMPORTANT: Output ONLY the Markdown document. Do NOT include any preamble, introduction, or conversational text like "Here is the handoff document" or "I'll generate...". Start directly with "## Context Summary".`;
+}
+
+/**
+ * Get the prompt for auto-generating a handoff goal from conversation context.
+ * Used when context reaches 95% and auto-handoff triggers.
+ */
+export function getAutoHandoffGoalPrompt(): string {
+	return `You are selecting the single most useful next step for the user based on the conversation.
+
+Output ONE short, imperative goal (max 12 words).
+- No quotes
+- No markdown
+- No trailing punctuation
+- Start with a verb (e.g., "Implement", "Fix", "Add", "Complete")
+
+If the conversation is unclear about what to do next, output: "Continue the current task"
+
+Examples of good goals:
+- Implement the OAuth logout flow
+- Fix the failing unit tests
+- Add error handling to the API endpoint
+- Complete the database migration`;
 }
