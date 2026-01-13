@@ -1367,8 +1367,8 @@ export class TuiRenderer {
 		}
 
 		const currentLevel = this.agent.state.thinkingLevel || "off";
-		// Toggle: off ↔ medium
-		const nextLevel = currentLevel === "off" ? "medium" : "off";
+		// Toggle: off ↔ high
+		const nextLevel = currentLevel === "off" ? "high" : "off";
 
 		// Apply the new thinking level
 		this.agent.setThinkingLevel(nextLevel);
