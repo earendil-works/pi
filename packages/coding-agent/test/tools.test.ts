@@ -534,4 +534,23 @@ describe("Coding Agent Tools", () => {
 			expect(output).toContain(".hidden-dir/");
 		});
 	});
+
+	describe("schema validation", () => {
+		it("should have Google-compatible schemas for all coding tools", async () => {
+			const { validateToolSchemas } = await import("@kennyfrc/pi-ai");
+			const { codingTools } = await import("../src/tools/index.js");
+
+			const errors = validateToolSchemas(codingTools);
+
+			if (errors.length > 0) {
+				const errorMessages = errors.map((e) => `Tool "${e.toolName}" at ${e.path}: ${e.message}`);
+				throw new Error(
+					`Schema validation failed:\n${errorMessages.join("\n")}\n\n` +
+						`Fix: Use StringEnum instead of Type.Union([Type.Literal(...)]) for string enums.`,
+				);
+			}
+
+			expect(errors).toEqual([]);
+		});
+	});
 });

@@ -1,13 +1,15 @@
 import type { AgentTool } from "@kennyfrc/pi-ai";
+import { StringEnum } from "@kennyfrc/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { getToolDescription } from "../prompts/index.js";
 
-const TodoStatus = Type.Union(
-	[Type.Literal("pending"), Type.Literal("in_progress"), Type.Literal("completed"), Type.Literal("cancelled")],
-	{ description: "Current status of the task: pending, in_progress, completed, cancelled" },
-);
+// Use StringEnum instead of Type.Union([Type.Literal(...)]) for Google API compatibility.
+// Google's API doesn't support anyOf/const patterns - only enum arrays.
+const TodoStatus = StringEnum(["pending", "in_progress", "completed", "cancelled"] as const, {
+	description: "Current status of the task: pending, in_progress, completed, cancelled",
+});
 
-const TodoPriority = Type.Union([Type.Literal("high"), Type.Literal("medium"), Type.Literal("low")], {
+const TodoPriority = StringEnum(["high", "medium", "low"] as const, {
 	description: "Priority level of the task: high, medium, low",
 });
 
