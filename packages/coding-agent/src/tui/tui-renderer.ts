@@ -857,8 +857,7 @@ export class TuiRenderer {
 					// Invalidate footer cache to refresh git branch (in case agent executed git commands)
 					this.footer.invalidate();
 
-					// Check for emergency auto-handoff at 0.97 before tool execution
-					// Note: We calculate from event.message.usage because agent state isn't updated yet
+					// Emergency handoff at 95%: abort tools before execution to prevent overflow
 					if (
 						assistantMsg.stopReason === "toolUse" &&
 						!this.isAutoHandoffInProgress &&
@@ -869,8 +868,7 @@ export class TuiRenderer {
 						const contextWindow = this.agent.state.model.contextWindow || 0;
 						const ratio = contextWindow > 0 ? contextTokens / contextWindow : 0;
 
-						if (ratio >= 0.97) {
-							// Mark pending tool components as aborted
+						if (ratio >= 0.95) {
 							for (const component of this.pendingTools.values()) {
 								component.updateResult({
 									content: [{ type: "text", text: "Aborted (context limit)" }],
@@ -879,11 +877,9 @@ export class TuiRenderer {
 							}
 							this.pendingTools.clear();
 
-							// Pause queue drain and abort agent before tool execution
 							this.agent.pauseQueueDrain();
 							this.agent.abort();
 
-							// Fire handoff with emergency flag
 							void this.handleAutoHandoff(true);
 							this.ui.requestRender();
 							break;
@@ -2524,16 +2520,15 @@ export class TuiRenderer {
 	}
 
 	/**
-	 * Handle automatic handoff when context reaches threshold.
-	 * Pipeline: generate goal → generate draft → switch session → auto-submit
-	 * @param isEmergency - true if triggered at 97% (before tool execution), false if at 90% (agent_end)
+	 * Auto-handoff: generate goal → draft → switch session → auto-submit.
+	 * @param isEmergency - true at 95% (pre-tool), false at 90% (post-completion)
 	 */
 	private async handleAutoHandoff(isEmergency: boolean = false): Promise<void> {
 		if (this.isAutoHandoffInProgress) return;
 		this.isAutoHandoffInProgress = true;
 
 		const parentId = this.sessionManager.getSessionId();
-		const threshold = isEmergency ? "97%" : "90%";
+		const threshold = isEmergency ? "95%" : "90%";
 
 		// Show notification in chat
 		this.chatContainer.addChild(new Spacer(1));
