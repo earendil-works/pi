@@ -1367,8 +1367,11 @@ export class TuiRenderer {
 		}
 
 		const currentLevel = this.agent.state.thinkingLevel || "off";
-		// Toggle: off ↔ high
-		const nextLevel = currentLevel === "off" ? "high" : "off";
+		// Cycle: off → low → medium → high → off (excludes "minimal")
+		const tabCycle: Array<"off" | "low" | "medium" | "high"> = ["off", "low", "medium", "high"];
+		const currentIndex = tabCycle.indexOf(currentLevel as "off" | "low" | "medium" | "high");
+		// If not in cycle (e.g., "minimal"), jump to "low"; otherwise advance to next
+		const nextLevel = currentIndex === -1 ? "low" : tabCycle[(currentIndex + 1) % tabCycle.length];
 
 		// Apply the new thinking level
 		this.agent.setThinkingLevel(nextLevel);
