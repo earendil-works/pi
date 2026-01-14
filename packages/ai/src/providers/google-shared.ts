@@ -3,7 +3,7 @@
  */
 
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part, type Schema } from "@google/genai";
-import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from "../types.js";
+import type { Context, ImageContent, Model, StopReason, TextContent, Tool, ToolResultMessage } from "../types.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { transformMessages } from "./transorm-messages.js";
 
@@ -16,7 +16,8 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 	const contents: Content[] = [];
 	const transformedMessages = transformMessages(context.messages, model);
 
-	for (const msg of transformedMessages) {
+	for (let i = 0; i < transformedMessages.length; i++) {
+		const msg = transformedMessages[i];
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				contents.push({
@@ -77,45 +78,52 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 				parts,
 			});
 		} else if (msg.role === "toolResult") {
-			// Build parts array with functionResponse and/or images
+			// Group consecutive tool results into a single turn
 			const parts: Part[] = [];
+			let j = i;
+			while (j < transformedMessages.length && transformedMessages[j].role === "toolResult") {
+				const toolMsg = transformedMessages[j] as ToolResultMessage;
 
-			// Extract text and image content
-			const textContent = msg.content.filter((c): c is TextContent => c.type === "text");
-			const textResult = textContent.map((c) => c.text).join("\n");
-			const imageContent = model.input.includes("image")
-				? msg.content.filter((c): c is ImageContent => c.type === "image")
-				: [];
+				// Extract text and image content
+				const textContent = toolMsg.content.filter(
+					(c: TextContent | ImageContent): c is TextContent => c.type === "text",
+				);
+				const textResult = textContent.map((c: TextContent) => c.text).join("\n");
+				const imageContent = model.input.includes("image")
+					? toolMsg.content.filter((c: TextContent | ImageContent): c is ImageContent => c.type === "image")
+					: [];
 
-			// Always add functionResponse with text result (or placeholder if only images)
-			const hasText = textResult.length > 0;
-			const hasImages = imageContent.length > 0;
+				const hasText = textResult.length > 0;
+				const hasImages = imageContent.length > 0;
+				const responseValue = hasText ? sanitizeSurrogates(textResult) : hasImages ? "(see attached image)" : "";
 
-			// Use "output" key for success, "error" key for errors as per SDK documentation
-			const responseValue = hasText ? sanitizeSurrogates(textResult) : hasImages ? "(see attached image)" : "";
-
-			parts.push({
-				functionResponse: {
-					id: msg.toolCallId,
-					name: msg.toolName,
-					response: msg.isError ? { error: responseValue } : { output: responseValue },
-				},
-			});
-
-			// Add any images as inlineData parts
-			for (const imageBlock of imageContent) {
 				parts.push({
-					inlineData: {
-						mimeType: imageBlock.mimeType,
-						data: imageBlock.data,
+					functionResponse: {
+						id: toolMsg.toolCallId,
+						name: toolMsg.toolName,
+						response: toolMsg.isError ? { error: responseValue } : { output: responseValue },
 					},
 				});
+
+				// Add any images as inlineData parts
+				for (const imageBlock of imageContent) {
+					parts.push({
+						inlineData: {
+							mimeType: imageBlock.mimeType,
+							data: imageBlock.data,
+						},
+					});
+				}
+				j++;
 			}
 
 			contents.push({
 				role: "user",
 				parts,
 			});
+
+			// Skip the grouped tool results
+			i = j - 1;
 		}
 	}
 
