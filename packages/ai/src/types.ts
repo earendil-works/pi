@@ -92,11 +92,11 @@ export type Provider = KnownProvider | string;
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 
 export interface RetryOptions {
-	/** Maximum number of retry attempts. Default: 3. */
+	/** Maximum number of retry attempts. Default varies by provider. */
 	maxRetries?: number;
-	/** Initial delay in milliseconds for exponential backoff. Default: 1000. */
+	/** Initial delay in milliseconds for exponential backoff. Default varies by provider. */
 	baseDelay?: number;
-	/** Maximum delay in milliseconds between retries. Default: 60000. */
+	/** Maximum delay in milliseconds between retries. Default varies by provider. */
 	maxDelay?: number;
 }
 

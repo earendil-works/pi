@@ -89,6 +89,57 @@ export interface AnthropicOptions extends StreamOptions {
 	toolChoice?: "auto" | "any" | "none" | { type: "tool"; name: string };
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+	return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : null;
+}
+
+function toNumber(value: unknown): number | undefined {
+	if (typeof value === "number") return value;
+	if (typeof value === "string" && value.trim()) {
+		const parsed = Number(value);
+		if (!Number.isNaN(parsed)) return parsed;
+	}
+	return undefined;
+}
+
+function parseErrorJson(message: string): Record<string, unknown> | null {
+	const start = message.indexOf("{");
+	const end = message.lastIndexOf("}");
+	if (start === -1 || end <= start) return null;
+	const candidate = message.slice(start, end + 1);
+	try {
+		return asRecord(JSON.parse(candidate));
+	} catch {
+		return null;
+	}
+}
+
+function getErrorType(error: unknown): string | undefined {
+	const record = asRecord(error);
+	const nestedError = record ? asRecord(record.error) : null;
+	const nestedType = nestedError && typeof nestedError.type === "string" ? nestedError.type : undefined;
+	if (nestedType) return nestedType;
+
+	const rootType = record && typeof record.type === "string" ? record.type : undefined;
+	if (rootType) return rootType;
+
+	if (error instanceof Error) {
+		const parsed = parseErrorJson(error.message);
+		if (parsed) {
+			const parsedError = asRecord(parsed.error);
+			const parsedType = parsedError && typeof parsedError.type === "string" ? parsedError.type : undefined;
+			return parsedType ?? (typeof parsed.type === "string" ? parsed.type : undefined);
+		}
+	}
+
+	return undefined;
+}
+
+function getStatusCode(error: unknown): number | undefined {
+	const record = asRecord(error);
+	return toNumber(record?.status);
+}
+
 /**
  * Check if error is retryable. Never retries when aborted.
  * Retries: overloaded_error, rate_limit_error, 5xx, network errors.
@@ -96,15 +147,13 @@ export interface AnthropicOptions extends StreamOptions {
 function isRetryableError(error: unknown, signal?: AbortSignal): boolean {
 	if (signal?.aborted) return false;
 
-	const apiError = error as any;
-	if (apiError?.error?.type) {
-		const errorType = apiError.error.type;
-		if (errorType === "overloaded_error" || errorType === "rate_limit_error") {
-			return true;
-		}
+	const errorType = getErrorType(error);
+	if (errorType === "overloaded_error" || errorType === "rate_limit_error") {
+		return true;
 	}
 
-	if (apiError?.status >= 500 && apiError?.status <= 504) {
+	const statusCode = getStatusCode(error);
+	if (statusCode !== undefined && statusCode >= 500 && statusCode <= 504) {
 		return true;
 	}
 
@@ -131,8 +180,8 @@ export const streamAnthropic: StreamFunction<"anthropic-messages"> = (
 	const stream = new AssistantMessageEventStream();
 
 	(async () => {
-		const maxRetries = options?.retry?.maxRetries ?? 3;
-		const baseDelay = options?.retry?.baseDelay ?? 1000;
+		const maxRetries = options?.retry?.maxRetries ?? 9;
+		const baseDelay = options?.retry?.baseDelay ?? 100;
 		const maxDelay = options?.retry?.maxDelay ?? 60000;
 
 		const output: AssistantMessage = {
@@ -155,9 +204,11 @@ export const streamAnthropic: StreamFunction<"anthropic-messages"> = (
 
 		let lastError: unknown;
 		let hasEmittedStart = false;
+		let attempts = 0;
 
 		// Retry window = before first event emission (prevents duplicate start events)
 		for (let attempt = 0; attempt <= maxRetries; attempt++) {
+			attempts = attempt + 1;
 			try {
 				output.content = [];
 
@@ -373,7 +424,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages"> = (
 
 		output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 		const errorMessage = lastError instanceof Error ? lastError.message : JSON.stringify(lastError);
-		output.errorMessage = maxRetries > 0 ? `${errorMessage} (after ${maxRetries + 1} attempts)` : errorMessage;
+		output.errorMessage = attempts > 1 ? `${errorMessage} (after ${attempts} attempts)` : errorMessage;
 
 		stream.push({ type: "error", reason: output.stopReason, error: output });
 		stream.end();

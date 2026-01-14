@@ -128,21 +128,21 @@ describe("Anthropic Retry - Integration Tests", () => {
 
 	describe("INV-7: Attempt Count in Error Message", () => {
 		it("should format error message with correct attempt count", () => {
-			const maxRetries = 3;
+			const attempts = 4;
 			const baseError = "Overloaded";
 
 			// Simulate FormatErrorMessage
-			const errorMessage = maxRetries > 0 ? `${baseError} (after ${maxRetries + 1} attempts)` : baseError;
+			const errorMessage = attempts > 1 ? `${baseError} (after ${attempts} attempts)` : baseError;
 
 			expect(errorMessage).toBe("Overloaded (after 4 attempts)");
 			expect(errorMessage).toContain("after 4 attempts");
 		});
 
-		it("should not add suffix when maxRetries is 0", () => {
-			const maxRetries = 0;
+		it("should not add suffix when only one attempt occurred", () => {
+			const attempts = 1;
 			const baseError = "Overloaded";
 
-			const errorMessage = maxRetries > 0 ? `${baseError} (after ${maxRetries + 1} attempts)` : baseError;
+			const errorMessage = attempts > 1 ? `${baseError} (after ${attempts} attempts)` : baseError;
 
 			expect(errorMessage).toBe("Overloaded");
 			expect(errorMessage).not.toContain("after");
