@@ -7,6 +7,7 @@ export interface OAuthCredentials {
 	refresh: string;
 	access: string;
 	expires: number;
+	scopes?: string[]; // OAuth scopes (e.g., ["user:inference"])
 	enterpriseUrl?: string;
 	projectId?: string; // For Google Cloud Code Assist
 	email?: string; // For Google Cloud Code Assist

@@ -1,11 +1,23 @@
 import { createHash, randomBytes } from "crypto";
-import { type OAuthCredentials, saveOAuthCredentials } from "./storage.js";
+import { loadOAuthCredentials, type OAuthCredentials, saveOAuthCredentials } from "./storage.js";
 
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
 const TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
 const REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback";
-const SCOPES = "org:create_api_key user:profile user:inference";
+const DEFAULT_SCOPES = ["user:inference"];
+
+/**
+ * Get scopes for Anthropic OAuth.
+ * Uses scopes from existing credentials if available, otherwise defaults to user:inference.
+ */
+function getScopes(): string {
+	const existing = loadOAuthCredentials("anthropic");
+	if (existing?.scopes && existing.scopes.length > 0) {
+		return existing.scopes.join(" ");
+	}
+	return DEFAULT_SCOPES.join(" ");
+}
 
 /**
  * Generate PKCE code verifier and challenge
@@ -24,6 +36,7 @@ export async function loginAnthropic(
 	onPromptCode: () => Promise<string>,
 ): Promise<void> {
 	const { verifier, challenge } = generatePKCE();
+	const scopes = getScopes();
 
 	// Build authorization URL
 	const authParams = new URLSearchParams({
@@ -31,7 +44,7 @@ export async function loginAnthropic(
 		client_id: CLIENT_ID,
 		response_type: "code",
 		redirect_uri: REDIRECT_URI,
-		scope: SCOPES,
+		scope: scopes,
 		code_challenge: challenge,
 		code_challenge_method: "S256",
 		state: verifier,
