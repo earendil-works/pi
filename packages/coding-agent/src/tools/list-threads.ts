@@ -1,13 +1,9 @@
 import type { AgentTool } from "@kennyfrc/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { getToolDescription } from "../prompts/index.js";
-import { SessionManager } from "../session-manager.js";
+import { getSessionsRoot, type SearchGroup, SessionIndex } from "../session-index.js";
 
 // --- Search Query Types ---
-type SearchGroup =
-	| { type: "term"; text: string }
-	| { type: "phrase"; text: string }
-	| { type: "or"; alternatives: string[] };
 
 interface ParsedQuery {
 	groups: SearchGroup[];
@@ -63,33 +59,6 @@ function parseSearchQuery(query: string): ParsedQuery {
 	return { groups, hasStructuredSyntax };
 }
 
-/**
- * Check if a single search group matches the haystack.
- */
-function matchGroup(group: SearchGroup, haystack: string): boolean {
-	switch (group.type) {
-		case "term":
-		case "phrase":
-			return haystack.includes(group.text);
-		case "or":
-			return group.alternatives.some((alt) => haystack.includes(alt));
-	}
-}
-
-/**
- * Check if all groups match (AND semantics).
- */
-function matchAllGroups(groups: SearchGroup[], haystack: string): boolean {
-	return groups.every((group) => matchGroup(group, haystack));
-}
-
-/**
- * Check if any group matches (OR semantics for relaxation).
- */
-function matchAnyGroup(groups: SearchGroup[], haystack: string): boolean {
-	return groups.some((group) => matchGroup(group, haystack));
-}
-
 const listThreadsSchema = Type.Object({
 	search: Type.Optional(
 		Type.String({
@@ -129,48 +98,36 @@ export const listThreadsTool: AgentTool<typeof listThreadsSchema> = {
 		_toolCallId: string,
 		{ search, workspace, limit }: { search?: string; workspace?: string; limit?: number },
 	) => {
-		const mgr = new SessionManager(false, undefined, true);
+		const index = new SessionIndex(getSessionsRoot());
 
 		// Use current workspace if not provided
 		const effectiveWorkspace = workspace?.trim() || process.cwd();
+		const max = limit || 25;
 
 		try {
-			const sessions = mgr.loadAllSessionsGlobal();
+			let sessions: Awaited<ReturnType<typeof index.listRecent>>;
 
-			let filtered = sessions;
 			if (search?.trim()) {
 				const parsed = parseSearchQuery(search);
 
 				if (parsed.groups.length === 0) {
-					// Empty query after parsing - match all
-					filtered = sessions;
+					// Empty query after parsing - list recent
+					sessions = await index.listRecent(effectiveWorkspace, max);
 				} else {
-					// Build haystack once per session and apply AND matching
-					filtered = sessions.filter((s) => {
-						const haystack = (s.firstMessage + " " + s.allMessagesText).toLowerCase();
-						return matchAllGroups(parsed.groups, haystack);
-					});
+					// Search with AND matching
+					sessions = await index.search(effectiveWorkspace, parsed.groups, max);
 
 					// Relaxation: if AND returns 0 and query is plain terms (no quotes/pipes), retry with OR
-					if (filtered.length === 0 && parsed.groups.length >= 2 && !parsed.hasStructuredSyntax) {
-						filtered = sessions.filter((s) => {
-							const haystack = (s.firstMessage + " " + s.allMessagesText).toLowerCase();
-							return matchAnyGroup(parsed.groups, haystack);
-						});
+					if (sessions.length === 0 && parsed.groups.length >= 2 && !parsed.hasStructuredSyntax) {
+						sessions = await index.searchAny(effectiveWorkspace, parsed.groups, max);
 					}
 				}
+			} else {
+				// No search - just list recent
+				sessions = await index.listRecent(effectiveWorkspace, max);
 			}
 
-			// Apply workspace filter (case-insensitive substring match)
-			const workspaceTerm = effectiveWorkspace.toLowerCase();
-			const sourceSessions = search ? filtered : sessions;
-			filtered = sourceSessions.filter((s) => s.cwd.toLowerCase().includes(workspaceTerm));
-
-			// Sort by date desc
-			filtered.sort((a, b) => b.modified.getTime() - a.modified.getTime());
-
-			const max = limit || 25;
-			const results = filtered.slice(0, max).map((s) => ({
+			const results = sessions.map((s) => ({
 				id: s.id,
 				date: s.modified.toISOString(),
 				relativeDate: getRelativeDate(s.modified),
