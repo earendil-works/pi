@@ -36,13 +36,12 @@ npm link  # If you want to test locally
 
 ## General Guidelines
 
-- When receiving the first user message, you MUST read README.md in full. Then ask the user which module(s) they want to work on. Then you MUST read the corresponding README.md files in full, in parallel:
+- When receiving the first user message, you MUST read README.md in full. Then proactively read the available package README.md files in full, in parallel:
     - packages/ai/README.md
     - packages/tui/README.md
-    - packages/agent/README.md
     - packages/coding-agent/README.md
     - packages/pods/README.md
-    - packages/web-ui/README.md
+    - packages/proxy/README.md
 - We must NEVER have type `any` anywhere, unless absolutely, positively necessary.
 - If you are working with an external API, check node_modules for the type definitions as needed instead of assuming things.
 - Always run `npm run check` in the project's root directory after making code changes.
