@@ -32,6 +32,14 @@ npm link  # If you want to test locally
 - The `scripts/sync-versions.js` script ensures root and packages stay in sync
 - This is a fork of upstream, so we maintain our own versioning
 
+## Generated Files & Build Artifacts
+
+- Some files are generated and may change as a side-effect of running scripts/builds (for example `packages/ai/src/models.generated.*`).
+- When these generated files change alongside a feature/fix, keep commits atomic:
+	- Commit the human-authored change(s) separately.
+	- Commit generated/build-artifact updates separately (even if they were triggered indirectly).
+- If it’s obviously a generated/build byproduct and the user has asked to proceed, do not repeatedly ask whether to include it; just keep it in a separate commit.
+
 ---
 
 ## General Guidelines
