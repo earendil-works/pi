@@ -248,6 +248,7 @@ export class FooterComponent implements Component {
 
 		// Add model name on the right side, plus thinking level if model supports it
 		const modelName = this.state.model?.id || "no-model";
+		const providerName = this.state.model?.provider;
 
 		// Add thinking level hint if model supports reasoning and thinking is enabled
 		let rightSide = modelName;
@@ -256,6 +257,11 @@ export class FooterComponent implements Component {
 			if (thinkingLevel !== "off") {
 				rightSide = `${modelName} • ${thinkingLevel}`;
 			}
+		}
+
+		// Append provider to reduce billing/provider ambiguity (e.g., OpenAI vs OpenRouter vs OpenAI Codex)
+		if (providerName) {
+			rightSide = `${rightSide} [${providerName}]`;
 		}
 
 		const statsLeftWidth = visibleWidth(statsLeft);
