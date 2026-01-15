@@ -1,5 +1,6 @@
 import type { AgentState } from "@kennyfrc/pi-agent-core";
 import type { AssistantMessage } from "@kennyfrc/pi-ai";
+import { supportsXhigh } from "@kennyfrc/pi-ai";
 import { type Component, visibleWidth } from "@kennyfrc/pi-tui";
 import { existsSync, type FSWatcher, readFileSync, watch } from "fs";
 import { dirname, join } from "path";
@@ -254,7 +255,8 @@ export class FooterComponent implements Component {
 		let rightSide = modelName;
 		if (this.state.model?.reasoning) {
 			const thinkingLevel = this.state.thinkingLevel || "off";
-			if (thinkingLevel !== "off") {
+			const canShowXhigh = this.state.model ? supportsXhigh(this.state.model) : false;
+			if (thinkingLevel !== "off" && (thinkingLevel !== "xhigh" || canShowXhigh)) {
 				rightSide = `${modelName} • ${thinkingLevel}`;
 			}
 		}

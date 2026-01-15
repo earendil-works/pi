@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { Agent, AgentEvent, AgentState, Attachment, ThinkingLevel } from "@kennyfrc/pi-agent-core";
 import type { AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@kennyfrc/pi-ai";
-import { complete } from "@kennyfrc/pi-ai";
+import { complete, supportsXhigh } from "@kennyfrc/pi-ai";
 import type { SlashCommand } from "@kennyfrc/pi-tui";
 import {
 	CombinedAutocompleteProvider,
@@ -57,6 +57,7 @@ import { ModelSelectorComponent } from "./model-selector.js";
 import { OAuthSelectorComponent } from "./oauth-selector.js";
 import { QueueModeSelectorComponent } from "./queue-mode-selector.js";
 import { ThemeSelectorComponent } from "./theme-selector.js";
+import { getEffectiveThinkingLevel, getNextThinkingLevel, getThinkingLevelItems } from "./thinking-levels.js";
 import { ThinkingSelectorComponent } from "./thinking-selector.js";
 import { ToolExecutionComponent } from "./tool-execution.js";
 import { UserMessageComponent } from "./user-message.js";
@@ -1477,11 +1478,8 @@ export class TuiRenderer {
 		}
 
 		const currentLevel = this.agent.state.thinkingLevel || "off";
-		// Cycle: off → low → medium → high → off (excludes "minimal")
-		const tabCycle: Array<"off" | "low" | "medium" | "high"> = ["off", "low", "medium", "high"];
-		const currentIndex = tabCycle.indexOf(currentLevel as "off" | "low" | "medium" | "high");
-		// If not in cycle (e.g., "minimal"), jump to "low"; otherwise advance to next
-		const nextLevel = currentIndex === -1 ? "low" : tabCycle[(currentIndex + 1) % tabCycle.length];
+		const xhighSupported = this.agent.state.model ? supportsXhigh(this.agent.state.model) : false;
+		const nextLevel = getNextThinkingLevel(currentLevel, xhighSupported);
 
 		// Apply the new thinking level
 		this.agent.setThinkingLevel(nextLevel);
@@ -1540,7 +1538,11 @@ export class TuiRenderer {
 			this.settingsManager.setDefaultModelAndProvider(nextModel.provider, nextModel.id);
 
 			// Apply thinking level (silently use "off" if model doesn't support thinking)
-			const effectiveThinking = nextModel.reasoning ? nextThinking : "off";
+			const effectiveThinking = getEffectiveThinkingLevel(
+				nextThinking,
+				nextModel.reasoning,
+				supportsXhigh(nextModel),
+			);
 			this.agent.setThinkingLevel(effectiveThinking);
 			this.sessionManager.saveThinkingLevelChange(effectiveThinking);
 			this.settingsManager.setDefaultThinkingLevel(effectiveThinking);
@@ -1548,7 +1550,8 @@ export class TuiRenderer {
 
 			// Show notification
 			this.chatContainer.addChild(new Spacer(1));
-			const thinkingStr = nextModel.reasoning && nextThinking !== "off" ? ` (thinking: ${nextThinking})` : "";
+			const thinkingStr =
+				nextModel.reasoning && effectiveThinking !== "off" ? ` (thinking: ${effectiveThinking})` : "";
 			this.chatContainer.addChild(
 				new Text(theme.fg("dim", `Switched to ${nextModel.name || nextModel.id}${thinkingStr}`), 1, 0),
 			);
@@ -1599,6 +1602,19 @@ export class TuiRenderer {
 			// Save model change to session and settings
 			this.sessionManager.saveModelChange(nextModel.provider, nextModel.id);
 			this.settingsManager.setDefaultModelAndProvider(nextModel.provider, nextModel.id);
+
+			const currentThinking = this.agent.state.thinkingLevel;
+			const effectiveThinking = getEffectiveThinkingLevel(
+				currentThinking,
+				nextModel.reasoning,
+				supportsXhigh(nextModel),
+			);
+			if (effectiveThinking !== currentThinking) {
+				this.agent.setThinkingLevel(effectiveThinking);
+				this.sessionManager.saveThinkingLevelChange(effectiveThinking);
+				this.settingsManager.setDefaultThinkingLevel(effectiveThinking);
+				this.updateEditorBorderColor();
+			}
 
 			// Show notification
 			this.chatContainer.addChild(new Spacer(1));
@@ -1725,9 +1741,12 @@ export class TuiRenderer {
 	}
 
 	private showThinkingSelector(): void {
+		const xhighSupported = this.agent.state.model ? supportsXhigh(this.agent.state.model) : false;
+
 		// Create thinking selector with current level
 		this.thinkingSelector = new ThinkingSelectorComponent(
 			this.agent.state.thinkingLevel,
+			getThinkingLevelItems(xhighSupported),
 			(level) => {
 				// Apply the selected thinking level
 				this.agent.setThinkingLevel(level);
@@ -1890,6 +1909,15 @@ export class TuiRenderer {
 
 				// Save model change to session
 				this.sessionManager.saveModelChange(model.provider, model.id);
+
+				const currentThinking = this.agent.state.thinkingLevel;
+				const effectiveThinking = getEffectiveThinkingLevel(currentThinking, model.reasoning, supportsXhigh(model));
+				if (effectiveThinking !== currentThinking) {
+					this.agent.setThinkingLevel(effectiveThinking);
+					this.sessionManager.saveThinkingLevelChange(effectiveThinking);
+					this.settingsManager.setDefaultThinkingLevel(effectiveThinking);
+					this.updateEditorBorderColor();
+				}
 
 				// Show confirmation message with proper spacing
 				this.chatContainer.addChild(new Spacer(1));

@@ -7,7 +7,7 @@ export interface AgentRunConfig {
 	systemPrompt: string;
 	tools: AgentTool<any>[];
 	model: Model<any>;
-	reasoning?: "low" | "medium" | "high";
+	reasoning?: "low" | "medium" | "high" | "xhigh";
 }
 
 /**

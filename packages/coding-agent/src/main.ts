@@ -1,5 +1,6 @@
 import { Agent, type Attachment, ProviderTransport, type ThinkingLevel } from "@kennyfrc/pi-agent-core";
 import type { Api, KnownProvider, Model } from "@kennyfrc/pi-ai";
+import { supportsXhigh } from "@kennyfrc/pi-ai";
 import { ProcessTerminal, TUI } from "@kennyfrc/pi-tui";
 import chalk from "chalk";
 import { existsSync, readFileSync, statSync } from "fs";
@@ -1060,6 +1061,10 @@ export async function main(args: string[]) {
 		initialThinking = parsed.thinking;
 	}
 
+	if (initialModel && initialThinking === "xhigh" && !supportsXhigh(initialModel)) {
+		initialThinking = "high";
+	}
+
 	// Determine which tools to use
 	const selectedTools = parsed.tools ? parsed.tools.map((name) => allTools[name]) : codingTools;
 
@@ -1102,6 +1107,10 @@ export async function main(args: string[]) {
 		agent.setThinkingLevel("off");
 	}
 
+	if (initialModel && agent.state.thinkingLevel === "xhigh" && !supportsXhigh(initialModel)) {
+		agent.setThinkingLevel("high");
+	}
+
 	// Track if we had to fall back from saved model (to show in chat later)
 	let modelFallbackMessage: string | null = null;
 
@@ -1119,6 +1128,11 @@ export async function main(args: string[]) {
 			if (shouldPrintMessages) {
 				console.log(chalk.dim(`Restored thinking level: ${thinkingLevel}`));
 			}
+		}
+
+		const activeModel = agent.state.model;
+		if (activeModel && agent.state.thinkingLevel === "xhigh" && !supportsXhigh(activeModel)) {
+			agent.setThinkingLevel("high");
 		}
 
 		// Check if we had to fall back from saved model

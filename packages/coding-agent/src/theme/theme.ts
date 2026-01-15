@@ -70,12 +70,13 @@ const ThemeJsonSchema = Type.Object({
 		syntaxType: ColorValueSchema,
 		syntaxOperator: ColorValueSchema,
 		syntaxPunctuation: ColorValueSchema,
-		// Thinking Level Borders (5 colors)
+		// Thinking Level Borders (6 colors)
 		thinkingOff: ColorValueSchema,
 		thinkingMinimal: ColorValueSchema,
 		thinkingLow: ColorValueSchema,
 		thinkingMedium: ColorValueSchema,
 		thinkingHigh: ColorValueSchema,
+		thinkingXhigh: ColorValueSchema,
 		// Context Budget Indicators (4 colors)
 		budgetGreen: ColorValueSchema,
 		budgetYellow: ColorValueSchema,
@@ -130,6 +131,7 @@ export type ThemeColor =
 	| "thinkingLow"
 	| "thinkingMedium"
 	| "thinkingHigh"
+	| "thinkingXhigh"
 	| "budgetGreen"
 	| "budgetYellow"
 	| "budgetOrange"
@@ -309,7 +311,7 @@ export class Theme {
 		return this.mode;
 	}
 
-	getThinkingBorderColor(level: "off" | "minimal" | "low" | "medium" | "high"): (str: string) => string {
+	getThinkingBorderColor(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh"): (str: string) => string {
 		// Map thinking levels to dedicated theme colors
 		switch (level) {
 			case "off":
@@ -322,6 +324,8 @@ export class Theme {
 				return (str: string) => this.fg("thinkingMedium", str);
 			case "high":
 				return (str: string) => this.fg("thinkingHigh", str);
+			case "xhigh":
+				return (str: string) => this.fg("thinkingXhigh", str);
 			default:
 				return (str: string) => this.fg("thinkingOff", str);
 		}

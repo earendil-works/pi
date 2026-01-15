@@ -18,7 +18,7 @@ export interface Attachment {
 /**
  * Thinking/reasoning level for models that support it.
  */
-export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high";
+export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
 /**
  * User message with optional attachments.
