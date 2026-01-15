@@ -103,7 +103,7 @@ function getShellConfig(): { shell: string; args: string[] } {
 
 		for (const path of paths) {
 			if (existsSync(path)) {
-				return { shell: path, args: ["-c"] };
+				return { shell: path, args: ["-lc"] };
 			}
 		}
 
@@ -112,7 +112,7 @@ function getShellConfig(): { shell: string; args: string[] } {
 				`Searched in:\n${paths.map((p) => `  ${p}`).join("\n")}`,
 		);
 	}
-	return { shell: "sh", args: ["-c"] };
+	return { shell: "bash", args: ["-lc"] };
 }
 
 /**
