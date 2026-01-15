@@ -611,6 +611,23 @@ function parseSSE(response) {
 	let buffer = "";
 	if (!response.body) return (async function* () {})();
 	const reader = response.body.getReader();
+	const parseChunk = (chunk) => {
+		if (!chunk.trim()) return { done: false };
+		const dataLines = chunk
+			.split("\n")
+			.filter((line) => line.startsWith("data:"))
+			.map((line) => line.slice(5).trim());
+		if (dataLines.length === 0) return { done: false };
+		const data = dataLines.join("\n");
+		if (data === "[DONE]") return { done: true };
+		try {
+			const json = JSON.parse(data);
+			return { done: false, event: json };
+		} catch (error) {
+			console.warn("Failed to parse SSE JSON:", error);
+			return { done: false };
+		}
+	};
 	async function* generator() {
 		while (true) {
 			const { done, value } = await reader.read();
@@ -621,21 +638,15 @@ function parseSSE(response) {
 				const chunk = buffer.slice(0, boundary);
 				buffer = buffer.slice(boundary + 2);
 				boundary = buffer.indexOf("\n\n");
-				if (!chunk.trim()) continue;
-				const dataLines = chunk
-					.split("\n")
-					.filter((line) => line.startsWith("data:"))
-					.map((line) => line.slice(5).trim());
-				if (dataLines.length === 0) continue;
-				const data = dataLines.join("\n");
-				if (data === "[DONE]") return;
-				try {
-					const json = JSON.parse(data);
-					yield json;
-				} catch (error) {
-					console.warn("Failed to parse SSE JSON:", error);
-				}
+				const result = parseChunk(chunk);
+				if (result.done) return;
+				if (result.event) yield result.event;
 			}
+		}
+		if (buffer.trim()) {
+			const result = parseChunk(buffer);
+			if (result.done) return;
+			if (result.event) yield result.event;
 		}
 	}
 	return generator();
