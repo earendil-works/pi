@@ -377,7 +377,7 @@ export class TuiRenderer {
 				return;
 			}
 
-			if (this.loadingAnimation) {
+			if (this.agent.state.isStreaming) {
 				// Restore queued messages to editor on abort
 				const queuedText = this.queuedMessages.join("\n\n");
 				const currentText = this.editor.getText();
