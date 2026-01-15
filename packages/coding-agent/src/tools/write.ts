@@ -1,6 +1,7 @@
 import * as os from "node:os";
 import type { AgentTool } from "@kennyfrc/pi-ai";
 import { Type } from "@sinclair/typebox";
+import { createHash } from "crypto";
 import { mkdir, readFile, writeFile } from "fs/promises";
 import { dirname, resolve as resolvePath } from "path";
 import { getToolDescription } from "../prompts/index.js";
@@ -13,6 +14,10 @@ function expandPath(filePath: string): string {
 		return os.homedir() + filePath.slice(1);
 	}
 	return filePath;
+}
+
+function hashContent(content: string): string {
+	return createHash("sha256").update(content).digest("hex");
 }
 
 const writeSchema = Type.Object({
@@ -37,7 +42,9 @@ export const writeTool: AgentTool<typeof writeSchema> = {
 
 		return new Promise<{
 			content: Array<{ type: "text"; text: string }>;
-			details: { path: string; created: boolean; previousContent: string | null } | undefined;
+			details:
+				| { path: string; created: boolean; previousContent: string | null; newContentHash: string }
+				| undefined;
 		}>((resolve, reject) => {
 			if (signal?.aborted) {
 				reject(new Error("Operation aborted"));
@@ -93,6 +100,7 @@ export const writeTool: AgentTool<typeof writeSchema> = {
 							path: absolutePath,
 							created,
 							previousContent,
+							newContentHash: hashContent(content),
 						},
 					});
 				} catch (error: any) {

@@ -19,7 +19,7 @@ import {
 	visibleWidth,
 } from "@kennyfrc/pi-tui";
 import { exec } from "child_process";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { readFile, unlink, writeFile } from "fs/promises";
 import { relative } from "path";
 import {
@@ -61,6 +61,10 @@ import { ThinkingSelectorComponent } from "./thinking-selector.js";
 import { ToolExecutionComponent } from "./tool-execution.js";
 import { UserMessageComponent } from "./user-message.js";
 import { UserMessageSelectorComponent } from "./user-message-selector.js";
+
+function hashContent(content: string): string {
+	return createHash("sha256").update(content).digest("hex");
+}
 
 /**
  * TUI renderer for the coding agent
@@ -2926,6 +2930,7 @@ export class TuiRenderer {
 					oldText: string | undefined;
 					newText: string | undefined;
 					index: number | undefined;
+					newContentHash: string | undefined;
 			  }
 			| {
 					type: "write";
@@ -2933,6 +2938,7 @@ export class TuiRenderer {
 					path: string;
 					created: boolean;
 					previousContent: string | null | undefined;
+					newContentHash: string | undefined;
 			  };
 
 		const undoOperations: UndoOperation[] = [];
@@ -2948,6 +2954,7 @@ export class TuiRenderer {
 						oldText?: string;
 						newText?: string;
 						index?: number;
+						newContentHash?: string;
 					};
 					if (details.path) {
 						undoOperations.push({
@@ -2957,6 +2964,7 @@ export class TuiRenderer {
 							oldText: details.oldText,
 							newText: details.newText,
 							index: details.index,
+							newContentHash: details.newContentHash,
 						});
 					}
 				} else if (toolName === "Write" && toolResult.details) {
@@ -2964,6 +2972,7 @@ export class TuiRenderer {
 						path?: string;
 						created?: boolean;
 						previousContent?: string | null;
+						newContentHash?: string;
 					};
 					if (details.path && details.created !== undefined) {
 						undoOperations.push({
@@ -2972,6 +2981,7 @@ export class TuiRenderer {
 							path: details.path,
 							created: details.created,
 							previousContent: details.previousContent,
+							newContentHash: details.newContentHash,
 						});
 					}
 				}
@@ -2989,21 +2999,30 @@ export class TuiRenderer {
 
 			if (op.type === "edit") {
 				try {
-					let { oldText, newText } = op;
-					if (oldText === undefined || newText === undefined) {
-						const storedDetails = this.sessionManager.findToolResultDetails(op.toolCallId);
+					let { oldText, newText, newContentHash } = op;
+					if (oldText === undefined || newText === undefined || newContentHash === undefined) {
+						const storedDetails = this.sessionManager.findToolResultDetails(op.toolCallId) as {
+							oldText?: string;
+							newText?: string;
+							newContentHash?: string;
+						} | null;
 						if (storedDetails) {
 							oldText = storedDetails.oldText;
 							newText = storedDetails.newText;
+							newContentHash = storedDetails.newContentHash;
 						}
 					}
 
-					if (oldText === undefined || newText === undefined) {
+					if (oldText === undefined || newText === undefined || newContentHash === undefined) {
 						errors.push(`${relPath}: undo data not available`);
 						continue;
 					}
 
 					const currentContent = await readFile(op.path, "utf-8");
+					if (hashContent(currentContent) !== newContentHash) {
+						errors.push(`${relPath}: content has changed, cannot safely undo`);
+						continue;
+					}
 
 					// Use index if available, fall back to indexOf (avoids String.replace $ issues)
 					let revertIndex: number;
@@ -3035,12 +3054,37 @@ export class TuiRenderer {
 				}
 			} else if (op.type === "write") {
 				try {
-					let { previousContent } = op;
-					if (previousContent === undefined && !op.created) {
-						const storedDetails = this.sessionManager.findToolResultDetails(op.toolCallId);
+					let { previousContent, newContentHash } = op;
+					if (previousContent === undefined || newContentHash === undefined) {
+						const storedDetails = this.sessionManager.findToolResultDetails(op.toolCallId) as {
+							previousContent?: string | null;
+							newContentHash?: string;
+						} | null;
 						if (storedDetails) {
 							previousContent = storedDetails.previousContent;
+							newContentHash = storedDetails.newContentHash;
 						}
+					}
+
+					if (newContentHash === undefined) {
+						errors.push(`${relPath}: undo data not available`);
+						continue;
+					}
+
+					let currentContent: string;
+					try {
+						currentContent = await readFile(op.path, "utf-8");
+					} catch (err: any) {
+						if (err.code === "ENOENT") {
+							errors.push(`${relPath}: file missing, cannot safely undo`);
+							continue;
+						}
+						throw err;
+					}
+
+					if (hashContent(currentContent) !== newContentHash) {
+						errors.push(`${relPath}: content has changed, cannot safely undo`);
+						continue;
 					}
 
 					if (op.created) {

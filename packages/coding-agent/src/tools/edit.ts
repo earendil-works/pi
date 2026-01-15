@@ -1,6 +1,7 @@
 import * as os from "node:os";
 import type { AgentTool } from "@kennyfrc/pi-ai";
 import { Type } from "@sinclair/typebox";
+import { createHash } from "crypto";
 import * as Diff from "diff";
 import { constants } from "fs";
 import { access, readFile, writeFile } from "fs/promises";
@@ -15,6 +16,10 @@ function expandPath(filePath: string): string {
 		return os.homedir() + filePath.slice(1);
 	}
 	return filePath;
+}
+
+function hashContent(content: string): string {
+	return createHash("sha256").update(content).digest("hex");
 }
 
 function generateDiffString(oldContent: string, newContent: string, contextLines = 4): string {
@@ -315,7 +320,16 @@ export const editTool: AgentTool<typeof editSchema> = {
 
 		return new Promise<{
 			content: Array<{ type: "text"; text: string }>;
-			details: { diff: string; path: string; oldText: string; newText: string; index: number } | undefined;
+			details:
+				| {
+						diff: string;
+						path: string;
+						oldText: string;
+						newText: string;
+						index: number;
+						newContentHash: string;
+				  }
+				| undefined;
 		}>((resolve, reject) => {
 			if (signal?.aborted) {
 				reject(new Error("Operation aborted"));
@@ -517,6 +531,7 @@ export const editTool: AgentTool<typeof editSchema> = {
 							oldText: firstMatch.content,
 							newText,
 							index: firstMatch.index,
+							newContentHash: hashContent(newContent),
 						},
 					});
 				} catch (error: unknown) {
