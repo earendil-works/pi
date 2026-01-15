@@ -1,7 +1,7 @@
 /**
  * Handoff Nudge Tests
  *
- * Tests the 85% threshold nudge system that encourages voluntary handoff
+ * Tests the 80% threshold nudge system that encourages voluntary handoff
  * before forced auto-handoff at 90%.
  */
 
@@ -10,8 +10,8 @@ import { getHandoffNudgeReminder, HANDOFF_NUDGE_THRESHOLD } from "../src/prompts
 
 describe("Handoff Nudge", () => {
 	describe("Constants", () => {
-		it("threshold is 85%", () => {
-			expect(HANDOFF_NUDGE_THRESHOLD).toBe(0.85);
+		it("threshold is 80%", () => {
+			expect(HANDOFF_NUDGE_THRESHOLD).toBe(0.8);
 		});
 	});
 
@@ -22,9 +22,9 @@ describe("Handoff Nudge", () => {
 			expect(reminder).toContain("</system_reminder>");
 		});
 
-		it("mentions 85% threshold", () => {
+		it("mentions 80% threshold", () => {
 			const reminder = getHandoffNudgeReminder();
-			expect(reminder).toContain("85%");
+			expect(reminder).toContain("80%");
 		});
 
 		it("mentions Handoff tool", () => {
@@ -50,31 +50,31 @@ describe("Threshold Detection Logic", () => {
 	}
 
 	describe("shouldSetNudgeFlag", () => {
-		it("returns false when ratio < 0.85 and flag is false", () => {
-			expect(shouldSetNudgeFlag(0.84, false)).toBe(false);
+		it("returns false when ratio < 0.80 and flag is false", () => {
+			expect(shouldSetNudgeFlag(0.79, false)).toBe(false);
 			expect(shouldSetNudgeFlag(0.5, false)).toBe(false);
 			expect(shouldSetNudgeFlag(0.0, false)).toBe(false);
 		});
 
-		it("returns true when ratio >= 0.85 and flag is false", () => {
-			expect(shouldSetNudgeFlag(0.85, false)).toBe(true);
-			expect(shouldSetNudgeFlag(0.86, false)).toBe(true);
+		it("returns true when ratio >= 0.80 and flag is false", () => {
+			expect(shouldSetNudgeFlag(0.8, false)).toBe(true);
+			expect(shouldSetNudgeFlag(0.81, false)).toBe(true);
 			expect(shouldSetNudgeFlag(0.9, false)).toBe(true);
 			expect(shouldSetNudgeFlag(0.99, false)).toBe(true);
 		});
 
 		it("returns true when flag is already true (one-way latch)", () => {
 			expect(shouldSetNudgeFlag(0.5, true)).toBe(true);
-			expect(shouldSetNudgeFlag(0.84, true)).toBe(true);
-			expect(shouldSetNudgeFlag(0.85, true)).toBe(true);
+			expect(shouldSetNudgeFlag(0.79, true)).toBe(true);
+			expect(shouldSetNudgeFlag(0.8, true)).toBe(true);
 		});
 
-		it("boundary: exactly 0.85 triggers", () => {
-			expect(shouldSetNudgeFlag(0.85, false)).toBe(true);
+		it("boundary: exactly 0.80 triggers", () => {
+			expect(shouldSetNudgeFlag(0.8, false)).toBe(true);
 		});
 
-		it("boundary: 0.8499... does not trigger", () => {
-			expect(shouldSetNudgeFlag(0.8499999, false)).toBe(false);
+		it("boundary: 0.7999... does not trigger", () => {
+			expect(shouldSetNudgeFlag(0.7999999, false)).toBe(false);
 		});
 	});
 });
@@ -173,16 +173,16 @@ describe("Nudge State Machine", () => {
 	});
 
 	describe("Threshold crossing", () => {
-		it("enables nudge when ratio crosses 85%", () => {
-			machine.onAgentEnd(0.84);
+		it("enables nudge when ratio crosses 80%", () => {
+			machine.onAgentEnd(0.79);
 			expect(machine.isNudgeEnabled()).toBe(false);
 
-			machine.onAgentEnd(0.85);
+			machine.onAgentEnd(0.8);
 			expect(machine.isNudgeEnabled()).toBe(true);
 		});
 
 		it("stays enabled once crossed (one-way latch)", () => {
-			machine.onAgentEnd(0.85);
+			machine.onAgentEnd(0.8);
 			expect(machine.isNudgeEnabled()).toBe(true);
 
 			// Ratio drops but nudge stays on
@@ -191,7 +191,7 @@ describe("Nudge State Machine", () => {
 		});
 
 		it("augments messages after threshold crossed", () => {
-			machine.onAgentEnd(0.85);
+			machine.onAgentEnd(0.8);
 			const result = machine.augmentMessage("test");
 			expect(result).toContain("test");
 			expect(result).toContain("<system_reminder>");
@@ -230,19 +230,19 @@ describe("Nudge State Machine", () => {
 		});
 
 		it("does not enable nudge if resumed session is below threshold", () => {
-			machine.onSessionInit(0.8);
+			machine.onSessionInit(0.79);
 			expect(machine.isNudgeEnabled()).toBe(false);
 		});
 	});
 
 	describe("Edge cases", () => {
-		it("handles exact boundary (0.85)", () => {
-			machine.onAgentEnd(0.85);
+		it("handles exact boundary (0.80)", () => {
+			machine.onAgentEnd(0.8);
 			expect(machine.isNudgeEnabled()).toBe(true);
 		});
 
-		it("handles just below boundary (0.849999)", () => {
-			machine.onAgentEnd(0.849999);
+		it("handles just below boundary (0.799999)", () => {
+			machine.onAgentEnd(0.799999);
 			expect(machine.isNudgeEnabled()).toBe(false);
 		});
 
