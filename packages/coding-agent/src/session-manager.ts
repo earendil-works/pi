@@ -449,7 +449,7 @@ export class SessionManager {
 			: this.findSessionByUuid(sessionId);
 		if (!sessionPath) return null;
 
-		const { maxMessages = 50, startIndex = 0, detailed = false } = options;
+		const { maxMessages = 50, startIndex = 0, detailed = true } = options;
 
 		try {
 			const content = readFileSync(sessionPath, "utf8");
@@ -543,7 +543,7 @@ export class SessionManager {
 					}
 
 					const name = toolMsg.toolName || "unknown";
-					const limit = 2000;
+					const limit = 2048;
 
 					if (resultContent.length > limit) {
 						resultContent =

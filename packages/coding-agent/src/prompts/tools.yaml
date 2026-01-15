@@ -55,6 +55,8 @@ ReadThread: |
   Use 'raw: true' ONLY when you need the full unfiltered transcript (e.g., for complete context or debugging).
   
   Returns <thread_extract> (default) or <reference_thread> (raw mode).
+  
+  Tool calls (Bash, Read, Write, etc.) are visible by default. Use 'detailed: false' for clean transcripts without tool output.
 
 TodoWrite: |
   Create and manage a structured task list for multi-step work.
@@ -62,3 +64,23 @@ TodoWrite: |
   States: pending, in_progress, completed, cancelled.
   Priority: high, medium (default), low.
   Replaces the full list each call.
+
+Handoff: |
+  Explicitly hand off to a new session with specific file context injected.
+
+  Use when: current context is cluttered, switching focus areas, or need fresh start with curated context.
+
+  Parameters:
+  - goal: Imperative statement of what to accomplish (required)
+  - files: Array of file selections using slice syntax (required):
+    - 'src/foo.ts' - full file
+    - 'src/foo.ts:42' - single line
+    - 'src/foo.ts:10-50' - line range
+    - 'src/foo.ts:100-' - from line 100 to end
+  - token_limit: Max tokens for file context (default: 100000)
+
+  The tool validates files exist, checks token limits, and prepares the handoff.
+  On success, the session switches and the goal with file context is auto-submitted.
+
+  Example:
+  {"goal":"Implement OAuth logout flow","files":["src/auth/oauth.ts:50-150","src/routes/auth.ts","src/types/auth.ts:1-30"]}

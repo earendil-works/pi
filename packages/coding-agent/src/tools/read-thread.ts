@@ -23,9 +23,7 @@ const readThreadSchema = Type.Object({
 		Type.Number({ description: "Max messages to return (default: 500 for extraction, 50 for raw mode)" }),
 	),
 	start_index: Type.Optional(Type.Number({ description: "Message index to start from (default: 0)" })),
-	detailed: Type.Optional(
-		Type.Boolean({ description: "Include tool execution details in raw mode (default: false)" }),
-	),
+	detailed: Type.Optional(Type.Boolean({ description: "Include tool execution details in raw mode (default: true)" })),
 });
 
 function wrapContent(
@@ -91,10 +89,37 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 		const limit = max_messages ?? (raw ? 50 : 500);
 		const start = start_index ?? 0;
 
+		// Raw Mode: Return transcript without AI extraction
+		if (raw) {
+			// For raw mode, respect user's detailed parameter (defaults to true in SessionManager)
+			const result = mgr.getThreadContent(id, {
+				maxMessages: limit,
+				startIndex: start,
+				detailed: detailed,
+				globalSearch: true,
+			});
+
+			if (!result) {
+				return {
+					content: [{ type: "text" as const, text: "Thread not found." }],
+					details: undefined,
+					isError: true,
+				};
+			}
+
+			const wrappedContent = wrapContent(result.content, id, result.totalMessages, result.returnedMessages, start);
+			return {
+				content: [{ type: "text" as const, text: wrappedContent }],
+				details: undefined,
+			};
+		}
+
+		// Extraction Mode: Use AI to extract relevant information
+		// Always fetch with detailed=true so extraction LLM sees tool calls
 		const result = mgr.getThreadContent(id, {
 			maxMessages: limit,
 			startIndex: start,
-			detailed: detailed ?? false,
+			detailed: true, // Always include tool calls for extraction
 			globalSearch: true,
 		});
 
@@ -106,16 +131,6 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 			};
 		}
 
-		// Raw Mode: Return transcript without AI extraction
-		if (raw) {
-			const wrappedContent = wrapContent(result.content, id, result.totalMessages, result.returnedMessages, start);
-			return {
-				content: [{ type: "text" as const, text: wrappedContent }],
-				details: undefined,
-			};
-		}
-
-		// Extraction Mode: Use AI to extract relevant information
 		{
 			const currentModel = getCurrentModel();
 			let extractionModel = currentModel;
@@ -139,8 +154,9 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 				return { content: [{ type: "text", text: raw }], details: undefined };
 			}
 
-			// Truncate to ~400k characters (approx 100k tokens) for safety
-			const MAX_CHARS = 400000;
+			// Truncate to ~300k characters (approx 75k tokens) for safety
+			// Reduced from 400k to account for tool-inclusive content
+			const MAX_CHARS = 300000;
 			const contentToProcess =
 				result.content.length > MAX_CHARS
 					? result.content.slice(0, MAX_CHARS) + "\n...[content truncated due to length]..."
