@@ -4,6 +4,7 @@ export { bashTool } from "./bash.js";
 export { editTool } from "./edit.js";
 export { globTool } from "./glob.js";
 export { grepTool } from "./grep.js";
+export { handoffTool } from "./handoff.js";
 export { listThreadsTool } from "./list-threads.js";
 export { readTool } from "./read.js";
 export { readImageTool } from "./read-image.js";
@@ -15,6 +16,7 @@ import { bashTool } from "./bash.js";
 import { editTool } from "./edit.js";
 import { globTool } from "./glob.js";
 import { grepTool } from "./grep.js";
+import { handoffTool } from "./handoff.js";
 import { listThreadsTool } from "./list-threads.js";
 import { readTool } from "./read.js";
 import { readImageTool } from "./read-image.js";
@@ -34,6 +36,7 @@ export const codingTools: AgentTool<any>[] = [
 	readThreadTool,
 	readImageTool,
 	todowriteTool,
+	handoffTool,
 ];
 
 // All available tools (TitleCase keys match tool.name)
@@ -48,6 +51,7 @@ export const allTools = {
 	ReadThread: readThreadTool,
 	ReadImage: readImageTool,
 	TodoWrite: todowriteTool,
+	Handoff: handoffTool,
 };
 
 export type ToolName = keyof typeof allTools;
