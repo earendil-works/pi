@@ -13,6 +13,7 @@ import type {
 	Context,
 	Model,
 	OpenAICodexResponsesOptions,
+	RetryClass,
 	StopReason,
 	StreamFunction,
 	TextContent,
@@ -22,6 +23,7 @@ import type {
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
+import { getExponentialBackoff, sleep } from "../utils/retry.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { buildCodexPiBridge, OPENCODE_CODEX_INSTRUCTIONS } from "./openai-codex-responses-legacy.js";
 import { transformMessages } from "./transform-messages.js";
@@ -60,6 +62,137 @@ interface RequestBody {
 	[key: string]: unknown;
 }
 
+export class CodexHttpError extends Error {
+	readonly status: number;
+	readonly retryAfterMs?: number;
+
+	constructor(message: string, status: number, retryAfterMs?: number) {
+		super(message);
+		this.name = "CodexHttpError";
+		this.status = status;
+		this.retryAfterMs = retryAfterMs;
+	}
+}
+
+class CodexStreamError extends Error {
+	readonly hadContent: boolean;
+
+	constructor(message: string, hadContent: boolean) {
+		super(message);
+		this.name = "CodexStreamError";
+		this.hadContent = hadContent;
+	}
+}
+
+const DEFAULT_RETRY_CLASSES: RetryClass[] = ["429", "5xx", "transport"];
+
+function getRetryAfterMs(headers: Headers): number | undefined {
+	const raw = headers.get("retry-after") ?? headers.get("Retry-After");
+	if (!raw) return undefined;
+
+	const seconds = Number(raw);
+	if (Number.isFinite(seconds)) return seconds * 1000;
+
+	const date = Date.parse(raw);
+	if (!Number.isNaN(date)) return Math.max(0, date - Date.now());
+
+	return undefined;
+}
+
+function getErrorStatus(error: unknown): number | undefined {
+	if (error instanceof CodexHttpError) return error.status;
+	if (!error || typeof error !== "object") return undefined;
+
+	const record = error as Record<string, unknown>;
+	const status = record.status;
+	if (typeof status === "number") return status;
+	if (typeof status === "string" && status.trim()) {
+		const parsed = Number(status);
+		return Number.isNaN(parsed) ? undefined : parsed;
+	}
+	return undefined;
+}
+
+function getErrorMessage(error: unknown): string {
+	if (error instanceof Error) return error.message;
+	return typeof error === "string" ? error : JSON.stringify(error);
+}
+
+function getRetryAfterFromError(error: unknown): number | undefined {
+	if (error instanceof CodexHttpError) return error.retryAfterMs;
+	if (!error || typeof error !== "object") return undefined;
+
+	const record = error as Record<string, unknown>;
+	const retryAfter = record.retryAfterMs;
+	return typeof retryAfter === "number" ? retryAfter : undefined;
+}
+
+function resolveRetryClasses(retryOn?: RetryClass[]): RetryClass[] {
+	return retryOn && retryOn.length > 0 ? retryOn : DEFAULT_RETRY_CLASSES;
+}
+
+function hasRetryClass(classes: RetryClass[], value: RetryClass): boolean {
+	return classes.includes(value);
+}
+
+export function isRetryableCodexError(error: unknown, signal?: AbortSignal, retryOn?: RetryClass[]): boolean {
+	if (signal?.aborted) return false;
+
+	const classes = resolveRetryClasses(retryOn);
+
+	if (error instanceof CodexStreamError) {
+		return !error.hadContent && hasRetryClass(classes, "transport");
+	}
+
+	const status = getErrorStatus(error);
+	if (status === 429 && hasRetryClass(classes, "429")) {
+		return true;
+	}
+	if (status !== undefined && status >= 500 && status <= 504 && hasRetryClass(classes, "5xx")) {
+		return true;
+	}
+
+	if (!hasRetryClass(classes, "transport")) {
+		return false;
+	}
+
+	const message = getErrorMessage(error).toLowerCase();
+	return (
+		message.includes("terminated") ||
+		message.includes("fetch failed") ||
+		message.includes("network") ||
+		message.includes("econnreset") ||
+		message.includes("etimedout") ||
+		message.includes("econnrefused")
+	);
+}
+
+export function getRetryDelay(attempt: number, baseDelay: number, maxDelay: number, error: unknown): number {
+	const backoff = getExponentialBackoff(attempt, baseDelay, maxDelay);
+	const retryAfterMs = getRetryAfterFromError(error);
+	if (retryAfterMs === undefined) return Math.min(maxDelay, backoff);
+	return Math.min(maxDelay, Math.max(backoff, retryAfterMs));
+}
+
+function resolveCodexRetryOptions(options?: OpenAICodexResponsesOptions): {
+	requestMaxRetries: number;
+	streamMaxRetries: number;
+	baseDelay: number;
+	maxDelay: number;
+	retryOn: RetryClass[];
+} {
+	const fallbackRetry = options?.retry;
+	const codexRetry = options?.codexRetry;
+
+	return {
+		requestMaxRetries: codexRetry?.requestMaxRetries ?? fallbackRetry?.maxRetries ?? 3,
+		streamMaxRetries: codexRetry?.streamMaxRetries ?? fallbackRetry?.maxRetries ?? 1,
+		baseDelay: codexRetry?.baseDelay ?? fallbackRetry?.baseDelay ?? 1000,
+		maxDelay: codexRetry?.maxDelay ?? fallbackRetry?.maxDelay ?? 60000,
+		retryOn: resolveRetryClasses(codexRetry?.retryOn),
+	};
+}
+
 // ============================================================================
 // Main Stream Function
 // ============================================================================
@@ -90,47 +223,118 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 			timestamp: Date.now(),
 		};
 
-		try {
-			const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
-			if (!apiKey) {
-				throw new Error(`No API key for provider: ${model.provider}`);
+		const retryConfig = resolveCodexRetryOptions(options);
+		const { requestMaxRetries, streamMaxRetries, baseDelay, maxDelay, retryOn } = retryConfig;
+
+		let hasEmittedStart = false;
+		let attempts = 0;
+		let lastError: unknown;
+		let streamRetries = 0;
+		let requestAttempt = 0;
+
+		while (true) {
+			const attemptIndex = requestAttempt;
+			requestAttempt += 1;
+			attempts = requestAttempt;
+			try {
+				output.content = [];
+				output.usage = {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				};
+
+				const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
+				if (!apiKey) {
+					throw new Error(`No API key for provider: ${model.provider}`);
+				}
+
+				const accountId = extractAccountId(apiKey);
+				const body = buildRequestBody(model, context, options);
+				const headers = buildHeaders(model.headers, accountId, apiKey, options?.sessionId);
+
+				const response = await fetch(CODEX_URL, {
+					method: "POST",
+					headers,
+					body: JSON.stringify(body),
+					signal: options?.signal,
+				});
+
+				if (!response.ok) {
+					const info = await parseErrorResponse(response);
+					const retryAfterMs = getRetryAfterMs(response.headers);
+					throw new CodexHttpError(info.friendlyMessage || info.message, response.status, retryAfterMs);
+				}
+
+				if (!response.body) {
+					throw new Error("No response body");
+				}
+
+				if (!hasEmittedStart) {
+					stream.push({ type: "start", partial: output });
+					hasEmittedStart = true;
+				}
+
+				await processStream(response, output, stream, model);
+
+				if (options?.signal?.aborted) {
+					throw new Error("Request was aborted");
+				}
+
+				stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
+				stream.end();
+				return;
+			} catch (error) {
+				lastError = error;
+
+				const canRetryStream =
+					error instanceof CodexStreamError &&
+					hasRetryClass(retryOn, "transport") &&
+					!error.hadContent &&
+					streamRetries < streamMaxRetries;
+
+				if (canRetryStream) {
+					const streamAttempt = streamRetries;
+					streamRetries += 1;
+					const delay = getRetryDelay(streamAttempt, baseDelay, maxDelay, error);
+					try {
+						await sleep(delay, options?.signal);
+					} catch {
+						break;
+					}
+					continue;
+				}
+
+				const shouldRetryRequest =
+					!hasEmittedStart &&
+					isRetryableCodexError(error, options?.signal, retryOn) &&
+					attemptIndex < requestMaxRetries;
+
+				if (shouldRetryRequest) {
+					const delay = getRetryDelay(attemptIndex, baseDelay, maxDelay, error);
+					try {
+						await sleep(delay, options?.signal);
+					} catch {
+						break;
+					}
+					continue;
+				}
+				break;
 			}
-
-			const accountId = extractAccountId(apiKey);
-			const body = buildRequestBody(model, context, options);
-			const headers = buildHeaders(model.headers, accountId, apiKey, options?.sessionId);
-
-			const response = await fetch(CODEX_URL, {
-				method: "POST",
-				headers,
-				body: JSON.stringify(body),
-				signal: options?.signal,
-			});
-
-			if (!response.ok) {
-				const info = await parseErrorResponse(response);
-				throw new Error(info.friendlyMessage || info.message);
-			}
-
-			if (!response.body) {
-				throw new Error("No response body");
-			}
-
-			stream.push({ type: "start", partial: output });
-			await processStream(response, output, stream, model);
-
-			if (options?.signal?.aborted) {
-				throw new Error("Request was aborted");
-			}
-
-			stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
-			stream.end();
-		} catch (error) {
-			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : String(error);
-			stream.push({ type: "error", reason: output.stopReason, error: output });
-			stream.end();
 		}
+
+		if (!hasEmittedStart) {
+			stream.push({ type: "start", partial: output });
+		}
+
+		output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+		const errorMessage = getErrorMessage(lastError ?? "Unknown error");
+		output.errorMessage = attempts > 1 ? `${errorMessage} (after ${attempts} attempts)` : errorMessage;
+		stream.push({ type: "error", reason: output.stopReason, error: output });
+		stream.end();
 	})();
 
 	return stream;
@@ -347,6 +551,8 @@ async function processStream(
 ): Promise<void> {
 	let currentItem: ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall | null = null;
 	let currentBlock: ThinkingContent | TextContent | (ToolCall & { partialJson: string }) | null = null;
+	let sawCompletion = false;
+	let hadContent = false;
 	const blockIndex = () => output.content.length - 1;
 
 	for await (const event of parseSSE(response)) {
@@ -356,16 +562,19 @@ async function processStream(
 			case "response.output_item.added": {
 				const item = event.item as ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall;
 				if (item.type === "reasoning") {
+					hadContent = true;
 					currentItem = item;
 					currentBlock = { type: "thinking", thinking: "" };
 					output.content.push(currentBlock);
 					stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
 				} else if (item.type === "message") {
+					hadContent = true;
 					currentItem = item;
 					currentBlock = { type: "text", text: "" };
 					output.content.push(currentBlock);
 					stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
 				} else if (item.type === "function_call") {
+					hadContent = true;
 					currentItem = item;
 					currentBlock = {
 						type: "toolCall",
@@ -496,6 +705,7 @@ async function processStream(
 
 			case "response.completed":
 			case "response.done": {
+				sawCompletion = true;
 				const resp = (
 					event as {
 						response?: {
@@ -538,6 +748,10 @@ async function processStream(
 				throw new Error(formatCodexFailure(event) ?? "Codex response failed");
 			}
 		}
+	}
+
+	if (!sawCompletion) {
+		throw new CodexStreamError("Stream terminated", hadContent);
 	}
 }
 

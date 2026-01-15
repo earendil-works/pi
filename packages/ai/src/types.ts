@@ -60,6 +60,8 @@ export interface OpenAICodexResponsesOptions extends StreamOptions {
 	include?: string[];
 	/** Session ID for prompt caching */
 	sessionId?: string;
+	/** Codex-specific retry tuning (request vs stream retries). */
+	codexRetry?: CodexRetryOptions;
 }
 
 // Compile-time exhaustiveness check - this will fail if ApiOptionsMap doesn't have all KnownApi keys
@@ -91,6 +93,8 @@ export type Provider = KnownProvider | string;
 
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";
 
+export type RetryClass = "429" | "5xx" | "transport";
+
 export interface RetryOptions {
 	/** Maximum number of retry attempts. Default varies by provider. */
 	maxRetries?: number;
@@ -98,6 +102,19 @@ export interface RetryOptions {
 	baseDelay?: number;
 	/** Maximum delay in milliseconds between retries. Default varies by provider. */
 	maxDelay?: number;
+}
+
+export interface CodexRetryOptions {
+	/** Max attempts for initial request failures (429/5xx/transport). */
+	requestMaxRetries?: number;
+	/** Max attempts for retrying a dropped stream before failing. */
+	streamMaxRetries?: number;
+	/** Initial delay in milliseconds for exponential backoff. */
+	baseDelay?: number;
+	/** Maximum delay in milliseconds between retries. */
+	maxDelay?: number;
+	/** Which error classes are retryable. Defaults to all classes. */
+	retryOn?: RetryClass[];
 }
 
 // Base options all providers share
