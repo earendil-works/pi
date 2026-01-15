@@ -454,6 +454,20 @@ Clear the conversation context and start a fresh session:
 
 Aborts any in-flight agent work, clears all messages, and creates a new session file.
 
+### /autohandoff
+
+Toggle automatic session handoff when context usage is high.
+
+```
+/autohandoff          # toggle on/off
+/autohandoff on       # enable auto-handoff
+/autohandoff off      # disable auto-handoff (default)
+/autohandoff toggle   # toggle on/off
+/autohandoff status   # show current status
+```
+
+Auto-handoff is stored in `~/.pi/agent/settings.json` and defaults to `off`.
+
 ## Editor Features
 
 The interactive input editor includes several productivity features:

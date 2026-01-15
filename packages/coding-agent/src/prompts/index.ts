@@ -8,11 +8,7 @@ import type { ToolName } from "../tools/index.js";
 // Handoff Nudge Constants
 // -----------------------------------------------------------------------------
 
-/**
- * Context usage threshold (as a ratio) at which to start nudging the agent
- * to voluntarily use the Handoff tool before forced auto-handoff at 90%.
- */
-export const HANDOFF_NUDGE_THRESHOLD = 0.8;
+export { HANDOFF_NUDGE_THRESHOLD } from "../auto-handoff.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);

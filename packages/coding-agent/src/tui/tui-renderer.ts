@@ -22,6 +22,16 @@ import { exec } from "child_process";
 import { randomUUID } from "crypto";
 import { readFile, unlink, writeFile } from "fs/promises";
 import { relative } from "path";
+import {
+	AUTO_HANDOFF_EMERGENCY_THRESHOLD,
+	type AutoHandoffMode,
+	type AutoHandoffSlashCommand,
+	applyAutoHandoffCommand,
+	parseAutoHandoffSlashCommand,
+	shouldEnableHandoffNudge,
+	shouldTriggerEmergencyAutoHandoff,
+	shouldTriggerNormalAutoHandoff,
+} from "../auto-handoff.js";
 import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
 import { exportSessionToHtml } from "../export-html.js";
@@ -29,12 +39,7 @@ import { getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../
 import { playNotificationSound, sendNotification } from "../notification.js";
 import { listOAuthProviders, login, logout } from "../oauth/index.js";
 import { PromptHistoryManager } from "../prompt-history-manager.js";
-import {
-	getAutoHandoffGoalPrompt,
-	getHandoffNudgeReminder,
-	getHandoffPrompt,
-	HANDOFF_NUDGE_THRESHOLD,
-} from "../prompts/index.js";
+import { getAutoHandoffGoalPrompt, getHandoffNudgeReminder, getHandoffPrompt } from "../prompts/index.js";
 import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
@@ -71,6 +76,7 @@ export class TuiRenderer {
 	private agent: Agent;
 	private sessionManager: SessionManager;
 	private settingsManager: SettingsManager;
+	private autoHandoffMode: AutoHandoffMode;
 
 	// Type-safe wrappers for Agent methods that TypeScript can't resolve
 	private updateQueuedMessage(index: number, text: string, attachments?: Attachment[]): void {
@@ -167,6 +173,7 @@ export class TuiRenderer {
 		this.agent = agent;
 		this.sessionManager = sessionManager;
 		this.settingsManager = settingsManager;
+		this.autoHandoffMode = settingsManager.getAutoHandoffMode();
 		this.version = version;
 		this.promptHistory = new PromptHistoryManager();
 		this.newVersion = newVersion;
@@ -262,9 +269,15 @@ export class TuiRenderer {
 			description: "Toggle completion notifications (sound + native alerts on macOS)",
 		};
 
+		const autoHandoffCommand: SlashCommand = {
+			name: "autohandoff",
+			description: "Toggle auto-handoff when context is high",
+		};
+
 		// Setup autocomplete for file paths and slash commands
 		const autocompleteProvider = new CombinedAutocompleteProvider(
 			[
+				autoHandoffCommand,
 				branchCommand,
 				changelogCommand,
 				clearCommand,
@@ -596,6 +609,14 @@ export class TuiRenderer {
 				return;
 			}
 
+			// Check for /autohandoff command
+			const autoHandoffCommand = parseAutoHandoffSlashCommand(text);
+			if (autoHandoffCommand) {
+				this.handleAutoHandoffSlashCommand(autoHandoffCommand);
+				this.editor.setText("");
+				return;
+			}
+
 			// Check for /debug command
 			if (text === "/debug") {
 				this.handleDebugCommand();
@@ -881,7 +902,7 @@ export class TuiRenderer {
 						const contextWindow = this.agent.state.model.contextWindow || 0;
 						const ratio = contextWindow > 0 ? contextTokens / contextWindow : 0;
 
-						if (ratio >= 0.95) {
+						if (ratio >= AUTO_HANDOFF_EMERGENCY_THRESHOLD) {
 							for (const component of this.pendingTools.values()) {
 								component.updateResult({
 									content: [{ type: "text", text: "Aborted (context limit)" }],
@@ -890,10 +911,37 @@ export class TuiRenderer {
 							}
 							this.pendingTools.clear();
 
-							this.agent.pauseQueueDrain();
-							this.agent.abort();
+							const shouldEmergencyAutoHandoff = shouldTriggerEmergencyAutoHandoff({
+								autoHandoffMode: this.autoHandoffMode,
+								ratio,
+								isAutoHandoffInProgress: this.isAutoHandoffInProgress,
+								hasModel: this.agent.state.model != null,
+								stopReason: assistantMsg.stopReason,
+							});
 
-							void this.handleAutoHandoff(true);
+							if (shouldEmergencyAutoHandoff) {
+								this.agent.pauseQueueDrain();
+								this.agent.abort();
+
+								void this.handleAutoHandoff(true);
+							} else {
+								// Auto-handoff disabled, but we still abort tool execution to avoid
+								// hard context overflows.
+								this.agent.abort();
+								this.chatContainer.addChild(new Spacer(1));
+								this.chatContainer.addChild(
+									new Text(
+										theme.fg(
+											"warning",
+											"Context is very high; aborted tool execution to prevent overflow.\n" +
+												"Auto-handoff is OFF. Use /handoff <goal> or /autohandoff on.",
+										),
+										1,
+										0,
+									),
+								);
+							}
+
 							this.ui.requestRender();
 							break;
 						}
@@ -1030,15 +1078,22 @@ export class TuiRenderer {
 					break;
 				}
 
-				// Check for handoff nudge trigger (85% context threshold)
+				// Check for handoff nudge trigger
 				const { ratio } = this.getContextUsage();
-				if (!this.shouldIncludeHandoffNudge && ratio >= HANDOFF_NUDGE_THRESHOLD) {
-					this.shouldIncludeHandoffNudge = true;
-				}
+				this.shouldIncludeHandoffNudge = shouldEnableHandoffNudge({
+					autoHandoffMode: this.autoHandoffMode,
+					ratio,
+					currentFlag: this.shouldIncludeHandoffNudge,
+				});
 
-				// Check for auto-handoff trigger (90% context threshold)
-				const shouldAutoHandoff =
-					ratio >= 0.9 && !this.isAutoHandoffInProgress && !state.error && this.agent.state.model != null;
+				// Check for auto-handoff trigger
+				const shouldAutoHandoff = shouldTriggerNormalAutoHandoff({
+					autoHandoffMode: this.autoHandoffMode,
+					ratio,
+					isAutoHandoffInProgress: this.isAutoHandoffInProgress,
+					hasError: Boolean(state.error),
+					hasModel: this.agent.state.model != null,
+				});
 
 				if (shouldAutoHandoff) {
 					// Pause queue drain synchronously before any async work
@@ -1168,9 +1223,11 @@ export class TuiRenderer {
 
 		// Check if we should enable handoff nudge based on restored context usage
 		const { ratio } = this.getContextUsage();
-		if (ratio >= HANDOFF_NUDGE_THRESHOLD) {
-			this.shouldIncludeHandoffNudge = true;
-		}
+		this.shouldIncludeHandoffNudge = shouldEnableHandoffNudge({
+			autoHandoffMode: this.autoHandoffMode,
+			ratio,
+			currentFlag: this.shouldIncludeHandoffNudge,
+		});
 
 		this.ui.requestRender();
 	}
@@ -3050,6 +3107,29 @@ export class TuiRenderer {
 		this.chatContainer.addChild(new Spacer(1));
 		const status = next ? "enabled" : "disabled";
 		this.chatContainer.addChild(new Text(theme.fg("dim", `Notifications: ${status}`), 1, 0));
+		this.ui.requestRender();
+	}
+
+	private handleAutoHandoffSlashCommand(command: AutoHandoffSlashCommand): void {
+		const previous = this.autoHandoffMode;
+		const next = applyAutoHandoffCommand(previous, command);
+
+		this.autoHandoffMode = next;
+		if (next !== previous) {
+			this.settingsManager.setAutoHandoffMode(next);
+		}
+
+		// Turning auto-handoff off should also stop injecting the auto-handoff nudge.
+		this.shouldIncludeHandoffNudge = shouldEnableHandoffNudge({
+			autoHandoffMode: next,
+			ratio: 0,
+			currentFlag: false,
+		});
+
+		this.chatContainer.addChild(new Spacer(1));
+		const label = next === "on" ? theme.fg("accent", "Auto-handoff: ON") : theme.fg("warning", "Auto-handoff: OFF");
+		const hint = theme.fg("muted", "Use /autohandoff [on|off|toggle|status]");
+		this.chatContainer.addChild(new Text(label + "\n" + hint, 1, 0));
 		this.ui.requestRender();
 	}
 
