@@ -1,18 +1,10 @@
-/**
- * OpenAI Codex Responses provider.
- * Uses ChatGPT OAuth for API access to GPT-5.x Codex models.
- */
-
 import os from "node:os";
 import type {
 	ResponseFunctionToolCall,
-	ResponseInput,
-	ResponseInputContent,
-	ResponseInputImage,
-	ResponseInputText,
 	ResponseOutputMessage,
 	ResponseReasoningItem,
 } from "openai/resources/responses/responses.js";
+import { PI_STATIC_INSTRUCTIONS } from "../constants.js";
 import { calculateCost } from "../models.js";
 import { getEnvApiKey } from "../stream.js";
 import type {
@@ -31,25 +23,46 @@ import type {
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
-import {
-	CODEX_BASE_URL,
-	JWT_CLAIM_PATH,
-	OPENAI_HEADER_VALUES,
-	OPENAI_HEADERS,
-	URL_PATHS,
-} from "./openai-codex/constants.js";
-import { getCodexInstructions } from "./openai-codex/prompts/codex.js";
-import { buildCodexPiBridge } from "./openai-codex/prompts/pi-codex-bridge.js";
-import { buildCodexSystemPrompt } from "./openai-codex/prompts/system-prompt.js";
-import {
-	type CodexRequestOptions,
-	type RequestBody,
-	transformRequestBody,
-} from "./openai-codex/request-transformer.js";
-import { parseCodexError, parseCodexSseStream } from "./openai-codex/response-handler.js";
-import { transformMessages } from "./transorm-messages.js";
+import { buildCodexPiBridge, OPENCODE_CODEX_INSTRUCTIONS } from "./openai-codex-responses-legacy.js";
+import { transformMessages } from "./transform-messages.js";
 
-const CODEX_DEBUG = process.env.PI_CODEX_DEBUG === "1" || process.env.PI_CODEX_DEBUG === "true";
+// ============================================================================
+// Configuration
+// ============================================================================
+
+/**
+ * When true, uses the legacy OpenCode/Codex system prompt with bridge injection.
+ * When false (default), uses the new Pi static instructions.
+ */
+const USE_LEGACY_CODEX_PROMPT = false;
+
+const CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
+const JWT_CLAIM_PATH = "https://api.openai.com/auth" as const;
+
+// ============================================================================
+// Types
+// ============================================================================
+
+interface RequestBody {
+	model: string;
+	store?: boolean;
+	stream?: boolean;
+	instructions?: string;
+	input?: unknown[];
+	tools?: unknown;
+	tool_choice?: "auto";
+	parallel_tool_calls?: boolean;
+	temperature?: number;
+	reasoning?: { effort?: string; summary?: string };
+	text?: { verbosity?: string };
+	include?: string[];
+	prompt_cache_key?: string;
+	[key: string]: unknown;
+}
+
+// ============================================================================
+// Main Stream Function
+// ============================================================================
 
 export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"> = (
 	model: Model<"openai-codex-responses">,
@@ -83,76 +96,19 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 				throw new Error(`No API key for provider: ${model.provider}`);
 			}
 
-			const accountId = getAccountId(apiKey);
-			const baseUrl = model.baseUrl || CODEX_BASE_URL;
-			const baseWithSlash = baseUrl.endsWith("/") ? baseUrl : `${baseUrl}/`;
-			const url = rewriteUrlForCodex(new URL(URL_PATHS.RESPONSES.slice(1), baseWithSlash).toString());
+			const accountId = extractAccountId(apiKey);
+			const body = buildRequestBody(model, context, options);
+			const headers = buildHeaders(model.headers, accountId, apiKey, options?.sessionId);
 
-			const messages = convertMessages(model, context);
-			const params: RequestBody = {
-				model: model.id,
-				input: messages,
-				stream: true,
-				prompt_cache_key: options?.sessionId,
-			};
-
-			if (options?.maxTokens) {
-				params.max_output_tokens = options.maxTokens;
-			}
-
-			if (options?.temperature !== undefined) {
-				params.temperature = options.temperature;
-			}
-
-			if (context.tools) {
-				params.tools = convertTools(context.tools);
-			}
-
-			const codexInstructions = getCodexInstructions();
-			const bridgeText = buildCodexPiBridge(context.tools);
-			const systemPrompt = buildCodexSystemPrompt({
-				codexInstructions,
-				bridgeText,
-				userSystemPrompt: context.systemPrompt,
-			});
-
-			params.instructions = systemPrompt.instructions;
-
-			const codexOptions: CodexRequestOptions = {
-				reasoningEffort: options?.reasoningEffort,
-				reasoningSummary: options?.reasoningSummary ?? undefined,
-				textVerbosity: options?.textVerbosity,
-				include: options?.include,
-			};
-
-			const transformedBody = await transformRequestBody(params, codexOptions, systemPrompt);
-
-			const reasoningEffort = transformedBody.reasoning?.effort ?? null;
-			const headers = createCodexHeaders(model.headers, accountId, apiKey, options?.sessionId);
-			logCodexDebug("codex request", {
-				url,
-				model: params.model,
-				reasoningEffort,
-				headers: redactHeaders(headers),
-			});
-
-			const response = await fetch(url, {
+			const response = await fetch(CODEX_URL, {
 				method: "POST",
 				headers,
-				body: JSON.stringify(transformedBody),
+				body: JSON.stringify(body),
 				signal: options?.signal,
 			});
 
-			logCodexDebug("codex response", {
-				url: response.url,
-				status: response.status,
-				statusText: response.statusText,
-				contentType: response.headers.get("content-type") || null,
-				cfRay: response.headers.get("cf-ray") || null,
-			});
-
 			if (!response.ok) {
-				const info = await parseCodexError(response);
+				const info = await parseErrorResponse(response);
 				throw new Error(info.friendlyMessage || info.message);
 			}
 
@@ -161,210 +117,17 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 			}
 
 			stream.push({ type: "start", partial: output });
-
-			let currentItem: ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall | null = null;
-			let currentBlock: ThinkingContent | TextContent | (ToolCall & { partialJson: string }) | null = null;
-			const blocks = output.content;
-			const blockIndex = () => blocks.length - 1;
-
-			for await (const rawEvent of parseCodexSseStream(response)) {
-				const eventType = typeof rawEvent.type === "string" ? rawEvent.type : "";
-				if (!eventType) continue;
-
-				if (eventType === "response.output_item.added") {
-					const item = rawEvent.item as ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall;
-					if (item.type === "reasoning") {
-						currentItem = item;
-						currentBlock = { type: "thinking", thinking: "" };
-						output.content.push(currentBlock);
-						stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
-					} else if (item.type === "message") {
-						currentItem = item;
-						currentBlock = { type: "text", text: "" };
-						output.content.push(currentBlock);
-						stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
-					} else if (item.type === "function_call") {
-						currentItem = item;
-						currentBlock = {
-							type: "toolCall",
-							id: `${item.call_id}|${item.id}`,
-							name: item.name,
-							arguments: {},
-							partialJson: item.arguments || "",
-						};
-						output.content.push(currentBlock);
-						stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
-					}
-				} else if (eventType === "response.reasoning_summary_part.added") {
-					if (currentItem && currentItem.type === "reasoning") {
-						currentItem.summary = currentItem.summary || [];
-						currentItem.summary.push((rawEvent as { part: ResponseReasoningItem["summary"][number] }).part);
-					}
-				} else if (eventType === "response.reasoning_summary_text.delta") {
-					if (currentItem && currentItem.type === "reasoning" && currentBlock?.type === "thinking") {
-						currentItem.summary = currentItem.summary || [];
-						const lastPart = currentItem.summary[currentItem.summary.length - 1];
-						if (lastPart) {
-							const delta = (rawEvent as { delta?: string }).delta || "";
-							currentBlock.thinking += delta;
-							lastPart.text += delta;
-							stream.push({
-								type: "thinking_delta",
-								contentIndex: blockIndex(),
-								delta,
-								partial: output,
-							});
-						}
-					}
-				} else if (eventType === "response.reasoning_summary_part.done") {
-					if (currentItem && currentItem.type === "reasoning" && currentBlock?.type === "thinking") {
-						currentItem.summary = currentItem.summary || [];
-						const lastPart = currentItem.summary[currentItem.summary.length - 1];
-						if (lastPart) {
-							currentBlock.thinking += "\n\n";
-							lastPart.text += "\n\n";
-							stream.push({
-								type: "thinking_delta",
-								contentIndex: blockIndex(),
-								delta: "\n\n",
-								partial: output,
-							});
-						}
-					}
-				} else if (eventType === "response.content_part.added") {
-					if (currentItem && currentItem.type === "message") {
-						currentItem.content = currentItem.content || [];
-						const part = (rawEvent as { part?: ResponseOutputMessage["content"][number] }).part;
-						if (part && (part.type === "output_text" || part.type === "refusal")) {
-							currentItem.content.push(part);
-						}
-					}
-				} else if (eventType === "response.output_text.delta") {
-					if (currentItem && currentItem.type === "message" && currentBlock?.type === "text") {
-						const lastPart = currentItem.content[currentItem.content.length - 1];
-						if (lastPart && lastPart.type === "output_text") {
-							const delta = (rawEvent as { delta?: string }).delta || "";
-							currentBlock.text += delta;
-							lastPart.text += delta;
-							stream.push({
-								type: "text_delta",
-								contentIndex: blockIndex(),
-								delta,
-								partial: output,
-							});
-						}
-					}
-				} else if (eventType === "response.refusal.delta") {
-					if (currentItem && currentItem.type === "message" && currentBlock?.type === "text") {
-						const lastPart = currentItem.content[currentItem.content.length - 1];
-						if (lastPart && lastPart.type === "refusal") {
-							const delta = (rawEvent as { delta?: string }).delta || "";
-							currentBlock.text += delta;
-							lastPart.refusal += delta;
-							stream.push({
-								type: "text_delta",
-								contentIndex: blockIndex(),
-								delta,
-								partial: output,
-							});
-						}
-					}
-				} else if (eventType === "response.function_call_arguments.delta") {
-					if (currentItem && currentItem.type === "function_call" && currentBlock?.type === "toolCall") {
-						const delta = (rawEvent as { delta?: string }).delta || "";
-						currentBlock.partialJson += delta;
-						currentBlock.arguments = parseStreamingJson(currentBlock.partialJson);
-						stream.push({
-							type: "toolcall_delta",
-							contentIndex: blockIndex(),
-							delta,
-							partial: output,
-						});
-					}
-				} else if (eventType === "response.output_item.done") {
-					const item = rawEvent.item as ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall;
-					if (item.type === "reasoning" && currentBlock?.type === "thinking") {
-						currentBlock.thinking = item.summary?.map((s) => s.text).join("\n\n") || "";
-						currentBlock.thinkingSignature = JSON.stringify(item);
-						stream.push({
-							type: "thinking_end",
-							contentIndex: blockIndex(),
-							content: currentBlock.thinking,
-							partial: output,
-						});
-						currentBlock = null;
-					} else if (item.type === "message" && currentBlock?.type === "text") {
-						currentBlock.text = item.content.map((c) => (c.type === "output_text" ? c.text : c.refusal)).join("");
-						currentBlock.textSignature = item.id;
-						stream.push({
-							type: "text_end",
-							contentIndex: blockIndex(),
-							content: currentBlock.text,
-							partial: output,
-						});
-						currentBlock = null;
-					} else if (item.type === "function_call") {
-						const toolCall: ToolCall = {
-							type: "toolCall",
-							id: `${item.call_id}|${item.id}`,
-							name: item.name,
-							arguments: JSON.parse(item.arguments),
-						};
-						stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
-					}
-				} else if (eventType === "response.completed" || eventType === "response.done") {
-					const response = (
-						rawEvent as {
-							response?: {
-								usage?: {
-									input_tokens?: number;
-									output_tokens?: number;
-									total_tokens?: number;
-									input_tokens_details?: { cached_tokens?: number };
-								};
-								status?: string;
-							};
-						}
-					).response;
-					if (response?.usage) {
-						const cachedTokens = response.usage.input_tokens_details?.cached_tokens || 0;
-						output.usage = {
-							input: (response.usage.input_tokens || 0) - cachedTokens,
-							output: response.usage.output_tokens || 0,
-							cacheRead: cachedTokens,
-							cacheWrite: 0,
-							totalTokens: response.usage.total_tokens || 0,
-							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-						};
-					}
-					calculateCost(model, output.usage);
-					output.stopReason = mapStopReason(response?.status);
-					if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
-						output.stopReason = "toolUse";
-					}
-				} else if (eventType === "error") {
-					const code = (rawEvent as { code?: string }).code || "";
-					const message = (rawEvent as { message?: string }).message || "";
-					throw new Error(formatCodexErrorEvent(rawEvent, code, message));
-				} else if (eventType === "response.failed") {
-					throw new Error(formatCodexFailure(rawEvent) ?? "Codex response failed");
-				}
-			}
+			await processStream(response, output, stream, model);
 
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
 			}
 
-			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new Error("Codex response failed");
-			}
-
-			stream.push({ type: "done", reason: output.stopReason, message: output });
+			stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
 			stream.end();
 		} catch (error) {
-			for (const block of output.content) delete (block as { index?: number }).index;
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			output.errorMessage = error instanceof Error ? error.message : String(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -374,10 +137,415 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 };
 
 // ============================================================================
+// Request Building
+// ============================================================================
+
+function buildRequestBody(
+	model: Model<"openai-codex-responses">,
+	context: Context,
+	options?: OpenAICodexResponsesOptions,
+): RequestBody {
+	const systemPrompt = buildSystemPrompt(context.systemPrompt, context.tools);
+	const messages = convertMessages(model, context);
+
+	// Prepend developer messages
+	const developerMessages = systemPrompt.developerMessages.map((text) => ({
+		type: "message",
+		role: "developer",
+		content: [{ type: "input_text", text }],
+	}));
+
+	const body: RequestBody = {
+		model: model.id,
+		store: false,
+		stream: true,
+		instructions: systemPrompt.instructions,
+		input: [...developerMessages, ...messages],
+		text: { verbosity: options?.textVerbosity || "medium" },
+		include: ["reasoning.encrypted_content"],
+		prompt_cache_key: options?.sessionId,
+		tool_choice: "auto",
+		parallel_tool_calls: true,
+	};
+
+	if (options?.temperature !== undefined) {
+		body.temperature = options.temperature;
+	}
+
+	if (context.tools) {
+		body.tools = context.tools.map((tool) => ({
+			type: "function",
+			name: tool.name,
+			description: tool.description,
+			parameters: tool.parameters,
+			strict: null,
+		}));
+	}
+
+	if (options?.reasoningEffort !== undefined) {
+		body.reasoning = {
+			effort: clampReasoningEffort(model.id, options.reasoningEffort),
+			summary: options.reasoningSummary ?? "auto",
+		};
+	}
+
+	return body;
+}
+
+function buildSystemPrompt(
+	userSystemPrompt?: string,
+	tools?: Tool[],
+): { instructions: string; developerMessages: string[] } {
+	if (USE_LEGACY_CODEX_PROMPT) {
+		const developerMessages: string[] = [];
+		const bridgeText = buildCodexPiBridge(tools);
+		if (bridgeText.trim()) developerMessages.push(bridgeText.trim());
+		if (userSystemPrompt?.trim()) developerMessages.push(userSystemPrompt.trim());
+		return { instructions: OPENCODE_CODEX_INSTRUCTIONS, developerMessages };
+	}
+
+	const staticPrefix = PI_STATIC_INSTRUCTIONS.trim();
+	const developerMessages: string[] = [];
+
+	if (userSystemPrompt?.trim()) {
+		let dynamicPart = userSystemPrompt.trim();
+		if (dynamicPart.startsWith(staticPrefix)) {
+			dynamicPart = dynamicPart.slice(staticPrefix.length).trim();
+		}
+		if (dynamicPart) developerMessages.push(dynamicPart);
+	}
+
+	return { instructions: staticPrefix, developerMessages };
+}
+
+function clampReasoningEffort(modelId: string, effort: string): string {
+	const id = modelId.includes("/") ? modelId.split("/").pop()! : modelId;
+	if (id === "gpt-5.1" && effort === "xhigh") return "high";
+	if (id === "gpt-5.1-codex-mini") return effort === "high" || effort === "xhigh" ? "high" : "medium";
+	return effort;
+}
+
+// ============================================================================
+// Message Conversion
+// ============================================================================
+
+function convertMessages(model: Model<"openai-codex-responses">, context: Context): unknown[] {
+	const messages: unknown[] = [];
+	const transformed = transformMessages(context.messages, model);
+
+	for (const msg of transformed) {
+		if (msg.role === "user") {
+			messages.push(convertUserMessage(msg, model));
+		} else if (msg.role === "assistant") {
+			messages.push(...convertAssistantMessage(msg));
+		} else if (msg.role === "toolResult") {
+			messages.push(...convertToolResult(msg, model));
+		}
+	}
+
+	return messages.filter(Boolean);
+}
+
+function convertUserMessage(
+	msg: { content: string | Array<{ type: string; text?: string; mimeType?: string; data?: string }> },
+	model: Model<"openai-codex-responses">,
+): unknown {
+	if (typeof msg.content === "string") {
+		return {
+			role: "user",
+			content: [{ type: "input_text", text: sanitizeSurrogates(msg.content) }],
+		};
+	}
+
+	const content = msg.content.map((item) => {
+		if (item.type === "text") {
+			return { type: "input_text", text: sanitizeSurrogates(item.text || "") };
+		}
+		return {
+			type: "input_image",
+			detail: "auto",
+			image_url: `data:${item.mimeType};base64,${item.data}`,
+		};
+	});
+
+	const filtered = model.input.includes("image") ? content : content.filter((c) => c.type !== "input_image");
+	return filtered.length > 0 ? { role: "user", content: filtered } : null;
+}
+
+function convertAssistantMessage(msg: AssistantMessage): unknown[] {
+	const output: unknown[] = [];
+
+	for (const block of msg.content) {
+		if (block.type === "thinking" && msg.stopReason !== "error" && block.thinkingSignature) {
+			output.push(JSON.parse(block.thinkingSignature));
+		} else if (block.type === "text") {
+			output.push({
+				type: "message",
+				role: "assistant",
+				content: [{ type: "output_text", text: sanitizeSurrogates(block.text), annotations: [] }],
+				status: "completed",
+			});
+		} else if (block.type === "toolCall" && msg.stopReason !== "error") {
+			const [callId, id] = block.id.split("|");
+			output.push({
+				type: "function_call",
+				id,
+				call_id: callId,
+				name: block.name,
+				arguments: JSON.stringify(block.arguments),
+			});
+		}
+	}
+
+	return output;
+}
+
+function convertToolResult(
+	msg: { toolCallId: string; content: Array<{ type: string; text?: string; mimeType?: string; data?: string }> },
+	model: Model<"openai-codex-responses">,
+): unknown[] {
+	const output: unknown[] = [];
+	const textResult = msg.content
+		.filter((c) => c.type === "text")
+		.map((c) => c.text || "")
+		.join("\n");
+	const hasImages = msg.content.some((c) => c.type === "image");
+
+	output.push({
+		type: "function_call_output",
+		call_id: msg.toolCallId.split("|")[0],
+		output: sanitizeSurrogates(textResult || "(see attached image)"),
+	});
+
+	if (hasImages && model.input.includes("image")) {
+		const imageParts = msg.content
+			.filter((c) => c.type === "image")
+			.map((c) => ({
+				type: "input_image",
+				detail: "auto",
+				image_url: `data:${c.mimeType};base64,${c.data}`,
+			}));
+
+		output.push({
+			role: "user",
+			content: [{ type: "input_text", text: "Attached image(s) from tool result:" }, ...imageParts],
+		});
+	}
+
+	return output;
+}
+
+// ============================================================================
+// Response Processing
+// ============================================================================
+
+async function processStream(
+	response: Response,
+	output: AssistantMessage,
+	stream: AssistantMessageEventStream,
+	model: Model<"openai-codex-responses">,
+): Promise<void> {
+	let currentItem: ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall | null = null;
+	let currentBlock: ThinkingContent | TextContent | (ToolCall & { partialJson: string }) | null = null;
+	const blockIndex = () => output.content.length - 1;
+
+	for await (const event of parseSSE(response)) {
+		const type = event.type as string;
+
+		switch (type) {
+			case "response.output_item.added": {
+				const item = event.item as ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall;
+				if (item.type === "reasoning") {
+					currentItem = item;
+					currentBlock = { type: "thinking", thinking: "" };
+					output.content.push(currentBlock);
+					stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+				} else if (item.type === "message") {
+					currentItem = item;
+					currentBlock = { type: "text", text: "" };
+					output.content.push(currentBlock);
+					stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+				} else if (item.type === "function_call") {
+					currentItem = item;
+					currentBlock = {
+						type: "toolCall",
+						id: `${item.call_id}|${item.id}`,
+						name: item.name,
+						arguments: {},
+						partialJson: item.arguments || "",
+					};
+					output.content.push(currentBlock);
+					stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+				}
+				break;
+			}
+
+			case "response.reasoning_summary_part.added": {
+				if (currentItem?.type === "reasoning") {
+					currentItem.summary = currentItem.summary || [];
+					currentItem.summary.push((event as { part: ResponseReasoningItem["summary"][number] }).part);
+				}
+				break;
+			}
+
+			case "response.reasoning_summary_text.delta": {
+				if (currentItem?.type === "reasoning" && currentBlock?.type === "thinking") {
+					const delta = (event as { delta?: string }).delta || "";
+					const lastPart = currentItem.summary?.[currentItem.summary.length - 1];
+					if (lastPart) {
+						currentBlock.thinking += delta;
+						lastPart.text += delta;
+						stream.push({ type: "thinking_delta", contentIndex: blockIndex(), delta, partial: output });
+					}
+				}
+				break;
+			}
+
+			case "response.reasoning_summary_part.done": {
+				if (currentItem?.type === "reasoning" && currentBlock?.type === "thinking") {
+					const lastPart = currentItem.summary?.[currentItem.summary.length - 1];
+					if (lastPart) {
+						currentBlock.thinking += "\n\n";
+						lastPart.text += "\n\n";
+						stream.push({ type: "thinking_delta", contentIndex: blockIndex(), delta: "\n\n", partial: output });
+					}
+				}
+				break;
+			}
+
+			case "response.content_part.added": {
+				if (currentItem?.type === "message") {
+					currentItem.content = currentItem.content || [];
+					const part = (event as { part?: ResponseOutputMessage["content"][number] }).part;
+					if (part && (part.type === "output_text" || part.type === "refusal")) {
+						currentItem.content.push(part);
+					}
+				}
+				break;
+			}
+
+			case "response.output_text.delta": {
+				if (currentItem?.type === "message" && currentBlock?.type === "text") {
+					const lastPart = currentItem.content[currentItem.content.length - 1];
+					if (lastPart?.type === "output_text") {
+						const delta = (event as { delta?: string }).delta || "";
+						currentBlock.text += delta;
+						lastPart.text += delta;
+						stream.push({ type: "text_delta", contentIndex: blockIndex(), delta, partial: output });
+					}
+				}
+				break;
+			}
+
+			case "response.refusal.delta": {
+				if (currentItem?.type === "message" && currentBlock?.type === "text") {
+					const lastPart = currentItem.content[currentItem.content.length - 1];
+					if (lastPart?.type === "refusal") {
+						const delta = (event as { delta?: string }).delta || "";
+						currentBlock.text += delta;
+						lastPart.refusal += delta;
+						stream.push({ type: "text_delta", contentIndex: blockIndex(), delta, partial: output });
+					}
+				}
+				break;
+			}
+
+			case "response.function_call_arguments.delta": {
+				if (currentItem?.type === "function_call" && currentBlock?.type === "toolCall") {
+					const delta = (event as { delta?: string }).delta || "";
+					currentBlock.partialJson += delta;
+					currentBlock.arguments = parseStreamingJson(currentBlock.partialJson);
+					stream.push({ type: "toolcall_delta", contentIndex: blockIndex(), delta, partial: output });
+				}
+				break;
+			}
+
+			case "response.output_item.done": {
+				const item = event.item as ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall;
+				if (item.type === "reasoning" && currentBlock?.type === "thinking") {
+					currentBlock.thinking = item.summary?.map((s) => s.text).join("\n\n") || "";
+					currentBlock.thinkingSignature = JSON.stringify(item);
+					stream.push({
+						type: "thinking_end",
+						contentIndex: blockIndex(),
+						content: currentBlock.thinking,
+						partial: output,
+					});
+					currentBlock = null;
+				} else if (item.type === "message" && currentBlock?.type === "text") {
+					currentBlock.text = item.content.map((c) => (c.type === "output_text" ? c.text : c.refusal)).join("");
+					currentBlock.textSignature = item.id;
+					stream.push({
+						type: "text_end",
+						contentIndex: blockIndex(),
+						content: currentBlock.text,
+						partial: output,
+					});
+					currentBlock = null;
+				} else if (item.type === "function_call") {
+					const toolCall: ToolCall = {
+						type: "toolCall",
+						id: `${item.call_id}|${item.id}`,
+						name: item.name,
+						arguments: JSON.parse(item.arguments),
+					};
+					stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+				}
+				break;
+			}
+
+			case "response.completed":
+			case "response.done": {
+				const resp = (
+					event as {
+						response?: {
+							usage?: {
+								input_tokens?: number;
+								output_tokens?: number;
+								total_tokens?: number;
+								input_tokens_details?: { cached_tokens?: number };
+							};
+							status?: string;
+						};
+					}
+				).response;
+				if (resp?.usage) {
+					const cached = resp.usage.input_tokens_details?.cached_tokens || 0;
+					output.usage = {
+						input: (resp.usage.input_tokens || 0) - cached,
+						output: resp.usage.output_tokens || 0,
+						cacheRead: cached,
+						cacheWrite: 0,
+						totalTokens: resp.usage.total_tokens || 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					};
+				}
+				calculateCost(model, output.usage);
+				output.stopReason = mapStopReason(resp?.status);
+				if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
+					output.stopReason = "toolUse";
+				}
+				break;
+			}
+
+			case "error": {
+				const code = (event as { code?: string }).code || "";
+				const message = (event as { message?: string }).message || "";
+				throw new Error(formatCodexErrorEvent(event, code, message));
+			}
+
+			case "response.failed": {
+				throw new Error(formatCodexFailure(event) ?? "Codex response failed");
+			}
+		}
+	}
+}
+
+// ============================================================================
 // Headers
 // ============================================================================
 
-function createCodexHeaders(
+function buildHeaders(
 	initHeaders: Record<string, string> | undefined,
 	accountId: string,
 	accessToken: string,
@@ -386,17 +554,17 @@ function createCodexHeaders(
 	const headers = new Headers(initHeaders ?? {});
 	headers.delete("x-api-key");
 	headers.set("Authorization", `Bearer ${accessToken}`);
-	headers.set(OPENAI_HEADERS.ACCOUNT_ID, accountId);
-	headers.set(OPENAI_HEADERS.BETA, OPENAI_HEADER_VALUES.BETA_RESPONSES);
-	headers.set(OPENAI_HEADERS.ORIGINATOR, OPENAI_HEADER_VALUES.ORIGINATOR_CODEX);
+	headers.set("OpenAI-Organization", accountId);
+	headers.set("OpenAI-Beta", "responses=codex");
+	headers.set("OpenAI-Organization-Context", "codex");
 	headers.set("User-Agent", `pi (${os.platform()} ${os.release()}; ${os.arch()})`);
 
 	if (promptCacheKey) {
-		headers.set(OPENAI_HEADERS.CONVERSATION_ID, promptCacheKey);
-		headers.set(OPENAI_HEADERS.SESSION_ID, promptCacheKey);
+		headers.set("OpenAI-Conversation-ID", promptCacheKey);
+		headers.set("OpenAI-Session-ID", promptCacheKey);
 	} else {
-		headers.delete(OPENAI_HEADERS.CONVERSATION_ID);
-		headers.delete(OPENAI_HEADERS.SESSION_ID);
+		headers.delete("OpenAI-Conversation-ID");
+		headers.delete("OpenAI-Session-ID");
 	}
 
 	headers.set("accept", "text/event-stream");
@@ -405,228 +573,108 @@ function createCodexHeaders(
 }
 
 // ============================================================================
-// Debug Logging
+// JSON Parsing
 // ============================================================================
 
-function logCodexDebug(message: string, details?: Record<string, unknown>): void {
-	if (!CODEX_DEBUG) return;
-	if (details) {
-		console.error(`[codex] ${message}`, details);
-		return;
-	}
-	console.error(`[codex] ${message}`);
-}
+function parseSSE(response: Response): AsyncGenerator<Record<string, unknown>> {
+	const decoder = new TextDecoder();
+	let buffer = "";
 
-function redactHeaders(headers: Headers): Record<string, string> {
-	const redacted: Record<string, string> = {};
-	for (const [key, value] of headers.entries()) {
-		const lower = key.toLowerCase();
-		if (lower === "authorization") {
-			redacted[key] = "Bearer [redacted]";
-			continue;
+	if (!response.body) return (async function* () {})();
+
+	const reader = response.body.getReader();
+
+	async function* generator(): AsyncGenerator<Record<string, unknown>> {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) break;
+			buffer += decoder.decode(value, { stream: true });
+
+			let boundary = buffer.indexOf("\n\n");
+			while (boundary !== -1) {
+				const chunk = buffer.slice(0, boundary);
+				buffer = buffer.slice(boundary + 2);
+				boundary = buffer.indexOf("\n\n");
+
+				if (!chunk.trim()) continue;
+
+				const dataLines = chunk
+					.split("\n")
+					.filter((line) => line.startsWith("data:"))
+					.map((line) => line.slice(5).trim());
+
+				if (dataLines.length === 0) continue;
+
+				const data = dataLines.join("\n");
+				if (data === "[DONE]") return;
+
+				try {
+					const json = JSON.parse(data) as Record<string, unknown>;
+					yield json;
+				} catch (error) {
+					console.warn("Failed to parse SSE JSON:", error);
+				}
+			}
 		}
-		if (
-			lower.includes("account") ||
-			lower.includes("session") ||
-			lower.includes("conversation") ||
-			lower === "cookie"
-		) {
-			redacted[key] = "[redacted]";
-			continue;
-		}
-		redacted[key] = value;
 	}
-	return redacted;
+
+	return generator();
 }
 
 // ============================================================================
-// URL Rewriting
+// Error Handling
 // ============================================================================
 
-function rewriteUrlForCodex(url: string): string {
-	return url.replace(URL_PATHS.RESPONSES, URL_PATHS.CODEX_RESPONSES);
-}
+async function parseErrorResponse(response: Response): Promise<{ message: string; friendlyMessage?: string }> {
+	const contentType = response.headers.get("content-type") || "";
+	let bodyText = "";
 
-// ============================================================================
-// JWT Decoding
-// ============================================================================
-
-type JwtPayload = {
-	[JWT_CLAIM_PATH]?: {
-		chatgpt_account_id?: string;
-	};
-	[key: string]: unknown;
-};
-
-function decodeJwt(token: string): JwtPayload | null {
 	try {
-		const parts = token.split(".");
-		if (parts.length !== 3) return null;
-		const payload = parts[1] ?? "";
-		const decoded = Buffer.from(payload, "base64").toString("utf-8");
-		return JSON.parse(decoded) as JwtPayload;
+		bodyText = await response.text();
 	} catch {
-		return null;
+		bodyText = "";
 	}
-}
 
-function getAccountId(accessToken: string): string {
-	const payload = decodeJwt(accessToken);
-	const auth = payload?.[JWT_CLAIM_PATH];
-	const accountId = auth?.chatgpt_account_id;
-	if (!accountId) {
-		throw new Error("Failed to extract accountId from token");
-	}
-	return accountId;
-}
-
-// ============================================================================
-// Message Conversion
-// ============================================================================
-
-function shortHash(str: string): string {
-	let h1 = 0xdeadbeef;
-	let h2 = 0x41c6ce57;
-	for (let i = 0; i < str.length; i++) {
-		const ch = str.charCodeAt(i);
-		h1 = Math.imul(h1 ^ ch, 2654435761);
-		h2 = Math.imul(h2 ^ ch, 1597334677);
-	}
-	h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-	h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-	return (h2 >>> 0).toString(36) + (h1 >>> 0).toString(36);
-}
-
-function convertMessages(model: Model<"openai-codex-responses">, context: Context): ResponseInput {
-	const messages: ResponseInput = [];
-
-	const transformedMessages = transformMessages(context.messages, model);
-
-	let msgIndex = 0;
-	for (const msg of transformedMessages) {
-		if (msg.role === "user") {
-			if (typeof msg.content === "string") {
-				messages.push({
-					role: "user",
-					content: [{ type: "input_text", text: sanitizeSurrogates(msg.content) }],
-				});
-			} else {
-				const content: ResponseInputContent[] = msg.content.map((item): ResponseInputContent => {
-					if (item.type === "text") {
-						return {
-							type: "input_text",
-							text: sanitizeSurrogates(item.text),
-						} satisfies ResponseInputText;
-					}
-					return {
-						type: "input_image",
-						detail: "auto",
-						image_url: `data:${item.mimeType};base64,${item.data}`,
-					} satisfies ResponseInputImage;
-				});
-				const filteredContent = !model.input.includes("image")
-					? content.filter((c) => c.type !== "input_image")
-					: content;
-				if (filteredContent.length === 0) continue;
-				messages.push({
-					role: "user",
-					content: filteredContent,
-				});
-			}
-		} else if (msg.role === "assistant") {
-			const output: ResponseInput = [];
-
-			for (const block of msg.content) {
-				if (block.type === "thinking" && msg.stopReason !== "error") {
-					if (block.thinkingSignature) {
-						const reasoningItem = JSON.parse(block.thinkingSignature) as ResponseReasoningItem;
-						output.push(reasoningItem);
-					}
-				} else if (block.type === "text") {
-					const textBlock = block as TextContent;
-					let msgId = textBlock.textSignature;
-					if (!msgId) {
-						msgId = `msg_${msgIndex}`;
-					} else if (msgId.length > 64) {
-						msgId = `msg_${shortHash(msgId)}`;
-					}
-					output.push({
-						type: "message",
-						role: "assistant",
-						content: [{ type: "output_text", text: sanitizeSurrogates(textBlock.text), annotations: [] }],
-						status: "completed",
-						id: msgId,
-					} satisfies ResponseOutputMessage);
-				} else if (block.type === "toolCall" && msg.stopReason !== "error") {
-					const toolCall = block as ToolCall;
-					output.push({
-						type: "function_call",
-						id: toolCall.id.split("|")[1],
-						call_id: toolCall.id.split("|")[0],
-						name: toolCall.name,
-						arguments: JSON.stringify(toolCall.arguments),
-					});
-				}
-			}
-			if (output.length === 0) continue;
-			messages.push(...output);
-		} else if (msg.role === "toolResult") {
-			const textResult = msg.content
-				.filter((c) => c.type === "text")
-				.map((c) => (c as { text: string }).text)
-				.join("\n");
-			const hasImages = msg.content.some((c) => c.type === "image");
-
-			const hasText = textResult.length > 0;
-			messages.push({
-				type: "function_call_output",
-				call_id: msg.toolCallId.split("|")[0],
-				output: sanitizeSurrogates(hasText ? textResult : "(see attached image)"),
-			});
-
-			if (hasImages && model.input.includes("image")) {
-				const contentParts: ResponseInputContent[] = [];
-				contentParts.push({
-					type: "input_text",
-					text: "Attached image(s) from tool result:",
-				} satisfies ResponseInputText);
-
-				for (const block of msg.content) {
-					if (block.type === "image") {
-						contentParts.push({
-							type: "input_image",
-							detail: "auto",
-							image_url: `data:${block.mimeType};base64,${block.data}`,
-						} satisfies ResponseInputImage);
-					}
-				}
-
-				messages.push({
-					role: "user",
-					content: contentParts,
-				});
-			}
+	if (contentType.includes("application/json") && bodyText) {
+		try {
+			const json = JSON.parse(bodyText) as Record<string, unknown>;
+			const error = json.error as Record<string, unknown> | undefined;
+			return {
+				message: (error?.message as string) || bodyText,
+				friendlyMessage: (error?.details as string) || undefined,
+			};
+		} catch {
+			return { message: bodyText };
 		}
-		msgIndex++;
 	}
 
-	return messages;
+	return { message: bodyText || `Request failed with status ${response.status}` };
 }
 
-// ============================================================================
-// Tool Conversion
-// ============================================================================
+function formatCodexErrorEvent(event: Record<string, unknown>, code: string, message: string): string {
+	return `Codex error (${code}): ${message || JSON.stringify(event)}`;
+}
 
-function convertTools(
-	tools: Tool[],
-): Array<{ type: "function"; name: string; description: string; parameters: Record<string, unknown>; strict: null }> {
-	return tools.map((tool) => ({
-		type: "function",
-		name: tool.name,
-		description: tool.description,
-		parameters: tool.parameters as unknown as Record<string, unknown>,
-		strict: null,
-	}));
+function formatCodexFailure(rawEvent: Record<string, unknown>): string | null {
+	const response = asRecord(rawEvent.response);
+	const error = asRecord(rawEvent.error) ?? (response ? asRecord(response.error) : null);
+
+	const message = getString(error?.message) ?? getString(rawEvent.message) ?? getString(response?.message);
+	const code = getString(error?.code) ?? getString(error?.type) ?? getString(rawEvent.code);
+
+	if (!message && !code) return null;
+	return code ? `Codex response failed (${code}): ${message || "Unknown error"}` : `Codex response failed: ${message}`;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+	if (value && typeof value === "object") {
+		return value as Record<string, unknown>;
+	}
+	return null;
+}
+
+function getString(value: unknown): string | undefined {
+	return typeof value === "string" ? value : undefined;
 }
 
 // ============================================================================
@@ -652,70 +700,35 @@ function mapStopReason(status: string | undefined): StopReason {
 }
 
 // ============================================================================
-// Error Formatting
+// JWT
 // ============================================================================
 
-function asRecord(value: unknown): Record<string, unknown> | null {
-	if (value && typeof value === "object") {
-		return value as Record<string, unknown>;
-	}
-	return null;
-}
+type JwtPayload = {
+	[JWT_CLAIM_PATH]?: {
+		chatgpt_account_id?: string;
+	};
+	[key: string]: unknown;
+};
 
-function getString(value: unknown): string | undefined {
-	return typeof value === "string" ? value : undefined;
-}
-
-function truncate(text: string, limit: number): string {
-	if (text.length <= limit) return text;
-	return `${text.slice(0, limit)}...[truncated ${text.length - limit}]`;
-}
-
-function formatCodexFailure(rawEvent: Record<string, unknown>): string | null {
-	const response = asRecord(rawEvent.response);
-	const error = asRecord(rawEvent.error) ?? (response ? asRecord(response.error) : null);
-
-	const message = getString(error?.message) ?? getString(rawEvent.message) ?? getString(response?.message);
-	const code = getString(error?.code) ?? getString(error?.type) ?? getString(rawEvent.code);
-	const status = getString(response?.status) ?? getString(rawEvent.status);
-
-	const meta: string[] = [];
-	if (code) meta.push(`code=${code}`);
-	if (status) meta.push(`status=${status}`);
-
-	if (message) {
-		const metaText = meta.length ? ` (${meta.join(", ")})` : "";
-		return `Codex response failed: ${message}${metaText}`;
-	}
-
-	if (meta.length) {
-		return `Codex response failed (${meta.join(", ")})`;
-	}
-
+function decodeJwt(token: string): JwtPayload | null {
 	try {
-		return `Codex response failed: ${truncate(JSON.stringify(rawEvent), 800)}`;
+		const parts = token.split(".");
+		if (parts.length !== 3) return null;
+		const payload = parts[1] ?? "";
+		const decoded = Buffer.from(payload, "base64").toString("utf-8");
+		return JSON.parse(decoded) as JwtPayload;
 	} catch {
-		return "Codex response failed";
+		return null;
 	}
 }
 
-function formatCodexErrorEvent(rawEvent: Record<string, unknown>, code: string, message: string): string {
-	const detail = formatCodexFailure(rawEvent);
-	if (detail) {
-		return detail.replace("response failed", "error event");
+function extractAccountId(accessToken: string): string {
+	const payload = decodeJwt(accessToken);
+	const auth = payload?.[JWT_CLAIM_PATH];
+	const accountId = auth?.chatgpt_account_id;
+	if (!accountId) {
+		throw new Error("Failed to extract accountId from token");
 	}
 
-	const meta: string[] = [];
-	if (code) meta.push(`code=${code}`);
-	if (message) meta.push(`message=${message}`);
-
-	if (meta.length > 0) {
-		return `Codex error event (${meta.join(", ")})`;
-	}
-
-	try {
-		return `Codex error event: ${truncate(JSON.stringify(rawEvent), 800)}`;
-	} catch {
-		return "Codex error event";
-	}
+	return accountId;
 }

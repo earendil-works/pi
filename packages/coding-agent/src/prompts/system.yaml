@@ -26,6 +26,7 @@ toolDescriptions:
   ReadThread: Read a specific thread's conversation history
   ReadImage: Analyze images and extract information
   TodoWrite: Manage a simple task list
+  Handoff: Hand off to a new session with file context
 
 # Guidelines that are conditionally included based on enabled tools
 # Each guideline has a condition (which tools must be present/absent) and the text

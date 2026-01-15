@@ -171,7 +171,21 @@ export function buildSystemPrompt(options: {
 
 	// Build from template
 	const config = loadSystemPromptConfig();
-	const tools = selectedTools || (["Read", "Bash", "Edit", "Write", "Grep", "Glob"] as ToolName[]);
+	const tools =
+		selectedTools ||
+		([
+			"Read",
+			"Bash",
+			"Edit",
+			"Write",
+			"Grep",
+			"Glob",
+			"ListThreads",
+			"ReadThread",
+			"ReadImage",
+			"TodoWrite",
+			"Handoff",
+		] as ToolName[]);
 
 	// Build tools list
 	const toolDescriptions = config.toolDescriptions;
