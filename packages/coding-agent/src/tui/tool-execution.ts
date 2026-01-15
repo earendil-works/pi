@@ -2,6 +2,7 @@ import * as os from "node:os";
 import { Container, Spacer, Text } from "@kennyfrc/pi-tui";
 import stripAnsi from "strip-ansi";
 import { theme } from "../theme/theme.js";
+import { stripSystemReminderTagsForDisplay } from "../utils/system-reminder.js";
 
 /**
  * Convert absolute path to tilde notation if it's in home directory
@@ -315,7 +316,7 @@ export class ToolExecutionComponent extends Container {
 			text = theme.fg("toolTitle", theme.bold("TodoWrite"));
 
 			if (this.result) {
-				const output = this.getTextOutput().trim();
+				const output = stripSystemReminderTagsForDisplay(this.getTextOutput()).trim();
 				if (output) {
 					text +=
 						"\n\n" +

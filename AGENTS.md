@@ -26,6 +26,8 @@ git commit -m "chore: bump version to X.Y.Z"
 npm link  # If you want to test locally
 ```
 
+**Note:** `npm run build` may update tracked generated files (e.g. `packages/ai/src/models.generated.*` and related compiled `.js/.d.ts`). Don’t revert them; commit them (ideally in their own commit if you want cleaner history).
+
 ## Notes
 
 - Never manually edit version numbers in package.json files - use the scripts above

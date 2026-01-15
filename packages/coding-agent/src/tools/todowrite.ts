@@ -174,8 +174,16 @@ export const todowriteTool: AgentTool<typeof todowriteSchema> = {
 		const completed = todos.filter((t) => t.status === "completed").length;
 		const cancelled = todos.filter((t) => t.status === "cancelled").length;
 
+		let text = formatTodos(todos);
+
+		// If there is active work left, add an out-of-band reminder for the model.
+		// The TUI hides this tag, but the model still receives it via the tool result.
+		if (pending > 0 || inProgress > 0) {
+			text += `\n\n<system_reminder pending="${pending}" in_progress="${inProgress}">Continue now. Execute the remaining todo items using available tools. Prefer the in_progress item first, otherwise take the next pending item. Keep going until there are no pending/in_progress items left, or you are blocked (then ask the user for what you need). Update the todo list with TodoWrite as you make progress.</system_reminder>`;
+		}
+
 		return {
-			content: [{ type: "text", text: formatTodos(todos) }],
+			content: [{ type: "text", text }],
 			details: {
 				todos: todos,
 				summary: { total: todos.length, pending, inProgress, completed, cancelled },
