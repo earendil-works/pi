@@ -34,6 +34,7 @@ import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
 import { bashTool } from "../tools/bash.js";
+import type { HandoffDetails } from "../tools/handoff.js";
 import { formatTodosForHandoff } from "../tools/todowrite.js";
 import { generateTitle } from "../utils/auto-title.js";
 import { formatElapsed } from "../utils/format-elapsed.js";
@@ -138,6 +139,7 @@ export class TuiRenderer {
 	private bashAbortController: AbortController | null = null;
 	private handoffAbortController: AbortController | null = null;
 	private isAutoHandoffInProgress = false;
+	private pendingExplicitHandoff: (HandoffDetails & { parentSessionId: string }) | null = null;
 	private bashModeIndicatorContainer: Container = new Container();
 
 	private unsubscribe?: () => void;
@@ -936,6 +938,20 @@ export class TuiRenderer {
 					this.pendingTools.delete(event.toolCallId);
 					this.ui.requestRender();
 				}
+
+				// Detect explicit Handoff tool completion - queue for execution after agent_end
+				if (
+					event.toolName === "Handoff" &&
+					!event.isError &&
+					typeof event.result !== "string" &&
+					event.result?.details?.handoffType === "explicit"
+				) {
+					const details = event.result.details as HandoffDetails;
+					this.pendingExplicitHandoff = {
+						...details,
+						parentSessionId: this.sessionManager.getSessionId(),
+					};
+				}
 				break;
 			}
 
@@ -992,6 +1008,16 @@ export class TuiRenderer {
 
 				// Update footer to clear "Working" status
 				this.footer.updateState(state);
+
+				// Execute pending explicit handoff (from Handoff tool)
+				if (this.pendingExplicitHandoff) {
+					const handoff = this.pendingExplicitHandoff;
+					this.pendingExplicitHandoff = null;
+					// Fire and forget - executeExplicitHandoff manages its own lifecycle
+					void this.executeExplicitHandoff(handoff);
+					// Skip auto-titling and auto-handoff since we're switching sessions
+					break;
+				}
 
 				// Check for auto-handoff trigger (90% context threshold)
 				const { ratio } = this.getContextUsage();
@@ -2647,6 +2673,73 @@ export class TuiRenderer {
 		} finally {
 			this.isAutoHandoffInProgress = false;
 			this.handoffAbortController = null;
+			this.ui.requestRender();
+		}
+	}
+
+	/**
+	 * Execute an explicit handoff triggered by the Handoff tool.
+	 * Creates new session, clears state, and auto-submits the handoff message.
+	 */
+	private async executeExplicitHandoff(details: HandoffDetails & { parentSessionId: string }): Promise<void> {
+		const { goal, formattedMessage, parentSessionId, fileTokens } = details;
+
+		// Insert parent thread reference after the header line
+		// The formattedMessage starts with "# Handoff: <goal>\n\n"
+		const headerEnd = formattedMessage.indexOf("\n\n") + 2;
+		const parentInfo =
+			`**Parent Thread:** \`${parentSessionId}\`\n` +
+			`*Use \`read_thread\` with this ID to reference the original conversation if needed.*\n\n`;
+		const messageWithParent = formattedMessage.slice(0, headerEnd) + parentInfo + formattedMessage.slice(headerEnd);
+
+		// Create new session
+		const newSessionPath = this.sessionManager.createHandoffSession(this.agent.state, parentSessionId);
+		this.sessionManager.setSessionFile(newSessionPath);
+
+		// Clear agent messages but preserve queues
+		this.agent.replaceMessages([]);
+
+		// Clear UI state
+		this.chatContainer.clear();
+		this.isFirstUserMessage = true;
+		this.hasTitle = false;
+		this.footer.setTitle(null);
+
+		// Show transition message
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(
+			new Text(
+				theme.fg("accent", `✓ Handoff: ${goal}`) +
+					"\n" +
+					theme.fg("dim", `Parent: ${parentSessionId}`) +
+					"\n" +
+					theme.fg("dim", `Context: ${fileTokens.toLocaleString()} tokens`),
+				1,
+				0,
+			),
+		);
+		this.chatContainer.addChild(new Spacer(1));
+
+		// Update pending messages display
+		this.updatePendingMessagesDisplay();
+
+		this.ui.requestRender();
+
+		// Send notification if enabled
+		if (this.settingsManager.getNotifications()) {
+			playNotificationSound();
+			sendNotification("Pi - Handoff", `Started new session: ${goal}`);
+		}
+
+		// Auto-submit the handoff message by directly calling agent.prompt()
+		// This ensures the message is submitted regardless of the main loop state
+		try {
+			await this.agent.prompt(messageWithParent);
+		} catch (error: unknown) {
+			// Display error if submission fails
+			const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(theme.fg("error", `Handoff submission failed: ${errorMessage}`), 1, 0));
 			this.ui.requestRender();
 		}
 	}
