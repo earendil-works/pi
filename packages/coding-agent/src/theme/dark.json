@@ -72,10 +72,10 @@
 
 		"thinkingOff": "dimmed2",
 		"thinkingMinimal": "dimmed4",
-		"thinkingLow": "dimmed3",
-		"thinkingMedium": "cyan",
-		"thinkingHigh": "purple",
-		"thinkingXhigh": "orange",
+		"thinkingLow": "green",
+		"thinkingMedium": "yellow",
+		"thinkingHigh": "orange",
+		"thinkingXhigh": "pink",
 
 		"budgetGreen": "budgetGreen",
 		"budgetYellow": "budgetYellow",

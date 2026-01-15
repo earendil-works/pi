@@ -68,10 +68,10 @@
 
 		"thinkingOff": "lightGray",
 		"thinkingMinimal": "#9e9e9e",
-		"thinkingLow": "#5f87af",
-		"thinkingMedium": "#5f8787",
-		"thinkingHigh": "#875f87",
-		"thinkingXhigh": "orange",
+		"thinkingLow": "green",
+		"thinkingMedium": "yellow",
+		"thinkingHigh": "orange",
+		"thinkingXhigh": "red",
 
 		"budgetGreen": "budgetGreen",
 		"budgetYellow": "budgetYellow",
