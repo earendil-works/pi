@@ -178,8 +178,8 @@ function wrapSingleLine(line: string, width: number): string[] {
 		const totalNeeded = currentVisibleLength + tokenVisibleLength;
 
 		if (totalNeeded > width && currentVisibleLength > 0) {
-			// Wrap to next line - don't carry trailing whitespace
-			wrapped.push(currentLine);
+			// Wrap to next line - trim trailing whitespace from current line
+			wrapped.push(currentLine.trimEnd());
 			if (isWhitespace) {
 				// Don't start new line with whitespace
 				currentLine = tracker.getActiveCodes();
