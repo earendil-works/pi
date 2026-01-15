@@ -2,11 +2,10 @@ import type { AgentTool } from "@kennyfrc/pi-ai";
 import { Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
 import { existsSync, readdirSync, statSync } from "fs";
-import { globSync } from "glob";
 import { homedir } from "os";
 import nodePath from "path";
 import { getToolDescription } from "../prompts/index.js";
-import { ensureTool } from "../tools-manager.js";
+import { ensureToolWithTimeout } from "../tools-manager.js";
 import { DEFAULT_SEARCH_TIMEOUT_MS, killProcessTree } from "./process-utils.js";
 
 const MAX_OUTPUT_BYTES = 16 * 1024; // 16KB
@@ -171,7 +170,7 @@ async function findByGlob(
 	limit: number,
 	signal?: AbortSignal,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; details: undefined }> {
-	const fdPath = await ensureTool("fd", true);
+	const fdPath = await ensureToolWithTimeout("fd", undefined, true);
 	if (!fdPath) {
 		throw new Error("fd is not available and could not be downloaded");
 	}
@@ -180,31 +179,14 @@ async function findByGlob(
 		throw new Error("Operation aborted");
 	}
 
+	// fd respects .gitignore natively in git repos.
+	// For non-git directories, we only respect the root .gitignore (if present).
+	// This avoids the expensive sync traversal that was causing hangs on large directories.
 	const args: string[] = ["--glob", "--color=never", "--hidden", "--max-results", String(limit)];
 
-	// fd needs explicit --ignore-file for .gitignore outside git repos
-	const gitignoreFiles = new Set<string>();
 	const rootGitignore = nodePath.join(searchPath, ".gitignore");
 	if (existsSync(rootGitignore)) {
-		gitignoreFiles.add(rootGitignore);
-	}
-
-	try {
-		const nestedGitignores = globSync("**/.gitignore", {
-			cwd: searchPath,
-			dot: true,
-			absolute: true,
-			ignore: ["**/node_modules/**", "**/.git/**"],
-		});
-		for (const file of nestedGitignores) {
-			gitignoreFiles.add(file);
-		}
-	} catch {
-		// Ignore glob errors
-	}
-
-	for (const gitignorePath of gitignoreFiles) {
-		args.push("--ignore-file", gitignorePath);
+		args.push("--ignore-file", rootGitignore);
 	}
 
 	args.push(pattern, searchPath);

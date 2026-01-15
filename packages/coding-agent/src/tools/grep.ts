@@ -6,7 +6,7 @@ import { readFileSync, type Stats, statSync } from "fs";
 import { homedir } from "os";
 import path from "path";
 import { getToolDescription } from "../prompts/index.js";
-import { ensureTool } from "../tools-manager.js";
+import { ensureToolWithTimeout } from "../tools-manager.js";
 import { DEFAULT_SEARCH_TIMEOUT_MS, killProcessTree } from "./process-utils.js";
 
 const MAX_LINE_LENGTH = 4096;
@@ -84,7 +84,7 @@ export const grepTool: AgentTool<typeof grepSchema> = {
 
 			(async () => {
 				try {
-					const rgPath = await ensureTool("rg", true);
+					const rgPath = await ensureToolWithTimeout("rg", undefined, true);
 					if (!rgPath) {
 						settle(() => reject(new Error("ripgrep (rg) is not available and could not be downloaded")));
 						return;

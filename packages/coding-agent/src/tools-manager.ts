@@ -8,6 +8,28 @@ import { finished } from "stream/promises";
 
 const TOOLS_DIR = join(homedir(), ".pi", "agent", "tools");
 
+// Timeout constants for network operations
+const API_TIMEOUT_MS = 15_000; // 15s for GitHub API calls
+const DOWNLOAD_TIMEOUT_MS = 120_000; // 2 minutes for binary downloads
+
+/**
+ * Fetch with timeout support using AbortController.
+ * Exported for testing.
+ */
+export async function fetchWithTimeout(url: string, timeoutMs: number, options?: RequestInit): Promise<Response> {
+	const controller = new AbortController();
+	const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+
+	try {
+		return await fetch(url, {
+			...options,
+			signal: controller.signal,
+		});
+	} finally {
+		clearTimeout(timeoutId);
+	}
+}
+
 interface ToolConfig {
 	name: string;
 	repo: string; // GitHub repo (e.g., "sharkdp/fd")
@@ -91,7 +113,7 @@ export function getToolPath(tool: "fd" | "rg"): string | null {
 
 // Fetch latest release version from GitHub
 async function getLatestVersion(repo: string): Promise<string> {
-	const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+	const response = await fetchWithTimeout(`https://api.github.com/repos/${repo}/releases/latest`, API_TIMEOUT_MS, {
 		headers: { "User-Agent": "pi-coding-agent" },
 	});
 
@@ -105,7 +127,7 @@ async function getLatestVersion(repo: string): Promise<string> {
 
 // Download a file from URL
 async function downloadFile(url: string, dest: string): Promise<void> {
-	const response = await fetch(url);
+	const response = await fetchWithTimeout(url, DOWNLOAD_TIMEOUT_MS);
 
 	if (!response.ok) {
 		throw new Error(`Failed to download: ${response.status}`);
@@ -209,4 +231,34 @@ export async function ensureTool(tool: "fd" | "rg", silent: boolean = false): Pr
 		}
 		return null;
 	}
+}
+
+// Default timeout for tool setup (download + extraction)
+const TOOL_SETUP_TIMEOUT_MS = 180_000; // 3 minutes
+
+/**
+ * Ensure a tool is available with a timeout.
+ * Wraps ensureTool with Promise.race to prevent indefinite hangs.
+ * @param tool - The tool to ensure ("fd" or "rg")
+ * @param timeoutMs - Timeout in milliseconds (default: 3 minutes)
+ * @param silent - Suppress console output
+ * @throws Error if tool setup times out
+ */
+export async function ensureToolWithTimeout(
+	tool: "fd" | "rg",
+	timeoutMs: number = TOOL_SETUP_TIMEOUT_MS,
+	silent: boolean = false,
+): Promise<string | null> {
+	const timeoutPromise = new Promise<never>((_, reject) => {
+		setTimeout(() => {
+			reject(
+				new Error(
+					`Tool setup timed out after ${timeoutMs / 1000}s. ` +
+						`Install manually with: brew install fd ripgrep (macOS) or apt install fd-find ripgrep (Linux)`,
+				),
+			);
+		}, timeoutMs);
+	});
+
+	return Promise.race([ensureTool(tool, silent), timeoutPromise]);
 }
