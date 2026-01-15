@@ -4,6 +4,16 @@ import { fileURLToPath } from "url";
 import { parse } from "yaml";
 import type { ToolName } from "../tools/index.js";
 
+// -----------------------------------------------------------------------------
+// Handoff Nudge Constants
+// -----------------------------------------------------------------------------
+
+/**
+ * Context usage threshold (as a ratio) at which to start nudging the agent
+ * to voluntarily use the Handoff tool before forced auto-handoff at 90%.
+ */
+export const HANDOFF_NUDGE_THRESHOLD = 0.85;
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -241,4 +251,16 @@ Examples of good goals:
 - Fix the failing unit tests
 - Add error handling to the API endpoint
 - Complete the database migration`;
+}
+
+/**
+ * Get the system reminder content for handoff nudge at 85% threshold.
+ * This is appended to user messages to encourage voluntary handoff.
+ */
+export function getHandoffNudgeReminder(): string {
+	return `
+
+<system_reminder>
+Context usage is at 85%+. Consider using the Handoff tool to start a fresh session with selected file context before auto-handoff triggers at 90%.
+</system_reminder>`;
 }

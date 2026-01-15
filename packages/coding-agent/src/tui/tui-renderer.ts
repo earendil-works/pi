@@ -29,7 +29,12 @@ import { getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../
 import { playNotificationSound, sendNotification } from "../notification.js";
 import { listOAuthProviders, login, logout } from "../oauth/index.js";
 import { PromptHistoryManager } from "../prompt-history-manager.js";
-import { getAutoHandoffGoalPrompt, getHandoffPrompt } from "../prompts/index.js";
+import {
+	getAutoHandoffGoalPrompt,
+	getHandoffNudgeReminder,
+	getHandoffPrompt,
+	HANDOFF_NUDGE_THRESHOLD,
+} from "../prompts/index.js";
 import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
@@ -139,6 +144,7 @@ export class TuiRenderer {
 	private bashAbortController: AbortController | null = null;
 	private handoffAbortController: AbortController | null = null;
 	private isAutoHandoffInProgress = false;
+	private shouldIncludeHandoffNudge = false; // 85% threshold nudge state
 	private pendingExplicitHandoff: (HandoffDetails & { parentSessionId: string }) | null = null;
 	private bashModeIndicatorContainer: Container = new Container();
 
@@ -641,6 +647,11 @@ export class TuiRenderer {
 			// Save to prompt history (savePrompt filters out slash commands and empty)
 			this.promptHistory.savePrompt(text);
 
+			// Append handoff nudge if threshold crossed
+			if (this.shouldIncludeHandoffNudge) {
+				text = text + getHandoffNudgeReminder();
+			}
+
 			if (this.onInputCallback) {
 				this.onInputCallback(text);
 			}
@@ -1019,8 +1030,13 @@ export class TuiRenderer {
 					break;
 				}
 
-				// Check for auto-handoff trigger (90% context threshold)
+				// Check for handoff nudge trigger (85% context threshold)
 				const { ratio } = this.getContextUsage();
+				if (!this.shouldIncludeHandoffNudge && ratio >= HANDOFF_NUDGE_THRESHOLD) {
+					this.shouldIncludeHandoffNudge = true;
+				}
+
+				// Check for auto-handoff trigger (90% context threshold)
 				const shouldAutoHandoff =
 					ratio >= 0.9 && !this.isAutoHandoffInProgress && !state.error && this.agent.state.model != null;
 
@@ -1149,6 +1165,13 @@ export class TuiRenderer {
 		}
 		// Clear pending tools after rendering initial messages
 		this.pendingTools.clear();
+
+		// Check if we should enable handoff nudge based on restored context usage
+		const { ratio } = this.getContextUsage();
+		if (ratio >= HANDOFF_NUDGE_THRESHOLD) {
+			this.shouldIncludeHandoffNudge = true;
+		}
+
 		this.ui.requestRender();
 	}
 
@@ -2607,6 +2630,7 @@ export class TuiRenderer {
 			this.isFirstUserMessage = true;
 			this.hasTitle = false;
 			this.footer.setTitle(null);
+			this.shouldIncludeHandoffNudge = false; // Reset nudge for new session
 
 			// Show success message in new session
 			this.chatContainer.addChild(new Spacer(1));
@@ -2704,6 +2728,7 @@ export class TuiRenderer {
 		this.isFirstUserMessage = true;
 		this.hasTitle = false;
 		this.footer.setTitle(null);
+		this.shouldIncludeHandoffNudge = false; // Reset nudge for new session
 
 		// Show transition message
 		this.chatContainer.addChild(new Spacer(1));
@@ -2785,6 +2810,9 @@ export class TuiRenderer {
 		// Reset title state
 		this.hasTitle = false;
 		this.footer.setTitle(null);
+
+		// Reset handoff nudge state
+		this.shouldIncludeHandoffNudge = false;
 
 		// Show confirmation
 		this.chatContainer.addChild(new Spacer(1));
