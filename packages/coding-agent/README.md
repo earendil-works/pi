@@ -22,8 +22,6 @@ Works on Linux, macOS, and Windows (barely tested, needs Git Bash running in the
 - [Usage](#usage)
 - [Security (YOLO by default)](#security-yolo-by-default)
 - [Sub-Agents](#sub-agents)
-- [To-Dos](#to-dos)
-- [Planning](#planning)
 - [Background Bash](#background-bash)
 - [Planned Features](#planned-features)
 - [License](#license)
@@ -958,48 +956,6 @@ Use at your own risk.
 Context transfer between agents is generally poor. Information gets lost, compressed, or misrepresented when passed through agent boundaries. Direct execution with full context is more effective than delegation with summarized context.
 
 If you need parallel work on independent tasks, manually run multiple `pi` sessions in different terminal tabs. You're the orchestrator.
-
-## To-Dos
-
-**pi does not and will not support built-in to-dos.** In my experience, to-do lists generally confuse models more than they help.
-
-If you need task tracking, make it stateful by writing to a file:
-
-```markdown
-# TODO.md
-
-- [x] Implement user authentication
-- [x] Add database migrations
-- [ ] Write API documentation
-- [ ] Add rate limiting
-```
-
-The agent can read and update this file as needed. Using checkboxes keeps track of what's done and what remains. Simple, visible, and under your control.
-
-## Planning
-
-**pi does not and will not have a built-in planning mode.** Telling the agent to think through a problem together with you, without modifying files or executing commands, is generally sufficient.
-
-If you need persistent planning across sessions, write it to a file:
-
-```markdown
-# PLAN.md
-
-## Goal
-Refactor authentication system to support OAuth
-
-## Approach
-1. Research OAuth 2.0 flows
-2. Design token storage schema
-3. Implement authorization server endpoints
-4. Update client-side login flow
-5. Add tests
-
-## Current Step
-Working on step 3 - authorization endpoints
-```
-
-The agent can read, update, and reference the plan as it works. Unlike ephemeral planning modes that only exist within a session, file-based plans persist and can be versioned with your code.
 
 ## Background Bash
 
