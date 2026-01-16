@@ -535,7 +535,8 @@ Change queue mode with `/queue` command. Setting is saved in `~/.pi/agent/settin
 - **Cmd+Backspace** (Ghostty): Delete to start of line (same as Ctrl+U)
 - **Ctrl+K**: Delete to end of line (at line end: merge with next line)
 - **Ctrl+C**: Clear editor (first press) / Exit pi (second press)
-- **Tab**: Path completion (when autocomplete active) / Cycle thinking level off → low → medium → high (for reasoning-capable models)
+- **Tab**: Path completion (when autocomplete active) / Cycle thinking level off → low → medium → high → xhigh (for reasoning-capable models)
+- **Shift+Tab** (Ghostty): Cycle thinking level xhigh → high → medium → low → off
 - **Ctrl+P**: Cycle models (use `--models` to scope)
 - **Ctrl+O**: Toggle tool output expansion (collapsed ↔ full output)
 - **Enter**: Send message
