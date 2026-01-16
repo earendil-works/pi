@@ -2702,6 +2702,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "xiaomi/mimo-v2-flash": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "nvidia/nemotron-3-nano-30b-a3b:free": {
 			id: string;
 			name: string;
@@ -3093,23 +3110,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "allenai/olmo-3-7b-instruct": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "x-ai/grok-4.1-fast": {
 			id: string;
 			name: string;
@@ -3382,23 +3382,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "qwen/qwen3-vl-8b-thinking": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "qwen/qwen3-vl-8b-instruct": {
 			id: string;
 			name: string;
@@ -3603,6 +3586,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "google/gemini-2.5-flash-preview-09-2025": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "google/gemini-2.5-flash-lite-preview-09-2025": {
 			id: string;
 			name: string;
@@ -3645,40 +3645,6 @@ export declare const MODELS: {
 			baseUrl: string;
 			reasoning: false;
 			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "qwen/qwen3-max": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "qwen/qwen3-coder-plus": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
 			cost: {
 				input: number;
 				output: number;
@@ -3773,23 +3739,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "qwen/qwen3-coder-flash": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "qwen/qwen3-next-80b-a3b-thinking": {
 			id: string;
 			name: string;
@@ -3807,6 +3756,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "qwen/qwen3-next-80b-a3b-instruct:free": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: false;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "qwen/qwen3-next-80b-a3b-instruct": {
 			id: string;
 			name: string;
@@ -3814,40 +3780,6 @@ export declare const MODELS: {
 			provider: string;
 			baseUrl: string;
 			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "qwen/qwen-plus-2025-07-28": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "qwen/qwen-plus-2025-07-28:thinking": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
 			input: "text"[];
 			cost: {
 				input: number;
@@ -4453,6 +4385,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "qwen/qwen3-coder:free": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: false;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "qwen/qwen3-coder": {
 			id: string;
 			name: string;
@@ -4810,23 +4759,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/codex-mini": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "nousresearch/deephermes-3-mistral-24b-preview": {
 			id: string;
 			name: string;
@@ -4902,6 +4834,23 @@ export declare const MODELS: {
 			provider: string;
 			baseUrl: string;
 			reasoning: false;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "qwen/qwen3-4b:free": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
 			input: "text"[];
 			cost: {
 				input: number;
@@ -5184,6 +5133,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "mistralai/mistral-small-3.1-24b-instruct:free": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: false;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "mistralai/mistral-small-3.1-24b-instruct": {
 			id: string;
 			name: string;
@@ -5345,74 +5311,6 @@ export declare const MODELS: {
 			baseUrl: string;
 			reasoning: false;
 			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "qwen/qwen-vl-max": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "qwen/qwen-turbo": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "qwen/qwen-plus": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "qwen/qwen-max": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
 			cost: {
 				input: number;
 				output: number;
@@ -6051,40 +5949,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "mistralai/mistral-7b-instruct:free": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "mistralai/mistral-7b-instruct": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "openai/gpt-4o-2024-05-13": {
 			id: string;
 			name: string;
@@ -6127,23 +5991,6 @@ export declare const MODELS: {
 			baseUrl: string;
 			reasoning: false;
 			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "meta-llama/llama-3-70b-instruct": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
 			cost: {
 				input: number;
 				output: number;
