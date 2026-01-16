@@ -30,10 +30,10 @@ import {
 	parseAutoHandoffSlashCommand,
 	shouldEnableHandoffNudge,
 	shouldTriggerEmergencyAutoHandoff,
-	shouldTriggerNormalAutoHandoff,
 } from "../auto-handoff.js";
 import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
+import { scheduleExplicitHandoff, submitExplicitHandoff } from "../explicit-handoff.js";
 import { exportSessionToHtml } from "../export-html.js";
 import { getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
 import { playNotificationSound, sendNotification } from "../notification.js";
@@ -57,7 +57,12 @@ import { ModelSelectorComponent } from "./model-selector.js";
 import { OAuthSelectorComponent } from "./oauth-selector.js";
 import { QueueModeSelectorComponent } from "./queue-mode-selector.js";
 import { ThemeSelectorComponent } from "./theme-selector.js";
-import { getEffectiveThinkingLevel, getNextThinkingLevel, getThinkingLevelItems } from "./thinking-levels.js";
+import {
+	getEffectiveThinkingLevel,
+	getNextThinkingLevel,
+	getPreviousThinkingLevel,
+	getThinkingLevelItems,
+} from "./thinking-levels.js";
 import { ThinkingSelectorComponent } from "./thinking-selector.js";
 import { ToolExecutionComponent } from "./tool-execution.js";
 import { UserMessageComponent } from "./user-message.js";
@@ -179,6 +184,9 @@ export class TuiRenderer {
 		this.sessionManager = sessionManager;
 		this.settingsManager = settingsManager;
 		this.autoHandoffMode = settingsManager.getAutoHandoffMode();
+
+		// Set up tool result transformer for handoff nudge injection
+		this.updateToolResultTransformer();
 		this.version = version;
 		this.promptHistory = new PromptHistoryManager();
 		this.newVersion = newVersion;
@@ -424,6 +432,10 @@ export class TuiRenderer {
 
 		this.editor.onTab = () => {
 			this.toggleThinkingLevel();
+		};
+
+		this.editor.onShiftTab = () => {
+			this.toggleThinkingLevelReverse();
 		};
 
 		this.editor.onCtrlP = () => {
@@ -672,11 +684,6 @@ export class TuiRenderer {
 			// All good, proceed with submission
 			// Save to prompt history (savePrompt filters out slash commands and empty)
 			this.promptHistory.savePrompt(text);
-
-			// Append handoff nudge if threshold crossed
-			if (this.shouldIncludeHandoffNudge) {
-				text = text + getHandoffNudgeReminder();
-			}
 
 			if (this.onInputCallback) {
 				this.onInputCallback(text);
@@ -1077,36 +1084,26 @@ export class TuiRenderer {
 				if (this.pendingExplicitHandoff) {
 					const handoff = this.pendingExplicitHandoff;
 					this.pendingExplicitHandoff = null;
-					// Fire and forget - executeExplicitHandoff manages its own lifecycle
-					void this.executeExplicitHandoff(handoff);
+					scheduleExplicitHandoff({
+						pauseQueueDrain: () => this.agent.pauseQueueDrain(),
+						execute: () => {
+							void this.executeExplicitHandoff(handoff);
+						},
+					});
 					// Skip auto-titling and auto-handoff since we're switching sessions
 					break;
 				}
 
 				// Check for handoff nudge trigger
 				const { ratio } = this.getContextUsage();
+				const prevNudge = this.shouldIncludeHandoffNudge;
 				this.shouldIncludeHandoffNudge = shouldEnableHandoffNudge({
 					autoHandoffMode: this.autoHandoffMode,
 					ratio,
 					currentFlag: this.shouldIncludeHandoffNudge,
 				});
-
-				// Check for auto-handoff trigger
-				const shouldAutoHandoff = shouldTriggerNormalAutoHandoff({
-					autoHandoffMode: this.autoHandoffMode,
-					ratio,
-					isAutoHandoffInProgress: this.isAutoHandoffInProgress,
-					hasError: Boolean(state.error),
-					hasModel: this.agent.state.model != null,
-				});
-
-				if (shouldAutoHandoff) {
-					// Pause queue drain synchronously before any async work
-					this.agent.pauseQueueDrain();
-					// Fire and forget - handleAutoHandoff manages its own lifecycle
-					void this.handleAutoHandoff(false);
-					// Skip auto-titling since we're switching sessions
-					break;
+				if (prevNudge !== this.shouldIncludeHandoffNudge) {
+					this.updateToolResultTransformer();
 				}
 
 				// Trigger auto-titling if not yet titled and we have context
@@ -1233,6 +1230,7 @@ export class TuiRenderer {
 			ratio,
 			currentFlag: this.shouldIncludeHandoffNudge,
 		});
+		this.updateToolResultTransformer();
 
 		this.ui.requestRender();
 	}
@@ -1494,6 +1492,35 @@ export class TuiRenderer {
 		// Show brief notification
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(theme.fg("dim", `Thinking level: ${nextLevel}`), 1, 0));
+		this.ui.requestRender();
+	}
+
+	private toggleThinkingLevelReverse(): void {
+		// Only toggle if model supports thinking
+		if (!this.agent.state.model?.reasoning) {
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(theme.fg("dim", "Current model does not support thinking"), 1, 0));
+			this.ui.requestRender();
+			return;
+		}
+
+		const currentLevel = this.agent.state.thinkingLevel || "off";
+		const xhighSupported = this.agent.state.model ? supportsXhigh(this.agent.state.model) : false;
+		const previousLevel = getPreviousThinkingLevel(currentLevel, xhighSupported);
+
+		// Apply the new thinking level
+		this.agent.setThinkingLevel(previousLevel);
+
+		// Save thinking level change to session and settings
+		this.sessionManager.saveThinkingLevelChange(previousLevel);
+		this.settingsManager.setDefaultThinkingLevel(previousLevel);
+
+		// Update border color
+		this.updateEditorBorderColor();
+
+		// Show brief notification
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg("dim", `Thinking level: ${previousLevel}`), 1, 0));
 		this.ui.requestRender();
 	}
 
@@ -2520,6 +2547,37 @@ export class TuiRenderer {
 	}
 
 	/**
+	 * Update the tool result transformer based on current nudge state.
+	 * Called when autohandoff mode changes or nudge state changes.
+	 */
+	private updateToolResultTransformer(): void {
+		if (this.autoHandoffMode !== "on" || !this.shouldIncludeHandoffNudge) {
+			// No nudge needed - clear any transformer
+			this.agent.setToolResultTransformer(undefined);
+			return;
+		}
+
+		// Set up transformer to inject nudge into tool results
+		this.agent.setToolResultTransformer((toolResult: ToolResultMessage): ToolResultMessage => {
+			const { ratio } = this.getContextUsage();
+			const nudge = getHandoffNudgeReminder(ratio);
+
+			// Append nudge to the last text content block, or add a new one
+			const newContent = [...toolResult.content];
+			const lastTextIndex = newContent.map((c) => c.type).lastIndexOf("text");
+
+			if (lastTextIndex >= 0) {
+				const lastText = newContent[lastTextIndex] as { type: "text"; text: string };
+				newContent[lastTextIndex] = { type: "text", text: lastText.text + nudge };
+			} else {
+				newContent.push({ type: "text", text: nudge });
+			}
+
+			return { ...toolResult, content: newContent };
+		});
+	}
+
+	/**
 	 * Extract tail transcript for goal generation (last N user/assistant text only).
 	 * Strips tool calls, tool results, and timestamp prefixes.
 	 */
@@ -2720,6 +2778,7 @@ export class TuiRenderer {
 			this.hasTitle = false;
 			this.footer.setTitle(null);
 			this.shouldIncludeHandoffNudge = false; // Reset nudge for new session
+			this.updateToolResultTransformer();
 
 			// Show success message in new session
 			this.chatContainer.addChild(new Spacer(1));
@@ -2805,56 +2864,72 @@ export class TuiRenderer {
 			`*Use \`read_thread\` with this ID to reference the original conversation if needed.*\n\n`;
 		const messageWithParent = formattedMessage.slice(0, headerEnd) + parentInfo + formattedMessage.slice(headerEnd);
 
-		// Create new session
-		const newSessionPath = this.sessionManager.createHandoffSession(this.agent.state, parentSessionId);
-		this.sessionManager.setSessionFile(newSessionPath);
-
-		// Clear agent messages but preserve queues
-		this.agent.replaceMessages([]);
-
-		// Clear UI state
-		this.chatContainer.clear();
-		this.isFirstUserMessage = true;
-		this.hasTitle = false;
-		this.footer.setTitle(null);
-		this.shouldIncludeHandoffNudge = false; // Reset nudge for new session
-
-		// Show transition message
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(
-			new Text(
-				theme.fg("accent", `✓ Handoff: ${goal}`) +
-					"\n" +
-					theme.fg("dim", `Parent: ${parentSessionId}`) +
-					"\n" +
-					theme.fg("dim", `Context: ${fileTokens.toLocaleString()} tokens`),
-				1,
-				0,
-			),
-		);
-		this.chatContainer.addChild(new Spacer(1));
-
-		// Update pending messages display
-		this.updatePendingMessagesDisplay();
-
-		this.ui.requestRender();
-
-		// Send notification if enabled
-		if (this.settingsManager.getNotifications()) {
-			playNotificationSound();
-			sendNotification("Pi - Handoff", `Started new session: ${goal}`);
-		}
-
-		// Auto-submit the handoff message by directly calling agent.prompt()
-		// This ensures the message is submitted regardless of the main loop state
 		try {
-			await this.agent.prompt(messageWithParent);
+			// Create new session
+			const newSessionPath = this.sessionManager.createHandoffSession(this.agent.state, parentSessionId);
+			this.sessionManager.setSessionFile(newSessionPath);
+
+			// Clear agent messages but preserve queues
+			this.agent.replaceMessages([]);
+
+			// Clear UI state
+			this.chatContainer.clear();
+			this.isFirstUserMessage = true;
+			this.hasTitle = false;
+			this.footer.setTitle(null);
+			this.shouldIncludeHandoffNudge = false; // Reset nudge for new session
+			this.updateToolResultTransformer();
+
+			// Reset queue editing state
+			this.editingQueueIndex = null;
+			this.savedEditorText = null;
+			this.isHandlingQueueEditChange = false;
+
+			// Show transition message
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(
+				new Text(
+					theme.fg("accent", `✓ Handoff: ${goal}`) +
+						"\n" +
+						theme.fg("dim", `Parent: ${parentSessionId}`) +
+						"\n" +
+						theme.fg("dim", `Context: ${fileTokens.toLocaleString()} tokens`),
+					1,
+					0,
+				),
+			);
+			this.chatContainer.addChild(new Spacer(1));
+
+			// Update pending messages display
+			this.updatePendingMessagesDisplay();
+
+			this.ui.requestRender();
+
+			// Send notification if enabled
+			if (this.settingsManager.getNotifications()) {
+				playNotificationSound();
+				sendNotification("Pi - Handoff", `Started new session: ${goal}`);
+			}
+
+			// Auto-submit the handoff message by using the input callback when available
+			if (this.onInputCallback) {
+				await submitExplicitHandoff({
+					message: messageWithParent,
+					prompt: (text) => this.agent.prompt(text),
+					submitViaInput: this.onInputCallback,
+				});
+			} else {
+				this.editor.setText(messageWithParent);
+				this.chatContainer.addChild(new Text(theme.fg("dim", "Press Enter to continue in new session"), 1, 0));
+				this.ui.requestRender();
+			}
 		} catch (error: unknown) {
-			// Display error if submission fails
 			const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 			this.chatContainer.addChild(new Spacer(1));
-			this.chatContainer.addChild(new Text(theme.fg("error", `Handoff submission failed: ${errorMessage}`), 1, 0));
+			this.chatContainer.addChild(new Text(theme.fg("error", `Handoff failed: ${errorMessage}`), 1, 0));
 			this.ui.requestRender();
+		} finally {
+			this.agent.resumeQueueDrain();
 		}
 	}
 
@@ -2902,6 +2977,7 @@ export class TuiRenderer {
 
 		// Reset handoff nudge state
 		this.shouldIncludeHandoffNudge = false;
+		this.updateToolResultTransformer();
 
 		// Show confirmation
 		this.chatContainer.addChild(new Spacer(1));
@@ -3197,6 +3273,7 @@ export class TuiRenderer {
 			ratio: 0,
 			currentFlag: false,
 		});
+		this.updateToolResultTransformer();
 
 		this.chatContainer.addChild(new Spacer(1));
 		const label = next === "on" ? theme.fg("accent", "Auto-handoff: ON") : theme.fg("warning", "Auto-handoff: OFF");

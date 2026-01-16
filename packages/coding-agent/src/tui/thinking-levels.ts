@@ -20,6 +20,19 @@ export function getNextThinkingLevel(current: ThinkingLevel, supportsXhigh: bool
 	return cycle[(currentIndex + 1) % cycle.length];
 }
 
+export function getPreviousThinkingLevel(current: ThinkingLevel, supportsXhigh: boolean): ThinkingLevel {
+	if (current === "minimal") {
+		return "off";
+	}
+
+	const cycle = getTabThinkingLevels(supportsXhigh);
+	const currentIndex = cycle.indexOf(current as TabThinkingLevel);
+	if (currentIndex === -1) {
+		return cycle[cycle.length - 1];
+	}
+	return cycle[(currentIndex - 1 + cycle.length) % cycle.length];
+}
+
 export function getEffectiveThinkingLevel(
 	level: ThinkingLevel,
 	supportsReasoning: boolean,

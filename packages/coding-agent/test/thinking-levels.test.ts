@@ -4,6 +4,7 @@ import { initTheme, theme } from "../src/theme/theme.js";
 import {
 	getEffectiveThinkingLevel,
 	getNextThinkingLevel,
+	getPreviousThinkingLevel,
 	getTabThinkingLevels,
 	getThinkingLevelItems,
 } from "../src/tui/thinking-levels.js";
@@ -43,6 +44,23 @@ describe("thinking level utilities", () => {
 
 		for (const [current, supportsXhigh, expected] of levels) {
 			expect(getNextThinkingLevel(current, supportsXhigh)).toBe(expected);
+		}
+	});
+
+	it("computes previous thinking level based on support", () => {
+		const levels: Array<[ThinkingLevel, boolean, ThinkingLevel]> = [
+			["off", true, "xhigh"],
+			["low", true, "off"],
+			["medium", true, "low"],
+			["high", true, "medium"],
+			["minimal", true, "off"],
+			["off", false, "high"],
+			["high", false, "medium"],
+			["xhigh", false, "high"],
+		];
+
+		for (const [current, supportsXhigh, expected] of levels) {
+			expect(getPreviousThinkingLevel(current, supportsXhigh)).toBe(expected);
 		}
 	});
 
