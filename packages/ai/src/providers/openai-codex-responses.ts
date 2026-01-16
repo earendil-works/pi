@@ -135,6 +135,18 @@ function hasRetryClass(classes: RetryClass[], value: RetryClass): boolean {
 	return classes.includes(value);
 }
 
+function isTransportErrorMessage(message: string): boolean {
+	const normalized = message.toLowerCase();
+	return (
+		normalized.includes("terminated") ||
+		normalized.includes("fetch failed") ||
+		normalized.includes("network") ||
+		normalized.includes("econnreset") ||
+		normalized.includes("etimedout") ||
+		normalized.includes("econnrefused")
+	);
+}
+
 export function isRetryableCodexError(error: unknown, signal?: AbortSignal, retryOn?: RetryClass[]): boolean {
 	if (signal?.aborted) return false;
 
@@ -156,15 +168,7 @@ export function isRetryableCodexError(error: unknown, signal?: AbortSignal, retr
 		return false;
 	}
 
-	const message = getErrorMessage(error).toLowerCase();
-	return (
-		message.includes("terminated") ||
-		message.includes("fetch failed") ||
-		message.includes("network") ||
-		message.includes("econnreset") ||
-		message.includes("etimedout") ||
-		message.includes("econnrefused")
-	);
+	return isTransportErrorMessage(getErrorMessage(error));
 }
 
 export function getRetryDelay(attempt: number, baseDelay: number, maxDelay: number, error: unknown): number {
@@ -291,10 +295,11 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 				lastError = error;
 
 				const canRetryStream =
-					error instanceof CodexStreamError &&
+					!options?.signal?.aborted &&
 					hasRetryClass(retryOn, "transport") &&
-					!error.hadContent &&
-					streamRetries < streamMaxRetries;
+					streamRetries < streamMaxRetries &&
+					(error instanceof CodexStreamError ||
+						(hasEmittedStart && isTransportErrorMessage(getErrorMessage(error))));
 
 				if (canRetryStream) {
 					const streamAttempt = streamRetries;
