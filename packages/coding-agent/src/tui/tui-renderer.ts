@@ -162,6 +162,7 @@ export class TuiRenderer {
 	private isAutoHandoffInProgress = false;
 	private shouldIncludeHandoffNudge = false; // 85% threshold nudge state
 	private pendingExplicitHandoff: (HandoffDetails & { parentSessionId: string }) | null = null;
+	private pendingExplicitHandoffMessage: string | null = null;
 	private bashModeIndicatorContainer: Container = new Container();
 
 	private unsubscribe?: () => void;
@@ -1241,6 +1242,15 @@ export class TuiRenderer {
 				this.onInputCallback = undefined;
 				resolve(text);
 			};
+
+			if (this.pendingExplicitHandoffMessage) {
+				const pendingMessage = this.pendingExplicitHandoffMessage;
+				this.pendingExplicitHandoffMessage = null;
+				const submit = this.onInputCallback;
+				if (submit) {
+					queueMicrotask(() => submit(pendingMessage));
+				}
+			}
 		});
 	}
 
@@ -2919,9 +2929,7 @@ export class TuiRenderer {
 					submitViaInput: this.onInputCallback,
 				});
 			} else {
-				this.editor.setText(messageWithParent);
-				this.chatContainer.addChild(new Text(theme.fg("dim", "Press Enter to continue in new session"), 1, 0));
-				this.ui.requestRender();
+				this.pendingExplicitHandoffMessage = messageWithParent;
 			}
 		} catch (error: unknown) {
 			const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
@@ -2967,6 +2975,7 @@ export class TuiRenderer {
 		this.editingQueueIndex = null;
 		this.savedEditorText = null;
 		this.isHandlingQueueEditChange = false;
+		this.pendingExplicitHandoffMessage = null;
 		this.streamingComponent = null;
 		this.pendingTools.clear();
 		this.isFirstUserMessage = true;

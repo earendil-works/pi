@@ -81,4 +81,9 @@ export type AgentEvent =
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
 	preprocessor?: (messages: AgentContext["messages"], abortSignal?: AbortSignal) => Promise<AgentContext["messages"]>;
+	/**
+	 * Transform tool result messages after they're created but before they're added to context.
+	 * Use this to inject additional content (e.g., context usage warnings) into tool results.
+	 */
+	toolResultTransformer?: (toolResult: ToolResultMessage) => ToolResultMessage;
 }

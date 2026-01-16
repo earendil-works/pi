@@ -2,7 +2,7 @@
  * Handoff Nudge Tests
  *
  * Tests the 80% threshold nudge system that encourages voluntary handoff
- * before forced auto-handoff at 90%.
+ * before forced auto-handoff at 95%.
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
@@ -17,24 +17,25 @@ describe("Handoff Nudge", () => {
 
 	describe("getHandoffNudgeReminder", () => {
 		it("returns a string containing system_reminder tags", () => {
-			const reminder = getHandoffNudgeReminder();
+			const reminder = getHandoffNudgeReminder(0.85);
 			expect(reminder).toContain("<system_reminder>");
 			expect(reminder).toContain("</system_reminder>");
 		});
 
-		it("mentions 80% threshold", () => {
-			const reminder = getHandoffNudgeReminder();
-			expect(reminder).toContain("80%");
+		it("shows the actual context percentage", () => {
+			expect(getHandoffNudgeReminder(0.8)).toContain("80%");
+			expect(getHandoffNudgeReminder(0.85)).toContain("85%");
+			expect(getHandoffNudgeReminder(0.92)).toContain("92%");
 		});
 
 		it("mentions Handoff tool", () => {
-			const reminder = getHandoffNudgeReminder();
+			const reminder = getHandoffNudgeReminder(0.85);
 			expect(reminder).toContain("Handoff");
 		});
 
-		it("mentions 90% auto-handoff", () => {
-			const reminder = getHandoffNudgeReminder();
-			expect(reminder).toContain("90%");
+		it("mentions 95% auto-handoff", () => {
+			const reminder = getHandoffNudgeReminder(0.85);
+			expect(reminder).toContain("95%");
 		});
 	});
 });
@@ -80,9 +81,9 @@ describe("Threshold Detection Logic", () => {
 });
 
 describe("Message Augmentation Logic", () => {
-	function augmentMessage(text: string, shouldNudge: boolean): string {
+	function augmentMessage(text: string, shouldNudge: boolean, ratio = 0.85): string {
 		if (!shouldNudge) return text;
-		return text + getHandoffNudgeReminder();
+		return text + getHandoffNudgeReminder(ratio);
 	}
 
 	it("returns original text when shouldNudge is false", () => {
@@ -124,9 +125,11 @@ describe("Nudge State Machine", () => {
 	 */
 	class NudgeStateMachine {
 		private shouldIncludeHandoffNudge = false;
+		private lastRatio = 0;
 
 		/** Called after agent_end with current context ratio */
 		onAgentEnd(ratio: number): void {
+			this.lastRatio = ratio;
 			if (!this.shouldIncludeHandoffNudge && ratio >= HANDOFF_NUDGE_THRESHOLD) {
 				this.shouldIncludeHandoffNudge = true;
 			}
@@ -134,6 +137,7 @@ describe("Nudge State Machine", () => {
 
 		/** Called on session init with existing context ratio */
 		onSessionInit(ratio: number): void {
+			this.lastRatio = ratio;
 			if (ratio >= HANDOFF_NUDGE_THRESHOLD) {
 				this.shouldIncludeHandoffNudge = true;
 			}
@@ -142,12 +146,13 @@ describe("Nudge State Machine", () => {
 		/** Called on /clear, auto-handoff, or explicit handoff */
 		onSessionReset(): void {
 			this.shouldIncludeHandoffNudge = false;
+			this.lastRatio = 0;
 		}
 
 		/** Get augmented message text */
 		augmentMessage(text: string): string {
 			if (!this.shouldIncludeHandoffNudge) return text;
-			return text + getHandoffNudgeReminder();
+			return text + getHandoffNudgeReminder(this.lastRatio);
 		}
 
 		/** For testing: check current state */

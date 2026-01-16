@@ -16,7 +16,6 @@ export const DEFAULT_AUTO_HANDOFF_MODE: AutoHandoffMode = "off";
 /** One-way nudge threshold (ratio) for encouraging handoff. */
 export const HANDOFF_NUDGE_THRESHOLD = 0.8;
 
-export const AUTO_HANDOFF_NORMAL_THRESHOLD = 0.9;
 export const AUTO_HANDOFF_EMERGENCY_THRESHOLD = 0.95;
 
 export function isAutoHandoffMode(value: unknown): value is AutoHandoffMode {
@@ -74,21 +73,6 @@ export function applyAutoHandoffCommand(
 }
 
 type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
-
-export function shouldTriggerNormalAutoHandoff(params: {
-	autoHandoffMode: AutoHandoffMode;
-	ratio: number;
-	isAutoHandoffInProgress: boolean;
-	hasError: boolean;
-	hasModel: boolean;
-}): boolean {
-	if (params.autoHandoffMode !== "on") return false;
-	if (params.isAutoHandoffInProgress) return false;
-	if (!params.hasModel) return false;
-	if (params.hasError) return false;
-
-	return params.ratio >= AUTO_HANDOFF_NORMAL_THRESHOLD;
-}
 
 export function shouldTriggerEmergencyAutoHandoff(params: {
 	autoHandoffMode: AutoHandoffMode;

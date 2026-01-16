@@ -1,4 +1,4 @@
-import type { ImageContent, Message, TextContent } from "@kennyfrc/pi-ai";
+import type { ImageContent, Message, TextContent, ToolResultMessage } from "@kennyfrc/pi-ai";
 import { getModel } from "@kennyfrc/pi-ai";
 import type { AgentTransport } from "./transports/types.js";
 import type { AgentEvent, AgentState, AppMessage, Attachment, ThinkingLevel } from "./types.js";
@@ -80,6 +80,8 @@ export interface AgentOptions {
 	transport: AgentTransport;
 	// Transform app messages to LLM-compatible messages before sending to transport
 	messageTransformer?: (messages: AppMessage[]) => Message[] | Promise<Message[]>;
+	// Transform tool result messages after they're created (e.g., to inject context usage warnings)
+	toolResultTransformer?: (toolResult: ToolResultMessage) => ToolResultMessage;
 	// Queue mode: "all" = send all queued messages at once, "one-at-a-time" = send one queued message per turn
 	queueMode?: "all" | "one-at-a-time";
 }
@@ -100,6 +102,7 @@ export class Agent {
 	private abortController?: AbortController;
 	private transport: AgentTransport;
 	private messageTransformer: (messages: AppMessage[]) => Message[] | Promise<Message[]>;
+	private toolResultTransformer?: (toolResult: ToolResultMessage) => ToolResultMessage;
 	private messageQueue: QueuedAppMessage[] = [];
 	private queueMode: "all" | "one-at-a-time";
 	private runningPrompt?: Promise<void>;
@@ -111,6 +114,7 @@ export class Agent {
 		this._state = { ...this._state, ...opts.initialState };
 		this.transport = opts.transport;
 		this.messageTransformer = opts.messageTransformer || defaultMessageTransformer;
+		this.toolResultTransformer = opts.toolResultTransformer;
 		this.queueMode = opts.queueMode || "one-at-a-time";
 	}
 
@@ -126,6 +130,10 @@ export class Agent {
 	// State mutators - update internal state without emitting events
 	setSystemPrompt(v: string) {
 		this._state.systemPrompt = v;
+	}
+
+	setToolResultTransformer(fn: ((toolResult: ToolResultMessage) => ToolResultMessage) | undefined) {
+		this.toolResultTransformer = fn;
 	}
 
 	setModel(m: typeof this._state.model) {
@@ -279,6 +287,7 @@ export class Agent {
 			tools: this._state.tools,
 			model,
 			reasoning,
+			toolResultTransformer: this.toolResultTransformer,
 		};
 
 		// Track all messages generated in this prompt

@@ -264,13 +264,15 @@ Examples of good goals:
 }
 
 /**
- * Get the system reminder content for handoff nudge at 80% threshold.
- * This is appended to user messages to encourage voluntary handoff.
+ * Get the system reminder content for handoff nudge.
+ * This is appended to the last tool result to encourage voluntary handoff.
+ * @param ratio - Current context usage ratio (0.0 to 1.0)
  */
-export function getHandoffNudgeReminder(): string {
+export function getHandoffNudgeReminder(ratio: number): string {
+	const percent = Math.round(ratio * 100);
 	return `
 
 <system_reminder>
-Context usage is at 80%+. Consider using the Handoff tool to start a fresh session with selected file context before auto-handoff triggers at 90%.
+Context usage is at ${percent}%. Consider using the Handoff tool to start a fresh session with selected file context before auto-handoff triggers at 95%.
 </system_reminder>`;
 }

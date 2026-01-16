@@ -58,6 +58,7 @@ export class ProviderTransport implements AgentTransport {
 			model,
 			reasoning: cfg.reasoning,
 			apiKey,
+			toolResultTransformer: cfg.toolResultTransformer,
 		};
 
 		// Yield events from agentLoop

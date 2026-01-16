@@ -90,7 +90,9 @@ export function agentLoop(
 			const toolResults: ToolResultMessage[] = [];
 			if (hasMoreToolCalls) {
 				// Execute tool calls
-				toolResults.push(...(await executeToolCalls(currentContext.tools, message, signal, stream)));
+				toolResults.push(
+					...(await executeToolCalls(currentContext.tools, message, signal, stream, config.toolResultTransformer)),
+				);
 				currentContext.messages.push(...toolResults);
 				newMessages.push(...toolResults);
 			}
@@ -202,6 +204,7 @@ async function executeToolCalls<T>(
 	assistantMessage: AssistantMessage,
 	signal: AbortSignal | undefined,
 	stream: EventStream<AgentEvent, Message[]>,
+	toolResultTransformer?: (toolResult: ToolResultMessage<T>) => ToolResultMessage<T>,
 ): Promise<ToolResultMessage<T>[]> {
 	const toolCalls = assistantMessage.content.filter((c) => c.type === "toolCall");
 
@@ -318,7 +321,7 @@ async function executeToolCalls<T>(
 		const content: ToolResultMessage<T>["content"] =
 			typeof resultOrError === "string" ? [{ type: "text", text: resultOrError }] : resultOrError.content;
 
-		const toolResultMessage: ToolResultMessage<T> = {
+		let toolResultMessage: ToolResultMessage<T> = {
 			role: "toolResult",
 			toolCallId: toolCall.id,
 			toolName: toolCall.name,
@@ -327,6 +330,11 @@ async function executeToolCalls<T>(
 			isError,
 			timestamp: Date.now(),
 		};
+
+		// Apply transformer if provided (e.g., to inject context usage warnings)
+		if (toolResultTransformer) {
+			toolResultMessage = toolResultTransformer(toolResultMessage);
+		}
 
 		results.push(toolResultMessage);
 		stream.push({ type: "message_start", message: toolResultMessage });
