@@ -415,13 +415,13 @@ function buildSystemPrompt(
 
 	const staticPrefix = PI_STATIC_INSTRUCTIONS.trim();
 	const developerMessages: string[] = [];
-	const trimmedPrompt = userSystemPrompt?.trim();
 
-	if (trimmedPrompt) {
-		if (trimmedPrompt.startsWith(staticPrefix)) {
-			return { instructions: trimmedPrompt, developerMessages };
+	if (userSystemPrompt?.trim()) {
+		let dynamicPart = userSystemPrompt.trim();
+		if (dynamicPart.startsWith(staticPrefix)) {
+			dynamicPart = dynamicPart.slice(staticPrefix.length).trim();
 		}
-		return { instructions: `${staticPrefix}\n\n${trimmedPrompt}`, developerMessages };
+		if (dynamicPart) developerMessages.push(dynamicPart);
 	}
 
 	return { instructions: staticPrefix, developerMessages };
