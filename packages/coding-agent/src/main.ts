@@ -366,6 +366,8 @@ function buildSystemPrompt(customPrompt?: string, selectedTools?: ToolName[]): s
 	});
 }
 
+type ContextFile = { path: string; content: string; scope: "user" | "project" };
+
 /**
  * Look for AGENTS.md or CLAUDE.md in a directory (prefers AGENTS.md)
  */
@@ -393,20 +395,20 @@ function loadContextFileFromDir(dir: string): { path: string; content: string } 
  * 2. Parent directories (top-most first) down to cwd
  * Each returns {path, content} for separate messages
  */
-function loadProjectContextFiles(): Array<{ path: string; content: string }> {
-	const contextFiles: Array<{ path: string; content: string }> = [];
+function loadProjectContextFiles(): ContextFile[] {
+	const contextFiles: ContextFile[] = [];
 
 	// 1. Load global context from ~/.pi/agent/
 	const homeDir = homedir();
 	const globalContextDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homeDir, ".pi/agent/"));
 	const globalContext = loadContextFileFromDir(globalContextDir);
 	if (globalContext) {
-		contextFiles.push(globalContext);
+		contextFiles.push({ ...globalContext, scope: "user" });
 	}
 
 	// 2. Walk up from cwd to root, collecting all context files
 	const cwd = process.cwd();
-	const ancestorContextFiles: Array<{ path: string; content: string }> = [];
+	const ancestorContextFiles: ContextFile[] = [];
 
 	let currentDir = cwd;
 	const root = resolve("/");
@@ -415,7 +417,7 @@ function loadProjectContextFiles(): Array<{ path: string; content: string }> {
 		const contextFile = loadContextFileFromDir(currentDir);
 		if (contextFile) {
 			// Add to beginning so we get top-most parent first
-			ancestorContextFiles.unshift(contextFile);
+			ancestorContextFiles.unshift({ ...contextFile, scope: "project" });
 		}
 
 		// Stop if we've reached root

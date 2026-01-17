@@ -31,6 +31,8 @@ interface SystemPromptConfig {
 	guidelines: Guideline[];
 }
 
+type ContextFile = { path: string; content: string; scope: "user" | "project" };
+
 // Cache for loaded configs
 let systemPromptConfig: SystemPromptConfig | null = null;
 let toolDescriptionsConfig: Record<string, string> | null = null;
@@ -142,29 +144,39 @@ export function buildGuidelines(selectedTools: ToolName[]): string[] {
 	return guidelines;
 }
 
+function formatContextFiles(contextFiles: ContextFile[]): string {
+	if (contextFiles.length === 0) {
+		return "";
+	}
+
+	return contextFiles
+		.map(({ path: filePath, content, scope }) => {
+			const tag = scope === "user" ? "user_instructions" : "project_instructions";
+			return `<${tag} source="${filePath}">\n${content}\n</${tag}>`;
+		})
+		.join("\n\n");
+}
+
 /**
  * Build the complete system prompt
  */
 export function buildSystemPrompt(options: {
 	customPrompt?: string;
 	selectedTools?: ToolName[];
-	contextFiles?: Array<{ path: string; content: string }>;
+	contextFiles?: ContextFile[];
 }): string {
 	const { customPrompt, selectedTools, contextFiles = [] } = options;
 
 	// If custom prompt provided, use it with context appended
 	if (customPrompt) {
-		let prompt = customPrompt;
+		let prompt = `<system_instructions>\n${customPrompt}\n</system_instructions>`;
+		const contextBlock = formatContextFiles(contextFiles);
 
-		if (contextFiles.length > 0) {
-			prompt += "\n\n# Project Context\n\n";
-			prompt += "The following project context files have been loaded:\n\n";
-			for (const { path: filePath, content } of contextFiles) {
-				prompt += `## ${filePath}\n\n${content}\n\n`;
-			}
+		if (contextBlock) {
+			prompt += `\n\n${contextBlock}`;
 		}
 
-		prompt += `\n<metadata>\nCurrent working directory: ${process.cwd()}\n</metadata>`;
+		prompt += `\n\n<metadata>\nCurrent working directory: ${process.cwd()}\n</metadata>`;
 
 		return prompt;
 	}
@@ -198,12 +210,9 @@ export function buildSystemPrompt(options: {
 
 	// Build context files section
 	let contextFilesSection = "";
-	if (contextFiles.length > 0) {
-		contextFilesSection = "\n\n# Project Context\n\n";
-		contextFilesSection += "The following project context files have been loaded:\n\n";
-		for (const { path: filePath, content } of contextFiles) {
-			contextFilesSection += `## ${filePath}\n\n${content}\n\n`;
-		}
+	const contextBlock = formatContextFiles(contextFiles);
+	if (contextBlock) {
+		contextFilesSection = `\n\n${contextBlock}`;
 	}
 
 	// Replace placeholders in template

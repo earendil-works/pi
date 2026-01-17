@@ -414,17 +414,20 @@ function buildSystemPrompt(
 	}
 
 	const staticPrefix = PI_STATIC_INSTRUCTIONS.trim();
+	const staticInstructions = `<system_instructions>\n${staticPrefix}\n</system_instructions>`;
 	const developerMessages: string[] = [];
 
 	if (userSystemPrompt?.trim()) {
 		let dynamicPart = userSystemPrompt.trim();
-		if (dynamicPart.startsWith(staticPrefix)) {
+		if (dynamicPart.startsWith(staticInstructions)) {
+			dynamicPart = dynamicPart.slice(staticInstructions.length).trim();
+		} else if (dynamicPart.startsWith(staticPrefix)) {
 			dynamicPart = dynamicPart.slice(staticPrefix.length).trim();
 		}
 		if (dynamicPart) developerMessages.push(dynamicPart);
 	}
 
-	return { instructions: staticPrefix, developerMessages };
+	return { instructions: staticInstructions, developerMessages };
 }
 
 function clampReasoningEffort(modelId: string, effort: string): string {

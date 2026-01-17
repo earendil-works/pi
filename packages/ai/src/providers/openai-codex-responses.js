@@ -297,15 +297,18 @@ function buildSystemPrompt(userSystemPrompt, tools) {
 		return { instructions: OPENCODE_CODEX_INSTRUCTIONS, developerMessages };
 	}
 	const staticPrefix = PI_STATIC_INSTRUCTIONS.trim();
+	const staticInstructions = `<system_instructions>\n${staticPrefix}\n</system_instructions>`;
 	const developerMessages = [];
-	const trimmedPrompt = userSystemPrompt?.trim();
-	if (trimmedPrompt) {
-		if (trimmedPrompt.startsWith(staticPrefix)) {
-			return { instructions: trimmedPrompt, developerMessages };
+	if (userSystemPrompt?.trim()) {
+		let dynamicPart = userSystemPrompt.trim();
+		if (dynamicPart.startsWith(staticInstructions)) {
+			dynamicPart = dynamicPart.slice(staticInstructions.length).trim();
+		} else if (dynamicPart.startsWith(staticPrefix)) {
+			dynamicPart = dynamicPart.slice(staticPrefix.length).trim();
 		}
-		return { instructions: `${staticPrefix}\n\n${trimmedPrompt}`, developerMessages };
+		if (dynamicPart) developerMessages.push(dynamicPart);
 	}
-	return { instructions: staticPrefix, developerMessages };
+	return { instructions: staticInstructions, developerMessages };
 }
 function clampReasoningEffort(modelId, effort) {
 	const id = modelId.includes("/") ? modelId.split("/").pop() : modelId;
