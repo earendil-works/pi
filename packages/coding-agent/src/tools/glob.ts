@@ -29,6 +29,7 @@ const globSchema = Type.Object({
 	),
 	path: Type.Optional(Type.String({ description: "Directory to search in (default: current directory)" })),
 	limit: Type.Optional(Type.Number({ description: "Maximum number of results (default: 1000 for glob, 500 for ls)" })),
+	includeIgnored: Type.Optional(Type.Boolean({ description: "Include files ignored by .gitignore (default: false)" })),
 });
 
 const DEFAULT_GLOB_LIMIT = 1000;
@@ -168,6 +169,7 @@ async function findByGlob(
 	pattern: string,
 	searchPath: string,
 	limit: number,
+	includeIgnored: boolean,
 	signal?: AbortSignal,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; details: undefined }> {
 	const fdPath = await ensureToolWithTimeout("fd", undefined, true);
@@ -184,9 +186,15 @@ async function findByGlob(
 	// This avoids the expensive sync traversal that was causing hangs on large directories.
 	const args: string[] = ["--glob", "--color=never", "--hidden", "--max-results", String(limit)];
 
-	const rootGitignore = nodePath.join(searchPath, ".gitignore");
-	if (existsSync(rootGitignore)) {
-		args.push("--ignore-file", rootGitignore);
+	if (includeIgnored) {
+		// Bypass VCS ignore rules (.gitignore) specifically
+		args.push("--no-ignore-vcs");
+	} else {
+		// For non-git directories, manually respect root .gitignore
+		const rootGitignore = nodePath.join(searchPath, ".gitignore");
+		if (existsSync(rootGitignore)) {
+			args.push("--ignore-file", rootGitignore);
+		}
 	}
 
 	args.push(pattern, searchPath);
@@ -285,9 +293,12 @@ async function findByGlob(
 
 			const trimmed = stdout.trim();
 			if (!trimmed) {
-				settle(() =>
-					resolve({ content: [{ type: "text", text: "No files found matching pattern" }], details: undefined }),
-				);
+				let message = "No files found matching pattern";
+				if (!includeIgnored) {
+					message +=
+						"\n\n(Note: .gitignored files are excluded. Re-run with includeIgnored: true to include them.)";
+				}
+				settle(() => resolve({ content: [{ type: "text", text: message }], details: undefined }));
 				return;
 			}
 
@@ -304,7 +315,12 @@ export const globTool: AgentTool<typeof globSchema> = {
 	parameters: globSchema,
 	execute: async (
 		_toolCallId: string,
-		{ pattern, path: searchDir, limit }: { pattern?: string; path?: string; limit?: number },
+		{
+			pattern,
+			path: searchDir,
+			limit,
+			includeIgnored,
+		}: { pattern?: string; path?: string; limit?: number; includeIgnored?: boolean },
 		signal?: AbortSignal,
 		_onProgress?: (chunk: string) => void,
 	) => {
@@ -330,7 +346,7 @@ export const globTool: AgentTool<typeof globSchema> = {
 					}
 
 					const effectiveLimit = limit ?? DEFAULT_GLOB_LIMIT;
-					const result = await findByGlob(pattern, resolvedPath, effectiveLimit, signal);
+					const result = await findByGlob(pattern, resolvedPath, effectiveLimit, includeIgnored ?? false, signal);
 					signal?.removeEventListener("abort", onAbort);
 					resolve(result);
 				} catch (e: unknown) {

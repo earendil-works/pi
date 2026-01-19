@@ -31,10 +31,10 @@ Write: |
   Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.
 
 Grep: |
-  Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore.
+  Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore by default. Set `includeIgnored: true` to search gitignored files.
 
 Glob: |
-  Find files by glob pattern OR list directory contents. When pattern is provided, searches for matching files (e.g., '*.ts', '**/*.json'). When pattern is omitted, lists directory contents with '/' suffix for directories. Respects .gitignore.
+  Find files by glob pattern OR list directory contents. When pattern is provided, searches for matching files (e.g., '*.ts', '**/*.json'). When pattern is omitted, lists directory contents with '/' suffix for directories. Respects .gitignore by default. Set `includeIgnored: true` to find gitignored files.
 
 ListThreads: |
   List past conversation threads. Returns thread IDs, relative dates, message counts, workspace paths, and preview text. Supports keyword search (message content) and workspace filtering (case-insensitive substring match).

@@ -399,7 +399,8 @@ describe("Glob truncation interactions", () => {
 			});
 
 			const output = getTextOutput(result);
-			expect(output).toBe("No files found matching pattern");
+			expect(output).toContain("No files found matching pattern");
+			// The hint about gitignored files is expected, but no truncation message
 			expect(output).not.toContain("truncated");
 		});
 

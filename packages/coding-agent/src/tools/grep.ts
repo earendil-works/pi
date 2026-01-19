@@ -37,6 +37,7 @@ const grepSchema = Type.Object({
 		Type.Number({ description: "Number of lines to show before and after each match (default: 0)" }),
 	),
 	limit: Type.Optional(Type.Number({ description: "Maximum number of matches to return (default: 100)" })),
+	includeIgnored: Type.Optional(Type.Boolean({ description: "Include files ignored by .gitignore (default: false)" })),
 });
 
 const DEFAULT_LIMIT = 100;
@@ -56,6 +57,7 @@ export const grepTool: AgentTool<typeof grepSchema> = {
 			literal,
 			context,
 			limit,
+			includeIgnored,
 		}: {
 			pattern: string;
 			path?: string;
@@ -64,6 +66,7 @@ export const grepTool: AgentTool<typeof grepSchema> = {
 			literal?: boolean;
 			context?: number;
 			limit?: number;
+			includeIgnored?: boolean;
 		},
 		signal?: AbortSignal,
 		_onProgress?: (chunk: string) => void,
@@ -129,6 +132,11 @@ export const grepTool: AgentTool<typeof grepSchema> = {
 					};
 
 					const args: string[] = ["--json", "--line-number", "--color=never", "--hidden"];
+
+					if (includeIgnored) {
+						// Bypass VCS ignore rules (.gitignore) specifically
+						args.push("--no-ignore-vcs");
+					}
 
 					if (ignoreCase) {
 						args.push("--ignore-case");
@@ -312,9 +320,12 @@ export const grepTool: AgentTool<typeof grepSchema> = {
 						}
 
 						if (matchCount === 0) {
-							settle(() =>
-								resolve({ content: [{ type: "text", text: "No matches found" }], details: undefined }),
-							);
+							let message = "No matches found";
+							if (!includeIgnored) {
+								message +=
+									"\n\n(Note: .gitignored files are excluded. Re-run with includeIgnored: true to include them.)";
+							}
+							settle(() => resolve({ content: [{ type: "text", text: message }], details: undefined }));
 							return;
 						}
 

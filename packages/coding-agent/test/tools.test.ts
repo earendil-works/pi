@@ -1,3 +1,4 @@
+import { execSync } from "child_process";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -483,6 +484,70 @@ describe("Coding Agent Tools", () => {
 			// Ensure second match is not present
 			expect(output).not.toContain("match two");
 		});
+
+		it("should respect .gitignore by default in git repos", async () => {
+			// Initialize git repo so rg respects .gitignore
+			execSync("git init", { cwd: testDir, stdio: "ignore" });
+			writeFileSync(join(testDir, ".gitignore"), "ignored.txt\n");
+			writeFileSync(join(testDir, "ignored.txt"), "secret content");
+			writeFileSync(join(testDir, "kept.txt"), "secret content");
+
+			const result = await grepTool.execute("test-call-grep-gitignore-1", {
+				pattern: "secret",
+				path: testDir,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("kept.txt");
+			expect(output).not.toContain("ignored.txt");
+		});
+
+		it("should include gitignored files when includeIgnored is true", async () => {
+			// Initialize git repo so we can test bypassing .gitignore
+			execSync("git init", { cwd: testDir, stdio: "ignore" });
+			writeFileSync(join(testDir, ".gitignore"), "ignored.txt\n");
+			writeFileSync(join(testDir, "ignored.txt"), "secret content");
+			writeFileSync(join(testDir, "kept.txt"), "secret content");
+
+			const result = await grepTool.execute("test-call-grep-gitignore-2", {
+				pattern: "secret",
+				path: testDir,
+				includeIgnored: true,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("kept.txt");
+			expect(output).toContain("ignored.txt");
+		});
+
+		it("should show hint when no matches and includeIgnored is false", async () => {
+			// Initialize git repo so rg respects .gitignore
+			execSync("git init", { cwd: testDir, stdio: "ignore" });
+			writeFileSync(join(testDir, ".gitignore"), "*.log\n");
+			writeFileSync(join(testDir, "app.log"), "error message");
+
+			const result = await grepTool.execute("test-call-grep-gitignore-3", {
+				pattern: "error message",
+				path: testDir,
+				literal: true,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("No matches found");
+			expect(output).toContain("includeIgnored: true");
+		});
+
+		it("should not show hint when no matches and includeIgnored is true", async () => {
+			const result = await grepTool.execute("test-call-grep-gitignore-4", {
+				pattern: "nonexistent pattern xyz",
+				path: testDir,
+				includeIgnored: true,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("No matches found");
+			expect(output).not.toContain("includeIgnored: true");
+		});
 	});
 
 	describe("glob tool (find mode)", () => {
@@ -519,6 +584,49 @@ describe("Coding Agent Tools", () => {
 			const output = getTextOutput(result);
 			expect(output).toContain("kept.txt");
 			expect(output).not.toContain("ignored.txt");
+		});
+
+		it("should include gitignored files when includeIgnored is true", async () => {
+			writeFileSync(join(testDir, ".gitignore"), "ignored.txt\n");
+			writeFileSync(join(testDir, "ignored.txt"), "ignored content");
+			writeFileSync(join(testDir, "kept.txt"), "kept");
+
+			const result = await globTool.execute("test-call-include-ignored-1", {
+				pattern: "**/*.txt",
+				path: testDir,
+				includeIgnored: true,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("kept.txt");
+			expect(output).toContain("ignored.txt");
+		});
+
+		it("should show hint when no matches and includeIgnored is false", async () => {
+			writeFileSync(join(testDir, ".gitignore"), "*.log\n");
+			writeFileSync(join(testDir, "app.log"), "log content");
+
+			const result = await globTool.execute("test-call-include-ignored-2", {
+				pattern: "*.log",
+				path: testDir,
+				includeIgnored: false,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("No files found matching pattern");
+			expect(output).toContain("includeIgnored: true");
+		});
+
+		it("should not show hint when no matches and includeIgnored is true", async () => {
+			const result = await globTool.execute("test-call-include-ignored-3", {
+				pattern: "*.nonexistent",
+				path: testDir,
+				includeIgnored: true,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("No files found matching pattern");
+			expect(output).not.toContain("includeIgnored: true");
 		});
 	});
 
