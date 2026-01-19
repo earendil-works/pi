@@ -2,12 +2,10 @@
 # These are the detailed descriptions that help the model understand how to use each tool
 
 Read: |
-  Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, defaults to first 2000 lines. Use offset/limit for large files.
-  
-  For image analysis tasks, use the `ReadImage` tool instead of `Read`.
+  Read the contents of a text file. Supports text files only. For text files, defaults to first 2000 lines. Use offset/limit for large files.
 
 ReadImage: |
-  Analyze an image and extract information based on an objective. Accepts a local file path or remote URL. Returns XML-delimited analysis output.
+  Analyze an image and extract information based on an objective. Use this tool only for image files or image URLs. Supported formats: jpg, jpeg, png, gif, webp. Do not use this tool for reading text files. Accepts a local file path or remote URL. Returns XML-delimited analysis output.
 
   Parameters:
   - path: Path to the image file (local or URL)
