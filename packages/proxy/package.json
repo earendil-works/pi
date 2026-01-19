@@ -1,6 +1,6 @@
 {
 	"name": "@kennyfrc/pi-proxy",
-	"version": "0.22.13",
+	"version": "0.22.14",
 	"type": "module",
 	"description": "CORS and authentication proxy for pi-ai",
 	"main": "dist/index.js",
