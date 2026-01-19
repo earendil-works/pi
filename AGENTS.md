@@ -61,4 +61,3 @@ npm link  # If you want to test locally
 - Do NOT use inline imports ala `await import("./theme/theme.js");`
 - Read `~/agent-tools/browser-tools/README.md` if you need to run an interact with a browser
 - Use GitHub CLI to interact with GitHub issues and pull requests
-- Use `tmux` (installed globally) if you need to interact with a TUI app

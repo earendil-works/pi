@@ -50,15 +50,6 @@ guidelines:
   - condition:
       present: [Bash]
     text: |
-      For interactive sessions (servers, REPLs, TUIs, debuggers):
-      1. Start in tmux: tmux new-session -d -s <name> '<command>'
-      2. Capture output: tmux capture-pane -t <name> -p
-      3. Send input: tmux send-keys -t <name> '<input>' Enter
-      4. Kill when done: tmux kill-session -t <name>
-
-  - condition:
-      present: [Bash]
-    text: |
       Avoid large outputs: pipe to head/tail (head -100), limit rg results (rg -m 5), or redirect to files when output may be large. For bundled/minified files, search source files instead.
 
   - condition:
