@@ -37,7 +37,17 @@ import { scheduleExplicitHandoff, submitExplicitHandoff } from "../explicit-hand
 import { exportSessionToHtml } from "../export-html.js";
 import { getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
 import { playNotificationSound, sendNotification } from "../notification.js";
-import { listOAuthProviders, login, logout } from "../oauth/index.js";
+import {
+	getActiveOAuthAccount,
+	listOAuthAccounts,
+	listOAuthProviders,
+	login,
+	logout,
+	type OAuthAccountEntry,
+	type OAuthProvider,
+	removeOAuthAccount,
+	setActiveOAuthAccount,
+} from "../oauth/index.js";
 import { PromptHistoryManager } from "../prompt-history-manager.js";
 import { getAutoHandoffGoalPrompt, getHandoffNudgeReminder, getHandoffPrompt } from "../prompts/index.js";
 import type { SessionManager } from "../session-manager.js";
@@ -54,6 +64,7 @@ import { DynamicBorder } from "./dynamic-border.js";
 import { FooterComponent } from "./footer.js";
 import { LabeledBorder } from "./labeled-border.js";
 import { ModelSelectorComponent } from "./model-selector.js";
+import { OAuthAccountSelectorComponent } from "./oauth-account-selector.js";
 import { OAuthSelectorComponent } from "./oauth-selector.js";
 import { QueueModeSelectorComponent } from "./queue-mode-selector.js";
 import { ThemeSelectorComponent } from "./theme-selector.js";
@@ -139,7 +150,8 @@ export class TuiRenderer {
 	private userMessageSelector: UserMessageSelectorComponent | null = null;
 
 	// OAuth selector
-	private oauthSelector: any | null = null;
+	private oauthSelector: OAuthSelectorComponent | null = null;
+	private oauthAccountSelector: OAuthAccountSelectorComponent | null = null;
 
 	// Track if this is the first user message (to skip spacer)
 	private isFirstUserMessage = true;
@@ -163,6 +175,8 @@ export class TuiRenderer {
 	private shouldIncludeHandoffNudge = false; // 85% threshold nudge state
 	private pendingExplicitHandoff: (HandoffDetails & { parentSessionId: string }) | null = null;
 	private pendingExplicitHandoffMessage: string | null = null;
+	private codexAccountIdBeforeRun: string | null = null;
+	private lastCodexAccountId: string | null = null;
 	private bashModeIndicatorContainer: Container = new Container();
 
 	private unsubscribe?: () => void;
@@ -780,6 +794,7 @@ export class TuiRenderer {
 					}
 				}, 1000);
 
+				this.captureCodexAccountBeforeRun();
 				this.ui.requestRender();
 				break;
 
@@ -837,6 +852,7 @@ export class TuiRenderer {
 					this.editor.setText("");
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
+					this.maybeAnnounceCodexAccountSwitch();
 					// Create assistant component for streaming
 					this.streamingComponent = new AssistantMessageComponent();
 					this.chatContainer.addChild(this.streamingComponent);
@@ -1133,6 +1149,64 @@ export class TuiRenderer {
 				break;
 			}
 		}
+	}
+
+	private isLikelyUuid(value: string): boolean {
+		return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+	}
+
+	private maskAccountId(value: string): string {
+		if (!this.isLikelyUuid(value)) return value;
+		return `••••${value.slice(-4)}`;
+	}
+
+	private formatCodexAccountLabel(account: OAuthAccountEntry): string {
+		const label = account.label ?? account.credentials.email ?? account.id;
+		const maskedId = this.maskAccountId(account.id);
+		if (account.id === label) {
+			return this.isLikelyUuid(label) ? maskedId : label;
+		}
+		const suffix =
+			maskedId !== account.id
+				? maskedId
+				: account.id.length > 12
+					? `${account.id.slice(0, 6)}…${account.id.slice(-4)}`
+					: account.id;
+		return `${label} (${suffix})`;
+	}
+
+	private captureCodexAccountBeforeRun(): void {
+		if (this.agent.state.model?.provider !== "openai-codex") {
+			this.codexAccountIdBeforeRun = null;
+			return;
+		}
+
+		const active = getActiveOAuthAccount("openai-codex");
+		this.codexAccountIdBeforeRun = active?.id ?? null;
+		if (this.lastCodexAccountId === null) {
+			this.lastCodexAccountId = this.codexAccountIdBeforeRun;
+		}
+	}
+
+	private maybeAnnounceCodexAccountSwitch(): void {
+		if (this.agent.state.model?.provider !== "openai-codex") {
+			this.codexAccountIdBeforeRun = null;
+			return;
+		}
+
+		const accounts = listOAuthAccounts("openai-codex");
+		const active = getActiveOAuthAccount("openai-codex");
+		const activeId = active?.id ?? null;
+		const beforeId = this.codexAccountIdBeforeRun ?? this.lastCodexAccountId;
+
+		if (accounts.length > 1 && active && beforeId && active.id !== beforeId) {
+			const label = this.formatCodexAccountLabel(active);
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(theme.fg("warning", `Auto-switched Codex account to ${label}.`), 1, 0));
+		}
+
+		this.lastCodexAccountId = activeId;
+		this.codexAccountIdBeforeRun = null;
 	}
 
 	private addMessageToChat(message: Message): void {
@@ -2090,19 +2164,23 @@ export class TuiRenderer {
 		// Create OAuth selector
 		this.oauthSelector = new OAuthSelectorComponent(
 			mode,
-			async (providerId: any) => {
+			async (providerId: string) => {
 				// Hide selector first
 				this.hideOAuthSelector();
+				const oauthProvider = providerId as OAuthProvider;
 
-				if (mode === "login") {
-					// Handle login
+				const formatAccountLabel = (account: OAuthAccountEntry): string => {
+					return account.label ?? account.credentials.email ?? account.id;
+				};
+
+				const runLoginFlow = async (): Promise<void> => {
 					this.chatContainer.addChild(new Spacer(1));
 					this.chatContainer.addChild(new Text(theme.fg("dim", `Logging in to ${providerId}...`), 1, 0));
 					this.ui.requestRender();
 
 					try {
 						await login(
-							providerId,
+							oauthProvider,
 							(info: { url: string; instructions?: string }) => {
 								// Show auth URL to user
 								this.chatContainer.addChild(new Spacer(1));
@@ -2163,24 +2241,98 @@ export class TuiRenderer {
 					} catch (error: any) {
 						this.showError(`Login failed: ${error.message}`);
 					}
-				} else {
-					// Handle logout
-					try {
-						await logout(providerId);
+				};
 
-						// Invalidate OAuth cache so footer updates
-						invalidateOAuthCache();
+				if (mode === "login") {
+					if (providerId === "openai-codex") {
+						const accounts = listOAuthAccounts(oauthProvider);
+						if (accounts.length > 0) {
+							const activeAccount = getActiveOAuthAccount(oauthProvider);
+							this.showOAuthAccountSelector(
+								"login",
+								accounts,
+								activeAccount?.id ?? null,
+								async (selection) => {
+									if (selection.type === "add") {
+										await runLoginFlow();
+										return;
+									}
+
+									setActiveOAuthAccount(oauthProvider, selection.accountId);
+									const account = accounts.find((item) => item.id === selection.accountId);
+									const label = account ? formatAccountLabel(account) : selection.accountId;
+									this.chatContainer.addChild(new Spacer(1));
+									this.chatContainer.addChild(
+										new Text(theme.fg("success", `✓ Switched to ${providerId} account ${label}`), 1, 0),
+									);
+									this.ui.requestRender();
+								},
+								() => {
+									this.ui.requestRender();
+								},
+							);
+							return;
+						}
+					}
+
+					await runLoginFlow();
+					return;
+				}
+
+				if (providerId === "openai-codex") {
+					const accounts = listOAuthAccounts(oauthProvider);
+					if (accounts.length === 0) {
 						this.chatContainer.addChild(new Spacer(1));
 						this.chatContainer.addChild(
-							new Text(theme.fg("success", `✓ Successfully logged out of ${providerId}`), 1, 0),
-						);
-						this.chatContainer.addChild(
-							new Text(theme.fg("dim", `Credentials removed from ~/.pi/agent/oauth.json`), 1, 0),
+							new Text(theme.fg("dim", "No OAuth accounts available. Use /login first."), 1, 0),
 						);
 						this.ui.requestRender();
-					} catch (error: any) {
-						this.showError(`Logout failed: ${error.message}`);
+						return;
 					}
+
+					const activeAccount = getActiveOAuthAccount(providerId);
+					this.showOAuthAccountSelector(
+						"logout",
+						accounts,
+						activeAccount?.id ?? null,
+						(selection) => {
+							if (selection.type !== "account") return;
+							const account = accounts.find((item) => item.id === selection.accountId);
+							const label = account ? formatAccountLabel(account) : selection.accountId;
+							removeOAuthAccount(oauthProvider, selection.accountId);
+							invalidateOAuthCache();
+							this.chatContainer.addChild(new Spacer(1));
+							this.chatContainer.addChild(
+								new Text(theme.fg("success", `✓ Logged out of ${providerId} account ${label}`), 1, 0),
+							);
+							this.chatContainer.addChild(
+								new Text(theme.fg("dim", "Credentials updated in ~/.pi/agent/oauth.json"), 1, 0),
+							);
+							this.ui.requestRender();
+						},
+						() => {
+							this.ui.requestRender();
+						},
+					);
+					return;
+				}
+
+				// Handle logout
+				try {
+					await logout(oauthProvider);
+
+					// Invalidate OAuth cache so footer updates
+					invalidateOAuthCache();
+					this.chatContainer.addChild(new Spacer(1));
+					this.chatContainer.addChild(
+						new Text(theme.fg("success", `✓ Successfully logged out of ${providerId}`), 1, 0),
+					);
+					this.chatContainer.addChild(
+						new Text(theme.fg("dim", `Credentials removed from ~/.pi/agent/oauth.json`), 1, 0),
+					);
+					this.ui.requestRender();
+				} catch (error: any) {
+					this.showError(`Logout failed: ${error.message}`);
 				}
 			},
 			() => {
@@ -2202,6 +2354,40 @@ export class TuiRenderer {
 		this.editorContainer.clear();
 		this.editorContainer.addChild(this.editor);
 		this.oauthSelector = null;
+		this.ui.setFocus(this.editor);
+	}
+
+	private showOAuthAccountSelector(
+		mode: "login" | "logout",
+		accounts: OAuthAccountEntry[],
+		activeAccountId: string | null,
+		onSelect: (selection: { type: "account"; accountId: string } | { type: "add" }) => void | Promise<void>,
+		onCancel: () => void,
+	): void {
+		this.oauthAccountSelector = new OAuthAccountSelectorComponent(
+			mode,
+			accounts,
+			activeAccountId,
+			(selection) => {
+				this.hideOAuthAccountSelector();
+				void onSelect(selection);
+			},
+			() => {
+				this.hideOAuthAccountSelector();
+				onCancel();
+			},
+		);
+
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.oauthAccountSelector);
+		this.ui.setFocus(this.oauthAccountSelector);
+		this.ui.requestRender();
+	}
+
+	private hideOAuthAccountSelector(): void {
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.oauthAccountSelector = null;
 		this.ui.setFocus(this.editor);
 	}
 

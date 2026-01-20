@@ -28,15 +28,24 @@ export { loginGeminiCli, refreshGoogleCloudToken } from "./google-gemini-cli.js"
 export { loginOpenAICodex, refreshOpenAICodexToken } from "./openai-codex.js";
 // Storage
 export {
+	addOAuthAccount,
+	clearOAuthAccountCooldown,
+	getActiveOAuthAccount,
+	getNextAvailableOAuthAccount,
 	getOAuthPath,
 	hasOAuthCredentials,
+	listOAuthAccounts,
 	listOAuthProviders,
 	loadOAuthCredentials,
 	loadOAuthStorage,
+	markOAuthAccountCooldown,
+	removeOAuthAccount,
 	removeOAuthCredentials,
 	resetOAuthStorage,
 	saveOAuthCredentials,
+	setActiveOAuthAccount,
 	setOAuthStorage,
+	updateOAuthAccountCredentials,
 } from "./storage.js";
 
 // ============================================================================
@@ -47,7 +56,14 @@ import { refreshGitHubCopilotToken } from "./github-copilot.js";
 import { refreshAntigravityToken } from "./google-antigravity.js";
 import { refreshGoogleCloudToken } from "./google-gemini-cli.js";
 import { refreshOpenAICodexToken } from "./openai-codex.js";
-import { loadOAuthCredentials, removeOAuthCredentials, saveOAuthCredentials } from "./storage.js";
+import {
+	getNextAvailableOAuthAccount,
+	loadOAuthCredentials,
+	markOAuthAccountCooldown,
+	removeOAuthCredentials,
+	saveOAuthCredentials,
+	updateOAuthAccountCredentials,
+} from "./storage.js";
 /**
  * Refresh token for any OAuth provider.
  * Saves the new credentials and returns the new access token.
@@ -97,6 +113,29 @@ export async function refreshToken(provider) {
  * @returns API key string, or null if no credentials
  */
 export async function getOAuthApiKey(provider) {
+	if (provider === "openai-codex") {
+		const attempted = new Set();
+		while (true) {
+			const account = getNextAvailableOAuthAccount(provider);
+			if (!account || attempted.has(account.id)) {
+				return null;
+			}
+			attempted.add(account.id);
+			const credentials = account.credentials;
+			if (Date.now() >= credentials.expires) {
+				try {
+					const refreshed = await refreshOpenAICodexToken(credentials.refresh);
+					updateOAuthAccountCredentials(provider, account.id, refreshed);
+					return refreshed.access;
+				} catch (error) {
+					console.error(`Failed to refresh OAuth token for ${provider}:`, error);
+					markOAuthAccountCooldown(provider, account.id, 60 * 60 * 1000);
+					continue;
+				}
+			}
+			return credentials.access;
+		}
+	}
 	const credentials = loadOAuthCredentials(provider);
 	if (!credentials) {
 		return null;

@@ -4,33 +4,42 @@
  */
 
 import {
+	getActiveOAuthAccount,
 	getOAuthApiKey,
+	listOAuthAccounts,
 	listOAuthProviders as listOAuthProvidersFromAi,
 	loadOAuthCredentials,
 	loginAntigravity,
 	loginGeminiCli,
 	loginGitHubCopilot,
 	loginOpenAICodex,
+	type OAuthAccountEntry,
 	type OAuthCredentials,
 	type OAuthProvider,
 	type OAuthStorageBackend,
 	refreshToken as refreshTokenFromAi,
+	removeOAuthAccount,
 	removeOAuthCredentials,
 	resetOAuthStorage,
 	saveOAuthCredentials,
+	setActiveOAuthAccount,
 	setOAuthStorage,
 } from "@kennyfrc/pi-ai";
 import { loginAnthropic } from "./anthropic.js";
 
 // Re-export types and functions
-export type { OAuthCredentials, OAuthProvider, OAuthStorageBackend };
+export type { OAuthAccountEntry, OAuthCredentials, OAuthProvider, OAuthStorageBackend };
 export { listOAuthProvidersFromAi as listOAuthProviders };
 export {
+	getActiveOAuthAccount,
 	getOAuthApiKey,
+	listOAuthAccounts,
 	loadOAuthCredentials,
+	removeOAuthAccount,
 	removeOAuthCredentials,
 	resetOAuthStorage,
 	saveOAuthCredentials,
+	setActiveOAuthAccount,
 	setOAuthStorage,
 };
 

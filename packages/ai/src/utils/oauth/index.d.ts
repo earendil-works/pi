@@ -22,19 +22,31 @@ export { type AntigravityCredentials, loginAntigravity, refreshAntigravityToken 
 export { type GoogleCloudCredentials, loginGeminiCli, refreshGoogleCloudToken } from "./google-gemini-cli.js";
 export { loginOpenAICodex, refreshOpenAICodexToken } from "./openai-codex.js";
 export {
+	addOAuthAccount,
+	clearOAuthAccountCooldown,
+	getActiveOAuthAccount,
+	getNextAvailableOAuthAccount,
 	getOAuthPath,
 	hasOAuthCredentials,
+	listOAuthAccounts,
 	listOAuthProviders,
 	loadOAuthCredentials,
 	loadOAuthStorage,
+	markOAuthAccountCooldown,
+	type OAuthAccountEntry,
 	type OAuthCredentials,
+	type OAuthMultiAccountStorage,
 	type OAuthProvider,
 	type OAuthStorage,
 	type OAuthStorageBackend,
+	type OAuthStorageEntry,
+	removeOAuthAccount,
 	removeOAuthCredentials,
 	resetOAuthStorage,
 	saveOAuthCredentials,
+	setActiveOAuthAccount,
 	setOAuthStorage,
+	updateOAuthAccountCredentials,
 } from "./storage.js";
 import type { OAuthProvider } from "./storage.js";
 /**

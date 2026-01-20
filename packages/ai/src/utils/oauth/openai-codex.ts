@@ -6,7 +6,7 @@
 import { randomBytes } from "node:crypto";
 import http from "node:http";
 import { generatePKCE } from "./pkce.js";
-import { type OAuthCredentials, saveOAuthCredentials } from "./storage.js";
+import { addOAuthAccount, type OAuthCredentials } from "./storage.js";
 
 // ============================================================================
 // Constants
@@ -45,11 +45,12 @@ const SUCCESS_HTML = `<!doctype html>
 // Types
 // ============================================================================
 
-type TokenSuccess = { type: "success"; access: string; refresh: string; expires: number };
+type TokenSuccess = { type: "success"; access: string; refresh: string; expires: number; idToken?: string };
 type TokenFailure = { type: "failed" };
 type TokenResult = TokenSuccess | TokenFailure;
 
 type JwtPayload = {
+	email?: string;
 	[JWT_CLAIM_PATH]?: {
 		chatgpt_account_id?: string;
 	};
@@ -122,6 +123,12 @@ function getAccountId(accessToken: string): string | null {
 	return typeof accountId === "string" && accountId.length > 0 ? accountId : null;
 }
 
+function getEmail(token: string): string | null {
+	const payload = decodeJwt(token);
+	const email = payload?.email;
+	return typeof email === "string" && email.length > 0 ? email : null;
+}
+
 // ============================================================================
 // Token Exchange
 // ============================================================================
@@ -153,6 +160,7 @@ async function exchangeAuthorizationCode(
 		access_token?: string;
 		refresh_token?: string;
 		expires_in?: number;
+		id_token?: string;
 	};
 
 	if (!json.access_token || !json.refresh_token || typeof json.expires_in !== "number") {
@@ -160,11 +168,14 @@ async function exchangeAuthorizationCode(
 		return { type: "failed" };
 	}
 
+	const idToken = typeof json.id_token === "string" ? json.id_token : undefined;
+
 	return {
 		type: "success",
 		access: json.access_token,
 		refresh: json.refresh_token,
 		expires: Date.now() + json.expires_in * 1000,
+		idToken,
 	};
 }
 
@@ -423,15 +434,18 @@ export async function loginOpenAICodex(options: {
 			throw new Error("Failed to extract accountId from token");
 		}
 
+		const email = tokenResult.idToken ? getEmail(tokenResult.idToken) : null;
 		const credentials: OAuthCredentials = {
 			type: "oauth",
 			access: tokenResult.access,
 			refresh: tokenResult.refresh,
 			expires: tokenResult.expires,
 			accountId,
+			...(email ? { email } : {}),
 		};
 
-		saveOAuthCredentials("openai-codex", credentials);
+		const label = email ?? accountId;
+		addOAuthAccount("openai-codex", credentials, label);
 	} finally {
 		server.close();
 	}

@@ -5,7 +5,7 @@
 import { randomBytes } from "node:crypto";
 import http from "node:http";
 import { generatePKCE } from "./pkce.js";
-import { saveOAuthCredentials } from "./storage.js";
+import { addOAuthAccount } from "./storage.js";
 
 // ============================================================================
 // Constants
@@ -89,6 +89,11 @@ function getAccountId(accessToken) {
 	const accountId = auth?.chatgpt_account_id;
 	return typeof accountId === "string" && accountId.length > 0 ? accountId : null;
 }
+function getEmail(token) {
+	const payload = decodeJwt(token);
+	const email = payload?.email;
+	return typeof email === "string" && email.length > 0 ? email : null;
+}
 // ============================================================================
 // Token Exchange
 // ============================================================================
@@ -114,11 +119,13 @@ async function exchangeAuthorizationCode(code, verifier, redirectUri = REDIRECT_
 		console.error("[openai-codex] token response missing fields:", json);
 		return { type: "failed" };
 	}
+	const idToken = typeof json.id_token === "string" ? json.id_token : undefined;
 	return {
 		type: "success",
 		access: json.access_token,
 		refresh: json.refresh_token,
 		expires: Date.now() + json.expires_in * 1000,
+		idToken,
 	};
 }
 async function refreshAccessToken(refreshToken) {
@@ -328,14 +335,17 @@ export async function loginOpenAICodex(options) {
 		if (!accountId) {
 			throw new Error("Failed to extract accountId from token");
 		}
+		const email = tokenResult.idToken ? getEmail(tokenResult.idToken) : null;
 		const credentials = {
 			type: "oauth",
 			access: tokenResult.access,
 			refresh: tokenResult.refresh,
 			expires: tokenResult.expires,
 			accountId,
+			...(email ? { email } : {}),
 		};
-		saveOAuthCredentials("openai-codex", credentials);
+		const label = email ?? accountId;
+		addOAuthAccount("openai-codex", credentials, label);
 	} finally {
 		server.close();
 	}

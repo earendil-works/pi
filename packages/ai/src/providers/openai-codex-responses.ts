@@ -23,6 +23,8 @@ import type {
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
+import { getOAuthApiKey } from "../utils/oauth/index.js";
+import { listOAuthAccounts, markOAuthAccountCooldown } from "../utils/oauth/storage.js";
 import { getExponentialBackoff, sleep } from "../utils/retry.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { buildCodexPiBridge, OPENCODE_CODEX_INSTRUCTIONS } from "./openai-codex-responses-legacy.js";
@@ -147,6 +149,50 @@ function isTransportErrorMessage(message: string): boolean {
 	);
 }
 
+const DEFAULT_COOLDOWN_MS = 60_000;
+
+function parseCooldownFromMessage(message: string): number | null {
+	const match = message.match(/try again in\s*(\d+(?:\.\d+)?)\s*(ms|s|seconds?|minutes?|hours?)/i);
+	if (!match) return null;
+
+	const value = Number.parseFloat(match[1]);
+	if (!Number.isFinite(value)) return null;
+
+	const unit = match[2].toLowerCase();
+	if (unit === "ms") return Math.round(value);
+	if (unit === "s" || unit.startsWith("second")) return Math.round(value * 1000);
+	if (unit.startsWith("minute")) return Math.round(value * 60_000);
+	if (unit.startsWith("hour")) return Math.round(value * 3_600_000);
+
+	return null;
+}
+
+function classifyCooldown(error: unknown): { shouldCooldown: boolean; cooldownMs: number } {
+	const status = getErrorStatus(error);
+	const message = getErrorMessage(error).toLowerCase();
+	const retryAfterMs = getRetryAfterFromError(error);
+	const parsedCooldown = parseCooldownFromMessage(message);
+
+	if (status === 429) {
+		return { shouldCooldown: true, cooldownMs: retryAfterMs ?? parsedCooldown ?? DEFAULT_COOLDOWN_MS };
+	}
+
+	const rateLimitHint =
+		message.includes("rate limit") ||
+		message.includes("rate_limit") ||
+		message.includes("usage limit") ||
+		message.includes("too many requests");
+	if (rateLimitHint) {
+		return { shouldCooldown: true, cooldownMs: retryAfterMs ?? parsedCooldown ?? DEFAULT_COOLDOWN_MS };
+	}
+
+	if ((status !== undefined && status >= 500 && status <= 504) || isTransportErrorMessage(message)) {
+		return { shouldCooldown: true, cooldownMs: DEFAULT_COOLDOWN_MS };
+	}
+
+	return { shouldCooldown: false, cooldownMs: 0 };
+}
+
 export function isRetryableCodexError(error: unknown, signal?: AbortSignal, retryOn?: RetryClass[]): boolean {
 	if (signal?.aborted) return false;
 
@@ -197,6 +243,47 @@ function resolveCodexRetryOptions(options?: OpenAICodexResponsesOptions): {
 	};
 }
 
+function isStoredOAuthAccessToken(token: string): boolean {
+	const accounts = listOAuthAccounts("openai-codex");
+	return accounts.some((account) => account.credentials.access === token);
+}
+
+async function resolveCodexApiKey(
+	modelProvider: string,
+	explicitKey?: string,
+): Promise<{ apiKey: string; fromOAuth: boolean }> {
+	const explicitMatchesOAuth = explicitKey ? isStoredOAuthAccessToken(explicitKey) : false;
+
+	if (explicitKey && !explicitMatchesOAuth) {
+		return { apiKey: explicitKey, fromOAuth: false };
+	}
+
+	const oauthKey = await getOAuthApiKey("openai-codex");
+	if (oauthKey) {
+		return { apiKey: oauthKey, fromOAuth: true };
+	}
+
+	if (explicitKey) {
+		return { apiKey: explicitKey, fromOAuth: explicitMatchesOAuth };
+	}
+
+	const envKey = getEnvApiKey(modelProvider);
+	if (!envKey) {
+		throw new Error(`No API key for provider: ${modelProvider}`);
+	}
+
+	return { apiKey: envKey, fromOAuth: false };
+}
+
+function tryMarkCodexCooldown(apiKey: string, cooldownMs: number): void {
+	try {
+		const accountId = extractAccountId(apiKey);
+		markOAuthAccountCooldown("openai-codex", accountId, cooldownMs);
+	} catch {
+		// ignore cooldown marking failures
+	}
+}
+
 // ============================================================================
 // Main Stream Function
 // ============================================================================
@@ -233,6 +320,9 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 		let hasEmittedStart = false;
 		let attempts = 0;
 		let lastError: unknown;
+		let lastApiKey: string | null = null;
+		let lastApiKeyWasOAuth = false;
+		let lastCooldownMarkedKey: string | null = null;
 		let streamRetries = 0;
 		let requestAttempt = 0;
 
@@ -251,10 +341,10 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 				};
 
-				const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
-				if (!apiKey) {
-					throw new Error(`No API key for provider: ${model.provider}`);
-				}
+				const resolvedKey = await resolveCodexApiKey(model.provider, options?.apiKey);
+				const apiKey = resolvedKey.apiKey;
+				lastApiKey = apiKey;
+				lastApiKeyWasOAuth = resolvedKey.fromOAuth;
 
 				const accountId = extractAccountId(apiKey);
 				const body = buildRequestBody(model, context, options);
@@ -293,6 +383,7 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 				return;
 			} catch (error) {
 				lastError = error;
+				const cooldown = classifyCooldown(error);
 
 				const canRetryStream =
 					!options?.signal?.aborted &&
@@ -319,6 +410,12 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 					attemptIndex < requestMaxRetries;
 
 				if (shouldRetryRequest) {
+					if (cooldown.shouldCooldown && lastApiKey && lastApiKeyWasOAuth) {
+						if (lastApiKey !== lastCooldownMarkedKey) {
+							tryMarkCodexCooldown(lastApiKey, cooldown.cooldownMs);
+							lastCooldownMarkedKey = lastApiKey;
+						}
+					}
 					const delay = getRetryDelay(attemptIndex, baseDelay, maxDelay, error);
 					try {
 						await sleep(delay, options?.signal);
@@ -333,6 +430,13 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 
 		if (!hasEmittedStart) {
 			stream.push({ type: "start", partial: output });
+		}
+
+		if (lastError && !options?.signal?.aborted) {
+			const cooldown = classifyCooldown(lastError);
+			if (cooldown.shouldCooldown && lastApiKey && lastApiKeyWasOAuth && lastApiKey !== lastCooldownMarkedKey) {
+				tryMarkCodexCooldown(lastApiKey, cooldown.cooldownMs);
+			}
 		}
 
 		output.stopReason = options?.signal?.aborted ? "aborted" : "error";

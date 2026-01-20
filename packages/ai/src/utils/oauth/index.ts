@@ -37,19 +37,31 @@ export {
 export { loginOpenAICodex, refreshOpenAICodexToken } from "./openai-codex.js";
 // Storage
 export {
+	addOAuthAccount,
+	clearOAuthAccountCooldown,
+	getActiveOAuthAccount,
+	getNextAvailableOAuthAccount,
 	getOAuthPath,
 	hasOAuthCredentials,
+	listOAuthAccounts,
 	listOAuthProviders,
 	loadOAuthCredentials,
 	loadOAuthStorage,
+	markOAuthAccountCooldown,
+	type OAuthAccountEntry,
 	type OAuthCredentials,
+	type OAuthMultiAccountStorage,
 	type OAuthProvider,
 	type OAuthStorage,
 	type OAuthStorageBackend,
+	type OAuthStorageEntry,
+	removeOAuthAccount,
 	removeOAuthCredentials,
 	resetOAuthStorage,
 	saveOAuthCredentials,
+	setActiveOAuthAccount,
 	setOAuthStorage,
+	updateOAuthAccountCredentials,
 } from "./storage.js";
 
 // ============================================================================
@@ -62,7 +74,14 @@ import { refreshAntigravityToken } from "./google-antigravity.js";
 import { refreshGoogleCloudToken } from "./google-gemini-cli.js";
 import { refreshOpenAICodexToken } from "./openai-codex.js";
 import type { OAuthCredentials, OAuthProvider } from "./storage.js";
-import { loadOAuthCredentials, removeOAuthCredentials, saveOAuthCredentials } from "./storage.js";
+import {
+	getNextAvailableOAuthAccount,
+	loadOAuthCredentials,
+	markOAuthAccountCooldown,
+	removeOAuthCredentials,
+	saveOAuthCredentials,
+	updateOAuthAccountCredentials,
+} from "./storage.js";
 
 /**
  * Refresh token for any OAuth provider.
@@ -117,6 +136,32 @@ export async function refreshToken(provider: OAuthProvider): Promise<string> {
  * @returns API key string, or null if no credentials
  */
 export async function getOAuthApiKey(provider: OAuthProvider): Promise<string | null> {
+	if (provider === "openai-codex") {
+		const attempted = new Set<string>();
+		while (true) {
+			const account = getNextAvailableOAuthAccount(provider);
+			if (!account || attempted.has(account.id)) {
+				return null;
+			}
+			attempted.add(account.id);
+
+			const credentials = account.credentials;
+			if (Date.now() >= credentials.expires) {
+				try {
+					const refreshed = await refreshOpenAICodexToken(credentials.refresh);
+					updateOAuthAccountCredentials(provider, account.id, refreshed);
+					return refreshed.access;
+				} catch (error) {
+					console.error(`Failed to refresh OAuth token for ${provider}:`, error);
+					markOAuthAccountCooldown(provider, account.id, 60 * 60 * 1000);
+					continue;
+				}
+			}
+
+			return credentials.access;
+		}
+	}
+
 	const credentials = loadOAuthCredentials(provider);
 	if (!credentials) {
 		return null;

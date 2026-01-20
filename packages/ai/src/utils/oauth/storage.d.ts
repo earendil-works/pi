@@ -14,8 +14,20 @@ export interface OAuthCredentials {
 	email?: string;
 	accountId?: string;
 }
+export interface OAuthAccountEntry {
+	id: string;
+	credentials: OAuthCredentials;
+	label?: string;
+	lastUsed?: number;
+	cooldownUntil?: number;
+}
+export interface OAuthMultiAccountStorage {
+	accounts: OAuthAccountEntry[];
+	activeAccountId?: string;
+}
+export type OAuthStorageEntry = OAuthCredentials | OAuthMultiAccountStorage;
 export interface OAuthStorage {
-	[provider: string]: OAuthCredentials;
+	[provider: string]: OAuthStorageEntry;
 }
 export type OAuthProvider =
 	| "anthropic"
@@ -84,4 +96,44 @@ export declare function hasOAuthCredentials(provider: string): boolean;
  * List all providers with OAuth credentials
  */
 export declare function listOAuthProviders(): string[];
+/**
+ * List all OAuth accounts for a provider
+ */
+export declare function listOAuthAccounts(provider: string): OAuthAccountEntry[];
+/**
+ * Get the active OAuth account for a provider
+ */
+export declare function getActiveOAuthAccount(provider: string): OAuthAccountEntry | null;
+/**
+ * Set the active OAuth account for a provider
+ */
+export declare function setActiveOAuthAccount(provider: string, accountId: string): void;
+/**
+ * Add or update an OAuth account for a provider
+ */
+export declare function addOAuthAccount(provider: string, creds: OAuthCredentials, label?: string): OAuthAccountEntry;
+/**
+ * Remove an OAuth account for a provider
+ */
+export declare function removeOAuthAccount(provider: string, accountId: string): void;
+/**
+ * Update OAuth account credentials
+ */
+export declare function updateOAuthAccountCredentials(
+	provider: string,
+	accountId: string,
+	creds: OAuthCredentials,
+): void;
+/**
+ * Mark an OAuth account as cooling down
+ */
+export declare function markOAuthAccountCooldown(provider: string, accountId: string, durationMs: number): void;
+/**
+ * Clear OAuth account cooldown
+ */
+export declare function clearOAuthAccountCooldown(provider: string, accountId: string): void;
+/**
+ * Select the next available OAuth account for a provider
+ */
+export declare function getNextAvailableOAuthAccount(provider: string): OAuthAccountEntry | null;
 //# sourceMappingURL=storage.d.ts.map

@@ -5,6 +5,7 @@ import { type Component, visibleWidth } from "@kennyfrc/pi-tui";
 import { existsSync, type FSWatcher, readFileSync, watch } from "fs";
 import { dirname, join } from "path";
 import { isModelUsingOAuth } from "../model-config.js";
+import { getActiveOAuthAccount, listOAuthAccounts } from "../oauth/index.js";
 import { theme } from "../theme/theme.js";
 
 /**
@@ -221,8 +222,22 @@ export class FooterComponent implements Component {
 
 		// Show cost with (sub) or (api) indicator
 		const usingSubscription = this.state.model ? isModelUsingOAuth(this.state.model) : false;
+		let subscriptionSuffix: string | null = null;
+		if (usingSubscription && this.state.model?.provider === "openai-codex") {
+			const accounts = listOAuthAccounts("openai-codex");
+			if (accounts.length > 1) {
+				const activeAccount = getActiveOAuthAccount("openai-codex");
+				if (activeAccount) {
+					const label = activeAccount.label ?? activeAccount.credentials.email ?? activeAccount.id;
+					const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(label);
+					const displayLabel = isUuid ? `••••${label.slice(-4)}` : label;
+					const truncated = displayLabel.length > 12 ? `${displayLabel.slice(0, 12)}…` : displayLabel;
+					subscriptionSuffix = `${truncated}/${accounts.length}`;
+				}
+			}
+		}
 		if (totalCost || usingSubscription || this.state.model) {
-			const type = usingSubscription ? " (sub)" : " (api)";
+			const type = usingSubscription ? (subscriptionSuffix ? ` (sub:${subscriptionSuffix})` : " (sub)") : " (api)";
 			const costStr = `$${totalCost.toFixed(3)}${type}`;
 			statsParts.push(costStr);
 		}
