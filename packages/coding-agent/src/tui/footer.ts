@@ -245,13 +245,13 @@ export class FooterComponent implements Component {
 		// Colorize context percentage based on usage with handoff hints
 		let contextPercentStr: string;
 		const contextPercentDisplay = `${contextPercent}% of ${formatTokens(contextWindow)}`;
-		if (contextTokens >= 166000) {
+		if (contextPercentValue >= 90) {
 			// Critical - strongly suggest handoff
 			contextPercentStr = theme.fg("budgetRed", `${contextPercentDisplay} (handoff soon)`);
-		} else if (contextTokens >= 133000) {
+		} else if (contextPercentValue >= 80) {
 			// High - mention handoff
 			contextPercentStr = theme.fg("budgetOrange", `${contextPercentDisplay} (consider handoff)`);
-		} else if (contextTokens >= 100000) {
+		} else if (contextPercentValue >= 60) {
 			// Moderate - just show percentage
 			contextPercentStr = theme.fg("budgetYellow", contextPercentDisplay);
 		} else {
