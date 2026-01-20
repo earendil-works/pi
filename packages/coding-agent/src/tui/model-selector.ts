@@ -1,6 +1,12 @@
 import type { Model } from "@kennyfrc/pi-ai";
 import { Container, Input, Spacer, Text, type TUI } from "@kennyfrc/pi-tui";
 import { getAvailableModels } from "../model-config.js";
+import {
+	compareModelUsage,
+	getWorkspaceSessionDir,
+	loadModelUsageStats,
+	type ModelUsageStats,
+} from "../model-usage.js";
 import type { SettingsManager } from "../settings-manager.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
@@ -19,6 +25,7 @@ export class ModelSelectorComponent extends Container {
 	private listContainer: Container;
 	private allModels: ModelItem[] = [];
 	private filteredModels: ModelItem[] = [];
+	private modelUsageByKey: Map<string, ModelUsageStats> = new Map();
 	private selectedIndex: number = 0;
 	private currentModel: Model<any> | null;
 	private settingsManager: SettingsManager;
@@ -100,24 +107,19 @@ export class ModelSelectorComponent extends Container {
 			model,
 		}));
 
-		// Sort: current model first, then by provider
-		models.sort((a, b) => {
-			const aIsCurrent = this.currentModel?.id === a.model.id && this.currentModel?.provider === a.provider;
-			const bIsCurrent = this.currentModel?.id === b.model.id && this.currentModel?.provider === b.provider;
-			if (aIsCurrent && !bIsCurrent) return -1;
-			if (!aIsCurrent && bIsCurrent) return 1;
-			return a.provider.localeCompare(b.provider);
-		});
+		this.modelUsageByKey = loadModelUsageStats(getWorkspaceSessionDir());
+		this.sortModelsByUsage(models, "recency");
 
 		this.allModels = models;
-		this.filteredModels = models;
+		this.filteredModels = [...models];
 	}
 
 	private filterModels(query: string): void {
-		if (!query.trim()) {
-			this.filteredModels = this.allModels;
+		const trimmedQuery = query.trim();
+		if (!trimmedQuery) {
+			this.filteredModels = [...this.allModels];
 		} else {
-			const searchTokens = query
+			const searchTokens = trimmedQuery
 				.toLowerCase()
 				.split(/\s+/)
 				.filter((t) => t);
@@ -127,8 +129,13 @@ export class ModelSelectorComponent extends Container {
 			});
 		}
 
+		this.sortModelsByUsage(this.filteredModels, trimmedQuery ? "frequency" : "recency");
 		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredModels.length - 1));
 		this.updateList();
+	}
+
+	private sortModelsByUsage(models: ModelItem[], mode: "recency" | "frequency"): void {
+		models.sort((a, b) => compareModelUsage(a, b, this.modelUsageByKey, mode));
 	}
 
 	private updateList(): void {
