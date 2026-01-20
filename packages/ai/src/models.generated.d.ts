@@ -5830,7 +5830,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "mistralai/ministral-8b": {
+		readonly "mistralai/ministral-3b": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -5847,7 +5847,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "mistralai/ministral-3b": {
+		readonly "mistralai/ministral-8b": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -5949,7 +5949,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "cohere/command-r-08-2024": {
+		readonly "cohere/command-r-plus-08-2024": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -5966,7 +5966,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "cohere/command-r-plus-08-2024": {
+		readonly "cohere/command-r-08-2024": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6017,7 +6017,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "meta-llama/llama-3.1-8b-instruct": {
+		readonly "meta-llama/llama-3.1-70b-instruct": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6051,7 +6051,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "meta-llama/llama-3.1-70b-instruct": {
+		readonly "meta-llama/llama-3.1-8b-instruct": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6085,7 +6085,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4o-mini-2024-07-18": {
+		readonly "openai/gpt-4o-mini": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6102,7 +6102,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4o-mini": {
+		readonly "openai/gpt-4o-mini-2024-07-18": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6136,23 +6136,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4o-2024-05-13": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "openai/gpt-4o": {
 			id: string;
 			name: string;
@@ -6171,6 +6154,23 @@ export declare const MODELS: {
 			maxTokens: number;
 		};
 		readonly "openai/gpt-4o:extended": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: false;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "openai/gpt-4o-2024-05-13": {
 			id: string;
 			name: string;
 			api: "openai-completions";
