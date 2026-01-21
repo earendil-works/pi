@@ -1,0 +1,22 @@
+# Work Log: Manager/Subagent Implementation
+
+- Initialized task breakdown for subagent manager implementation.
+- Added subagent task-file schema/helpers in `packages/coding-agent/src/subagent/` plus vitest coverage (`test/subagent-task-file.test.ts`).
+- Adjusted schemas to use `Type.Union/Type.Literal` (TypeCompiler compatibility).
+- Verified: `npm run test -w @kennyfrc/pi-coding-agent -- test/subagent-task-file.test.ts`.
+- Updated Task tool input enums to `Type.Union/Type.Literal` and guarded `killProcessTree` for undefined PIDs.
+- Re-ran: `npm run test -w @kennyfrc/pi-coding-agent -- test/subagent-task-file.test.ts` (pass).
+- Ran `npm run check` (pass; Biome applied formatting fixes).
+- Enabled Task tool by default (added to codingTools) and removed `--enable-subagent` requirement in CLI help/tool gating.
+- Ran `npm run check` again after enabling default Task tool (pass; Biome applied formatting fixes).
+- Fixed subagent spawn to handle tsx/ts entrypoints (use tsx when argv1 is .ts/.tsx) and added unit test for command resolution.
+- Ran `npm run test -w @kennyfrc/pi-coding-agent -- test/task-resolve-subagent-command.test.ts` (pass).
+- Added Task tool input parsing for todo status/priority with clearer error messages and unit test (`test/task-tool-validation.test.ts`).
+- Ran `npm run test -w @kennyfrc/pi-coding-agent -- test/task-tool-validation.test.ts` (pass).
+- Added subagent progress events with formatting helper and unit tests (`test/subagent-loop-events.test.ts`).
+- Added Task tool outcome helper to surface warnings when subagent exits after completion (`test/task-tool-outcome.test.ts`).
+- Added Task tool progress rendering for non-Bash tools in the TUI and unit test (`test/tool-execution-task-progress.test.ts`).
+- Ran `npm run test -w @kennyfrc/pi-coding-agent -- test/subagent-loop-events.test.ts` (pass).
+- Ran `npm run test -w @kennyfrc/pi-coding-agent -- test/task-tool-outcome.test.ts` (pass).
+- Ran `npm run test -w @kennyfrc/pi-coding-agent -- test/tool-execution-task-progress.test.ts` (pass).
+- Ran `npm run check` (pass).
