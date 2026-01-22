@@ -689,6 +689,7 @@ export class Editor implements Component {
 		};
 		this.pastes.clear();
 		this.pasteCounter = 0;
+		this.invalidate();
 
 		if (this.onChange) {
 			this.onChange("");
