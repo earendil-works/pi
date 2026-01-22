@@ -274,8 +274,8 @@ ${chalk.bold("Options:")}
   --session <path>        Use specific session file
   --no-session            Don't save session (ephemeral)
   --models <patterns>     Comma-separated model patterns for quick cycling with Ctrl+P
-  --tools <tools>         Comma-separated list of tools to enable (default: Read,Bash,Edit,Write,Grep,Glob,TodoWrite)
-                          Available: Read, Bash, Edit, Write, Grep, Glob, ListThreads, ReadThread, ReadImage, TodoWrite
+  --tools <tools>         Comma-separated list of tools to enable (default: Read,Bash,Edit,Write,ListThreads,ReadThread,ReadImage,TodoWrite,Handoff)
+                          Available: Read, Bash, Edit, Write, Grep, Glob, ListThreads, ReadThread, ReadImage, TodoWrite, Handoff
   --thinking <level>      Set thinking level: off, minimal, low, medium, high
   --export <file>         Export session file to HTML and exit
   --help, -h              Show this help
@@ -333,15 +333,19 @@ ${chalk.bold("Environment Variables:")}
   ZAI_API_KEY             - ZAI API key
   PI_CODING_AGENT_DIR     - Session storage directory (default: ~/.pi/agent)
 
-${chalk.bold("Available Tools (default: read, bash, edit, write, todowrite):")}
-  read      - Read file contents
-  bash      - Execute bash commands
-  edit      - Edit files with find/replace
-  write     - Write files (creates/overwrites)
-  todowrite - Track planning steps and progress
-  grep      - Search file contents (read-only, off by default)
-  find      - Find files by glob pattern (read-only, off by default)
-  ls        - List directory contents (read-only, off by default)
+${chalk.bold("Available Tools (default: read, bash, edit, write, list_threads, read_thread, read_image, todowrite, handoff):")}
+  read         - Read file contents
+  bash         - Execute bash commands
+  edit         - Edit files with find/replace
+  write        - Write files (creates/overwrites)
+  list_threads - List past conversation threads
+  read_thread  - Read a specific thread's conversation history
+  read_image   - Analyze images and extract information
+  todowrite    - Track planning steps and progress
+  handoff      - Hand off to a new session with file context
+  grep         - Search file contents (read-only, off by default)
+  find         - Find files by glob pattern (read-only, off by default)
+  ls           - List directory contents (read-only, off by default)
 `);
 }
 

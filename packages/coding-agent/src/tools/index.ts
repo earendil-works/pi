@@ -30,8 +30,6 @@ export const codingTools: AgentTool<any>[] = [
 	bashTool,
 	editTool,
 	writeTool,
-	grepTool,
-	globTool,
 	listThreadsTool,
 	readThreadTool,
 	readImageTool,

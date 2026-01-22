@@ -190,8 +190,6 @@ export function buildSystemPrompt(options: {
 			"Bash",
 			"Edit",
 			"Write",
-			"Grep",
-			"Glob",
 			"ListThreads",
 			"ReadThread",
 			"ReadImage",
