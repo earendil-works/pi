@@ -5458,23 +5458,6 @@ export const MODELS = {
 			contextWindow: 1000000,
 			maxTokens: 8192,
 		},
-		"qwen/qwen2.5-vl-72b-instruct": {
-			id: "qwen/qwen2.5-vl-72b-instruct",
-			name: "Qwen: Qwen2.5 VL 72B Instruct",
-			api: "openai-completions",
-			provider: "openrouter",
-			baseUrl: "https://openrouter.ai/api/v1",
-			reasoning: false,
-			input: ["text", "image"],
-			cost: {
-				input: 0.15,
-				output: 0.6,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
-			contextWindow: 32768,
-			maxTokens: 32768,
-		},
 		"qwen/qwen-plus": {
 			id: "qwen/qwen-plus",
 			name: "Qwen: Qwen-Plus",
