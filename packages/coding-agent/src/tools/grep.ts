@@ -150,7 +150,7 @@ export const grepTool: AgentTool<typeof grepSchema> = {
 						args.push("--glob", glob);
 					}
 
-					args.push(pattern, searchPath);
+					args.push("-e", pattern, "--", searchPath);
 
 					const child = spawn(rgPath, args, {
 						stdio: ["ignore", "pipe", "pipe"],

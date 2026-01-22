@@ -548,6 +548,33 @@ describe("Coding Agent Tools", () => {
 			expect(output).toContain("No matches found");
 			expect(output).not.toContain("includeIgnored: true");
 		});
+
+		it("should handle patterns starting with a dash", async () => {
+			const testFile = join(testDir, "dashed.txt");
+			writeFileSync(testFile, "flags: --categories\nother line");
+
+			const result = await grepTool.execute("test-call-grep-dash-1", {
+				pattern: "--categories",
+				path: testFile,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("dashed.txt:1: flags: --categories");
+		});
+
+		it("should handle regex patterns starting with a dash", async () => {
+			const testFile = join(testDir, "dashed-regex.txt");
+			writeFileSync(testFile, "modules categories\n--modules and categories");
+
+			const result = await grepTool.execute("test-call-grep-dash-2", {
+				pattern: "--modules|modules\\b.*categories",
+				path: testFile,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("dashed-regex.txt:1: modules categories");
+			expect(output).toContain("dashed-regex.txt:2: --modules and categories");
+		});
 	});
 
 	describe("glob tool (find mode)", () => {
