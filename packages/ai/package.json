@@ -1,6 +1,6 @@
 {
 	"name": "@kennyfrc/pi-ai",
-	"version": "0.22.19",
+	"version": "0.22.20",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
