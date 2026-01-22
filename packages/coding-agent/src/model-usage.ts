@@ -1,10 +1,22 @@
-import { existsSync, readdirSync, readFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join, resolve } from "path";
 
 export interface ModelUsageStats {
 	count: number;
 	lastUsed: number;
+}
+
+interface FileMetadata {
+	size: number;
+	mtimeMs: number;
+}
+
+interface ModelUsageCacheFile {
+	version: 1;
+	sessionDir: string;
+	files: Record<string, FileMetadata>;
+	stats: Record<string, ModelUsageStats>;
 }
 
 export function getModelUsageKey(provider: string, modelId: string): string {
@@ -18,6 +30,119 @@ export function getWorkspaceSessionDir(projectPath?: string): string {
 	return join(configDir, "sessions", safePath);
 }
 
+function getCachePath(sessionDir: string): string {
+	return join(sessionDir, ".model-usage-cache.json");
+}
+
+function readCacheFile(cachePath: string): ModelUsageCacheFile | null {
+	if (!existsSync(cachePath)) return null;
+	let raw = "";
+	try {
+		raw = readFileSync(cachePath, "utf8");
+	} catch {
+		return null;
+	}
+
+	if (!raw.trim()) return null;
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch {
+		return null;
+	}
+
+	if (typeof parsed !== "object" || parsed === null) return null;
+	const record = parsed as Record<string, unknown>;
+	if (record.version !== 1) return null;
+	if (typeof record.sessionDir !== "string") return null;
+	if (typeof record.files !== "object" || record.files === null) return null;
+	if (typeof record.stats !== "object" || record.stats === null) return null;
+
+	return {
+		version: 1,
+		sessionDir: record.sessionDir as string,
+		files: record.files as Record<string, FileMetadata>,
+		stats: record.stats as Record<string, ModelUsageStats>,
+	};
+}
+
+function buildFileMetadata(
+	sessionDir: string,
+	files: string[],
+): { meta: Map<string, FileMetadata>; complete: boolean } {
+	const meta = new Map<string, FileMetadata>();
+	let complete = true;
+
+	for (const file of files) {
+		const filePath = join(sessionDir, file);
+		try {
+			const stat = statSync(filePath);
+			meta.set(file, { size: stat.size, mtimeMs: stat.mtimeMs });
+		} catch {
+			complete = false;
+		}
+	}
+
+	return { meta, complete };
+}
+
+function cacheMatches(cache: ModelUsageCacheFile, sessionDir: string, metadata: Map<string, FileMetadata>): boolean {
+	if (cache.sessionDir !== sessionDir) return false;
+	const cachedFiles = Object.keys(cache.files);
+	if (cachedFiles.length !== metadata.size) return false;
+
+	for (const [fileName, fileMeta] of metadata.entries()) {
+		const cached = cache.files[fileName];
+		if (!cached) return false;
+		if (cached.size !== fileMeta.size) return false;
+		if (cached.mtimeMs !== fileMeta.mtimeMs) return false;
+	}
+
+	return true;
+}
+
+function statsRecordToMap(stats: Record<string, ModelUsageStats>): Map<string, ModelUsageStats> {
+	const map = new Map<string, ModelUsageStats>();
+	for (const [key, value] of Object.entries(stats)) {
+		if (!value) continue;
+		map.set(key, { count: value.count, lastUsed: value.lastUsed });
+	}
+	return map;
+}
+
+function statsMapToRecord(stats: Map<string, ModelUsageStats>): Record<string, ModelUsageStats> {
+	const record: Record<string, ModelUsageStats> = {};
+	for (const [key, value] of stats.entries()) {
+		record[key] = { count: value.count, lastUsed: value.lastUsed };
+	}
+	return record;
+}
+
+function writeCacheFile(
+	cachePath: string,
+	sessionDir: string,
+	metadata: Map<string, FileMetadata>,
+	stats: Map<string, ModelUsageStats>,
+): void {
+	const files: Record<string, FileMetadata> = {};
+	for (const [fileName, fileMeta] of metadata.entries()) {
+		files[fileName] = { size: fileMeta.size, mtimeMs: fileMeta.mtimeMs };
+	}
+
+	const cache: ModelUsageCacheFile = {
+		version: 1,
+		sessionDir,
+		files,
+		stats: statsMapToRecord(stats),
+	};
+
+	try {
+		writeFileSync(cachePath, JSON.stringify(cache));
+	} catch {
+		// Ignore cache write failures
+	}
+}
+
 export function loadModelUsageStats(sessionDir: string): Map<string, ModelUsageStats> {
 	const stats = new Map<string, ModelUsageStats>();
 	if (!existsSync(sessionDir)) return stats;
@@ -27,6 +152,15 @@ export function loadModelUsageStats(sessionDir: string): Map<string, ModelUsageS
 		files = readdirSync(sessionDir).filter((file) => file.endsWith(".jsonl"));
 	} catch {
 		return stats;
+	}
+
+	const cachePath = getCachePath(sessionDir);
+	const { meta: metadata, complete } = buildFileMetadata(sessionDir, files);
+	if (complete) {
+		const cached = readCacheFile(cachePath);
+		if (cached && cacheMatches(cached, sessionDir, metadata)) {
+			return statsRecordToMap(cached.stats);
+		}
 	}
 
 	for (const file of files) {
@@ -67,6 +201,10 @@ export function loadModelUsageStats(sessionDir: string): Map<string, ModelUsageS
 			const nextLastUsed = Math.max(previous?.lastUsed ?? 0, ts);
 			stats.set(key, { count: nextCount, lastUsed: nextLastUsed });
 		}
+	}
+
+	if (complete) {
+		writeCacheFile(cachePath, sessionDir, metadata, stats);
 	}
 
 	return stats;

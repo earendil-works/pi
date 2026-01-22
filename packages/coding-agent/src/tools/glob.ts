@@ -20,6 +20,62 @@ function expandPath(filePath: string): string {
 	return filePath;
 }
 
+const globMetaRegex = /[*?[\]{}]/;
+
+function splitLeadingLiteralPath(pattern: string): { prefix: string; remainder: string } | null {
+	let normalized = pattern.trim();
+	if (!normalized) {
+		return null;
+	}
+
+	if (
+		normalized.startsWith("/") ||
+		normalized.startsWith("~") ||
+		normalized.startsWith("..") ||
+		normalized.startsWith("..\\")
+	) {
+		return null;
+	}
+
+	while (normalized.startsWith("./") || normalized.startsWith(".\\")) {
+		normalized = normalized.slice(2);
+	}
+
+	const segments = normalized.split(/[\\/]/);
+	if (segments.length < 2) {
+		return null;
+	}
+
+	const prefixParts: string[] = [];
+	let splitIndex = 0;
+	for (let i = 0; i < segments.length; i += 1) {
+		const segment = segments[i];
+		if (!segment || segment === ".") {
+			return null;
+		}
+		if (segment === ".." || segment === "**" || globMetaRegex.test(segment)) {
+			splitIndex = i;
+			break;
+		}
+		prefixParts.push(segment);
+		splitIndex = i + 1;
+	}
+
+	if (prefixParts.length === 0 || splitIndex >= segments.length) {
+		return null;
+	}
+
+	const remainder = segments.slice(splitIndex).join("/");
+	if (!remainder) {
+		return null;
+	}
+
+	return {
+		prefix: nodePath.join(...prefixParts),
+		remainder,
+	};
+}
+
 const globSchema = Type.Object({
 	pattern: Type.Optional(
 		Type.String({
@@ -119,6 +175,7 @@ function formatFdOutput(
 	rawOutput: string,
 	searchPath: string,
 	limit: number,
+	pathPrefix?: string,
 ): { output: string; count: number; byteTruncated: boolean } {
 	const lines = rawOutput.split("\n");
 	const relativized: string[] = [];
@@ -137,6 +194,10 @@ function formatFdOutput(
 			relativePath = line.slice(searchPath.length + 1); // +1 for the /
 		} else {
 			relativePath = nodePath.relative(searchPath, line);
+		}
+
+		if (pathPrefix) {
+			relativePath = relativePath ? nodePath.join(pathPrefix, relativePath) : pathPrefix;
 		}
 
 		if (hadTrailingSlash && !relativePath.endsWith("/")) {
@@ -181,6 +242,11 @@ async function findByGlob(
 		throw new Error("Operation aborted");
 	}
 
+	const prefixSplit = splitLeadingLiteralPath(pattern);
+	const fdSearchPath = prefixSplit ? nodePath.join(searchPath, prefixSplit.prefix) : searchPath;
+	const fdPattern = prefixSplit ? prefixSplit.remainder : pattern;
+	const outputPrefix = prefixSplit ? prefixSplit.prefix : undefined;
+
 	// fd respects .gitignore natively in git repos.
 	// For non-git directories, we only respect the root .gitignore (if present).
 	// This avoids the expensive sync traversal that was causing hangs on large directories.
@@ -197,7 +263,7 @@ async function findByGlob(
 		}
 	}
 
-	args.push(pattern, searchPath);
+	args.push(fdPattern, fdSearchPath);
 
 	return new Promise((resolve, reject) => {
 		let settled = false;
@@ -273,7 +339,7 @@ async function findByGlob(
 				const trimmed = stdout.trim();
 				let result: string;
 				if (trimmed) {
-					const { output, count } = formatFdOutput(trimmed, searchPath, limit);
+					const { output, count } = formatFdOutput(trimmed, fdSearchPath, limit, outputPrefix);
 					result =
 						output +
 						`\n\n(search timed out after ${DEFAULT_SEARCH_TIMEOUT_MS / 1000}s, ${count} files found before timeout)`;
@@ -302,7 +368,7 @@ async function findByGlob(
 				return;
 			}
 
-			const { output } = formatFdOutput(trimmed, searchPath, limit);
+			const { output } = formatFdOutput(trimmed, fdSearchPath, limit, outputPrefix);
 			settle(() => resolve({ content: [{ type: "text", text: output }], details: undefined }));
 		});
 	});

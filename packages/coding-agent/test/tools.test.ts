@@ -629,6 +629,20 @@ describe("Coding Agent Tools", () => {
 			expect(output).toContain("ignored.txt");
 		});
 
+		it("should handle path-prefixed patterns", async () => {
+			const nestedDir = join(testDir, "devdocs", "reports");
+			mkdirSync(nestedDir, { recursive: true });
+			writeFileSync(join(nestedDir, "report.md"), "report");
+
+			const result = await globTool.execute("test-call-glob-prefix-1", {
+				pattern: "devdocs/reports/**/*.md",
+				path: testDir,
+			});
+
+			const output = getTextOutput(result);
+			expect(output).toContain("devdocs/reports/report.md");
+		});
+
 		it("should show hint when no matches and includeIgnored is false", async () => {
 			writeFileSync(join(testDir, ".gitignore"), "*.log\n");
 			writeFileSync(join(testDir, "app.log"), "log content");
