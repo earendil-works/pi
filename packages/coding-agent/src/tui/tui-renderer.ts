@@ -847,9 +847,8 @@ export class TuiRenderer {
 						}
 					}
 
-					// Show user message immediately and clear editor
+					// Show user message immediately
 					this.addMessageToChat(event.message);
-					this.editor.setText("");
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
 					this.maybeAnnounceCodexAccountSwitch();
