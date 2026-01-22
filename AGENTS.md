@@ -31,6 +31,7 @@ npm link  # If you want to test locally
 ## Notes
 
 - Never manually edit version numbers in package.json files - use the scripts above
+- Default to `npm run version:patch` without asking unless the user explicitly requests minor/major
 - The `scripts/sync-versions.js` script ensures root and packages stay in sync
 - This is a fork of upstream, so we maintain our own versioning
 
