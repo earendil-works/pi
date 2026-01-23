@@ -1,4 +1,4 @@
-import { marked, type Token } from "marked";
+import { marked, type Token, type Tokens } from "marked";
 import type { Component } from "../tui.js";
 import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.js";
 
@@ -237,16 +237,20 @@ export class Markdown implements Component {
 			}
 
 			case "list": {
-				const listLines = this.renderList(token as any, 0);
-				lines.push(...listLines);
+				if (this.isListToken(token)) {
+					const listLines = this.renderList(token, 0);
+					lines.push(...listLines);
+				}
 				// Don't add spacing after lists if a space token follows
 				// (the space token will handle it)
 				break;
 			}
 
 			case "table": {
-				const tableLines = this.renderTable(token as any);
-				lines.push(...tableLines);
+				if (this.isTableToken(token)) {
+					const tableLines = this.renderTable(token);
+					lines.push(...tableLines);
+				}
 				break;
 			}
 
@@ -282,6 +286,14 @@ export class Markdown implements Component {
 		}
 
 		return lines;
+	}
+
+	private isListToken(token: Token): token is Tokens.List {
+		return token.type === "list" && Array.isArray((token as Tokens.List).items);
+	}
+
+	private isTableToken(token: Token): token is Tokens.Table {
+		return token.type === "table" && Array.isArray((token as Tokens.Table).header);
 	}
 
 	private renderInlineTokens(tokens: Token[]): string {
@@ -357,13 +369,16 @@ export class Markdown implements Component {
 	/**
 	 * Render a list with proper nesting support
 	 */
-	private renderList(token: Token & { items: any[]; ordered: boolean }, depth: number): string[] {
+	private renderList(token: Tokens.List, depth: number): string[] {
 		const lines: string[] = [];
 		const indent = "  ".repeat(depth);
 
+		const startNumber =
+			token.ordered && typeof token.start === "number" && Number.isFinite(token.start) ? token.start : 1;
+
 		for (let i = 0; i < token.items.length; i++) {
 			const item = token.items[i];
-			const bullet = token.ordered ? `${i + 1}. ` : "- ";
+			const bullet = token.ordered ? `${startNumber + i}. ` : "- ";
 
 			// Process item tokens to handle nested lists
 			const itemLines = this.renderListItem(item.tokens || [], depth);
@@ -411,10 +426,10 @@ export class Markdown implements Component {
 		const lines: string[] = [];
 
 		for (const token of tokens) {
-			if (token.type === "list") {
+			if (this.isListToken(token)) {
 				// Nested list - render with one additional indent level
 				// These lines will have their own indent, so we just add them as-is
-				const nestedLines = this.renderList(token as any, parentDepth + 1);
+				const nestedLines = this.renderList(token, parentDepth + 1);
 				lines.push(...nestedLines);
 			} else if (token.type === "text") {
 				// Text content (may have inline tokens)
@@ -448,7 +463,7 @@ export class Markdown implements Component {
 	/**
 	 * Render a table
 	 */
-	private renderTable(token: Token & { header: any[]; rows: any[][] }): string[] {
+	private renderTable(token: Tokens.Table): string[] {
 		const lines: string[] = [];
 
 		// Calculate column widths
