@@ -1,6 +1,6 @@
 {
 	"name": "@kennyfrc/pi-coding-agent",
-	"version": "0.22.24",
+	"version": "0.22.25",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"bin": {
@@ -23,9 +23,9 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-		"@kennyfrc/pi-agent-core": "^0.22.24",
-		"@kennyfrc/pi-ai": "^0.22.24",
-		"@kennyfrc/pi-tui": "^0.22.24",
+		"@kennyfrc/pi-agent-core": "^0.22.25",
+		"@kennyfrc/pi-ai": "^0.22.25",
+		"@kennyfrc/pi-tui": "^0.22.25",
 		"chalk": "^5.5.0",
 		"diff": "^8.0.2",
 		"glob": "^11.0.3",
