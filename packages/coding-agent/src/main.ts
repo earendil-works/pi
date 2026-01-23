@@ -15,7 +15,8 @@ import { setCurrentModel } from "./runtime-state.js";
 import { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
 import { initTheme } from "./theme/theme.js";
-import { allTools, codingTools, type ToolName } from "./tools/index.js";
+import { allTools, type ToolName } from "./tools/index.js";
+import { resolveToolSelection, type ToolSelection } from "./tools/tool-selection.js";
 import { ensureTool } from "./tools-manager.js";
 import { SessionSelectorComponent } from "./tui/session-selector.js";
 import { TuiRenderer } from "./tui/tui-renderer.js";
@@ -115,6 +116,8 @@ function parseArgs(args: string[]): Args {
 				read: "Read",
 				write: "Write",
 				edit: "Edit",
+				apply_patch: "ApplyPatch",
+				applypatch: "ApplyPatch",
 				bash: "Bash",
 				grep: "Grep",
 				find: "Glob",
@@ -337,15 +340,16 @@ ${chalk.bold("Available Tools (default: read, bash, edit, write, list_threads, r
   read         - Read file contents
   bash         - Execute bash commands
   edit         - Edit files with find/replace
+  apply_patch  - Apply patch edits (Edit/Write are swapped to this for GPT models)
   write        - Write files (creates/overwrites)
   list_threads - List past conversation threads
   read_thread  - Read a specific thread's conversation history
   read_image   - Analyze images and extract information
   todowrite    - Track planning steps and progress
   handoff      - Hand off to a new session with file context
-  grep         - Search file contents (read-only, off by default)
-  find         - Find files by glob pattern (read-only, off by default)
-  ls           - List directory contents (read-only, off by default)
+  grep         - Search file contents (off by default)
+  find         - Find files by glob pattern (off by default)
+  ls           - List directory contents (off by default)
 `);
 }
 
@@ -611,6 +615,8 @@ async function runInteractiveMode(
 	modelFallbackMessage: string | null = null,
 	newVersion: string | null = null,
 	scopedModels: Array<{ model: Model<Api>; thinkingLevel: ThinkingLevel }> = [],
+	toolSelector?: (model: Model<Api> | null | undefined) => ToolSelection,
+	systemPromptBuilder?: (toolNames: ToolName[]) => string,
 	initialMessages: string[] = [],
 	initialMessage?: string,
 	initialAttachments?: Attachment[],
@@ -624,6 +630,8 @@ async function runInteractiveMode(
 		changelogMarkdown,
 		newVersion,
 		scopedModels,
+		toolSelector,
+		systemPromptBuilder,
 		fdPath,
 	);
 
@@ -984,8 +992,6 @@ export async function main(args: string[]) {
 		}
 	}
 
-	const systemPrompt = buildSystemPrompt(parsed.systemPrompt, parsed.tools);
-
 	// Load previous messages if continuing or resuming
 	// This may update initialModel if restoring from session
 	if (parsed.continue || parsed.resume) {
@@ -1071,8 +1077,12 @@ export async function main(args: string[]) {
 		initialThinking = "high";
 	}
 
-	// Determine which tools to use
-	const selectedTools = parsed.tools ? parsed.tools.map((name) => allTools[name]) : codingTools;
+	const baseToolNames = parsed.tools;
+	const toolSelection = resolveToolSelection(baseToolNames, initialModel);
+	const systemPrompt = buildSystemPrompt(parsed.systemPrompt, toolSelection.toolNames);
+	const selectedTools = toolSelection.tools;
+	const toolSelector = (model: Model<Api> | null | undefined) => resolveToolSelection(baseToolNames, model);
+	const systemPromptBuilder = (toolNames: ToolName[]) => buildSystemPrompt(parsed.systemPrompt, toolNames);
 
 	// Create agent (initialModel can be null in interactive mode)
 	const agent = new Agent({
@@ -1204,6 +1214,8 @@ export async function main(args: string[]) {
 			modelFallbackMessage,
 			newVersion,
 			scopedModels,
+			toolSelector,
+			systemPromptBuilder,
 			parsed.messages,
 			initialMessage,
 			initialAttachments,

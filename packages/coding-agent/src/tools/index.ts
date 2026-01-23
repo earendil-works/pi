@@ -1,5 +1,6 @@
 import type { AgentTool } from "@kennyfrc/pi-ai";
 
+export { applyPatchTool } from "./apply-patch.js";
 export { bashTool } from "./bash.js";
 export { editTool } from "./edit.js";
 export { globTool } from "./glob.js";
@@ -12,6 +13,7 @@ export { readThreadTool } from "./read-thread.js";
 export { todowriteTool } from "./todowrite.js";
 export { writeTool } from "./write.js";
 
+import { applyPatchTool } from "./apply-patch.js";
 import { bashTool } from "./bash.js";
 import { editTool } from "./edit.js";
 import { globTool } from "./glob.js";
@@ -42,6 +44,7 @@ export const allTools = {
 	Read: readTool,
 	Bash: bashTool,
 	Edit: editTool,
+	ApplyPatch: applyPatchTool,
 	Write: writeTool,
 	Grep: grepTool,
 	Glob: globTool,

@@ -1,0 +1,49 @@
+apply_patch characterization
+sandbox=<sandbox>
+operations:
+- add added.txt
+- update alpha.txt
+- update move-me.txt
+- move move-me.txt -> moved/renamed.txt
+- delete delete-me.txt
+patch:
+<<<
+*** Begin Patch
+*** Add File: added.txt
++alpha
++beta
+*** Update File: alpha.txt
+@@
+ one
+-two
++two-updated
+ three
+*** Update File: move-me.txt
+*** Move to: moved/renamed.txt
+@@
+ move-one
+-move-two
++move-two-updated
+*** Delete File: delete-me.txt
+*** End Patch
+>>>
+initial_state:
+- alpha.txt: "one\ntwo\nthree\n"
+- move-me.txt: "move-one\nmove-two\n"
+- delete-me.txt: "delete-me\n"
+run:
+exit_code=0
+stdout:
+Success. Updated the following files:
+A added.txt
+M alpha.txt
+M moved/renamed.txt
+D delete-me.txt
+stderr:
+<empty>
+final_state:
+- alpha.txt: "one\ntwo-updated\nthree\n"
+- added.txt: "alpha\nbeta\n"
+- moved/renamed.txt: "move-one\nmove-two-updated\n"
+- move-me.txt: <missing>
+- delete-me.txt: <missing>

@@ -55,7 +55,9 @@ import type { SettingsManager } from "../settings-manager.js";
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
 import { bashTool } from "../tools/bash.js";
 import type { HandoffDetails } from "../tools/handoff.js";
+import type { ToolName } from "../tools/index.js";
 import { formatTodosForHandoff } from "../tools/todowrite.js";
+import type { ToolSelection } from "../tools/tool-selection.js";
 import { generateTitle } from "../utils/auto-title.js";
 import { formatElapsed } from "../utils/format-elapsed.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
@@ -161,6 +163,8 @@ export class TuiRenderer {
 
 	// Model scope for quick cycling
 	private scopedModels: Array<{ model: Model<any>; thinkingLevel: ThinkingLevel }> = [];
+	private toolSelector?: (model: Model<any> | null | undefined) => ToolSelection;
+	private systemPromptBuilder?: (toolNames: ToolName[]) => string;
 
 	// Tool output expansion state
 	private toolOutputExpanded = false;
@@ -193,6 +197,8 @@ export class TuiRenderer {
 		changelogMarkdown: string | null = null,
 		newVersion: string | null = null,
 		scopedModels: Array<{ model: Model<any>; thinkingLevel: ThinkingLevel }> = [],
+		toolSelector?: (model: Model<any> | null | undefined) => ToolSelection,
+		systemPromptBuilder?: (toolNames: ToolName[]) => string,
 		fdPath: string | null = null,
 	) {
 		this.agent = agent;
@@ -207,6 +213,8 @@ export class TuiRenderer {
 		this.newVersion = newVersion;
 		this.changelogMarkdown = changelogMarkdown;
 		this.scopedModels = scopedModels;
+		this.toolSelector = toolSelector;
+		this.systemPromptBuilder = systemPromptBuilder;
 		this.ui = new TUI(new ProcessTerminal());
 		this.chatContainer = new Container();
 		this.pendingMessagesContainer = new Container();
@@ -1607,6 +1615,15 @@ export class TuiRenderer {
 		this.ui.requestRender();
 	}
 
+	private updateToolsForModel(model: Model<any> | null | undefined): void {
+		if (!this.toolSelector || !this.systemPromptBuilder) {
+			return;
+		}
+		const selection = this.toolSelector(model);
+		this.agent.setTools(selection.tools);
+		this.agent.setSystemPrompt(this.systemPromptBuilder(selection.toolNames));
+	}
+
 	private async cycleModel(): Promise<void> {
 		// Use scoped models if available, otherwise all available models
 		if (this.scopedModels.length > 0) {
@@ -1642,6 +1659,7 @@ export class TuiRenderer {
 
 			// Switch model
 			this.agent.setModel(nextModel);
+			this.updateToolsForModel(nextModel);
 
 			// Save model change to session and settings
 			this.sessionManager.saveModelChange(nextModel.provider, nextModel.id);
@@ -1708,6 +1726,7 @@ export class TuiRenderer {
 
 			// Switch model
 			this.agent.setModel(nextModel);
+			this.updateToolsForModel(nextModel);
 
 			// Save model change to session and settings
 			this.sessionManager.saveModelChange(nextModel.provider, nextModel.id);
@@ -2016,6 +2035,7 @@ export class TuiRenderer {
 			(model) => {
 				// Apply the selected model
 				this.agent.setModel(model);
+				this.updateToolsForModel(model);
 
 				// Save model change to session
 				this.sessionManager.saveModelChange(model.provider, model.id);

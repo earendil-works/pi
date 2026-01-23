@@ -2,6 +2,7 @@ import * as os from "node:os";
 import { Container, Spacer, Text } from "@kennyfrc/pi-tui";
 import stripAnsi from "strip-ansi";
 import { theme } from "../theme/theme.js";
+import { type ApplyPatchParseResult, parseApplyPatchInput } from "../tools/apply-patch/parse.js";
 import { stripSystemReminderTagsForDisplay } from "../utils/system-reminder.js";
 
 /**
@@ -237,6 +238,84 @@ export class ToolExecutionComponent extends Container {
 						}
 					});
 					text += "\n\n" + coloredLines.join("\n");
+				}
+			}
+		} else if (this.toolName === "ApplyPatch") {
+			const input = typeof this.args?.input === "string" ? this.args.input : "";
+			const details = this.result?.details as unknown;
+			const parsed =
+				details && typeof details === "object" && "parsed" in details
+					? (details as { parsed: ApplyPatchParseResult }).parsed
+					: parseApplyPatchInput(input);
+
+			const addCount = parsed.ops.filter((op) => op.type === "add").length;
+			const updateCount = parsed.ops.filter((op) => op.type === "update").length;
+			const deleteCount = parsed.ops.filter((op) => op.type === "delete").length;
+
+			text = theme.fg("toolTitle", theme.bold("ApplyPatch"));
+			const summaryParts: string[] = [];
+			if (addCount > 0) {
+				summaryParts.push(theme.fg("toolDiffAdded", `A ${addCount}`));
+			}
+			if (updateCount > 0) {
+				summaryParts.push(theme.fg("toolDiffContext", `M ${updateCount}`));
+			}
+			if (deleteCount > 0) {
+				summaryParts.push(theme.fg("toolDiffRemoved", `D ${deleteCount}`));
+			}
+			if (summaryParts.length > 0) {
+				text += " " + summaryParts.join(theme.fg("dim", " · "));
+			}
+
+			if (input) {
+				const lines = input.split("\n");
+				const maxLines = this.expanded ? lines.length : 20;
+				const displayLines = lines.slice(0, maxLines);
+				const remaining = lines.length - maxLines;
+
+				const coloredLines = displayLines.map((line: string) => {
+					if (line.startsWith("*** Delete File:")) {
+						return theme.fg("toolDiffRemoved", line);
+					}
+					if (line.startsWith("+")) {
+						return theme.fg("toolDiffAdded", line);
+					}
+					if (line.startsWith("-")) {
+						return theme.fg("toolDiffRemoved", line);
+					}
+					return theme.fg("toolDiffContext", line);
+				});
+
+				text += "\n\n" + coloredLines.join("\n");
+				if (remaining > 0) {
+					text +=
+						theme.fg("toolOutput", `\n(${remaining} more lines `) +
+						theme.fg("dim", "·") +
+						theme.fg("muted", " ctrl+o to expand") +
+						theme.fg("toolOutput", ")");
+				}
+			}
+
+			if (this.result) {
+				const output = this.getTextOutput().trim();
+				if (this.result.isError) {
+					if (output) {
+						text += "\n\n" + theme.fg("error", output);
+					}
+				} else if (output) {
+					const lines = output.split("\n");
+					const maxLines = this.expanded ? lines.length : 6;
+					const displayLines = lines.slice(0, maxLines);
+					const remaining = lines.length - maxLines;
+
+					text += "\n\n" + displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n");
+					if (remaining > 0) {
+						text +=
+							theme.fg("toolOutput", `\n(${remaining} more lines `) +
+							theme.fg("dim", "·") +
+							theme.fg("muted", " ctrl+o to expand") +
+							theme.fg("toolOutput", ")");
+					}
 				}
 			}
 		} else if (this.toolName === "Glob") {

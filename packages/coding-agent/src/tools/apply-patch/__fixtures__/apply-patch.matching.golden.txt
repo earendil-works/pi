@@ -1,0 +1,606 @@
+apply_patch matching characterization
+
+scenario=add_delete
+sandbox=<sandbox>
+patch:
+<<<
+*** Begin Patch
+*** Add File: added.txt
++alpha
+*** Delete File: delete.txt
+*** End Patch
+>>>
+initial_state:
+- delete.txt: "to-delete\n"
+trace:
+<<<
+run: start
+parse_patch: raw_length=88
+parse_patch: lines=5
+parse_patch: boundaries=strict
+hunk:add path=added.txt lines=1
+hunk:delete path=delete.txt
+parse_patch: hunks=2
+apply:add path=added.txt
+path_check: target=added.txt status=ok
+apply:delete path=delete.txt
+path_check: target=delete.txt status=ok
+run: success added=1 modified=0 deleted=1
+>>>
+run:
+exit_code=0
+stdout:
+Success. Updated the following files:
+A added.txt
+D delete.txt
+stderr:
+<empty>
+final_state:
+- added.txt: "alpha\n"
+- delete.txt: <missing>
+
+scenario=exact_match
+sandbox=<sandbox>
+patch:
+<<<
+*** Begin Patch
+*** Update File: exact.txt
+@@
+ alpha
+-beta
++beta-updated
+*** End Patch
+>>>
+initial_state:
+- exact.txt: "alpha\nbeta\n"
+trace:
+<<<
+run: start
+parse_patch: raw_length=86
+parse_patch: lines=7
+parse_patch: boundaries=strict
+chunk: context=<none> old=2 new=2 eof=false parsed=4
+hunk:update path=exact.txt move=<none> chunks=1
+parse_patch: hunks=1
+apply:update path=exact.txt move=<none>
+path_check: target=exact.txt status=ok
+symlink_check: path=exact.txt status=ok
+update_file: path=exact.txt lines=2
+compute_replacements: path=exact.txt chunks=1 lines=2
+compute_chunk: index=0 context=<none> old=2 new=2 eof=false
+seek:start=0 eof=false pattern=["alpha","beta"]
+seek:exact=0
+match_found: index=0 old_len=2 new_len=2
+replacements_sorted: count=1
+run: success added=0 modified=1 deleted=0
+>>>
+run:
+exit_code=0
+stdout:
+Success. Updated the following files:
+M exact.txt
+stderr:
+<empty>
+final_state:
+- exact.txt: "alpha\nbeta-updated\n"
+
+scenario=trim_end_match
+sandbox=<sandbox>
+patch:
+<<<
+*** Begin Patch
+*** Update File: trim-end.txt
+@@
+-alpha
++alpha-updated
+*** End Patch
+>>>
+initial_state:
+- trim-end.txt: "alpha   \n"
+trace:
+<<<
+run: start
+parse_patch: raw_length=84
+parse_patch: lines=6
+parse_patch: boundaries=strict
+chunk: context=<none> old=1 new=1 eof=false parsed=3
+hunk:update path=trim-end.txt move=<none> chunks=1
+parse_patch: hunks=1
+apply:update path=trim-end.txt move=<none>
+path_check: target=trim-end.txt status=ok
+symlink_check: path=trim-end.txt status=ok
+update_file: path=trim-end.txt lines=1
+compute_replacements: path=trim-end.txt chunks=1 lines=1
+compute_chunk: index=0 context=<none> old=1 new=1 eof=false
+seek:start=0 eof=false pattern=["alpha"]
+seek:exact=none
+seek:trim_end=0
+match_found: index=0 old_len=1 new_len=1
+replacements_sorted: count=1
+run: success added=0 modified=1 deleted=0
+>>>
+run:
+exit_code=0
+stdout:
+Success. Updated the following files:
+M trim-end.txt
+stderr:
+<empty>
+final_state:
+- trim-end.txt: "alpha-updated\n"
+
+scenario=trim_match
+sandbox=<sandbox>
+patch:
+<<<
+*** Begin Patch
+*** Update File: trim.txt
+@@
+-beta
++beta-updated
+*** End Patch
+>>>
+initial_state:
+- trim.txt: "  beta  \n"
+trace:
+<<<
+run: start
+parse_patch: raw_length=78
+parse_patch: lines=6
+parse_patch: boundaries=strict
+chunk: context=<none> old=1 new=1 eof=false parsed=3
+hunk:update path=trim.txt move=<none> chunks=1
+parse_patch: hunks=1
+apply:update path=trim.txt move=<none>
+path_check: target=trim.txt status=ok
+symlink_check: path=trim.txt status=ok
+update_file: path=trim.txt lines=1
+compute_replacements: path=trim.txt chunks=1 lines=1
+compute_chunk: index=0 context=<none> old=1 new=1 eof=false
+seek:start=0 eof=false pattern=["beta"]
+seek:exact=none
+seek:trim_end=none
+seek:trim=0
+match_found: index=0 old_len=1 new_len=1
+replacements_sorted: count=1
+run: success added=0 modified=1 deleted=0
+>>>
+run:
+exit_code=0
+stdout:
+Success. Updated the following files:
+M trim.txt
+stderr:
+<empty>
+final_state:
+- trim.txt: "beta-updated\n"
+
+scenario=confusable_match
+sandbox=<sandbox>
+patch:
+<<<
+*** Begin Patch
+*** Update File: confusable.txt
+@@
+-const x = "hello";
++const x = "world";
+*** End Patch
+>>>
+initial_state:
+- confusable.txt: "const x = “hello”;\n"
+trace:
+<<<
+run: start
+parse_patch: raw_length=104
+parse_patch: lines=6
+parse_patch: boundaries=strict
+chunk: context=<none> old=1 new=1 eof=false parsed=3
+hunk:update path=confusable.txt move=<none> chunks=1
+parse_patch: hunks=1
+apply:update path=confusable.txt move=<none>
+path_check: target=confusable.txt status=ok
+symlink_check: path=confusable.txt status=ok
+update_file: path=confusable.txt lines=1
+compute_replacements: path=confusable.txt chunks=1 lines=1
+compute_chunk: index=0 context=<none> old=1 new=1 eof=false
+seek:start=0 eof=false pattern=["const x = \"hello\";"]
+seek:exact=none
+seek:trim_end=none
+seek:trim=none
+seek:unescaped=skipped
+seek:normalised=0
+match_found: index=0 old_len=1 new_len=1
+replacements_sorted: count=1
+run: success added=0 modified=1 deleted=0
+>>>
+run:
+exit_code=0
+stdout:
+Success. Updated the following files:
+M confusable.txt
+stderr:
+<empty>
+final_state:
+- confusable.txt: "const x = \"world\";\n"
+
+scenario=invisible_char_match
+sandbox=<sandbox>
+patch:
+<<<
+*** Begin Patch
+*** Update File: invisible.txt
+@@
+-alphabeta
++alpha-beta
+*** End Patch
+>>>
+initial_state:
+- invisible.txt: "alpha​beta\n"
+trace:
+<<<
+run: start
+parse_patch: raw_length=86
+parse_patch: lines=6
+parse_patch: boundaries=strict
+chunk: context=<none> old=1 new=1 eof=false parsed=3
+hunk:update path=invisible.txt move=<none> chunks=1
+parse_patch: hunks=1
+apply:update path=invisible.txt move=<none>
+path_check: target=invisible.txt status=ok
+symlink_check: path=invisible.txt status=ok
+update_file: path=invisible.txt lines=1
+compute_replacements: path=invisible.txt chunks=1 lines=1
+compute_chunk: index=0 context=<none> old=1 new=1 eof=false
+seek:start=0 eof=false pattern=["alphabeta"]
+seek:exact=none
+seek:trim_end=none
+seek:trim=none
+seek:unescaped=skipped
+seek:normalised=0
+match_found: index=0 old_len=1 new_len=1
+replacements_sorted: count=1
+run: success added=0 modified=1 deleted=0
+>>>
+run:
+exit_code=0
+stdout:
+Success. Updated the following files:
+M invisible.txt
+stderr:
+<empty>
+final_state:
+- invisible.txt: "alpha-beta\n"
+
+scenario=whitespace_normalized
+sandbox=<sandbox>
+patch:
+<<<
+*** Begin Patch
+*** Update File: whitespace.txt
+@@
+-alpha beta
++alpha beta updated
+*** End Patch
+>>>
+initial_state:
+- whitespace.txt: "alpha   beta\n"
+trace:
+<<<
+run: start
+parse_patch: raw_length=96
+parse_patch: lines=6
+parse_patch: boundaries=strict
+chunk: context=<none> old=1 new=1 eof=false parsed=3
+hunk:update path=whitespace.txt move=<none> chunks=1
+parse_patch: hunks=1
+apply:update path=whitespace.txt move=<none>
+path_check: target=whitespace.txt status=ok
+symlink_check: path=whitespace.txt status=ok
+update_file: path=whitespace.txt lines=1
+compute_replacements: path=whitespace.txt chunks=1 lines=1
+compute_chunk: index=0 context=<none> old=1 new=1 eof=false
+seek:start=0 eof=false pattern=["alpha beta"]
+seek:exact=none
+seek:trim_end=none
+seek:trim=none
+seek:unescaped=skipped
+seek:normalised=none
+seek:whitespace=0
+match_found: index=0 old_len=1 new_len=1
+replacements_sorted: count=1
+run: success added=0 modified=1 deleted=0
+>>>
+run:
+exit_code=0
+stdout:
+Success. Updated the following files:
+M whitespace.txt
+stderr:
+<empty>
+final_state:
+- whitespace.txt: "alpha beta updated\n"
+
+scenario=unescaped_match
+sandbox=<sandbox>
+patch:
+<<<
+*** Begin Patch
+*** Update File: unescape.txt
+@@
+-tab\tvalue
++tab	updated
+*** End Patch
+>>>
+initial_state:
+- unescape.txt: "tab\tvalue\n"
+trace:
+<<<
+run: start
+parse_patch: raw_length=87
+parse_patch: lines=6
+parse_patch: boundaries=strict
+chunk: context=<none> old=1 new=1 eof=false parsed=3
+hunk:update path=unescape.txt move=<none> chunks=1
+parse_patch: hunks=1
+apply:update path=unescape.txt move=<none>
+path_check: target=unescape.txt status=ok
+symlink_check: path=unescape.txt status=ok
+update_file: path=unescape.txt lines=1
+compute_replacements: path=unescape.txt chunks=1 lines=1
+compute_chunk: index=0 context=<none> old=1 new=1 eof=false
+seek:start=0 eof=false pattern=["tab\\tvalue"]
+seek:exact=none
+seek:trim_end=none
+seek:trim=none
+seek:unescaped=0
+match_found: index=0 old_len=1 new_len=1
+replacements_sorted: count=1
+run: success added=0 modified=1 deleted=0
+>>>
+run:
+exit_code=0
+stdout:
+Success. Updated the following files:
+M unescape.txt
+stderr:
+<empty>
+final_state:
+- unescape.txt: "tab\tupdated\n"
+
+scenario=fuzzy_match
+sandbox=<sandbox>
+patch:
+<<<
+*** Begin Patch
+*** Update File: fuzzy.txt
+@@
+-const value = 11;
++const value = 12;
+*** End Patch
+>>>
+initial_state:
+- fuzzy.txt: "const value = 10;\n"
+trace:
+<<<
+run: start
+parse_patch: raw_length=97
+parse_patch: lines=6
+parse_patch: boundaries=strict
+chunk: context=<none> old=1 new=1 eof=false parsed=3
+hunk:update path=fuzzy.txt move=<none> chunks=1
+parse_patch: hunks=1
+apply:update path=fuzzy.txt move=<none>
+path_check: target=fuzzy.txt status=ok
+symlink_check: path=fuzzy.txt status=ok
+update_file: path=fuzzy.txt lines=1
+compute_replacements: path=fuzzy.txt chunks=1 lines=1
+compute_chunk: index=0 context=<none> old=1 new=1 eof=false
+seek:start=0 eof=false pattern=["const value = 11;"]
+seek:exact=none
+seek:trim_end=none
+seek:trim=none
+seek:unescaped=skipped
+seek:normalised=none
+seek:whitespace=none
+seek:indent=none
+seek:fuzzy=0 score=0.941
+match_found: index=0 old_len=1 new_len=1
+replacements_sorted: count=1
+run: success added=0 modified=1 deleted=0
+>>>
+run:
+exit_code=0
+stdout:
+Success. Updated the following files:
+M fuzzy.txt
+stderr:
+<empty>
+final_state:
+- fuzzy.txt: "const value = 12;\n"
+
+scenario=context_match
+sandbox=<sandbox>
+patch:
+<<<
+*** Begin Patch
+*** Update File: context.txt
+@@ function foo() {
+-  const x = 1;
++  const x = 2;
+*** End Patch
+>>>
+initial_state:
+- context.txt: "header\nfunction foo() {\n  const x = 1;\n}\ntail\n"
+trace:
+<<<
+run: start
+parse_patch: raw_length=110
+parse_patch: lines=6
+parse_patch: boundaries=strict
+chunk: context=function foo() { old=1 new=1 eof=false parsed=3
+hunk:update path=context.txt move=<none> chunks=1
+parse_patch: hunks=1
+apply:update path=context.txt move=<none>
+path_check: target=context.txt status=ok
+symlink_check: path=context.txt status=ok
+update_file: path=context.txt lines=5
+compute_replacements: path=context.txt chunks=1 lines=5
+compute_chunk: index=0 context=function foo() { old=1 new=1 eof=false
+seek:start=0 eof=false pattern=["function foo() {"]
+seek:exact=1
+context_found: index=1
+seek:start=2 eof=false pattern=["  const x = 1;"]
+seek:exact=2
+match_found: index=2 old_len=1 new_len=1
+replacements_sorted: count=1
+run: success added=0 modified=1 deleted=0
+>>>
+run:
+exit_code=0
+stdout:
+Success. Updated the following files:
+M context.txt
+stderr:
+<empty>
+final_state:
+- context.txt: "header\nfunction foo() {\n  const x = 2;\n}\ntail\n"
+
+scenario=insert_at_eof
+sandbox=<sandbox>
+patch:
+<<<
+*** Begin Patch
+*** Update File: eof.txt
+@@
++beta
+*** End of File
+*** End Patch
+>>>
+initial_state:
+- eof.txt: "alpha\n"
+trace:
+<<<
+run: start
+parse_patch: raw_length=79
+parse_patch: lines=6
+parse_patch: boundaries=strict
+chunk: context=<none> old=0 new=1 eof=true parsed=3
+hunk:update path=eof.txt move=<none> chunks=1
+parse_patch: hunks=1
+apply:update path=eof.txt move=<none>
+path_check: target=eof.txt status=ok
+symlink_check: path=eof.txt status=ok
+update_file: path=eof.txt lines=1
+compute_replacements: path=eof.txt chunks=1 lines=1
+compute_chunk: index=0 context=<none> old=0 new=1 eof=true
+insert_at: index=1 mode=eof lines=1
+replacements_sorted: count=1
+run: success added=0 modified=1 deleted=0
+>>>
+run:
+exit_code=0
+stdout:
+Success. Updated the following files:
+M eof.txt
+stderr:
+<empty>
+final_state:
+- eof.txt: "alpha\nbeta\n"
+
+scenario=pattern_trimmed_for_eof
+sandbox=<sandbox>
+patch:
+<<<
+*** Begin Patch
+*** Update File: trim-eof.txt
+@@
+ alpha
+ beta
+ 
++beta-updated
+*** End Patch
+>>>
+initial_state:
+- trim-eof.txt: "alpha\nbeta\n"
+trace:
+<<<
+run: start
+parse_patch: raw_length=91
+parse_patch: lines=8
+parse_patch: boundaries=strict
+chunk: context=<none> old=3 new=4 eof=false parsed=5
+hunk:update path=trim-eof.txt move=<none> chunks=1
+parse_patch: hunks=1
+apply:update path=trim-eof.txt move=<none>
+path_check: target=trim-eof.txt status=ok
+symlink_check: path=trim-eof.txt status=ok
+update_file: path=trim-eof.txt lines=2
+compute_replacements: path=trim-eof.txt chunks=1 lines=2
+compute_chunk: index=0 context=<none> old=3 new=4 eof=false
+seek:start=0 eof=false pattern=["alpha","beta",""]
+seek:pattern_longer_than_lines
+pattern_trimmed_for_eof
+seek:start=0 eof=false pattern=["alpha","beta"]
+seek:exact=0
+match_found: index=0 old_len=2 new_len=4
+replacements_sorted: count=1
+run: success added=0 modified=1 deleted=0
+>>>
+run:
+exit_code=0
+stdout:
+Success. Updated the following files:
+M trim-eof.txt
+stderr:
+<empty>
+final_state:
+- trim-eof.txt: "alpha\nbeta\n\nbeta-updated\n"
+
+scenario=missing_lines
+sandbox=<sandbox>
+patch:
+<<<
+*** Begin Patch
+*** Update File: missing.txt
+@@
+-beta
++beta-updated
+*** End Patch
+>>>
+initial_state:
+- missing.txt: "alpha\n"
+trace:
+<<<
+run: start
+parse_patch: raw_length=81
+parse_patch: lines=6
+parse_patch: boundaries=strict
+chunk: context=<none> old=1 new=1 eof=false parsed=3
+hunk:update path=missing.txt move=<none> chunks=1
+parse_patch: hunks=1
+apply:update path=missing.txt move=<none>
+path_check: target=missing.txt status=ok
+symlink_check: path=missing.txt status=ok
+update_file: path=missing.txt lines=1
+compute_replacements: path=missing.txt chunks=1 lines=1
+compute_chunk: index=0 context=<none> old=1 new=1 eof=false
+seek:start=0 eof=false pattern=["beta"]
+seek:exact=none
+seek:trim_end=none
+seek:trim=none
+seek:unescaped=skipped
+seek:normalised=none
+seek:whitespace=none
+seek:indent=none
+seek:fuzzy=none best=0.200
+run: error kind=other message=Failed to find expected lines in missing.txt:\nbeta
+>>>
+run:
+exit_code=1
+stdout:
+<empty>
+stderr:
+Failed to find expected lines in missing.txt:
+beta
+final_state:
+- missing.txt: "alpha\n"
