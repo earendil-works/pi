@@ -1,6 +1,6 @@
 {
 	"name": "@kennyfrc/pi",
-	"version": "0.22.25",
+	"version": "0.22.26",
 	"description": "CLI tool for managing vLLM deployments on GPU pods",
 	"type": "module",
 	"bin": {
@@ -34,7 +34,7 @@
 		"node": ">=20.0.0"
 	},
 	"dependencies": {
-		"@kennyfrc/pi-agent-core": "^0.22.25",
+		"@kennyfrc/pi-agent-core": "^0.22.26",
 		"chalk": "^5.5.0"
 	},
 	"devDependencies": {}
