@@ -89,11 +89,13 @@ function detectCompatFromUrl(baseUrl: string): Required<OpenAICompat> {
 
 	const isZAI = baseUrl.includes("api.z.ai");
 
+	const isOpenAI = baseUrl.includes("openai.com");
+
 	return {
 		supportsStore: !isNonStandard,
-		supportsDeveloperRole: !isNonStandard && !isZAI,
+		supportsDeveloperRole: isOpenAI,
 		supportsReasoningEffort: !isGrok && !isZAI,
-		reasoningEffortFormat: isFireworks ? "boolean" : "string",
+		reasoningEffortFormat: "string",
 		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
 		requiresToolResultName: isMistral,
 		requiresAssistantAfterToolResult: false, // Mistral no longer requires this as of Dec 2024
@@ -432,11 +434,10 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 
 					if (choice?.delta?.tool_calls) {
 						for (const toolCall of choice.delta.tool_calls) {
-							if (
-								!currentBlock ||
-								currentBlock.type !== "toolCall" ||
-								(toolCall.id && currentBlock.id !== toolCall.id)
-							) {
+							// Use function.name to detect new tool calls (not id).
+							// Fireworks sends different ids for continuation chunks of the same tool call.
+							const hasName = toolCall.function?.name != null && toolCall.function.name.length > 0;
+							if (!currentBlock || currentBlock.type !== "toolCall" || hasName) {
 								finishCurrentBlock(currentBlock);
 								currentBlock = {
 									type: "toolCall",
@@ -450,7 +451,6 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 							}
 
 							if (currentBlock.type === "toolCall") {
-								if (toolCall.id) currentBlock.id = toolCall.id;
 								if (toolCall.function?.name) currentBlock.name = toolCall.function.name;
 								let delta = "";
 								if (toolCall.function?.arguments) {
