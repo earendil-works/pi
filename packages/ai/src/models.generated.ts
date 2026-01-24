@@ -2632,12 +2632,12 @@ export const MODELS = {
 			input: ["text"],
 			cost: {
 				input: 0.27,
-				output: 1.12,
+				output: 1.1,
 				cacheRead: 0,
 				cacheWrite: 0,
 			},
 			contextWindow: 196608,
-			maxTokens: 65536,
+			maxTokens: 196608,
 		} satisfies Model<"openai-completions">,
 		"z-ai/glm-4.7": {
 			id: "z-ai/glm-4.7",

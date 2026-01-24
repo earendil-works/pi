@@ -1,6 +1,6 @@
 {
 	"name": "@kennyfrc/pi-agent-core",
-	"version": "0.22.28",
+	"version": "0.22.29",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -18,8 +18,8 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-		"@kennyfrc/pi-ai": "^0.22.28",
-		"@kennyfrc/pi-tui": "^0.22.28"
+		"@kennyfrc/pi-ai": "^0.22.29",
+		"@kennyfrc/pi-tui": "^0.22.29"
 	},
 	"keywords": [
 		"ai",
