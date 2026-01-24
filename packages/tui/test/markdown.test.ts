@@ -95,6 +95,38 @@ describe("Markdown component", () => {
 			assert.ok(plainLines.some((line) => line.includes("  - Unordered nested")));
 			assert.ok(plainLines.some((line) => line.includes("2. Second ordered")));
 		});
+
+		describe("HTML token handling", () => {
+			it("drops top-level HTML tokens by default", () => {
+				const markdown = new Markdown("<div>hi</div>", 0, 0, defaultMarkdownTheme);
+				const lines = markdown.render(80);
+
+				const plain = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+				assert.ok(!plain.some((line) => line.includes("<div>hi</div>")));
+			});
+
+			it("renders top-level HTML tokens as literal text when enabled", () => {
+				const markdown = new Markdown("<div>hi</div>", 0, 0, defaultMarkdownTheme, undefined, {
+					renderHtml: true,
+				});
+				const lines = markdown.render(80);
+
+				const plain = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+				assert.ok(plain.some((line) => line.includes("<div>hi</div>")));
+			});
+
+			it("does not swallow non-HTML lines that were tokenized into an HTML block", () => {
+				const markdown = new Markdown("prefix\n<div>hi</div>\nsuffix", 0, 0, defaultMarkdownTheme, undefined, {
+					renderHtml: true,
+				});
+				const lines = markdown.render(80);
+
+				const plain = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "")).filter((l) => l.trim() !== "");
+				assert.ok(plain.some((line) => line.includes("prefix")));
+				assert.ok(plain.some((line) => line.includes("<div>hi</div>")));
+				assert.ok(plain.some((line) => line.includes("suffix")));
+			});
+		});
 	});
 
 	describe("Tables", () => {

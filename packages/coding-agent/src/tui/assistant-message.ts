@@ -38,15 +38,24 @@ export class AssistantMessageComponent extends Container {
 			if (content.type === "text" && content.text.trim()) {
 				// Assistant text messages with no background - trim the text
 				// Set paddingY=0 to avoid extra spacing before tool executions
-				this.contentContainer.addChild(new Markdown(content.text.trim(), 1, 0, getMarkdownTheme()));
+				this.contentContainer.addChild(
+					new Markdown(content.text.trim(), 1, 0, getMarkdownTheme(), undefined, { renderHtml: true }),
+				);
 			} else if (content.type === "thinking" && content.thinking.trim()) {
 				// Thinking traces in muted color, italic
 				// Use Markdown component with default text style for consistent styling
 				this.contentContainer.addChild(
-					new Markdown(content.thinking.trim(), 1, 0, getMarkdownTheme(), {
-						color: (text: string) => theme.fg("muted", text),
-						italic: true,
-					}),
+					new Markdown(
+						content.thinking.trim(),
+						1,
+						0,
+						getMarkdownTheme(),
+						{
+							color: (text: string) => theme.fg("muted", text),
+							italic: true,
+						},
+						{ renderHtml: true },
+					),
 				);
 				this.contentContainer.addChild(new Spacer(1));
 			}

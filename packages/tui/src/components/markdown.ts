@@ -42,12 +42,23 @@ export interface MarkdownTheme {
 	underline: (text: string) => string;
 }
 
+export interface MarkdownOptions {
+	/**
+	 * If true, render markdown HTML tokens as literal text instead of dropping them.
+	 *
+	 * By default, HTML tokens are dropped because terminal UIs generally can't
+	 * render HTML, and many markdown libraries treat HTML as "raw" blocks.
+	 */
+	renderHtml?: boolean;
+}
+
 export class Markdown implements Component {
 	private text: string;
 	private paddingX: number; // Left/right padding
 	private paddingY: number; // Top/bottom padding
 	private defaultTextStyle?: DefaultTextStyle;
 	private theme: MarkdownTheme;
+	private renderHtml: boolean;
 
 	// Cache for rendered output
 	private cachedText?: string;
@@ -60,12 +71,14 @@ export class Markdown implements Component {
 		paddingY: number,
 		theme: MarkdownTheme,
 		defaultTextStyle?: DefaultTextStyle,
+		options?: MarkdownOptions,
 	) {
 		this.text = text;
 		this.paddingX = paddingX;
 		this.paddingY = paddingY;
 		this.theme = theme;
 		this.defaultTextStyle = defaultTextStyle;
+		this.renderHtml = options?.renderHtml ?? false;
 	}
 
 	setText(text: string): void {
@@ -270,7 +283,14 @@ export class Markdown implements Component {
 				break;
 
 			case "html":
-				// Skip HTML for terminal output
+				// HTML in markdown is treated as "raw" content by many parsers.
+				// By default, we drop it (historical behavior), but callers may opt-in
+				// to render it as literal text.
+				if (this.renderHtml && "text" in token && typeof token.text === "string") {
+					for (const htmlLine of token.text.split("\n")) {
+						lines.push(this.applyDefaultStyle(htmlLine));
+					}
+				}
 				break;
 
 			case "space":

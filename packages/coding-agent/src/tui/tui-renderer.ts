@@ -58,6 +58,7 @@ import type { HandoffDetails } from "../tools/handoff.js";
 import type { ToolName } from "../tools/index.js";
 import { formatTodosForHandoff } from "../tools/todowrite.js";
 import type { ToolSelection } from "../tools/tool-selection.js";
+import { autoFenceHtmlInMarkdown } from "../utils/auto-fence-html.js";
 import { generateTitle } from "../utils/auto-title.js";
 import { formatElapsed } from "../utils/format-elapsed.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
@@ -123,7 +124,7 @@ export class TuiRenderer {
 	private newVersion: string | null = null;
 
 	// Message queueing
-	private queuedMessages: string[] = [];
+	private queuedMessages: Array<{ raw: string; sent: string }> = [];
 
 	// Queue editing state
 	private editingQueueIndex: number | null = null;
@@ -434,7 +435,7 @@ export class TuiRenderer {
 
 			if (this.agent.state.isStreaming) {
 				// Restore queued messages to editor on abort
-				const queuedText = this.queuedMessages.join("\n\n");
+				const queuedText = this.queuedMessages.map((m) => m.raw).join("\n\n");
 				const currentText = this.editor.getText();
 				const combinedText = [queuedText, currentText].filter((t) => t.trim()).join("\n\n");
 				this.editor.setText(combinedText);
@@ -502,8 +503,9 @@ export class TuiRenderer {
 			if (this.editingQueueIndex !== null && this.editingQueueIndex < this.queuedMessages.length) {
 				const trimmed = text.trim();
 				if (trimmed) {
-					this.queuedMessages[this.editingQueueIndex] = trimmed;
-					this.updateQueuedMessage(this.editingQueueIndex, trimmed);
+					const sent = autoFenceHtmlInMarkdown(trimmed);
+					this.queuedMessages[this.editingQueueIndex] = { raw: trimmed, sent };
+					this.updateQueuedMessage(this.editingQueueIndex, sent);
 					this.updatePendingMessagesDisplay();
 				}
 			}
@@ -511,7 +513,7 @@ export class TuiRenderer {
 
 		// Handle editor submission
 		this.editor.onSubmit = async (text: string) => {
-			text = text.trim();
+			const rawText = text.trim();
 
 			// Reset history navigation state on any submission
 			this.historyIndex = -1;
@@ -519,9 +521,10 @@ export class TuiRenderer {
 
 			if (this.editingQueueIndex !== null) {
 				// text parameter holds content before handleSubmit cleared the editor
-				if (text) {
-					this.queuedMessages[this.editingQueueIndex] = text;
-					this.updateQueuedMessage(this.editingQueueIndex, text);
+				if (rawText) {
+					const sent = autoFenceHtmlInMarkdown(rawText);
+					this.queuedMessages[this.editingQueueIndex] = { raw: rawText, sent };
+					this.updateQueuedMessage(this.editingQueueIndex, sent);
 				} else {
 					this.queuedMessages.splice(this.editingQueueIndex, 1);
 					this.removeQueuedMessage(this.editingQueueIndex);
@@ -535,10 +538,10 @@ export class TuiRenderer {
 				return;
 			}
 
-			if (!text) return;
+			if (!rawText) return;
 
 			// Check for /thinking command
-			if (text === "/thinking") {
+			if (rawText === "/thinking") {
 				// Show thinking level selector
 				this.showThinkingSelector();
 				this.editor.setText("");
@@ -546,7 +549,7 @@ export class TuiRenderer {
 			}
 
 			// Check for /model command
-			if (text === "/model") {
+			if (rawText === "/model") {
 				// Show model selector
 				this.showModelSelector();
 				this.editor.setText("");
@@ -554,43 +557,43 @@ export class TuiRenderer {
 			}
 
 			// Check for /export command
-			if (text.startsWith("/export")) {
-				this.handleExportCommand(text);
+			if (rawText.startsWith("/export")) {
+				this.handleExportCommand(rawText);
 				this.editor.setText("");
 				return;
 			}
 
 			// Check for /copy command
-			if (text === "/copy") {
+			if (rawText === "/copy") {
 				this.handleCopyCommand();
 				this.editor.setText("");
 				return;
 			}
 
 			// Check for /session command
-			if (text === "/session") {
+			if (rawText === "/session") {
 				this.handleSessionCommand();
 				this.editor.setText("");
 				return;
 			}
 
 			// Check for /changelog command
-			if (text === "/changelog") {
+			if (rawText === "/changelog") {
 				this.handleChangelogCommand();
 				this.editor.setText("");
 				return;
 			}
 
 			// Check for /branch command
-			if (text === "/branch") {
+			if (rawText === "/branch") {
 				this.showUserMessageSelector();
 				this.editor.setText("");
 				return;
 			}
 
 			// Check for /handoff command
-			if (text.startsWith("/handoff")) {
-				const goal = text.substring(8).trim(); // "/handoff".length = 8
+			if (rawText.startsWith("/handoff")) {
+				const goal = rawText.substring(8).trim(); // "/handoff".length = 8
 				if (!goal) {
 					this.showError("Usage: /handoff <goal>\nExample: /handoff implement the login page");
 					return;
@@ -601,56 +604,56 @@ export class TuiRenderer {
 			}
 
 			// Check for /login command
-			if (text === "/login") {
+			if (rawText === "/login") {
 				this.showOAuthSelector("login");
 				this.editor.setText("");
 				return;
 			}
 
 			// Check for /logout command
-			if (text === "/logout") {
+			if (rawText === "/logout") {
 				this.showOAuthSelector("logout");
 				this.editor.setText("");
 				return;
 			}
 
 			// Check for /queue command
-			if (text === "/queue") {
+			if (rawText === "/queue") {
 				this.showQueueModeSelector();
 				this.editor.setText("");
 				return;
 			}
 
 			// Check for /theme command
-			if (text === "/theme") {
+			if (rawText === "/theme") {
 				this.showThemeSelector();
 				this.editor.setText("");
 				return;
 			}
 
 			// Check for /clear or /new command
-			if (text === "/clear" || text === "/new") {
+			if (rawText === "/clear" || rawText === "/new") {
 				this.handleClearCommand();
 				this.editor.setText("");
 				return;
 			}
 
 			// Check for /undo command
-			if (text === "/undo") {
+			if (rawText === "/undo") {
 				this.handleUndoCommand();
 				this.editor.setText("");
 				return;
 			}
 
 			// Check for /notify command
-			if (text === "/notify") {
+			if (rawText === "/notify") {
 				this.handleNotifyCommand();
 				this.editor.setText("");
 				return;
 			}
 
 			// Check for /autohandoff command
-			const autoHandoffCommand = parseAutoHandoffSlashCommand(text);
+			const autoHandoffCommand = parseAutoHandoffSlashCommand(rawText);
 			if (autoHandoffCommand) {
 				this.handleAutoHandoffSlashCommand(autoHandoffCommand);
 				this.editor.setText("");
@@ -658,11 +661,13 @@ export class TuiRenderer {
 			}
 
 			// Check for /debug command
-			if (text === "/debug") {
+			if (rawText === "/debug") {
 				this.handleDebugCommand();
 				this.editor.setText("");
 				return;
 			}
+
+			const sentText = autoFenceHtmlInMarkdown(rawText);
 
 			// Normal message submission - validate model and API key first
 			const currentModel = this.agent.state.model;
@@ -683,17 +688,17 @@ export class TuiRenderer {
 					`No API key found for ${currentModel.provider}.\n\n` +
 						`Set the appropriate environment variable or update ~/.pi/agent/models.json`,
 				);
-				this.editor.setText(text);
+				this.editor.setText(rawText);
 				return;
 			}
 
 			// Check if agent is currently streaming
 			if (this.agent.state.isStreaming) {
 				// Queue the message instead of submitting
-				this.queuedMessages.push(text);
+				this.queuedMessages.push({ raw: rawText, sent: sentText });
 
 				// Queue in agent (simple text, no attachments for queued messages)
-				this.queueMessage(text);
+				this.queueMessage(sentText);
 
 				// Update pending messages display
 				this.updatePendingMessagesDisplay();
@@ -706,10 +711,10 @@ export class TuiRenderer {
 
 			// All good, proceed with submission
 			// Save to prompt history (savePrompt filters out slash commands and empty)
-			this.promptHistory.savePrompt(text);
+			this.promptHistory.savePrompt(rawText);
 
 			if (this.onInputCallback) {
-				this.onInputCallback(text);
+				this.onInputCallback(sentText);
 			}
 		};
 
@@ -821,7 +826,7 @@ export class TuiRenderer {
 					// Check if any queued messages are contained in the incoming message
 					if (this.queuedMessages.length > 0) {
 						// Check exact match first (one-at-a-time mode)
-						const queuedIndex = this.queuedMessages.indexOf(rawMessageText);
+						const queuedIndex = this.queuedMessages.findIndex((m) => m.sent === rawMessageText);
 						if (queuedIndex !== -1) {
 							// Handle queue editing state when item is consumed
 							if (this.editingQueueIndex !== null) {
@@ -841,7 +846,7 @@ export class TuiRenderer {
 						} else {
 							// Check if this is a combined message ("all" mode)
 							// Combined messages have format: "msg1\n\nmsg2\n\nmsg3"
-							const combinedText = this.queuedMessages.join("\n\n");
+							const combinedText = this.queuedMessages.map((m) => m.sent).join("\n\n");
 							if (rawMessageText === combinedText) {
 								// All queued messages were combined - clear the queue
 								if (this.editingQueueIndex !== null) {
@@ -1773,7 +1778,7 @@ export class TuiRenderer {
 		if (this.editingQueueIndex === null) {
 			this.savedEditorText = this.editor.getText();
 			this.editingQueueIndex = this.queuedMessages.length - 1;
-			this.editor.setText(this.queuedMessages[this.editingQueueIndex]);
+			this.editor.setText(this.queuedMessages[this.editingQueueIndex]?.raw || "");
 		} else if (this.editingQueueIndex > 0) {
 			this.saveCurrentQueueEdit();
 			// saveCurrentQueueEdit may delete item and reset editingQueueIndex
@@ -1784,7 +1789,7 @@ export class TuiRenderer {
 				this.editor.setText(savedText);
 			} else {
 				this.editingQueueIndex = Math.max(0, this.editingQueueIndex - 1);
-				this.editor.setText(this.queuedMessages[this.editingQueueIndex] || "");
+				this.editor.setText(this.queuedMessages[this.editingQueueIndex]?.raw || "");
 			}
 		} else {
 			this.saveCurrentQueueEdit();
@@ -1813,7 +1818,7 @@ export class TuiRenderer {
 				this.editor.setText(savedText);
 			} else {
 				this.editingQueueIndex = Math.min(this.queuedMessages.length - 1, this.editingQueueIndex + 1);
-				this.editor.setText(this.queuedMessages[this.editingQueueIndex] || "");
+				this.editor.setText(this.queuedMessages[this.editingQueueIndex]?.raw || "");
 			}
 		} else {
 			this.saveCurrentQueueEdit();
@@ -1845,8 +1850,9 @@ export class TuiRenderer {
 				this.editingQueueIndex = this.queuedMessages.length - 1;
 			}
 		} else {
-			this.queuedMessages[this.editingQueueIndex] = editedText;
-			this.updateQueuedMessage(this.editingQueueIndex, editedText);
+			const sent = autoFenceHtmlInMarkdown(editedText);
+			this.queuedMessages[this.editingQueueIndex] = { raw: editedText, sent };
+			this.updateQueuedMessage(this.editingQueueIndex, sent);
 		}
 	}
 
@@ -3546,7 +3552,7 @@ export class TuiRenderer {
 					this.pendingMessagesContainer.addChild(new TruncatedText(prefix + hint, 1, 0));
 				} else {
 					const prefix = theme.fg("dim", "↳ Queued: ");
-					const messageColor = theme.fg("dim", message);
+					const messageColor = theme.fg("dim", message.raw);
 					this.pendingMessagesContainer.addChild(new TruncatedText(prefix + messageColor, 1, 0));
 				}
 			}
