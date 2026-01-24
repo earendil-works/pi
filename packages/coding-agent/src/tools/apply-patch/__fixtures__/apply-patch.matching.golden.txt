@@ -64,7 +64,6 @@ hunk:update path=exact.txt move=<none> chunks=1
 parse_patch: hunks=1
 apply:update path=exact.txt move=<none>
 path_check: target=exact.txt status=ok
-symlink_check: path=exact.txt status=ok
 update_file: path=exact.txt lines=2
 compute_replacements: path=exact.txt chunks=1 lines=2
 compute_chunk: index=0 context=<none> old=2 new=2 eof=false
@@ -108,7 +107,6 @@ hunk:update path=trim-end.txt move=<none> chunks=1
 parse_patch: hunks=1
 apply:update path=trim-end.txt move=<none>
 path_check: target=trim-end.txt status=ok
-symlink_check: path=trim-end.txt status=ok
 update_file: path=trim-end.txt lines=1
 compute_replacements: path=trim-end.txt chunks=1 lines=1
 compute_chunk: index=0 context=<none> old=1 new=1 eof=false
@@ -153,7 +151,6 @@ hunk:update path=trim.txt move=<none> chunks=1
 parse_patch: hunks=1
 apply:update path=trim.txt move=<none>
 path_check: target=trim.txt status=ok
-symlink_check: path=trim.txt status=ok
 update_file: path=trim.txt lines=1
 compute_replacements: path=trim.txt chunks=1 lines=1
 compute_chunk: index=0 context=<none> old=1 new=1 eof=false
@@ -199,7 +196,6 @@ hunk:update path=confusable.txt move=<none> chunks=1
 parse_patch: hunks=1
 apply:update path=confusable.txt move=<none>
 path_check: target=confusable.txt status=ok
-symlink_check: path=confusable.txt status=ok
 update_file: path=confusable.txt lines=1
 compute_replacements: path=confusable.txt chunks=1 lines=1
 compute_chunk: index=0 context=<none> old=1 new=1 eof=false
@@ -247,7 +243,6 @@ hunk:update path=invisible.txt move=<none> chunks=1
 parse_patch: hunks=1
 apply:update path=invisible.txt move=<none>
 path_check: target=invisible.txt status=ok
-symlink_check: path=invisible.txt status=ok
 update_file: path=invisible.txt lines=1
 compute_replacements: path=invisible.txt chunks=1 lines=1
 compute_chunk: index=0 context=<none> old=1 new=1 eof=false
@@ -295,7 +290,6 @@ hunk:update path=whitespace.txt move=<none> chunks=1
 parse_patch: hunks=1
 apply:update path=whitespace.txt move=<none>
 path_check: target=whitespace.txt status=ok
-symlink_check: path=whitespace.txt status=ok
 update_file: path=whitespace.txt lines=1
 compute_replacements: path=whitespace.txt chunks=1 lines=1
 compute_chunk: index=0 context=<none> old=1 new=1 eof=false
@@ -344,7 +338,6 @@ hunk:update path=unescape.txt move=<none> chunks=1
 parse_patch: hunks=1
 apply:update path=unescape.txt move=<none>
 path_check: target=unescape.txt status=ok
-symlink_check: path=unescape.txt status=ok
 update_file: path=unescape.txt lines=1
 compute_replacements: path=unescape.txt chunks=1 lines=1
 compute_chunk: index=0 context=<none> old=1 new=1 eof=false
@@ -391,7 +384,6 @@ hunk:update path=fuzzy.txt move=<none> chunks=1
 parse_patch: hunks=1
 apply:update path=fuzzy.txt move=<none>
 path_check: target=fuzzy.txt status=ok
-symlink_check: path=fuzzy.txt status=ok
 update_file: path=fuzzy.txt lines=1
 compute_replacements: path=fuzzy.txt chunks=1 lines=1
 compute_chunk: index=0 context=<none> old=1 new=1 eof=false
@@ -442,7 +434,6 @@ hunk:update path=context.txt move=<none> chunks=1
 parse_patch: hunks=1
 apply:update path=context.txt move=<none>
 path_check: target=context.txt status=ok
-symlink_check: path=context.txt status=ok
 update_file: path=context.txt lines=5
 compute_replacements: path=context.txt chunks=1 lines=5
 compute_chunk: index=0 context=function foo() { old=1 new=1 eof=false
@@ -489,7 +480,6 @@ hunk:update path=eof.txt move=<none> chunks=1
 parse_patch: hunks=1
 apply:update path=eof.txt move=<none>
 path_check: target=eof.txt status=ok
-symlink_check: path=eof.txt status=ok
 update_file: path=eof.txt lines=1
 compute_replacements: path=eof.txt chunks=1 lines=1
 compute_chunk: index=0 context=<none> old=0 new=1 eof=true
@@ -533,7 +523,6 @@ hunk:update path=trim-eof.txt move=<none> chunks=1
 parse_patch: hunks=1
 apply:update path=trim-eof.txt move=<none>
 path_check: target=trim-eof.txt status=ok
-symlink_check: path=trim-eof.txt status=ok
 update_file: path=trim-eof.txt lines=2
 compute_replacements: path=trim-eof.txt chunks=1 lines=2
 compute_chunk: index=0 context=<none> old=3 new=4 eof=false
@@ -580,7 +569,6 @@ hunk:update path=missing.txt move=<none> chunks=1
 parse_patch: hunks=1
 apply:update path=missing.txt move=<none>
 path_check: target=missing.txt status=ok
-symlink_check: path=missing.txt status=ok
 update_file: path=missing.txt lines=1
 compute_replacements: path=missing.txt chunks=1 lines=1
 compute_chunk: index=0 context=<none> old=1 new=1 eof=false

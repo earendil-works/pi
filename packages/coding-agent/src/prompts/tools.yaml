@@ -92,7 +92,9 @@ ApplyPatch: |
 
   - You must include a header with your intended action (Add/Delete/Update)
   - You must prefix new lines with `+` even when creating a new file
-  - File references can only be relative, NEVER ABSOLUTE.
+  - File references may be relative or absolute.
+    - `~` and `~/...` are expanded to the user's home directory.
+    - Relative paths are resolved from the current working directory (and may refer to paths outside it).
 
   You can invoke ApplyPatch like:
 

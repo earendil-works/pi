@@ -1,6 +1,7 @@
 import { constants } from "node:fs";
-import { lstat, mkdir, open, readFile, realpath, rm } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { mkdir, open, readFile, rm } from "node:fs/promises";
+import * as os from "node:os";
+import { dirname, isAbsolute, resolve } from "node:path";
 
 const BEGIN_PATCH_MARKER = "*** Begin Patch";
 const END_PATCH_MARKER = "*** End Patch";
@@ -191,46 +192,14 @@ function stripCommonIndent(lines: string[]): string[] {
 	return lines.map((line) => (line.trim().length === 0 ? line : line.slice(minIndent)));
 }
 
-async function ensureParentPathSafe(
-	baseReal: string,
-	parentPath: string,
-	createParents: boolean,
-	trace?: ApplyPatchTrace,
-): Promise<void> {
-	const rel = relative(baseReal, parentPath);
-	if (rel.length > 0 && (rel.startsWith("..") || isAbsolute(rel))) {
-		traceLine(trace, `path_check: target=${parentPath} status=outside_parent`);
-		throw new ApplyPatchIoError(`Path escapes working directory: ${parentPath}`);
+function expandPath(filePath: string): string {
+	if (filePath === "~") {
+		return os.homedir();
 	}
-
-	const segments = rel.length === 0 ? [] : rel.split(/[/\\]+/);
-	let current = baseReal;
-	for (const segment of segments) {
-		current = join(current, segment);
-		try {
-			const stat = await lstat(current);
-			if (stat.isSymbolicLink()) {
-				traceLine(trace, `path_check: target=${current} status=symlink_parent`);
-				throw new ApplyPatchIoError(`Refusing to follow symlink parent ${current}`);
-			}
-			if (!stat.isDirectory()) {
-				throw new ApplyPatchIoError(`Expected directory for ${current}`);
-			}
-		} catch (error) {
-			if (error instanceof Error && "code" in error && (error as NodeJS.ErrnoException).code === "ENOENT") {
-				if (!createParents) {
-					throw new ApplyPatchIoError(`Missing parent directory for ${current}`);
-				}
-				await mkdir(current);
-				const created = await lstat(current);
-				if (created.isSymbolicLink() || !created.isDirectory()) {
-					throw new ApplyPatchIoError(`Invalid directory created at ${current}`);
-				}
-				continue;
-			}
-			throw error;
-		}
+	if (filePath.startsWith("~/")) {
+		return os.homedir() + filePath.slice(1);
 	}
+	return filePath;
 }
 
 async function resolvePathWithinCwd(
@@ -239,35 +208,25 @@ async function resolvePathWithinCwd(
 	createParents: boolean,
 	trace?: ApplyPatchTrace,
 ): Promise<string> {
-	if (isAbsolute(target)) {
+	const expandedTarget = expandPath(target);
+	if (isAbsolute(expandedTarget)) {
 		if (createParents) {
-			await mkdir(dirname(target), { recursive: true });
+			await mkdir(dirname(expandedTarget), { recursive: true });
 		}
 		traceLine(trace, `path_check: target=${target} status=absolute`);
-		return target;
+		return expandedTarget;
 	}
-	let baseReal: string;
-	try {
-		baseReal = await realpath(cwd);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		throw new ApplyPatchIoError(`Failed to resolve cwd ${cwd}: ${message}`);
+
+	const resolved = resolve(cwd, expandedTarget);
+	if (createParents) {
+		await mkdir(dirname(resolved), { recursive: true });
 	}
-	const resolved = resolve(baseReal, target);
-	const rel = relative(baseReal, resolved);
-	const isOutside = rel.length > 0 && (rel.startsWith("..") || isAbsolute(rel));
-	if (isOutside) {
-		traceLine(trace, `path_check: target=${target} status=outside`);
-		throw new ApplyPatchIoError(`Path escapes working directory: ${target}`);
-	}
-	await ensureParentPathSafe(baseReal, dirname(resolved), createParents, trace);
 	traceLine(trace, `path_check: target=${target} status=ok`);
 	return resolved;
 }
 
 async function writeFileExclusive(path: string, contents: string): Promise<void> {
-	const noFollowFlag = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
-	const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | noFollowFlag;
+	const flags = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL;
 	const handle = await open(path, flags, 0o666);
 	try {
 		await handle.writeFile(contents, "utf8");
@@ -277,8 +236,7 @@ async function writeFileExclusive(path: string, contents: string): Promise<void>
 }
 
 async function writeFileReplace(path: string, contents: string): Promise<void> {
-	const noFollowFlag = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
-	const flags = constants.O_WRONLY | constants.O_TRUNC | noFollowFlag;
+	const flags = constants.O_WRONLY | constants.O_TRUNC;
 	const handle = await open(path, flags, 0o666);
 	try {
 		await handle.writeFile(contents, "utf8");
@@ -877,19 +835,6 @@ async function deriveNewContentsFromChunks(
 	chunks: UpdateFileChunk[],
 	trace?: ApplyPatchTrace,
 ): Promise<string> {
-	let stat: Awaited<ReturnType<typeof lstat>>;
-	try {
-		stat = await lstat(fsPath);
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		throw new ApplyPatchIoError(`Failed to inspect file to update ${displayPath}: ${message}`);
-	}
-	if (stat.isSymbolicLink()) {
-		traceLine(trace, `symlink_check: path=${displayPath} status=symlink`);
-		throw new ApplyPatchIoError(`Refusing to update symlink ${displayPath}`);
-	}
-	traceLine(trace, `symlink_check: path=${displayPath} status=ok`);
-
 	let originalContents: string;
 	try {
 		originalContents = await readFile(fsPath, "utf8");
