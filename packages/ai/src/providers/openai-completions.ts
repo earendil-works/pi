@@ -70,7 +70,10 @@ function hasToolHistory(messages: Message[]): boolean {
  * Auto-detect OpenAI-completions compatibility settings from URL.
  */
 function detectCompatFromUrl(baseUrl: string): Required<OpenAICompat> {
+	const isMoonshot = baseUrl.includes("api.moonshot.ai");
+
 	const isNonStandard =
+		isMoonshot ||
 		baseUrl.includes("cerebras.ai") ||
 		baseUrl.includes("api.x.ai") ||
 		baseUrl.includes("mistral.ai") ||
@@ -79,7 +82,7 @@ function detectCompatFromUrl(baseUrl: string): Required<OpenAICompat> {
 		baseUrl.includes("api.z.ai");
 
 	const useMaxTokens =
-		baseUrl.includes("mistral.ai") || baseUrl.includes("chutes.ai") || baseUrl.includes("fireworks.ai");
+		isMoonshot || baseUrl.includes("mistral.ai") || baseUrl.includes("chutes.ai") || baseUrl.includes("fireworks.ai");
 
 	const isGrok = baseUrl.includes("api.x.ai");
 
@@ -94,14 +97,16 @@ function detectCompatFromUrl(baseUrl: string): Required<OpenAICompat> {
 	return {
 		supportsStore: !isNonStandard,
 		supportsDeveloperRole: isOpenAI,
-		supportsReasoningEffort: !isGrok && !isZAI,
+		// Moonshot uses a different "thinking" mechanism; don't send OpenAI-style reasoning_effort.
+		supportsReasoningEffort: !isMoonshot && !isGrok && !isZAI,
 		reasoningEffortFormat: "string",
 		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
 		requiresToolResultName: isMistral,
 		requiresAssistantAfterToolResult: false, // Mistral no longer requires this as of Dec 2024
 		requiresThinkingAsText: isMistral || isZAI,
 		requiresMistralToolIds: isMistral,
-		supportsStreamOptions: !isFireworks && !isZAI,
+		// Moonshot doesn't document OpenAI's stream_options extension; keep requests conservative.
+		supportsStreamOptions: !isMoonshot && !isFireworks && !isZAI,
 		isZAI,
 	};
 }

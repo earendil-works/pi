@@ -45,7 +45,9 @@ function hasToolHistory(messages) {
  * Auto-detect OpenAI-completions compatibility settings from URL.
  */
 function detectCompatFromUrl(baseUrl) {
+	const isMoonshot = baseUrl.includes("api.moonshot.ai");
 	const isNonStandard =
+		isMoonshot ||
 		baseUrl.includes("cerebras.ai") ||
 		baseUrl.includes("api.x.ai") ||
 		baseUrl.includes("mistral.ai") ||
@@ -53,22 +55,23 @@ function detectCompatFromUrl(baseUrl) {
 		baseUrl.includes("fireworks.ai") ||
 		baseUrl.includes("api.z.ai");
 	const useMaxTokens =
-		baseUrl.includes("mistral.ai") || baseUrl.includes("chutes.ai") || baseUrl.includes("fireworks.ai");
+		isMoonshot || baseUrl.includes("mistral.ai") || baseUrl.includes("chutes.ai") || baseUrl.includes("fireworks.ai");
 	const isGrok = baseUrl.includes("api.x.ai");
 	const isMistral = baseUrl.includes("mistral.ai");
 	const isFireworks = baseUrl.includes("fireworks.ai");
 	const isZAI = baseUrl.includes("api.z.ai");
+	const isOpenAI = baseUrl.includes("openai.com");
 	return {
 		supportsStore: !isNonStandard,
-		supportsDeveloperRole: !isNonStandard && !isZAI,
-		supportsReasoningEffort: !isGrok && !isZAI,
-		reasoningEffortFormat: isFireworks ? "boolean" : "string",
+		supportsDeveloperRole: isOpenAI,
+		supportsReasoningEffort: !isMoonshot && !isGrok && !isZAI,
+		reasoningEffortFormat: "string",
 		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
 		requiresToolResultName: isMistral,
 		requiresAssistantAfterToolResult: false, // Mistral no longer requires this as of Dec 2024
 		requiresThinkingAsText: isMistral || isZAI,
 		requiresMistralToolIds: isMistral,
-		supportsStreamOptions: !isFireworks && !isZAI,
+		supportsStreamOptions: !isMoonshot && !isFireworks && !isZAI,
 		isZAI,
 	};
 }
@@ -356,11 +359,10 @@ export const streamOpenAICompletions = (model, context, options) => {
 					}
 					if (choice?.delta?.tool_calls) {
 						for (const toolCall of choice.delta.tool_calls) {
-							if (
-								!currentBlock ||
-								currentBlock.type !== "toolCall" ||
-								(toolCall.id && currentBlock.id !== toolCall.id)
-							) {
+							// Use function.name to detect new tool calls (not id).
+							// Fireworks sends different ids for continuation chunks of the same tool call.
+							const hasName = toolCall.function?.name != null && toolCall.function.name.length > 0;
+							if (!currentBlock || currentBlock.type !== "toolCall" || hasName) {
 								finishCurrentBlock(currentBlock);
 								currentBlock = {
 									type: "toolCall",
@@ -373,7 +375,6 @@ export const streamOpenAICompletions = (model, context, options) => {
 								stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
 							}
 							if (currentBlock.type === "toolCall") {
-								if (toolCall.id) currentBlock.id = toolCall.id;
 								if (toolCall.function?.name) currentBlock.name = toolCall.function.name;
 								let delta = "";
 								if (toolCall.function?.arguments) {

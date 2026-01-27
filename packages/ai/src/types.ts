@@ -80,6 +80,7 @@ export type KnownProvider =
 	| "google"
 	| "google-gemini-cli"
 	| "google-antigravity"
+	| "moonshot"
 	| "openai"
 	| "openai-codex"
 	| "github-copilot"

@@ -414,6 +414,43 @@ async function generateModels() {
 		});
 	}
 
+	// Moonshot (Kimi) models (direct API)
+	// Docs: https://platform.moonshot.ai/ (OpenAI-compatible base URL: https://api.moonshot.ai/v1)
+	// NOTE: We currently support image inputs, not video inputs.
+	if (!allModels.some((m) => m.provider === "moonshot" && m.id === "kimi-k2.5")) {
+		allModels.push({
+			id: "kimi-k2.5",
+			name: "Kimi K2.5 (Moonshot)",
+			api: "openai-completions",
+			provider: "moonshot",
+			baseUrl: "https://api.moonshot.ai/v1",
+			// Moonshot exposes reasoning via `reasoning_content` and expects it preserved in follow-up turns.
+			reasoning: true,
+			reasoningFormat: "reasoning_content",
+			input: ["text", "image"],
+			// Pricing from Moonshot docs (k2.5): input cache-hit $0.10/M, cache-miss $0.60/M, output $3.00/M.
+			// We model this as: input=cache-miss, cacheRead=cache-hit, cacheWrite unknown.
+			cost: {
+				input: 0.6,
+				output: 3.0,
+				cacheRead: 0.1,
+				cacheWrite: 0,
+			},
+			contextWindow: 262144,
+			maxTokens: 32768,
+			extraBody: {
+				// Explicitly enable thinking (default is enabled, but be explicit).
+				thinking: { type: "enabled" },
+				// Moonshot docs indicate k2.5 uses fixed values; sending anything else can error.
+				temperature: 1.0,
+				top_p: 0.95,
+				n: 1,
+				presence_penalty: 0.0,
+				frequency_penalty: 0.0,
+			},
+		});
+	}
+
 	// Google Cloud Code Assist models (Gemini CLI)
 	// Uses production endpoint, standard Gemini models only
 	const CLOUD_CODE_ASSIST_ENDPOINT = "https://cloudcode-pa.googleapis.com";
@@ -667,6 +704,9 @@ export const MODELS = {
 				output += `\t\t\tbaseUrl: "${model.baseUrl}",\n`;
 			}
 			output += `\t\t\treasoning: ${model.reasoning},\n`;
+			if (model.reasoningFormat) {
+				output += `\t\t\treasoningFormat: "${model.reasoningFormat}",\n`;
+			}
 			output += `\t\t\tinput: [${model.input.map(i => `"${i}"`).join(", ")}],\n`;
 			output += `\t\t\tcost: {\n`;
 			output += `\t\t\t\tinput: ${model.cost.input},\n`;
@@ -676,6 +716,14 @@ export const MODELS = {
 			output += `\t\t\t},\n`;
 			output += `\t\t\tcontextWindow: ${model.contextWindow},\n`;
 			output += `\t\t\tmaxTokens: ${model.maxTokens},\n`;
+			if (model.headers) {
+				const headersJson = JSON.stringify(model.headers, null, 2);
+				output += `\t\t\theaders: ${headersJson.replace(/\n/g, "\n\t\t\t")},\n`;
+			}
+			if (model.extraBody) {
+				const extraBodyJson = JSON.stringify(model.extraBody, null, 2);
+				output += `\t\t\textraBody: ${extraBodyJson.replace(/\n/g, "\n\t\t\t")},\n`;
+			}
 			output += `\t\t} satisfies Model<"${model.api}">,\n`;
 		}
 

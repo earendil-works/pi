@@ -231,8 +231,13 @@ export function loadAndMergeModels(): { models: Model<Api>[]; error: string | nu
 		return { models: [], error };
 	}
 
-	// Merge: custom models come after built-in
-	return { models: [...builtInModels, ...customModels], error: null };
+	// Merge: custom models come after built-in.
+	// If a custom model has the same (provider,id) as a built-in model, de-duplicate so it only shows once
+	// in the model selector. This also allows users to override built-in models via models.json.
+	const keyOf = (m: Model<Api>) => `${m.provider}:${m.id}`;
+	const customKeys = new Set(customModels.map(keyOf));
+	const dedupedBuiltIn = builtInModels.filter((m) => !customKeys.has(keyOf(m)));
+	return { models: [...dedupedBuiltIn, ...customModels], error: null };
 }
 
 /**

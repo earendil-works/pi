@@ -35,6 +35,7 @@ const defaultModelPerProvider: Record<KnownProvider, string> = {
 	google: "gemini-2.5-pro",
 	"google-gemini-cli": "gemini-2.5-pro",
 	"google-antigravity": "gemini-3-pro-high",
+	moonshot: "kimi-k2.5",
 	openrouter: "openai/gpt-5.1-codex",
 	xai: "grok-4-fast-non-reasoning",
 	groq: "openai/gpt-oss-120b",
