@@ -64,6 +64,7 @@ function detectCompatFromUrl(baseUrl) {
 	return {
 		supportsStore: !isNonStandard,
 		supportsDeveloperRole: isOpenAI,
+		// Moonshot uses a different "thinking" mechanism; don't send OpenAI-style reasoning_effort.
 		supportsReasoningEffort: !isMoonshot && !isGrok && !isZAI,
 		reasoningEffortFormat: "string",
 		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
@@ -71,6 +72,7 @@ function detectCompatFromUrl(baseUrl) {
 		requiresAssistantAfterToolResult: false, // Mistral no longer requires this as of Dec 2024
 		requiresThinkingAsText: isMistral || isZAI,
 		requiresMistralToolIds: isMistral,
+		// Moonshot doesn't document OpenAI's stream_options extension; keep requests conservative.
 		supportsStreamOptions: !isMoonshot && !isFireworks && !isZAI,
 		isZAI,
 	};

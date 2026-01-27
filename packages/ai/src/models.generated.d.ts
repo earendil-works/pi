@@ -2532,6 +2532,40 @@ export declare const MODELS: {
 		};
 	};
 	readonly openrouter: {
+		readonly "moonshotai/kimi-k2.5": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "upstage/solar-pro-3:free": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "z-ai/glm-4.7-flash": {
 			id: string;
 			name: string;
@@ -2675,23 +2709,6 @@ export declare const MODELS: {
 			provider: string;
 			baseUrl: string;
 			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "xiaomi/mimo-v2-flash:free": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
 			input: "text"[];
 			cost: {
 				input: number;
@@ -6424,6 +6441,36 @@ export declare const MODELS: {
 			};
 			contextWindow: number;
 			maxTokens: number;
+		};
+	};
+	readonly moonshot: {
+		readonly "kimi-k2.5": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			reasoningFormat: "reasoning_content";
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+			extraBody: {
+				thinking: {
+					type: string;
+				};
+				temperature: number;
+				top_p: number;
+				n: number;
+				presence_penalty: number;
+				frequency_penalty: number;
+			};
 		};
 	};
 	readonly "google-gemini-cli": {
