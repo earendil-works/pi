@@ -19,6 +19,9 @@
 		"@hono/node-server": "^1.14.0",
 		"hono": "^4.6.16"
 	},
+	"publishConfig": {
+		"access": "restricted"
+	},
 	"devDependencies": {
 		"@types/node": "^22.10.5",
 		"tsx": "^4.19.2",

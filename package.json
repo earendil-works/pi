@@ -17,8 +17,8 @@
 		"version:major": "npm version major -ws --no-git-tag-version && node scripts/sync-versions.js",
 		"version:set": "npm version -ws",
 		"prepublishOnly": "npm run clean && npm run build && npm run check",
-		"publish": "npm run prepublishOnly && npm publish -ws --access public",
-		"publish:dry": "npm run prepublishOnly && npm publish -ws --access public --dry-run",
+		"publish": "npm run prepublishOnly && npm publish -ws --access restricted",
+		"publish:dry": "npm run prepublishOnly && npm publish -ws --access restricted --dry-run",
 		"prepare": "husky"
 	},
 	"devDependencies": {

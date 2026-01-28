@@ -46,6 +46,9 @@
 		"url": "git+https://github.com/kennyfrc/mu-mono.git",
 		"directory": "packages/ai"
 	},
+	"publishConfig": {
+		"access": "restricted"
+	},
 	"engines": {
 		"node": ">=20.0.0"
 	},
