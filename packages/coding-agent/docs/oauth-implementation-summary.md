@@ -13,7 +13,7 @@ Implementation of OAuth2 authentication support for Anthropic (Claude Pro/Max) h
    - `saveOAuthCredentials()` - Save credentials for a provider
    - `removeOAuthCredentials()` - Remove credentials for a provider
    - `listOAuthProviders()` - List all providers with saved credentials
-   - Stores credentials in `~/.pi/agent/oauth.json` with `0o600` permissions
+   - Stores credentials in `~/.mu/agent/oauth.json` with `0o600` permissions
 
 2. **`src/oauth/anthropic.ts`** - Anthropic OAuth flow
    - `loginAnthropic()` - Device code flow implementation with PKCE
@@ -73,7 +73,7 @@ Implementation of OAuth2 authentication support for Anthropic (Claude Pro/Max) h
 4. Browser opens to Anthropic's OAuth authorization page
 5. User authorizes the app and copies the authorization code
 6. User pastes code in the terminal input
-7. Tokens are exchanged and saved to `~/.pi/agent/oauth.json`
+7. Tokens are exchanged and saved to `~/.mu/agent/oauth.json`
 8. User can now use Claude models without API keys
 
 ### Technical Flow
@@ -99,7 +99,7 @@ Based on SST's opencode implementation:
 
 ### Security
 
-- Tokens stored in `~/.pi/agent/oauth.json` with `0o600` permissions (owner read/write only)
+- Tokens stored in `~/.mu/agent/oauth.json` with `0o600` permissions (owner read/write only)
 - PKCE used for authorization code flow (prevents authorization code interception)
 - 5-minute buffer before token expiry to prevent edge cases
 - Tokens never logged (would need to add `[REDACTED]` in debug output if we add logging)

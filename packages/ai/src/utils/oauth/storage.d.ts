@@ -1,7 +1,7 @@
 /**
  * OAuth credential storage with configurable backend.
  *
- * Default: ~/.pi/agent/oauth.json
+ * Default: ~/.mu/agent/oauth.json
  * Override with setOAuthStorage() for custom storage locations or backends.
  */
 export interface OAuthCredentials {
@@ -65,7 +65,7 @@ export interface OAuthStorageBackend {
  */
 export declare function setOAuthStorage(backend: OAuthStorageBackend): void;
 /**
- * Reset to default filesystem storage (~/.pi/agent/oauth.json)
+ * Reset to default filesystem storage (~/.mu/agent/oauth.json)
  */
 export declare function resetOAuthStorage(): void;
 /**

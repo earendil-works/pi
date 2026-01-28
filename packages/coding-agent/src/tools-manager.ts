@@ -6,7 +6,7 @@ import { join } from "path";
 import { Readable } from "stream";
 import { finished } from "stream/promises";
 
-const TOOLS_DIR = join(homedir(), ".pi", "agent", "tools");
+const TOOLS_DIR = join(homedir(), ".mu", "agent", "tools");
 
 // Timeout constants for network operations
 const API_TIMEOUT_MS = 15_000; // 15s for GitHub API calls
@@ -114,7 +114,7 @@ export function getToolPath(tool: "fd" | "rg"): string | null {
 // Fetch latest release version from GitHub
 async function getLatestVersion(repo: string): Promise<string> {
 	const response = await fetchWithTimeout(`https://api.github.com/repos/${repo}/releases/latest`, API_TIMEOUT_MS, {
-		headers: { "User-Agent": "pi-coding-agent" },
+		headers: { "User-Agent": "mu-coding-agent" },
 	});
 
 	if (!response.ok) {

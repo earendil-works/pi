@@ -16,7 +16,7 @@ export const listPods = () => {
 	const podNames = Object.keys(config.pods);
 
 	if (podNames.length === 0) {
-		console.log("No pods configured. Use 'pi pods setup' to add a pod.");
+		console.log("No pods configured. Use 'mu pods setup' to add a pod.");
 		return;
 	}
 
@@ -48,7 +48,7 @@ export const setupPod = async (
 ) => {
 	// Validate environment variables
 	const hfToken = process.env.HF_TOKEN;
-	const vllmApiKey = process.env.PI_API_KEY;
+	const vllmApiKey = process.env.MU_API_KEY;
 
 	if (!hfToken) {
 		console.error(chalk.red("ERROR: HF_TOKEN environment variable is required"));
@@ -58,8 +58,8 @@ export const setupPod = async (
 	}
 
 	if (!vllmApiKey) {
-		console.error(chalk.red("ERROR: PI_API_KEY environment variable is required"));
-		console.error("Set an API key: export PI_API_KEY=your_api_key_here");
+		console.error(chalk.red("ERROR: MU_API_KEY environment variable is required"));
+		console.error("Set an API key: export MU_API_KEY=your_api_key_here");
 		process.exit(1);
 	}
 
@@ -168,7 +168,7 @@ export const setupPod = async (
 	console.log(chalk.green(`✓ Pod '${name}' setup complete and set as active pod`));
 	console.log("");
 	console.log("You can now deploy models with:");
-	console.log(chalk.cyan(`  pi start <model> --name <name>`));
+	console.log(chalk.cyan(`  mu start <model> --name <name>`));
 };
 
 /**

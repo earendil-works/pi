@@ -3,11 +3,11 @@
 	"compilerOptions": {
 		"noEmit": true,
 		"paths": {
-			"@kennyfrc/pi-tui": ["./packages/tui/src/index.ts"],
-			"@kennyfrc/pi-ai": ["./packages/ai/src/index.ts"],
-			"@kennyfrc/pi-agent-core": ["./packages/agent/src/index.ts"],
-			"@kennyfrc/pi-coding-agent": ["./packages/coding-agent/src/index.ts"],
-			"@kennyfrc/pi": ["./packages/pods/src/index.ts"]
+			"@kennyfrc/mu-tui": ["./packages/tui/src/index.ts"],
+			"@kennyfrc/mu-ai": ["./packages/ai/src/index.ts"],
+			"@kennyfrc/mu-agent-core": ["./packages/agent/src/index.ts"],
+			"@kennyfrc/mu-coding-agent": ["./packages/coding-agent/src/index.ts"],
+			"@kennyfrc/mu": ["./packages/pods/src/index.ts"]
 		}
 	},
 	"include": ["packages/*/src/**/*", "packages/*/test/**/*"]

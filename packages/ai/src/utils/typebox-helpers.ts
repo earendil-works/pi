@@ -43,7 +43,7 @@ export interface SchemaValidationError {
  *
  * @example
  * // In a test file:
- * import { validateToolSchema } from '@kennyfrc/pi-ai';
+ * import { validateToolSchema } from '@kennyfrc/mu-ai';
  * import { myTool } from './tools/my-tool.js';
  *
  * test('tool schema is Google-compatible', () => {
@@ -109,7 +109,7 @@ export function validateToolSchema(schema: TSchema, path = ""): SchemaValidation
  * Validates all tools in an array for Google API compatibility.
  *
  * @example
- * import { validateToolSchemas } from '@kennyfrc/pi-ai';
+ * import { validateToolSchemas } from '@kennyfrc/mu-ai';
  * import { codingTools } from './tools/index.js';
  *
  * test('all tools are Google-compatible', () => {

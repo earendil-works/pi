@@ -2,11 +2,11 @@
 # GPU pod bootstrap for vLLM deployment
 set -euo pipefail
 
-# Parse arguments passed from pi CLI
+# Parse arguments passed from mu CLI
 MOUNT_COMMAND=""
 MODELS_PATH=""
 HF_TOKEN=""
-PI_API_KEY=""
+MU_API_KEY=""
 VLLM_VERSION="release"  # Default to release
 
 while [[ $# -gt 0 ]]; do
@@ -24,7 +24,7 @@ while [[ $# -gt 0 ]]; do
             shift 2
             ;;
         --vllm-api-key)
-            PI_API_KEY="$2"
+            MU_API_KEY="$2"
             shift 2
             ;;
         --vllm)
@@ -44,8 +44,8 @@ if [ -z "$HF_TOKEN" ]; then
     exit 1
 fi
 
-if [ -z "$PI_API_KEY" ]; then
-    echo "ERROR: PI_API_KEY is required" >&2
+if [ -z "$MU_API_KEY" ]; then
+    echo "ERROR: MU_API_KEY is required" >&2
     exit 1
 fi
 
@@ -306,7 +306,7 @@ cat >> ~/.bashrc << EOF
 export PATH="/usr/local/cuda-${DRIVER_CUDA_VERSION}/bin:\$HOME/.local/bin:\$PATH"
 export LD_LIBRARY_PATH="/usr/local/cuda-${DRIVER_CUDA_VERSION}/lib64:\${LD_LIBRARY_PATH:-}"
 export HF_TOKEN="${HF_TOKEN}"
-export PI_API_KEY="${PI_API_KEY}"
+export MU_API_KEY="${MU_API_KEY}"
 export HUGGING_FACE_HUB_TOKEN="${HF_TOKEN}"
 export HF_HUB_ENABLE_HF_TRANSFER=1
 export VLLM_NO_USAGE_STATS=1
@@ -318,7 +318,7 @@ EOF
 # Create log directory for vLLM
 mkdir -p ~/.vllm_logs
 
-# --- Output GPU info for pi CLI to parse -------------------------------------
+# --- Output GPU info for mu CLI to parse -------------------------------------
 echo ""
 echo "===GPU_INFO_START==="
 nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader | while IFS=, read -r id name memory; do

@@ -1,5 +1,5 @@
-import type { ThinkingLevel } from "@kennyfrc/pi-agent-core";
-import type { SelectItem } from "@kennyfrc/pi-tui";
+import type { ThinkingLevel } from "@kennyfrc/mu-agent-core";
+import type { SelectItem } from "@kennyfrc/mu-tui";
 
 type TabThinkingLevel = Exclude<ThinkingLevel, "minimal">;
 

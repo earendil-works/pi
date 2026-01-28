@@ -7,7 +7,7 @@
  */
 
 import * as os from "node:os";
-import type { AgentTool, TextContent } from "@kennyfrc/pi-ai";
+import type { AgentTool, TextContent } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { existsSync, readFileSync } from "fs";
 import { resolve } from "path";

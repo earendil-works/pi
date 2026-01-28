@@ -1,5 +1,5 @@
-import type { Model } from "@kennyfrc/pi-ai";
-import { Container, Input, Spacer, Text, type TUI } from "@kennyfrc/pi-tui";
+import type { Model } from "@kennyfrc/mu-ai";
+import { Container, Input, Spacer, Text, type TUI } from "@kennyfrc/mu-tui";
 import { getAvailableModels } from "../model-config.js";
 import {
 	compareModelUsage,
@@ -89,7 +89,7 @@ export class ModelSelectorComponent extends Container {
 	}
 
 	private async loadModels(): Promise<void> {
-		// Load available models fresh (includes custom models from ~/.pi/agent/models.json)
+		// Load available models fresh (includes custom models from ~/.mu/agent/models.json)
 		const { models: availableModels, error } = await getAvailableModels();
 
 		// If there's an error loading models.json, we'll show it via the "no models" path

@@ -1,5 +1,5 @@
 import * as os from "node:os";
-import type { AgentTool, ImageContent, TextContent } from "@kennyfrc/pi-ai";
+import type { AgentTool, ImageContent, TextContent } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { constants } from "fs";
 import { access, readFile } from "fs/promises";

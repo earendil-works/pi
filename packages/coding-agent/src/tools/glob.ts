@@ -1,4 +1,4 @@
-import type { AgentTool } from "@kennyfrc/pi-ai";
+import type { AgentTool } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
 import { existsSync, readdirSync, statSync } from "fs";

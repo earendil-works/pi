@@ -1,15 +1,11 @@
 /**
- * Codex-Pi bridge prompt.
- * Aligns Codex CLI expectations with Pi's toolset.
+ * Codex-Mu bridge prompt.
+ * Aligns Codex CLI expectations with Mu's toolset.
  */
-
-import type { Tool } from "../../../types.js";
-
-function formatToolList(tools?: Tool[]): string {
+function formatToolList(tools) {
 	if (!tools || tools.length === 0) {
 		return "- (none)";
 	}
-
 	const normalized = tools
 		.map((tool) => {
 			const name = tool.name.trim();
@@ -17,15 +13,12 @@ function formatToolList(tools?: Tool[]): string {
 			const description = (tool.description || "Custom tool").replace(/\s*\n\s*/g, " ").trim();
 			return { name, description };
 		})
-		.filter((tool): tool is { name: string; description: string } => tool !== null);
-
+		.filter((tool) => tool !== null);
 	if (normalized.length === 0) {
 		return "- (none)";
 	}
-
 	const maxNameLength = normalized.reduce((max, tool) => Math.max(max, tool.name.length), 0);
 	const padWidth = Math.max(6, maxNameLength + 1);
-
 	return normalized
 		.map((tool) => {
 			const paddedName = tool.name.padEnd(padWidth);
@@ -33,10 +26,8 @@ function formatToolList(tools?: Tool[]): string {
 		})
 		.join("\n");
 }
-
-export function buildCodexPiBridge(tools?: Tool[]): string {
+export function buildCodexMuBridge(tools) {
 	const toolsList = formatToolList(tools);
-
 	return `# Codex Environment Bridge
 
 <environment_override priority="0">
@@ -55,3 +46,4 @@ ${toolsList}
 Only use the tools listed above. Do not reference or call any other tools.
 `;
 }
+//# sourceMappingURL=mu-codex-bridge.js.map

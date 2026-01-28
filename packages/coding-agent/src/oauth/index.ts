@@ -1,6 +1,6 @@
 /**
  * OAuth management for coding-agent.
- * Re-exports from @kennyfrc/pi-ai and adds convenience wrappers.
+ * Re-exports from @kennyfrc/mu-ai and adds convenience wrappers.
  */
 
 import {
@@ -24,7 +24,7 @@ import {
 	saveOAuthCredentials,
 	setActiveOAuthAccount,
 	setOAuthStorage,
-} from "@kennyfrc/pi-ai";
+} from "@kennyfrc/mu-ai";
 import { loginAnthropic } from "./anthropic.js";
 
 // Re-export types and functions

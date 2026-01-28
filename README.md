@@ -1,4 +1,4 @@
-# Pi Monorepo
+# Mu Monorepo
 
 Tools for building AI agents and managing LLM deployments.
 
@@ -6,15 +6,15 @@ Tools for building AI agents and managing LLM deployments.
 
 | Package | Description |
 |---------|-------------|
-| **[@kennyfrc/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
-| **[@kennyfrc/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
-| **[@kennyfrc/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
-| **[@kennyfrc/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
-| **[@kennyfrc/pi-web-ui](packages/web-ui)** | Web components for AI chat interfaces |
-| **[@kennyfrc/pi-proxy](packages/proxy)** | CORS proxy for browser-based LLM API calls |
-| **[@kennyfrc/pi](packages/pods)** | CLI for managing vLLM deployments on GPU pods |
+| **[@kennyfrc/mu-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
+| **[@kennyfrc/mu-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
+| **[@kennyfrc/mu-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
+| **[@kennyfrc/mu-tui](packages/tui)** | Terminal UI library with differential rendering |
+| **[@kennyfrc/mu-web-ui](packages/web-ui)** | Web components for AI chat interfaces |
+| **[@kennyfrc/mu-proxy](packages/proxy)** | CORS proxy for browser-based LLM API calls |
+| **[@kennyfrc/mu](packages/pods)** | CLI for managing vLLM deployments on GPU pods |
 
-**Note:** Both `pi-coding-agent` and `pi` packages provide a `pi` CLI command. If you globally install both, whichever is installed last will take precedence. Install only the one you need, or use `npx @kennyfrc/pi-coding-agent` or `npx @kennyfrc/pi` to avoid conflicts.
+**Note:** Both `mu-coding-agent` and `mu` packages provide a `mu` CLI command. If you globally install both, whichever is installed last will take precedence. Install only the one you need, or use `npx @kennyfrc/mu-coding-agent` or `npx @kennyfrc/mu` to avoid conflicts.
 
 ## Development
 
@@ -51,7 +51,7 @@ npm run version:major    # 0.7.5 -> 1.0.0
 
 These commands:
 1. Update all package versions to the same number
-2. Update inter-package dependency versions (e.g., `pi-agent` depends on `pi-ai@^0.7.7`)
+2. Update inter-package dependency versions (e.g., `mu-agent` depends on `pi-ai@^0.7.7`)
 3. Update `package-lock.json`
 
 **Never manually edit version numbers.** The lockstep system ensures consistency across the monorepo.

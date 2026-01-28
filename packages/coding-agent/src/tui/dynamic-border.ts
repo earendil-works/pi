@@ -1,4 +1,4 @@
-import type { Component } from "@kennyfrc/pi-tui";
+import type { Component } from "@kennyfrc/mu-tui";
 import { theme } from "../theme/theme.js";
 
 /**

@@ -176,7 +176,7 @@ async function createAuthorizationFlow() {
 	url.searchParams.set("state", state);
 	url.searchParams.set("id_token_add_organizations", "true");
 	url.searchParams.set("codex_cli_simplified_flow", "true");
-	url.searchParams.set("originator", "pi");
+	url.searchParams.set("originator", "mu");
 	return { verifier, state, url: url.toString() };
 }
 function startLocalOAuthServer(state) {

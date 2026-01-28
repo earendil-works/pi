@@ -5,7 +5,7 @@
  * Does NOT test full handoff flow (that requires TUI integration).
  */
 
-import type { AssistantMessage, Usage } from "@kennyfrc/pi-ai";
+import type { AssistantMessage, Usage } from "@kennyfrc/mu-ai";
 import { describe, expect, it } from "vitest";
 
 // Extract the threshold detection logic for unit testing

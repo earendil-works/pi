@@ -16,7 +16,7 @@ const TEST_SESSION_ID = "test-read-thread-00000000-0000-0000-0000-000000000001";
 const TEST_WORKSPACE = "--test-read-thread-workspace--";
 
 function getTestSessionDir(): string {
-	const configDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi/agent/");
+	const configDir = process.env.MU_CODING_AGENT_DIR || join(homedir(), ".mu/agent/");
 	return join(configDir, "sessions", TEST_WORKSPACE);
 }
 

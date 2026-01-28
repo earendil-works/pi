@@ -1,4 +1,4 @@
-import type { AgentTool } from "@kennyfrc/pi-ai";
+import type { AgentTool } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { getToolDescription } from "../prompts/index.js";
 import { getSessionsRoot, type SearchGroup, SessionIndex } from "../session-index.js";

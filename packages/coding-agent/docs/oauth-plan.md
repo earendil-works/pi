@@ -17,7 +17,7 @@ Many users have Claude Pro/Max or GitHub Copilot subscriptions but can't use the
 ## Phase 1: Anthropic OAuth (Initial Implementation)
 
 We'll start with Anthropic OAuth because:
-1. The `@kennyfrc/pi-ai` Anthropic provider already handles OAuth tokens (checks for `sk-ant-oat` prefix)
+1. The `@kennyfrc/mu-ai` Anthropic provider already handles OAuth tokens (checks for `sk-ant-oat` prefix)
 2. No custom headers needed - just return the token
 3. Simpler flow - only needs refresh token exchange
 
@@ -36,12 +36,12 @@ We'll start with Anthropic OAuth because:
    # Opens browser to https://claude.ai/oauth/authorize?code=...
    # User authorizes
    # Paste authorization code in terminal
-   # Saves tokens to ~/.pi/agent/oauth.json
+   # Saves tokens to ~/.mu/agent/oauth.json
    # Success message shown
    ```
 
 3. **Token Storage**
-   - File: `~/.pi/agent/oauth.json`
+   - File: `~/.mu/agent/oauth.json`
    - Permissions: `0o600` (owner read/write only)
    - Format:
      ```json
@@ -65,7 +65,7 @@ We'll start with Anthropic OAuth because:
 Modified `getApiKeyForModel()` for Anthropic:
 
 1. Check `ANTHROPIC_OAUTH_TOKEN` env var (manual OAuth token)
-2. Check `~/.pi/agent/oauth.json` for OAuth credentials (auto-refresh if needed)
+2. Check `~/.mu/agent/oauth.json` for OAuth credentials (auto-refresh if needed)
 3. Check `ANTHROPIC_API_KEY` env var (paid API key)
 4. Fail with helpful error message
 
@@ -140,7 +140,7 @@ Opening browser to authorize...
 Paste the authorization code here: abc123def456...
 
 ✓ Successfully authenticated with Anthropic
-  Tokens saved to ~/.pi/agent/oauth.json
+  Tokens saved to ~/.mu/agent/oauth.json
 ```
 
 Implementation:
@@ -162,7 +162,7 @@ Select provider to logout:
     [no other providers logged in]
 
 ✓ Successfully logged out of Anthropic
-  Credentials removed from ~/.pi/agent/oauth.json
+  Credentials removed from ~/.mu/agent/oauth.json
 ```
 
 Implementation:
@@ -196,7 +196,7 @@ No new dependencies needed:
 
 ### Security
 
-- Store tokens in `~/.pi/agent/oauth.json` with `0o600` permissions
+- Store tokens in `~/.mu/agent/oauth.json` with `0o600` permissions
 - Never log tokens (use `[REDACTED]` in debug output)
 - Clear credentials on logout
 - Token refresh uses HTTPS only
@@ -323,7 +323,7 @@ To logout:
 pi logout
 \`\`\`
 
-**Note:** OAuth tokens are stored in `~/.pi/agent/oauth.json` with restricted permissions (0600).
+**Note:** OAuth tokens are stored in `~/.mu/agent/oauth.json` with restricted permissions (0600).
 ```
 
 ### Slash Commands Section

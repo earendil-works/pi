@@ -1,5 +1,5 @@
-import type { AgentTool } from "@kennyfrc/pi-ai";
-import { StringEnum } from "@kennyfrc/pi-ai";
+import type { AgentTool } from "@kennyfrc/mu-ai";
+import { StringEnum } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { getToolDescription } from "../prompts/index.js";
 

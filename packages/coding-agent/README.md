@@ -1,4 +1,4 @@
-# pi
+# mu
 
 A radically simple and opinionated coding agent with multi-model support (including mid-session switching), a simple yet powerful CLI for headless coding tasks, and many creature comforts you might be used to from other coding agents.
 
@@ -30,7 +30,7 @@ Works on Linux, macOS, and Windows (barely tested, needs Git Bash running in the
 ## Installation
 
 ```bash
-npm install -g @kennyfrc/pi-coding-agent
+npm install -g @kennyfrc/mu-coding-agent
 ```
 
 ## Quick Start
@@ -40,7 +40,7 @@ npm install -g @kennyfrc/pi-coding-agent
 export ANTHROPIC_API_KEY=sk-ant-...
 
 # Start the interactive CLI
-pi
+mu
 ```
 
 Once in the CLI, you can chat with the AI:
@@ -95,7 +95,7 @@ If no API key is set, the CLI will prompt you to configure one on first run.
 If you have a Claude Pro/Max subscription, you can use OAuth instead of API keys:
 
 ```bash
-pi
+mu
 # In the interactive session:
 /login
 # Select "Anthropic (Claude Pro/Max)"
@@ -113,11 +113,11 @@ To logout:
 /logout
 ```
 
-**Note:** OAuth tokens are stored in `~/.pi/agent/oauth.json` with restricted permissions (0600).
+**Note:** OAuth tokens are stored in `~/.mu/agent/oauth.json` with restricted permissions (0600).
 
 ## Custom Models and Providers
 
-You can add custom models and providers (like Ollama, vLLM, LM Studio, or any custom API endpoint) via `~/.pi/agent/models.json`. Supports OpenAI-compatible APIs (`openai-completions`, `openai-responses`), Anthropic Messages API (`anthropic-messages`), and Google Generative AI API (`google-generative-ai`). This file is loaded fresh every time you open the `/model` selector, allowing live updates without restarting.
+You can add custom models and providers (like Ollama, vLLM, LM Studio, or any custom API endpoint) via `~/.mu/agent/models.json`. Supports OpenAI-compatible APIs (`openai-completions`, `openai-responses`), Anthropic Messages API (`anthropic-messages`), and Google Generative AI API (`google-generative-ai`). This file is loaded fresh every time you open the `/model` selector, allowing live updates without restarting.
 
 ### Configuration File Structure
 
@@ -190,7 +190,7 @@ You can add custom models and providers (like Ollama, vLLM, LM Studio, or any cu
 
 The `apiKey` field can be either an environment variable name or a literal API key:
 
-1. First, `pi` checks if an environment variable with that name exists
+1. First, `mu` checks if an environment variable with that name exists
 2. If found, uses the environment variable's value
 3. Otherwise, treats it as a literal API key
 
@@ -248,18 +248,18 @@ You can add custom HTTP headers to bypass Cloudflare bot detection, add authenti
 
 ### Model Selection Priority
 
-When starting `pi`, models are selected in this order:
+When starting `mu`, models are selected in this order:
 
 1. **CLI args**: `--provider` and `--model` flags
 2. **First from `--models` scope**: If `--models` is provided (skipped when using `--continue` or `--resume`)
 3. **Restored from session**: If using `--continue` or `--resume`
-4. **Saved default**: From `~/.pi/agent/settings.json` (set when you select a model with `/model`)
+4. **Saved default**: From `~/.mu/agent/settings.json` (set when you select a model with `/model`)
 5. **First available**: First model with a valid API key
 6. **None**: Allowed in interactive mode (shows error on message submission)
 
 ### Provider Defaults
 
-When multiple providers are available, pi prefers sensible defaults before falling back to "first available":
+When multiple providers are available, mu prefers sensible defaults before falling back to "first available":
 
 | Provider   | Default Model            |
 |------------|--------------------------|
@@ -285,11 +285,11 @@ If the file contains errors (JSON syntax, schema violations, missing fields), th
 
 ### Example: Adding Ollama Models
 
-See the configuration structure above. Create `~/.pi/agent/models.json` with your Ollama setup, then use `/model` to select your local models. The agent can also help you write this file if you point it to this README.
+See the configuration structure above. Create `~/.mu/agent/models.json` with your Ollama setup, then use `/model` to select your local models. The agent can also help you write this file if you point it to this README.
 
 ## Themes
 
-Pi supports customizable color themes for the TUI. Two built-in themes are available: `dark` (default) and `light`.
+Mu supports customizable color themes for the TUI. Two built-in themes are available: `dark` (default) and `light`.
 
 ### Selecting a Theme
 
@@ -297,32 +297,32 @@ Use the `/theme` command to interactively select a theme, or edit your settings 
 
 ```bash
 # Interactive selector
-pi
+mu
 /theme
 
-# Or edit ~/.pi/agent/settings.json
+# Or edit ~/.mu/agent/settings.json
 {
   "theme": "dark"  # or "light"
 }
 ```
 
-On first run, Pi auto-detects your terminal background (dark/light) and selects an appropriate theme.
+On first run, Mu auto-detects your terminal background (dark/light) and selects an appropriate theme.
 
 ### Custom Themes
 
-Create custom themes in `~/.pi/agent/themes/*.json`. Custom themes support **live editing** - when you select a custom theme, Pi watches the file and automatically reloads when you save changes.
+Create custom themes in `~/.mu/agent/themes/*.json`. Custom themes support **live editing** - when you select a custom theme, Pi watches the file and automatically reloads when you save changes.
 
 **Workflow for creating themes:**
 1. Copy a built-in theme as a starting point:
    ```bash
-   mkdir -p ~/.pi/agent/themes
+   mkdir -p ~/.mu/agent/themes
    # Copy dark theme
-   cp $(npm root -g)/@kennyfrc/pi-coding-agent/dist/theme/dark.json ~/.pi/agent/themes/my-theme.json
+   cp $(npm root -g)/@kennyfrc/mu-coding-agent/dist/theme/dark.json ~/.mu/agent/themes/my-theme.json
    # Or copy light theme
-   cp $(npm root -g)/@kennyfrc/pi-coding-agent/dist/theme/light.json ~/.pi/agent/themes/my-theme.json
+   cp $(npm root -g)/@kennyfrc/mu-coding-agent/dist/theme/light.json ~/.mu/agent/themes/my-theme.json
    ```
 2. Use `/theme` to select "my-theme"
-3. Edit `~/.pi/agent/themes/my-theme.json` - changes apply immediately on save
+3. Edit `~/.mu/agent/themes/my-theme.json` - changes apply immediately on save
 4. Iterate until satisfied (no need to re-select the theme)
 
 See [Theme Documentation](docs/theme.md) for:
@@ -334,7 +334,7 @@ Example custom theme:
 
 ```json
 {
-  "$schema": "https://raw.githubusercontent.com/badlogic/pi-mono/main/packages/coding-agent/theme-schema.json",
+  "$schema": "https://raw.githubusercontent.com/badlogic/mu-mono/main/packages/coding-agent/theme-schema.json",
   "name": "my-theme",
   "vars": {
     "accent": "#00aaff",
@@ -469,7 +469,7 @@ Toggle automatic session handoff when context usage is high.
 /autohandoff status   # show current status
 ```
 
-Auto-handoff is stored in `~/.pi/agent/settings.json` and defaults to `off`.
+Auto-handoff is stored in `~/.mu/agent/settings.json` and defaults to `off`.
 
 ## Editor Features
 
@@ -528,7 +528,7 @@ You can submit multiple messages while the agent is processing without waiting f
 - All queued messages (plus any text in the editor) are restored to the editor
 - Allows you to modify or remove queued messages before resubmitting
 
-Change queue mode with `/queue` command. Setting is saved in `~/.pi/agent/settings.json`.
+Change queue mode with `/queue` command. Setting is saved in `~/.mu/agent/settings.json`.
 
 ### Keyboard Shortcuts
 
@@ -537,7 +537,7 @@ Change queue mode with `/queue` command. Setting is saved in `~/.pi/agent/settin
 - **Ctrl+U**: Delete to start of line (at line start: merge with previous line)
 - **Cmd+Backspace** (Ghostty): Delete to start of line (same as Ctrl+U)
 - **Ctrl+K**: Delete to end of line (at line end: merge with next line)
-- **Ctrl+C**: Clear editor (first press) / Exit pi (second press)
+- **Ctrl+C**: Clear editor (first press) / Exit mu (second press)
 - **Tab**: Path completion (when autocomplete active) / Cycle thinking level off → low → medium → high → xhigh (for reasoning-capable models)
 - **Shift+Tab** (Ghostty): Cycle thinking level xhigh → high → medium → low → off
 - **Ctrl+P**: Cycle models (use `--models` to scope)
@@ -559,7 +559,7 @@ The agent automatically loads context from `AGENTS.md` or `CLAUDE.md` files at s
 
 Context files are loaded in this order:
 
-1. **Global context**: `~/.pi/agent/AGENTS.md` or `CLAUDE.md`
+1. **Global context**: `~/.mu/agent/AGENTS.md` or `CLAUDE.md`
    - Applies to all your coding sessions
    - Great for personal coding preferences and workflows
 
@@ -617,22 +617,22 @@ The image will be automatically encoded and sent with your message. JPEG and PNG
 
 ## Session Management
 
-Sessions are automatically saved in `~/.pi/agent/sessions/` organized by working directory. Each session is stored as a JSONL file with a unique timestamp-based ID.
+Sessions are automatically saved in `~/.mu/agent/sessions/` organized by working directory. Each session is stored as a JSONL file with a unique timestamp-based ID.
 
 To continue the most recent session:
 
 ```bash
-pi --continue
+mu --continue
 # or
-pi -c
+mu -c
 ```
 
 To browse and select from past sessions:
 
 ```bash
-pi --resume
+mu --resume
 # or
-pi -r
+mu -r
 ```
 
 This opens an interactive session selector where you can:
@@ -646,19 +646,19 @@ Sessions include all conversation messages, tool calls and results, model switch
 To run without saving a session (ephemeral mode):
 
 ```bash
-pi --no-session
+mu --no-session
 ```
 
 To use a specific session file instead of auto-generating one:
 
 ```bash
-pi --session /path/to/my-session.jsonl
+mu --session /path/to/my-session.jsonl
 ```
 
 ## CLI Options
 
 ```bash
-pi [options] [@files...] [messages...]
+mu [options] [@files...] [messages...]
 ```
 
 ### File Arguments (`@file`)
@@ -667,19 +667,19 @@ You can include files directly in your initial message using the `@` prefix:
 
 ```bash
 # Include a text file in your prompt
-pi @prompt.md "Answer the question"
+mu @prompt.md "Answer the question"
 
 # Include multiple files
-pi @requirements.md @context.txt "Summarize these"
+mu @requirements.md @context.txt "Summarize these"
 
 # Include images (vision-capable models only)
-pi @screenshot.png "What's in this image?"
+mu @screenshot.png "What's in this image?"
 
 # Mix text and images
-pi @prompt.md @diagram.png "Explain based on the diagram"
+mu @prompt.md @diagram.png "Explain based on the diagram"
 
 # Files without additional text
-pi @task.md
+mu @task.md
 ```
 
 **How it works:**
@@ -693,17 +693,17 @@ pi @task.md
 **Examples:**
 ```bash
 # All files go into first message, regardless of position
-pi @file1.md @file2.txt "prompt" @file3.md
+mu @file1.md @file2.txt "prompt" @file3.md
 
 # This sends:
 # Message 1: file1 + file2 + file3 + "prompt"
 # (Any additional plain text arguments become separate messages)
 
 # Home directory expansion works
-pi @~/Documents/notes.md "Summarize"
+mu @~/Documents/notes.md "Summarize"
 
 # Combine with other options
-pi --print @requirements.md "List the main points"
+mu --print @requirements.md "List the main points"
 ```
 
 **Limitations:**
@@ -713,7 +713,7 @@ pi --print @requirements.md "List the main points"
 ### Options
 
 **--provider <name>**
-Provider name. Available: `anthropic`, `openai`, `google`, `xai`, `groq`, `cerebras`, `openrouter`, `zai`, plus any custom providers defined in `~/.pi/agent/models.json`.
+Provider name. Available: `anthropic`, `openai`, `google`, `xai`, `groq`, `cerebras`, `openrouter`, `zai`, plus any custom providers defined in `~/.mu/agent/models.json`.
 
 **--model <id>**
 Model ID. If not specified, uses: (1) saved default from settings, (2) first available model with valid API key, or (3) none (interactive mode only).
@@ -731,7 +731,7 @@ If the argument is a valid file path, the file contents will be used as the syst
 **--mode <mode>**
 Output mode for non-interactive usage (implies `--print`). Options:
 - `text` (default): Output only the final assistant message text
-- `json`: Stream all agent events as JSON (one event per line). Events are emitted by `@kennyfrc/pi-agent` and include message updates, tool executions, and completions
+- `json`: Stream all agent events as JSON (one event per line). Events are emitted by `@kennyfrc/mu-agent` and include message updates, tool executions, and completions
 - `rpc`: JSON mode plus stdin listener for headless operation. Send JSON commands on stdin: `{"type":"prompt","message":"..."}` or `{"type":"abort"}`. See [test/rpc-example.ts](test/rpc-example.ts) for a complete example
 
 **--print, -p**
@@ -766,7 +766,7 @@ Examples:
 - `--models sonnet,haiku` - Partial match for any model containing "sonnet" or "haiku"
 
 **--tools <tools>**
-Comma-separated list of tools to enable. By default, pi uses `read,bash,edit,write,grep,glob`. This flag allows restricting or changing the available tools.
+Comma-separated list of tools to enable. By default, mu uses `read,bash,edit,write,grep,glob`. This flag allows restricting or changing the available tools.
 
 Available tools:
 - `read` - Read file contents
@@ -803,57 +803,57 @@ Show help message
 
 ```bash
 # Start interactive mode
-pi
+mu
 
 # Interactive mode with initial prompt (stays running after completion)
-pi "List all .ts files in src/"
+mu "List all .ts files in src/"
 
 # Include files in your prompt
-pi @requirements.md @design.png "Implement this feature"
+mu @requirements.md @design.png "Implement this feature"
 
 # Non-interactive mode (process prompt and exit)
-pi -p "List all .ts files in src/"
+mu -p "List all .ts files in src/"
 
 # Non-interactive with files
-pi -p @code.ts "Review this code for bugs"
+mu -p @code.ts "Review this code for bugs"
 
 # JSON mode - stream all agent events (non-interactive)
-pi --mode json "List all .ts files in src/"
+mu --mode json "List all .ts files in src/"
 
 # RPC mode - headless operation (see test/rpc-example.ts)
-pi --mode rpc --no-session
+mu --mode rpc --no-session
 # Then send JSON on stdin:
 # {"type":"prompt","message":"List all .ts files"}
 # {"type":"abort"}
 
 # Continue previous session
-pi -c "What did we discuss?"
+mu -c "What did we discuss?"
 
 # Use different model
-pi --provider openai --model gpt-4o "Help me refactor this code"
+mu --provider openai --model gpt-4o "Help me refactor this code"
 
 # Limit model cycling to specific models
-pi --models claude-sonnet,claude-haiku,gpt-4o
+mu --models claude-sonnet,claude-haiku,gpt-4o
 # Now Ctrl+P cycles only through those models
 
 # Model cycling with thinking levels
-pi --models sonnet:high,haiku:low
+mu --models sonnet:high,haiku:low
 # Starts with sonnet at high thinking, Ctrl+P switches to haiku at low thinking
 
 # Start with specific thinking level
-pi --thinking high "Solve this complex algorithm problem"
+mu --thinking high "Solve this complex algorithm problem"
 
 # Read-only mode (no file modifications possible)
-pi --tools read,grep,glob -p "Review the architecture in src/"
+mu --tools read,grep,glob -p "Review the architecture in src/"
 
 # Oracle-style subagent (bash for git/gh, no file modifications)
-pi --tools read,bash,grep,glob \
+mu --tools read,bash,grep,glob \
    --no-session \
    -p "Use bash only for read-only operations. Read issue #74 with gh, then review the implementation"
 
 # Export a session file to HTML
-pi --export ~/.pi/agent/sessions/--myproject--/session.jsonl
-pi --export session.jsonl my-export.html
+mu --export ~/.mu/agent/sessions/--myproject--/session.jsonl
+mu --export session.jsonl my-export.html
 ```
 
 ## Tools
@@ -923,7 +923,7 @@ You: Read ~/agent-tools/screenshot/README.md and use that tool to take a screens
 The agent will read the README, understand the tool, and invoke it via bash as needed. If you need a new tool, ask the agent to write it for you.
 
 You can also reference tool READMEs in your `AGENTS.md` files to make them automatically available:
-- Global: `~/.pi/agent/AGENTS.md` - available in all sessions
+- Global: `~/.mu/agent/AGENTS.md` - available in all sessions
 - Project-specific: `./AGENTS.md` - available in this project
 
 **Real-world example:**
@@ -947,16 +947,16 @@ This agent runs in full YOLO mode and assumes you know what you're doing. It has
 - Pre-checking tools for "dangerous" patterns introduces latency, false positives, and is ineffective
 
 **Prompt injection risks:**
-- By default, pi has no web search or fetch tool
+- By default, mu has no web search or fetch tool
 - However, it can use `curl` or read files from disk
 - Both provide ample surface area for prompt injection attacks
 - Malicious content in files or command outputs can influence behavior
 
 **Mitigations:**
-- Run pi inside a container if you're uncomfortable with full access
+- Run mu inside a container if you're uncomfortable with full access
 - Use a different tool if you need guardrails
-- Don't use pi on systems with sensitive data you can't afford to lose
-- Fork pi and add all of the above
+- Don't use mu on systems with sensitive data you can't afford to lose
+- Fork mu and add all of the above
 
 This is how I want it to work and I'm not likely to change my stance on this.
 
@@ -966,14 +966,14 @@ Use at your own risk.
 
 **pi does not and will not support sub-agents as a built-in feature.** If the agent needs to delegate work, it can:
 
-1. Spawn another instance of itself via the `pi` CLI command
-2. Write a custom tool with a README.md that describes how to invoke pi for specific tasks
+1. Spawn another instance of itself via the `mu` CLI command
+2. Write a custom tool with a README.md that describes how to invoke mu for specific tasks
 
 **Why no built-in sub-agents:**
 
 Context transfer between agents is generally poor. Information gets lost, compressed, or misrepresented when passed through agent boundaries. Direct execution with full context is more effective than delegation with summarized context.
 
-If you need parallel work on independent tasks, manually run multiple `pi` sessions in different terminal tabs. You're the orchestrator.
+If you need parallel work on independent tasks, manually run multiple `mu` sessions in different terminal tabs. You're the orchestrator.
 
 ## Background Bash
 
@@ -990,7 +990,7 @@ Things that might happen eventually:
 
 ### Debug Command
 
-The `/debug` command is a hidden development feature (not shown in autocomplete) that writes all currently rendered lines with their visible widths and ANSI escape sequences to `~/.pi/agent/pi-debug.log`. This is useful for debugging TUI rendering issues, especially when lines don't extend to the terminal edge or contain unexpected invisible characters.
+The `/debug` command is a hidden development feature (not shown in autocomplete) that writes all currently rendered lines with their visible widths and ANSI escape sequences to `~/.mu/agent/pi-debug.log`. This is useful for debugging TUI rendering issues, especially when lines don't extend to the terminal edge or contain unexpected invisible characters.
 
 ```
 /debug
@@ -1007,5 +1007,5 @@ MIT
 
 ## See Also
 
-- [@kennyfrc/pi-ai](https://www.npmjs.com/package/@kennyfrc/pi-ai): Core LLM toolkit with multi-provider support
-- [@kennyfrc/pi-agent](https://www.npmjs.com/package/@kennyfrc/pi-agent): Agent framework with tool execution
+- [@kennyfrc/mu-ai](https://www.npmjs.com/package/@kennyfrc/mu-ai): Core LLM toolkit with multi-provider support
+- [@kennyfrc/mu-agent](https://www.npmjs.com/package/@kennyfrc/mu-agent): Agent framework with tool execution

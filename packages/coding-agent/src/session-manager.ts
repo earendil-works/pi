@@ -1,4 +1,4 @@
-import type { AgentState } from "@kennyfrc/pi-agent-core";
+import type { AgentState } from "@kennyfrc/mu-agent-core";
 import { randomBytes } from "crypto";
 import {
 	appendFileSync,
@@ -110,7 +110,7 @@ export class SessionManager {
 		// Replace all path separators and colons (for Windows drive letters) with dashes
 		const safePath = "--" + cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-") + "--";
 
-		const configDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi/agent/"));
+		const configDir = resolve(process.env.MU_CODING_AGENT_DIR || join(homedir(), ".mu/agent/"));
 		const sessionDir = join(configDir, "sessions", safePath);
 		if (!existsSync(sessionDir) && !this.readOnly) {
 			mkdirSync(sessionDir, { recursive: true });
@@ -118,9 +118,9 @@ export class SessionManager {
 		return sessionDir;
 	}
 
-	/** Get the root sessions directory (~/.pi/agent/sessions/) */
+	/** Get the root sessions directory (~/.mu/agent/sessions/) */
 	private getSessionsRootDir(): string {
-		const configDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi/agent/"));
+		const configDir = resolve(process.env.MU_CODING_AGENT_DIR || join(homedir(), ".mu/agent/"));
 		return join(configDir, "sessions");
 	}
 

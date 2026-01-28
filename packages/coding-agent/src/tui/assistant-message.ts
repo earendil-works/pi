@@ -1,5 +1,5 @@
-import type { AssistantMessage } from "@kennyfrc/pi-ai";
-import { Container, Markdown, Spacer, Text } from "@kennyfrc/pi-tui";
+import type { AssistantMessage } from "@kennyfrc/mu-ai";
+import { Container, Markdown, Spacer, Text } from "@kennyfrc/mu-tui";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
 
 /**

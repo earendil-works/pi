@@ -22,5 +22,5 @@ packages/*/dist-firefox/
 .npm/
 coverage/
 .nyc_output/
-.pi_config/
+.mu_config/
 tui-debug.log

@@ -1,5 +1,5 @@
-import type { AgentState } from "@kennyfrc/pi-agent-core";
-import type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "@kennyfrc/pi-ai";
+import type { AgentState } from "@kennyfrc/mu-agent-core";
+import type { AssistantMessage, Message, ToolResultMessage, UserMessage } from "@kennyfrc/mu-ai";
 import { existsSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { basename, dirname, join } from "path";
@@ -358,10 +358,10 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
 	const sessionFile = sessionManager.getSessionFile();
 	const timestamp = new Date().toISOString();
 
-	// Use pi-session- prefix + session filename + .html if no output path provided
+	// Use mu-session- prefix + session filename + .html if no output path provided
 	if (!outputPath) {
 		const sessionBasename = basename(sessionFile, ".jsonl");
-		outputPath = `pi-session-${sessionBasename}.html`;
+		outputPath = `mu-session-${sessionBasename}.html`;
 	}
 
 	// Read and parse session data
@@ -1633,7 +1633,7 @@ export function exportFromFile(inputPath: string, outputPath?: string): string {
 	// Generate output path if not provided
 	if (!outputPath) {
 		const inputBasename = basename(inputPath, ".jsonl");
-		outputPath = `pi-session-${inputBasename}.html`;
+		outputPath = `mu-session-${inputBasename}.html`;
 	}
 
 	const html = generateHtml(data, basename(inputPath));

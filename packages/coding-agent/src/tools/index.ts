@@ -1,4 +1,4 @@
-import type { AgentTool } from "@kennyfrc/pi-ai";
+import type { AgentTool } from "@kennyfrc/mu-ai";
 
 export { applyPatchTool } from "./apply-patch.js";
 export { bashTool } from "./bash.js";

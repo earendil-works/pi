@@ -21,7 +21,7 @@ interface OAuthStorageFormat {
  * Get path to oauth.json
  */
 function getOAuthFilePath(): string {
-	const configDir = join(homedir(), ".pi", "agent");
+	const configDir = join(homedir(), ".mu", "agent");
 	return join(configDir, "oauth.json");
 }
 
@@ -29,7 +29,7 @@ function getOAuthFilePath(): string {
  * Ensure the config directory exists
  */
 function ensureConfigDir(): void {
-	const configDir = join(homedir(), ".pi", "agent");
+	const configDir = join(homedir(), ".mu", "agent");
 	if (!existsSync(configDir)) {
 		mkdirSync(configDir, { recursive: true, mode: 0o700 });
 	}

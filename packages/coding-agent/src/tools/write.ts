@@ -1,5 +1,5 @@
 import * as os from "node:os";
-import type { AgentTool } from "@kennyfrc/pi-ai";
+import type { AgentTool } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { createHash } from "crypto";
 import { mkdir, readFile, writeFile } from "fs/promises";

@@ -1,12 +1,12 @@
 {
-	"name": "@kennyfrc/pi-proxy",
-	"version": "0.22.30",
+	"name": "@kennyfrc/mu-proxy",
+	"version": "0.23.0",
 	"type": "module",
-	"description": "CORS and authentication proxy for pi-ai",
+	"description": "CORS and authentication proxy for mu-ai",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
 	"bin": {
-		"pi-proxy": "dist/cli.js"
+		"mu-proxy": "dist/cli.js"
 	},
 	"scripts": {
 		"clean": "rm -rf dist",

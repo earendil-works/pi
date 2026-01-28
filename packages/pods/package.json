@@ -1,10 +1,10 @@
 {
-	"name": "@kennyfrc/pi",
-	"version": "0.22.30",
+	"name": "@kennyfrc/mu",
+	"version": "0.23.0",
 	"description": "CLI tool for managing vLLM deployments on GPU pods",
 	"type": "module",
 	"bin": {
-		"pi": "dist/cli.js"
+		"mu": "dist/cli.js"
 	},
 	"scripts": {
 		"clean": "rm -rf dist",
@@ -27,14 +27,14 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/kennyfrc/pi-mono.git",
+		"url": "git+https://github.com/kennyfrc/mu-mono.git",
 		"directory": "packages/pods"
 	},
 	"engines": {
 		"node": ">=20.0.0"
 	},
 	"dependencies": {
-		"@kennyfrc/pi-agent-core": "^0.22.30",
+		"@kennyfrc/mu-agent-core": "^0.23.0",
 		"chalk": "^5.5.0"
 	},
 	"devDependencies": {}

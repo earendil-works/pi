@@ -1,4 +1,4 @@
-import type { AgentTool, Api, Model } from "@kennyfrc/pi-ai";
+import type { AgentTool, Api, Model } from "@kennyfrc/mu-ai";
 import type { TSchema } from "@sinclair/typebox";
 import { allTools, type ToolName } from "./index.js";
 

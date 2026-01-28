@@ -978,7 +978,7 @@ function formatToolList(tools) {
 		})
 		.join("\n");
 }
-export function buildCodexPiBridge(tools) {
+export function buildCodexMuBridge(tools) {
 	const toolsList = formatToolList(tools);
 	return `# Codex Environment Bridge
 

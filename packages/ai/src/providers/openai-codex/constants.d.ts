@@ -11,7 +11,7 @@ export declare const OPENAI_HEADERS: {
 };
 export declare const OPENAI_HEADER_VALUES: {
 	readonly BETA_RESPONSES: "responses=experimental";
-	readonly ORIGINATOR_CODEX: "pi";
+	readonly ORIGINATOR_CODEX: "mu";
 };
 export declare const URL_PATHS: {
 	readonly RESPONSES: "/responses";

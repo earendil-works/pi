@@ -4,7 +4,7 @@ import type {
 	ResponseOutputMessage,
 	ResponseReasoningItem,
 } from "openai/resources/responses/responses.js";
-import { PI_STATIC_INSTRUCTIONS } from "../constants.js";
+import { MU_STATIC_INSTRUCTIONS } from "../constants.js";
 import { calculateCost } from "../models.js";
 import { getEnvApiKey } from "../stream.js";
 import type {
@@ -27,7 +27,7 @@ import { getOAuthApiKey } from "../utils/oauth/index.js";
 import { listOAuthAccounts, markOAuthAccountCooldown } from "../utils/oauth/storage.js";
 import { getExponentialBackoff, sleep } from "../utils/retry.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
-import { buildCodexPiBridge, OPENCODE_CODEX_INSTRUCTIONS } from "./openai-codex-responses-legacy.js";
+import { buildCodexMuBridge, OPENCODE_CODEX_INSTRUCTIONS } from "./openai-codex-responses-legacy.js";
 import { transformMessages } from "./transform-messages.js";
 
 // ============================================================================
@@ -511,13 +511,13 @@ function buildSystemPrompt(
 ): { instructions: string; developerMessages: string[] } {
 	if (USE_LEGACY_CODEX_PROMPT) {
 		const developerMessages: string[] = [];
-		const bridgeText = buildCodexPiBridge(tools);
+		const bridgeText = buildCodexMuBridge(tools);
 		if (bridgeText.trim()) developerMessages.push(bridgeText.trim());
 		if (userSystemPrompt?.trim()) developerMessages.push(userSystemPrompt.trim());
 		return { instructions: OPENCODE_CODEX_INSTRUCTIONS, developerMessages };
 	}
 
-	const staticPrefix = PI_STATIC_INSTRUCTIONS.trim();
+	const staticPrefix = MU_STATIC_INSTRUCTIONS.trim();
 	const staticInstructions = `<system_instructions>\n${staticPrefix}\n</system_instructions>`;
 	const developerMessages: string[] = [];
 

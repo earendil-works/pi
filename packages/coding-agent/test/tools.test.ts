@@ -686,7 +686,7 @@ describe("Coding Agent Tools", () => {
 
 	describe("schema validation", () => {
 		it("should have Google-compatible schemas for all coding tools", async () => {
-			const { validateToolSchemas } = await import("@kennyfrc/pi-ai");
+			const { validateToolSchemas } = await import("@kennyfrc/mu-ai");
 			const { codingTools } = await import("../src/tools/index.js");
 
 			const errors = validateToolSchemas(codingTools);

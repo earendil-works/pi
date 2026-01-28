@@ -25,7 +25,7 @@ export class PromptHistoryManager {
 		// Match SessionManager's path isolation pattern
 		const safePath = "--" + cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-") + "--";
 
-		const configDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi/agent/"));
+		const configDir = resolve(process.env.MU_CODING_AGENT_DIR || join(homedir(), ".mu/agent/"));
 		const historyDir = join(configDir, "prompt-history", safePath);
 		if (!existsSync(historyDir)) {
 			mkdirSync(historyDir, { recursive: true });

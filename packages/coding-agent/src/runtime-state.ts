@@ -1,4 +1,4 @@
-import type { Api, Model } from "@kennyfrc/pi-ai";
+import type { Api, Model } from "@kennyfrc/mu-ai";
 
 let currentModel: Model<Api> | undefined;
 

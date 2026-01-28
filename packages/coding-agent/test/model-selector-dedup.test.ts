@@ -4,8 +4,8 @@ describe("model selector: built-in + custom model de-duplication", () => {
 	it("does not return duplicate entries when models.json defines the same provider+id as a built-in model", async () => {
 		vi.resetModules();
 
-		const fakeHome = "/tmp/pi-home";
-		const configPath = `${fakeHome}/.pi/agent/models.json`;
+		const fakeHome = "/tmp/mu-home";
+		const configPath = `${fakeHome}/.mu/agent/models.json`;
 
 		// Mock os.homedir() so model-config reads from our fake path
 		vi.doMock("os", () => ({
@@ -42,7 +42,7 @@ describe("model selector: built-in + custom model de-duplication", () => {
 		}));
 
 		// Mock pi-ai model registry so there is also a built-in moonshot/kimi-k2.5
-		vi.doMock("@kennyfrc/pi-ai", () => ({
+		vi.doMock("@kennyfrc/mu-ai", () => ({
 			getProviders: () => ["moonshot"],
 			getModels: () => [
 				{

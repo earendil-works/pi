@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Model runner script - runs sequentially, killed by pi stop
+# Model runner script - runs sequentially, killed by mu stop
 set -euo pipefail
 
-# These values are replaced before upload by pi CLI
+# These values are replaced before upload by mu CLI
 MODEL_ID="{{MODEL_ID}}"
 NAME="{{NAME}}"
 PORT="{{PORT}}"
@@ -52,7 +52,7 @@ echo "✅ Model download complete"
 echo ""
 
 # Build vLLM command
-VLLM_CMD="vllm serve '$MODEL_ID' --port $PORT --api-key '$PI_API_KEY'"
+VLLM_CMD="vllm serve '$MODEL_ID' --port $PORT --api-key '$MU_API_KEY'"
 if [ -n "$VLLM_ARGS" ]; then
     VLLM_CMD="$VLLM_CMD $VLLM_ARGS"
 fi

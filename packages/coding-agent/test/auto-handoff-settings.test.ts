@@ -11,7 +11,7 @@ import { SettingsManager } from "../src/settings-manager.js";
 
 describe("SettingsManager auto-handoff mode", () => {
 	it("defaults to off when unset", () => {
-		const baseDir = join(tmpdir(), `pi-settings-test-${Date.now()}`);
+		const baseDir = join(tmpdir(), `mu-settings-test-${Date.now()}`);
 		mkdirSync(baseDir, { recursive: true });
 		try {
 			const settings = new SettingsManager(baseDir);
@@ -22,7 +22,7 @@ describe("SettingsManager auto-handoff mode", () => {
 	});
 
 	it("persists mode across instances", () => {
-		const baseDir = join(tmpdir(), `pi-settings-test-${Date.now()}`);
+		const baseDir = join(tmpdir(), `mu-settings-test-${Date.now()}`);
 		mkdirSync(baseDir, { recursive: true });
 		try {
 			const settingsA = new SettingsManager(baseDir);

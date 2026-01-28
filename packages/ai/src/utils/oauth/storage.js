@@ -1,7 +1,7 @@
 /**
  * OAuth credential storage with configurable backend.
  *
- * Default: ~/.pi/agent/oauth.json
+ * Default: ~/.mu/agent/oauth.json
  * Override with setOAuthStorage() for custom storage locations or backends.
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
@@ -11,7 +11,7 @@ import { dirname, join } from "path";
 // ============================================================================
 // Default filesystem backend
 // ============================================================================
-const DEFAULT_PATH = join(homedir(), ".pi", "agent", "oauth.json");
+const DEFAULT_PATH = join(homedir(), ".mu", "agent", "oauth.json");
 function defaultLoad() {
 	if (!existsSync(DEFAULT_PATH)) {
 		return {};
@@ -60,7 +60,7 @@ export function setOAuthStorage(backend) {
 	currentBackend = backend;
 }
 /**
- * Reset to default filesystem storage (~/.pi/agent/oauth.json)
+ * Reset to default filesystem storage (~/.mu/agent/oauth.json)
  */
 export function resetOAuthStorage() {
 	currentBackend = { load: defaultLoad, save: defaultSave };

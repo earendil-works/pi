@@ -375,7 +375,7 @@ function buildRequest(model, context, projectId, options = {}) {
 		project: projectId,
 		model: model.id,
 		request,
-		userAgent: "pi-coding-agent",
+		userAgent: "mu-coding-agent",
 		requestId: `pi-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
 	};
 }

@@ -1,6 +1,6 @@
 // Verification: Queue drain pause/resume functionality
 
-import { getModel } from "@kennyfrc/pi-ai";
+import { getModel } from "@kennyfrc/mu-ai";
 import { beforeEach, describe, expect, it } from "vitest";
 import { Agent } from "../src/agent.js";
 

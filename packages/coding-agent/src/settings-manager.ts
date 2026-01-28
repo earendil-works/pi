@@ -21,7 +21,7 @@ export class SettingsManager {
 	private settings: Settings;
 
 	constructor(baseDir?: string) {
-		const dir = baseDir || join(homedir(), ".pi", "agent");
+		const dir = baseDir || join(homedir(), ".mu", "agent");
 		this.settingsPath = join(dir, "settings.json");
 		this.settings = this.load();
 	}

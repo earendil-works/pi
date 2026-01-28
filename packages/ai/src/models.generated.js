@@ -2534,6 +2534,23 @@ export const MODELS = {
 		},
 	},
 	openrouter: {
+		"arcee-ai/trinity-large-preview:free": {
+			id: "arcee-ai/trinity-large-preview:free",
+			name: "Arcee AI: Trinity Large Preview (free)",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: false,
+			input: ["text"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 131000,
+			maxTokens: 4096,
+		},
 		"moonshotai/kimi-k2.5": {
 			id: "moonshotai/kimi-k2.5",
 			name: "MoonshotAI: Kimi K2.5",
@@ -2545,11 +2562,11 @@ export const MODELS = {
 			cost: {
 				input: 0.6,
 				output: 3,
-				cacheRead: 0.09999999999999999,
+				cacheRead: 0,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
-			maxTokens: 4096,
+			maxTokens: 262144,
 		},
 		"upstage/solar-pro-3:free": {
 			id: "upstage/solar-pro-3:free",
@@ -2822,23 +2839,6 @@ export const MODELS = {
 			},
 			contextWindow: 400000,
 			maxTokens: 128000,
-		},
-		"mistralai/devstral-2512:free": {
-			id: "mistralai/devstral-2512:free",
-			name: "Mistral: Devstral 2 2512 (free)",
-			api: "openai-completions",
-			provider: "openrouter",
-			baseUrl: "https://openrouter.ai/api/v1",
-			reasoning: false,
-			input: ["text"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
-			contextWindow: 262144,
-			maxTokens: 4096,
 		},
 		"mistralai/devstral-2512": {
 			id: "mistralai/devstral-2512",
@@ -3616,7 +3616,7 @@ export const MODELS = {
 			cost: {
 				input: 0.21,
 				output: 0.32,
-				cacheRead: 0,
+				cacheRead: 0.21,
 				cacheWrite: 0,
 			},
 			contextWindow: 163840,
@@ -3637,7 +3637,7 @@ export const MODELS = {
 				cacheWrite: 0.08333333333333334,
 			},
 			contextWindow: 1048576,
-			maxTokens: 65535,
+			maxTokens: 65536,
 		},
 		"google/gemini-2.5-flash-lite-preview-09-2025": {
 			id: "google/gemini-2.5-flash-lite-preview-09-2025",
@@ -5010,7 +5010,7 @@ export const MODELS = {
 			cost: {
 				input: 0.049999999999999996,
 				output: 0.25,
-				cacheRead: 0,
+				cacheRead: 0.049999999999999996,
 				cacheWrite: 0,
 			},
 			contextWindow: 32000,

@@ -1,4 +1,4 @@
-import { type AgentContext, type AgentLoopConfig, agentLoop, type Message, type UserMessage } from "@kennyfrc/pi-ai";
+import { type AgentContext, type AgentLoopConfig, agentLoop, type Message, type UserMessage } from "@kennyfrc/mu-ai";
 import type { AgentRunConfig, AgentTransport } from "./types.js";
 
 export interface ProviderTransportOptions {

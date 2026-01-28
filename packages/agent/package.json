@@ -1,6 +1,6 @@
 {
-	"name": "@kennyfrc/pi-agent-core",
-	"version": "0.22.30",
+	"name": "@kennyfrc/mu-agent-core",
+	"version": "0.23.0",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -18,8 +18,8 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-		"@kennyfrc/pi-ai": "^0.22.30",
-		"@kennyfrc/pi-tui": "^0.22.30"
+		"@kennyfrc/mu-ai": "^0.23.0",
+		"@kennyfrc/mu-tui": "^0.23.0"
 	},
 	"keywords": [
 		"ai",
@@ -32,7 +32,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/kennyfrc/pi-mono.git",
+		"url": "git+https://github.com/kennyfrc/mu-mono.git",
 		"directory": "packages/agent"
 	},
 	"engines": {

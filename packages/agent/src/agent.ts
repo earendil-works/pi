@@ -1,5 +1,5 @@
-import type { ImageContent, Message, TextContent, ToolResultMessage } from "@kennyfrc/pi-ai";
-import { getModel } from "@kennyfrc/pi-ai";
+import type { ImageContent, Message, TextContent, ToolResultMessage } from "@kennyfrc/mu-ai";
+import { getModel } from "@kennyfrc/mu-ai";
 import type { AgentTransport } from "./transports/types.js";
 import type { AgentEvent, AgentState, AppMessage, Attachment, ThinkingLevel } from "./types.js";
 

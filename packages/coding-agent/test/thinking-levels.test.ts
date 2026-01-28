@@ -1,4 +1,4 @@
-import type { ThinkingLevel } from "@kennyfrc/pi-agent-core";
+import type { ThinkingLevel } from "@kennyfrc/mu-agent-core";
 import { beforeAll, describe, expect, it } from "vitest";
 import { initTheme, theme } from "../src/theme/theme.js";
 import {

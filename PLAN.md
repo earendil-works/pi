@@ -11,9 +11,9 @@ This plan details the refactoring of the `read_thread` tool to support semantic 
 4. **Manage Context**: Handle large threads by retrieving more messages when a goal is present, but truncating to fit the extraction model's context window.
 
 ### Architecture Impact
-- **Dependencies**: The tool will now depend on the `pi-ai` generic model invocation functions (`complete`, `getModel`, `Context`).
+- **Dependencies**: The tool will now depend on the `mu-ai` generic model invocation functions (`complete`, `getModel`, `Context`).
 - **State**: No new state is persisted; the operation is stateless.
-- **Configuration**: Requires `ANTHROPIC_API_KEY` to be available in the environment (standard for `pi-ai`).
+- **Configuration**: Requires `ANTHROPIC_API_KEY` to be available in the environment (standard for `mu-ai`).
 
 ## 2. Modified Files
 
@@ -60,7 +60,7 @@ Refactor the `execute` function to handle the branching logic.
 
 **Imports needed:**
 ```typescript
-import { complete, getModel, type Context } from "@kennyfrc/pi-ai";
+import { complete, getModel, type Context } from "@kennyfrc/mu-ai";
 ```
 
 ### Step 3: Implement Extraction Helper (`read-thread.ts`)
@@ -149,7 +149,7 @@ Since this is a refactor of an existing tool:
 ## 6. Implementation Checklist
 
 - [ ] Update `readThreadSchema` with `goal` parameter
-- [ ] Add imports for `complete`, `getModel`, `Context` from `@kennyfrc/pi-ai`
+- [ ] Add imports for `complete`, `getModel`, `Context` from `@kennyfrc/mu-ai`
 - [ ] Implement `extractRelevantInfo()` helper function
 - [ ] Update `execute()` with branching logic
 - [ ] Update `tools.yaml` description

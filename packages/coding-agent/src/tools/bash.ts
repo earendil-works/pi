@@ -1,4 +1,4 @@
-import type { AgentTool } from "@kennyfrc/pi-ai";
+import type { AgentTool } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
 import { createWriteStream, existsSync, unlink, type WriteStream } from "fs";
@@ -190,7 +190,7 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 				const tempDir = tmpdir();
 				const randomId = Math.random().toString(36).slice(2, 10);
 				const timestamp = Date.now();
-				logPath = join(tempDir, `pi-bash-${timestamp}-${randomId}.log`);
+				logPath = join(tempDir, `mu-bash-${timestamp}-${randomId}.log`);
 				logStream = createWriteStream(logPath);
 
 				// Handle log stream errors gracefully - don't fail the command

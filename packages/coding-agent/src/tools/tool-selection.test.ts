@@ -1,4 +1,4 @@
-import { getModel } from "@kennyfrc/pi-ai";
+import { getModel } from "@kennyfrc/mu-ai";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_TOOL_NAMES, resolveToolSelection } from "./tool-selection.js";
 

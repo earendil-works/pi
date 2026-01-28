@@ -1,4 +1,4 @@
-import type { TextContent } from "@kennyfrc/pi-ai";
+import type { TextContent } from "@kennyfrc/mu-ai";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";

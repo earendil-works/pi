@@ -1,6 +1,6 @@
-# @kennyfrc/pi-proxy
+# @kennyfrc/mu-proxy
 
-CORS and authentication proxy for pi-ai. Enables browser clients to access OAuth-protected endpoints.
+CORS and authentication proxy for mu-ai. Enables browser clients to access OAuth-protected endpoints.
 
 ## Usage
 
@@ -13,11 +13,11 @@ Zero-config CORS proxy for development:
 npx tsx packages/proxy/src/cors-proxy.ts 3001
 
 # Or use npm script
-npm run dev -w @kennyfrc/pi-proxy
+npm run dev -w @kennyfrc/mu-proxy
 
 # Or install globally and use CLI
-npm install -g @kennyfrc/pi-proxy
-pi-proxy 3001
+npm install -g @kennyfrc/mu-proxy
+mu-proxy 3001
 ```
 
 The proxy will forward requests to any URL:

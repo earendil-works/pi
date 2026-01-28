@@ -3,5 +3,5 @@
  */
 
 export { getCodexInstructions } from "./prompts/codex.js";
-export { buildCodexPiBridge } from "./prompts/pi-codex-bridge.js";
+export { buildCodexMuBridge } from "./prompts/mu-codex-bridge.js";
 export { buildCodexSystemPrompt, type CodexSystemPrompt } from "./prompts/system-prompt.js";

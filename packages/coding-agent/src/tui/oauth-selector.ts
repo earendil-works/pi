@@ -1,4 +1,4 @@
-import { Container, Spacer, TruncatedText } from "@kennyfrc/pi-tui";
+import { Container, Spacer, TruncatedText } from "@kennyfrc/mu-tui";
 import { getOAuthProviders, loadOAuthCredentials, type OAuthProviderInfo } from "../oauth/index.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";

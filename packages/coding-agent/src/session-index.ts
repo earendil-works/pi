@@ -501,6 +501,6 @@ export class SessionIndex {
  * Get the sessions root directory.
  */
 export function getSessionsRoot(): string {
-	const configDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi/agent/"));
+	const configDir = resolve(process.env.MU_CODING_AGENT_DIR || join(homedir(), ".mu/agent/"));
 	return join(configDir, "sessions");
 }

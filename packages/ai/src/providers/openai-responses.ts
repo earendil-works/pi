@@ -245,16 +245,26 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 				else if (event.type === "response.completed") {
 					const response = event.response;
 					if (response?.usage) {
-						const cachedTokens = response.usage.input_tokens_details?.cached_tokens || 0;
-						const input = (response.usage.input_tokens || 0) - cachedTokens;
-						const outputTokens = response.usage.output_tokens || 0;
+						// Support both OpenAI (input_tokens/output_tokens) and
+						// Fireworks-style (prompt_tokens/completion_tokens) field names
+						const usage = response.usage as unknown as Record<string, unknown>;
+						const rawInput =
+							(usage.input_tokens as number | undefined) ?? (usage.prompt_tokens as number | undefined) ?? 0;
+						const rawOutput =
+							(usage.output_tokens as number | undefined) ??
+							(usage.completion_tokens as number | undefined) ??
+							0;
+						const cachedTokens =
+							((response.usage.input_tokens_details as unknown as Record<string, unknown> | undefined)
+								?.cached_tokens as number | undefined) ?? 0;
+						const input = rawInput - cachedTokens;
 						output.usage = {
 							// OpenAI includes cached tokens in input_tokens, so subtract to get non-cached input
 							input,
-							output: outputTokens,
+							output: rawOutput,
 							cacheRead: cachedTokens,
 							cacheWrite: 0,
-							totalTokens: input + outputTokens + cachedTokens,
+							totalTokens: input + rawOutput + cachedTokens,
 							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 						};
 					}
@@ -320,6 +330,11 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 		input: messages,
 		stream: true,
 	};
+
+	// Merge extra body fields first as defaults (model-specific params from models.json)
+	if (model.extraBody) {
+		Object.assign(params, model.extraBody);
+	}
 
 	if (options?.maxTokens) {
 		params.max_output_tokens = options?.maxTokens;

@@ -30,17 +30,17 @@
 
 9. Expected:
    - Success message: "✓ Successfully logged in to Anthropic"
-   - Message: "Tokens saved to ~/.pi/agent/oauth.json"
+   - Message: "Tokens saved to ~/.mu/agent/oauth.json"
 
 10. Verify file created:
     ```bash
-    ls -la ~/.pi/agent/oauth.json
+    ls -la ~/.mu/agent/oauth.json
     ```
     Expected: File exists with permissions `-rw-------` (0600)
 
 11. Verify file contents:
     ```bash
-    cat ~/.pi/agent/oauth.json
+    cat ~/.mu/agent/oauth.json
     ```
     Expected: JSON with structure:
     ```json
@@ -85,18 +85,18 @@
 
 4. Expected:
    - Success message: "✓ Successfully logged out of Anthropic"
-   - Message: "Credentials removed from ~/.pi/agent/oauth.json"
+   - Message: "Credentials removed from ~/.mu/agent/oauth.json"
 
 5. Verify file is empty or doesn't contain anthropic:
    ```bash
-   cat ~/.pi/agent/oauth.json
+   cat ~/.mu/agent/oauth.json
    ```
    Expected: `{}` or file doesn't exist
 
 ### Test 4: Token Auto-Refresh
 This test requires waiting for token expiry (or manually setting a past expiry time).
 
-1. Modify `~/.pi/agent/oauth.json` to set an expired time:
+1. Modify `~/.mu/agent/oauth.json` to set an expired time:
    ```json
    {
      "anthropic": {
@@ -118,7 +118,7 @@ This test requires waiting for token expiry (or manually setting a past expiry t
 ### Test 5: Fallback to API Key
 1. Remove OAuth credentials:
    ```bash
-   rm ~/.pi/agent/oauth.json
+   rm ~/.mu/agent/oauth.json
    ```
 
 2. Set ANTHROPIC_API_KEY:
@@ -177,7 +177,7 @@ This test requires waiting for token expiry (or manually setting a past expiry t
 ### Test 10: No OAuth Available (Logout)
 1. Ensure no OAuth credentials are saved:
    ```bash
-   rm ~/.pi/agent/oauth.json
+   rm ~/.mu/agent/oauth.json
    ```
 
 2. Start pi and type `/logout`

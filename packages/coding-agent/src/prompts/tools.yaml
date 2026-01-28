@@ -114,7 +114,7 @@ Glob: |
 ListThreads: |
   List past conversation threads. Returns thread IDs, relative dates, message counts, workspace paths, and preview text. Supports keyword search (message content) and workspace filtering (case-insensitive substring match).
 
-  **Defaults to current working directory** if workspace is not specified. Use longer unique segments to avoid false matches (e.g., "work/pi-mono" instead of "pi-mono").
+  **Defaults to current working directory** if workspace is not specified. Use longer unique segments to avoid false matches (e.g., "work/mu-mono" instead of "mu-mono").
 
   **Search syntax:**
   - Space-separated terms use AND logic: `auth login` matches threads with both "auth" AND "login"

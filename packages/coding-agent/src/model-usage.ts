@@ -26,7 +26,7 @@ export function getModelUsageKey(provider: string, modelId: string): string {
 export function getWorkspaceSessionDir(projectPath?: string): string {
 	const cwd = projectPath ? resolve(projectPath) : process.cwd();
 	const safePath = "--" + cwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-") + "--";
-	const configDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi/agent/"));
+	const configDir = resolve(process.env.MU_CODING_AGENT_DIR || join(homedir(), ".mu/agent/"));
 	return join(configDir, "sessions", safePath);
 }
 

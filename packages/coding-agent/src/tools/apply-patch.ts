@@ -1,4 +1,4 @@
-import type { AgentTool } from "@kennyfrc/pi-ai";
+import type { AgentTool } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { getToolDescription } from "../prompts/index.js";
 import { parseApplyPatchInput } from "./apply-patch/parse.js";

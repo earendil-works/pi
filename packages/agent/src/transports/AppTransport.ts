@@ -10,10 +10,10 @@ import type {
 	SimpleStreamOptions,
 	ToolCall,
 	UserMessage,
-} from "@kennyfrc/pi-ai";
-import { agentLoop } from "@kennyfrc/pi-ai";
-import { AssistantMessageEventStream } from "@kennyfrc/pi-ai/dist/utils/event-stream.js";
-import { parseStreamingJson } from "@kennyfrc/pi-ai/dist/utils/json-parse.js";
+} from "@kennyfrc/mu-ai";
+import { agentLoop } from "@kennyfrc/mu-ai";
+import { AssistantMessageEventStream } from "@kennyfrc/mu-ai/dist/utils/event-stream.js";
+import { parseStreamingJson } from "@kennyfrc/mu-ai/dist/utils/json-parse.js";
 import type { ProxyAssistantMessageEvent } from "./proxy-types.js";
 import type { AgentRunConfig, AgentTransport } from "./types.js";
 

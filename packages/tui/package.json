@@ -1,6 +1,6 @@
 {
-	"name": "@kennyfrc/pi-tui",
-	"version": "0.22.30",
+	"name": "@kennyfrc/mu-tui",
+	"version": "0.23.0",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"type": "module",
 	"main": "dist/index.js",
@@ -29,7 +29,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/kennyfrc/pi-mono.git",
+		"url": "git+https://github.com/kennyfrc/mu-mono.git",
 		"directory": "packages/tui"
 	},
 	"engines": {

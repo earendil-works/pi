@@ -1,5 +1,5 @@
-import type { AgentState } from "@kennyfrc/pi-agent-core";
-import { type Api, completeSimple, type Message, type Model } from "@kennyfrc/pi-ai";
+import type { AgentState } from "@kennyfrc/mu-agent-core";
+import { type Api, completeSimple, type Message, type Model } from "@kennyfrc/mu-ai";
 import { findModel, getApiKeyForModel } from "../model-config.js";
 
 /**

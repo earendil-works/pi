@@ -24,7 +24,7 @@ export declare function getEnvApiKey(provider: string): string | undefined;
  *
  * Priority:
  * 1. Explicitly set keys (via setApiKey)
- * 2. OAuth credentials from ~/.pi/agent/oauth.json
+ * 2. OAuth credentials from ~/.mu/agent/oauth.json
  * 3. Environment variables
  */
 export declare function resolveApiKey(provider: KnownProvider): Promise<string | undefined>;

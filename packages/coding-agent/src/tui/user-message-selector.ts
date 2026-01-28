@@ -1,4 +1,4 @@
-import { type Component, Container, Spacer, Text } from "@kennyfrc/pi-tui";
+import { type Component, Container, Spacer, Text } from "@kennyfrc/mu-tui";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 

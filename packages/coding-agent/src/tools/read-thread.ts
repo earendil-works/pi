@@ -1,4 +1,4 @@
-import { type AgentTool, completeSimple } from "@kennyfrc/pi-ai";
+import { type AgentTool, completeSimple } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { findModel, getApiKeyForModel } from "../model-config.js";
 import { getToolDescription } from "../prompts/index.js";

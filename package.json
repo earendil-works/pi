@@ -1,5 +1,5 @@
 {
-	"name": "pi-monorepo",
+	"name": "mu-monorepo",
 	"private": true,
 	"type": "module",
 	"workspaces": [
@@ -7,9 +7,9 @@
 	],
 	"scripts": {
 		"clean": "npm run clean --workspaces",
-		"build": "npm run build -w @kennyfrc/pi-tui && npm run build -w @kennyfrc/pi-ai && npm run build -w @kennyfrc/pi-agent-core && npm run build -w @kennyfrc/pi-coding-agent && npm run build -w @kennyfrc/pi-proxy && npm run build -w @kennyfrc/pi",
-		"dev": "concurrently --names \"ai,agent,coding-agent,tui,proxy\" --prefix-colors \"cyan,yellow,red,magenta,blue\" \"npm run dev -w @kennyfrc/pi-ai\" \"npm run dev -w @kennyfrc/pi-agent-core\" \"npm run dev -w @kennyfrc/pi-coding-agent\" \"npm run dev -w @kennyfrc/pi-tui\" \"npm run dev -w @kennyfrc/pi-proxy\"",
-		"dev:tsc": "npm run dev:tsc -w @kennyfrc/pi-ai",
+		"build": "npm run build -w @kennyfrc/mu-tui && npm run build -w @kennyfrc/mu-ai && npm run build -w @kennyfrc/mu-agent-core && npm run build -w @kennyfrc/mu-coding-agent && npm run build -w @kennyfrc/mu-proxy && npm run build -w @kennyfrc/mu",
+		"dev": "concurrently --names \"ai,agent,coding-agent,tui,proxy\" --prefix-colors \"cyan,yellow,red,magenta,blue\" \"npm run dev -w @kennyfrc/mu-ai\" \"npm run dev -w @kennyfrc/mu-agent-core\" \"npm run dev -w @kennyfrc/mu-coding-agent\" \"npm run dev -w @kennyfrc/mu-tui\" \"npm run dev -w @kennyfrc/mu-proxy\"",
+		"dev:tsc": "npm run dev:tsc -w @kennyfrc/mu-ai",
 		"check": "biome check --write . && npm run check --workspaces && tsgo --noEmit",
 		"test": "npm run test --workspaces --if-present",
 		"version:patch": "npm version patch -ws --no-git-tag-version && node scripts/sync-versions.js",
@@ -33,5 +33,5 @@
 	"engines": {
 		"node": ">=20.0.0"
 	},
-	"version": "0.22.30"
+	"version": "0.23.0"
 }

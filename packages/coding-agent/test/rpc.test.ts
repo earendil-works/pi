@@ -4,14 +4,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
-import type { AgentEvent } from "@kennyfrc/pi-agent-core";
+import type { AgentEvent } from "@kennyfrc/mu-agent-core";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 /**
  * RPC mode tests.
- * Regression test for issue #83: https://github.com/badlogic/pi-mono/issues/83
+ * Regression test for issue #83: https://github.com/badlogic/mu-mono/issues/83
  */
 describe("RPC mode", () => {
 	let agent: ChildProcess;
@@ -19,7 +19,7 @@ describe("RPC mode", () => {
 
 	beforeEach(() => {
 		// Create a unique temp directory for sessions
-		sessionDir = join(tmpdir(), `pi-rpc-test-${Date.now()}`);
+		sessionDir = join(tmpdir(), `mu-rpc-test-${Date.now()}`);
 	});
 
 	afterEach(() => {
@@ -39,7 +39,7 @@ describe("RPC mode", () => {
 			cwd: join(__dirname, ".."),
 			env: {
 				...process.env,
-				PI_CODING_AGENT_DIR: sessionDir,
+				MU_CODING_AGENT_DIR: sessionDir,
 			},
 		});
 

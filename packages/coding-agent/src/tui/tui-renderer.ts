@@ -1,10 +1,10 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { Agent, AgentEvent, AgentState, Attachment, ThinkingLevel } from "@kennyfrc/pi-agent-core";
-import type { AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@kennyfrc/pi-ai";
-import { complete, supportsXhigh } from "@kennyfrc/pi-ai";
-import type { SlashCommand } from "@kennyfrc/pi-tui";
+import type { Agent, AgentEvent, AgentState, Attachment, ThinkingLevel } from "@kennyfrc/mu-agent-core";
+import type { AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@kennyfrc/mu-ai";
+import { complete, supportsXhigh } from "@kennyfrc/mu-ai";
+import type { SlashCommand } from "@kennyfrc/mu-tui";
 import {
 	CombinedAutocompleteProvider,
 	Container,
@@ -17,7 +17,7 @@ import {
 	TruncatedText,
 	TUI,
 	visibleWidth,
-} from "@kennyfrc/pi-tui";
+} from "@kennyfrc/mu-tui";
 import { exec } from "child_process";
 import { createHash, randomUUID } from "crypto";
 import { readFile, unlink, writeFile } from "fs/promises";
@@ -349,7 +349,7 @@ export class TuiRenderer {
 		}
 
 		// Add header with logo and instructions
-		const logo = theme.bold(theme.fg("accent", "pi")) + theme.fg("dim", ` v${this.version}`);
+		const logo = theme.bold(theme.fg("accent", "mu")) + theme.fg("dim", ` v${this.version}`);
 		const instructions =
 			theme.fg("dim", "esc") +
 			theme.fg("muted", " to interrupt") +
@@ -395,7 +395,7 @@ export class TuiRenderer {
 					theme.bold(theme.fg("warning", "Update Available")) +
 						"\n" +
 						theme.fg("muted", `New version ${this.newVersion} is available. Run: `) +
-						theme.fg("accent", "npm install -g @kennyfrc/pi-coding-agent"),
+						theme.fg("accent", "npm install -g @kennyfrc/mu-coding-agent"),
 					1,
 					0,
 				),
@@ -675,7 +675,7 @@ export class TuiRenderer {
 				this.showError(
 					"No model selected.\n\n" +
 						"Set an API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)\n" +
-						"or create ~/.pi/agent/models.json\n\n" +
+						"or create ~/.mu/agent/models.json\n\n" +
 						"Then use /model to select a model.",
 				);
 				return;
@@ -686,7 +686,7 @@ export class TuiRenderer {
 			if (!apiKey) {
 				this.showError(
 					`No API key found for ${currentModel.provider}.\n\n` +
-						`Set the appropriate environment variable or update ~/.pi/agent/models.json`,
+						`Set the appropriate environment variable or update ~/.mu/agent/models.json`,
 				);
 				this.editor.setText(rawText);
 				return;
@@ -1102,7 +1102,7 @@ export class TuiRenderer {
 					playNotificationSound();
 					const modelName = this.agent.state.model?.name || this.agent.state.model?.id || "Agent";
 					const title = this.footer.getTitle();
-					const notificationTitle = title ? `Pi - ${title}` : "Pi";
+					const notificationTitle = title ? `Mu - ${title}` : "Mu";
 					sendNotification(notificationTitle, `${modelName} finished`);
 				}
 
@@ -2260,7 +2260,7 @@ export class TuiRenderer {
 							new Text(theme.fg("success", `✓ Successfully logged in to ${providerId}`), 1, 0),
 						);
 						this.chatContainer.addChild(
-							new Text(theme.fg("dim", `Tokens saved to ~/.pi/agent/oauth.json`), 1, 0),
+							new Text(theme.fg("dim", `Tokens saved to ~/.mu/agent/oauth.json`), 1, 0),
 						);
 						this.ui.requestRender();
 					} catch (error: any) {
@@ -2331,7 +2331,7 @@ export class TuiRenderer {
 								new Text(theme.fg("success", `✓ Logged out of ${providerId} account ${label}`), 1, 0),
 							);
 							this.chatContainer.addChild(
-								new Text(theme.fg("dim", "Credentials updated in ~/.pi/agent/oauth.json"), 1, 0),
+								new Text(theme.fg("dim", "Credentials updated in ~/.mu/agent/oauth.json"), 1, 0),
 							);
 							this.ui.requestRender();
 						},
@@ -2353,7 +2353,7 @@ export class TuiRenderer {
 						new Text(theme.fg("success", `✓ Successfully logged out of ${providerId}`), 1, 0),
 					);
 					this.chatContainer.addChild(
-						new Text(theme.fg("dim", `Credentials removed from ~/.pi/agent/oauth.json`), 1, 0),
+						new Text(theme.fg("dim", `Credentials removed from ~/.mu/agent/oauth.json`), 1, 0),
 					);
 					this.ui.requestRender();
 				} catch (error: any) {
@@ -3041,7 +3041,7 @@ export class TuiRenderer {
 			// Send notification
 			if (this.settingsManager.getNotifications()) {
 				playNotificationSound();
-				sendNotification("Pi - Auto-handoff", `Started new session: ${goal}`);
+				sendNotification("Mu - Auto-handoff", `Started new session: ${goal}`);
 			}
 		} catch (err: unknown) {
 			const error = err as Error;
@@ -3129,7 +3129,7 @@ export class TuiRenderer {
 			// Send notification if enabled
 			if (this.settingsManager.getNotifications()) {
 				playNotificationSound();
-				sendNotification("Pi - Handoff", `Started new session: ${goal}`);
+				sendNotification("Mu - Handoff", `Started new session: ${goal}`);
 			}
 
 			// Auto-submit the handoff message by using the input callback when available
@@ -3507,7 +3507,7 @@ export class TuiRenderer {
 		const width = (this.ui as any).terminal.columns;
 		const allLines = this.ui.render(width);
 
-		const debugLogPath = path.join(os.homedir(), ".pi", "agent", "pi-debug.log");
+		const debugLogPath = path.join(os.homedir(), ".mu", "agent", "mu-debug.log");
 		const debugData = [
 			`Debug output at ${new Date().toISOString()}`,
 			`Terminal width: ${width}`,
@@ -3529,7 +3529,7 @@ export class TuiRenderer {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(
 			new Text(
-				theme.fg("accent", "✓ Debug log written") + "\n" + theme.fg("muted", `~/.pi/agent/pi-debug.log`),
+				theme.fg("accent", "✓ Debug log written") + "\n" + theme.fg("muted", `~/.mu/agent/mu-debug.log`),
 				1,
 				1,
 			),

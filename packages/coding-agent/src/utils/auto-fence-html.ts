@@ -1,4 +1,4 @@
-import { containsMarkdownHtmlTokens } from "@kennyfrc/pi-tui";
+import { containsMarkdownHtmlTokens } from "@kennyfrc/mu-tui";
 
 function getMaxBacktickRun(text: string): number {
 	let maxRun = 0;

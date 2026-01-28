@@ -19,7 +19,7 @@ export async function promptModel(modelName: string, userArgs: string[], opts: P
 	const activePod = opts.pod ? { name: opts.pod, pod: loadConfig().pods[opts.pod] } : getActivePod();
 
 	if (!activePod) {
-		console.error(chalk.red("No active pod. Use 'pi pods active <name>' to set one."));
+		console.error(chalk.red("No active pod. Use 'mu pods active <name>' to set one."));
 		process.exit(1);
 	}
 
@@ -63,7 +63,7 @@ Current working directory: ${process.cwd()}`;
 		"--model",
 		modelConfig.model,
 		"--api-key",
-		opts.apiKey || process.env.PI_API_KEY || "dummy",
+		opts.apiKey || process.env.MU_API_KEY || "dummy",
 		"--api",
 		modelConfig.model.toLowerCase().includes("gpt-oss") ? "responses" : "completions",
 		"--system-prompt",

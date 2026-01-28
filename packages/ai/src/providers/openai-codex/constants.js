@@ -11,7 +11,7 @@ export const OPENAI_HEADERS = {
 };
 export const OPENAI_HEADER_VALUES = {
 	BETA_RESPONSES: "responses=experimental",
-	ORIGINATOR_CODEX: "pi",
+	ORIGINATOR_CODEX: "mu",
 };
 export const URL_PATHS = {
 	RESPONSES: "/responses",

@@ -1,4 +1,4 @@
-import { type Api, getApiKey, getModels, getProviders, type KnownProvider, type Model } from "@kennyfrc/pi-ai";
+import { type Api, getApiKey, getModels, getProviders, type KnownProvider, type Model } from "@kennyfrc/mu-ai";
 import { type Static, Type } from "@sinclair/typebox";
 import AjvModule from "ajv";
 import { existsSync, readFileSync } from "fs";
@@ -82,11 +82,11 @@ export function resolveApiKey(keyConfig: string): string | undefined {
 }
 
 /**
- * Load custom models from ~/.pi/agent/models.json
+ * Load custom models from ~/.mu/agent/models.json
  * Returns { models, error } - either models array or error message
  */
 function loadCustomModels(): { models: Model<Api>[]; error: string | null } {
-	const configPath = join(homedir(), ".pi", "agent", "models.json");
+	const configPath = join(homedir(), ".mu", "agent", "models.json");
 	if (!existsSync(configPath)) {
 		return { models: [], error: null };
 	}
@@ -279,7 +279,7 @@ export async function getApiKeyForModel(model: Model<Api>): Promise<string | und
 		// No OAuth available - throw actionable error (no silent fallback to API key)
 		if (!hasStoredCreds) {
 			throw new Error(
-				'Anthropic requires OAuth. Run "pi" then "/login" and select Anthropic.\n' +
+				'Anthropic requires OAuth. Run "mu" then "/login" and select Anthropic.\n' +
 					"Or pass --api-key explicitly to use an API key.",
 			);
 		}
@@ -298,7 +298,7 @@ export async function getApiKeyForModel(model: Model<Api>): Promise<string | und
 		}
 	}
 
-	// For built-in providers, use getApiKey from @kennyfrc/pi-ai
+	// For built-in providers, use getApiKey from @kennyfrc/mu-ai
 	return getApiKey(model.provider as KnownProvider);
 }
 

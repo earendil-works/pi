@@ -1,7 +1,7 @@
-import { Agent, type Attachment, ProviderTransport, type ThinkingLevel } from "@kennyfrc/pi-agent-core";
-import type { Api, KnownProvider, Model } from "@kennyfrc/pi-ai";
-import { supportsXhigh } from "@kennyfrc/pi-ai";
-import { ProcessTerminal, TUI } from "@kennyfrc/pi-tui";
+import { Agent, type Attachment, ProviderTransport, type ThinkingLevel } from "@kennyfrc/mu-agent-core";
+import type { Api, KnownProvider, Model } from "@kennyfrc/mu-ai";
+import { supportsXhigh } from "@kennyfrc/mu-ai";
+import { ProcessTerminal, TUI } from "@kennyfrc/mu-tui";
 import chalk from "chalk";
 import { existsSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
@@ -261,10 +261,10 @@ function processFileArguments(fileArgs: string[]): { textContent: string; imageA
 }
 
 function printHelp() {
-	console.log(`${chalk.bold("pi")} - AI assistant with read, bash, edit, write tools
+	console.log(`${chalk.bold("mu")} - AI assistant with read, bash, edit, write tools
 
 ${chalk.bold("Usage:")}
-  pi [options] [@files...] [messages...]
+  mu [options] [@files...] [messages...]
 
 ${chalk.bold("Options:")}
   --provider <name>       Provider name (default: google)
@@ -286,44 +286,44 @@ ${chalk.bold("Options:")}
 
 ${chalk.bold("Examples:")}
   # Interactive mode
-  pi
+  mu
 
   # Interactive mode with initial prompt
-  pi "List all .ts files in src/"
+  mu "List all .ts files in src/"
 
   # Include files in initial message
-  pi @prompt.md @image.png "What color is the sky?"
+  mu @prompt.md @image.png "What color is the sky?"
 
   # Non-interactive mode (process and exit)
-  pi -p "List all .ts files in src/"
+  mu -p "List all .ts files in src/"
 
   # Multiple messages (interactive)
-  pi "Read package.json" "What dependencies do we have?"
+  mu "Read package.json" "What dependencies do we have?"
 
   # Continue previous session
-  pi --continue "What did we discuss?"
+  mu --continue "What did we discuss?"
 
   # Resume a specific session by ID (shown on exit)
-  pi --resume abc12345-1234-5678-9abc-def012345678
+  mu --resume abc12345-1234-5678-9abc-def012345678
 
   # Use different model
-  pi --provider openai --model gpt-4o-mini "Help me refactor this code"
+  mu --provider openai --model gpt-4o-mini "Help me refactor this code"
 
   # Limit model cycling to specific models
-  pi --models claude-sonnet,claude-haiku,gpt-4o
+  mu --models claude-sonnet,claude-haiku,gpt-4o
 
   # Cycle models with fixed thinking levels
-  pi --models sonnet:high,haiku:low
+  mu --models sonnet:high,haiku:low
 
   # Start with a specific thinking level
-  pi --thinking high "Solve this complex problem"
+  mu --thinking high "Solve this complex problem"
 
   # Read-only mode (no file modifications possible)
-  pi --tools Read,Grep,Glob -p "Review the code in src/"
+  mu --tools Read,Grep,Glob -p "Review the code in src/"
 
   # Export a session file to HTML
-  pi --export ~/.pi/agent/sessions/--path--/session.jsonl
-  pi --export session.jsonl output.html
+  mu --export ~/.mu/agent/sessions/--path--/session.jsonl
+  mu --export session.jsonl output.html
 
 ${chalk.bold("Environment Variables:")}
   ANTHROPIC_API_KEY       - Anthropic Claude API key
@@ -335,7 +335,7 @@ ${chalk.bold("Environment Variables:")}
   XAI_API_KEY             - xAI Grok API key
   OPENROUTER_API_KEY      - OpenRouter API key
   ZAI_API_KEY             - ZAI API key
-  PI_CODING_AGENT_DIR     - Session storage directory (default: ~/.pi/agent)
+  MU_CODING_AGENT_DIR     - Session storage directory (default: ~/.mu/agent)
 
 ${chalk.bold("Available Tools (default: read, bash, edit, write, list_threads, read_thread, read_image, todowrite, handoff):")}
   read         - Read file contents
@@ -400,16 +400,16 @@ function loadContextFileFromDir(dir: string): { path: string; content: string } 
 
 /**
  * Load all project context files in order:
- * 1. Global: ~/.pi/agent/AGENTS.md or CLAUDE.md
+ * 1. Global: ~/.mu/agent/AGENTS.md or CLAUDE.md
  * 2. Parent directories (top-most first) down to cwd
  * Each returns {path, content} for separate messages
  */
 function loadProjectContextFiles(): ContextFile[] {
 	const contextFiles: ContextFile[] = [];
 
-	// 1. Load global context from ~/.pi/agent/
+	// 1. Load global context from ~/.mu/agent/
 	const homeDir = homedir();
-	const globalContextDir = resolve(process.env.PI_CODING_AGENT_DIR || join(homeDir, ".pi/agent/"));
+	const globalContextDir = resolve(process.env.MU_CODING_AGENT_DIR || join(homeDir, ".mu/agent/"));
 	const globalContext = loadContextFileFromDir(globalContextDir);
 	if (globalContext) {
 		contextFiles.push({ ...globalContext, scope: "user" });
@@ -446,7 +446,7 @@ function loadProjectContextFiles(): ContextFile[] {
 
 async function checkForNewVersion(currentVersion: string): Promise<string | null> {
 	try {
-		const response = await fetch("https://registry.npmjs.org/@kennyfrc/pi-coding-agent/latest");
+		const response = await fetch("https://registry.npmjs.org/@kennyfrc/mu-coding-agent/latest");
 		if (!response.ok) return null;
 
 		const data = (await response.json()) as { version?: string };
@@ -862,16 +862,16 @@ export async function main(args: string[]) {
 	// Handle resume: either by UUID or interactive selector
 	if (parsed.resume) {
 		if (parsed.resumeUuid) {
-			// Resume by specific UUID: pi resume <uuid>
+			// Resume by specific UUID: mu resume <uuid>
 			const sessionPath = sessionManager.findSessionByUuid(parsed.resumeUuid);
 			if (!sessionPath) {
 				console.error(chalk.red(`Session not found: ${parsed.resumeUuid}`));
-				console.error(chalk.dim("Use 'pi --resume' to browse available sessions"));
+				console.error(chalk.dim("Use 'mu --resume' to browse available sessions"));
 				process.exit(1);
 			}
 			sessionManager.setSessionFile(sessionPath);
 		} else {
-			// Interactive session selector: pi --resume or pi -r
+			// Interactive session selector: mu --resume or mu -r
 			const selectedSession = await selectSession(sessionManager);
 			if (!selectedSession) {
 				console.log(chalk.dim("No session selected"));
@@ -980,7 +980,7 @@ export async function main(args: string[]) {
 		console.error(chalk.red("No models available."));
 		console.error(chalk.yellow("\nSet an API key environment variable:"));
 		console.error("  ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.");
-		console.error(chalk.yellow("\nOr create ~/.pi/agent/models.json"));
+		console.error(chalk.yellow("\nOr create ~/.mu/agent/models.json"));
 		process.exit(1);
 	}
 
@@ -1058,7 +1058,7 @@ export async function main(args: string[]) {
 							console.error(chalk.red("\nNo models available."));
 							console.error(chalk.yellow("Set an API key environment variable:"));
 							console.error("  ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.");
-							console.error(chalk.yellow("\nOr create ~/.pi/agent/models.json"));
+							console.error(chalk.yellow("\nOr create ~/.mu/agent/models.json"));
 						}
 						process.exit(1);
 					}
@@ -1111,7 +1111,7 @@ export async function main(args: string[]) {
 				const key = await getApiKeyForModel(currentModel);
 				if (!key) {
 					throw new Error(
-						`No API key found for provider "${currentModel.provider}". Please set the appropriate environment variable or update ~/.pi/agent/models.json`,
+						`No API key found for provider "${currentModel.provider}". Please set the appropriate environment variable or update ~/.mu/agent/models.json`,
 					);
 				}
 				return key;
