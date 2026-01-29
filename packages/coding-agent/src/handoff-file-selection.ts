@@ -13,12 +13,54 @@ export const handoffFileSelectionTool: Tool<typeof handoffFileSelectionSchema> =
 	parameters: handoffFileSelectionSchema,
 };
 
+function unescapeXmlEntities(raw: string): string {
+	let value = raw;
+
+	// Do a couple of passes to handle common double-escaped output like "&amp;lt;file&amp;gt;".
+	for (let i = 0; i < 2; i += 1) {
+		const next = value
+			.replaceAll("&amp;", "&")
+			.replaceAll("&lt;", "<")
+			.replaceAll("&gt;", ">")
+			.replaceAll("&quot;", '"')
+			.replaceAll("&apos;", "'")
+			.replaceAll("&#39;", "'");
+		if (next === value) break;
+		value = next;
+	}
+
+	return value;
+}
+
+function stripWrappingDelimiters(raw: string): string {
+	let value = raw.trim();
+	const wrappers: Array<[string, string]> = [
+		["```", "```"],
+		["`", "`"],
+		['"', '"'],
+		["'", "'"],
+	];
+
+	for (;;) {
+		let changed = false;
+		for (const [start, end] of wrappers) {
+			if (value.length >= start.length + end.length && value.startsWith(start) && value.endsWith(end)) {
+				value = value.slice(start.length, value.length - end.length).trim();
+				changed = true;
+			}
+		}
+		if (!changed) break;
+	}
+
+	return value;
+}
+
 function normalizeSelections(items: string[]): string[] {
 	const seen = new Set<string>();
 	const result: string[] = [];
 
 	for (const item of items) {
-		const trimmed = item.trim();
+		const trimmed = stripWrappingDelimiters(item);
 		if (!trimmed) continue;
 		if (seen.has(trimmed)) continue;
 		seen.add(trimmed);
@@ -37,9 +79,10 @@ type XmlParseState = {
 };
 
 function extractAttribute(tag: string, name: string): string | null {
-	const pattern = new RegExp(`\\b${name}\\s*=\\s*"([^"]+)"`, "i");
+	const pattern = new RegExp(`\\b${name}\\s*=\\s*(?:"([^"]+)"|'([^']+)')`, "i");
 	const match = tag.match(pattern);
-	return match ? match[1].trim() : null;
+	const rawValue = match ? (match[1] ?? match[2]) : null;
+	return rawValue ? rawValue.trim() : null;
 }
 
 function parseXmlSelections(raw: string): string[] {
@@ -109,7 +152,7 @@ function parseXmlSelections(raw: string): string[] {
 }
 
 export function parseHandoffFileSelections(raw: string): string[] {
-	const trimmed = raw.trim();
+	const trimmed = unescapeXmlEntities(raw).trim();
 	if (!trimmed) return [];
 
 	return parseXmlSelections(trimmed);
