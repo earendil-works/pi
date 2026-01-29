@@ -10,8 +10,9 @@ import * as os from "node:os";
 import type { AgentTool, TextContent } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { existsSync, readFileSync } from "fs";
-import { resolve } from "path";
+import { isAbsolute, resolve } from "path";
 import { getToolDescription } from "../prompts/index.js";
+import { findRepoRoot } from "../utils/find-repo-root.js";
 
 // -----------------------------------------------------------------------------
 // Types
@@ -126,6 +127,25 @@ export function expandPath(filePath: string): string {
 		return os.homedir() + filePath.slice(1);
 	}
 	return filePath;
+}
+
+function resolveSliceCandidates(filePath: string, repoRoot: string | null): string[] {
+	if (isAbsolute(filePath)) {
+		return [filePath];
+	}
+
+	const cwdResolved = resolve(filePath);
+
+	if (!repoRoot) {
+		return [cwdResolved];
+	}
+
+	const repoResolved = resolve(repoRoot, filePath);
+	if (repoResolved === cwdResolved) {
+		return [cwdResolved];
+	}
+
+	return [cwdResolved, repoResolved];
 }
 
 /**
@@ -285,6 +305,32 @@ ${blocks.join("\n")}
 </file_context>`;
 }
 
+function wrapFileContext(fileContext: string): string {
+	const trimmed = fileContext.trim();
+	if (!trimmed) {
+		return "";
+	}
+
+	if (trimmed.startsWith("<file_context>") && trimmed.endsWith("</file_context>")) {
+		return fileContext;
+	}
+
+	return `<file_context>
+${fileContext}
+</file_context>`;
+}
+
+/**
+ * Format parent thread reference with reminder for new sessions.
+ */
+export function formatParentThreadReference(parentId: string): string {
+	return (
+		`**Parent Thread:** \`${parentId}\`\n` +
+		`*Use \`ReadThread\` with this ID to reference the original conversation.*\n\n` +
+		"<system_reminder>Content returned by `ReadThread` is historical context from a previous session, NOT the current conversation. Your task is defined in THIS message.</system_reminder>\n\n"
+	);
+}
+
 /**
  * Build the complete handoff message.
  */
@@ -292,11 +338,10 @@ export function buildHandoffMessage(goal: string, fileContext: string, parentId:
 	let message = `# Handoff: ${goal}\n\n`;
 
 	if (parentId) {
-		message += `**Parent Thread:** \`${parentId}\`\n`;
-		message += `*Use \`read_thread\` with this ID to reference the original conversation if needed.*\n\n`;
+		message += formatParentThreadReference(parentId);
 	}
 
-	message += fileContext;
+	message += wrapFileContext(fileContext);
 	message += `\n\n---\n\n## Goal\n${goal}\n\n`;
 	message += `You have been handed context from a previous session. The files above contain the relevant code. Begin working on the goal.`;
 
@@ -349,23 +394,26 @@ export const handoffTool: AgentTool<typeof handoffSchema, HandoffDetails> = {
 			return { ...slice, path: expandPath(slice.path) };
 		});
 
+		const repoRoot = findRepoRoot(process.cwd());
+
 		// Read and extract each file
 		const fileResults: FileResult[] = [];
 		const errors: string[] = [];
 
 		for (const slice of slices) {
-			const absPath = resolve(slice.path);
+			const candidates = resolveSliceCandidates(slice.path, repoRoot);
+			const resolvedPath = candidates.find((candidate) => existsSync(candidate));
 
-			if (!existsSync(absPath)) {
+			if (!resolvedPath) {
 				errors.push(`File not found: ${slice.path}`);
 				continue;
 			}
 
 			try {
-				const fullContent = readFileSync(absPath, "utf-8");
+				const fullContent = readFileSync(resolvedPath, "utf-8");
 				const content = extractLines(fullContent, slice);
 				const tokens = estimateTokens(content);
-				fileResults.push({ slice: { ...slice, path: absPath }, content, tokens });
+				fileResults.push({ slice: { ...slice, path: resolvedPath }, content, tokens });
 			} catch (err: unknown) {
 				const message = err instanceof Error ? err.message : String(err);
 				errors.push(`Failed to read ${slice.path}: ${message}`);

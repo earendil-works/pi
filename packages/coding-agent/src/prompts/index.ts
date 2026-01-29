@@ -3,6 +3,7 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { parse } from "yaml";
 import type { ToolName } from "../tools/index.js";
+import { findRepoRoot } from "../utils/find-repo-root.js";
 
 // -----------------------------------------------------------------------------
 // Handoff Nudge Constants
@@ -246,6 +247,45 @@ List of file paths crucial for the goal (full paths as bullet points).
 Concrete instructions to achieve the target goal.
 
 IMPORTANT: Output ONLY the Markdown document. Do NOT include any preamble, introduction, or conversational text like "Here is the handoff document" or "I'll generate...". Start directly with "## Context Summary".`;
+}
+
+/**
+ * Get the prompt for selecting file slices for handoff.
+ */
+export function getHandoffFileSelectionPrompt(goal: string): string {
+	const cwd = process.cwd();
+	const repoRoot = findRepoRoot(cwd);
+	const repoLine = repoRoot ? `Repository root: ${repoRoot}` : "Repository root: (not found)";
+
+	return `You are selecting the exact file paths and line slices needed to continue a coding task.
+
+TARGET GOAL: "${goal}"
+
+${repoLine}
+Current working directory: ${cwd}
+
+Path rules:
+- Use absolute paths OR paths relative to the repository root above.
+- Prefer repo-root relative paths when possible (e.g., packages/app/src/file.ts).
+- Do NOT use paths relative to the current working directory unless it matches the repo root.
+- If the repository root is not found, use absolute paths.
+
+Pick the minimal, high-signal set of files from the repository.
+- Use slice syntax when only part of a file is needed:
+  - 'src/foo.ts' (full file)
+  - 'src/foo.ts:42' (single line)
+  - 'src/foo.ts:10-50' (line range)
+  - 'src/foo.ts:100-' (from line 100 to end)
+
+Output ONLY XML using <handoff_files> and <file> tags.
+- You may place <file> tags anywhere in the response; they will be extracted.
+- Each <file> tag must contain a single file selection.
+- Example:
+<handoff_files>
+  <file>src/foo.ts</file>
+  <file>src/bar.ts:10-50</file>
+</handoff_files>
+`;
 }
 
 /**

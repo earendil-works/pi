@@ -35,6 +35,7 @@ import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
 import { scheduleExplicitHandoff, submitExplicitHandoff } from "../explicit-handoff.js";
 import { exportSessionToHtml } from "../export-html.js";
+import { parseHandoffFileSelections } from "../handoff-file-selection.js";
 import { getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
 import { playNotificationSound, sendNotification } from "../notification.js";
 import {
@@ -49,14 +50,21 @@ import {
 	setActiveOAuthAccount,
 } from "../oauth/index.js";
 import { PromptHistoryManager } from "../prompt-history-manager.js";
-import { getAutoHandoffGoalPrompt, getHandoffNudgeReminder, getHandoffPrompt } from "../prompts/index.js";
+import { getAutoHandoffGoalPrompt, getHandoffFileSelectionPrompt, getHandoffNudgeReminder } from "../prompts/index.js";
 import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
+import {
+	consumeJsonlChunk,
+	createInitialFollowState,
+	extractTurnCompleteAssistantMessages,
+	type JsonlFollowState,
+} from "../subscriptions/session-jsonl-follower.js";
+import { parseSubscribeCommand } from "../subscriptions/subscribe-command.js";
+import { createSubscriptionToolMessages, SUBSCRIPTION_TOOL_NAME } from "../subscriptions/subscription-messages.js";
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
 import { bashTool } from "../tools/bash.js";
-import type { HandoffDetails } from "../tools/handoff.js";
+import { formatParentThreadReference, type HandoffDetails, handoffTool } from "../tools/handoff.js";
 import type { ToolName } from "../tools/index.js";
-import { formatTodosForHandoff } from "../tools/todowrite.js";
 import type { ToolSelection } from "../tools/tool-selection.js";
 import { autoFenceHtmlInMarkdown } from "../utils/auto-fence-html.js";
 import { generateTitle } from "../utils/auto-title.js";
@@ -84,6 +92,21 @@ import { UserMessageSelectorComponent } from "./user-message-selector.js";
 
 function hashContent(content: string): string {
 	return createHash("sha256").update(content).digest("hex");
+}
+
+type HandoffToolResult = Awaited<ReturnType<typeof handoffTool.execute>>;
+
+interface SubscriptionEvent {
+	sessionId: string;
+	assistantMessage: AssistantMessage;
+}
+
+interface SubscriptionWatchState {
+	sessionId: string;
+	filePath: string;
+	watcher: fs.FSWatcher;
+	followState: JsonlFollowState;
+	seenKeys: Set<string>;
 }
 
 /**
@@ -178,8 +201,11 @@ export class TuiRenderer {
 	private handoffAbortController: AbortController | null = null;
 	private isAutoHandoffInProgress = false;
 	private shouldIncludeHandoffNudge = false; // 85% threshold nudge state
-	private pendingExplicitHandoff: (HandoffDetails & { parentSessionId: string }) | null = null;
+	private pendingExplicitHandoff: (HandoffDetails & { parentSessionId: string | null }) | null = null;
 	private pendingExplicitHandoffMessage: string | null = null;
+	private subscriptions = new Map<string, SubscriptionWatchState>();
+	private pendingSubscriptionEvents: SubscriptionEvent[] = [];
+	private isDrainingSubscriptionEvents = false;
 	private codexAccountIdBeforeRun: string | null = null;
 	private lastCodexAccountId: string | null = null;
 	private bashModeIndicatorContainer: Container = new Container();
@@ -266,6 +292,11 @@ export class TuiRenderer {
 			description: "Hand off to a new focused thread with a goal",
 		};
 
+		const subscribeCommand: SlashCommand = {
+			name: "subscribe",
+			description: "Subscribe to another session's turn completions",
+		};
+
 		const loginCommand: SlashCommand = {
 			name: "login",
 			description: "Login with OAuth provider",
@@ -321,6 +352,7 @@ export class TuiRenderer {
 				copyCommand,
 				exportCommand,
 				handoffCommand,
+				subscribeCommand,
 				loginCommand,
 				logoutCommand,
 				modelCommand,
@@ -600,6 +632,13 @@ export class TuiRenderer {
 				}
 				this.editor.setText(""); // Clear before async operation
 				await this.handleHandoffCommand(goal);
+				return;
+			}
+
+			const subscribeCommand = parseSubscribeCommand(rawText);
+			if (subscribeCommand) {
+				this.handleSubscribeCommand(subscribeCommand.sessionId);
+				this.editor.setText("");
 				return;
 			}
 
@@ -1122,6 +1161,8 @@ export class TuiRenderer {
 					// Skip auto-titling and auto-handoff since we're switching sessions
 					break;
 				}
+
+				void this.drainSubscriptionEvents();
 
 				// Check for handoff nudge trigger
 				const { ratio } = this.getContextUsage();
@@ -2611,7 +2652,7 @@ export class TuiRenderer {
 			this.ui,
 			(spinner) => theme.fg("accent", spinner),
 			(text) => theme.fg("muted", text),
-			"Generating handoff... (esc to cancel)",
+			"Selecting handoff files... (esc to cancel)",
 		);
 		this.statusContainer.addChild(this.loadingAnimation);
 		this.ui.requestRender();
@@ -2619,78 +2660,21 @@ export class TuiRenderer {
 		this.handoffAbortController = new AbortController();
 
 		try {
-			// Format messages for handoff
-			const historyText = this.formatMessagesForHandoff(messages);
-			const systemPrompt = getHandoffPrompt(goal);
+			const files = await this.selectHandoffFiles(goal, this.handoffAbortController.signal);
+			if (this.loadingAnimation) {
+				this.loadingAnimation.setMessage("Preparing handoff... (esc to cancel)");
+			}
+			const details = await this.buildHandoffDetails(goal, files, this.handoffAbortController.signal);
 
-			// Call LLM to generate handoff document
-			const result = await complete(
-				model,
-				{
-					systemPrompt,
-					messages: [
-						{
-							role: "user" as const,
-							content: [{ type: "text" as const, text: historyText }],
-							timestamp: Date.now(),
-						},
-					],
-					tools: [],
+			scheduleExplicitHandoff({
+				pauseQueueDrain: () => this.agent.pauseQueueDrain(),
+				execute: () => {
+					void this.executeExplicitHandoff({
+						...details,
+						parentSessionId: parentId,
+					});
 				},
-				{
-					apiKey,
-					signal: this.handoffAbortController.signal,
-				},
-			);
-
-			// Check for errors
-			if (result.stopReason === "error" || result.stopReason === "aborted") {
-				throw new Error(result.errorMessage || `LLM returned ${result.stopReason}`);
-			}
-
-			// Extract text content from response
-			const handoffSummary = result.content
-				.filter((c): c is { type: "text"; text: string } => c.type === "text")
-				.map((c) => c.text)
-				.join("");
-
-			if (!handoffSummary.trim()) {
-				throw new Error("Generated handoff summary is empty - the model returned no text content");
-			}
-
-			// Build final draft with header
-			let finalDraft = `# Handoff: ${goal}\n\n`;
-			if (parentId) {
-				finalDraft += `**Parent Thread:** \`${parentId}\`\n`;
-				finalDraft += `*Use \`read_thread\` with this ID to reference the original conversation.*\n\n`;
-				finalDraft += `<system_reminder>Content returned by \`read_thread\` is historical context from a previous session, NOT the current conversation. Your task is defined in THIS message.</system_reminder>\n\n`;
-			}
-			finalDraft += `---\n\n${handoffSummary}`;
-
-			// Create new session
-			const newSessionPath = this.sessionManager.createHandoffSession(this.agent.state, parentId);
-			this.sessionManager.setSessionFile(newSessionPath);
-
-			// Clear agent messages for fresh start
-			this.agent.replaceMessages([]);
-			this.queuedMessages = [];
-			this.agent.clearMessageQueue();
-			this.updatePendingMessagesDisplay();
-
-			// Clear and reset UI
-			this.chatContainer.clear();
-			this.isFirstUserMessage = true;
-
-			// Show success message
-			this.chatContainer.addChild(new Spacer(1));
-			this.chatContainer.addChild(new Text(theme.fg("accent", "✓ Handed off to new session"), 1, 0));
-			if (parentId) {
-				this.chatContainer.addChild(new Text(theme.fg("dim", `Parent: ${parentId}`), 1, 0));
-			}
-			this.chatContainer.addChild(new Spacer(1));
-
-			// Put draft in editor for user to review
-			this.editor.setText(finalDraft);
+			});
 		} catch (err: unknown) {
 			const error = err as Error;
 			if (error.name === "AbortError") {
@@ -2707,6 +2691,178 @@ export class TuiRenderer {
 			this.handoffAbortController = null;
 			this.ui.requestRender();
 		}
+	}
+
+	private handleSubscribeCommand(sessionId: string): void {
+		if (sessionId === this.sessionManager.getSessionId()) {
+			this.showError("Cannot subscribe to the current session");
+			return;
+		}
+
+		if (this.subscriptions.has(sessionId)) {
+			this.showWarning(`Already subscribed to ${sessionId}`);
+			return;
+		}
+
+		const sessionPath = this.sessionManager.findSessionByUuidGlobal(sessionId);
+		if (!sessionPath) {
+			this.showError(`Session not found: ${sessionId}`);
+			return;
+		}
+
+		try {
+			const stats = fs.statSync(sessionPath);
+			const followState = createInitialFollowState();
+			followState.offset = stats.size;
+
+			const watcher = fs.watch(sessionPath, () => {
+				this.handleSubscriptionFileChange(sessionId);
+			});
+
+			this.subscriptions.set(sessionId, {
+				sessionId,
+				filePath: sessionPath,
+				watcher,
+				followState,
+				seenKeys: new Set<string>(),
+			});
+
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(theme.fg("dim", `Subscribed to ${sessionId}`), 1, 0));
+			this.ui.requestRender();
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			this.showError(`Failed to subscribe: ${message}`);
+		}
+	}
+
+	private handleSubscriptionFileChange(sessionId: string): void {
+		const subscription = this.subscriptions.get(sessionId);
+		if (!subscription) return;
+
+		let fileBuffer: Buffer;
+		try {
+			fileBuffer = fs.readFileSync(subscription.filePath);
+		} catch {
+			return;
+		}
+
+		if (fileBuffer.length <= subscription.followState.offset) {
+			return;
+		}
+
+		const chunkBuffer = fileBuffer.subarray(subscription.followState.offset);
+		const chunk = chunkBuffer.toString("utf8");
+
+		const { entries, nextState } = consumeJsonlChunk(
+			{ offset: 0, remainder: subscription.followState.remainder },
+			chunk,
+		);
+		subscription.followState = {
+			offset: fileBuffer.length,
+			remainder: nextState.remainder,
+		};
+
+		const completedMessages = extractTurnCompleteAssistantMessages(entries);
+		for (const assistantMessage of completedMessages) {
+			const key = this.buildSubscriptionEventKey(assistantMessage);
+			if (subscription.seenKeys.has(key)) continue;
+			subscription.seenKeys.add(key);
+			this.enqueueSubscriptionEvent({ sessionId, assistantMessage });
+		}
+	}
+
+	private buildSubscriptionEventKey(message: AssistantMessage): string {
+		const text = message.content
+			.filter((block): block is { type: "text"; text: string } => block.type === "text")
+			.map((block) => block.text)
+			.join("");
+		const hash = createHash("sha1").update(text).digest("hex");
+		return `${message.timestamp}:${message.stopReason}:${hash}`;
+	}
+
+	private enqueueSubscriptionEvent(event: SubscriptionEvent): void {
+		this.pendingSubscriptionEvents.push(event);
+		if (!this.agent.state.isStreaming && !this.isAutoHandoffInProgress) {
+			queueMicrotask(() => {
+				void this.drainSubscriptionEvents();
+			});
+		}
+	}
+
+	private async drainSubscriptionEvents(): Promise<void> {
+		if (this.isDrainingSubscriptionEvents) return;
+		if (this.agent.state.isStreaming || this.isAutoHandoffInProgress) return;
+		const nextEvent = this.pendingSubscriptionEvents.shift();
+		if (!nextEvent) return;
+
+		this.isDrainingSubscriptionEvents = true;
+		try {
+			await this.injectSubscriptionEvent(nextEvent);
+		} finally {
+			this.isDrainingSubscriptionEvents = false;
+		}
+	}
+
+	private async injectSubscriptionEvent(event: SubscriptionEvent): Promise<void> {
+		const model = this.agent.state.model;
+		if (!model) {
+			this.showError("No model selected - unable to process subscription update");
+			return;
+		}
+
+		const apiKey = await getApiKeyForModel(model);
+		if (!apiKey) {
+			this.showError(`No API key for ${model.provider}`);
+			return;
+		}
+
+		const toolCallId = randomUUID();
+		const { assistantToolCallMessage, toolResultMessage } = createSubscriptionToolMessages({
+			toolCallId,
+			model,
+			assistantMessage: event.assistantMessage,
+			sessionId: event.sessionId,
+		});
+
+		const toolCall = assistantToolCallMessage.content.find((block) => block.type === "toolCall");
+		if (!toolCall) {
+			this.showError("Failed to create subscription tool call");
+			return;
+		}
+
+		this.chatContainer.addChild(new Text("", 0, 0));
+		const toolComponent = new ToolExecutionComponent(SUBSCRIPTION_TOOL_NAME, toolCall.arguments);
+		this.chatContainer.addChild(toolComponent);
+		toolComponent.updateResult({
+			content: toolResultMessage.content,
+			details: toolResultMessage.details,
+			isError: false,
+		});
+
+		this.agent.appendMessage(assistantToolCallMessage);
+		this.agent.appendMessage(toolResultMessage);
+		this.sessionManager.saveMessage(assistantToolCallMessage);
+		this.sessionManager.saveMessage(toolResultMessage);
+		if (this.sessionManager.shouldInitializeSession(this.agent.state.messages)) {
+			this.sessionManager.startSession(this.agent.state);
+		}
+
+		this.ui.requestRender();
+
+		await this.agent.prompt("A subscribed session completed a turn. Respond to the tool result above.");
+	}
+
+	private clearSubscriptions(): void {
+		for (const subscription of this.subscriptions.values()) {
+			try {
+				subscription.watcher.close();
+			} catch {
+				// Ignore watcher cleanup errors
+			}
+		}
+		this.subscriptions.clear();
+		this.pendingSubscriptionEvents = [];
 	}
 
 	private formatMessagesForHandoff(messages: Message[]): string {
@@ -2742,6 +2898,113 @@ export class TuiRenderer {
 			})
 			.filter((line) => line.length > 0)
 			.join("\n\n");
+	}
+
+	private insertParentThreadReference(formattedMessage: string, parentSessionId: string): string {
+		const headerEnd = formattedMessage.indexOf("\n\n");
+		const parentBlock = formatParentThreadReference(parentSessionId);
+		if (headerEnd === -1) {
+			return `${formattedMessage}\n\n${parentBlock}`;
+		}
+		const insertAt = headerEnd + 2;
+		return formattedMessage.slice(0, insertAt) + parentBlock + formattedMessage.slice(insertAt);
+	}
+
+	private extractAssistantText(message: AssistantMessage): string {
+		return message.content
+			.filter((c): c is { type: "text"; text: string } => c.type === "text")
+			.map((c) => c.text)
+			.join("");
+	}
+
+	private async selectHandoffFiles(goal: string, signal: AbortSignal): Promise<string[]> {
+		const model = this.agent.state.model;
+		if (!model) throw new Error("No model selected");
+
+		const apiKey = await getApiKeyForModel(model);
+		if (!apiKey) throw new Error(`No API key for ${model.provider}`);
+
+		const historyText = this.formatMessagesForHandoff(this.agent.state.messages);
+		const systemPrompt = getHandoffFileSelectionPrompt(goal);
+		const context = {
+			systemPrompt,
+			messages: [
+				{
+					role: "user" as const,
+					content: [{ type: "text" as const, text: historyText }],
+					timestamp: Date.now(),
+				},
+			],
+		};
+
+		let result: AssistantMessage;
+		switch (model.api) {
+			case "anthropic-messages":
+				result = await complete(model as Model<"anthropic-messages">, context, {
+					apiKey,
+					signal,
+				});
+				break;
+			case "openai-completions":
+				result = await complete(model as Model<"openai-completions">, context, {
+					apiKey,
+					signal,
+				});
+				break;
+			case "openai-responses":
+				result = await complete(model as Model<"openai-responses">, context, {
+					apiKey,
+					signal,
+				});
+				break;
+			case "google-generative-ai":
+				result = await complete(model as Model<"google-generative-ai">, context, {
+					apiKey,
+					signal,
+				});
+				break;
+			case "google-gemini-cli":
+				result = await complete(model as Model<"google-gemini-cli">, context, {
+					apiKey,
+					signal,
+				});
+				break;
+			case "openai-codex-responses":
+				result = await complete(model as Model<"openai-codex-responses">, context, { apiKey, signal });
+				break;
+			case "zai-completions":
+				result = await complete(model as Model<"zai-completions">, context, { apiKey, signal });
+				break;
+			default: {
+				throw new Error(`Unsupported API for handoff file selection: ${String(model.api)}`);
+			}
+		}
+
+		if (result.stopReason === "error" || result.stopReason === "aborted") {
+			throw new Error(result.errorMessage || `LLM returned ${result.stopReason}`);
+		}
+
+		const textSelections = parseHandoffFileSelections(this.extractAssistantText(result));
+		if (textSelections.length === 0) {
+			throw new Error("No files selected for handoff");
+		}
+
+		return textSelections;
+	}
+
+	private async buildHandoffDetails(goal: string, files: string[], signal: AbortSignal): Promise<HandoffDetails> {
+		const result = (await handoffTool.execute(randomUUID(), { goal, files }, signal, undefined)) as HandoffToolResult;
+		const maybeError = result as HandoffToolResult & { isError?: boolean };
+
+		if (maybeError.isError) {
+			const errorText = result.content
+				.filter((c): c is { type: "text"; text: string } => c.type === "text")
+				.map((c) => c.text)
+				.join("");
+			throw new Error(errorText || "Handoff tool failed");
+		}
+
+		return result.details;
 	}
 
 	/**
@@ -2879,67 +3142,6 @@ export class TuiRenderer {
 	}
 
 	/**
-	 * Generate handoff draft markdown using LLM.
-	 * Extracted from handleHandoffCommand for reuse.
-	 */
-	private async generateHandoffDraft(goal: string, parentId: string | null, signal: AbortSignal): Promise<string> {
-		const model = this.agent.state.model;
-		if (!model) throw new Error("No model selected");
-
-		const apiKey = await getApiKeyForModel(model);
-		if (!apiKey) throw new Error(`No API key for ${model.provider}`);
-
-		const historyText = this.formatMessagesForHandoff(this.agent.state.messages);
-		const systemPrompt = getHandoffPrompt(goal);
-
-		const result = await complete(
-			model,
-			{
-				systemPrompt,
-				messages: [
-					{
-						role: "user" as const,
-						content: [{ type: "text" as const, text: historyText }],
-						timestamp: Date.now(),
-					},
-				],
-				tools: [],
-			},
-			{ apiKey, signal },
-		);
-
-		if (result.stopReason === "error" || result.stopReason === "aborted") {
-			throw new Error(result.errorMessage || `LLM returned ${result.stopReason}`);
-		}
-
-		const handoffSummary = result.content
-			.filter((c): c is { type: "text"; text: string } => c.type === "text")
-			.map((c) => c.text)
-			.join("");
-
-		if (!handoffSummary.trim()) {
-			throw new Error("Generated handoff summary is empty");
-		}
-
-		// Build final draft with header
-		let finalDraft = `# Handoff: ${goal}\n\n`;
-		if (parentId) {
-			finalDraft += `**Parent Thread:** \`${parentId}\`\n`;
-			finalDraft += `*Use \`read_thread\` with this ID to reference the original conversation.*\n\n`;
-			finalDraft += `<system_reminder>Content returned by \`read_thread\` is historical context from a previous session, NOT the current conversation. Your task is defined in THIS message.</system_reminder>\n\n`;
-		}
-		finalDraft += `---\n\n${handoffSummary}`;
-
-		// Append active todos if any exist
-		const todosSection = formatTodosForHandoff();
-		if (todosSection) {
-			finalDraft += `\n\n---\n\n${todosSection}`;
-		}
-
-		return finalDraft;
-	}
-
-	/**
 	 * Auto-handoff: generate goal → draft → switch session → auto-submit.
 	 * @param isEmergency - true at 95% (pre-tool), false at 90% (post-completion)
 	 */
@@ -2978,13 +3180,21 @@ export class TuiRenderer {
 			// Step 1: Generate goal
 			const goal = await this.generateAutoHandoffGoal(this.handoffAbortController.signal);
 
-			// Update loader - stage 2: draft generation
+			// Update loader - stage 2: file selection
 			if (this.loadingAnimation) {
-				this.loadingAnimation.setMessage("Auto-handoff: generating handoff... (esc to cancel)");
+				this.loadingAnimation.setMessage("Auto-handoff: selecting files... (esc to cancel)");
 			}
 
-			// Step 2: Generate handoff draft
-			const finalDraft = await this.generateHandoffDraft(goal, parentId, this.handoffAbortController.signal);
+			const files = await this.selectHandoffFiles(goal, this.handoffAbortController.signal);
+
+			if (this.loadingAnimation) {
+				this.loadingAnimation.setMessage("Auto-handoff: preparing handoff... (esc to cancel)");
+			}
+
+			const details = await this.buildHandoffDetails(goal, files, this.handoffAbortController.signal);
+			const finalDraft = parentId
+				? this.insertParentThreadReference(details.formattedMessage, parentId)
+				: details.formattedMessage;
 
 			// Step 3: Switch session (only after we have the draft)
 			const newSessionPath = this.sessionManager.createHandoffSession(this.agent.state, parentId);
@@ -3074,21 +3284,21 @@ export class TuiRenderer {
 	 * Execute an explicit handoff triggered by the Handoff tool.
 	 * Creates new session, clears state, and auto-submits the handoff message.
 	 */
-	private async executeExplicitHandoff(details: HandoffDetails & { parentSessionId: string }): Promise<void> {
+	private async executeExplicitHandoff(details: HandoffDetails & { parentSessionId: string | null }): Promise<void> {
 		const { goal, formattedMessage, parentSessionId, fileTokens } = details;
 
-		// Insert parent thread reference after the header line
-		// The formattedMessage starts with "# Handoff: <goal>\n\n"
-		const headerEnd = formattedMessage.indexOf("\n\n") + 2;
-		const parentInfo =
-			`**Parent Thread:** \`${parentSessionId}\`\n` +
-			`*Use \`read_thread\` with this ID to reference the original conversation if needed.*\n\n`;
-		const messageWithParent = formattedMessage.slice(0, headerEnd) + parentInfo + formattedMessage.slice(headerEnd);
+		const messageWithParent = parentSessionId
+			? this.insertParentThreadReference(formattedMessage, parentSessionId)
+			: formattedMessage;
 
 		try {
 			// Create new session
-			const newSessionPath = this.sessionManager.createHandoffSession(this.agent.state, parentSessionId);
+			const newSessionPath = this.sessionManager.createHandoffSession(
+				this.agent.state,
+				parentSessionId ?? undefined,
+			);
 			this.sessionManager.setSessionFile(newSessionPath);
+			this.clearSubscriptions();
 
 			// Clear agent messages but preserve queues
 			this.agent.replaceMessages([]);
@@ -3108,17 +3318,12 @@ export class TuiRenderer {
 
 			// Show transition message
 			this.chatContainer.addChild(new Spacer(1));
-			this.chatContainer.addChild(
-				new Text(
-					theme.fg("accent", `✓ Handoff: ${goal}`) +
-						"\n" +
-						theme.fg("dim", `Parent: ${parentSessionId}`) +
-						"\n" +
-						theme.fg("dim", `Context: ${fileTokens.toLocaleString()} tokens`),
-					1,
-					0,
-				),
-			);
+			const handoffLines = [theme.fg("accent", `✓ Handoff: ${goal}`)];
+			if (parentSessionId) {
+				handoffLines.push(theme.fg("dim", `Parent: ${parentSessionId}`));
+			}
+			handoffLines.push(theme.fg("dim", `Context: ${fileTokens.toLocaleString()} tokens`));
+			this.chatContainer.addChild(new Text(handoffLines.join("\n"), 1, 0));
 			this.chatContainer.addChild(new Spacer(1));
 
 			// Update pending messages display
@@ -3175,6 +3380,7 @@ export class TuiRenderer {
 		// Reset agent and session
 		this.agent.reset();
 		this.sessionManager.reset();
+		this.clearSubscriptions();
 
 		// Resubscribe to agent
 		this.subscribeToAgent();

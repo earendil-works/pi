@@ -1,7 +1,7 @@
 import type { TextContent } from "@kennyfrc/mu-ai";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
-import { join } from "path";
+import { dirname, join } from "path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
 	buildHandoffMessage,
@@ -13,6 +13,7 @@ import {
 	type FileSlice,
 	formatFileBlock,
 	formatFileContext,
+	formatParentThreadReference,
 	formatSlice,
 	type HandoffDetails,
 	handoffTool,
@@ -335,7 +336,8 @@ describe("buildHandoffMessage", () => {
 	it("includes parent thread reference when provided", () => {
 		const message = buildHandoffMessage("Goal", "<files>", "abc-123");
 		expect(message).toContain("**Parent Thread:** `abc-123`");
-		expect(message).toContain("read_thread");
+		expect(message).toContain("ReadThread");
+		expect(message).toContain("<system_reminder>");
 	});
 
 	it("omits parent thread section when null", () => {
@@ -344,14 +346,25 @@ describe("buildHandoffMessage", () => {
 	});
 
 	it("includes file context", () => {
-		const fileContext = "<file_context>\ntest content\n</file_context>";
+		const fileContext = "test content";
 		const message = buildHandoffMessage("Goal", fileContext, null);
+		expect(message).toContain("<file_context>");
 		expect(message).toContain(fileContext);
+		expect(message).toContain("</file_context>");
 	});
 
 	it("includes instructions for the new session", () => {
 		const message = buildHandoffMessage("Goal", "<files>", null);
 		expect(message).toContain("Begin working on the goal");
+	});
+});
+
+describe("formatParentThreadReference", () => {
+	it("includes parent id and reminder", () => {
+		const result = formatParentThreadReference("parent-xyz");
+		expect(result).toContain("**Parent Thread:** `parent-xyz`");
+		expect(result).toContain("ReadThread");
+		expect(result).toContain("<system_reminder>");
 	});
 });
 
@@ -397,6 +410,34 @@ describe("handoffTool.execute", () => {
 
 		expect(result.isError).toBe(true);
 		expect(result.content[0].text).toContain("File not found");
+	});
+
+	it("resolves repo-root relative paths from nested cwd", async () => {
+		const repoRoot = join(tmpdir(), `handoff-repo-${Date.now()}`);
+		const gitHeadPath = join(repoRoot, ".git", "HEAD");
+		const nestedCwd = join(repoRoot, "packages", "coding-agent");
+		const targetFile = join(repoRoot, "packages", "tui", "src", "nested.ts");
+		const previousCwd = process.cwd();
+
+		try {
+			mkdirSync(dirname(gitHeadPath), { recursive: true });
+			writeFileSync(gitHeadPath, "ref: refs/heads/main");
+			mkdirSync(nestedCwd, { recursive: true });
+			mkdirSync(dirname(targetFile), { recursive: true });
+			writeFileSync(targetFile, "const nested = true;");
+
+			process.chdir(nestedCwd);
+			const result = (await handoffTool.execute("test-call", {
+				goal: "Test goal",
+				files: ["packages/tui/src/nested.ts"],
+			})) as ToolResult;
+
+			expect(result.isError).toBeFalsy();
+			expect(result.details.formattedMessage).toContain("const nested = true;");
+		} finally {
+			process.chdir(previousCwd);
+			rmSync(repoRoot, { recursive: true, force: true });
+		}
 	});
 
 	it("returns error when exceeding token limit", async () => {

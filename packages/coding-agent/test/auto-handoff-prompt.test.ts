@@ -1,6 +1,6 @@
 // Verification: Auto-handoff goal prompt
 import { describe, expect, it } from "vitest";
-import { getAutoHandoffGoalPrompt, getHandoffPrompt } from "../src/prompts/index.js";
+import { getAutoHandoffGoalPrompt, getHandoffFileSelectionPrompt, getHandoffPrompt } from "../src/prompts/index.js";
 
 describe("Auto-Handoff Prompts", () => {
 	it("should return goal prompt with correct constraints", () => {
@@ -24,5 +24,22 @@ describe("Auto-Handoff Prompts", () => {
 		expect(prompt).toContain("## Current Status");
 		expect(prompt).toContain("## Relevant Files");
 		expect(prompt).toContain("## Next Steps");
+	});
+
+	it("should return handoff file selection prompt with XML instructions", () => {
+		const goal = "Refactor the auth flow";
+		const prompt = getHandoffFileSelectionPrompt(goal);
+
+		expect(prompt).toContain(`TARGET GOAL: "${goal}"`);
+		expect(prompt).toContain("Repository root:");
+		expect(prompt).toContain("Current working directory:");
+		expect(prompt).toContain("Path rules:");
+		expect(prompt).toContain("absolute paths");
+		expect(prompt).toContain("<handoff_files>");
+		expect(prompt).toContain("<file>");
+		expect(prompt).toContain("slice syntax");
+		expect(prompt.toLowerCase()).toContain("output only xml");
+		expect(prompt).not.toContain("select_handoff_files");
+		expect(prompt.toLowerCase()).not.toContain("tool calling");
 	});
 });
