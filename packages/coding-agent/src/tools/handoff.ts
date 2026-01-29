@@ -6,11 +6,12 @@
  * is agent-invocable with explicit control over what files to include.
  */
 
+import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import type { AgentTool, TextContent } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { existsSync, readFileSync } from "fs";
-import { isAbsolute, resolve } from "path";
+import { isAbsolute, relative, resolve } from "path";
 import { getToolDescription } from "../prompts/index.js";
 import { findRepoRoot } from "../utils/find-repo-root.js";
 
@@ -305,6 +306,23 @@ ${blocks.join("\n")}
 </file_context>`;
 }
 
+/**
+ * Format git diff output as a <file_diff> block.
+ */
+export function formatFileDiff(diff: string): string {
+	const trimmed = diff.trim();
+	if (!trimmed) {
+		return "";
+	}
+
+	return `<file_diff>
+
+\`\`\`diff
+${trimmed}
+\`\`\`
+</file_diff>`;
+}
+
 function wrapFileContext(fileContext: string): string {
 	const trimmed = fileContext.trim();
 	if (!trimmed) {
@@ -318,6 +336,53 @@ function wrapFileContext(fileContext: string): string {
 	return `<file_context>
 ${fileContext}
 </file_context>`;
+}
+
+function wrapFileDiff(fileDiff: string): string {
+	const trimmed = fileDiff.trim();
+	if (!trimmed) {
+		return "";
+	}
+
+	if (trimmed.startsWith("<file_diff>") && trimmed.endsWith("</file_diff>")) {
+		return fileDiff;
+	}
+
+	return `<file_diff>
+${fileDiff}
+</file_diff>`;
+}
+
+function toRepoRelativePath(repoRoot: string, filePath: string): string | null {
+	const rel = relative(repoRoot, filePath);
+	if (!rel || rel.startsWith("..") || isAbsolute(rel)) {
+		return null;
+	}
+	return rel;
+}
+
+function getGitDiff(repoRoot: string | null, filePaths: string[]): string {
+	if (!repoRoot) return "";
+
+	const selections = new Set<string>();
+	for (const filePath of filePaths) {
+		const rel = toRepoRelativePath(repoRoot, filePath);
+		if (rel) {
+			selections.add(rel);
+		}
+	}
+
+	if (selections.size === 0) return "";
+
+	try {
+		return execFileSync("git", ["diff", "--", ...selections], {
+			cwd: repoRoot,
+			encoding: "utf-8",
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+	} catch {
+		return "";
+	}
 }
 
 /**
@@ -334,7 +399,12 @@ export function formatParentThreadReference(parentId: string): string {
 /**
  * Build the complete handoff message.
  */
-export function buildHandoffMessage(goal: string, fileContext: string, parentId: string | null): string {
+export function buildHandoffMessage(
+	goal: string,
+	fileContext: string,
+	parentId: string | null,
+	fileDiff?: string,
+): string {
 	let message = `# Handoff: ${goal}\n\n`;
 
 	if (parentId) {
@@ -342,6 +412,11 @@ export function buildHandoffMessage(goal: string, fileContext: string, parentId:
 	}
 
 	message += wrapFileContext(fileContext);
+
+	const diffBlock = fileDiff ? wrapFileDiff(fileDiff) : "";
+	if (diffBlock) {
+		message += `\n\n${diffBlock}`;
+	}
 	message += `\n\n---\n\n## Goal\n${goal}\n\n`;
 	message += `You have been handed context from a previous session. The files above contain the relevant code. Begin working on the goal.`;
 
@@ -429,8 +504,14 @@ export const handoffTool: AgentTool<typeof handoffSchema, HandoffDetails> = {
 			};
 		}
 
+		const diffText = getGitDiff(
+			repoRoot,
+			fileResults.map((result) => result.slice.path),
+		);
+		const diffTokens = diffText ? estimateTokens(diffText) : 0;
+
 		// Check token budget
-		const totalTokens = fileResults.reduce((sum, f) => sum + f.tokens, 0);
+		const totalTokens = fileResults.reduce((sum, f) => sum + f.tokens, 0) + diffTokens;
 
 		if (totalTokens > limit) {
 			const sorted = [...fileResults].sort((a, b) => b.tokens - a.tokens);
@@ -438,6 +519,7 @@ export const handoffTool: AgentTool<typeof handoffSchema, HandoffDetails> = {
 				.slice(0, 5)
 				.map((f) => `- ${formatSlice(f.slice)}: ~${f.tokens.toLocaleString()} tokens`)
 				.join("\n");
+			const diffLine = diffTokens > 0 ? `- Diff: ~${diffTokens.toLocaleString()} tokens` : "";
 
 			return {
 				content: [
@@ -446,7 +528,7 @@ export const handoffTool: AgentTool<typeof handoffSchema, HandoffDetails> = {
 						text: `Error: Files exceed ${limit.toLocaleString()} token limit (estimated: ${totalTokens.toLocaleString()}).
 
 Largest selections:
-${breakdown}
+${breakdown}${diffLine ? `\n${diffLine}` : ""}
 
 Suggestions:
 - Use line ranges to select specific sections (e.g., 'file.ts:100-200')
@@ -459,10 +541,12 @@ Suggestions:
 			};
 		}
 
+		const diffBlock = formatFileDiff(diffText);
+
 		// Format the handoff message
 		const fileContext = formatFileContext(fileResults);
 		// parentSessionId will be filled by TUI
-		const formattedMessage = buildHandoffMessage(goal, fileContext, null);
+		const formattedMessage = buildHandoffMessage(goal, fileContext, null, diffBlock);
 
 		return {
 			content: [

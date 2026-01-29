@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import type { TextContent } from "@kennyfrc/mu-ai";
 import { mkdirSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
@@ -434,6 +435,69 @@ describe("handoffTool.execute", () => {
 
 			expect(result.isError).toBeFalsy();
 			expect(result.details.formattedMessage).toContain("const nested = true;");
+		} finally {
+			process.chdir(previousCwd);
+			rmSync(repoRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("includes git diff for selected files", async () => {
+		const repoRoot = join(tmpdir(), `handoff-diff-${Date.now()}`);
+		const targetFile = join(repoRoot, "file.txt");
+		const previousCwd = process.cwd();
+
+		try {
+			mkdirSync(repoRoot, { recursive: true });
+			execSync("git init", { cwd: repoRoot });
+			execSync('git config user.email "handoff@example.com"', { cwd: repoRoot });
+			execSync('git config user.name "Handoff Test"', { cwd: repoRoot });
+			writeFileSync(targetFile, "line1\n");
+			execSync("git add file.txt", { cwd: repoRoot });
+			execSync('git commit -m "init"', { cwd: repoRoot });
+
+			writeFileSync(targetFile, "line1\nline2\n");
+
+			process.chdir(repoRoot);
+			const result = (await handoffTool.execute("test-call", {
+				goal: "Test goal",
+				files: ["file.txt"],
+			})) as ToolResult;
+
+			expect(result.isError).toBeFalsy();
+			expect(result.details.formattedMessage).toContain("diff --git");
+			expect(result.details.formattedMessage).toContain("+line2");
+		} finally {
+			process.chdir(previousCwd);
+			rmSync(repoRoot, { recursive: true, force: true });
+		}
+	});
+
+	it("counts diff tokens toward the limit", async () => {
+		const repoRoot = join(tmpdir(), `handoff-diff-budget-${Date.now()}`);
+		const targetFile = join(repoRoot, "file.txt");
+		const previousCwd = process.cwd();
+		const expandedLines = Array.from({ length: 200 }, (_, index) => `line-${index + 1}`).join("\n");
+
+		try {
+			mkdirSync(repoRoot, { recursive: true });
+			execSync("git init", { cwd: repoRoot });
+			execSync('git config user.email "handoff@example.com"', { cwd: repoRoot });
+			execSync('git config user.name "Handoff Test"', { cwd: repoRoot });
+			writeFileSync(targetFile, "base\n");
+			execSync("git add file.txt", { cwd: repoRoot });
+			execSync('git commit -m "init"', { cwd: repoRoot });
+
+			writeFileSync(targetFile, `base\n${expandedLines}\n`);
+
+			process.chdir(repoRoot);
+			const result = (await handoffTool.execute("test-call", {
+				goal: "Test goal",
+				files: ["file.txt:1"],
+				token_limit: 50,
+			})) as ToolResult;
+
+			expect(result.isError).toBe(true);
+			expect(result.content[0].text).toContain("token limit");
 		} finally {
 			process.chdir(previousCwd);
 			rmSync(repoRoot, { recursive: true, force: true });
