@@ -42,6 +42,7 @@ const defaultModelPerProvider: Record<KnownProvider, string> = {
 	cerebras: "zai-glm-4.6",
 	zai: "glm-4.6",
 	mistral: "devstral-medium-2507",
+	synthetic: "hf:deepseek-ai/DeepSeek-V3-0324",
 };
 
 type Mode = "text" | "json" | "rpc";

@@ -89,7 +89,8 @@ export type KnownProvider =
 	| "cerebras"
 	| "openrouter"
 	| "zai"
-	| "mistral";
+	| "mistral"
+	| "synthetic";
 export type Provider = KnownProvider | string;
 
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";

@@ -668,6 +668,39 @@ async function generateModels() {
 	];
 	allModels.push(...codexModels);
 
+	// Synthetic (synthetic.new) models
+	// Docs: https://dev.synthetic.new/docs/openai/chat-completions
+	// Uses OpenAI-compatible API with model IDs prefixed with "hf:"
+	const syntheticModels: Model<"openai-completions">[] = [
+		{
+			id: "hf:deepseek-ai/DeepSeek-V3-0324",
+			name: "DeepSeek V3 0324 (Synthetic)",
+			api: "openai-completions",
+			provider: "synthetic",
+			baseUrl: "https://api.synthetic.new/openai/v1",
+			reasoning: true,
+			reasoningFormat: "reasoning_content",
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 64000,
+			maxTokens: 8192,
+		},
+		{
+			id: "hf:deepseek-ai/DeepSeek-R1",
+			name: "DeepSeek R1 (Synthetic)",
+			api: "openai-completions",
+			provider: "synthetic",
+			baseUrl: "https://api.synthetic.new/openai/v1",
+			reasoning: true,
+			reasoningFormat: "reasoning_content",
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 64000,
+			maxTokens: 8192,
+		},
+	];
+	allModels.push(...syntheticModels);
+
 	// Group by provider and deduplicate by model ID
 	const providers: Record<string, Record<string, Model<any>>> = {};
 	for (const model of allModels) {
