@@ -27,6 +27,30 @@ describe("parseHandoffFileSelections", () => {
 		expect(result).toEqual(["src/a.ts", "src/b.ts:5-9"]);
 	});
 
+	it("parses self-closing file tags with single-quote path attribute", () => {
+		const input = "<file path='src/a.ts' /><file path='src/b.ts:5-9'/>";
+		const result = parseHandoffFileSelections(input);
+		expect(result).toEqual(["src/a.ts", "src/b.ts:5-9"]);
+	});
+
+	it("parses escaped XML tags", () => {
+		const input = "prefix &lt;file&gt;src/a.ts&lt;/file&gt; tail";
+		const result = parseHandoffFileSelections(input);
+		expect(result).toEqual(["src/a.ts"]);
+	});
+
+	it("parses double-escaped XML tags", () => {
+		const input = "&amp;lt;file&amp;gt;src/a.ts&amp;lt;/file&amp;gt;";
+		const result = parseHandoffFileSelections(input);
+		expect(result).toEqual(["src/a.ts"]);
+	});
+
+	it("strips wrapping backticks and quotes around file values", () => {
+		const input = "<file>`src/a.ts`</file><file>\"src/b.ts:10-20\"</file><file path='`src/c.ts`'/>";
+		const result = parseHandoffFileSelections(input);
+		expect(result).toEqual(["src/a.ts", "src/b.ts:10-20", "src/c.ts"]);
+	});
+
 	it("returns empty array when no file tags exist", () => {
 		const input = "No files listed here.";
 		const result = parseHandoffFileSelections(input);
