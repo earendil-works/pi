@@ -289,6 +289,9 @@ function buildParams(model, context, options) {
 	if (context.tools) {
 		params.tools = convertTools(context.tools);
 	}
+	if (options?.toolChoice) {
+		params.tool_choice = options.toolChoice;
+	}
 	if (model.reasoning) {
 		if (options?.reasoningEffort || options?.reasoningSummary) {
 			// Map 'xhigh' to 'high' for OpenAI compatibility as 'xhigh' is not a standard OpenAI value
