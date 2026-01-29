@@ -20,16 +20,18 @@ export class SelectList implements Component {
 	private selectedIndex: number = 0;
 	private maxVisible: number = 5;
 	private theme: SelectListTheme;
+	private labelMaxWidth: number;
 
 	public onSelect?: (item: SelectItem) => void;
 	public onCancel?: () => void;
 	public onSelectionChange?: (item: SelectItem) => void;
 
-	constructor(items: SelectItem[], maxVisible: number, theme: SelectListTheme) {
+	constructor(items: SelectItem[], maxVisible: number, theme: SelectListTheme, labelMaxWidth = 30) {
 		this.items = items;
 		this.filteredItems = items;
 		this.maxVisible = maxVisible;
 		this.theme = theme;
+		this.labelMaxWidth = labelMaxWidth;
 	}
 
 	setFilter(filter: string): void {
@@ -62,6 +64,9 @@ export class SelectList implements Component {
 		);
 		const endIndex = Math.min(startIndex + this.maxVisible, this.filteredItems.length);
 
+		const minWidthForDescription = this.labelMaxWidth + 10;
+		const labelColumnWidth = this.labelMaxWidth + 2;
+
 		// Render visible items
 		for (let i = startIndex; i < endIndex; i++) {
 			const item = this.filteredItems[i];
@@ -75,11 +80,11 @@ export class SelectList implements Component {
 				const prefixWidth = 2; // "→ " is 2 characters visually
 				const displayValue = item.label || item.value;
 
-				if (item.description && width > 40) {
+				if (item.description && width > minWidthForDescription) {
 					// Calculate how much space we have for value + description
-					const maxValueLength = Math.min(displayValue.length, 30);
+					const maxValueLength = Math.min(displayValue.length, this.labelMaxWidth);
 					const truncatedValue = displayValue.substring(0, maxValueLength);
-					const spacing = " ".repeat(Math.max(1, 32 - truncatedValue.length));
+					const spacing = " ".repeat(Math.max(1, labelColumnWidth - truncatedValue.length));
 
 					// Calculate remaining space for description using visible widths
 					const descriptionStart = prefixWidth + truncatedValue.length + spacing.length;
@@ -103,11 +108,11 @@ export class SelectList implements Component {
 				const displayValue = item.label || item.value;
 				const prefix = "  ";
 
-				if (item.description && width > 40) {
+				if (item.description && width > minWidthForDescription) {
 					// Calculate how much space we have for value + description
-					const maxValueLength = Math.min(displayValue.length, 30);
+					const maxValueLength = Math.min(displayValue.length, this.labelMaxWidth);
 					const truncatedValue = displayValue.substring(0, maxValueLength);
-					const spacing = " ".repeat(Math.max(1, 32 - truncatedValue.length));
+					const spacing = " ".repeat(Math.max(1, labelColumnWidth - truncatedValue.length));
 
 					// Calculate remaining space for description
 					const descriptionStart = prefix.length + truncatedValue.length + spacing.length;

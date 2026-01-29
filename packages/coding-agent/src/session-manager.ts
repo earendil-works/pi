@@ -598,6 +598,7 @@ export class SessionManager {
 		modified: Date;
 		messageCount: number;
 		firstMessage: string;
+		title?: string;
 		allMessagesText: string;
 		cwd: string;
 	}> {
@@ -608,6 +609,7 @@ export class SessionManager {
 			modified: Date;
 			messageCount: number;
 			firstMessage: string;
+			title?: string;
 			allMessagesText: string;
 			cwd: string;
 		}> = [];
@@ -630,6 +632,7 @@ export class SessionManager {
 					let created = stats.birthtime;
 					let messageCount = 0;
 					let firstMessage = "";
+					let lastTitle = "";
 					let cwd = "";
 					const allMessages: string[] = [];
 
@@ -637,11 +640,20 @@ export class SessionManager {
 						try {
 							const entry = JSON.parse(line);
 
-							// Extract session ID and cwd from first session entry
-							if (entry.type === "session" && !sessionId) {
-								sessionId = entry.id;
-								created = new Date(entry.timestamp);
-								cwd = entry.cwd || "";
+							// Extract session ID, cwd, and title from session entry
+							if (entry.type === "session") {
+								if (!sessionId) {
+									sessionId = entry.id;
+									created = new Date(entry.timestamp);
+									cwd = entry.cwd || "";
+								}
+								if (typeof entry.title === "string" && entry.title.trim()) {
+									lastTitle = entry.title;
+								}
+							}
+
+							if (entry.type === "title_change" && typeof entry.title === "string" && entry.title.trim()) {
+								lastTitle = entry.title;
 							}
 
 							// Count messages and collect all text
@@ -682,6 +694,7 @@ export class SessionManager {
 						modified: stats.mtime,
 						messageCount,
 						firstMessage: firstMessage || "(no messages)",
+						title: lastTitle || undefined,
 						allMessagesText: allMessages.join(" "),
 						cwd,
 					});
@@ -704,6 +717,7 @@ export class SessionManager {
 		modified: Date;
 		messageCount: number;
 		firstMessage: string;
+		title?: string;
 		allMessagesText: string;
 		cwd: string;
 	}> {
@@ -720,6 +734,7 @@ export class SessionManager {
 		modified: Date;
 		messageCount: number;
 		firstMessage: string;
+		title?: string;
 		allMessagesText: string;
 		cwd: string;
 	}> {
@@ -730,6 +745,7 @@ export class SessionManager {
 			modified: Date;
 			messageCount: number;
 			firstMessage: string;
+			title?: string;
 			allMessagesText: string;
 			cwd: string;
 		}> = [];

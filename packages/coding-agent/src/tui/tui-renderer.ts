@@ -59,8 +59,14 @@ import {
 	extractTurnCompleteAssistantMessages,
 	type JsonlFollowState,
 } from "../subscriptions/session-jsonl-follower.js";
-import { parseSubscribeCommand } from "../subscriptions/subscribe-command.js";
+import { parseSubscribeCommand, parseUnsubscribeCommand } from "../subscriptions/subscribe-command.js";
 import { createSubscriptionToolMessages, SUBSCRIPTION_TOOL_NAME } from "../subscriptions/subscription-messages.js";
+import {
+	buildSubscribeSelectItems,
+	buildUnsubscribeSelectItems,
+	filterRecentSubscriptionSessions,
+	type SubscriptionSessionSummary,
+} from "../subscriptions/subscription-selection.js";
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
 import { bashTool } from "../tools/bash.js";
 import { formatParentThreadReference, type HandoffDetails, handoffTool } from "../tools/handoff.js";
@@ -78,6 +84,7 @@ import { ModelSelectorComponent } from "./model-selector.js";
 import { OAuthAccountSelectorComponent } from "./oauth-account-selector.js";
 import { OAuthSelectorComponent } from "./oauth-selector.js";
 import { QueueModeSelectorComponent } from "./queue-mode-selector.js";
+import { SubscriptionSelectorComponent } from "./subscription-selector.js";
 import { ThemeSelectorComponent } from "./theme-selector.js";
 import {
 	getEffectiveThinkingLevel,
@@ -93,6 +100,8 @@ import { UserMessageSelectorComponent } from "./user-message-selector.js";
 function hashContent(content: string): string {
 	return createHash("sha256").update(content).digest("hex");
 }
+
+const SUBSCRIPTION_RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 type HandoffToolResult = Awaited<ReturnType<typeof handoffTool.execute>>;
 
@@ -174,6 +183,9 @@ export class TuiRenderer {
 
 	// User message selector (for branching)
 	private userMessageSelector: UserMessageSelectorComponent | null = null;
+
+	// Subscription selector (subscribe/unsubscribe)
+	private subscriptionSelector: SubscriptionSelectorComponent | null = null;
 
 	// OAuth selector
 	private oauthSelector: OAuthSelectorComponent | null = null;
@@ -297,6 +309,11 @@ export class TuiRenderer {
 			description: "Subscribe to another session's turn completions",
 		};
 
+		const unsubscribeCommand: SlashCommand = {
+			name: "unsubscribe",
+			description: "Stop watching a subscribed session",
+		};
+
 		const loginCommand: SlashCommand = {
 			name: "login",
 			description: "Login with OAuth provider",
@@ -353,6 +370,7 @@ export class TuiRenderer {
 				exportCommand,
 				handoffCommand,
 				subscribeCommand,
+				unsubscribeCommand,
 				loginCommand,
 				logoutCommand,
 				modelCommand,
@@ -635,9 +653,28 @@ export class TuiRenderer {
 				return;
 			}
 
+			const unsubscribeCommand = parseUnsubscribeCommand(rawText);
+			if (unsubscribeCommand) {
+				this.handleUnsubscribeCommand(unsubscribeCommand.sessionId);
+				this.editor.setText("");
+				return;
+			}
+
+			if (/^\/unsubscribe(?:\s|$)/i.test(rawText)) {
+				this.showUnsubscribeSelector();
+				this.editor.setText("");
+				return;
+			}
+
 			const subscribeCommand = parseSubscribeCommand(rawText);
 			if (subscribeCommand) {
 				this.handleSubscribeCommand(subscribeCommand.sessionId);
+				this.editor.setText("");
+				return;
+			}
+
+			if (/^\/subscribe(?:\s|$)/i.test(rawText)) {
+				this.showSubscribeSelector();
 				this.editor.setText("");
 				return;
 			}
@@ -2211,6 +2248,110 @@ export class TuiRenderer {
 		this.ui.setFocus(this.editor);
 	}
 
+	private showSubscribeSelector(): void {
+		const now = new Date();
+		const currentSessionId = this.sessionManager.getSessionId();
+		const subscribedSessionIds = new Set(this.subscriptions.keys());
+		const summaries: SubscriptionSessionSummary[] = this.sessionManager.loadAllSessions().map((session) => ({
+			id: session.id,
+			modified: session.modified,
+			firstMessage: session.firstMessage,
+			messageCount: session.messageCount,
+			title: session.title,
+		}));
+
+		const recentSessions = filterRecentSubscriptionSessions(summaries, {
+			now,
+			maxAgeMs: SUBSCRIPTION_RECENT_WINDOW_MS,
+			currentSessionId,
+			subscribedSessionIds,
+		});
+
+		if (recentSessions.length === 0) {
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(
+				new Text(theme.fg("dim", "No recent sessions to subscribe to (last 24 hours)."), 1, 0),
+			);
+			this.ui.requestRender();
+			return;
+		}
+
+		const selectItems = buildSubscribeSelectItems(recentSessions).map((item) => ({
+			value: item.id,
+			label: item.label,
+			description: item.description,
+		}));
+
+		this.showSubscriptionSelector("Subscribe to Session", selectItems, (sessionId) => {
+			this.handleSubscribeCommand(sessionId);
+		});
+	}
+
+	private showUnsubscribeSelector(): void {
+		const subscriptionIds = Array.from(this.subscriptions.keys());
+		if (subscriptionIds.length === 0) {
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(theme.fg("dim", "No active subscriptions to unsubscribe."), 1, 0));
+			this.ui.requestRender();
+			return;
+		}
+
+		const summariesById = new Map<string, SubscriptionSessionSummary>();
+		for (const session of this.sessionManager.loadAllSessionsGlobal()) {
+			if (!summariesById.has(session.id)) {
+				summariesById.set(session.id, {
+					id: session.id,
+					modified: session.modified,
+					firstMessage: session.firstMessage,
+					messageCount: session.messageCount,
+					title: session.title,
+				});
+			}
+		}
+
+		const selectItems = buildUnsubscribeSelectItems(subscriptionIds, summariesById).map((item) => ({
+			value: item.id,
+			label: item.label,
+			description: item.description,
+		}));
+
+		this.showSubscriptionSelector("Unsubscribe from Session", selectItems, (sessionId) => {
+			this.handleUnsubscribeCommand(sessionId);
+		});
+	}
+
+	private showSubscriptionSelector(
+		title: string,
+		items: Array<{ value: string; label: string; description: string }>,
+		onSelect: (sessionId: string) => void,
+	): void {
+		this.subscriptionSelector = new SubscriptionSelectorComponent(
+			title,
+			items,
+			(sessionId) => {
+				this.hideSubscriptionSelector();
+				onSelect(sessionId);
+				this.ui.requestRender();
+			},
+			() => {
+				this.hideSubscriptionSelector();
+				this.ui.requestRender();
+			},
+		);
+
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.subscriptionSelector);
+		this.ui.setFocus(this.subscriptionSelector.getSelectList());
+		this.ui.requestRender();
+	}
+
+	private hideSubscriptionSelector(): void {
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.subscriptionSelector = null;
+		this.ui.setFocus(this.editor);
+	}
+
 	private async showOAuthSelector(mode: "login" | "logout"): Promise<void> {
 		// For logout mode, filter to only show logged-in providers
 		let providersToShow: string[] = [];
@@ -2736,6 +2877,26 @@ export class TuiRenderer {
 		}
 	}
 
+	private handleUnsubscribeCommand(sessionId: string): void {
+		const subscription = this.subscriptions.get(sessionId);
+		if (!subscription) {
+			this.showWarning(`Not subscribed to ${sessionId}`);
+			return;
+		}
+
+		try {
+			subscription.watcher.close();
+		} catch {
+			// Ignore watcher cleanup errors
+		}
+		this.subscriptions.delete(sessionId);
+		this.pendingSubscriptionEvents = this.pendingSubscriptionEvents.filter((event) => event.sessionId !== sessionId);
+
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg("dim", `Unsubscribed from ${sessionId}`), 1, 0));
+		this.ui.requestRender();
+	}
+
 	private handleSubscriptionFileChange(sessionId: string): void {
 		const subscription = this.subscriptions.get(sessionId);
 		if (!subscription) return;
@@ -2850,7 +3011,9 @@ export class TuiRenderer {
 
 		this.ui.requestRender();
 
-		await this.agent.prompt("A subscribed session completed a turn. Respond to the tool result above.");
+		await this.agent.prompt(
+			`A subscribed session (${event.sessionId}) completed a turn. Use ReadThread if you need more context, then respond to the tool result above.`,
+		);
 	}
 
 	private clearSubscriptions(): void {
