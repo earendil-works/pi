@@ -280,6 +280,9 @@ Pick the minimal, high-signal set of files from the repository.
 Output ONLY XML using <handoff_files> and <file> tags.
 - You may place <file> tags anywhere in the response; they will be extracted.
 - Each <file> tag must contain a single file selection.
+- Do NOT wrap the XML in Markdown/code fences.
+- Do NOT escape XML tags (no &lt;file&gt;...&lt;/file&gt;). Use literal <file> tags.
+- Do NOT wrap file selections in backticks or quotes.
 - Example:
 <handoff_files>
   <file>src/foo.ts</file>

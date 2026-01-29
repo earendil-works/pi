@@ -36,6 +36,7 @@ import { copyToClipboard } from "../clipboard.js";
 import { scheduleExplicitHandoff, submitExplicitHandoff } from "../explicit-handoff.js";
 import { exportSessionToHtml } from "../export-html.js";
 import { parseHandoffFileSelections } from "../handoff-file-selection.js";
+import { formatMessagesForHandoffSelection } from "../handoff-selection-transcript.js";
 import { getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
 import { playNotificationSound, sendNotification } from "../notification.js";
 import {
@@ -3029,38 +3030,7 @@ export class TuiRenderer {
 	}
 
 	private formatMessagesForHandoff(messages: Message[]): string {
-		return messages
-			.map((msg) => {
-				if (msg.role === "user") {
-					const text = (msg.content as Array<{ type: string; text?: string }>)
-						.filter((c) => c.type === "text")
-						.map((c) => c.text || "")
-						.join("");
-					return `User: ${text}`;
-				} else if (msg.role === "assistant") {
-					const assistantMsg = msg as AssistantMessage;
-					const textParts = assistantMsg.content
-						.filter((c): c is { type: "text"; text: string } => c.type === "text")
-						.map((c) => c.text)
-						.join("");
-					const toolCalls = assistantMsg.content
-						.filter((c): c is ToolCall => c.type === "toolCall")
-						.map((c) => `[Tool: ${c.name}]`)
-						.join(" ");
-					return `Assistant: ${textParts}${toolCalls ? "\n" + toolCalls : ""}`;
-				} else if (msg.role === "toolResult") {
-					const toolResult = msg as ToolResultMessage;
-					const text = toolResult.content
-						.filter((c): c is { type: "text"; text: string } => c.type === "text")
-						.map((c) => c.text)
-						.join("");
-					const truncated = text.length > 500 ? text.substring(0, 500) + "..." : text;
-					return `Tool (${toolResult.toolName}): ${truncated}`;
-				}
-				return "";
-			})
-			.filter((line) => line.length > 0)
-			.join("\n\n");
+		return formatMessagesForHandoffSelection(messages);
 	}
 
 	private insertParentThreadReference(formattedMessage: string, parentSessionId: string): string {
