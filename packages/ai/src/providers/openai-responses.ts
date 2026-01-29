@@ -30,9 +30,19 @@ import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { transformMessages } from "./transorm-messages.js";
 
 // OpenAI Responses-specific options
+export type OpenAIResponsesToolChoice =
+	| "auto"
+	| "none"
+	| "required"
+	| {
+			type: "function";
+			name: string;
+	  };
+
 export interface OpenAIResponsesOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
+	toolChoice?: OpenAIResponsesToolChoice;
 }
 
 /**
@@ -346,6 +356,10 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 
 	if (context.tools) {
 		params.tools = convertTools(context.tools);
+	}
+
+	if (options?.toolChoice) {
+		params.tool_choice = options.toolChoice;
 	}
 
 	if (model.reasoning) {
