@@ -23,14 +23,14 @@ describe("todowrite integration", () => {
 			expect(desc).toContain("in_progress");
 		});
 
-		it("buildSystemPrompt includes TodoWrite in tools list", () => {
-			const prompt = buildSystemPrompt({ selectedTools: ["TodoWrite"] });
+		it("buildSystemPrompt includes TodoWrite in tools list", async () => {
+			const prompt = await buildSystemPrompt({ selectedTools: ["TodoWrite"] });
 			expect(prompt).toContain("TodoWrite");
 			expect(prompt).toContain("task list");
 		});
 
-		it("buildSystemPrompt works with TodoWrite alongside other tools", () => {
-			const prompt = buildSystemPrompt({ selectedTools: ["Read", "Bash", "TodoWrite"] });
+		it("buildSystemPrompt works with TodoWrite alongside other tools", async () => {
+			const prompt = await buildSystemPrompt({ selectedTools: ["Read", "Bash", "TodoWrite"] });
 			expect(prompt).toContain("Read");
 			expect(prompt).toContain("Bash");
 			expect(prompt).toContain("TodoWrite");

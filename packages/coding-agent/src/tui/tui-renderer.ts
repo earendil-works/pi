@@ -201,7 +201,7 @@ export class TuiRenderer {
 	// Model scope for quick cycling
 	private scopedModels: Array<{ model: Model<any>; thinkingLevel: ThinkingLevel }> = [];
 	private toolSelector?: (model: Model<any> | null | undefined) => ToolSelection;
-	private systemPromptBuilder?: (toolNames: ToolName[]) => string;
+	private systemPromptBuilder?: (toolNames: ToolName[]) => Promise<string>;
 
 	// Tool output expansion state
 	private toolOutputExpanded = false;
@@ -238,7 +238,7 @@ export class TuiRenderer {
 		newVersion: string | null = null,
 		scopedModels: Array<{ model: Model<any>; thinkingLevel: ThinkingLevel }> = [],
 		toolSelector?: (model: Model<any> | null | undefined) => ToolSelection,
-		systemPromptBuilder?: (toolNames: ToolName[]) => string,
+		systemPromptBuilder?: (toolNames: ToolName[]) => Promise<string>,
 		fdPath: string | null = null,
 	) {
 		this.agent = agent;
@@ -1699,13 +1699,14 @@ export class TuiRenderer {
 		this.ui.requestRender();
 	}
 
-	private updateToolsForModel(model: Model<any> | null | undefined): void {
+	private async updateToolsForModel(model: Model<any> | null | undefined): Promise<void> {
 		if (!this.toolSelector || !this.systemPromptBuilder) {
 			return;
 		}
 		const selection = this.toolSelector(model);
 		this.agent.setTools(selection.tools);
-		this.agent.setSystemPrompt(this.systemPromptBuilder(selection.toolNames));
+		const systemPrompt = await this.systemPromptBuilder(selection.toolNames);
+		this.agent.setSystemPrompt(systemPrompt);
 	}
 
 	private async cycleModel(): Promise<void> {
@@ -1743,7 +1744,7 @@ export class TuiRenderer {
 
 			// Switch model
 			this.agent.setModel(nextModel);
-			this.updateToolsForModel(nextModel);
+			await this.updateToolsForModel(nextModel);
 
 			// Save model change to session and settings
 			this.sessionManager.saveModelChange(nextModel.provider, nextModel.id);
@@ -1810,7 +1811,7 @@ export class TuiRenderer {
 
 			// Switch model
 			this.agent.setModel(nextModel);
-			this.updateToolsForModel(nextModel);
+			await this.updateToolsForModel(nextModel);
 
 			// Save model change to session and settings
 			this.sessionManager.saveModelChange(nextModel.provider, nextModel.id);
@@ -2117,10 +2118,10 @@ export class TuiRenderer {
 			this.ui,
 			this.agent.state.model,
 			this.settingsManager,
-			(model) => {
+			async (model) => {
 				// Apply the selected model
 				this.agent.setModel(model);
-				this.updateToolsForModel(model);
+				await this.updateToolsForModel(model);
 
 				// Save model change to session
 				this.sessionManager.saveModelChange(model.provider, model.id);

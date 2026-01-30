@@ -1,5 +1,5 @@
 # System prompt configuration for the agent
-# Placeholders: {{TOOLS_LIST}}, {{GUIDELINES}}, {{CONTEXT_FILES}}, {{CWD}}
+# Placeholders: {{TOOLS_LIST}}, {{GUIDELINES}}, {{CONTEXT_FILES}}, {{FILE_TREE}}, {{CWD}}
 
 systemPrompt: |
   <system_instructions>
@@ -14,6 +14,7 @@ systemPrompt: |
   {{CONTEXT_FILES}}
   <metadata>
   Current working directory: {{CWD}}
+  {{FILE_TREE}}
   </metadata>
 
 # Short tool descriptions shown in the system prompt's "Available tools" list

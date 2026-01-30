@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import { parse } from "yaml";
 import type { ToolName } from "../tools/index.js";
 import { findRepoRoot } from "../utils/find-repo-root.js";
+import { generateFileTree } from "./file-tree.js";
 
 // -----------------------------------------------------------------------------
 // Handoff Nudge Constants
@@ -161,12 +162,22 @@ function formatContextFiles(contextFiles: ContextFile[]): string {
 /**
  * Build the complete system prompt
  */
-export function buildSystemPrompt(options: {
+export async function buildSystemPrompt(options: {
 	customPrompt?: string;
 	selectedTools?: ToolName[];
 	contextFiles?: ContextFile[];
-}): string {
-	const { customPrompt, selectedTools, contextFiles = [] } = options;
+	includeFileTree?: boolean;
+}): Promise<string> {
+	const { customPrompt, selectedTools, contextFiles = [], includeFileTree = true } = options;
+
+	// Generate file tree if enabled
+	let fileTreeSection = "";
+	if (includeFileTree) {
+		const fileTree = await generateFileTree({ cwd: process.cwd(), limit: 200 });
+		if (fileTree) {
+			fileTreeSection = `\nProject files:\n${fileTree}`;
+		}
+	}
 
 	// If custom prompt provided, use it with context appended
 	if (customPrompt) {
@@ -177,7 +188,7 @@ export function buildSystemPrompt(options: {
 			prompt += `\n\n${contextBlock}`;
 		}
 
-		prompt += `\n\n<metadata>\nCurrent working directory: ${process.cwd()}\n</metadata>`;
+		prompt += `\n\n<metadata>\nCurrent working directory: ${process.cwd()}${fileTreeSection}\n</metadata>`;
 
 		return prompt;
 	}
@@ -219,6 +230,7 @@ export function buildSystemPrompt(options: {
 		.replace("{{TOOLS_LIST}}", toolsList)
 		.replace("{{GUIDELINES}}", guidelinesText)
 		.replace("{{CONTEXT_FILES}}", contextFilesSection)
+		.replace("{{FILE_TREE}}", fileTreeSection)
 		.replace("{{CWD}}", process.cwd());
 
 	return prompt;

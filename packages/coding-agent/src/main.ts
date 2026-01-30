@@ -355,7 +355,7 @@ ${chalk.bold("Available Tools (default: read, bash, edit, write, list_threads, r
 `);
 }
 
-function buildSystemPrompt(customPrompt?: string, selectedTools?: ToolName[]): string {
+async function buildSystemPrompt(customPrompt?: string, selectedTools?: ToolName[]): Promise<string> {
 	// Check if customPrompt is a file path that exists
 	let resolvedCustomPrompt = customPrompt;
 	if (customPrompt && existsSync(customPrompt)) {
@@ -618,7 +618,7 @@ async function runInteractiveMode(
 	newVersion: string | null = null,
 	scopedModels: Array<{ model: Model<Api>; thinkingLevel: ThinkingLevel }> = [],
 	toolSelector?: (model: Model<Api> | null | undefined) => ToolSelection,
-	systemPromptBuilder?: (toolNames: ToolName[]) => string,
+	systemPromptBuilder?: (toolNames: ToolName[]) => Promise<string>,
 	initialMessages: string[] = [],
 	initialMessage?: string,
 	initialAttachments?: Attachment[],
@@ -1081,10 +1081,10 @@ export async function main(args: string[]) {
 
 	const baseToolNames = parsed.tools;
 	const toolSelection = resolveToolSelection(baseToolNames, initialModel);
-	const systemPrompt = buildSystemPrompt(parsed.systemPrompt, toolSelection.toolNames);
+	const systemPrompt = await buildSystemPrompt(parsed.systemPrompt, toolSelection.toolNames);
 	const selectedTools = toolSelection.tools;
 	const toolSelector = (model: Model<Api> | null | undefined) => resolveToolSelection(baseToolNames, model);
-	const systemPromptBuilder = (toolNames: ToolName[]) => buildSystemPrompt(parsed.systemPrompt, toolNames);
+	const systemPromptBuilder = async (toolNames: ToolName[]) => buildSystemPrompt(parsed.systemPrompt, toolNames);
 
 	// Create agent (initialModel can be null in interactive mode)
 	const agent = new Agent({
