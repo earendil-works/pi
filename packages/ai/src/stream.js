@@ -22,6 +22,7 @@ const envKeyByProvider = {
 	openrouter: "OPENROUTER_API_KEY",
 	zai: "ZAI_API_KEY",
 	mistral: "MISTRAL_API_KEY",
+	synthetic: "SYNTHETIC_API_KEY",
 };
 export function getApiKey(provider) {
 	// Check explicit keys first

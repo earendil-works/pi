@@ -5626,23 +5626,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "google/gemini-2.0-flash-exp:free": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "meta-llama/llama-3.3-70b-instruct:free": {
 			id: string;
 			name: string;
@@ -6758,6 +6741,44 @@ export declare const MODELS: {
 			baseUrl: string;
 			reasoning: true;
 			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+	};
+	readonly synthetic: {
+		readonly "hf:deepseek-ai/DeepSeek-V3-0324": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			reasoningFormat: "reasoning_content";
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "hf:deepseek-ai/DeepSeek-R1": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			reasoningFormat: "reasoning_content";
+			input: "text"[];
 			cost: {
 				input: number;
 				output: number;
