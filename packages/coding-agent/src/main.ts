@@ -14,7 +14,7 @@ import { buildSystemPrompt as buildSystemPromptFromYaml } from "./prompts/index.
 import { setCurrentModel } from "./runtime-state.js";
 import { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
-import { initTheme } from "./theme/theme.js";
+import { initThemeWithGhostty } from "./theme/theme.js";
 import { allTools, type ToolName } from "./tools/index.js";
 import { resolveToolSelection, type ToolSelection } from "./tools/tool-selection.js";
 import { ensureTool } from "./tools-manager.js";
@@ -849,8 +849,7 @@ export async function main(args: string[]) {
 
 	// Initialize theme (before any TUI rendering)
 	const settingsManager = new SettingsManager();
-	const themeName = settingsManager.getTheme();
-	initTheme(themeName);
+	initThemeWithGhostty(settingsManager);
 
 	// Setup session manager
 	const sessionManager = new SessionManager(parsed.continue && !parsed.resume, parsed.session);

@@ -544,6 +544,47 @@ export function stopThemeWatcher(): void {
 }
 
 // ============================================================================
+// Ghostty Theme Sync Integration
+// ============================================================================
+
+import type { SettingsManager } from "../settings-manager.js";
+import { getOrCreateGhosttyTheme, isGhosttyAvailable, isRunningInGhostty } from "./ghostty-sync.js";
+
+/**
+ * Initialize theme with Ghostty sync support.
+ * Uses "respectful sync": only syncs if user hasn't explicitly chosen a non-Ghostty theme.
+ * If running in Ghostty and no explicit theme saved, generates/uses a synced theme.
+ * Otherwise, uses the saved theme from settings.
+ * @param settingsManager Settings manager to read/save theme preference
+ */
+export function initThemeWithGhostty(settingsManager: SettingsManager): void {
+	const savedTheme = settingsManager.getTheme();
+
+	// Check if we should use Ghostty sync:
+	// - Must be running in Ghostty with CLI available
+	// - Either no theme saved, or already using a ghostty-sync theme
+	if (isRunningInGhostty() && isGhosttyAvailable()) {
+		const isGhosttyTheme = savedTheme?.startsWith("ghostty-sync-");
+
+		if (!savedTheme || isGhosttyTheme) {
+			const result = getOrCreateGhosttyTheme();
+			if (result) {
+				// Use the Ghostty-synced theme
+				initTheme(result.name);
+				// Save to settings for persistence (only if it's new or different)
+				if (result.name !== savedTheme) {
+					settingsManager.setTheme(result.name);
+				}
+				return;
+			}
+		}
+	}
+
+	// Fall back to saved theme (or default if none)
+	initTheme(savedTheme);
+}
+
+// ============================================================================
 // TUI Helpers
 // ============================================================================
 
