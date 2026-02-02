@@ -1479,7 +1479,7 @@ export class TuiRenderer {
 			// Print resume hint if session was initialized
 			if (this.sessionManager.isInitialized()) {
 				const sessionId = this.sessionManager.getSessionId();
-				console.log(`\nResume this conversation via: pi --resume ${sessionId}\n`);
+				console.log(`\nResume this conversation via: mu --resume ${sessionId}\n`);
 			}
 
 			process.exit(0);

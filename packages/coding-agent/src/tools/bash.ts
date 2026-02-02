@@ -186,6 +186,26 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 			let logFileBytes = 0;
 			let logFileExceeded = false;
 
+			const finalizeLogStream = (done: () => void) => {
+				const stream = logStream;
+				logStream = null;
+				if (!stream) {
+					done();
+					return;
+				}
+
+				// Ensure buffered data is flushed before we resolve/reject. Otherwise callers/tests
+				// may read a partially-written overflow file.
+				if (stream.writableEnded) {
+					done();
+					return;
+				}
+
+				stream.end(() => {
+					done();
+				});
+			};
+
 			try {
 				const tempDir = tmpdir();
 				const randomId = Math.random().toString(36).slice(2, 10);
@@ -360,12 +380,11 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 				}
 
 				// Cleanup log file on error
-				if (logStream) {
-					logStream.end();
-				}
-				if (logPath) {
-					unlink(logPath, () => {});
-				}
+				finalizeLogStream(() => {
+					if (logPath) {
+						unlink(logPath, () => {});
+					}
+				});
 
 				_reject(err instanceof Error ? err : new Error(String(err)));
 			});
@@ -392,11 +411,6 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 			}
 
 			child.on("close", (code) => {
-				// Finalize log file stream
-				if (logStream) {
-					logStream.end();
-				}
-
 				// Clear any pending timer and flush final chunk
 				if (flushTimer) {
 					clearTimeout(flushTimer);
@@ -416,14 +430,16 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 					if (result) result += "\n\n";
 					result += "Command aborted";
 
-					// Keep log file if truncated, otherwise delete
-					if (didTruncate && logPath) {
-						result += `\n\nFull output saved to: ${logPath}`;
-					} else if (logPath) {
-						unlink(logPath, () => {});
-					}
+					finalizeLogStream(() => {
+						// Keep log file if truncated, otherwise delete
+						if (didTruncate && logPath) {
+							result += `\n\nFull output saved to: ${logPath}`;
+						} else if (logPath) {
+							unlink(logPath, () => {});
+						}
 
-					_reject(new Error(result));
+						_reject(new Error(result));
+					});
 					return;
 				}
 
@@ -432,14 +448,16 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 					if (result) result += "\n\n";
 					result += `Command timed out after ${effectiveTimeout} seconds`;
 
-					// Keep log file if truncated, otherwise delete
-					if (didTruncate && logPath) {
-						result += `\n\nFull output saved to: ${logPath}`;
-					} else if (logPath) {
-						unlink(logPath, () => {});
-					}
+					finalizeLogStream(() => {
+						// Keep log file if truncated, otherwise delete
+						if (didTruncate && logPath) {
+							result += `\n\nFull output saved to: ${logPath}`;
+						} else if (logPath) {
+							unlink(logPath, () => {});
+						}
 
-					_reject(new Error(result));
+						_reject(new Error(result));
+					});
 					return;
 				}
 
@@ -454,26 +472,29 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 
 				let result = output;
 
-				// Show truncation notice only if we actually dropped bytes
-				if (didTruncate) {
-					result += `\n\n... (output truncated to ${MAX_OUTPUT_BYTES} bytes)`;
-					if (logPath) {
-						result += `\nFull output saved to: ${logPath}`;
+				finalizeLogStream(() => {
+					// Show truncation notice only if we actually dropped bytes
+					if (didTruncate) {
+						result += `\n\n... (output truncated to ${MAX_OUTPUT_BYTES} bytes)`;
+						if (logPath) {
+							result += `\nFull output saved to: ${logPath}`;
+						}
+					} else if (logPath) {
+						// Not truncated - delete the log file (not needed)
+						unlink(logPath, () => {});
 					}
-				} else if (logPath) {
-					// Not truncated - delete the log file (not needed)
-					unlink(logPath, () => {});
-				}
 
-				if (code !== 0 && code !== null) {
-					if (result) result += "\n\n";
-					_reject(new Error(result + `Command exited with code ${code}`));
-				} else {
+					if (code !== 0 && code !== null) {
+						if (result) result += "\n\n";
+						_reject(new Error(result + `Command exited with code ${code}`));
+						return;
+					}
+
 					resolve({
 						content: [{ type: "text", text: result || "(no output)" }],
 						details: undefined,
 					});
-				}
+				});
 			});
 
 			// Handle abort signal - kill entire process tree
