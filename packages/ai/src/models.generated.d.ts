@@ -2549,6 +2549,23 @@ export declare const MODELS: {
 		};
 	};
 	readonly openrouter: {
+		readonly "stepfun/step-3.5-flash:free": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "arcee-ai/trinity-large-preview:free": {
 			id: string;
 			name: string;

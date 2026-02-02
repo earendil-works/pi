@@ -2551,6 +2551,23 @@ export const MODELS = {
 		},
 	},
 	openrouter: {
+		"stepfun/step-3.5-flash:free": {
+			id: "stepfun/step-3.5-flash:free",
+			name: "StepFun: Step 3.5 Flash (free)",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 256000,
+			maxTokens: 256000,
+		},
 		"arcee-ai/trinity-large-preview:free": {
 			id: "arcee-ai/trinity-large-preview:free",
 			name: "Arcee AI: Trinity Large Preview (free)",
@@ -5026,7 +5043,7 @@ export const MODELS = {
 			input: ["text"],
 			cost: {
 				input: 0.049999999999999996,
-				output: 0.25,
+				output: 0.39999999999999997,
 				cacheRead: 0.049999999999999996,
 				cacheWrite: 0,
 			},
