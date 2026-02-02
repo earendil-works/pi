@@ -15,6 +15,8 @@ import { homedir } from "os";
 import { join, resolve } from "path";
 import { StringDecoder } from "string_decoder";
 
+import { recordModelUsage } from "./model-usage.js";
+
 function uuidv4(): string {
 	const bytes = randomBytes(16);
 	bytes[6] = (bytes[6] & 0x0f) | 0x40;
@@ -187,6 +189,11 @@ export class SessionManager {
 		};
 		appendFileSync(this.sessionFile, JSON.stringify(entry) + "\n");
 
+		// Update model usage snapshot (best-effort)
+		if (!this.readOnly) {
+			recordModelUsage(this.sessionDir, state.model.provider, state.model.id, Date.now());
+		}
+
 		// Write any queued messages
 		for (const msg of this.pendingMessages) {
 			appendFileSync(this.sessionFile, JSON.stringify(msg) + "\n");
@@ -226,6 +233,12 @@ export class SessionManager {
 
 	saveModelChange(provider: string, modelId: string): void {
 		if (!this.enabled) return;
+
+		// Update model usage snapshot (best-effort)
+		if (!this.readOnly) {
+			recordModelUsage(this.sessionDir, provider, modelId, Date.now());
+		}
+
 		const entry: ModelChangeEntry = {
 			type: "model_change",
 			timestamp: new Date().toISOString(),
