@@ -14,7 +14,7 @@ Tools for building AI agents and managing LLM deployments.
 | **[@kennyfrc/mu-proxy](packages/proxy)** | CORS proxy for browser-based LLM API calls |
 | **[@kennyfrc/mu](packages/pods)** | CLI for managing vLLM deployments on GPU pods |
 
-**Note:** Both `mu-coding-agent` and `mu` packages provide a `mu` CLI command. If you globally install both, whichever is installed last will take precedence. Install only the one you need, or use `npx @kennyfrc/mu-coding-agent` or `npx @kennyfrc/mu` to avoid conflicts.
+**Note:** The coding agent package provides the `mu` command. The pods package provides `mu-pods` to avoid binary name conflicts.
 
 ## Development
 

@@ -1,4 +1,4 @@
-# mu
+# mu-pods
 
 Deploy and manage LLMs on GPU pods with automatic vLLM configuration for agentic workloads.
 
@@ -8,9 +8,11 @@ Deploy and manage LLMs on GPU pods with automatic vLLM configuration for agentic
 npm install -g @kennyfrc/mu
 ```
 
-## What is mu?
+This package installs the `mu-pods` binary (to avoid clobbering the coding-agent `mu` command).
 
-`mu` simplifies running large language models on remote GPU pods. It automatically:
+## What is mu-pods?
+
+`mu-pods` simplifies running large language models on remote GPU pods. It automatically:
 - Sets up vLLM on fresh Ubuntu pods
 - Configures tool calling for agentic models (Qwen, GPT-OSS, GLM, etc.)
 - Manages multiple models on the same pod with "smart" GPU allocation
@@ -25,17 +27,17 @@ export HF_TOKEN=your_huggingface_token      # Get from https://huggingface.co/se
 export MU_API_KEY=your_api_key              # Any string you want for API authentication
 
 # Setup a DataCrunch pod with NFS storage (models path auto-extracted)
-mu pods setup dc1 "ssh root@1.2.3.4" \
+mu-pods pods setup dc1 "ssh root@1.2.3.4" \
   --mount "sudo mount -t nfs -o nconnect=16 nfs.fin-02.datacrunch.io:/your-pseudo /mnt/hf-models"
 
 # Start a model (automatic configuration for known models)
-mu start Qwen/Qwen2.5-Coder-32B-Instruct --name qwen
+mu-pods start Qwen/Qwen2.5-Coder-32B-Instruct --name qwen
 
 # Send a single message to the model
-mu agent qwen "What is the Fibonacci sequence?"
+mu-pods agent qwen "What is the Fibonacci sequence?"
 
 # Interactive chat mode with file system tools
-mu agent qwen -i
+mu-pods agent qwen -i
 
 # Use with any OpenAI-compatible client
 export OPENAI_BASE_URL='http://1.2.3.4:8001/v1'
@@ -77,16 +79,16 @@ export OPENAI_API_KEY=$MU_API_KEY
 ### Pod Management
 
 ```bash
-mu pods setup <name> "<ssh>" [options]        # Setup new pod
+mu-pods pods setup <name> "<ssh>" [options]        # Setup new pod
   --mount "<mount_command>"                   # Run mount command during setup
   --models-path <path>                        # Override extracted path (optional)
   --vllm release|nightly|gpt-oss              # vLLM version (default: release)
 
-mu pods                                       # List all configured pods
-mu pods active <name>                         # Switch active pod
-mu pods remove <name>                         # Remove pod from local config
-mu shell [<name>]                             # SSH into pod
-mu ssh [<name>] "<command>"                   # Run command on pod
+mu-pods pods                                       # List all configured pods
+mu-pods pods active <name>                         # Switch active pod
+mu-pods pods remove <name>                         # Remove pod from local config
+mu-pods shell [<name>]                             # SSH into pod
+mu-pods ssh [<name>] "<command>"                   # Run command on pod
 ```
 
 **Note**: When using `--mount`, the models path is automatically extracted from the mount command's target directory. You only need `--models-path` if not using `--mount` or to override the extracted path.
@@ -100,25 +102,25 @@ mu ssh [<name>] "<command>"                   # Run command on pod
 ### Model Management
 
 ```bash
-mu start <model> --name <name> [options]  # Start a model
+mu-pods start <model> --name <name> [options]  # Start a model
   --memory <percent>      # GPU memory: 30%, 50%, 90% (default: 90%)
   --context <size>        # Context window: 4k, 8k, 16k, 32k, 64k, 128k
   --gpus <count>          # Number of GPUs to use (predefined models only)
   --pod <name>            # Target specific pod (overrides active)
   --vllm <args...>        # Pass custom args directly to vLLM
 
-mu stop [<name>]          # Stop model (or all if no name given)
-mu list                   # List running models with status
-mu logs <name>            # Stream model logs (tail -f)
+mu-pods stop [<name>]          # Stop model (or all if no name given)
+mu-pods list                   # List running models with status
+mu-pods logs <name>            # Stream model logs (tail -f)
 ```
 
 ### Agent & Chat Interface
 
 ```bash
-mu agent <name> "<message>"               # Single message to model
-mu agent <name> "<msg1>" "<msg2>"         # Multiple messages in sequence
-mu agent <name> -i                        # Interactive chat mode
-mu agent <name> -i -c                     # Continue previous session
+mu-pods agent <name> "<message>"               # Single message to model
+mu-pods agent <name> "<msg1>" "<msg2>"         # Multiple messages in sequence
+mu-pods agent <name> -i                        # Interactive chat mode
+mu-pods agent <name> -i -c                     # Continue previous session
 
 # Standalone OpenAI-compatible agent (works with any API)
 mu-agent --base-url http://localhost:8000/v1 --model llama-3.1 "Hello"

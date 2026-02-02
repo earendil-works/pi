@@ -16,34 +16,34 @@ const __dirname = dirname(__filename);
 const packageJson = JSON.parse(readFileSync(join(__dirname, "../package.json"), "utf-8"));
 
 function printHelp() {
-	console.log(`mu v${packageJson.version} - Manage vLLM deployments on GPU pods
+	console.log(`mu-pods v${packageJson.version} - Manage vLLM deployments on GPU pods
 
 Pod Management:
-  mu pods setup <name> "<ssh>" --mount "<mount>"    Setup pod with mount command
-    Options:
-      --vllm release    Install latest vLLM release >=0.10.0 (default)
-      --vllm nightly    Install vLLM nightly build (latest features)
-      --vllm gpt-oss    Install vLLM 0.10.1+gptoss with PyTorch nightly (GPT-OSS only)
-  mu pods                                           List all pods (* = active)
-  mu pods active <name>                             Switch active pod
-  mu pods remove <name>                             Remove pod from local config
-  mu shell [<name>]                                 Open shell on pod (active or specified)
-  mu ssh [<name>] "<command>"                       Run SSH command on pod
+	  mu-pods pods setup <name> "<ssh>" --mount "<mount>"    Setup pod with mount command
+	    Options:
+	      --vllm release    Install latest vLLM release >=0.10.0 (default)
+	      --vllm nightly    Install vLLM nightly build (latest features)
+	      --vllm gpt-oss    Install vLLM 0.10.1+gptoss with PyTorch nightly (GPT-OSS only)
+	  mu-pods pods                                           List all pods (* = active)
+	  mu-pods pods active <name>                             Switch active pod
+	  mu-pods pods remove <name>                             Remove pod from local config
+	  mu-pods shell [<name>]                                 Open shell on pod (active or specified)
+	  mu-pods ssh [<name>] "<command>"                       Run SSH command on pod
 
 Model Management:
-  mu start <model> --name <name> [options]          Start a model
-    --memory <percent>   GPU memory allocation (30%, 50%, 90%)
-    --context <size>     Context window (4k, 8k, 16k, 32k, 64k, 128k)
-    --gpus <count>       Number of GPUs to use (predefined models only)
-    --vllm <args...>     Pass remaining args to vLLM (ignores other options)
-  mu stop [<name>]                                  Stop model (or all if no name)
-  mu list                                           List running models
-  mu logs <name>                                    Stream model logs
-  mu agent <name> ["<message>"...] [options]        Chat with model using agent & tools
-  mu agent <name> [options]                         Interactive chat mode
-    --continue, -c       Continue previous session
-    --json              Output as JSONL
-    (All mu-agent options are supported)
+	  mu-pods start <model> --name <name> [options]          Start a model
+	    --memory <percent>   GPU memory allocation (30%, 50%, 90%)
+	    --context <size>     Context window (4k, 8k, 16k, 32k, 64k, 128k)
+	    --gpus <count>       Number of GPUs to use (predefined models only)
+	    --vllm <args...>     Pass remaining args to vLLM (ignores other options)
+	  mu-pods stop [<name>]                                  Stop model (or all if no name)
+	  mu-pods list                                           List running models
+	  mu-pods logs <name>                                    Stream model logs
+	  mu-pods agent <name> ["<message>"...] [options]        Chat with model using agent & tools
+	  mu-pods agent <name> [options]                         Interactive chat mode
+	    --continue, -c       Continue previous session
+	    --json              Output as JSONL
+	    (All mu-agent options are supported)
 
   All model commands support --pod <name> to override the active pod.
 

@@ -3,7 +3,8 @@
  * Generates a formatted, indented tree representation of project files.
  */
 
-import { glob } from "tinyglobby";
+import { spawn } from "node:child_process";
+import { readdirSync } from "node:fs";
 
 export interface FileTreeOptions {
 	/** Directory to scan (default: process.cwd()) */
@@ -24,6 +25,9 @@ export interface TreeNode {
 	isTruncated?: boolean;
 }
 
+const DEFAULT_MAX_INPUT_PATHS = 50_000;
+const DEFAULT_COMMAND_TIMEOUT_MS = 5_000;
+
 /**
  * Build a tree structure from a list of file paths.
  */
@@ -31,7 +35,10 @@ export function buildTreeFromPaths(paths: string[]): TreeNode {
 	const root: TreeNode = { name: "", path: "", type: "directory", children: [] };
 
 	for (const filePath of paths) {
-		const parts = filePath.split("/").filter((p) => p.length > 0);
+		// Support directory sentinel paths like "src/" (used by shallow listings)
+		const isDirectoryPath = filePath.endsWith("/");
+		const normalized = isDirectoryPath ? filePath.slice(0, -1) : filePath;
+		const parts = normalized.split("/").filter((p) => p.length > 0);
 		let current = root;
 
 		for (let i = 0; i < parts.length; i++) {
@@ -46,7 +53,7 @@ export function buildTreeFromPaths(paths: string[]): TreeNode {
 				child = {
 					name: part,
 					path: currentPath,
-					type: isLast ? "file" : "directory",
+					type: isLast ? (isDirectoryPath ? "directory" : "file") : "directory",
 					children: [],
 				};
 				current.children.push(child);
@@ -60,6 +67,152 @@ export function buildTreeFromPaths(paths: string[]): TreeNode {
 	sortTree(root);
 
 	return root;
+}
+
+type CollectLinesResult = { lines: string[]; truncated: boolean };
+
+async function collectLinesFromCommand(options: {
+	command: string;
+	args: string[];
+	cwd: string;
+	maxLines: number;
+	timeoutMs: number;
+}): Promise<CollectLinesResult | null> {
+	const { command, args, cwd, maxLines, timeoutMs } = options;
+
+	return await new Promise<CollectLinesResult | null>((resolve) => {
+		let truncated = false;
+		const child = spawn(command, args, {
+			cwd,
+			stdio: ["ignore", "pipe", "ignore"],
+		});
+
+		const lines: string[] = [];
+		let buffer = "";
+		let resolved = false;
+
+		const finish = (result: CollectLinesResult | null) => {
+			if (resolved) return;
+			resolved = true;
+			resolve(result);
+		};
+
+		const timeoutId = setTimeout(() => {
+			truncated = true;
+			child.kill();
+		}, timeoutMs);
+
+		child.on("error", () => {
+			clearTimeout(timeoutId);
+			finish(null);
+		});
+
+		child.stdout?.on("data", (chunk: Buffer) => {
+			buffer += chunk.toString("utf8");
+			let newlineIndex = buffer.indexOf("\n");
+			while (newlineIndex !== -1) {
+				const line = buffer.slice(0, newlineIndex).trimEnd();
+				buffer = buffer.slice(newlineIndex + 1);
+				if (line) {
+					lines.push(line);
+					if (lines.length >= maxLines) {
+						truncated = true;
+						child.kill();
+						break;
+					}
+				}
+				newlineIndex = buffer.indexOf("\n");
+			}
+		});
+
+		child.on("close", (code) => {
+			clearTimeout(timeoutId);
+
+			const last = buffer.trim();
+			if (last) {
+				lines.push(last);
+			}
+
+			if (code === 0 || truncated) {
+				finish({ lines, truncated });
+				return;
+			}
+
+			finish(null);
+		});
+	});
+}
+
+function shallowListPaths(cwd: string, includeHidden: boolean, maxPaths: number): string[] {
+	try {
+		const entries = readdirSync(cwd, { withFileTypes: true });
+		const out: string[] = [];
+
+		for (const entry of entries) {
+			if (!includeHidden && entry.name.startsWith(".")) continue;
+			if (entry.name === "node_modules" || entry.name === ".git") continue;
+
+			out.push(entry.isDirectory() ? `${entry.name}/` : entry.name);
+			if (out.length >= maxPaths) break;
+		}
+
+		return out;
+	} catch {
+		return [];
+	}
+}
+
+async function listPathsForTree(options: {
+	cwd: string;
+	respectGitignore: boolean;
+	includeHidden: boolean;
+	maxInputPaths: number;
+}): Promise<string[]> {
+	const { cwd, respectGitignore, includeHidden, maxInputPaths } = options;
+
+	// Fast path (git): only tracked files. Avoids huge untracked dirs.
+	if (respectGitignore) {
+		const git = await collectLinesFromCommand({
+			command: "git",
+			args: ["ls-files"],
+			cwd,
+			maxLines: maxInputPaths,
+			timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
+		});
+		if (git && git.lines.length > 0) {
+			return git.lines;
+		}
+	}
+
+	// Fallback (fd): bounded crawl. Works outside git repos.
+	const fdArgs: string[] = [
+		"--base-directory",
+		cwd,
+		"--max-results",
+		String(maxInputPaths),
+		"--type",
+		"f",
+		"--exclude",
+		".git",
+		"--exclude",
+		"node_modules",
+	];
+	if (includeHidden) {
+		fdArgs.push("--hidden");
+	}
+	const fd = await collectLinesFromCommand({
+		command: "fd",
+		args: fdArgs,
+		cwd,
+		maxLines: maxInputPaths,
+		timeoutMs: DEFAULT_COMMAND_TIMEOUT_MS,
+	});
+	if (fd && fd.lines.length > 0) {
+		return fd.lines;
+	}
+
+	// Last resort: shallow listing (never recurse)
+	return shallowListPaths(cwd, includeHidden, maxInputPaths);
 }
 
 function sortTree(node: TreeNode): void {
@@ -244,12 +397,10 @@ export async function generateFileTree(options: FileTreeOptions = {}): Promise<s
 	const { cwd = process.cwd(), limit = 200, respectGitignore = true, includeHidden = false } = options;
 
 	try {
-		const files = await glob("**/*", {
-			cwd,
-			ignore: respectGitignore ? ["**/.git/**", "**/node_modules/**"] : undefined,
-			dot: includeHidden,
-			absolute: false,
-		});
+		// We need more input paths than output nodes for decent breadth-first coverage,
+		// but we MUST cap this to avoid startup latency and OOM in large directories.
+		const maxInputPaths = Math.min(DEFAULT_MAX_INPUT_PATHS, Math.max(limit * 50, 5_000));
+		const files = await listPathsForTree({ cwd, respectGitignore, includeHidden, maxInputPaths });
 
 		if (files.length === 0) {
 			return "";

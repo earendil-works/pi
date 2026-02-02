@@ -1,4 +1,9 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+
 import { buildTreeFromPaths, formatTree, generateFileTree } from "./file-tree.js";
 
 describe("buildTreeFromPaths", () => {
@@ -76,5 +81,39 @@ describe("generateFileTree", () => {
 		expect(typeof result).toBe("string");
 		// With limit 5, should have truncation indicator
 		expect(result).toContain("truncated");
+	});
+
+	it("should prefer git ls-files (exclude untracked files) when cwd is a git repo", async () => {
+		const dir = mkdtempSync(join(tmpdir(), "mu-file-tree-"));
+		try {
+			// Initialize a tiny git repo
+			execFileSync("git", ["init"], { cwd: dir, stdio: "ignore" });
+
+			mkdirSync(join(dir, "src"), { recursive: true });
+			writeFileSync(join(dir, "src", "tracked.ts"), "export const tracked = true;\n", "utf8");
+
+			execFileSync("git", ["add", "."], { cwd: dir, stdio: "ignore" });
+
+			// Commit with env-provided identity so this test doesn't depend on global git config
+			const gitEnv = {
+				...process.env,
+				GIT_AUTHOR_NAME: "test",
+				GIT_AUTHOR_EMAIL: "test@example.com",
+				GIT_COMMITTER_NAME: "test",
+				GIT_COMMITTER_EMAIL: "test@example.com",
+			};
+			execFileSync("git", ["commit", "-m", "init"], { cwd: dir, stdio: "ignore", env: gitEnv });
+
+			// Create an untracked file that should NOT show up in the tree
+			mkdirSync(join(dir, "untracked"), { recursive: true });
+			writeFileSync(join(dir, "untracked", "secret.txt"), "nope\n", "utf8");
+
+			const tree = await generateFileTree({ cwd: dir, limit: 200 });
+			expect(tree).toContain("src/");
+			expect(tree).toContain("tracked.ts");
+			expect(tree).not.toContain("secret.txt");
+		} finally {
+			rmSync(dir, { recursive: true, force: true });
+		}
 	});
 });
