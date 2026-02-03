@@ -36,6 +36,7 @@ import { copyToClipboard } from "../clipboard.js";
 import { scheduleExplicitHandoff, submitExplicitHandoff } from "../explicit-handoff.js";
 import { exportSessionToHtml } from "../export-html.js";
 import { parseHandoffFileSelections } from "../handoff-file-selection.js";
+import { normalizeAutoHandoffGoal } from "../handoff-goal.js";
 import { formatMessagesForHandoffSelection } from "../handoff-selection-transcript.js";
 import { getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
 import { playNotificationSound, sendNotification } from "../notification.js";
@@ -3268,11 +3269,7 @@ export class TuiRenderer {
 			.join("")
 			.trim();
 
-		if (!goal) {
-			return "Continue the current task";
-		}
-
-		return goal;
+		return normalizeAutoHandoffGoal({ modelGoal: goal, messages: this.agent.state.messages });
 	}
 
 	/**

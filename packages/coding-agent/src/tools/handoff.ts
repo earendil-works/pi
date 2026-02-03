@@ -12,6 +12,7 @@ import type { AgentTool, TextContent } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { existsSync, readFileSync } from "fs";
 import { isAbsolute, relative, resolve } from "path";
+import { normalizeHandoffGoalFromFiles } from "../handoff-goal.js";
 import { getToolDescription } from "../prompts/index.js";
 import { findRepoRoot } from "../utils/find-repo-root.js";
 
@@ -542,22 +543,23 @@ Suggestions:
 		}
 
 		const diffBlock = formatFileDiff(diffText);
+		const normalizedGoal = normalizeHandoffGoalFromFiles({ goal, files });
 
 		// Format the handoff message
 		const fileContext = formatFileContext(fileResults);
 		// parentSessionId will be filled by TUI
-		const formattedMessage = buildHandoffMessage(goal, fileContext, null, diffBlock);
+		const formattedMessage = buildHandoffMessage(normalizedGoal, fileContext, null, diffBlock);
 
 		return {
 			content: [
 				{
 					type: "text",
-					text: `Handoff prepared: "${goal}" (${totalTokens.toLocaleString()} tokens in ${files.length} file(s))`,
+					text: `Handoff prepared: "${normalizedGoal}" (${totalTokens.toLocaleString()} tokens in ${files.length} file(s))`,
 				},
 			],
 			details: {
 				handoffType: "explicit",
-				goal,
+				goal: normalizedGoal,
 				formattedMessage,
 				parentSessionId: "", // Filled by TUI
 				fileTokens: totalTokens,

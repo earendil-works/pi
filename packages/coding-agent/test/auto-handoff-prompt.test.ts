@@ -12,7 +12,8 @@ describe("Auto-Handoff Prompts", () => {
 		expect(prompt).toContain("No quotes");
 		expect(prompt).toContain("No markdown");
 		expect(prompt).toContain("Start with a verb");
-		expect(prompt).toContain("Continue the current task");
+		expect(prompt).toContain("do NOT output a generic placeholder");
+		expect(prompt).not.toContain("If the conversation is unclear about what to do next");
 	});
 
 	it("should return handoff prompt with goal embedded", () => {

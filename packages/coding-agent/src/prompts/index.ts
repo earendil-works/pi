@@ -316,7 +316,8 @@ Output ONE short, imperative goal (max 12 words).
 - No trailing punctuation
 - Start with a verb (e.g., "Implement", "Fix", "Add", "Complete")
 
-If the conversation is unclear about what to do next, output: "Continue the current task"
+Even if the conversation is unclear, do NOT output a generic placeholder like "Continue the current task".
+Instead, output your best concrete guess based on the most recent user request.
 
 Examples of good goals:
 - Implement the OAuth logout flow
