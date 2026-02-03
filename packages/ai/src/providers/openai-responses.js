@@ -318,7 +318,6 @@ function buildParams(model, context, options) {
 	}
 	return params;
 }
-
 function convertMessages(model, context) {
 	const messages = [];
 	const transformedMessages = transformMessages(context.messages, model);

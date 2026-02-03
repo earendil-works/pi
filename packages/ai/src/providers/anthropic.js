@@ -453,7 +453,6 @@ function sanitizeToolCallId(id) {
 	// Replace any character that isn't alphanumeric, underscore, or hyphen with underscore
 	return id.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
-
 function shouldSendSignaturelessThinkingBlocks(model) {
 	// Anthropic's official API requires a thinking signature to be re-submitted.
 	// Many third-party / Anthropic-compatible endpoints do NOT provide signatures, and/or
@@ -462,7 +461,6 @@ function shouldSendSignaturelessThinkingBlocks(model) {
 	// Rule: allow signature-less thinking blocks for any *non-official* Anthropic endpoint.
 	return !isOfficialAnthropicBaseUrl(model.baseUrl);
 }
-
 function isOfficialAnthropicBaseUrl(baseUrl) {
 	try {
 		const url = new URL(baseUrl);
