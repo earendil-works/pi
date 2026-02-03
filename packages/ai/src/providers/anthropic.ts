@@ -566,6 +566,27 @@ function sanitizeToolCallId(id: string): string {
 	return id.replace(/[^a-zA-Z0-9_-]/g, "_");
 }
 
+function shouldSendSignaturelessThinkingBlocks(model: Model<"anthropic-messages">): boolean {
+	// Anthropic's official API requires a thinking signature to be re-submitted.
+	// Many third-party / Anthropic-compatible endpoints do NOT provide signatures, and/or
+	// accept signature-less thinking blocks.
+	//
+	// Rule: allow signature-less thinking blocks for any *non-official* Anthropic endpoint.
+	return !isOfficialAnthropicBaseUrl(model.baseUrl);
+}
+
+function isOfficialAnthropicBaseUrl(baseUrl: string): boolean {
+	try {
+		const url = new URL(baseUrl);
+		// Note: if the user is proxying Anthropic through something like
+		// `http://localhost:3001?url=https://api.anthropic.com`, the hostname won't match.
+		// So we also fall back to substring matching against the original baseUrl.
+		return url.hostname === "api.anthropic.com" || baseUrl.includes("api.anthropic.com");
+	} catch {
+		return baseUrl.includes("api.anthropic.com");
+	}
+}
+
 function convertMessages(messages: Message[], model: Model<"anthropic-messages">): MessageParam[] {
 	const params: MessageParam[] = [];
 
@@ -626,17 +647,24 @@ function convertMessages(messages: Message[], model: Model<"anthropic-messages">
 					});
 				} else if (block.type === "thinking") {
 					if (block.thinking.trim().length === 0) continue;
-					// Missing signature => send as text to avoid API rejection.
-					if (!block.thinkingSignature || block.thinkingSignature.trim().length === 0) {
-						blocks.push({
-							type: "text",
-							text: sanitizeSurrogates(block.thinking),
-						});
-					} else {
+					const signature = block.thinkingSignature?.trim() ?? "";
+					if (signature.length > 0) {
 						blocks.push({
 							type: "thinking",
 							thinking: sanitizeSurrogates(block.thinking),
-							signature: block.thinkingSignature,
+							signature,
+						});
+					} else if (shouldSendSignaturelessThinkingBlocks(model)) {
+						// Synthetic-compatible: allow signature-less thinking blocks.
+						blocks.push({
+							type: "thinking",
+							thinking: sanitizeSurrogates(block.thinking),
+						} as unknown as ContentBlockParam);
+					} else {
+						// Missing signature => send as plain text to avoid API rejection.
+						blocks.push({
+							type: "text",
+							text: sanitizeSurrogates(block.thinking),
 						});
 					}
 				} else if (block.type === "toolCall") {

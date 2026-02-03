@@ -447,6 +447,27 @@ function convertMessages(model: Model<"openai-responses">, context: Context): Re
 					if (block.thinkingSignature) {
 						const reasoningItem = JSON.parse(block.thinkingSignature);
 						output.push(reasoningItem);
+					} else if (block.thinking.trim().length > 0) {
+						// Cross-provider history has no OpenAI reasoning signature; preserve it as a reasoning item.
+						// OpenAI docs recommend re-sending prior reasoning items for subsequent turns.
+						const fullThinking = sanitizeSurrogates(block.thinking);
+						const summaryText = fullThinking.length > 1500 ? fullThinking.slice(0, 1500) : fullThinking;
+						output.push({
+							type: "reasoning",
+							id: "reasoning_" + Math.random().toString(36).substring(2, 15),
+							summary: [
+								{
+									type: "summary_text",
+									text: summaryText,
+								},
+							],
+							content: [
+								{
+									type: "reasoning_text",
+									text: fullThinking,
+								},
+							],
+						} satisfies ResponseReasoningItem);
 					}
 				} else if (block.type === "text") {
 					const textBlock = block as TextContent;
