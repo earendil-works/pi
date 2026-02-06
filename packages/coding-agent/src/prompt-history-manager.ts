@@ -65,8 +65,11 @@ export class PromptHistoryManager {
 	savePrompt(prompt: string): void {
 		const trimmed = prompt.trim();
 
-		// Skip empty prompts and slash commands
-		if (!trimmed || trimmed.startsWith("/")) {
+		if (!trimmed) return;
+
+		// Skip slash commands EXCEPT /handoff (we want Up-arrow to recall the last handoff command).
+		const isHandoffCommand = /^\/handoff(?:\s|$)/i.test(trimmed);
+		if (trimmed.startsWith("/") && !isHandoffCommand) {
 			return;
 		}
 

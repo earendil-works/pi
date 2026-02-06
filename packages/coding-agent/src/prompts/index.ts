@@ -296,11 +296,36 @@ Output ONLY XML using <handoff_files> and <file> tags.
 - Do NOT escape XML tags (no &lt;file&gt;...&lt;/file&gt;). Use literal <file> tags.
 - Do NOT wrap file selections in backticks or quotes.
 - Example:
-<handoff_files>
-  <file>src/foo.ts</file>
-  <file>src/bar.ts:10-50</file>
-</handoff_files>
-`;
+	<handoff_files>
+	  <file>src/foo.ts</file>
+	  <file>src/bar.ts:10-50</file>
+	</handoff_files>
+	`;
+}
+
+/**
+ * Build the full system prompt for the *handoff file selection* model call.
+ *
+ * This wraps getHandoffFileSelectionPrompt() and optionally injects a project file tree,
+ * so the model can choose valid paths.
+ */
+export function buildHandoffFileSelectionPrompt(params: { goal: string; fileTree?: string }): string {
+	const base = getHandoffFileSelectionPrompt(params.goal);
+	const trimmedTree = params.fileTree?.trim();
+	if (!trimmedTree) return base;
+
+	return (
+		base +
+		`
+
+Project file tree (paths are relative to the repository root when available):
+<file_tree>
+${trimmedTree}
+</file_tree>
+
+Select file paths that actually exist in the tree above.
+`
+	);
 }
 
 /**

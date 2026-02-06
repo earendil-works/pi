@@ -50,7 +50,12 @@ import {
 	setActiveOAuthAccount,
 } from "../oauth/index.js";
 import { PromptHistoryManager } from "../prompt-history-manager.js";
-import { getAutoHandoffGoalPrompt, getHandoffFileSelectionPrompt, getHandoffNudgeReminder } from "../prompts/index.js";
+import { generateFileTree } from "../prompts/file-tree.js";
+import {
+	buildHandoffFileSelectionPrompt,
+	getAutoHandoffGoalPrompt,
+	getHandoffNudgeReminder,
+} from "../prompts/index.js";
 import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
 import {
@@ -75,6 +80,7 @@ import type { ToolSelection } from "../tools/tool-selection.js";
 import { undoFileOperations } from "../undo/undo-file-operations.js";
 import { autoFenceHtmlInMarkdown } from "../utils/auto-fence-html.js";
 import { generateTitle } from "../utils/auto-title.js";
+import { findRepoRoot } from "../utils/find-repo-root.js";
 import { formatElapsed } from "../utils/format-elapsed.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
 import { CustomEditor } from "./custom-editor.js";
@@ -652,6 +658,9 @@ export class TuiRenderer {
 
 			// Check for /handoff command
 			if (rawText.startsWith("/handoff")) {
+				// Persist the handoff command so the user can recall it via Up-arrow.
+				this.promptHistory.savePrompt(rawText);
+
 				const goal = rawText.substring(8).trim(); // "/handoff".length = 8
 				if (!goal) {
 					this.showError("Usage: /handoff <goal>\nExample: /handoff implement the login page");
@@ -3085,7 +3094,9 @@ export class TuiRenderer {
 		if (!apiKey) throw new Error(`No API key for ${model.provider}`);
 
 		const historyText = this.formatMessagesForHandoff(this.agent.state.messages);
-		const systemPrompt = getHandoffFileSelectionPrompt(goal);
+		const repoRoot = findRepoRoot(process.cwd()) ?? process.cwd();
+		const fileTree = await generateFileTree({ cwd: repoRoot, limit: 400 });
+		const systemPrompt = buildHandoffFileSelectionPrompt({ goal, fileTree });
 		const context = {
 			systemPrompt,
 			messages: [

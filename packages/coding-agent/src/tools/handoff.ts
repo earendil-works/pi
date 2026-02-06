@@ -12,7 +12,7 @@ import type { AgentTool, TextContent } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { existsSync, readFileSync } from "fs";
 import { isAbsolute, relative, resolve } from "path";
-import { normalizeHandoffGoalFromFiles } from "../handoff-goal.js";
+import { GENERIC_HANDOFF_GOAL, normalizeHandoffGoalFromFiles } from "../handoff-goal.js";
 import { getToolDescription } from "../prompts/index.js";
 import { findRepoRoot } from "../utils/find-repo-root.js";
 
@@ -401,12 +401,16 @@ export function formatParentThreadReference(parentId: string): string {
  * Build the complete handoff message.
  */
 export function buildHandoffMessage(
-	goal: string,
+	goalTitle: string,
 	fileContext: string,
 	parentId: string | null,
 	fileDiff?: string,
+	goalBody?: string,
 ): string {
-	let message = `# Handoff: ${goal}\n\n`;
+	const trimmedBody = (goalBody ?? goalTitle).trim();
+	const body = trimmedBody || goalTitle;
+
+	let message = `# Handoff: ${goalTitle}\n\n`;
 
 	if (parentId) {
 		message += formatParentThreadReference(parentId);
@@ -418,8 +422,9 @@ export function buildHandoffMessage(
 	if (diffBlock) {
 		message += `\n\n${diffBlock}`;
 	}
-	message += `\n\n---\n\n## Goal\n${goal}\n\n`;
-	message += `You have been handed context from a previous session. The files above contain the relevant code. Begin working on the goal.`;
+	message += `\n\n---\n\n## Goal\n${body}\n\n`;
+	message +=
+		"You have been handed context from a previous session. The files above contain the relevant code. Begin working on the goal.";
 
 	return message;
 }
@@ -544,11 +549,17 @@ Suggestions:
 
 		const diffBlock = formatFileDiff(diffText);
 		const normalizedGoal = normalizeHandoffGoalFromFiles({ goal, files });
+		const trimmedGoal = goal.trim();
+		const isBareGenericGoal =
+			trimmedGoal.length > 0 &&
+			!trimmedGoal.includes("\n") &&
+			trimmedGoal.toLowerCase() === GENERIC_HANDOFF_GOAL.toLowerCase();
+		const goalBody = isBareGenericGoal ? normalizedGoal : trimmedGoal || normalizedGoal;
 
 		// Format the handoff message
 		const fileContext = formatFileContext(fileResults);
 		// parentSessionId will be filled by TUI
-		const formattedMessage = buildHandoffMessage(normalizedGoal, fileContext, null, diffBlock);
+		const formattedMessage = buildHandoffMessage(normalizedGoal, fileContext, null, diffBlock, goalBody);
 
 		return {
 			content: [
