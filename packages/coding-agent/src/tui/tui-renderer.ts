@@ -157,7 +157,7 @@ export class TuiRenderer {
 	private newVersion: string | null = null;
 
 	// Message queueing
-	private queuedMessages: Array<{ raw: string; sent: string }> = [];
+	private queuedMessages: Array<{ raw: string; sent: string; kind: "by-end" | "next" }> = [];
 
 	// Queue editing state
 	private editingQueueIndex: number | null = null;
@@ -555,7 +555,11 @@ export class TuiRenderer {
 				const trimmed = text.trim();
 				if (trimmed) {
 					const sent = autoFenceHtmlInMarkdown(trimmed);
-					this.queuedMessages[this.editingQueueIndex] = { raw: trimmed, sent };
+					this.queuedMessages[this.editingQueueIndex] = {
+						...this.queuedMessages[this.editingQueueIndex],
+						raw: trimmed,
+						sent,
+					};
 					this.updateQueuedMessage(this.editingQueueIndex, sent);
 					this.updatePendingMessagesDisplay();
 				}
@@ -574,7 +578,11 @@ export class TuiRenderer {
 				// text parameter holds content before handleSubmit cleared the editor
 				if (rawText) {
 					const sent = autoFenceHtmlInMarkdown(rawText);
-					this.queuedMessages[this.editingQueueIndex] = { raw: rawText, sent };
+					this.queuedMessages[this.editingQueueIndex] = {
+						...this.queuedMessages[this.editingQueueIndex],
+						raw: rawText,
+						sent,
+					};
 					this.updateQueuedMessage(this.editingQueueIndex, sent);
 				} else {
 					this.queuedMessages.splice(this.editingQueueIndex, 1);
@@ -772,7 +780,11 @@ export class TuiRenderer {
 			// Check if agent is currently streaming
 			if (this.agent.state.isStreaming) {
 				// Queue the message instead of submitting
-				this.queuedMessages.push({ raw: rawText, sent: sentText });
+				this.queuedMessages.push({
+					raw: rawText,
+					sent: sentText,
+					kind: this.agent.getQueueMode() === "steer" ? "next" : "by-end",
+				});
 
 				// Queue in agent (simple text, no attachments for queued messages)
 				this.queueMessage(sentText);
@@ -1933,7 +1945,11 @@ export class TuiRenderer {
 			}
 		} else {
 			const sent = autoFenceHtmlInMarkdown(editedText);
-			this.queuedMessages[this.editingQueueIndex] = { raw: editedText, sent };
+			this.queuedMessages[this.editingQueueIndex] = {
+				...this.queuedMessages[this.editingQueueIndex],
+				raw: editedText,
+				sent,
+			};
 			this.updateQueuedMessage(this.editingQueueIndex, sent);
 		}
 	}
@@ -2013,6 +2029,14 @@ export class TuiRenderer {
 			(mode) => {
 				// Apply the selected queue mode
 				this.agent.setQueueMode(mode);
+
+				// Mirror agent's normalization behavior locally: if steer is disabled,
+				// queued-next messages become queued-by-end.
+				if (mode !== "steer") {
+					for (const m of this.queuedMessages) {
+						if (m.kind === "next") m.kind = "by-end";
+					}
+				}
 
 				// Save queue mode to settings
 				this.settingsManager.setQueueMode(mode);
@@ -3703,7 +3727,7 @@ export class TuiRenderer {
 					const hint = theme.fg("muted", "(in textarea below)");
 					this.pendingMessagesContainer.addChild(new TruncatedText(prefix + hint, 1, 0));
 				} else {
-					const prefix = theme.fg("dim", "↳ Queued: ");
+					const prefix = theme.fg("dim", message.kind === "next" ? "↳ Queued next: " : "↳ Queued: ");
 					const messageColor = theme.fg("dim", message.raw);
 					this.pendingMessagesContainer.addChild(new TruncatedText(prefix + messageColor, 1, 0));
 				}

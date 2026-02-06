@@ -30,9 +30,16 @@ function formatMessageTimestamp(epochMs: number): string {
 /**
  * Internal representation of a queued message with its attachments.
  */
-interface QueuedAppMessage {
+type QueuedMessageKind = "by-end" | "next";
+
+export interface AgentQueuedMessage {
 	text: string;
 	attachments?: Attachment[];
+	/**
+	 * "by-end" messages are drained after the current agent run completes.
+	 * "next" messages are eligible for injection at the tool boundary when queueMode="steer".
+	 */
+	kind: QueuedMessageKind;
 }
 
 /**
@@ -110,7 +117,7 @@ export class Agent {
 	private transport: AgentTransport;
 	private messageTransformer: (messages: AppMessage[]) => Message[] | Promise<Message[]>;
 	private toolResultTransformer?: (toolResult: ToolResultMessage) => ToolResultMessage;
-	private messageQueue: QueuedAppMessage[] = [];
+	private messageQueue: AgentQueuedMessage[] = [];
 	private queueMode: "all" | "one-at-a-time" | "steer";
 	private runningPrompt?: Promise<void>;
 	private resolveRunningPrompt?: () => void;
@@ -152,6 +159,13 @@ export class Agent {
 	}
 
 	setQueueMode(mode: "all" | "one-at-a-time" | "steer") {
+		// If steer is disabled, queued "next" messages can't be injected at tool boundaries,
+		// so normalize them to "by-end" while preserving order.
+		if (mode !== "steer") {
+			for (const m of this.messageQueue) {
+				if (m.kind === "next") m.kind = "by-end";
+			}
+		}
 		this.queueMode = mode;
 	}
 
@@ -187,16 +201,20 @@ export class Agent {
 	}
 
 	queueMessage(text: string, attachments?: Attachment[]) {
-		this.messageQueue.push({ text, attachments });
+		this.messageQueue.push({
+			text,
+			attachments,
+			kind: this.queueMode === "steer" ? "next" : "by-end",
+		});
 	}
 
-	getQueuedMessages(): ReadonlyArray<{ text: string; attachments?: Attachment[] }> {
+	getQueuedMessages(): ReadonlyArray<AgentQueuedMessage> {
 		return this.messageQueue;
 	}
 
 	updateQueuedMessage(index: number, text: string, attachments?: Attachment[]) {
 		if (index >= 0 && index < this.messageQueue.length) {
-			this.messageQueue[index] = { text, attachments };
+			this.messageQueue[index] = { ...this.messageQueue[index], text, attachments };
 		}
 	}
 
@@ -235,6 +253,21 @@ export class Agent {
 		this._state.pendingToolCalls = new Set<string>();
 		this._state.error = undefined;
 		this.messageQueue = [];
+	}
+
+	private drainQueuedMessages(kind: QueuedMessageKind): AgentQueuedMessage[] {
+		if (this.messageQueue.length === 0) return [];
+		const drained: AgentQueuedMessage[] = [];
+		const remaining: AgentQueuedMessage[] = [];
+		for (const m of this.messageQueue) {
+			if (m.kind === kind) {
+				drained.push(m);
+			} else {
+				remaining.push(m);
+			}
+		}
+		this.messageQueue = remaining;
+		return drained;
 	}
 
 	async prompt(input: string, attachments?: Attachment[]) {
@@ -308,9 +341,8 @@ export class Agent {
 							// If we have queued messages while tools were running, inject them now so the
 							// continuation LLM call can react.
 							if (abortSignal?.aborted) return undefined;
-							if (this.messageQueue.length === 0) return undefined;
-
-							const allMessages = this.messageQueue.splice(0);
+							const allMessages = this.drainQueuedMessages("next");
+							if (allMessages.length === 0) return undefined;
 							const combinedText = allMessages.map((m) => m.text).join("\n\n");
 							const combinedAttachments = allMessages.flatMap((m) => m.attachments || []);
 
