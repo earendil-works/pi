@@ -20,8 +20,6 @@ import {
 } from "@kennyfrc/mu-tui";
 import { exec } from "child_process";
 import { createHash, randomUUID } from "crypto";
-import { readFile, unlink, writeFile } from "fs/promises";
-import { relative } from "path";
 import {
 	AUTO_HANDOFF_EMERGENCY_THRESHOLD,
 	type AutoHandoffMode,
@@ -74,6 +72,7 @@ import { bashTool } from "../tools/bash.js";
 import { formatParentThreadReference, type HandoffDetails, handoffTool } from "../tools/handoff.js";
 import type { ToolName } from "../tools/index.js";
 import type { ToolSelection } from "../tools/tool-selection.js";
+import { undoFileOperations } from "../undo/undo-file-operations.js";
 import { autoFenceHtmlInMarkdown } from "../utils/auto-fence-html.js";
 import { generateTitle } from "../utils/auto-title.js";
 import { formatElapsed } from "../utils/format-elapsed.js";
@@ -837,6 +836,8 @@ export class TuiRenderer {
 							details.oldText = undefined;
 							details.newText = undefined;
 						}
+						// ApplyPatch tool stores full file snapshots in details.undo
+						if (details.undo !== undefined) details.undo = undefined;
 					}
 				}
 			}
@@ -3570,200 +3571,14 @@ export class TuiRenderer {
 
 		const messagesToUndo = messages.slice(lastUserIndex);
 
-		const toolCallNames = new Map<string, string>();
-		for (const msg of messagesToUndo) {
-			if (msg.role === "assistant") {
-				const assistantMsg = msg as AssistantMessage;
-				for (const content of assistantMsg.content) {
-					if (content.type === "toolCall") {
-						toolCallNames.set(content.id, content.name);
-					}
-				}
-			}
-		}
-
-		// Content fields may be undefined (stripped from memory) - lazily loaded when needed
-		type UndoOperation =
-			| {
-					type: "edit";
-					toolCallId: string;
-					path: string;
-					oldText: string | undefined;
-					newText: string | undefined;
-					index: number | undefined;
-					newContentHash: string | undefined;
-			  }
-			| {
-					type: "write";
-					toolCallId: string;
-					path: string;
-					created: boolean;
-					previousContent: string | null | undefined;
-					newContentHash: string | undefined;
-			  };
-
-		const undoOperations: UndoOperation[] = [];
-
-		for (const msg of messagesToUndo) {
-			if (msg.role === "toolResult") {
-				const toolResult = msg as any;
-				const toolName = toolCallNames.get(toolResult.toolCallId);
-
-				if (toolName === "Edit" && toolResult.details) {
-					const details = toolResult.details as {
-						path?: string;
-						oldText?: string;
-						newText?: string;
-						index?: number;
-						newContentHash?: string;
-					};
-					if (details.path) {
-						undoOperations.push({
-							type: "edit",
-							toolCallId: toolResult.toolCallId,
-							path: details.path,
-							oldText: details.oldText,
-							newText: details.newText,
-							index: details.index,
-							newContentHash: details.newContentHash,
-						});
-					}
-				} else if (toolName === "Write" && toolResult.details) {
-					const details = toolResult.details as {
-						path?: string;
-						created?: boolean;
-						previousContent?: string | null;
-						newContentHash?: string;
-					};
-					if (details.path && details.created !== undefined) {
-						undoOperations.push({
-							type: "write",
-							toolCallId: toolResult.toolCallId,
-							path: details.path,
-							created: details.created,
-							previousContent: details.previousContent,
-							newContentHash: details.newContentHash,
-						});
-					}
-				}
-			}
-		}
-
-		let revertedCount = 0;
-		const errors: string[] = [];
-		const revertedDetails: string[] = [];
-
-		// Revert in reverse order (newest first)
-		for (let i = undoOperations.length - 1; i >= 0; i--) {
-			const op = undoOperations[i];
-			const relPath = relative(process.cwd(), op.path);
-
-			if (op.type === "edit") {
-				try {
-					let { oldText, newText, newContentHash } = op;
-					if (oldText === undefined || newText === undefined || newContentHash === undefined) {
-						const storedDetails = this.sessionManager.findToolResultDetails(op.toolCallId) as {
-							oldText?: string;
-							newText?: string;
-							newContentHash?: string;
-						} | null;
-						if (storedDetails) {
-							oldText = storedDetails.oldText;
-							newText = storedDetails.newText;
-							newContentHash = storedDetails.newContentHash;
-						}
-					}
-
-					if (oldText === undefined || newText === undefined || newContentHash === undefined) {
-						errors.push(`${relPath}: undo data not available`);
-						continue;
-					}
-
-					const currentContent = await readFile(op.path, "utf-8");
-					if (hashContent(currentContent) !== newContentHash) {
-						errors.push(`${relPath}: content has changed, cannot safely undo`);
-						continue;
-					}
-
-					// Use index if available, fall back to indexOf (avoids String.replace $ issues)
-					let revertIndex: number;
-					if (op.index !== undefined) {
-						const atIndex = currentContent.substring(op.index, op.index + newText.length);
-						revertIndex = atIndex === newText ? op.index : currentContent.indexOf(newText);
-					} else {
-						revertIndex = currentContent.indexOf(newText);
-					}
-
-					if (revertIndex === -1) {
-						errors.push(`${relPath}: content has changed, cannot revert edit`);
-						continue;
-					}
-
-					const revertedContent =
-						currentContent.substring(0, revertIndex) +
-						oldText +
-						currentContent.substring(revertIndex + newText.length);
-
-					await writeFile(op.path, revertedContent, "utf-8");
-					revertedCount++;
-
-					const linesRemoved = (newText.match(/\n/g) || []).length + 1;
-					const linesAdded = (oldText.match(/\n/g) || []).length + 1;
-					revertedDetails.push(`${relPath} (-${linesRemoved}/+${linesAdded})`);
-				} catch (err: any) {
-					errors.push(`${relPath}: ${err.message}`);
-				}
-			} else if (op.type === "write") {
-				try {
-					let { previousContent, newContentHash } = op;
-					if (previousContent === undefined || newContentHash === undefined) {
-						const storedDetails = this.sessionManager.findToolResultDetails(op.toolCallId) as {
-							previousContent?: string | null;
-							newContentHash?: string;
-						} | null;
-						if (storedDetails) {
-							previousContent = storedDetails.previousContent;
-							newContentHash = storedDetails.newContentHash;
-						}
-					}
-
-					if (newContentHash === undefined) {
-						errors.push(`${relPath}: undo data not available`);
-						continue;
-					}
-
-					let currentContent: string;
-					try {
-						currentContent = await readFile(op.path, "utf-8");
-					} catch (err: any) {
-						if (err.code === "ENOENT") {
-							errors.push(`${relPath}: file missing, cannot safely undo`);
-							continue;
-						}
-						throw err;
-					}
-
-					if (hashContent(currentContent) !== newContentHash) {
-						errors.push(`${relPath}: content has changed, cannot safely undo`);
-						continue;
-					}
-
-					if (op.created) {
-						await unlink(op.path);
-						revertedCount++;
-						revertedDetails.push(`${relPath} (deleted)`);
-					} else if (previousContent !== null && previousContent !== undefined) {
-						await writeFile(op.path, previousContent, "utf-8");
-						revertedCount++;
-						revertedDetails.push(`${relPath} (restored)`);
-					} else {
-						errors.push(`${relPath}: cannot undo overwrite (original content not captured)`);
-					}
-				} catch (err: any) {
-					errors.push(`${relPath}: ${err.message}`);
-				}
-			}
-		}
+		const fileUndo = await undoFileOperations({
+			cwd: process.cwd(),
+			sessionManager: this.sessionManager,
+			messagesToUndo,
+		});
+		const errors = fileUndo.warnings;
+		const revertedDetails = fileUndo.revertedDetails;
+		const plannedCount = fileUndo.plannedCount;
 
 		const newSessionFile = this.sessionManager.createBranchedSession(this.agent.state, lastUserIndex - 1);
 		this.sessionManager.setSessionFile(newSessionFile);
@@ -3787,7 +3602,7 @@ export class TuiRenderer {
 				statusText += "\n" + theme.fg("warning", `Warnings:\n  ${errors.join("\n  ")}`);
 			}
 			this.chatContainer.addChild(new Text(statusText, 1, 0));
-		} else if (undoOperations.length === 0) {
+		} else if (plannedCount === 0) {
 			this.chatContainer.addChild(
 				new Text(
 					theme.fg("accent", "✓ Undid last turn") + "\n" + theme.fg("muted", "No file operations to revert"),
