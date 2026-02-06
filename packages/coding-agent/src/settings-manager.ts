@@ -8,7 +8,7 @@ export interface Settings {
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-	queueMode?: "all" | "one-at-a-time";
+	queueMode?: "all" | "one-at-a-time" | "steer";
 	autoHandoffMode?: AutoHandoffMode;
 	theme?: string;
 	notifications?: boolean;
@@ -87,11 +87,11 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getQueueMode(): "all" | "one-at-a-time" {
+	getQueueMode(): "all" | "one-at-a-time" | "steer" {
 		return this.settings.queueMode || "one-at-a-time";
 	}
 
-	setQueueMode(mode: "all" | "one-at-a-time"): void {
+	setQueueMode(mode: "all" | "one-at-a-time" | "steer"): void {
 		this.settings.queueMode = mode;
 		this.save();
 	}

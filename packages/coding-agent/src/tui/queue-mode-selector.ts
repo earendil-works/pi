@@ -9,8 +9,8 @@ export class QueueModeSelectorComponent extends Container {
 	private selectList: SelectList;
 
 	constructor(
-		currentMode: "all" | "one-at-a-time",
-		onSelect: (mode: "all" | "one-at-a-time") => void,
+		currentMode: "all" | "one-at-a-time" | "steer",
+		onSelect: (mode: "all" | "one-at-a-time" | "steer") => void,
 		onCancel: () => void,
 	) {
 		super();
@@ -21,6 +21,11 @@ export class QueueModeSelectorComponent extends Container {
 				label: "one-at-a-time",
 				description: "Process queued messages one by one (recommended)",
 			},
+			{
+				value: "steer",
+				label: "steer",
+				description: "Inject queued message after tool calls (between tool results and the continuation response)",
+			},
 			{ value: "all", label: "all", description: "Process all queued messages at once" },
 		];
 
@@ -28,7 +33,7 @@ export class QueueModeSelectorComponent extends Container {
 		this.addChild(new DynamicBorder());
 
 		// Create selector
-		this.selectList = new SelectList(queueModes, 2, getSelectListTheme());
+		this.selectList = new SelectList(queueModes, 3, getSelectListTheme());
 
 		// Preselect current mode
 		const currentIndex = queueModes.findIndex((item) => item.value === currentMode);
@@ -37,7 +42,7 @@ export class QueueModeSelectorComponent extends Container {
 		}
 
 		this.selectList.onSelect = (item) => {
-			onSelect(item.value as "all" | "one-at-a-time");
+			onSelect(item.value as "all" | "one-at-a-time" | "steer");
 		};
 
 		this.selectList.onCancel = () => {
