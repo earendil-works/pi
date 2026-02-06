@@ -6786,6 +6786,23 @@ export const MODELS = {
 			contextWindow: 272000,
 			maxTokens: 128000,
 		},
+		"gpt-5.3-codex": {
+			id: "gpt-5.3-codex",
+			name: "GPT-5.3 Codex (ChatGPT Sub)",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 272000,
+			maxTokens: 128000,
+		},
 	},
 	synthetic: {
 		"hf:deepseek-ai/DeepSeek-V3-0324": {

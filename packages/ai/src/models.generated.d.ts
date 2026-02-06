@@ -6784,6 +6784,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "gpt-5.3-codex": {
+			id: string;
+			name: string;
+			api: "openai-codex-responses";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 	};
 	readonly synthetic: {
 		readonly "hf:deepseek-ai/DeepSeek-V3-0324": {
