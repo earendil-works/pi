@@ -9,6 +9,7 @@ import type {
 	TextContent,
 	Tool,
 	ToolResultMessage,
+	UserMessage,
 } from "../types.js";
 
 export interface AgentToolResult<T> {
@@ -81,6 +82,20 @@ export type AgentEvent =
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
 	preprocessor?: (messages: AgentContext["messages"], abortSignal?: AbortSignal) => Promise<AgentContext["messages"]>;
+	/**
+	 * Optional hook to inject user messages between a tool-using turn and the continuation LLM call.
+	 *
+	 * Called after tool execution completes (tool results exist) and before the next assistant
+	 * response is generated.
+	 */
+	interrupt?: (
+		args: {
+			assistantMessage: AssistantMessage;
+			toolResults: ToolResultMessage[];
+			messages: AgentContext["messages"];
+		},
+		abortSignal?: AbortSignal,
+	) => Promise<UserMessage[] | undefined | null>;
 	/**
 	 * Transform tool result messages after they're created but before they're added to context.
 	 * Use this to inject additional content (e.g., context usage warnings) into tool results.

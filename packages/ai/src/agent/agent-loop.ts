@@ -62,12 +62,25 @@ export function agentLoop(
 		// Keep looping while we have tool calls
 		let hasMoreToolCalls = true;
 		let firstTurn = true;
+		let pendingInjectedUserMessages: UserMessage[] = [];
 
 		while (hasMoreToolCalls) {
 			if (!firstTurn) {
 				stream.push({ type: "turn_start" });
 			} else {
 				firstTurn = false;
+			}
+
+			// If we have pending injected user messages from the previous tool-using turn,
+			// emit them now as part of this new turn (before the next assistant response).
+			if (pendingInjectedUserMessages.length > 0) {
+				for (const injected of pendingInjectedUserMessages) {
+					currentContext.messages.push(injected);
+					newMessages.push(injected);
+					stream.push({ type: "message_start", message: injected });
+					stream.push({ type: "message_end", message: injected });
+				}
+				pendingInjectedUserMessages = [];
 			}
 
 			// Stream assistant response
@@ -97,6 +110,27 @@ export function agentLoop(
 				newMessages.push(...toolResults);
 			}
 			stream.push({ type: "turn_end", message, toolResults: toolResults });
+
+			// Allow the host to inject steering user messages between toolResults and the continuation.
+			// We only ever need this when the model is going to continue (i.e., hasMoreToolCalls).
+			if (hasMoreToolCalls && config.interrupt) {
+				try {
+					const injected = await config.interrupt(
+						{
+							assistantMessage: message,
+							toolResults,
+							messages: currentContext.messages,
+						},
+						signal,
+					);
+					if (injected && injected.length > 0) {
+						pendingInjectedUserMessages = injected;
+					}
+				} catch {
+					// Steering should never crash the agent loop.
+					pendingInjectedUserMessages = [];
+				}
+			}
 		}
 		const cleanedMessages = stripThinkingFromMessages(newMessages);
 		stream.push({ type: "agent_end", messages: cleanedMessages });
