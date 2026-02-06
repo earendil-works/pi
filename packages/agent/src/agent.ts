@@ -1,4 +1,11 @@
-import type { ImageContent, Message, TextContent, ToolResultMessage } from "@kennyfrc/mu-ai";
+import type {
+	AssistantMessage,
+	ImageContent,
+	Message,
+	TextContent,
+	ToolResultMessage,
+	UserMessage,
+} from "@kennyfrc/mu-ai";
 import { getModel } from "@kennyfrc/mu-ai";
 import type { AgentTransport } from "./transports/types.js";
 import type { AgentEvent, AgentState, AppMessage, Attachment, ThinkingLevel } from "./types.js";
@@ -83,7 +90,7 @@ export interface AgentOptions {
 	// Transform tool result messages after they're created (e.g., to inject context usage warnings)
 	toolResultTransformer?: (toolResult: ToolResultMessage) => ToolResultMessage;
 	// Queue mode: "all" = send all queued messages at once, "one-at-a-time" = send one queued message per turn
-	queueMode?: "all" | "one-at-a-time";
+	queueMode?: "all" | "one-at-a-time" | "steer";
 }
 
 export class Agent {
@@ -104,7 +111,7 @@ export class Agent {
 	private messageTransformer: (messages: AppMessage[]) => Message[] | Promise<Message[]>;
 	private toolResultTransformer?: (toolResult: ToolResultMessage) => ToolResultMessage;
 	private messageQueue: QueuedAppMessage[] = [];
-	private queueMode: "all" | "one-at-a-time";
+	private queueMode: "all" | "one-at-a-time" | "steer";
 	private runningPrompt?: Promise<void>;
 	private resolveRunningPrompt?: () => void;
 	private isDraining = false; // Guard against re-entrant queue draining
@@ -144,11 +151,11 @@ export class Agent {
 		this._state.thinkingLevel = l;
 	}
 
-	setQueueMode(mode: "all" | "one-at-a-time") {
+	setQueueMode(mode: "all" | "one-at-a-time" | "steer") {
 		this.queueMode = mode;
 	}
 
-	getQueueMode(): "all" | "one-at-a-time" {
+	getQueueMode(): "all" | "one-at-a-time" | "steer" {
 		return this.queueMode;
 	}
 
@@ -287,6 +294,49 @@ export class Agent {
 			tools: this._state.tools,
 			model,
 			reasoning,
+			interrupt:
+				this.queueMode !== "steer"
+					? undefined
+					: async (
+							_args: {
+								assistantMessage: AssistantMessage;
+								toolResults: ToolResultMessage[];
+								messages: Message[];
+							},
+							abortSignal?: AbortSignal,
+						): Promise<UserMessage[] | undefined> => {
+							// If we have queued messages while tools were running, inject them now so the
+							// continuation LLM call can react.
+							if (abortSignal?.aborted) return undefined;
+							if (this.messageQueue.length === 0) return undefined;
+
+							const allMessages = this.messageQueue.splice(0);
+							const combinedText = allMessages.map((m) => m.text).join("\n\n");
+							const combinedAttachments = allMessages.flatMap((m) => m.attachments || []);
+
+							const now = Date.now();
+							const formattedTime = formatMessageTimestamp(now);
+							const timestampXml = `<user_message_time>${formattedTime}</user_message_time>`;
+							const textWithTimestamp = `${timestampXml}\n\n${combinedText}`;
+
+							const content: Array<TextContent | ImageContent> = [{ type: "text", text: textWithTimestamp }];
+							if (combinedAttachments.length > 0) {
+								for (const a of combinedAttachments) {
+									if (a.type === "image") {
+										content.push({ type: "image", data: a.content, mimeType: a.mimeType });
+									} else if (a.type === "document" && a.extractedText) {
+										content.push({
+											type: "text",
+											text: `\n\n[Document: ${a.fileName}]\n${a.extractedText}`,
+											isDocument: true,
+										} as TextContent);
+									}
+								}
+							}
+
+							const injected: UserMessage = { role: "user", content, timestamp: now };
+							return [injected];
+						},
 			toolResultTransformer: this.toolResultTransformer,
 		};
 
@@ -425,7 +475,7 @@ export class Agent {
 				const combinedAttachments = allMessages.flatMap((m) => m.attachments || []);
 				await this.prompt(combinedText, combinedAttachments.length > 0 ? combinedAttachments : undefined);
 			} else {
-				// "one-at-a-time": process each message sequentially
+				// "one-at-a-time" (and "steer" fallback when no tools ran): process each message sequentially
 				// User abort clears messageQueue, so loop exits naturally.
 				while (this.messageQueue.length > 0) {
 					const next = this.messageQueue.shift();

@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentTool, Message, Model, ToolResultMessage } from "@kennyfrc/mu-ai";
+import type { AgentEvent, AgentLoopConfig, AgentTool, Message, Model, ToolResultMessage } from "@kennyfrc/mu-ai";
 
 /**
  * The minimal configuration needed to run an agent turn.
@@ -8,6 +8,11 @@ export interface AgentRunConfig {
 	tools: AgentTool<any>[];
 	model: Model<any>;
 	reasoning?: "low" | "medium" | "high" | "xhigh";
+	/**
+	 * Optional hook to inject user messages between a tool-using turn and the continuation LLM call.
+	 * Used by queueMode="steer".
+	 */
+	interrupt?: AgentLoopConfig["interrupt"];
 	/**
 	 * Transform tool result messages after they're created but before they're added to context.
 	 * Use this to inject additional content (e.g., context usage warnings) into tool results.
