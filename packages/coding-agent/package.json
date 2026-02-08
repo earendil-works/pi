@@ -1,6 +1,6 @@
 {
 	"name": "@kennyfrc/mu-coding-agent",
-	"version": "0.23.13",
+	"version": "0.23.14",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"bin": {
@@ -23,9 +23,9 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-		"@kennyfrc/mu-agent-core": "^0.23.13",
-		"@kennyfrc/mu-ai": "^0.23.13",
-		"@kennyfrc/mu-tui": "^0.23.13",
+		"@kennyfrc/mu-agent-core": "^0.23.14",
+		"@kennyfrc/mu-ai": "^0.23.14",
+		"@kennyfrc/mu-tui": "^0.23.14",
 		"chalk": "^5.5.0",
 		"diff": "^8.0.2",
 		"glob": "^11.0.3",
