@@ -1010,3 +1010,4 @@ MIT
 
 - [@kennyfrc/mu-ai](https://www.npmjs.com/package/@kennyfrc/mu-ai): Core LLM toolkit with multi-provider support
 - [@kennyfrc/mu-agent](https://www.npmjs.com/package/@kennyfrc/mu-agent): Agent framework with tool execution
+- [Agent loop internals](docs/agent-loop.md): How mu runs turns, executes tools, emits events, and supports queue modes

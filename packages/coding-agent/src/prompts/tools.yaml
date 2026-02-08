@@ -140,6 +140,31 @@ TodoWrite: |
   Priority: high, medium (default), low.
   Replaces the full list each call.
 
+Todo: |
+  Create and manage durable, file-backed todos stored on disk.
+
+  Todos are stored as individual markdown files with YAML front-matter.
+  Default directory: <repoRoot>/.mu/todos/
+  Override with MU_TODO_PATH (absolute or repo-relative).
+
+  Actions (set the 'action' field):
+  - list: list todos (supports filters: list, status, tags, assignment)
+  - get: get full todo (front-matter + body)
+  - create: create a new todo
+  - create_many: create multiple todos in one call
+  - update: update fields and/or body (replaces content)
+  - append: append markdown to the body
+  - claim / release: assignment coordination for parallel agents
+  - claim_next: atomically claim the next matching unassigned todo
+  - delete: delete a todo (may require force when assigned)
+
+  Status:
+  - open | in_progress | done | cancelled
+
+  Notes:
+  - Prefer claim_next for parallel-safe automation.
+  - Use list + get to load minimal context: avoid pulling all bodies.
+
 Handoff: |
   Explicitly hand off to a new session with specific file context injected.
 

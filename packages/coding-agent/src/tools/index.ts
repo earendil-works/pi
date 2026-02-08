@@ -10,6 +10,7 @@ export { listThreadsTool } from "./list-threads.js";
 export { readTool } from "./read.js";
 export { readImageTool } from "./read-image.js";
 export { readThreadTool } from "./read-thread.js";
+export { todoTool } from "./todo.js";
 export { todowriteTool } from "./todowrite.js";
 export { writeTool } from "./write.js";
 
@@ -23,7 +24,7 @@ import { listThreadsTool } from "./list-threads.js";
 import { readTool } from "./read.js";
 import { readImageTool } from "./read-image.js";
 import { readThreadTool } from "./read-thread.js";
-import { todowriteTool } from "./todowrite.js";
+import { todoTool } from "./todo.js";
 import { writeTool } from "./write.js";
 
 // Default tools for full access mode
@@ -35,7 +36,7 @@ export const codingTools: AgentTool<any>[] = [
 	listThreadsTool,
 	readThreadTool,
 	readImageTool,
-	todowriteTool,
+	todoTool,
 	handoffTool,
 ];
 
@@ -51,7 +52,7 @@ export const allTools = {
 	ListThreads: listThreadsTool,
 	ReadThread: readThreadTool,
 	ReadImage: readImageTool,
-	TodoWrite: todowriteTool,
+	Todo: todoTool,
 	Handoff: handoffTool,
 };
 

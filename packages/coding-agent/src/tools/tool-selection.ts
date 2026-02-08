@@ -10,7 +10,7 @@ export const DEFAULT_TOOL_NAMES: ToolName[] = [
 	"ListThreads",
 	"ReadThread",
 	"ReadImage",
-	"TodoWrite",
+	"Todo",
 	"Handoff",
 ];
 

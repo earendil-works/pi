@@ -9,6 +9,7 @@ import { dirname, extname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 
 import { exportFromFile } from "./export-html.js";
+import { ensureIdentityEnv } from "./identity-env.js";
 import { findModel, getApiKeyForModel, getAvailableModels } from "./model-config.js";
 import { buildSystemPrompt as buildSystemPromptFromYaml } from "./prompts/index.js";
 import { setCurrentModel } from "./runtime-state.js";
@@ -127,7 +128,8 @@ function parseArgs(args: string[]): Args {
 				list_threads: "ListThreads",
 				read_thread: "ReadThread",
 				read_image: "ReadImage",
-				todowrite: "TodoWrite",
+				todowrite: "Todo",
+				todo: "Todo",
 			};
 
 			for (const name of toolNames) {
@@ -279,8 +281,8 @@ ${chalk.bold("Options:")}
   --session <path>        Use specific session file
   --no-session            Don't save session (ephemeral)
   --models <patterns>     Comma-separated model patterns for quick cycling with Ctrl+P
-  --tools <tools>         Comma-separated list of tools to enable (default: Read,Bash,Edit,Write,ListThreads,ReadThread,ReadImage,TodoWrite,Handoff)
-                          Available: Read, Bash, Edit, Write, Grep, Glob, ListThreads, ReadThread, ReadImage, TodoWrite, Handoff
+	--tools <tools>         Comma-separated list of tools to enable (default: Read,Bash,Edit,Write,ListThreads,ReadThread,ReadImage,Todo,Handoff)
+	                          Available: Read, Bash, Edit, Write, Grep, Glob, ListThreads, ReadThread, ReadImage, Todo, Handoff
   --thinking <level>      Set thinking level: off, minimal, low, medium, high
   --export <file>         Export session file to HTML and exit
   --help, -h              Show this help
@@ -338,7 +340,7 @@ ${chalk.bold("Environment Variables:")}
   ZAI_API_KEY             - ZAI API key
   MU_CODING_AGENT_DIR     - Session storage directory (default: ~/.mu/agent)
 
-${chalk.bold("Available Tools (default: read, bash, edit, write, list_threads, read_thread, read_image, todowrite, handoff):")}
+${chalk.bold("Available Tools (default: read, bash, edit, write, list_threads, read_thread, read_image, todo, handoff):")}
   read         - Read file contents
   bash         - Execute bash commands
   edit         - Edit files with find/replace
@@ -347,7 +349,7 @@ ${chalk.bold("Available Tools (default: read, bash, edit, write, list_threads, r
   list_threads - List past conversation threads
   read_thread  - Read a specific thread's conversation history
   read_image   - Analyze images and extract information
-  todowrite    - Track planning steps and progress
+	  todo         - File-backed todos (lists, claim/release, claim_next)
   handoff      - Hand off to a new session with file context
   grep         - Search file contents (off by default)
   find         - Find files by glob pattern (off by default)
@@ -880,6 +882,9 @@ export async function main(args: string[]) {
 			sessionManager.setSessionFile(selectedSession);
 		}
 	}
+
+	// Identity: expose session/run IDs via env for tools (Todo lock + assignment).
+	ensureIdentityEnv(sessionManager.getSessionId());
 
 	// Resolve model scope early if provided (needed for initial model selection)
 	let scopedModels: Array<{ model: Model<Api>; thinkingLevel: ThinkingLevel }> = [];

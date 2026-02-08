@@ -130,6 +130,13 @@ export class SessionManager {
 		this.sessionId = uuidv4();
 		const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
 		this.sessionFile = join(this.sessionDir, `${timestamp}_${this.sessionId}.jsonl`);
+		this.exportSessionIdToEnv();
+	}
+
+	private exportSessionIdToEnv(): void {
+		if (this.sessionId) {
+			process.env.MU_SESSION_ID = this.sessionId;
+		}
 	}
 
 	/** Reset to a fresh session. Clears pending messages and starts a new session file. */
@@ -157,7 +164,11 @@ export class SessionManager {
 	}
 
 	private loadSessionId(): void {
-		if (!existsSync(this.sessionFile)) return;
+		if (!existsSync(this.sessionFile)) {
+			this.sessionId = uuidv4();
+			this.exportSessionIdToEnv();
+			return;
+		}
 
 		const lines = readFileSync(this.sessionFile, "utf8").trim().split("\n");
 		for (const line of lines) {
@@ -165,6 +176,7 @@ export class SessionManager {
 				const entry = JSON.parse(line);
 				if (entry.type === "session") {
 					this.sessionId = entry.id;
+					this.exportSessionIdToEnv();
 					return;
 				}
 			} catch {
@@ -172,6 +184,7 @@ export class SessionManager {
 			}
 		}
 		this.sessionId = uuidv4();
+		this.exportSessionIdToEnv();
 	}
 
 	startSession(state: AgentState): void {
@@ -790,6 +803,7 @@ export class SessionManager {
 		this.sessionFile = path;
 		this.loadSessionId();
 		this.sessionInitialized = existsSync(path);
+		this.exportSessionIdToEnv();
 	}
 
 	/** Lazily load undo data from session file (chunked to avoid memory spike) */

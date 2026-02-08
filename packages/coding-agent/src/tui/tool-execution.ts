@@ -3,7 +3,6 @@ import { Container, Spacer, Text } from "@kennyfrc/mu-tui";
 import stripAnsi from "strip-ansi";
 import { theme } from "../theme/theme.js";
 import { type ApplyPatchParseResult, parseApplyPatchInput } from "../tools/apply-patch/parse.js";
-import { stripSystemReminderTagsForDisplay } from "../utils/system-reminder.js";
 
 /**
  * Convert absolute path to tilde notation if it's in home directory
@@ -391,11 +390,15 @@ export class ToolExecutionComponent extends Container {
 					}
 				}
 			}
-		} else if (this.toolName === "TodoWrite") {
-			text = theme.fg("toolTitle", theme.bold("TodoWrite"));
+		} else if (this.toolName === "Todo") {
+			const action = (this.args?.action as string | undefined) ?? "";
+			text = theme.fg("toolTitle", theme.bold("Todo"));
+			if (action) {
+				text += theme.fg("dim", ` (${action})`);
+			}
 
 			if (this.result) {
-				const output = stripSystemReminderTagsForDisplay(this.getTextOutput()).trim();
+				const output = this.getTextOutput().trim();
 				if (output) {
 					text +=
 						"\n\n" +
@@ -404,9 +407,6 @@ export class ToolExecutionComponent extends Container {
 							.map((line: string) => theme.fg("toolOutput", line))
 							.join("\n");
 				}
-			} else {
-				const count = this.args?.todos?.length || 0;
-				text += theme.fg("dim", ` (${count} items)`);
 			}
 		} else {
 			// Generic tool

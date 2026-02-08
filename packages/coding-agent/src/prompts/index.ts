@@ -197,17 +197,7 @@ export async function buildSystemPrompt(options: {
 	const config = loadSystemPromptConfig();
 	const tools =
 		selectedTools ||
-		([
-			"Read",
-			"Bash",
-			"Edit",
-			"Write",
-			"ListThreads",
-			"ReadThread",
-			"ReadImage",
-			"TodoWrite",
-			"Handoff",
-		] as ToolName[]);
+		(["Read", "Bash", "Edit", "Write", "ListThreads", "ReadThread", "ReadImage", "Todo", "Handoff"] as ToolName[]);
 
 	// Build tools list
 	const toolDescriptions = config.toolDescriptions;

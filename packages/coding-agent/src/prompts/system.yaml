@@ -29,7 +29,7 @@ toolDescriptions:
   ListThreads: List past conversation threads with search
   ReadThread: Read a specific thread's conversation history
   ReadImage: Analyze images and extract information
-  TodoWrite: Manage a simple task list
+  Todo: Manage durable, file-backed todos
   Handoff: Hand off to a new session with file context
 
 # Guidelines that are conditionally included based on enabled tools
