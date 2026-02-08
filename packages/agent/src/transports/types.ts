@@ -10,7 +10,7 @@ export interface AgentRunConfig {
 	reasoning?: "low" | "medium" | "high" | "xhigh";
 	/**
 	 * Optional hook to inject user messages between a tool-using turn and the continuation LLM call.
-	 * Used by queueMode="steer".
+	 * Used by steering messages (/steer) that are queued with kind "next".
 	 */
 	interrupt?: AgentLoopConfig["interrupt"];
 	/**

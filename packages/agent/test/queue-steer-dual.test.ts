@@ -76,8 +76,41 @@ class InterruptCapturingTransport implements AgentTransport {
 	}
 }
 
-describe("Queue mode steer: dual-queue semantics", () => {
-	it("does not reclassify already-queued items when enabling steer", () => {
+class RecordingTransport implements AgentTransport {
+	public userTexts: string[] = [];
+
+	async *run(
+		_messages: Message[],
+		userMessage: Message,
+		_config: AgentRunConfig,
+		_signal?: AbortSignal,
+	): AsyncIterable<AgentEvent> {
+		const asText = (msg: Message): string => {
+			const content = (msg as unknown as { content: unknown }).content;
+			if (typeof content === "string") return content;
+			if (!Array.isArray(content)) return "";
+			const blocks = content as Array<TextContent | ImageContent>;
+			return blocks
+				.filter((b): b is TextContent => b.type === "text")
+				.map((b) => b.text)
+				.join("\n");
+		};
+
+		this.userTexts.push(asText(userMessage));
+		yield { type: "message_start", message: userMessage };
+		yield { type: "message_end", message: userMessage };
+		yield { type: "agent_end", messages: [] };
+	}
+}
+
+const USER_MESSAGE_TIME_PREFIX_PATTERN = /^(?:<user_message_time>[\s\S]*?<\/user_message_time>\n\n)+/;
+
+function stripUserMessageTimePrefix(text: string): string {
+	return text.replace(USER_MESSAGE_TIME_PREFIX_PATTERN, "");
+}
+
+describe("Steer queue: dual-queue semantics", () => {
+	it("maintains separate kinds for by-end vs next", () => {
 		const transport = new InterruptCapturingTransport();
 		const agent = new Agent({
 			initialState: {
@@ -89,11 +122,8 @@ describe("Queue mode steer: dual-queue semantics", () => {
 			transport,
 		});
 
-		agent.setQueueMode("one-at-a-time");
 		agent.queueMessage("A");
-
-		agent.setQueueMode("steer");
-		agent.queueMessage("B");
+		agent.queueSteerMessage("B");
 
 		expect(agent.getQueuedMessages().map((m) => m.kind)).toEqual(["by-end", "next"]);
 	});
@@ -110,10 +140,8 @@ describe("Queue mode steer: dual-queue semantics", () => {
 			transport,
 		});
 
-		agent.setQueueMode("one-at-a-time");
 		agent.queueMessage("by-end");
-		agent.setQueueMode("steer");
-		agent.queueMessage("next");
+		agent.queueSteerMessage("next");
 
 		agent.pauseQueueDrain(); // avoid draining remaining queue after prompt
 		await agent.prompt("test input");
@@ -126,8 +154,8 @@ describe("Queue mode steer: dual-queue semantics", () => {
 		expect(agent.getQueuedMessages().map((m) => m.kind)).toEqual(["by-end"]);
 	});
 
-	it("switching away from steer normalizes queued-next -> queued-by-end", () => {
-		const transport = new InterruptCapturingTransport();
+	it("prioritizes queued-next over queued-by-end even when queueMode=all", async () => {
+		const transport = new RecordingTransport();
 		const agent = new Agent({
 			initialState: {
 				systemPrompt: "test",
@@ -135,14 +163,22 @@ describe("Queue mode steer: dual-queue semantics", () => {
 				thinkingLevel: "off",
 				tools: [],
 			},
+			queueMode: "all",
 			transport,
 		});
 
-		agent.setQueueMode("steer");
-		agent.queueMessage("was-next");
-		expect(agent.getQueuedMessages().map((m) => m.kind)).toEqual(["next"]);
+		agent.queueMessage("BY-END 1");
+		agent.queueMessage("BY-END 2");
+		agent.queueSteerMessage("NEXT 1");
+		agent.queueSteerMessage("NEXT 2");
 
-		agent.setQueueMode("one-at-a-time");
-		expect(agent.getQueuedMessages().map((m) => m.kind)).toEqual(["by-end"]);
+		await agent.prompt("START");
+
+		const texts = transport.userTexts.map(stripUserMessageTimePrefix);
+		expect(texts[0]).toContain("START");
+		expect(texts[1]).toContain("NEXT 1");
+		expect(texts[2]).toContain("NEXT 2");
+		expect(texts[3]).toContain("BY-END 1");
+		expect(texts[3]).toContain("BY-END 2");
 	});
 });

@@ -76,9 +76,10 @@ export class PromptHistoryManager {
 
 		if (!trimmed) return;
 
-		// Skip slash commands EXCEPT /handoff (we want Up-arrow to recall the last handoff command).
+		// Skip slash commands EXCEPT /handoff and /steer (we want Up-arrow to recall these).
 		const isHandoffCommand = /^\/handoff(?:\s|$)/i.test(trimmed);
-		if (trimmed.startsWith("/") && !isHandoffCommand) {
+		const isSteerCommand = /^\/steer(?:\s|$)/i.test(trimmed);
+		if (trimmed.startsWith("/") && !isHandoffCommand && !isSteerCommand) {
 			return;
 		}
 

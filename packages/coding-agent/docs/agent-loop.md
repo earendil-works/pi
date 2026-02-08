@@ -36,7 +36,7 @@ Responsibilities
   - appends the user message,
   - runs the underlying loop,
   - appends generated messages into state.
-- Manage the **message queue** (one-at-a-time / all / steer).
+- Manage the **message queue** (one-at-a-time / all) and steering injections (`/steer`).
 
 ### Layer C: `@kennyfrc/mu-coding-agent` (CLI + TUI)
 
@@ -140,7 +140,7 @@ Tool implementations can stream progress via an `onProgress(chunk)` callback; th
 
 The TUI appends these chunks to the tool card (useful for long `bash` commands).
 
-## 4) Queue modes (interactive UX)
+## 4) Queue modes + steering (interactive UX)
 
 Queue modes are managed by `@kennyfrc/mu-agent-core`’s `Agent` wrapper (`packages/agent/src/agent.ts`).
 
@@ -155,9 +155,11 @@ Queue modes are managed by `@kennyfrc/mu-agent-core`’s `Agent` wrapper (`packa
   - combined text: `msg1 + "\n\n" + msg2 + ...`
   - attachments are concatenated
 
-### `steer`
+### Steering messages: `/steer <message>`
 
-Steer is special: it can inject queued messages **between tool execution and the continuation LLM call**.
+`/steer` is **command-like** UX for sending a *steering* user message immediately.
+
+If the agent is currently doing tool calls, `/steer` queues the message with kind `next`, making it eligible for injection **between tool results and the continuation LLM call**.
 
 Mechanism:
 - `Agent.prompt(...)` passes an `interrupt(...)` function into `mu-ai`’s `agentLoop`.
@@ -165,7 +167,7 @@ Mechanism:
 - The wrapper drains queued messages of kind `next`, builds a new `UserMessage`, and returns it.
 - `agentLoop` then emits that injected user message at the start of the next turn.
 
-This is why steer feels like “mid-flight steering” without aborting the whole run.
+This is why `/steer` feels like “mid-flight steering” without aborting the whole run.
 
 ## 5) Timestamps in user messages
 
@@ -198,4 +200,3 @@ If you’re new to this codebase and want the fastest “I get it now” path:
    - See how state + queue wrap the loop.
 3. `packages/coding-agent/src/tui/tui-renderer.ts`
    - See how events become UI + how sessions are persisted.
-

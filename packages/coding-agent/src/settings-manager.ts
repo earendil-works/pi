@@ -8,7 +8,7 @@ export interface Settings {
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
-	queueMode?: "all" | "one-at-a-time" | "steer";
+	queueMode?: "all" | "one-at-a-time";
 	autoHandoffMode?: AutoHandoffMode;
 	theme?: string;
 	notifications?: boolean;
@@ -87,11 +87,13 @@ export class SettingsManager {
 		this.save();
 	}
 
-	getQueueMode(): "all" | "one-at-a-time" | "steer" {
-		return this.settings.queueMode || "one-at-a-time";
+	getQueueMode(): "all" | "one-at-a-time" {
+		// Back-compat: older versions stored "steer". Treat it as the default.
+		const mode = this.settings.queueMode;
+		return mode === "all" ? "all" : "one-at-a-time";
 	}
 
-	setQueueMode(mode: "all" | "one-at-a-time" | "steer"): void {
+	setQueueMode(mode: "all" | "one-at-a-time"): void {
 		this.settings.queueMode = mode;
 		this.save();
 	}

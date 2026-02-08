@@ -37,7 +37,7 @@ export interface AgentQueuedMessage {
 	attachments?: Attachment[];
 	/**
 	 * "by-end" messages are drained after the current agent run completes.
-	 * "next" messages are eligible for injection at the tool boundary when queueMode="steer".
+	 * "next" messages are eligible for injection at the tool boundary (between tool results and the continuation LLM call).
 	 */
 	kind: QueuedMessageKind;
 }
@@ -96,8 +96,8 @@ export interface AgentOptions {
 	messageTransformer?: (messages: AppMessage[]) => Message[] | Promise<Message[]>;
 	// Transform tool result messages after they're created (e.g., to inject context usage warnings)
 	toolResultTransformer?: (toolResult: ToolResultMessage) => ToolResultMessage;
-	// Queue mode: "all" = send all queued messages at once, "one-at-a-time" = send one queued message per turn
-	queueMode?: "all" | "one-at-a-time" | "steer";
+	// Queue mode for regular queued messages: "all" = send all queued-by-end messages at once, "one-at-a-time" = one per turn
+	queueMode?: "all" | "one-at-a-time";
 }
 
 export class Agent {
@@ -118,7 +118,7 @@ export class Agent {
 	private messageTransformer: (messages: AppMessage[]) => Message[] | Promise<Message[]>;
 	private toolResultTransformer?: (toolResult: ToolResultMessage) => ToolResultMessage;
 	private messageQueue: AgentQueuedMessage[] = [];
-	private queueMode: "all" | "one-at-a-time" | "steer";
+	private queueMode: "all" | "one-at-a-time";
 	private runningPrompt?: Promise<void>;
 	private resolveRunningPrompt?: () => void;
 	private isDraining = false; // Guard against re-entrant queue draining
@@ -158,18 +158,11 @@ export class Agent {
 		this._state.thinkingLevel = l;
 	}
 
-	setQueueMode(mode: "all" | "one-at-a-time" | "steer") {
-		// If steer is disabled, queued "next" messages can't be injected at tool boundaries,
-		// so normalize them to "by-end" while preserving order.
-		if (mode !== "steer") {
-			for (const m of this.messageQueue) {
-				if (m.kind === "next") m.kind = "by-end";
-			}
-		}
+	setQueueMode(mode: "all" | "one-at-a-time") {
 		this.queueMode = mode;
 	}
 
-	getQueueMode(): "all" | "one-at-a-time" | "steer" {
+	getQueueMode(): "all" | "one-at-a-time" {
 		return this.queueMode;
 	}
 
@@ -204,7 +197,20 @@ export class Agent {
 		this.messageQueue.push({
 			text,
 			attachments,
-			kind: this.queueMode === "steer" ? "next" : "by-end",
+			kind: "by-end",
+		});
+	}
+
+	/**
+	 * Queue a steering message that should be processed "next":
+	 * - injected at the tool boundary if the current run is doing tool calls
+	 * - otherwise processed before queued-by-end messages after the current run completes
+	 */
+	queueSteerMessage(text: string, attachments?: Attachment[]) {
+		this.messageQueue.push({
+			text,
+			attachments,
+			kind: "next",
 		});
 	}
 
@@ -212,9 +218,14 @@ export class Agent {
 		return this.messageQueue;
 	}
 
-	updateQueuedMessage(index: number, text: string, attachments?: Attachment[]) {
+	updateQueuedMessage(index: number, text: string, attachments?: Attachment[], kind?: QueuedMessageKind) {
 		if (index >= 0 && index < this.messageQueue.length) {
-			this.messageQueue[index] = { ...this.messageQueue[index], text, attachments };
+			this.messageQueue[index] = {
+				...this.messageQueue[index],
+				text,
+				attachments,
+				kind: kind ?? this.messageQueue[index].kind,
+			};
 		}
 	}
 
@@ -327,48 +338,45 @@ export class Agent {
 			tools: this._state.tools,
 			model,
 			reasoning,
-			interrupt:
-				this.queueMode !== "steer"
-					? undefined
-					: async (
-							_args: {
-								assistantMessage: AssistantMessage;
-								toolResults: ToolResultMessage[];
-								messages: Message[];
-							},
-							abortSignal?: AbortSignal,
-						): Promise<UserMessage[] | undefined> => {
-							// If we have queued messages while tools were running, inject them now so the
-							// continuation LLM call can react.
-							if (abortSignal?.aborted) return undefined;
-							const allMessages = this.drainQueuedMessages("next");
-							if (allMessages.length === 0) return undefined;
-							const combinedText = allMessages.map((m) => m.text).join("\n\n");
-							const combinedAttachments = allMessages.flatMap((m) => m.attachments || []);
+			interrupt: async (
+				_args: {
+					assistantMessage: AssistantMessage;
+					toolResults: ToolResultMessage[];
+					messages: Message[];
+				},
+				abortSignal?: AbortSignal,
+			): Promise<UserMessage[] | undefined> => {
+				// If we have queued steering messages while tools were running, inject them now so the
+				// continuation LLM call can react.
+				if (abortSignal?.aborted) return undefined;
+				const allMessages = this.drainQueuedMessages("next");
+				if (allMessages.length === 0) return undefined;
+				const combinedText = allMessages.map((m) => m.text).join("\n\n");
+				const combinedAttachments = allMessages.flatMap((m) => m.attachments || []);
 
-							const now = Date.now();
-							const formattedTime = formatMessageTimestamp(now);
-							const timestampXml = `<user_message_time>${formattedTime}</user_message_time>`;
-							const textWithTimestamp = `${timestampXml}\n\n${combinedText}`;
+				const now = Date.now();
+				const formattedTime = formatMessageTimestamp(now);
+				const timestampXml = `<user_message_time>${formattedTime}</user_message_time>`;
+				const textWithTimestamp = `${timestampXml}\n\n${combinedText}`;
 
-							const content: Array<TextContent | ImageContent> = [{ type: "text", text: textWithTimestamp }];
-							if (combinedAttachments.length > 0) {
-								for (const a of combinedAttachments) {
-									if (a.type === "image") {
-										content.push({ type: "image", data: a.content, mimeType: a.mimeType });
-									} else if (a.type === "document" && a.extractedText) {
-										content.push({
-											type: "text",
-											text: `\n\n[Document: ${a.fileName}]\n${a.extractedText}`,
-											isDocument: true,
-										} as TextContent);
-									}
-								}
-							}
+				const content: Array<TextContent | ImageContent> = [{ type: "text", text: textWithTimestamp }];
+				if (combinedAttachments.length > 0) {
+					for (const a of combinedAttachments) {
+						if (a.type === "image") {
+							content.push({ type: "image", data: a.content, mimeType: a.mimeType });
+						} else if (a.type === "document" && a.extractedText) {
+							content.push({
+								type: "text",
+								text: `\n\n[Document: ${a.fileName}]\n${a.extractedText}`,
+								isDocument: true,
+							} as TextContent);
+						}
+					}
+				}
 
-							const injected: UserMessage = { role: "user", content, timestamp: now };
-							return [injected];
-						},
+				const injected: UserMessage = { role: "user", content, timestamp: now };
+				return [injected];
+			},
 			toolResultTransformer: this.toolResultTransformer,
 		};
 
@@ -500,15 +508,22 @@ export class Agent {
 
 		this.isDraining = true;
 		try {
+			// Always prioritize queued steering messages.
+			const nextMessages = this.drainQueuedMessages("next");
+			for (const m of nextMessages) {
+				await this.prompt(m.text, m.attachments);
+			}
+
 			if (this.queueMode === "all") {
-				// Combine all queued messages into a single prompt
-				const allMessages = this.messageQueue.splice(0);
-				const combinedText = allMessages.map((m) => m.text).join("\n\n");
-				const combinedAttachments = allMessages.flatMap((m) => m.attachments || []);
-				await this.prompt(combinedText, combinedAttachments.length > 0 ? combinedAttachments : undefined);
+				// Combine all queued-by-end messages into a single prompt
+				const byEndMessages = this.drainQueuedMessages("by-end");
+				if (byEndMessages.length > 0) {
+					const combinedText = byEndMessages.map((m) => m.text).join("\n\n");
+					const combinedAttachments = byEndMessages.flatMap((m) => m.attachments || []);
+					await this.prompt(combinedText, combinedAttachments.length > 0 ? combinedAttachments : undefined);
+				}
 			} else {
-				// "one-at-a-time" (and "steer" fallback when no tools ran): process each message sequentially
-				// User abort clears messageQueue, so loop exits naturally.
+				// one-at-a-time: process queued-by-end sequentially.
 				while (this.messageQueue.length > 0) {
 					const next = this.messageQueue.shift();
 					if (next) {

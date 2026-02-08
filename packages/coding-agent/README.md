@@ -378,10 +378,19 @@ Adjust thinking/reasoning level for supported models (Claude Sonnet 4, GPT-5, Ge
 
 Select message queue mode. Opens an interactive selector where you can choose between:
 - **one-at-a-time** (default): Process queued messages one by one. When you submit messages while the agent is processing, they're queued and sent individually after each agent response completes.
-- **steer**: If the agent is currently doing tool calls, a queued message will be injected *between* tool results and the model's continuation response. This lets you "steer" the current run without aborting it.
 - **all**: Process all queued messages at once. All queued messages are injected into the context together before the next agent response.
 
 The queue mode setting is saved and persists across sessions.
+
+### /steer <message>
+
+Send a **steering message** immediately:
+
+```
+/steer use ripgrep instead of grep
+```
+
+If the agent is currently doing tool calls, the message is injected *between* tool results and the model’s continuation response (mid-flight steering without aborting). Otherwise, it becomes the next queued message processed after the current run completes.
 
 ### /export [filename]
 

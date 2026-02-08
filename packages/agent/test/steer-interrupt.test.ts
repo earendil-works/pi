@@ -114,7 +114,7 @@ class FakeTransport implements AgentTransport {
 	}
 }
 
-describe("queueMode=steer", () => {
+describe("steer injection", () => {
 	it("injects queued message after tool results so the continuation reacts", async () => {
 		const schema = Type.Object({ text: Type.String() });
 		type EchoParams = Static<typeof schema>;
@@ -138,13 +138,13 @@ describe("queueMode=steer", () => {
 				thinkingLevel: "off",
 				tools: [echoTool],
 			},
-			queueMode: "steer",
+			queueMode: "one-at-a-time",
 			transport: new FakeTransport(),
 		});
 
 		const p = agent.prompt("Initial");
 		setTimeout(() => {
-			agent.queueMessage("STEER: do something else");
+			agent.queueSteerMessage("STEER: do something else");
 		}, 10);
 		await p;
 
