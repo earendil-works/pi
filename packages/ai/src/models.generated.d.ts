@@ -2583,6 +2583,23 @@ export declare const MODELS: {
 		};
 	};
 	readonly openrouter: {
+		readonly "openrouter/pony-alpha": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "anthropic/claude-opus-4.6": {
 			id: string;
 			name: string;

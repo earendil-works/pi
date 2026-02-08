@@ -104,7 +104,7 @@ export const MODELS = {
 				cacheRead: 0.5,
 				cacheWrite: 6.25,
 			},
-			contextWindow: 1000000,
+			contextWindow: 200000,
 			maxTokens: 128000,
 		} satisfies Model<"anthropic-messages">,
 		"claude-3-5-haiku-latest": {
@@ -2588,6 +2588,23 @@ export const MODELS = {
 		} satisfies Model<"openai-completions">,
 	},
 	openrouter: {
+		"openrouter/pony-alpha": {
+			id: "openrouter/pony-alpha",
+			name: "Pony Alpha",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 200000,
+			maxTokens: 131000,
+		} satisfies Model<"openai-completions">,
 		"anthropic/claude-opus-4.6": {
 			id: "anthropic/claude-opus-4.6",
 			name: "Anthropic: Claude Opus 4.6",
@@ -2616,7 +2633,7 @@ export const MODELS = {
 			cost: {
 				input: 0.07,
 				output: 0.3,
-				cacheRead: 0,
+				cacheRead: 0.035,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -2682,13 +2699,13 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
-				input: 0.44999999999999996,
-				output: 2.5,
-				cacheRead: 0,
+				input: 0.3,
+				output: 1.5,
+				cacheRead: 0.049999999999999996,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
-			maxTokens: 65535,
+			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
 		"upstage/solar-pro-3:free": {
 			id: "upstage/solar-pro-3:free",
@@ -2716,13 +2733,13 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text"],
 			cost: {
-				input: 0.07,
+				input: 0.06,
 				output: 0.39999999999999997,
-				cacheRead: 0.01,
+				cacheRead: 0.0100000002,
 				cacheWrite: 0,
 			},
-			contextWindow: 200000,
-			maxTokens: 131072,
+			contextWindow: 202752,
+			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
 		"openai/gpt-5.2-codex": {
 			id: "openai/gpt-5.2-codex",
@@ -2820,7 +2837,7 @@ export const MODELS = {
 			cost: {
 				input: 0.39999999999999997,
 				output: 1.5,
-				cacheRead: 0,
+				cacheRead: 0.19999999999999998,
 				cacheWrite: 0,
 			},
 			contextWindow: 202752,
@@ -2871,7 +2888,7 @@ export const MODELS = {
 			cost: {
 				input: 0.09,
 				output: 0.29,
-				cacheRead: 0,
+				cacheRead: 0.045,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -2973,7 +2990,7 @@ export const MODELS = {
 			cost: {
 				input: 0.049999999999999996,
 				output: 0.22,
-				cacheRead: 0,
+				cacheRead: 0.024999999999999998,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -3177,7 +3194,7 @@ export const MODELS = {
 			cost: {
 				input: 0.25,
 				output: 0.38,
-				cacheRead: 0,
+				cacheRead: 0.125,
 				cacheWrite: 0,
 			},
 			contextWindow: 163840,
@@ -3228,7 +3245,7 @@ export const MODELS = {
 			cost: {
 				input: 0.25,
 				output: 0.85,
-				cacheRead: 0,
+				cacheRead: 0.125,
 				cacheWrite: 0,
 			},
 			contextWindow: 163840,
@@ -3381,7 +3398,7 @@ export const MODELS = {
 			cost: {
 				input: 0.39999999999999997,
 				output: 1.75,
-				cacheRead: 0,
+				cacheRead: 0.19999999999999998,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -3670,7 +3687,7 @@ export const MODELS = {
 			cost: {
 				input: 0.35,
 				output: 1.5,
-				cacheRead: 0,
+				cacheRead: 0.175,
 				cacheWrite: 0,
 			},
 			contextWindow: 202752,
@@ -4061,7 +4078,7 @@ export const MODELS = {
 			cost: {
 				input: 0.39,
 				output: 1.9,
-				cacheRead: 0,
+				cacheRead: 0.195,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -4146,7 +4163,7 @@ export const MODELS = {
 			cost: {
 				input: 0.11,
 				output: 0.38,
-				cacheRead: 0,
+				cacheRead: 0.055,
 				cacheWrite: 0,
 			},
 			contextWindow: 131072,
@@ -4416,13 +4433,13 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text"],
 			cost: {
-				input: 0.02,
-				output: 0.09999999999999999,
+				input: 0.03,
+				output: 0.14,
 				cacheRead: 0,
 				cacheWrite: 0,
 			},
 			contextWindow: 131072,
-			maxTokens: 131072,
+			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
 		"anthropic/claude-opus-4.1": {
 			id: "anthropic/claude-opus-4.1",
@@ -4486,7 +4503,7 @@ export const MODELS = {
 			cost: {
 				input: 0.08,
 				output: 0.33,
-				cacheRead: 0,
+				cacheRead: 0.04,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -4503,7 +4520,7 @@ export const MODELS = {
 			cost: {
 				input: 0.35,
 				output: 1.55,
-				cacheRead: 0,
+				cacheRead: 0.175,
 				cacheWrite: 0,
 			},
 			contextWindow: 131072,
@@ -4535,13 +4552,13 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text"],
 			cost: {
-				input: 0.049999999999999996,
-				output: 0.22,
-				cacheRead: 0,
+				input: 0.13,
+				output: 0.85,
+				cacheRead: 0.024999999999999998,
 				cacheWrite: 0,
 			},
 			contextWindow: 131072,
-			maxTokens: 131072,
+			maxTokens: 98304,
 		} satisfies Model<"openai-completions">,
 		"qwen/qwen3-235b-a22b-thinking-2507": {
 			id: "qwen/qwen3-235b-a22b-thinking-2507",
@@ -4554,7 +4571,7 @@ export const MODELS = {
 			cost: {
 				input: 0.11,
 				output: 0.6,
-				cacheRead: 0,
+				cacheRead: 0.055,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -4604,12 +4621,12 @@ export const MODELS = {
 			input: ["text"],
 			cost: {
 				input: 0.22,
-				output: 0.95,
-				cacheRead: 0,
+				output: 1,
+				cacheRead: 0.022,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
-			maxTokens: 262144,
+			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
 		"qwen/qwen3-coder:exacto": {
 			id: "qwen/qwen3-coder:exacto",
@@ -4741,7 +4758,7 @@ export const MODELS = {
 			cost: {
 				input: 0.25,
 				output: 0.85,
-				cacheRead: 0,
+				cacheRead: 0.125,
 				cacheWrite: 0,
 			},
 			contextWindow: 163840,
@@ -4775,7 +4792,7 @@ export const MODELS = {
 			cost: {
 				input: 0.06,
 				output: 0.18,
-				cacheRead: 0,
+				cacheRead: 0.03,
 				cacheWrite: 0,
 			},
 			contextWindow: 131072,
@@ -4911,7 +4928,7 @@ export const MODELS = {
 			cost: {
 				input: 0.39999999999999997,
 				output: 1.75,
-				cacheRead: 0,
+				cacheRead: 0.19999999999999998,
 				cacheWrite: 0,
 			},
 			contextWindow: 163840,
@@ -4962,7 +4979,7 @@ export const MODELS = {
 			cost: {
 				input: 0.02,
 				output: 0.09999999999999999,
-				cacheRead: 0,
+				cacheRead: 0.01,
 				cacheWrite: 0,
 			},
 			contextWindow: 32768,
@@ -5064,7 +5081,7 @@ export const MODELS = {
 			cost: {
 				input: 0.06,
 				output: 0.22,
-				cacheRead: 0,
+				cacheRead: 0.03,
 				cacheWrite: 0,
 			},
 			contextWindow: 40960,
@@ -5098,7 +5115,7 @@ export const MODELS = {
 			cost: {
 				input: 0.049999999999999996,
 				output: 0.22,
-				cacheRead: 0,
+				cacheRead: 0.024999999999999998,
 				cacheWrite: 0,
 			},
 			contextWindow: 40960,
@@ -5115,7 +5132,7 @@ export const MODELS = {
 			cost: {
 				input: 0.08,
 				output: 0.24,
-				cacheRead: 0,
+				cacheRead: 0.04,
 				cacheWrite: 0,
 			},
 			contextWindow: 40960,
@@ -5319,7 +5336,7 @@ export const MODELS = {
 			cost: {
 				input: 0.19,
 				output: 0.87,
-				cacheRead: 0,
+				cacheRead: 0.095,
 				cacheWrite: 0,
 			},
 			contextWindow: 163840,
@@ -5353,7 +5370,7 @@ export const MODELS = {
 			cost: {
 				input: 0.03,
 				output: 0.11,
-				cacheRead: 0,
+				cacheRead: 0.015,
 				cacheWrite: 0,
 			},
 			contextWindow: 131072,
@@ -5387,7 +5404,7 @@ export const MODELS = {
 			cost: {
 				input: 0.04,
 				output: 0.15,
-				cacheRead: 0,
+				cacheRead: 0.02,
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
@@ -5606,13 +5623,13 @@ export const MODELS = {
 			reasoning: false,
 			input: ["text"],
 			cost: {
-				input: 0.03,
-				output: 0.11,
+				input: 0.049999999999999996,
+				output: 0.08,
 				cacheRead: 0,
 				cacheWrite: 0,
 			},
 			contextWindow: 32768,
-			maxTokens: 32768,
+			maxTokens: 16384,
 		} satisfies Model<"openai-completions">,
 		"deepseek/deepseek-r1": {
 			id: "deepseek/deepseek-r1",
@@ -5642,7 +5659,7 @@ export const MODELS = {
 			cost: {
 				input: 0.3,
 				output: 1.2,
-				cacheRead: 0,
+				cacheRead: 0.15,
 				cacheWrite: 0,
 			},
 			contextWindow: 163840,
