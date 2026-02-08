@@ -73,6 +73,8 @@ import {
 	type SubscriptionSessionSummary,
 } from "../subscriptions/subscription-selection.js";
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
+import { getTodoRootDirForCwd } from "../todos/todo-path.js";
+import { TodoStore } from "../todos/todo-store.js";
 import { bashTool } from "../tools/bash.js";
 import { formatParentThreadReference, type HandoffDetails, handoffTool } from "../tools/handoff.js";
 import type { ToolName } from "../tools/index.js";
@@ -100,6 +102,7 @@ import {
 	getThinkingLevelItems,
 } from "./thinking-levels.js";
 import { ThinkingSelectorComponent } from "./thinking-selector.js";
+import { TodoOverlayComponent } from "./todo-overlay.js";
 import { ToolExecutionComponent } from "./tool-execution.js";
 import { UserMessageComponent } from "./user-message.js";
 import { UserMessageSelectorComponent } from "./user-message-selector.js";
@@ -109,6 +112,15 @@ function hashContent(content: string): string {
 }
 
 const SUBSCRIPTION_RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// User messages in Agent state are stored with a timestamp prefix for LLM visibility:
+//   <user_message_time>...</user_message_time>\n\n
+// That prefix should never leak back into editor buffers or prompt history.
+const USER_MESSAGE_TIME_PREFIX_PATTERN = /^(?:<user_message_time>[\s\S]*?<\/user_message_time>\n\n)+/;
+
+function stripUserMessageTimePrefix(text: string): string {
+	return text.replace(USER_MESSAGE_TIME_PREFIX_PATTERN, "");
+}
 
 type HandoffToolResult = Awaited<ReturnType<typeof handoffTool.execute>>;
 
@@ -184,6 +196,9 @@ export class TuiRenderer {
 
 	// Theme selector
 	private themeSelector: ThemeSelectorComponent | null = null;
+
+	// /todos overlay
+	private todoOverlay: TodoOverlayComponent | null = null;
 
 	// Model selector
 	private modelSelector: ModelSelectorComponent | null = null;
@@ -336,6 +351,11 @@ export class TuiRenderer {
 			description: "Select message queue mode (opens selector UI)",
 		};
 
+		const todosCommand: SlashCommand = {
+			name: "todos",
+			description: "Manage todos (opens overlay UI)",
+		};
+
 		const themeCommand: SlashCommand = {
 			name: "theme",
 			description: "Select color theme (opens selector UI)",
@@ -387,6 +407,7 @@ export class TuiRenderer {
 				sessionCommand,
 				themeCommand,
 				thinkingCommand,
+				todosCommand,
 				undoCommand,
 			],
 			process.cwd(),
@@ -711,6 +732,13 @@ export class TuiRenderer {
 				return;
 			}
 
+			// Check for /todos command
+			if (rawText === "/todos") {
+				this.showTodosOverlay();
+				this.editor.setText("");
+				return;
+			}
+
 			// Check for /queue command
 			if (rawText === "/queue") {
 				this.showQueueModeSelector();
@@ -919,8 +947,7 @@ export class TuiRenderer {
 					const messageText = textBlocks.map((c: any) => c.text).join("");
 
 					// Strip timestamp prefix if present (format: <user_message_time>...</user_message_time>\n\n)
-					const timestampPattern = /^<user_message_time>.*?<\/user_message_time>\n\n/;
-					const rawMessageText = messageText.replace(timestampPattern, "");
+					const rawMessageText = stripUserMessageTimePrefix(messageText);
 
 					// In "all" queue mode, messages are combined with \n\n separator
 					// Check if any queued messages are contained in the incoming message
@@ -1460,7 +1487,7 @@ export class TuiRenderer {
 
 		const prompt = this.promptHistory.getPromptAt(this.historyIndex);
 		if (prompt !== null) {
-			this.editor.setText(prompt);
+			this.editor.setText(stripUserMessageTimePrefix(prompt));
 			this.ui.requestRender();
 		}
 	}
@@ -1478,7 +1505,7 @@ export class TuiRenderer {
 			this.historyIndex++;
 			const prompt = this.promptHistory.getPromptAt(this.historyIndex);
 			if (prompt !== null) {
-				this.editor.setText(prompt);
+				this.editor.setText(stripUserMessageTimePrefix(prompt));
 				this.ui.requestRender();
 			}
 		} else {
@@ -2081,6 +2108,40 @@ export class TuiRenderer {
 		this.ui.setFocus(this.editor);
 	}
 
+	private showTodosOverlay(): void {
+		const runId = process.env.MU_RUN_ID;
+		if (!runId) {
+			this.showError("MU_RUN_ID is not set. Restart mu to enable /todos.");
+			return;
+		}
+
+		const who = { sessionId: this.sessionManager.getSessionId(), runId };
+		const rootDir = getTodoRootDirForCwd(process.cwd());
+		const store = new TodoStore({ rootDir });
+
+		this.todoOverlay = new TodoOverlayComponent({
+			tui: this.ui,
+			store,
+			who,
+			onCancel: () => {
+				this.hideTodosOverlay();
+				this.ui.requestRender();
+			},
+		});
+
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.todoOverlay);
+		this.ui.setFocus(this.todoOverlay);
+		this.ui.requestRender();
+	}
+
+	private hideTodosOverlay(): void {
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.todoOverlay = null;
+		this.ui.setFocus(this.editor);
+	}
+
 	private showThemeSelector(): void {
 		// Get current theme from settings
 		const currentTheme = this.settingsManager.getTheme() || "dark";
@@ -2212,7 +2273,7 @@ export class TuiRenderer {
 				const textBlocks = userMsg.content.filter((c: any) => c.type === "text");
 				const textContent = textBlocks.map((c: any) => c.text).join("");
 				if (textContent) {
-					userMessages.push({ index: i, text: textContent });
+					userMessages.push({ index: i, text: stripUserMessageTimePrefix(textContent) });
 				}
 			}
 		}
@@ -2257,7 +2318,7 @@ export class TuiRenderer {
 				);
 
 				// Put the selected message in the editor
-				this.editor.setText(selectedText);
+				this.editor.setText(stripUserMessageTimePrefix(selectedText));
 
 				// Hide selector and show editor again
 				this.hideUserMessageSelector();
@@ -3249,7 +3310,7 @@ export class TuiRenderer {
 						.map((c) => c.text || "")
 						.join("");
 					// Strip timestamp prefix: <user_message_time>...</user_message_time>\n\n
-					text = text.replace(/^<user_message_time>.*?<\/user_message_time>\n\n/, "");
+					text = stripUserMessageTimePrefix(text);
 					return `User: ${text}`;
 				} else if (msg.role === "assistant") {
 					const assistantMsg = msg as AssistantMessage;
@@ -3603,6 +3664,7 @@ export class TuiRenderer {
 		const lastUserMessage = messages[lastUserIndex] as any;
 		const textBlocks = lastUserMessage.content.filter((c: any) => c.type === "text");
 		const lastUserText = textBlocks.map((c: any) => c.text).join("");
+		const restoredEditorText = stripUserMessageTimePrefix(lastUserText);
 
 		const messagesToUndo = messages.slice(lastUserIndex);
 
@@ -3625,7 +3687,7 @@ export class TuiRenderer {
 		this.isFirstUserMessage = true;
 		this.renderInitialMessages(this.agent.state);
 
-		this.editor.setText(lastUserText);
+		this.editor.setText(restoredEditorText);
 
 		this.chatContainer.addChild(new Spacer(1));
 		if (revertedDetails.length > 0 || errors.length > 0) {

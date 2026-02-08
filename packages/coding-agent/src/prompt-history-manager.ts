@@ -9,6 +9,15 @@ interface HistoryEntry {
 
 const MAX_HISTORY_SIZE = 500;
 
+// User messages in Agent state are stored with a timestamp prefix for LLM visibility:
+//   <user_message_time>...</user_message_time>\n\n
+// Prompt history should store the user-authored prompt only.
+const USER_MESSAGE_TIME_PREFIX_PATTERN = /^(?:<user_message_time>[\s\S]*?<\/user_message_time>\n\n)+/;
+
+function stripUserMessageTimePrefix(text: string): string {
+	return text.replace(USER_MESSAGE_TIME_PREFIX_PATTERN, "");
+}
+
 export class PromptHistoryManager {
 	private historyDir: string;
 	private historyFile: string;
@@ -63,7 +72,7 @@ export class PromptHistoryManager {
 	}
 
 	savePrompt(prompt: string): void {
-		const trimmed = prompt.trim();
+		const trimmed = stripUserMessageTimePrefix(prompt).trim();
 
 		if (!trimmed) return;
 
