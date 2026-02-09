@@ -7,6 +7,12 @@ import { getMarkdownTheme, theme } from "../theme/theme.js";
  */
 export class AssistantMessageComponent extends Container {
 	private contentContainer: Container;
+	private cachedBlockTypes: Array<"text" | "thinking"> = [];
+	private cachedHasLeadingSpacer = false;
+	private cachedStatusKind: "none" | "aborted" | "error" = "none";
+	private cachedStatusMessage: string | null = null;
+	private cachedHasToolCalls = false;
+	private cachedMarkdownBlocks: Markdown[] = [];
 
 	constructor(message?: AssistantMessage) {
 		super();
@@ -21,57 +27,91 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	updateContent(message: AssistantMessage): void {
-		// Clear content container
-		this.contentContainer.clear();
+		const blocks: Array<{ type: "text" | "thinking"; text: string }> = [];
+		for (const content of message.content) {
+			if (content.type === "text") {
+				const text = content.text.trim();
+				if (text) blocks.push({ type: "text", text });
+			} else if (content.type === "thinking") {
+				const thinking = content.thinking.trim();
+				if (thinking) blocks.push({ type: "thinking", text: thinking });
+			}
+		}
 
-		if (
-			message.content.length > 0 &&
-			message.content.some(
-				(c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),
-			)
-		) {
+		const hasLeadingSpacer = blocks.length > 0;
+		const blockTypes = blocks.map((b) => b.type);
+		const hasToolCalls = message.content.some((c) => c.type === "toolCall");
+		let statusKind: "none" | "aborted" | "error" = "none";
+		let statusMessage: string | null = null;
+
+		if (!hasToolCalls) {
+			if (message.stopReason === "aborted") {
+				statusKind = "aborted";
+			} else if (message.stopReason === "error") {
+				statusKind = "error";
+				statusMessage = message.errorMessage || "Unknown error";
+			}
+		}
+
+		const canReuse =
+			this.cachedMarkdownBlocks.length === blocks.length &&
+			this.cachedHasLeadingSpacer === hasLeadingSpacer &&
+			this.cachedHasToolCalls === hasToolCalls &&
+			this.cachedStatusKind === statusKind &&
+			this.cachedStatusMessage === statusMessage &&
+			this.cachedBlockTypes.length === blockTypes.length &&
+			this.cachedBlockTypes.every((t, i) => t === blockTypes[i]);
+
+		if (canReuse) {
+			for (let i = 0; i < blocks.length; i++) {
+				this.cachedMarkdownBlocks[i]?.setText(blocks[i]!.text);
+			}
+			return;
+		}
+
+		// Block signature changed (or first render) - rebuild component tree.
+		this.contentContainer.clear();
+		this.cachedMarkdownBlocks = [];
+
+		this.cachedBlockTypes = blockTypes;
+		this.cachedHasLeadingSpacer = hasLeadingSpacer;
+		this.cachedHasToolCalls = hasToolCalls;
+		this.cachedStatusKind = statusKind;
+		this.cachedStatusMessage = statusMessage;
+
+		if (hasLeadingSpacer) {
 			this.contentContainer.addChild(new Spacer(1));
 		}
 
-		// Render content in order
-		for (const content of message.content) {
-			if (content.type === "text" && content.text.trim()) {
-				// Assistant text messages with no background - trim the text
-				// Set paddingY=0 to avoid extra spacing before tool executions
-				this.contentContainer.addChild(
-					new Markdown(content.text.trim(), 1, 0, getMarkdownTheme(), undefined, { renderHtml: true }),
-				);
-			} else if (content.type === "thinking" && content.thinking.trim()) {
-				// Thinking traces in muted color, italic
-				// Use Markdown component with default text style for consistent styling
-				this.contentContainer.addChild(
-					new Markdown(
-						content.thinking.trim(),
-						1,
-						0,
-						getMarkdownTheme(),
-						{
-							color: (text: string) => theme.fg("muted", text),
-							italic: true,
-						},
-						{ renderHtml: true },
-					),
-				);
-				this.contentContainer.addChild(new Spacer(1));
+		for (const block of blocks) {
+			if (block.type === "text") {
+				const md = new Markdown(block.text, 1, 0, getMarkdownTheme(), undefined, { renderHtml: true });
+				this.cachedMarkdownBlocks.push(md);
+				this.contentContainer.addChild(md);
+				continue;
 			}
+
+			const md = new Markdown(
+				block.text,
+				1,
+				0,
+				getMarkdownTheme(),
+				{
+					color: (text: string) => theme.fg("muted", text),
+					italic: true,
+				},
+				{ renderHtml: true },
+			);
+			this.cachedMarkdownBlocks.push(md);
+			this.contentContainer.addChild(md);
+			this.contentContainer.addChild(new Spacer(1));
 		}
 
-		// Check if aborted - show after partial content
-		// But only if there are no tool calls (tool execution components will show the error)
-		const hasToolCalls = message.content.some((c) => c.type === "toolCall");
-		if (!hasToolCalls) {
-			if (message.stopReason === "aborted") {
-				this.contentContainer.addChild(new Text(theme.fg("error", "\nAborted"), 1, 0));
-			} else if (message.stopReason === "error") {
-				const errorMsg = message.errorMessage || "Unknown error";
-				this.contentContainer.addChild(new Spacer(1));
-				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), 1, 0));
-			}
+		if (statusKind === "aborted") {
+			this.contentContainer.addChild(new Text(theme.fg("error", "\nAborted"), 1, 0));
+		} else if (statusKind === "error") {
+			this.contentContainer.addChild(new Spacer(1));
+			this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${statusMessage}`), 1, 0));
 		}
 	}
 }

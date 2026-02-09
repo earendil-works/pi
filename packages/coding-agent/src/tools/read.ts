@@ -5,6 +5,7 @@ import { constants } from "fs";
 import { access, readFile } from "fs/promises";
 import { extname, resolve as resolvePath } from "path";
 import { getToolDescription } from "../prompts/index.js";
+import { readTextFileForTool } from "../utils/read-text-file.js";
 
 /**
  * Expand ~ to home directory
@@ -104,51 +105,14 @@ export const readTool: AgentTool<typeof readSchema> = {
 							{ type: "image", data: base64, mimeType },
 						];
 					} else {
-						// Read as text
-						const textContent = await readFile(absolutePath, "utf-8");
-						const lines = textContent.split("\n");
-
-						// Apply offset and limit (matching Claude Code Read tool behavior)
-						const startLine = offset ? Math.max(0, offset - 1) : 0; // 1-indexed to 0-indexed
-						const maxLines = limit || MAX_LINES;
-						const endLine = Math.min(startLine + maxLines, lines.length);
-
-						// Check if offset is out of bounds
-						if (startLine >= lines.length) {
-							throw new Error(`Offset ${offset} is beyond end of file (${lines.length} lines total)`);
-						}
-
-						// Get the relevant lines
-						const selectedLines = lines.slice(startLine, endLine);
-
-						// Truncate long lines and track which were truncated
-						let hadTruncatedLines = false;
-						const formattedLines = selectedLines.map((line) => {
-							if (line.length > MAX_LINE_LENGTH) {
-								hadTruncatedLines = true;
-								return line.slice(0, MAX_LINE_LENGTH);
-							}
-							return line;
+						// Read as text (streamed to avoid holding large files in memory)
+						const outputText = await readTextFileForTool(absolutePath, {
+							offset,
+							limit,
+							defaultLimit: MAX_LINES,
+							maxLineLength: MAX_LINE_LENGTH,
+							signal,
 						});
-
-						let outputText = formattedLines.join("\n");
-
-						// Add notices
-						const notices: string[] = [];
-
-						if (hadTruncatedLines) {
-							notices.push(`Some lines were truncated to ${MAX_LINE_LENGTH} characters for display`);
-						}
-
-						if (endLine < lines.length) {
-							const remaining = lines.length - endLine;
-							notices.push(`${remaining} more lines not shown. Use offset=${endLine + 1} to continue reading`);
-						}
-
-						if (notices.length > 0) {
-							outputText += `\n\n... (${notices.join(". ")})`;
-						}
-
 						content = [{ type: "text", text: outputText }];
 					}
 

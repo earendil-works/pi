@@ -84,6 +84,8 @@ import { autoFenceHtmlInMarkdown } from "../utils/auto-fence-html.js";
 import { generateTitle } from "../utils/auto-title.js";
 import { findRepoRoot } from "../utils/find-repo-root.js";
 import { formatElapsed } from "../utils/format-elapsed.js";
+import { addToLimitedSet } from "../utils/limited-set.js";
+import { readAppendedFileChunkSync } from "../utils/read-appended-file-chunk.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
 import { CustomEditor } from "./custom-editor.js";
 import { DynamicBorder } from "./dynamic-border.js";
@@ -135,7 +137,10 @@ interface SubscriptionWatchState {
 	watcher: fs.FSWatcher;
 	followState: JsonlFollowState;
 	seenKeys: Set<string>;
+	seenKeysOrder: string[];
 }
+
+const MAX_SUBSCRIPTION_SEEN_KEYS = 2000;
 
 /**
  * TUI renderer for the coding agent
@@ -3025,6 +3030,7 @@ export class TuiRenderer {
 				watcher,
 				followState,
 				seenKeys: new Set<string>(),
+				seenKeysOrder: [],
 			});
 
 			this.chatContainer.addChild(new Spacer(1));
@@ -3060,34 +3066,30 @@ export class TuiRenderer {
 		const subscription = this.subscriptions.get(sessionId);
 		if (!subscription) return;
 
-		let fileBuffer: Buffer;
-		try {
-			fileBuffer = fs.readFileSync(subscription.filePath);
-		} catch {
+		const previousOffset = subscription.followState.offset;
+		const { chunk, newOffset } = readAppendedFileChunkSync(subscription.filePath, previousOffset);
+
+		// If the file was truncated/rotated, drop any partial remainder.
+		const remainder = newOffset < previousOffset ? "" : subscription.followState.remainder;
+
+		if (!chunk) {
+			subscription.followState = { offset: newOffset, remainder };
 			return;
 		}
 
-		if (fileBuffer.length <= subscription.followState.offset) {
-			return;
-		}
-
-		const chunkBuffer = fileBuffer.subarray(subscription.followState.offset);
-		const chunk = chunkBuffer.toString("utf8");
-
-		const { entries, nextState } = consumeJsonlChunk(
-			{ offset: 0, remainder: subscription.followState.remainder },
-			chunk,
-		);
-		subscription.followState = {
-			offset: fileBuffer.length,
-			remainder: nextState.remainder,
-		};
+		const { entries, nextState } = consumeJsonlChunk({ offset: 0, remainder }, chunk);
+		subscription.followState = { offset: newOffset, remainder: nextState.remainder };
 
 		const completedMessages = extractTurnCompleteAssistantMessages(entries);
 		for (const assistantMessage of completedMessages) {
 			const key = this.buildSubscriptionEventKey(assistantMessage);
-			if (subscription.seenKeys.has(key)) continue;
-			subscription.seenKeys.add(key);
+			const added = addToLimitedSet(
+				subscription.seenKeys,
+				subscription.seenKeysOrder,
+				key,
+				MAX_SUBSCRIPTION_SEEN_KEYS,
+			);
+			if (!added) continue;
 			this.enqueueSubscriptionEvent({ sessionId, assistantMessage });
 		}
 	}

@@ -112,7 +112,9 @@ function getShellConfig(): { shell: string; args: string[] } {
 				`Searched in:\n${paths.map((p) => `  ${p}`).join("\n")}`,
 		);
 	}
-	return { shell: "bash", args: ["-lc"] };
+	// On Unix, avoid `-l` (login shell) to prevent slow/side-effecty shell startup.
+	// The Node process already inherits the user's environment (PATH, etc.).
+	return { shell: "bash", args: ["-c"] };
 }
 
 /**
