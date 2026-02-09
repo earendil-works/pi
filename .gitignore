@@ -25,3 +25,10 @@ coverage/
 .mu_config/
 .mu/
 tui-debug.log
+
+# Local agent backbuffer / scratchpad (workspace-specific)
+devdocs/scratchpad.md
+
+# Local experiments
+tmp/*.ts
+tmp/undo-history-timestamp-repro-config/
