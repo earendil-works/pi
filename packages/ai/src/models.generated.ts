@@ -2588,6 +2588,40 @@ export const MODELS = {
 		} satisfies Model<"openai-completions">,
 	},
 	openrouter: {
+		"qwen/qwen3-max-thinking": {
+			id: "qwen/qwen3-max-thinking",
+			name: "Qwen: Qwen3 Max Thinking",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 1.2,
+				output: 6,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 262144,
+			maxTokens: 32768,
+		} satisfies Model<"openai-completions">,
+		"openrouter/aurora-alpha": {
+			id: "openrouter/aurora-alpha",
+			name: "Aurora Alpha",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 128000,
+			maxTokens: 50000,
+		} satisfies Model<"openai-completions">,
 		"openrouter/pony-alpha": {
 			id: "openrouter/pony-alpha",
 			name: "Pony Alpha",
@@ -3537,7 +3571,7 @@ export const MODELS = {
 				cacheRead: 0,
 				cacheWrite: 0,
 			},
-			contextWindow: 256000,
+			contextWindow: 131072,
 			maxTokens: 32768,
 		} satisfies Model<"openai-completions">,
 		"qwen/qwen3-vl-8b-instruct": {
@@ -3826,8 +3860,8 @@ export const MODELS = {
 				cacheRead: 0.24,
 				cacheWrite: 0,
 			},
-			contextWindow: 256000,
-			maxTokens: 32768,
+			contextWindow: 262144,
+			maxTokens: 65536,
 		} satisfies Model<"openai-completions">,
 		"qwen/qwen3-coder-plus": {
 			id: "qwen/qwen3-coder-plus",
@@ -3840,10 +3874,10 @@ export const MODELS = {
 			cost: {
 				input: 1,
 				output: 5,
-				cacheRead: 0.09999999999999999,
+				cacheRead: 0.19999999999999998,
 				cacheWrite: 0,
 			},
-			contextWindow: 128000,
+			contextWindow: 1000000,
 			maxTokens: 65536,
 		} satisfies Model<"openai-completions">,
 		"openai/gpt-5-codex": {
@@ -3942,10 +3976,10 @@ export const MODELS = {
 			cost: {
 				input: 0.3,
 				output: 1.5,
-				cacheRead: 0.08,
+				cacheRead: 0.06,
 				cacheWrite: 0,
 			},
-			contextWindow: 128000,
+			contextWindow: 1000000,
 			maxTokens: 65536,
 		} satisfies Model<"openai-completions">,
 		"qwen/qwen3-next-80b-a3b-thinking": {
@@ -4026,7 +4060,7 @@ export const MODELS = {
 			input: ["text"],
 			cost: {
 				input: 0.39999999999999997,
-				output: 4,
+				output: 1.2,
 				cacheRead: 0,
 				cacheWrite: 0,
 			},
@@ -5510,7 +5544,7 @@ export const MODELS = {
 				cacheWrite: 0,
 			},
 			contextWindow: 131072,
-			maxTokens: 8192,
+			maxTokens: 32768,
 		} satisfies Model<"openai-completions">,
 		"qwen/qwen-turbo": {
 			id: "qwen/qwen-turbo",
@@ -5523,10 +5557,10 @@ export const MODELS = {
 			cost: {
 				input: 0.049999999999999996,
 				output: 0.19999999999999998,
-				cacheRead: 0.02,
+				cacheRead: 0.01,
 				cacheWrite: 0,
 			},
-			contextWindow: 1000000,
+			contextWindow: 131072,
 			maxTokens: 8192,
 		} satisfies Model<"openai-completions">,
 		"qwen/qwen-plus": {
@@ -5540,11 +5574,11 @@ export const MODELS = {
 			cost: {
 				input: 0.39999999999999997,
 				output: 1.2,
-				cacheRead: 0.16,
+				cacheRead: 0.08,
 				cacheWrite: 0,
 			},
-			contextWindow: 131072,
-			maxTokens: 8192,
+			contextWindow: 1000000,
+			maxTokens: 32768,
 		} satisfies Model<"openai-completions">,
 		"qwen/qwen-max": {
 			id: "qwen/qwen-max",
@@ -5557,7 +5591,7 @@ export const MODELS = {
 			cost: {
 				input: 1.5999999999999999,
 				output: 6.3999999999999995,
-				cacheRead: 0.64,
+				cacheRead: 0.32,
 				cacheWrite: 0,
 			},
 			contextWindow: 32768,
