@@ -3,6 +3,9 @@ import { homedir } from "os";
 import { dirname, join } from "path";
 import { type AutoHandoffMode, DEFAULT_AUTO_HANDOFF_MODE, isAutoHandoffMode } from "./auto-handoff.js";
 
+export type NotificationBannerMode = "native" | "none";
+export type NotificationSoundMode = "tink" | "none";
+
 export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
@@ -11,6 +14,9 @@ export interface Settings {
 	queueMode?: "all" | "one-at-a-time";
 	autoHandoffMode?: AutoHandoffMode;
 	theme?: string;
+	notificationBanner?: NotificationBannerMode;
+	notificationSound?: NotificationSoundMode;
+	// Legacy setting: single toggle for both banner + sound
 	notifications?: boolean;
 	googleClientId?: string;
 	googleClientSecret?: string;
@@ -126,11 +132,56 @@ export class SettingsManager {
 		this.save();
 	}
 
+	getNotificationBanner(): NotificationBannerMode {
+		const mode = this.settings.notificationBanner;
+		if (mode === "native" || mode === "none") {
+			return mode;
+		}
+
+		// Back-compat with legacy boolean notifications setting
+		if (this.settings.notifications === false) {
+			return "none";
+		}
+
+		return "native";
+	}
+
+	setNotificationBanner(mode: NotificationBannerMode): void {
+		this.settings.notificationBanner = mode;
+		this.save();
+	}
+
+	getNotificationSound(): NotificationSoundMode {
+		const mode = this.settings.notificationSound;
+		if (mode === "tink" || mode === "none") {
+			return mode;
+		}
+
+		// Back-compat with legacy boolean notifications setting
+		if (this.settings.notifications === false) {
+			return "none";
+		}
+
+		return "tink";
+	}
+
+	setNotificationSound(mode: NotificationSoundMode): void {
+		this.settings.notificationSound = mode;
+		this.save();
+	}
+
 	getNotifications(): boolean {
-		return this.settings.notifications ?? true;
+		return this.getNotificationBanner() !== "none" || this.getNotificationSound() !== "none";
 	}
 
 	setNotifications(enabled: boolean): void {
+		if (enabled) {
+			this.settings.notificationBanner = "native";
+			this.settings.notificationSound = "tink";
+		} else {
+			this.settings.notificationBanner = "none";
+			this.settings.notificationSound = "none";
+		}
 		this.settings.notifications = enabled;
 		this.save();
 	}

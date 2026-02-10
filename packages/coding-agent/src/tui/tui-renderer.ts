@@ -1292,9 +1292,11 @@ export class TuiRenderer {
 				// Note: Don't need to re-enable submit - we never disable it
 				this.ui.requestRender();
 
-				// Send notification and play sound if enabled (macOS only)
-				if (this.settingsManager.getNotifications()) {
+				// Send notification and play sound if configured (macOS only)
+				if (this.settingsManager.getNotificationSound() !== "none") {
 					playNotificationSound();
+				}
+				if (this.settingsManager.getNotificationBanner() !== "none") {
 					const modelName = this.agent.state.model?.name || this.agent.state.model?.id || "Agent";
 					const title = this.footer.getTitle();
 					const notificationTitle = title ? `Mu - ${title}` : "Mu";
@@ -3540,8 +3542,10 @@ export class TuiRenderer {
 			}
 
 			// Send notification
-			if (this.settingsManager.getNotifications()) {
+			if (this.settingsManager.getNotificationSound() !== "none") {
 				playNotificationSound();
+			}
+			if (this.settingsManager.getNotificationBanner() !== "none") {
 				sendNotification("Mu - Auto-handoff", `Started new session: ${goal}`);
 			}
 		} catch (err: unknown) {
@@ -3623,8 +3627,10 @@ export class TuiRenderer {
 			this.ui.requestRender();
 
 			// Send notification if enabled
-			if (this.settingsManager.getNotifications()) {
+			if (this.settingsManager.getNotificationSound() !== "none") {
 				playNotificationSound();
+			}
+			if (this.settingsManager.getNotificationBanner() !== "none") {
 				sendNotification("Mu - Handoff", `Started new session: ${goal}`);
 			}
 
