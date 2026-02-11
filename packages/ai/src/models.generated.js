@@ -819,7 +819,7 @@ export const MODELS = {
 				cacheRead: 0.175,
 				cacheWrite: 0,
 			},
-			contextWindow: 400000,
+			contextWindow: 272000,
 			maxTokens: 128000,
 		},
 		"gpt-5.1-codex": {
@@ -836,7 +836,7 @@ export const MODELS = {
 				cacheRead: 0.125,
 				cacheWrite: 0,
 			},
-			contextWindow: 400000,
+			contextWindow: 272000,
 			maxTokens: 128000,
 		},
 		"gpt-4o-2024-08-06": {
@@ -904,7 +904,7 @@ export const MODELS = {
 				cacheRead: 0,
 				cacheWrite: 0,
 			},
-			contextWindow: 400000,
+			contextWindow: 272000,
 			maxTokens: 128000,
 		},
 		"gpt-4-turbo": {
@@ -938,7 +938,7 @@ export const MODELS = {
 				cacheRead: 0.025,
 				cacheWrite: 0,
 			},
-			contextWindow: 400000,
+			contextWindow: 272000,
 			maxTokens: 128000,
 		},
 		"o3-mini": {
@@ -989,7 +989,7 @@ export const MODELS = {
 				cacheRead: 0.13,
 				cacheWrite: 0,
 			},
-			contextWindow: 400000,
+			contextWindow: 272000,
 			maxTokens: 128000,
 		},
 		"codex-mini-latest": {
@@ -1023,7 +1023,7 @@ export const MODELS = {
 				cacheRead: 0.005,
 				cacheWrite: 0,
 			},
-			contextWindow: 400000,
+			contextWindow: 272000,
 			maxTokens: 128000,
 		},
 		"gpt-5-codex": {
@@ -1040,7 +1040,7 @@ export const MODELS = {
 				cacheRead: 0.125,
 				cacheWrite: 0,
 			},
-			contextWindow: 400000,
+			contextWindow: 272000,
 			maxTokens: 128000,
 		},
 		"gpt-4o": {
@@ -1125,7 +1125,7 @@ export const MODELS = {
 				cacheRead: 0.175,
 				cacheWrite: 0,
 			},
-			contextWindow: 400000,
+			contextWindow: 272000,
 			maxTokens: 128000,
 		},
 		"gpt-5-mini": {
@@ -1142,7 +1142,7 @@ export const MODELS = {
 				cacheRead: 0.025,
 				cacheWrite: 0,
 			},
-			contextWindow: 400000,
+			contextWindow: 272000,
 			maxTokens: 128000,
 		},
 		"o3-pro": {
@@ -1193,7 +1193,7 @@ export const MODELS = {
 				cacheRead: 0.125,
 				cacheWrite: 0,
 			},
-			contextWindow: 400000,
+			contextWindow: 272000,
 			maxTokens: 128000,
 		},
 		o3: {
@@ -1261,7 +1261,7 @@ export const MODELS = {
 				cacheRead: 0.125,
 				cacheWrite: 0,
 			},
-			contextWindow: 400000,
+			contextWindow: 272000,
 			maxTokens: 128000,
 		},
 		"gpt-5-pro": {
@@ -1295,7 +1295,7 @@ export const MODELS = {
 				cacheRead: 0.175,
 				cacheWrite: 0,
 			},
-			contextWindow: 400000,
+			contextWindow: 272000,
 			maxTokens: 128000,
 		},
 		"gpt-5.1-chat-latest": {
@@ -2699,6 +2699,23 @@ export const MODELS = {
 				input: 0,
 				output: 0,
 				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 256000,
+			maxTokens: 256000,
+		},
+		"stepfun/step-3.5-flash": {
+			id: "stepfun/step-3.5-flash",
+			name: "StepFun: Step 3.5 Flash",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0.09999999999999999,
+				output: 0.3,
+				cacheRead: 0.02,
 				cacheWrite: 0,
 			},
 			contextWindow: 256000,
@@ -5144,12 +5161,12 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text"],
 			cost: {
-				input: 0.19999999999999998,
-				output: 0.6,
-				cacheRead: 0,
+				input: 0.22,
+				output: 0.88,
+				cacheRead: 0.11,
 				cacheWrite: 0,
 			},
-			contextWindow: 40960,
+			contextWindow: 131072,
 			maxTokens: 4096,
 		},
 		"openai/o4-mini-high": {
