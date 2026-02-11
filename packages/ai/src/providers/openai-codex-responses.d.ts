@@ -1,4 +1,15 @@
 import type { RetryClass, StreamFunction } from "../types.js";
+/**
+ * Sanitize tool call ID to meet OpenAI Codex requirements:
+ * - Max 64 characters
+ * - Must start with "fc_" for item IDs
+ * - Only alphanumeric, underscore, hyphen allowed
+ * - No trailing underscores
+ */
+export declare function sanitizeToolCallId(id: string): {
+	callId: string;
+	itemId: string;
+};
 export declare class CodexHttpError extends Error {
 	readonly status: number;
 	readonly retryAfterMs?: number;
