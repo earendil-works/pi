@@ -43,6 +43,43 @@ const USE_LEGACY_CODEX_PROMPT = false;
 const CODEX_URL = "https://chatgpt.com/backend-api/codex/responses";
 const JWT_CLAIM_PATH = "https://api.openai.com/auth" as const;
 
+/**
+ * Sanitize tool call ID to meet OpenAI Codex requirements:
+ * - Max 64 characters
+ * - Must start with "fc_" for item IDs
+ * - Only alphanumeric, underscore, hyphen allowed
+ * - No trailing underscores
+ */
+export function sanitizeToolCallId(id: string): { callId: string; itemId: string } {
+	const parts = id.split("|");
+	const rawCallId = parts[0] ?? id;
+	const rawItemId = parts[1] ?? "";
+
+	const sanitize = (s: string, prefix?: string): string => {
+		// Replace special chars with underscore
+		let result = s.replace(/[^a-zA-Z0-9_-]/g, "_");
+		// Ensure prefix
+		if (prefix && !result.startsWith(prefix)) {
+			result = `${prefix}${result}`;
+		}
+		// Truncate to 64 chars
+		if (result.length > 64) {
+			result = result.slice(0, 64);
+		}
+		// Strip trailing underscores (but preserve prefix)
+		const prefixLen = prefix?.length ?? 0;
+		const beforeTrailing = result.slice(0, prefixLen);
+		const afterPrefix = result.slice(prefixLen).replace(/_+$/, "");
+		result = beforeTrailing + afterPrefix;
+		return result;
+	};
+
+	return {
+		callId: sanitize(rawCallId),
+		itemId: sanitize(rawItemId, "fc_"),
+	};
+}
+
 // ============================================================================
 // Types
 // ============================================================================
@@ -491,7 +528,7 @@ function buildRequestBody(
 			name: tool.name,
 			description: tool.description,
 			parameters: tool.parameters,
-			strict: null,
+			strict: false,
 		}));
 	}
 
@@ -602,10 +639,10 @@ function convertAssistantMessage(msg: AssistantMessage): unknown[] {
 				status: "completed",
 			});
 		} else if (block.type === "toolCall" && msg.stopReason !== "error") {
-			const [callId, id] = block.id.split("|");
+			const { callId, itemId } = sanitizeToolCallId(block.id);
 			output.push({
 				type: "function_call",
-				id,
+				id: itemId,
 				call_id: callId,
 				name: block.name,
 				arguments: JSON.stringify(block.arguments),
@@ -627,9 +664,10 @@ function convertToolResult(
 		.join("\n");
 	const hasImages = msg.content.some((c) => c.type === "image");
 
+	const { callId } = sanitizeToolCallId(msg.toolCallId);
 	output.push({
 		type: "function_call_output",
-		call_id: msg.toolCallId.split("|")[0],
+		call_id: callId,
 		output: sanitizeSurrogates(textResult || "(see attached image)"),
 	});
 
@@ -781,6 +819,15 @@ async function processStream(
 				break;
 			}
 
+			case "response.function_call_arguments.done": {
+				if (currentItem?.type === "function_call" && currentBlock?.type === "toolCall") {
+					const args = (event as { arguments?: string }).arguments || "";
+					currentBlock.partialJson = args;
+					currentBlock.arguments = parseStreamingJson(args);
+				}
+				break;
+			}
+
 			case "response.output_item.done": {
 				const item = event.item as ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall;
 				if (item.type === "reasoning" && currentBlock?.type === "thinking") {
@@ -804,11 +851,14 @@ async function processStream(
 					});
 					currentBlock = null;
 				} else if (item.type === "function_call") {
+					// Use accumulated partialJson as fallback if item.arguments is empty/missing
+					const argsStr =
+						item.arguments || (currentBlock?.type === "toolCall" ? currentBlock.partialJson : "{}") || "{}";
 					const toolCall: ToolCall = {
 						type: "toolCall",
 						id: `${item.call_id}|${item.id}`,
 						name: item.name,
-						arguments: JSON.parse(item.arguments),
+						arguments: JSON.parse(argsStr),
 					};
 					stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
 				}
