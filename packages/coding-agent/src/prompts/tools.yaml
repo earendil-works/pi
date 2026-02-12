@@ -23,7 +23,44 @@ Bash: |
   Execute a bash command in the current working directory. Returns stdout and stderr. Optionally provide a timeout in seconds (default: 1800 seconds / 30 minutes). Minimum timeout is 1800 seconds; lower values are ignored.
 
 Edit: |
-  Edit a file by replacing text. Supports flexible matching: if exact match fails, tries unescaping (\\n→newline), Unicode normalization (smart quotes↔straight, em dash↔hyphen, etc.), and flexible whitespace. Use 'all: true' to replace multiple occurrences. Provides suggestions if text not found.
+  Edit a file using hashline mode (preferred) or legacy text matching.
+
+  **Hashline Mode (New - Use This):**
+  Read file output includes hashline format: `LINE:HASH|content`
+  Use the `LINE:HASH` reference to specify edit location:
+
+  ```json
+  {
+    "path": "file.ts",
+    "edits": [
+      { "set_line": { "anchor": "5:a3", "new_text": "const x = 1;" } },
+      { "replace_lines": { "start_anchor": "1:bg", "end_anchor": "3:0e", "new_text": "// replaced" } },
+      { "insert_after": { "anchor": "10:ff", "text": "// new line" } }
+    ]
+  }
+  ```
+
+  Operations:
+  - `set_line`: Replace single line. Use empty `new_text` to delete.
+  - `replace_lines`: Replace line range (inclusive). Use empty `new_text` to delete range.
+  - `insert_after`: Insert after specified line.
+  - `replace`: Fuzzy text fallback (use when hashline unavailable).
+
+  **Important:**
+  - Copy `LINE:HASH` refs exactly from Read output
+  - Multiple edits in one call are validated atomically (all-or-nothing)
+  - If hash mismatch detected, error shows updated LINE:HASH refs
+  - Re-read file before editing if file may have changed
+
+  **Legacy Mode (Backward Compatible):**
+  ```json
+  {
+    "path": "file.ts",
+    "oldText": "function hello()",
+    "newText": "function greet()",
+    "all": false
+  }
+  ```
 
 ApplyPatch: |
   Use the `apply_patch` tool to edit files.
