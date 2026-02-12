@@ -415,6 +415,10 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 					throw new Error("Request was aborted");
 				}
 
+				if (output.stopReason === "error" || output.stopReason === "aborted") {
+					throw new Error(output.errorMessage || "Codex response failed");
+				}
+
 				stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
 				stream.end();
 				return;
@@ -426,7 +430,7 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 					!options?.signal?.aborted &&
 					hasRetryClass(retryOn, "transport") &&
 					streamRetries < streamMaxRetries &&
-					(error instanceof CodexStreamError ||
+					((error instanceof CodexStreamError && !error.hadContent) ||
 						(hasEmittedStart && isTransportErrorMessage(getErrorMessage(error))));
 
 				if (canRetryStream) {
@@ -515,7 +519,7 @@ function buildRequestBody(
 		include: ["reasoning.encrypted_content"],
 		prompt_cache_key: options?.sessionId,
 		tool_choice: "auto",
-		parallel_tool_calls: true,
+		parallel_tool_calls: options?.parallelToolCalls ?? false,
 	};
 
 	if (options?.temperature !== undefined) {
@@ -893,6 +897,11 @@ async function processStream(
 					};
 				}
 				calculateCost(model, output.usage);
+
+				if (resp?.status === "queued" || resp?.status === "in_progress") {
+					throw new CodexStreamError(`Stream ended with non-terminal status: ${resp.status}`, hadContent);
+				}
+
 				output.stopReason = mapStopReason(resp?.status);
 				if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
 					output.stopReason = "toolUse";
@@ -987,6 +996,7 @@ function parseSSE(response: Response): AsyncGenerator<Record<string, unknown>> {
 			const { done, value } = await reader.read();
 			if (done) break;
 			buffer += decoder.decode(value, { stream: true });
+			buffer = buffer.replace(/\r\n/g, "\n");
 
 			let boundary = buffer.indexOf("\n\n");
 			while (boundary !== -1) {
@@ -1079,12 +1089,11 @@ function mapStopReason(status: string | undefined): StopReason {
 			return "length";
 		case "failed":
 		case "cancelled":
-			return "error";
 		case "in_progress":
 		case "queued":
-			return "stop";
+			return "error";
 		default:
-			return "stop";
+			return "error";
 	}
 }
 
