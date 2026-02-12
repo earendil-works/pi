@@ -3,6 +3,7 @@ import { Container, Spacer, Text } from "@kennyfrc/mu-tui";
 import stripAnsi from "strip-ansi";
 import { theme } from "../theme/theme.js";
 import { type ApplyPatchParseResult, parseApplyPatchInput } from "../tools/apply-patch/parse.js";
+import { truncateToVisualLines } from "./visual-truncate.js";
 
 /**
  * Convert absolute path to tilde notation if it's in home directory
@@ -34,6 +35,8 @@ export class ToolExecutionComponent extends Container {
 	private args: any;
 	private expanded = false;
 	private partialOutput = ""; // Accumulated streaming output (rolling buffer)
+	private lastFormattedWidth = -1;
+	private lastFormattedText = "";
 	private result?: {
 		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 		isError: boolean;
@@ -89,6 +92,21 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	override render(width: number): string[] {
+		if (this.lastFormattedWidth !== width) {
+			this.lastFormattedWidth = width;
+			this.lastFormattedText = "";
+		}
+
+		const formatted = this.formatToolExecution(width);
+		if (formatted !== this.lastFormattedText) {
+			this.lastFormattedText = formatted;
+			this.contentText.setText(formatted);
+		}
+
+		return super.render(width);
+	}
+
 	private updateDisplay(): void {
 		const bgFn = this.result
 			? this.result.isError
@@ -97,7 +115,8 @@ export class ToolExecutionComponent extends Container {
 			: (text: string) => theme.bg("toolPendingBg", text);
 
 		this.contentText.setCustomBgFn(bgFn);
-		this.contentText.setText(this.formatToolExecution());
+		// Text is width-dependent for some render paths (bash collapsed preview), so compute on render().
+		this.lastFormattedWidth = -1;
 	}
 
 	private getTextOutput(): string {
@@ -120,7 +139,7 @@ export class ToolExecutionComponent extends Container {
 		return output;
 	}
 
-	private formatToolExecution(): string {
+	private formatToolExecution(width: number): string {
 		let text = "";
 
 		// Format based on tool type
@@ -137,18 +156,27 @@ export class ToolExecutionComponent extends Container {
 			}
 
 			if (output) {
-				const lines = output.split("\n");
-				const maxLines = this.expanded ? lines.length : 5;
-				const displayLines = lines.slice(0, maxLines);
-				const remaining = lines.length - maxLines;
+				const contentWidth = Math.max(1, width - 2); // contentText has paddingX=1
+				const styledOutput = output
+					.split("\n")
+					.map((line: string) => theme.fg("toolOutput", line))
+					.join("\n");
 
-				text += "\n\n" + displayLines.map((line: string) => theme.fg("toolOutput", line)).join("\n");
-				if (remaining > 0) {
-					text +=
-						theme.fg("toolOutput", `\n(${remaining} more lines `) +
-						theme.fg("dim", "·") +
-						theme.fg("muted", " ctrl+o to expand") +
-						theme.fg("toolOutput", ")");
+				if (this.expanded) {
+					text += "\n\n" + styledOutput;
+				} else {
+					const maxVisualLines = 5;
+					const result = truncateToVisualLines(styledOutput, maxVisualLines, contentWidth, 0);
+					const previewLines = result.visualLines;
+
+					text += "\n\n";
+					if (result.skippedCount > 0) {
+						const hint = `... (${result.skippedCount} earlier lines · ctrl+o to expand)`;
+						// Ensure hint fits the same visual width as the output preview.
+						const hintLine = new Text(theme.fg("muted", hint), 0, 0).render(contentWidth)[0] ?? "";
+						text += hintLine + "\n";
+					}
+					text += previewLines.join("\n");
 				}
 			}
 		} else if (this.toolName === "Read") {

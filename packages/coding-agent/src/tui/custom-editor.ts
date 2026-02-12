@@ -33,6 +33,31 @@ export class CustomEditor extends Editor {
 	 * keys to allow parent's SelectList navigation when menu is open.
 	 */
 	handleInput(data: string): void {
+		// Ctrl+O can arrive in different encodings depending on terminal protocol.
+		// Handle both the ASCII control character (\x0f) and Kitty CSI-u (ESC [ 111 ; 5 u).
+		// Also handle the case where terminals batch multiple events into a single chunk.
+		if (this.onCtrlO) {
+			const kittyCtrlO = "\x1b[111;5u";
+			if (data !== "\x0f" && data.includes("\x0f")) {
+				const parts = data.split("\x0f");
+				for (let i = 0; i < parts.length; i++) {
+					const part = parts[i] ?? "";
+					if (part) this.handleInput(part);
+					if (i < parts.length - 1) this.onCtrlO();
+				}
+				return;
+			}
+			if (data !== kittyCtrlO && data.includes(kittyCtrlO)) {
+				const parts = data.split(kittyCtrlO);
+				for (let i = 0; i < parts.length; i++) {
+					const part = parts[i] ?? "";
+					if (part) this.handleInput(part);
+					if (i < parts.length - 1) this.onCtrlO();
+				}
+				return;
+			}
+		}
+
 		if (data === "!" && !this._bashMode && this.getText().trim() === "" && this.isAtFirstLine()) {
 			this.setBashMode(true);
 			return;
@@ -67,7 +92,7 @@ export class CustomEditor extends Editor {
 			this.onHistoryDown();
 			return;
 		}
-		if (data === "\x0f" && this.onCtrlO) {
+		if ((data === "\x0f" || data === "\x1b[111;5u") && this.onCtrlO) {
 			this.onCtrlO();
 			return;
 		}
