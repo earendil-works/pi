@@ -51,24 +51,12 @@ export function resolveToolSelection(
 ): ToolSelection {
 	const initialNames = baseToolNames && baseToolNames.length > 0 ? baseToolNames : DEFAULT_TOOL_NAMES;
 	let replacedWithApplyPatch = false;
-	let resolvedNames = dedupeToolNames(initialNames);
+	const resolvedNames = dedupeToolNames(initialNames);
 
-	if (isGptModel(model)) {
-		const swapped: ToolName[] = [];
-		for (const name of resolvedNames) {
-			if (name === "Edit" || name === "Write") {
-				replacedWithApplyPatch = true;
-				if (!swapped.includes("ApplyPatch")) {
-					swapped.push("ApplyPatch");
-				}
-				continue;
-			}
-			if (!swapped.includes(name)) {
-				swapped.push(name);
-			}
-		}
-		resolvedNames = swapped;
-	}
+	// Note: Previously we replaced Edit/Write with ApplyPatch for GPT models,
+	// but now we use the new hashline-based Edit tool for all models including Codex.
+	// ApplyPatch is still available if explicitly requested.
+	replacedWithApplyPatch = false;
 
 	const tools = resolvedNames.map((name) => allTools[name]) as unknown as Array<AgentTool<TSchema, unknown>>;
 
