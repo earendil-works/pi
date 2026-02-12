@@ -179,6 +179,12 @@ export class TUI extends Container {
 			return;
 		}
 
+		// Special case: appended lines must be committed to scrollback.
+		// Terminals generally do NOT scroll when you "move down" with cursor controls.
+		// They scroll when you actually output newlines at the bottom.
+		const appendedLines = newLines.length > this.previousLines.length;
+		const appendStart = appendedLines && firstChanged === this.previousLines.length && firstChanged > 0;
+
 		// Check if firstChanged is outside the viewport
 		// cursorRow is the line where cursor is (0-indexed)
 		// Viewport shows lines from (cursorRow - height + 1) to cursorRow
@@ -204,15 +210,18 @@ export class TUI extends Container {
 		// Build buffer with all updates wrapped in synchronized output
 		let buffer = "\x1b[?2026h"; // Begin synchronized output
 
-		// Move cursor to first changed line
-		const lineDiff = firstChanged - this.cursorRow;
+		// Move cursor to first changed line.
+		// If we're appending at the end, move to the last existing line and emit a newline
+		// so the terminal scrolls and the new content is added below.
+		const moveTargetRow = appendStart ? firstChanged - 1 : firstChanged;
+		const lineDiff = moveTargetRow - this.cursorRow;
 		if (lineDiff > 0) {
 			buffer += `\x1b[${lineDiff}B`; // Move down
 		} else if (lineDiff < 0) {
 			buffer += `\x1b[${-lineDiff}A`; // Move up
 		}
 
-		buffer += "\r"; // Move to column 0
+		buffer += appendStart ? "\r\n" : "\r"; // Move to column 0 (and scroll if appending)
 
 		// Render from first changed line to end, clearing each line before writing
 		// This avoids the \x1b[J clear-to-end which can cause flicker in xterm.js
