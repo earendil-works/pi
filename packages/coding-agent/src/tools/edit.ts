@@ -292,20 +292,6 @@ interface MatchResult {
 	content: string;
 }
 
-// Legacy schema for backward compatibility
-const legacyEditSchema = Type.Object({
-	path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
-	oldText: Type.String({
-		description: "Text to find and replace. Include surrounding lines if the text appears multiple times.",
-	}),
-	newText: Type.String({ description: "New text to replace the old text with" }),
-	all: Type.Optional(
-		Type.Boolean({
-			description: "If true, replace all occurrences. If false (default), fail if multiple occurrences found.",
-		}),
-	),
-});
-
 // Hashline batch edit schemas
 const setLineSchema = Type.Object({
 	set_line: Type.Object({
@@ -339,17 +325,35 @@ const replaceSchema = Type.Object({
 
 const hashlineEditItemSchema = Type.Union([setLineSchema, replaceLinesSchema, insertAfterSchema, replaceSchema]);
 
-const batchEditSchema = Type.Object({
-	path: Type.String({ description: "Path to the file to edit" }),
-	edits: Type.Array(hashlineEditItemSchema, { description: "Array of edit operations" }),
+// Single top-level object schema for provider compatibility.
+// Runtime validation below enforces valid combinations:
+// - legacy mode requires oldText + newText
+// - batch mode requires edits
+const editSchema = Type.Object({
+	path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
+	oldText: Type.Optional(
+		Type.String({
+			description: "Legacy mode: text to find and replace.",
+		}),
+	),
+	newText: Type.Optional(
+		Type.String({
+			description: "Legacy mode: replacement text for oldText.",
+		}),
+	),
+	all: Type.Optional(
+		Type.Boolean({
+			description: "Legacy mode: replace all occurrences instead of requiring a unique match.",
+		}),
+	),
+	edits: Type.Optional(Type.Array(hashlineEditItemSchema, { description: "Batch mode: array of hashline edits." })),
 });
 
-// Combined schema that accepts either legacy or batch format
-const editSchema = Type.Union([legacyEditSchema, batchEditSchema]);
-
 // Type guards for batch operations
-function isBatchEdit(input: any): input is { path: string; edits: any[] } {
-	return input && Array.isArray(input.edits);
+function isBatchEdit(input: unknown): input is { path: string; edits: unknown[] } {
+	if (typeof input !== "object" || input === null) return false;
+	const candidate = input as { edits?: unknown };
+	return Array.isArray(candidate.edits);
 }
 
 // Regex patterns for prefix stripping
@@ -738,6 +742,10 @@ export const editTool: AgentTool<typeof editSchema> = {
 	parameters: editSchema,
 	getResourceKey: ({ path }) => `file:${resolvePath(expandPath(path))}`,
 	execute: async (_toolCallId: string, params: any, signal?: AbortSignal, _onProgress?: (chunk: string) => void) => {
+		if (typeof params?.path !== "string" || params.path.length === 0) {
+			throw new Error('Missing required parameter "path".');
+		}
+
 		const absolutePath = resolvePath(expandPath(params.path));
 
 		// Route to batch handler or legacy handler
@@ -758,6 +766,9 @@ export const editTool: AgentTool<typeof editSchema> = {
 
 		// Legacy single-edit handler
 		const { oldText, newText, all } = params;
+		if (typeof oldText !== "string" || typeof newText !== "string") {
+			throw new Error('Legacy edit mode requires both "oldText" and "newText" string parameters.');
+		}
 
 		return new Promise<{
 			content: Array<{ type: "text"; text: string }>;
