@@ -112,7 +112,6 @@ export const readTool: AgentTool<typeof readSchema> = {
 							defaultLimit: MAX_LINES,
 							maxLineLength: MAX_LINE_LENGTH,
 							signal,
-							hashlines: true,
 						});
 						content = [{ type: "text", text: outputText }];
 					}

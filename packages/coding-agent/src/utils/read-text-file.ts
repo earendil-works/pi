@@ -1,6 +1,5 @@
 import * as fs from "node:fs";
 import { StringDecoder } from "node:string_decoder";
-import { computeLineHash } from "./hashline.js";
 
 export interface ReadTextFileForToolOptions {
 	/** 1-indexed line number to start reading from */
@@ -10,8 +9,6 @@ export interface ReadTextFileForToolOptions {
 	defaultLimit: number;
 	maxLineLength: number;
 	signal?: AbortSignal;
-	/** Format output with hashlines (LINE:HASH|CONTENT) */
-	hashlines?: boolean;
 }
 
 /**
@@ -30,7 +27,6 @@ export async function readTextFileForTool(path: string, options: ReadTextFileFor
 	const endLineExclusive = startLine + maxLines;
 
 	const selectedLines: string[] = [];
-	const selectedLineNumbers: number[] = []; // Track absolute line numbers
 	let hadTruncatedLines = false;
 	let totalLines = 0;
 
@@ -48,7 +44,6 @@ export async function readTextFileForTool(path: string, options: ReadTextFileFor
 			return;
 		}
 
-		selectedLineNumbers.push(lineIndex + 1); // 1-indexed absolute line number
 		if (line.length > maxLineLength) {
 			hadTruncatedLines = true;
 			selectedLines.push(line.slice(0, maxLineLength));
@@ -106,20 +101,7 @@ export async function readTextFileForTool(path: string, options: ReadTextFileFor
 	const effectiveEndLineExclusive = Math.min(endLineExclusive, totalLines);
 	const remaining = Math.max(0, totalLines - effectiveEndLineExclusive);
 
-	let outputText: string;
-
-	if (options.hashlines) {
-		// Format with hashlines: LINE:HASH|CONTENT
-		outputText = selectedLines
-			.map((line, i) => {
-				const lineNum = selectedLineNumbers[i];
-				const hash = computeLineHash(lineNum, line);
-				return `${lineNum}:${hash}|${line}`;
-			})
-			.join("\n");
-	} else {
-		outputText = selectedLines.join("\n");
-	}
+	let outputText = selectedLines.join("\n");
 
 	const notices: string[] = [];
 	if (hadTruncatedLines) {

@@ -20,15 +20,6 @@ function getTextOutput(result: any): string {
 	);
 }
 
-// Helper to strip hashline prefixes for content comparison
-// Format: "1:ab|content" -> "content"
-function stripHashlines(text: string): string {
-	return text
-		.split("\n")
-		.map((line) => line.replace(/^\d+:[a-z0-9]{2}\|/, ""))
-		.join("\n");
-}
-
 describe("Coding Agent Tools", () => {
 	let testDir: string;
 
@@ -50,12 +41,9 @@ describe("Coding Agent Tools", () => {
 			writeFileSync(testFile, content);
 
 			const result = await readTool.execute("test-call-1", { path: testFile });
-			const output = getTextOutput(result);
 
-			// Verify hashline format then strip for content comparison
-			expect(output).toMatch(/^1:[a-z0-9]{2}\|Hello, world!/);
-			expect(stripHashlines(output)).toBe(content);
-			expect(output).not.toContain("more lines not shown");
+			expect(getTextOutput(result)).toBe(content);
+			expect(getTextOutput(result)).not.toContain("more lines not shown");
 			expect(result.details).toBeUndefined();
 		});
 
@@ -92,10 +80,7 @@ describe("Coding Agent Tools", () => {
 			expect(output).toContain("Short line");
 			expect(output).toContain("Another short line");
 			expect(output).toContain("Some lines were truncated to 2000 characters");
-			// Line includes hashline prefix + content (truncated to 2000)
-			const lines = output.split("\n");
-			const contentLine = stripHashlines(lines[1]);
-			expect(contentLine.length).toBe(2000);
+			expect(output.split("\n")[1].length).toBe(2000);
 		});
 
 		it("should handle offset parameter", async () => {

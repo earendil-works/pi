@@ -7,7 +7,6 @@ import { constants } from "fs";
 import { access, readFile, writeFile } from "fs/promises";
 import { resolve as resolvePath } from "path";
 import { getToolDescription } from "../prompts/index.js";
-import { computeLineHash } from "../utils/hashline.js";
 
 function expandPath(filePath: string): string {
 	if (filePath === "~") {
@@ -292,448 +291,18 @@ interface MatchResult {
 	content: string;
 }
 
-// Hashline batch edit schemas
-const setLineSchema = Type.Object({
-	set_line: Type.Object({
-		anchor: Type.String({ description: 'Line reference "LINE:HASH"' }),
-		new_text: Type.String({ description: 'Replacement text. Use "" to delete.' }),
-	}),
-});
-
-const replaceLinesSchema = Type.Object({
-	replace_lines: Type.Object({
-		start_anchor: Type.String({ description: 'Start line "LINE:HASH"' }),
-		end_anchor: Type.String({ description: 'End line "LINE:HASH"' }),
-		new_text: Type.String({ description: 'Replacement text. Use "" to delete range.' }),
-	}),
-});
-
-const insertAfterSchema = Type.Object({
-	insert_after: Type.Object({
-		anchor: Type.String({ description: 'Insert after this line "LINE:HASH"' }),
-		text: Type.String({ description: "Content to insert (non-empty)" }),
-	}),
-});
-
-const replaceSchema = Type.Object({
-	replace: Type.Object({
-		old_text: Type.String({ description: "Text to find (fuzzy matching)" }),
-		new_text: Type.String({ description: "Replacement text" }),
-		all: Type.Optional(Type.Boolean({ description: "Replace all occurrences" })),
-	}),
-});
-
-const hashlineEditItemSchema = Type.Union([setLineSchema, replaceLinesSchema, insertAfterSchema, replaceSchema]);
-
-// Single top-level object schema for provider compatibility.
-// Runtime validation below enforces valid combinations:
-// - legacy mode requires oldText + newText
-// - batch mode requires edits
 const editSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
-	oldText: Type.Optional(
-		Type.String({
-			description: "Legacy mode: text to find and replace.",
-		}),
-	),
-	newText: Type.Optional(
-		Type.String({
-			description: "Legacy mode: replacement text for oldText.",
-		}),
-	),
+	oldText: Type.String({
+		description: "Text to find and replace. Include surrounding lines if the text appears multiple times.",
+	}),
+	newText: Type.String({ description: "New text to replace the old text with" }),
 	all: Type.Optional(
 		Type.Boolean({
-			description: "Legacy mode: replace all occurrences instead of requiring a unique match.",
+			description: "If true, replace all occurrences. If false (default), fail if multiple occurrences found.",
 		}),
 	),
-	edits: Type.Optional(Type.Array(hashlineEditItemSchema, { description: "Batch mode: array of hashline edits." })),
 });
-
-// Type guards for batch operations
-function isBatchEdit(input: unknown): input is { path: string; edits: unknown[] } {
-	if (typeof input !== "object" || input === null) return false;
-	const candidate = input as { edits?: unknown };
-	return Array.isArray(candidate.edits);
-}
-
-// Regex patterns for prefix stripping
-const HASHLINE_PREFIX_RE = /^\d+:[a-z0-9]{2}\|/;
-const DIFF_PLUS_RE = /^\+(?!\+)/; // + but not ++
-
-/**
- * Get leading whitespace of a string
- */
-function leadingWhitespace(s: string): string {
-	const match = s.match(/^\s*/);
-	return match ? match[0] : "";
-}
-
-/**
- * Restore original indentation to a line if model didn't provide any
- */
-function restoreLeadingIndent(templateLine: string, line: string): string {
-	if (line.length === 0) return line;
-	const templateIndent = leadingWhitespace(templateLine);
-	if (templateIndent.length === 0) return line;
-	const indent = leadingWhitespace(line);
-	if (indent.length > 0) return line; // Model provided indent, trust it
-	return templateIndent + line;
-}
-
-/**
- * Restore indentation for all lines in a replacement
- */
-function restoreIndentForReplacement(oldLines: string[], newLines: string[]): string[] {
-	if (oldLines.length !== newLines.length) return newLines;
-
-	let changed = false;
-	const out = new Array<string>(newLines.length);
-	for (let i = 0; i < newLines.length; i++) {
-		const restored = restoreLeadingIndent(oldLines[i], newLines[i]);
-		out[i] = restored;
-		if (restored !== newLines[i]) changed = true;
-	}
-	return changed ? out : newLines;
-}
-
-/**
- * Strip hashline prefixes and diff + markers from replacement lines.
- * Models frequently copy LINE:HASH| prefixes or include diff + markers.
- */
-function stripNewLinePrefixes(text: string): string {
-	const lines = text.split("\n");
-
-	// Count non-empty lines and prefix matches
-	let nonEmpty = 0;
-	let hashPrefixCount = 0;
-	let diffPlusCount = 0;
-
-	for (const line of lines) {
-		if (line.length === 0) continue;
-		nonEmpty++;
-		if (HASHLINE_PREFIX_RE.test(line)) hashPrefixCount++;
-		if (DIFF_PLUS_RE.test(line)) diffPlusCount++;
-	}
-
-	if (nonEmpty === 0) return text;
-
-	// Determine if we should strip (majority > 50%)
-	const stripHash = hashPrefixCount > 0 && hashPrefixCount >= nonEmpty * 0.5;
-	const stripPlus = !stripHash && diffPlusCount > 0 && diffPlusCount >= nonEmpty * 0.5;
-
-	if (!stripHash && !stripPlus) return text;
-
-	return lines
-		.map((line) => {
-			if (stripHash) return line.replace(HASHLINE_PREFIX_RE, "");
-			if (stripPlus) return line.replace(DIFF_PLUS_RE, "");
-			return line;
-		})
-		.join("\n");
-}
-
-// Parse line reference "LINE:HASH" or "LINE:HASH-LINE:HASH" (for ranges, handled separately)
-function parseLineRef(ref: string): { line: number; hash: string } {
-	// Strip display suffix if present: "5:ab|content" -> "5:ab"
-	const cleaned = ref.replace(/\|.*$/, "").trim();
-	const match = cleaned.match(/^(\d+):([a-z0-9]{2})$/i);
-	if (!match) {
-		throw new Error(`Invalid line reference "${ref}". Expected format "LINE:HASH" (e.g., "5:ab").`);
-	}
-	return { line: parseInt(match[1], 10), hash: match[2].toLowerCase() };
-}
-
-// Hash mismatch error with rich context
-export class HashlineMismatchError extends Error {
-	constructor(
-		public readonly mismatches: Array<{ line: number; expected: string; actual: string }>,
-		public readonly fileLines: string[],
-	) {
-		super(HashlineMismatchError.formatMessage(mismatches, fileLines));
-		this.name = "HashlineMismatchError";
-	}
-
-	static formatMessage(
-		mismatches: Array<{ line: number; expected: string; actual: string }>,
-		fileLines: string[],
-	): string {
-		const lines: string[] = [];
-		lines.push(
-			`${mismatches.length} line${mismatches.length > 1 ? "s have" : " has"} hash mismatch - changed since last read. Use the updated LINE:HASH references shown below (>>> marks changed lines).`,
-		);
-		lines.push("");
-
-		// Show context around each mismatch
-		const contextLines = new Set<number>();
-		for (const m of mismatches) {
-			for (let i = Math.max(1, m.line - 2); i <= Math.min(fileLines.length, m.line + 2); i++) {
-				contextLines.add(i);
-			}
-		}
-
-		const sorted = [...contextLines].sort((a, b) => a - b);
-		let prev = -1;
-		for (const lineNum of sorted) {
-			if (prev !== -1 && lineNum > prev + 1) {
-				lines.push("    ...");
-			}
-			prev = lineNum;
-			const content = fileLines[lineNum - 1] ?? "";
-			const hash = computeLineHash(lineNum, content);
-			const isMismatch = mismatches.some((m) => m.line === lineNum);
-			lines.push(`${isMismatch ? ">>>" : "   "} ${lineNum}:${hash}|${content}`);
-		}
-
-		// Quick fix section
-		lines.push("");
-		lines.push("Quick fix — replace stale refs:");
-		for (const m of mismatches) {
-			const actualHash = computeLineHash(m.line, fileLines[m.line - 1]);
-			lines.push(`\t${m.line}:${m.expected} → ${m.line}:${actualHash}`);
-		}
-
-		return lines.join("\n");
-	}
-}
-
-// Apply batch hashline edits
-async function applyBatchEdits(
-	absolutePath: string,
-	edits: any[],
-	_signal?: AbortSignal,
-): Promise<{ content: string; diff: string }> {
-	const fileContent = await readFile(absolutePath, "utf-8");
-	const fileLines = fileContent.split("\n");
-	const originalLines = [...fileLines];
-
-	if (edits.length === 0) {
-		throw new Error("edits array must not be empty");
-	}
-
-	// Build hash -> line index map for relocation
-	const hashToLine = new Map<string, number>();
-	const duplicateHashes = new Set<string>();
-	for (let i = 0; i < fileLines.length; i++) {
-		const hash = computeLineHash(i + 1, fileLines[i]);
-		if (hashToLine.has(hash)) {
-			duplicateHashes.add(hash);
-		} else {
-			hashToLine.set(hash, i + 1);
-		}
-	}
-
-	// Track hashes referenced by the model - if same hash appears in multiple anchors, it's ambiguous
-	const hashReferenceCount = new Map<string, number>();
-	for (const edit of edits) {
-		let anchor: string | undefined;
-		if ("set_line" in edit) anchor = edit.set_line.anchor;
-		else if ("insert_after" in edit) anchor = edit.insert_after.anchor;
-		else if ("replace_lines" in edit) {
-			anchor = edit.replace_lines.start_anchor;
-			const endHash = parseLineRef(edit.replace_lines.end_anchor).hash;
-			hashReferenceCount.set(endHash, (hashReferenceCount.get(endHash) || 0) + 1);
-		}
-		if (anchor) {
-			const { hash } = parseLineRef(anchor);
-			hashReferenceCount.set(hash, (hashReferenceCount.get(hash) || 0) + 1);
-		}
-	}
-	// Mark hashes referenced multiple times as "ambiguous" (don't relocate)
-	for (const [hash, count] of hashReferenceCount) {
-		if (count > 1) {
-			duplicateHashes.add(hash);
-		}
-	}
-
-	// Parse and validate all edits first
-	const parsedEdits: Array<{
-		type: "set_line" | "replace_lines" | "insert_after" | "replace";
-		startLine: number;
-		endLine: number;
-		newLines: string[];
-		originalAnchor?: string;
-	}> = [];
-	const mismatches: Array<{ line: number; expected: string; actual: string }> = [];
-
-	for (const edit of edits) {
-		if ("set_line" in edit) {
-			const { anchor, new_text } = edit.set_line;
-			let { line, hash } = parseLineRef(anchor);
-			const actualHash = computeLineHash(line, fileLines[line - 1]);
-
-			if (actualHash !== hash) {
-				// Try relocation
-				const relocatedLine = hashToLine.get(hash);
-				if (relocatedLine && !duplicateHashes.has(hash)) {
-					line = relocatedLine;
-				} else {
-					mismatches.push({ line, expected: hash, actual: actualHash });
-					continue;
-				}
-			}
-
-			// Strip prefixes from new_text
-			const strippedText = stripNewLinePrefixes(new_text);
-
-			parsedEdits.push({
-				type: "set_line",
-				startLine: line,
-				endLine: line,
-				newLines: strippedText === "" ? [] : [strippedText],
-				originalAnchor: anchor,
-			});
-		} else if ("replace_lines" in edit) {
-			const { start_anchor, end_anchor, new_text } = edit.replace_lines;
-			const start = parseLineRef(start_anchor);
-			const end = parseLineRef(end_anchor);
-
-			const actualStartHash = computeLineHash(start.line, fileLines[start.line - 1]);
-			const actualEndHash = computeLineHash(end.line, fileLines[end.line - 1]);
-
-			if (actualStartHash !== start.hash) {
-				const relocated = hashToLine.get(start.hash);
-				if (relocated && !duplicateHashes.has(start.hash)) {
-					start.line = relocated;
-				} else {
-					mismatches.push({ line: start.line, expected: start.hash, actual: actualStartHash });
-				}
-			}
-			if (actualEndHash !== end.hash) {
-				const relocated = hashToLine.get(end.hash);
-				if (relocated && !duplicateHashes.has(end.hash)) {
-					end.line = relocated;
-				} else {
-					mismatches.push({ line: end.line, expected: end.hash, actual: actualEndHash });
-				}
-			}
-
-			if (start.line > end.line) {
-				throw new Error(`Range start line ${start.line} must be <= end line ${end.line}`);
-			}
-
-			// Strip prefixes from new_text
-			const strippedText = stripNewLinePrefixes(new_text);
-
-			parsedEdits.push({
-				type: "replace_lines",
-				startLine: start.line,
-				endLine: end.line,
-				newLines: strippedText === "" ? [] : strippedText.split("\n"),
-			});
-		} else if ("insert_after" in edit) {
-			const { anchor, text } = edit.insert_after;
-			if (!text || text === "") {
-				throw new Error("insert_after requires non-empty text");
-			}
-
-			let { line, hash } = parseLineRef(anchor);
-			const actualHash = computeLineHash(line, fileLines[line - 1]);
-
-			if (actualHash !== hash) {
-				const relocated = hashToLine.get(hash);
-				if (relocated && !duplicateHashes.has(hash)) {
-					line = relocated;
-				} else {
-					mismatches.push({ line, expected: hash, actual: actualHash });
-					continue;
-				}
-			}
-
-			// Strip prefixes from text
-			const strippedText = stripNewLinePrefixes(text);
-
-			parsedEdits.push({
-				type: "insert_after",
-				startLine: line + 1,
-				endLine: line,
-				newLines: strippedText.split("\n"),
-			});
-		} else if ("replace" in edit) {
-			// Fuzzy replace fallback - find and replace text
-			const { old_text, new_text, all } = edit.replace;
-			// Strip prefixes from new_text
-			const strippedText = stripNewLinePrefixes(new_text);
-			// For now, treat as a single-line operation at line 1
-			// This will be enhanced in a later slice
-			const idx = fileContent.indexOf(old_text);
-			if (idx === -1) {
-				throw new Error(`Could not find text: ${old_text.slice(0, 50)}...`);
-			}
-			// Find which line this starts on
-			const beforeMatch = fileContent.slice(0, idx);
-			const startLine = beforeMatch.split("\n").length;
-			const endLine = startLine + old_text.split("\n").length - 1;
-
-			parsedEdits.push({
-				type: "replace",
-				startLine,
-				endLine,
-				newLines: strippedText.split("\n"),
-			});
-		}
-	}
-
-	if (mismatches.length > 0) {
-		throw new HashlineMismatchError(mismatches, fileLines);
-	}
-
-	// Sort bottom-up (highest line first) for stable application
-	parsedEdits.sort((a, b) => b.startLine - a.startLine);
-
-	// Track no-op edits
-	const noopEdits: Array<{ editIndex: number; line: number; currentContent: string }> = [];
-
-	// Apply edits
-	for (let i = 0; i < parsedEdits.length; i++) {
-		const edit = parsedEdits[i];
-
-		if (edit.type === "insert_after") {
-			// For insert, check if resulting in empty content
-			if (edit.newLines.length === 0 || (edit.newLines.length === 1 && edit.newLines[0] === "")) {
-				noopEdits.push({ editIndex: i, line: edit.startLine - 1, currentContent: "" });
-				continue;
-			}
-			fileLines.splice(edit.startLine - 1, 0, ...edit.newLines);
-		} else {
-			const count = edit.endLine - edit.startLine + 1;
-			const origLines = originalLines.slice(edit.startLine - 1, edit.startLine - 1 + count);
-
-			// Restore indentation if model didn't provide any
-			const restoredLines = restoreIndentForReplacement(origLines, edit.newLines);
-
-			const origContent = origLines.join("\n");
-			const newContent = restoredLines.join("\n");
-
-			// Check for no-op (identical content)
-			if (origContent === newContent) {
-				noopEdits.push({ editIndex: i, line: edit.startLine, currentContent: origContent });
-				continue;
-			}
-
-			fileLines.splice(edit.startLine - 1, count, ...restoredLines);
-		}
-	}
-
-	// If any no-ops detected, throw error with details
-	if (noopEdits.length > 0) {
-		let diagnostic = `No changes made to ${absolutePath}. The edits produced identical content.`;
-		const details = noopEdits
-			.map((e) => {
-				const hash = computeLineHash(e.line, fileLines[e.line - 1]);
-				return `Edit ${e.editIndex}: replacement for ${e.line}:${hash} is identical to current content:\n  ${e.line}:${hash}| ${e.currentContent}`;
-			})
-			.join("\n");
-		diagnostic += `\n${details}`;
-		diagnostic +=
-			"\nYour content must differ from what the file already contains. Re-read the file to see the current state.";
-		throw new Error(diagnostic);
-	}
-
-	const newContent = fileLines.join("\n");
-	const diff = generateDiffString(originalLines.join("\n"), newContent);
-
-	return { content: newContent, diff };
-}
 
 export const editTool: AgentTool<typeof editSchema> = {
 	name: "Edit",
@@ -741,34 +310,13 @@ export const editTool: AgentTool<typeof editSchema> = {
 	description: getToolDescription("Edit"),
 	parameters: editSchema,
 	getResourceKey: ({ path }) => `file:${resolvePath(expandPath(path))}`,
-	execute: async (_toolCallId: string, params: any, signal?: AbortSignal, _onProgress?: (chunk: string) => void) => {
-		if (typeof params?.path !== "string" || params.path.length === 0) {
-			throw new Error('Missing required parameter "path".');
-		}
-
-		const absolutePath = resolvePath(expandPath(params.path));
-
-		// Route to batch handler or legacy handler
-		if (isBatchEdit(params)) {
-			// Check for mixed params
-			if ("oldText" in params || "newText" in params) {
-				throw new Error("Cannot mix edits array with oldText/newText. Use one or the other.");
-			}
-
-			const { content, diff } = await applyBatchEdits(absolutePath, params.edits, signal);
-			await writeFile(absolutePath, content, "utf-8");
-
-			return {
-				content: [{ type: "text" as const, text: `Successfully edited ${params.path}` }],
-				details: { diff, path: absolutePath, newContentHash: hashContent(content) },
-			};
-		}
-
-		// Legacy single-edit handler
-		const { oldText, newText, all } = params;
-		if (typeof oldText !== "string" || typeof newText !== "string") {
-			throw new Error('Legacy edit mode requires both "oldText" and "newText" string parameters.');
-		}
+	execute: async (
+		_toolCallId: string,
+		{ path, oldText, newText, all }: { path: string; oldText: string; newText: string; all?: boolean },
+		signal?: AbortSignal,
+		_onProgress?: (chunk: string) => void,
+	) => {
+		const absolutePath = resolvePath(expandPath(path));
 
 		return new Promise<{
 			content: Array<{ type: "text"; text: string }>;
@@ -807,7 +355,7 @@ export const editTool: AgentTool<typeof editSchema> = {
 						if (signal) {
 							signal.removeEventListener("abort", onAbort);
 						}
-						reject(new Error(`File not found: ${params.path}`));
+						reject(new Error(`File not found: ${path}`));
 						return;
 					}
 
@@ -879,9 +427,7 @@ export const editTool: AgentTool<typeof editSchema> = {
 					if (matches.length === 0) {
 						const parts = oldText.trim().split(/\s+/);
 						if (parts.length > 0 && parts[0].length > 0) {
-							const pattern = parts
-								.map((p: string) => makeConfusableFlexiblePattern(escapeRegExp(p)))
-								.join("\\s+");
+							const pattern = parts.map((p) => makeConfusableFlexiblePattern(escapeRegExp(p))).join("\\s+");
 							const regex = new RegExp(pattern, "g");
 
 							let match: RegExpExecArray | null;
@@ -899,7 +445,7 @@ export const editTool: AgentTool<typeof editSchema> = {
 
 					if (matches.length === 0) {
 						const suggestion = findNearestMatch(fileContent, oldText);
-						let errorMsg = `Could not find the text in ${params.path}.`;
+						let errorMsg = `Could not find the text in ${path}.`;
 
 						if (suggestion) {
 							errorMsg += `\n\nDid you mean this at line ${suggestion.line}?\n${suggestion.content}`;
@@ -928,7 +474,7 @@ export const editTool: AgentTool<typeof editSchema> = {
 						}
 						reject(
 							new Error(
-								`Found ${matches.length} occurrences of the text in ${params.path} at lines: ${lineNumbers}.\n` +
+								`Found ${matches.length} occurrences of the text in ${path} at lines: ${lineNumbers}.\n` +
 									`Please provide more surrounding context in 'oldText' to uniquely identify the location, ` +
 									`or set 'all: true' to replace all occurrences.`,
 							),
@@ -953,7 +499,7 @@ export const editTool: AgentTool<typeof editSchema> = {
 						if (signal) {
 							signal.removeEventListener("abort", onAbort);
 						}
-						reject(new Error(`No changes made to ${params.path}. The replacement produced identical content.`));
+						reject(new Error(`No changes made to ${path}. The replacement produced identical content.`));
 						return;
 					}
 
@@ -976,7 +522,7 @@ export const editTool: AgentTool<typeof editSchema> = {
 						content: [
 							{
 								type: "text",
-								text: `Successfully replaced text in ${params.path}${matchType}${countStr}.`,
+								text: `Successfully replaced text in ${path}${matchType}${countStr}.`,
 							},
 						],
 						details: {
