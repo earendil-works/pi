@@ -50,6 +50,8 @@ export interface OpenAICodexResponsesOptions extends StreamOptions {
 	include?: string[];
 	/** Session ID for prompt caching */
 	sessionId?: string;
+	/** OpenAI Responses setting to request parallel tool calls */
+	parallelToolCalls?: boolean;
 	/** Codex-specific retry tuning (request vs stream retries). */
 	codexRetry?: CodexRetryOptions;
 }
