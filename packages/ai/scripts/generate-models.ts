@@ -677,6 +677,18 @@ async function generateModels() {
 			contextWindow: CODEX_CONTEXT,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
+		{
+			id: "gpt-5.3-codex-spark",
+			name: "GPT-5.3 Codex Spark (ChatGPT Sub)",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 128000,
+			maxTokens: 64000,
+		},
 	];
 	allModels.push(...codexModels);
 
