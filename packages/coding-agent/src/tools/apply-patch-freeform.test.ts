@@ -26,7 +26,7 @@ describe("apply_patch (freeform) tool", () => {
 
 		const patch = ["*** Begin Patch", "*** Add File: hello.txt", "+Hello, world!", "*** End Patch", ""].join("\n");
 
-		await applyPatchFreeformTool.execute("toolcall_1", patch);
+		await applyPatchFreeformTool.execute("toolcall_1", { input: patch });
 
 		const content = await readFile(join(tempDir, "hello.txt"), "utf8");
 		expect(content).toBe("Hello, world!\n");

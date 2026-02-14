@@ -241,14 +241,11 @@ exec_command: |
 apply_patch: |
   Apply a patch edit to files.
 
-  IMPORTANT: This tool takes a FREEFORM STRING argument (the patch text), NOT a JSON object.
-  Pass the patch as the entire tool argument (a JSON string literal).
+  Parameters:
+  - input: The patch text (*** Begin Patch ... *** End Patch)
 
-  Example tool call (conceptual):
-  "*** Begin Patch
-  *** Add File: hello.txt
-  +Hello
-  *** End Patch"
+  Example:
+  {"input":"*** Begin Patch\n*** Add File: hello.txt\n+Hello\n*** End Patch\n"}
 
   The patch language is a stripped-down, file-oriented diff format designed to be easy to parse and safe to apply.
   You MUST include:

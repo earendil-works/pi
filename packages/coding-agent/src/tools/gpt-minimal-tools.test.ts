@@ -22,6 +22,9 @@ describe("GPT minimal tool surface", () => {
 		expect(toolMap.apply_patch?.name).toBe("apply_patch");
 		expect(toolMap.view_image?.name).toBe("view_image");
 		expect(toolMap.update_plan?.name).toBe("update_plan");
+
+		// OpenAI function tools require parameters schema to be an object.
+		expect(toolMap.apply_patch?.parameters?.type).toBe("object");
 	});
 
 	it("selects only the minimal tools for GPT models", () => {

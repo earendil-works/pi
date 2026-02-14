@@ -32,7 +32,7 @@ toolDescriptions:
   Todo: Manage durable, file-backed todos
   Handoff: Hand off to a new session with file context
   exec_command: Execute shell commands
-  apply_patch: Apply patch edits to files (freeform)
+  apply_patch: Apply patch edits to files
   view_image: Load and view images
   update_plan: Update a durable, file-backed plan
 
@@ -79,7 +79,7 @@ guidelines:
 
   - condition:
       present: [apply_patch]
-    text: Use apply_patch for file changes (it takes a freeform patch string)
+    text: Use apply_patch for file changes (provide the patch text in the input field)
 
   - condition:
       anyPresent: [Edit, ApplyPatch, Write]
