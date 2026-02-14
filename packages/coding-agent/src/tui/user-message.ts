@@ -20,6 +20,11 @@ function parseMessageTimestamp(text: string): { timestamp: string | undefined; c
  * Component that renders a user message
  */
 export class UserMessageComponent extends Container {
+	// User messages are immutable after construction.
+	getRevision(): number {
+		return 0;
+	}
+
 	constructor(text: string, isFirst: boolean) {
 		super();
 

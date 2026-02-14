@@ -6,6 +6,7 @@ import { getMarkdownTheme, theme } from "../theme/theme.js";
  * Component that renders a complete assistant message
  */
 export class AssistantMessageComponent extends Container {
+	private revision = 0;
 	private contentContainer: Container;
 	private cachedBlockTypes: Array<"text" | "thinking"> = [];
 	private cachedHasLeadingSpacer = false;
@@ -13,6 +14,10 @@ export class AssistantMessageComponent extends Container {
 	private cachedStatusMessage: string | null = null;
 	private cachedHasToolCalls = false;
 	private cachedMarkdownBlocks: Markdown[] = [];
+
+	getRevision(): number {
+		return this.revision;
+	}
 
 	constructor(message?: AssistantMessage) {
 		super();
@@ -27,6 +32,8 @@ export class AssistantMessageComponent extends Container {
 	}
 
 	updateContent(message: AssistantMessage): void {
+		this.revision++;
+
 		const blocks: Array<{ type: "text" | "thinking"; text: string }> = [];
 		for (const content of message.content) {
 			if (content.type === "text") {

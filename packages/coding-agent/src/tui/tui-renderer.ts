@@ -12,6 +12,7 @@ import {
 	Loader,
 	Markdown,
 	ProcessTerminal,
+	RenderCacheContainer,
 	Spacer,
 	Text,
 	TruncatedText,
@@ -102,6 +103,7 @@ import { ModelSelectorComponent } from "./model-selector.js";
 import { OAuthAccountSelectorComponent } from "./oauth-account-selector.js";
 import { OAuthSelectorComponent } from "./oauth-selector.js";
 import { QueueModeSelectorComponent } from "./queue-mode-selector.js";
+import { StreamingAssistantMessageComponent } from "./streaming-assistant-message.js";
 import { SubscriptionSelectorComponent } from "./subscription-selector.js";
 import { ThemeSelectorComponent } from "./theme-selector.js";
 import {
@@ -204,7 +206,7 @@ export class TuiRenderer {
 	private isHandlingQueueEditChange = false;
 
 	// Streaming message tracking
-	private streamingComponent: AssistantMessageComponent | null = null;
+	private streamingComponent: StreamingAssistantMessageComponent | null = null;
 
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent>();
@@ -298,9 +300,11 @@ export class TuiRenderer {
 		this.toolSelector = toolSelector;
 		this.systemPromptBuilder = systemPromptBuilder;
 		this.ui = new TUI(new ProcessTerminal());
-		this.chatContainer = new Container();
-		this.pendingMessagesContainer = new Container();
-		this.statusContainer = new Container();
+		// These containers accumulate lots of stable history. Use a caching container so
+		// we don't walk and concatenate unchanged child outputs on every streaming frame.
+		this.chatContainer = new RenderCacheContainer();
+		this.pendingMessagesContainer = new RenderCacheContainer();
+		this.statusContainer = new RenderCacheContainer();
 		this.editor = new CustomEditor(getEditorTheme());
 		this.editorContainer = new Container(); // Container to hold editor or selector
 		this.editorContainer.addChild(this.editor); // Start with editor
@@ -1071,10 +1075,12 @@ export class TuiRenderer {
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
 					this.maybeAnnounceCodexAccountSwitch();
-					// Create assistant component for streaming
-					this.streamingComponent = new AssistantMessageComponent();
+					// Create assistant component for streaming. This uses a bounded rolling buffer
+					// during token streaming, then finalizes into full Markdown rendering once the
+					// message is complete.
+					this.streamingComponent = new StreamingAssistantMessageComponent();
 					this.chatContainer.addChild(this.streamingComponent);
-					this.streamingComponent.updateContent(event.message as AssistantMessage);
+					this.streamingComponent.resetFromMessage(event.message as AssistantMessage);
 					this.ui.requestRender();
 				}
 				break;
@@ -1083,7 +1089,7 @@ export class TuiRenderer {
 				// Update streaming component
 				if (this.streamingComponent && event.message.role === "assistant") {
 					const assistantMsg = event.message as AssistantMessage;
-					this.streamingComponent.updateContent(assistantMsg);
+					this.streamingComponent.applyAssistantMessageEvent(event.assistantMessageEvent);
 
 					// Create tool execution components as soon as we see tool calls
 					for (const content of assistantMsg.content) {
@@ -1116,8 +1122,8 @@ export class TuiRenderer {
 				if (this.streamingComponent && event.message.role === "assistant") {
 					const assistantMsg = event.message as AssistantMessage;
 
-					// Update streaming component with final message (includes stopReason)
-					this.streamingComponent.updateContent(assistantMsg);
+					// Finalize streaming component with the final message (includes stopReason)
+					this.streamingComponent.finalize(assistantMsg);
 
 					// If message was aborted or errored, mark all pending tool components as failed
 					if (assistantMsg.stopReason === "aborted" || assistantMsg.stopReason === "error") {
@@ -1132,7 +1138,8 @@ export class TuiRenderer {
 						this.pendingTools.clear();
 					}
 
-					// Keep the streaming component - it's now the final assistant message
+					// Keep the component in the chat (it now renders the final message), but
+					// clear our streaming pointer.
 					this.streamingComponent = null;
 
 					// Invalidate footer cache to refresh git branch (in case agent executed git commands)

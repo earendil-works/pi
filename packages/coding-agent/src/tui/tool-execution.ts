@@ -34,6 +34,7 @@ const MAX_PARTIAL_OUTPUT_SIZE = 64 * 1024; // 64KB
  * Component that renders a tool call with its result (updateable)
  */
 export class ToolExecutionComponent extends Container {
+	private revision = 0;
 	private contentText: Text;
 	private toolName: string;
 	private args: unknown;
@@ -46,6 +47,10 @@ export class ToolExecutionComponent extends Container {
 		isError: boolean;
 		details?: unknown;
 	};
+
+	getRevision(): number {
+		return this.revision;
+	}
 
 	constructor(toolName: string, args: unknown) {
 		super();
@@ -112,6 +117,8 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private updateDisplay(): void {
+		this.revision++;
+
 		const bgFn = this.result
 			? this.result.isError
 				? (text: string) => theme.bg("toolErrorBg", text)
