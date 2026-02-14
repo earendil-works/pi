@@ -1,4 +1,4 @@
-import { type AgentTool, completeSimple } from "@kennyfrc/mu-ai";
+import { type AgentTool, completeSimple, type Message } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { findModel, getApiKeyForModel } from "../model-config.js";
 import { getToolDescription } from "../prompts/index.js";
@@ -6,7 +6,7 @@ import { getCurrentModel } from "../runtime-state.js";
 import { SessionManager } from "../session-manager.js";
 import { selectReadThreadChunks } from "./read-thread-chunk-selection.js";
 import { formatMessagesForReadThreadDerivation } from "./read-thread-derivation-transcript.js";
-import { loadThreadMessagesFromSessionFile } from "./read-thread-session.js";
+import { loadThreadMessagesFromSessionFile, loadThreadMessagesTailFromSessionFile } from "./read-thread-session.js";
 import { computeReadThreadWindow } from "./read-thread-window.js";
 
 const readThreadSchema = Type.Object({
@@ -160,23 +160,50 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 			};
 		}
 
-		const loaded = loadThreadMessagesFromSessionFile(sessionPath);
-		const window = computeReadThreadWindow({
-			totalMessages: loaded.totalMessages,
+		const shouldUseTailDefault = start_index === undefined;
+		const loaded: { messages: Message[]; totalMessages: number | null } = shouldUseTailDefault
+			? loadThreadMessagesTailFromSessionFile(sessionPath, limit)
+			: (() => {
+					const full = loadThreadMessagesFromSessionFile(sessionPath);
+					return { messages: full.messages, totalMessages: full.totalMessages };
+				})();
+
+		const computedWindow = computeReadThreadWindow({
+			totalMessages: loaded.totalMessages ?? loaded.messages.length,
 			maxMessages: limit,
 			startIndex: start_index,
 			tailDefault: true,
 		});
 
-		const sliced = loaded.messages.slice(window.startIndex, window.startIndex + limit);
+		const windowStartIndex =
+			shouldUseTailDefault && loaded.totalMessages !== null
+				? Math.max(0, loaded.totalMessages - loaded.messages.length)
+				: computedWindow.startIndex;
+
+		const sliced = shouldUseTailDefault
+			? loaded.messages
+			: loaded.messages.slice(windowStartIndex, windowStartIndex + limit);
 		const windowReturnedMessages = sliced.length;
-		const indexed = sliced.map((message, offset) => ({ index: window.startIndex + offset, message }));
+		const indexed = sliced.map((message, offset) => ({ index: windowStartIndex + offset, message }));
 		const selection = selectReadThreadChunks({
 			messages: indexed,
 			goal: goal ?? "",
 			maxSelectedMessages: limit,
 		});
 		const transcript = formatMessagesForReadThreadDerivation(selection.selected, { maxTranscriptChars: 300_000 });
+		const transcriptReturnedMessages = selection.selected.length;
+
+		const buildTranscriptRawFallback = (warning: string) => {
+			const rawText = wrapContent(
+				transcript,
+				id,
+				loaded.totalMessages ?? -1,
+				transcriptReturnedMessages,
+				windowStartIndex,
+				warning,
+			);
+			return { content: [{ type: "text" as const, text: rawText }], details: undefined };
+		};
 
 		const currentModel = getCurrentModel();
 		let extractionModel = currentModel;
@@ -187,9 +214,13 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 		}
 
 		if (!extractionModel) {
+			if (shouldUseTailDefault) {
+				return buildTranscriptRawFallback("No active model available for extraction. Returning tail transcript.");
+			}
+
 			const rawResult = mgr.getThreadContent(id, {
 				maxMessages: limit,
-				startIndex: window.startIndex,
+				startIndex: windowStartIndex,
 				detailed: true,
 				globalSearch: true,
 			});
@@ -205,7 +236,7 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 				id,
 				rawResult.totalMessages,
 				rawResult.returnedMessages,
-				window.startIndex,
+				windowStartIndex,
 				"No active model available for extraction. Returning raw content.",
 			);
 			return { content: [{ type: "text", text: rawText }], details: undefined };
@@ -215,10 +246,17 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 		try {
 			apiKey = await getApiKeyForModel(extractionModel);
 		} catch (error: unknown) {
+			if (shouldUseTailDefault) {
+				const message = error instanceof Error ? error.message : String(error);
+				return buildTranscriptRawFallback(
+					`Extraction credentials unavailable: ${message}. Returning tail transcript.`,
+				);
+			}
+
 			const message = error instanceof Error ? error.message : String(error);
 			const rawResult = mgr.getThreadContent(id, {
 				maxMessages: limit,
-				startIndex: window.startIndex,
+				startIndex: windowStartIndex,
 				detailed: true,
 				globalSearch: true,
 			});
@@ -234,16 +272,22 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 				id,
 				rawResult.totalMessages,
 				rawResult.returnedMessages,
-				window.startIndex,
+				windowStartIndex,
 				`Extraction credentials unavailable: ${message}. Returning raw content.`,
 			);
 			return { content: [{ type: "text", text: rawText }], details: undefined };
 		}
 
 		if (!apiKey) {
+			if (shouldUseTailDefault) {
+				return buildTranscriptRawFallback(
+					`No API key or OAuth token available for ${extractionModel.provider}. Returning tail transcript.`,
+				);
+			}
+
 			const rawResult = mgr.getThreadContent(id, {
 				maxMessages: limit,
-				startIndex: window.startIndex,
+				startIndex: windowStartIndex,
 				detailed: true,
 				globalSearch: true,
 			});
@@ -259,7 +303,7 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 				id,
 				rawResult.totalMessages,
 				rawResult.returnedMessages,
-				window.startIndex,
+				windowStartIndex,
 				`No API key or OAuth token available for ${extractionModel.provider}. Returning raw content.`,
 			);
 			return { content: [{ type: "text", text: rawText }], details: undefined };
@@ -318,8 +362,8 @@ You MUST respond with ONLY this XML format:
 						text: wrapThreadExtract({
 							id,
 							goal: goal ?? "",
-							totalMessages: loaded.totalMessages,
-							windowStartIndex: window.startIndex,
+							totalMessages: loaded.totalMessages ?? -1,
+							windowStartIndex,
 							windowMaxMessages: limit,
 							windowReturnedMessages,
 							selectedMessages: selection.selected.length,
@@ -336,9 +380,13 @@ You MUST respond with ONLY this XML format:
 			}
 
 			const errorMessage = error instanceof Error ? error.message : String(error);
+			if (shouldUseTailDefault) {
+				return buildTranscriptRawFallback(`Extraction failed: ${errorMessage}. Returning tail transcript.`);
+			}
+
 			const rawResult = mgr.getThreadContent(id, {
 				maxMessages: limit,
-				startIndex: window.startIndex,
+				startIndex: windowStartIndex,
 				detailed: true,
 				globalSearch: true,
 			});
@@ -354,7 +402,7 @@ You MUST respond with ONLY this XML format:
 				id,
 				rawResult.totalMessages,
 				rawResult.returnedMessages,
-				window.startIndex,
+				windowStartIndex,
 				`Extraction failed: ${errorMessage}. Returning raw content.`,
 			);
 			return { content: [{ type: "text", text: rawText }], details: undefined };
