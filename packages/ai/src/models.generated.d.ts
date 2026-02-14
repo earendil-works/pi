@@ -3331,23 +3331,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "tngtech/tng-r1t-chimera:free": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "tngtech/tng-r1t-chimera": {
 			id: string;
 			name: string;
@@ -5167,6 +5150,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "qwen/qwen3-4b": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "qwen/qwen3-30b-a3b": {
 			id: string;
 			name: string;
@@ -6843,6 +6843,23 @@ export declare const MODELS: {
 			baseUrl: string;
 			reasoning: true;
 			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "gpt-5.3-codex-spark": {
+			id: string;
+			name: string;
+			api: "openai-codex-responses";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
 			cost: {
 				input: number;
 				output: number;
