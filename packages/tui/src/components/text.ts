@@ -23,6 +23,7 @@ export class Text implements Component {
 	}
 
 	setText(text: string): void {
+		if (text === this.text) return;
 		this.text = text;
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
@@ -30,6 +31,7 @@ export class Text implements Component {
 	}
 
 	setCustomBgFn(customBgFn?: (text: string) => string): void {
+		if (customBgFn === this.customBgFn) return;
 		this.customBgFn = customBgFn;
 		this.cachedText = undefined;
 		this.cachedWidth = undefined;
