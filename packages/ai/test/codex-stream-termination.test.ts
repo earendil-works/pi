@@ -143,6 +143,16 @@ describe("openai-codex stream termination handling", () => {
 		expect(run.resultError).toContain("non-terminal status: in_progress");
 	});
 
+	it("fails when stream ends with non-terminal completion status queued", async () => {
+		const sse = `data: ${JSON.stringify({ type: "response.done", response: { status: "queued" } })}\n\n`;
+		const run = await runCodexStreamWithSse(sse);
+
+		expect(run.events).toContain("error:error");
+		expect(run.events.some((event) => event.startsWith("done:"))).toBe(false);
+		expect(run.resultStopReason).toBe("error");
+		expect(run.resultError).toContain("non-terminal status: queued");
+	});
+
 	it("emits error event instead of done when completion status is failed", async () => {
 		const sse = `data: ${JSON.stringify({ type: "response.done", response: { status: "failed" } })}\n\n`;
 		const run = await runCodexStreamWithSse(sse);

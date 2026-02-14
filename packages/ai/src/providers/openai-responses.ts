@@ -76,6 +76,9 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 		};
 
 		try {
+			let sawCompletion = false;
+			let hadContent = false;
+
 			// Create OpenAI client
 			const client = createClient(model, options?.apiKey);
 			const params = buildParams(model, context, options);
@@ -92,16 +95,19 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 				if (event.type === "response.output_item.added") {
 					const item = event.item;
 					if (item.type === "reasoning") {
+						hadContent = true;
 						currentItem = item;
 						currentBlock = { type: "thinking", thinking: "" };
 						output.content.push(currentBlock);
 						stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
 					} else if (item.type === "message") {
+						hadContent = true;
 						currentItem = item;
 						currentBlock = { type: "text", text: "" };
 						output.content.push(currentBlock);
 						stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
 					} else if (item.type === "function_call") {
+						hadContent = true;
 						currentItem = item;
 						currentBlock = {
 							type: "toolCall",
@@ -206,6 +212,7 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 						currentBlock &&
 						currentBlock.type === "toolCall"
 					) {
+						hadContent = true;
 						currentBlock.partialJson += event.delta;
 						currentBlock.arguments = parseStreamingJson(currentBlock.partialJson);
 						stream.push({
@@ -221,6 +228,7 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 					const item = event.item;
 
 					if (item.type === "reasoning" && currentBlock && currentBlock.type === "thinking") {
+						hadContent = true;
 						currentBlock.thinking = item.summary?.map((s) => s.text).join("\n\n") || "";
 						currentBlock.thinkingSignature = JSON.stringify(item);
 						stream.push({
@@ -231,6 +239,7 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 						});
 						currentBlock = null;
 					} else if (item.type === "message" && currentBlock && currentBlock.type === "text") {
+						hadContent = true;
 						currentBlock.text = item.content.map((c) => (c.type === "output_text" ? c.text : c.refusal)).join("");
 						currentBlock.textSignature = item.id;
 						stream.push({
@@ -241,18 +250,24 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 						});
 						currentBlock = null;
 					} else if (item.type === "function_call") {
+						hadContent = true;
+						// Use accumulated partialJson as fallback if item.arguments is empty/missing
+						const argsStr =
+							item.arguments || (currentBlock?.type === "toolCall" ? currentBlock.partialJson : "{}") || "{}";
 						const toolCall: ToolCall = {
 							type: "toolCall",
 							id: item.call_id + "|" + item.id,
 							name: item.name,
-							arguments: JSON.parse(item.arguments),
+							arguments: JSON.parse(argsStr),
 						};
 
 						stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+						currentBlock = null;
 					}
 				}
 				// Handle completion
 				else if (event.type === "response.completed") {
+					sawCompletion = true;
 					const response = event.response;
 					if (response?.usage) {
 						// Support both OpenAI (input_tokens/output_tokens) and
@@ -279,6 +294,11 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 						};
 					}
 					calculateCost(model, output.usage);
+
+					if (response?.status === "queued" || response?.status === "in_progress") {
+						throw new Error(`Stream ended with non-terminal status: ${response.status}`);
+					}
+
 					// Map status to stop reason
 					output.stopReason = mapStopReason(response?.status);
 					if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
@@ -289,8 +309,12 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 				else if (event.type === "error") {
 					throw new Error(`Error Code ${event.code}: ${event.message}` || "Unknown error");
 				} else if (event.type === "response.failed") {
-					throw new Error("Unknown error");
+					throw new Error("OpenAI response failed");
 				}
+			}
+
+			if (!sawCompletion) {
+				throw new Error(hadContent ? "Stream terminated before completion" : "Stream terminated");
 			}
 
 			if (options?.signal?.aborted) {
@@ -298,7 +322,7 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 			}
 
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new Error("An unkown error ocurred");
+				throw new Error(output.errorMessage || "OpenAI response failed");
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
@@ -560,10 +584,9 @@ function mapStopReason(status: OpenAI.Responses.ResponseStatus | undefined): Sto
 		case "failed":
 		case "cancelled":
 			return "error";
-		// These two are wonky ...
 		case "in_progress":
 		case "queued":
-			return "stop";
+			return "error";
 		default: {
 			const _exhaustive: never = status;
 			throw new Error(`Unhandled stop reason: ${_exhaustive}`);
