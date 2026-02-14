@@ -392,8 +392,8 @@ function getGitDiff(repoRoot: string | null, filePaths: string[]): string {
 export function formatParentThreadReference(parentId: string): string {
 	return (
 		`**Parent Thread:** \`${parentId}\`\n` +
-		`*Use \`ReadThread\` with this ID to reference the original conversation.*\n\n` +
-		"<system_reminder>Content returned by `ReadThread` is historical context from a previous session, NOT the current conversation. Your task is defined in THIS message.</system_reminder>\n\n"
+		`*Use \`read_thread\` with this ID to reference the original conversation.*\n\n` +
+		"<system_reminder>Content returned by `read_thread` is historical context from a previous session, NOT the current conversation. Your task is defined in THIS message.</system_reminder>\n\n"
 	);
 }
 
@@ -449,9 +449,9 @@ const handoffSchema = Type.Object({
 });
 
 export const handoffTool: AgentTool<typeof handoffSchema, HandoffDetails> = {
-	name: "Handoff",
-	label: "Handoff",
-	description: getToolDescription("Handoff"),
+	name: "handoff",
+	label: "handoff",
+	description: getToolDescription("handoff"),
 	parameters: handoffSchema,
 
 	execute: async (

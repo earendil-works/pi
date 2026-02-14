@@ -149,9 +149,9 @@ const todowriteSchema = Type.Object({
 });
 
 export const todowriteTool: AgentTool<typeof todowriteSchema> = {
-	name: "TodoWrite",
-	label: "TodoWrite",
-	description: getToolDescription("TodoWrite"),
+	name: "todo_write",
+	label: "todo_write",
+	description: getToolDescription("todo_write"),
 	parameters: todowriteSchema,
 	execute: async (
 		_toolCallId: string,
@@ -179,7 +179,7 @@ export const todowriteTool: AgentTool<typeof todowriteSchema> = {
 		// If there is active work left, add an out-of-band reminder for the model.
 		// The TUI hides this tag, but the model still receives it via the tool result.
 		if (pending > 0 || inProgress > 0) {
-			text += `\n\n<system_reminder pending="${pending}" in_progress="${inProgress}">Continue now. Execute the remaining todo items using available tools. Prefer the in_progress item first, otherwise take the next pending item. Keep going until there are no pending/in_progress items left, or you are blocked (then ask the user for what you need). Update the todo list with TodoWrite as you make progress.</system_reminder>`;
+			text += `\n\n<system_reminder pending="${pending}" in_progress="${inProgress}">Continue now. Execute the remaining todo items using available tools. Prefer the in_progress item first, otherwise take the next pending item. Keep going until there are no pending/in_progress items left, or you are blocked (then ask the user for what you need). Update the todo list with todo_write as you make progress.</system_reminder>`;
 		}
 
 		return {

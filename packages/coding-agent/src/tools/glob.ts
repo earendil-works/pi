@@ -375,9 +375,9 @@ async function findByGlob(
 }
 
 export const globTool: AgentTool<typeof globSchema> = {
-	name: "Glob",
-	label: "Glob",
-	description: getToolDescription("Glob"),
+	name: "glob",
+	label: "glob",
+	description: getToolDescription("glob"),
 	parameters: globSchema,
 	execute: async (
 		_toolCallId: string,

@@ -90,9 +90,9 @@ function formatTodoOneLine(todo: { id: string; title: string; status: TodoStatus
 }
 
 export const todoTool: AgentTool<typeof todoSchema> = {
-	name: "Todo",
-	label: "Todo",
-	description: getToolDescription("Todo"),
+	name: "todo",
+	label: "todo",
+	description: getToolDescription("todo"),
 	parameters: todoSchema,
 	execute: async (_toolCallId, args) => {
 		const who = getWhoAmIFromEnv();

@@ -19,20 +19,20 @@ systemPrompt: |
 
 # Short tool descriptions shown in the system prompt's "Available tools" list
 toolDescriptions:
-  Read: Read file contents
-  Bash: Execute bash commands (ls, rg, fd, sg, etc.)
-  Edit: Edit files with flexible matching (exact, unescape, whitespace-tolerant)
-  ApplyPatch: Apply patch edits to files
-  Write: Create or overwrite files
-  Grep: Search file contents for patterns (respects .gitignore)
-  Glob: Find files by glob pattern or list directory (respects .gitignore)
-  ListThreads: List past conversation threads with search
-  ReadThread: Read a specific thread's conversation history
-  ReadImage: Analyze images and extract information
-  Todo: Manage durable, file-backed todos
-  Handoff: Hand off to a new session with file context
-  exec_command: Execute shell commands
+  read: Read file contents
+  bash: Execute bash commands (ls, rg, fd, sg, etc.)
+  edit: Edit files with flexible matching (exact, unescape, whitespace-tolerant)
   apply_patch: Apply patch edits to files
+  write: Create or overwrite files
+  grep: Search file contents for patterns (respects .gitignore)
+  glob: Find files by glob pattern or list directory (respects .gitignore)
+  list_threads: List past conversation threads with search
+  read_thread: Read a specific thread's conversation history
+  read_image: Analyze images and extract information
+  todo: Manage durable, file-backed todos
+  todo_write: Write the durable todo list to disk
+  handoff: Hand off to a new session with file context
+  exec_command: Execute shell commands
   view_image: Load and view images
   update_plan: Update a durable, file-backed plan
 
@@ -40,57 +40,57 @@ toolDescriptions:
 # Each guideline has a condition (which tools must be present/absent) and the text
 guidelines:
   - condition:
-      absent: [Bash, exec_command, Edit, ApplyPatch, apply_patch, Write]
+      absent: [bash, exec_command, edit, apply_patch, write]
     text: You cannot modify files or execute arbitrary commands
 
   - condition:
-      present: [Bash]
-      absent: [Edit, Write]
+      present: [bash]
+      absent: [edit, write]
     text: Use Bash for shell commands (git log, gh issue view, curl, etc.)
 
   - condition:
       present: [exec_command]
-      absent: [Bash]
+      absent: [bash]
     text: Use exec_command for shell commands (git log, curl, etc.)
 
   - condition:
-      present: [Bash]
-      absent: [Grep, Glob]
+      present: [bash]
+      absent: [grep, glob]
     text: Use Bash for file operations like ls, rg (ripgrep), fd, sg (ast-grep), or to read files with line numbers using nl, sed, etc., or to inspect binary files using hexdump, od, xxd, etc. Line numbers are relative to read content when using offset/limit.
 
   - condition:
-      present: [Bash]
+      present: [bash]
     text: |
       Avoid large outputs: pipe to head/tail (head -100), limit rg results (rg -m 5), or redirect to files when output may be large. For bundled/minified files, search source files instead.
 
   - condition:
-      present: [Bash]
-      anyPresent: [Grep, Glob]
+      present: [bash]
+      anyPresent: [grep, glob]
     text: Prefer Grep/Glob tools over Bash for file exploration (faster, respects .gitignore)
 
   - condition:
-      present: [Read]
-      anyPresent: [Edit, ApplyPatch]
+      present: [read]
+      anyPresent: [edit, apply_patch]
     text: Read the relevant file or section before editing. Re-read if your context may be stale.
 
   - condition:
-      anyPresent: [Edit, ApplyPatch]
-    text: Use Edit or ApplyPatch for precise changes (Edit supports flexible whitespace matching; ApplyPatch uses structured patch hunks)
+      anyPresent: [edit, apply_patch]
+    text: Use edit or apply_patch for precise changes (edit supports hashline-based edits; apply_patch uses structured patch hunks)
 
   - condition:
       present: [apply_patch]
     text: Use apply_patch for file changes (provide the patch text in the input field)
 
   - condition:
-      anyPresent: [Edit, ApplyPatch, Write]
+      anyPresent: [edit, apply_patch, write]
     text: Make only the requested changes. Avoid modifying unrelated code or adding unrequested features.
 
   - condition:
-      present: [Write]
+      present: [write]
     text: Use Write only for new files or complete rewrites
 
   - condition:
-      anyPresent: [Edit, ApplyPatch, Write]
+      anyPresent: [edit, apply_patch, write]
     text: When summarizing your actions, output plain text directly - do NOT use cat or Bash to display what you did
 
   # Always included (no condition)
@@ -99,7 +99,7 @@ guidelines:
   - text: Show file paths clearly when working with files
 
   - condition:
-      present: [Bash]
+      present: [bash]
     text: |
       Git safety:
       - Run git status before each commit to see what's staged and modified.

@@ -90,9 +90,9 @@ const applyPatchSchema = Type.Object({
 });
 
 export const applyPatchTool: AgentTool<typeof applyPatchSchema, ApplyPatchToolDetails> = {
-	name: "ApplyPatch",
-	label: "ApplyPatch",
-	description: getToolDescription("ApplyPatch"),
+	name: "apply_patch",
+	label: "apply_patch",
+	description: getToolDescription("apply_patch"),
 	parameters: applyPatchSchema,
 	execute: async (
 		_toolCallId: string,

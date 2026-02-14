@@ -26,9 +26,9 @@ const writeSchema = Type.Object({
 });
 
 export const writeTool: AgentTool<typeof writeSchema> = {
-	name: "Write",
-	label: "Write",
-	description: getToolDescription("Write"),
+	name: "write",
+	label: "write",
+	description: getToolDescription("write"),
 	parameters: writeSchema,
 	getResourceKey: ({ path }) => `file:${resolvePath(expandPath(path))}`,
 	execute: async (

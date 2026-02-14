@@ -64,28 +64,66 @@ function replaceTabs(text: string): string {
 	return text.replace(/\t/g, "   ");
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function normalizeToolName(toolName: string): string {
+	// Prefer snake_case; accept older TitleCase names for historical sessions
+	switch (toolName) {
+		case "Read":
+			return "read";
+		case "Write":
+			return "write";
+		case "Edit":
+			return "edit";
+		case "Bash":
+			return "bash";
+		case "Glob":
+			return "glob";
+		case "Grep":
+			return "grep";
+		case "Todo":
+			return "todo";
+		case "Handoff":
+			return "handoff";
+		case "ApplyPatch":
+			return "apply_patch";
+		default:
+			return toolName;
+	}
+}
+
 /**
  * Format tool execution matching TUI ToolExecutionComponent
  */
 function formatToolExecution(
 	toolName: string,
-	args: any,
+	args: unknown,
 	result?: ToolResultMessage,
 ): { html: string; bgColor: string } {
 	let html = "";
 	const isError = result?.isError || false;
 	const bgColor = result ? (isError ? COLORS.toolErrorBg : COLORS.toolSuccessBg) : COLORS.toolPendingBg;
+	const normalizedToolName = normalizeToolName(toolName);
+	type ToolArgs = Record<string, unknown> & {
+		command?: unknown;
+		file_path?: unknown;
+		path?: unknown;
+		content?: unknown;
+	};
+	const argsRecord = (isRecord(args) ? args : {}) as ToolArgs;
 
 	// Get text output from result
 	const getTextOutput = (): string => {
 		if (!result) return "";
 		const textBlocks = result.content.filter((c) => c.type === "text");
-		return textBlocks.map((c: any) => c.text).join("\n");
+		return textBlocks.map((c) => (c.type === "text" ? c.text : "")).join("\n");
 	};
 
 	// Format based on tool type (matching TUI logic exactly)
-	if (toolName === "Bash") {
-		const command = args?.command || "";
+	if (normalizedToolName === "bash") {
+		const command = typeof argsRecord.command === "string" ? argsRecord.command : "";
 		html = `<div class="tool-command">$ ${escapeHtml(command || "...")}</div>`;
 
 		if (result) {
@@ -121,9 +159,15 @@ function formatToolExecution(
 				}
 			}
 		}
-	} else if (toolName === "Read") {
-		const path = shortenPath(args?.file_path || args?.path || "");
-		html = `<div class="tool-header"><span class="tool-name">Read</span> <span class="tool-path">${escapeHtml(path || "...")}</span></div>`;
+	} else if (normalizedToolName === "read") {
+		const rawPath =
+			typeof argsRecord.file_path === "string"
+				? argsRecord.file_path
+				: typeof argsRecord.path === "string"
+					? argsRecord.path
+					: "";
+		const path = shortenPath(rawPath);
+		html = `<div class="tool-header"><span class="tool-name">read</span> <span class="tool-path">${escapeHtml(path || "...")}</span></div>`;
 
 		if (result) {
 			const output = getTextOutput();
@@ -156,13 +200,19 @@ function formatToolExecution(
 				html += "</div>";
 			}
 		}
-	} else if (toolName === "Write") {
-		const path = shortenPath(args?.file_path || args?.path || "");
-		const fileContent = args?.content || "";
+	} else if (normalizedToolName === "write") {
+		const rawPath =
+			typeof argsRecord.file_path === "string"
+				? argsRecord.file_path
+				: typeof argsRecord.path === "string"
+					? argsRecord.path
+					: "";
+		const path = shortenPath(rawPath);
+		const fileContent = typeof argsRecord.content === "string" ? argsRecord.content : "";
 		const lines = fileContent ? fileContent.split("\n") : [];
 		const totalLines = lines.length;
 
-		html = `<div class="tool-header"><span class="tool-name">Write</span> <span class="tool-path">${escapeHtml(path || "...")}</span>`;
+		html = `<div class="tool-header"><span class="tool-name">write</span> <span class="tool-path">${escapeHtml(path || "...")}</span>`;
 		if (totalLines > 10) {
 			html += ` <span class="line-count">(${totalLines} lines)</span>`;
 		}
@@ -204,13 +254,21 @@ function formatToolExecution(
 				html += `<div class="tool-output"><div>${escapeHtml(output)}</div></div>`;
 			}
 		}
-	} else if (toolName === "Edit") {
-		const path = shortenPath(args?.file_path || args?.path || "");
-		html = `<div class="tool-header"><span class="tool-name">Edit</span> <span class="tool-path">${escapeHtml(path || "...")}</span></div>`;
+	} else if (normalizedToolName === "edit") {
+		const rawPath =
+			typeof argsRecord.file_path === "string"
+				? argsRecord.file_path
+				: typeof argsRecord.path === "string"
+					? argsRecord.path
+					: "";
+		const path = shortenPath(rawPath);
+		html = `<div class="tool-header"><span class="tool-name">edit</span> <span class="tool-path">${escapeHtml(path || "...")}</span></div>`;
 
 		// Show diff if available from result.details.diff
-		if (result?.details?.diff) {
-			const diffLines = result.details.diff.split("\n");
+		const details = result?.details;
+		const diff = isRecord(details) ? (details as { diff?: unknown }).diff : undefined;
+		if (typeof diff === "string") {
+			const diffLines = diff.split("\n");
 			html += '<div class="tool-diff">';
 			for (const line of diffLines) {
 				if (line.startsWith("+")) {

@@ -1,7 +1,6 @@
-import type { AgentTool } from "@kennyfrc/mu-ai";
+// Note: Tools have heterogeneous parameter schemas; we let TypeScript infer the array type.
 
 export { applyPatchTool } from "./apply-patch.js";
-export { applyPatchFreeformTool } from "./apply-patch-freeform.js";
 export { bashTool } from "./bash.js";
 export { editTool } from "./edit.js";
 export { execCommandTool } from "./exec-command.js";
@@ -19,7 +18,6 @@ export { viewImageTool } from "./view-image.js";
 export { writeTool } from "./write.js";
 
 import { applyPatchTool } from "./apply-patch.js";
-import { applyPatchFreeformTool } from "./apply-patch-freeform.js";
 import { bashTool } from "./bash.js";
 import { editTool } from "./edit.js";
 import { execCommandTool } from "./exec-command.js";
@@ -31,12 +29,13 @@ import { readTool } from "./read.js";
 import { readImageTool } from "./read-image.js";
 import { readThreadTool } from "./read-thread.js";
 import { todoTool } from "./todo.js";
+import { todowriteTool } from "./todowrite.js";
 import { updatePlanTool } from "./update-plan.js";
 import { viewImageTool } from "./view-image.js";
 import { writeTool } from "./write.js";
 
 // Default tools for full access mode
-export const codingTools: AgentTool<any>[] = [
+export const codingTools = [
 	readTool,
 	bashTool,
 	editTool,
@@ -48,24 +47,24 @@ export const codingTools: AgentTool<any>[] = [
 	handoffTool,
 ];
 
-// All available tools (TitleCase keys match tool.name)
+// All available tools (tool names are lowercase snake_case)
 export const allTools = {
-	Read: readTool,
-	Bash: bashTool,
-	Edit: editTool,
-	ApplyPatch: applyPatchTool,
-	Write: writeTool,
-	Grep: grepTool,
-	Glob: globTool,
-	ListThreads: listThreadsTool,
-	ReadThread: readThreadTool,
-	ReadImage: readImageTool,
-	Todo: todoTool,
-	Handoff: handoffTool,
+	read: readTool,
+	bash: bashTool,
+	edit: editTool,
+	apply_patch: applyPatchTool,
+	write: writeTool,
+	grep: grepTool,
+	glob: globTool,
+	list_threads: listThreadsTool,
+	read_thread: readThreadTool,
+	read_image: readImageTool,
+	todo: todoTool,
+	todo_write: todowriteTool,
+	handoff: handoffTool,
 
-	// Codex-style minimal tools (snake_case)
+	// Codex-style minimal tools
 	exec_command: execCommandTool,
-	apply_patch: applyPatchFreeformTool,
 	view_image: viewImageTool,
 	update_plan: updatePlanTool,
 };

@@ -197,7 +197,7 @@ export async function buildSystemPrompt(options: {
 	const config = loadSystemPromptConfig();
 	const tools =
 		selectedTools ||
-		(["Read", "Bash", "Edit", "Write", "ListThreads", "ReadThread", "ReadImage", "Todo", "Handoff"] as ToolName[]);
+		(["read", "bash", "edit", "write", "list_threads", "read_thread", "read_image", "todo", "handoff"] as ToolName[]);
 
 	// Build tools list
 	const toolDescriptions = config.toolDescriptions;
@@ -351,6 +351,6 @@ export function getHandoffNudgeReminder(ratio: number): string {
 	return `
 
 <system_reminder>
-Context usage is at ${percent}%. Consider using the Handoff tool to start a fresh session with selected file context before auto-handoff triggers at 95%.
+Context usage is at ${percent}%. Consider using the handoff tool to start a fresh session with selected file context before auto-handoff triggers at 95%.
 </system_reminder>`;
 }

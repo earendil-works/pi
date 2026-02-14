@@ -146,7 +146,7 @@ export async function undoFileOperations(params: {
 		const toolName = toolCallNames.get(toolResult.toolCallId);
 		if (!toolName) continue;
 
-		if (toolName === "Edit") {
+		if (toolName === "edit" || toolName === "Edit") {
 			const parsed = parseEditUndoDetails(toolResult.details);
 			if (parsed) {
 				undoOperations.push({
@@ -158,7 +158,7 @@ export async function undoFileOperations(params: {
 			continue;
 		}
 
-		if (toolName === "Write") {
+		if (toolName === "write" || toolName === "Write") {
 			const parsed = parseWriteUndoDetails(toolResult.details);
 			if (parsed) {
 				undoOperations.push({
@@ -170,7 +170,7 @@ export async function undoFileOperations(params: {
 			continue;
 		}
 
-		if (toolName === "ApplyPatch" || toolName === "apply_patch") {
+		if (toolName === "apply_patch" || toolName === "ApplyPatch") {
 			const inMemoryEntries = parseApplyPatchUndoEntries(toolResult.details);
 			undoOperations.push({
 				type: "applyPatch",

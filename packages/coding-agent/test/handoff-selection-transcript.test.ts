@@ -16,7 +16,7 @@ describe("formatMessagesForHandoffSelection", () => {
 				{
 					type: "toolCall",
 					id: "tool_1",
-					name: "Read",
+					name: "read",
 					arguments: { path: "packages/coding-agent/src/tui/tui-renderer.ts", offset: 10, limit: 20 },
 				},
 			],
@@ -34,7 +34,7 @@ describe("formatMessagesForHandoffSelection", () => {
 		const toolResultMsg: ToolResultMessage = {
 			role: "toolResult",
 			toolCallId: "tool_1",
-			toolName: "Read",
+			toolName: "read",
 			content: [{ type: "text", text: "(file contents omitted)" }],
 			isError: false,
 			timestamp: Date.now(),
@@ -47,7 +47,7 @@ describe("formatMessagesForHandoffSelection", () => {
 		];
 
 		const transcript = formatMessagesForHandoffSelection(messages);
-		expect(transcript).toContain("[ToolCall Read");
+		expect(transcript).toContain("[ToolCall read");
 		expect(transcript).toContain("packages/coding-agent/src/tui/tui-renderer.ts");
 	});
 });

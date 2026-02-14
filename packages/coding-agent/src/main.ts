@@ -114,27 +114,49 @@ function parseArgs(args: string[]): Args {
 			const toolNames = args[++i].split(",").map((s) => s.trim());
 			const validTools: ToolName[] = [];
 
-			// Backward compatibility: map legacy lowercase names to TitleCase
+			// Backward compatibility: map legacy/pretty names to snake_case tool names
 			const legacyToNew: Record<string, ToolName> = {
-				read: "Read",
-				write: "Write",
-				edit: "Edit",
-				apply_patch: "ApplyPatch",
-				applypatch: "ApplyPatch",
-				bash: "Bash",
-				grep: "Grep",
-				find: "Glob",
-				ls: "Glob",
-				list_threads: "ListThreads",
-				read_thread: "ReadThread",
-				read_image: "ReadImage",
-				todowrite: "Todo",
-				todo: "Todo",
+				// Preferred / canonical
+				read: "read",
+				write: "write",
+				edit: "edit",
+				apply_patch: "apply_patch",
+				bash: "bash",
+				grep: "grep",
+				glob: "glob",
+				list_threads: "list_threads",
+				read_thread: "read_thread",
+				read_image: "read_image",
+				todo: "todo",
+				todo_write: "todo_write",
+				handoff: "handoff",
+				exec_command: "exec_command",
+				view_image: "view_image",
+				update_plan: "update_plan",
+
+				// Legacy / aliases
+				Read: "read",
+				Write: "write",
+				Edit: "edit",
+				ApplyPatch: "apply_patch",
+				Bash: "bash",
+				Grep: "grep",
+				Glob: "glob",
+				ListThreads: "list_threads",
+				ReadThread: "read_thread",
+				ReadImage: "read_image",
+				Todo: "todo",
+				Handoff: "handoff",
+				applypatch: "apply_patch",
+				find: "glob",
+				ls: "glob",
+				todowrite: "todo",
 			};
 
 			for (const name of toolNames) {
-				// Try direct match first (TitleCase), then legacy mapping
-				const resolved = name in allTools ? (name as ToolName) : legacyToNew[name.toLowerCase()];
+				// Try direct match first, then legacy mapping
+				const resolved =
+					name in allTools ? (name as ToolName) : (legacyToNew[name] ?? legacyToNew[name.toLowerCase()]);
 				if (resolved && resolved in allTools) {
 					if (!validTools.includes(resolved)) {
 						validTools.push(resolved);
@@ -281,8 +303,8 @@ ${chalk.bold("Options:")}
   --session <path>        Use specific session file
   --no-session            Don't save session (ephemeral)
   --models <patterns>     Comma-separated model patterns for quick cycling with Ctrl+P
-	--tools <tools>         Comma-separated list of tools to enable (default: Read,Bash,Edit,Write,ListThreads,ReadThread,ReadImage,Todo,Handoff)
-	                          Available: Read, Bash, Edit, Write, Grep, Glob, ListThreads, ReadThread, ReadImage, Todo, Handoff
+  --tools <tools>         Comma-separated list of tools to enable (default: read,bash,edit,write,list_threads,read_thread,read_image,todo,handoff)
+                          Available: read, bash, edit, apply_patch, write, grep, glob, list_threads, read_thread, read_image, todo, todo_write, handoff, exec_command, view_image, update_plan
   --thinking <level>      Set thinking level: off, minimal, low, medium, high
   --export <file>         Export session file to HTML and exit
   --help, -h              Show this help
@@ -322,7 +344,7 @@ ${chalk.bold("Examples:")}
   mu --thinking high "Solve this complex problem"
 
   # Read-only mode (no file modifications possible)
-  mu --tools Read,Grep,Glob -p "Review the code in src/"
+  mu --tools read,grep,glob -p "Review the code in src/"
 
   # Export a session file to HTML
   mu --export ~/.mu/agent/sessions/--path--/session.jsonl
@@ -344,16 +366,19 @@ ${chalk.bold("Available Tools (default: read, bash, edit, write, list_threads, r
   read         - Read file contents
   bash         - Execute bash commands
   edit         - Edit files with find/replace
-  apply_patch  - Apply patch edits (Edit/Write are swapped to this for GPT models)
+  apply_patch  - Apply patch edits
   write        - Write files (creates/overwrites)
   list_threads - List past conversation threads
   read_thread  - Read a specific thread's conversation history
   read_image   - Analyze images and extract information
-	  todo         - File-backed todos (lists, claim/release, claim_next)
+  todo         - File-backed todos (lists, claim/release, claim_next)
+  todo_write   - Persist todo list to disk and emit a reminder to continue
   handoff      - Hand off to a new session with file context
   grep         - Search file contents (off by default)
-  find         - Find files by glob pattern (off by default)
-  ls           - List directory contents (off by default)
+  glob         - Find files by glob pattern or list directory contents (off by default)
+  exec_command - Execute shell commands (Codex-style)
+  view_image   - Load and view images (Codex-style)
+  update_plan  - Update a durable plan (Codex-style)
 `);
 }
 

@@ -25,8 +25,8 @@ describe("buildSystemPrompt", () => {
 		const prompt = await buildSystemPrompt({});
 
 		expect(prompt).toContain("Available tools:");
-		expect(prompt).toContain("Read:");
-		expect(prompt).toContain("Bash:");
+		expect(prompt).toContain("- read:");
+		expect(prompt).toContain("- bash:");
 	});
 
 	it("should work with custom prompt", async () => {

@@ -1236,7 +1236,7 @@ export class TuiRenderer {
 
 				// Detect explicit Handoff tool completion - queue for execution after agent_end
 				if (
-					event.toolName === "Handoff" &&
+					event.toolName === "handoff" &&
 					!event.isError &&
 					typeof event.result !== "string" &&
 					event.result?.details?.handoffType === "explicit"
@@ -1650,7 +1650,7 @@ export class TuiRenderer {
 		this.ui.requestRender();
 
 		this.chatContainer.addChild(new Text("", 0, 0));
-		const toolComponent = new ToolExecutionComponent("Bash", { command });
+		const toolComponent = new ToolExecutionComponent("bash", { command });
 		this.chatContainer.addChild(toolComponent);
 		this.ui.requestRender();
 
@@ -1692,7 +1692,7 @@ export class TuiRenderer {
 		const toolCall: ToolCall = {
 			type: "toolCall",
 			id: toolCallId,
-			name: "Bash",
+			name: "bash",
 			arguments: { command },
 		};
 
@@ -1717,7 +1717,7 @@ export class TuiRenderer {
 		const toolResultMessage: ToolResultMessage = {
 			role: "toolResult",
 			toolCallId,
-			toolName: "Bash",
+			toolName: "bash",
 			content: result.content,
 			details: result.details,
 			isError,
@@ -3175,7 +3175,7 @@ export class TuiRenderer {
 		this.ui.requestRender();
 
 		await this.agent.prompt(
-			`A subscribed session (${event.sessionId}) completed a turn. Use ReadThread if you need more context, then respond to the tool result above.`,
+			`A subscribed session (${event.sessionId}) completed a turn. Use read_thread if you need more context, then respond to the tool result above.`,
 		);
 	}
 

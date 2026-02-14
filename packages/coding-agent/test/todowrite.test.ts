@@ -159,7 +159,7 @@ describe("todowrite tool", () => {
 			expect(textContent.text).toContain("◐ [M] In progress task");
 			expect(textContent.text).toContain("● [M] Completed task");
 			// Should NOT contain IDs or JSON
-			expect(textContent.text).not.toContain("todo_");
+			expect(textContent.text).not.toMatch(/todo_\\d+/);
 			expect(textContent.text).not.toContain("{");
 		}
 	});

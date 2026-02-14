@@ -3,18 +3,28 @@ import type { TSchema } from "@sinclair/typebox";
 import { allTools, type ToolName } from "./index.js";
 
 export const DEFAULT_TOOL_NAMES: ToolName[] = [
-	"Read",
-	"Bash",
-	"Edit",
-	"Write",
-	"ListThreads",
-	"ReadThread",
-	"ReadImage",
-	"Todo",
-	"Handoff",
+	"read",
+	"bash",
+	"edit",
+	"write",
+	"list_threads",
+	"read_thread",
+	"read_image",
+	"todo",
+	"handoff",
 ];
 
-const GPT_MINIMAL_TOOL_NAMES: ToolName[] = ["exec_command", "apply_patch", "view_image", "update_plan"];
+const GPT_DEFAULT_TOOL_NAMES: ToolName[] = [
+	"read",
+	"bash",
+	"apply_patch",
+	"write",
+	"list_threads",
+	"read_thread",
+	"read_image",
+	"todo",
+	"handoff",
+];
 
 export interface ToolSelection {
 	toolNames: ToolName[];
@@ -51,18 +61,18 @@ export function resolveToolSelection(
 	baseToolNames: ToolName[] | undefined,
 	model: Model<Api> | null | undefined,
 ): ToolSelection {
-	const initialNames = isGptModel(model)
-		? GPT_MINIMAL_TOOL_NAMES
-		: baseToolNames && baseToolNames.length > 0
+	const initialNames =
+		baseToolNames && baseToolNames.length > 0
 			? baseToolNames
-			: DEFAULT_TOOL_NAMES;
+			: isGptModel(model)
+				? GPT_DEFAULT_TOOL_NAMES
+				: DEFAULT_TOOL_NAMES;
 	let replacedWithApplyPatch = false;
 	const resolvedNames = dedupeToolNames(initialNames);
 
-	// Note: Previously we replaced Edit/Write with ApplyPatch for GPT models,
-	// but now we use the new hashline-based Edit tool for all models including Codex.
-	// ApplyPatch is still available if explicitly requested.
-	replacedWithApplyPatch = false;
+	// For GPT-ish models, we default to apply_patch instead of edit.
+	replacedWithApplyPatch =
+		isGptModel(model) && !resolvedNames.includes("edit") && resolvedNames.includes("apply_patch");
 
 	const tools = resolvedNames.map((name) => allTools[name]) as unknown as Array<AgentTool<TSchema, unknown>>;
 

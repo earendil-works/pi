@@ -9,7 +9,7 @@ import { SessionManager } from "../src/session-manager.js";
 import { applyPatchTool } from "../src/tools/apply-patch.js";
 import { undoFileOperations } from "../src/undo/undo-file-operations.js";
 
-describe("undo ApplyPatch", () => {
+describe("undo apply_patch", () => {
 	let testDir: string;
 	let previousCwd: string;
 
@@ -51,7 +51,7 @@ describe("undo ApplyPatch", () => {
 		const toolResultMessage: ToolResultMessage = {
 			role: "toolResult",
 			toolCallId: "tc_applypatch",
-			toolName: "ApplyPatch",
+			toolName: "apply_patch",
 			content: toolResult.content,
 			details: toolResult.details,
 			isError: false,
@@ -66,7 +66,7 @@ describe("undo ApplyPatch", () => {
 
 		const assistantMessage: AssistantMessage = {
 			role: "assistant",
-			content: [{ type: "toolCall", id: "tc_applypatch", name: "ApplyPatch", arguments: { input: patch } }],
+			content: [{ type: "toolCall", id: "tc_applypatch", name: "apply_patch", arguments: { input: patch } }],
 			api: "openai-completions",
 			provider: "test",
 			model: "test",
@@ -121,7 +121,7 @@ describe("undo ApplyPatch", () => {
 		const toolResultMessage: ToolResultMessage = {
 			role: "toolResult",
 			toolCallId: "tc_applypatch",
-			toolName: "ApplyPatch",
+			toolName: "apply_patch",
 			content: toolResult.content,
 			details: toolResult.details,
 			isError: false,
@@ -132,7 +132,7 @@ describe("undo ApplyPatch", () => {
 
 		const assistantMessage: AssistantMessage = {
 			role: "assistant",
-			content: [{ type: "toolCall", id: "tc_applypatch", name: "ApplyPatch", arguments: { input: patch } }],
+			content: [{ type: "toolCall", id: "tc_applypatch", name: "apply_patch", arguments: { input: patch } }],
 			api: "openai-completions",
 			provider: "test",
 			model: "test",

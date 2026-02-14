@@ -174,9 +174,9 @@ const PROGRESS_FLUSH_DELAY = 100;
 const PROGRESS_MAX_PENDING_SIZE = 4096;
 
 export const bashTool: AgentTool<typeof bashSchema> = {
-	name: "Bash",
-	label: "Bash",
-	description: getToolDescription("Bash"),
+	name: "bash",
+	label: "bash",
+	description: getToolDescription("bash"),
 	parameters: bashSchema,
 	execute: async (
 		_toolCallId: string,

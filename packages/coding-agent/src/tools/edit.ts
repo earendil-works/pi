@@ -305,9 +305,9 @@ const editSchema = Type.Object({
 });
 
 export const editTool: AgentTool<typeof editSchema> = {
-	name: "Edit",
-	label: "Edit",
-	description: getToolDescription("Edit"),
+	name: "edit",
+	label: "edit",
+	description: getToolDescription("edit"),
 	parameters: editSchema,
 	getResourceKey: ({ path }) => `file:${resolvePath(expandPath(path))}`,
 	execute: async (

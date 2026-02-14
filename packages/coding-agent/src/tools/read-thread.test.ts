@@ -60,7 +60,7 @@ function createTestSession(toolResultLength: number = 100): string {
 					{
 						type: "toolCall",
 						id: "tool-call-001",
-						name: "Glob",
+						name: "glob",
 						arguments: { pattern: "**/*.ts", path: "/test/workspace" },
 					},
 				],
@@ -73,7 +73,7 @@ function createTestSession(toolResultLength: number = 100): string {
 			message: {
 				role: "toolResult",
 				toolCallId: "tool-call-001",
-				toolName: "Glob",
+				toolName: "glob",
 				content: [{ type: "text", text: "x".repeat(toolResultLength) }],
 			},
 		}),
@@ -122,7 +122,7 @@ describe("ReadThread Tool Visibility", () => {
 
 			expect(result).not.toBeNull();
 			expect(result!.content).toContain("Used tool");
-			expect(result!.content).toContain("Glob");
+			expect(result!.content).toContain("glob");
 			expect(result!.content).toContain("Output from");
 		});
 

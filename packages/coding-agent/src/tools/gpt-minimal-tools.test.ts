@@ -8,7 +8,7 @@ function asToolMap(tools: unknown): Record<string, AgentTool> {
 	return tools as Record<string, AgentTool>;
 }
 
-describe("GPT minimal tool surface", () => {
+describe("GPT tools", () => {
 	it("registers Codex-style tool names in allTools", () => {
 		const toolMap = asToolMap(allTools);
 		const names = Object.keys(toolMap);
@@ -27,11 +27,21 @@ describe("GPT minimal tool surface", () => {
 		expect(toolMap.apply_patch?.parameters?.type).toBe("object");
 	});
 
-	it("selects only the minimal tools for GPT models", () => {
+	it("defaults GPT-ish models to the standard tool set, but swaps edit -> apply_patch", () => {
 		const model = getModel("openai", "gpt-4o-mini");
 		const selection = resolveToolSelection(undefined, model);
 
-		expect(selection.toolNames).toEqual(["exec_command", "apply_patch", "view_image", "update_plan"]);
+		expect(selection.toolNames).toEqual([
+			"read",
+			"bash",
+			"apply_patch",
+			"write",
+			"list_threads",
+			"read_thread",
+			"read_image",
+			"todo",
+			"handoff",
+		]);
 		expect(selection.tools.map((t) => t.name)).toEqual(selection.toolNames);
 	});
 });

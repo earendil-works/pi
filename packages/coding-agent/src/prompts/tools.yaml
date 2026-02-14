@@ -1,10 +1,10 @@
 # Full tool descriptions sent to the LLM as part of tool definitions
 # These are the detailed descriptions that help the model understand how to use each tool
 
-Read: |
+read: |
   Read the contents of a text file. Supports text files only. For text files, defaults to first 2000 lines. Use offset/limit for large files.
 
-ReadImage: |
+read_image: |
   Analyze an image and extract information based on an objective. Use this tool only for image files or image URLs. Supported formats: jpg, jpeg, png, gif, webp. Do not use this tool for reading text files. Accepts a local file path or remote URL. Returns XML-delimited analysis output.
 
   Parameters:
@@ -19,10 +19,10 @@ ReadImage: |
 
   {"path":"screenshots/before.png","objective":"Identify all visual differences","context":"Reviewing UI changes","referenceFiles":["screenshots/after.png"]}
 
-Bash: |
+bash: |
   Execute a bash command in the current working directory. Returns stdout and stderr. Optionally provide a timeout in seconds (default: 1800 seconds / 30 minutes). Minimum timeout is 1800 seconds; lower values are ignored.
 
-Edit: |
+edit: |
   Edit a file using hashline mode (preferred) or legacy text matching.
 
   **Hashline Mode (New - Use This):**
@@ -47,7 +47,7 @@ Edit: |
   - `replace`: Fuzzy text fallback (use when hashline unavailable).
 
   **Important:**
-  - Copy `LINE:HASH` refs exactly from Read output
+  - Copy `LINE:HASH` refs exactly from read output
   - Multiple edits in one call are validated atomically (all-or-nothing)
   - If hash mismatch detected, error shows updated LINE:HASH refs
   - Re-read file before editing if file may have changed
@@ -62,7 +62,7 @@ Edit: |
   }
   ```
 
-ApplyPatch: |
+apply_patch: |
   Use the `apply_patch` tool to edit files.
   Your patch language is a stripped-down, file-oriented diff format designed to be easy to parse and safe to apply. You can think of it as a high-level envelope:
 
@@ -133,22 +133,22 @@ ApplyPatch: |
     - `~` and `~/...` are expanded to the user's home directory.
     - Relative paths are resolved from the current working directory (and may refer to paths outside it).
 
-  You can invoke ApplyPatch like:
+  You can invoke apply_patch like:
 
   ```
   {"input":"*** Begin Patch\n*** Add File: hello.txt\n+Hello, world!\n*** End Patch\n"}
   ```
 
-Write: |
+write: |
   Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.
 
-Grep: |
+grep: |
   Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore by default. Set `includeIgnored: true` to search gitignored files.
 
-Glob: |
+glob: |
   Find files by glob pattern OR list directory contents. When pattern is provided, searches for matching files (e.g., '*.ts', '**/*.json'). When pattern is omitted, lists directory contents with '/' suffix for directories. Respects .gitignore by default. Set `includeIgnored: true` to find gitignored files.
 
-ListThreads: |
+list_threads: |
   List past conversation threads. Returns thread IDs, relative dates, message counts, workspace paths, and preview text. Supports keyword search (message content) and workspace filtering (case-insensitive substring match).
 
   **Defaults to current working directory** if workspace is not specified. Use longer unique segments to avoid false matches (e.g., "work/mu-mono" instead of "mu-mono").
@@ -159,7 +159,7 @@ ListThreads: |
   - Use `|` for OR within a group: `doc|docs sidebar` matches (doc OR docs) AND sidebar
   - Example: `auth login|signin "error handling"` matches threads with auth AND (login OR signin) AND "error handling"
 
-ReadThread: |
+read_thread: |
   Read the conversation history of a specific thread by its ID.
   
   IMPORTANT: 'goal' is REQUIRED - describe what information you need from the thread. An AI will extract only the relevant parts.
@@ -168,16 +168,16 @@ ReadThread: |
   
   Returns <thread_extract> (default) or <reference_thread> (raw mode).
   
-  Tool calls (Bash, Read, Write, etc.) are visible by default. Use 'detailed: false' for clean transcripts without tool output.
+  Tool calls (bash, read, write, etc.) are visible by default. Use 'detailed: false' for clean transcripts without tool output.
 
-TodoWrite: |
+todo_write: |
   Create and manage a structured task list for multi-step work.
 
   States: pending, in_progress, completed, cancelled.
   Priority: high, medium (default), low.
   Replaces the full list each call.
 
-Todo: |
+todo: |
   Create and manage durable, file-backed todos stored on disk.
 
   Todos are stored as individual markdown files with YAML front-matter.
@@ -202,7 +202,7 @@ Todo: |
   - Prefer claim_next for parallel-safe automation.
   - Use list + get to load minimal context: avoid pulling all bodies.
 
-Handoff: |
+handoff: |
   Explicitly hand off to a new session with specific file context injected.
 
   Use when: current context is cluttered, switching focus areas, or need fresh start with curated context.
@@ -237,28 +237,6 @@ exec_command: |
 
   Example:
   {"cmd":"ls -la","workdir":"packages/coding-agent"}
-
-apply_patch: |
-  Apply a patch edit to files.
-
-  Parameters:
-  - input: The patch text (*** Begin Patch ... *** End Patch)
-
-  Example:
-  {"input":"*** Begin Patch\n*** Add File: hello.txt\n+Hello\n*** End Patch\n"}
-
-  The patch language is a stripped-down, file-oriented diff format designed to be easy to parse and safe to apply.
-  You MUST include:
-  - "*** Begin Patch"
-  - one or more file operations
-  - "*** End Patch"
-
-  File operations:
-  - "*** Add File: <path>"
-  - "*** Delete File: <path>"
-  - "*** Update File: <path>"
-    - optional "*** Move to: <new path>"
-    - one or more hunks introduced by "@@"
 
 view_image: |
   Load an image (local path or URL) and attach it to the tool result so the model can view it.

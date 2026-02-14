@@ -30,7 +30,7 @@ describe("Handoff Nudge", () => {
 
 		it("mentions Handoff tool", () => {
 			const reminder = getHandoffNudgeReminder(0.85);
-			expect(reminder).toContain("Handoff");
+			expect(reminder).toContain("handoff");
 		});
 
 		it("mentions 95% auto-handoff", () => {

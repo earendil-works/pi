@@ -337,7 +337,7 @@ describe("buildHandoffMessage", () => {
 	it("includes parent thread reference when provided", () => {
 		const message = buildHandoffMessage("Goal", "<files>", "abc-123");
 		expect(message).toContain("**Parent Thread:** `abc-123`");
-		expect(message).toContain("ReadThread");
+		expect(message).toContain("read_thread");
 		expect(message).toContain("<system_reminder>");
 	});
 
@@ -364,7 +364,7 @@ describe("formatParentThreadReference", () => {
 	it("includes parent id and reminder", () => {
 		const result = formatParentThreadReference("parent-xyz");
 		expect(result).toContain("**Parent Thread:** `parent-xyz`");
-		expect(result).toContain("ReadThread");
+		expect(result).toContain("read_thread");
 		expect(result).toContain("<system_reminder>");
 	});
 });

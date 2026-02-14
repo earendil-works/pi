@@ -23,6 +23,10 @@ function replaceTabs(text: string): string {
 	return text.replace(/\t/g, "   ");
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
 // Maximum size for partial output buffer (keeps last N bytes to avoid memory issues)
 const MAX_PARTIAL_OUTPUT_SIZE = 64 * 1024; // 64KB
 
@@ -32,7 +36,7 @@ const MAX_PARTIAL_OUTPUT_SIZE = 64 * 1024; // 64KB
 export class ToolExecutionComponent extends Container {
 	private contentText: Text;
 	private toolName: string;
-	private args: any;
+	private args: unknown;
 	private expanded = false;
 	private partialOutput = ""; // Accumulated streaming output (rolling buffer)
 	private lastFormattedWidth = -1;
@@ -40,10 +44,10 @@ export class ToolExecutionComponent extends Container {
 	private result?: {
 		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
 		isError: boolean;
-		details?: any;
+		details?: unknown;
 	};
 
-	constructor(toolName: string, args: any) {
+	constructor(toolName: string, args: unknown) {
 		super();
 		this.toolName = toolName;
 		this.args = args;
@@ -54,7 +58,7 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
-	updateArgs(args: any): void {
+	updateArgs(args: unknown): void {
 		this.args = args;
 		this.updateDisplay();
 	}
@@ -78,7 +82,7 @@ export class ToolExecutionComponent extends Container {
 
 	updateResult(result: {
 		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
-		details?: any;
+		details?: unknown;
 		isError: boolean;
 	}): void {
 		this.result = result;
@@ -123,16 +127,16 @@ export class ToolExecutionComponent extends Container {
 		if (!this.result) return "";
 
 		// Extract text from content blocks
-		const textBlocks = this.result.content?.filter((c: any) => c.type === "text") || [];
-		const imageBlocks = this.result.content?.filter((c: any) => c.type === "image") || [];
+		const textBlocks = this.result.content?.filter((c) => c.type === "text") || [];
+		const imageBlocks = this.result.content?.filter((c) => c.type === "image") || [];
 
 		// Strip ANSI codes and carriage returns from raw output
 		// (bash may emit colors/formatting, and Windows may include \r)
-		let output = textBlocks.map((c: any) => stripAnsi(c.text || "").replace(/\r/g, "")).join("\n");
+		let output = textBlocks.map((c) => stripAnsi(c.text || "").replace(/\r/g, "")).join("\n");
 
 		// Add indicator for images
 		if (imageBlocks.length > 0) {
-			const imageIndicators = imageBlocks.map((img: any) => `[Image: ${img.mimeType}]`).join("\n");
+			const imageIndicators = imageBlocks.map((img) => `[Image: ${img.mimeType}]`).join("\n");
 			output = output ? `${output}\n${imageIndicators}` : imageIndicators;
 		}
 
@@ -141,10 +145,31 @@ export class ToolExecutionComponent extends Container {
 
 	private formatToolExecution(width: number): string {
 		let text = "";
+		type ToolArgs = Record<string, unknown> & {
+			// bash
+			command?: unknown;
+			// exec_command
+			cmd?: unknown;
+			workdir?: unknown;
+			// read/write/edit
+			file_path?: unknown;
+			path?: unknown;
+			offset?: unknown;
+			limit?: unknown;
+			content?: unknown;
+			// apply_patch
+			input?: unknown;
+			// glob/grep
+			pattern?: unknown;
+			glob?: unknown;
+			// todo
+			action?: unknown;
+		};
+		const args = (isRecord(this.args) ? this.args : {}) as ToolArgs;
 
 		// Format based on tool type
-		if (this.toolName === "Bash") {
-			const command = this.args?.command || "";
+		if (this.toolName === "bash") {
+			const command = typeof args.command === "string" ? args.command : "";
 			text = theme.fg("toolTitle", theme.bold(`$ ${command || theme.fg("toolOutput", "...")}`));
 
 			// Use final result if available, otherwise show streaming partial output
@@ -180,8 +205,8 @@ export class ToolExecutionComponent extends Container {
 				}
 			}
 		} else if (this.toolName === "exec_command") {
-			const cmd = typeof this.args?.cmd === "string" ? this.args.cmd : "";
-			const workdir = typeof this.args?.workdir === "string" ? this.args.workdir : "";
+			const cmd = typeof args.cmd === "string" ? args.cmd : "";
+			const workdir = typeof args.workdir === "string" ? args.workdir : "";
 
 			// Render a single-line, truncated header (avoid JSON args dumps)
 			const contentWidth = Math.max(1, width - 2); // contentText has paddingX=1
@@ -222,10 +247,12 @@ export class ToolExecutionComponent extends Container {
 					text += previewLines.join("\n");
 				}
 			}
-		} else if (this.toolName === "Read") {
-			const path = shortenPath(this.args?.file_path || this.args?.path || "");
-			const offset = this.args?.offset;
-			const limit = this.args?.limit;
+		} else if (this.toolName === "read") {
+			const rawPath =
+				typeof args.file_path === "string" ? args.file_path : typeof args.path === "string" ? args.path : "";
+			const path = shortenPath(rawPath);
+			const offset = typeof args.offset === "number" ? args.offset : undefined;
+			const limit = typeof args.limit === "number" ? args.limit : undefined;
 
 			// Build path display with offset/limit suffix
 			let pathDisplay = path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
@@ -234,7 +261,7 @@ export class ToolExecutionComponent extends Container {
 				pathDisplay += theme.fg("toolOutput", `:${offset}${endLine ? `-${endLine}` : ""}`);
 			}
 
-			text = theme.fg("toolTitle", theme.bold("Read")) + " " + pathDisplay;
+			text = theme.fg("toolTitle", theme.bold("read")) + " " + pathDisplay;
 
 			if (this.result) {
 				const output = this.getTextOutput();
@@ -252,14 +279,16 @@ export class ToolExecutionComponent extends Container {
 						theme.fg("toolOutput", ")");
 				}
 			}
-		} else if (this.toolName === "Write") {
-			const path = shortenPath(this.args?.file_path || this.args?.path || "");
-			const fileContent = this.args?.content || "";
+		} else if (this.toolName === "write") {
+			const rawPath =
+				typeof args.file_path === "string" ? args.file_path : typeof args.path === "string" ? args.path : "";
+			const path = shortenPath(rawPath);
+			const fileContent = typeof args.content === "string" ? args.content : "";
 			const lines = fileContent ? fileContent.split("\n") : [];
 			const totalLines = lines.length;
 
 			text =
-				theme.fg("toolTitle", theme.bold("Write")) +
+				theme.fg("toolTitle", theme.bold("write")) +
 				" " +
 				(path ? theme.fg("accent", path) : theme.fg("toolOutput", "..."));
 			if (totalLines > 10) {
@@ -281,10 +310,12 @@ export class ToolExecutionComponent extends Container {
 						theme.fg("toolOutput", ")");
 				}
 			}
-		} else if (this.toolName === "Edit") {
-			const path = shortenPath(this.args?.file_path || this.args?.path || "");
+		} else if (this.toolName === "edit") {
+			const rawPath =
+				typeof args.file_path === "string" ? args.file_path : typeof args.path === "string" ? args.path : "";
+			const path = shortenPath(rawPath);
 			text =
-				theme.fg("toolTitle", theme.bold("Edit")) +
+				theme.fg("toolTitle", theme.bold("edit")) +
 				" " +
 				(path ? theme.fg("accent", path) : theme.fg("toolOutput", "..."));
 
@@ -295,34 +326,39 @@ export class ToolExecutionComponent extends Container {
 					if (errorText) {
 						text += "\n\n" + theme.fg("error", errorText);
 					}
-				} else if (this.result.details?.diff) {
-					// Show diff if available
-					const diffLines = this.result.details.diff.split("\n");
-					const coloredLines = diffLines.map((line: string) => {
-						if (line.startsWith("+")) {
-							return theme.fg("toolDiffAdded", line);
-						} else if (line.startsWith("-")) {
-							return theme.fg("toolDiffRemoved", line);
-						} else {
-							return theme.fg("toolDiffContext", line);
-						}
-					});
-					text += "\n\n" + coloredLines.join("\n");
+				} else {
+					const details = this.result.details;
+					const diff = isRecord(details) ? (details as { diff?: unknown }).diff : undefined;
+					if (typeof diff === "string") {
+						// Show diff if available
+						const diffLines = diff.split("\n");
+						const coloredLines = diffLines.map((line: string) => {
+							if (line.startsWith("+")) {
+								return theme.fg("toolDiffAdded", line);
+							} else if (line.startsWith("-")) {
+								return theme.fg("toolDiffRemoved", line);
+							} else {
+								return theme.fg("toolDiffContext", line);
+							}
+						});
+						text += "\n\n" + coloredLines.join("\n");
+					}
 				}
 			}
-		} else if (this.toolName === "ApplyPatch") {
-			const input = typeof this.args?.input === "string" ? this.args.input : "";
-			const details = this.result?.details as unknown;
+		} else if (this.toolName === "apply_patch") {
+			const input = typeof args.input === "string" ? args.input : "";
+			const details = this.result?.details;
+			const parsedCandidate = isRecord(details) ? (details as { parsed?: unknown }).parsed : undefined;
 			const parsed =
-				details && typeof details === "object" && "parsed" in details
-					? (details as { parsed: ApplyPatchParseResult }).parsed
+				parsedCandidate && typeof parsedCandidate === "object"
+					? (parsedCandidate as ApplyPatchParseResult)
 					: parseApplyPatchInput(input);
 
 			const addCount = parsed.ops.filter((op) => op.type === "add").length;
 			const updateCount = parsed.ops.filter((op) => op.type === "update").length;
 			const deleteCount = parsed.ops.filter((op) => op.type === "delete").length;
 
-			text = theme.fg("toolTitle", theme.bold("ApplyPatch"));
+			text = theme.fg("toolTitle", theme.bold("apply_patch"));
 			const summaryParts: string[] = [];
 			if (addCount > 0) {
 				summaryParts.push(theme.fg("toolDiffAdded", `A ${addCount}`));
@@ -388,17 +424,17 @@ export class ToolExecutionComponent extends Container {
 					}
 				}
 			}
-		} else if (this.toolName === "Glob") {
-			const pattern = this.args?.pattern || "";
-			const path = shortenPath(this.args?.path || ".");
-			const limit = this.args?.limit;
+		} else if (this.toolName === "glob") {
+			const pattern = typeof args.pattern === "string" ? args.pattern : "";
+			const path = shortenPath(typeof args.path === "string" ? args.path : ".");
+			const limit = typeof args.limit === "number" ? args.limit : undefined;
 
 			// If pattern is empty, it's "ls mode" - list directory contents
 			if (!pattern) {
-				text = theme.fg("toolTitle", theme.bold("Glob")) + " " + theme.fg("accent", path);
+				text = theme.fg("toolTitle", theme.bold("glob")) + " " + theme.fg("accent", path);
 			} else {
 				text =
-					theme.fg("toolTitle", theme.bold("Glob")) +
+					theme.fg("toolTitle", theme.bold("glob")) +
 					" " +
 					theme.fg("accent", pattern) +
 					theme.fg("toolOutput", ` in ${path}`);
@@ -425,19 +461,19 @@ export class ToolExecutionComponent extends Container {
 					}
 				}
 			}
-		} else if (this.toolName === "Grep") {
-			const pattern = this.args?.pattern || "";
-			const path = shortenPath(this.args?.path || ".");
-			const glob = this.args?.glob;
-			const limit = this.args?.limit;
+		} else if (this.toolName === "grep") {
+			const pattern = typeof args.pattern === "string" ? args.pattern : "";
+			const path = shortenPath(typeof args.path === "string" ? args.path : ".");
+			const globPattern = typeof args.glob === "string" ? args.glob : "";
+			const limit = typeof args.limit === "number" ? args.limit : undefined;
 
 			text =
-				theme.fg("toolTitle", theme.bold("Grep")) +
+				theme.fg("toolTitle", theme.bold("grep")) +
 				" " +
 				theme.fg("accent", `/${pattern}/`) +
 				theme.fg("toolOutput", ` in ${path}`);
-			if (glob) {
-				text += theme.fg("toolOutput", ` (${glob})`);
+			if (globPattern) {
+				text += theme.fg("toolOutput", ` (${globPattern})`);
 			}
 			if (limit !== undefined) {
 				text += theme.fg("toolOutput", ` limit ${limit}`);
@@ -461,9 +497,9 @@ export class ToolExecutionComponent extends Container {
 					}
 				}
 			}
-		} else if (this.toolName === "Todo") {
-			const action = (this.args?.action as string | undefined) ?? "";
-			text = theme.fg("toolTitle", theme.bold("Todo"));
+		} else if (this.toolName === "todo") {
+			const action = typeof args.action === "string" ? args.action : "";
+			text = theme.fg("toolTitle", theme.bold("todo"));
 			if (action) {
 				text += theme.fg("dim", ` (${action})`);
 			}

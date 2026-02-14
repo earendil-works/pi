@@ -1,22 +1,32 @@
 import { getModel } from "@kennyfrc/mu-ai";
 import { describe, expect, it } from "vitest";
-import { DEFAULT_TOOL_NAMES, resolveToolSelection } from "./tool-selection.js";
+import { resolveToolSelection } from "./tool-selection.js";
 
 describe("resolveToolSelection", () => {
-	it("restricts GPT models to Codex-style minimal tool surface", () => {
+	it("defaults GPT-ish models to the standard tool set, but swaps edit -> apply_patch", () => {
 		const model = getModel("openai", "gpt-4o-mini");
-		const selection = resolveToolSelection(DEFAULT_TOOL_NAMES, model);
+		const selection = resolveToolSelection(undefined, model);
 
-		expect(selection.toolNames).toEqual(["exec_command", "apply_patch", "view_image", "update_plan"]);
-		expect(selection.replacedWithApplyPatch).toBe(false);
+		expect(selection.toolNames).toEqual([
+			"read",
+			"bash",
+			"apply_patch",
+			"write",
+			"list_threads",
+			"read_thread",
+			"read_image",
+			"todo",
+			"handoff",
+		]);
+		expect(selection.replacedWithApplyPatch).toBe(true);
 	});
 
 	it("keeps Edit and Write for non-GPT models", () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5");
-		const selection = resolveToolSelection(DEFAULT_TOOL_NAMES, model);
+		const selection = resolveToolSelection(undefined, model);
 
-		expect(selection.toolNames).toContain("Edit");
-		expect(selection.toolNames).toContain("Write");
+		expect(selection.toolNames).toContain("edit");
+		expect(selection.toolNames).toContain("write");
 		expect(selection.replacedWithApplyPatch).toBe(false);
 	});
 });

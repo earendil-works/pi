@@ -6,7 +6,7 @@ describe("ToolExecutionComponent bash collapsed preview", () => {
 	initTheme("dark");
 
 	it("bounds long single-line output and shows expand hint when collapsed", () => {
-		const component = new ToolExecutionComponent("Bash", { command: "echo huge" });
+		const component = new ToolExecutionComponent("bash", { command: "echo huge" });
 		component.updateResult({
 			content: [{ type: "text", text: "A".repeat(32 * 1024) }],
 			isError: false,
