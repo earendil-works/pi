@@ -4,6 +4,10 @@ import { findModel, getApiKeyForModel } from "../model-config.js";
 import { getToolDescription } from "../prompts/index.js";
 import { getCurrentModel } from "../runtime-state.js";
 import { SessionManager } from "../session-manager.js";
+import { selectReadThreadChunks } from "./read-thread-chunk-selection.js";
+import { formatMessagesForReadThreadDerivation } from "./read-thread-derivation-transcript.js";
+import { loadThreadMessagesFromSessionFile } from "./read-thread-session.js";
+import { computeReadThreadWindow } from "./read-thread-window.js";
 
 const readThreadSchema = Type.Object({
 	id: Type.String({ description: "The thread ID to read" }),
@@ -22,7 +26,12 @@ const readThreadSchema = Type.Object({
 	max_messages: Type.Optional(
 		Type.Number({ description: "Max messages to return (default: 500 for extraction, 50 for raw mode)" }),
 	),
-	start_index: Type.Optional(Type.Number({ description: "Message index to start from (default: 0)" })),
+	start_index: Type.Optional(
+		Type.Number({
+			description:
+				"Message index to start from. Raw mode defaults to 0. Extraction mode defaults to a tail window when omitted.",
+		}),
+	),
 	detailed: Type.Optional(Type.Boolean({ description: "Include tool execution details in raw mode (default: true)" })),
 });
 
@@ -37,6 +46,32 @@ function wrapContent(
 	const metadata = `id="${id}" total_messages="${totalMessages}" returned_messages="${returnedMessages}" start_index="${startIndex}"`;
 	const warningTag = warning ? `<warning>${warning}</warning>\n` : "";
 	return `<reference_thread ${metadata}>\n${warningTag}${content}\n</reference_thread>`;
+}
+
+function wrapThreadExtract(input: {
+	id: string;
+	goal: string;
+	totalMessages: number;
+	windowStartIndex: number;
+	windowMaxMessages: number;
+	windowReturnedMessages: number;
+	selectedMessages: number;
+	keywords: string[];
+	extract: string;
+}): string {
+	return [
+		"<thread_extract>",
+		`<source_thread>${input.id}</source_thread>`,
+		"<goal>",
+		input.goal,
+		"</goal>",
+		`<coverage total_messages="${input.totalMessages}" window_start_index="${input.windowStartIndex}" window_max_messages="${input.windowMaxMessages}" window_returned_messages="${input.windowReturnedMessages}" selected_messages="${input.selectedMessages}" />`,
+		input.keywords.length > 0 ? `<keywords>${input.keywords.join(", ")}</keywords>` : "<keywords />",
+		"<extract>",
+		input.extract,
+		"</extract>",
+		"</thread_extract>",
+	].join("\n");
 }
 
 export const readThreadTool: AgentTool<typeof readThreadSchema> = {
@@ -114,16 +149,10 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 			};
 		}
 
-		// Extraction Mode: Use AI to extract relevant information
-		// Always fetch with detailed=true so extraction LLM sees tool calls
-		const result = mgr.getThreadContent(id, {
-			maxMessages: limit,
-			startIndex: start,
-			detailed: true, // Always include tool calls for extraction
-			globalSearch: true,
-		});
-
-		if (!result) {
+		// Extraction Mode: Use AI to extract relevant information.
+		// Default to a tail window so we capture the most recent work.
+		const sessionPath = mgr.findSessionByUuidGlobal(id);
+		if (!sessionPath) {
 			return {
 				content: [{ type: "text" as const, text: "Thread not found." }],
 				details: undefined,
@@ -131,58 +160,117 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 			};
 		}
 
-		{
-			const currentModel = getCurrentModel();
-			let extractionModel = currentModel;
+		const loaded = loadThreadMessagesFromSessionFile(sessionPath);
+		const window = computeReadThreadWindow({
+			totalMessages: loaded.totalMessages,
+			maxMessages: limit,
+			startIndex: start_index,
+			tailDefault: true,
+		});
 
-			// Prefer Sonnet 4.5 if user is on Anthropic
-			if (currentModel?.provider === "anthropic") {
-				const found = findModel("anthropic", "claude-sonnet-4-5");
-				if (found?.model) extractionModel = found.model;
+		const sliced = loaded.messages.slice(window.startIndex, window.startIndex + limit);
+		const windowReturnedMessages = sliced.length;
+		const indexed = sliced.map((message, offset) => ({ index: window.startIndex + offset, message }));
+		const selection = selectReadThreadChunks({
+			messages: indexed,
+			goal: goal ?? "",
+			maxSelectedMessages: limit,
+		});
+		const transcript = formatMessagesForReadThreadDerivation(selection.selected, { maxTranscriptChars: 300_000 });
+
+		const currentModel = getCurrentModel();
+		let extractionModel = currentModel;
+
+		if (currentModel?.provider === "anthropic") {
+			const found = findModel("anthropic", "claude-sonnet-4-5");
+			if (found?.model) extractionModel = found.model;
+		}
+
+		if (!extractionModel) {
+			const rawResult = mgr.getThreadContent(id, {
+				maxMessages: limit,
+				startIndex: window.startIndex,
+				detailed: true,
+				globalSearch: true,
+			});
+			if (!rawResult) {
+				return {
+					content: [{ type: "text" as const, text: "Thread not found." }],
+					details: undefined,
+					isError: true,
+				};
+			}
+			const rawText = wrapContent(
+				rawResult.content,
+				id,
+				rawResult.totalMessages,
+				rawResult.returnedMessages,
+				window.startIndex,
+				"No active model available for extraction. Returning raw content.",
+			);
+			return { content: [{ type: "text", text: rawText }], details: undefined };
+		}
+
+		let apiKey: string | undefined;
+		try {
+			apiKey = await getApiKeyForModel(extractionModel);
+		} catch (error: unknown) {
+			const message = error instanceof Error ? error.message : String(error);
+			const rawResult = mgr.getThreadContent(id, {
+				maxMessages: limit,
+				startIndex: window.startIndex,
+				detailed: true,
+				globalSearch: true,
+			});
+			if (!rawResult) {
+				return {
+					content: [{ type: "text" as const, text: "Thread not found." }],
+					details: undefined,
+					isError: true,
+				};
+			}
+			const rawText = wrapContent(
+				rawResult.content,
+				id,
+				rawResult.totalMessages,
+				rawResult.returnedMessages,
+				window.startIndex,
+				`Extraction credentials unavailable: ${message}. Returning raw content.`,
+			);
+			return { content: [{ type: "text", text: rawText }], details: undefined };
+		}
+
+		if (!apiKey) {
+			const rawResult = mgr.getThreadContent(id, {
+				maxMessages: limit,
+				startIndex: window.startIndex,
+				detailed: true,
+				globalSearch: true,
+			});
+			if (!rawResult) {
+				return {
+					content: [{ type: "text" as const, text: "Thread not found." }],
+					details: undefined,
+					isError: true,
+				};
+			}
+			const rawText = wrapContent(
+				rawResult.content,
+				id,
+				rawResult.totalMessages,
+				rawResult.returnedMessages,
+				window.startIndex,
+				`No API key or OAuth token available for ${extractionModel.provider}. Returning raw content.`,
+			);
+			return { content: [{ type: "text", text: rawText }], details: undefined };
+		}
+
+		try {
+			if (onProgress) {
+				onProgress(`Extracting from thread ${id} using ${extractionModel.id}...`);
 			}
 
-			// Fallback to raw if no model available (should be rare)
-			if (!extractionModel) {
-				const raw = wrapContent(
-					result.content,
-					id,
-					result.totalMessages,
-					result.returnedMessages,
-					start,
-					"No active model available for extraction. Returning raw content.",
-				);
-				return { content: [{ type: "text", text: raw }], details: undefined };
-			}
-
-			// Truncate to ~300k characters (approx 75k tokens) for safety
-			// Reduced from 400k to account for tool-inclusive content
-			const MAX_CHARS = 300000;
-			const contentToProcess =
-				result.content.length > MAX_CHARS
-					? result.content.slice(0, MAX_CHARS) + "\n...[content truncated due to length]..."
-					: result.content;
-
-			// Get API key or OAuth token for the extraction model
-			const apiKey = await getApiKeyForModel(extractionModel);
-			if (!apiKey) {
-				const raw = wrapContent(
-					result.content,
-					id,
-					result.totalMessages,
-					result.returnedMessages,
-					start,
-					`No API key or OAuth token available for ${extractionModel.provider}. Returning raw content.`,
-				);
-				return { content: [{ type: "text", text: raw }], details: undefined };
-			}
-
-			try {
-				// Report progress for extraction
-				if (onProgress) {
-					onProgress(`Extracting from thread ${id} using ${extractionModel.id}...`);
-				}
-
-				const systemPrompt = `You are an expert researcher. Extract information relevant to the user's goal from the provided conversation transcript.
+			const systemPrompt = `You are an expert researcher. Extract information relevant to the user's goal from the provided conversation transcript.
 
 CRITICAL CONSTRAINTS:
 1. You are running in a restricted sandbox with NO access to tools, files, or external resources.
@@ -195,92 +283,81 @@ PROTOCOL:
 You MUST respond with ONLY this XML format:
 <analysis>
 [Your extracted information here]
-</analysis>
-
-Examples:
-
-Input:
-Transcript:
-User: List files.
-Assistant: > Used tool ls
-src tests package.json
-User: Read package.json
-Assistant: > Used tool read with args { path: "package.json" }
-{ "name": "demo" }
-Goal: What is the project name?
-
-Output:
-<analysis>
-The project name is "demo" as seen in package.json.
-</analysis>
-
-Input:
-Transcript:
-User: I'm getting a 500 error on /api/users
-Assistant: Let me check the logs.
-> Used tool bash with args { command: "tail -n 50 logs.txt" }
-Error: Database connection failed
-Goal: Why is the API failing?
-
-Output:
-<analysis>
-The API is failing due to a "Database connection failed" error found in logs.txt.
 </analysis>`;
 
-				const extraction = await completeSimple(
-					extractionModel,
-					{
-						systemPrompt,
-						messages: [
-							{
-								role: "user",
-								content: [{ type: "text", text: `Transcript:\n${contentToProcess}\n\nGoal: ${goal}` }],
-								timestamp: Date.now(),
-							},
-						],
-					},
-					{ apiKey, signal },
-				);
-
-				const rawText = extraction.content
-					.filter((c) => c.type === "text")
-					.map((c) => c.text)
-					.join("");
-
-				// Extract content from <analysis> tags if present to remove hallucinations/thought chains
-				let extractedText = rawText;
-				const match = rawText.match(/<analysis>([\s\S]*?)<\/analysis>/i);
-				if (match) {
-					extractedText = match[1].trim();
-				}
-
-				return {
-					content: [
+			const extraction = await completeSimple(
+				extractionModel,
+				{
+					systemPrompt,
+					messages: [
 						{
-							type: "text",
-							text: `<thread_extract goal="${goal}" source_thread="${id}">\n${extractedText}\n</thread_extract>`,
+							role: "user",
+							content: [{ type: "text", text: `Transcript:\n${transcript}\n\nGoal: ${goal}` }],
+							timestamp: Date.now(),
 						},
 					],
-					details: undefined,
-				};
-			} catch (error: unknown) {
-				// Re-throw aborts so they propagate properly
-				if (signal?.aborted) {
-					throw error;
-				}
+				},
+				{ apiKey, signal },
+			);
 
-				// Fallback to raw content on failure
-				const errorMessage = error instanceof Error ? error.message : String(error);
-				const raw = wrapContent(
-					result.content,
-					id,
-					result.totalMessages,
-					result.returnedMessages,
-					start,
-					`Extraction failed: ${errorMessage}. Returning raw content.`,
-				);
-				return { content: [{ type: "text", text: raw }], details: undefined };
+			const rawText = extraction.content
+				.filter((c) => c.type === "text")
+				.map((c) => c.text)
+				.join("");
+
+			let extractedText = rawText;
+			const match = rawText.match(/<analysis>([\s\S]*?)<\/analysis>/i);
+			if (match) {
+				extractedText = match[1].trim();
 			}
+
+			return {
+				content: [
+					{
+						type: "text",
+						text: wrapThreadExtract({
+							id,
+							goal: goal ?? "",
+							totalMessages: loaded.totalMessages,
+							windowStartIndex: window.startIndex,
+							windowMaxMessages: limit,
+							windowReturnedMessages,
+							selectedMessages: selection.selected.length,
+							keywords: selection.keywords,
+							extract: extractedText,
+						}),
+					},
+				],
+				details: undefined,
+			};
+		} catch (error: unknown) {
+			if (signal?.aborted) {
+				throw error;
+			}
+
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			const rawResult = mgr.getThreadContent(id, {
+				maxMessages: limit,
+				startIndex: window.startIndex,
+				detailed: true,
+				globalSearch: true,
+			});
+			if (!rawResult) {
+				return {
+					content: [{ type: "text" as const, text: "Thread not found." }],
+					details: undefined,
+					isError: true,
+				};
+			}
+			const rawText = wrapContent(
+				rawResult.content,
+				id,
+				rawResult.totalMessages,
+				rawResult.returnedMessages,
+				window.startIndex,
+				`Extraction failed: ${errorMessage}. Returning raw content.`,
+			);
+			return { content: [{ type: "text", text: rawText }], details: undefined };
 		}
 	},
 };
