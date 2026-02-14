@@ -221,3 +221,67 @@ Handoff: |
 
   Example:
   {"goal":"Implement OAuth logout flow","files":["src/auth/oauth.ts:50-150","src/routes/auth.ts","src/types/auth.ts:1-30"]}
+
+exec_command: |
+  Execute a shell command.
+
+  Parameters:
+  - cmd: Shell command to execute (required)
+  - workdir (optional): Working directory
+  - shell (optional): Shell program (may be ignored)
+  - login (optional): Run as login shell (may be ignored)
+  - tty (optional): Allocate a TTY (may be ignored)
+  - yield_time_ms (optional): Streaming yield interval (may be ignored)
+  - max_output_tokens (optional): Max output to return (may be ignored)
+  - sandbox_permissions / justification / prefix_rule: accepted for compatibility (ignored in mu)
+
+  Example:
+  {"cmd":"ls -la","workdir":"packages/coding-agent"}
+
+apply_patch: |
+  Apply a patch edit to files.
+
+  IMPORTANT: This tool takes a FREEFORM STRING argument (the patch text), NOT a JSON object.
+  Pass the patch as the entire tool argument (a JSON string literal).
+
+  Example tool call (conceptual):
+  "*** Begin Patch
+  *** Add File: hello.txt
+  +Hello
+  *** End Patch"
+
+  The patch language is a stripped-down, file-oriented diff format designed to be easy to parse and safe to apply.
+  You MUST include:
+  - "*** Begin Patch"
+  - one or more file operations
+  - "*** End Patch"
+
+  File operations:
+  - "*** Add File: <path>"
+  - "*** Delete File: <path>"
+  - "*** Update File: <path>"
+    - optional "*** Move to: <new path>"
+    - one or more hunks introduced by "@@"
+
+view_image: |
+  Load an image (local path or URL) and attach it to the tool result so the model can view it.
+
+  Parameters:
+  - path: Local path or URL to an image (jpg, jpeg, png, gif, webp)
+
+  Example:
+  {"path":"screenshots/ui.png"}
+
+update_plan: |
+  Update the current plan (durable + file-backed).
+
+  This tool replaces the full plan each call and writes it to disk under:
+  - <repoRoot>/.mu/plans/<sessionId>.json
+  Override the directory with MU_PLAN_PATH.
+
+  Parameters:
+  - explanation (optional): Short explanation of the update
+  - plan: Array of { step: string, status: "pending" | "in_progress" | "completed" }
+
+  Example:
+  {"explanation":"Break into smaller steps","plan":[{"step":"Add tests","status":"in_progress"},{"step":"Implement tool","status":"pending"}]}

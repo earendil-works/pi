@@ -117,6 +117,16 @@ function getShellConfig(): { shell: string; args: string[] } {
 	return { shell: "bash", args: ["-c"] };
 }
 
+function buildBashEnv(): NodeJS.ProcessEnv {
+	// Some environments set LC_ALL=C.UTF-8 even when that locale isn't installed (common on macOS),
+	// which causes bash to emit a warning on every invocation and pollute stdout/stderr.
+	const env: NodeJS.ProcessEnv = { ...process.env };
+	if (env.LC_ALL === "C.UTF-8") {
+		delete env.LC_ALL;
+	}
+	return env;
+}
+
 /**
  * Kill a process and all its children
  */
@@ -178,6 +188,7 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 			const { shell, args } = getShellConfig();
 			const child = spawn(shell, [...args, command], {
 				detached: true,
+				env: buildBashEnv(),
 				stdio: ["ignore", "pipe", "pipe"],
 			});
 

@@ -14,6 +14,8 @@ export const DEFAULT_TOOL_NAMES: ToolName[] = [
 	"Handoff",
 ];
 
+const GPT_MINIMAL_TOOL_NAMES: ToolName[] = ["exec_command", "apply_patch", "view_image", "update_plan"];
+
 export interface ToolSelection {
 	toolNames: ToolName[];
 	tools: Array<AgentTool<TSchema, unknown>>;
@@ -49,7 +51,11 @@ export function resolveToolSelection(
 	baseToolNames: ToolName[] | undefined,
 	model: Model<Api> | null | undefined,
 ): ToolSelection {
-	const initialNames = baseToolNames && baseToolNames.length > 0 ? baseToolNames : DEFAULT_TOOL_NAMES;
+	const initialNames = isGptModel(model)
+		? GPT_MINIMAL_TOOL_NAMES
+		: baseToolNames && baseToolNames.length > 0
+			? baseToolNames
+			: DEFAULT_TOOL_NAMES;
 	let replacedWithApplyPatch = false;
 	const resolvedNames = dedupeToolNames(initialNames);
 

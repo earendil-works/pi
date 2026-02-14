@@ -31,18 +31,27 @@ toolDescriptions:
   ReadImage: Analyze images and extract information
   Todo: Manage durable, file-backed todos
   Handoff: Hand off to a new session with file context
+  exec_command: Execute shell commands
+  apply_patch: Apply patch edits to files (freeform)
+  view_image: Load and view images
+  update_plan: Update a durable, file-backed plan
 
 # Guidelines that are conditionally included based on enabled tools
 # Each guideline has a condition (which tools must be present/absent) and the text
 guidelines:
   - condition:
-      absent: [Bash, Edit, Write]
+      absent: [Bash, exec_command, Edit, ApplyPatch, apply_patch, Write]
     text: You cannot modify files or execute arbitrary commands
 
   - condition:
       present: [Bash]
       absent: [Edit, Write]
     text: Use Bash for shell commands (git log, gh issue view, curl, etc.)
+
+  - condition:
+      present: [exec_command]
+      absent: [Bash]
+    text: Use exec_command for shell commands (git log, curl, etc.)
 
   - condition:
       present: [Bash]
@@ -67,6 +76,10 @@ guidelines:
   - condition:
       anyPresent: [Edit, ApplyPatch]
     text: Use Edit or ApplyPatch for precise changes (Edit supports flexible whitespace matching; ApplyPatch uses structured patch hunks)
+
+  - condition:
+      present: [apply_patch]
+    text: Use apply_patch for file changes (it takes a freeform patch string)
 
   - condition:
       anyPresent: [Edit, ApplyPatch, Write]

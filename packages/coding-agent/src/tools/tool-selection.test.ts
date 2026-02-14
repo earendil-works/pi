@@ -3,12 +3,11 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_TOOL_NAMES, resolveToolSelection } from "./tool-selection.js";
 
 describe("resolveToolSelection", () => {
-	it("keeps Edit and Write for GPT models (no auto-replacement)", () => {
+	it("restricts GPT models to Codex-style minimal tool surface", () => {
 		const model = getModel("openai", "gpt-4o-mini");
 		const selection = resolveToolSelection(DEFAULT_TOOL_NAMES, model);
 
-		expect(selection.toolNames).toContain("Edit");
-		expect(selection.toolNames).toContain("Write");
+		expect(selection.toolNames).toEqual(["exec_command", "apply_patch", "view_image", "update_plan"]);
 		expect(selection.replacedWithApplyPatch).toBe(false);
 	});
 

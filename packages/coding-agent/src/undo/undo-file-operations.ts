@@ -170,7 +170,7 @@ export async function undoFileOperations(params: {
 			continue;
 		}
 
-		if (toolName === "ApplyPatch") {
+		if (toolName === "ApplyPatch" || toolName === "apply_patch") {
 			const inMemoryEntries = parseApplyPatchUndoEntries(toolResult.details);
 			undoOperations.push({
 				type: "applyPatch",
