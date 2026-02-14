@@ -34,8 +34,15 @@ import { copyToClipboard } from "../clipboard.js";
 import { scheduleExplicitHandoff, submitExplicitHandoff } from "../explicit-handoff.js";
 import { exportSessionToHtml } from "../export-html.js";
 import { parseHandoffFileSelections } from "../handoff-file-selection.js";
+import { extractHandoffFileTracking } from "../handoff-file-tracking.js";
 import { normalizeAutoHandoffGoal } from "../handoff-goal.js";
 import { formatMessagesForHandoffSelection } from "../handoff-selection-transcript.js";
+import { parseHandoffSlashCommand } from "../handoff-slash-command.js";
+import {
+	buildHandoffDraftFromModelText,
+	buildHandoffSummaryUserText,
+	HANDOFF_SUMMARY_SYSTEM_PROMPT,
+} from "../handoff-summary.js";
 import { getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
 import { playNotificationSound, sendNotification } from "../notification.js";
 import {
@@ -76,7 +83,7 @@ import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from
 import { getTodoRootDirForCwd } from "../todos/todo-path.js";
 import { TodoStore } from "../todos/todo-store.js";
 import { bashTool } from "../tools/bash.js";
-import { formatParentThreadReference, type HandoffDetails, handoffTool } from "../tools/handoff.js";
+import { estimateTokens, formatParentThreadReference, type HandoffDetails, handoffTool } from "../tools/handoff.js";
 import type { ToolName } from "../tools/index.js";
 import type { ToolSelection } from "../tools/tool-selection.js";
 import { undoFileOperations } from "../undo/undo-file-operations.js";
@@ -713,13 +720,17 @@ export class TuiRenderer {
 				// Persist the handoff command so the user can recall it via Up-arrow.
 				this.promptHistory.savePrompt(rawText);
 
-				const goal = rawText.substring(8).trim(); // "/handoff".length = 8
-				if (!goal) {
-					this.showError("Usage: /handoff <goal>\nExample: /handoff implement the login page");
+				const parsed = parseHandoffSlashCommand(rawText);
+				if (!parsed) {
+					this.showError(
+						"Usage: /handoff [--inject] <goal>\n" +
+							"Example: /handoff implement the login page\n" +
+							"Example (inject files): /handoff --inject implement the login page",
+					);
 					return;
 				}
 				this.editor.setText(""); // Clear before async operation
-				await this.handleHandoffCommand(goal);
+				await this.handleHandoffCommand(parsed.goal, parsed.mode);
 				return;
 			}
 
@@ -1093,7 +1104,7 @@ export class TuiRenderer {
 						}
 					}
 
-					this.ui.requestRender();
+					this.ui.requestRenderWithReason("stream");
 				}
 				break;
 
@@ -1207,7 +1218,7 @@ export class TuiRenderer {
 				const component = this.pendingTools.get(progressEvent.toolCallId);
 				if (component) {
 					component.appendOutput(progressEvent.output);
-					this.ui.requestRender();
+					this.ui.requestRenderWithReason("tool_progress");
 				}
 				break;
 			}
@@ -2922,7 +2933,7 @@ export class TuiRenderer {
 		this.ui.requestRender();
 	}
 
-	private async handleHandoffCommand(goal: string): Promise<void> {
+	private async handleHandoffCommand(goal: string, mode: "summary" | "inject"): Promise<void> {
 		const parentId = this.sessionManager.getSessionId();
 		const messages = this.agent.state.messages;
 
@@ -2959,19 +2970,33 @@ export class TuiRenderer {
 			this.ui,
 			(spinner) => theme.fg("accent", spinner),
 			(text) => theme.fg("muted", text),
-			"Selecting handoff files... (esc to cancel)",
+			mode === "inject"
+				? "Selecting handoff files... (esc to cancel)"
+				: "Preparing handoff summary... (esc to cancel)",
 		);
 		this.statusContainer.addChild(this.loadingAnimation);
 		this.ui.requestRender();
 
-		this.handoffAbortController = new AbortController();
+		const handoffAbortController = new AbortController();
+		this.handoffAbortController = handoffAbortController;
+		const { signal } = handoffAbortController;
 
 		try {
-			const files = await this.selectHandoffFiles(goal, this.handoffAbortController.signal);
-			if (this.loadingAnimation) {
-				this.loadingAnimation.setMessage("Preparing handoff... (esc to cancel)");
-			}
-			const details = await this.buildHandoffDetails(goal, files, this.handoffAbortController.signal);
+			const details =
+				mode === "inject"
+					? await (async () => {
+							const files = await this.selectHandoffFiles(goal, signal);
+							if (this.loadingAnimation) {
+								this.loadingAnimation.setMessage("Preparing handoff... (esc to cancel)");
+							}
+							return await this.buildHandoffDetails(goal, files, signal);
+						})()
+					: await (async () => {
+							if (this.loadingAnimation) {
+								this.loadingAnimation.setMessage("Summarizing for handoff... (esc to cancel)");
+							}
+							return await this.buildHandoffSummaryDetails(goal, signal);
+						})();
 
 			scheduleExplicitHandoff({
 				pauseQueueDrain: () => this.agent.pauseQueueDrain(),
@@ -3304,6 +3329,64 @@ export class TuiRenderer {
 		return result.details;
 	}
 
+	private async buildHandoffSummaryDetails(goal: string, signal: AbortSignal): Promise<HandoffDetails> {
+		const model = this.agent.state.model;
+		if (!model) throw new Error("No model selected");
+
+		const apiKey = await getApiKeyForModel(model);
+		if (!apiKey) throw new Error(`No API key for ${model.provider}`);
+
+		const conversation = this.formatMessagesForHandoff(this.agent.state.messages);
+		const tracking = extractHandoffFileTracking(this.agent.state.messages);
+
+		const userText = buildHandoffSummaryUserText({
+			goal,
+			conversation,
+			readFiles: tracking.readFiles,
+			modifiedFiles: tracking.modifiedFiles,
+		});
+
+		const result = await complete(
+			model,
+			{
+				systemPrompt: HANDOFF_SUMMARY_SYSTEM_PROMPT,
+				messages: [
+					{
+						role: "user" as const,
+						content: [{ type: "text" as const, text: userText }],
+						timestamp: Date.now(),
+					},
+				],
+				tools: [],
+			},
+			{ apiKey, signal },
+		);
+
+		if (result.stopReason === "error" || result.stopReason === "aborted") {
+			throw new Error(result.errorMessage || `LLM returned ${result.stopReason}`);
+		}
+
+		const modelText = result.content
+			.filter((c): c is { type: "text"; text: string } => c.type === "text")
+			.map((c) => c.text)
+			.join("");
+
+		const formattedMessage = buildHandoffDraftFromModelText({
+			goal,
+			modelText,
+			readFiles: tracking.readFiles,
+			modifiedFiles: tracking.modifiedFiles,
+		});
+
+		return {
+			handoffType: "explicit",
+			goal: goal.trim(),
+			formattedMessage,
+			parentSessionId: "",
+			fileTokens: estimateTokens(formattedMessage),
+		};
+	}
+
 	/**
 	 * Get context usage metrics for auto-handoff threshold detection.
 	 * Mirrors the calculation in FooterComponent.
@@ -3473,18 +3556,16 @@ export class TuiRenderer {
 			// Step 1: Generate goal
 			const goal = await this.generateAutoHandoffGoal(this.handoffAbortController.signal);
 
-			// Update loader - stage 2: file selection
+			// Update loader - stage 2: summarization
 			if (this.loadingAnimation) {
-				this.loadingAnimation.setMessage("Auto-handoff: selecting files... (esc to cancel)");
+				this.loadingAnimation.setMessage("Auto-handoff: summarizing... (esc to cancel)");
 			}
-
-			const files = await this.selectHandoffFiles(goal, this.handoffAbortController.signal);
 
 			if (this.loadingAnimation) {
 				this.loadingAnimation.setMessage("Auto-handoff: preparing handoff... (esc to cancel)");
 			}
 
-			const details = await this.buildHandoffDetails(goal, files, this.handoffAbortController.signal);
+			const details = await this.buildHandoffSummaryDetails(goal, this.handoffAbortController.signal);
 			const finalDraft = parentId
 				? this.insertParentThreadReference(details.formattedMessage, parentId)
 				: details.formattedMessage;

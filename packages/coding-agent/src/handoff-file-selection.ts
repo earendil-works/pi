@@ -151,9 +151,47 @@ function parseXmlSelections(raw: string): string[] {
 	return normalizeSelections(state.selections);
 }
 
+function looksLikePath(candidate: string): boolean {
+	// Heuristics: must look like a file path, not just a word.
+	// - has a path separator, OR
+	// - has an extension (foo.ts, package.json, README.md), optionally with slice suffix (:<line> or :<start>-<end?>)
+	if (candidate.includes("/") || candidate.includes("\\")) return true;
+	return /\.[a-z0-9]+(?::\d+(?:-\d*)?)?$/i.test(candidate);
+}
+
+function parseLooseLineSelections(raw: string): string[] {
+	const selections: string[] = [];
+	const lines = raw.split(/\r?\n/);
+
+	for (const rawLine of lines) {
+		const line = rawLine.trim();
+		if (!line) continue;
+
+		const withoutBullet = line
+			.replace(/^[-*]\s+/, "")
+			.replace(/^\d+[.)]\s+/, "")
+			.trim();
+		if (!withoutBullet) continue;
+
+		const unwrapped = stripWrappingDelimiters(withoutBullet);
+		const firstToken = unwrapped.split(/\s+/)[0] ?? "";
+		const token = stripWrappingDelimiters(firstToken).replace(/[),.;]+$/, "");
+
+		if (!token) continue;
+		if (!looksLikePath(token)) continue;
+		selections.push(token);
+	}
+
+	return normalizeSelections(selections);
+}
+
 export function parseHandoffFileSelections(raw: string): string[] {
 	const trimmed = unescapeXmlEntities(raw).trim();
 	if (!trimmed) return [];
 
-	return parseXmlSelections(trimmed);
+	const xmlSelections = parseXmlSelections(trimmed);
+	if (xmlSelections.length > 0) return xmlSelections;
+
+	// Fallback: support common non-XML formats (bullet lists, numbered lists).
+	return parseLooseLineSelections(trimmed);
 }

@@ -51,6 +51,12 @@ describe("parseHandoffFileSelections", () => {
 		expect(result).toEqual(["src/a.ts", "src/b.ts:10-20", "src/c.ts"]);
 	});
 
+	it("parses bullet-list paths when no <file> tags exist", () => {
+		const input = ["Here are the relevant files:", "- src/a.ts", "- `src/b.ts:10-20`", "* src/c.ts"].join("\n");
+		const result = parseHandoffFileSelections(input);
+		expect(result).toEqual(["src/a.ts", "src/b.ts:10-20", "src/c.ts"]);
+	});
+
 	it("returns empty array when no file tags exist", () => {
 		const input = "No files listed here.";
 		const result = parseHandoffFileSelections(input);
