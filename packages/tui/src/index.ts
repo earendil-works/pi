@@ -23,6 +23,8 @@ export { Text } from "./components/text.js";
 export { TruncatedText } from "./components/truncated-text.js";
 // Markdown helpers
 export { containsMarkdownHtmlTokens } from "./markdown-html.js";
+// Render caching helpers
+export { RenderCacheContainer, type RevisionedComponent } from "./render-cache-container.js";
 // Terminal interface and implementations
 export { ProcessTerminal, type Terminal } from "./terminal.js";
 export { type Component, Container, type RenderReason, type RenderThrottleConfig, TUI } from "./tui.js";

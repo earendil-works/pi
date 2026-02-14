@@ -64,7 +64,13 @@ export class Loader extends Text {
 		const frame = frames[this.currentFrame];
 		this.setText(`${this.spinnerColorFn(frame)} ${this.messageColorFn(this.message)}`);
 		if (this.ui) {
-			this.ui.requestRender();
+			// IMPORTANT: loader updates are effectively "animation" frames. Rendering them via
+			// requestRender() maps to reason "other", which cancels stream throttling.
+			// During assistant streaming, that can increase render frequency and cause UI lag.
+			//
+			// We treat loader renders as stream-throttled renders so they coalesce with
+			// in-flight streaming frames instead of resetting the throttle window.
+			this.ui.requestRenderWithReason("stream");
 		}
 	}
 }
