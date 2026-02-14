@@ -18,7 +18,7 @@ describe("ToolExecutionComponent apply_patch", () => {
 
 		const rendered = stripAnsi(component.render(80).join("\n"));
 
-		expect(rendered).toContain("ApplyPatch");
+		expect(rendered).toContain("apply_patch");
 		expect(rendered).toContain("*** Delete File: demo.txt");
 		expect(rendered).toContain("+new");
 		expect(rendered).toContain("-old");

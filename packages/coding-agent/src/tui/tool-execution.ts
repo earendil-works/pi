@@ -358,8 +358,7 @@ export class ToolExecutionComponent extends Container {
 			const updateCount = parsed.ops.filter((op) => op.type === "update").length;
 			const deleteCount = parsed.ops.filter((op) => op.type === "delete").length;
 
-			// Keep tool name snake_case for invocation, but render a nicer TitleCase label in the UI.
-			text = theme.fg("toolTitle", theme.bold("ApplyPatch"));
+			text = theme.fg("toolTitle", theme.bold("apply_patch"));
 			const summaryParts: string[] = [];
 			if (addCount > 0) {
 				summaryParts.push(theme.fg("toolDiffAdded", `A ${addCount}`));
