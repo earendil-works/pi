@@ -25,6 +25,6 @@ export { TruncatedText } from "./components/truncated-text.js";
 export { containsMarkdownHtmlTokens } from "./markdown-html.js";
 // Terminal interface and implementations
 export { ProcessTerminal, type Terminal } from "./terminal.js";
-export { type Component, Container, TUI } from "./tui.js";
+export { type Component, Container, type RenderReason, type RenderThrottleConfig, TUI } from "./tui.js";
 // Utilities
 export { visibleWidth } from "./utils.js";

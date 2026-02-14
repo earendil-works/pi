@@ -5,6 +5,8 @@
 import type { Terminal } from "./terminal.js";
 import { visibleWidth } from "./utils.js";
 
+export type { Terminal };
+
 /**
  * Component interface - all components must implement this
  */
@@ -29,6 +31,20 @@ export interface Component {
 }
 
 export { visibleWidth };
+
+export type RenderReason = "input" | "resize" | "stream" | "tool_progress" | "other";
+
+export interface RenderThrottleConfig {
+	/**
+	 * Minimum time between renders for streaming assistant deltas.
+	 * Smaller = smoother streaming, higher CPU. Larger = fewer renders, less CPU.
+	 */
+	streamMinIntervalMs?: number;
+	/**
+	 * Minimum time between renders for tool progress output (e.g. bash stdout/stderr streaming).
+	 */
+	toolProgressMinIntervalMs?: number;
+}
 
 /**
  * Container - a component that contains other components
@@ -80,9 +96,18 @@ export class TUI extends Container {
 	private maxLinesRendered = 0; // Max number of lines ever rendered (working area)
 	private previousViewportTop = 0; // Previous viewport top (0-indexed, in content-space)
 
-	constructor(terminal: Terminal) {
+	private streamMinIntervalMs: number;
+	private toolProgressMinIntervalMs: number;
+
+	private throttleTimer: NodeJS.Timeout | null = null;
+	private throttleNeedsRender = false;
+	private throttleNextIntervalMs = 0;
+
+	constructor(terminal: Terminal, throttleConfig: RenderThrottleConfig = {}) {
 		super();
 		this.terminal = terminal;
+		this.streamMinIntervalMs = throttleConfig.streamMinIntervalMs ?? 33;
+		this.toolProgressMinIntervalMs = throttleConfig.toolProgressMinIntervalMs ?? 33;
 	}
 
 	setFocus(component: Component | null): void {
@@ -92,7 +117,7 @@ export class TUI extends Container {
 	start(): void {
 		this.terminal.start(
 			(data) => this.handleInput(data),
-			() => this.requestRender(),
+			() => this.requestRenderWithReason("resize"),
 		);
 		this.terminal.hideCursor();
 		this.requestRender();
@@ -118,6 +143,26 @@ export class TUI extends Container {
 	}
 
 	requestRender(): void {
+		this.requestRenderWithReason("other");
+	}
+
+	requestRenderWithReason(reason: RenderReason): void {
+		if (reason === "stream") {
+			this.requestThrottledRender(this.streamMinIntervalMs);
+			return;
+		}
+		if (reason === "tool_progress") {
+			this.requestThrottledRender(this.toolProgressMinIntervalMs);
+			return;
+		}
+
+		// Input/resize/other should render immediately and also cancel any pending throttle
+		// so streaming can resume at full cadence afterwards.
+		this.cancelThrottle();
+		this.requestImmediateRender();
+	}
+
+	private requestImmediateRender(): void {
 		if (this.renderRequested) return;
 		this.renderRequested = true;
 		process.nextTick(() => {
@@ -126,12 +171,51 @@ export class TUI extends Container {
 		});
 	}
 
+	private requestThrottledRender(minIntervalMs: number): void {
+		if (!this.throttleTimer) {
+			// First event in the window: render immediately for responsiveness.
+			this.requestImmediateRender();
+			this.startThrottleWindow(minIntervalMs);
+			return;
+		}
+
+		// In the window: request a trailing-edge render.
+		this.throttleNeedsRender = true;
+		this.throttleNextIntervalMs = this.throttleNextIntervalMs
+			? Math.min(this.throttleNextIntervalMs, minIntervalMs)
+			: minIntervalMs;
+	}
+
+	private startThrottleWindow(minIntervalMs: number): void {
+		this.throttleTimer = setTimeout(() => {
+			this.throttleTimer = null;
+
+			if (!this.throttleNeedsRender) return;
+
+			const nextIntervalMs = this.throttleNextIntervalMs || minIntervalMs;
+			this.throttleNeedsRender = false;
+			this.throttleNextIntervalMs = 0;
+
+			this.requestImmediateRender();
+			this.startThrottleWindow(nextIntervalMs);
+		}, minIntervalMs);
+	}
+
+	private cancelThrottle(): void {
+		if (this.throttleTimer) {
+			clearTimeout(this.throttleTimer);
+			this.throttleTimer = null;
+		}
+		this.throttleNeedsRender = false;
+		this.throttleNextIntervalMs = 0;
+	}
+
 	private handleInput(data: string): void {
 		// Pass input to focused component (including Ctrl+C)
 		// The focused component can decide how to handle Ctrl+C
 		if (this.focusedComponent?.handleInput) {
 			this.focusedComponent.handleInput(data);
-			this.requestRender();
+			this.requestRenderWithReason("input");
 		}
 	}
 
