@@ -1,5 +1,5 @@
 import * as os from "node:os";
-import { Container, Spacer, Text } from "@kennyfrc/mu-tui";
+import { Container, Spacer, Text, TruncatedText } from "@kennyfrc/mu-tui";
 import stripAnsi from "strip-ansi";
 import { theme } from "../theme/theme.js";
 import { type ApplyPatchParseResult, parseApplyPatchInput } from "../tools/apply-patch/parse.js";
@@ -174,6 +174,49 @@ export class ToolExecutionComponent extends Container {
 						const hint = `... (${result.skippedCount} earlier lines · ctrl+o to expand)`;
 						// Ensure hint fits the same visual width as the output preview.
 						const hintLine = new Text(theme.fg("muted", hint), 0, 0).render(contentWidth)[0] ?? "";
+						text += hintLine + "\n";
+					}
+					text += previewLines.join("\n");
+				}
+			}
+		} else if (this.toolName === "exec_command") {
+			const cmd = typeof this.args?.cmd === "string" ? this.args.cmd : "";
+			const workdir = typeof this.args?.workdir === "string" ? this.args.workdir : "";
+
+			// Render a single-line, truncated header (avoid JSON args dumps)
+			const contentWidth = Math.max(1, width - 2); // contentText has paddingX=1
+			const cmdDisplay = cmd?.trim() ? cmd.trim() : theme.fg("toolOutput", "...");
+			const workdirSuffix = workdir?.trim() ? theme.fg("muted", ` (in ${shortenPath(workdir.trim())})`) : "";
+			const header =
+				theme.fg("toolTitle", theme.bold("Exec")) + " " + theme.fg("accent", cmdDisplay) + workdirSuffix;
+			const headerLine = new TruncatedText(header, 0, 0).render(contentWidth)[0] ?? header;
+			text = headerLine;
+
+			// Use final result if available, otherwise show streaming partial output
+			let output = "";
+			if (this.result) {
+				output = this.getTextOutput().trim();
+			} else if (this.partialOutput) {
+				output = stripAnsi(this.partialOutput).trim();
+			}
+
+			if (output) {
+				const styledOutput = output
+					.split("\n")
+					.map((line: string) => theme.fg("toolOutput", line))
+					.join("\n");
+
+				if (this.expanded) {
+					text += "\n\n" + styledOutput;
+				} else {
+					const maxVisualLines = 5;
+					const result = truncateToVisualLines(styledOutput, maxVisualLines, contentWidth, 0);
+					const previewLines = result.visualLines;
+
+					text += "\n\n";
+					if (result.skippedCount > 0) {
+						const hint = theme.fg("muted", `... (${result.skippedCount} earlier lines · ctrl+o to expand)`);
+						const hintLine = new TruncatedText(hint, 0, 0).render(contentWidth)[0] ?? "";
 						text += hintLine + "\n";
 					}
 					text += previewLines.join("\n");
