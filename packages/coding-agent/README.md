@@ -776,19 +776,30 @@ Examples:
 - `--models sonnet,haiku` - Partial match for any model containing "sonnet" or "haiku"
 
 **--tools <tools>**
-Comma-separated list of tools to enable. By default, mu uses `read,bash,edit,write,grep,glob`. This flag allows restricting or changing the available tools.
+Comma-separated list of tools to enable. By default, mu uses `read,bash,edit,write,list_threads,read_thread,read_image,todo,handoff` (for GPT-ish models: `read,bash,apply_patch,write,list_threads,read_thread,read_image,todo,handoff`). This flag allows restricting or changing the available tools.
 
 Available tools:
 - `read` - Read file contents
 - `bash` - Execute bash commands
-- `edit` - Make surgical edits to files
+- `edit` - Edit files with find/replace
+- `apply_patch` - Apply patch edits
 - `write` - Create or overwrite files
-- `grep` - Search file contents for patterns
-- `glob` - Find files by glob pattern or list directory contents
+- `list_threads` - List past conversation threads
+- `read_thread` - Read a specific thread's conversation history
+- `read_image` - Analyze images and extract information
+- `todo` - File-backed todos (lists, claim/release, claim_next)
+- `todo_write` - Persist todo list to disk and emit a reminder to continue
+- `handoff` - Hand off to a new session with file context
+- `grep` - Search file contents (off by default)
+- `glob` - Find files by glob pattern or list directory contents (off by default)
+- `exec_command` - Execute shell commands (Codex-style, off by default)
+- `view_image` - Load and view images (Codex-style, off by default)
+- `update_plan` - Update a durable plan (Codex-style, off by default)
 
 Examples:
 - `--tools read,grep,glob` - Read-only mode for code review/exploration
 - `--tools read,bash` - Only allow reading and bash commands
+- `--tools read,bash,apply_patch,write` - Enable patch-based editing (instead of `edit`)
 
 **--thinking <level>**
 Set thinking level for reasoning-capable models. Valid values: `off`, `minimal`, `low`, `medium`, `high`. Takes highest priority over all other thinking level sources (saved settings, `--models` pattern levels, session restore).

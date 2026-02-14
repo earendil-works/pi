@@ -358,7 +358,8 @@ export class ToolExecutionComponent extends Container {
 			const updateCount = parsed.ops.filter((op) => op.type === "update").length;
 			const deleteCount = parsed.ops.filter((op) => op.type === "delete").length;
 
-			text = theme.fg("toolTitle", theme.bold("apply_patch"));
+			// Keep tool name snake_case for invocation, but render a nicer TitleCase label in the UI.
+			text = theme.fg("toolTitle", theme.bold("ApplyPatch"));
 			const summaryParts: string[] = [];
 			if (addCount > 0) {
 				summaryParts.push(theme.fg("toolDiffAdded", `A ${addCount}`));
@@ -380,8 +381,21 @@ export class ToolExecutionComponent extends Container {
 				const remaining = lines.length - maxLines;
 
 				const coloredLines = displayLines.map((line: string) => {
+					if (
+						line.startsWith("*** Begin Patch") ||
+						line.startsWith("*** End Patch") ||
+						line.startsWith("*** End of File")
+					) {
+						return theme.fg("toolDiffContext", line);
+					}
+					if (line.startsWith("*** Add File:")) {
+						return theme.fg("toolDiffAdded", line);
+					}
 					if (line.startsWith("*** Delete File:")) {
 						return theme.fg("toolDiffRemoved", line);
+					}
+					if (line.startsWith("*** Update File:") || line.startsWith("*** Move to:")) {
+						return theme.fg("toolDiffContext", line);
 					}
 					if (line.startsWith("+")) {
 						return theme.fg("toolDiffAdded", line);
