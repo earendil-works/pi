@@ -75,7 +75,10 @@ export class TUI extends Container {
 	private previousWidth = 0;
 	private focusedComponent: Component | null = null;
 	private renderRequested = false;
-	private cursorRow = 0; // Track where cursor is (0-indexed, relative to our first line)
+	private cursorRow = 0; // Logical cursor row (end of rendered content)
+	private hardwareCursorRow = 0; // Actual terminal cursor row after last write
+	private maxLinesRendered = 0; // Max number of lines ever rendered (working area)
+	private previousViewportTop = 0; // Previous viewport top (0-indexed, in content-space)
 
 	constructor(terminal: Terminal) {
 		super();
@@ -96,6 +99,20 @@ export class TUI extends Container {
 	}
 
 	stop(): void {
+		// Try to move the cursor below our rendered content so the shell prompt
+		// doesn't overwrite UI content on exit.
+		if (this.previousLines.length > 0) {
+			const targetRow = this.previousLines.length; // line after last content
+			const lineDiff = targetRow - this.hardwareCursorRow;
+			if (lineDiff > 0) {
+				// Use real newlines so the terminal scrolls if needed.
+				this.terminal.write("\r\n".repeat(lineDiff));
+			} else if (lineDiff < 0) {
+				this.terminal.write(`\x1b[${-lineDiff}A\r\n`);
+			} else {
+				this.terminal.write("\r\n");
+			}
+		}
 		this.terminal.showCursor();
 		this.terminal.stop();
 	}
@@ -128,40 +145,44 @@ export class TUI extends Container {
 		// Width changed - need full re-render
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
 
-		// First render - just output everything without clearing
-		if (this.previousLines.length === 0) {
+		const fullRender = (clear: boolean): void => {
 			let buffer = "\x1b[?2026h"; // Begin synchronized output
+			if (clear) {
+				buffer += "\x1b[3J\x1b[2J\x1b[H"; // Clear scrollback, screen, and home
+			}
 			for (let i = 0; i < newLines.length; i++) {
 				if (i > 0) buffer += "\r\n";
 				buffer += newLines[i];
 			}
 			buffer += "\x1b[?2026l"; // End synchronized output
 			this.terminal.write(buffer);
-			// After rendering N lines, cursor is at end of last line (line N-1)
-			this.cursorRow = newLines.length - 1;
+
+			this.cursorRow = Math.max(0, newLines.length - 1);
+			this.hardwareCursorRow = this.cursorRow;
+
+			// Reset working area on clear, otherwise track growth.
+			this.maxLinesRendered = clear ? newLines.length : Math.max(this.maxLinesRendered, newLines.length);
+			this.previousViewportTop = Math.max(0, this.maxLinesRendered - height);
+
 			this.previousLines = newLines;
 			this.previousWidth = width;
+		};
+
+		// First render - just output everything without clearing (assumes clean screen)
+		if (this.previousLines.length === 0 && !widthChanged) {
+			fullRender(false);
 			return;
 		}
 
 		// Width changed - full re-render
 		if (widthChanged) {
-			let buffer = "\x1b[?2026h"; // Begin synchronized output
-			buffer += "\x1b[3J\x1b[2J\x1b[H"; // Clear scrollback, screen, and home
-			for (let i = 0; i < newLines.length; i++) {
-				if (i > 0) buffer += "\r\n";
-				buffer += newLines[i];
-			}
-			buffer += "\x1b[?2026l"; // End synchronized output
-			this.terminal.write(buffer);
-			this.cursorRow = newLines.length - 1;
-			this.previousLines = newLines;
-			this.previousWidth = width;
+			fullRender(true);
 			return;
 		}
 
 		// Find first and last changed lines
 		let firstChanged = -1;
+		let lastChanged = -1;
 		const maxLines = Math.max(newLines.length, this.previousLines.length);
 		for (let i = 0; i < maxLines; i++) {
 			const oldLine = i < this.previousLines.length ? this.previousLines[i] : "";
@@ -171,7 +192,16 @@ export class TUI extends Container {
 				if (firstChanged === -1) {
 					firstChanged = i;
 				}
+				lastChanged = i;
 			}
+		}
+
+		const appendedLines = newLines.length > this.previousLines.length;
+		if (appendedLines) {
+			if (firstChanged === -1) {
+				firstChanged = this.previousLines.length;
+			}
+			lastChanged = newLines.length - 1;
 		}
 
 		// No changes
@@ -179,42 +209,68 @@ export class TUI extends Container {
 			return;
 		}
 
-		// Special case: appended lines must be committed to scrollback.
-		// Terminals generally do NOT scroll when you "move down" with cursor controls.
-		// They scroll when you actually output newlines at the bottom.
-		const appendedLines = newLines.length > this.previousLines.length;
-		const appendStart = appendedLines && firstChanged === this.previousLines.length && firstChanged > 0;
-
-		// Check if firstChanged is outside the viewport
-		// cursorRow is the line where cursor is (0-indexed)
-		// Viewport shows lines from (cursorRow - height + 1) to cursorRow
-		// If firstChanged < viewportTop, we need full re-render
-		const viewportTop = this.cursorRow - height + 1;
-		if (firstChanged < viewportTop) {
-			// First change is above viewport - need full re-render
-			let buffer = "\x1b[?2026h"; // Begin synchronized output
-			buffer += "\x1b[3J\x1b[2J\x1b[H"; // Clear scrollback, screen, and home
-			for (let i = 0; i < newLines.length; i++) {
-				if (i > 0) buffer += "\r\n";
-				buffer += newLines[i];
-			}
-			buffer += "\x1b[?2026l"; // End synchronized output
-			this.terminal.write(buffer);
-			this.cursorRow = newLines.length - 1;
-			this.previousLines = newLines;
-			this.previousWidth = width;
+		// If content shrunk, do a full redraw to avoid leaving stale lines on screen.
+		// (This is rare in normal streaming workloads and keeps the implementation safe.)
+		if (this.previousLines.length > newLines.length) {
+			fullRender(true);
 			return;
 		}
 
-		// Render from first changed line to end
-		// Build buffer with all updates wrapped in synchronized output
+		// All changes are in deleted lines. For correctness (and simplicity), do a full redraw.
+		if (firstChanged >= newLines.length) {
+			fullRender(true);
+			return;
+		}
+
+		// Special case: appended lines must be committed to scrollback.
+		// Terminals generally do NOT scroll when you "move down" with cursor controls.
+		// They scroll when you actually output newlines at the bottom.
+		const appendStart = appendedLines && firstChanged === this.previousLines.length && firstChanged > 0;
+
+		// Check if firstChanged is above what was previously visible.
+		// We use previousLines.length here (not maxLinesRendered) to avoid false positives after shrink.
+		const previousContentViewportTop = Math.max(0, this.previousLines.length - height);
+		if (firstChanged < previousContentViewportTop) {
+			// First change is above viewport - need full re-render
+			fullRender(true);
+			return;
+		}
+
+		// Render only the changed range (firstChanged..lastChanged), not all lines to end.
 		let buffer = "\x1b[?2026h"; // Begin synchronized output
 
-		// Move cursor to first changed line.
-		// If we're appending at the end, move to the last existing line and emit a newline
-		// so the terminal scrolls and the new content is added below.
+		let prevViewportTop = this.previousViewportTop;
+		let hardwareCursorRow = this.hardwareCursorRow;
+
+		const workingHeight = Math.max(this.maxLinesRendered, this.previousLines.length, newLines.length);
+		let viewportTop = Math.max(0, workingHeight - height);
+
 		const moveTargetRow = appendStart ? firstChanged - 1 : firstChanged;
-		const lineDiff = moveTargetRow - this.cursorRow;
+
+		// If the target is below the currently visible viewport bottom, scroll by emitting newlines.
+		// This is necessary because cursor-down escape sequences generally do not scroll.
+		const prevViewportBottom = prevViewportTop + height - 1;
+		if (moveTargetRow > prevViewportBottom) {
+			const currentScreenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - prevViewportTop));
+			const moveToBottom = height - 1 - currentScreenRow;
+			if (moveToBottom > 0) {
+				buffer += `\x1b[${moveToBottom}B`;
+			}
+
+			const scroll = moveTargetRow - prevViewportBottom;
+			buffer += "\r\n".repeat(scroll);
+			prevViewportTop += scroll;
+			viewportTop += scroll;
+			hardwareCursorRow = moveTargetRow;
+		}
+
+		const computeLineDiff = (targetRow: number): number => {
+			const currentScreenRow = Math.max(0, Math.min(height - 1, hardwareCursorRow - prevViewportTop));
+			const targetScreenRow = Math.max(0, Math.min(height - 1, targetRow - prevViewportTop));
+			return targetScreenRow - currentScreenRow;
+		};
+
+		const lineDiff = computeLineDiff(moveTargetRow);
 		if (lineDiff > 0) {
 			buffer += `\x1b[${lineDiff}B`; // Move down
 		} else if (lineDiff < 0) {
@@ -223,10 +279,14 @@ export class TUI extends Container {
 
 		buffer += appendStart ? "\r\n" : "\r"; // Move to column 0 (and scroll if appending)
 
-		// Render from first changed line to end, clearing each line before writing
+		const renderEnd = Math.min(lastChanged, newLines.length - 1);
+
+		// Render changed lines, clearing each line before writing.
 		// This avoids the \x1b[J clear-to-end which can cause flicker in xterm.js
-		for (let i = firstChanged; i < newLines.length; i++) {
-			if (i > firstChanged) buffer += "\r\n";
+		for (let i = firstChanged; i <= renderEnd; i++) {
+			if (i > firstChanged) {
+				buffer += "\r\n";
+			}
 			buffer += "\x1b[2K"; // Clear current line
 			if (visibleWidth(newLines[i]) > width) {
 				throw new Error(`Rendered line ${i} exceeds terminal width\n\n${newLines[i]}`);
@@ -234,24 +294,16 @@ export class TUI extends Container {
 			buffer += newLines[i];
 		}
 
-		// If we had more lines before, clear them and move cursor back
-		if (this.previousLines.length > newLines.length) {
-			const extraLines = this.previousLines.length - newLines.length;
-			for (let i = newLines.length; i < this.previousLines.length; i++) {
-				buffer += "\r\n\x1b[2K";
-			}
-			// Move cursor back to end of new content
-			buffer += `\x1b[${extraLines}A`;
-		}
-
 		buffer += "\x1b[?2026l"; // End synchronized output
 
 		// Write entire buffer at once
 		this.terminal.write(buffer);
 
-		// Cursor is now at end of last line
-		this.cursorRow = newLines.length - 1;
-
+		// Track cursor positions for next render.
+		this.cursorRow = Math.max(0, newLines.length - 1);
+		this.hardwareCursorRow = renderEnd;
+		this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
+		this.previousViewportTop = Math.max(0, this.maxLinesRendered - height);
 		this.previousLines = newLines;
 		this.previousWidth = width;
 	}
