@@ -4,7 +4,6 @@ export { applyPatchTool } from "./apply-patch.js";
 export { bashTool } from "./bash.js";
 export { editTool } from "./edit.js";
 export { execCommandTool } from "./exec-command.js";
-export { fetchTool } from "./fetch.js";
 export { globTool } from "./glob.js";
 export { grepTool } from "./grep.js";
 export { handoffTool } from "./handoff.js";
@@ -16,14 +15,12 @@ export { todoTool } from "./todo.js";
 export { todowriteTool } from "./todowrite.js";
 export { updatePlanTool } from "./update-plan.js";
 export { viewImageTool } from "./view-image.js";
-export { webSearchTool } from "./web-search.js";
 export { writeTool } from "./write.js";
 
 import { applyPatchTool } from "./apply-patch.js";
 import { bashTool } from "./bash.js";
 import { editTool } from "./edit.js";
 import { execCommandTool } from "./exec-command.js";
-import { fetchTool } from "./fetch.js";
 import { globTool } from "./glob.js";
 import { grepTool } from "./grep.js";
 import { handoffTool } from "./handoff.js";
@@ -35,7 +32,6 @@ import { todoTool } from "./todo.js";
 import { todowriteTool } from "./todowrite.js";
 import { updatePlanTool } from "./update-plan.js";
 import { viewImageTool } from "./view-image.js";
-import { webSearchTool } from "./web-search.js";
 import { writeTool } from "./write.js";
 
 // Default tools for full access mode
@@ -71,8 +67,6 @@ export const allTools = {
 	exec_command: execCommandTool,
 	view_image: viewImageTool,
 	update_plan: updatePlanTool,
-	web_search: webSearchTool,
-	fetch: fetchTool,
 };
 
 export type ToolName = keyof typeof allTools;

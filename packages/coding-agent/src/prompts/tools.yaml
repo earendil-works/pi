@@ -170,23 +170,6 @@ read_thread: |
   
   Tool calls (bash, read, write, etc.) are visible by default. Use 'detailed: false' for clean transcripts without tool output.
 
-
-web_search: |
-  Loose wrapper around the `websearch` CLI (Brave Search).
-
-  This tool simply forwards your parameters to the underlying CLI and returns the CLI's stdout.
-
-  Notes:
-  - Uses `websearch query ...`
-  - Requires the Brave API key to be configured for the websearch CLI (env/config)
-
-fetch: |
-  Loose wrapper around the `webfetch` CLI.
-
-  This tool forwards your parameters to the underlying CLI and returns the CLI's stdout as the fetched content.
-  The `webfetch` CLI prints metadata (including pagination via `next=<n>`) on stderr; the tool parses `next=`
-  and exposes it via `details.nextStart` (the next `--start-index` to continue from).
-
 todo_write: |
   Create and manage a structured task list for multi-step work.
 

@@ -24,8 +24,6 @@ toolDescriptions:
   edit: Edit files with flexible matching (exact, unescape, whitespace-tolerant)
   apply_patch: Apply patch edits to files
   write: Create or overwrite files
-  web_search: Search the web (websearch CLI wrapper)
-  fetch: Fetch a URL (webfetch CLI wrapper)
   grep: Search file contents for patterns (respects .gitignore)
   glob: Find files by glob pattern or list directory (respects .gitignore)
   list_threads: List past conversation threads with search

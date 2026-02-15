@@ -12,8 +12,6 @@ export const DEFAULT_TOOL_NAMES: ToolName[] = [
 	"read_image",
 	"todo",
 	"handoff",
-	"web_search",
-	"fetch",
 ];
 
 const GPT_DEFAULT_TOOL_NAMES: ToolName[] = [
@@ -29,13 +27,12 @@ const GPT_DEFAULT_TOOL_NAMES: ToolName[] = [
 ];
 
 const GPT_STAR_TOOL_NAMES: ToolName[] = [
+	"read",
 	"exec_command",
 	"read_image",
 	"handoff",
 	"list_threads",
 	"read_thread",
-	"web_search",
-	"fetch",
 ];
 
 export interface ToolSelection {
