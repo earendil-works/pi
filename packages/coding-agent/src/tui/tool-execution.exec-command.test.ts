@@ -24,6 +24,18 @@ describe("ToolExecutionComponent exec_command rendering", () => {
 		expect(text).not.toContain('"workdir"');
 	});
 
+	it("shows multi-line commands (not truncated to the first line)", () => {
+		const component = new ToolExecutionComponent("exec_command", {
+			cmd: ["websearch --batch \\\\", "  Query: one", "  Query: two", "  --limit 5"].join("\n"),
+		});
+
+		const text = renderText(component, 120);
+		expect(text).toContain("websearch --batch");
+		expect(text).toContain("Query: one");
+		expect(text).toContain("Query: two");
+		expect(text).toContain("--limit 5");
+	});
+
 	it("normalizes legacy tool names to snake_case", () => {
 		const component = new ToolExecutionComponent("Exec", {
 			cmd: "echo hi",

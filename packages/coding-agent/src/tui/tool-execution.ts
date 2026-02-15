@@ -1,5 +1,5 @@
 import * as os from "node:os";
-import { Container, Spacer, Text, TruncatedText } from "@kennyfrc/mu-tui";
+import { Container, Spacer, Text } from "@kennyfrc/mu-tui";
 import stripAnsi from "strip-ansi";
 import { theme } from "../theme/theme.js";
 import { type ApplyPatchParseResult, parseApplyPatchInput } from "../tools/apply-patch/parse.js";
@@ -251,14 +251,42 @@ export class ToolExecutionComponent extends Container {
 			const cmd = typeof args.cmd === "string" ? args.cmd : "";
 			const workdir = typeof args.workdir === "string" ? args.workdir : "";
 
-			// Render a single-line, truncated header (avoid JSON args dumps)
 			const contentWidth = Math.max(1, width - 2); // contentText has paddingX=1
-			const cmdDisplay = cmd?.trim() ? cmd.trim() : theme.fg("toolOutput", "...");
+
+			// Preserve the first line in the header (so we always show the "shape" of the command),
+			// and render the remaining lines below. This avoids truncating multi-line commands to
+			// a single line (previous TruncatedText behavior).
+			const normalizedCmd = stripAnsi(cmd).replace(/\r/g, "").trimEnd();
+			const cmdLines = normalizedCmd ? normalizedCmd.split("\n") : [];
+			const firstLine = cmdLines[0]?.trim() ? cmdLines[0]!.trimEnd() : "";
+			const remainingCmd = cmdLines.length > 1 ? cmdLines.slice(1).join("\n") : "";
+
 			const workdirSuffix = workdir?.trim() ? theme.fg("muted", ` (in ${shortenPath(workdir.trim())})`) : "";
-			const header =
-				theme.fg("toolTitle", theme.bold("exec_command")) + " " + theme.fg("accent", cmdDisplay) + workdirSuffix;
-			const headerLine = new TruncatedText(header, 0, 0).render(contentWidth)[0] ?? header;
-			text = headerLine;
+			const headerCmd = firstLine ? theme.fg("accent", firstLine) : theme.fg("toolOutput", "...");
+			text = theme.fg("toolTitle", theme.bold("exec_command")) + " " + headerCmd + workdirSuffix;
+
+			if (remainingCmd.trim()) {
+				const styledRemainingCmd = remainingCmd
+					.split("\n")
+					.map((line: string) => theme.fg("accent", line))
+					.join("\n");
+
+				if (this.expanded) {
+					text += "\n\n" + styledRemainingCmd;
+				} else {
+					const maxVisualLines = 8;
+					const result = truncateToVisualLines(styledRemainingCmd, maxVisualLines, contentWidth, 0);
+					const previewLines = result.visualLines;
+
+					text += "\n\n";
+					if (result.skippedCount > 0) {
+						const hint = `... (${result.skippedCount} earlier lines · ctrl+o to expand)`;
+						const hintLine = new Text(theme.fg("muted", hint), 0, 0).render(contentWidth)[0] ?? "";
+						text += hintLine + "\n";
+					}
+					text += previewLines.join("\n");
+				}
+			}
 
 			// Use final result if available, otherwise show streaming partial output
 			let output = "";
@@ -283,8 +311,8 @@ export class ToolExecutionComponent extends Container {
 
 					text += "\n\n";
 					if (result.skippedCount > 0) {
-						const hint = theme.fg("muted", `... (${result.skippedCount} earlier lines · ctrl+o to expand)`);
-						const hintLine = new TruncatedText(hint, 0, 0).render(contentWidth)[0] ?? "";
+						const hint = `... (${result.skippedCount} earlier lines · ctrl+o to expand)`;
+						const hintLine = new Text(theme.fg("muted", hint), 0, 0).render(contentWidth)[0] ?? "";
 						text += hintLine + "\n";
 					}
 					text += previewLines.join("\n");
