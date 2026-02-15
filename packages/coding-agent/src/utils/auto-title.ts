@@ -39,7 +39,8 @@ export async function generateTitle(state: AgentState): Promise<string | null> {
 		} as Message;
 	});
 
-	// Select model: prefer Haiku 4.5 for Anthropic providers, otherwise use current model
+	// Select model: prefer Haiku 4.5 for Anthropic providers, otherwise use the current model.
+	// For OpenAI Codex, prefer the lightweight Spark model for speed and consistency.
 	let titleModel: Model<Api> = currentModel;
 	if (currentModel.provider === "anthropic") {
 		// Prefer lightweight models for titling
@@ -50,12 +51,21 @@ export async function generateTitle(state: AgentState): Promise<string | null> {
 		else if (haiku35.model) titleModel = haiku35.model;
 	}
 
+	if (currentModel.provider === "openai-codex") {
+		const spark = findModel("openai-codex", "gpt-5.3-codex-spark");
+		if (spark.model) titleModel = spark.model;
+	}
+
 	// Get API key
 	const apiKey = await getApiKeyForModel(titleModel);
 	if (!apiKey) return null; // Fail silently if no key for specific model
 
 	// Build the prompt with XML protocol
 	const systemPrompt = `You are a title generator. Generate a concise title (max 60 chars) for conversations.
+
+CRITICAL CONSTRAINTS:
+- You are running in a restricted sandbox with NO access to tools, files, or external resources.
+- You can ONLY output text.
 
 PROTOCOL: You MUST respond with ONLY this XML format, nothing else:
 <title>Your Title Here</title>
