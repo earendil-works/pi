@@ -32,12 +32,13 @@ describe("GPT tools", () => {
 		const selection = resolveToolSelection(undefined, model);
 
 		expect(selection.toolNames).toEqual([
-			"read",
 			"exec_command",
 			"read_image",
 			"handoff",
 			"list_threads",
 			"read_thread",
+			"web_search",
+			"fetch",
 		]);
 		expect(selection.tools.map((t) => t.name)).toEqual(selection.toolNames);
 	});
