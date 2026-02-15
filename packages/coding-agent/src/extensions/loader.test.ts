@@ -68,4 +68,58 @@ export default function (mu) {
 		extra = tools.find((t) => t.name === "extra");
 		expect(extra?.label).toBe("extra-v2");
 	});
+
+	it("prefers TypeScript extension file when both .ts and .js exist", async () => {
+		const projectDir = await mkdtemp(join(tmpdir(), "mu-ext-project-dupe-"));
+		const extDir = join(projectDir, ".mu", "extensions");
+		await mkdir(extDir, { recursive: true });
+
+		const tsPath = join(extDir, "web-tools.ts");
+		const jsPath = join(extDir, "web-tools.js");
+
+		const tsExt = `
+import { Type } from "@sinclair/typebox";
+
+export default function (mu) {
+  mu.registerTool({
+    label: "web_search-ts",
+    name: "web_search",
+    description: "ts",
+    parameters: Type.Object({}),
+    async execute() {
+      return { content: [{ type: "text", text: "ts" }], details: { source: "ts" } };
+    }
+  });
+}
+`;
+		const jsExt = `
+import { Type } from "@sinclair/typebox";
+
+export default function (mu) {
+  mu.registerTool({
+    label: "web_search-js",
+    name: "web_search",
+    description: "js",
+    parameters: Type.Object({}),
+    async execute() {
+      return { content: [{ type: "text", text: "js" }], details: { source: "js" } };
+    }
+  });
+}
+`;
+
+		await writeFile(tsPath, tsExt, "utf8");
+		await writeFile(jsPath, jsExt, "utf8");
+
+		const mgr = new ExtensionManager({ builtInTools: makeBuiltIn() });
+		const loader = new ExtensionLoader(mgr, { projectDir, configDir: join(projectDir, "_config") });
+		const res = await loader.loadAll();
+
+		expect(res.length).toBe(1);
+		expect(res[0].ok).toBe(true);
+
+		const tools = mgr.getToolsForSelection(["bash"]);
+		const webSearch = tools.find((t) => t.name === "web_search");
+		expect(webSearch?.label).toBe("web_search-ts");
+	});
 });

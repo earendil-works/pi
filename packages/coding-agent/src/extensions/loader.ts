@@ -122,9 +122,32 @@ export class ExtensionLoader {
 			}
 		}
 
-		// Stable order: alphabetic by absolute path.
+		// Stable order with duplicate preference by basename:
+		// If both .ts and .js variants exist for the same relative path, keep TypeScript source only.
 		files.sort();
-		return files;
+
+		const extPriority = (path: string): number => {
+			const ext = extname(path).toLowerCase();
+			if (ext === ".ts" || ext === ".mts" || ext === ".cts") return 0;
+			if (ext === ".js" || ext === ".mjs" || ext === ".cjs") return 1;
+			return 2;
+		};
+
+		const stem = (path: string): string => {
+			const ext = extname(path);
+			return ext ? path.slice(0, -ext.length) : path;
+		};
+
+		const bestByStem = new Map<string, string>();
+		for (const file of files) {
+			const key = stem(file);
+			const prev = bestByStem.get(key);
+			if (!prev || extPriority(file) < extPriority(prev)) {
+				bestByStem.set(key, file);
+			}
+		}
+
+		return Array.from(bestByStem.values()).sort();
 	}
 
 	async loadAll(): Promise<ExtensionLoadResult[]> {
