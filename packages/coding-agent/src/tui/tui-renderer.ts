@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Agent, AgentEvent, AgentState, Attachment, ThinkingLevel } from "@kennyfrc/mu-agent-core";
-import type { AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@kennyfrc/mu-ai";
+import type { Api, AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@kennyfrc/mu-ai";
 import { complete, supportsXhigh } from "@kennyfrc/mu-ai";
 import type { SlashCommand } from "@kennyfrc/mu-tui";
 import {
@@ -44,7 +44,7 @@ import {
 	buildHandoffSummaryUserText,
 	HANDOFF_SUMMARY_SYSTEM_PROMPT,
 } from "../handoff-summary.js";
-import { getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
+import { findModel, getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
 import { playNotificationSound, sendNotification } from "../notification.js";
 import {
 	getActiveOAuthAccount,
@@ -3244,12 +3244,20 @@ export class TuiRenderer {
 			.join("");
 	}
 
+	private resolveHandoffLlmModel(model: Model<Api>): Model<Api> {
+		if (model.provider !== "openai-codex") return model;
+		const found = findModel("openai-codex", "gpt-5.3-codex-spark");
+		return found.model ?? model;
+	}
+
 	private async selectHandoffFiles(goal: string, signal: AbortSignal): Promise<string[]> {
 		const model = this.agent.state.model;
 		if (!model) throw new Error("No model selected");
 
-		const apiKey = await getApiKeyForModel(model);
-		if (!apiKey) throw new Error(`No API key for ${model.provider}`);
+		const handoffModel = this.resolveHandoffLlmModel(model as unknown as Model<Api>);
+
+		const apiKey = await getApiKeyForModel(handoffModel);
+		if (!apiKey) throw new Error(`No API key for ${handoffModel.provider}`);
 
 		const historyText = this.formatMessagesForHandoff(this.agent.state.messages);
 		const repoRoot = findRepoRoot(process.cwd()) ?? process.cwd();
@@ -3267,45 +3275,45 @@ export class TuiRenderer {
 		};
 
 		let result: AssistantMessage;
-		switch (model.api) {
+		switch (handoffModel.api) {
 			case "anthropic-messages":
-				result = await complete(model as Model<"anthropic-messages">, context, {
+				result = await complete(handoffModel as Model<"anthropic-messages">, context, {
 					apiKey,
 					signal,
 				});
 				break;
 			case "openai-completions":
-				result = await complete(model as Model<"openai-completions">, context, {
+				result = await complete(handoffModel as Model<"openai-completions">, context, {
 					apiKey,
 					signal,
 				});
 				break;
 			case "openai-responses":
-				result = await complete(model as Model<"openai-responses">, context, {
+				result = await complete(handoffModel as Model<"openai-responses">, context, {
 					apiKey,
 					signal,
 				});
 				break;
 			case "google-generative-ai":
-				result = await complete(model as Model<"google-generative-ai">, context, {
+				result = await complete(handoffModel as Model<"google-generative-ai">, context, {
 					apiKey,
 					signal,
 				});
 				break;
 			case "google-gemini-cli":
-				result = await complete(model as Model<"google-gemini-cli">, context, {
+				result = await complete(handoffModel as Model<"google-gemini-cli">, context, {
 					apiKey,
 					signal,
 				});
 				break;
 			case "openai-codex-responses":
-				result = await complete(model as Model<"openai-codex-responses">, context, { apiKey, signal });
+				result = await complete(handoffModel as Model<"openai-codex-responses">, context, { apiKey, signal });
 				break;
 			case "zai-completions":
-				result = await complete(model as Model<"zai-completions">, context, { apiKey, signal });
+				result = await complete(handoffModel as Model<"zai-completions">, context, { apiKey, signal });
 				break;
 			default: {
-				throw new Error(`Unsupported API for handoff file selection: ${String(model.api)}`);
+				throw new Error(`Unsupported API for handoff file selection: ${String(handoffModel.api)}`);
 			}
 		}
 
@@ -3340,8 +3348,9 @@ export class TuiRenderer {
 		const model = this.agent.state.model;
 		if (!model) throw new Error("No model selected");
 
-		const apiKey = await getApiKeyForModel(model);
-		if (!apiKey) throw new Error(`No API key for ${model.provider}`);
+		const handoffModel = this.resolveHandoffLlmModel(model as unknown as Model<Api>);
+		const apiKey = await getApiKeyForModel(handoffModel);
+		if (!apiKey) throw new Error(`No API key for ${handoffModel.provider}`);
 
 		const conversation = this.formatMessagesForHandoff(this.agent.state.messages);
 		const tracking = extractHandoffFileTracking(this.agent.state.messages);
@@ -3354,7 +3363,7 @@ export class TuiRenderer {
 		});
 
 		const result = await complete(
-			model,
+			handoffModel,
 			{
 				systemPrompt: HANDOFF_SUMMARY_SYSTEM_PROMPT,
 				messages: [
@@ -3364,7 +3373,6 @@ export class TuiRenderer {
 						timestamp: Date.now(),
 					},
 				],
-				tools: [],
 			},
 			{ apiKey, signal },
 		);
@@ -3489,14 +3497,15 @@ export class TuiRenderer {
 		const model = this.agent.state.model;
 		if (!model) throw new Error("No model selected");
 
-		const apiKey = await getApiKeyForModel(model);
-		if (!apiKey) throw new Error(`No API key for ${model.provider}`);
+		const handoffModel = this.resolveHandoffLlmModel(model as unknown as Model<Api>);
+		const apiKey = await getApiKeyForModel(handoffModel);
+		if (!apiKey) throw new Error(`No API key for ${handoffModel.provider}`);
 
 		const transcript = this.extractTailTranscript(8);
 		const systemPrompt = getAutoHandoffGoalPrompt();
 
 		const result = await complete(
-			model,
+			handoffModel,
 			{
 				systemPrompt,
 				messages: [
@@ -3506,7 +3515,6 @@ export class TuiRenderer {
 						timestamp: Date.now(),
 					},
 				],
-				tools: [],
 			},
 			{ apiKey, signal },
 		);
