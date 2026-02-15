@@ -15,7 +15,7 @@ export function loadThreadMessagesFromSessionFile(sessionPath: string): { messag
 		try {
 			const entry: unknown = JSON.parse(line);
 			if (!isObject(entry)) continue;
-			if (entry.type !== "message") continue;
+			if (entry.type !== "message" && entry.type !== "custom_message") continue;
 			if (!("message" in entry)) continue;
 
 			// Session JSONL is produced by our runtime, so we accept it as Message with a minimal structural check.
@@ -115,7 +115,7 @@ export function loadThreadMessagesTailFromSessionFile(
 			try {
 				const entry: unknown = JSON.parse(line);
 				if (!isObject(entry)) continue;
-				if (entry.type !== "message") continue;
+				if (entry.type !== "message" && entry.type !== "custom_message") continue;
 				if (!("message" in entry)) continue;
 
 				const rawMessage = (entry as { message: unknown }).message;

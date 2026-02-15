@@ -352,7 +352,7 @@ export class SessionIndex {
 						message?: { role: string; content: unknown };
 					};
 
-					if (entry.type === "message") {
+					if (entry.type === "message" || entry.type === "custom_message") {
 						messageCount++;
 						if (!firstMessage && entry.message?.role === "user") {
 							firstMessage = this.extractText(entry.message.content);
@@ -392,7 +392,7 @@ export class SessionIndex {
 			if (!line.trim()) continue;
 			try {
 				const entry = JSON.parse(line) as { type: string };
-				if (entry.type === "message") {
+				if (entry.type === "message" || entry.type === "custom_message") {
 					count++;
 				}
 			} catch {
@@ -418,7 +418,7 @@ export class SessionIndex {
 					message?: { role: string; content: unknown };
 				};
 
-				if (entry.type === "message") {
+				if (entry.type === "message" || entry.type === "custom_message") {
 					const role = entry.message?.role;
 					if (role === "user" || role === "assistant") {
 						texts.push(this.extractText(entry.message?.content));

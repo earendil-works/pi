@@ -44,6 +44,23 @@ export interface SessionMessageEntry {
 	message: any; // AppMessage from agent state
 }
 
+export interface SessionCustomEntry {
+	type: "custom";
+	timestamp: string;
+	customType: string;
+	data: unknown;
+}
+
+export type SessionCustomMessageDisplay = "visible" | "hidden";
+
+export interface SessionCustomMessageEntry {
+	type: "custom_message";
+	timestamp: string;
+	customType: string;
+	message: unknown; // AppMessage from agent state
+	display?: SessionCustomMessageDisplay;
+}
+
 export interface ThinkingLevelChangeEntry {
 	type: "thinking_level_change";
 	timestamp: string;
@@ -229,6 +246,43 @@ export class SessionManager {
 		}
 	}
 
+	appendCustomEntry(customType: string, data: unknown): void {
+		if (!this.enabled) return;
+		const entry: SessionCustomEntry = {
+			type: "custom",
+			timestamp: new Date().toISOString(),
+			customType,
+			data,
+		};
+
+		if (!this.sessionInitialized) {
+			this.pendingMessages.push(entry);
+		} else {
+			appendFileSync(this.sessionFile, JSON.stringify(entry) + "\n");
+		}
+	}
+
+	appendCustomMessage(
+		customType: string,
+		message: unknown,
+		options?: { display?: SessionCustomMessageDisplay },
+	): void {
+		if (!this.enabled) return;
+		const entry: SessionCustomMessageEntry = {
+			type: "custom_message",
+			timestamp: new Date().toISOString(),
+			customType,
+			message,
+			display: options?.display,
+		};
+
+		if (!this.sessionInitialized) {
+			this.pendingMessages.push(entry);
+		} else {
+			appendFileSync(this.sessionFile, JSON.stringify(entry) + "\n");
+		}
+	}
+
 	saveThinkingLevelChange(thinkingLevel: string): void {
 		if (!this.enabled) return;
 		const entry: ThinkingLevelChangeEntry = {
@@ -275,8 +329,9 @@ export class SessionManager {
 		for (const line of lines) {
 			try {
 				const entry = JSON.parse(line);
-				if (entry.type === "message") {
-					messages.push(entry.message);
+				if (entry.type === "message" || entry.type === "custom_message") {
+					// Both entry types contain an AppMessage payload in `message`.
+					messages.push(entry.message as { role: string; content: unknown });
 				}
 			} catch {
 				// Skip malformed lines
@@ -483,12 +538,22 @@ export class SessionManager {
 			const output: string[] = [];
 			const messages: Array<{ role: string; content: unknown }> = [];
 
+			const isMessageLike = (value: unknown): value is { role: string; content: unknown } => {
+				if (!value || typeof value !== "object") return false;
+				const v = value as Record<string, unknown>;
+				return typeof v.role === "string" && "content" in v;
+			};
+
 			// 1. Parse all message entries
 			for (const line of lines) {
 				try {
 					const entry = JSON.parse(line);
-					if (entry.type === "message") {
-						messages.push(entry.message);
+					if (entry.type === "message" || entry.type === "custom_message") {
+						// Both entry types contain an AppMessage payload in `message`.
+						const message = (entry as { message?: unknown }).message;
+						if (isMessageLike(message)) {
+							messages.push(message);
+						}
 					}
 				} catch {
 					// Skip malformed lines
@@ -683,7 +748,7 @@ export class SessionManager {
 							}
 
 							// Count messages and collect all text
-							if (entry.type === "message") {
+							if (entry.type === "message" || entry.type === "custom_message") {
 								messageCount++;
 
 								// Extract text from user and assistant messages
@@ -918,6 +983,51 @@ export class SessionManager {
 		let remainder = "";
 		let messageCount = 0;
 
+		const append = (entry: unknown): void => {
+			appendFileSync(destFile, JSON.stringify(entry) + "\n");
+		};
+
+		const copyEntry = (entry: unknown): boolean => {
+			if (messageCount > maxMessageIndex) return true;
+			if (typeof entry !== "object" || entry === null) return false;
+			const rec = entry as Record<string, unknown>;
+			const type = rec.type;
+
+			if (type === "custom") {
+				append({
+					type: "custom",
+					timestamp: new Date().toISOString(),
+					customType: typeof rec.customType === "string" ? rec.customType : "unknown",
+					data: rec.data,
+				} satisfies SessionCustomEntry);
+				return false;
+			}
+
+			if (type === "message") {
+				append({
+					type: "message",
+					timestamp: new Date().toISOString(),
+					message: rec.message,
+				} satisfies SessionMessageEntry);
+				messageCount++;
+				return messageCount > maxMessageIndex;
+			}
+
+			if (type === "custom_message") {
+				append({
+					type: "custom_message",
+					timestamp: new Date().toISOString(),
+					customType: typeof rec.customType === "string" ? rec.customType : "unknown",
+					message: rec.message,
+					display: rec.display === "hidden" || rec.display === "visible" ? rec.display : undefined,
+				} satisfies SessionCustomMessageEntry);
+				messageCount++;
+				return messageCount > maxMessageIndex;
+			}
+
+			return false;
+		};
+
 		try {
 			for (;;) {
 				const bytesRead = readSync(fd, buffer, 0, CHUNK_SIZE, null);
@@ -934,17 +1044,8 @@ export class SessionManager {
 				for (const line of lines) {
 					if (!line.trim()) continue;
 					try {
-						const entry = JSON.parse(line);
-						if (entry.type === "message") {
-							if (messageCount > maxMessageIndex) return;
-							const messageEntry: SessionMessageEntry = {
-								type: "message",
-								timestamp: new Date().toISOString(),
-								message: entry.message,
-							};
-							appendFileSync(destFile, JSON.stringify(messageEntry) + "\n");
-							messageCount++;
-						}
+						const entry: unknown = JSON.parse(line);
+						if (copyEntry(entry)) return;
 					} catch {
 						// Skip malformed lines
 					}
@@ -955,15 +1056,8 @@ export class SessionManager {
 
 			if (remainder.trim() && messageCount <= maxMessageIndex) {
 				try {
-					const entry = JSON.parse(remainder);
-					if (entry.type === "message") {
-						const messageEntry: SessionMessageEntry = {
-							type: "message",
-							timestamp: new Date().toISOString(),
-							message: entry.message,
-						};
-						appendFileSync(destFile, JSON.stringify(messageEntry) + "\n");
-					}
+					const entry: unknown = JSON.parse(remainder);
+					copyEntry(entry);
 				} catch {
 					// Skip malformed line
 				}

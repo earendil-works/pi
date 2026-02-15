@@ -11,7 +11,7 @@ export interface JsonlChunkResult<T> {
 }
 
 interface SessionMessageEntry {
-	type: "message";
+	type: "message" | "custom_message";
 	message: unknown;
 }
 
@@ -57,7 +57,7 @@ export function consumeJsonlChunk(state: JsonlFollowState, chunk: string): Jsonl
 
 function isSessionMessageEntry(entry: unknown): entry is SessionMessageEntry {
 	if (!isRecord(entry)) return false;
-	if (entry.type !== "message") return false;
+	if (entry.type !== "message" && entry.type !== "custom_message") return false;
 	return "message" in entry;
 }
 

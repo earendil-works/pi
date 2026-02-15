@@ -456,7 +456,7 @@ export function exportSessionToHtml(sessionManager: SessionManager, state: Agent
 					const modelInfo = entry.provider ? `${entry.provider}/${entry.modelId}` : entry.modelId;
 					modelsUsed.add(modelInfo);
 				}
-			} else if (entry.type === "message") {
+			} else if (entry.type === "message" || entry.type === "custom_message") {
 				messages.push(entry.message);
 				sessionEvents.push(entry);
 				// Build map of tool call ID to result
@@ -1037,7 +1037,7 @@ function parseSessionManagerFormat(lines: string[]): ParsedSessionData {
 					const modelInfo = entry.provider ? `${entry.provider}/${entry.modelId}` : entry.modelId;
 					data.modelsUsed.add(modelInfo);
 				}
-			} else if (entry.type === "message") {
+			} else if (entry.type === "message" || entry.type === "custom_message") {
 				data.messages.push(entry.message);
 				data.sessionEvents.push(entry);
 				if (entry.message.role === "toolResult") {
