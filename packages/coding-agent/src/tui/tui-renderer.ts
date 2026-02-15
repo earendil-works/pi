@@ -34,6 +34,9 @@ import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
 import { scheduleExplicitHandoff, submitExplicitHandoff } from "../explicit-handoff.js";
 import { exportSessionToHtml } from "../export-html.js";
+import type { ExtensionLoader } from "../extensions/loader.js";
+import type { ExtensionManager } from "../extensions/manager.js";
+import type { ExtensionCommandContext, ExtensionCommandPrintColor } from "../extensions/types.js";
 import { parseHandoffFileSelections } from "../handoff-file-selection.js";
 import { extractHandoffFileTracking } from "../handoff-file-tracking.js";
 import { normalizeAutoHandoffGoal } from "../handoff-goal.js";
@@ -165,7 +168,13 @@ export class TuiRenderer {
 	private agent: Agent;
 	private sessionManager: SessionManager;
 	private settingsManager: SettingsManager;
+	private extensionManager: ExtensionManager;
+	private extensionLoader: ExtensionLoader;
 	private autoHandoffMode: AutoHandoffMode;
+
+	// Slash command autocomplete state
+	private builtInSlashCommands: SlashCommand[] = [];
+	private fdPath: string | null = null;
 
 	// Type-safe wrappers for Agent methods that TypeScript can't resolve
 	private updateQueuedMessage(
@@ -277,6 +286,8 @@ export class TuiRenderer {
 		agent: Agent,
 		sessionManager: SessionManager,
 		settingsManager: SettingsManager,
+		extensionManager: ExtensionManager,
+		extensionLoader: ExtensionLoader,
 		version: string,
 		changelogMarkdown: string | null = null,
 		newVersion: string | null = null,
@@ -288,6 +299,8 @@ export class TuiRenderer {
 		this.agent = agent;
 		this.sessionManager = sessionManager;
 		this.settingsManager = settingsManager;
+		this.extensionManager = extensionManager;
+		this.extensionLoader = extensionLoader;
 		this.autoHandoffMode = settingsManager.getAutoHandoffMode();
 
 		// Set up tool result transformer for handoff nudge injection
@@ -417,33 +430,58 @@ export class TuiRenderer {
 			description: "Toggle auto-handoff when context is high",
 		};
 
-		// Setup autocomplete for file paths and slash commands
+		const reloadCommand: SlashCommand = {
+			name: "reload",
+			description: "Reload extensions from disk",
+		};
+
+		this.builtInSlashCommands = [
+			autoHandoffCommand,
+			branchCommand,
+			changelogCommand,
+			clearCommand,
+			copyCommand,
+			exportCommand,
+			handoffCommand,
+			subscribeCommand,
+			unsubscribeCommand,
+			loginCommand,
+			logoutCommand,
+			modelCommand,
+			newCommand,
+			notifyCommand,
+			queueCommand,
+			reloadCommand,
+			sessionCommand,
+			steerCommand,
+			themeCommand,
+			thinkingCommand,
+			todosCommand,
+			undoCommand,
+		];
+
+		this.fdPath = fdPath;
+		this.refreshAutocompleteProvider();
+	}
+
+	private refreshAutocompleteProvider(): void {
+		const builtInNames = new Set(this.builtInSlashCommands.map((c) => c.name));
+
+		const extensionCommands = this.extensionManager
+			.listCommands()
+			.filter((cmd) => !builtInNames.has(cmd.name))
+			.map(
+				(cmd): SlashCommand => ({
+					name: cmd.name,
+					description: cmd.description,
+					getArgumentCompletions: cmd.getArgumentCompletions,
+				}),
+			);
+
 		const autocompleteProvider = new CombinedAutocompleteProvider(
-			[
-				autoHandoffCommand,
-				branchCommand,
-				changelogCommand,
-				clearCommand,
-				copyCommand,
-				exportCommand,
-				handoffCommand,
-				subscribeCommand,
-				unsubscribeCommand,
-				loginCommand,
-				logoutCommand,
-				modelCommand,
-				newCommand,
-				notifyCommand,
-				queueCommand,
-				steerCommand,
-				sessionCommand,
-				themeCommand,
-				thinkingCommand,
-				todosCommand,
-				undoCommand,
-			],
+			[...this.builtInSlashCommands, ...extensionCommands],
 			process.cwd(),
-			fdPath,
+			this.fdPath,
 		);
 		this.editor.setAutocompleteProvider(autocompleteProvider);
 	}
@@ -631,7 +669,7 @@ export class TuiRenderer {
 
 		// Handle editor submission
 		this.editor.onSubmit = async (text: string) => {
-			const rawText = text.trim();
+			let rawText = text.trim();
 
 			// Reset history navigation state on any submission
 			this.historyIndex = -1;
@@ -667,6 +705,20 @@ export class TuiRenderer {
 			}
 
 			if (!rawText) return;
+
+			// Extensions: input hooks (transform or handled)
+			const extensionInput = await this.extensionManager.applyInputHooks(rawText);
+			if (extensionInput.handled) {
+				this.editor.setText("");
+				this.ui.requestRender();
+				return;
+			}
+			rawText = extensionInput.text.trim();
+			if (!rawText) {
+				this.editor.setText("");
+				this.ui.requestRender();
+				return;
+			}
 
 			// Check for /thinking command
 			if (rawText === "/thinking") {
@@ -709,6 +761,13 @@ export class TuiRenderer {
 			if (rawText === "/changelog") {
 				this.handleChangelogCommand();
 				this.editor.setText("");
+				return;
+			}
+
+			// Check for /reload command
+			if (rawText === "/reload") {
+				this.editor.setText(""); // Clear before async operation
+				await this.handleReloadCommand();
 				return;
 			}
 
@@ -831,6 +890,12 @@ export class TuiRenderer {
 			// Check for /debug command
 			if (rawText === "/debug") {
 				this.handleDebugCommand();
+				this.editor.setText("");
+				return;
+			}
+
+			// Extension slash commands
+			if (await this.tryHandleExtensionCommand(rawText)) {
 				this.editor.setText("");
 				return;
 			}
@@ -2805,6 +2870,143 @@ export class TuiRenderer {
 		}
 	}
 
+	private async handleReloadCommand(): Promise<void> {
+		if (this.agent.state.isStreaming) {
+			this.showError("Cannot reload extensions while agent is busy");
+			return;
+		}
+
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg("dim", "Reloading extensions..."), 1, 0));
+		this.ui.requestRender();
+
+		let results: Awaited<ReturnType<ExtensionLoader["reloadAll"]>>;
+		try {
+			results = await this.extensionLoader.reloadAll();
+		} catch (err: unknown) {
+			const msg = err instanceof Error ? err.message : String(err);
+			this.showError(`Failed to reload extensions: ${msg}`);
+			return;
+		}
+
+		await this.updateToolsForModel(this.agent.state.model);
+		this.updateToolResultTransformer();
+		this.refreshAutocompleteProvider();
+
+		const okCount = results.filter((r) => r.ok).length;
+		const failed = results.filter((r) => !r.ok);
+
+		const summary =
+			results.length === 0
+				? "Reloaded extensions: none found"
+				: failed.length === 0
+					? `Reloaded extensions: ${okCount} ok`
+					: `Reloaded extensions: ${okCount} ok, ${failed.length} failed`;
+
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg(failed.length === 0 ? "dim" : "warning", summary), 1, 0));
+
+		if (failed.length > 0) {
+			for (const r of failed) {
+				const errText = r.error ? `: ${r.error}` : "";
+				this.chatContainer.addChild(new Text(theme.fg("dim", `- ${r.path}${errText}`), 1, 0));
+			}
+		}
+
+		this.ui.requestRender();
+	}
+
+	private async tryHandleExtensionCommand(text: string): Promise<boolean> {
+		if (!text.startsWith("/")) return false;
+
+		const withoutSlash = text.slice(1);
+		const spaceIndex = withoutSlash.indexOf(" ");
+		const commandName = spaceIndex === -1 ? withoutSlash : withoutSlash.slice(0, spaceIndex);
+		const argString = spaceIndex === -1 ? "" : withoutSlash.slice(spaceIndex + 1);
+
+		if (!commandName) return false;
+		if (commandName.toLowerCase() === "steer") return false;
+
+		const command =
+			this.extensionManager.getCommand(commandName) ??
+			this.extensionManager.listCommands().find((c) => c.name.toLowerCase() === commandName.toLowerCase());
+
+		if (!command) return false;
+
+		const ctx = this.createExtensionCommandContext();
+
+		try {
+			await command.execute(argString, ctx);
+		} catch (err: unknown) {
+			const msg = err instanceof Error ? err.message : String(err);
+			this.showError(`Extension command /${command.name} failed: ${msg}`);
+		}
+
+		return true;
+	}
+
+	private createExtensionCommandContext(): ExtensionCommandContext {
+		return {
+			send: async (text, options) => {
+				await this.sendExtensionCommandMessage(text, options?.kind ?? "by-end");
+			},
+			print: (text, options) => {
+				this.printExtensionCommandMessage(text, options?.color ?? "dim");
+			},
+		};
+	}
+
+	private printExtensionCommandMessage(text: string, color: ExtensionCommandPrintColor): void {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg(color, text), 1, 0));
+		this.ui.requestRender();
+	}
+
+	private async sendExtensionCommandMessage(text: string, kind: "by-end" | "next"): Promise<void> {
+		const trimmed = text.trim();
+		if (!trimmed) return;
+
+		const sentText = autoFenceHtmlInMarkdown(trimmed);
+
+		// Normal message submission - validate model and API key first
+		const currentModel = this.agent.state.model;
+		if (!currentModel) {
+			this.showError(
+				"No model selected.\n\n" +
+					"Set an API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)\n" +
+					"or create ~/.mu/agent/models.json\n\n" +
+					"Then use /model to select a model.",
+			);
+			return;
+		}
+
+		const apiKey = await getApiKeyForModel(currentModel);
+		if (!apiKey) {
+			this.showError(
+				`No API key found for ${currentModel.provider}.\n\n` +
+					`Set the appropriate environment variable or update ~/.mu/agent/models.json`,
+			);
+			return;
+		}
+
+		// If agent is streaming, or the input callback has already been consumed, queue the message.
+		if (this.agent.state.isStreaming || !this.onInputCallback) {
+			this.queuedMessages.push({ raw: trimmed, sent: sentText, kind });
+			if (kind === "next") {
+				this.queueSteerMessage(sentText);
+			} else {
+				this.queueMessage(sentText);
+			}
+			this.updatePendingMessagesDisplay();
+			this.ui.requestRender();
+			return;
+		}
+
+		// All good, proceed with submission
+		this.promptHistory.savePrompt(trimmed);
+		this.onInputCallback(sentText);
+	}
+
 	private handleCopyCommand(): void {
 		// Find the last assistant message
 		const lastAssistantMessage = this.agent.state.messages
@@ -3369,37 +3571,37 @@ export class TuiRenderer {
 		const result =
 			handoffModel.api === "openai-codex-responses"
 				? await complete(
-					handoffModel as Model<"openai-codex-responses">,
-					{
-						systemPrompt: HANDOFF_SUMMARY_SYSTEM_PROMPT,
-						messages: [
-							{
-								role: "user" as const,
-								content: [{ type: "text" as const, text: userText }],
-								timestamp: Date.now(),
-							},
-						],
-					},
-					{
-						apiKey,
-						signal,
-						reasoningEffort: "xhigh",
-					},
-				)
+						handoffModel as Model<"openai-codex-responses">,
+						{
+							systemPrompt: HANDOFF_SUMMARY_SYSTEM_PROMPT,
+							messages: [
+								{
+									role: "user" as const,
+									content: [{ type: "text" as const, text: userText }],
+									timestamp: Date.now(),
+								},
+							],
+						},
+						{
+							apiKey,
+							signal,
+							reasoningEffort: "xhigh",
+						},
+					)
 				: await complete(
-					handoffModel,
-					{
-						systemPrompt: HANDOFF_SUMMARY_SYSTEM_PROMPT,
-						messages: [
-							{
-								role: "user" as const,
-								content: [{ type: "text" as const, text: userText }],
-								timestamp: Date.now(),
-							},
-						],
-					},
-					{ apiKey, signal },
-				);
+						handoffModel,
+						{
+							systemPrompt: HANDOFF_SUMMARY_SYSTEM_PROMPT,
+							messages: [
+								{
+									role: "user" as const,
+									content: [{ type: "text" as const, text: userText }],
+									timestamp: Date.now(),
+								},
+							],
+						},
+						{ apiKey, signal },
+					);
 
 		if (result.stopReason === "error" || result.stopReason === "aborted") {
 			throw new Error(result.errorMessage || `LLM returned ${result.stopReason}`);
@@ -3454,30 +3656,28 @@ export class TuiRenderer {
 	 * Called when autohandoff mode changes or nudge state changes.
 	 */
 	private updateToolResultTransformer(): void {
-		if (this.autoHandoffMode !== "on" || !this.shouldIncludeHandoffNudge) {
-			// No nudge needed - clear any transformer
-			this.agent.setToolResultTransformer(undefined);
-			return;
-		}
+		const base =
+			this.autoHandoffMode === "on" && this.shouldIncludeHandoffNudge
+				? (toolResult: ToolResultMessage<unknown>): ToolResultMessage<unknown> => {
+						const { ratio } = this.getContextUsage();
+						const nudge = getHandoffNudgeReminder(ratio);
 
-		// Set up transformer to inject nudge into tool results
-		this.agent.setToolResultTransformer((toolResult: ToolResultMessage): ToolResultMessage => {
-			const { ratio } = this.getContextUsage();
-			const nudge = getHandoffNudgeReminder(ratio);
+						// Append nudge to the last text content block, or add a new one
+						const newContent = [...toolResult.content];
+						const lastTextIndex = newContent.map((c) => c.type).lastIndexOf("text");
 
-			// Append nudge to the last text content block, or add a new one
-			const newContent = [...toolResult.content];
-			const lastTextIndex = newContent.map((c) => c.type).lastIndexOf("text");
+						if (lastTextIndex >= 0) {
+							const lastText = newContent[lastTextIndex] as { type: "text"; text: string };
+							newContent[lastTextIndex] = { type: "text", text: lastText.text + nudge };
+						} else {
+							newContent.push({ type: "text", text: nudge });
+						}
 
-			if (lastTextIndex >= 0) {
-				const lastText = newContent[lastTextIndex] as { type: "text"; text: string };
-				newContent[lastTextIndex] = { type: "text", text: lastText.text + nudge };
-			} else {
-				newContent.push({ type: "text", text: nudge });
-			}
+						return { ...toolResult, content: newContent };
+					}
+				: undefined;
 
-			return { ...toolResult, content: newContent };
-		});
+		this.agent.setToolResultTransformer(this.extensionManager.composeToolResultTransformer(base));
 	}
 
 	/**
@@ -3531,37 +3731,37 @@ export class TuiRenderer {
 		const result =
 			handoffModel.api === "openai-codex-responses"
 				? await complete(
-					handoffModel as Model<"openai-codex-responses">,
-					{
-						systemPrompt,
-						messages: [
-							{
-								role: "user" as const,
-								content: [{ type: "text" as const, text: transcript }],
-								timestamp: Date.now(),
-							},
-						],
-					},
-					{
-						apiKey,
-						signal,
-						reasoningEffort: "xhigh",
-					},
-				)
+						handoffModel as Model<"openai-codex-responses">,
+						{
+							systemPrompt,
+							messages: [
+								{
+									role: "user" as const,
+									content: [{ type: "text" as const, text: transcript }],
+									timestamp: Date.now(),
+								},
+							],
+						},
+						{
+							apiKey,
+							signal,
+							reasoningEffort: "xhigh",
+						},
+					)
 				: await complete(
-					handoffModel,
-					{
-						systemPrompt,
-						messages: [
-							{
-								role: "user" as const,
-								content: [{ type: "text" as const, text: transcript }],
-								timestamp: Date.now(),
-							},
-						],
-					},
-					{ apiKey, signal },
-				);
+						handoffModel,
+						{
+							systemPrompt,
+							messages: [
+								{
+									role: "user" as const,
+									content: [{ type: "text" as const, text: transcript }],
+									timestamp: Date.now(),
+								},
+							],
+						},
+						{ apiKey, signal },
+					);
 
 		if (result.stopReason === "error" || result.stopReason === "aborted") {
 			throw new Error(result.errorMessage || `LLM returned ${result.stopReason}`);

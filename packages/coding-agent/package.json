@@ -29,6 +29,7 @@
 		"chalk": "^5.5.0",
 		"diff": "^8.0.2",
 		"glob": "^11.0.3",
+		"jiti": "^2.6.1",
 		"yaml": "^2.8.2"
 	},
 	"devDependencies": {

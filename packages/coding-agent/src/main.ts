@@ -1,7 +1,8 @@
 import { Agent, type Attachment, ProviderTransport, type ThinkingLevel } from "@kennyfrc/mu-agent-core";
-import type { Api, KnownProvider, Model } from "@kennyfrc/mu-ai";
+import type { AgentTool, Api, KnownProvider, Model } from "@kennyfrc/mu-ai";
 import { supportsXhigh } from "@kennyfrc/mu-ai";
 import { ProcessTerminal, TUI } from "@kennyfrc/mu-tui";
+import type { TSchema } from "@sinclair/typebox";
 import chalk from "chalk";
 import { existsSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
@@ -9,6 +10,8 @@ import { dirname, extname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 
 import { exportFromFile } from "./export-html.js";
+import { ExtensionLoader } from "./extensions/loader.js";
+import { ExtensionManager } from "./extensions/manager.js";
 import { ensureIdentityEnv } from "./identity-env.js";
 import { findModel, getApiKeyForModel, getAvailableModels } from "./model-config.js";
 import { buildSystemPrompt as buildSystemPromptFromYaml } from "./prompts/index.js";
@@ -641,6 +644,8 @@ async function runInteractiveMode(
 	agent: Agent,
 	sessionManager: SessionManager,
 	settingsManager: SettingsManager,
+	extensionManager: ExtensionManager,
+	extensionLoader: ExtensionLoader,
 	version: string,
 	changelogMarkdown: string | null = null,
 	modelFallbackMessage: string | null = null,
@@ -657,6 +662,8 @@ async function runInteractiveMode(
 		agent,
 		sessionManager,
 		settingsManager,
+		extensionManager,
+		extensionLoader,
 		version,
 		changelogMarkdown,
 		newVersion,
@@ -1110,11 +1117,41 @@ export async function main(args: string[]) {
 		initialThinking = "high";
 	}
 
+	// ---------------------------------------------------------------------
+	// Extensions (Phase 1+2): tools + tool interception + hot reload
+	// ---------------------------------------------------------------------
+
+	const extensionLog = (message: string, err?: unknown) => {
+		if (!shouldPrintMessages) return;
+		console.error(chalk.yellow(message));
+		if (err) {
+			console.error(chalk.dim(err instanceof Error ? err.stack || err.message : String(err)));
+		}
+	};
+
+	const extensionManager = new ExtensionManager({
+		builtInTools: allTools as unknown as Record<string, AgentTool<TSchema, unknown>>,
+		log: extensionLog,
+		sessionManager,
+	});
+	const extensionLoader = new ExtensionLoader(extensionManager, { log: extensionLog });
+	await extensionLoader.loadAll();
+
 	const baseToolNames = parsed.tools;
-	const toolSelection = resolveToolSelection(baseToolNames, initialModel);
+	const baseSelection = resolveToolSelection(baseToolNames, initialModel);
+	const toolSelection: ToolSelection = {
+		...baseSelection,
+		tools: extensionManager.getToolsForSelection(baseSelection.toolNames),
+	};
 	const systemPrompt = await buildSystemPrompt(parsed.systemPrompt, toolSelection.toolNames);
 	const selectedTools = toolSelection.tools;
-	const toolSelector = (model: Model<Api> | null | undefined) => resolveToolSelection(baseToolNames, model);
+	const toolSelector = (model: Model<Api> | null | undefined) => {
+		const selection = resolveToolSelection(baseToolNames, model);
+		return {
+			...selection,
+			tools: extensionManager.getToolsForSelection(selection.toolNames),
+		};
+	};
 	const systemPromptBuilder = async (toolNames: ToolName[]) => buildSystemPrompt(parsed.systemPrompt, toolNames);
 
 	// Create agent (initialModel can be null in interactive mode)
@@ -1126,6 +1163,8 @@ export async function main(args: string[]) {
 			tools: selectedTools,
 		},
 		queueMode: settingsManager.getQueueMode(),
+		messagePreprocessor: extensionManager.getMessagePreprocessor(),
+		toolResultTransformer: extensionManager.composeToolResultTransformer(),
 		transport: new ProviderTransport({
 			// Dynamic API key lookup based on current model's provider
 			getApiKey: async () => {
@@ -1242,6 +1281,8 @@ export async function main(args: string[]) {
 			agent,
 			sessionManager,
 			settingsManager,
+			extensionManager,
+			extensionLoader,
 			VERSION,
 			changelogMarkdown,
 			modelFallbackMessage,

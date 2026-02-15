@@ -62,11 +62,83 @@ const ModelsConfigSchema = Type.Object({
 });
 
 type ModelsConfig = Static<typeof ModelsConfigSchema>;
-type ProviderConfig = Static<typeof ProviderConfigSchema>;
+export type ProviderConfig = Static<typeof ProviderConfigSchema>;
 type ModelDefinition = Static<typeof ModelDefinitionSchema>;
 
 // Custom provider API key mappings (provider name -> apiKey config)
 const customProviderApiKeys: Map<string, string> = new Map();
+
+// Runtime provider registrations (extensions)
+interface RuntimeProviderRegistration {
+	sourceId: string;
+	providerName: string;
+	config: ProviderConfig;
+	priority: number;
+	seq: number;
+}
+
+const runtimeProviderRegistrationsByProvider: Map<string, RuntimeProviderRegistration[]> = new Map();
+let runtimeProviderRegistrationSeq = 0;
+
+function sortRuntimeProviderRegistrations(regs: RuntimeProviderRegistration[]): RuntimeProviderRegistration[] {
+	// Higher priority first; for equal priority, last write wins.
+	return regs.slice().sort((a, b) => b.priority - a.priority || b.seq - a.seq);
+}
+
+function getActiveRuntimeProviderConfig(providerName: string): ProviderConfig | null {
+	const regs = runtimeProviderRegistrationsByProvider.get(providerName);
+	if (!regs || regs.length === 0) return null;
+	return sortRuntimeProviderRegistrations(regs)[0]?.config ?? null;
+}
+
+function validateProviderConfigOrThrow(providerName: string, providerConfig: ProviderConfig): void {
+	// Validate schema with AJV so extension mistakes fail fast with actionable errors.
+	const ajv = new Ajv();
+	const validate = ajv.compile(ProviderConfigSchema);
+	if (!validate(providerConfig)) {
+		const errors =
+			validate.errors?.map((e: any) => `  - ${e.instancePath || "root"}: ${e.message}`).join("\n") ||
+			"Unknown schema error";
+		throw new Error(`Invalid provider config for ${providerName}:\n${errors}`);
+	}
+
+	// Re-use the models.json semantic validation.
+	validateConfig({ providers: { [providerName]: providerConfig } } as ModelsConfig);
+}
+
+export function registerRuntimeProvider(
+	providerName: string,
+	config: ProviderConfig,
+	options: { sourceId: string; priority?: number },
+): void {
+	if (!providerName || providerName.trim().length === 0) {
+		throw new Error("registerRuntimeProvider: providerName is required");
+	}
+	validateProviderConfigOrThrow(providerName, config);
+
+	const reg: RuntimeProviderRegistration = {
+		sourceId: options.sourceId,
+		providerName,
+		config,
+		priority: options.priority ?? 0,
+		seq: runtimeProviderRegistrationSeq++,
+	};
+
+	const current = runtimeProviderRegistrationsByProvider.get(providerName) ?? [];
+	current.push(reg);
+	runtimeProviderRegistrationsByProvider.set(providerName, current);
+}
+
+export function unregisterRuntimeProvidersBySourceId(sourceId: string): void {
+	for (const [providerName, regs] of runtimeProviderRegistrationsByProvider.entries()) {
+		const next = regs.filter((r) => r.sourceId !== sourceId);
+		if (next.length === 0) {
+			runtimeProviderRegistrationsByProvider.delete(providerName);
+		} else {
+			runtimeProviderRegistrationsByProvider.set(providerName, next);
+		}
+	}
+}
 
 /**
  * Resolve an API key config value to an actual key.
@@ -210,6 +282,48 @@ function parseModels(config: ModelsConfig): Model<Api>[] {
 	return models;
 }
 
+function parseProviderModelsFromConfig(providerName: string, providerConfig: ProviderConfig): Model<Api>[] {
+	const models: Model<Api>[] = [];
+
+	for (const modelDef of providerConfig.models) {
+		const api = modelDef.api || providerConfig.api;
+		if (!api) continue;
+
+		const headers =
+			providerConfig.headers || modelDef.headers ? { ...providerConfig.headers, ...modelDef.headers } : undefined;
+
+		models.push({
+			id: modelDef.id,
+			name: modelDef.name,
+			api: api as Api,
+			provider: providerName,
+			baseUrl: providerConfig.baseUrl,
+			reasoning: modelDef.reasoning,
+			input: modelDef.input as ("text" | "image")[],
+			cost: modelDef.cost,
+			contextWindow: modelDef.contextWindow,
+			maxTokens: modelDef.maxTokens,
+			headers,
+			...(modelDef.reasoningFormat && { reasoningFormat: modelDef.reasoningFormat }),
+			...(modelDef.extraBody && { extraBody: modelDef.extraBody }),
+		});
+	}
+
+	return models;
+}
+
+function loadRuntimeModels(): Model<Api>[] {
+	const models: Model<Api>[] = [];
+
+	for (const providerName of runtimeProviderRegistrationsByProvider.keys()) {
+		const config = getActiveRuntimeProviderConfig(providerName);
+		if (!config) continue;
+		models.push(...parseProviderModelsFromConfig(providerName, config));
+	}
+
+	return models;
+}
+
 /**
  * Get all models (built-in + custom), freshly loaded
  * Returns { models, error } - either models array or error message
@@ -224,20 +338,28 @@ export function loadAndMergeModels(): { models: Model<Api>[]; error: string | nu
 		builtInModels.push(...(providerModels as Model<Api>[]));
 	}
 
-	// Load custom models
+	// Load custom models (from ~/.mu/agent/models.json)
 	const { models: customModels, error } = loadCustomModels();
-
 	if (error) {
 		return { models: [], error };
 	}
 
-	// Merge: custom models come after built-in.
-	// If a custom model has the same (provider,id) as a built-in model, de-duplicate so it only shows once
-	// in the model selector. This also allows users to override built-in models via models.json.
+	// Load runtime (extension) providers/models
+	const runtimeModels = loadRuntimeModels();
+
+	// Merge order:
+	// 1) built-ins
+	// 2) models.json
+	// 3) runtime registrations
+	// Last writer wins via de-duplication by (provider,id).
 	const keyOf = (m: Model<Api>) => `${m.provider}:${m.id}`;
+	const runtimeKeys = new Set(runtimeModels.map(keyOf));
 	const customKeys = new Set(customModels.map(keyOf));
-	const dedupedBuiltIn = builtInModels.filter((m) => !customKeys.has(keyOf(m)));
-	return { models: [...dedupedBuiltIn, ...customModels], error: null };
+
+	const dedupedBuiltIn = builtInModels.filter((m) => !customKeys.has(keyOf(m)) && !runtimeKeys.has(keyOf(m)));
+	const dedupedCustom = customModels.filter((m) => !runtimeKeys.has(keyOf(m)));
+
+	return { models: [...dedupedBuiltIn, ...dedupedCustom, ...runtimeModels], error: null };
 }
 
 /**
@@ -248,7 +370,13 @@ export function loadAndMergeModels(): { models: Model<Api>[]; error: string | nu
  * Use --api-key flag to explicitly bypass OAuth enforcement.
  */
 export async function getApiKeyForModel(model: Model<Api>): Promise<string | undefined> {
-	// For custom providers, check their apiKey config
+	// Runtime providers registered by extensions
+	const runtimeProviderConfig = getActiveRuntimeProviderConfig(model.provider);
+	if (runtimeProviderConfig) {
+		return resolveApiKey(runtimeProviderConfig.apiKey);
+	}
+
+	// For custom providers from models.json, check their apiKey config
 	const customKeyConfig = customProviderApiKeys.get(model.provider);
 	if (customKeyConfig) {
 		return resolveApiKey(customKeyConfig);
