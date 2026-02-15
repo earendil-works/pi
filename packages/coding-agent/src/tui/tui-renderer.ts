@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Agent, AgentEvent, AgentState, Attachment, ThinkingLevel } from "@kennyfrc/mu-agent-core";
-import type { AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@kennyfrc/mu-ai";
+import type { Api, AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@kennyfrc/mu-ai";
 import { complete, supportsXhigh } from "@kennyfrc/mu-ai";
 import type { SlashCommand } from "@kennyfrc/mu-tui";
 import {
@@ -34,6 +34,9 @@ import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
 import { scheduleExplicitHandoff, submitExplicitHandoff } from "../explicit-handoff.js";
 import { exportSessionToHtml } from "../export-html.js";
+import type { ExtensionLoader } from "../extensions/loader.js";
+import type { ExtensionManager } from "../extensions/manager.js";
+import type { ExtensionCommand, ExtensionCommandContext, ExtensionCommandPrintColor } from "../extensions/types.js";
 import { parseHandoffFileSelections } from "../handoff-file-selection.js";
 import { extractHandoffFileTracking } from "../handoff-file-tracking.js";
 import { normalizeAutoHandoffGoal } from "../handoff-goal.js";
@@ -44,7 +47,7 @@ import {
 	buildHandoffSummaryUserText,
 	HANDOFF_SUMMARY_SYSTEM_PROMPT,
 } from "../handoff-summary.js";
-import { getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
+import { findModel, getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
 import { playNotificationSound, sendNotification } from "../notification.js";
 import {
 	getActiveOAuthAccount,
@@ -165,6 +168,8 @@ export class TuiRenderer {
 	private agent: Agent;
 	private sessionManager: SessionManager;
 	private settingsManager: SettingsManager;
+	private extensionManager: ExtensionManager;
+	private extensionLoader: ExtensionLoader;
 	private autoHandoffMode: AutoHandoffMode;
 
 	// Type-safe wrappers for Agent methods that TypeScript can't resolve
@@ -250,6 +255,10 @@ export class TuiRenderer {
 	// Tool output expansion state
 	private toolOutputExpanded = false;
 
+	// Slash command autocomplete state
+	private builtInSlashCommands: SlashCommand[] = [];
+	private fdPath: string | null = null;
+
 	private promptHistory: PromptHistoryManager;
 	private historyIndex: number = -1;
 	private currentDraft: string = "";
@@ -277,6 +286,8 @@ export class TuiRenderer {
 		agent: Agent,
 		sessionManager: SessionManager,
 		settingsManager: SettingsManager,
+		extensionManager: ExtensionManager,
+		extensionLoader: ExtensionLoader,
 		version: string,
 		changelogMarkdown: string | null = null,
 		newVersion: string | null = null,
@@ -288,6 +299,8 @@ export class TuiRenderer {
 		this.agent = agent;
 		this.sessionManager = sessionManager;
 		this.settingsManager = settingsManager;
+		this.extensionManager = extensionManager;
+		this.extensionLoader = extensionLoader;
 		this.autoHandoffMode = settingsManager.getAutoHandoffMode();
 
 		// Set up tool result transformer for handoff nudge injection
@@ -417,35 +430,52 @@ export class TuiRenderer {
 			description: "Toggle auto-handoff when context is high",
 		};
 
-		// Setup autocomplete for file paths and slash commands
-		const autocompleteProvider = new CombinedAutocompleteProvider(
-			[
-				autoHandoffCommand,
-				branchCommand,
-				changelogCommand,
-				clearCommand,
-				copyCommand,
-				exportCommand,
-				handoffCommand,
-				subscribeCommand,
-				unsubscribeCommand,
-				loginCommand,
-				logoutCommand,
-				modelCommand,
-				newCommand,
-				notifyCommand,
-				queueCommand,
-				steerCommand,
-				sessionCommand,
-				themeCommand,
-				thinkingCommand,
-				todosCommand,
-				undoCommand,
-			],
+		const reloadCommand: SlashCommand = {
+			name: "reload",
+			description: "Reload extensions (tools/commands/providers) from disk",
+		};
+
+		this.builtInSlashCommands = [
+			reloadCommand,
+			autoHandoffCommand,
+			branchCommand,
+			changelogCommand,
+			clearCommand,
+			copyCommand,
+			exportCommand,
+			handoffCommand,
+			subscribeCommand,
+			unsubscribeCommand,
+			loginCommand,
+			logoutCommand,
+			modelCommand,
+			newCommand,
+			notifyCommand,
+			queueCommand,
+			steerCommand,
+			sessionCommand,
+			themeCommand,
+			thinkingCommand,
+			todosCommand,
+			undoCommand,
+		];
+		this.fdPath = fdPath;
+		this.refreshAutocompleteProvider();
+	}
+
+	private refreshAutocompleteProvider(): void {
+		const extensionCommands: SlashCommand[] = this.extensionManager.listCommands().map((cmd) => ({
+			name: cmd.name,
+			description: cmd.description,
+			getArgumentCompletions: cmd.getArgumentCompletions,
+		}));
+
+		const provider = new CombinedAutocompleteProvider(
+			[...this.builtInSlashCommands, ...extensionCommands],
 			process.cwd(),
-			fdPath,
+			this.fdPath,
 		);
-		this.editor.setAutocompleteProvider(autocompleteProvider);
+		this.editor.setAutocompleteProvider(provider);
 	}
 
 	async init(): Promise<void> {
@@ -631,7 +661,7 @@ export class TuiRenderer {
 
 		// Handle editor submission
 		this.editor.onSubmit = async (text: string) => {
-			const rawText = text.trim();
+			let rawText = text.trim();
 
 			// Reset history navigation state on any submission
 			this.historyIndex = -1;
@@ -666,6 +696,16 @@ export class TuiRenderer {
 				return;
 			}
 
+			if (!rawText) return;
+
+			// Extension input hooks (transform or handle before built-in command parsing)
+			const inputResult = await this.extensionManager.applyInputHooks(rawText);
+			if (inputResult.handled) {
+				// Extension handled the input; nothing to submit.
+				this.ui.requestRender();
+				return;
+			}
+			rawText = inputResult.text.trim();
 			if (!rawText) return;
 
 			// Check for /thinking command
@@ -828,11 +868,33 @@ export class TuiRenderer {
 				return;
 			}
 
+			// Check for /reload command
+			if (rawText === "/reload") {
+				this.editor.setText("");
+				await this.handleReloadCommand();
+				return;
+			}
+
 			// Check for /debug command
 			if (rawText === "/debug") {
 				this.handleDebugCommand();
 				this.editor.setText("");
 				return;
+			}
+
+			// Extension slash commands (registered via extensions)
+			if (rawText.startsWith("/")) {
+				const space = rawText.indexOf(" ");
+				const name = (space === -1 ? rawText.slice(1) : rawText.slice(1, space)).trim();
+				const argString = space === -1 ? "" : rawText.slice(space + 1);
+				if (name) {
+					const cmd = this.extensionManager.getCommand(name);
+					if (cmd) {
+						this.editor.setText("");
+						await this.executeExtensionCommand(cmd, argString);
+						return;
+					}
+				}
 			}
 
 			// /steer <message>
@@ -3244,12 +3306,20 @@ export class TuiRenderer {
 			.join("");
 	}
 
+	private resolveHandoffLlmModel(model: Model<Api>): Model<Api> {
+		if (model.provider !== "openai-codex") return model;
+		const found = findModel("openai-codex", "gpt-5.3-codex-spark");
+		return found.model ?? model;
+	}
+
 	private async selectHandoffFiles(goal: string, signal: AbortSignal): Promise<string[]> {
 		const model = this.agent.state.model;
 		if (!model) throw new Error("No model selected");
 
-		const apiKey = await getApiKeyForModel(model);
-		if (!apiKey) throw new Error(`No API key for ${model.provider}`);
+		const handoffModel = this.resolveHandoffLlmModel(model as unknown as Model<Api>);
+
+		const apiKey = await getApiKeyForModel(handoffModel);
+		if (!apiKey) throw new Error(`No API key for ${handoffModel.provider}`);
 
 		const historyText = this.formatMessagesForHandoff(this.agent.state.messages);
 		const repoRoot = findRepoRoot(process.cwd()) ?? process.cwd();
@@ -3267,42 +3337,42 @@ export class TuiRenderer {
 		};
 
 		let result: AssistantMessage;
-		switch (model.api) {
+		switch (handoffModel.api) {
 			case "anthropic-messages":
-				result = await complete(model as Model<"anthropic-messages">, context, {
+				result = await complete(handoffModel as Model<"anthropic-messages">, context, {
 					apiKey,
 					signal,
 				});
 				break;
 			case "openai-completions":
-				result = await complete(model as Model<"openai-completions">, context, {
+				result = await complete(handoffModel as Model<"openai-completions">, context, {
 					apiKey,
 					signal,
 				});
 				break;
 			case "openai-responses":
-				result = await complete(model as Model<"openai-responses">, context, {
+				result = await complete(handoffModel as Model<"openai-responses">, context, {
 					apiKey,
 					signal,
 				});
 				break;
 			case "google-generative-ai":
-				result = await complete(model as Model<"google-generative-ai">, context, {
+				result = await complete(handoffModel as Model<"google-generative-ai">, context, {
 					apiKey,
 					signal,
 				});
 				break;
 			case "google-gemini-cli":
-				result = await complete(model as Model<"google-gemini-cli">, context, {
+				result = await complete(handoffModel as Model<"google-gemini-cli">, context, {
 					apiKey,
 					signal,
 				});
 				break;
 			case "openai-codex-responses":
-				result = await complete(model as Model<"openai-codex-responses">, context, { apiKey, signal });
+				result = await complete(handoffModel as Model<"openai-codex-responses">, context, { apiKey, signal });
 				break;
 			case "zai-completions":
-				result = await complete(model as Model<"zai-completions">, context, { apiKey, signal });
+				result = await complete(handoffModel as Model<"zai-completions">, context, { apiKey, signal });
 				break;
 			default: {
 				throw new Error(`Unsupported API for handoff file selection: ${String(model.api)}`);
@@ -3340,8 +3410,9 @@ export class TuiRenderer {
 		const model = this.agent.state.model;
 		if (!model) throw new Error("No model selected");
 
-		const apiKey = await getApiKeyForModel(model);
-		if (!apiKey) throw new Error(`No API key for ${model.provider}`);
+		const handoffModel = this.resolveHandoffLlmModel(model as unknown as Model<Api>);
+		const apiKey = await getApiKeyForModel(handoffModel);
+		if (!apiKey) throw new Error(`No API key for ${handoffModel.provider}`);
 
 		const conversation = this.formatMessagesForHandoff(this.agent.state.messages);
 		const tracking = extractHandoffFileTracking(this.agent.state.messages);
@@ -3354,7 +3425,7 @@ export class TuiRenderer {
 		});
 
 		const result = await complete(
-			model,
+			handoffModel,
 			{
 				systemPrompt: HANDOFF_SUMMARY_SYSTEM_PROMPT,
 				messages: [
@@ -3364,7 +3435,6 @@ export class TuiRenderer {
 						timestamp: Date.now(),
 					},
 				],
-				tools: [],
 			},
 			{ apiKey, signal },
 		);
@@ -3423,13 +3493,12 @@ export class TuiRenderer {
 	 */
 	private updateToolResultTransformer(): void {
 		if (this.autoHandoffMode !== "on" || !this.shouldIncludeHandoffNudge) {
-			// No nudge needed - clear any transformer
-			this.agent.setToolResultTransformer(undefined);
+			// No nudge needed - keep only extension-managed tool result patches
+			this.agent.setToolResultTransformer(this.extensionManager.composeToolResultTransformer(undefined));
 			return;
 		}
 
-		// Set up transformer to inject nudge into tool results
-		this.agent.setToolResultTransformer((toolResult: ToolResultMessage): ToolResultMessage => {
+		const baseTransformer = (toolResult: ToolResultMessage): ToolResultMessage => {
 			const { ratio } = this.getContextUsage();
 			const nudge = getHandoffNudgeReminder(ratio);
 
@@ -3445,7 +3514,10 @@ export class TuiRenderer {
 			}
 
 			return { ...toolResult, content: newContent };
-		});
+		};
+
+		// Compose: extension patches first, then base nudge injection.
+		this.agent.setToolResultTransformer(this.extensionManager.composeToolResultTransformer(baseTransformer));
 	}
 
 	/**
@@ -3489,14 +3561,15 @@ export class TuiRenderer {
 		const model = this.agent.state.model;
 		if (!model) throw new Error("No model selected");
 
-		const apiKey = await getApiKeyForModel(model);
-		if (!apiKey) throw new Error(`No API key for ${model.provider}`);
+		const handoffModel = this.resolveHandoffLlmModel(model as unknown as Model<Api>);
+		const apiKey = await getApiKeyForModel(handoffModel);
+		if (!apiKey) throw new Error(`No API key for ${handoffModel.provider}`);
 
 		const transcript = this.extractTailTranscript(8);
 		const systemPrompt = getAutoHandoffGoalPrompt();
 
 		const result = await complete(
-			model,
+			handoffModel,
 			{
 				systemPrompt,
 				messages: [
@@ -3506,7 +3579,6 @@ export class TuiRenderer {
 						timestamp: Date.now(),
 					},
 				],
-				tools: [],
 			},
 			{ apiKey, signal },
 		);
@@ -3906,6 +3978,90 @@ export class TuiRenderer {
 		const hint = theme.fg("muted", "Use /autohandoff [on|off|toggle|status]");
 		this.chatContainer.addChild(new Text(label + "\n" + hint, 1, 0));
 		this.ui.requestRender();
+	}
+
+	private async handleReloadCommand(): Promise<void> {
+		if (this.agent.state.isStreaming) {
+			this.showError("Cannot reload extensions while the agent is running (press esc to interrupt first)");
+			return;
+		}
+
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg("dim", "Reloading extensions..."), 1, 0));
+		this.ui.requestRender();
+
+		const results = await this.extensionLoader.reloadAll();
+		const okCount = results.filter((r) => r.ok).length;
+		const failCount = results.length - okCount;
+		this.refreshAutocompleteProvider();
+
+		// Refresh tools and transformer for current model
+		await this.updateToolsForModel(this.agent.state.model);
+		this.updateToolResultTransformer();
+
+		this.chatContainer.addChild(new Spacer(1));
+		const summaryColor = failCount > 0 ? "warning" : "success";
+		this.chatContainer.addChild(
+			new Text(theme.fg(summaryColor, `Extensions reloaded: ${okCount} ok, ${failCount} failed`), 1, 0),
+		);
+
+		if (failCount > 0) {
+			for (const r of results) {
+				if (r.ok) continue;
+				this.chatContainer.addChild(
+					new Text(
+						theme.fg("error", `- ${r.path}`) + (r.error ? "\n" + theme.fg("muted", `  ${r.error}`) : ""),
+						1,
+						0,
+					),
+				);
+			}
+		}
+
+		this.ui.requestRender();
+	}
+
+	private async executeExtensionCommand(cmd: ExtensionCommand, argString: string): Promise<void> {
+		const ctx: ExtensionCommandContext = {
+			print: (text: string, options?: { color?: ExtensionCommandPrintColor }) => {
+				const color: ExtensionCommandPrintColor = options?.color ?? "dim";
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(new Text(theme.fg(color, text), 1, 0));
+				this.ui.requestRender();
+			},
+			send: async (text: string, options?: { kind?: "by-end" | "next" }) => {
+				const kind = options?.kind ?? "by-end";
+				const sentText = autoFenceHtmlInMarkdown(text);
+
+				if (this.agent.state.isStreaming) {
+					this.queuedMessages.push({ raw: text, sent: sentText, kind });
+					if (kind === "next") {
+						this.queueSteerMessage(sentText);
+					} else {
+						this.queueMessage(sentText);
+					}
+					this.updatePendingMessagesDisplay();
+					this.ui.requestRender();
+					return;
+				}
+
+				if (this.onInputCallback) {
+					this.onInputCallback(sentText);
+				} else {
+					// Should not happen during normal interactive loop, but be defensive.
+					this.editor.setText(sentText);
+					this.ui.requestRender();
+				}
+			},
+		};
+
+		try {
+			await cmd.execute(argString, ctx);
+		} catch (err) {
+			this.showError(
+				`Extension command failed: /${cmd.name}\n` + (err instanceof Error ? err.message : String(err)),
+			);
+		}
 	}
 
 	private handleDebugCommand(): void {
