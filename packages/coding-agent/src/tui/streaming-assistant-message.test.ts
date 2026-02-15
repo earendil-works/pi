@@ -81,4 +81,13 @@ describe("StreamingAssistantMessageComponent", () => {
 		expect(countOccurrences(rendered, "THINKING_TRACE")).toBe(1);
 		expect(rendered).toContain("ANSWER");
 	});
+
+	it("renders markdown while streaming (hr token)", () => {
+		const c = new StreamingAssistantMessageComponent({ maxBufferChars: 10_000 });
+		c.applyAssistantMessageEvent(textDelta("---\n"));
+
+		const rendered = stripAnsi(c.render(80).join("\n"));
+		expect(rendered).toContain("─");
+		expect(rendered).not.toContain("---");
+	});
 });

@@ -53,7 +53,8 @@ export class AssistantMessageComponent extends Container {
 			const firstTextIndex = blocks.findIndex((b, i) => b.type === "text" && i > firstThinkingIndex);
 			if (firstTextIndex !== -1) {
 				const fixed = fixThinkingSpill(blocks[firstThinkingIndex]!.text, blocks[firstTextIndex]!.text, {
-					exactDuplicateStrategy: "dropThinking",
+					// Prefer keeping the thinking trace inside the thinking block.
+					exactDuplicateStrategy: "dropText",
 				});
 
 				if (fixed.thinking) {

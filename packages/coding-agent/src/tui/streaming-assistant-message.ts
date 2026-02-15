@@ -1,6 +1,6 @@
 import type { AssistantMessage, AssistantMessageEvent } from "@kennyfrc/mu-ai";
-import { Container, Spacer, Text } from "@kennyfrc/mu-tui";
-import { theme } from "../theme/theme.js";
+import { Container, Markdown, Spacer } from "@kennyfrc/mu-tui";
+import { getMarkdownTheme, theme } from "../theme/theme.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
 import { fixThinkingSpill } from "./thinking-spill.js";
 
@@ -31,8 +31,8 @@ export class StreamingAssistantMessageComponent extends Container {
 	private streamingContainer: Container;
 	private leadingSpacer: Spacer;
 	private betweenSpacer: Spacer;
-	private thinkingText: Text;
-	private responseText: Text;
+	private thinkingMarkdown: Markdown;
+	private responseMarkdown: Markdown;
 
 	private mode: "streaming" | "final" = "streaming";
 
@@ -58,13 +58,23 @@ export class StreamingAssistantMessageComponent extends Container {
 		this.streamingContainer = new Container();
 		this.leadingSpacer = new Spacer(0);
 		this.betweenSpacer = new Spacer(0);
-		this.thinkingText = new Text("", 1, 0);
-		this.responseText = new Text("", 1, 0);
+		this.thinkingMarkdown = new Markdown(
+			"",
+			1,
+			0,
+			getMarkdownTheme(),
+			{
+				color: (text: string) => theme.fg("muted", text),
+				italic: true,
+			},
+			{ renderHtml: true },
+		);
+		this.responseMarkdown = new Markdown("", 1, 0, getMarkdownTheme(), undefined, { renderHtml: true });
 
 		this.streamingContainer.addChild(this.leadingSpacer);
-		this.streamingContainer.addChild(this.thinkingText);
+		this.streamingContainer.addChild(this.thinkingMarkdown);
 		this.streamingContainer.addChild(this.betweenSpacer);
-		this.streamingContainer.addChild(this.responseText);
+		this.streamingContainer.addChild(this.responseMarkdown);
 
 		this.addChild(this.streamingContainer);
 	}
@@ -147,8 +157,8 @@ export class StreamingAssistantMessageComponent extends Container {
 		this.leadingSpacer.setLines(hasAny ? 1 : 0);
 		this.betweenSpacer.setLines(hasThinking && hasText ? 1 : 0);
 
-		this.thinkingText.setText(hasThinking ? theme.fg("muted", fixed.thinking) : "");
-		this.responseText.setText(hasText ? fixed.text : "");
+		this.thinkingMarkdown.setText(hasThinking ? fixed.thinking : "");
+		this.responseMarkdown.setText(hasText ? fixed.text : "");
 	}
 
 	private appendRolling(current: string, chunk: string): string {
