@@ -1,11 +1,100 @@
 import { spawn as nodeSpawn, type SpawnOptionsWithoutStdio } from "node:child_process";
+import type { Readable } from "node:stream";
 import type { AgentTool } from "@kennyfrc/mu-ai";
-import { type Static, Type } from "@sinclair/typebox";
+import { type Static, type TSchema, Type } from "@sinclair/typebox";
 
-import type { ExtensionApi } from "../types.js";
-import { eraseAgentTool } from "../types.js";
+interface SpawnedProcess {
+	stdout: Readable;
+	stderr: Readable;
+	on(event: "close", handler: (code: number | null) => void): this;
+	on(event: "error", handler: (err: Error) => void): this;
+	kill(signal?: NodeJS.Signals | number): boolean;
+}
 
-import { runSpawnedCommand, type SpawnedProcess, type SpawnFn, type SpawnOptions } from "./spawn-cli.js";
+interface SpawnOptions {
+	cwd?: string;
+	stdio: ["ignore", "pipe", "pipe"];
+}
+
+type SpawnFn = (command: string, args: string[], options: SpawnOptions) => SpawnedProcess;
+
+interface RunSpawnedCommandParams {
+	command: string;
+	args: string[];
+	spawn: SpawnFn;
+	cwd?: string;
+	signal?: AbortSignal;
+	onOutput?: (chunk: string) => void;
+}
+
+interface SpawnedCommandResult {
+	exitCode: number;
+	stdout: string;
+	stderr: string;
+	combined: string;
+}
+
+async function runSpawnedCommand(params: RunSpawnedCommandParams): Promise<SpawnedCommandResult> {
+	const child = params.spawn(params.command, params.args, {
+		cwd: params.cwd,
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	let stdout = "";
+	let stderr = "";
+	let combined = "";
+
+	const append = (kind: "stdout" | "stderr", chunk: Buffer) => {
+		const text = chunk.toString("utf8");
+		combined += text;
+		if (kind === "stdout") {
+			stdout += text;
+		} else {
+			stderr += text;
+		}
+		params.onOutput?.(text);
+	};
+
+	child.stdout.on("data", (d: Buffer) => append("stdout", d));
+	child.stderr.on("data", (d: Buffer) => append("stderr", d));
+
+	const abort = () => {
+		child.kill("SIGKILL");
+	};
+
+	if (params.signal) {
+		if (params.signal.aborted) {
+			abort();
+		} else {
+			params.signal.addEventListener("abort", abort, { once: true });
+		}
+	}
+
+	const exitCode = await new Promise<number>((resolve, reject) => {
+		child.on("error", (err) => reject(err));
+		child.on("close", (code) => resolve(code ?? 0));
+	});
+
+	if (params.signal) {
+		params.signal.removeEventListener("abort", abort);
+	}
+
+	if (exitCode !== 0) {
+		throw new Error(
+			`Command failed with exit code ${exitCode}: ${params.command} ${params.args.join(" ")}\n\n${combined}`.trim(),
+		);
+	}
+
+	return { exitCode, stdout, stderr, combined };
+}
+
+interface ExtensionApiLike {
+	registerTool(tool: AgentTool<TSchema, unknown>): void;
+}
+
+function eraseTool<TParams extends TSchema, TDetails>(tool: AgentTool<TParams, TDetails>): AgentTool<TSchema, unknown> {
+	return tool as unknown as AgentTool<TSchema, unknown>;
+}
 
 function toTrimmedString(value: unknown): string {
 	if (typeof value !== "string") return "";
@@ -225,7 +314,7 @@ export function createFetchTool(params?: {
 // Extension factory (default export)
 // ---------------------------------------------------------------------------
 
-export default function webToolsExtension(mu: ExtensionApi): void {
-	mu.registerTool(eraseAgentTool(createWebSearchTool()));
-	mu.registerTool(eraseAgentTool(createFetchTool()));
+export default function webToolsExtension(mu: ExtensionApiLike): void {
+	mu.registerTool(eraseTool(createWebSearchTool()));
+	mu.registerTool(eraseTool(createFetchTool()));
 }
