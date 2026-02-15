@@ -54,6 +54,7 @@ export function sanitizeToolCallId(id: string): { callId: string; itemId: string
 	const parts = id.split("|");
 	const rawCallId = parts[0] ?? id;
 	const rawItemId = parts[1] ?? "";
+	const effectiveItemId = rawItemId || rawCallId;
 
 	const sanitize = (s: string, prefix?: string): string => {
 		// Replace special chars with underscore
@@ -76,7 +77,7 @@ export function sanitizeToolCallId(id: string): { callId: string; itemId: string
 
 	return {
 		callId: sanitize(rawCallId),
-		itemId: sanitize(rawItemId, "fc_"),
+		itemId: sanitize(effectiveItemId, "fc_"),
 	};
 }
 
