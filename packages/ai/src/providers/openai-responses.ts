@@ -178,7 +178,8 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 				}
 
 				let currentItem: ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall | null = null;
-				let currentBlock: ThinkingContent | TextContent | (ToolCall & { partialJson: string }) | null = null;
+				type OpenAIResponsesToolCallBlock = ToolCall & { partialJson?: string };
+				let currentBlock: ThinkingContent | TextContent | OpenAIResponsesToolCallBlock | null = null;
 				const blocks = output.content;
 				const blockIndex = () => blocks.length - 1;
 
@@ -212,7 +213,7 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 							currentItem = item;
 							currentBlock = {
 								type: "toolCall",
-								id: item.call_id + "|" + item.id,
+								id: item.call_id + "|" + (item.id || ""),
 								name: item.name,
 								arguments: {},
 								partialJson: item.arguments || "",
@@ -314,7 +315,7 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 							currentBlock.type === "toolCall"
 						) {
 							hadContent = true;
-							currentBlock.partialJson += event.delta;
+							currentBlock.partialJson = (currentBlock.partialJson ?? "") + event.delta;
 							currentBlock.arguments = parseStreamingJson(currentBlock.partialJson);
 							stream.push({
 								type: "toolcall_delta",
@@ -322,6 +323,19 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 								delta: event.delta,
 								partial: output,
 							});
+						}
+					}
+					// Handle finalized function call arguments
+					else if (event.type === "response.function_call_arguments.done") {
+						if (
+							currentItem &&
+							currentItem.type === "function_call" &&
+							currentBlock &&
+							currentBlock.type === "toolCall"
+						) {
+							const args = event.arguments || "";
+							currentBlock.partialJson = args;
+							currentBlock.arguments = parseStreamingJson(args);
 						}
 					}
 					// Handle output item completion
@@ -357,11 +371,26 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 							// Use accumulated partialJson as fallback if item.arguments is empty/missing
 							const argsStr =
 								item.arguments || (currentBlock?.type === "toolCall" ? currentBlock.partialJson : "{}") || "{}";
+							let parsedArgs: unknown;
+							try {
+								parsedArgs = JSON.parse(argsStr);
+							} catch {
+								parsedArgs = {};
+							}
+							const args =
+								parsedArgs && typeof parsedArgs === "object" && !Array.isArray(parsedArgs)
+									? (parsedArgs as Record<string, unknown>)
+									: {};
+							if (currentBlock?.type === "toolCall") {
+								currentBlock.partialJson = argsStr;
+								currentBlock.arguments = args;
+								delete currentBlock.partialJson;
+							}
 							const toolCall: ToolCall = {
 								type: "toolCall",
-								id: item.call_id + "|" + item.id,
+								id: item.call_id + "|" + (item.id || ""),
 								name: item.name,
-								arguments: JSON.parse(argsStr),
+								arguments: args,
 							};
 
 							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
