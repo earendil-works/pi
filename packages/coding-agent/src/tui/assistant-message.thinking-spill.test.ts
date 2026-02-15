@@ -48,6 +48,22 @@ describe("AssistantMessageComponent (thinking spill guard)", () => {
 		expect(rendered).toContain("ANSWER");
 	});
 
+	it("handles spill even when the final message block order is text → thinking (suffix case)", () => {
+		const msg: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [
+				{ type: "text", text: "ANSWER\n\nTHINKINGTRACE" },
+				{ type: "thinking", thinking: "THINKINGTRACE" },
+			],
+		};
+
+		const c = new AssistantMessageComponent(msg);
+		const rendered = stripAnsi(c.render(200).join("\n"));
+
+		expect(countOccurrences(rendered, "THINKINGTRACE")).toBe(1);
+		expect(rendered).toContain("ANSWER");
+	});
+
 	it("renders exact duplicates only once (keep response, drop thinking)", () => {
 		const msg: AssistantMessage = {
 			...baseAssistantMessage(),

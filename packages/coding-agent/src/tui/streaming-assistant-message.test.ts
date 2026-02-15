@@ -82,6 +82,16 @@ describe("StreamingAssistantMessageComponent", () => {
 		expect(rendered).toContain("ANSWER");
 	});
 
+	it("does not spill duplicated thinking suffix into the response while streaming", () => {
+		const c = new StreamingAssistantMessageComponent({ maxBufferChars: 10_000 });
+		c.applyAssistantMessageEvent(thinkingDelta("THINKING_TRACE"));
+		c.applyAssistantMessageEvent(textDelta("ANSWER\n\nTHINKING_TRACE"));
+
+		const rendered = stripAnsi(c.render(200).join("\n"));
+		expect(countOccurrences(rendered, "THINKING_TRACE")).toBe(1);
+		expect(rendered).toContain("ANSWER");
+	});
+
 	it("renders markdown while streaming (hr token)", () => {
 		const c = new StreamingAssistantMessageComponent({ maxBufferChars: 10_000 });
 		c.applyAssistantMessageEvent(textDelta("---\n"));

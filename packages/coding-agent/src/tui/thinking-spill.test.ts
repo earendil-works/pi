@@ -8,6 +8,12 @@ describe("fixThinkingSpill", () => {
 		expect(result.text).toBe("ANSWER");
 	});
 
+	it("strips a duplicated thinking suffix from the response text", () => {
+		const result = fixThinkingSpill("THINKING", "ANSWER\n\nTHINKING");
+		expect(result.thinking).toBe("THINKING");
+		expect(result.text).toBe("ANSWER");
+	});
+
 	it("drops thinking on exact duplicates when configured", () => {
 		const result = fixThinkingSpill("DUP", "DUP", { exactDuplicateStrategy: "dropThinking" });
 		expect(result.thinking).toBe("");

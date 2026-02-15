@@ -35,45 +35,42 @@ export class AssistantMessageComponent extends Container {
 	updateContent(message: AssistantMessage): void {
 		this.revision++;
 
-		const blocks: Array<{ type: "text" | "thinking"; text: string }> = [];
+		// Render thinking blocks before response text blocks to keep the UI stable
+		// between streaming (which is always thinking→text) and the finalized render.
+		const thinkingBlocks: Array<{ type: "thinking"; text: string }> = [];
+		const textBlocks: Array<{ type: "text"; text: string }> = [];
 		for (const content of message.content) {
 			if (content.type === "text") {
 				const text = content.text.trim();
-				if (text) blocks.push({ type: "text", text });
+				if (text) textBlocks.push({ type: "text", text });
 			} else if (content.type === "thinking") {
 				const thinking = content.thinking.trim();
-				if (thinking) blocks.push({ type: "thinking", text: thinking });
+				if (thinking) thinkingBlocks.push({ type: "thinking", text: thinking });
 			}
 		}
 
 		// Guard against providers/models that duplicate thinking into the response text.
-		// (Common symptom: the response starts by repeating the thinking trace.)
-		const firstThinkingIndex = blocks.findIndex((b) => b.type === "thinking");
-		if (firstThinkingIndex !== -1) {
-			const firstTextIndex = blocks.findIndex((b, i) => b.type === "text" && i > firstThinkingIndex);
-			if (firstTextIndex !== -1) {
-				const fixed = fixThinkingSpill(blocks[firstThinkingIndex]!.text, blocks[firstTextIndex]!.text, {
+		//
+		// We intentionally compare against the *combined* thinking trace, so we can
+		// detect spill even if the final message block order is [text, thinking].
+		const combinedThinking = thinkingBlocks
+			.map((b) => b.text)
+			.join("\n\n")
+			.trim();
+		if (combinedThinking.length > 0) {
+			for (const block of textBlocks) {
+				const fixed = fixThinkingSpill(combinedThinking, block.text, {
 					// Prefer keeping the thinking trace inside the thinking block.
 					exactDuplicateStrategy: "dropText",
 				});
-
-				if (fixed.thinking) {
-					blocks[firstThinkingIndex]!.text = fixed.thinking;
-					blocks[firstTextIndex]!.text = fixed.text;
-				} else {
-					// Dropping the thinking block shifts indices.
-					blocks.splice(firstThinkingIndex, 1);
-					const shiftedTextIndex = firstTextIndex - 1;
-					if (
-						shiftedTextIndex >= 0 &&
-						shiftedTextIndex < blocks.length &&
-						blocks[shiftedTextIndex]?.type === "text"
-					) {
-						blocks[shiftedTextIndex]!.text = fixed.text;
-					}
-				}
+				block.text = fixed.text.trim();
 			}
 		}
+
+		const blocks: Array<{ type: "text" | "thinking"; text: string }> = [
+			...thinkingBlocks,
+			...textBlocks.filter((b) => b.text.trim().length > 0),
+		];
 
 		const hasLeadingSpacer = blocks.length > 0;
 		const blockTypes = blocks.map((b) => b.type);

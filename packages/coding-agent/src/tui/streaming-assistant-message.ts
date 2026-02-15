@@ -17,9 +17,9 @@ const DEFAULT_MAX_BUFFER_CHARS = 64 * 1024;
 /**
  * Streaming assistant message component.
  *
- * During token streaming, we keep a bounded rolling buffer and render via cheap
- * `Text` blocks (no markdown parsing). Once the message ends, we swap the inner
- * rendering to the full `AssistantMessageComponent` (Markdown).
+ * During token streaming, we keep a bounded rolling buffer and render via
+ * `Markdown` so formatting stays stable throughout streaming. Once the message
+ * ends, we swap the inner rendering to the full `AssistantMessageComponent`.
  */
 export class StreamingAssistantMessageComponent extends Container {
 	private revision = 0;

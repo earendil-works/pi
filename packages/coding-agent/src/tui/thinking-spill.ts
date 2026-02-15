@@ -62,5 +62,23 @@ export function fixThinkingSpill(
 		return { thinking, text: stripped };
 	}
 
+	// Suffix spill: response ends by repeating the thinking trace.
+	//
+	// This can happen when a provider/model appends the full thinking blob after the
+	// visible answer (or when the message block order is [text, thinking]).
+	if (textTrimmed.endsWith(thinkingTrimmed)) {
+		// Prefer stripping from the raw text so we preserve any mid-string whitespace
+		// outside the duplicated suffix.
+		const idx = text.lastIndexOf(thinkingTrimmed);
+		if (idx !== -1 && text.slice(idx + thinkingTrimmed.length).trim().length === 0) {
+			const stripped = text.slice(0, idx).trimEnd();
+			return { thinking, text: stripped };
+		}
+
+		// Fallback: compute using trimmed strings.
+		const stripped = textTrimmed.slice(0, textTrimmed.length - thinkingTrimmed.length).trimEnd();
+		return { thinking, text: stripped };
+	}
+
 	return { thinking, text };
 }
