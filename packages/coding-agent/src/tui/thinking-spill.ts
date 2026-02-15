@@ -19,28 +19,36 @@ export interface ThinkingSpillFixResult {
 /**
  * Normalize excessive leading whitespace from lines.
  *
- * Some models add excessive indentation (6+ spaces) to lines in thinking traces
- * and responses. This is jarring during streaming. We reduce 6+ spaces down to 2
- * spaces to preserve readability while removing the excessive indentation.
+ * Some models add 1-2 leading spaces to lines in thinking traces and responses.
+ * This is jarring during streaming. We strip consistent leading indentation across
+ * all non-blank lines while preserving relative indentation for intentional structure.
  *
  * This preserves:
- * - Nested lists (2 spaces of indentation)
- * - Indented code blocks (4 spaces - unchanged since we only touch 6+)
+ * - Nested lists (relative indentation preserved)
+ * - Indented code blocks (relative indentation preserved)
  * - Fenced code blocks (backticks - content inside is preserved)
  */
 export function normalizeExcessiveWhitespace(text: string): string {
-	return text
-		.split("\n")
-		.map((line) => {
-			// Match 6 or more leading spaces
-			const match = line.match(/^( {6,})/);
-			if (match) {
-				// Reduce excessive indentation to 2 spaces
-				return "  " + line.slice(match[1].length);
-			}
-			return line;
-		})
-		.join("\n");
+	const lines = text.split("\n");
+
+	// Find the minimum leading spaces across all non-empty lines
+	let minIndent = Infinity;
+	for (const line of lines) {
+		if (line.trim().length === 0) continue; // Skip empty lines
+		const leadingSpaces = line.match(/^( *)/)?.[1]?.length ?? 0;
+		if (leadingSpaces < minIndent) {
+			minIndent = leadingSpaces;
+		}
+		// Stop early if we hit 0 - can't strip less than 0
+		if (minIndent === 0) break;
+	}
+
+	// If all lines have at least 1 leading space, strip that common prefix
+	if (minIndent > 0 && minIndent !== Infinity) {
+		return lines.map((line) => line.slice(minIndent)).join("\n");
+	}
+
+	return text;
 }
 
 /**
