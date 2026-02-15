@@ -213,6 +213,13 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 			if (found?.model) extractionModel = found.model;
 		}
 
+		// For the OpenAI Codex provider, always use the lightweight Spark model for read_thread extraction.
+		// This keeps extraction fast and avoids any tool-use behaviors.
+		if (currentModel?.provider === "openai-codex") {
+			const found = findModel("openai-codex", "gpt-5.3-codex-spark");
+			if (found?.model) extractionModel = found.model;
+		}
+
 		if (!extractionModel) {
 			if (shouldUseTailDefault) {
 				return buildTranscriptRawFallback("No active model available for extraction. Returning tail transcript.");
