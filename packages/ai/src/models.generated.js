@@ -2662,12 +2662,12 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text"],
 			cost: {
-				input: 0.7999999999999999,
-				output: 2.56,
-				cacheRead: 0.16,
+				input: 0.75,
+				output: 2.5500000000000003,
+				cacheRead: 0,
 				cacheWrite: 0,
 			},
-			contextWindow: 202752,
+			contextWindow: 204800,
 			maxTokens: 131072,
 		},
 		"qwen/qwen3-max-thinking": {

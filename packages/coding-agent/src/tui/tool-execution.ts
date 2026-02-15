@@ -27,6 +27,42 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
+function normalizeToolName(toolName: string): string {
+	const legacyNameMap: Record<string, string> = {
+		// Historical TitleCase names from older transcripts.
+		Read: "read",
+		Write: "write",
+		Edit: "edit",
+		Bash: "bash",
+		Glob: "glob",
+		Grep: "grep",
+		Todo: "todo",
+		Handoff: "handoff",
+		ApplyPatch: "apply_patch",
+		ReadThread: "read_thread",
+		ListThreads: "list_threads",
+		Exec: "exec_command",
+		UpdatePlan: "update_plan",
+		TodoWrite: "todo_write",
+		ViewImage: "view_image",
+	};
+
+	const trimmed = toolName.trim();
+	if (trimmed in legacyNameMap) {
+		return legacyNameMap[trimmed]!;
+	}
+
+	if (trimmed.includes("_")) {
+		return trimmed.toLowerCase();
+	}
+
+	return trimmed
+		.replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+		.replace(/\s+/g, "_")
+		.replace(/-+/g, "_")
+		.toLowerCase();
+}
+
 // Maximum size for partial output buffer (keeps last N bytes to avoid memory issues)
 const MAX_PARTIAL_OUTPUT_SIZE = 64 * 1024; // 64KB
 
@@ -54,7 +90,7 @@ export class ToolExecutionComponent extends Container {
 
 	constructor(toolName: string, args: unknown) {
 		super();
-		this.toolName = toolName;
+		this.toolName = normalizeToolName(toolName);
 		this.args = args;
 		this.addChild(new Spacer(1));
 		// Content with colored background and padding
@@ -220,7 +256,7 @@ export class ToolExecutionComponent extends Container {
 			const cmdDisplay = cmd?.trim() ? cmd.trim() : theme.fg("toolOutput", "...");
 			const workdirSuffix = workdir?.trim() ? theme.fg("muted", ` (in ${shortenPath(workdir.trim())})`) : "";
 			const header =
-				theme.fg("toolTitle", theme.bold("Exec")) + " " + theme.fg("accent", cmdDisplay) + workdirSuffix;
+				theme.fg("toolTitle", theme.bold("exec_command")) + " " + theme.fg("accent", cmdDisplay) + workdirSuffix;
 			const headerLine = new TruncatedText(header, 0, 0).render(contentWidth)[0] ?? header;
 			text = headerLine;
 

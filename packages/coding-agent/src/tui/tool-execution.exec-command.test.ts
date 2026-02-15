@@ -17,11 +17,20 @@ describe("ToolExecutionComponent exec_command rendering", () => {
 		});
 
 		const text = renderText(component, 80);
-		expect(text).toContain("Exec");
+		expect(text).toContain("exec_command");
 		expect(text).toContain("nl -ba");
 		// The old behavior dumped raw JSON args. This should not.
 		expect(text).not.toContain('"cmd"');
 		expect(text).not.toContain('"workdir"');
+	});
+
+	it("normalizes legacy tool names to snake_case", () => {
+		const component = new ToolExecutionComponent("Exec", {
+			cmd: "echo hi",
+		});
+
+		const text = renderText(component, 80);
+		expect(text).toContain("exec_command");
 	});
 
 	it("shows collapsed output preview + ctrl+o hint for huge output", () => {
