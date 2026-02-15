@@ -1,6 +1,7 @@
 import type { AssistantMessage } from "@kennyfrc/mu-ai";
 import { Container, Markdown, Spacer, Text } from "@kennyfrc/mu-tui";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
+import { fixThinkingSpill } from "./thinking-spill.js";
 
 /**
  * Component that renders a complete assistant message
@@ -42,6 +43,34 @@ export class AssistantMessageComponent extends Container {
 			} else if (content.type === "thinking") {
 				const thinking = content.thinking.trim();
 				if (thinking) blocks.push({ type: "thinking", text: thinking });
+			}
+		}
+
+		// Guard against providers/models that duplicate thinking into the response text.
+		// (Common symptom: the response starts by repeating the thinking trace.)
+		const firstThinkingIndex = blocks.findIndex((b) => b.type === "thinking");
+		if (firstThinkingIndex !== -1) {
+			const firstTextIndex = blocks.findIndex((b, i) => b.type === "text" && i > firstThinkingIndex);
+			if (firstTextIndex !== -1) {
+				const fixed = fixThinkingSpill(blocks[firstThinkingIndex]!.text, blocks[firstTextIndex]!.text, {
+					exactDuplicateStrategy: "dropThinking",
+				});
+
+				if (fixed.thinking) {
+					blocks[firstThinkingIndex]!.text = fixed.thinking;
+					blocks[firstTextIndex]!.text = fixed.text;
+				} else {
+					// Dropping the thinking block shifts indices.
+					blocks.splice(firstThinkingIndex, 1);
+					const shiftedTextIndex = firstTextIndex - 1;
+					if (
+						shiftedTextIndex >= 0 &&
+						shiftedTextIndex < blocks.length &&
+						blocks[shiftedTextIndex]?.type === "text"
+					) {
+						blocks[shiftedTextIndex]!.text = fixed.text;
+					}
+				}
 			}
 		}
 

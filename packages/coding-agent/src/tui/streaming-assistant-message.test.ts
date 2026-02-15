@@ -29,6 +29,18 @@ const textDelta = (delta: string): AssistantMessageEvent => ({
 	partial: baseAssistantMessage(),
 });
 
+const thinkingDelta = (delta: string): AssistantMessageEvent => ({
+	type: "thinking_delta",
+	contentIndex: 0,
+	delta,
+	partial: baseAssistantMessage(),
+});
+
+function countOccurrences(haystack: string, needle: string): number {
+	if (!needle) return 0;
+	return haystack.split(needle).length - 1;
+}
+
 describe("StreamingAssistantMessageComponent", () => {
 	initTheme("dark");
 
@@ -58,5 +70,15 @@ describe("StreamingAssistantMessageComponent", () => {
 		const rendered = stripAnsi(c.render(80).join("\n")).trim();
 		expect(rendered).toContain("Hello");
 		expect(rendered).toContain("world");
+	});
+
+	it("does not spill duplicated thinking prefix into the response while streaming", () => {
+		const c = new StreamingAssistantMessageComponent({ maxBufferChars: 10_000 });
+		c.applyAssistantMessageEvent(thinkingDelta("THINKING_TRACE"));
+		c.applyAssistantMessageEvent(textDelta("THINKING_TRACE\n\nANSWER"));
+
+		const rendered = stripAnsi(c.render(200).join("\n"));
+		expect(countOccurrences(rendered, "THINKING_TRACE")).toBe(1);
+		expect(rendered).toContain("ANSWER");
 	});
 });

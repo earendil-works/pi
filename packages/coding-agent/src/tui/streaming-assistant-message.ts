@@ -2,6 +2,7 @@ import type { AssistantMessage, AssistantMessageEvent } from "@kennyfrc/mu-ai";
 import { Container, Spacer, Text } from "@kennyfrc/mu-tui";
 import { theme } from "../theme/theme.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
+import { fixThinkingSpill } from "./thinking-spill.js";
 
 export interface StreamingAssistantMessageOptions {
 	/**
@@ -137,15 +138,17 @@ export class StreamingAssistantMessageComponent extends Container {
 	private updateStreamingDisplay(): void {
 		this.revision++;
 
-		const hasThinking = this.thinkingBuffer.trim().length > 0;
-		const hasText = this.textBuffer.trim().length > 0;
+		const fixed = fixThinkingSpill(this.thinkingBuffer, this.textBuffer, { exactDuplicateStrategy: "dropText" });
+
+		const hasThinking = fixed.thinking.trim().length > 0;
+		const hasText = fixed.text.trim().length > 0;
 		const hasAny = hasThinking || hasText;
 
 		this.leadingSpacer.setLines(hasAny ? 1 : 0);
 		this.betweenSpacer.setLines(hasThinking && hasText ? 1 : 0);
 
-		this.thinkingText.setText(hasThinking ? theme.fg("muted", this.thinkingBuffer) : "");
-		this.responseText.setText(hasText ? this.textBuffer : "");
+		this.thinkingText.setText(hasThinking ? theme.fg("muted", fixed.thinking) : "");
+		this.responseText.setText(hasText ? fixed.text : "");
 	}
 
 	private appendRolling(current: string, chunk: string): string {
