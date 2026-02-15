@@ -26,14 +26,7 @@ const GPT_DEFAULT_TOOL_NAMES: ToolName[] = [
 	"handoff",
 ];
 
-const GPT_STAR_TOOL_NAMES: ToolName[] = [
-	"read",
-	"exec_command",
-	"read_image",
-	"handoff",
-	"list_threads",
-	"read_thread",
-];
+const GPT_STAR_TOOL_NAMES: ToolName[] = ["exec_command", "read_image", "handoff", "list_threads", "read_thread"];
 
 export interface ToolSelection {
 	toolNames: ToolName[];
