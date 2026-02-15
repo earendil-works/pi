@@ -25,6 +25,28 @@ Only JS/TS module files are loaded (`.ts`, `.mts`, `.cts`, `.js`, `.mjs`, `.cjs`
 
 ---
 
+## Tool visibility in system prompt
+
+The `Available tools` section in the system prompt is built from the **actual runtime tool list** (built-ins + extension tools), not just built-ins.
+
+For extension tools:
+- Mu uses your tool's `name`
+- Mu uses a short description derived from your tool's `description` (first non-empty line, trimmed)
+
+This keeps tool messaging scoped to what each extension actually registers.
+
+---
+
+## Duplicate extension files (`.ts` + `.js`)
+
+If both `my-extension.ts` and `my-extension.js` exist with the same basename, Mu loads only one:
+- prefers TypeScript source (`.ts` / `.mts` / `.cts`)
+- otherwise falls back to JavaScript (`.js` / `.mjs` / `.cjs`)
+
+This avoids accidental double-registration.
+
+---
+
 ## Extension file format
 
 Each extension file must default-export a factory function:
