@@ -2819,12 +2819,12 @@ export const MODELS = {
 			input: ["text", "image"],
 			cost: {
 				input: 0.44999999999999996,
-				output: 2.25,
-				cacheRead: 0.070000002,
+				output: 0.44,
+				cacheRead: 0.11249999999999999,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
-			maxTokens: 4096,
+			maxTokens: 65535,
 		} satisfies Model<"openai-completions">,
 		"upstage/solar-pro-3:free": {
 			id: "upstage/solar-pro-3:free",
