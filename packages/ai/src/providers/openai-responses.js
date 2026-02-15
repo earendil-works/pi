@@ -2,8 +2,57 @@ import OpenAI from "openai";
 import { calculateCost } from "../models.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
+import { getExponentialBackoff, sleep } from "../utils/retry.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { transformMessages } from "./transorm-messages.js";
+
+function asRecord(value) {
+	return value && typeof value === "object" ? value : null;
+}
+function toNumber(value) {
+	if (typeof value === "number") return value;
+	if (typeof value === "string" && value.trim()) {
+		const parsed = Number(value);
+		if (!Number.isNaN(parsed)) return parsed;
+	}
+	return undefined;
+}
+function getErrorStatus(error) {
+	if (!error) return undefined;
+	const record = asRecord(error);
+	return toNumber(record?.status);
+}
+function getErrorMessage(error) {
+	if (error instanceof Error) return error.message;
+	return typeof error === "string" ? error : JSON.stringify(error);
+}
+/**
+ * Retryable errors for OpenAI Responses.
+ *
+ * Important: we only retry *before* we emit any stream events, to avoid
+ * duplicating partial output to the caller.
+ */
+function isRetryableOpenAIError(error, signal) {
+	if (signal?.aborted) return false;
+	const status = getErrorStatus(error);
+	if (status !== undefined) {
+		if (status === 408 || status === 409 || status === 429) return true;
+		if (status >= 500 && status <= 599) return true;
+		return false;
+	}
+	if (error instanceof Error) {
+		const message = error.message.toLowerCase();
+		return (
+			message.includes("fetch failed") ||
+			message.includes("terminated") ||
+			message.includes("network") ||
+			message.includes("econnreset") ||
+			message.includes("etimedout") ||
+			message.includes("econnrefused")
+		);
+	}
+	return false;
+}
 /**
  * Generate function for OpenAI Responses API
  */
@@ -28,252 +77,310 @@ export const streamOpenAIResponses = (model, context, options) => {
 			stopReason: "stop",
 			timestamp: Date.now(),
 		};
-		try {
-			let sawCompletion = false;
-			let hadContent = false;
-			// Create OpenAI client
-			const client = createClient(model, options?.apiKey);
-			const params = buildParams(model, context, options);
-			const openaiStream = await client.responses.create(params, { signal: options?.signal });
-			stream.push({ type: "start", partial: output });
-			let currentItem = null;
-			let currentBlock = null;
-			const blocks = output.content;
-			const blockIndex = () => blocks.length - 1;
-			for await (const event of openaiStream) {
-				// Handle output item start
-				if (event.type === "response.output_item.added") {
-					const item = event.item;
-					if (item.type === "reasoning") {
-						hadContent = true;
-						currentItem = item;
-						currentBlock = { type: "thinking", thinking: "" };
-						output.content.push(currentBlock);
-						stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
-					} else if (item.type === "message") {
-						hadContent = true;
-						currentItem = item;
-						currentBlock = { type: "text", text: "" };
-						output.content.push(currentBlock);
-						stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
-					} else if (item.type === "function_call") {
-						hadContent = true;
-						currentItem = item;
-						currentBlock = {
-							type: "toolCall",
-							id: item.call_id + "|" + item.id,
-							name: item.name,
-							arguments: {},
-							partialJson: item.arguments || "",
-						};
-						output.content.push(currentBlock);
-						stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+		const maxRetries = options?.retry?.maxRetries ?? 4;
+		const baseDelay = options?.retry?.baseDelay ?? 200;
+		const maxDelay = options?.retry?.maxDelay ?? 60000;
+		let hasEmittedStart = false;
+		let attempts = 0;
+		let lastError;
+		for (let attempt = 0; attempt <= maxRetries; attempt++) {
+			attempts = attempt + 1;
+			// Safe because we do not emit any events until we have the first SSE frame.
+			output.content = [];
+			output.usage = {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			};
+			output.stopReason = "stop";
+			delete output.errorMessage;
+			try {
+				let sawCompletion = false;
+				let hadContent = false;
+				// Create OpenAI client (disable SDK retries; we handle retries here).
+				const client = createClient(model, options?.apiKey, 0);
+				const params = buildParams(model, context, options);
+				const openaiStream = await client.responses.create(params, { signal: options?.signal });
+				// Retry boundary: wait for the first event before emitting `start`.
+				const iterator = openaiStream[Symbol.asyncIterator]();
+				const first = await iterator.next();
+				if (first.done) {
+					throw new Error("Stream ended without events");
+				}
+				if (!hasEmittedStart) {
+					stream.push({ type: "start", partial: output });
+					hasEmittedStart = true;
+				}
+				let currentItem = null;
+				let currentBlock = null;
+				const blocks = output.content;
+				const blockIndex = () => blocks.length - 1;
+				async function* events() {
+					yield first.value;
+					while (true) {
+						const next = await iterator.next();
+						if (next.done) return;
+						yield next.value;
 					}
 				}
-				// Handle reasoning summary deltas
-				else if (event.type === "response.reasoning_summary_part.added") {
-					if (currentItem && currentItem.type === "reasoning") {
-						currentItem.summary = currentItem.summary || [];
-						currentItem.summary.push(event.part);
+				for await (const event of events()) {
+					// Handle output item start
+					if (event.type === "response.output_item.added") {
+						const item = event.item;
+						if (item.type === "reasoning") {
+							hadContent = true;
+							currentItem = item;
+							currentBlock = { type: "thinking", thinking: "" };
+							output.content.push(currentBlock);
+							stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+						} else if (item.type === "message") {
+							hadContent = true;
+							currentItem = item;
+							currentBlock = { type: "text", text: "" };
+							output.content.push(currentBlock);
+							stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+						} else if (item.type === "function_call") {
+							hadContent = true;
+							currentItem = item;
+							currentBlock = {
+								type: "toolCall",
+								id: item.call_id + "|" + item.id,
+								name: item.name,
+								arguments: {},
+								partialJson: item.arguments || "",
+							};
+							output.content.push(currentBlock);
+							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+						}
 					}
-				} else if (event.type === "response.reasoning_summary_text.delta") {
-					if (
-						currentItem &&
-						currentItem.type === "reasoning" &&
-						currentBlock &&
-						currentBlock.type === "thinking"
-					) {
-						currentItem.summary = currentItem.summary || [];
-						const lastPart = currentItem.summary[currentItem.summary.length - 1];
-						if (lastPart) {
-							currentBlock.thinking += event.delta;
-							lastPart.text += event.delta;
+					// Handle reasoning summary deltas
+					else if (event.type === "response.reasoning_summary_part.added") {
+						if (currentItem && currentItem.type === "reasoning") {
+							currentItem.summary = currentItem.summary || [];
+							currentItem.summary.push(event.part);
+						}
+					} else if (event.type === "response.reasoning_summary_text.delta") {
+						if (
+							currentItem &&
+							currentItem.type === "reasoning" &&
+							currentBlock &&
+							currentBlock.type === "thinking"
+						) {
+							currentItem.summary = currentItem.summary || [];
+							const lastPart = currentItem.summary[currentItem.summary.length - 1];
+							if (lastPart) {
+								currentBlock.thinking += event.delta;
+								lastPart.text += event.delta;
+								stream.push({
+									type: "thinking_delta",
+									contentIndex: blockIndex(),
+									delta: event.delta,
+									partial: output,
+								});
+							}
+						}
+					}
+					// Add a new line between summary parts (hack...)
+					else if (event.type === "response.reasoning_summary_part.done") {
+						if (
+							currentItem &&
+							currentItem.type === "reasoning" &&
+							currentBlock &&
+							currentBlock.type === "thinking"
+						) {
+							currentItem.summary = currentItem.summary || [];
+							const lastPart = currentItem.summary[currentItem.summary.length - 1];
+							if (lastPart) {
+								currentBlock.thinking += "\n\n";
+								lastPart.text += "\n\n";
+								stream.push({
+									type: "thinking_delta",
+									contentIndex: blockIndex(),
+									delta: "\n\n",
+									partial: output,
+								});
+							}
+						}
+					}
+					// Handle text output deltas
+					else if (event.type === "response.content_part.added") {
+						if (currentItem && currentItem.type === "message") {
+							currentItem.content = currentItem.content || [];
+							currentItem.content.push(event.part);
+						}
+					} else if (event.type === "response.output_text.delta") {
+						if (currentItem && currentItem.type === "message" && currentBlock && currentBlock.type === "text") {
+							const lastPart = currentItem.content[currentItem.content.length - 1];
+							if (lastPart && lastPart.type === "output_text") {
+								currentBlock.text += event.delta;
+								lastPart.text += event.delta;
+								stream.push({
+									type: "text_delta",
+									contentIndex: blockIndex(),
+									delta: event.delta,
+									partial: output,
+								});
+							}
+						}
+					} else if (event.type === "response.refusal.delta") {
+						if (currentItem && currentItem.type === "message" && currentBlock && currentBlock.type === "text") {
+							const lastPart = currentItem.content[currentItem.content.length - 1];
+							if (lastPart && lastPart.type === "refusal") {
+								currentBlock.text += event.delta;
+								lastPart.refusal += event.delta;
+								stream.push({
+									type: "text_delta",
+									contentIndex: blockIndex(),
+									delta: event.delta,
+									partial: output,
+								});
+							}
+						}
+					}
+					// Handle function call argument deltas
+					else if (event.type === "response.function_call_arguments.delta") {
+						if (
+							currentItem &&
+							currentItem.type === "function_call" &&
+							currentBlock &&
+							currentBlock.type === "toolCall"
+						) {
+							hadContent = true;
+							currentBlock.partialJson += event.delta;
+							currentBlock.arguments = parseStreamingJson(currentBlock.partialJson);
 							stream.push({
-								type: "thinking_delta",
+								type: "toolcall_delta",
 								contentIndex: blockIndex(),
 								delta: event.delta,
 								partial: output,
 							});
 						}
 					}
-				}
-				// Add a new line between summary parts (hack...)
-				else if (event.type === "response.reasoning_summary_part.done") {
-					if (
-						currentItem &&
-						currentItem.type === "reasoning" &&
-						currentBlock &&
-						currentBlock.type === "thinking"
-					) {
-						currentItem.summary = currentItem.summary || [];
-						const lastPart = currentItem.summary[currentItem.summary.length - 1];
-						if (lastPart) {
-							currentBlock.thinking += "\n\n";
-							lastPart.text += "\n\n";
+					// Handle output item completion
+					else if (event.type === "response.output_item.done") {
+						const item = event.item;
+						if (item.type === "reasoning" && currentBlock && currentBlock.type === "thinking") {
+							hadContent = true;
+							currentBlock.thinking = item.summary?.map((s) => s.text).join("\n\n") || "";
+							currentBlock.thinkingSignature = JSON.stringify(item);
 							stream.push({
-								type: "thinking_delta",
+								type: "thinking_end",
 								contentIndex: blockIndex(),
-								delta: "\n\n",
+								content: currentBlock.thinking,
 								partial: output,
 							});
-						}
-					}
-				}
-				// Handle text output deltas
-				else if (event.type === "response.content_part.added") {
-					if (currentItem && currentItem.type === "message") {
-						currentItem.content = currentItem.content || [];
-						currentItem.content.push(event.part);
-					}
-				} else if (event.type === "response.output_text.delta") {
-					if (currentItem && currentItem.type === "message" && currentBlock && currentBlock.type === "text") {
-						const lastPart = currentItem.content[currentItem.content.length - 1];
-						if (lastPart && lastPart.type === "output_text") {
-							currentBlock.text += event.delta;
-							lastPart.text += event.delta;
+							currentBlock = null;
+						} else if (item.type === "message" && currentBlock && currentBlock.type === "text") {
+							hadContent = true;
+							currentBlock.text = item.content
+								.map((c) => (c.type === "output_text" ? c.text : c.refusal))
+								.join("");
+							currentBlock.textSignature = item.id;
 							stream.push({
-								type: "text_delta",
+								type: "text_end",
 								contentIndex: blockIndex(),
-								delta: event.delta,
+								content: currentBlock.text,
 								partial: output,
 							});
+							currentBlock = null;
+						} else if (item.type === "function_call") {
+							hadContent = true;
+							// Use accumulated partialJson as fallback if item.arguments is empty/missing
+							const argsStr =
+								item.arguments || (currentBlock?.type === "toolCall" ? currentBlock.partialJson : "{}") || "{}";
+							const toolCall = {
+								type: "toolCall",
+								id: item.call_id + "|" + item.id,
+								name: item.name,
+								arguments: JSON.parse(argsStr),
+							};
+							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+							currentBlock = null;
 						}
 					}
-				} else if (event.type === "response.refusal.delta") {
-					if (currentItem && currentItem.type === "message" && currentBlock && currentBlock.type === "text") {
-						const lastPart = currentItem.content[currentItem.content.length - 1];
-						if (lastPart && lastPart.type === "refusal") {
-							currentBlock.text += event.delta;
-							lastPart.refusal += event.delta;
-							stream.push({
-								type: "text_delta",
-								contentIndex: blockIndex(),
-								delta: event.delta,
-								partial: output,
-							});
+					// Handle completion
+					else if (event.type === "response.completed") {
+						sawCompletion = true;
+						const response = event.response;
+						if (response?.usage) {
+							// Support both OpenAI (input_tokens/output_tokens) and
+							// Fireworks-style (prompt_tokens/completion_tokens) field names
+							const usage = response.usage;
+							const rawInput = usage.input_tokens ?? usage.prompt_tokens ?? 0;
+							const rawOutput = usage.output_tokens ?? usage.completion_tokens ?? 0;
+							const cachedTokens = response.usage.input_tokens_details?.cached_tokens ?? 0;
+							const input = rawInput - cachedTokens;
+							output.usage = {
+								// OpenAI includes cached tokens in input_tokens, so subtract to get non-cached input
+								input,
+								output: rawOutput,
+								cacheRead: cachedTokens,
+								cacheWrite: 0,
+								totalTokens: input + rawOutput + cachedTokens,
+								cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+							};
+						}
+						calculateCost(model, output.usage);
+						if (response?.status === "queued" || response?.status === "in_progress") {
+							throw new Error(`Stream ended with non-terminal status: ${response.status}`);
+						}
+						// Map status to stop reason
+						output.stopReason = mapStopReason(response?.status);
+						if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
+							output.stopReason = "toolUse";
 						}
 					}
-				}
-				// Handle function call argument deltas
-				else if (event.type === "response.function_call_arguments.delta") {
-					if (
-						currentItem &&
-						currentItem.type === "function_call" &&
-						currentBlock &&
-						currentBlock.type === "toolCall"
-					) {
-						hadContent = true;
-						currentBlock.partialJson += event.delta;
-						currentBlock.arguments = parseStreamingJson(currentBlock.partialJson);
-						stream.push({
-							type: "toolcall_delta",
-							contentIndex: blockIndex(),
-							delta: event.delta,
-							partial: output,
-						});
+					// Handle errors
+					else if (event.type === "error") {
+						throw new Error(`Error Code ${event.code}: ${event.message}` || "Unknown error");
+					} else if (event.type === "response.failed") {
+						throw new Error("OpenAI response failed");
 					}
 				}
-				// Handle output item completion
-				else if (event.type === "response.output_item.done") {
-					const item = event.item;
-					if (item.type === "reasoning" && currentBlock && currentBlock.type === "thinking") {
-						hadContent = true;
-						currentBlock.thinking = item.summary?.map((s) => s.text).join("\n\n") || "";
-						currentBlock.thinkingSignature = JSON.stringify(item);
-						stream.push({
-							type: "thinking_end",
-							contentIndex: blockIndex(),
-							content: currentBlock.thinking,
-							partial: output,
-						});
-						currentBlock = null;
-					} else if (item.type === "message" && currentBlock && currentBlock.type === "text") {
-						hadContent = true;
-						currentBlock.text = item.content.map((c) => (c.type === "output_text" ? c.text : c.refusal)).join("");
-						currentBlock.textSignature = item.id;
-						stream.push({
-							type: "text_end",
-							contentIndex: blockIndex(),
-							content: currentBlock.text,
-							partial: output,
-						});
-						currentBlock = null;
-					} else if (item.type === "function_call") {
-						hadContent = true;
-						// Use accumulated partialJson as fallback if item.arguments is empty/missing
-						const argsStr =
-							item.arguments || (currentBlock?.type === "toolCall" ? currentBlock.partialJson : "{}") || "{}";
-						const toolCall = {
-							type: "toolCall",
-							id: item.call_id + "|" + item.id,
-							name: item.name,
-							arguments: JSON.parse(argsStr),
-						};
-						stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
-						currentBlock = null;
-					}
+				if (!sawCompletion) {
+					throw new Error(hadContent ? "Stream terminated before completion" : "Stream terminated");
 				}
-				// Handle completion
-				else if (event.type === "response.completed") {
-					sawCompletion = true;
-					const response = event.response;
-					if (response?.usage) {
-						// Support both OpenAI (input_tokens/output_tokens) and
-						// Fireworks-style (prompt_tokens/completion_tokens) field names
-						const usage = response.usage;
-						const rawInput = usage.input_tokens ?? usage.prompt_tokens ?? 0;
-						const rawOutput = usage.output_tokens ?? usage.completion_tokens ?? 0;
-						const cachedTokens = response.usage.input_tokens_details?.cached_tokens ?? 0;
-						const input = rawInput - cachedTokens;
-						output.usage = {
-							// OpenAI includes cached tokens in input_tokens, so subtract to get non-cached input
-							input,
-							output: rawOutput,
-							cacheRead: cachedTokens,
-							cacheWrite: 0,
-							totalTokens: input + rawOutput + cachedTokens,
-							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-						};
-					}
-					calculateCost(model, output.usage);
-					if (response?.status === "queued" || response?.status === "in_progress") {
-						throw new Error(`Stream ended with non-terminal status: ${response.status}`);
-					}
-					// Map status to stop reason
-					output.stopReason = mapStopReason(response?.status);
-					if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
-						output.stopReason = "toolUse";
-					}
+				if (options?.signal?.aborted) {
+					throw new Error("Request was aborted");
 				}
-				// Handle errors
-				else if (event.type === "error") {
-					throw new Error(`Error Code ${event.code}: ${event.message}` || "Unknown error");
-				} else if (event.type === "response.failed") {
-					throw new Error("OpenAI response failed");
+				if (output.stopReason === "aborted" || output.stopReason === "error") {
+					throw new Error(output.errorMessage || "OpenAI response failed");
 				}
+				stream.push({ type: "done", reason: output.stopReason, message: output });
+				stream.end();
+				return;
+			} catch (error) {
+				lastError = error;
+				const shouldRetry =
+					!hasEmittedStart && isRetryableOpenAIError(error, options?.signal) && attempt < maxRetries;
+				if (shouldRetry) {
+					const delay = getExponentialBackoff(attempt, baseDelay, maxDelay);
+					try {
+						await sleep(delay, options?.signal);
+					} catch {
+						break;
+					}
+					continue;
+				}
+				break;
 			}
-			if (!sawCompletion) {
-				throw new Error(hadContent ? "Stream terminated before completion" : "Stream terminated");
-			}
-			if (options?.signal?.aborted) {
-				throw new Error("Request was aborted");
-			}
-			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new Error(output.errorMessage || "OpenAI response failed");
-			}
-			stream.push({ type: "done", reason: output.stopReason, message: output });
-			stream.end();
-		} catch (error) {
-			for (const block of output.content) delete block.index;
-			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
-			stream.push({ type: "error", reason: output.stopReason, error: output });
-			stream.end();
 		}
+		if (!hasEmittedStart) {
+			stream.push({ type: "start", partial: output });
+		}
+		for (const block of output.content) delete block.index;
+		output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+		const errorMessage = getErrorMessage(lastError ?? "OpenAI response failed");
+		output.errorMessage = attempts > 1 ? `${errorMessage} (after ${attempts} attempts)` : errorMessage;
+		stream.push({ type: "error", reason: output.stopReason, error: output });
+		stream.end();
 	})();
 	return stream;
 };
-function createClient(model, apiKey) {
+function createClient(model, apiKey, maxRetries = 0) {
 	if (!apiKey) {
 		if (!process.env.OPENAI_API_KEY) {
 			throw new Error(
@@ -287,6 +394,7 @@ function createClient(model, apiKey) {
 		baseURL: model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		defaultHeaders: model.headers,
+		maxRetries,
 	});
 }
 function buildParams(model, context, options) {

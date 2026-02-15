@@ -120,7 +120,10 @@ function isTransportErrorMessage(message) {
 		normalized.includes("network") ||
 		normalized.includes("econnreset") ||
 		normalized.includes("etimedout") ||
-		normalized.includes("econnrefused")
+		normalized.includes("econnrefused") ||
+		// Seen from OpenAI/Codex edge when it fails to retry an upstream request.
+		normalized.includes("request buffer") ||
+		normalized.includes("buffer limit")
 	);
 }
 const DEFAULT_COOLDOWN_MS = 60_000;
