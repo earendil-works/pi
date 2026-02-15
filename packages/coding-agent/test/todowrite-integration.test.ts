@@ -25,13 +25,13 @@ describe("todo integration", () => {
 		});
 
 		it("buildSystemPrompt includes Todo in tools list", async () => {
-			const prompt = await buildSystemPrompt({ selectedTools: ["todo"] });
+			const prompt = await buildSystemPrompt({ tools: [{ name: "todo" }] });
 			expect(prompt).toContain("todo");
 			expect(prompt).toContain("file-backed");
 		});
 
 		it("buildSystemPrompt works with Todo alongside other tools", async () => {
-			const prompt = await buildSystemPrompt({ selectedTools: ["read", "bash", "todo"] });
+			const prompt = await buildSystemPrompt({ tools: [{ name: "read" }, { name: "bash" }, { name: "todo" }] });
 			expect(prompt).toContain("read");
 			expect(prompt).toContain("bash");
 			expect(prompt).toContain("todo");

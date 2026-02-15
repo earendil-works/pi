@@ -2,7 +2,6 @@ import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { parse } from "yaml";
-import type { ToolName } from "../tools/index.js";
 import { findRepoRoot } from "../utils/find-repo-root.js";
 import { generateFileTree } from "./file-tree.js";
 
@@ -17,9 +16,9 @@ const __dirname = dirname(__filename);
 
 // Types for the system.yaml structure
 interface GuidelineCondition {
-	present?: ToolName[];
-	absent?: ToolName[];
-	anyPresent?: ToolName[];
+	present?: string[];
+	absent?: string[];
+	anyPresent?: string[];
 }
 
 interface Guideline {
@@ -29,7 +28,7 @@ interface Guideline {
 
 interface SystemPromptConfig {
 	systemPrompt: string;
-	toolDescriptions: Record<ToolName, string>;
+	toolDescriptions: Record<string, string>;
 	guidelines: Guideline[];
 }
 
@@ -70,7 +69,7 @@ function loadToolDescriptionsConfig(): Record<string, string> {
 /**
  * Get the short tool descriptions for the system prompt
  */
-export function getToolDescriptions(): Record<ToolName, string> {
+export function getToolDescriptions(): Record<string, string> {
 	const config = loadSystemPromptConfig();
 	return config.toolDescriptions;
 }
@@ -90,7 +89,7 @@ export function getToolDescription(toolName: string): string {
 /**
  * Check if a guideline's condition is satisfied given the selected tools
  */
-function isGuidelineSatisfied(condition: GuidelineCondition | undefined, selectedTools: ToolName[]): boolean {
+function isGuidelineSatisfied(condition: GuidelineCondition | undefined, selectedTools: string[]): boolean {
 	if (!condition) {
 		return true; // No condition means always include
 	}
@@ -133,7 +132,7 @@ function isGuidelineSatisfied(condition: GuidelineCondition | undefined, selecte
 /**
  * Build the guidelines list based on selected tools
  */
-export function buildGuidelines(selectedTools: ToolName[]): string[] {
+export function buildGuidelines(selectedTools: string[]): string[] {
 	const config = loadSystemPromptConfig();
 	const guidelines: string[] = [];
 
@@ -159,16 +158,48 @@ function formatContextFiles(contextFiles: ContextFile[]): string {
 		.join("\n\n");
 }
 
+function firstNonEmptyLine(text: string): string {
+	for (const line of text.split(/\r?\n/)) {
+		const trimmed = line.trim();
+		if (trimmed) return trimmed;
+	}
+	return "";
+}
+
+function shorten(text: string, maxLen: number): string {
+	const trimmed = text.trim();
+	if (trimmed.length <= maxLen) return trimmed;
+	return trimmed.slice(0, maxLen - 1).trimEnd() + "…";
+}
+
+function getShortToolDescription(toolName: string, toolDescription: string | undefined): string {
+	const config = loadSystemPromptConfig();
+	const fromYaml = config.toolDescriptions[toolName];
+	if (fromYaml) return fromYaml.trim();
+	if (toolDescription) {
+		const firstLine = firstNonEmptyLine(toolDescription);
+		return shorten(firstLine || toolDescription, 120);
+	}
+	return "(no description)";
+}
+
 /**
  * Build the complete system prompt
  */
+export interface ToolPromptEntry {
+	name: string;
+	/** Full tool description (may be long). Used as a fallback if no short description exists in system.yaml. */
+	description?: string;
+}
+
 export async function buildSystemPrompt(options: {
 	customPrompt?: string;
-	selectedTools?: ToolName[];
+	/** Tools available to the assistant (built-ins + extensions). */
+	tools?: ToolPromptEntry[];
 	contextFiles?: ContextFile[];
 	includeFileTree?: boolean;
 }): Promise<string> {
-	const { customPrompt, selectedTools, contextFiles = [], includeFileTree = true } = options;
+	const { customPrompt, tools, contextFiles = [], includeFileTree = true } = options;
 
 	// Generate file tree if enabled
 	let fileTreeSection = "";
@@ -195,16 +226,30 @@ export async function buildSystemPrompt(options: {
 
 	// Build from template
 	const config = loadSystemPromptConfig();
-	const tools =
-		selectedTools ||
-		(["read", "bash", "edit", "write", "list_threads", "read_thread", "read_image", "todo", "handoff"] as ToolName[]);
+	const promptTools: ToolPromptEntry[] =
+		tools && tools.length > 0
+			? tools
+			: [
+					{ name: "read" },
+					{ name: "bash" },
+					{ name: "edit" },
+					{ name: "write" },
+					{ name: "list_threads" },
+					{ name: "read_thread" },
+					{ name: "read_image" },
+					{ name: "todo" },
+					{ name: "handoff" },
+				];
 
-	// Build tools list
-	const toolDescriptions = config.toolDescriptions;
-	const toolsList = tools.map((t) => `- ${t}: ${toolDescriptions[t]}`).join("\n");
+	const toolNames = promptTools.map((t) => t.name);
 
-	// Build guidelines
-	const guidelinesText = buildGuidelines(tools)
+	// Build tools list (short)
+	const toolsList = promptTools
+		.map((t) => `- ${t.name}: ${getShortToolDescription(t.name, t.description)}`)
+		.join("\n");
+
+	// Build guidelines (based on enabled tool names)
+	const guidelinesText = buildGuidelines(toolNames)
 		.map((g) => `- ${g}`)
 		.join("\n");
 

@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Agent, AgentEvent, AgentState, Attachment, ThinkingLevel } from "@kennyfrc/mu-agent-core";
-import type { Api, AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@kennyfrc/mu-ai";
+import type { AgentTool, Api, AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@kennyfrc/mu-ai";
 import { complete, supportsXhigh } from "@kennyfrc/mu-ai";
 import type { SlashCommand } from "@kennyfrc/mu-tui";
 import {
@@ -19,6 +19,7 @@ import {
 	TUI,
 	visibleWidth,
 } from "@kennyfrc/mu-tui";
+import type { TSchema } from "@sinclair/typebox";
 import { exec } from "child_process";
 import { createHash, randomUUID } from "crypto";
 import {
@@ -88,7 +89,6 @@ import { getTodoRootDirForCwd } from "../todos/todo-path.js";
 import { TodoStore } from "../todos/todo-store.js";
 import { bashTool } from "../tools/bash.js";
 import { estimateTokens, formatParentThreadReference, type HandoffDetails, handoffTool } from "../tools/handoff.js";
-import type { ToolName } from "../tools/index.js";
 import type { ToolSelection } from "../tools/tool-selection.js";
 import { undoFileOperations } from "../undo/undo-file-operations.js";
 import { autoFenceHtmlInMarkdown } from "../utils/auto-fence-html.js";
@@ -254,7 +254,7 @@ export class TuiRenderer {
 	// Model scope for quick cycling
 	private scopedModels: Array<{ model: Model<any>; thinkingLevel: ThinkingLevel }> = [];
 	private toolSelector?: (model: Model<any> | null | undefined) => ToolSelection;
-	private systemPromptBuilder?: (toolNames: ToolName[]) => Promise<string>;
+	private systemPromptBuilder?: (tools: Array<AgentTool<TSchema, unknown>>) => Promise<string>;
 
 	// Tool output expansion state
 	private toolOutputExpanded = false;
@@ -293,7 +293,7 @@ export class TuiRenderer {
 		newVersion: string | null = null,
 		scopedModels: Array<{ model: Model<any>; thinkingLevel: ThinkingLevel }> = [],
 		toolSelector?: (model: Model<any> | null | undefined) => ToolSelection,
-		systemPromptBuilder?: (toolNames: ToolName[]) => Promise<string>,
+		systemPromptBuilder?: (tools: Array<AgentTool<TSchema, unknown>>) => Promise<string>,
 		fdPath: string | null = null,
 	) {
 		this.agent = agent;
@@ -1908,7 +1908,7 @@ export class TuiRenderer {
 		}
 		const selection = this.toolSelector(model);
 		this.agent.setTools(selection.tools);
-		const systemPrompt = await this.systemPromptBuilder(selection.toolNames);
+		const systemPrompt = await this.systemPromptBuilder(selection.tools);
 		this.agent.setSystemPrompt(systemPrompt);
 	}
 

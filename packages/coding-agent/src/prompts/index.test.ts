@@ -29,6 +29,19 @@ describe("buildSystemPrompt", () => {
 		expect(prompt).toContain("- bash:");
 	});
 
+	it("should include extension tools when tools are provided", async () => {
+		const prompt = await buildSystemPrompt({
+			includeFileTree: false,
+			tools: [
+				{ name: "web_search", description: "Search the web." },
+				{ name: "fetch", description: "Fetch a URL." },
+			],
+		});
+
+		expect(prompt).toContain("- web_search: Search the web.");
+		expect(prompt).toContain("- fetch: Fetch a URL.");
+	});
+
 	it("should work with custom prompt", async () => {
 		const prompt = await buildSystemPrompt({
 			customPrompt: "You are a test assistant.",

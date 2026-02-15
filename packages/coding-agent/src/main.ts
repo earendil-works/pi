@@ -387,7 +387,7 @@ ${chalk.bold(
 `);
 }
 
-async function buildSystemPrompt(customPrompt?: string, selectedTools?: ToolName[]): Promise<string> {
+async function buildSystemPrompt(customPrompt?: string, tools?: Array<AgentTool<TSchema, unknown>>): Promise<string> {
 	// Check if customPrompt is a file path that exists
 	let resolvedCustomPrompt = customPrompt;
 	if (customPrompt && existsSync(customPrompt)) {
@@ -403,7 +403,7 @@ async function buildSystemPrompt(customPrompt?: string, selectedTools?: ToolName
 
 	return buildSystemPromptFromYaml({
 		customPrompt: resolvedCustomPrompt,
-		selectedTools,
+		tools: tools?.map((t) => ({ name: t.name, description: t.description })),
 		contextFiles,
 	});
 }
@@ -652,7 +652,7 @@ async function runInteractiveMode(
 	newVersion: string | null = null,
 	scopedModels: Array<{ model: Model<Api>; thinkingLevel: ThinkingLevel }> = [],
 	toolSelector?: (model: Model<Api> | null | undefined) => ToolSelection,
-	systemPromptBuilder?: (toolNames: ToolName[]) => Promise<string>,
+	systemPromptBuilder?: (tools: Array<AgentTool<TSchema, unknown>>) => Promise<string>,
 	initialMessages: string[] = [],
 	initialMessage?: string,
 	initialAttachments?: Attachment[],
@@ -1143,7 +1143,7 @@ export async function main(args: string[]) {
 		...baseSelection,
 		tools: extensionManager.getToolsForSelection(baseSelection.toolNames),
 	};
-	const systemPrompt = await buildSystemPrompt(parsed.systemPrompt, toolSelection.toolNames);
+	const systemPrompt = await buildSystemPrompt(parsed.systemPrompt, toolSelection.tools);
 	const selectedTools = toolSelection.tools;
 	const toolSelector = (model: Model<Api> | null | undefined) => {
 		const selection = resolveToolSelection(baseToolNames, model);
@@ -1152,7 +1152,8 @@ export async function main(args: string[]) {
 			tools: extensionManager.getToolsForSelection(selection.toolNames),
 		};
 	};
-	const systemPromptBuilder = async (toolNames: ToolName[]) => buildSystemPrompt(parsed.systemPrompt, toolNames);
+	const systemPromptBuilder = async (tools: Array<AgentTool<TSchema, unknown>>) =>
+		buildSystemPrompt(parsed.systemPrompt, tools);
 
 	// Create agent (initialModel can be null in interactive mode)
 	const agent = new Agent({
