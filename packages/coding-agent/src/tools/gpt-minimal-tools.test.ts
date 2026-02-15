@@ -27,21 +27,28 @@ describe("GPT tools", () => {
 		expect(toolMap.apply_patch?.parameters?.type).toBe("object");
 	});
 
-	it("defaults GPT-ish models to the standard tool set, but swaps edit -> apply_patch", () => {
+	it("defaults GPT-* models to the restricted tool set", () => {
 		const model = getModel("openai", "gpt-4o-mini");
 		const selection = resolveToolSelection(undefined, model);
 
 		expect(selection.toolNames).toEqual([
 			"read",
-			"bash",
-			"apply_patch",
-			"write",
+			"exec_command",
+			"read_image",
+			"handoff",
 			"list_threads",
 			"read_thread",
-			"read_image",
-			"todo",
-			"handoff",
 		]);
 		expect(selection.tools.map((t) => t.name)).toEqual(selection.toolNames);
+	});
+
+	it("keeps the GPT-ish default for OpenAI non-GPT-* models", () => {
+		const model = getModel("openai", "codex-mini-latest");
+		const selection = resolveToolSelection(undefined, model);
+
+		expect(selection.toolNames).toContain("bash");
+		expect(selection.toolNames).toContain("apply_patch");
+		expect(selection.toolNames).toContain("write");
+		expect(selection.toolNames).toContain("todo");
 	});
 });

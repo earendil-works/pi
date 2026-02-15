@@ -26,6 +26,15 @@ const GPT_DEFAULT_TOOL_NAMES: ToolName[] = [
 	"handoff",
 ];
 
+const GPT_STAR_TOOL_NAMES: ToolName[] = [
+	"read",
+	"exec_command",
+	"read_image",
+	"handoff",
+	"list_threads",
+	"read_thread",
+];
+
 export interface ToolSelection {
 	toolNames: ToolName[];
 	tools: Array<AgentTool<TSchema, unknown>>;
@@ -43,6 +52,16 @@ export function isGptModel(model: Model<Api> | null | undefined): boolean {
 		return true;
 	}
 	return id.includes("gpt") || name.includes("gpt");
+}
+
+function isGptStarModel(model: Model<Api> | null | undefined): boolean {
+	if (!model) {
+		return false;
+	}
+	const id = model.id.toLowerCase();
+	const name = model.name ? model.name.toLowerCase() : "";
+
+	return id.startsWith("gpt-") || id.includes("/gpt-") || id.includes(":gpt-") || name.includes("gpt-");
 }
 
 function dedupeToolNames(toolNames: ToolName[]): ToolName[] {
@@ -64,9 +83,11 @@ export function resolveToolSelection(
 	const initialNames =
 		baseToolNames && baseToolNames.length > 0
 			? baseToolNames
-			: isGptModel(model)
-				? GPT_DEFAULT_TOOL_NAMES
-				: DEFAULT_TOOL_NAMES;
+			: isGptStarModel(model)
+				? GPT_STAR_TOOL_NAMES
+				: isGptModel(model)
+					? GPT_DEFAULT_TOOL_NAMES
+					: DEFAULT_TOOL_NAMES;
 	let replacedWithApplyPatch = false;
 	const resolvedNames = dedupeToolNames(initialNames);
 
