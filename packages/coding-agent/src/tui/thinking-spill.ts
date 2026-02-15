@@ -19,33 +19,47 @@ export interface ThinkingSpillFixResult {
 /**
  * Normalize excessive leading whitespace from lines.
  *
- * Some models add 1-2 leading spaces to lines in thinking traces and responses.
- * This is jarring during streaming. We strip consistent leading indentation across
- * all non-blank lines while preserving relative indentation for intentional structure.
+ * Some models add a small, consistent leading indentation to lines in thinking traces
+ * and responses. This is jarring during streaming. We strip common leading whitespace
+ * from all non-blank lines while preserving relative indentation for intentional
+ * structure.
  *
  * This preserves:
  * - Nested lists (relative indentation preserved)
  * - Indented code blocks (relative indentation preserved)
+ * - Tab-indented blocks (tabs are normalized alongside spaces)
  * - Fenced code blocks (backticks - content inside is preserved)
  */
 export function normalizeExcessiveWhitespace(text: string): string {
 	const lines = text.split("\n");
-
-	// Find the minimum leading spaces across all non-empty lines
-	let minIndent = Infinity;
-	for (const line of lines) {
-		if (line.trim().length === 0) continue; // Skip empty lines
-		const leadingSpaces = line.match(/^( *)/)?.[1]?.length ?? 0;
-		if (leadingSpaces < minIndent) {
-			minIndent = leadingSpaces;
-		}
-		// Stop early if we hit 0 - can't strip less than 0
-		if (minIndent === 0) break;
+	const linesWithContent = lines.filter((line) => line.trim().length > 0);
+	if (linesWithContent.length === 0) {
+		return text;
 	}
 
-	// If all lines have at least 1 leading space, strip that common prefix
-	if (minIndent > 0 && minIndent !== Infinity) {
-		return lines.map((line) => line.slice(minIndent)).join("\n");
+	let commonIndent = linesWithContent[0]?.match(/^[ \t]*/)?.[0] ?? "";
+	for (let i = 1; i < linesWithContent.length; i++) {
+		const indent = linesWithContent[i]?.match(/^[ \t]*/)?.[0] ?? "";
+		if (indent.length < commonIndent.length) {
+			commonIndent = indent;
+		}
+
+		while (commonIndent.length > 0 && !indent.startsWith(commonIndent)) {
+			commonIndent = commonIndent.slice(0, -1);
+		}
+
+		if (commonIndent.length === 0) {
+			break;
+		}
+	}
+
+	if (commonIndent.length > 0) {
+		return lines
+			.map((line) => {
+				if (line.trim().length === 0) return line;
+				return line.startsWith(commonIndent) ? line.slice(commonIndent.length) : line;
+			})
+			.join("\n");
 	}
 
 	return text;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fixThinkingSpill } from "./thinking-spill.js";
+import { fixThinkingSpill, normalizeExcessiveWhitespace } from "./thinking-spill.js";
 
 describe("fixThinkingSpill", () => {
 	it("strips a duplicated thinking prefix from the response text", () => {
@@ -24,5 +24,27 @@ describe("fixThinkingSpill", () => {
 		const result = fixThinkingSpill("DUP", "DUP", { exactDuplicateStrategy: "dropText" });
 		expect(result.thinking).toBe("DUP");
 		expect(result.text).toBe("");
+	});
+});
+
+describe("normalizeExcessiveWhitespace", () => {
+	it("strips shared leading spaces from all lines", () => {
+		expect(normalizeExcessiveWhitespace(" ONE\n TWO\n")).toBe("ONE\nTWO\n");
+	});
+
+	it("strips shared tab indentation from all lines", () => {
+		expect(normalizeExcessiveWhitespace("\tONE\n\t\tTWO\n")).toBe("ONE\n\tTWO\n");
+	});
+
+	it("preserves relative indentation after dedenting tab-indented blocks", () => {
+		expect(normalizeExcessiveWhitespace("\tone\n\t  two\n")).toBe("one\n  two\n");
+	});
+
+	it("does not dedent when only a single line has indentation", () => {
+		expect(normalizeExcessiveWhitespace("NONE\n  INDENT\n")).toBe("NONE\n  INDENT\n");
+	});
+
+	it("does not dedent mixed tab/space indentation without a common prefix", () => {
+		expect(normalizeExcessiveWhitespace("\tONE\n  TWO\n")).toBe("\tONE\n  TWO\n");
 	});
 });
