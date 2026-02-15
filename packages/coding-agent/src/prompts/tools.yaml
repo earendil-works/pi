@@ -12,7 +12,7 @@ read_image: |
   - objective: What to extract/analyze from the image
   - context (optional): Why this analysis matters (helps focus the analysis)
   - referenceFiles (optional): Paths to reference images for comparison
-  - model (optional): "claude" or "gemini" (default: gemini)
+  - model (optional): "gemini" (default: gemini)
 
   Examples:
   {"path":"docs/specs/system-design.png","objective":"Summarize main architectural decisions","context":"Evaluating this system for a new project"}

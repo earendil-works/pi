@@ -154,34 +154,6 @@ async function loadImageSource(
 	}
 }
 
-/**
- * Determine auth type based on provider and API key characteristics
- */
-function determineAuthType(provider: string, apiKey: string): "sub" | "api" {
-	// OAuth tokens have distinct patterns
-	if (provider === "anthropic") {
-		// OAuth tokens start with "sk-ant-" and are longer
-		if (apiKey.startsWith("sk-ant-") && apiKey.length > 50) {
-			return "sub";
-		}
-		// Standard API keys start with "sk-ant-api03" or similar short prefixes
-		return "api";
-	}
-
-	// For Google providers, OAuth tokens are typically longer JWT-like strings
-	// API keys are usually shorter and may have specific prefixes
-	if (provider.startsWith("google")) {
-		// OAuth tokens are typically very long (hundreds of chars)
-		if (apiKey.length > 100) {
-			return "sub";
-		}
-		return "api";
-	}
-
-	// Default to API for unknown providers
-	return "api";
-}
-
 const readImageSchema = Type.Object({
 	path: Type.String({ description: "Path to the image file to read (local file path or remote URL)" }),
 	objective: Type.String({
@@ -200,8 +172,8 @@ const readImageSchema = Type.Object({
 		}),
 	),
 	model: Type.Optional(
-		StringEnum(["claude", "gemini"] as const, {
-			description: "Model to use for image analysis (default: gemini)",
+		StringEnum(["gemini"] as const, {
+			description: "Model to use for image analysis (must be gemini)",
 		}),
 	),
 });
@@ -224,103 +196,62 @@ export const readImageTool: AgentTool<typeof readImageSchema> = {
 			objective: string;
 			context?: string;
 			referenceFiles?: string[];
-			model?: "claude" | "gemini";
+			model?: "gemini";
 		},
 		signal?: AbortSignal,
 		_onProgress?: (chunk: string) => void,
 	) => {
-		// Determine which model to use (default: gemini)
-		const selectedModelAlias = model ?? "gemini";
+		// Note: `model` is intentionally restricted to "gemini" (schema-level).
+		// This tool always uses Gemini 3 Flash Preview via the Gemini CLI provider.
+		void model;
 
-		// Resolve the model and auth type
-		let selectedModel: ReturnType<typeof findModel> extends { model: infer T } ? T : never | null = null;
-		let authType: "sub" | "api" = "api";
-		let provider = "";
+		const provider = "google-gemini-cli";
+		const authType: "sub" = "sub";
 
-		if (selectedModelAlias === "claude") {
-			// Claude: use anthropic provider with claude-haiku-4-5
-			const result = findModel("anthropic", "claude-haiku-4-5");
-			if (!result.model) {
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>Model claude-haiku-4-5 not found</error></image_extract>`,
-						},
-					],
-					details: undefined,
-					isError: true,
-				};
-			}
-			selectedModel = result.model;
-			provider = "anthropic";
+		const modelResult = findModel(provider, "gemini-3-flash-preview");
+		if (!modelResult.model) {
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>Model gemini-3-flash-preview not found for provider ${provider}</error></image_extract>`,
+					},
+				],
+				details: undefined,
+				isError: true,
+			};
+		}
 
-			// Get API key (OAuth priority)
-			const apiKey = await getApiKeyForModel(result.model);
-			if (!apiKey) {
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>No API key or OAuth token available for anthropic</error></image_extract>`,
-						},
-					],
-					details: undefined,
-					isError: true,
-				};
-			}
+		const selectedModel = modelResult.model;
 
-			// Determine auth type based on key characteristics
-			authType = determineAuthType("anthropic", apiKey);
-		} else {
-			// Gemini: default to google-gemini-cli (OAuth) with fallback to google (API key)
-			// Try google-gemini-cli first (OAuth provider)
-			const oauthResult = findModel("google-gemini-cli", "gemini-3-flash-preview");
+		let apiKey: string | undefined;
+		try {
+			apiKey = await getApiKeyForModel(selectedModel);
+		} catch (error) {
+			const msg = error instanceof Error ? error.message : String(error);
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>${escapeXmlAttr(msg)}</error></image_extract>`,
+					},
+				],
+				details: undefined,
+				isError: true,
+			};
+		}
 
-			if (oauthResult.model) {
-				const apiKey = await getApiKeyForModel(oauthResult.model);
-				if (apiKey) {
-					// Use OAuth path
-					selectedModel = oauthResult.model;
-					provider = "google-gemini-cli";
-					authType = "sub";
-				}
-			}
-
-			// Fallback to google provider if OAuth not available
-			if (!selectedModel) {
-				const apiResult = findModel("google", "gemini-3-flash-preview");
-				if (!apiResult.model) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>Model gemini-3-flash-preview not found</error></image_extract>`,
-							},
-						],
-						details: undefined,
-						isError: true,
-					};
-				}
-
-				const apiKey = await getApiKeyForModel(apiResult.model);
-				if (!apiKey) {
-					return {
-						content: [
-							{
-								type: "text" as const,
-								text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>No API key or OAuth token available for google</error></image_extract>`,
-							},
-						],
-						details: undefined,
-						isError: true,
-					};
-				}
-
-				selectedModel = apiResult.model;
-				provider = "google";
-				authType = "api";
-			}
+		if (!apiKey) {
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>No OAuth token available for ${provider}</error></image_extract>`,
+					},
+				],
+				details: undefined,
+				isError: true,
+			};
 		}
 
 		// Check if already aborted - return tool-shaped error instead of throwing
@@ -462,20 +393,6 @@ CRITICAL CONSTRAINTS:
 					timestamp: Date.now(),
 				},
 			];
-
-			const apiKey = await getApiKeyForModel(selectedModel);
-			if (!apiKey) {
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>Failed to get API key for ${selectedModel.id}</error></image_extract>`,
-						},
-					],
-					details: undefined,
-					isError: true,
-				};
-			}
 
 			const result = await completeSimple(
 				selectedModel,

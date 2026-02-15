@@ -4,7 +4,7 @@
 
 ### Added
 
-- **read_image Tool**: New tool for analyzing images with vision-capable models. Accepts local file paths or remote URLs, supports Claude Haiku 4.5 or Gemini 3 Flash Preview, uses OAuth by default with API key fallback, and returns structured XML output.
+- **read_image Tool**: New tool for analyzing images with vision-capable models. Accepts local file paths or remote URLs, uses Gemini 3 Flash Preview via the Gemini CLI provider (OAuth required; no Google API key fallback), and returns structured XML output.
 
 ### Changed
 
