@@ -95,6 +95,11 @@ Input: User asks about let vs const
 		.join("\n\n");
 
 	try {
+		const options =
+			titleModel.provider === "openai-codex"
+				? ({ apiKey, maxTokens: 100, reasoning: "xhigh" } as const)
+				: ({ apiKey, maxTokens: 100 } as const);
+
 		const result = await completeSimple(
 			titleModel,
 			{
@@ -107,7 +112,7 @@ Input: User asks about let vs const
 					},
 				],
 			},
-			{ apiKey, maxTokens: 100 },
+			options,
 		);
 
 		const responseText = result.content

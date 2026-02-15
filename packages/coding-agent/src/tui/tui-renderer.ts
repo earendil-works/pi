@@ -3307,7 +3307,11 @@ export class TuiRenderer {
 				});
 				break;
 			case "openai-codex-responses":
-				result = await complete(handoffModel as Model<"openai-codex-responses">, context, { apiKey, signal });
+				result = await complete(handoffModel as Model<"openai-codex-responses">, context, {
+					apiKey,
+					signal,
+					reasoningEffort: "xhigh",
+				});
 				break;
 			case "zai-completions":
 				result = await complete(handoffModel as Model<"zai-completions">, context, { apiKey, signal });
@@ -3362,20 +3366,40 @@ export class TuiRenderer {
 			modifiedFiles: tracking.modifiedFiles,
 		});
 
-		const result = await complete(
-			handoffModel,
-			{
-				systemPrompt: HANDOFF_SUMMARY_SYSTEM_PROMPT,
-				messages: [
+		const result =
+			handoffModel.api === "openai-codex-responses"
+				? await complete(
+					handoffModel as Model<"openai-codex-responses">,
 					{
-						role: "user" as const,
-						content: [{ type: "text" as const, text: userText }],
-						timestamp: Date.now(),
+						systemPrompt: HANDOFF_SUMMARY_SYSTEM_PROMPT,
+						messages: [
+							{
+								role: "user" as const,
+								content: [{ type: "text" as const, text: userText }],
+								timestamp: Date.now(),
+							},
+						],
 					},
-				],
-			},
-			{ apiKey, signal },
-		);
+					{
+						apiKey,
+						signal,
+						reasoningEffort: "xhigh",
+					},
+				)
+				: await complete(
+					handoffModel,
+					{
+						systemPrompt: HANDOFF_SUMMARY_SYSTEM_PROMPT,
+						messages: [
+							{
+								role: "user" as const,
+								content: [{ type: "text" as const, text: userText }],
+								timestamp: Date.now(),
+							},
+						],
+					},
+					{ apiKey, signal },
+				);
 
 		if (result.stopReason === "error" || result.stopReason === "aborted") {
 			throw new Error(result.errorMessage || `LLM returned ${result.stopReason}`);
@@ -3504,20 +3528,40 @@ export class TuiRenderer {
 		const transcript = this.extractTailTranscript(8);
 		const systemPrompt = getAutoHandoffGoalPrompt();
 
-		const result = await complete(
-			handoffModel,
-			{
-				systemPrompt,
-				messages: [
+		const result =
+			handoffModel.api === "openai-codex-responses"
+				? await complete(
+					handoffModel as Model<"openai-codex-responses">,
 					{
-						role: "user" as const,
-						content: [{ type: "text" as const, text: transcript }],
-						timestamp: Date.now(),
+						systemPrompt,
+						messages: [
+							{
+								role: "user" as const,
+								content: [{ type: "text" as const, text: transcript }],
+								timestamp: Date.now(),
+							},
+						],
 					},
-				],
-			},
-			{ apiKey, signal },
-		);
+					{
+						apiKey,
+						signal,
+						reasoningEffort: "xhigh",
+					},
+				)
+				: await complete(
+					handoffModel,
+					{
+						systemPrompt,
+						messages: [
+							{
+								role: "user" as const,
+								content: [{ type: "text" as const, text: transcript }],
+								timestamp: Date.now(),
+							},
+						],
+					},
+					{ apiKey, signal },
+				);
 
 		if (result.stopReason === "error" || result.stopReason === "aborted") {
 			throw new Error(result.errorMessage || `LLM returned ${result.stopReason}`);

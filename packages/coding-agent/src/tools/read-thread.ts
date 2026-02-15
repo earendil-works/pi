@@ -348,7 +348,7 @@ You MUST respond with ONLY this XML format:
 						},
 					],
 				},
-				{ apiKey, signal },
+				extractionModel.provider === "openai-codex" ? { apiKey, signal, reasoning: "xhigh" } : { apiKey, signal },
 			);
 
 			const rawText = extraction.content
