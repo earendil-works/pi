@@ -2,7 +2,7 @@ import type { AssistantMessage, AssistantMessageEvent } from "@kennyfrc/mu-ai";
 import { Container, Markdown, Spacer } from "@kennyfrc/mu-tui";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
-import { fixThinkingSpill } from "./thinking-spill.js";
+import { fixThinkingSpill, normalizeExcessiveWhitespace } from "./thinking-spill.js";
 
 export interface StreamingAssistantMessageOptions {
 	/**
@@ -148,7 +148,11 @@ export class StreamingAssistantMessageComponent extends Container {
 	private updateStreamingDisplay(): void {
 		this.revision++;
 
-		const fixed = fixThinkingSpill(this.thinkingBuffer, this.textBuffer, { exactDuplicateStrategy: "dropText" });
+		const fixed = fixThinkingSpill(
+			normalizeExcessiveWhitespace(this.thinkingBuffer),
+			normalizeExcessiveWhitespace(this.textBuffer),
+			{ exactDuplicateStrategy: "dropText" },
+		);
 
 		const hasThinking = fixed.thinking.trim().length > 0;
 		const hasText = fixed.text.trim().length > 0;

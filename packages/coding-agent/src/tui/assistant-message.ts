@@ -1,7 +1,7 @@
 import type { AssistantMessage } from "@kennyfrc/mu-ai";
 import { Container, Markdown, Spacer, Text } from "@kennyfrc/mu-tui";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
-import { fixThinkingSpill } from "./thinking-spill.js";
+import { fixThinkingSpill, normalizeExcessiveWhitespace } from "./thinking-spill.js";
 
 /**
  * Component that renders a complete assistant message
@@ -68,8 +68,10 @@ export class AssistantMessageComponent extends Container {
 		}
 
 		const blocks: Array<{ type: "text" | "thinking"; text: string }> = [
-			...thinkingBlocks,
-			...textBlocks.filter((b) => b.text.trim().length > 0),
+			...thinkingBlocks.map((b) => ({ ...b, text: normalizeExcessiveWhitespace(b.text) })),
+			...textBlocks
+				.filter((b) => b.text.trim().length > 0)
+				.map((b) => ({ ...b, text: normalizeExcessiveWhitespace(b.text) })),
 		];
 
 		const hasLeadingSpacer = blocks.length > 0;

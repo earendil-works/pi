@@ -17,6 +17,33 @@ export interface ThinkingSpillFixResult {
 }
 
 /**
+ * Normalize excessive leading whitespace from lines.
+ *
+ * Some models add excessive indentation (6+ spaces) to lines in thinking traces
+ * and responses. This is jarring during streaming. We reduce 6+ spaces down to 2
+ * spaces to preserve readability while removing the excessive indentation.
+ *
+ * This preserves:
+ * - Nested lists (2 spaces of indentation)
+ * - Indented code blocks (4 spaces - unchanged since we only touch 6+)
+ * - Fenced code blocks (backticks - content inside is preserved)
+ */
+export function normalizeExcessiveWhitespace(text: string): string {
+	return text
+		.split("\n")
+		.map((line) => {
+			// Match 6 or more leading spaces
+			const match = line.match(/^( {6,})/);
+			if (match) {
+				// Reduce excessive indentation to 2 spaces
+				return "  " + line.slice(match[1].length);
+			}
+			return line;
+		})
+		.join("\n");
+}
+
+/**
  * Best-effort guard to prevent "thinking" content from being duplicated/spilled
  * into the visible response text.
  */
