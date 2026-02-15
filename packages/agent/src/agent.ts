@@ -7,7 +7,7 @@ import type {
 	UserMessage,
 } from "@kennyfrc/mu-ai";
 import { getModel } from "@kennyfrc/mu-ai";
-import type { AgentTransport } from "./transports/types.js";
+import type { AgentRunConfig, AgentTransport } from "./transports/types.js";
 import type { AgentEvent, AgentState, AppMessage, Attachment, ThinkingLevel } from "./types.js";
 
 /**
@@ -94,6 +94,8 @@ export interface AgentOptions {
 	transport: AgentTransport;
 	// Transform app messages to LLM-compatible messages before sending to transport
 	messageTransformer?: (messages: AppMessage[]) => Message[] | Promise<Message[]>;
+	// Transform/prune/inject LLM messages before each provider call inside a multi-turn run.
+	messagePreprocessor?: (messages: Message[], abortSignal?: AbortSignal) => Message[] | Promise<Message[]>;
 	// Transform tool result messages after they're created (e.g., to inject context usage warnings)
 	toolResultTransformer?: (toolResult: ToolResultMessage) => ToolResultMessage;
 	// Queue mode for regular queued messages: "all" = send all queued-by-end messages at once, "one-at-a-time" = one per turn
@@ -116,6 +118,7 @@ export class Agent {
 	private abortController?: AbortController;
 	private transport: AgentTransport;
 	private messageTransformer: (messages: AppMessage[]) => Message[] | Promise<Message[]>;
+	private messagePreprocessor?: (messages: Message[], abortSignal?: AbortSignal) => Message[] | Promise<Message[]>;
 	private toolResultTransformer?: (toolResult: ToolResultMessage) => ToolResultMessage;
 	private messageQueue: AgentQueuedMessage[] = [];
 	private queueMode: "all" | "one-at-a-time";
@@ -128,6 +131,7 @@ export class Agent {
 		this._state = { ...this._state, ...opts.initialState };
 		this.transport = opts.transport;
 		this.messageTransformer = opts.messageTransformer || defaultMessageTransformer;
+		this.messagePreprocessor = opts.messagePreprocessor;
 		this.toolResultTransformer = opts.toolResultTransformer;
 		this.queueMode = opts.queueMode || "one-at-a-time";
 	}
@@ -148,6 +152,12 @@ export class Agent {
 
 	setToolResultTransformer(fn: ((toolResult: ToolResultMessage) => ToolResultMessage) | undefined) {
 		this.toolResultTransformer = fn;
+	}
+
+	setMessagePreprocessor(
+		fn: ((messages: Message[], abortSignal?: AbortSignal) => Message[] | Promise<Message[]>) | undefined,
+	): void {
+		this.messagePreprocessor = fn;
 	}
 
 	setModel(m: typeof this._state.model) {
@@ -333,11 +343,15 @@ export class Agent {
 					? "low"
 					: this._state.thinkingLevel;
 
-		const cfg = {
+		const cfg: AgentRunConfig = {
 			systemPrompt: this._state.systemPrompt,
 			tools: this._state.tools,
 			model,
 			reasoning,
+			preprocessor: this.messagePreprocessor
+				? async (messages: Message[], abortSignal?: AbortSignal) =>
+						await this.messagePreprocessor!(messages, abortSignal)
+				: undefined,
 			interrupt: async (
 				_args: {
 					assistantMessage: AssistantMessage;

@@ -9,6 +9,11 @@ export interface AgentRunConfig {
 	model: Model<any>;
 	reasoning?: "low" | "medium" | "high" | "xhigh";
 	/**
+	 * Transform/prune/inject messages before each LLM call within a multi-turn run.
+	 * Passed through to @kennyfrc/mu-ai's AgentLoopConfig.preprocessor.
+	 */
+	preprocessor?: AgentLoopConfig["preprocessor"];
+	/**
 	 * Optional hook to inject user messages between a tool-using turn and the continuation LLM call.
 	 * Used by steering messages (/steer) that are queued with kind "next".
 	 */

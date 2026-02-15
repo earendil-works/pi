@@ -58,6 +58,7 @@ export class ProviderTransport implements AgentTransport {
 			model,
 			reasoning: cfg.reasoning,
 			apiKey,
+			preprocessor: cfg.preprocessor,
 			interrupt: cfg.interrupt,
 			toolResultTransformer: cfg.toolResultTransformer,
 		};

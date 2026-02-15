@@ -364,6 +364,7 @@ export class AppTransport implements AgentTransport {
 		const pc: AgentLoopConfig = {
 			model: cfg.model,
 			reasoning: cfg.reasoning,
+			preprocessor: cfg.preprocessor,
 			interrupt: cfg.interrupt,
 			toolResultTransformer: cfg.toolResultTransformer,
 		};
