@@ -12,6 +12,8 @@ Extensions can:
 
 This is designed to be hot-reloadable via `/reload`.
 
+For a Diátaxis-style guide (tutorial/how-to/reference/explanation), see: `docs/extensions/README.md`.
+
 ---
 
 ## Discovery locations
