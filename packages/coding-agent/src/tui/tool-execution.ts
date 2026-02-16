@@ -27,6 +27,122 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
+function isNonEmptyString(value: unknown): value is string {
+	return typeof value === "string" && value.trim().length > 0;
+}
+
+function quoteArgForDisplay(arg: string): string {
+	// Unquoted if it's a simple token (no whitespace, no shell-ish punctuation)
+	if (/^[A-Za-z0-9._/:=-]+$/.test(arg)) return arg;
+	return JSON.stringify(arg);
+}
+
+function formatCommandLineForDisplay(command: string, argv: string[]): string {
+	return [command, ...argv]
+		.map((p) => quoteArgForDisplay(p))
+		.join(" ")
+		.trim();
+}
+
+function deriveWebToolCallText(toolName: string, args: Record<string, unknown>): string | null {
+	if (toolName === "web_search") {
+		const cliArgs: string[] = ["query"];
+		const searchTerm = isNonEmptyString(args.searchTerm) ? args.searchTerm.trim() : "";
+		if (searchTerm) cliArgs.push(searchTerm);
+		if (isNonEmptyString(args.country)) cliArgs.push("--country", args.country.trim());
+		if (isNonEmptyString(args.lang)) cliArgs.push("--lang", args.lang.trim());
+		if (typeof args.count === "number" && Number.isFinite(args.count)) cliArgs.push("--count", String(args.count));
+		if (typeof args.offset === "number" && Number.isFinite(args.offset))
+			cliArgs.push("--offset", String(args.offset));
+		if (isNonEmptyString(args.freshness)) cliArgs.push("--freshness", args.freshness.trim());
+		const batch = Array.isArray(args.batch) ? args.batch.filter(isNonEmptyString).map((s) => s.trim()) : [];
+		if (batch.length > 0) cliArgs.push("--batch", ...batch);
+		return formatCommandLineForDisplay("websearch", cliArgs);
+	}
+
+	if (toolName === "fetch") {
+		if (!isNonEmptyString(args.url)) return null;
+		const cliArgs: string[] = [args.url.trim()];
+		if (args.html === true) cliArgs.push("--html");
+		if (args.text === true) cliArgs.push("--text");
+		if (args.browser === true) cliArgs.push("--browser");
+		if (typeof args.timeout === "number" && Number.isFinite(args.timeout))
+			cliArgs.push("--timeout", String(args.timeout));
+		if (isNonEmptyString(args.userAgent)) cliArgs.push("--user-agent", args.userAgent.trim());
+		if (typeof args.maxLength === "number" && Number.isFinite(args.maxLength))
+			cliArgs.push("--max-length", String(args.maxLength));
+		if (typeof args.startIndex === "number" && Number.isFinite(args.startIndex))
+			cliArgs.push("--start-index", String(args.startIndex));
+		if (typeof args.renderTimeout === "number" && Number.isFinite(args.renderTimeout))
+			cliArgs.push("--render-timeout", String(args.renderTimeout));
+		if (typeof args.maxHtmlLength === "number" && Number.isFinite(args.maxHtmlLength))
+			cliArgs.push("--max-html-length", String(args.maxHtmlLength));
+		if (args.disableReadability === true) cliArgs.push("--disable-readability");
+		if (args.noAcceptMarkdown === true) cliArgs.push("--no-accept-markdown");
+		if (typeof args.minThroughput === "number" && Number.isFinite(args.minThroughput))
+			cliArgs.push("--min-throughput", String(args.minThroughput));
+		if (typeof args.throughputGrace === "number" && Number.isFinite(args.throughputGrace))
+			cliArgs.push("--throughput-grace", String(args.throughputGrace));
+
+		const headers = Array.isArray(args.header) ? args.header.filter(isNonEmptyString).map((s) => s.trim()) : [];
+		for (const h of headers) cliArgs.push("--header", h);
+		const cookies = Array.isArray(args.cookie) ? args.cookie.filter(isNonEmptyString).map((s) => s.trim()) : [];
+		for (const c of cookies) cliArgs.push("--cookie", c);
+
+		if (isNonEmptyString(args.captchaKey)) cliArgs.push("--captcha-key", args.captchaKey.trim());
+		if (typeof args.captchaInterval === "number" && Number.isFinite(args.captchaInterval))
+			cliArgs.push("--captcha-interval", String(args.captchaInterval));
+		if (args.captchaReport === true) cliArgs.push("--captcha-report");
+		if (typeof args.captchaSolveTimeout === "number" && Number.isFinite(args.captchaSolveTimeout))
+			cliArgs.push("--captcha-solve-timeout", String(args.captchaSolveTimeout));
+		if (typeof args.captchaGlobalTimeout === "number" && Number.isFinite(args.captchaGlobalTimeout))
+			cliArgs.push("--captcha-global-timeout", String(args.captchaGlobalTimeout));
+
+		return formatCommandLineForDisplay("webfetch", cliArgs);
+	}
+
+	return null;
+}
+
+type MuDisplayV1Severity = "ok" | "warning" | "error" | "info";
+
+interface MuDisplayV1 {
+	version: 1;
+	call?: {
+		style: "argv";
+		text: string;
+		command?: string;
+		argv?: string[];
+		cwd?: string;
+	};
+	summary?: {
+		text: string;
+		severity?: MuDisplayV1Severity;
+	};
+	output?: {
+		collapse?: {
+			maxVisualLines: number;
+			expandHint?: string;
+		};
+		format?: "text" | "markdown" | "json" | "html";
+	};
+	sections?: Array<{
+		title: string;
+		format?: "text" | "json";
+		content: string;
+		collapsedByDefault?: boolean;
+		collapse?: { maxVisualLines: number };
+	}>;
+}
+
+function readMuDisplayV1(details: unknown): MuDisplayV1 | undefined {
+	if (!isRecord(details)) return undefined;
+	const candidate = details.mu_display;
+	if (!isRecord(candidate)) return undefined;
+	if (candidate.version !== 1) return undefined;
+	return candidate as unknown as MuDisplayV1;
+}
+
 function normalizeToolName(toolName: string): string {
 	const legacyNameMap: Record<string, string> = {
 		// Historical TitleCase names from older transcripts.
@@ -207,6 +323,9 @@ export class ToolExecutionComponent extends Container {
 			glob?: unknown;
 			// todo
 			action?: unknown;
+			// argv-style (registerCliTool)
+			argv?: unknown;
+			stdin?: unknown;
 		};
 		const args = (isRecord(this.args) ? this.args : {}) as ToolArgs;
 
@@ -599,15 +718,97 @@ export class ToolExecutionComponent extends Container {
 							.join("\n");
 				}
 			}
-		} else {
-			// Generic tool
-			text = theme.fg("toolTitle", theme.bold(this.toolName));
+		} else if (readMuDisplayV1(this.result?.details)) {
+			const muDisplay = readMuDisplayV1(this.result?.details)!;
+			const callText = muDisplay.call?.text ?? "";
+			const cwdSuffix = muDisplay.call?.cwd?.trim()
+				? theme.fg("muted", ` (in ${shortenPath(muDisplay.call.cwd.trim())})`)
+				: "";
 
-			const content = JSON.stringify(this.args, null, 2);
-			text += "\n\n" + content;
-			const output = this.getTextOutput();
+			text =
+				theme.fg("toolTitle", theme.bold(this.toolName)) +
+				" " +
+				(callText ? theme.fg("accent", callText) : theme.fg("toolOutput", "...")) +
+				cwdSuffix;
+
+			if (muDisplay.summary?.text?.trim()) {
+				text += "\n" + theme.fg("muted", muDisplay.summary.text.trim());
+			}
+
+			// Output: prefer final result, otherwise streaming partial output.
+			let output = "";
+			if (this.result) {
+				output = this.getTextOutput().trim();
+			} else if (this.partialOutput) {
+				output = stripAnsi(this.partialOutput).trim();
+			}
+
 			if (output) {
-				text += "\n" + output;
+				const contentWidth = Math.max(1, width - 2); // contentText has paddingX=1
+				const styledOutput = output
+					.split("\n")
+					.map((line: string) => theme.fg("toolOutput", line))
+					.join("\n");
+
+				const maxVisualLines = muDisplay.output?.collapse?.maxVisualLines ?? 5;
+				const expandHint = muDisplay.output?.collapse?.expandHint ?? "ctrl+o to expand";
+
+				if (this.expanded) {
+					text += "\n\n" + styledOutput;
+				} else {
+					const result = truncateToVisualLines(styledOutput, maxVisualLines, contentWidth, 0);
+					text += "\n\n";
+					if (result.skippedCount > 0) {
+						const hint = `... (${result.skippedCount} earlier lines · ${expandHint})`;
+						const hintLine = new Text(theme.fg("muted", hint), 0, 0).render(contentWidth)[0] ?? "";
+						text += hintLine + "\n";
+					}
+					text += result.visualLines.join("\n");
+				}
+			}
+		} else {
+			// argv-style tool (registerCliTool) without display hints (typically while running)
+			const argvRaw = args.argv;
+			const argv = Array.isArray(argvRaw) ? argvRaw.filter((v): v is string => typeof v === "string") : [];
+			const hasArgv = argv.length > 0;
+			const callText = deriveWebToolCallText(this.toolName, args);
+
+			if (hasArgv || this.partialOutput || callText) {
+				const head = hasArgv ? argv.join(" ") : (callText ?? "");
+				text = theme.fg("toolTitle", theme.bold(this.toolName)) + (head ? " " + theme.fg("accent", head) : "");
+
+				const output = this.partialOutput ? stripAnsi(this.partialOutput).trim() : "";
+				if (output) {
+					const contentWidth = Math.max(1, width - 2); // contentText has paddingX=1
+					const styledOutput = output
+						.split("\n")
+						.map((line: string) => theme.fg("toolOutput", line))
+						.join("\n");
+
+					if (this.expanded) {
+						text += "\n\n" + styledOutput;
+					} else {
+						const maxVisualLines = 5;
+						const result = truncateToVisualLines(styledOutput, maxVisualLines, contentWidth, 0);
+						text += "\n\n";
+						if (result.skippedCount > 0) {
+							const hint = `... (${result.skippedCount} earlier lines · ctrl+o to expand)`;
+							const hintLine = new Text(theme.fg("muted", hint), 0, 0).render(contentWidth)[0] ?? "";
+							text += hintLine + "\n";
+						}
+						text += result.visualLines.join("\n");
+					}
+				}
+			} else {
+				// Generic tool
+				text = theme.fg("toolTitle", theme.bold(this.toolName));
+
+				const content = JSON.stringify(this.args, null, 2);
+				text += "\n\n" + content;
+				const output = this.getTextOutput();
+				if (output) {
+					text += "\n" + output;
+				}
 			}
 		}
 
