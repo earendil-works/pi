@@ -5541,7 +5541,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "anthropic/claude-3.7-sonnet:thinking": {
+		readonly "anthropic/claude-3.7-sonnet": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -5558,7 +5558,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "anthropic/claude-3.7-sonnet": {
+		readonly "anthropic/claude-3.7-sonnet:thinking": {
 			id: string;
 			name: string;
 			api: "openai-completions";

@@ -1671,8 +1671,8 @@ export const MODELS = {
 			reasoning: false,
 			input: ["text"],
 			cost: {
-				input: 0,
-				output: 0,
+				input: 2.25,
+				output: 2.75,
 				cacheRead: 0,
 				cacheWrite: 0,
 			},
@@ -2819,8 +2819,8 @@ export const MODELS = {
 			input: ["text", "image"],
 			cost: {
 				input: 0.44999999999999996,
-				output: 0.44,
-				cacheRead: 0.11249999999999999,
+				output: 2.2,
+				cacheRead: 0.22499999999999998,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -4195,13 +4195,13 @@ export const MODELS = {
 			reasoning: false,
 			input: ["text"],
 			cost: {
-				input: 0.39,
-				output: 1.9,
-				cacheRead: 0.195,
+				input: 0.39999999999999997,
+				output: 2,
+				cacheRead: 0.15,
 				cacheWrite: 0,
 			},
-			contextWindow: 262144,
-			maxTokens: 262144,
+			contextWindow: 131072,
+			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
 		"moonshotai/kimi-k2-0905:exacto": {
 			id: "moonshotai/kimi-k2-0905:exacto",
@@ -5546,9 +5546,9 @@ export const MODELS = {
 			contextWindow: 1048576,
 			maxTokens: 8192,
 		} satisfies Model<"openai-completions">,
-		"anthropic/claude-3.7-sonnet:thinking": {
-			id: "anthropic/claude-3.7-sonnet:thinking",
-			name: "Anthropic: Claude 3.7 Sonnet (thinking)",
+		"anthropic/claude-3.7-sonnet": {
+			id: "anthropic/claude-3.7-sonnet",
+			name: "Anthropic: Claude 3.7 Sonnet",
 			api: "openai-completions",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
@@ -5563,9 +5563,9 @@ export const MODELS = {
 			contextWindow: 200000,
 			maxTokens: 64000,
 		} satisfies Model<"openai-completions">,
-		"anthropic/claude-3.7-sonnet": {
-			id: "anthropic/claude-3.7-sonnet",
-			name: "Anthropic: Claude 3.7 Sonnet",
+		"anthropic/claude-3.7-sonnet:thinking": {
+			id: "anthropic/claude-3.7-sonnet:thinking",
+			name: "Anthropic: Claude 3.7 Sonnet (thinking)",
 			api: "openai-completions",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
