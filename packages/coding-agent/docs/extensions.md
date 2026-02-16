@@ -2,21 +2,218 @@
 
 Mu’s coding agent (`@kennyfrc/mu-coding-agent`) supports a small, host-owned extension runtime.
 
-Extensions can:
-- register LLM-callable tools
-- intercept/block tool calls and patch tool results
-- preprocess messages before each model call (context hook)
-- transform/handle user input before it’s parsed
-- register slash commands (autocomplete + execution)
-- register custom providers/models at runtime (overlay built-ins + `~/.mu/agent/models.json`)
+This document is written in **Diátaxis** style:
 
-This is designed to be hot-reloadable via `/reload`.
-
-For a Diátaxis-style guide (tutorial/how-to/reference/explanation), see: `docs/extensions/README.md`.
+- **Tutorial**: learn by building a small extension end-to-end.
+- **How-to**: goal-oriented recipes.
+- **Reference**: exact behaviors and API surface.
+- **Explanation**: design rationale and mental model.
 
 ---
 
-## Discovery locations
+## Tutorial: your first extension
+
+You will build a single-file extension that:
+
+1) adds a new LLM-callable tool `get_time`
+2) adds a new slash command `/time` that calls the tool (indirectly, by sending a user message)
+3) hot-reloads via `/reload`
+
+### 0) Choose where it lives
+
+Mu loads extensions from:
+
+- Global: `~/.mu/agent/extensions/`
+- Project: `./.mu/extensions/` (relative to your cwd)
+
+For this tutorial, use the **project** location so the extension travels with the repo:
+
+```bash
+mkdir -p .mu/extensions
+```
+
+### 1) Create a single-file extension
+
+Create `./.mu/extensions/time.ts`:
+
+```ts
+import type { AgentTool } from "@kennyfrc/mu-ai";
+import { Type } from "@sinclair/typebox";
+
+export default function (mu: { registerTool: (t: AgentTool<any, any>) => void; registerCommand: (c: any) => void }) {
+	const tool: AgentTool<typeof Type.Object({}), { epochMs: number }> = {
+		name: "get_time",
+		label: "get_time",
+		description: "Return the current time as epoch milliseconds.",
+		parameters: Type.Object({}),
+		execute: async () => {
+			return {
+				content: [{ type: "text", text: String(Date.now()) }],
+				details: { epochMs: Date.now() },
+			};
+		},
+	};
+
+	mu.registerTool(tool);
+
+	mu.registerCommand({
+		name: "time",
+		description: "Ask the agent for the current time (via get_time tool)",
+		execute: async (_argString: string, ctx: { send: (t: string) => Promise<void> }) => {
+			await ctx.send("Call get_time and print it.");
+		},
+	});
+}
+```
+
+Notes:
+- Keep extensions **self-contained**. Avoid relative imports like `../types.js` (repo-internal).
+- Prefer package imports (`@kennyfrc/mu-ai`, `@sinclair/typebox`, etc.).
+
+### 2) Start mu and reload
+
+Start `mu` from the project root, then run:
+
+```
+/reload
+```
+
+You should see a “Reloaded extensions: … ok” message.
+
+### 3) Try the slash command
+
+Type:
+
+```
+/time
+```
+
+Expected behavior:
+- you should see the agent call `get_time`
+- you should see an answer containing the returned epoch milliseconds
+
+### 4) Iterate with hot reload
+
+Edit the tool description or output, then run `/reload` again.
+
+A good quick check is changing the tool description line and verifying that the system prompt’s `Available tools` list updates accordingly.
+
+---
+
+## How-to: common extension tasks
+
+This section is a set of recipes. It assumes you already know what extensions are and just need to accomplish a concrete goal.
+
+### Add a new LLM-callable tool
+
+1) Create `~/.mu/agent/extensions/my-tools.ts` (global) or `./.mu/extensions/my-tools.ts` (project).
+2) Default-export a function.
+3) Call `mu.registerTool(tool)`.
+4) Run `/reload`.
+
+Minimal skeleton:
+
+```ts
+import type { AgentTool } from "@kennyfrc/mu-ai";
+import { Type } from "@sinclair/typebox";
+
+export default function (mu: { registerTool: (t: AgentTool<any, any>) => void }) {
+	const tool: AgentTool<typeof Type.Object({ q: Type.String() })> = {
+		name: "my_tool",
+		label: "my_tool",
+		description: "One-line summary used in the system prompt.",
+		parameters: Type.Object({ q: Type.String() }),
+		execute: async (_id, args) => {
+			return { content: [{ type: "text", text: `q=${args.q}` }], details: undefined };
+		},
+	};
+
+	mu.registerTool(tool);
+}
+```
+
+### Add a slash command
+
+```ts
+export default function (mu) {
+	mu.registerCommand({
+		name: "hello",
+		description: "Say hello",
+		execute: async (argString, ctx) => {
+			ctx.print(`hello: ${argString}`, { color: "dim" });
+		},
+	});
+}
+```
+
+### Block or patch tool calls
+
+Block:
+
+```ts
+mu.beforeToolCall((ev) => {
+	if (ev.toolName === "bash") return { type: "block", reason: "bash disabled" };
+	return { type: "noop" };
+});
+```
+
+Patch args:
+
+```ts
+mu.beforeToolCall((ev) => {
+	if (ev.toolName === "read" && typeof ev.args === "object" && ev.args && "path" in ev.args) {
+		return { type: "patch", args: { ...(ev.args as any), limit: 50 } };
+	}
+	return { type: "noop" };
+});
+```
+
+### Patch tool results
+
+```ts
+mu.afterToolResult((tr) => {
+	if (tr.toolName !== "read") return;
+	return {
+		...tr,
+		content: [{ type: "text", text: "(redacted)" }],
+	};
+});
+```
+
+### Inject context before each model call (prompt-like behavior)
+
+```ts
+mu.context((messages) => {
+	return [
+		{ role: "user", content: "(extension note) prefer rg over grep", timestamp: Date.now() },
+		...messages,
+	];
+});
+```
+
+This is the supported way for extensions to add **per-call** “prompt-like” instructions today.
+
+### Keep extensions portable (no legacy imports)
+
+Do:
+- import from packages (e.g. `@kennyfrc/mu-ai`, `@sinclair/typebox`)
+- keep extensions single-file when you can
+
+Avoid:
+- relative imports into the mu repo build output, like `../types.js`
+- relying on sibling helper files unless you ship them alongside your extension
+
+### Debug why an extension isn’t loading
+
+1) Run `/reload`.
+2) Read the error and file path.
+3) The most common cause is a relative import to a file that doesn’t exist where the extension lives.
+
+---
+
+## Reference
+
+### Discovery locations
 
 On startup (and on `/reload`), Mu discovers extensions in this order:
 
@@ -25,21 +222,7 @@ On startup (and on `/reload`), Mu discovers extensions in this order:
 
 Only JS/TS module files are loaded (`.ts`, `.mts`, `.cts`, `.js`, `.mjs`, `.cjs`). Type declaration files are ignored.
 
----
-
-## Tool visibility in system prompt
-
-The `Available tools` section in the system prompt is built from the **actual runtime tool list** (built-ins + extension tools), not just built-ins.
-
-For extension tools:
-- Mu uses your tool's `name`
-- Mu uses a short description derived from your tool's `description` (first non-empty line, trimmed)
-
-This keeps tool messaging scoped to what each extension actually registers.
-
----
-
-## Duplicate extension files (`.ts` + `.js`)
+### Duplicate extension files (`.ts` + `.js`)
 
 If both `my-extension.ts` and `my-extension.js` exist with the same basename, Mu loads only one:
 - prefers TypeScript source (`.ts` / `.mts` / `.cts`)
@@ -47,9 +230,7 @@ If both `my-extension.ts` and `my-extension.js` exist with the same basename, Mu
 
 This avoids accidental double-registration.
 
----
-
-## Extension file format
+### Extension file format
 
 Each extension file must default-export a factory function:
 
@@ -61,11 +242,17 @@ export default function (mu) {
 
 The factory is executed once per load. On `/reload`, the old extension is unloaded (registrations removed by `sourceId`), then the module is re-imported and executed again.
 
----
+### Tool visibility in system prompt
 
-## API surface (ExtensionApi)
+The `Available tools` section in the system prompt is built from the **actual runtime tool list** (built-ins + extension tools), not just built-ins.
 
-### Tools
+For extension tools:
+- Mu uses your tool's `name`
+- Mu uses a short description derived from your tool's `description` (first non-empty line, trimmed)
+
+### API surface (ExtensionApi)
+
+#### Tools
 
 ```ts
 mu.registerTool(tool, { priority })
@@ -76,7 +263,7 @@ mu.registerTool(tool, { priority })
   1) highest `priority`
   2) last-write-wins for ties
 
-### Tool interception
+#### Tool interception
 
 ```ts
 mu.beforeToolCall((event) => {
@@ -95,7 +282,7 @@ mu.afterToolResult((toolResult) => {
 - `afterToolResult` hooks are applied as a patch chain.
 - Hook errors are fail-open (ignored).
 
-### Context preprocessor (per model call)
+#### Context preprocessor (per model call)
 
 ```ts
 mu.context((messages, abortSignal) => {
@@ -105,7 +292,7 @@ mu.context((messages, abortSignal) => {
 
 This runs **before every provider call**, not just once per user prompt.
 
-### Input hooks
+#### Input hooks
 
 ```ts
 mu.input((text) => {
@@ -117,7 +304,7 @@ mu.input((text) => {
 
 Input hooks run before built-in parsing. `handled` short-circuits submission.
 
-### Slash commands
+#### Slash commands
 
 ```ts
 mu.registerCommand({
@@ -133,7 +320,7 @@ mu.registerCommand({
 - Registered commands appear in `/` autocomplete.
 - Mu routes `/name ...args` to extension commands after built-ins.
 
-### Runtime providers/models
+#### Runtime providers/models
 
 ```ts
 mu.registerProvider("my-provider", {
@@ -156,9 +343,7 @@ API key resolution order:
 2) `models.json` provider `apiKey`
 3) built-in env var resolution (`@kennyfrc/mu-ai`)
 
----
-
-## Priority & ordering summary
+### Priority & ordering summary
 
 - Hook execution: **priority desc**, then **registration order** for ties.
 - Tool/command selection: **priority desc**, then **last-write-wins** for ties.
@@ -166,30 +351,58 @@ API key resolution order:
 
 ---
 
-## Hot reload & state
+## Explanation
 
-Because extensions are re-evaluated on `/reload`, **do not store durable state in module-level globals**.
+### What an extension is in Mu
 
-Durable state should be derived from:
-- session history (tool result details or custom session entries)
-- external files
+An extension is **host-owned code** that runs inside the `mu` process and registers capabilities into a small set of registries:
 
+- tools (LLM-callable functions)
+- hook chains (input/context/tool interception)
+- slash commands
+- runtime model providers
 
+This is deliberately simpler than MCP-style “remote tool servers”: the host loads code and owns the lifecycle.
 
-### Session entries (durable extension state)
+### Why extensions must be self-contained
 
-Extensions can append durable entries to the current session JSONL file:
+Mu discovers extensions in user/project directories (like `~/.mu/agent/extensions`). Those directories do **not** contain the mu repo’s internal source files.
+
+So an extension that imports repo-internal modules like:
 
 ```ts
-mu.appendSessionEntry("my_type", { any: "json" })
-
-mu.appendSessionMessage("my_type", {
-  role: "user",
-  content: "message text",
-  timestamp: Date.now(),
-}, { display: "hidden" })
+import { eraseAgentTool } from "../types.js";
 ```
 
-- `custom` entries are **not** sent to the LLM automatically; they are for durable state/history.
-- `custom_message` entries are loaded by `SessionManager.loadMessages()` on resume/continue.
-- Branching (`/branch`) preserves these entries when copying the message prefix into a new session file.
+will break when it’s copied outside the repo.
+
+A “proper” extension instead imports from stable packages (`@kennyfrc/mu-ai`, `@sinclair/typebox`, etc.) and keeps its own helpers in the same file (or ships them alongside).
+
+### Tool text vs tool behavior
+
+Mu has two layers of tool-related text:
+
+1) **System prompt tool list** (“Available tools”)
+   - exists to teach the model what tools exist
+   - should match the runtime tool set
+
+2) **Tool definitions** sent to the provider
+   - the provider uses these to enable function calling
+   - this is the authoritative tool schema + description
+
+In the new system:
+- extension tools become visible in the system prompt automatically
+- their short description comes from the tool’s own `description`
+
+### Why there isn’t an extension API for system-prompt fragments (yet)
+
+Extensions can already inject instruction-like text via `context(...)` (because it runs before each provider call).
+
+A dedicated “system prompt fragment registry” is possible, but it adds complexity:
+- ordering and conflict resolution across extensions
+- update semantics on `/reload`
+- testing “prompt shape” drift
+
+If you need true prompt augmentation, the clean direction is:
+- `mu.registerSystemPromptFragment({ id, text, priority })`
+- merged at prompt rebuild time alongside runtime tool list
