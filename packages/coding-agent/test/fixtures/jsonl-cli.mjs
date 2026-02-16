@@ -16,8 +16,14 @@ if (!hasJsonl) {
 }
 
 const shouldFail = argv.includes("--fail");
+const shouldPlain = argv.includes("--plain");
 
 process.stderr.write("[fixture] starting\n");
+
+if (shouldPlain) {
+	process.stdout.write("Query: plain mode\n\n1. hello\n");
+	process.exit(0);
+}
 
 const ts = Date.now();
 process.stdout.write(`${JSON.stringify({ type: "meta", ts, tool: "fixture", version: "0.0.0", argv })}\n`);

@@ -295,3 +295,76 @@ export function buildMuDisplayV1ForCliResult(args: {
 		sections: sections.length > 0 ? sections : undefined,
 	};
 }
+
+export function countJsonlParseErrors(records: unknown[]): number {
+	let count = 0;
+	for (const record of records) {
+		if (!isRecord(record)) continue;
+		if (record.kind === "jsonl_parse_error") count++;
+	}
+	return count;
+}
+
+export function hasJsonlOutputOrResultRecords(records: unknown[]): boolean {
+	for (const record of records) {
+		if (!isRecord(record)) continue;
+		if (record.type === "output" || record.type === "result") return true;
+	}
+	return false;
+}
+
+export function buildMuDisplayV1ForCliRawOutput(args: {
+	toolName: string;
+	command: string;
+	displayArgv: string[];
+	cwd?: string;
+	exitCode: number;
+	ok: boolean;
+	stderr: string;
+	jsonlParseErrorCount: number;
+}): MuDisplayV1 {
+	const callText = formatCommandLineForDisplay(args.command, args.displayArgv);
+	const base = `${args.ok ? "ok" : "error"} · exit=${args.exitCode}`;
+	const summaryText = args.jsonlParseErrorCount > 0 ? `${base} · non-jsonl output` : base;
+
+	const sections: MuDisplayV1["sections"] = [];
+	if (args.stderr.trim()) {
+		sections.push({
+			title: "stderr",
+			format: "text",
+			content: args.stderr.trimEnd(),
+			collapsedByDefault: true,
+			collapse: { maxVisualLines: 6 },
+		});
+	}
+	if (args.jsonlParseErrorCount > 0) {
+		sections.push({
+			title: "jsonl",
+			format: "text",
+			content: `Expected JSONL on stdout but received non-JSONL output. parseErrors=${args.jsonlParseErrorCount}.
+
+Tip: configure this tool with jsonlFlag: null (or update the CLI to support JSONL).`,
+			collapsedByDefault: true,
+			collapse: { maxVisualLines: 6 },
+		});
+	}
+
+	return {
+		version: 1,
+		call: {
+			style: "argv",
+			text: callText,
+			command: args.command,
+			argv: args.displayArgv,
+			cwd: args.cwd,
+		},
+		summary: {
+			text: summaryText,
+			severity: args.jsonlParseErrorCount > 0 ? "warning" : args.ok ? "ok" : "error",
+		},
+		output: {
+			collapse: { maxVisualLines: 5, expandHint: "ctrl+o to expand" },
+		},
+		sections: sections.length > 0 ? sections : undefined,
+	};
+}

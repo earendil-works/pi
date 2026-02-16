@@ -3,9 +3,12 @@ import { type Static, type TSchema, Type } from "@sinclair/typebox";
 import { registerRuntimeProvider, unregisterRuntimeProvidersBySourceId } from "../model-config.js";
 import type { SessionManager } from "../session-manager.js";
 import {
+	buildMuDisplayV1ForCliRawOutput,
 	buildMuDisplayV1ForCliResult,
+	countJsonlParseErrors,
 	deriveContentFromJsonlRecords,
 	deriveOkFromJsonlRecords,
+	hasJsonlOutputOrResultRecords,
 	parseJsonl,
 	runJsonlCliCommand,
 } from "./cli-jsonl.js";
@@ -126,6 +129,40 @@ export class ExtensionManager {
 						}
 
 						const records = parseJsonl(res.stdout, spec.name);
+						const jsonlParseErrorCount = countJsonlParseErrors(records);
+						const hasOutputOrResult = hasJsonlOutputOrResultRecords(records);
+
+						// If the CLI claims to support JSONL but emits non-JSONL output, fall back to raw stdout
+						// to avoid spamming the transcript/session with per-line JSON parse errors.
+						if (!hasOutputOrResult && jsonlParseErrorCount > 0) {
+							const ok = res.exitCode === 0;
+							const mu_display = buildMuDisplayV1ForCliRawOutput({
+								toolName: spec.name,
+								command: spec.command,
+								displayArgv,
+								cwd: spec.cwd,
+								exitCode: res.exitCode,
+								ok,
+								stderr: res.stderr,
+								jsonlParseErrorCount,
+							});
+
+							return {
+								content: [{ type: "text", text: res.stdout }],
+								details: {
+									command: spec.command,
+									args: fullArgs,
+									exitCode: res.exitCode,
+									ok,
+									stdout: res.stdout,
+									stderr: res.stderr,
+									mode: "raw",
+									jsonlParseErrorCount,
+									mu_display,
+								},
+							};
+						}
+
 						const contentText = deriveContentFromJsonlRecords(records);
 						const okFromRecords = deriveOkFromJsonlRecords(records);
 						const ok = okFromRecords ?? res.exitCode === 0;

@@ -50,6 +50,37 @@ describe("ExtensionApi.registerCliTool", () => {
 		expect(progressText).not.toContain('"type":"meta"');
 	});
 
+	it("falls back to raw stdout when the CLI emits non-JSONL output", async () => {
+		const mgr = new ExtensionManager({ builtInTools: {} });
+
+		await mgr.loadExtension((api) => {
+			api.registerCliTool({
+				name: "fixture_cli_plain",
+				description: "Fixture JSONL CLI tool (plain stdout)",
+				command: process.execPath,
+				fixedArgs: [fixtureScriptPath()],
+			});
+		}, "ext-fixture-plain");
+
+		const tool = mgr.getToolsForSelection([]).find((t) => t.name === "fixture_cli_plain");
+		expect(tool).toBeTruthy();
+
+		const res = await tool!.execute("tc_1", { argv: ["--plain"] });
+		const text = res.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+		expect(text).toContain("Query: plain mode");
+		expect(text).not.toContain("jsonl_parse_error");
+
+		const details = res.details as unknown as {
+			mode?: string;
+			jsonlParseErrorCount?: number;
+			mu_display?: { summary?: { text?: string; severity?: string } };
+		};
+		expect(details.mode).toBe("raw");
+		expect(details.jsonlParseErrorCount).toBeGreaterThan(0);
+		expect(details.mu_display?.summary?.severity).toBe("warning");
+		expect(details.mu_display?.summary?.text).toContain("non-jsonl output");
+	});
+
 	it("returns parsed records and ok=false when the CLI exits non-zero", async () => {
 		const mgr = new ExtensionManager({ builtInTools: {} });
 
