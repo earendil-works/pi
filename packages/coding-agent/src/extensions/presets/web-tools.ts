@@ -101,6 +101,49 @@ function toTrimmedString(value: unknown): string {
 	return value.trim();
 }
 
+type MuDisplayV1Severity = "ok" | "warning" | "error" | "info";
+
+interface MuDisplayV1 {
+	version: 1;
+	call?: {
+		style: "argv";
+		text: string;
+		command?: string;
+		argv?: string[];
+		cwd?: string;
+	};
+	summary?: {
+		text: string;
+		severity?: MuDisplayV1Severity;
+	};
+	output?: {
+		collapse?: {
+			maxVisualLines: number;
+			expandHint?: string;
+		};
+		format?: "text" | "markdown" | "json" | "html";
+	};
+	sections?: Array<{
+		title: string;
+		format?: "text" | "json";
+		content: string;
+		collapsedByDefault?: boolean;
+		collapse?: { maxVisualLines: number };
+	}>;
+}
+
+function quoteArgForDisplay(arg: string): string {
+	if (/^[A-Za-z0-9._/:=-]+$/.test(arg)) return arg;
+	return JSON.stringify(arg);
+}
+
+function formatCommandLineForDisplay(command: string, argv: string[]): string {
+	return [command, ...argv]
+		.map((p) => quoteArgForDisplay(p))
+		.join(" ")
+		.trim();
+}
+
 function defaultSpawn(command: string, args: string[], options: SpawnOptions): SpawnedProcess {
 	// Node's ChildProcess type is structurally compatible with our SpawnedProcess interface.
 	return nodeSpawn(command, args, options as unknown as SpawnOptionsWithoutStdio) as unknown as SpawnedProcess;
@@ -127,6 +170,7 @@ export interface WebSearchDetails {
 	args: string[];
 	stdout: string;
 	stderr: string;
+	mu_display?: MuDisplayV1;
 }
 
 export function createWebSearchTool(params?: {
@@ -179,6 +223,18 @@ export function createWebSearchTool(params?: {
 					args: cliArgs,
 					stdout: res.stdout,
 					stderr: res.stderr,
+					mu_display: {
+						version: 1,
+						call: {
+							style: "argv",
+							text: formatCommandLineForDisplay(command, cliArgs),
+							command,
+							argv: cliArgs,
+							cwd,
+						},
+						summary: { text: "ok · exit=0", severity: "ok" },
+						output: { collapse: { maxVisualLines: 5, expandHint: "ctrl+o to expand" } },
+					},
 				},
 			};
 		},
@@ -226,6 +282,7 @@ export interface FetchDetails {
 	stdout: string;
 	stderr: string;
 	nextStart?: number;
+	mu_display?: MuDisplayV1;
 }
 
 function parseNextStart(stderr: string): number | undefined {
@@ -296,6 +353,9 @@ export function createFetchTool(params?: {
 				onOutput: onProgress,
 			});
 
+			const nextStart = parseNextStart(res.stderr);
+			const summary = nextStart === undefined ? "ok · exit=0" : `ok · exit=0 · next=${nextStart}`;
+
 			return {
 				content: [{ type: "text", text: res.stdout }],
 				details: {
@@ -303,7 +363,19 @@ export function createFetchTool(params?: {
 					args: cliArgs,
 					stdout: res.stdout,
 					stderr: res.stderr,
-					nextStart: parseNextStart(res.stderr),
+					nextStart,
+					mu_display: {
+						version: 1,
+						call: {
+							style: "argv",
+							text: formatCommandLineForDisplay(command, cliArgs),
+							command,
+							argv: cliArgs,
+							cwd,
+						},
+						summary: { text: summary, severity: "ok" },
+						output: { collapse: { maxVisualLines: 5, expandHint: "ctrl+o to expand" } },
+					},
 				},
 			};
 		},

@@ -78,6 +78,10 @@ describe("createWebSearchTool", () => {
 		);
 
 		expect(res.content[0]).toEqual({ type: "text", text: "ok\n" });
+
+		expect(res.details.mu_display?.version).toBe(1);
+		expect(res.details.mu_display?.call?.text).toContain("websearch query");
+		expect(res.details.mu_display?.summary?.text).toContain("ok · exit=0");
 	});
 });
 
@@ -104,5 +108,11 @@ describe("createFetchTool", () => {
 
 		expect(res.content[0]).toEqual({ type: "text", text: "CONTENT\n" });
 		expect(res.details.nextStart).toBe(167);
+		expect(res.details.mu_display?.version).toBe(1);
+		expect(res.details.mu_display?.call?.text).toContain("webfetch https://example.com");
+		expect(res.details.mu_display?.call?.text).toContain("--browser");
+		expect(res.details.mu_display?.call?.text).toContain("--max-length 200");
+		expect(res.details.mu_display?.call?.text).toContain("--start-index 10");
+		expect(res.details.mu_display?.summary?.text).toContain("next=167");
 	});
 });
