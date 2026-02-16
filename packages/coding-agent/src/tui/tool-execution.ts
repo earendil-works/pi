@@ -725,11 +725,12 @@ export class ToolExecutionComponent extends Container {
 				? theme.fg("muted", ` (in ${shortenPath(muDisplay.call.cwd.trim())})`)
 				: "";
 
+			// mu_display.call.text is a complete CLI command (e.g., "websearch query ...").
+			// Show it directly as the title without redundant tool name prefix.
 			text =
-				theme.fg("toolTitle", theme.bold(this.toolName)) +
-				" " +
-				(callText ? theme.fg("accent", callText) : theme.fg("toolOutput", "...")) +
-				cwdSuffix;
+				(callText
+					? theme.fg("toolTitle", theme.bold(callText))
+					: theme.fg("toolTitle", theme.bold(this.toolName))) + cwdSuffix;
 
 			if (muDisplay.summary?.text?.trim()) {
 				text += "\n" + theme.fg("muted", muDisplay.summary.text.trim());
@@ -774,8 +775,15 @@ export class ToolExecutionComponent extends Container {
 			const callText = deriveWebToolCallText(this.toolName, args);
 
 			if (hasArgv || this.partialOutput || callText) {
-				const head = hasArgv ? argv.join(" ") : (callText ?? "");
-				text = theme.fg("toolTitle", theme.bold(this.toolName)) + (head ? " " + theme.fg("accent", head) : "");
+				// When callText is derived from named args (e.g., web_search -> "websearch query ..."),
+				// it already contains a self-identifying CLI command. Show it directly without tool name prefix.
+				// When argv is provided directly, show tool name + argv since argv alone may not be self-identifying.
+				if (callText && !hasArgv) {
+					text = theme.fg("toolTitle", theme.bold(callText));
+				} else {
+					const head = hasArgv ? argv.join(" ") : "";
+					text = theme.fg("toolTitle", theme.bold(this.toolName)) + (head ? " " + theme.fg("accent", head) : "");
+				}
 
 				const output = this.partialOutput ? stripAnsi(this.partialOutput).trim() : "";
 				if (output) {
