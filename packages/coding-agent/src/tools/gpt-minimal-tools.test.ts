@@ -31,7 +31,14 @@ describe("GPT tools", () => {
 		const model = getModel("openai", "gpt-4o-mini");
 		const selection = resolveToolSelection(undefined, model);
 
-		expect(selection.toolNames).toEqual(["exec_command", "read_image", "handoff", "list_threads", "read_thread"]);
+		expect(selection.toolNames).toEqual([
+			"exec_command",
+			"apply_patch",
+			"read_image",
+			"handoff",
+			"list_threads",
+			"read_thread",
+		]);
 		expect(selection.tools.map((t) => t.name)).toEqual(selection.toolNames);
 	});
 
