@@ -163,6 +163,36 @@ export class ExtensionManager {
 							};
 						}
 
+						// If the process failed and produced no JSONL records at all, show stderr instead of "[]".
+						if (!hasOutputOrResult && jsonlParseErrorCount === 0 && records.length === 0 && res.exitCode !== 0) {
+							const ok = false;
+							const text = res.stderr.trim() ? res.stderr : `Command failed with exit code ${res.exitCode}`;
+							const mu_display = buildMuDisplayV1ForCliRawOutput({
+								toolName: spec.name,
+								command: spec.command,
+								displayArgv,
+								cwd: spec.cwd,
+								exitCode: res.exitCode,
+								ok,
+								stderr: res.stderr,
+								jsonlParseErrorCount: 0,
+							});
+
+							return {
+								content: [{ type: "text", text }],
+								details: {
+									command: spec.command,
+									args: fullArgs,
+									exitCode: res.exitCode,
+									ok,
+									stdout: res.stdout,
+									stderr: res.stderr,
+									mode: "stderr",
+									mu_display,
+								},
+							};
+						}
+
 						const contentText = deriveContentFromJsonlRecords(records);
 						const okFromRecords = deriveOkFromJsonlRecords(records);
 						const ok = okFromRecords ?? res.exitCode === 0;

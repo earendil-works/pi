@@ -80,6 +80,30 @@ describe("ExtensionApi.registerCliTool", () => {
 		expect(details.mu_display?.summary?.severity).toBe("warning");
 		expect(details.mu_display?.summary?.text).toContain("non-jsonl output");
 	});
+	it("shows stderr when the CLI exits non-zero with no JSONL output", async () => {
+		const mgr = new ExtensionManager({ builtInTools: {} });
+
+		await mgr.loadExtension((api) => {
+			api.registerCliTool({
+				name: "fixture_cli_stderr_only",
+				description: "Fixture JSONL CLI tool (stderr-only failure)",
+				command: process.execPath,
+				fixedArgs: [fixtureScriptPath()],
+			});
+		}, "ext-fixture-stderr-only");
+
+		const tool = mgr.getToolsForSelection([]).find((t) => t.name === "fixture_cli_stderr_only");
+		expect(tool).toBeTruthy();
+
+		const res = await tool!.execute("tc_1", { argv: ["--stderr-only-fail"] });
+		const text = res.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+		expect(text).toContain("[fixture] stderr-only failure");
+		expect(text.trim()).not.toBe("[]");
+
+		const details = res.details as unknown as { mode?: string; exitCode?: number };
+		expect(details.mode).toBe("stderr");
+		expect(details.exitCode).toBe(1);
+	});
 
 	it("returns parsed records and ok=false when the CLI exits non-zero", async () => {
 		const mgr = new ExtensionManager({ builtInTools: {} });

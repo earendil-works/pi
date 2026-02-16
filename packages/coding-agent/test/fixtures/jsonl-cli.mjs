@@ -25,6 +25,12 @@ if (shouldPlain) {
 	process.exit(0);
 }
 
+const shouldStderrOnlyFail = argv.includes("--stderr-only-fail");
+if (shouldStderrOnlyFail) {
+	process.stderr.write("[fixture] stderr-only failure\n");
+	process.exit(1);
+}
+
 const ts = Date.now();
 process.stdout.write(`${JSON.stringify({ type: "meta", ts, tool: "fixture", version: "0.0.0", argv })}\n`);
 
