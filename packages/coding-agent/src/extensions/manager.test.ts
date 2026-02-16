@@ -1,8 +1,30 @@
 import type { AgentTool } from "@kennyfrc/mu-ai";
+import { getModel } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { describe, expect, it } from "vitest";
+import { resolveToolSelection } from "../tools/tool-selection.js";
 import { ExtensionManager } from "./manager.js";
-import { eraseAgentTool } from "./types.js";
+import { type ErasedAgentTool, eraseAgentTool } from "./types.js";
+
+const mockToolSchema = Type.Object({});
+
+function makeTool(name: string): AgentTool<typeof mockToolSchema, { name: string }> {
+	return {
+		label: name,
+		name,
+		description: `${name} tool`,
+		parameters: mockToolSchema,
+		execute: async () => ({ content: [{ type: "text", text: name }], details: { name } }),
+	};
+}
+
+function toolMap(names: string[]): Record<string, ReturnType<typeof eraseAgentTool>> {
+	const map: Record<string, ErasedAgentTool> = Object.create(null);
+	for (const name of names) {
+		map[name] = eraseAgentTool(makeTool(name));
+	}
+	return map;
+}
 
 describe("ExtensionManager", () => {
 	it("adds extension-defined tools and can override built-ins by priority", async () => {
@@ -52,5 +74,29 @@ describe("ExtensionManager", () => {
 		const res = await bashTool!.execute("tc_1", {});
 		const text = res.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
 		expect(text).toContain("ext");
+	});
+
+	it("adds extension tools to GPT-* model defaults", async () => {
+		const gptTools = resolveToolSelection(undefined, getModel("openai", "gpt-4o-mini")).toolNames;
+		const mgr = new ExtensionManager({ builtInTools: toolMap(gptTools) });
+
+		await mgr.loadExtension((api) => {
+			api.registerTool(eraseAgentTool(makeTool("ext-gpt")));
+		}, "ext-gpt");
+
+		const selected = mgr.getToolsForSelection(gptTools).map((tool) => tool.name);
+		expect(selected).toEqual([...gptTools, "ext-gpt"]);
+	});
+
+	it("adds extension tools to default model defaults", async () => {
+		const defaultTools = resolveToolSelection(undefined, getModel("anthropic", "claude-sonnet-4-5")).toolNames;
+		const mgr = new ExtensionManager({ builtInTools: toolMap(defaultTools) });
+
+		await mgr.loadExtension((api) => {
+			api.registerTool(eraseAgentTool(makeTool("ext-default")));
+		}, "ext-default");
+
+		const selected = mgr.getToolsForSelection(defaultTools).map((tool) => tool.name);
+		expect(selected).toEqual([...defaultTools, "ext-default"]);
 	});
 });

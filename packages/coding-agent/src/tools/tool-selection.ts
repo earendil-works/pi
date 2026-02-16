@@ -2,6 +2,7 @@ import type { AgentTool, Api, Model } from "@kennyfrc/mu-ai";
 import type { TSchema } from "@sinclair/typebox";
 import { allTools, type ToolName } from "./index.js";
 
+// Default toolset for non-OpenAI models.
 export const DEFAULT_TOOL_NAMES: ToolName[] = [
 	"read",
 	"bash",
@@ -14,6 +15,7 @@ export const DEFAULT_TOOL_NAMES: ToolName[] = [
 	"handoff",
 ];
 
+// Default toolset for OpenAI-like non-*GPT* models.
 const GPT_DEFAULT_TOOL_NAMES: ToolName[] = [
 	"read",
 	"bash",
@@ -26,14 +28,8 @@ const GPT_DEFAULT_TOOL_NAMES: ToolName[] = [
 	"handoff",
 ];
 
-const GPT_STAR_TOOL_NAMES: ToolName[] = [
-	"read",
-	"exec_command",
-	"read_image",
-	"handoff",
-	"list_threads",
-	"read_thread",
-];
+// Restricted default toolset for *GPT* pattern models.
+const GPT_STAR_TOOL_NAMES: ToolName[] = ["exec_command", "read_image", "handoff", "list_threads", "read_thread"];
 
 export interface ToolSelection {
 	toolNames: ToolName[];

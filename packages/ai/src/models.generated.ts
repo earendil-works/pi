@@ -2648,12 +2648,12 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text"],
 			cost: {
-				input: 0.3,
-				output: 1.2,
-				cacheRead: 0.03,
+				input: 0.19999999999999998,
+				output: 1,
+				cacheRead: 0,
 				cacheWrite: 0,
 			},
-			contextWindow: 204800,
+			contextWindow: 196608,
 			maxTokens: 131072,
 		} satisfies Model<"openai-completions">,
 		"z-ai/glm-5": {

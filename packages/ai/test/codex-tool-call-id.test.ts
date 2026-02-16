@@ -41,13 +41,12 @@ describe("sanitizeToolCallId", () => {
 	it("should handle IDs without pipe separator", () => {
 		const result = sanitizeToolCallId("singleId");
 		expect(result.callId).toBe("singleId");
-		// When no itemId, we get minimum "fc_" prefix
-		expect(result.itemId).toBe("fc_");
+		expect(result.itemId).toBe("fc_singleId");
 	});
 
 	it("should handle empty itemId", () => {
 		const result = sanitizeToolCallId("call123|");
 		expect(result.callId).toBe("call123");
-		expect(result.itemId).toBe("fc_");
+		expect(result.itemId).toBe("fc_call123");
 	});
 });
