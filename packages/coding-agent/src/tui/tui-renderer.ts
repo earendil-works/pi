@@ -92,7 +92,7 @@ import { estimateTokens, formatParentThreadReference, type HandoffDetails, hando
 import type { ToolSelection } from "../tools/tool-selection.js";
 import { undoFileOperations } from "../undo/undo-file-operations.js";
 import { autoFenceHtmlInMarkdown } from "../utils/auto-fence-html.js";
-import { generateTitle } from "../utils/auto-title.js";
+import { generateThreadListingMeta } from "../utils/auto-title.js";
 import { findRepoRoot } from "../utils/find-repo-root.js";
 import { formatElapsed } from "../utils/format-elapsed.js";
 import { addToLimitedSet } from "../utils/limited-set.js";
@@ -1425,11 +1425,12 @@ export class TuiRenderer {
 
 					if (userMsgs >= 1 && assistantMsgs >= 1) {
 						// Fire and forget - don't await to block UI
-						generateTitle(state)
-							.then((title) => {
-								if (title) {
-									this.footer.setTitle(title);
-									this.sessionManager.saveTitle(title);
+						generateThreadListingMeta(state)
+							.then((meta) => {
+								if (meta) {
+									this.footer.setTitle(meta.title);
+									this.sessionManager.saveTitle(meta.title);
+									this.sessionManager.savePreview(meta.preview);
 									this.hasTitle = true;
 									this.ui.requestRender();
 								}

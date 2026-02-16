@@ -89,6 +89,12 @@ function getRelativeDate(date: Date): string {
 	return date.toLocaleDateString();
 }
 
+const USER_MESSAGE_TIME_PREFIX_PATTERN = /^(?:<user_message_time>[\s\S]*?<\/user_message_time>\n\n)+/;
+
+function stripUserMessageTimePrefix(text: string): string {
+	return text.replace(USER_MESSAGE_TIME_PREFIX_PATTERN, "");
+}
+
 export const listThreadsTool: AgentTool<typeof listThreadsSchema> = {
 	name: "list_threads",
 	label: "list_threads",
@@ -127,14 +133,22 @@ export const listThreadsTool: AgentTool<typeof listThreadsSchema> = {
 				sessions = await index.listRecent(effectiveWorkspace, max);
 			}
 
-			const results = sessions.map((s) => ({
-				id: s.id,
-				date: s.modified.toISOString(),
-				relativeDate: getRelativeDate(s.modified),
-				messageCount: s.messageCount,
-				workspace: s.cwd,
-				preview: s.firstMessage.substring(0, 200) + (s.firstMessage.length > 200 ? "..." : ""),
-			}));
+			const results = sessions.map((s) => {
+				const title = s.title?.trim() || null;
+				const fallbackPreview = stripUserMessageTimePrefix(s.firstMessage).trim();
+				const rawPreview = (s.preview?.trim() || fallbackPreview).trim();
+				const preview = rawPreview.substring(0, 200) + (rawPreview.length > 200 ? "..." : "");
+
+				return {
+					id: s.id,
+					date: s.modified.toISOString(),
+					relativeDate: getRelativeDate(s.modified),
+					messageCount: s.messageCount,
+					workspace: s.cwd,
+					title,
+					preview,
+				};
+			});
 
 			return {
 				content: [{ type: "text" as const, text: JSON.stringify(results, null, 2) }],

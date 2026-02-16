@@ -80,6 +80,12 @@ export interface TitleChangeEntry {
 	title: string;
 }
 
+export interface PreviewChangeEntry {
+	type: "preview_change";
+	timestamp: string;
+	preview: string;
+}
+
 export class SessionManager {
 	private sessionId!: string;
 	private sessionFile!: string;
@@ -409,6 +415,21 @@ export class SessionManager {
 		}
 	}
 
+	savePreview(preview: string): void {
+		if (!this.enabled) return;
+		const entry: PreviewChangeEntry = {
+			type: "preview_change",
+			timestamp: new Date().toISOString(),
+			preview,
+		};
+
+		if (!this.sessionInitialized) {
+			this.pendingMessages.push(entry);
+		} else {
+			appendFileSync(this.sessionFile, JSON.stringify(entry) + "\n");
+		}
+	}
+
 	loadTitle(): string | null {
 		if (!existsSync(this.sessionFile)) return null;
 
@@ -428,6 +449,25 @@ export class SessionManager {
 			}
 		}
 		return lastTitle;
+	}
+
+	loadPreview(): string | null {
+		if (!existsSync(this.sessionFile)) return null;
+
+		const lines = readFileSync(this.sessionFile, "utf8").trim().split("\n");
+		let lastPreview: string | null = null;
+
+		for (const line of lines) {
+			try {
+				const entry = JSON.parse(line);
+				if (entry.type === "preview_change" && entry.preview) {
+					lastPreview = entry.preview;
+				}
+			} catch {
+				// Skip malformed lines
+			}
+		}
+		return lastPreview;
 	}
 
 	getSessionId(): string {

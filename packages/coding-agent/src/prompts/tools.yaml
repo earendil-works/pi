@@ -149,7 +149,7 @@ glob: |
   Find files by glob pattern OR list directory contents. When pattern is provided, searches for matching files (e.g., '*.ts', '**/*.json'). When pattern is omitted, lists directory contents with '/' suffix for directories. Respects .gitignore by default. Set `includeIgnored: true` to find gitignored files.
 
 list_threads: |
-  List past conversation threads. Returns thread IDs, relative dates, message counts, workspace paths, and preview text. Supports keyword search (message content) and workspace filtering (case-insensitive substring match).
+  List past conversation threads. Returns thread IDs, relative dates, message counts, workspace paths, AI-generated titles (when available), and listing preview text. Supports keyword search (message content) and workspace filtering (case-insensitive substring match).
 
   **Defaults to current working directory** if workspace is not specified. Use longer unique segments to avoid false matches (e.g., "work/mu-mono" instead of "mu-mono").
 

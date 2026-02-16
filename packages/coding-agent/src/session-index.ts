@@ -26,11 +26,13 @@ export interface CacheEntry {
 	size: number; // bytes
 	messageCount: number;
 	firstMessage: string; // truncated to 500 chars
+	title?: string; // latest persisted title (if any)
+	preview?: string; // latest persisted listing preview (if any)
 }
 
 /** Persisted cache structure */
 export interface MetadataCache {
-	version: 1;
+	version: 2;
 	entries: Record<string, CacheEntry>; // keyed by absolute path
 }
 
@@ -49,6 +51,8 @@ export interface SessionMeta {
 	modified: Date;
 	messageCount: number;
 	firstMessage: string;
+	title?: string;
+	preview?: string;
 }
 
 /** Search group from parsed query (reuse from list-threads.ts) */
@@ -61,7 +65,7 @@ export type SearchGroup =
 // Constants
 // -----------------------------------------------------------------------------
 
-const CACHE_VERSION = 1;
+const CACHE_VERSION = 2;
 const CACHE_DIR = ".cache";
 const CACHE_FILE = "index.json";
 const HEADER_READ_SIZE = 8192; // 8KB usually enough for header + first message
@@ -336,36 +340,67 @@ export class SessionIndex {
 			const lines = content.split("\n");
 
 			// Parse header (first line)
-			const header = JSON.parse(lines[0]) as { id: string; cwd?: string };
+			const header = JSON.parse(lines[0]) as { id: string; cwd?: string; title?: string };
+			let title = typeof header.title === "string" && header.title.trim() ? header.title.trim() : undefined;
+			let preview: string | undefined;
 
-			// Find first user message
 			let firstMessage = "";
 			let messageCount = 0;
 
+			// For small files, the header read likely contains the full file, so we can extract title/preview quickly.
 			for (let i = 1; i < lines.length; i++) {
 				const line = lines[i].trim();
 				if (!line) continue;
 
+				let parsed: unknown;
 				try {
-					const entry = JSON.parse(line) as {
-						type: string;
-						message?: { role: string; content: unknown };
-					};
-
-					if (entry.type === "message" || entry.type === "custom_message") {
-						messageCount++;
-						if (!firstMessage && entry.message?.role === "user") {
-							firstMessage = this.extractText(entry.message.content);
-						}
-					}
+					parsed = JSON.parse(line) as unknown;
 				} catch {
 					// Partial line at end of buffer - ignore
+					continue;
+				}
+
+				if (typeof parsed !== "object" || parsed === null) continue;
+				const rec = parsed as Record<string, unknown>;
+				const type = rec.type;
+
+				if (type === "session") {
+					const t = typeof rec.title === "string" ? rec.title.trim() : "";
+					if (t) title = t;
+					continue;
+				}
+				if (type === "title_change") {
+					const t = typeof rec.title === "string" ? rec.title.trim() : "";
+					if (t) title = t;
+					continue;
+				}
+				if (type === "preview_change") {
+					const p = typeof rec.preview === "string" ? rec.preview.trim() : "";
+					if (p) preview = p;
+					continue;
+				}
+
+				if (type === "message" || type === "custom_message") {
+					messageCount++;
+					if (!firstMessage) {
+						const msg = rec.message;
+						if (typeof msg === "object" && msg !== null) {
+							const msgRec = msg as Record<string, unknown>;
+							if (msgRec.role === "user") {
+								firstMessage = this.extractText(msgRec.content);
+							}
+						}
+					}
 				}
 			}
 
-			// If we didn't read the whole file, get accurate message count
+			// Large file: scan full file once to get robust title/preview and accurate message count.
 			if (bytesRead === HEADER_READ_SIZE) {
-				messageCount = await this.countMessages(file.path);
+				const scanned = await this.scanSessionFileForMetadata(file.path);
+				messageCount = scanned.messageCount;
+				if (scanned.firstMessage) firstMessage = scanned.firstMessage;
+				title = scanned.title ?? title;
+				preview = scanned.preview ?? preview;
 			}
 
 			return {
@@ -375,10 +410,74 @@ export class SessionIndex {
 				size: file.size,
 				messageCount,
 				firstMessage: firstMessage.substring(0, FIRST_MESSAGE_MAX_LEN),
+				title,
+				preview,
 			};
 		} finally {
 			await fd.close();
 		}
+	}
+
+	private async scanSessionFileForMetadata(filePath: string): Promise<{
+		messageCount: number;
+		firstMessage: string;
+		title?: string;
+		preview?: string;
+	}> {
+		const content = await readFile(filePath, "utf8");
+		let messageCount = 0;
+		let firstMessage = "";
+		let title: string | undefined;
+		let preview: string | undefined;
+
+		const normalize = (value: unknown): string | undefined =>
+			typeof value === "string" && value.trim() ? value.trim() : undefined;
+
+		for (const line of content.split("\n")) {
+			const trimmed = line.trim();
+			if (!trimmed) continue;
+
+			let parsed: unknown;
+			try {
+				parsed = JSON.parse(trimmed) as unknown;
+			} catch {
+				continue;
+			}
+			if (typeof parsed !== "object" || parsed === null) continue;
+			const rec = parsed as Record<string, unknown>;
+			const type = rec.type;
+
+			if (type === "session") {
+				const t = normalize(rec.title);
+				if (t) title = t;
+				continue;
+			}
+			if (type === "title_change") {
+				const t = normalize(rec.title);
+				if (t) title = t;
+				continue;
+			}
+			if (type === "preview_change") {
+				const p = normalize(rec.preview);
+				if (p) preview = p;
+				continue;
+			}
+
+			if (type === "message" || type === "custom_message") {
+				messageCount++;
+				if (!firstMessage) {
+					const msg = rec.message;
+					if (typeof msg === "object" && msg !== null) {
+						const msgRec = msg as Record<string, unknown>;
+						if (msgRec.role === "user") {
+							firstMessage = this.extractText(msgRec.content);
+						}
+					}
+				}
+			}
+		}
+
+		return { messageCount, firstMessage, title, preview };
 	}
 
 	/**
@@ -489,6 +588,8 @@ export class SessionIndex {
 			modified: new Date(entry.mtime),
 			messageCount: entry.messageCount,
 			firstMessage: entry.firstMessage,
+			title: entry.title,
+			preview: entry.preview,
 		};
 	}
 }
