@@ -1,13 +1,21 @@
 import type { AgentTool, Message, ToolResultMessage } from "@kennyfrc/mu-ai";
-import type { TSchema } from "@sinclair/typebox";
+import { type Static, type TSchema, Type } from "@sinclair/typebox";
 import { registerRuntimeProvider, unregisterRuntimeProvidersBySourceId } from "../model-config.js";
 import type { SessionManager } from "../session-manager.js";
+import {
+	buildMuDisplayV1ForCliResult,
+	deriveContentFromJsonlRecords,
+	deriveOkFromJsonlRecords,
+	parseJsonl,
+	runJsonlCliCommand,
+} from "./cli-jsonl.js";
 import { CommandRegistry } from "./command-registry.js";
 import { ExtensionRunner } from "./runner.js";
 import { ToolRegistry } from "./tool-registry.js";
 import type {
 	ErasedAgentTool,
 	ExtensionApi,
+	ExtensionCliToolSpec,
 	ExtensionCommand,
 	ExtensionFactory,
 	HookRegistrationOptions,
@@ -53,6 +61,102 @@ export class ExtensionManager {
 
 		const api: ExtensionApi = {
 			registerTool: (tool, options?: ToolRegistrationOptions) => {
+				this.tools.registerTool(tool, { sourceId, priority: options?.priority });
+			},
+			registerCliTool: (spec: ExtensionCliToolSpec, options?: ToolRegistrationOptions) => {
+				const paramsSchema = Type.Object({
+					argv: Type.Array(
+						Type.String({ description: "Arguments passed verbatim to the CLI (no shell quoting)." }),
+					),
+					stdin: Type.Optional(Type.String({ description: "Optional stdin to pipe to the process." })),
+				});
+
+				type Params = Static<typeof paramsSchema>;
+
+				const fixedArgs = spec.fixedArgs ?? [];
+				const jsonlFlag = spec.jsonlFlag === undefined ? "--jsonl" : spec.jsonlFlag;
+
+				const tool: ErasedAgentTool = {
+					name: spec.name,
+					label: spec.label ?? spec.name,
+					description: spec.description,
+					parameters: paramsSchema,
+					execute: async (
+						_toolCallId: string,
+						params: unknown,
+						signal?: AbortSignal,
+						onProgress?: (chunk: string) => void,
+					) => {
+						const raw = typeof params === "object" && params !== null ? (params as Record<string, unknown>) : {};
+						const argv = Array.isArray(raw.argv)
+							? raw.argv.filter((v): v is string => typeof v === "string")
+							: [];
+						const stdin = typeof raw.stdin === "string" ? raw.stdin : undefined;
+
+						const wantsHelp = argv.includes("--help") || argv.includes("-h") || argv[0] === "help";
+						const useJsonl = !wantsHelp && Boolean(jsonlFlag);
+
+						const fullArgs = [...fixedArgs, ...(useJsonl && jsonlFlag ? [jsonlFlag] : []), ...argv];
+						const displayArgv = [...fixedArgs, ...argv];
+
+						const res = await runJsonlCliCommand({
+							command: spec.command,
+							args: fullArgs,
+							cwd: spec.cwd,
+							env: spec.env,
+							stdin,
+							progress: spec.progress,
+							signal,
+							onProgress,
+						});
+
+						if (!useJsonl) {
+							return {
+								content: [{ type: "text", text: res.stdout }],
+								details: {
+									command: spec.command,
+									args: fullArgs,
+									exitCode: res.exitCode,
+									ok: res.exitCode === 0,
+									stdout: res.stdout,
+									stderr: res.stderr,
+									mode: "help",
+								},
+							};
+						}
+
+						const records = parseJsonl(res.stdout, spec.name);
+						const contentText = deriveContentFromJsonlRecords(records);
+						const okFromRecords = deriveOkFromJsonlRecords(records);
+						const ok = okFromRecords ?? res.exitCode === 0;
+
+						const mu_display = buildMuDisplayV1ForCliResult({
+							toolName: spec.name,
+							command: spec.command,
+							displayArgv,
+							cwd: spec.cwd,
+							exitCode: res.exitCode,
+							ok,
+							records,
+							stderr: res.stderr,
+						});
+
+						return {
+							content: [{ type: "text", text: contentText }],
+							details: {
+								command: spec.command,
+								args: fullArgs,
+								exitCode: res.exitCode,
+								ok,
+								stdout: res.stdout,
+								stderr: res.stderr,
+								records,
+								mu_display,
+							},
+						};
+					},
+				};
+
 				this.tools.registerTool(tool, { sourceId, priority: options?.priority });
 			},
 			registerProvider: (providerName, config, options) => {

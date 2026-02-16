@@ -48,6 +48,37 @@ export interface ToolRegistrationOptions {
 	priority?: number;
 }
 
+export interface ExtensionCliToolSpec {
+	/** Tool name exposed to the LLM (function name). */
+	name: string;
+	/** Optional human label; defaults to name. */
+	label?: string;
+	/** One-line description used in system prompt and tool definitions. */
+	description: string;
+
+	/** Executable to spawn (resolved via PATH). */
+	command: string;
+
+	/** Fixed args always prepended before dynamic argv (e.g. ["query"] for websearch). */
+	fixedArgs?: string[];
+
+	/**
+	 * Flag appended automatically to request machine output.
+	 * Default: "--jsonl".
+	 * Set to null to disable auto-append.
+	 */
+	jsonlFlag?: string | null;
+
+	/** Which stream to forward into tool progress events. Default: "stderr". */
+	progress?: "stderr" | "stdout" | "both" | "none";
+
+	/** Optional working directory override. */
+	cwd?: string;
+
+	/** Optional environment overlay (merged with process.env). */
+	env?: Record<string, string>;
+}
+
 export interface HookRegistrationOptions {
 	priority?: number;
 }
@@ -83,6 +114,9 @@ export interface ExtensionCommand {
 export interface ExtensionApi {
 	/** Register an LLM-callable tool */
 	registerTool(tool: ErasedAgentTool, options?: ToolRegistrationOptions): void;
+
+	/** Register an LLM-callable CLI tool (argv passthrough + JSONL stdout parsing). */
+	registerCliTool(spec: ExtensionCliToolSpec, options?: ToolRegistrationOptions): void;
 
 	/** Register a provider + models (overlays built-ins + models.json). */
 	registerProvider(providerName: string, config: ProviderConfig, options?: ProviderRegistrationOptions): void;
