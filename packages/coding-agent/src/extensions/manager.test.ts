@@ -8,13 +8,27 @@ import { type ErasedAgentTool, eraseAgentTool } from "./types.js";
 
 const mockToolSchema = Type.Object({});
 
-function makeTool(name: string): AgentTool<typeof mockToolSchema, { name: string }> {
+function muDisplayForTest(argv: string[]): { version: 1; call: { style: "argv"; text: string; argv: string[] } } {
+	return {
+		version: 1,
+		call: {
+			style: "argv",
+			text: ["(test)", ...argv].join(" "),
+			argv,
+		},
+	};
+}
+
+function makeTool(name: string): AgentTool<typeof mockToolSchema, { name: string; mu_display: unknown }> {
 	return {
 		label: name,
 		name,
 		description: `${name} tool`,
 		parameters: mockToolSchema,
-		execute: async () => ({ content: [{ type: "text", text: name }], details: { name } }),
+		execute: async () => ({
+			content: [{ type: "text", text: name }],
+			details: { name, mu_display: muDisplayForTest([name]) },
+		}),
 	};
 }
 
@@ -43,19 +57,25 @@ describe("ExtensionManager", () => {
 		const mgr = new ExtensionManager({ builtInTools: { bash: eraseAgentTool(builtInBash) } });
 
 		const extraSchema = Type.Object({});
-		const extBash: AgentTool<typeof extraSchema, { v: string }> = {
+		const extBash: AgentTool<typeof extraSchema, { v: string; mu_display: unknown }> = {
 			label: "ext-bash",
 			name: "bash",
 			description: "ext bash",
 			parameters: extraSchema,
-			execute: async () => ({ content: [{ type: "text", text: "ext" }], details: { v: "ext" } }),
+			execute: async () => ({
+				content: [{ type: "text", text: "ext" }],
+				details: { v: "ext", mu_display: muDisplayForTest(["bash", "ext"]) },
+			}),
 		};
-		const extTool: AgentTool<typeof extraSchema, { ok: true }> = {
+		const extTool: AgentTool<typeof extraSchema, { ok: true; mu_display: unknown }> = {
 			label: "extra",
 			name: "extra",
 			description: "extra",
 			parameters: extraSchema,
-			execute: async () => ({ content: [{ type: "text", text: "extra" }], details: { ok: true } }),
+			execute: async () => ({
+				content: [{ type: "text", text: "extra" }],
+				details: { ok: true, mu_display: muDisplayForTest(["extra"]) },
+			}),
 		};
 
 		await mgr.loadExtension((api) => {
@@ -74,6 +94,32 @@ describe("ExtensionManager", () => {
 		const res = await bashTool!.execute("tc_1", {});
 		const text = res.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
 		expect(text).toContain("ext");
+	});
+
+	it("throws a strict error when an extension tool result is missing mu_display", async () => {
+		const mgr = new ExtensionManager({ builtInTools: toolMap(["bash"]) });
+
+		const schema = Type.Object({});
+		const badTool: AgentTool<typeof schema, { ok: true }> = {
+			label: "bad",
+			name: "bad",
+			description: "bad",
+			parameters: schema,
+			execute: async () => ({
+				content: [{ type: "text", text: "hello" }],
+				details: { ok: true },
+			}),
+		};
+
+		await mgr.loadExtension((api) => {
+			api.registerTool(eraseAgentTool(badTool));
+		}, "ext-bad");
+
+		const tools = mgr.getToolsForSelection(["bash"]);
+		const bad = tools.find((t) => t.name === "bad");
+		expect(bad).toBeTruthy();
+
+		await expect(bad!.execute("tc_1", {})).rejects.toThrow(/mu_display/);
 	});
 
 	it("adds extension tools to GPT-* model defaults", async () => {

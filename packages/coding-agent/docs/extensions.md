@@ -124,13 +124,28 @@ export default function (mu: { registerTool: (t: AgentTool<any, any>) => void })
 		description: "One-line summary used in the system prompt.",
 		parameters: Type.Object({ q: Type.String() }),
 		execute: async (_id, args) => {
-			return { content: [{ type: "text", text: `q=${args.q}` }], details: undefined };
+			return {
+				content: [{ type: "text", text: `q=${args.q}` }],
+				details: {
+					mu_display: {
+						version: 1,
+						call: {
+							style: "argv",
+							text: `my_tool ${JSON.stringify(args.q)}`,
+							argv: [String(args.q)],
+						},
+					},
+				},
+			};
 		},
 	};
 
 	mu.registerTool(tool);
 }
 ```
+
+Note: extension tools must return `toolResult.details.mu_display` (version 1). If you are wrapping an external CLI,
+prefer `registerCliTool(...)` which auto-generates `mu_display`.
 
 
 ### Add a CLI tool (argv passthrough + JSONL stdout)

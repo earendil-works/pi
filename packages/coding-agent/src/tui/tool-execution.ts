@@ -44,6 +44,13 @@ function formatCommandLineForDisplay(command: string, argv: string[]): string {
 		.trim();
 }
 
+function formatArgvForDisplay(argv: string[]): string {
+	return argv
+		.map((p) => quoteArgForDisplay(p))
+		.join(" ")
+		.trim();
+}
+
 function deriveWebToolCallText(toolName: string, args: Record<string, unknown>): string | null {
 	if (toolName === "web_search") {
 		const cliArgs: string[] = ["query"];
@@ -57,7 +64,8 @@ function deriveWebToolCallText(toolName: string, args: Record<string, unknown>):
 		if (isNonEmptyString(args.freshness)) cliArgs.push("--freshness", args.freshness.trim());
 		const batch = Array.isArray(args.batch) ? args.batch.filter(isNonEmptyString).map((s) => s.trim()) : [];
 		if (batch.length > 0) cliArgs.push("--batch", ...batch);
-		return formatCommandLineForDisplay("websearch", cliArgs);
+		// TUI convention: tool name is the "command"; show argv only.
+		return formatArgvForDisplay(cliArgs);
 	}
 
 	if (toolName === "fetch") {
@@ -98,7 +106,8 @@ function deriveWebToolCallText(toolName: string, args: Record<string, unknown>):
 		if (typeof args.captchaGlobalTimeout === "number" && Number.isFinite(args.captchaGlobalTimeout))
 			cliArgs.push("--captcha-global-timeout", String(args.captchaGlobalTimeout));
 
-		return formatCommandLineForDisplay("webfetch", cliArgs);
+		// TUI convention: tool name is the "command"; show argv only.
+		return formatArgvForDisplay(cliArgs);
 	}
 
 	return null;
@@ -720,17 +729,21 @@ export class ToolExecutionComponent extends Container {
 			}
 		} else if (readMuDisplayV1(this.result?.details)) {
 			const muDisplay = readMuDisplayV1(this.result?.details)!;
-			const callText = muDisplay.call?.text ?? "";
+
+			// TUI convention: tool name is the "command"; show argv only.
+			const argv = Array.isArray(muDisplay.call?.argv)
+				? muDisplay.call!.argv.filter((v): v is string => typeof v === "string")
+				: [];
+			const callText = argv.length > 0 ? formatArgvForDisplay(argv) : (muDisplay.call?.text ?? "");
 			const cwdSuffix = muDisplay.call?.cwd?.trim()
 				? theme.fg("muted", ` (in ${shortenPath(muDisplay.call.cwd.trim())})`)
 				: "";
 
-			// mu_display.call.text is a complete CLI command (e.g., "websearch query ...").
-			// Show it directly as the title without redundant tool name prefix.
 			text =
-				(callText
-					? theme.fg("toolTitle", theme.bold(callText))
-					: theme.fg("toolTitle", theme.bold(this.toolName))) + cwdSuffix;
+				theme.fg("toolTitle", theme.bold(this.toolName)) +
+				" " +
+				(callText ? theme.fg("accent", callText) : theme.fg("toolOutput", "...")) +
+				cwdSuffix;
 
 			if (muDisplay.summary?.text?.trim()) {
 				text += "\n" + theme.fg("muted", muDisplay.summary.text.trim());
@@ -775,22 +788,24 @@ export class ToolExecutionComponent extends Container {
 			const callText = deriveWebToolCallText(this.toolName, args);
 
 			if (hasArgv || this.partialOutput || callText) {
-				// When callText is derived from named args (e.g., web_search -> "websearch query ..."),
-				// it already contains a self-identifying CLI command. Show it directly without tool name prefix.
-				// When argv is provided directly, show tool name + argv since argv alone may not be self-identifying.
-				if (callText && !hasArgv) {
-					text = theme.fg("toolTitle", theme.bold(callText));
-				} else {
-					const head = hasArgv ? argv.join(" ") : "";
-					text = theme.fg("toolTitle", theme.bold(this.toolName)) + (head ? " " + theme.fg("accent", head) : "");
+				const head = hasArgv ? formatArgvForDisplay(argv) : (callText ?? "");
+				text = theme.fg("toolTitle", theme.bold(this.toolName)) + (head ? " " + theme.fg("accent", head) : "");
+
+				// Prefer final result output, otherwise streaming partial output.
+				let output = "";
+				if (this.result) {
+					output = this.getTextOutput().trim();
+				} else if (this.partialOutput) {
+					output = stripAnsi(this.partialOutput).trim();
 				}
 
-				const output = this.partialOutput ? stripAnsi(this.partialOutput).trim() : "";
 				if (output) {
 					const contentWidth = Math.max(1, width - 2); // contentText has paddingX=1
 					const styledOutput = output
 						.split("\n")
-						.map((line: string) => theme.fg("toolOutput", line))
+						.map((line: string) =>
+							this.result?.isError ? theme.fg("error", line) : theme.fg("toolOutput", line),
+						)
 						.join("\n");
 
 					if (this.expanded) {

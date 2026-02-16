@@ -10,7 +10,7 @@ function renderText(component: ToolExecutionComponent, width: number): string {
 describe("ToolExecutionComponent mu_display rendering", () => {
 	initTheme("dark");
 
-	it("renders mu_display.call.text without redundant tool name prefix", () => {
+	it("renders mu_display.call.text instead of dumping JSON args", () => {
 		const component = new ToolExecutionComponent("fetch", {
 			argv: ["https://example.com", "--max-length", "200"],
 		});
@@ -34,15 +34,13 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 		});
 
 		const text = renderText(component, 120);
-		// The call text should be shown directly, not prefixed with tool name
-		expect(text).toContain("webfetch https://example.com --max-length 200");
+		expect(text).toContain("fetch https://example.com --max-length 200");
+		expect(text).not.toContain("webfetch");
 		expect(text).toContain("ok · exit=0");
 		expect(text).not.toContain('"argv"');
-		// No redundant "fetch" prefix before "webfetch"
-		expect(text).not.toContain("fetch webfetch");
 	});
 
-	it("collapses long output using mu_display.output.collapse without redundant prefix", () => {
+	it("collapses long output using mu_display.output.collapse", () => {
 		const component = new ToolExecutionComponent("web_search", {
 			argv: ["hello"],
 		});
@@ -65,12 +63,12 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 		const text = stripAnsi(lines.join("\n"));
 
 		expect(lines.length).toBeLessThanOrEqual(24);
+		expect(text).toContain("web_search query hello");
+		expect(text).not.toContain("websearch");
 		expect(text).toContain("ctrl+o to expand");
-		// No redundant "web_search" prefix before "websearch"
-		expect(text).not.toContain("web_search websearch");
 	});
 
-	it("renders a CLI-like call line for fetch args without redundant tool name prefix", () => {
+	it("renders a CLI-like call line for fetch args before mu_display is available", () => {
 		const component = new ToolExecutionComponent("fetch", {
 			url: "https://example.com",
 			browser: true,
@@ -78,14 +76,11 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 		});
 
 		const text = renderText(component, 120);
-		// The derived CLI command should be shown directly, not prefixed with tool name
-		expect(text).toContain("webfetch https://example.com --browser --max-length 200");
+		expect(text).toContain("fetch https://example.com --browser --max-length 200");
 		expect(text).not.toContain('"url"');
-		// No redundant "fetch" prefix before "webfetch"
-		expect(text).not.toContain("fetch webfetch");
 	});
 
-	it("renders a CLI-like call line for web_search args without redundant tool name prefix", () => {
+	it("renders a CLI-like call line for web_search args before mu_display is available", () => {
 		const component = new ToolExecutionComponent("web_search", {
 			searchTerm: "hello",
 			country: "US",
@@ -93,11 +88,25 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 		});
 
 		const text = renderText(component, 120);
-		// The derived CLI command should be shown directly, not prefixed with tool name
-		expect(text).toContain("websearch query hello --country US --count 3");
+		expect(text).toContain("web_search query hello --country US --count 3");
 		expect(text).not.toContain('"searchTerm"');
-		// No redundant "web_search" prefix before "websearch"
-		expect(text).not.toContain("web_search websearch");
+	});
+
+	it("renders final tool output for web_search even without mu_display", () => {
+		const component = new ToolExecutionComponent("web_search", {
+			searchTerm: "hello",
+		});
+
+		component.updateResult({
+			content: [{ type: "text", text: "line 1\nline 2" }],
+			isError: false,
+			details: { command: "websearch", args: ["query", "hello"], stdout: "", stderr: "" },
+		});
+
+		const text = renderText(component, 120);
+		expect(text).toContain("web_search query hello");
+		expect(text).toContain("line 1");
+		expect(text).toContain("line 2");
 	});
 
 	it("renders streaming partial output for argv-style tools before final result", () => {
@@ -109,8 +118,5 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 
 		const text = renderText(component, 80);
 		expect(text).toContain("downloading...");
-		// When argv is provided directly, show the argv without redundant prefix
-		expect(text).toContain("fetch https://example.com");
-		expect(text).not.toContain("fetch fetch");
 	});
 });

@@ -175,5 +175,11 @@ describe("ExtensionApi.registerCliTool", () => {
 		const res = await tool!.execute("tc_1", { argv: ["--help"] });
 		const text = res.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
 		expect(text).toContain("fixture help");
+
+		const details = res.details as unknown as {
+			mu_display?: { version?: number; call?: { argv?: unknown } };
+		};
+		expect(details.mu_display?.version).toBe(1);
+		expect(Array.isArray(details.mu_display?.call?.argv)).toBe(true);
 	});
 });

@@ -8,6 +8,7 @@ import {
 	countJsonlParseErrors,
 	deriveContentFromJsonlRecords,
 	deriveOkFromJsonlRecords,
+	formatCommandLineForDisplay,
 	hasJsonlOutputOrResultRecords,
 	parseJsonl,
 	runJsonlCliCommand,
@@ -25,6 +26,56 @@ import type {
 	ToolRegistrationOptions,
 } from "./types.js";
 import { composeToolResultTransformer, wrapToolWithExtensions } from "./wrapper.js";
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function assertHasMuDisplayV1(toolName: string, details: unknown): void {
+	if (!isRecord(details)) {
+		throw new Error(
+			`Extension tool "${toolName}" must return toolResult.details.mu_display (version 1). Received: ${typeof details}`,
+		);
+	}
+
+	const muDisplay = details.mu_display;
+	if (!isRecord(muDisplay) || muDisplay.version !== 1) {
+		throw new Error(
+			`Extension tool "${toolName}" must return toolResult.details.mu_display.version === 1. ` +
+				`Tip: if this wraps a CLI, prefer api.registerCliTool(...) which auto-generates mu_display.`,
+		);
+	}
+
+	const call = muDisplay.call;
+	if (!isRecord(call) || call.style !== "argv") {
+		throw new Error(`Extension tool "${toolName}" must return toolResult.details.mu_display.call.style === "argv".`);
+	}
+
+	// We require argv so the TUI can render consistent "toolName + argv" lines without
+	// duplicating underlying implementation commands (e.g. websearch/webfetch).
+	const argv = call.argv;
+	if (!Array.isArray(argv) || !argv.every((v) => typeof v === "string")) {
+		throw new Error(`Extension tool "${toolName}" must return toolResult.details.mu_display.call.argv as string[].`);
+	}
+
+	const text = call.text;
+	if (typeof text !== "string" || !text.trim()) {
+		throw new Error(
+			`Extension tool "${toolName}" must return toolResult.details.mu_display.call.text as a non-empty string.`,
+		);
+	}
+}
+
+function wrapExtensionToolWithStrictMuDisplay(tool: ErasedAgentTool): ErasedAgentTool {
+	return {
+		...tool,
+		execute: async (toolCallId, params, signal, onProgress) => {
+			const res = await tool.execute(toolCallId, params, signal, onProgress);
+			assertHasMuDisplayV1(tool.name, (res as { details?: unknown }).details);
+			return res;
+		},
+	};
+}
 
 function isJsonlFlagUnsupported(stderr: string, jsonlFlag: string): boolean {
 	const s = stderr.toLowerCase();
@@ -77,7 +128,12 @@ export class ExtensionManager {
 
 		const api: ExtensionApi = {
 			registerTool: (tool, options?: ToolRegistrationOptions) => {
-				this.tools.registerTool(tool, { sourceId, priority: options?.priority });
+				// Enforce a strict display contract for extension tools.
+				// Without mu_display, the TUI would otherwise guess and often render confusing headers.
+				this.tools.registerTool(wrapExtensionToolWithStrictMuDisplay(tool), {
+					sourceId,
+					priority: options?.priority,
+				});
 			},
 			registerCliTool: (spec: ExtensionCliToolSpec, options?: ToolRegistrationOptions) => {
 				const paramsSchema = Type.Object({
@@ -127,16 +183,34 @@ export class ExtensionManager {
 						});
 
 						if (!useJsonl) {
+							const ok = res.exitCode === 0;
+							const mu_display = {
+								version: 1 as const,
+								call: {
+									style: "argv" as const,
+									text: formatCommandLineForDisplay(spec.command, displayArgv),
+									command: spec.command,
+									argv: displayArgv,
+									cwd: spec.cwd,
+								},
+								summary: {
+									text: `${ok ? "ok" : "error"} · exit=${res.exitCode}`,
+									severity: ok ? ("ok" as const) : ("error" as const),
+								},
+								output: { collapse: { maxVisualLines: 5, expandHint: "ctrl+o to expand" } },
+							};
+
 							return {
 								content: [{ type: "text", text: res.stdout }],
 								details: {
 									command: spec.command,
 									args: fullArgs,
 									exitCode: res.exitCode,
-									ok: res.exitCode === 0,
+									ok,
 									stdout: res.stdout,
 									stderr: res.stderr,
 									mode: "help",
+									mu_display,
 								},
 							};
 						}
@@ -287,7 +361,10 @@ export class ExtensionManager {
 					},
 				};
 
-				this.tools.registerTool(tool, { sourceId, priority: options?.priority });
+				this.tools.registerTool(wrapExtensionToolWithStrictMuDisplay(tool), {
+					sourceId,
+					priority: options?.priority,
+				});
 			},
 			registerProvider: (providerName, config, options) => {
 				registerRuntimeProvider(providerName, config, { sourceId, priority: options?.priority });
