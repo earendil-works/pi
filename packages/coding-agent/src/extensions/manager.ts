@@ -26,6 +26,19 @@ import type {
 } from "./types.js";
 import { composeToolResultTransformer, wrapToolWithExtensions } from "./wrapper.js";
 
+function isJsonlFlagUnsupported(stderr: string, jsonlFlag: string): boolean {
+	const s = stderr.toLowerCase();
+	const f = jsonlFlag.toLowerCase();
+	if (!f.trim()) return false;
+	if (!s.includes(f)) return false;
+	return (
+		s.includes("unknown option") ||
+		s.includes("unrecognized option") ||
+		s.includes("invalid option") ||
+		s.includes("unknown flag")
+	);
+}
+
 export interface ExtensionManagerOptions {
 	builtInTools: Record<string, ErasedAgentTool>;
 	builtInSourceId?: string;
@@ -128,6 +141,54 @@ export class ExtensionManager {
 							};
 						}
 
+						// If the CLI does not support the jsonlFlag, retry once without it.
+						if (
+							useJsonl &&
+							typeof jsonlFlag === "string" &&
+							res.exitCode !== 0 &&
+							isJsonlFlagUnsupported(res.stderr, jsonlFlag)
+						) {
+							const retryArgs = [...fixedArgs, ...argv];
+							const retry = await runJsonlCliCommand({
+								command: spec.command,
+								args: retryArgs,
+								cwd: spec.cwd,
+								env: spec.env,
+								stdin,
+								progress: spec.progress,
+								signal,
+								onProgress,
+							});
+
+							const ok = retry.exitCode === 0;
+							const mu_display = buildMuDisplayV1ForCliRawOutput({
+								toolName: spec.name,
+								command: spec.command,
+								displayArgv,
+								cwd: spec.cwd,
+								exitCode: retry.exitCode,
+								ok,
+								stderr: retry.stderr,
+								jsonlParseErrorCount: 0,
+								reason: "unsupported_jsonl",
+							});
+
+							return {
+								content: [{ type: "text", text: retry.stdout }],
+								details: {
+									command: spec.command,
+									args: retryArgs,
+									exitCode: retry.exitCode,
+									ok,
+									stdout: retry.stdout,
+									stderr: retry.stderr,
+									mode: "raw",
+									jsonlUnsupported: true,
+									mu_display,
+								},
+							};
+						}
+
 						const records = parseJsonl(res.stdout, spec.name);
 						const jsonlParseErrorCount = countJsonlParseErrors(records);
 						const hasOutputOrResult = hasJsonlOutputOrResultRecords(records);
@@ -145,6 +206,7 @@ export class ExtensionManager {
 								ok,
 								stderr: res.stderr,
 								jsonlParseErrorCount,
+								reason: "invalid_jsonl",
 							});
 
 							return {
@@ -176,6 +238,7 @@ export class ExtensionManager {
 								ok,
 								stderr: res.stderr,
 								jsonlParseErrorCount: 0,
+								reason: "stderr_only_failure",
 							});
 
 							return {

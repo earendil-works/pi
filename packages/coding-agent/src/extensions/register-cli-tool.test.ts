@@ -130,6 +130,33 @@ describe("ExtensionApi.registerCliTool", () => {
 		expect(details.records.length).toBeGreaterThanOrEqual(2);
 	});
 
+	it("retries without --jsonl when the CLI rejects the jsonl flag", async () => {
+		const mgr = new ExtensionManager({ builtInTools: {} });
+
+		await mgr.loadExtension((api) => {
+			api.registerCliTool({
+				name: "fixture_cli_no_jsonl",
+				description: "Fixture CLI that rejects --jsonl",
+				command: process.execPath,
+				fixedArgs: [fixtureScriptPath()],
+			});
+		}, "ext-fixture-no-jsonl");
+
+		const tool = mgr.getToolsForSelection([]).find((t) => t.name === "fixture_cli_no_jsonl");
+		expect(tool).toBeTruthy();
+
+		const res = await tool!.execute("tc_1", { argv: ["--no-jsonl-supported"] });
+		const text = res.content.map((c) => (c.type === "text" ? c.text : "")).join("\n");
+		expect(text).toContain("RAW OK");
+
+		const details = res.details as unknown as {
+			jsonlUnsupported?: boolean;
+			mu_display?: { summary?: { text?: string } };
+		};
+		expect(details.jsonlUnsupported).toBe(true);
+		expect(details.mu_display?.summary?.text).toContain("jsonl unsupported");
+	});
+
 	it("does not force --jsonl when argv requests help", async () => {
 		const mgr = new ExtensionManager({ builtInTools: {} });
 

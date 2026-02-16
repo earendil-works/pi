@@ -10,6 +10,17 @@ if (argv.includes("--help") || argv.includes("-h") || argv[0] === "help") {
 
 const hasJsonl = argv.includes("--jsonl") || argv.includes("--json");
 
+const noJsonlSupported = argv.includes("--no-jsonl-supported");
+
+if (noJsonlSupported) {
+	if (hasJsonl) {
+		process.stderr.write("error: unknown option '--jsonl'\n");
+		process.exit(1);
+	}
+	process.stdout.write("RAW OK\n");
+	process.exit(0);
+}
+
 if (!hasJsonl) {
 	process.stderr.write("[fixture] missing --jsonl\n");
 	process.exit(2);

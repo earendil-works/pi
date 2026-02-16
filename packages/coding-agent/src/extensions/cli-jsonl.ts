@@ -51,6 +51,8 @@ export interface MuDisplayV1 {
 	}>;
 }
 
+export type CliRawOutputReason = "invalid_jsonl" | "unsupported_jsonl" | "stderr_only_failure";
+
 function defaultSpawn(
 	command: string,
 	args: string[],
@@ -322,10 +324,16 @@ export function buildMuDisplayV1ForCliRawOutput(args: {
 	ok: boolean;
 	stderr: string;
 	jsonlParseErrorCount: number;
+	reason: CliRawOutputReason;
 }): MuDisplayV1 {
 	const callText = formatCommandLineForDisplay(args.command, args.displayArgv);
 	const base = `${args.ok ? "ok" : "error"} · exit=${args.exitCode}`;
-	const summaryText = args.jsonlParseErrorCount > 0 ? `${base} · non-jsonl output` : base;
+	const summaryText =
+		args.reason === "unsupported_jsonl"
+			? `${base} · jsonl unsupported`
+			: args.reason === "invalid_jsonl"
+				? `${base} · non-jsonl output`
+				: base;
 
 	const sections: MuDisplayV1["sections"] = [];
 	if (args.stderr.trim()) {
@@ -360,7 +368,12 @@ Tip: configure this tool with jsonlFlag: null (or update the CLI to support JSON
 		},
 		summary: {
 			text: summaryText,
-			severity: args.jsonlParseErrorCount > 0 ? "warning" : args.ok ? "ok" : "error",
+			severity:
+				args.reason === "invalid_jsonl" || args.reason === "unsupported_jsonl"
+					? "warning"
+					: args.ok
+						? "ok"
+						: "error",
 		},
 		output: {
 			collapse: { maxVisualLines: 5, expandHint: "ctrl+o to expand" },
