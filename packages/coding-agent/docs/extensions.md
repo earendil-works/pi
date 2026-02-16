@@ -132,6 +132,33 @@ export default function (mu: { registerTool: (t: AgentTool<any, any>) => void })
 }
 ```
 
+
+### Add a CLI tool (argv passthrough + JSONL stdout)
+
+Use this when you want to wrap an external CLI without mirroring its full flag matrix into a large tool schema.
+
+The CLI should support `--jsonl` and emit JSONL records on stdout (with diagnostics on stderr).
+
+```ts
+export default function (mu) {
+	mu.registerCliTool({
+		name: "web_fetch",
+		description: "Fetch a URL via the webfetch CLI (JSONL mode)",
+		command: "webfetch",
+		// fixedArgs: [],
+		// jsonlFlag: "--jsonl", // default
+		progress: "stderr", // default
+	});
+}
+```
+
+Tool parameters are stable:
+
+- `argv: string[]` — passed verbatim (no shell)
+- `stdin?: string` — optional stdin
+
+Note: if `argv` includes `--help` or `-h`, Mu will *not* auto-append `--jsonl`, and will return the CLI help text as-is.
+
 ### Add a slash command
 
 ```ts
