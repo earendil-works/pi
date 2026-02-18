@@ -10,10 +10,11 @@ export class CustomEditor extends Editor {
 	public onCtrlO?: () => void;
 	public onOptionUp?: () => void;
 	public onOptionDown?: () => void;
-	public onHistoryUp?: () => void;
-	public onHistoryDown?: () => void;
+	public onHistoryUp?: () => boolean;
+	public onHistoryDown?: () => boolean;
 
 	private _bashMode = false;
+	private historyNavActive = false;
 	public onBashSubmit?: (command: string) => void;
 	public onBashModeChange?: (enabled: boolean) => void;
 
@@ -83,14 +84,44 @@ export class CustomEditor extends Editor {
 			return;
 		}
 
-		// Use visual line methods for history navigation to handle wrapped text correctly
-		if (data === "\x1b[A" && this.onHistoryUp && this.isAtFirstVisualLine() && !this.isShowingAutocomplete()) {
-			this.onHistoryUp();
-			return;
-		}
-		if (data === "\x1b[B" && this.onHistoryDown && this.isAtLastVisualLine() && !this.isShowingAutocomplete()) {
-			this.onHistoryDown();
-			return;
+		// History navigation mode: UP/DOWN navigate history entries regardless of cursor position
+		// Non-UP/DOWN keys exit history mode before being processed normally
+		if (this.historyNavActive) {
+			// In history mode, UP/DOWN always navigate (ignore cursor position)
+			if (data === "\x1b[A" && this.onHistoryUp) {
+				const navigated = this.onHistoryUp();
+				// Stay in history mode only if navigation succeeded
+				this.historyNavActive = navigated;
+				return;
+			}
+			if (data === "\x1b[B" && this.onHistoryDown) {
+				const navigated = this.onHistoryDown();
+				// Stay in history mode only if navigation succeeded
+				// Exiting at bottom (returning to draft) also exits history mode
+				this.historyNavActive = navigated;
+				return;
+			}
+			// Any non-arrow key exits history mode first, then processes normally
+			this.historyNavActive = false;
+		} else {
+			// Not in history mode: check boundaries to enter history mode
+			// Block history nav when: autocomplete open, bash mode active
+			const canEnterHistoryNav = !this.isShowingAutocomplete() && !this._bashMode;
+
+			if (data === "\x1b[A" && this.onHistoryUp && canEnterHistoryNav && this.isAtFirstVisualLine()) {
+				const navigated = this.onHistoryUp();
+				if (navigated) {
+					this.historyNavActive = true;
+				}
+				return;
+			}
+			if (data === "\x1b[B" && this.onHistoryDown && canEnterHistoryNav && this.isAtLastVisualLine()) {
+				const navigated = this.onHistoryDown();
+				if (navigated) {
+					this.historyNavActive = true;
+				}
+				return;
+			}
 		}
 		if ((data === "\x0f" || data === "\x1b[111;5u") && this.onCtrlO) {
 			this.onCtrlO();

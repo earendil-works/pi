@@ -627,11 +627,11 @@ export class TuiRenderer {
 		};
 
 		this.editor.onHistoryUp = () => {
-			this.navigateHistoryUp();
+			return this.navigateHistoryUp();
 		};
 
 		this.editor.onHistoryDown = () => {
-			this.navigateHistoryDown();
+			return this.navigateHistoryDown();
 		};
 
 		this.editor.onBashModeChange = (enabled: boolean) => {
@@ -1623,9 +1623,9 @@ export class TuiRenderer {
 		});
 	}
 
-	private navigateHistoryUp(): void {
+	private navigateHistoryUp(): boolean {
 		const historyLength = this.promptHistory.getHistoryLength();
-		if (historyLength === 0) return;
+		if (historyLength === 0) return false;
 
 		if (this.historyIndex === -1) {
 			// First time pressing up - save current draft and go to most recent history
@@ -1636,7 +1636,7 @@ export class TuiRenderer {
 			this.historyIndex--;
 		} else {
 			// Already at oldest entry, do nothing
-			return;
+			return false;
 		}
 
 		const prompt = this.promptHistory.getPromptAt(this.historyIndex);
@@ -1644,12 +1644,13 @@ export class TuiRenderer {
 			this.editor.setText(stripUserMessageTimePrefix(prompt));
 			this.ui.requestRender();
 		}
+		return true;
 	}
 
-	private navigateHistoryDown(): void {
+	private navigateHistoryDown(): boolean {
 		if (this.historyIndex === -1) {
 			// Not browsing history, nothing to do
-			return;
+			return false;
 		}
 
 		const historyLength = this.promptHistory.getHistoryLength();
@@ -1662,13 +1663,14 @@ export class TuiRenderer {
 				this.editor.setText(stripUserMessageTimePrefix(prompt));
 				this.ui.requestRender();
 			}
-		} else {
-			// At most recent history entry, return to current draft
-			this.historyIndex = -1;
-			this.editor.setText(this.currentDraft);
-			this.currentDraft = "";
-			this.ui.requestRender();
+			return true;
 		}
+		// At most recent history entry, return to current draft
+		this.historyIndex = -1;
+		this.editor.setText(this.currentDraft);
+		this.currentDraft = "";
+		this.ui.requestRender();
+		return true;
 	}
 
 	private handleCtrlC(): void {
