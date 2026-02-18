@@ -33,9 +33,11 @@ const GPT_STAR_TOOL_NAMES: ToolName[] = [
 	"exec_command",
 	"apply_patch",
 	"read_image",
+	"view_image",
 	"handoff",
 	"list_threads",
 	"read_thread",
+	"update_plan",
 ];
 
 export interface ToolSelection {
