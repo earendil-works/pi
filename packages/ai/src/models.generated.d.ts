@@ -102,6 +102,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "claude-sonnet-4-6": {
+			id: string;
+			name: string;
+			api: "anthropic-messages";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "claude-sonnet-4-0": {
 			id: string;
 			name: string;
@@ -2634,6 +2651,23 @@ export declare const MODELS: {
 		};
 	};
 	readonly openrouter: {
+		readonly "anthropic/claude-sonnet-4.6": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "qwen/qwen3.5-plus-02-15": {
 			id: string;
 			name: string;
