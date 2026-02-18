@@ -9,6 +9,11 @@ import { listOAuthAccounts, markOAuthAccountCooldown } from "../utils/oauth/stor
 import { getExponentialBackoff, sleep } from "../utils/retry.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { buildCodexMuBridge, OPENCODE_CODEX_INSTRUCTIONS } from "./openai-codex-responses-legacy.js";
+import {
+	normalizeToolNameWithTools,
+	recoverToolCallFromTextContent,
+	upsertToolCallContent,
+} from "./tool-call-recovery.js";
 import { transformMessages } from "./transform-messages.js";
 
 // ============================================================================
@@ -298,7 +303,7 @@ export const streamOpenAICodexResponses = (model, context, options) => {
 					stream.push({ type: "start", partial: output });
 					hasEmittedStart = true;
 				}
-				await processStream(response, output, stream, model);
+				await processStream(response, output, stream, model, context.tools);
 				if (options?.signal?.aborted) {
 					throw new Error("Request was aborted");
 				}
@@ -544,8 +549,8 @@ function convertToolResult(msg, model) {
 	}
 	return output;
 }
-function normalizeToolName(name) {
-	return name.startsWith("functions.") ? name.slice("functions.".length) : name;
+function normalizeToolName(name, tools) {
+	return normalizeToolNameWithTools(name, tools);
 }
 function buildToolCallId(callId, itemId) {
 	const lhs = callId ?? itemId ?? "";
@@ -557,7 +562,7 @@ function parseToolArgumentsForName(raw, toolName) {
 	if (Object.keys(parsed).length > 0) return parsed;
 	const text = raw?.trim() ?? "";
 	if (!text) return {};
-	const normalizedName = normalizeToolName(toolName);
+	const normalizedName = normalizeToolName(toolName, undefined);
 	if (normalizedName === "apply_patch") {
 		return { input: text };
 	}
@@ -573,7 +578,7 @@ function getLocalShellCommand(item) {
 	}
 	return "";
 }
-async function processStream(response, output, stream, model) {
+async function processStream(response, output, stream, model, tools) {
 	let currentItem = null;
 	let currentBlock = null;
 	let sawCompletion = false;
@@ -599,10 +604,11 @@ async function processStream(response, output, stream, model) {
 				} else if (item.type === "function_call") {
 					hadContent = true;
 					currentItem = item;
+					const normalizedName = normalizeToolName(item.name, tools);
 					currentBlock = {
 						type: "toolCall",
 						id: `${item.call_id}|${item.id}`,
-						name: item.name,
+						name: normalizedName,
 						arguments: {},
 						partialJson: item.arguments || "",
 					};
@@ -612,10 +618,11 @@ async function processStream(response, output, stream, model) {
 					hadContent = true;
 					currentItem = item;
 					const rawInput = item.input || "";
+					const normalizedName = normalizeToolName(item.name, tools);
 					currentBlock = {
 						type: "toolCall",
 						id: buildToolCallId(item.call_id, item.id),
-						name: normalizeToolName(item.name),
+						name: normalizedName,
 						arguments: parseToolArgumentsForName(rawInput, item.name),
 						partialJson: rawInput,
 					};
@@ -738,27 +745,46 @@ async function processStream(response, output, stream, model) {
 			}
 			case "response.output_item.done": {
 				const item = event.item;
-				if (item.type === "reasoning" && currentBlock?.type === "thinking") {
-					currentBlock.thinking = item.summary?.map((s) => s.text).join("\n\n") || "";
-					currentBlock.thinkingSignature = JSON.stringify(item);
+				if (item.type === "reasoning") {
+					hadContent = true;
+					const activeThinkingBlock = currentBlock?.type === "thinking" ? currentBlock : null;
+					const hadActiveThinkingBlock = activeThinkingBlock !== null;
+					const thinkingBlock = activeThinkingBlock ?? { type: "thinking", thinking: "" };
+					if (!hadActiveThinkingBlock) {
+						output.content.push(thinkingBlock);
+						stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+					}
+					thinkingBlock.thinking = item.summary?.map((s) => s.text).join("\n\n") || "";
+					thinkingBlock.thinkingSignature = JSON.stringify(item);
+					const contentIndex = output.content.indexOf(thinkingBlock);
 					stream.push({
 						type: "thinking_end",
-						contentIndex: blockIndex(),
-						content: currentBlock.thinking,
+						contentIndex,
+						content: thinkingBlock.thinking,
 						partial: output,
 					});
-					currentBlock = null;
-				} else if (item.type === "message" && currentBlock?.type === "text") {
-					currentBlock.text = item.content.map((c) => (c.type === "output_text" ? c.text : c.refusal)).join("");
-					currentBlock.textSignature = item.id;
+					if (hadActiveThinkingBlock) currentBlock = null;
+				} else if (item.type === "message") {
+					hadContent = true;
+					const activeTextBlock = currentBlock?.type === "text" ? currentBlock : null;
+					const hadActiveTextBlock = activeTextBlock !== null;
+					const textBlock = activeTextBlock ?? { type: "text", text: "" };
+					if (!hadActiveTextBlock) {
+						output.content.push(textBlock);
+						stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+					}
+					textBlock.text = item.content.map((c) => (c.type === "output_text" ? c.text : c.refusal)).join("");
+					textBlock.textSignature = item.id;
+					const contentIndex = output.content.indexOf(textBlock);
 					stream.push({
 						type: "text_end",
-						contentIndex: blockIndex(),
-						content: currentBlock.text,
+						contentIndex,
+						content: textBlock.text,
 						partial: output,
 					});
-					currentBlock = null;
+					if (hadActiveTextBlock) currentBlock = null;
 				} else if (item.type === "function_call") {
+					const normalizedName = normalizeToolName(item.name, tools);
 					// Use accumulated partialJson as fallback if item.arguments is empty/missing
 					const argsStr =
 						item.arguments || (currentBlock?.type === "toolCall" ? currentBlock.partialJson : "{}") || "{}";
@@ -771,14 +797,18 @@ async function processStream(response, output, stream, model) {
 					const toolCall = {
 						type: "toolCall",
 						id: `${item.call_id}|${item.id}`,
-						name: item.name,
+						name: normalizedName,
 						arguments: args,
 					};
-					stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+					const { contentIndex, inserted } = upsertToolCallContent(output.content, toolCall);
+					if (inserted) {
+						stream.push({ type: "toolcall_start", contentIndex, partial: output });
+					}
+					stream.push({ type: "toolcall_end", contentIndex, toolCall, partial: output });
 					currentBlock = null;
 				} else if (item.type === "custom_tool_call") {
 					const rawInput = item.input || (currentBlock?.type === "toolCall" ? currentBlock.partialJson : "");
-					const toolName = normalizeToolName(item.name);
+					const toolName = normalizeToolName(item.name, tools);
 					const args = parseToolArgumentsForName(rawInput, toolName);
 					if (currentBlock?.type === "toolCall") {
 						currentBlock.partialJson = rawInput;
@@ -791,7 +821,11 @@ async function processStream(response, output, stream, model) {
 						name: toolName,
 						arguments: args,
 					};
-					stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+					const { contentIndex, inserted } = upsertToolCallContent(output.content, toolCall);
+					if (inserted) {
+						stream.push({ type: "toolcall_start", contentIndex, partial: output });
+					}
+					stream.push({ type: "toolcall_end", contentIndex, toolCall, partial: output });
 					currentBlock = null;
 				} else if (item.type === "local_shell_call") {
 					const command = getLocalShellCommand(item);
@@ -806,7 +840,11 @@ async function processStream(response, output, stream, model) {
 						name: "exec_command",
 						arguments: args,
 					};
-					stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+					const { contentIndex, inserted } = upsertToolCallContent(output.content, toolCall);
+					if (inserted) {
+						stream.push({ type: "toolcall_start", contentIndex, partial: output });
+					}
+					stream.push({ type: "toolcall_end", contentIndex, toolCall, partial: output });
 					currentBlock = null;
 				}
 				break;
@@ -837,6 +875,26 @@ async function processStream(response, output, stream, model) {
 					throw new CodexStreamError(`Stream ended with non-terminal status: ${resp.status}`, hadContent);
 				}
 				output.stopReason = mapStopReason(resp?.status);
+				if (output.stopReason === "stop" && !output.content.some((b) => b.type === "toolCall")) {
+					const recoveredToolCall = recoverToolCallFromTextContent(
+						output.content,
+						tools,
+						(name) => normalizeToolName(name, tools),
+						(raw) => parseToolArgumentsSafely(raw),
+					);
+					if (recoveredToolCall) {
+						const { contentIndex, inserted } = upsertToolCallContent(output.content, recoveredToolCall);
+						if (inserted) {
+							stream.push({ type: "toolcall_start", contentIndex, partial: output });
+						}
+						stream.push({
+							type: "toolcall_end",
+							contentIndex,
+							toolCall: recoveredToolCall,
+							partial: output,
+						});
+					}
+				}
 				if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
 					output.stopReason = "toolUse";
 				}
