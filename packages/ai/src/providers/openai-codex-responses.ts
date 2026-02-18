@@ -590,16 +590,32 @@ function clampReasoningEffort(modelId: string, effort: string): string {
 // Message Conversion
 // ============================================================================
 
+function shouldReplayAssistantMessage(msg: AssistantMessage): boolean {
+	return msg.stopReason !== "error" && msg.stopReason !== "aborted";
+}
+
 function convertMessages(model: Model<"openai-codex-responses">, context: Context): unknown[] {
 	const messages: unknown[] = [];
+	const replayableToolCallIds = new Set<string>();
 	const transformed = transformMessages(context.messages, model);
 
 	for (const msg of transformed) {
 		if (msg.role === "user") {
 			messages.push(convertUserMessage(msg, model));
 		} else if (msg.role === "assistant") {
+			if (!shouldReplayAssistantMessage(msg)) {
+				continue;
+			}
+			for (const block of msg.content) {
+				if (block.type === "toolCall") {
+					replayableToolCallIds.add(block.id);
+				}
+			}
 			messages.push(...convertAssistantMessage(msg));
 		} else if (msg.role === "toolResult") {
+			if (!replayableToolCallIds.has(msg.toolCallId)) {
+				continue;
+			}
 			messages.push(...convertToolResult(msg, model));
 		}
 	}
@@ -637,7 +653,7 @@ function convertAssistantMessage(msg: AssistantMessage): unknown[] {
 	const output: unknown[] = [];
 
 	for (const block of msg.content) {
-		if (block.type === "thinking" && msg.stopReason !== "error" && block.thinkingSignature) {
+		if (block.type === "thinking" && block.thinkingSignature) {
 			output.push(JSON.parse(block.thinkingSignature));
 		} else if (block.type === "text") {
 			output.push({
@@ -646,7 +662,7 @@ function convertAssistantMessage(msg: AssistantMessage): unknown[] {
 				content: [{ type: "output_text", text: sanitizeSurrogates(block.text), annotations: [] }],
 				status: "completed",
 			});
-		} else if (block.type === "toolCall" && msg.stopReason !== "error") {
+		} else if (block.type === "toolCall") {
 			const { callId, itemId } = sanitizeToolCallId(block.id);
 			output.push({
 				type: "function_call",
