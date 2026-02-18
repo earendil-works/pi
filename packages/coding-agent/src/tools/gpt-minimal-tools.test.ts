@@ -35,9 +35,11 @@ describe("GPT tools", () => {
 			"exec_command",
 			"apply_patch",
 			"read_image",
+			"view_image",
 			"handoff",
 			"list_threads",
 			"read_thread",
+			"update_plan",
 		]);
 		expect(selection.tools.map((t) => t.name)).toEqual(selection.toolNames);
 	});
