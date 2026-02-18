@@ -611,8 +611,12 @@ function buildParams(model, context, options) {
 	}
 	return params;
 }
+function shouldReplayAssistantMessage(msg) {
+	return msg.stopReason !== "error" && msg.stopReason !== "aborted";
+}
 function convertMessages(model, context) {
 	const messages = [];
+	const replayableToolCallIds = new Set();
 	const transformedMessages = transformMessages(context.messages, model);
 	if (context.systemPrompt) {
 		// Default to "system" role - only native OpenAI reasoning models use "developer"
@@ -657,10 +661,12 @@ function convertMessages(model, context) {
 				});
 			}
 		} else if (msg.role === "assistant") {
+			if (!shouldReplayAssistantMessage(msg)) {
+				continue;
+			}
 			const output = [];
 			for (const block of msg.content) {
-				// Do not submit thinking blocks if the completion had an error (i.e. abort)
-				if (block.type === "thinking" && msg.stopReason !== "error") {
+				if (block.type === "thinking") {
 					if (block.thinkingSignature) {
 						const reasoningItem = JSON.parse(block.thinkingSignature);
 						output.push(reasoningItem);
@@ -695,9 +701,9 @@ function convertMessages(model, context) {
 						status: "completed",
 						id: textBlock.textSignature || "msg_" + Math.random().toString(36).substring(2, 15),
 					});
-					// Do not submit toolcall blocks if the completion had an error (i.e. abort)
-				} else if (block.type === "toolCall" && msg.stopReason !== "error") {
+				} else if (block.type === "toolCall") {
 					const toolCall = block;
+					replayableToolCallIds.add(toolCall.id);
 					output.push({
 						type: "function_call",
 						id: toolCall.id.split("|")[1],
@@ -710,6 +716,9 @@ function convertMessages(model, context) {
 			if (output.length === 0) continue;
 			messages.push(...output);
 		} else if (msg.role === "toolResult") {
+			if (!replayableToolCallIds.has(msg.toolCallId)) {
+				continue;
+			}
 			// Extract text and image content
 			const textResult = msg.content
 				.filter((c) => c.type === "text")
