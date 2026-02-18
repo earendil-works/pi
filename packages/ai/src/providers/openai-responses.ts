@@ -47,6 +47,94 @@ export interface OpenAIResponsesOptions extends StreamOptions {
 	toolChoice?: OpenAIResponsesToolChoice;
 }
 
+type OpenAICustomToolCall = {
+	type: "custom_tool_call";
+	call_id: string;
+	name: string;
+	id?: string;
+	input?: string;
+	status?: string;
+};
+
+type OpenAILocalShellCall = {
+	type: "local_shell_call";
+	id?: string | null;
+	call_id?: string | null;
+	status?: string;
+	action?: {
+		type?: string;
+		command?: string | string[];
+		[key: string]: unknown;
+	};
+};
+
+type OpenAIResponseItem =
+	| ResponseReasoningItem
+	| ResponseOutputMessage
+	| ResponseFunctionToolCall
+	| OpenAICustomToolCall
+	| OpenAILocalShellCall;
+
+function normalizeToolName(name: string): string {
+	return name.startsWith("functions.") ? name.slice("functions.".length) : name;
+}
+
+function buildToolCallId(callId: string | undefined | null, itemId: string | undefined | null): string {
+	const lhs = callId ?? itemId ?? "";
+	const rhs = itemId ?? callId ?? "";
+	return `${lhs}|${rhs}`;
+}
+
+function tryParseObject(json: string): Record<string, unknown> | null {
+	try {
+		const parsed = JSON.parse(json);
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+			return parsed as Record<string, unknown>;
+		}
+	} catch {
+		// ignore parse errors
+	}
+	return null;
+}
+
+function parseToolArgumentsSafely(raw: string | undefined): Record<string, unknown> {
+	const source = raw ?? "";
+	if (!source.trim()) return {};
+
+	const parsed = tryParseObject(source);
+	if (parsed) return parsed;
+
+	const firstBrace = source.indexOf("{");
+	const lastBrace = source.lastIndexOf("}");
+	if (firstBrace !== -1 && lastBrace > firstBrace) {
+		const candidate = source.slice(firstBrace, lastBrace + 1);
+		const candidateParsed = tryParseObject(candidate);
+		if (candidateParsed) return candidateParsed;
+	}
+
+	return {};
+}
+
+function parseToolArgumentsForName(raw: string | undefined, _toolName: string): Record<string, unknown> {
+	const parsed = parseToolArgumentsSafely(raw);
+	if (Object.keys(parsed).length > 0) return parsed;
+
+	const text = raw?.trim() ?? "";
+	if (!text) return {};
+	return { input: text };
+}
+
+function getLocalShellCommand(item: OpenAILocalShellCall): string {
+	const action = asRecord(item.action);
+	const command = action?.command;
+	if (typeof command === "string") return command;
+	if (Array.isArray(command)) {
+		const parts = command.filter((part): part is string => typeof part === "string" && part.length > 0);
+		return parts.join(" ");
+	}
+	return "";
+}
+
 function asRecord(value: unknown): Record<string, unknown> | null {
 	return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
@@ -177,7 +265,7 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 					hasEmittedStart = true;
 				}
 
-				let currentItem: ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall | null = null;
+				let currentItem: OpenAIResponseItem | null = null;
 				type OpenAIResponsesToolCallBlock = ToolCall & { partialJson?: string };
 				let currentBlock: ThinkingContent | TextContent | OpenAIResponsesToolCallBlock | null = null;
 				const blocks = output.content;
@@ -195,7 +283,7 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 				for await (const event of events()) {
 					// Handle output item start
 					if (event.type === "response.output_item.added") {
-						const item = event.item;
+						const item = event.item as OpenAIResponseItem;
 						if (item.type === "reasoning") {
 							hadContent = true;
 							currentItem = item;
@@ -217,6 +305,33 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 								name: item.name,
 								arguments: {},
 								partialJson: item.arguments || "",
+							};
+							output.content.push(currentBlock);
+							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+						} else if (item.type === "custom_tool_call") {
+							hadContent = true;
+							currentItem = item;
+							const rawInput = item.input || "";
+							currentBlock = {
+								type: "toolCall",
+								id: buildToolCallId(item.call_id, item.id),
+								name: normalizeToolName(item.name),
+								arguments: parseToolArgumentsForName(rawInput, item.name),
+								partialJson: rawInput,
+							};
+							output.content.push(currentBlock);
+							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+						} else if (item.type === "local_shell_call") {
+							hadContent = true;
+							currentItem = item;
+							const command = getLocalShellCommand(item);
+							const rawInput = command ? JSON.stringify({ cmd: command }) : "";
+							currentBlock = {
+								type: "toolCall",
+								id: buildToolCallId(item.call_id, item.id),
+								name: "exec_command",
+								arguments: command ? { cmd: command } : {},
+								partialJson: rawInput,
 							};
 							output.content.push(currentBlock);
 							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
@@ -338,9 +453,39 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 							currentBlock.arguments = parseStreamingJson(args);
 						}
 					}
+					// Handle custom tool call argument deltas
+					else if (event.type === "response.custom_tool_call_input.delta") {
+						if (
+							currentItem &&
+							currentItem.type === "custom_tool_call" &&
+							currentBlock &&
+							currentBlock.type === "toolCall"
+						) {
+							hadContent = true;
+							currentBlock.partialJson = (currentBlock.partialJson ?? "") + event.delta;
+							currentBlock.arguments = parseToolArgumentsForName(currentBlock.partialJson, currentItem.name);
+							stream.push({
+								type: "toolcall_delta",
+								contentIndex: blockIndex(),
+								delta: event.delta,
+								partial: output,
+							});
+						}
+					} else if (event.type === "response.custom_tool_call_input.done") {
+						if (
+							currentItem &&
+							currentItem.type === "custom_tool_call" &&
+							currentBlock &&
+							currentBlock.type === "toolCall"
+						) {
+							const input = event.input || currentBlock.partialJson || "";
+							currentBlock.partialJson = input;
+							currentBlock.arguments = parseToolArgumentsForName(input, currentItem.name);
+						}
+					}
 					// Handle output item completion
 					else if (event.type === "response.output_item.done") {
-						const item = event.item;
+						const item = event.item as OpenAIResponseItem;
 
 						if (item.type === "reasoning" && currentBlock && currentBlock.type === "thinking") {
 							hadContent = true;
@@ -371,16 +516,7 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 							// Use accumulated partialJson as fallback if item.arguments is empty/missing
 							const argsStr =
 								item.arguments || (currentBlock?.type === "toolCall" ? currentBlock.partialJson : "{}") || "{}";
-							let parsedArgs: unknown;
-							try {
-								parsedArgs = JSON.parse(argsStr);
-							} catch {
-								parsedArgs = {};
-							}
-							const args =
-								parsedArgs && typeof parsedArgs === "object" && !Array.isArray(parsedArgs)
-									? (parsedArgs as Record<string, unknown>)
-									: {};
+							const args = parseToolArgumentsSafely(argsStr);
 							if (currentBlock?.type === "toolCall") {
 								currentBlock.partialJson = argsStr;
 								currentBlock.arguments = args;
@@ -395,7 +531,48 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses"> = (
 
 							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
 							currentBlock = null;
+						} else if (item.type === "custom_tool_call") {
+							hadContent = true;
+							const rawInput = item.input || (currentBlock?.type === "toolCall" ? currentBlock.partialJson : "");
+							const toolName = normalizeToolName(item.name);
+							const args = parseToolArgumentsForName(rawInput, toolName);
+							if (currentBlock?.type === "toolCall") {
+								currentBlock.partialJson = rawInput;
+								currentBlock.arguments = args;
+								delete currentBlock.partialJson;
+							}
+							const toolCall: ToolCall = {
+								type: "toolCall",
+								id: buildToolCallId(item.call_id, item.id),
+								name: toolName,
+								arguments: args,
+							};
+
+							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+							currentBlock = null;
+						} else if (item.type === "local_shell_call") {
+							hadContent = true;
+							const command = getLocalShellCommand(item);
+							const args = command ? { cmd: command } : {};
+							if (currentBlock?.type === "toolCall") {
+								currentBlock.arguments = args;
+								delete currentBlock.partialJson;
+							}
+							const toolCall: ToolCall = {
+								type: "toolCall",
+								id: buildToolCallId(item.call_id, item.id),
+								name: "exec_command",
+								arguments: args,
+							};
+
+							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+							currentBlock = null;
 						}
+					} else if (event.type === "response.incomplete") {
+						const response = asRecord(event.response);
+						const details = asRecord(response?.incomplete_details);
+						const reason = typeof details?.reason === "string" ? details.reason : "unknown";
+						throw new Error(`Incomplete response returned, reason: ${reason}`);
 					}
 					// Handle completion
 					else if (event.type === "response.completed") {

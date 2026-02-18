@@ -6,6 +6,56 @@ import { getExponentialBackoff, sleep } from "../utils/retry.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { transformMessages } from "./transorm-messages.js";
 
+function normalizeToolName(name) {
+	return name.startsWith("functions.") ? name.slice("functions.".length) : name;
+}
+function buildToolCallId(callId, itemId) {
+	const lhs = callId ?? itemId ?? "";
+	const rhs = itemId ?? callId ?? "";
+	return `${lhs}|${rhs}`;
+}
+function tryParseObject(json) {
+	try {
+		const parsed = JSON.parse(json);
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+			return parsed;
+		}
+	} catch {
+		// ignore parse errors
+	}
+	return null;
+}
+function parseToolArgumentsSafely(raw) {
+	const source = raw ?? "";
+	if (!source.trim()) return {};
+	const parsed = tryParseObject(source);
+	if (parsed) return parsed;
+	const firstBrace = source.indexOf("{");
+	const lastBrace = source.lastIndexOf("}");
+	if (firstBrace !== -1 && lastBrace > firstBrace) {
+		const candidate = source.slice(firstBrace, lastBrace + 1);
+		const candidateParsed = tryParseObject(candidate);
+		if (candidateParsed) return candidateParsed;
+	}
+	return {};
+}
+function parseToolArgumentsForName(raw, _toolName) {
+	const parsed = parseToolArgumentsSafely(raw);
+	if (Object.keys(parsed).length > 0) return parsed;
+	const text = raw?.trim() ?? "";
+	if (!text) return {};
+	return { input: text };
+}
+function getLocalShellCommand(item) {
+	const action = asRecord(item.action);
+	const command = action?.command;
+	if (typeof command === "string") return command;
+	if (Array.isArray(command)) {
+		const parts = command.filter((part) => typeof part === "string" && part.length > 0);
+		return parts.join(" ");
+	}
+	return "";
+}
 function asRecord(value) {
 	return value && typeof value === "object" ? value : null;
 }
@@ -154,6 +204,33 @@ export const streamOpenAIResponses = (model, context, options) => {
 							};
 							output.content.push(currentBlock);
 							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+						} else if (item.type === "custom_tool_call") {
+							hadContent = true;
+							currentItem = item;
+							const rawInput = item.input || "";
+							currentBlock = {
+								type: "toolCall",
+								id: buildToolCallId(item.call_id, item.id),
+								name: normalizeToolName(item.name),
+								arguments: parseToolArgumentsForName(rawInput, item.name),
+								partialJson: rawInput,
+							};
+							output.content.push(currentBlock);
+							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+						} else if (item.type === "local_shell_call") {
+							hadContent = true;
+							currentItem = item;
+							const command = getLocalShellCommand(item);
+							const rawInput = command ? JSON.stringify({ cmd: command }) : "";
+							currentBlock = {
+								type: "toolCall",
+								id: buildToolCallId(item.call_id, item.id),
+								name: "exec_command",
+								arguments: command ? { cmd: command } : {},
+								partialJson: rawInput,
+							};
+							output.content.push(currentBlock);
+							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
 						}
 					}
 					// Handle reasoning summary deltas
@@ -272,6 +349,36 @@ export const streamOpenAIResponses = (model, context, options) => {
 							currentBlock.arguments = parseStreamingJson(args);
 						}
 					}
+					// Handle custom tool call argument deltas
+					else if (event.type === "response.custom_tool_call_input.delta") {
+						if (
+							currentItem &&
+							currentItem.type === "custom_tool_call" &&
+							currentBlock &&
+							currentBlock.type === "toolCall"
+						) {
+							hadContent = true;
+							currentBlock.partialJson = (currentBlock.partialJson ?? "") + event.delta;
+							currentBlock.arguments = parseToolArgumentsForName(currentBlock.partialJson, currentItem.name);
+							stream.push({
+								type: "toolcall_delta",
+								contentIndex: blockIndex(),
+								delta: event.delta,
+								partial: output,
+							});
+						}
+					} else if (event.type === "response.custom_tool_call_input.done") {
+						if (
+							currentItem &&
+							currentItem.type === "custom_tool_call" &&
+							currentBlock &&
+							currentBlock.type === "toolCall"
+						) {
+							const input = event.input || currentBlock.partialJson || "";
+							currentBlock.partialJson = input;
+							currentBlock.arguments = parseToolArgumentsForName(input, currentItem.name);
+						}
+					}
 					// Handle output item completion
 					else if (event.type === "response.output_item.done") {
 						const item = event.item;
@@ -304,14 +411,7 @@ export const streamOpenAIResponses = (model, context, options) => {
 							// Use accumulated partialJson as fallback if item.arguments is empty/missing
 							const argsStr =
 								item.arguments || (currentBlock?.type === "toolCall" ? currentBlock.partialJson : "{}") || "{}";
-							let parsedArgs;
-							try {
-								parsedArgs = JSON.parse(argsStr);
-							} catch {
-								parsedArgs = {};
-							}
-							const args =
-								parsedArgs && typeof parsedArgs === "object" && !Array.isArray(parsedArgs) ? parsedArgs : {};
+							const args = parseToolArgumentsSafely(argsStr);
 							if (currentBlock?.type === "toolCall") {
 								currentBlock.partialJson = argsStr;
 								currentBlock.arguments = args;
@@ -325,7 +425,46 @@ export const streamOpenAIResponses = (model, context, options) => {
 							};
 							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
 							currentBlock = null;
+						} else if (item.type === "custom_tool_call") {
+							hadContent = true;
+							const rawInput = item.input || (currentBlock?.type === "toolCall" ? currentBlock.partialJson : "");
+							const toolName = normalizeToolName(item.name);
+							const args = parseToolArgumentsForName(rawInput, toolName);
+							if (currentBlock?.type === "toolCall") {
+								currentBlock.partialJson = rawInput;
+								currentBlock.arguments = args;
+								delete currentBlock.partialJson;
+							}
+							const toolCall = {
+								type: "toolCall",
+								id: buildToolCallId(item.call_id, item.id),
+								name: toolName,
+								arguments: args,
+							};
+							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+							currentBlock = null;
+						} else if (item.type === "local_shell_call") {
+							hadContent = true;
+							const command = getLocalShellCommand(item);
+							const args = command ? { cmd: command } : {};
+							if (currentBlock?.type === "toolCall") {
+								currentBlock.arguments = args;
+								delete currentBlock.partialJson;
+							}
+							const toolCall = {
+								type: "toolCall",
+								id: buildToolCallId(item.call_id, item.id),
+								name: "exec_command",
+								arguments: args,
+							};
+							stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+							currentBlock = null;
 						}
+					} else if (event.type === "response.incomplete") {
+						const response = asRecord(event.response);
+						const details = asRecord(response?.incomplete_details);
+						const reason = typeof details?.reason === "string" ? details.reason : "unknown";
+						throw new Error(`Incomplete response returned, reason: ${reason}`);
 					}
 					// Handle completion
 					else if (event.type === "response.completed") {

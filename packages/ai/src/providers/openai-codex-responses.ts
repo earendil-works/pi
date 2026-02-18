@@ -701,14 +701,78 @@ function convertToolResult(
 // Response Processing
 // ============================================================================
 
+type CodexCustomToolCall = {
+	type: "custom_tool_call";
+	call_id: string;
+	name: string;
+	id?: string;
+	input?: string;
+	status?: string;
+};
+
+type CodexLocalShellCall = {
+	type: "local_shell_call";
+	id?: string;
+	call_id?: string;
+	status?: string;
+	action?: {
+		type?: string;
+		command?: string | string[];
+		[key: string]: unknown;
+	};
+};
+
+type CodexResponseItem =
+	| ResponseReasoningItem
+	| ResponseOutputMessage
+	| ResponseFunctionToolCall
+	| CodexCustomToolCall
+	| CodexLocalShellCall;
+
+function normalizeToolName(name: string): string {
+	return name.startsWith("functions.") ? name.slice("functions.".length) : name;
+}
+
+function buildToolCallId(callId: string | undefined, itemId: string | undefined): string {
+	const lhs = callId ?? itemId ?? "";
+	const rhs = itemId ?? callId ?? "";
+	return `${lhs}|${rhs}`;
+}
+
+function parseToolArgumentsForName(raw: string | undefined, toolName: string): Record<string, unknown> {
+	const parsed = parseToolArgumentsSafely(raw);
+	if (Object.keys(parsed).length > 0) return parsed;
+
+	const text = raw?.trim() ?? "";
+	if (!text) return {};
+
+	const normalizedName = normalizeToolName(toolName);
+	if (normalizedName === "apply_patch") {
+		return { input: text };
+	}
+
+	return { input: text };
+}
+
+function getLocalShellCommand(item: CodexLocalShellCall): string {
+	const action = asRecord(item.action);
+	const command = action?.command;
+	if (typeof command === "string") return command;
+	if (Array.isArray(command)) {
+		const parts = command.filter((part): part is string => typeof part === "string" && part.length > 0);
+		return parts.join(" ");
+	}
+	return "";
+}
+
 async function processStream(
 	response: Response,
 	output: AssistantMessage,
 	stream: AssistantMessageEventStream,
 	model: Model<"openai-codex-responses">,
 ): Promise<void> {
-	let currentItem: ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall | null = null;
-	let currentBlock: ThinkingContent | TextContent | (ToolCall & { partialJson: string }) | null = null;
+	let currentItem: CodexResponseItem | null = null;
+	let currentBlock: ThinkingContent | TextContent | (ToolCall & { partialJson?: string }) | null = null;
 	let sawCompletion = false;
 	let hadContent = false;
 	const blockIndex = () => output.content.length - 1;
@@ -718,7 +782,7 @@ async function processStream(
 
 		switch (type) {
 			case "response.output_item.added": {
-				const item = event.item as ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall;
+				const item = event.item as CodexResponseItem;
 				if (item.type === "reasoning") {
 					hadContent = true;
 					currentItem = item;
@@ -740,6 +804,33 @@ async function processStream(
 						name: item.name,
 						arguments: {},
 						partialJson: item.arguments || "",
+					};
+					output.content.push(currentBlock);
+					stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+				} else if (item.type === "custom_tool_call") {
+					hadContent = true;
+					currentItem = item;
+					const rawInput = item.input || "";
+					currentBlock = {
+						type: "toolCall",
+						id: buildToolCallId(item.call_id, item.id),
+						name: normalizeToolName(item.name),
+						arguments: parseToolArgumentsForName(rawInput, item.name),
+						partialJson: rawInput,
+					};
+					output.content.push(currentBlock);
+					stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+				} else if (item.type === "local_shell_call") {
+					hadContent = true;
+					currentItem = item;
+					const command = getLocalShellCommand(item);
+					const rawInput = command ? JSON.stringify({ cmd: command }) : "";
+					currentBlock = {
+						type: "toolCall",
+						id: buildToolCallId(item.call_id, item.id),
+						name: "exec_command",
+						arguments: command ? { cmd: command } : {},
+						partialJson: rawInput,
 					};
 					output.content.push(currentBlock);
 					stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
@@ -836,8 +927,27 @@ async function processStream(
 				break;
 			}
 
+			case "response.custom_tool_call_input.delta": {
+				if (currentItem?.type === "custom_tool_call" && currentBlock?.type === "toolCall") {
+					const delta = (event as { delta?: string }).delta || "";
+					currentBlock.partialJson += delta;
+					currentBlock.arguments = parseToolArgumentsForName(currentBlock.partialJson, currentItem.name);
+					stream.push({ type: "toolcall_delta", contentIndex: blockIndex(), delta, partial: output });
+				}
+				break;
+			}
+
+			case "response.custom_tool_call_input.done": {
+				if (currentItem?.type === "custom_tool_call" && currentBlock?.type === "toolCall") {
+					const input = (event as { input?: string }).input || currentBlock.partialJson;
+					currentBlock.partialJson = input;
+					currentBlock.arguments = parseToolArgumentsForName(input, currentItem.name);
+				}
+				break;
+			}
+
 			case "response.output_item.done": {
-				const item = event.item as ResponseReasoningItem | ResponseOutputMessage | ResponseFunctionToolCall;
+				const item = event.item as CodexResponseItem;
 				if (item.type === "reasoning" && currentBlock?.type === "thinking") {
 					currentBlock.thinking = item.summary?.map((s) => s.text).join("\n\n") || "";
 					currentBlock.thinkingSignature = JSON.stringify(item);
@@ -862,15 +972,61 @@ async function processStream(
 					// Use accumulated partialJson as fallback if item.arguments is empty/missing
 					const argsStr =
 						item.arguments || (currentBlock?.type === "toolCall" ? currentBlock.partialJson : "{}") || "{}";
+					const args = parseToolArgumentsSafely(argsStr);
+					if (currentBlock?.type === "toolCall") {
+						currentBlock.partialJson = argsStr;
+						currentBlock.arguments = args;
+						delete currentBlock.partialJson;
+					}
 					const toolCall: ToolCall = {
 						type: "toolCall",
 						id: `${item.call_id}|${item.id}`,
 						name: item.name,
-						arguments: JSON.parse(argsStr),
+						arguments: args,
 					};
 					stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+					currentBlock = null;
+				} else if (item.type === "custom_tool_call") {
+					const rawInput = item.input || (currentBlock?.type === "toolCall" ? currentBlock.partialJson : "");
+					const toolName = normalizeToolName(item.name);
+					const args = parseToolArgumentsForName(rawInput, toolName);
+					if (currentBlock?.type === "toolCall") {
+						currentBlock.partialJson = rawInput;
+						currentBlock.arguments = args;
+						delete currentBlock.partialJson;
+					}
+					const toolCall: ToolCall = {
+						type: "toolCall",
+						id: buildToolCallId(item.call_id, item.id),
+						name: toolName,
+						arguments: args,
+					};
+					stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+					currentBlock = null;
+				} else if (item.type === "local_shell_call") {
+					const command = getLocalShellCommand(item);
+					const args = command ? { cmd: command } : {};
+					if (currentBlock?.type === "toolCall") {
+						currentBlock.arguments = args;
+						delete currentBlock.partialJson;
+					}
+					const toolCall: ToolCall = {
+						type: "toolCall",
+						id: buildToolCallId(item.call_id, item.id),
+						name: "exec_command",
+						arguments: args,
+					};
+					stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });
+					currentBlock = null;
 				}
 				break;
+			}
+
+			case "response.incomplete": {
+				const resp = asRecord((event as { response?: unknown }).response);
+				const details = asRecord(resp?.incomplete_details);
+				const reason = getString(details?.reason) ?? "unknown";
+				throw new CodexStreamError(`Incomplete response returned, reason: ${reason}`, hadContent);
 			}
 
 			case "response.completed":
@@ -938,22 +1094,26 @@ function buildHeaders(
 	initHeaders: Record<string, string> | undefined,
 	accountId: string,
 	accessToken: string,
-	promptCacheKey?: string,
+	sessionId?: string,
 ): Headers {
 	const headers = new Headers(initHeaders ?? {});
 	headers.delete("x-api-key");
 	headers.set("Authorization", `Bearer ${accessToken}`);
-	headers.set("OpenAI-Organization", accountId);
-	headers.set("OpenAI-Beta", "responses=codex");
-	headers.set("OpenAI-Organization-Context", "codex");
+	headers.set("chatgpt-account-id", accountId);
+	headers.set("originator", "mu");
 	headers.set("User-Agent", `pi (${os.platform()} ${os.release()}; ${os.arch()})`);
 
-	if (promptCacheKey) {
-		headers.set("OpenAI-Conversation-ID", promptCacheKey);
-		headers.set("OpenAI-Session-ID", promptCacheKey);
+	headers.delete("OpenAI-Organization");
+	headers.delete("OpenAI-Organization-Context");
+	headers.delete("OpenAI-Conversation-ID");
+	headers.delete("OpenAI-Session-ID");
+
+	if (sessionId) {
+		headers.set("session_id", sessionId);
+		headers.set("conversation_id", sessionId);
 	} else {
-		headers.delete("OpenAI-Conversation-ID");
-		headers.delete("OpenAI-Session-ID");
+		headers.delete("session_id");
+		headers.delete("conversation_id");
 	}
 
 	headers.set("accept", "text/event-stream");
@@ -1022,6 +1182,36 @@ function parseSSE(response: Response): AsyncGenerator<Record<string, unknown>> {
 	}
 
 	return generator();
+}
+
+function tryParseObject(json: string): Record<string, unknown> | null {
+	try {
+		const parsed = JSON.parse(json);
+		if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+			return parsed as Record<string, unknown>;
+		}
+	} catch {
+		// ignore parse errors
+	}
+	return null;
+}
+
+function parseToolArgumentsSafely(raw: string | undefined): Record<string, unknown> {
+	const source = raw ?? "";
+	if (!source.trim()) return {};
+
+	const parsed = tryParseObject(source);
+	if (parsed) return parsed;
+
+	const firstBrace = source.indexOf("{");
+	const lastBrace = source.lastIndexOf("}");
+	if (firstBrace !== -1 && lastBrace > firstBrace) {
+		const candidate = source.slice(firstBrace, lastBrace + 1);
+		const candidateParsed = tryParseObject(candidate);
+		if (candidateParsed) return candidateParsed;
+	}
+
+	return {};
 }
 
 // ============================================================================
