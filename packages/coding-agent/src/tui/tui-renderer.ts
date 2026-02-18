@@ -389,11 +389,7 @@ export class TuiRenderer {
 			description: "Select message queue mode (one-at-a-time / all)",
 		};
 
-		const steerCommand: SlashCommand = {
-			name: "steer",
-			description:
-				"Send a steering message immediately (inject between tool results and continuation when tools are running)",
-		};
+		// Note: /steer command removed - Enter now automatically steers when streaming
 
 		const todosCommand: SlashCommand = {
 			name: "todos",
@@ -453,7 +449,6 @@ export class TuiRenderer {
 			queueCommand,
 			reloadCommand,
 			sessionCommand,
-			steerCommand,
 			themeCommand,
 			thinkingCommand,
 			todosCommand,
@@ -511,8 +506,14 @@ export class TuiRenderer {
 			theme.fg("dim", "ctrl+k") +
 			theme.fg("muted", " to delete line") +
 			"\n" +
+			theme.fg("dim", "shift+tab") +
+			theme.fg("muted", " to cycle thinking") +
+			"\n" +
 			theme.fg("dim", "tab") +
-			theme.fg("muted", " to toggle thinking") +
+			theme.fg("muted", " to queue when streaming") +
+			"\n" +
+			theme.fg("dim", "enter") +
+			theme.fg("muted", " to steer when streaming") +
 			"\n" +
 			theme.fg("dim", "ctrl+p") +
 			theme.fg("muted", " to cycle models") +
@@ -603,11 +604,21 @@ export class TuiRenderer {
 		};
 
 		this.editor.onTab = () => {
-			this.toggleThinkingLevel();
+			// Tab queues regular message (by-end) when streaming
+			const text = this.editor.getText().trim();
+			if (text && this.agent.state.isStreaming) {
+				const sent = autoFenceHtmlInMarkdown(text);
+				this.queuedMessages.push({ raw: text, sent, kind: "by-end" });
+				this.queueMessage(sent);
+				this.updatePendingMessagesDisplay();
+				this.editor.setText("");
+				this.ui.requestRender();
+			}
 		};
 
 		this.editor.onShiftTab = () => {
-			this.toggleThinkingLevelReverse();
+			// Shift+Tab cycles thinking level (single direction)
+			this.toggleThinkingLevel();
 		};
 
 		this.editor.onCtrlP = () => {
@@ -651,17 +662,16 @@ export class TuiRenderer {
 			if (this.editingQueueIndex !== null && this.editingQueueIndex < this.queuedMessages.length) {
 				const trimmed = text.trim();
 				if (trimmed) {
-					const parsed = this.parseSteerInput(trimmed);
-					// If user is typing `/steer` but hasn't provided a message yet, don't sync an empty send.
-					if (parsed.isSteerCommand && !parsed.messageToSend) return;
-					const sent = autoFenceHtmlInMarkdown(parsed.messageToSend || "");
+					const sent = autoFenceHtmlInMarkdown(trimmed);
+					// Preserve existing kind when editing queue items
+					const existingKind = this.queuedMessages[this.editingQueueIndex].kind;
 					this.queuedMessages[this.editingQueueIndex] = {
 						...this.queuedMessages[this.editingQueueIndex],
 						raw: trimmed,
 						sent,
-						kind: parsed.kind,
+						kind: existingKind,
 					};
-					this.updateQueuedMessage(this.editingQueueIndex, sent, undefined, parsed.kind);
+					this.updateQueuedMessage(this.editingQueueIndex, sent, undefined, existingKind);
 					this.updatePendingMessagesDisplay();
 				}
 			}
@@ -678,19 +688,16 @@ export class TuiRenderer {
 			if (this.editingQueueIndex !== null) {
 				// text parameter holds content before handleSubmit cleared the editor
 				if (rawText) {
-					const parsed = this.parseSteerInput(rawText);
-					if (parsed.isSteerCommand && !parsed.messageToSend) {
-						this.showError("Usage: /steer <message>\nExample: /steer stop using that approach");
-						return;
-					}
-					const sent = autoFenceHtmlInMarkdown(parsed.messageToSend || "");
+					const sent = autoFenceHtmlInMarkdown(rawText);
+					// Preserve existing kind when editing queue items
+					const existingKind = this.queuedMessages[this.editingQueueIndex].kind;
 					this.queuedMessages[this.editingQueueIndex] = {
 						...this.queuedMessages[this.editingQueueIndex],
 						raw: rawText,
 						sent,
-						kind: parsed.kind,
+						kind: existingKind,
 					};
-					this.updateQueuedMessage(this.editingQueueIndex, sent, undefined, parsed.kind);
+					this.updateQueuedMessage(this.editingQueueIndex, sent, undefined, existingKind);
 				} else {
 					this.queuedMessages.splice(this.editingQueueIndex, 1);
 					this.removeQueuedMessage(this.editingQueueIndex);
@@ -900,16 +907,8 @@ export class TuiRenderer {
 				return;
 			}
 
-			// /steer <message>
-			// This is "command-like" UX, but it still results in a user message being sent.
-			const steerParsed = this.parseSteerInput(rawText);
-			if (steerParsed.isSteerCommand && !steerParsed.messageToSend) {
-				this.showError("Usage: /steer <message>\nExample: /steer use ripgrep instead of grep");
-				return;
-			}
-
-			const effectiveText = steerParsed.messageToSend || rawText;
-			const sentText = autoFenceHtmlInMarkdown(effectiveText);
+			// Note: /steer command removed - Enter now automatically steers when streaming
+			const sentText = autoFenceHtmlInMarkdown(rawText);
 
 			// Normal message submission - validate model and API key first
 			const currentModel = this.agent.state.model;
@@ -936,19 +935,15 @@ export class TuiRenderer {
 
 			// Check if agent is currently streaming
 			if (this.agent.state.isStreaming) {
-				// Queue the message instead of submitting
+				// Enter queues as steer message (next) when streaming
 				this.queuedMessages.push({
 					raw: rawText,
 					sent: sentText,
-					kind: steerParsed.kind,
+					kind: "next",
 				});
 
 				// Queue in agent (simple text, no attachments for queued messages)
-				if (steerParsed.kind === "next") {
-					this.queueSteerMessage(sentText);
-				} else {
-					this.queueMessage(sentText);
-				}
+				this.queueSteerMessage(sentText);
 
 				// Update pending messages display
 				this.updatePendingMessagesDisplay();
@@ -2136,19 +2131,16 @@ export class TuiRenderer {
 				this.editingQueueIndex = this.queuedMessages.length - 1;
 			}
 		} else {
-			const parsed = this.parseSteerInput(editedText);
-			if (parsed.isSteerCommand && !parsed.messageToSend) {
-				this.showError("Usage: /steer <message>\nExample: /steer stop using that approach");
-				return;
-			}
-			const sent = autoFenceHtmlInMarkdown(parsed.messageToSend || "");
+			const sent = autoFenceHtmlInMarkdown(editedText);
+			// Preserve existing kind when editing queue items
+			const existingKind = this.queuedMessages[this.editingQueueIndex].kind;
 			this.queuedMessages[this.editingQueueIndex] = {
 				...this.queuedMessages[this.editingQueueIndex],
 				raw: editedText,
 				sent,
-				kind: parsed.kind,
+				kind: existingKind,
 			};
-			this.updateQueuedMessage(this.editingQueueIndex, sent, undefined, parsed.kind);
+			this.updateQueuedMessage(this.editingQueueIndex, sent, undefined, existingKind);
 		}
 	}
 
@@ -4196,20 +4188,6 @@ export class TuiRenderer {
 			),
 		);
 		this.ui.requestRender();
-	}
-
-	private parseSteerInput(text: string): {
-		kind: "by-end" | "next";
-		messageToSend: string | null;
-		isSteerCommand: boolean;
-	} {
-		const trimmed = text.trim();
-		const match = /^\/steer(?:\s+([\s\S]+))?\s*$/i.exec(trimmed);
-		if (!match) {
-			return { kind: "by-end", messageToSend: trimmed, isSteerCommand: false };
-		}
-		const body = (match[1] || "").trim();
-		return { kind: "next", messageToSend: body || null, isSteerCommand: true };
 	}
 
 	private updatePendingMessagesDisplay(): void {

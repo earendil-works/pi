@@ -1,10 +1,10 @@
 import type { ThinkingLevel } from "@kennyfrc/mu-agent-core";
 import type { SelectItem } from "@kennyfrc/mu-tui";
 
-type TabThinkingLevel = Exclude<ThinkingLevel, "minimal">;
+type TabThinkingLevel = ThinkingLevel;
 
 export function getTabThinkingLevels(supportsXhigh: boolean): TabThinkingLevel[] {
-	const levels: TabThinkingLevel[] = ["off", "low", "medium", "high"];
+	const levels: TabThinkingLevel[] = ["off", "minimal", "low", "medium", "high"];
 	if (supportsXhigh) {
 		levels.push("xhigh");
 	}
@@ -21,10 +21,6 @@ export function getNextThinkingLevel(current: ThinkingLevel, supportsXhigh: bool
 }
 
 export function getPreviousThinkingLevel(current: ThinkingLevel, supportsXhigh: boolean): ThinkingLevel {
-	if (current === "minimal") {
-		return "off";
-	}
-
 	const cycle = getTabThinkingLevels(supportsXhigh);
 	const currentIndex = cycle.indexOf(current as TabThinkingLevel);
 	if (currentIndex === -1) {

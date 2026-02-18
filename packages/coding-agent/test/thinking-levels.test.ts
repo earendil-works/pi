@@ -26,19 +26,24 @@ describe("thinking level utilities", () => {
 
 	it("cycles tab thinking levels with and without xhigh", () => {
 		const cycleWithXhigh = getTabThinkingLevels(true);
-		expect(cycleWithXhigh).toEqual(["off", "low", "medium", "high", "xhigh"]);
+		expect(cycleWithXhigh).toEqual(["off", "minimal", "low", "medium", "high", "xhigh"]);
 
 		const cycleWithoutXhigh = getTabThinkingLevels(false);
-		expect(cycleWithoutXhigh).toEqual(["off", "low", "medium", "high"]);
+		expect(cycleWithoutXhigh).toEqual(["off", "minimal", "low", "medium", "high"]);
 	});
 
 	it("computes next thinking level based on support", () => {
 		const levels: Array<[ThinkingLevel, boolean, ThinkingLevel]> = [
-			["off", true, "low"],
+			["off", true, "minimal"],
+			["minimal", true, "low"],
+			["low", true, "medium"],
+			["medium", true, "high"],
 			["high", true, "xhigh"],
 			["xhigh", true, "off"],
-			["minimal", true, "low"],
+			["off", false, "minimal"],
+			["minimal", false, "low"],
 			["high", false, "off"],
+			// xhigh not in cycle when unsupported - falls back to "low"
 			["xhigh", false, "low"],
 		];
 
@@ -50,11 +55,13 @@ describe("thinking level utilities", () => {
 	it("computes previous thinking level based on support", () => {
 		const levels: Array<[ThinkingLevel, boolean, ThinkingLevel]> = [
 			["off", true, "xhigh"],
-			["low", true, "off"],
+			["minimal", true, "off"],
+			["low", true, "minimal"],
 			["medium", true, "low"],
 			["high", true, "medium"],
-			["minimal", true, "off"],
+			["xhigh", true, "high"],
 			["off", false, "high"],
+			["minimal", false, "off"],
 			["high", false, "medium"],
 			["xhigh", false, "high"],
 		];
