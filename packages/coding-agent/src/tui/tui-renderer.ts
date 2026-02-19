@@ -118,6 +118,7 @@ import {
 import { ThinkingSelectorComponent } from "./thinking-selector.js";
 import { TodoOverlayComponent } from "./todo-overlay.js";
 import { ToolExecutionComponent } from "./tool-execution.js";
+import { TreeSelectorComponent } from "./tree-selector.js";
 import { UserMessageComponent } from "./user-message.js";
 import { UserMessageSelectorComponent } from "./user-message-selector.js";
 
@@ -237,6 +238,9 @@ export class TuiRenderer {
 
 	// User message selector (for branching)
 	private userMessageSelector: UserMessageSelectorComponent | null = null;
+
+	// Tree selector (for navigation)
+	private treeSelector: TreeSelectorComponent | null = null;
 
 	// Subscription selector (subscribe/unsubscribe)
 	private subscriptionSelector: SubscriptionSelectorComponent | null = null;
@@ -359,6 +363,11 @@ export class TuiRenderer {
 			description: "Create a new branch from a previous message",
 		};
 
+		const treeCommand: SlashCommand = {
+			name: "tree",
+			description: "Navigate session tree (switch branches)",
+		};
+
 		const handoffCommand: SlashCommand = {
 			name: "handoff",
 			description: "Hand off to a new focused thread with a goal",
@@ -452,6 +461,7 @@ export class TuiRenderer {
 			themeCommand,
 			thinkingCommand,
 			todosCommand,
+			treeCommand,
 			undoCommand,
 		];
 
@@ -781,6 +791,13 @@ export class TuiRenderer {
 			// Check for /branch command
 			if (rawText === "/branch") {
 				this.showUserMessageSelector();
+				this.editor.setText("");
+				return;
+			}
+
+			// Check for /tree command
+			if (rawText === "/tree") {
+				this.showTreeSelector();
 				this.editor.setText("");
 				return;
 			}
@@ -2489,6 +2506,83 @@ export class TuiRenderer {
 		this.editorContainer.clear();
 		this.editorContainer.addChild(this.editor);
 		this.userMessageSelector = null;
+		this.ui.setFocus(this.editor);
+	}
+
+	private showTreeSelector(): void {
+		const tree = this.sessionManager.getTree();
+		const currentLeafId = this.sessionManager.getLeafId();
+
+		if (tree.length === 0) {
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(theme.fg("dim", "No entries in session"), 1, 0));
+			this.ui.requestRender();
+			return;
+		}
+
+		this.treeSelector = new TreeSelectorComponent(
+			tree,
+			currentLeafId,
+			(this.ui as any).terminal.rows,
+			async (entryId: string) => {
+				// Selecting the current leaf is a no-op
+				if (entryId === currentLeafId) {
+					this.hideTreeSelector();
+					this.chatContainer.addChild(new Spacer(1));
+					this.chatContainer.addChild(new Text(theme.fg("dim", "Already at this point"), 1, 0));
+					this.ui.requestRender();
+					return;
+				}
+
+				// Branch to the selected entry
+				try {
+					this.sessionManager.branch(entryId);
+
+					// Get the entry to check if it's a user message
+					const entry = this.sessionManager.getEntry(entryId);
+					let editorText: string | undefined;
+					if (entry?.type === "message") {
+						const msg = (entry as any).message;
+						if (msg.role === "user") {
+							// Extract text content for editor
+							const textBlocks = (msg.content || []).filter((c: any) => c.type === "text");
+							editorText = textBlocks.map((c: any) => c.text).join("");
+						}
+					}
+
+					// Re-render the conversation
+					this.hideTreeSelector();
+					this.chatContainer.clear();
+					this.renderInitialMessages(this.agent.state);
+
+					if (editorText && !this.editor.getText().trim()) {
+						this.editor.setText(editorText);
+					}
+
+					this.chatContainer.addChild(new Spacer(1));
+					this.chatContainer.addChild(new Text(theme.fg("dim", "Navigated to selected point"), 1, 0));
+					this.ui.requestRender();
+				} catch (error) {
+					this.showError(error instanceof Error ? error.message : String(error));
+				}
+			},
+			() => {
+				this.hideTreeSelector();
+				this.ui.requestRender();
+			},
+		);
+
+		// Replace editor with selector
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.treeSelector);
+		this.ui.setFocus(this.treeSelector);
+		this.ui.requestRender();
+	}
+
+	private hideTreeSelector(): void {
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.treeSelector = null;
 		this.ui.setFocus(this.editor);
 	}
 
