@@ -6649,6 +6649,23 @@ export const MODELS = {
 			contextWindow: 1048576,
 			maxTokens: 65535,
 		} satisfies Model<"google-gemini-cli">,
+		"gemini-3.1-pro-preview": {
+			id: "gemini-3.1-pro-preview",
+			name: "Gemini 3.1 Pro Preview (Cloud Code Assist)",
+			api: "google-gemini-cli",
+			provider: "google-gemini-cli",
+			baseUrl: "https://cloudcode-pa.googleapis.com",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 1048576,
+			maxTokens: 65535,
+		} satisfies Model<"google-gemini-cli">,
 	},
 	"google-antigravity": {
 		"gemini-3-pro-high": {

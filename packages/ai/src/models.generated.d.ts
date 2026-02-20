@@ -6644,6 +6644,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "gemini-3.1-pro-preview": {
+			id: string;
+			name: string;
+			api: "google-gemini-cli";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 	};
 	readonly "google-antigravity": {
 		readonly "gemini-3-pro-high": {
