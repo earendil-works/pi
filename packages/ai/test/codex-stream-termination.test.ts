@@ -162,4 +162,49 @@ describe("openai-codex stream termination handling", () => {
 		expect(run.resultStopReason).toBe("error");
 		expect(run.resultError).toContain("Codex response failed");
 	});
+
+	it("recovers completion events split across multiple data lines", async () => {
+		const events =
+			[
+				`data: ${JSON.stringify({
+					type: "response.output_item.added",
+					item: { type: "message", id: "msg_1", role: "assistant", status: "in_progress", content: [] },
+				})}`,
+				`data: ${JSON.stringify({ type: "response.content_part.added", part: { type: "output_text", text: "" } })}`,
+				`data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Hello" })}`,
+				`data: ${JSON.stringify({
+					type: "response.output_item.done",
+					item: {
+						type: "message",
+						id: "msg_1",
+						role: "assistant",
+						status: "completed",
+						content: [{ type: "output_text", text: "Hello" }],
+					},
+				})}`,
+				'data: {"type":"response.do\ndata: ne","response":{"status":"completed","usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8,"input_tokens_details":{"cached_tokens":0}}}}',
+			].join("\n\n") + "\n\n";
+
+		const run = await runCodexStreamWithSse(events);
+		expect(run.events).toContain("done:stop");
+		expect(run.resultStopReason).toBe("stop");
+		expect(run.resultText).toBe("Hello");
+	});
+
+	it("reports parse error count when stream ends before completion", async () => {
+		const events =
+			[
+				`data: ${JSON.stringify({
+					type: "response.output_item.added",
+					item: { type: "message", id: "msg_1", role: "assistant", status: "in_progress", content: [] },
+				})}`,
+				'data: {"type":"response.output_text.delta","delta":"unterminated',
+			].join("\n\n") + "\n\n";
+
+		const run = await runCodexStreamWithSse(events);
+		expect(run.events).toContain("error:error");
+		expect(run.resultStopReason).toBe("error");
+		expect(run.resultError).toContain("Stream terminated before completion");
+		expect(run.resultError).toContain("parseErrors=1");
+	});
 });

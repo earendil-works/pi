@@ -797,10 +797,16 @@ async function processStream(
 	let currentBlock: ThinkingContent | TextContent | (ToolCall & { partialJson?: string }) | null = null;
 	let sawCompletion = false;
 	let hadContent = false;
+	let parseErrorCount = 0;
+	let sawToolIntent = false;
 	const blockIndex = () => output.content.length - 1;
 
 	for await (const event of parseSSE(response)) {
 		const type = event.type as string;
+		if (type === "__parse_error__") {
+			parseErrorCount++;
+			continue;
+		}
 
 		switch (type) {
 			case "response.output_item.added": {
@@ -934,6 +940,7 @@ async function processStream(
 
 			case "response.function_call_arguments.delta": {
 				if (currentItem?.type === "function_call" && currentBlock?.type === "toolCall") {
+					sawToolIntent = true;
 					const delta = (event as { delta?: string }).delta || "";
 					currentBlock.partialJson += delta;
 					currentBlock.arguments = parseStreamingJson(currentBlock.partialJson);
@@ -944,6 +951,7 @@ async function processStream(
 
 			case "response.function_call_arguments.done": {
 				if (currentItem?.type === "function_call" && currentBlock?.type === "toolCall") {
+					sawToolIntent = true;
 					const args = (event as { arguments?: string }).arguments || "";
 					currentBlock.partialJson = args;
 					currentBlock.arguments = parseStreamingJson(args);
@@ -953,6 +961,7 @@ async function processStream(
 
 			case "response.custom_tool_call_input.delta": {
 				if (currentItem?.type === "custom_tool_call" && currentBlock?.type === "toolCall") {
+					sawToolIntent = true;
 					const delta = (event as { delta?: string }).delta || "";
 					currentBlock.partialJson += delta;
 					currentBlock.arguments = parseToolArgumentsForName(currentBlock.partialJson, currentItem.name);
@@ -963,6 +972,7 @@ async function processStream(
 
 			case "response.custom_tool_call_input.done": {
 				if (currentItem?.type === "custom_tool_call" && currentBlock?.type === "toolCall") {
+					sawToolIntent = true;
 					const input = (event as { input?: string }).input || currentBlock.partialJson;
 					currentBlock.partialJson = input;
 					currentBlock.arguments = parseToolArgumentsForName(input, currentItem.name);
@@ -1139,7 +1149,11 @@ async function processStream(
 						});
 					}
 				}
-				if (output.content.some((b) => b.type === "toolCall") && output.stopReason === "stop") {
+				const hasToolCall = output.content.some((b) => b.type === "toolCall");
+				if (sawToolIntent && !hasToolCall) {
+					throw new CodexStreamError("Tool intent observed but no toolCall materialized", hadContent);
+				}
+				if (hasToolCall && output.stopReason === "stop") {
 					output.stopReason = "toolUse";
 				}
 				break;
@@ -1158,7 +1172,8 @@ async function processStream(
 	}
 
 	if (!sawCompletion) {
-		throw new CodexStreamError("Stream terminated", hadContent);
+		const suffix = parseErrorCount > 0 ? ` (parseErrors=${parseErrorCount})` : "";
+		throw new CodexStreamError(`Stream terminated before completion${suffix}`, hadContent);
 	}
 }
 
@@ -1226,8 +1241,22 @@ function parseSSE(response: Response): AsyncGenerator<Record<string, unknown>> {
 			const json = JSON.parse(data) as Record<string, unknown>;
 			return { done: false, event: json };
 		} catch (error) {
+			const compact = dataLines.join("");
+			if (compact !== data) {
+				try {
+					const json = JSON.parse(compact) as Record<string, unknown>;
+					return { done: false, event: json };
+				} catch {
+					// Fall through to parse error marker below
+				}
+			}
 			console.warn("Failed to parse SSE JSON:", error);
-			return { done: false };
+			return {
+				done: false,
+				event: {
+					type: "__parse_error__",
+				},
+			};
 		}
 	};
 

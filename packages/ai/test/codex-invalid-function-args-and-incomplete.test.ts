@@ -154,4 +154,40 @@ describe("openai-codex malformed args + incomplete handling", () => {
 		expect(result.errorMessage?.toLowerCase()).toContain("incomplete");
 		expect(result.errorMessage).toContain("max_output_tokens");
 	});
+
+	it("ignores orphan tool argument deltas when no tool call item was started", async () => {
+		global.fetch = vi.fn(async () =>
+			createSseResponse([
+				{ type: "response.function_call_arguments.delta", delta: '{"cmd":"echo hello"}' },
+				{
+					type: "response.done",
+					response: {
+						status: "completed",
+						usage: {
+							input_tokens: 1,
+							output_tokens: 1,
+							total_tokens: 2,
+							input_tokens_details: { cached_tokens: 0 },
+						},
+					},
+				},
+			]),
+		) as typeof fetch;
+
+		const stream = streamOpenAICodexResponses(createModel(), createContext(), {
+			apiKey: createCodexToken(),
+			codexRetry: { requestMaxRetries: 0, streamMaxRetries: 0 },
+		});
+
+		const eventTypes: string[] = [];
+		for await (const event of stream) {
+			eventTypes.push(event.type === "error" ? `error:${event.reason}` : event.type);
+		}
+		const result = await stream.result();
+
+		expect(eventTypes).toContain("done");
+		expect(eventTypes).not.toContain("error:error");
+		expect(result.stopReason).toBe("stop");
+		expect(result.errorMessage).toBeUndefined();
+	});
 });

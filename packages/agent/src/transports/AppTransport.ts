@@ -100,6 +100,190 @@ function streamSimpleProxy(
 			reader = response.body!.getReader();
 			const decoder = new TextDecoder();
 			let buffer = "";
+			let sawTerminalEvent = false;
+
+			const parseSseFrame = (frame: string): ProxyAssistantMessageEvent | null => {
+				if (!frame.trim()) return null;
+				const dataLines = frame
+					.split("\n")
+					.filter((line) => line.startsWith("data:"))
+					.map((line) => line.slice(5).trim());
+				if (dataLines.length === 0) return null;
+				const data = dataLines.join("\n");
+				if (data === "[DONE]") return null;
+				try {
+					return JSON.parse(data) as ProxyAssistantMessageEvent;
+				} catch {
+					if (dataLines.length > 1) {
+						return JSON.parse(dataLines.join("")) as ProxyAssistantMessageEvent;
+					}
+					throw new Error("Failed to parse proxy SSE JSON frame");
+				}
+			};
+
+			const processProxyEvent = (proxyEvent: ProxyAssistantMessageEvent): void => {
+				let event: AssistantMessageEvent | undefined;
+
+				// Handle different event types
+				// Server sends events with partial for non-delta events,
+				// and without partial for delta events
+				switch (proxyEvent.type) {
+					case "start":
+						event = { type: "start", partial };
+						break;
+
+					case "text_start":
+						partial.content[proxyEvent.contentIndex] = {
+							type: "text",
+							text: "",
+						};
+						event = { type: "text_start", contentIndex: proxyEvent.contentIndex, partial };
+						break;
+
+					case "text_delta": {
+						const content = partial.content[proxyEvent.contentIndex];
+						if (content?.type === "text") {
+							content.text += proxyEvent.delta;
+							event = {
+								type: "text_delta",
+								contentIndex: proxyEvent.contentIndex,
+								delta: proxyEvent.delta,
+								partial,
+							};
+						} else {
+							throw new Error("Received text_delta for non-text content");
+						}
+						break;
+					}
+					case "text_end": {
+						const content = partial.content[proxyEvent.contentIndex];
+						if (content?.type === "text") {
+							content.textSignature = proxyEvent.contentSignature;
+							event = {
+								type: "text_end",
+								contentIndex: proxyEvent.contentIndex,
+								content: content.text,
+								partial,
+							};
+						} else {
+							throw new Error("Received text_end for non-text content");
+						}
+						break;
+					}
+
+					case "thinking_start":
+						partial.content[proxyEvent.contentIndex] = {
+							type: "thinking",
+							thinking: "",
+						};
+						event = { type: "thinking_start", contentIndex: proxyEvent.contentIndex, partial };
+						break;
+
+					case "thinking_delta": {
+						const content = partial.content[proxyEvent.contentIndex];
+						if (content?.type === "thinking") {
+							content.thinking += proxyEvent.delta;
+							event = {
+								type: "thinking_delta",
+								contentIndex: proxyEvent.contentIndex,
+								delta: proxyEvent.delta,
+								partial,
+							};
+						} else {
+							throw new Error("Received thinking_delta for non-thinking content");
+						}
+						break;
+					}
+
+					case "thinking_end": {
+						const content = partial.content[proxyEvent.contentIndex];
+						if (content?.type === "thinking") {
+							content.thinkingSignature = proxyEvent.contentSignature;
+							event = {
+								type: "thinking_end",
+								contentIndex: proxyEvent.contentIndex,
+								content: content.thinking,
+								partial,
+							};
+						} else {
+							throw new Error("Received thinking_end for non-thinking content");
+						}
+						break;
+					}
+
+					case "toolcall_start":
+						partial.content[proxyEvent.contentIndex] = {
+							type: "toolCall",
+							id: proxyEvent.id,
+							name: proxyEvent.toolName,
+							arguments: {},
+							partialJson: "",
+						} satisfies ToolCall & { partialJson: string } as ToolCall;
+						event = { type: "toolcall_start", contentIndex: proxyEvent.contentIndex, partial };
+						break;
+
+					case "toolcall_delta": {
+						const content = partial.content[proxyEvent.contentIndex];
+						if (content?.type === "toolCall") {
+							(content as any).partialJson += proxyEvent.delta;
+							content.arguments = parseStreamingJson((content as any).partialJson) || {};
+							event = {
+								type: "toolcall_delta",
+								contentIndex: proxyEvent.contentIndex,
+								delta: proxyEvent.delta,
+								partial,
+							};
+							partial.content[proxyEvent.contentIndex] = { ...content }; // Trigger reactivity
+						} else {
+							throw new Error("Received toolcall_delta for non-toolCall content");
+						}
+						break;
+					}
+
+					case "toolcall_end": {
+						const content = partial.content[proxyEvent.contentIndex];
+						if (content?.type === "toolCall") {
+							delete (content as any).partialJson;
+							event = {
+								type: "toolcall_end",
+								contentIndex: proxyEvent.contentIndex,
+								toolCall: content,
+								partial,
+							};
+						}
+						break;
+					}
+
+					case "done":
+						partial.stopReason = proxyEvent.reason;
+						partial.usage = proxyEvent.usage;
+						event = { type: "done", reason: proxyEvent.reason, message: partial };
+						sawTerminalEvent = true;
+						break;
+
+					case "error":
+						partial.stopReason = proxyEvent.reason;
+						partial.errorMessage = proxyEvent.errorMessage;
+						partial.usage = proxyEvent.usage;
+						event = { type: "error", reason: proxyEvent.reason, error: partial };
+						sawTerminalEvent = true;
+						break;
+
+					default: {
+						// Exhaustive check
+						const _exhaustiveCheck: never = proxyEvent;
+						console.warn(`Unhandled event type: ${(proxyEvent as unknown as { type: string }).type}`);
+						break;
+					}
+				}
+
+				// Push the event to stream
+				if (event) {
+					stream.push(event);
+				} else {
+					throw new Error("Failed to create event from proxy event");
+				}
+			};
 
 			while (true) {
 				const { done, value } = await reader.read();
@@ -111,181 +295,31 @@ function streamSimpleProxy(
 				}
 
 				buffer += decoder.decode(value, { stream: true });
-				const lines = buffer.split("\n");
-				buffer = lines.pop() || "";
+				buffer = buffer.replace(/\r\n/g, "\n");
+				let boundary = buffer.indexOf("\n\n");
+				while (boundary !== -1) {
+					const frame = buffer.slice(0, boundary);
+					buffer = buffer.slice(boundary + 2);
+					boundary = buffer.indexOf("\n\n");
+					const proxyEvent = parseSseFrame(frame);
+					if (!proxyEvent) continue;
+					processProxyEvent(proxyEvent);
+				}
+			}
 
-				for (const line of lines) {
-					if (line.startsWith("data: ")) {
-						const data = line.slice(6).trim();
-						if (data) {
-							const proxyEvent = JSON.parse(data) as ProxyAssistantMessageEvent;
-							let event: AssistantMessageEvent | undefined;
-
-							// Handle different event types
-							// Server sends events with partial for non-delta events,
-							// and without partial for delta events
-							switch (proxyEvent.type) {
-								case "start":
-									event = { type: "start", partial };
-									break;
-
-								case "text_start":
-									partial.content[proxyEvent.contentIndex] = {
-										type: "text",
-										text: "",
-									};
-									event = { type: "text_start", contentIndex: proxyEvent.contentIndex, partial };
-									break;
-
-								case "text_delta": {
-									const content = partial.content[proxyEvent.contentIndex];
-									if (content?.type === "text") {
-										content.text += proxyEvent.delta;
-										event = {
-											type: "text_delta",
-											contentIndex: proxyEvent.contentIndex,
-											delta: proxyEvent.delta,
-											partial,
-										};
-									} else {
-										throw new Error("Received text_delta for non-text content");
-									}
-									break;
-								}
-								case "text_end": {
-									const content = partial.content[proxyEvent.contentIndex];
-									if (content?.type === "text") {
-										content.textSignature = proxyEvent.contentSignature;
-										event = {
-											type: "text_end",
-											contentIndex: proxyEvent.contentIndex,
-											content: content.text,
-											partial,
-										};
-									} else {
-										throw new Error("Received text_end for non-text content");
-									}
-									break;
-								}
-
-								case "thinking_start":
-									partial.content[proxyEvent.contentIndex] = {
-										type: "thinking",
-										thinking: "",
-									};
-									event = { type: "thinking_start", contentIndex: proxyEvent.contentIndex, partial };
-									break;
-
-								case "thinking_delta": {
-									const content = partial.content[proxyEvent.contentIndex];
-									if (content?.type === "thinking") {
-										content.thinking += proxyEvent.delta;
-										event = {
-											type: "thinking_delta",
-											contentIndex: proxyEvent.contentIndex,
-											delta: proxyEvent.delta,
-											partial,
-										};
-									} else {
-										throw new Error("Received thinking_delta for non-thinking content");
-									}
-									break;
-								}
-
-								case "thinking_end": {
-									const content = partial.content[proxyEvent.contentIndex];
-									if (content?.type === "thinking") {
-										content.thinkingSignature = proxyEvent.contentSignature;
-										event = {
-											type: "thinking_end",
-											contentIndex: proxyEvent.contentIndex,
-											content: content.thinking,
-											partial,
-										};
-									} else {
-										throw new Error("Received thinking_end for non-thinking content");
-									}
-									break;
-								}
-
-								case "toolcall_start":
-									partial.content[proxyEvent.contentIndex] = {
-										type: "toolCall",
-										id: proxyEvent.id,
-										name: proxyEvent.toolName,
-										arguments: {},
-										partialJson: "",
-									} satisfies ToolCall & { partialJson: string } as ToolCall;
-									event = { type: "toolcall_start", contentIndex: proxyEvent.contentIndex, partial };
-									break;
-
-								case "toolcall_delta": {
-									const content = partial.content[proxyEvent.contentIndex];
-									if (content?.type === "toolCall") {
-										(content as any).partialJson += proxyEvent.delta;
-										content.arguments = parseStreamingJson((content as any).partialJson) || {};
-										event = {
-											type: "toolcall_delta",
-											contentIndex: proxyEvent.contentIndex,
-											delta: proxyEvent.delta,
-											partial,
-										};
-										partial.content[proxyEvent.contentIndex] = { ...content }; // Trigger reactivity
-									} else {
-										throw new Error("Received toolcall_delta for non-toolCall content");
-									}
-									break;
-								}
-
-								case "toolcall_end": {
-									const content = partial.content[proxyEvent.contentIndex];
-									if (content?.type === "toolCall") {
-										delete (content as any).partialJson;
-										event = {
-											type: "toolcall_end",
-											contentIndex: proxyEvent.contentIndex,
-											toolCall: content,
-											partial,
-										};
-									}
-									break;
-								}
-
-								case "done":
-									partial.stopReason = proxyEvent.reason;
-									partial.usage = proxyEvent.usage;
-									event = { type: "done", reason: proxyEvent.reason, message: partial };
-									break;
-
-								case "error":
-									partial.stopReason = proxyEvent.reason;
-									partial.errorMessage = proxyEvent.errorMessage;
-									partial.usage = proxyEvent.usage;
-									event = { type: "error", reason: proxyEvent.reason, error: partial };
-									break;
-
-								default: {
-									// Exhaustive check
-									const _exhaustiveCheck: never = proxyEvent;
-									console.warn(`Unhandled event type: ${(proxyEvent as any).type}`);
-									break;
-								}
-							}
-
-							// Push the event to stream
-							if (event) {
-								stream.push(event);
-							} else {
-								throw new Error("Failed to create event from proxy event");
-							}
-						}
-					}
+			if (buffer.trim()) {
+				const proxyEvent = parseSseFrame(buffer);
+				if (proxyEvent) {
+					processProxyEvent(proxyEvent);
 				}
 			}
 
 			// Check if aborted after reading
 			if (options.signal?.aborted) {
 				throw new Error("Request aborted by user");
+			}
+			if (!sawTerminalEvent) {
+				throw new Error("Proxy stream closed before terminal event");
 			}
 
 			stream.end();
