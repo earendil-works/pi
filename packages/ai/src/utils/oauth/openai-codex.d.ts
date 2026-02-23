@@ -4,8 +4,8 @@
  */
 import { type OAuthCredentials } from "./storage.js";
 export type OAuthPrompt = {
-	message: string;
-	placeholder?: string;
+    message: string;
+    placeholder?: string;
 };
 /**
  * Login with OpenAI Codex OAuth.
@@ -17,10 +17,13 @@ export type OAuthPrompt = {
  *                                    Races with browser callback - whichever completes first wins.
  */
 export declare function loginOpenAICodex(options: {
-	onAuth: (info: { url: string; instructions?: string }) => void;
-	onPrompt: (prompt: OAuthPrompt) => Promise<string>;
-	onProgress?: (message: string) => void;
-	onManualCodeInput?: () => Promise<string>;
+    onAuth: (info: {
+        url: string;
+        instructions?: string;
+    }) => void;
+    onPrompt: (prompt: OAuthPrompt) => Promise<string>;
+    onProgress?: (message: string) => void;
+    onManualCodeInput?: () => Promise<string>;
 }): Promise<void>;
 /**
  * Refresh OpenAI Codex OAuth token.

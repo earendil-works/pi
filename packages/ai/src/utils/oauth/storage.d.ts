@@ -5,45 +5,40 @@
  * Override with setOAuthStorage() for custom storage locations or backends.
  */
 export interface OAuthCredentials {
-	type: "oauth";
-	refresh: string;
-	access: string;
-	expires: number;
-	enterpriseUrl?: string;
-	projectId?: string;
-	email?: string;
-	accountId?: string;
+    type: "oauth";
+    refresh: string;
+    access: string;
+    expires: number;
+    enterpriseUrl?: string;
+    projectId?: string;
+    email?: string;
+    accountId?: string;
 }
 export interface OAuthAccountEntry {
-	id: string;
-	credentials: OAuthCredentials;
-	label?: string;
-	lastUsed?: number;
-	cooldownUntil?: number;
+    id: string;
+    credentials: OAuthCredentials;
+    label?: string;
+    lastUsed?: number;
+    cooldownUntil?: number;
 }
 export interface OAuthMultiAccountStorage {
-	accounts: OAuthAccountEntry[];
-	activeAccountId?: string;
+    accounts: OAuthAccountEntry[];
+    activeAccountId?: string;
 }
 export type OAuthStorageEntry = OAuthCredentials | OAuthMultiAccountStorage;
 export interface OAuthStorage {
-	[provider: string]: OAuthStorageEntry;
+    [provider: string]: OAuthStorageEntry;
 }
-export type OAuthProvider =
-	| "anthropic"
-	| "github-copilot"
-	| "google-gemini-cli"
-	| "google-antigravity"
-	| "openai-codex";
+export type OAuthProvider = "anthropic" | "github-copilot" | "google-gemini-cli" | "google-antigravity" | "openai-codex";
 /**
  * Storage backend interface.
  * Implement this to use a custom storage location or backend.
  */
 export interface OAuthStorageBackend {
-	/** Load all OAuth credentials. Return empty object if none exist. */
-	load(): OAuthStorage;
-	/** Save all OAuth credentials. */
-	save(storage: OAuthStorage): void;
+    /** Load all OAuth credentials. Return empty object if none exist. */
+    load(): OAuthStorage;
+    /** Save all OAuth credentials. */
+    save(storage: OAuthStorage): void;
 }
 /**
  * Configure the OAuth storage backend.
@@ -119,11 +114,7 @@ export declare function removeOAuthAccount(provider: string, accountId: string):
 /**
  * Update OAuth account credentials
  */
-export declare function updateOAuthAccountCredentials(
-	provider: string,
-	accountId: string,
-	creds: OAuthCredentials,
-): void;
+export declare function updateOAuthAccountCredentials(provider: string, accountId: string, creds: OAuthCredentials): void;
 /**
  * Mark an OAuth account as cooling down
  */

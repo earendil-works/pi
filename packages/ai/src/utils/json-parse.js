@@ -7,21 +7,23 @@ import { parse as partialParse } from "partial-json";
  * @returns Parsed object or empty object if parsing fails
  */
 export function parseStreamingJson(partialJson) {
-	if (!partialJson || partialJson.trim() === "") {
-		return {};
-	}
-	// Try standard parsing first (fastest for complete JSON)
-	try {
-		return JSON.parse(partialJson);
-	} catch {
-		// Try partial-json for incomplete JSON
-		try {
-			const result = partialParse(partialJson);
-			return result ?? {};
-		} catch {
-			// If all parsing fails, return empty object
-			return {};
-		}
-	}
+    if (!partialJson || partialJson.trim() === "") {
+        return {};
+    }
+    // Try standard parsing first (fastest for complete JSON)
+    try {
+        return JSON.parse(partialJson);
+    }
+    catch {
+        // Try partial-json for incomplete JSON
+        try {
+            const result = partialParse(partialJson);
+            return (result ?? {});
+        }
+        catch {
+            // If all parsing fails, return empty object
+            return {};
+        }
+    }
 }
 //# sourceMappingURL=json-parse.js.map
