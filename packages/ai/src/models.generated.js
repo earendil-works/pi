@@ -2747,9 +2747,9 @@ export const MODELS = {
             reasoning: true,
             input: ["text", "image"],
             cost: {
-                input: 0.15,
-                output: 1,
-                cacheRead: 0.15,
+                input: 0.55,
+                output: 3.5,
+                cacheRead: 0.55,
                 cacheWrite: 0,
             },
             contextWindow: 262144,
@@ -2783,7 +2783,7 @@ export const MODELS = {
             cost: {
                 input: 0.95,
                 output: 2.5500000000000003,
-                cacheRead: 0,
+                cacheRead: 0.19999999999999998,
                 cacheWrite: 0,
             },
             contextWindow: 204800,
