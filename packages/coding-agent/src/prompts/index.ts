@@ -237,7 +237,7 @@ export async function buildSystemPrompt(options: {
 					{ name: "list_threads" },
 					{ name: "read_thread" },
 					{ name: "read_image" },
-					{ name: "todo" },
+					{ name: "todo_write" },
 					{ name: "handoff" },
 				];
 

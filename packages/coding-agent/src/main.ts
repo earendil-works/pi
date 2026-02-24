@@ -130,12 +130,9 @@ function parseArgs(args: string[]): Args {
 				list_threads: "list_threads",
 				read_thread: "read_thread",
 				read_image: "read_image",
-				todo: "todo",
 				todo_write: "todo_write",
 				handoff: "handoff",
 				exec_command: "exec_command",
-				view_image: "view_image",
-				update_plan: "update_plan",
 
 				// Legacy / aliases
 				Read: "read",
@@ -148,12 +145,13 @@ function parseArgs(args: string[]): Args {
 				ListThreads: "list_threads",
 				ReadThread: "read_thread",
 				ReadImage: "read_image",
-				Todo: "todo",
+				Todo: "todo_write",
 				Handoff: "handoff",
 				applypatch: "apply_patch",
 				find: "glob",
 				ls: "glob",
-				todowrite: "todo",
+				todo: "todo_write",
+				todowrite: "todo_write",
 			};
 
 			for (const name of toolNames) {
@@ -306,8 +304,8 @@ ${chalk.bold("Options:")}
   --session <path>        Use specific session file
   --no-session            Don't save session (ephemeral)
   --models <patterns>     Comma-separated model patterns for quick cycling with Ctrl+P
-  --tools <tools>         Comma-separated list of tools to enable (default: read,bash,edit,write,list_threads,read_thread,read_image,todo,handoff; gpt*: exec_command,apply_patch,read_image,handoff,list_threads,read_thread)
-                          Available: read, bash, edit, apply_patch, write, grep, glob, list_threads, read_thread, read_image, todo, todo_write, handoff, exec_command, view_image, update_plan
+  --tools <tools>         Comma-separated list of tools to enable (default: read,bash,edit,write,list_threads,read_thread,read_image,todo_write,handoff)
+                          Available: read, bash, edit, apply_patch, write, grep, glob, list_threads, read_thread, read_image, todo_write, handoff, exec_command
   --thinking <level>      Set thinking level: off, minimal, low, medium, high
   --export <file>         Export session file to HTML and exit
   --help, -h              Show this help
@@ -366,7 +364,7 @@ ${chalk.bold("Environment Variables:")}
   MU_CODING_AGENT_DIR     - Session storage directory (default: ~/.mu/agent)
 
 ${chalk.bold(
-	"Available Tools (default: read, bash, edit, write, list_threads, read_thread, read_image, todo, handoff; gpt*: exec_command, apply_patch, read_image, handoff, list_threads, read_thread):",
+	"Available Tools (default: read, bash, edit, write, list_threads, read_thread, read_image, todo_write, handoff):",
 )}
   read         - Read file contents
   bash         - Execute bash commands
@@ -376,14 +374,11 @@ ${chalk.bold(
   list_threads - List past conversation threads
   read_thread  - Read a specific thread's conversation history
   read_image   - Analyze images and extract information
-  todo         - File-backed todos (lists, claim/release, claim_next)
   todo_write   - Persist todo list to disk and emit a reminder to continue
   handoff      - Hand off to a new session with file context
   grep         - Search file contents (off by default)
   glob         - Find files by glob pattern or list directory contents (off by default)
   exec_command - Execute shell commands (Codex-style)
-  view_image   - Load and view images (Codex-style)
-  update_plan  - Update a durable plan (Codex-style)
 `);
 }
 

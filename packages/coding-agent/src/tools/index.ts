@@ -11,10 +11,7 @@ export { listThreadsTool } from "./list-threads.js";
 export { readTool } from "./read.js";
 export { readImageTool } from "./read-image.js";
 export { readThreadTool } from "./read-thread.js";
-export { todoTool } from "./todo.js";
 export { todowriteTool } from "./todowrite.js";
-export { updatePlanTool } from "./update-plan.js";
-export { viewImageTool } from "./view-image.js";
 export { writeTool } from "./write.js";
 
 import { applyPatchTool } from "./apply-patch.js";
@@ -28,10 +25,7 @@ import { listThreadsTool } from "./list-threads.js";
 import { readTool } from "./read.js";
 import { readImageTool } from "./read-image.js";
 import { readThreadTool } from "./read-thread.js";
-import { todoTool } from "./todo.js";
 import { todowriteTool } from "./todowrite.js";
-import { updatePlanTool } from "./update-plan.js";
-import { viewImageTool } from "./view-image.js";
 import { writeTool } from "./write.js";
 
 // Default tools for full access mode
@@ -43,7 +37,7 @@ export const codingTools = [
 	listThreadsTool,
 	readThreadTool,
 	readImageTool,
-	todoTool,
+	todowriteTool,
 	handoffTool,
 ];
 
@@ -59,14 +53,11 @@ export const allTools = {
 	list_threads: listThreadsTool,
 	read_thread: readThreadTool,
 	read_image: readImageTool,
-	todo: todoTool,
 	todo_write: todowriteTool,
 	handoff: handoffTool,
 
 	// Codex-style minimal tools
 	exec_command: execCommandTool,
-	view_image: viewImageTool,
-	update_plan: updatePlanTool,
 };
 
 export type ToolName = keyof typeof allTools;

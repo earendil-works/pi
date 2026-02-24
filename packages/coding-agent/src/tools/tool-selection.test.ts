@@ -3,21 +3,22 @@ import { describe, expect, it } from "vitest";
 import { resolveToolSelection } from "./tool-selection.js";
 
 describe("resolveToolSelection", () => {
-	it("defaults GPT-* models to a restricted tool set", () => {
+	it("defaults GPT-* models to the regular tool set", () => {
 		const model = getModel("openai", "gpt-4o-mini");
 		const selection = resolveToolSelection(undefined, model);
 
 		expect(selection.toolNames).toEqual([
-			"exec_command",
-			"apply_patch",
-			"read_image",
-			"view_image",
-			"handoff",
+			"read",
+			"bash",
+			"edit",
+			"write",
 			"list_threads",
 			"read_thread",
-			"update_plan",
+			"read_image",
+			"todo_write",
+			"handoff",
 		]);
-		expect(selection.replacedWithApplyPatch).toBe(true);
+		expect(selection.replacedWithApplyPatch).toBe(false);
 	});
 
 	it("keeps Edit and Write for non-GPT models", () => {
@@ -29,19 +30,19 @@ describe("resolveToolSelection", () => {
 		expect(selection.replacedWithApplyPatch).toBe(false);
 	});
 
-	it("defaults non-GPT-* OpenAI models to the GPT-ish standard tool set", () => {
+	it("defaults non-GPT-* OpenAI models to the regular tool set", () => {
 		const model = getModel("openai", "codex-mini-latest");
 		const selection = resolveToolSelection(undefined, model);
 
 		expect(selection.toolNames).toEqual([
 			"read",
 			"bash",
-			"apply_patch",
+			"edit",
 			"write",
 			"list_threads",
 			"read_thread",
 			"read_image",
-			"todo",
+			"todo_write",
 			"handoff",
 		]);
 	});

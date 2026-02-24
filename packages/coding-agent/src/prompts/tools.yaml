@@ -177,31 +177,6 @@ todo_write: |
   Priority: high, medium (default), low.
   Replaces the full list each call.
 
-todo: |
-  Create and manage durable, file-backed todos stored on disk.
-
-  Todos are stored as individual markdown files with YAML front-matter.
-  Default directory: <repoRoot>/.mu/todos/
-  Override with MU_TODO_PATH (absolute or repo-relative).
-
-  Actions (set the 'action' field):
-  - list: list todos (supports filters: list, status, tags, assignment)
-  - get: get full todo (front-matter + body)
-  - create: create a new todo
-  - create_many: create multiple todos in one call
-  - update: update fields and/or body (replaces content)
-  - append: append markdown to the body
-  - claim / release: assignment coordination for parallel agents
-  - claim_next: atomically claim the next matching unassigned todo
-  - delete: delete a todo (may require force when assigned)
-
-  Status:
-  - open | in_progress | done | cancelled
-
-  Notes:
-  - Prefer claim_next for parallel-safe automation.
-  - Use list + get to load minimal context: avoid pulling all bodies.
-
 handoff: |
   Explicitly hand off to a new session with specific file context injected.
 
@@ -237,26 +212,3 @@ exec_command: |
 
   Example:
   {"cmd":"ls -la","workdir":"packages/coding-agent"}
-
-view_image: |
-  Load an image (local path or URL) and attach it to the tool result so the model can view it.
-
-  Parameters:
-  - path: Local path or URL to an image (jpg, jpeg, png, gif, webp)
-
-  Example:
-  {"path":"screenshots/ui.png"}
-
-update_plan: |
-  Update the current plan (durable + file-backed).
-
-  This tool replaces the full plan each call and writes it to disk under:
-  - <repoRoot>/.mu/plans/<sessionId>.json
-  Override the directory with MU_PLAN_PATH.
-
-  Parameters:
-  - explanation (optional): Short explanation of the update
-  - plan: Array of { step: string, status: "pending" | "in_progress" | "completed" }
-
-  Example:
-  {"explanation":"Break into smaller steps","plan":[{"step":"Add tests","status":"in_progress"},{"step":"Implement tool","status":"pending"}]}

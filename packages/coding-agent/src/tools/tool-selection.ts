@@ -11,33 +11,8 @@ export const DEFAULT_TOOL_NAMES: ToolName[] = [
 	"list_threads",
 	"read_thread",
 	"read_image",
-	"todo",
+	"todo_write",
 	"handoff",
-];
-
-// Default toolset for OpenAI-like non-*GPT* models.
-const GPT_DEFAULT_TOOL_NAMES: ToolName[] = [
-	"read",
-	"bash",
-	"apply_patch",
-	"write",
-	"list_threads",
-	"read_thread",
-	"read_image",
-	"todo",
-	"handoff",
-];
-
-// Restricted default toolset for *GPT* pattern models.
-const GPT_STAR_TOOL_NAMES: ToolName[] = [
-	"exec_command",
-	"apply_patch",
-	"read_image",
-	"view_image",
-	"handoff",
-	"list_threads",
-	"read_thread",
-	"update_plan",
 ];
 
 export interface ToolSelection {
@@ -59,16 +34,6 @@ export function isGptModel(model: Model<Api> | null | undefined): boolean {
 	return id.includes("gpt") || name.includes("gpt");
 }
 
-function isGptStarModel(model: Model<Api> | null | undefined): boolean {
-	if (!model) {
-		return false;
-	}
-	const id = model.id.toLowerCase();
-	const name = model.name ? model.name.toLowerCase() : "";
-
-	return id.startsWith("gpt-") || id.includes("/gpt-") || id.includes(":gpt-") || name.includes("gpt-");
-}
-
 function dedupeToolNames(toolNames: ToolName[]): ToolName[] {
 	const seen = new Set<ToolName>();
 	const result: ToolName[] = [];
@@ -83,22 +48,12 @@ function dedupeToolNames(toolNames: ToolName[]): ToolName[] {
 
 export function resolveToolSelection(
 	baseToolNames: ToolName[] | undefined,
-	model: Model<Api> | null | undefined,
+	_model: Model<Api> | null | undefined,
 ): ToolSelection {
-	const initialNames =
-		baseToolNames && baseToolNames.length > 0
-			? baseToolNames
-			: isGptStarModel(model)
-				? GPT_STAR_TOOL_NAMES
-				: isGptModel(model)
-					? GPT_DEFAULT_TOOL_NAMES
-					: DEFAULT_TOOL_NAMES;
-	let replacedWithApplyPatch = false;
+	const initialNames = baseToolNames && baseToolNames.length > 0 ? baseToolNames : DEFAULT_TOOL_NAMES;
 	const resolvedNames = dedupeToolNames(initialNames);
 
-	// For GPT-ish models, we default to apply_patch instead of edit.
-	replacedWithApplyPatch =
-		isGptModel(model) && !resolvedNames.includes("edit") && resolvedNames.includes("apply_patch");
+	const replacedWithApplyPatch = !resolvedNames.includes("edit") && resolvedNames.includes("apply_patch");
 
 	const tools = resolvedNames.map((name) => allTools[name]) as unknown as Array<AgentTool<TSchema, unknown>>;
 
