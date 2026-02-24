@@ -4,7 +4,15 @@
  * Uses the Cloud Code Assist API endpoint to access Gemini and Claude models.
  */
 
-import type { Content, ThinkingConfig } from "@google/genai";
+import type {
+	Content,
+	GenerationConfigRoutingConfig,
+	MediaResolution,
+	ModelSelectionConfig,
+	SafetySetting,
+	SpeechConfigUnion,
+	ThinkingConfig,
+} from "@google/genai";
 import { calculateCost } from "../models.js";
 import type {
 	Api,
@@ -24,6 +32,12 @@ import { convertMessages, convertTools, mapStopReasonString, mapToolChoice } fro
 
 export interface GoogleGeminiCliOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "any";
+	userPromptId?: string;
+	sessionId?: string;
+	cachedContent?: string;
+	labels?: Record<string, string>;
+	safetySettings?: SafetySetting[];
+	generationConfig?: VertexGenerationConfig;
 	/**
 	 * Thinking/reasoning configuration.
 	 * Uses `budgetTokens` to set the thinking budget.
@@ -35,6 +49,30 @@ export interface GoogleGeminiCliOptions extends StreamOptions {
 		budgetTokens?: number;
 	};
 	projectId?: string;
+}
+
+interface VertexGenerationConfig {
+	temperature?: number;
+	topP?: number;
+	topK?: number;
+	candidateCount?: number;
+	maxOutputTokens?: number;
+	stopSequences?: string[];
+	responseLogprobs?: boolean;
+	logprobs?: number;
+	presencePenalty?: number;
+	frequencyPenalty?: number;
+	seed?: number;
+	responseMimeType?: string;
+	responseJsonSchema?: unknown;
+	responseSchema?: unknown;
+	routingConfig?: GenerationConfigRoutingConfig;
+	modelSelectionConfig?: ModelSelectionConfig;
+	responseModalities?: string[];
+	mediaResolution?: MediaResolution;
+	speechConfig?: SpeechConfigUnion;
+	audioTimestamp?: boolean;
+	thinkingConfig?: ThinkingConfig;
 }
 
 const DEFAULT_ENDPOINT = "https://cloudcode-pa.googleapis.com";
@@ -66,23 +104,22 @@ let toolCallCounter = 0;
 interface CloudCodeAssistRequest {
 	project: string;
 	model: string;
+	user_prompt_id: string;
 	request: {
 		contents: Content[];
-		systemInstruction?: { parts: { text: string }[] };
-		generationConfig?: {
-			maxOutputTokens?: number;
-			temperature?: number;
-			thinkingConfig?: ThinkingConfig;
-		};
+		systemInstruction?: Content;
+		cachedContent?: string;
 		tools?: ReturnType<typeof convertTools>;
 		toolConfig?: {
 			functionCallingConfig: {
 				mode: ReturnType<typeof mapToolChoice>;
 			};
 		};
+		labels?: Record<string, string>;
+		safetySettings?: SafetySetting[];
+		generationConfig?: VertexGenerationConfig;
+		session_id?: string;
 	};
-	userAgent?: string;
-	requestId?: string;
 }
 
 interface CloudCodeAssistResponseChunk {
@@ -184,7 +221,6 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli"> = (
 						headers: {
 							Authorization: `Bearer ${accessToken}`,
 							"Content-Type": "application/json",
-							Accept: "text/event-stream",
 							...headers,
 						},
 						body: JSON.stringify(requestBody),
@@ -467,7 +503,9 @@ function buildRequest(
 ): CloudCodeAssistRequest {
 	const contents = convertMessages(model, context);
 
-	const generationConfig: CloudCodeAssistRequest["request"]["generationConfig"] = {};
+	const generationConfig: VertexGenerationConfig = {
+		...(options.generationConfig ?? {}),
+	};
 	if (options.temperature !== undefined) {
 		generationConfig.temperature = options.temperature;
 	}
@@ -493,6 +531,7 @@ function buildRequest(
 	// System instruction must be object with parts, not plain string
 	if (context.systemPrompt) {
 		request.systemInstruction = {
+			role: "user",
 			parts: [{ text: sanitizeSurrogates(context.systemPrompt) }],
 		};
 	}
@@ -512,11 +551,28 @@ function buildRequest(
 		}
 	}
 
+	if (options.cachedContent !== undefined) {
+		request.cachedContent = options.cachedContent;
+	}
+
+	if (options.labels !== undefined) {
+		request.labels = options.labels;
+	}
+
+	if (options.safetySettings !== undefined) {
+		request.safetySettings = options.safetySettings;
+	}
+
+	if (options.sessionId !== undefined) {
+		request.session_id = options.sessionId;
+	}
+
+	const userPromptId = options.userPromptId ?? `mu-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+
 	return {
 		project: projectId,
 		model: model.id,
+		user_prompt_id: userPromptId,
 		request,
-		userAgent: "mu-coding-agent",
-		requestId: `pi-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`,
 	};
 }
