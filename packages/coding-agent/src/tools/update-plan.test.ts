@@ -59,4 +59,44 @@ describe("update_plan tool", () => {
 		expect(parsed.explanation).toBe("Testing");
 		expect(Array.isArray(parsed.plan)).toBe(true);
 	});
+
+	it("returns mu_display metadata for concise TUI rendering", async () => {
+		tempDir = await mkdtemp(join(tmpdir(), "mu-update-plan-"));
+		originalCwd = process.cwd();
+		process.chdir(tempDir);
+
+		originalEnv = {
+			MU_SESSION_ID: process.env.MU_SESSION_ID,
+			MU_RUN_ID: process.env.MU_RUN_ID,
+			MU_PLAN_PATH: process.env.MU_PLAN_PATH,
+		};
+		process.env.MU_SESSION_ID = "test_session";
+		process.env.MU_RUN_ID = "test_run";
+		delete process.env.MU_PLAN_PATH;
+
+		const result = await updatePlanTool.execute("toolcall_1", {
+			explanation: "Testing",
+			plan: [
+				{ step: "First step", status: "in_progress" },
+				{ step: "Second step", status: "pending" },
+			],
+		});
+
+		const details = result.details as
+			| {
+					mu_display?: {
+						version?: number;
+						call?: { text?: string };
+						summary?: { text?: string };
+						output?: { collapse?: { maxVisualLines?: number } };
+					};
+			  }
+			| undefined;
+
+		expect(details?.mu_display?.version).toBe(1);
+		expect(details?.mu_display?.call?.text).toContain("update_plan");
+		expect(details?.mu_display?.summary?.text).toContain("1 in_progress");
+		expect(details?.mu_display?.summary?.text).toContain("1 pending");
+		expect(details?.mu_display?.output?.collapse?.maxVisualLines).toBe(8);
+	});
 });

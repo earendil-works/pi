@@ -37,6 +37,32 @@ interface TodoItemInput {
 	priority?: TodoPriority;
 }
 
+interface MuDisplayV1 {
+	version: 1;
+	call: {
+		style: "argv";
+		text: string;
+		command: "todo_write";
+		argv: string[];
+	};
+	summary: {
+		text: string;
+		severity: "info";
+	};
+	output: {
+		collapse: {
+			maxVisualLines: number;
+			expandHint: string;
+		};
+	};
+}
+
+export interface TodoWriteToolDetails {
+	todos: TodoItem[];
+	summary: { total: number; pending: number; inProgress: number; completed: number; cancelled: number };
+	mu_display: MuDisplayV1;
+}
+
 // Module-level state: one agent per process, so this acts as session state
 let todos: TodoItem[] = [];
 let nextId = 1;
@@ -148,7 +174,7 @@ const todowriteSchema = Type.Object({
 	}),
 });
 
-export const todowriteTool: AgentTool<typeof todowriteSchema> = {
+export const todowriteTool: AgentTool<typeof todowriteSchema, TodoWriteToolDetails> = {
 	name: "todo_write",
 	label: "todo_write",
 	description: getToolDescription("todo_write"),
@@ -173,6 +199,7 @@ export const todowriteTool: AgentTool<typeof todowriteSchema> = {
 		const inProgress = todos.filter((t) => t.status === "in_progress").length;
 		const completed = todos.filter((t) => t.status === "completed").length;
 		const cancelled = todos.filter((t) => t.status === "cancelled").length;
+		const total = todos.length;
 
 		let text = formatTodos(todos);
 
@@ -182,11 +209,37 @@ export const todowriteTool: AgentTool<typeof todowriteSchema> = {
 			text += `\n\n<system_reminder pending="${pending}" in_progress="${inProgress}">Continue now. Execute the remaining todo items using available tools. Prefer the in_progress item first, otherwise take the next pending item. Keep going until there are no pending/in_progress items left, or you are blocked (then ask the user for what you need). Update the todo list with todo_write as you make progress.</system_reminder>`;
 		}
 
+		const summaryText = [
+			`${inProgress} in_progress`,
+			`${pending} pending`,
+			`${completed} completed`,
+			`${cancelled} cancelled`,
+		].join(" · ");
+
 		return {
 			content: [{ type: "text", text }],
 			details: {
 				todos: todos,
-				summary: { total: todos.length, pending, inProgress, completed, cancelled },
+				summary: { total, pending, inProgress, completed, cancelled },
+				mu_display: {
+					version: 1,
+					call: {
+						style: "argv",
+						text: `todo_write set --items ${total}`,
+						command: "todo_write",
+						argv: ["set", "--items", String(total)],
+					},
+					summary: {
+						text: summaryText,
+						severity: "info",
+					},
+					output: {
+						collapse: {
+							maxVisualLines: 5,
+							expandHint: "ctrl+o to expand",
+						},
+					},
+				},
 			},
 		};
 	},

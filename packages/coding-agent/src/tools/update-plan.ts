@@ -26,6 +26,25 @@ export interface UpdatePlanToolDetails {
 	path: string;
 	explanation?: string;
 	plan: Array<{ step: string; status: PlanStatus }>;
+	mu_display: {
+		version: 1;
+		call: {
+			style: "argv";
+			text: string;
+			command: "update_plan";
+			argv: string[];
+		};
+		summary: {
+			text: string;
+			severity: "info";
+		};
+		output: {
+			collapse: {
+				maxVisualLines: number;
+				expandHint: string;
+			};
+		};
+	};
 }
 
 function getWhoAmIFromEnv(): { sessionId: string; runId: string } {
@@ -92,6 +111,11 @@ export const updatePlanTool: AgentTool<typeof updatePlanSchema, UpdatePlanToolDe
 	) => {
 		const who = getWhoAmIFromEnv();
 		const filePath = getPlanFilePathForCwd(process.cwd(), who.sessionId);
+		const total = plan.length;
+		const inProgress = plan.filter((item) => item.status === "in_progress").length;
+		const pending = plan.filter((item) => item.status === "pending").length;
+		const completed = plan.filter((item) => item.status === "completed").length;
+		const summaryText = `${inProgress} in_progress · ${pending} pending · ${completed} completed`;
 
 		await mkdir(dirname(filePath), { recursive: true });
 		const payload = {
@@ -105,7 +129,30 @@ export const updatePlanTool: AgentTool<typeof updatePlanSchema, UpdatePlanToolDe
 
 		return {
 			content: [{ type: "text", text: formatPlanText(explanation, plan) }],
-			details: { path: filePath, explanation: explanation?.trim() || undefined, plan },
+			details: {
+				path: filePath,
+				explanation: explanation?.trim() || undefined,
+				plan,
+				mu_display: {
+					version: 1,
+					call: {
+						style: "argv",
+						text: `update_plan set --steps ${total}`,
+						command: "update_plan",
+						argv: ["set", "--steps", String(total)],
+					},
+					summary: {
+						text: summaryText,
+						severity: "info",
+					},
+					output: {
+						collapse: {
+							maxVisualLines: 8,
+							expandHint: "ctrl+o to expand",
+						},
+					},
+				},
+			},
 		};
 	},
 };

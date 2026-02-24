@@ -187,6 +187,59 @@ describe("todowrite tool", () => {
 			cancelled: 1,
 		});
 	});
+
+	it("returns mu_display metadata for concise TUI rendering", async () => {
+		const result = await todowriteTool.execute(
+			"call-1",
+			{
+				todos: [
+					{ content: "Pending 1", status: "pending" },
+					{ content: "In progress", status: "in_progress" },
+					{ content: "Done", status: "completed" },
+				],
+			},
+			undefined,
+			undefined,
+		);
+
+		const details = result.details as
+			| {
+					mu_display?: {
+						version?: number;
+						call?: { text?: string };
+						summary?: { text?: string };
+						output?: { collapse?: { maxVisualLines?: number } };
+					};
+			  }
+			| undefined;
+
+		expect(details?.mu_display?.version).toBe(1);
+		expect(details?.mu_display?.call?.text).toContain("todo_write");
+		expect(details?.mu_display?.summary?.text).toContain("1 in_progress");
+		expect(details?.mu_display?.summary?.text).toContain("1 pending");
+		expect(details?.mu_display?.summary?.text).toContain("1 completed");
+		expect(details?.mu_display?.output?.collapse?.maxVisualLines).toBe(5);
+	});
+
+	it("keeps system_reminder in tool result content for model-side continuation", async () => {
+		const result = await todowriteTool.execute(
+			"call-1",
+			{
+				todos: [
+					{ content: "Pending 1", status: "pending" },
+					{ content: "In progress", status: "in_progress" },
+				],
+			},
+			undefined,
+			undefined,
+		);
+
+		const textContent = result.content[0];
+		expect(textContent.type).toBe("text");
+		if (textContent.type === "text") {
+			expect(textContent.text).toContain("<system_reminder");
+		}
+	});
 });
 
 describe("formatTodosForHandoff", () => {

@@ -3,6 +3,7 @@ import { Container, Spacer, Text } from "@kennyfrc/mu-tui";
 import stripAnsi from "strip-ansi";
 import { theme } from "../theme/theme.js";
 import { type ApplyPatchParseResult, parseApplyPatchInput } from "../tools/apply-patch/parse.js";
+import { stripSystemReminderTagsForDisplay } from "../utils/system-reminder.js";
 import { truncateToVisualLines } from "./visual-truncate.js";
 
 /**
@@ -301,6 +302,7 @@ export class ToolExecutionComponent extends Container {
 		// Strip ANSI codes and carriage returns from raw output
 		// (bash may emit colors/formatting, and Windows may include \r)
 		let output = textBlocks.map((c) => stripAnsi(c.text || "").replace(/\r/g, "")).join("\n");
+		output = stripSystemReminderTagsForDisplay(output);
 
 		// Add indicator for images
 		if (imageBlocks.length > 0) {
@@ -709,24 +711,6 @@ export class ToolExecutionComponent extends Container {
 					}
 				}
 			}
-		} else if (this.toolName === "todo") {
-			const action = typeof args.action === "string" ? args.action : "";
-			text = theme.fg("toolTitle", theme.bold("todo"));
-			if (action) {
-				text += theme.fg("dim", ` (${action})`);
-			}
-
-			if (this.result) {
-				const output = this.getTextOutput().trim();
-				if (output) {
-					text +=
-						"\n\n" +
-						output
-							.split("\n")
-							.map((line: string) => theme.fg("toolOutput", line))
-							.join("\n");
-				}
-			}
 		} else if (readMuDisplayV1(this.result?.details)) {
 			const muDisplay = readMuDisplayV1(this.result?.details)!;
 
@@ -778,6 +762,24 @@ export class ToolExecutionComponent extends Container {
 						text += hintLine + "\n";
 					}
 					text += result.visualLines.join("\n");
+				}
+			}
+		} else if (this.toolName === "todo") {
+			const action = typeof args.action === "string" ? args.action : "";
+			text = theme.fg("toolTitle", theme.bold("todo"));
+			if (action) {
+				text += theme.fg("dim", ` (${action})`);
+			}
+
+			if (this.result) {
+				const output = this.getTextOutput().trim();
+				if (output) {
+					text +=
+						"\n\n" +
+						output
+							.split("\n")
+							.map((line: string) => theme.fg("toolOutput", line))
+							.join("\n");
 				}
 			}
 		} else {

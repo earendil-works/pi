@@ -119,4 +119,57 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 		const text = renderText(component, 80);
 		expect(text).toContain("downloading...");
 	});
+
+	it("prefers mu_display rendering for todo tool when metadata is present", () => {
+		const component = new ToolExecutionComponent("todo", {
+			action: "list",
+		});
+
+		component.updateResult({
+			content: [{ type: "text", text: "No todos" }],
+			isError: false,
+			details: {
+				mu_display: {
+					version: 1,
+					call: {
+						style: "argv",
+						argv: ["update", "--items", "3"],
+					},
+					summary: { text: "3 open items" },
+				},
+			},
+		});
+
+		const text = renderText(component, 120);
+		expect(text).toContain("todo update --items 3");
+		expect(text).toContain("3 open items");
+		expect(text).not.toContain("todo (list)");
+	});
+
+	it("hides system_reminder tags from displayed output", () => {
+		const component = new ToolExecutionComponent("todo_write", {
+			todos: [{ content: "Task 1", status: "pending" }],
+		});
+
+		component.updateResult({
+			content: [
+				{
+					type: "text",
+					text: '○ [M] Task 1\n\n<system_reminder pending="1" in_progress="0">Continue now.</system_reminder>',
+				},
+			],
+			isError: false,
+			details: {
+				mu_display: {
+					version: 1,
+					call: { style: "argv", argv: ["set", "--items", "1"] },
+				},
+			},
+		});
+
+		const text = renderText(component, 120);
+		expect(text).toContain("○ [M] Task 1");
+		expect(text).not.toContain("system_reminder");
+		expect(text).not.toContain("Continue now.");
+	});
 });
