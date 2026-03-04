@@ -92,6 +92,17 @@ describe("StreamingAssistantMessageComponent", () => {
 		expect(rendered).toContain("ANSWER");
 	});
 
+	it("normalizes punctuation artifacts in both thinking and response while streaming", () => {
+		const c = new StreamingAssistantMessageComponent({ maxBufferChars: 10_000 });
+		c.applyAssistantMessageEvent(thinkingDelta("I should help them\r\n\r\n ."));
+		c.applyAssistantMessageEvent(textDelta("Hey\r\n ! I'm doing well, thanks."));
+
+		const rendered = stripAnsi(c.render(200).join("\n"));
+		expect(rendered).toContain("I should help them.");
+		expect(rendered).toContain("Hey! I'm doing well, thanks.");
+		expect(rendered).not.toContain("\r");
+	});
+
 	it("renders markdown while streaming (hr token)", () => {
 		const c = new StreamingAssistantMessageComponent({ maxBufferChars: 10_000 });
 		c.applyAssistantMessageEvent(textDelta("---\n"));

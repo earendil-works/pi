@@ -78,8 +78,8 @@ export function normalizeExcessiveWhitespace(text: string): string {
  */
 export function normalizePunctuationSpacing(text: string): string {
 	return text
-		.replace(/([\p{L}\p{N}])(?:[ \t]*\n[ \t]*)+([!?.,])(?!\[)/gu, "$1$2")
-		.replace(/([\p{L}\p{N}])(?:[ \t]+)([!?.,])(?!\[)/gu, "$1$2");
+		.replace(/([\p{L}\p{N}])(?:[^\S\r\n]*(?:\r?\n|\r)[^\S\r\n]*)+([!?.,])(?!\[)/gu, "$1$2")
+		.replace(/([\p{L}\p{N}])(?:[^\S\r\n]+)([!?.,])(?!\[)/gu, "$1$2");
 }
 
 /**

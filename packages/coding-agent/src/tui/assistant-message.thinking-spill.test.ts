@@ -77,4 +77,21 @@ describe("AssistantMessageComponent (thinking spill guard)", () => {
 		const rendered = stripAnsi(c.render(200).join("\n"));
 		expect(countOccurrences(rendered, "DUP")).toBe(1);
 	});
+
+	it("normalizes punctuation artifacts in both thinking and response text", () => {
+		const msg: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [
+				{ type: "thinking", thinking: "I should help them\r\n\r\n ." },
+				{ type: "text", text: "Hey\r\n ! I'm doing well, thanks." },
+			],
+		};
+
+		const c = new AssistantMessageComponent(msg);
+		const rendered = stripAnsi(c.render(200).join("\n"));
+
+		expect(rendered).toContain("I should help them.");
+		expect(rendered).toContain("Hey! I'm doing well, thanks.");
+		expect(rendered).not.toContain("\r");
+	});
 });

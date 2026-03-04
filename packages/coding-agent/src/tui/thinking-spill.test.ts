@@ -54,6 +54,11 @@ describe("normalizePunctuationSpacing", () => {
 		expect(normalizePunctuationSpacing("Hey\n ! Doing well")).toBe("Hey! Doing well");
 	});
 
+	it("joins CRLF punctuation continuations", () => {
+		expect(normalizePunctuationSpacing("Hey\r\n ! Doing well")).toBe("Hey! Doing well");
+		expect(normalizePunctuationSpacing("help them\r\n\r\n .")).toBe("help them.");
+	});
+
 	it("removes plain spaces before punctuation", () => {
 		expect(normalizePunctuationSpacing("Hello !")).toBe("Hello!");
 	});

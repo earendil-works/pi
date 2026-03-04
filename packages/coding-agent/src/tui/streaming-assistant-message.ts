@@ -148,11 +148,9 @@ export class StreamingAssistantMessageComponent extends Container {
 	private updateStreamingDisplay(): void {
 		this.revision++;
 
-		const fixed = fixThinkingSpill(
-			normalizeExcessiveWhitespace(this.thinkingBuffer),
-			normalizePunctuationSpacing(normalizeExcessiveWhitespace(this.textBuffer)),
-			{ exactDuplicateStrategy: "dropText" },
-		);
+		const normalizedThinking = normalizePunctuationSpacing(normalizeExcessiveWhitespace(this.thinkingBuffer));
+		const normalizedText = normalizePunctuationSpacing(normalizeExcessiveWhitespace(this.textBuffer));
+		const fixed = fixThinkingSpill(normalizedThinking, normalizedText, { exactDuplicateStrategy: "dropText" });
 
 		const hasThinking = fixed.thinking.trim().length > 0;
 		const hasText = fixed.text.trim().length > 0;
@@ -162,7 +160,7 @@ export class StreamingAssistantMessageComponent extends Container {
 		this.betweenSpacer.setLines(hasThinking && hasText ? 1 : 0);
 
 		this.thinkingMarkdown.setText(hasThinking ? fixed.thinking : "");
-		this.responseMarkdown.setText(hasText ? normalizePunctuationSpacing(fixed.text) : "");
+		this.responseMarkdown.setText(hasText ? fixed.text : "");
 	}
 
 	private appendRolling(current: string, chunk: string): string {

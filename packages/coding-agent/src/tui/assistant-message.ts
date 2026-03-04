@@ -68,7 +68,10 @@ export class AssistantMessageComponent extends Container {
 		}
 
 		const blocks: Array<{ type: "text" | "thinking"; text: string }> = [
-			...thinkingBlocks.map((b) => ({ ...b, text: normalizeExcessiveWhitespace(b.text) })),
+			...thinkingBlocks.map((b) => ({
+				...b,
+				text: normalizePunctuationSpacing(normalizeExcessiveWhitespace(b.text)),
+			})),
 			...textBlocks
 				.filter((b) => b.text.trim().length > 0)
 				.map((b) => ({
