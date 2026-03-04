@@ -135,6 +135,22 @@ function getCompat(model: Model<"openai-completions">): Required<OpenAICompat> {
 	};
 }
 
+function isBasetenBaseUrl(baseUrl: string): boolean {
+	return baseUrl.includes("inference.baseten.co");
+}
+
+function isBasetenThinkingModel(model: Model<"openai-completions">): boolean {
+	if (!isBasetenBaseUrl(model.baseUrl)) return false;
+	const modelId = model.id.toLowerCase();
+	return modelId.includes("kimi-k2.5") || modelId.includes("glm");
+}
+
+function isBasetenReasoningEffortModel(model: Model<"openai-completions">): boolean {
+	if (!isBasetenBaseUrl(model.baseUrl)) return false;
+	const modelId = model.id.toLowerCase();
+	return modelId === "openai/gpt-oss-120b" || modelId.endsWith("/gpt-oss-120b");
+}
+
 // State machine for parsing <think> tags from streaming content
 // Many open-source models (DeepSeek, Qwen, etc.) output reasoning in <think> tags
 interface ThinkParseState {
@@ -251,6 +267,20 @@ function parsePossiblyDoubleEncoded(jsonStr: string | undefined): Record<string,
 	return first as Record<string, unknown>;
 }
 
+function getNonEmptyStringField(source: unknown, field: string): string | null {
+	if (!source || typeof source !== "object") return null;
+	const value = (source as Record<string, unknown>)[field];
+	return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+interface OpenAIToolCallDelta {
+	id?: string | null;
+	function?: {
+		name?: string | null;
+		arguments?: string | null;
+	} | null;
+}
+
 export interface OpenAICompletionsOptions extends StreamOptions {
 	toolChoice?: "auto" | "none" | "required" | { type: "function"; function: { name: string } };
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -351,125 +381,138 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 
 				const choice = chunk.choices[0];
 				if (!choice) continue;
+				const choiceWithMessage = choice as ChatCompletionChunk.Choice & {
+					message?: {
+						content?: string | null;
+						reasoning_content?: string | null;
+						reasoning?: string | null;
+						tool_calls?: OpenAIToolCallDelta[];
+					};
+				};
 
 				if (choice.finish_reason) {
 					output.stopReason = mapStopReason(choice.finish_reason);
 				}
 
-				if (choice.delta) {
-					if (
-						choice.delta.content !== null &&
-						choice.delta.content !== undefined &&
-						choice.delta.content.length > 0
-					) {
-						// Parse <think> tags from content (used by DeepSeek, Qwen, etc.)
-						const segments = splitThinkSegments(choice.delta.content, thinkParseState);
+				const contentDelta =
+					getNonEmptyStringField(choice.delta, "content") ??
+					getNonEmptyStringField(choiceWithMessage.message, "content");
+				if (contentDelta) {
+					// Parse <think> tags from content (used by DeepSeek, Qwen, etc.)
+					const segments = splitThinkSegments(contentDelta, thinkParseState);
 
-						for (const segment of segments) {
-							if (segment.kind === "thinking") {
-								// Switch to thinking block if needed
-								if (!currentBlock || currentBlock.type !== "thinking") {
-									finishCurrentBlock(currentBlock);
-									currentBlock = { type: "thinking", thinking: "", thinkingSignature: "think_tag" };
-									output.content.push(currentBlock);
-									stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
-								}
-								if (currentBlock.type === "thinking") {
-									currentBlock.thinking += segment.chunk;
-									stream.push({
-										type: "thinking_delta",
-										contentIndex: blockIndex(),
-										delta: segment.chunk,
-										partial: output,
-									});
-								}
-							} else {
-								// Text segment - switch to text block if needed
-								if (!currentBlock || currentBlock.type !== "text") {
-									finishCurrentBlock(currentBlock);
-									currentBlock = { type: "text", text: "" };
-									output.content.push(currentBlock);
-									stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
-								}
-								if (currentBlock.type === "text") {
-									currentBlock.text += segment.chunk;
-									stream.push({
-										type: "text_delta",
-										contentIndex: blockIndex(),
-										delta: segment.chunk,
-										partial: output,
-									});
-								}
-							}
-						}
-					}
-
-					// Some endpoints return reasoning in reasoning_content (llama.cpp),
-					// or reasoning (other openai compatible endpoints)
-					const reasoningFields = ["reasoning_content", "reasoning"];
-					for (const field of reasoningFields) {
-						if (
-							(choice.delta as any)[field] !== null &&
-							(choice.delta as any)[field] !== undefined &&
-							(choice.delta as any)[field].length > 0
-						) {
+					for (const segment of segments) {
+						if (segment.kind === "thinking") {
+							// Switch to thinking block if needed
 							if (!currentBlock || currentBlock.type !== "thinking") {
 								finishCurrentBlock(currentBlock);
-								currentBlock = {
-									type: "thinking",
-									thinking: "",
-									thinkingSignature: field,
-								};
+								currentBlock = { type: "thinking", thinking: "", thinkingSignature: "think_tag" };
 								output.content.push(currentBlock);
 								stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
 							}
-
 							if (currentBlock.type === "thinking") {
-								const delta = (choice.delta as any)[field];
-								currentBlock.thinking += delta;
+								currentBlock.thinking += segment.chunk;
 								stream.push({
 									type: "thinking_delta",
 									contentIndex: blockIndex(),
-									delta,
+									delta: segment.chunk,
+									partial: output,
+								});
+							}
+						} else {
+							// Text segment - switch to text block if needed
+							if (!currentBlock || currentBlock.type !== "text") {
+								finishCurrentBlock(currentBlock);
+								currentBlock = { type: "text", text: "" };
+								output.content.push(currentBlock);
+								stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+							}
+							if (currentBlock.type === "text") {
+								currentBlock.text += segment.chunk;
+								stream.push({
+									type: "text_delta",
+									contentIndex: blockIndex(),
+									delta: segment.chunk,
 									partial: output,
 								});
 							}
 						}
 					}
+				}
 
-					if (choice?.delta?.tool_calls) {
-						for (const toolCall of choice.delta.tool_calls) {
-							// Use function.name to detect new tool calls (not id).
-							// Fireworks sends different ids for continuation chunks of the same tool call.
-							const hasName = toolCall.function?.name != null && toolCall.function.name.length > 0;
-							if (!currentBlock || currentBlock.type !== "toolCall" || hasName) {
-								finishCurrentBlock(currentBlock);
-								currentBlock = {
-									type: "toolCall",
-									id: toolCall.id || "",
-									name: toolCall.function?.name || "",
-									arguments: {},
-									partialArgs: "",
-								};
-								output.content.push(currentBlock);
-								stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
-							}
+				// Some endpoints return reasoning in reasoning_content (llama.cpp),
+				// or reasoning (other OpenAI-compatible endpoints).
+				// Baseten may return these on choice.message instead of choice.delta.
+				const reasoningFields = ["reasoning_content", "reasoning"];
+				for (const field of reasoningFields) {
+					const reasoningDelta =
+						getNonEmptyStringField(choice.delta, field) ??
+						getNonEmptyStringField(choiceWithMessage.message, field);
+					if (reasoningDelta) {
+						if (!currentBlock || currentBlock.type !== "thinking") {
+							finishCurrentBlock(currentBlock);
+							currentBlock = {
+								type: "thinking",
+								thinking: "",
+								thinkingSignature: field,
+							};
+							output.content.push(currentBlock);
+							stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+						}
 
-							if (currentBlock.type === "toolCall") {
-								if (toolCall.function?.name) currentBlock.name = toolCall.function.name;
-								let delta = "";
-								if (toolCall.function?.arguments) {
-									delta = toolCall.function.arguments;
-									currentBlock.partialArgs += toolCall.function.arguments;
-									currentBlock.arguments = parseStreamingJson(currentBlock.partialArgs);
-								}
-								stream.push({
-									type: "toolcall_delta",
-									contentIndex: blockIndex(),
-									delta,
-									partial: output,
-								});
+						if (currentBlock.type === "thinking") {
+							currentBlock.thinking += reasoningDelta;
+							stream.push({
+								type: "thinking_delta",
+								contentIndex: blockIndex(),
+								delta: reasoningDelta,
+								partial: output,
+							});
+						}
+					}
+				}
+
+				const toolCalls =
+					choice.delta?.tool_calls && choice.delta.tool_calls.length > 0
+						? (choice.delta.tool_calls as OpenAIToolCallDelta[])
+						: choiceWithMessage.message?.tool_calls && choiceWithMessage.message.tool_calls.length > 0
+							? choiceWithMessage.message.tool_calls
+							: null;
+				if (toolCalls) {
+					for (const toolCall of toolCalls) {
+						// Use function.name to detect new tool calls (not id).
+						// Fireworks sends different ids for continuation chunks of the same tool call.
+						const hasName =
+							toolCall.function?.name !== null &&
+							toolCall.function?.name !== undefined &&
+							toolCall.function.name.length > 0;
+						if (!currentBlock || currentBlock.type !== "toolCall" || hasName) {
+							finishCurrentBlock(currentBlock);
+							currentBlock = {
+								type: "toolCall",
+								id: toolCall.id || "",
+								name: toolCall.function?.name || "",
+								arguments: {},
+								partialArgs: "",
+							};
+							output.content.push(currentBlock);
+							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+						}
+
+						if (currentBlock.type === "toolCall") {
+							if (toolCall.function?.name) currentBlock.name = toolCall.function.name;
+							let delta = "";
+							if (toolCall.function?.arguments) {
+								delta = toolCall.function.arguments;
+								currentBlock.partialArgs += toolCall.function.arguments;
+								currentBlock.arguments = parseStreamingJson(currentBlock.partialArgs);
 							}
+							stream.push({
+								type: "toolcall_delta",
+								contentIndex: blockIndex(),
+								delta,
+								partial: output,
+							});
 						}
 					}
 				}
@@ -603,17 +646,38 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 		params.tool_choice = options.toolChoice;
 	}
 
-	if (options?.reasoningEffort && model.reasoning && compat.supportsReasoningEffort) {
-		if (compat.reasoningEffortFormat === "boolean") {
-			// Fireworks uses boolean: any effort level (minimal/low/medium/high/xhigh) maps to true
-			(params as any).reasoning_effort = true;
-		} else {
-			// OpenAI uses string: low/medium/high
-			// Map 'minimal' to 'low' and 'xhigh' to 'high' for OpenAI compatibility
-			let effort: string = options.reasoningEffort;
-			if (effort === "minimal") effort = "low";
-			if (effort === "xhigh") effort = "high";
-			params.reasoning_effort = effort as "low" | "medium" | "high";
+	if (options?.reasoningEffort && model.reasoning) {
+		// Baseten uses chat_template_args.enable_thinking for Kimi K2.5 and GLM models.
+		if (isBasetenThinkingModel(model)) {
+			const paramsRecord = params as unknown as Record<string, unknown>;
+			const existingChatTemplateArgs = paramsRecord.chat_template_args;
+			const chatTemplateArgs =
+				existingChatTemplateArgs &&
+				typeof existingChatTemplateArgs === "object" &&
+				!Array.isArray(existingChatTemplateArgs)
+					? (existingChatTemplateArgs as Record<string, unknown>)
+					: {};
+			paramsRecord.chat_template_args = {
+				...chatTemplateArgs,
+				enable_thinking: true,
+			};
+		}
+
+		// Baseten currently supports reasoning_effort only on openai/gpt-oss-120b.
+		const allowReasoningEffort =
+			compat.supportsReasoningEffort && (!isBasetenBaseUrl(model.baseUrl) || isBasetenReasoningEffortModel(model));
+		if (allowReasoningEffort) {
+			if (compat.reasoningEffortFormat === "boolean") {
+				// Fireworks uses boolean: any effort level (minimal/low/medium/high/xhigh) maps to true
+				(params as unknown as Record<string, unknown>).reasoning_effort = true;
+			} else {
+				// OpenAI uses string: low/medium/high
+				// Map 'minimal' to 'low' and 'xhigh' to 'high' for OpenAI compatibility
+				let effort: string = options.reasoningEffort;
+				if (effort === "minimal") effort = "low";
+				if (effort === "xhigh") effort = "high";
+				params.reasoning_effort = effort as "low" | "medium" | "high";
+			}
 		}
 	}
 

@@ -66,6 +66,23 @@ export function normalizeExcessiveWhitespace(text: string): string {
 }
 
 /**
+ * Normalize awkward punctuation continuations caused by token/newline artifacts.
+ *
+ * Example:
+ * - "Hey\n ! Doing well" -> "Hey! Doing well"
+ * - "Hello !" -> "Hello!"
+ *
+ * Intentionally conservative:
+ * - only joins when punctuation follows a letter/number
+ * - skips markdown image syntax like `![alt](...)`
+ */
+export function normalizePunctuationSpacing(text: string): string {
+	return text
+		.replace(/([\p{L}\p{N}])(?:[ \t]*\n[ \t]*)+([!?.,])(?!\[)/gu, "$1$2")
+		.replace(/([\p{L}\p{N}])(?:[ \t]+)([!?.,])(?!\[)/gu, "$1$2");
+}
+
+/**
  * Best-effort guard to prevent "thinking" content from being duplicated/spilled
  * into the visible response text.
  */

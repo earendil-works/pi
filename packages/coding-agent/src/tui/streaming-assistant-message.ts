@@ -2,7 +2,7 @@ import type { AssistantMessage, AssistantMessageEvent } from "@kennyfrc/mu-ai";
 import { Container, Markdown, Spacer } from "@kennyfrc/mu-tui";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
-import { fixThinkingSpill, normalizeExcessiveWhitespace } from "./thinking-spill.js";
+import { fixThinkingSpill, normalizeExcessiveWhitespace, normalizePunctuationSpacing } from "./thinking-spill.js";
 
 export interface StreamingAssistantMessageOptions {
 	/**
@@ -150,7 +150,7 @@ export class StreamingAssistantMessageComponent extends Container {
 
 		const fixed = fixThinkingSpill(
 			normalizeExcessiveWhitespace(this.thinkingBuffer),
-			normalizeExcessiveWhitespace(this.textBuffer),
+			normalizePunctuationSpacing(normalizeExcessiveWhitespace(this.textBuffer)),
 			{ exactDuplicateStrategy: "dropText" },
 		);
 
@@ -162,7 +162,7 @@ export class StreamingAssistantMessageComponent extends Container {
 		this.betweenSpacer.setLines(hasThinking && hasText ? 1 : 0);
 
 		this.thinkingMarkdown.setText(hasThinking ? fixed.thinking : "");
-		this.responseMarkdown.setText(hasText ? fixed.text : "");
+		this.responseMarkdown.setText(hasText ? normalizePunctuationSpacing(fixed.text) : "");
 	}
 
 	private appendRolling(current: string, chunk: string): string {
