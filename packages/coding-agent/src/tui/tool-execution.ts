@@ -24,6 +24,19 @@ function replaceTabs(text: string): string {
 	return text.replace(/\t/g, "   ");
 }
 
+/**
+ * Apply diff syntax coloring to a line
+ */
+function colorDiffLine(line: string): string {
+	if (line.startsWith("+")) {
+		return theme.fg("toolDiffAdded", line);
+	} else if (line.startsWith("-")) {
+		return theme.fg("toolDiffRemoved", line);
+	} else {
+		return theme.fg("toolDiffContext", line);
+	}
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
@@ -496,8 +509,34 @@ export class ToolExecutionComponent extends Container {
 				text += ` (${totalLines} lines)`;
 			}
 
-			// Show first 10 lines of content if available
-			if (fileContent) {
+			// Handle streaming output or final result
+			if (this.result) {
+				// Show final result message
+				const output = this.getTextOutput().trim();
+				if (output) {
+					text += "\n\n" + theme.fg("toolOutput", output);
+				}
+			} else if (this.partialOutput) {
+				// Show streaming content
+				const streamLines = this.partialOutput.split("\n");
+				// Remove trailing empty line if content ended with newline
+				if (streamLines[streamLines.length - 1] === "") {
+					streamLines.pop();
+				}
+				const maxLines = this.expanded ? streamLines.length : 10;
+				const displayLines = streamLines.slice(0, maxLines);
+				const remaining = streamLines.length - maxLines;
+
+				text += "\n\n" + displayLines.map((line: string) => theme.fg("toolOutput", replaceTabs(line))).join("\n");
+				if (remaining > 0) {
+					text +=
+						theme.fg("toolOutput", `\n(${remaining} more lines `) +
+						theme.fg("dim", "·") +
+						theme.fg("muted", " ctrl+o to expand") +
+						theme.fg("toolOutput", ")");
+				}
+			} else if (fileContent) {
+				// Show args content preview before streaming starts
 				const maxLines = this.expanded ? lines.length : 10;
 				const displayLines = lines.slice(0, maxLines);
 				const remaining = lines.length - maxLines;
@@ -533,18 +572,15 @@ export class ToolExecutionComponent extends Container {
 					if (typeof diff === "string") {
 						// Show diff if available
 						const diffLines = diff.split("\n");
-						const coloredLines = diffLines.map((line: string) => {
-							if (line.startsWith("+")) {
-								return theme.fg("toolDiffAdded", line);
-							} else if (line.startsWith("-")) {
-								return theme.fg("toolDiffRemoved", line);
-							} else {
-								return theme.fg("toolDiffContext", line);
-							}
-						});
+						const coloredLines = diffLines.map(colorDiffLine);
 						text += "\n\n" + coloredLines.join("\n");
 					}
 				}
+			} else if (this.partialOutput) {
+				// Show streaming output with diff coloring
+				const lines = this.partialOutput.split("\n");
+				const coloredLines = lines.map(colorDiffLine);
+				text += "\n\n" + coloredLines.join("\n");
 			}
 		} else if (this.toolName === "apply_patch") {
 			const input = typeof args.input === "string" ? args.input : "";

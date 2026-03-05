@@ -86,6 +86,23 @@ export const writeTool: AgentTool<typeof writeSchema> = {
 
 					if (aborted) return;
 
+					// Stream content before writing
+					if (_onProgress && content) {
+						// Handle both cases: content with newlines and single-line content
+						const lines = content.split("\n");
+						for (let i = 0; i < lines.length; i++) {
+							const line = lines[i];
+							// Last element from split might be empty if content ends with newline
+							// In that case, we don't need to stream it as a separate line
+							if (i < lines.length - 1) {
+								_onProgress(line + "\n");
+							} else if (line.length > 0) {
+								// Non-empty last line (content didn't end with newline)
+								_onProgress(line);
+							}
+						}
+					}
+
 					await writeFile(absolutePath, content, "utf-8");
 
 					if (aborted) return;

@@ -503,6 +503,15 @@ export const editTool: AgentTool<typeof editSchema> = {
 						return;
 					}
 
+					// Generate and stream diff before writing
+					const diffString = generateDiffString(fileContent, newContent);
+					if (_onProgress && diffString) {
+						const diffLines = diffString.split("\n");
+						for (const line of diffLines) {
+							_onProgress(line + "\n");
+						}
+					}
+
 					await writeFile(absolutePath, newContent, "utf-8");
 
 					if (aborted) return;
@@ -526,7 +535,7 @@ export const editTool: AgentTool<typeof editSchema> = {
 							},
 						],
 						details: {
-							diff: generateDiffString(fileContent, newContent),
+							diff: diffString,
 							path: absolutePath,
 							oldText: firstMatch.content,
 							newText,
