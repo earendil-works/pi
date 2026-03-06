@@ -304,7 +304,7 @@ ${chalk.bold("Options:")}
   --session <path>        Use specific session file
   --no-session            Don't save session (ephemeral)
   --models <patterns>     Comma-separated model patterns for quick cycling with Ctrl+P
-  --tools <tools>         Comma-separated list of tools to enable (default: read,bash,edit,write,list_threads,read_thread,read_image,todo_write,handoff)
+  --tools <tools>         Comma-separated list of tools to enable (default: read,bash,edit,write,list_threads,read_thread,read_image,handoff)
                           Available: read, bash, edit, apply_patch, write, grep, glob, list_threads, read_thread, read_image, todo_write, handoff, exec_command
   --thinking <level>      Set thinking level: off, minimal, low, medium, high
   --export <file>         Export session file to HTML and exit
@@ -363,9 +363,7 @@ ${chalk.bold("Environment Variables:")}
   ZAI_API_KEY             - ZAI API key
   MU_CODING_AGENT_DIR     - Session storage directory (default: ~/.mu/agent)
 
-${chalk.bold(
-	"Available Tools (default: read, bash, edit, write, list_threads, read_thread, read_image, todo_write, handoff):",
-)}
+${chalk.bold("Available Tools (default: read, bash, edit, write, list_threads, read_thread, read_image, handoff):")}
   read         - Read file contents
   bash         - Execute bash commands
   edit         - Edit files with find/replace

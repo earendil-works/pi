@@ -38,7 +38,6 @@ describe("GPT tools", () => {
 			"list_threads",
 			"read_thread",
 			"read_image",
-			"todo_write",
 			"handoff",
 		]);
 		expect(selection.tools.map((t) => t.name)).toEqual(selection.toolNames);
@@ -51,7 +50,7 @@ describe("GPT tools", () => {
 		expect(selection.toolNames).toContain("bash");
 		expect(selection.toolNames).toContain("edit");
 		expect(selection.toolNames).toContain("write");
-		expect(selection.toolNames).toContain("todo_write");
+		expect(selection.toolNames).not.toContain("todo_write");
 		expect(selection.toolNames).not.toContain("exec_command");
 	});
 });

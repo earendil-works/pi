@@ -13,7 +13,6 @@ describe("resolveToolSelection", () => {
 			"list_threads",
 			"read_thread",
 			"read_image",
-			"todo_write",
 			"handoff",
 		]);
 		expect(selection.replacedWithApplyPatch).toBe(true);
@@ -40,7 +39,6 @@ describe("resolveToolSelection", () => {
 			"list_threads",
 			"read_thread",
 			"read_image",
-			"todo_write",
 			"handoff",
 		]);
 	});

@@ -11,7 +11,6 @@ export const DEFAULT_TOOL_NAMES: ToolName[] = [
 	"list_threads",
 	"read_thread",
 	"read_image",
-	"todo_write",
 	"handoff",
 ];
 
@@ -21,7 +20,6 @@ export const GPT_DEFAULT_TOOL_NAMES: ToolName[] = [
 	"list_threads",
 	"read_thread",
 	"read_image",
-	"todo_write",
 	"handoff",
 ];
 

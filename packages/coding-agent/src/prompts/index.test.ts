@@ -27,6 +27,7 @@ describe("buildSystemPrompt", () => {
 		expect(prompt).toContain("Available tools:");
 		expect(prompt).toContain("- read:");
 		expect(prompt).toContain("- bash:");
+		expect(prompt).not.toContain("- todo_write:");
 	});
 
 	it("should include extension tools when tools are provided", async () => {

@@ -776,7 +776,7 @@ Examples:
 - `--models sonnet,haiku` - Partial match for any model containing "sonnet" or "haiku"
 
 **--tools <tools>**
-Comma-separated list of tools to enable. By default, mu uses `read,bash,edit,write,list_threads,read_thread,read_image,todo_write,handoff`. This flag allows restricting or changing the available tools.
+Comma-separated list of tools to enable. By default, mu uses `read,bash,edit,write,list_threads,read_thread,read_image,handoff`. This flag allows restricting or changing the available tools.
 
 Available tools:
 - `read` - Read file contents

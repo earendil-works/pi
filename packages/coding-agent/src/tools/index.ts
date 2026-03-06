@@ -37,7 +37,6 @@ export const codingTools = [
 	listThreadsTool,
 	readThreadTool,
 	readImageTool,
-	todowriteTool,
 	handoffTool,
 ];
 

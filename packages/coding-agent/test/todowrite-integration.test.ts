@@ -12,9 +12,9 @@ describe("todo_write integration", () => {
 			expect(allTools.todo_write.name).toBe("todo_write");
 		});
 
-		it("codingTools includes todo_write", () => {
+		it("codingTools does not include todo_write by default", () => {
 			const names = codingTools.map((t) => t.name);
-			expect(names).toContain("todo_write");
+			expect(names).not.toContain("todo_write");
 		});
 	});
 
