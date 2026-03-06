@@ -46,6 +46,162 @@ export interface RenderThrottleConfig {
 	toolProgressMinIntervalMs?: number;
 }
 
+export interface OverlayOptions {
+	width?: number;
+	minWidth?: number;
+	maxWidth?: number;
+	marginX?: number;
+}
+
+interface ActiveOverlay {
+	component: Component;
+	options: OverlayOptions;
+}
+
+interface AnsiExtractResult {
+	code: string;
+	length: number;
+}
+
+class AnsiStateTracker {
+	private activeSgrCodes: string[] = [];
+
+	process(code: string): void {
+		if (!code.endsWith("m")) return;
+		if (code === "\x1b[0m" || code === "\x1b[m") {
+			this.activeSgrCodes = [];
+			return;
+		}
+		this.activeSgrCodes.push(code);
+	}
+
+	getActiveCodes(): string {
+		return this.activeSgrCodes.join("");
+	}
+
+	hasActiveCodes(): boolean {
+		return this.activeSgrCodes.length > 0;
+	}
+}
+
+const ansiSegmenter = new Intl.Segmenter();
+
+function extractAnsiCode(str: string, pos: number): AnsiExtractResult | null {
+	if (pos >= str.length || str[pos] !== "\x1b" || str[pos + 1] !== "[") {
+		return null;
+	}
+
+	let j = pos + 2;
+	while (j < str.length && str[j] && !/[mGKHJ]/.test(str[j]!)) {
+		j++;
+	}
+
+	if (j < str.length) {
+		return {
+			code: str.substring(pos, j + 1),
+			length: j + 1 - pos,
+		};
+	}
+
+	return null;
+}
+
+function splitVisibleSegments(text: string): Array<{ type: "ansi" | "grapheme"; value: string }> {
+	const segments: Array<{ type: "ansi" | "grapheme"; value: string }> = [];
+	let i = 0;
+
+	while (i < text.length) {
+		const ansi = extractAnsiCode(text, i);
+		if (ansi) {
+			segments.push({ type: "ansi", value: ansi.code });
+			i += ansi.length;
+			continue;
+		}
+
+		let end = i;
+		while (end < text.length && !extractAnsiCode(text, end)) {
+			end++;
+		}
+
+		for (const seg of ansiSegmenter.segment(text.slice(i, end))) {
+			segments.push({ type: "grapheme", value: seg.segment });
+		}
+		i = end;
+	}
+
+	return segments;
+}
+
+function sliceAnsiByVisibleWidth(text: string, start: number, end: number): string {
+	if (end <= start) return "";
+
+	const tracker = new AnsiStateTracker();
+	let result = "";
+	let visiblePos = 0;
+	let started = false;
+
+	for (const segment of splitVisibleSegments(text)) {
+		if (segment.type === "ansi") {
+			tracker.process(segment.value);
+			if (started) {
+				result += segment.value;
+			}
+			continue;
+		}
+
+		const graphemeWidth = visibleWidth(segment.value);
+		const nextVisiblePos = visiblePos + graphemeWidth;
+
+		if (nextVisiblePos <= start) {
+			visiblePos = nextVisiblePos;
+			continue;
+		}
+
+		if (visiblePos >= end) {
+			break;
+		}
+
+		if (!started) {
+			started = true;
+			if (tracker.hasActiveCodes()) {
+				result += tracker.getActiveCodes();
+			}
+		}
+
+		result += segment.value;
+		visiblePos = nextVisiblePos;
+
+		if (visiblePos >= end) {
+			break;
+		}
+	}
+
+	if (!started) return "";
+	if (tracker.hasActiveCodes()) {
+		result += "\x1b[0m";
+	}
+	return result;
+}
+
+function padAnsiToWidth(text: string, width: number): string {
+	const padding = Math.max(0, width - visibleWidth(text));
+	return text + " ".repeat(padding);
+}
+
+function overlayLine(
+	baseLine: string,
+	overlayText: string,
+	startCol: number,
+	overlayWidth: number,
+	totalWidth: number,
+): string {
+	const paddedBase = padAnsiToWidth(baseLine, totalWidth);
+	const left = sliceAnsiByVisibleWidth(paddedBase, 0, startCol);
+	const right = sliceAnsiByVisibleWidth(paddedBase, startCol + overlayWidth, totalWidth);
+	const paddedOverlay = padAnsiToWidth(overlayText, overlayWidth);
+	return left + paddedOverlay + right;
+}
+
 /**
  * Container - a component that contains other components
  */
@@ -87,6 +243,7 @@ export class Container implements Component {
  */
 export class TUI extends Container {
 	private terminal: Terminal;
+	private overlay: ActiveOverlay | null = null;
 	private previousLines: string[] = [];
 	private previousWidth = 0;
 	private focusedComponent: Component | null = null;
@@ -113,6 +270,57 @@ export class TUI extends Container {
 
 	setFocus(component: Component | null): void {
 		this.focusedComponent = component;
+	}
+
+	setOverlay(component: Component | null, options: OverlayOptions = {}): void {
+		this.overlay = component ? { component, options } : null;
+	}
+
+	clearOverlay(): void {
+		this.overlay = null;
+	}
+
+	override invalidate(): void {
+		super.invalidate();
+		this.overlay?.component.invalidate();
+	}
+
+	override render(width: number): string[] {
+		const baseLines = super.render(width);
+		return this.composeOverlay(baseLines, width, this.terminal.rows);
+	}
+
+	private composeOverlay(baseLines: string[], width: number, height: number): string[] {
+		if (!this.overlay) {
+			return baseLines;
+		}
+
+		const marginX = Math.max(0, this.overlay.options.marginX ?? 4);
+		const availableWidth = Math.max(1, width - marginX * 2);
+		const maxWidth = Math.max(1, Math.min(this.overlay.options.maxWidth ?? availableWidth, availableWidth));
+		const minWidth = Math.max(1, Math.min(this.overlay.options.minWidth ?? Math.min(72, maxWidth), maxWidth));
+		const overlayWidth = Math.max(1, Math.min(this.overlay.options.width ?? maxWidth, maxWidth));
+		const dialogWidth = Math.max(minWidth, overlayWidth);
+		const renderedOverlay = this.overlay.component.render(dialogWidth);
+		const croppedOverlay = renderedOverlay.slice(0, height);
+
+		const frameLines = baseLines.slice();
+		const frameHeight = Math.max(frameLines.length, height);
+		while (frameLines.length < frameHeight) {
+			frameLines.push("");
+		}
+
+		const viewportTop = Math.max(0, frameLines.length - height);
+		const originX = Math.max(0, Math.floor((width - dialogWidth) / 2));
+		const originY = viewportTop + Math.max(0, Math.floor((height - croppedOverlay.length) / 2));
+
+		for (let i = 0; i < croppedOverlay.length; i++) {
+			const lineIndex = originY + i;
+			const baseLine = frameLines[lineIndex] ?? "";
+			frameLines[lineIndex] = overlayLine(baseLine, croppedOverlay[i] ?? "", originX, dialogWidth, width);
+		}
+
+		return frameLines;
 	}
 
 	start(): void {
