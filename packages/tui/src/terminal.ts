@@ -50,6 +50,8 @@ export class ProcessTerminal implements Terminal {
 
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		process.stdout.write("\x1b[?2004h");
+		// Enable focus reporting so the TUI can detect when the terminal loses focus.
+		process.stdout.write("\x1b[?1004h");
 
 		// Force disable mouse tracking to ensure clean state and restore text selection
 		// Terminal modes persist between process executions, so a previous run (or crash)
@@ -65,6 +67,8 @@ export class ProcessTerminal implements Terminal {
 	stop(): void {
 		// Disable bracketed paste mode
 		process.stdout.write("\x1b[?2004l");
+		// Disable focus reporting.
+		process.stdout.write("\x1b[?1004l");
 
 		// Force disable mouse tracking to ensure clean exit state
 		process.stdout.write("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l");

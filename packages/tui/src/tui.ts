@@ -244,6 +244,7 @@ export class Container implements Component {
 export class TUI extends Container {
 	private terminal: Terminal;
 	private overlay: ActiveOverlay | null = null;
+	private terminalFocused = true;
 	private previousLines: string[] = [];
 	private previousWidth = 0;
 	private focusedComponent: Component | null = null;
@@ -271,6 +272,10 @@ export class TUI extends Container {
 	setFocus(component: Component | null): void {
 		this.focusedComponent = component;
 	}
+
+	isTerminalFocused = (): boolean => {
+		return this.terminalFocused;
+	};
 
 	setOverlay(component: Component | null, options: OverlayOptions = {}): void {
 		this.overlay = component ? { component, options } : null;
@@ -425,11 +430,33 @@ export class TUI extends Container {
 		this.throttleNextIntervalMs = 0;
 	}
 
+	private consumeTerminalFocusEvents(data: string): string {
+		let remaining = data;
+		let sawFocusEvent = false;
+
+		remaining = remaining.replace(/\x1b\[(I|O)/g, (_match: string, state: string) => {
+			sawFocusEvent = true;
+			this.terminalFocused = state === "I";
+			return "";
+		});
+
+		if (sawFocusEvent && remaining.length === 0) {
+			this.requestRenderWithReason("input");
+		}
+
+		return remaining;
+	}
+
 	private handleInput(data: string): void {
+		const remaining = this.consumeTerminalFocusEvents(data);
+		if (remaining.length === 0) {
+			return;
+		}
+
 		// Pass input to focused component (including Ctrl+C)
 		// The focused component can decide how to handle Ctrl+C
 		if (this.focusedComponent?.handleInput) {
-			this.focusedComponent.handleInput(data);
+			this.focusedComponent.handleInput(remaining);
 			this.requestRenderWithReason("input");
 		}
 	}
