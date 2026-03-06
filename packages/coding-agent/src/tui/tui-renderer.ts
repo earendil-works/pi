@@ -33,6 +33,7 @@ import {
 import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
 import { parseCompactSlashCommand } from "../compact-command.js";
+import { createCompactionAdapter } from "../compaction-adapter.js";
 import { scheduleExplicitHandoff } from "../explicit-handoff.js";
 import { exportSessionToHtml } from "../export-html.js";
 import type { ExtensionLoader } from "../extensions/loader.js";
@@ -3404,7 +3405,7 @@ export class TuiRenderer {
 			(text) => theme.fg("muted", text),
 			mode === "inject"
 				? "Selecting compact context files... (esc to cancel)"
-				: "Preparing compact summary... (esc to cancel)",
+				: "Preparing compact thread history... (esc to cancel)",
 		);
 		this.statusContainer.addChild(this.loadingAnimation);
 		this.ui.requestRender();
@@ -3425,9 +3426,9 @@ export class TuiRenderer {
 						})()
 					: await (async () => {
 							if (this.loadingAnimation) {
-								this.loadingAnimation.setMessage("Summarizing for compaction... (esc to cancel)");
+								this.loadingAnimation.setMessage("Compacting thread history... (esc to cancel)");
 							}
-							return await this.buildHandoffSummaryDetails(goal, signal);
+							return await this.buildSummaryCompactionDetails(goal, signal);
 						})();
 
 			scheduleExplicitHandoff({
@@ -3894,6 +3895,33 @@ export class TuiRenderer {
 		};
 	}
 
+	private async buildSummaryCompactionDetails(goal: string, signal: AbortSignal): Promise<HandoffDetails> {
+		const model = this.agent.state.model;
+		if (!model) throw new Error("No model selected");
+
+		const apiKey = await getApiKeyForModel(model);
+		if (!apiKey) throw new Error(`No API key for ${model.provider}`);
+
+		const tracking = extractHandoffFileTracking(this.agent.state.messages);
+		const adapter = createCompactionAdapter(model as Model<Api>);
+		const execution = await adapter.compactSummary({
+			model: model as Model<Api>,
+			apiKey,
+			messages: this.agent.state.messages,
+			goal,
+			readFiles: tracking.readFiles,
+			modifiedFiles: tracking.modifiedFiles,
+			signal,
+			localFallback: () => this.buildHandoffSummaryDetails(goal, signal),
+		});
+
+		if (execution.usedFallback && execution.fallbackReason) {
+			this.showWarning(`Remote compaction unavailable, used local summary instead: ${execution.fallbackReason}`);
+		}
+
+		return execution.details;
+	}
+
 	/**
 	 * Get context usage metrics for auto-handoff threshold detection.
 	 * Mirrors the calculation in FooterComponent.
@@ -4082,14 +4110,9 @@ export class TuiRenderer {
 
 			// Update loader - stage 2: compaction preparation
 			if (this.loadingAnimation) {
-				this.loadingAnimation.setMessage("Auto-compaction: selecting context... (esc to cancel)");
+				this.loadingAnimation.setMessage("Auto-compaction: compacting thread history... (esc to cancel)");
 			}
-
-			const files = await this.selectHandoffFiles(goal, this.handoffAbortController.signal);
-			if (this.loadingAnimation) {
-				this.loadingAnimation.setMessage("Auto-compaction: preparing checkpoint... (esc to cancel)");
-			}
-			const details = await this.buildHandoffDetails(goal, files, this.handoffAbortController.signal);
+			const details = await this.buildSummaryCompactionDetails(goal, this.handoffAbortController.signal);
 
 			await this.executeExplicitHandoff({
 				...details,
