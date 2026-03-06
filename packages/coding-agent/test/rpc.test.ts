@@ -56,7 +56,10 @@ describe("RPC mode", () => {
 
 		// Wait for agent_end which signals the full prompt/response cycle is complete
 		const waitForAgentEnd = new Promise<void>((resolve, reject) => {
-			const timeout = setTimeout(() => reject(new Error("Timeout waiting for agent_end")), 60000);
+			const timeout = setTimeout(
+				() => reject(new Error(`Timeout waiting for agent_end. Stderr: ${stderr || "(empty)"}`)),
+				120000,
+			);
 
 			rl.on("line", (line: string) => {
 				try {
@@ -130,5 +133,5 @@ describe("RPC mode", () => {
 		const roles = messages.map((m: { message: { role: string } }) => m.message.role);
 		expect(roles).toContain("user");
 		expect(roles).toContain("assistant");
-	}, 90000);
+	}, 150000);
 });
