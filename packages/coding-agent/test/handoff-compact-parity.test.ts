@@ -8,7 +8,41 @@ import {
 
 const UPSTREAM_SUMMARIZATION_SYSTEM_PROMPT = `You are a context summarization assistant. Your task is to read a conversation between a user and an AI coding assistant, then produce a structured summary following the exact format specified.
 
-Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.`;
+Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.
+
+Output EXACTLY these sections in this order:
+
+## Goal
+<one short paragraph>
+
+## Constraints & Preferences
+- <bullet list of concrete constraints/preferences from the conversation>
+
+## Progress
+### Done
+- <completed work only; include verification/results that already happened>
+
+### In Progress
+- <work that is actively underway but not finished, or - (none)>
+
+### Blocked
+- <actual blocker only, or - (none)>
+
+## Key Decisions
+- <important decision + brief why>
+
+## Next Steps
+1. <next concrete action>
+
+## Critical Context
+- <important facts, evidence, file paths, outputs, or caveats needed to continue>
+
+Rules:
+- Summarize what actually happened in the conversation; do not invent missing work.
+- Put completed tests/checks/results in Done, not In Progress.
+- Use Blocked only for real blockers. If nothing is blocked, write '- (none)'.
+- Keep it concrete and compact.
+- Preserve exact file paths, commands, versions, thread IDs, and notable outputs when they matter.`;
 
 const UPSTREAM_COMPACT_SUMMARY = [
 	"## Goal",
