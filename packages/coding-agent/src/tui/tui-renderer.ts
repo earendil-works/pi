@@ -32,6 +32,7 @@ import {
 } from "../auto-handoff.js";
 import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
+import { parseCompactSlashCommand } from "../compact-command.js";
 import { scheduleExplicitHandoff } from "../explicit-handoff.js";
 import { exportSessionToHtml } from "../export-html.js";
 import type { ExtensionLoader } from "../extensions/loader.js";
@@ -55,7 +56,6 @@ import {
 import { findModel, getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
 import { WorkspaceNoteStore } from "../notes/workspace-note-store.js";
 import { playNotificationSound, sendNotification } from "../notification.js";
-import { parseOaiCompactSlashCommand } from "../oai-compact-command.js";
 import {
 	getActiveOAuthAccount,
 	listOAuthAccounts,
@@ -393,9 +393,9 @@ export class TuiRenderer {
 			description: "Navigate session tree (switch branches)",
 		};
 
-		const oaiCompactCommand: SlashCommand = {
-			name: "oai-compact",
-			description: "Compact the current thread; use /oai-compact on|off to toggle auto mode",
+		const compactCommand: SlashCommand = {
+			name: "compact",
+			description: "Compact the current thread; use /compact on|off to toggle auto mode",
 		};
 
 		const subscribeCommand: SlashCommand = {
@@ -477,7 +477,7 @@ export class TuiRenderer {
 			copyCommand,
 			exportCommand,
 			fastCommand,
-			oaiCompactCommand,
+			compactCommand,
 			subscribeCommand,
 			unsubscribeCommand,
 			loginCommand,
@@ -842,17 +842,17 @@ export class TuiRenderer {
 				return;
 			}
 
-			// Check for /oai-compact command
-			if (rawText.startsWith("/oai-compact")) {
+			// Check for /compact command
+			if (rawText.startsWith("/compact")) {
 				this.promptHistory.savePrompt(rawText);
 
-				const parsedCompactCommand = parseOaiCompactSlashCommand(rawText);
+				const parsedCompactCommand = parseCompactSlashCommand(rawText);
 				if (!parsedCompactCommand) {
 					this.showError(
-						"Usage: /oai-compact [--summary|--inject] <goal>\n" +
-							"Example: /oai-compact fix the login page tests\n" +
-							"Example (file-context checkpoint): /oai-compact --inject fix the login page tests\n" +
-							"Auto mode: /oai-compact on | off | toggle | status",
+						"Usage: /compact [--summary|--inject] <goal>\n" +
+							"Example: /compact fix the login page tests\n" +
+							"Example (file-context checkpoint): /compact --inject fix the login page tests\n" +
+							"Auto mode: /compact on | off | toggle | status",
 					);
 					return;
 				}
@@ -1324,7 +1324,7 @@ export class TuiRenderer {
 										theme.fg(
 											"warning",
 											"Context is very high; aborted tool execution to prevent overflow.\n" +
-												"Automatic compaction is OFF. Use /oai-compact <goal> or /oai-compact on.",
+												"Automatic compaction is OFF. Use /compact <goal> or /compact on.",
 										),
 										1,
 										0,
@@ -1388,9 +1388,9 @@ export class TuiRenderer {
 					this.ui.requestRender();
 				}
 
-				// Detect explicit oai_compact tool completion - queue for execution after agent_end
+				// Detect explicit compact tool completion - queue for execution after agent_end
 				if (
-					event.toolName === "oai_compact" &&
+					event.toolName === "compact" &&
 					!event.isError &&
 					typeof event.result !== "string" &&
 					event.result?.details?.handoffType === "explicit"
@@ -1461,7 +1461,7 @@ export class TuiRenderer {
 				this.footer.updateState(state);
 				this.syncFooterUsageFromMessages(state.messages);
 
-				// Execute pending explicit compaction (from oai_compact tool)
+				// Execute pending explicit compaction (from compact tool)
 				if (this.pendingExplicitHandoff) {
 					const handoff = this.pendingExplicitHandoff;
 					this.pendingExplicitHandoff = null;
@@ -4120,7 +4120,7 @@ export class TuiRenderer {
 	}
 
 	/**
-	 * Apply an explicit same-thread compaction triggered by the oai_compact tool.
+	 * Apply an explicit same-thread compaction triggered by the compact tool.
 	 */
 	private async executeExplicitHandoff(details: HandoffDetails & { parentSessionId: string | null }): Promise<void> {
 		const { goal, fileTokens } = details;
@@ -4336,7 +4336,7 @@ export class TuiRenderer {
 			next === "on"
 				? theme.fg("accent", "Automatic compaction: ON")
 				: theme.fg("warning", "Automatic compaction: OFF");
-		const hint = theme.fg("muted", "Use /oai-compact [on|off|toggle|status]");
+		const hint = theme.fg("muted", "Use /compact [on|off|toggle|status]");
 		this.chatContainer.addChild(new Text(label + "\n" + hint, 1, 0));
 		this.ui.requestRender();
 	}

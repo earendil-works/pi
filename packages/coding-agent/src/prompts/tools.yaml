@@ -177,7 +177,7 @@ todo_write: |
   Priority: high, medium (default), low.
   Replaces the full list each call.
 
-oai_compact: |
+compact: |
   Compact the current thread into a smaller in-thread checkpoint with curated file context.
 
   Use when: current context is cluttered, you are near the context window, or you need a smaller baseline before continuing in the same session.

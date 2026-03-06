@@ -38,7 +38,7 @@ describe("GPT tools", () => {
 			"list_threads",
 			"read_thread",
 			"read_image",
-			"oai_compact",
+			"compact",
 		]);
 		expect(selection.tools.map((t) => t.name)).toEqual(selection.toolNames);
 	});

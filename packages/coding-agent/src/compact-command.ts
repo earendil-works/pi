@@ -1,10 +1,10 @@
 import type { AutoHandoffMode, AutoHandoffSlashCommand } from "./auto-handoff.js";
 
-export type OaiCompactSlashCommand =
+export type CompactSlashCommand =
 	| { kind: "compact"; goal: string; mode: "summary" | "inject" }
 	| { kind: "auto"; command: AutoHandoffSlashCommand };
 
-const OAI_COMPACT_PREFIX = "/oai-compact";
+const COMPACT_PREFIX = "/compact";
 
 function asAutoMode(value: string): AutoHandoffMode | null {
 	if (value === "on" || value === "off") {
@@ -13,10 +13,10 @@ function asAutoMode(value: string): AutoHandoffMode | null {
 	return null;
 }
 
-export function parseOaiCompactSlashCommand(rawText: string): OaiCompactSlashCommand | null {
-	if (!rawText.startsWith(OAI_COMPACT_PREFIX)) return null;
+export function parseCompactSlashCommand(rawText: string): CompactSlashCommand | null {
+	if (!rawText.startsWith(COMPACT_PREFIX)) return null;
 
-	const rest = rawText.slice(OAI_COMPACT_PREFIX.length).trim();
+	const rest = rawText.slice(COMPACT_PREFIX.length).trim();
 	if (!rest) return null;
 
 	const lowered = rest.toLowerCase();

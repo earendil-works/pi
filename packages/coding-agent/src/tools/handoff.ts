@@ -448,10 +448,10 @@ const handoffSchema = Type.Object({
 	token_limit: Type.Optional(Type.Number({ description: "Max tokens for file context (default: 100000)" })),
 });
 
-export const oaiCompactTool: AgentTool<typeof handoffSchema, HandoffDetails> = {
-	name: "oai_compact",
-	label: "oai_compact",
-	description: getToolDescription("oai_compact"),
+export const compactTool: AgentTool<typeof handoffSchema, HandoffDetails> = {
+	name: "compact",
+	label: "compact",
+	description: getToolDescription("compact"),
 	parameters: handoffSchema,
 
 	execute: async (
@@ -579,4 +579,4 @@ Suggestions:
 	},
 };
 
-export const handoffTool = oaiCompactTool;
+export const handoffTool = compactTool;

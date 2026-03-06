@@ -6,8 +6,8 @@ import { describe, expect, it } from "vitest";
 
 const require = createRequire(import.meta.url);
 
-describe("oai compact cli help", () => {
-	it("advertises oai_compact instead of handoff in --help output", () => {
+describe("compact cli help", () => {
+	it("advertises compact instead of handoff in --help output", () => {
 		const tsxPackageJsonPath = require.resolve("tsx/package.json");
 		const tsxCliPath = join(dirname(tsxPackageJsonPath), "dist/cli.mjs");
 		const cliPath = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
@@ -19,7 +19,7 @@ describe("oai compact cli help", () => {
 		});
 
 		expect(result.status).toBe(0);
-		expect(result.stdout).toContain("oai_compact");
+		expect(result.stdout).toContain("compact");
 		expect(result.stdout).not.toContain("handoff");
 	});
 });

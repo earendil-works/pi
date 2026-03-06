@@ -5,9 +5,9 @@ import { describe, expect, it } from "vitest";
 
 import { SessionManager } from "../src/session-manager.js";
 
-describe("oai compact session replay", () => {
+describe("compact session replay", () => {
 	it("replays a context_compaction entry as the active in-thread history baseline", () => {
-		const dir = mkdtempSync(join(tmpdir(), "mu-oai-compact-session-"));
+		const dir = mkdtempSync(join(tmpdir(), "mu-compact-session-"));
 		const sessionFile = join(dir, "session.jsonl");
 		const timestamp = new Date().toISOString();
 

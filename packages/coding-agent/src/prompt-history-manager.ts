@@ -76,11 +76,11 @@ export class PromptHistoryManager {
 
 		if (!trimmed) return;
 
-		// Skip slash commands EXCEPT /oai-compact, /handoff, and /steer (we want Up-arrow to recall these).
-		const isOaiCompactCommand = /^\/oai-compact(?:\s|$)/i.test(trimmed);
+		// Skip slash commands EXCEPT /compact, /handoff, and /steer (we want Up-arrow to recall these).
+		const isCompactCommand = /^\/compact(?:\s|$)/i.test(trimmed);
 		const isHandoffCommand = /^\/handoff(?:\s|$)/i.test(trimmed);
 		const isSteerCommand = /^\/steer(?:\s|$)/i.test(trimmed);
-		if (trimmed.startsWith("/") && !isOaiCompactCommand && !isHandoffCommand && !isSteerCommand) {
+		if (trimmed.startsWith("/") && !isCompactCommand && !isHandoffCommand && !isSteerCommand) {
 			return;
 		}
 

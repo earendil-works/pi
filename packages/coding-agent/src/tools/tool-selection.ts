@@ -11,7 +11,7 @@ export const DEFAULT_TOOL_NAMES: ToolName[] = [
 	"list_threads",
 	"read_thread",
 	"read_image",
-	"oai_compact",
+	"compact",
 ];
 
 export const GPT_DEFAULT_TOOL_NAMES: ToolName[] = [
@@ -20,7 +20,7 @@ export const GPT_DEFAULT_TOOL_NAMES: ToolName[] = [
 	"list_threads",
 	"read_thread",
 	"read_image",
-	"oai_compact",
+	"compact",
 ];
 
 export interface ToolSelection {

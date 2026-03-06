@@ -13,7 +13,7 @@ describe("resolveToolSelection", () => {
 			"list_threads",
 			"read_thread",
 			"read_image",
-			"oai_compact",
+			"compact",
 		]);
 		expect(selection.replacedWithApplyPatch).toBe(true);
 	});
@@ -39,7 +39,7 @@ describe("resolveToolSelection", () => {
 			"list_threads",
 			"read_thread",
 			"read_image",
-			"oai_compact",
+			"compact",
 		]);
 	});
 });
