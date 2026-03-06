@@ -650,12 +650,8 @@ export class TuiRenderer {
 			// Tab queues regular message (by-end) when streaming
 			const text = this.editor.getExpandedText().trim();
 			if (text && this.agent.state.isStreaming) {
-				const sent = autoFenceHtmlInMarkdown(text);
-				this.queuedMessages.push({ raw: text, sent, kind: "by-end" });
-				this.queueMessage(sent);
-				this.updatePendingMessagesDisplay();
-				this.editor.setText("");
-				this.ui.requestRender();
+				this.resetHistoryNavigationState();
+				void this.handleEditorTextSubmission(text, "by-end");
 			}
 		};
 
@@ -722,11 +718,9 @@ export class TuiRenderer {
 
 		// Handle editor submission
 		this.editor.onSubmit = async (text: string) => {
-			let rawText = text.trim();
+			this.resetHistoryNavigationState();
 
-			// Reset history navigation state on any submission
-			this.historyIndex = -1;
-			this.currentDraft = "";
+			const rawText = text.trim();
 
 			if (this.editingQueueIndex !== null) {
 				// text parameter holds content before handleSubmit cleared the editor
@@ -754,287 +748,7 @@ export class TuiRenderer {
 				return;
 			}
 
-			if (!rawText) return;
-
-			// Extensions: input hooks (transform or handled)
-			const extensionInput = await this.extensionManager.applyInputHooks(rawText);
-			if (extensionInput.handled) {
-				this.editor.setText("");
-				this.ui.requestRender();
-				return;
-			}
-			rawText = extensionInput.text.trim();
-			if (!rawText) {
-				this.editor.setText("");
-				this.ui.requestRender();
-				return;
-			}
-
-			// Check for /thinking command
-			if (rawText === "/thinking") {
-				// Show thinking level selector
-				this.showThinkingSelector();
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /model command
-			if (rawText === "/model") {
-				// Show model selector
-				this.showModelSelector();
-				this.editor.setText("");
-				return;
-			}
-
-			const fastModeCommand = parseFastModeSlashCommand(rawText);
-			if (fastModeCommand) {
-				this.handleFastModeSlashCommand(fastModeCommand);
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /export command
-			if (rawText.startsWith("/export")) {
-				this.handleExportCommand(rawText);
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /copy command
-			if (rawText === "/copy") {
-				this.handleCopyCommand();
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /session command
-			if (rawText === "/session") {
-				this.handleSessionCommand();
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /changelog command
-			if (rawText === "/changelog") {
-				this.handleChangelogCommand();
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /reload command
-			if (rawText === "/reload") {
-				this.editor.setText(""); // Clear before async operation
-				await this.handleReloadCommand();
-				return;
-			}
-
-			// Check for /branch command
-			if (rawText === "/branch") {
-				this.showUserMessageSelector();
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /tree command
-			if (rawText === "/tree") {
-				this.showTreeSelector();
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /compact command
-			if (rawText.startsWith("/compact")) {
-				this.promptHistory.savePrompt(rawText);
-
-				const parsedCompactCommand = parseCompactSlashCommand(rawText);
-				if (!parsedCompactCommand) {
-					this.showError(
-						"Usage: /compact [--summary|--inject] <goal>\n" +
-							"Example: /compact fix the login page tests\n" +
-							"Example (file-context checkpoint): /compact --inject fix the login page tests\n" +
-							"Auto mode: /compact on | off | toggle | status",
-					);
-					return;
-				}
-
-				this.editor.setText("");
-				if (parsedCompactCommand.kind === "auto") {
-					this.handleAutoHandoffSlashCommand(parsedCompactCommand.command);
-					return;
-				}
-
-				await this.handleHandoffCommand(parsedCompactCommand.goal, parsedCompactCommand.mode);
-				return;
-			}
-
-			const unsubscribeCommand = parseUnsubscribeCommand(rawText);
-			if (unsubscribeCommand) {
-				this.handleUnsubscribeCommand(unsubscribeCommand.sessionId);
-				this.editor.setText("");
-				return;
-			}
-
-			if (/^\/unsubscribe(?:\s|$)/i.test(rawText)) {
-				this.showUnsubscribeSelector();
-				this.editor.setText("");
-				return;
-			}
-
-			const subscribeCommand = parseSubscribeCommand(rawText);
-			if (subscribeCommand) {
-				this.handleSubscribeCommand(subscribeCommand.sessionId);
-				this.editor.setText("");
-				return;
-			}
-
-			if (/^\/subscribe(?:\s|$)/i.test(rawText)) {
-				this.showSubscribeSelector();
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /login command
-			if (rawText === "/login") {
-				this.showOAuthSelector("login");
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /logout command
-			if (rawText === "/logout") {
-				this.showOAuthSelector("logout");
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /todos command
-			if (rawText === "/todos") {
-				this.showTodosOverlay();
-				this.editor.setText("");
-				return;
-			}
-
-			const noteCommand = rawText.match(/^\/note(?:\s+([\s\S]*))?$/);
-			if (noteCommand) {
-				const quickNoteText = noteCommand[1]?.trim() ?? "";
-				this.editor.setText("");
-				if (quickNoteText) {
-					this.appendWorkspaceNote(quickNoteText);
-				} else {
-					this.showWorkspaceNoteOverlay();
-				}
-				return;
-			}
-
-			// Check for /queue command
-			if (rawText === "/queue") {
-				this.showQueueModeSelector();
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /theme command
-			if (rawText === "/theme") {
-				this.showThemeSelector();
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /clear or /new command
-			if (rawText === "/clear" || rawText === "/new") {
-				this.handleClearCommand();
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /undo command
-			if (rawText === "/undo") {
-				this.handleUndoCommand();
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /notify command
-			if (rawText === "/notify") {
-				this.handleNotifyCommand();
-				this.editor.setText("");
-				return;
-			}
-
-			const usageCommand = parseUsageSlashCommand(rawText);
-			if (usageCommand) {
-				this.handleUsageSlashCommand(usageCommand);
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /debug command
-			if (rawText === "/debug") {
-				this.handleDebugCommand();
-				this.editor.setText("");
-				return;
-			}
-
-			// Extension slash commands
-			if (await this.tryHandleExtensionCommand(rawText)) {
-				this.editor.setText("");
-				return;
-			}
-
-			// Note: /steer command removed - Enter now automatically steers when streaming
-			const sentText = autoFenceHtmlInMarkdown(rawText);
-
-			// Normal message submission - validate model and API key first
-			const currentModel = this.agent.state.model;
-			if (!currentModel) {
-				this.showError(
-					"No model selected.\n\n" +
-						"Set an API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)\n" +
-						"or create ~/.mu/agent/models.json\n\n" +
-						"Then use /model to select a model.",
-				);
-				return;
-			}
-
-			// Validate API key (async)
-			const apiKey = await getApiKeyForModel(currentModel);
-			if (!apiKey) {
-				this.showError(
-					`No API key found for ${currentModel.provider}.\n\n` +
-						`Set the appropriate environment variable or update ~/.mu/agent/models.json`,
-				);
-				this.editor.setText(rawText);
-				return;
-			}
-
-			// Check if agent is currently streaming
-			if (this.agent.state.isStreaming) {
-				// Enter queues as steer message (next) when streaming
-				this.queuedMessages.push({
-					raw: rawText,
-					sent: sentText,
-					kind: "next",
-				});
-
-				// Queue in agent (simple text, no attachments for queued messages)
-				this.queueSteerMessage(sentText);
-
-				// Update pending messages display
-				this.updatePendingMessagesDisplay();
-
-				// Clear editor
-				this.editor.setText("");
-				this.ui.requestRender();
-				return;
-			}
-
-			// All good, proceed with submission
-			// Save to prompt history (savePrompt filters out slash commands and empty)
-			this.promptHistory.savePrompt(rawText);
-
-			if (this.onInputCallback) {
-				this.onInputCallback(sentText);
-			}
+			await this.handleEditorTextSubmission(rawText, "next");
 		};
 
 		// Start the UI
@@ -3134,6 +2848,295 @@ export class TuiRenderer {
 		}
 
 		this.ui.requestRender();
+	}
+
+	private resetHistoryNavigationState(): void {
+		this.historyIndex = -1;
+		this.currentDraft = "";
+	}
+
+	private async handleEditorTextSubmission(text: string, streamingQueueKind: "by-end" | "next"): Promise<void> {
+		let rawText = text.trim();
+		if (!rawText) return;
+
+		// Extensions: input hooks (transform or handled)
+		const extensionInput = await this.extensionManager.applyInputHooks(rawText);
+		if (extensionInput.handled) {
+			this.editor.setText("");
+			this.ui.requestRender();
+			return;
+		}
+		rawText = extensionInput.text.trim();
+		if (!rawText) {
+			this.editor.setText("");
+			this.ui.requestRender();
+			return;
+		}
+
+		// Check for /thinking command
+		if (rawText === "/thinking") {
+			// Show thinking level selector
+			this.showThinkingSelector();
+			this.editor.setText("");
+			return;
+		}
+
+		// Check for /model command
+		if (rawText === "/model") {
+			// Show model selector
+			this.showModelSelector();
+			this.editor.setText("");
+			return;
+		}
+
+		const fastModeCommand = parseFastModeSlashCommand(rawText);
+		if (fastModeCommand) {
+			this.handleFastModeSlashCommand(fastModeCommand);
+			this.editor.setText("");
+			return;
+		}
+
+		// Check for /export command
+		if (rawText.startsWith("/export")) {
+			this.handleExportCommand(rawText);
+			this.editor.setText("");
+			return;
+		}
+
+		// Check for /copy command
+		if (rawText === "/copy") {
+			this.handleCopyCommand();
+			this.editor.setText("");
+			return;
+		}
+
+		// Check for /session command
+		if (rawText === "/session") {
+			this.handleSessionCommand();
+			this.editor.setText("");
+			return;
+		}
+
+		// Check for /changelog command
+		if (rawText === "/changelog") {
+			this.handleChangelogCommand();
+			this.editor.setText("");
+			return;
+		}
+
+		// Check for /reload command
+		if (rawText === "/reload") {
+			this.editor.setText(""); // Clear before async operation
+			await this.handleReloadCommand();
+			return;
+		}
+
+		// Check for /branch command
+		if (rawText === "/branch") {
+			this.showUserMessageSelector();
+			this.editor.setText("");
+			return;
+		}
+
+		// Check for /tree command
+		if (rawText === "/tree") {
+			this.showTreeSelector();
+			this.editor.setText("");
+			return;
+		}
+
+		// Check for /compact command
+		if (rawText.startsWith("/compact")) {
+			this.promptHistory.savePrompt(rawText);
+
+			const parsedCompactCommand = parseCompactSlashCommand(rawText);
+			if (!parsedCompactCommand) {
+				this.showError(
+					"Usage: /compact [--summary|--inject] <goal>\n" +
+						"Example: /compact fix the login page tests\n" +
+						"Example (file-context checkpoint): /compact --inject fix the login page tests\n" +
+						"Auto mode: /compact on | off | toggle | status",
+				);
+				return;
+			}
+
+			this.editor.setText("");
+			if (parsedCompactCommand.kind === "auto") {
+				this.handleAutoHandoffSlashCommand(parsedCompactCommand.command);
+				return;
+			}
+
+			await this.handleHandoffCommand(parsedCompactCommand.goal, parsedCompactCommand.mode);
+			return;
+		}
+
+		const unsubscribeCommand = parseUnsubscribeCommand(rawText);
+		if (unsubscribeCommand) {
+			this.handleUnsubscribeCommand(unsubscribeCommand.sessionId);
+			this.editor.setText("");
+			return;
+		}
+
+		if (/^\/unsubscribe(?:\s|$)/i.test(rawText)) {
+			this.showUnsubscribeSelector();
+			this.editor.setText("");
+			return;
+		}
+
+		const subscribeCommand = parseSubscribeCommand(rawText);
+		if (subscribeCommand) {
+			this.handleSubscribeCommand(subscribeCommand.sessionId);
+			this.editor.setText("");
+			return;
+		}
+
+		if (/^\/subscribe(?:\s|$)/i.test(rawText)) {
+			this.showSubscribeSelector();
+			this.editor.setText("");
+			return;
+		}
+
+		// Check for /login command
+		if (rawText === "/login") {
+			this.showOAuthSelector("login");
+			this.editor.setText("");
+			return;
+		}
+
+		// Check for /logout command
+		if (rawText === "/logout") {
+			this.showOAuthSelector("logout");
+			this.editor.setText("");
+			return;
+		}
+
+		// Check for /todos command
+		if (rawText === "/todos") {
+			this.showTodosOverlay();
+			this.editor.setText("");
+			return;
+		}
+
+		const noteCommand = rawText.match(/^\/note(?:\s+([\s\S]*))?$/);
+		if (noteCommand) {
+			const quickNoteText = noteCommand[1]?.trim() ?? "";
+			this.editor.setText("");
+			if (quickNoteText) {
+				this.appendWorkspaceNote(quickNoteText);
+			} else {
+				this.showWorkspaceNoteOverlay();
+			}
+			return;
+		}
+
+		// Check for /queue command
+		if (rawText === "/queue") {
+			this.showQueueModeSelector();
+			this.editor.setText("");
+			return;
+		}
+
+		// Check for /theme command
+		if (rawText === "/theme") {
+			this.showThemeSelector();
+			this.editor.setText("");
+			return;
+		}
+
+		// Check for /clear or /new command
+		if (rawText === "/clear" || rawText === "/new") {
+			this.handleClearCommand();
+			this.editor.setText("");
+			return;
+		}
+
+		// Check for /undo command
+		if (rawText === "/undo") {
+			this.handleUndoCommand();
+			this.editor.setText("");
+			return;
+		}
+
+		// Check for /notify command
+		if (rawText === "/notify") {
+			this.handleNotifyCommand();
+			this.editor.setText("");
+			return;
+		}
+
+		const usageCommand = parseUsageSlashCommand(rawText);
+		if (usageCommand) {
+			this.handleUsageSlashCommand(usageCommand);
+			this.editor.setText("");
+			return;
+		}
+
+		// Check for /debug command
+		if (rawText === "/debug") {
+			this.handleDebugCommand();
+			this.editor.setText("");
+			return;
+		}
+
+		// Extension slash commands
+		if (await this.tryHandleExtensionCommand(rawText)) {
+			this.editor.setText("");
+			return;
+		}
+
+		// Note: /steer command removed - Enter now automatically steers when streaming
+		const sentText = autoFenceHtmlInMarkdown(rawText);
+
+		// Normal message submission - validate model and API key first
+		const currentModel = this.agent.state.model;
+		if (!currentModel) {
+			this.showError(
+				"No model selected.\n\n" +
+					"Set an API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)\n" +
+					"or create ~/.mu/agent/models.json\n\n" +
+					"Then use /model to select a model.",
+			);
+			return;
+		}
+
+		// Validate API key (async)
+		const apiKey = await getApiKeyForModel(currentModel);
+		if (!apiKey) {
+			this.showError(
+				`No API key found for ${currentModel.provider}.\n\n` +
+					`Set the appropriate environment variable or update ~/.mu/agent/models.json`,
+			);
+			this.editor.setText(rawText);
+			return;
+		}
+
+		// Check if agent is currently streaming
+		if (this.agent.state.isStreaming) {
+			this.queuedMessages.push({
+				raw: rawText,
+				sent: sentText,
+				kind: streamingQueueKind,
+			});
+
+			if (streamingQueueKind === "next") {
+				this.queueSteerMessage(sentText);
+			} else {
+				this.queueMessage(sentText);
+			}
+
+			this.updatePendingMessagesDisplay();
+			this.editor.setText("");
+			this.ui.requestRender();
+			return;
+		}
+
+		// All good, proceed with submission
+		// Save to prompt history (savePrompt filters out slash commands and empty)
+		this.promptHistory.savePrompt(rawText);
+
+		if (this.onInputCallback) {
+			this.onInputCallback(sentText);
+		}
 	}
 
 	private async tryHandleExtensionCommand(text: string): Promise<boolean> {

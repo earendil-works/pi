@@ -28,9 +28,9 @@ describe("Handoff Nudge", () => {
 			expect(getHandoffNudgeReminder(0.92)).toContain("92%");
 		});
 
-		it("mentions Handoff tool", () => {
+		it("mentions compact", () => {
 			const reminder = getHandoffNudgeReminder(0.85);
-			expect(reminder).toContain("handoff");
+			expect(reminder).toContain("compact");
 		});
 
 		it("mentions 95% auto-handoff", () => {
