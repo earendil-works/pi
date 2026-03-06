@@ -401,7 +401,7 @@ export class TuiRenderer {
 
 		const handoffCommand: SlashCommand = {
 			name: "handoff",
-			description: "Hand off to a new focused thread with a goal",
+			description: "Hand off to a new focused thread with selected file context",
 		};
 
 		const subscribeCommand: SlashCommand = {
@@ -861,9 +861,9 @@ export class TuiRenderer {
 				const parsed = parseHandoffSlashCommand(rawText);
 				if (!parsed) {
 					this.showError(
-						"Usage: /handoff [--inject] <goal>\n" +
+						"Usage: /handoff [--summary] <goal>\n" +
 							"Example: /handoff implement the login page\n" +
-							"Example (inject files): /handoff --inject implement the login page",
+							"Example (summary draft): /handoff --summary implement the login page",
 					);
 					return;
 				}
@@ -4092,7 +4092,11 @@ export class TuiRenderer {
 				this.loadingAnimation.setMessage("Auto-handoff: preparing handoff... (esc to cancel)");
 			}
 
-			const details = await this.buildHandoffSummaryDetails(goal, this.handoffAbortController.signal);
+			const files = await this.selectHandoffFiles(goal, this.handoffAbortController.signal);
+			if (this.loadingAnimation) {
+				this.loadingAnimation.setMessage("Auto-handoff: preparing handoff... (esc to cancel)");
+			}
+			const details = await this.buildHandoffDetails(goal, files, this.handoffAbortController.signal);
 			const finalDraft = parentId
 				? this.insertParentThreadReference(details.formattedMessage, parentId)
 				: details.formattedMessage;

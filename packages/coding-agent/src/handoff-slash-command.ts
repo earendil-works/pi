@@ -8,6 +8,15 @@ export function parseHandoffSlashCommand(rawText: string): HandoffSlashCommand |
 	const rest = rawText.slice(HANDOFF_PREFIX.length).trim();
 	if (!rest) return null;
 
+	const summaryPrefixes = ["--summary", "summary"];
+	for (const prefix of summaryPrefixes) {
+		if (rest === prefix) return null;
+		if (rest.startsWith(`${prefix} `)) {
+			const goal = rest.slice(prefix.length).trim();
+			return goal ? { mode: "summary", goal } : null;
+		}
+	}
+
 	const injectPrefixes = ["--inject", "inject"];
 	for (const prefix of injectPrefixes) {
 		if (rest === prefix) return null;
@@ -17,5 +26,5 @@ export function parseHandoffSlashCommand(rawText: string): HandoffSlashCommand |
 		}
 	}
 
-	return { mode: "summary", goal: rest };
+	return { mode: "inject", goal: rest };
 }
