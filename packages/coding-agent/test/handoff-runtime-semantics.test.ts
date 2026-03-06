@@ -1,9 +1,10 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 describe("handoff runtime semantics", () => {
 	it("routes auto-handoff through file selection + injected handoff details", () => {
-		const source = readFileSync("packages/coding-agent/src/tui/tui-renderer.ts", "utf8");
+		const source = readFileSync(fileURLToPath(new URL("../src/tui/tui-renderer.ts", import.meta.url)), "utf8");
 
 		expect(source).toMatch(
 			/const files = await this\.selectHandoffFiles\(goal, this\.handoffAbortController\.signal\);/,
