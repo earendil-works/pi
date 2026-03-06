@@ -27,13 +27,12 @@ import {
 	type AutoHandoffMode,
 	type AutoHandoffSlashCommand,
 	applyAutoHandoffCommand,
-	parseAutoHandoffSlashCommand,
 	shouldEnableHandoffNudge,
 	shouldTriggerEmergencyAutoHandoff,
 } from "../auto-handoff.js";
 import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
-import { scheduleExplicitHandoff, submitExplicitHandoff } from "../explicit-handoff.js";
+import { scheduleExplicitHandoff } from "../explicit-handoff.js";
 import { exportSessionToHtml } from "../export-html.js";
 import type { ExtensionLoader } from "../extensions/loader.js";
 import type { ExtensionManager } from "../extensions/manager.js";
@@ -48,7 +47,6 @@ import { parseHandoffFileSelections } from "../handoff-file-selection.js";
 import { extractHandoffFileTracking } from "../handoff-file-tracking.js";
 import { normalizeAutoHandoffGoal } from "../handoff-goal.js";
 import { formatMessagesForHandoffSelection } from "../handoff-selection-transcript.js";
-import { parseHandoffSlashCommand } from "../handoff-slash-command.js";
 import {
 	buildHandoffDraftFromModelText,
 	buildHandoffSummaryUserText,
@@ -57,6 +55,7 @@ import {
 import { findModel, getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
 import { WorkspaceNoteStore } from "../notes/workspace-note-store.js";
 import { playNotificationSound, sendNotification } from "../notification.js";
+import { parseOaiCompactSlashCommand } from "../oai-compact-command.js";
 import {
 	getActiveOAuthAccount,
 	listOAuthAccounts,
@@ -95,7 +94,7 @@ import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from
 import { getTodoRootDirForCwd } from "../todos/todo-path.js";
 import { TodoStore } from "../todos/todo-store.js";
 import { bashTool } from "../tools/bash.js";
-import { estimateTokens, formatParentThreadReference, type HandoffDetails, handoffTool } from "../tools/handoff.js";
+import { estimateTokens, type HandoffDetails, handoffTool } from "../tools/handoff.js";
 import type { ToolSelection } from "../tools/tool-selection.js";
 import { undoFileOperations } from "../undo/undo-file-operations.js";
 import {
@@ -112,6 +111,7 @@ import { formatElapsed } from "../utils/format-elapsed.js";
 import { addToLimitedSet } from "../utils/limited-set.js";
 import { readAppendedFileChunkSync } from "../utils/read-appended-file-chunk.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
+import { ComposerPanelComponent } from "./composer-panel.js";
 import { CustomEditor } from "./custom-editor.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { FooterComponent } from "./footer.js";
@@ -124,18 +124,14 @@ import { formatQueuedMessagePreview } from "./queued-message-preview.js";
 import { StreamingAssistantMessageComponent } from "./streaming-assistant-message.js";
 import { SubscriptionSelectorComponent } from "./subscription-selector.js";
 import { ThemeSelectorComponent } from "./theme-selector.js";
-import {
-	getEffectiveThinkingLevel,
-	getNextThinkingLevel,
-	getPreviousThinkingLevel,
-	getThinkingLevelItems,
-} from "./thinking-levels.js";
+import { getEffectiveThinkingLevel, getNextThinkingLevel, getThinkingLevelItems } from "./thinking-levels.js";
 import { ThinkingSelectorComponent } from "./thinking-selector.js";
 import { TodoOverlayComponent } from "./todo-overlay.js";
 import { ToolExecutionComponent } from "./tool-execution.js";
 import { TreeSelectorComponent } from "./tree-selector.js";
 import { UserMessageComponent } from "./user-message.js";
 import { UserMessageSelectorComponent } from "./user-message-selector.js";
+import { WelcomePanelComponent } from "./welcome-panel.js";
 import { WorkspaceNoteOverlayComponent } from "./workspace-note-overlay.js";
 
 function hashContent(content: string): string {
@@ -180,6 +176,7 @@ export class TuiRenderer {
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
 	private editor: CustomEditor;
+	private composerPanel: ComposerPanelComponent;
 	private editorContainer: Container; // Container to swap between editor and selector
 	private footer: FooterComponent;
 	private agent: Agent;
@@ -342,8 +339,9 @@ export class TuiRenderer {
 		this.pendingMessagesContainer = new RenderCacheContainer();
 		this.statusContainer = new RenderCacheContainer();
 		this.editor = new CustomEditor(getEditorTheme());
+		this.composerPanel = new ComposerPanelComponent(this.editor);
 		this.editorContainer = new Container(); // Container to hold editor or selector
-		this.editorContainer.addChild(this.editor); // Start with editor
+		this.editorContainer.addChild(this.composerPanel); // Start with editor panel
 		this.footer = new FooterComponent(agent.state);
 		this.footer.setUsageFooterMode(this.usageFooterMode);
 
@@ -399,9 +397,9 @@ export class TuiRenderer {
 			description: "Navigate session tree (switch branches)",
 		};
 
-		const handoffCommand: SlashCommand = {
-			name: "handoff",
-			description: "Hand off to a new focused thread with selected file context",
+		const oaiCompactCommand: SlashCommand = {
+			name: "oai-compact",
+			description: "Compact the current thread; use /oai-compact on|off to toggle auto mode",
 		};
 
 		const subscribeCommand: SlashCommand = {
@@ -466,11 +464,6 @@ export class TuiRenderer {
 			description: "Toggle completion notifications (sound + native alerts on macOS)",
 		};
 
-		const autoHandoffCommand: SlashCommand = {
-			name: "autohandoff",
-			description: "Toggle auto-handoff when context is high",
-		};
-
 		const usageCommand: SlashCommand = {
 			name: "usage",
 			description: "Show or toggle usage limits in the footer",
@@ -482,14 +475,13 @@ export class TuiRenderer {
 		};
 
 		this.builtInSlashCommands = [
-			autoHandoffCommand,
 			branchCommand,
 			changelogCommand,
 			clearCommand,
 			copyCommand,
 			exportCommand,
 			fastCommand,
-			handoffCommand,
+			oaiCompactCommand,
 			subscribeCommand,
 			unsubscribeCommand,
 			loginCommand,
@@ -545,49 +537,9 @@ export class TuiRenderer {
 			this.hasTitle = true;
 		}
 
-		// Add header with logo and instructions
-		const logo = theme.bold(theme.fg("accent", "mu")) + theme.fg("dim", ` v${this.version}`);
-		const instructions =
-			theme.fg("dim", "esc") +
-			theme.fg("muted", " to interrupt") +
-			"\n" +
-			theme.fg("dim", "ctrl+c") +
-			theme.fg("muted", " to clear") +
-			"\n" +
-			theme.fg("dim", "ctrl+c twice") +
-			theme.fg("muted", " to exit") +
-			"\n" +
-			theme.fg("dim", "ctrl+k") +
-			theme.fg("muted", " to delete line") +
-			"\n" +
-			theme.fg("dim", "shift+tab") +
-			theme.fg("muted", " to cycle thinking") +
-			"\n" +
-			theme.fg("dim", "tab") +
-			theme.fg("muted", " to queue when streaming") +
-			"\n" +
-			theme.fg("dim", "enter") +
-			theme.fg("muted", " to steer when streaming") +
-			"\n" +
-			theme.fg("dim", "ctrl+p") +
-			theme.fg("muted", " to cycle models") +
-			"\n" +
-			theme.fg("dim", "ctrl+o") +
-			theme.fg("muted", " to expand tools") +
-			"\n" +
-			theme.fg("dim", "opt+up/down") +
-			theme.fg("muted", " to edit queue") +
-			"\n" +
-			theme.fg("dim", "/") +
-			theme.fg("muted", " for commands") +
-			"\n" +
-			theme.fg("dim", "drop files") +
-			theme.fg("muted", " to attach");
-		const header = new Text(logo + "\n" + instructions, 1, 0);
-
 		// Setup UI layout
 		this.ui.addChild(new Spacer(1));
-		this.ui.addChild(header);
+		this.ui.addChild(new WelcomePanelComponent(this.version));
 		this.ui.addChild(new Spacer(1));
 
 		// Add new version notification if available
@@ -622,6 +574,7 @@ export class TuiRenderer {
 		this.ui.addChild(new Spacer(1));
 		this.ui.addChild(this.bashModeIndicatorContainer);
 		this.ui.addChild(this.editorContainer);
+		this.ui.addChild(new Spacer(1));
 		this.ui.addChild(this.footer);
 		this.ui.setFocus(this.editor);
 
@@ -853,22 +806,28 @@ export class TuiRenderer {
 				return;
 			}
 
-			// Check for /handoff command
-			if (rawText.startsWith("/handoff")) {
-				// Persist the handoff command so the user can recall it via Up-arrow.
+			// Check for /oai-compact command
+			if (rawText.startsWith("/oai-compact")) {
 				this.promptHistory.savePrompt(rawText);
 
-				const parsed = parseHandoffSlashCommand(rawText);
-				if (!parsed) {
+				const parsedCompactCommand = parseOaiCompactSlashCommand(rawText);
+				if (!parsedCompactCommand) {
 					this.showError(
-						"Usage: /handoff [--summary] <goal>\n" +
-							"Example: /handoff implement the login page\n" +
-							"Example (summary draft): /handoff --summary implement the login page",
+						"Usage: /oai-compact [--summary|--inject] <goal>\n" +
+							"Example: /oai-compact fix the login page tests\n" +
+							"Example (file-context checkpoint): /oai-compact --inject fix the login page tests\n" +
+							"Auto mode: /oai-compact on | off | toggle | status",
 					);
 					return;
 				}
-				this.editor.setText(""); // Clear before async operation
-				await this.handleHandoffCommand(parsed.goal, parsed.mode);
+
+				this.editor.setText("");
+				if (parsedCompactCommand.kind === "auto") {
+					this.handleAutoHandoffSlashCommand(parsedCompactCommand.command);
+					return;
+				}
+
+				await this.handleHandoffCommand(parsedCompactCommand.goal, parsedCompactCommand.mode);
 				return;
 			}
 
@@ -962,14 +921,6 @@ export class TuiRenderer {
 			// Check for /notify command
 			if (rawText === "/notify") {
 				this.handleNotifyCommand();
-				this.editor.setText("");
-				return;
-			}
-
-			// Check for /autohandoff command
-			const autoHandoffCommand = parseAutoHandoffSlashCommand(rawText);
-			if (autoHandoffCommand) {
-				this.handleAutoHandoffSlashCommand(autoHandoffCommand);
 				this.editor.setText("");
 				return;
 			}
@@ -1337,7 +1288,7 @@ export class TuiRenderer {
 										theme.fg(
 											"warning",
 											"Context is very high; aborted tool execution to prevent overflow.\n" +
-												"Auto-handoff is OFF. Use /handoff <goal> or /autohandoff on.",
+												"Automatic compaction is OFF. Use /oai-compact <goal> or /oai-compact on.",
 										),
 										1,
 										0,
@@ -1401,9 +1352,9 @@ export class TuiRenderer {
 					this.ui.requestRender();
 				}
 
-				// Detect explicit Handoff tool completion - queue for execution after agent_end
+				// Detect explicit oai_compact tool completion - queue for execution after agent_end
 				if (
-					event.toolName === "handoff" &&
+					event.toolName === "oai_compact" &&
 					!event.isError &&
 					typeof event.result !== "string" &&
 					event.result?.details?.handoffType === "explicit"
@@ -1474,7 +1425,7 @@ export class TuiRenderer {
 				this.footer.updateState(state);
 				this.syncFooterUsageFromMessages(state.messages);
 
-				// Execute pending explicit handoff (from Handoff tool)
+				// Execute pending explicit compaction (from oai_compact tool)
 				if (this.pendingExplicitHandoff) {
 					const handoff = this.pendingExplicitHandoff;
 					this.pendingExplicitHandoff = null;
@@ -1484,7 +1435,7 @@ export class TuiRenderer {
 							void this.executeExplicitHandoff(handoff);
 						},
 					});
-					// Skip auto-titling and auto-handoff since we're switching sessions
+					// Skip auto-titling while the compaction transition is being applied.
 					break;
 				}
 
@@ -1700,6 +1651,12 @@ export class TuiRenderer {
 		this.updateToolResultTransformer();
 
 		this.ui.requestRender();
+	}
+
+	private showComposerPanel(): void {
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.composerPanel);
+		this.ui.setFocus(this.editor);
 	}
 
 	async getUserInput(): Promise<string> {
@@ -1923,14 +1880,8 @@ export class TuiRenderer {
 		this.ui.requestRender();
 	}
 
-	private updateBashModeIndicator(enabled: boolean): void {
+	private updateBashModeIndicator(_enabled: boolean): void {
 		this.bashModeIndicatorContainer.clear();
-		if (enabled) {
-			const indicatorText =
-				theme.fg("warning", theme.bold("$ Shell Mode")) +
-				theme.fg("muted", " — type command and press Enter, Esc to cancel");
-			this.bashModeIndicatorContainer.addChild(new Text(indicatorText, 1, 0));
-		}
 	}
 
 	private updateEditorBorderColor(): void {
@@ -1970,35 +1921,6 @@ export class TuiRenderer {
 		// Show brief notification
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(theme.fg("dim", `Thinking level: ${nextLevel}`), 1, 0));
-		this.ui.requestRender();
-	}
-
-	private toggleThinkingLevelReverse(): void {
-		// Only toggle if model supports thinking
-		if (!this.agent.state.model?.reasoning) {
-			this.chatContainer.addChild(new Spacer(1));
-			this.chatContainer.addChild(new Text(theme.fg("dim", "Current model does not support thinking"), 1, 0));
-			this.ui.requestRender();
-			return;
-		}
-
-		const currentLevel = this.agent.state.thinkingLevel || "off";
-		const xhighSupported = this.agent.state.model ? supportsXhigh(this.agent.state.model) : false;
-		const previousLevel = getPreviousThinkingLevel(currentLevel, xhighSupported);
-
-		// Apply the new thinking level
-		this.agent.setThinkingLevel(previousLevel);
-
-		// Save thinking level change to session and settings
-		this.sessionManager.saveThinkingLevelChange(previousLevel);
-		this.settingsManager.setDefaultThinkingLevel(previousLevel);
-
-		// Update border color
-		this.updateEditorBorderColor();
-
-		// Show brief notification
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new Text(theme.fg("dim", `Thinking level: ${previousLevel}`), 1, 0));
 		this.ui.requestRender();
 	}
 
@@ -2312,10 +2234,8 @@ export class TuiRenderer {
 
 	private hideThinkingSelector(): void {
 		// Replace selector with editor in the container
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
+		this.showComposerPanel();
 		this.thinkingSelector = null;
-		this.ui.setFocus(this.editor);
 	}
 
 	private showQueueModeSelector(): void {
@@ -2354,10 +2274,8 @@ export class TuiRenderer {
 
 	private hideQueueModeSelector(): void {
 		// Replace selector with editor in the container
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
+		this.showComposerPanel();
 		this.queueModeSelector = null;
-		this.ui.setFocus(this.editor);
 	}
 
 	private handleFastModeSlashCommand(command: FastModeSlashCommand): void {
@@ -2476,10 +2394,8 @@ export class TuiRenderer {
 	}
 
 	private hideTodosOverlay(): void {
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
+		this.showComposerPanel();
 		this.todoOverlay = null;
-		this.ui.setFocus(this.editor);
 	}
 
 	private showThemeSelector(): void {
@@ -2542,10 +2458,8 @@ export class TuiRenderer {
 
 	private hideThemeSelector(): void {
 		// Replace selector with editor in the container
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
+		this.showComposerPanel();
 		this.themeSelector = null;
-		this.ui.setFocus(this.editor);
 	}
 
 	private showModelSelector(): void {
@@ -2598,10 +2512,8 @@ export class TuiRenderer {
 
 	private hideModelSelector(): void {
 		// Replace selector with editor in the container
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
+		this.showComposerPanel();
 		this.modelSelector = null;
-		this.ui.setFocus(this.editor);
 	}
 
 	private showUserMessageSelector(): void {
@@ -2682,10 +2594,8 @@ export class TuiRenderer {
 
 	private hideUserMessageSelector(): void {
 		// Replace selector with editor in the container
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
+		this.showComposerPanel();
 		this.userMessageSelector = null;
-		this.ui.setFocus(this.editor);
 	}
 
 	private showTreeSelector(): void {
@@ -2759,10 +2669,8 @@ export class TuiRenderer {
 	}
 
 	private hideTreeSelector(): void {
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
+		this.showComposerPanel();
 		this.treeSelector = null;
-		this.ui.setFocus(this.editor);
 	}
 
 	private showSubscribeSelector(): void {
@@ -2863,10 +2771,8 @@ export class TuiRenderer {
 	}
 
 	private hideSubscriptionSelector(): void {
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
+		this.showComposerPanel();
 		this.subscriptionSelector = null;
-		this.ui.setFocus(this.editor);
 	}
 
 	private async showOAuthSelector(mode: "login" | "logout"): Promise<void> {
@@ -2933,9 +2839,7 @@ export class TuiRenderer {
 									codeInput.onSubmit = () => {
 										const code = codeInput.getValue();
 										// Restore editor
-										this.editorContainer.clear();
-										this.editorContainer.addChild(this.editor);
-										this.ui.setFocus(this.editor);
+										this.showComposerPanel();
 										resolve(code);
 									};
 
@@ -3075,10 +2979,8 @@ export class TuiRenderer {
 
 	private hideOAuthSelector(): void {
 		// Replace selector with editor in the container
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
+		this.showComposerPanel();
 		this.oauthSelector = null;
-		this.ui.setFocus(this.editor);
 	}
 
 	private showOAuthAccountSelector(
@@ -3109,10 +3011,8 @@ export class TuiRenderer {
 	}
 
 	private hideOAuthAccountSelector(): void {
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
+		this.showComposerPanel();
 		this.oauthAccountSelector = null;
-		this.ui.setFocus(this.editor);
 	}
 
 	private handleExportCommand(text: string): void {
@@ -3415,13 +3315,13 @@ export class TuiRenderer {
 		const messages = this.agent.state.messages;
 
 		if (messages.length === 0) {
-			this.showError("Nothing to hand off (no messages yet)");
+			this.showError("Nothing to compact (no messages yet)");
 			return;
 		}
 
 		// Prevent execution if agent is busy
 		if (this.agent.state.isStreaming) {
-			this.showError("Cannot handoff while agent is busy");
+			this.showError("Cannot compact while agent is busy");
 			return;
 		}
 
@@ -3448,8 +3348,8 @@ export class TuiRenderer {
 			(spinner) => theme.fg("accent", spinner),
 			(text) => theme.fg("muted", text),
 			mode === "inject"
-				? "Selecting handoff files... (esc to cancel)"
-				: "Preparing handoff summary... (esc to cancel)",
+				? "Selecting compact context files... (esc to cancel)"
+				: "Preparing compact summary... (esc to cancel)",
 		);
 		this.statusContainer.addChild(this.loadingAnimation);
 		this.ui.requestRender();
@@ -3464,13 +3364,13 @@ export class TuiRenderer {
 					? await (async () => {
 							const files = await this.selectHandoffFiles(goal, signal);
 							if (this.loadingAnimation) {
-								this.loadingAnimation.setMessage("Preparing handoff... (esc to cancel)");
+								this.loadingAnimation.setMessage("Preparing compact checkpoint... (esc to cancel)");
 							}
 							return await this.buildHandoffDetails(goal, files, signal);
 						})()
 					: await (async () => {
 							if (this.loadingAnimation) {
-								this.loadingAnimation.setMessage("Summarizing for handoff... (esc to cancel)");
+								this.loadingAnimation.setMessage("Summarizing for compaction... (esc to cancel)");
 							}
 							return await this.buildHandoffSummaryDetails(goal, signal);
 						})();
@@ -3487,9 +3387,9 @@ export class TuiRenderer {
 		} catch (err: unknown) {
 			const error = err as Error;
 			if (error.name === "AbortError") {
-				this.showWarning("Handoff cancelled");
+				this.showWarning("Compaction cancelled");
 			} else {
-				this.showError(`Handoff failed: ${error.message}`);
+				this.showError(`Compaction failed: ${error.message}`);
 			}
 		} finally {
 			if (this.loadingAnimation) {
@@ -3697,14 +3597,57 @@ export class TuiRenderer {
 		return formatMessagesForHandoffSelection(messages);
 	}
 
-	private insertParentThreadReference(formattedMessage: string, parentSessionId: string): string {
-		const headerEnd = formattedMessage.indexOf("\n\n");
-		const parentBlock = formatParentThreadReference(parentSessionId);
-		if (headerEnd === -1) {
-			return `${formattedMessage}\n\n${parentBlock}`;
+	private buildCompactionSummaryText(formattedMessage: string): string {
+		const summary = formattedMessage
+			.replace(/^# Handoff:/m, "# Compact checkpoint:")
+			.replace(
+				"You have been handed context from a previous session. The files above contain the relevant code. Begin working on the goal.",
+				"Use this compacted checkpoint as the active context for continuing the task.",
+			);
+
+		if (summary.includes("Use this compacted checkpoint as the active context for continuing the task.")) {
+			return summary;
 		}
-		const insertAt = headerEnd + 2;
-		return formattedMessage.slice(0, insertAt) + parentBlock + formattedMessage.slice(insertAt);
+
+		return `${summary}\n\nUse this compacted checkpoint as the active context for continuing the task.`;
+	}
+
+	private buildContextCompactionMessages(details: HandoffDetails): Message[] {
+		const timestamp = Date.now();
+		const compactSummary = this.buildCompactionSummaryText(details.formattedMessage);
+		const replacementMessages: Message[] = [
+			{
+				role: "user",
+				content: [{ type: "text", text: compactSummary }],
+				timestamp,
+			},
+		];
+
+		const model = this.agent.state.model;
+		if (!model) {
+			return replacementMessages;
+		}
+
+		const assistantMessage: AssistantMessage = {
+			role: "assistant",
+			content: [{ type: "text", text: `Context compacted. Continue from this checkpoint toward: ${details.goal}` }],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp,
+		};
+
+		replacementMessages.push(assistantMessage);
+		return replacementMessages;
 	}
 
 	private extractAssistantText(message: AssistantMessage): string {
@@ -4045,20 +3988,19 @@ export class TuiRenderer {
 	}
 
 	/**
-	 * Auto-handoff: generate goal → draft → switch session → auto-submit.
+	 * Auto-compaction: generate goal → compact checkpoint → replace current thread history.
 	 * @param isEmergency - true at 95% (pre-tool), false at 90% (post-completion)
 	 */
 	private async handleAutoHandoff(isEmergency: boolean = false): Promise<void> {
 		if (this.isAutoHandoffInProgress) return;
 		this.isAutoHandoffInProgress = true;
 
-		const parentId = this.sessionManager.getSessionId();
 		const threshold = isEmergency ? "95%" : "90%";
 
 		// Show notification in chat
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(
-			new Text(theme.fg("warning", `⚡ Auto-handoff triggered (${threshold} context)`), 1, 0),
+			new Text(theme.fg("warning", `⚡ Auto-compaction triggered (${threshold} context)`), 1, 0),
 		);
 		this.ui.requestRender();
 
@@ -4074,7 +4016,7 @@ export class TuiRenderer {
 			this.ui,
 			(spinner) => theme.fg("warning", spinner),
 			(text) => theme.fg("muted", text),
-			"Auto-handoff: choosing next goal... (esc to cancel)",
+			"Auto-compaction: choosing next goal... (esc to cancel)",
 		);
 		this.statusContainer.addChild(this.loadingAnimation);
 		this.ui.requestRender();
@@ -4083,83 +4025,21 @@ export class TuiRenderer {
 			// Step 1: Generate goal
 			const goal = await this.generateAutoHandoffGoal(this.handoffAbortController.signal);
 
-			// Update loader - stage 2: summarization
+			// Update loader - stage 2: compaction preparation
 			if (this.loadingAnimation) {
-				this.loadingAnimation.setMessage("Auto-handoff: summarizing... (esc to cancel)");
-			}
-
-			if (this.loadingAnimation) {
-				this.loadingAnimation.setMessage("Auto-handoff: preparing handoff... (esc to cancel)");
+				this.loadingAnimation.setMessage("Auto-compaction: selecting context... (esc to cancel)");
 			}
 
 			const files = await this.selectHandoffFiles(goal, this.handoffAbortController.signal);
 			if (this.loadingAnimation) {
-				this.loadingAnimation.setMessage("Auto-handoff: preparing handoff... (esc to cancel)");
+				this.loadingAnimation.setMessage("Auto-compaction: preparing checkpoint... (esc to cancel)");
 			}
 			const details = await this.buildHandoffDetails(goal, files, this.handoffAbortController.signal);
-			const finalDraft = parentId
-				? this.insertParentThreadReference(details.formattedMessage, parentId)
-				: details.formattedMessage;
 
-			// Step 3: Switch session (only after we have the draft)
-			const newSessionPath = this.sessionManager.createHandoffSession(this.agent.state, parentId);
-			this.sessionManager.setSessionFile(newSessionPath);
-
-			// Clear agent messages but preserve queues
-			this.agent.replaceMessages([]);
-
-			// Clear UI state
-			this.chatContainer.clear();
-			this.isFirstUserMessage = true;
-			this.hasTitle = false;
-			this.footer.setTitle(null);
-			this.shouldIncludeHandoffNudge = false; // Reset nudge for new session
-			this.updateToolResultTransformer();
-
-			// Show success message in new session
-			this.chatContainer.addChild(new Spacer(1));
-			this.chatContainer.addChild(
-				new Text(
-					theme.fg("accent", "✓ Auto-handoff started new session") +
-						"\n" +
-						theme.fg("dim", `Parent: ${parentId}`) +
-						"\n" +
-						theme.fg("dim", `Goal: ${goal}`),
-					1,
-					0,
-				),
-			);
-			this.chatContainer.addChild(new Spacer(1));
-
-			// Update pending messages display (queued messages carried over)
-			this.updatePendingMessagesDisplay();
-
-			// Stop loading animation
-			if (this.loadingAnimation) {
-				this.loadingAnimation.stop();
-				this.loadingAnimation = null;
-			}
-			this.statusContainer.clear();
-
-			// Step 4: Resume queue drain and auto-submit
-			this.agent.resumeQueueDrain();
-
-			// Auto-submit the handoff message
-			if (this.onInputCallback) {
-				this.onInputCallback(finalDraft);
-			} else {
-				// Fallback: put in editor for manual submission
-				this.editor.setText(finalDraft);
-				this.chatContainer.addChild(new Text(theme.fg("dim", "Press Enter to continue in new session"), 1, 0));
-			}
-
-			// Send notification
-			if (this.settingsManager.getNotificationSound() !== "none") {
-				playNotificationSound();
-			}
-			if (this.settingsManager.getNotificationBanner() !== "none") {
-				sendNotification("Mu - Auto-handoff", `Started new session: ${goal}`);
-			}
+			await this.executeExplicitHandoff({
+				...details,
+				parentSessionId: this.sessionManager.getSessionId(),
+			});
 		} catch (err: unknown) {
 			const error = err as Error;
 
@@ -4175,10 +4055,10 @@ export class TuiRenderer {
 
 			if (error.name === "AbortError" || this.handoffAbortController?.signal.aborted) {
 				this.chatContainer.addChild(new Spacer(1));
-				this.chatContainer.addChild(new Text(theme.fg("warning", "Auto-handoff cancelled"), 1, 0));
+				this.chatContainer.addChild(new Text(theme.fg("warning", "Auto-compaction cancelled"), 1, 0));
 			} else {
 				this.chatContainer.addChild(new Spacer(1));
-				this.chatContainer.addChild(new Text(theme.fg("error", `Auto-handoff failed: ${error.message}`), 1, 0));
+				this.chatContainer.addChild(new Text(theme.fg("error", `Auto-compaction failed: ${error.message}`), 1, 0));
 			}
 		} finally {
 			this.isAutoHandoffInProgress = false;
@@ -4188,49 +4068,34 @@ export class TuiRenderer {
 	}
 
 	/**
-	 * Execute an explicit handoff triggered by the Handoff tool.
-	 * Creates new session, clears state, and auto-submits the handoff message.
+	 * Apply an explicit same-thread compaction triggered by the oai_compact tool.
 	 */
 	private async executeExplicitHandoff(details: HandoffDetails & { parentSessionId: string | null }): Promise<void> {
-		const { goal, formattedMessage, parentSessionId, fileTokens } = details;
-
-		const messageWithParent = parentSessionId
-			? this.insertParentThreadReference(formattedMessage, parentSessionId)
-			: formattedMessage;
+		const { goal, fileTokens } = details;
+		const replacementMessages = this.buildContextCompactionMessages(details);
 
 		try {
-			// Create new session
-			const newSessionPath = this.sessionManager.createHandoffSession(
-				this.agent.state,
-				parentSessionId ?? undefined,
-			);
-			this.sessionManager.setSessionFile(newSessionPath);
-			this.clearSubscriptions();
+			this.sessionManager.appendContextCompaction(replacementMessages);
+			this.agent.replaceMessages(replacementMessages);
 
-			// Clear agent messages but preserve queues
-			this.agent.replaceMessages([]);
-
-			// Clear UI state
 			this.chatContainer.clear();
-			this.isFirstUserMessage = true;
-			this.hasTitle = false;
-			this.footer.setTitle(null);
-			this.shouldIncludeHandoffNudge = false; // Reset nudge for new session
+			this.pendingTools.clear();
+			this.streamingComponent = null;
+			this.shouldIncludeHandoffNudge = false;
 			this.updateToolResultTransformer();
 
 			// Reset queue editing state
 			this.editingQueueIndex = null;
 			this.savedEditorText = null;
 			this.isHandlingQueueEditChange = false;
+			this.pendingExplicitHandoffMessage = null;
 
-			// Show transition message
+			this.renderInitialMessages(this.agent.state);
+
 			this.chatContainer.addChild(new Spacer(1));
-			const handoffLines = [theme.fg("accent", `✓ Handoff: ${goal}`)];
-			if (parentSessionId) {
-				handoffLines.push(theme.fg("dim", `Parent: ${parentSessionId}`));
-			}
-			handoffLines.push(theme.fg("dim", `Context: ${fileTokens.toLocaleString()} tokens`));
-			this.chatContainer.addChild(new Text(handoffLines.join("\n"), 1, 0));
+			const compactLines = [theme.fg("accent", `✓ Context compacted: ${goal}`)];
+			compactLines.push(theme.fg("dim", `Checkpoint: ${fileTokens.toLocaleString()} tokens`));
+			this.chatContainer.addChild(new Text(compactLines.join("\n"), 1, 0));
 			this.chatContainer.addChild(new Spacer(1));
 
 			// Update pending messages display
@@ -4243,23 +4108,12 @@ export class TuiRenderer {
 				playNotificationSound();
 			}
 			if (this.settingsManager.getNotificationBanner() !== "none") {
-				sendNotification("Mu - Handoff", `Started new session: ${goal}`);
-			}
-
-			// Auto-submit the handoff message by using the input callback when available
-			if (this.onInputCallback) {
-				await submitExplicitHandoff({
-					message: messageWithParent,
-					prompt: (text) => this.agent.prompt(text),
-					submitViaInput: this.onInputCallback,
-				});
-			} else {
-				this.pendingExplicitHandoffMessage = messageWithParent;
+				sendNotification("Mu - Context compacted", goal);
 			}
 		} catch (error: unknown) {
 			const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 			this.chatContainer.addChild(new Spacer(1));
-			this.chatContainer.addChild(new Text(theme.fg("error", `Handoff failed: ${errorMessage}`), 1, 0));
+			this.chatContainer.addChild(new Text(theme.fg("error", `Compaction failed: ${errorMessage}`), 1, 0));
 			this.ui.requestRender();
 		} finally {
 			this.agent.resumeQueueDrain();
@@ -4417,7 +4271,7 @@ export class TuiRenderer {
 			this.settingsManager.setAutoHandoffMode(next);
 		}
 
-		// Turning auto-handoff off should also stop injecting the auto-handoff nudge.
+		// Turning automatic compaction off should also stop injecting the nudge.
 		this.shouldIncludeHandoffNudge = shouldEnableHandoffNudge({
 			autoHandoffMode: next,
 			ratio: 0,
@@ -4426,8 +4280,11 @@ export class TuiRenderer {
 		this.updateToolResultTransformer();
 
 		this.chatContainer.addChild(new Spacer(1));
-		const label = next === "on" ? theme.fg("accent", "Auto-handoff: ON") : theme.fg("warning", "Auto-handoff: OFF");
-		const hint = theme.fg("muted", "Use /autohandoff [on|off|toggle|status]");
+		const label =
+			next === "on"
+				? theme.fg("accent", "Automatic compaction: ON")
+				: theme.fg("warning", "Automatic compaction: OFF");
+		const hint = theme.fg("muted", "Use /oai-compact [on|off|toggle|status]");
 		this.chatContainer.addChild(new Text(label + "\n" + hint, 1, 0));
 		this.ui.requestRender();
 	}

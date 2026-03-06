@@ -103,6 +103,11 @@ export interface PreviewChangeEntry extends SessionEntryBase {
 	preview: string;
 }
 
+export interface ContextCompactionEntry extends SessionEntryBase {
+	type: "context_compaction";
+	replacementMessages: AgentState["messages"];
+}
+
 /** Label entry for user-defined bookmarks/markers on entries. */
 export interface LabelEntry extends SessionEntryBase {
 	type: "label";
@@ -130,6 +135,7 @@ export type SessionEntry =
 	| ModelChangeEntry
 	| TitleChangeEntry
 	| PreviewChangeEntry
+	| ContextCompactionEntry
 	| LabelEntry
 	| BranchSummaryEntry;
 
@@ -231,9 +237,18 @@ export class SessionManager {
 		}
 	}
 
+	private clearLoadedEntries(): void {
+		this.leafId = null;
+		this.byId.clear();
+		this.entries = [];
+		this.labelsById.clear();
+		this.sessionVersion = CURRENT_SESSION_VERSION;
+	}
+
 	/** Reset to a fresh session. Clears pending messages and starts a new session file. */
 	reset(): void {
 		this.pendingMessages = [];
+		this.clearLoadedEntries();
 		this.sessionInitialized = false;
 		this.initNewSession();
 	}
@@ -543,19 +558,20 @@ export class SessionManager {
 
 	loadMessages(): any[] {
 		if (!existsSync(this.sessionFile)) return [];
+		if (this.entries.length === 0 && this.byId.size === 0) {
+			this.loadEntries();
+		}
 
 		const messages: any[] = [];
-		const lines = readFileSync(this.sessionFile, "utf8").trim().split("\n");
+		for (const entry of this.getBranch()) {
+			if (entry.type === "context_compaction") {
+				messages.length = 0;
+				messages.push(...entry.replacementMessages);
+				continue;
+			}
 
-		for (const line of lines) {
-			try {
-				const entry = JSON.parse(line);
-				if (entry.type === "message" || entry.type === "custom_message") {
-					// Both entry types contain an AppMessage payload in `message`.
-					messages.push(entry.message as { role: string; content: unknown });
-				}
-			} catch {
-				// Skip malformed lines
+			if (entry.type === "message" || entry.type === "custom_message") {
+				messages.push(entry.message as { role: string; content: unknown });
 			}
 		}
 
@@ -1137,7 +1153,35 @@ export class SessionManager {
 		this.sessionFile = path;
 		this.loadSessionId();
 		this.sessionInitialized = existsSync(path);
+		if (this.sessionInitialized) {
+			this.loadEntries();
+		} else {
+			this.clearLoadedEntries();
+		}
 		this.exportSessionIdToEnv();
+	}
+
+	appendContextCompaction(replacementMessages: AgentState["messages"]): void {
+		if (!this.enabled) return;
+
+		const id = generateId(this.byId);
+		const entry: ContextCompactionEntry = {
+			type: "context_compaction",
+			id,
+			parentId: this.leafId,
+			timestamp: new Date().toISOString(),
+			replacementMessages,
+		};
+
+		if (!this.sessionInitialized) {
+			this.pendingMessages.push(entry);
+		} else {
+			appendFileSync(this.sessionFile, JSON.stringify(entry) + "\n");
+		}
+
+		this.byId.set(id, entry);
+		this.entries.push(entry);
+		this.leafId = id;
 	}
 
 	/** Lazily load undo data from session file (chunked to avoid memory spike) */
