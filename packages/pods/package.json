@@ -1,6 +1,6 @@
 {
 	"name": "@kennyfrc/mu",
-	"version": "0.24.25",
+	"version": "0.24.26",
 	"description": "CLI tool for managing vLLM deployments on GPU pods",
 	"type": "module",
 	"bin": {
@@ -37,7 +37,7 @@
 		"node": ">=20.0.0"
 	},
 	"dependencies": {
-		"@kennyfrc/mu-agent-core": "^0.24.25",
+		"@kennyfrc/mu-agent-core": "^0.24.26",
 		"chalk": "^5.5.0"
 	},
 	"devDependencies": {}
