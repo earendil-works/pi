@@ -97,6 +97,12 @@ import { bashTool } from "../tools/bash.js";
 import { estimateTokens, formatParentThreadReference, type HandoffDetails, handoffTool } from "../tools/handoff.js";
 import type { ToolSelection } from "../tools/tool-selection.js";
 import { undoFileOperations } from "../undo/undo-file-operations.js";
+import {
+	applyUsageCommand,
+	parseUsageSlashCommand,
+	supportsUsageCommand,
+	type UsageFooterMode,
+} from "../usage-footer.js";
 import { autoFenceHtmlInMarkdown } from "../utils/auto-fence-html.js";
 import { generateThreadListingMeta } from "../utils/auto-title.js";
 import { findRepoRoot } from "../utils/find-repo-root.js";
@@ -285,6 +291,7 @@ export class TuiRenderer {
 	private codexAccountIdBeforeRun: string | null = null;
 	private lastCodexAccountId: string | null = null;
 	private bashModeIndicatorContainer: Container = new Container();
+	private usageFooterMode: UsageFooterMode;
 
 	private unsubscribe?: () => void;
 
@@ -312,6 +319,7 @@ export class TuiRenderer {
 		this.extensionManager = extensionManager;
 		this.extensionLoader = extensionLoader;
 		this.autoHandoffMode = settingsManager.getAutoHandoffMode();
+		this.usageFooterMode = settingsManager.getUsageFooterMode();
 
 		// Set up tool result transformer for handoff nudge injection
 		this.updateToolResultTransformer();
@@ -332,7 +340,14 @@ export class TuiRenderer {
 		this.editorContainer = new Container(); // Container to hold editor or selector
 		this.editorContainer.addChild(this.editor); // Start with editor
 		this.footer = new FooterComponent(agent.state);
+		this.footer.setUsageFooterMode(this.usageFooterMode);
 
+		this.rebuildBuiltInSlashCommands();
+		this.fdPath = fdPath;
+		this.refreshAutocompleteProvider();
+	}
+
+	private rebuildBuiltInSlashCommands(): void {
 		// Define slash commands
 		const thinkingCommand: SlashCommand = {
 			name: "thinking",
@@ -446,6 +461,11 @@ export class TuiRenderer {
 			description: "Toggle auto-handoff when context is high",
 		};
 
+		const usageCommand: SlashCommand = {
+			name: "usage",
+			description: "Show or toggle usage limits in the footer",
+		};
+
 		const reloadCommand: SlashCommand = {
 			name: "reload",
 			description: "Reload extensions from disk",
@@ -477,8 +497,9 @@ export class TuiRenderer {
 			undoCommand,
 		];
 
-		this.fdPath = fdPath;
-		this.refreshAutocompleteProvider();
+		if (supportsUsageCommand(this.agent.state.model)) {
+			this.builtInSlashCommands.push(usageCommand);
+		}
 	}
 
 	private refreshAutocompleteProvider(): void {
@@ -926,6 +947,13 @@ export class TuiRenderer {
 			const autoHandoffCommand = parseAutoHandoffSlashCommand(rawText);
 			if (autoHandoffCommand) {
 				this.handleAutoHandoffSlashCommand(autoHandoffCommand);
+				this.editor.setText("");
+				return;
+			}
+
+			const usageCommand = parseUsageSlashCommand(rawText);
+			if (usageCommand) {
+				this.handleUsageSlashCommand(usageCommand);
 				this.editor.setText("");
 				return;
 			}
@@ -1981,6 +2009,8 @@ export class TuiRenderer {
 
 			// Switch model
 			this.agent.setModel(nextModel);
+			this.rebuildBuiltInSlashCommands();
+			this.refreshAutocompleteProvider();
 			await this.updateToolsForModel(nextModel);
 
 			// Save model change to session and settings
@@ -2048,6 +2078,8 @@ export class TuiRenderer {
 
 			// Switch model
 			this.agent.setModel(nextModel);
+			this.rebuildBuiltInSlashCommands();
+			this.refreshAutocompleteProvider();
 			await this.updateToolsForModel(nextModel);
 
 			// Save model change to session and settings
@@ -2419,6 +2451,8 @@ export class TuiRenderer {
 			async (model) => {
 				// Apply the selected model
 				this.agent.setModel(model);
+				this.rebuildBuiltInSlashCommands();
+				this.refreshAutocompleteProvider();
 				await this.updateToolsForModel(model);
 
 				// Save model change to session
@@ -4285,6 +4319,27 @@ export class TuiRenderer {
 		const label = next === "on" ? theme.fg("accent", "Auto-handoff: ON") : theme.fg("warning", "Auto-handoff: OFF");
 		const hint = theme.fg("muted", "Use /autohandoff [on|off|toggle|status]");
 		this.chatContainer.addChild(new Text(label + "\n" + hint, 1, 0));
+		this.ui.requestRender();
+	}
+
+	private handleUsageSlashCommand(
+		command: ReturnType<typeof parseUsageSlashCommand> extends infer T ? (T extends null ? never : T) : never,
+	): void {
+		if (!supportsUsageCommand(this.agent.state.model)) {
+			this.showWarning("/usage is only available for GPT-family models");
+			return;
+		}
+
+		this.usageFooterMode = applyUsageCommand(this.usageFooterMode, command);
+		this.settingsManager.setUsageFooterMode(this.usageFooterMode);
+		this.footer.setUsageFooterMode(this.usageFooterMode);
+
+		const message =
+			command.type === "status"
+				? `Usage footer: ${this.usageFooterMode}`
+				: `Usage footer ${this.usageFooterMode === "visible" ? "enabled" : "hidden"}`;
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg("dim", message), 1, 0));
 		this.ui.requestRender();
 	}
 

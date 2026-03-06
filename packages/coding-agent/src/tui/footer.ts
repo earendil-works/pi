@@ -8,6 +8,7 @@ import { supportsFastMode } from "../fast-mode.js";
 import { isModelUsingOAuth } from "../model-config.js";
 import { getActiveOAuthAccount, listOAuthAccounts } from "../oauth/index.js";
 import { theme } from "../theme/theme.js";
+import type { UsageFooterMode, UsageLimitsSnapshot } from "../usage-footer.js";
 
 /**
  * Find the git root directory by walking up from cwd.
@@ -39,6 +40,8 @@ export class FooterComponent implements Component {
 	private gitWatcher: FSWatcher | null = null;
 	private onBranchChange: (() => void) | null = null;
 	private title: string | null = null;
+	private usageFooterMode: UsageFooterMode = "hidden";
+	private usageLimits: UsageLimitsSnapshot | null = null;
 
 	constructor(state: AgentState) {
 		this.state = state;
@@ -110,6 +113,14 @@ export class FooterComponent implements Component {
 	 */
 	setShowExitHint(show: boolean): void {
 		this.showExitHint = show;
+	}
+
+	setUsageFooterMode(mode: UsageFooterMode): void {
+		this.usageFooterMode = mode;
+	}
+
+	setUsageLimits(snapshot: UsageLimitsSnapshot | null): void {
+		this.usageLimits = snapshot;
 	}
 
 	invalidate(): void {
@@ -241,6 +252,19 @@ export class FooterComponent implements Component {
 			const type = usingSubscription ? (subscriptionSuffix ? ` (sub:${subscriptionSuffix})` : " (sub)") : " (api)";
 			const costStr = `$${totalCost.toFixed(3)}${type}`;
 			statsParts.push(costStr);
+		}
+
+		if (this.usageFooterMode === "visible" && this.usageLimits) {
+			if (this.usageLimits.primary) {
+				statsParts.push(
+					`${this.usageLimits.primary.label} ${Math.round(this.usageLimits.primary.percentRemaining)}%`,
+				);
+			}
+			if (this.usageLimits.secondary) {
+				statsParts.push(
+					`${this.usageLimits.secondary.label} ${Math.round(this.usageLimits.secondary.percentRemaining)}%`,
+				);
+			}
 		}
 
 		// Colorize context percentage based on usage with handoff hints
