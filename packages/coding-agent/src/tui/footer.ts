@@ -162,47 +162,14 @@ export class FooterComponent implements Component {
 	}
 
 	render(width: number): string[] {
-		// Calculate cumulative usage from all assistant messages
-		let totalInput = 0;
-		let totalOutput = 0;
-		let totalCacheRead = 0;
-		let totalCacheWrite = 0;
 		let totalCost = 0;
 
 		for (const message of this.state.messages) {
 			if (message.role === "assistant") {
 				const assistantMsg = message as AssistantMessage;
-				totalInput += assistantMsg.usage.input;
-				totalOutput += assistantMsg.usage.output;
-				totalCacheRead += assistantMsg.usage.cacheRead;
-				totalCacheWrite += assistantMsg.usage.cacheWrite;
 				totalCost += assistantMsg.usage.cost.total;
 			}
 		}
-
-		// Get last assistant message for context percentage calculation (skip aborted messages)
-		const lastAssistantMessage = this.state.messages
-			.slice()
-			.reverse()
-			.find((m) => m.role === "assistant" && m.stopReason !== "aborted") as AssistantMessage | undefined;
-
-		// Calculate context percentage from last message (input + output + cacheRead + cacheWrite)
-		const contextTokens = lastAssistantMessage
-			? lastAssistantMessage.usage.input +
-				lastAssistantMessage.usage.output +
-				lastAssistantMessage.usage.cacheRead +
-				lastAssistantMessage.usage.cacheWrite
-			: 0;
-		const contextWindow = this.state.model?.contextWindow || 0;
-		const contextPercentValue = contextWindow > 0 ? (contextTokens / contextWindow) * 100 : 0;
-		const contextPercent = contextPercentValue.toFixed(1);
-
-		// Format token counts (similar to web-ui)
-		const formatTokens = (count: number): string => {
-			if (count < 1000) return count.toString();
-			if (count < 10000) return (count / 1000).toFixed(1) + "k";
-			return Math.round(count / 1000) + "k";
-		};
 
 		// Replace home directory with ~
 		let pwd = process.cwd();
@@ -227,10 +194,6 @@ export class FooterComponent implements Component {
 
 		// Build stats line
 		const statsParts = [];
-		if (totalInput) statsParts.push(`↑${formatTokens(totalInput)}`);
-		if (totalOutput) statsParts.push(`↓${formatTokens(totalOutput)}`);
-		if (totalCacheRead) statsParts.push(`R${formatTokens(totalCacheRead)}`);
-		if (totalCacheWrite) statsParts.push(`W${formatTokens(totalCacheWrite)}`);
 
 		// Show cost with (sub) or (api) indicator
 		const usingSubscription = this.state.model ? isModelUsingOAuth(this.state.model) : false;
@@ -267,24 +230,6 @@ export class FooterComponent implements Component {
 			}
 		}
 
-		// Colorize context percentage based on usage with handoff hints
-		let contextPercentStr: string;
-		const contextPercentDisplay = `${contextPercent}% of ${formatTokens(contextWindow)}`;
-		if (contextPercentValue >= 90) {
-			// Critical - strongly suggest handoff
-			contextPercentStr = theme.fg("budgetRed", `${contextPercentDisplay} (handoff soon)`);
-		} else if (contextPercentValue >= 80) {
-			// High - mention handoff
-			contextPercentStr = theme.fg("budgetOrange", `${contextPercentDisplay} (consider handoff)`);
-		} else if (contextPercentValue >= 60) {
-			// Moderate - just show percentage
-			contextPercentStr = theme.fg("budgetYellow", contextPercentDisplay);
-		} else {
-			// Healthy - use regular text color
-			contextPercentStr = contextPercentDisplay;
-		}
-		statsParts.push(contextPercentStr);
-
 		const statsLeft = statsParts.join(" ");
 
 		// Add model name on the right side, plus thinking level if model supports it
@@ -301,8 +246,8 @@ export class FooterComponent implements Component {
 			}
 		}
 
-		if (supportsFastMode(this.state.model)) {
-			rightSide = `${rightSide} • fast:${this.state.fastMode ? "on" : "off"}`;
+		if (supportsFastMode(this.state.model) && this.state.fastMode) {
+			rightSide = `${rightSide} • fast`;
 		}
 
 		// Append provider to reduce billing/provider ambiguity (e.g., OpenAI vs OpenRouter vs OpenAI Codex)

@@ -50,6 +50,20 @@ function createState(): AgentState {
 describe("Footer usage-limit rendering", () => {
 	initTheme("dark");
 
+	it("shows fast only when fast mode is enabled", () => {
+		const enabledState = createState();
+		enabledState.fastMode = true;
+		const enabledFooter = new FooterComponent(enabledState);
+		const enabledText = stripAnsi(enabledFooter.render(140).join("\n"));
+		expect(enabledText).toContain("• fast [openai]");
+		expect(enabledText).not.toContain("fast:on");
+		expect(enabledText).not.toContain("fast:off");
+
+		const disabledFooter = new FooterComponent(createState());
+		const disabledText = stripAnsi(disabledFooter.render(140).join("\n"));
+		expect(disabledText).not.toContain("fast");
+	});
+
 	it("renders short-window and weekly usage when footer usage is enabled", () => {
 		const footer = new FooterComponent(createState());
 		(footer as any).setUsageFooterMode("visible");
@@ -62,6 +76,10 @@ describe("Footer usage-limit rendering", () => {
 		const text = stripAnsi(footer.render(140).join("\n"));
 		expect(text).toContain("5h 28%");
 		expect(text).toContain("weekly 60%");
+		expect(text).not.toContain("ctx ");
+		expect(text).not.toContain("↑");
+		expect(text).not.toContain("↓");
+		expect(text).not.toContain("R350");
 	});
 
 	it("hides usage-limit chips when footer usage is hidden", () => {
@@ -76,5 +94,8 @@ describe("Footer usage-limit rendering", () => {
 		const text = stripAnsi(footer.render(140).join("\n"));
 		expect(text).not.toContain("5h 28%");
 		expect(text).not.toContain("weekly 60%");
+		expect(text).not.toContain("ctx ");
+		expect(text).not.toContain("↑");
+		expect(text).not.toContain("↓");
 	});
 });
