@@ -111,7 +111,6 @@ import { formatElapsed } from "../utils/format-elapsed.js";
 import { addToLimitedSet } from "../utils/limited-set.js";
 import { readAppendedFileChunkSync } from "../utils/read-appended-file-chunk.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
-import { ComposerPanelComponent } from "./composer-panel.js";
 import { CustomEditor } from "./custom-editor.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { FooterComponent } from "./footer.js";
@@ -131,7 +130,6 @@ import { ToolExecutionComponent } from "./tool-execution.js";
 import { TreeSelectorComponent } from "./tree-selector.js";
 import { UserMessageComponent } from "./user-message.js";
 import { UserMessageSelectorComponent } from "./user-message-selector.js";
-import { WelcomePanelComponent } from "./welcome-panel.js";
 import { WorkspaceNoteOverlayComponent } from "./workspace-note-overlay.js";
 
 function hashContent(content: string): string {
@@ -176,7 +174,6 @@ export class TuiRenderer {
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
 	private editor: CustomEditor;
-	private composerPanel: ComposerPanelComponent;
 	private editorContainer: Container; // Container to swap between editor and selector
 	private footer: FooterComponent;
 	private agent: Agent;
@@ -339,9 +336,8 @@ export class TuiRenderer {
 		this.pendingMessagesContainer = new RenderCacheContainer();
 		this.statusContainer = new RenderCacheContainer();
 		this.editor = new CustomEditor(getEditorTheme());
-		this.composerPanel = new ComposerPanelComponent(this.editor);
 		this.editorContainer = new Container(); // Container to hold editor or selector
-		this.editorContainer.addChild(this.composerPanel); // Start with editor panel
+		this.editorContainer.addChild(this.editor); // Start with editor
 		this.footer = new FooterComponent(agent.state);
 		this.footer.setUsageFooterMode(this.usageFooterMode);
 
@@ -537,9 +533,49 @@ export class TuiRenderer {
 			this.hasTitle = true;
 		}
 
+		// Add header with logo and instructions
+		const logo = theme.bold(theme.fg("accent", "mu")) + theme.fg("dim", ` v${this.version}`);
+		const instructions =
+			theme.fg("dim", "esc") +
+			theme.fg("muted", " to interrupt") +
+			"\n" +
+			theme.fg("dim", "ctrl+c") +
+			theme.fg("muted", " to clear") +
+			"\n" +
+			theme.fg("dim", "ctrl+c twice") +
+			theme.fg("muted", " to exit") +
+			"\n" +
+			theme.fg("dim", "ctrl+k") +
+			theme.fg("muted", " to delete line") +
+			"\n" +
+			theme.fg("dim", "shift+tab") +
+			theme.fg("muted", " to cycle thinking") +
+			"\n" +
+			theme.fg("dim", "tab") +
+			theme.fg("muted", " to queue when streaming") +
+			"\n" +
+			theme.fg("dim", "enter") +
+			theme.fg("muted", " to steer when streaming") +
+			"\n" +
+			theme.fg("dim", "ctrl+p") +
+			theme.fg("muted", " to cycle models") +
+			"\n" +
+			theme.fg("dim", "ctrl+o") +
+			theme.fg("muted", " to expand tools") +
+			"\n" +
+			theme.fg("dim", "opt+up/down") +
+			theme.fg("muted", " to edit queue") +
+			"\n" +
+			theme.fg("dim", "/") +
+			theme.fg("muted", " for commands") +
+			"\n" +
+			theme.fg("dim", "drop files") +
+			theme.fg("muted", " to attach");
+		const header = new Text(logo + "\n" + instructions, 1, 0);
+
 		// Setup UI layout
 		this.ui.addChild(new Spacer(1));
-		this.ui.addChild(new WelcomePanelComponent(this.version));
+		this.ui.addChild(header);
 		this.ui.addChild(new Spacer(1));
 
 		// Add new version notification if available
@@ -1653,12 +1689,6 @@ export class TuiRenderer {
 		this.ui.requestRender();
 	}
 
-	private showComposerPanel(): void {
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.composerPanel);
-		this.ui.setFocus(this.editor);
-	}
-
 	async getUserInput(): Promise<string> {
 		return new Promise((resolve) => {
 			this.onInputCallback = (text: string) => {
@@ -2234,7 +2264,9 @@ export class TuiRenderer {
 
 	private hideThinkingSelector(): void {
 		// Replace selector with editor in the container
-		this.showComposerPanel();
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.ui.setFocus(this.editor);
 		this.thinkingSelector = null;
 	}
 
@@ -2274,7 +2306,9 @@ export class TuiRenderer {
 
 	private hideQueueModeSelector(): void {
 		// Replace selector with editor in the container
-		this.showComposerPanel();
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.ui.setFocus(this.editor);
 		this.queueModeSelector = null;
 	}
 
@@ -2394,7 +2428,9 @@ export class TuiRenderer {
 	}
 
 	private hideTodosOverlay(): void {
-		this.showComposerPanel();
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.ui.setFocus(this.editor);
 		this.todoOverlay = null;
 	}
 
@@ -2458,7 +2494,9 @@ export class TuiRenderer {
 
 	private hideThemeSelector(): void {
 		// Replace selector with editor in the container
-		this.showComposerPanel();
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.ui.setFocus(this.editor);
 		this.themeSelector = null;
 	}
 
@@ -2512,7 +2550,9 @@ export class TuiRenderer {
 
 	private hideModelSelector(): void {
 		// Replace selector with editor in the container
-		this.showComposerPanel();
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.ui.setFocus(this.editor);
 		this.modelSelector = null;
 	}
 
@@ -2594,7 +2634,9 @@ export class TuiRenderer {
 
 	private hideUserMessageSelector(): void {
 		// Replace selector with editor in the container
-		this.showComposerPanel();
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.ui.setFocus(this.editor);
 		this.userMessageSelector = null;
 	}
 
@@ -2669,7 +2711,9 @@ export class TuiRenderer {
 	}
 
 	private hideTreeSelector(): void {
-		this.showComposerPanel();
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.ui.setFocus(this.editor);
 		this.treeSelector = null;
 	}
 
@@ -2771,7 +2815,9 @@ export class TuiRenderer {
 	}
 
 	private hideSubscriptionSelector(): void {
-		this.showComposerPanel();
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.ui.setFocus(this.editor);
 		this.subscriptionSelector = null;
 	}
 
@@ -2839,7 +2885,9 @@ export class TuiRenderer {
 									codeInput.onSubmit = () => {
 										const code = codeInput.getValue();
 										// Restore editor
-										this.showComposerPanel();
+										this.editorContainer.clear();
+										this.editorContainer.addChild(this.editor);
+										this.ui.setFocus(this.editor);
 										resolve(code);
 									};
 
@@ -2979,7 +3027,9 @@ export class TuiRenderer {
 
 	private hideOAuthSelector(): void {
 		// Replace selector with editor in the container
-		this.showComposerPanel();
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.ui.setFocus(this.editor);
 		this.oauthSelector = null;
 	}
 
@@ -3011,7 +3061,9 @@ export class TuiRenderer {
 	}
 
 	private hideOAuthAccountSelector(): void {
-		this.showComposerPanel();
+		this.editorContainer.clear();
+		this.editorContainer.addChild(this.editor);
+		this.ui.setFocus(this.editor);
 		this.oauthAccountSelector = null;
 	}
 
