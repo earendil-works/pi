@@ -99,6 +99,7 @@ import type { ToolSelection } from "../tools/tool-selection.js";
 import { undoFileOperations } from "../undo/undo-file-operations.js";
 import {
 	applyUsageCommand,
+	assistantMessageUsageSnapshot,
 	parseUsageSlashCommand,
 	supportsUsageCommand,
 	type UsageFooterMode,
@@ -118,6 +119,7 @@ import { ModelSelectorComponent } from "./model-selector.js";
 import { OAuthAccountSelectorComponent } from "./oauth-account-selector.js";
 import { OAuthSelectorComponent } from "./oauth-selector.js";
 import { QueueModeSelectorComponent } from "./queue-mode-selector.js";
+import { formatQueuedMessagePreview } from "./queued-message-preview.js";
 import { StreamingAssistantMessageComponent } from "./streaming-assistant-message.js";
 import { SubscriptionSelectorComponent } from "./subscription-selector.js";
 import { ThemeSelectorComponent } from "./theme-selector.js";
@@ -648,7 +650,7 @@ export class TuiRenderer {
 
 		this.editor.onTab = () => {
 			// Tab queues regular message (by-end) when streaming
-			const text = this.editor.getText().trim();
+			const text = this.editor.getExpandedText().trim();
 			if (text && this.agent.state.isStreaming) {
 				const sent = autoFenceHtmlInMarkdown(text);
 				this.queuedMessages.push({ raw: text, sent, kind: "by-end" });
@@ -1268,6 +1270,8 @@ export class TuiRenderer {
 
 					// Invalidate footer cache to refresh git branch (in case agent executed git commands)
 					this.footer.invalidate();
+					this.footer.updateState(state);
+					this.footer.setUsageLimits(assistantMessageUsageSnapshot(assistantMsg));
 
 					// Emergency handoff at 95%: abort tools before execution to prevent overflow
 					if (
@@ -1447,6 +1451,7 @@ export class TuiRenderer {
 
 				// Update footer to clear "Working" status
 				this.footer.updateState(state);
+				this.syncFooterUsageFromMessages(state.messages);
 
 				// Execute pending explicit handoff (from Handoff tool)
 				if (this.pendingExplicitHandoff) {
@@ -1563,6 +1568,17 @@ export class TuiRenderer {
 		this.codexAccountIdBeforeRun = null;
 	}
 
+	private syncFooterUsageFromMessages(messages: Message[]): void {
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const message = messages[i];
+			if (message?.role !== "assistant") continue;
+			this.footer.setUsageLimits(assistantMessageUsageSnapshot(message as AssistantMessage));
+			return;
+		}
+
+		this.footer.setUsageLimits(null);
+	}
+
 	private addMessageToChat(message: Message): void {
 		if (message.role === "user") {
 			const userMsg = message as any;
@@ -1591,6 +1607,7 @@ export class TuiRenderer {
 
 		// Update footer with loaded state
 		this.footer.updateState(state);
+		this.syncFooterUsageFromMessages(state.messages);
 
 		// Update editor border color based on current thinking level
 		this.updateEditorBorderColor();
@@ -4392,9 +4409,9 @@ export class TuiRenderer {
 					const hint = theme.fg("muted", "(in textarea below)");
 					this.pendingMessagesContainer.addChild(new TruncatedText(prefix + hint, 1, 0));
 				} else {
-					const prefix = theme.fg("dim", message.kind === "next" ? "↳ Queued next: " : "↳ Queued: ");
-					const messageColor = theme.fg("dim", message.raw);
-					this.pendingMessagesContainer.addChild(new TruncatedText(prefix + messageColor, 1, 0));
+					this.pendingMessagesContainer.addChild(
+						new Text(theme.fg("dim", formatQueuedMessagePreview(message.raw, message.kind)), 1, 0),
+					);
 				}
 			}
 

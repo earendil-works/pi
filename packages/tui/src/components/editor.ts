@@ -674,12 +674,7 @@ export class Editor implements Component {
 	}
 
 	private handleSubmit(): void {
-		let result = this.state.lines.join("\n").trim();
-
-		for (const [pasteId, pasteContent] of this.pastes) {
-			const markerRegex = new RegExp(`\\[paste #${pasteId}( (\\+\\d+ lines|\\d+ chars))?\\]`, "g");
-			result = result.replace(markerRegex, pasteContent);
-		}
+		const result = this.getExpandedText().trim();
 
 		this.state = {
 			lines: [""],
@@ -792,6 +787,17 @@ export class Editor implements Component {
 
 	getText(): string {
 		return this.state.lines.join("\n");
+	}
+
+	getExpandedText(): string {
+		let result = this.getText();
+
+		for (const [pasteId, pasteContent] of this.pastes) {
+			const markerRegex = new RegExp(`\\[paste #${pasteId}( (\\+\\d+ lines|\\d+ chars))?\\]`, "g");
+			result = result.replace(markerRegex, pasteContent);
+		}
+
+		return result;
 	}
 
 	setText(text: string): void {

@@ -117,6 +117,16 @@ describe("Editor component", () => {
 			assert.strictEqual(text, "Hällö Wörld! 😀 äöüÄÖÜß");
 		});
 
+		it("expands large paste markers in getExpandedText without changing visible editor text", () => {
+			const editor = new Editor(defaultEditorTheme);
+			const pasted = Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\n");
+
+			editor.handleInput(`\x1b[200~${pasted}\x1b[201~`);
+
+			assert.strictEqual(editor.getText(), "[paste #1 +20 lines]");
+			assert.strictEqual(editor.getExpandedText(), pasted);
+		});
+
 		it("moves cursor to document start on Ctrl+A and inserts at the beginning", () => {
 			const editor = new Editor(defaultEditorTheme);
 
