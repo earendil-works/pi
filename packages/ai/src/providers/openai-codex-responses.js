@@ -1,4 +1,5 @@
 import os from "node:os";
+import { getMuCompactResponseItem } from "../compact-history.js";
 import { MU_STATIC_INSTRUCTIONS } from "../constants.js";
 import { calculateCost } from "../models.js";
 import { getEnvApiKey } from "../stream.js";
@@ -479,6 +480,11 @@ function convertMessages(model, context) {
 	const replayableToolCallIds = new Set();
 	const transformed = transformMessages(context.messages, model);
 	for (const msg of transformed) {
+		const rawCompactItem = getMuCompactResponseItem(msg);
+		if (rawCompactItem) {
+			messages.push(rawCompactItem);
+			continue;
+		}
 		if (msg.role === "user") {
 			messages.push(convertUserMessage(msg, model));
 		} else if (msg.role === "assistant") {

@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { getMuCompactResponseItem } from "../compact-history.js";
 import { calculateCost } from "../models.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
@@ -691,6 +692,11 @@ function convertMessages(model, context) {
 		});
 	}
 	for (const msg of transformedMessages) {
+		const rawCompactItem = getMuCompactResponseItem(msg);
+		if (rawCompactItem) {
+			messages.push(rawCompactItem);
+			continue;
+		}
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				messages.push({
