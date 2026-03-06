@@ -17,6 +17,7 @@ export type CodexErrorInfo = {
 	rateLimits?: CodexRateLimits;
 	raw?: string;
 };
+export declare function parseCodexRateLimits(headers: Headers): CodexRateLimits | undefined;
 export declare function parseCodexError(response: Response): Promise<CodexErrorInfo>;
 /**
  * Parse SSE stream from Codex response.

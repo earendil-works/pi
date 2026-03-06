@@ -147,6 +147,15 @@ export interface Usage {
 		total: number;
 	};
 }
+export interface ServiceUsageLimitWindow {
+	usedPercent: number;
+	windowMinutes?: number;
+	resetsAt?: number;
+}
+export interface ServiceUsageLimits {
+	primary?: ServiceUsageLimitWindow;
+	secondary?: ServiceUsageLimitWindow;
+}
 export type StopReason = "stop" | "length" | "toolUse" | "error" | "aborted";
 export interface UserMessage {
 	role: "user";
@@ -160,6 +169,7 @@ export interface AssistantMessage {
 	provider: Provider;
 	model: string;
 	usage: Usage;
+	usageLimits?: ServiceUsageLimits;
 	stopReason: StopReason;
 	errorMessage?: string;
 	timestamp: number;

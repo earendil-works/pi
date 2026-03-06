@@ -8,6 +8,7 @@ import { getOAuthApiKey } from "../utils/oauth/index.js";
 import { listOAuthAccounts, markOAuthAccountCooldown } from "../utils/oauth/storage.js";
 import { getExponentialBackoff, sleep } from "../utils/retry.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
+import { parseCodexError, parseCodexRateLimits } from "./openai-codex/response-handler.js";
 import { buildCodexMuBridge, OPENCODE_CODEX_INSTRUCTIONS } from "./openai-codex-responses-legacy.js";
 import {
 	normalizeToolNameWithTools,
@@ -83,6 +84,20 @@ const DEFAULT_RETRY_CLASSES = ["429", "5xx", "transport"];
 function isGptFamilyModelId(modelId) {
 	const normalized = modelId.includes("/") ? (modelId.split("/").pop() ?? modelId) : modelId;
 	return normalized.toLowerCase().startsWith("gpt");
+}
+function toServiceUsageLimits(rateLimits) {
+	if (!rateLimits) return undefined;
+	const mapWindow = (window) => {
+		if (!window || window.used_percent === undefined) return undefined;
+		return {
+			usedPercent: window.used_percent,
+			windowMinutes: window.window_minutes,
+			resetsAt: window.resets_at,
+		};
+	};
+	const primary = mapWindow(rateLimits.primary);
+	const secondary = mapWindow(rateLimits.secondary);
+	return primary || secondary ? { primary, secondary } : undefined;
 }
 function getRetryAfterMs(headers) {
 	const raw = headers.get("retry-after") ?? headers.get("Retry-After");
@@ -295,8 +310,10 @@ export const streamOpenAICodexResponses = (model, context, options) => {
 					body: JSON.stringify(body),
 					signal: options?.signal,
 				});
+				output.usageLimits = toServiceUsageLimits(parseCodexRateLimits(response.headers));
 				if (!response.ok) {
-					const info = await parseErrorResponse(response);
+					const info = await parseCodexError(response);
+					output.usageLimits = toServiceUsageLimits(info.rateLimits) ?? output.usageLimits;
 					const retryAfterMs = getRetryAfterMs(response.headers);
 					throw new CodexHttpError(info.friendlyMessage || info.message, response.status, retryAfterMs);
 				}
@@ -1052,28 +1069,6 @@ function parseToolArgumentsSafely(raw) {
 // ============================================================================
 // Error Handling
 // ============================================================================
-async function parseErrorResponse(response) {
-	const contentType = response.headers.get("content-type") || "";
-	let bodyText = "";
-	try {
-		bodyText = await response.text();
-	} catch {
-		bodyText = "";
-	}
-	if (contentType.includes("application/json") && bodyText) {
-		try {
-			const json = JSON.parse(bodyText);
-			const error = json.error;
-			return {
-				message: error?.message || bodyText,
-				friendlyMessage: error?.details || undefined,
-			};
-		} catch {
-			return { message: bodyText };
-		}
-	}
-	return { message: bodyText || `Request failed with status ${response.status}` };
-}
 function formatCodexErrorEvent(event, code, message) {
 	return `Codex error (${code}): ${message || JSON.stringify(event)}`;
 }
