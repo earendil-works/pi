@@ -23,12 +23,23 @@ export function buildCompactionCheckpointText(args: {
 	return `${formatParentThreadReference(args.parentThreadId)}${withContinuationInstruction}`;
 }
 
-export function buildCompactionContinuationPrompt(args: { goal: string; parentThreadId: string | null }): string {
+export function buildCompactionContinuationPrompt(args: {
+	goal: string;
+	parentThreadId: string | null;
+	keyFiles?: string[];
+}): string {
 	const lines = [
 		"Continue the task from the compacted checkpoint.",
 		`Goal: ${args.goal.trim()}`,
 		"Use the checkpoint summary's Done / In Progress / Next Steps sections to decide the next concrete action.",
 	];
+
+	if (args.keyFiles && args.keyFiles.length > 0) {
+		lines.push("Key files:");
+		for (const file of args.keyFiles) {
+			lines.push(`- ${file}`);
+		}
+	}
 
 	if (args.parentThreadId) {
 		lines.push(`Parent thread ID: ${args.parentThreadId}`);

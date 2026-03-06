@@ -8,7 +8,7 @@
 
 import { execFileSync } from "node:child_process";
 import * as os from "node:os";
-import type { AgentTool, TextContent } from "@kennyfrc/mu-ai";
+import type { AgentTool, Message, TextContent } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { existsSync, readFileSync } from "fs";
 import { isAbsolute, relative, resolve } from "path";
@@ -41,6 +41,8 @@ export interface HandoffDetails {
 	formattedMessage: string;
 	parentSessionId: string;
 	fileTokens: number;
+	replacementMessages?: Message[];
+	keyFiles?: string[];
 }
 
 // -----------------------------------------------------------------------------

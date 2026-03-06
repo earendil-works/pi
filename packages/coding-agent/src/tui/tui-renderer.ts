@@ -3655,6 +3655,10 @@ export class TuiRenderer {
 	}
 
 	private buildContextCompactionMessages(details: HandoffDetails & { parentSessionId: string | null }): Message[] {
+		if (details.replacementMessages && details.replacementMessages.length > 0) {
+			return details.replacementMessages;
+		}
+
 		const timestamp = Date.now();
 		const compactSummary = buildCompactionCheckpointText({
 			formattedMessage: details.formattedMessage,
@@ -3699,6 +3703,7 @@ export class TuiRenderer {
 		const message = buildCompactionContinuationPrompt({
 			goal: details.goal,
 			parentThreadId: details.parentSessionId,
+			keyFiles: details.keyFiles,
 		});
 
 		await submitExplicitHandoff({
@@ -3915,6 +3920,7 @@ export class TuiRenderer {
 			formattedMessage,
 			parentSessionId: "",
 			fileTokens: estimateTokens(formattedMessage),
+			keyFiles: Array.from(new Set([...tracking.readFiles, ...tracking.modifiedFiles])),
 		};
 	}
 

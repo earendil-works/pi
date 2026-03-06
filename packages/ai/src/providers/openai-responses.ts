@@ -11,6 +11,7 @@ import type {
 	ResponseReasoningItem,
 	ResponseStreamEvent,
 } from "openai/resources/responses/responses.js";
+import { getMuCompactResponseItem } from "../compact-history.js";
 import { calculateCost } from "../models.js";
 import type {
 	Api,
@@ -829,6 +830,12 @@ function convertMessages(model: Model<"openai-responses">, context: Context): Re
 	}
 
 	for (const msg of transformedMessages) {
+		const rawCompactItem = getMuCompactResponseItem(msg);
+		if (rawCompactItem) {
+			messages.push(rawCompactItem as ResponseInput[number]);
+			continue;
+		}
+
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
 				messages.push({

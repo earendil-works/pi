@@ -1,4 +1,5 @@
 export * from "./agent/index.js";
+export * from "./compact-history.js";
 export * from "./constants.js";
 export * from "./models.js";
 export * from "./providers/anthropic.js";

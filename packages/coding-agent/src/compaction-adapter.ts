@@ -1,6 +1,14 @@
 import os from "node:os";
-import type { Api, Message, Model } from "@kennyfrc/mu-ai";
-import { buildHandoffDraftFromModelText, HANDOFF_SUMMARY_SYSTEM_PROMPT } from "./handoff-summary.js";
+import {
+	type Api,
+	type AssistantMessage,
+	type Message,
+	type Model,
+	MU_COMPACT_RESPONSE_ITEM_KEY,
+	type ToolResultMessage,
+	type UserMessage,
+} from "@kennyfrc/mu-ai";
+import { buildHandoffDraftFromModelText } from "./handoff-summary.js";
 import { estimateTokens, type HandoffDetails } from "./tools/handoff.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -38,6 +46,7 @@ type CompactResponseItem =
 	| CompactFunctionCallItem
 	| CompactFunctionCallOutputItem
 	| { type: "compaction"; encrypted_content: string }
+	| { type: "compaction_summary"; encrypted_content: string }
 	| { type: string; [key: string]: unknown };
 
 interface CompactEndpointResponse {
@@ -48,6 +57,16 @@ interface CompactEndpointRequest {
 	model: string;
 	input: CompactResponseItem[];
 	instructions: string;
+}
+
+type MessageWithCompactResponseItem = Message & {
+	[MU_COMPACT_RESPONSE_ITEM_KEY]?: CompactResponseItem;
+};
+
+export { MU_COMPACT_RESPONSE_ITEM_KEY };
+
+function buildKeyFiles(readFiles: string[], modifiedFiles: string[]): string[] {
+	return Array.from(new Set([...readFiles, ...modifiedFiles]));
 }
 
 export interface CompactSummaryArgs {
@@ -133,36 +152,6 @@ export function supportsUpstreamResponsesCompact(model: Model<Api>): boolean {
 	);
 }
 
-function buildCompactRequestUserMessage(
-	goal: string,
-	readFiles: string[],
-	modifiedFiles: string[],
-): CompactMessageItem {
-	const readFilesText = readFiles.length > 0 ? readFiles.join("\n") : "";
-	const modifiedFilesText = modifiedFiles.length > 0 ? modifiedFiles.join("\n") : "";
-	const text = [
-		"<goal>",
-		goal.trim(),
-		"</goal>",
-		"",
-		"<read-files>",
-		readFilesText,
-		"</read-files>",
-		"",
-		"<modified-files>",
-		modifiedFilesText,
-		"</modified-files>",
-		"",
-		"Compact the preceding thread into a structured checkpoint for continuing this goal.",
-	].join("\n");
-
-	return {
-		type: "message",
-		role: "user",
-		content: [{ type: "input_text", text }],
-	};
-}
-
 function toInputText(text: string): CompactTextContent {
 	return { type: "input_text", text };
 }
@@ -176,10 +165,17 @@ function toImageContent(mimeType: string, data: string): CompactTextContent {
 }
 
 function convertMessagesToCompactInput(model: Model<Api>, messages: Message[]): CompactResponseItem[] {
-	const input: CompactResponseItem[] = [];
+	const input: Array<CompactResponseItem & { __muToolCallId?: string }> = [];
 	const replayableToolCallIds = new Set<string>();
+	const completedToolCallIds = new Set<string>();
 
 	for (const message of messages) {
+		const rawCompactItem = (message as MessageWithCompactResponseItem)[MU_COMPACT_RESPONSE_ITEM_KEY];
+		if (rawCompactItem) {
+			input.push(rawCompactItem);
+			continue;
+		}
+
 		if (message.role === "user") {
 			if (typeof message.content === "string") {
 				input.push({
@@ -223,22 +219,26 @@ function convertMessagesToCompactInput(model: Model<Api>, messages: Message[]): 
 				}
 
 				if (block.type === "toolCall") {
-					replayableToolCallIds.add(block.id);
+					const callId = block.id.split("|")[0] ?? block.id;
+					replayableToolCallIds.add(callId);
 					input.push({
 						type: "function_call",
-						call_id: block.id.split("|")[0] ?? block.id,
+						call_id: callId,
 						id: block.id.split("|")[1] ?? undefined,
 						name: block.name,
 						arguments: JSON.stringify(block.arguments),
+						__muToolCallId: callId,
 					});
 				}
 			}
 			continue;
 		}
 
-		if (!replayableToolCallIds.has(message.toolCallId)) {
+		const callId = message.toolCallId.split("|")[0] ?? message.toolCallId;
+		if (!replayableToolCallIds.has(callId)) {
 			continue;
 		}
+		completedToolCallIds.add(callId);
 
 		const textOutput = message.content
 			.filter((block): block is { type: "text"; text: string } => block.type === "text")
@@ -247,7 +247,7 @@ function convertMessagesToCompactInput(model: Model<Api>, messages: Message[]): 
 
 		input.push({
 			type: "function_call_output",
-			call_id: message.toolCallId.split("|")[0] ?? message.toolCallId,
+			call_id: callId,
 			output: textOutput.length > 0 ? textOutput : "(see attached image)",
 		});
 
@@ -268,7 +268,137 @@ function convertMessagesToCompactInput(model: Model<Api>, messages: Message[]): 
 		}
 	}
 
-	return input;
+	return input
+		.filter((item) => {
+			if (item.type !== "function_call") {
+				return true;
+			}
+			return typeof item.call_id === "string" && completedToolCallIds.has(item.call_id);
+		})
+		.map((item) => {
+			if (!Object.hasOwn(item, "__muToolCallId")) {
+				return item;
+			}
+			const { __muToolCallId: _unused, ...rest } = item;
+			return rest;
+		});
+}
+
+function extractCompactItemTextContent(item: CompactMessageItem): string[] {
+	return item.content
+		.map((part) => {
+			if (part.type === "output_text") return part.text;
+			if (part.type === "input_text") return part.text;
+			if (part.type === "refusal") return part.refusal;
+			return "";
+		})
+		.filter((text) => text.length > 0);
+}
+
+function buildZeroUsage() {
+	return {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+}
+
+function createHiddenCompactMessage(item: CompactResponseItem, timestamp: number): MessageWithCompactResponseItem {
+	const message: UserMessage = {
+		role: "user",
+		content: [],
+		timestamp,
+	};
+	return {
+		...message,
+		[MU_COMPACT_RESPONSE_ITEM_KEY]: item,
+	};
+}
+
+function shouldKeepCompactedOutputItem(item: CompactResponseItem): boolean {
+	if (item.type === "compaction" || item.type === "compaction_summary") return true;
+	if (item.type !== "message") return false;
+	if (item.role === "developer") return false;
+	return item.role === "user" || item.role === "assistant";
+}
+
+function isRetainedCompactMessageItem(item: CompactResponseItem): item is CompactMessageItem {
+	return item.type === "message" && item.role !== "developer" && (item.role === "user" || item.role === "assistant");
+}
+
+function compactOutputItemsToMessages(args: { model: Model<Api>; output: CompactResponseItem[] }): Message[] {
+	const timestampBase = Date.now();
+	const replacementMessages: Message[] = [];
+
+	for (const [index, item] of args.output.entries()) {
+		const timestamp = timestampBase + index;
+		if (!shouldKeepCompactedOutputItem(item)) continue;
+
+		if (item.type === "compaction" || item.type === "compaction_summary") {
+			replacementMessages.push(createHiddenCompactMessage(item, timestamp));
+			continue;
+		}
+		if (!isRetainedCompactMessageItem(item)) {
+			continue;
+		}
+
+		const texts = extractCompactItemTextContent(item);
+		if (item.role === "user") {
+			const content = texts.map((text) => ({ type: "text" as const, text }));
+			replacementMessages.push({
+				role: "user",
+				content,
+				timestamp,
+			});
+			continue;
+		}
+
+		const content = texts.map((text) => ({ type: "text" as const, text }));
+		const assistantMessage: AssistantMessage = {
+			role: "assistant",
+			content,
+			api: args.model.api,
+			provider: args.model.provider,
+			model: args.model.id,
+			usage: buildZeroUsage(),
+			stopReason: "stop",
+			timestamp,
+		};
+		replacementMessages.push(assistantMessage);
+	}
+
+	return replacementMessages;
+}
+
+function estimateReplacementMessagesTokens(messages: Message[]): number {
+	const flattened = messages
+		.map((message) => {
+			if (message.role === "user") {
+				if (typeof message.content === "string") return message.content;
+				return message.content
+					.filter((block): block is { type: "text"; text: string } => block.type === "text")
+					.map((block) => block.text)
+					.join("\n");
+			}
+			if (message.role === "assistant") {
+				return message.content
+					.filter((block): block is { type: "text"; text: string } => block.type === "text")
+					.map((block) => block.text)
+					.join("\n");
+			}
+			const toolResult = message as ToolResultMessage;
+			return toolResult.content
+				.filter((block): block is { type: "text"; text: string } => block.type === "text")
+				.map((block) => block.text)
+				.join("\n");
+		})
+		.filter((text) => text.length > 0)
+		.join("\n\n");
+
+	return estimateTokens(flattened);
 }
 
 function extractCompactOutputText(output: CompactResponseItem[]): string {
@@ -302,7 +432,19 @@ function extractCompactOutputText(output: CompactResponseItem[]): string {
 }
 
 function buildCompactInstructions(goal: string): string {
-	return `${HANDOFF_SUMMARY_SYSTEM_PROMPT}\n\nCompact the thread into a checkpoint for continuing this goal: ${goal.trim()}`;
+	return `${UPSTREAM_CODEX_COMPACT_PROMPT}\n\nCurrent goal to continue after compaction: ${goal.trim()}`;
+}
+
+function resolveCompactEndpoint(model: Model<Api>): string {
+	const baseUrl = model.baseUrl.replace(/\/$/, "");
+	if (model.api === "openai-codex-responses") {
+		const codexBase = /\/backend-api(?:\/codex)?$/.test(baseUrl)
+			? baseUrl.replace(/\/backend-api$/, "/backend-api/codex")
+			: baseUrl;
+		return `${codexBase}/responses/compact`;
+	}
+
+	return `${baseUrl}/responses/compact`;
 }
 
 class StubCompactionAdapter implements CompactionAdapter {
@@ -327,13 +469,10 @@ export class OpenAIResponsesCompactAdapter implements CompactionAdapter {
 
 	async compactSummary(args: CompactSummaryArgs): Promise<CompactSummaryExecution> {
 		try {
-			const endpoint = `${args.model.baseUrl.replace(/\/$/, "")}/responses/compact`;
+			const endpoint = resolveCompactEndpoint(args.model);
 			const payload: CompactEndpointRequest = {
 				model: args.model.id,
-				input: [
-					...convertMessagesToCompactInput(args.model, args.messages),
-					buildCompactRequestUserMessage(args.goal, args.readFiles, args.modifiedFiles),
-				],
+				input: convertMessagesToCompactInput(args.model, args.messages),
 				instructions: buildCompactInstructions(args.goal),
 			};
 
@@ -363,18 +502,11 @@ export class OpenAIResponsesCompactAdapter implements CompactionAdapter {
 
 			const body = (await response.json()) as CompactEndpointResponse;
 			const output = body.output ?? [];
-			const modelText = extractCompactOutputText(output);
+			const replacementMessages = compactOutputItemsToMessages({ model: args.model, output });
 
-			if (!modelText) {
-				throw new Error("Compact endpoint returned no message text");
+			if (replacementMessages.length === 0) {
+				throw new Error("Compact endpoint returned no replayable history items");
 			}
-
-			const formattedMessage = buildHandoffDraftFromModelText({
-				goal: args.goal,
-				modelText,
-				readFiles: args.readFiles,
-				modifiedFiles: args.modifiedFiles,
-			});
 
 			return {
 				adapterKind: this.kind,
@@ -382,9 +514,11 @@ export class OpenAIResponsesCompactAdapter implements CompactionAdapter {
 				details: {
 					handoffType: "explicit",
 					goal: args.goal.trim(),
-					formattedMessage,
+					formattedMessage: "",
 					parentSessionId: "",
-					fileTokens: estimateTokens(formattedMessage),
+					fileTokens: estimateReplacementMessagesTokens(replacementMessages),
+					replacementMessages,
+					keyFiles: buildKeyFiles(args.readFiles, args.modifiedFiles),
 				},
 			};
 		} catch (error) {
@@ -431,6 +565,7 @@ export function createCompactSummaryFromOutput(args: {
 		formattedMessage,
 		parentSessionId: "",
 		fileTokens: estimateTokens(formattedMessage),
+		keyFiles: buildKeyFiles(args.readFiles, args.modifiedFiles),
 	};
 }
 
@@ -443,10 +578,7 @@ export function buildCompactRequestPayload(args: {
 }): CompactEndpointRequest {
 	return {
 		model: args.model.id,
-		input: [
-			...convertMessagesToCompactInput(args.model, args.messages),
-			buildCompactRequestUserMessage(args.goal, args.readFiles, args.modifiedFiles),
-		],
+		input: convertMessagesToCompactInput(args.model, args.messages),
 		instructions: buildCompactInstructions(args.goal),
 	};
 }
@@ -454,3 +586,18 @@ export function buildCompactRequestPayload(args: {
 export function extractCompactOutputTextForTest(output: JsonRecord[]): string {
 	return extractCompactOutputText(output as CompactResponseItem[]);
 }
+
+export function compactOutputItemsToMessagesForTest(args: { model: Model<Api>; output: JsonRecord[] }): Message[] {
+	return compactOutputItemsToMessages({ model: args.model, output: args.output as CompactResponseItem[] });
+}
+const UPSTREAM_CODEX_COMPACT_PROMPT = [
+	"You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary for another LLM that will resume the task.",
+	"",
+	"Include:",
+	"- Current progress and key decisions made",
+	"- Important context, constraints, or user preferences",
+	"- What remains to be done (clear next steps)",
+	"- Any critical data, examples, or references needed to continue",
+	"",
+	"Be concise, structured, and focused on helping the next LLM seamlessly continue the work.",
+].join("\n");

@@ -25,10 +25,13 @@ describe("compaction checkpoint", () => {
 		const prompt = buildCompactionContinuationPrompt({
 			goal: "Continue the release workflow",
 			parentThreadId: "thread-123",
+			keyFiles: ["src/auth.ts", "src/session.ts"],
 		});
 
 		expect(prompt).toContain("Continue the task from the compacted checkpoint.");
 		expect(prompt).toContain("Goal: Continue the release workflow");
+		expect(prompt).toContain("Key files:");
+		expect(prompt).toContain("- src/auth.ts");
 		expect(prompt).toContain("Parent thread ID: thread-123");
 		expect(prompt).toContain("Use `read_thread` if you need more detail from the parent thread.");
 	});
