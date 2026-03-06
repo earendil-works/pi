@@ -177,10 +177,10 @@ todo_write: |
   Priority: high, medium (default), low.
   Replaces the full list each call.
 
-handoff: |
-  Explicitly hand off to a new session with specific file context injected.
+oai_compact: |
+  Compact the current thread into a smaller in-thread checkpoint with curated file context.
 
-  Use when: current context is cluttered, switching focus areas, or need fresh start with curated context.
+  Use when: current context is cluttered, you are near the context window, or you need a smaller baseline before continuing in the same session.
 
   Parameters:
   - goal: Imperative statement of what to accomplish (required)
@@ -188,11 +188,11 @@ handoff: |
     - 'src/foo.ts' - full file
     - 'src/foo.ts:42' - single line
     - 'src/foo.ts:10-50' - line range
-    - 'src/foo.ts:100-' - from line 100 to end
+  - 'src/foo.ts:100-' - from line 100 to end
   - token_limit: Max tokens for file context (default: 100000)
 
-  The tool validates files exist, checks token limits, and prepares the handoff.
-  On success, the session switches and the goal with file context is auto-submitted.
+  The tool validates files exist, checks token limits, and prepares a compact checkpoint.
+  On success, the active thread history is replaced with a smaller checkpoint so work can continue in the same session.
 
   Example:
   {"goal":"Implement OAuth logout flow","files":["src/auth/oauth.ts:50-150","src/routes/auth.ts","src/types/auth.ts:1-30"]}

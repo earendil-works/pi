@@ -6,7 +6,7 @@ export { editTool } from "./edit.js";
 export { execCommandTool } from "./exec-command.js";
 export { globTool } from "./glob.js";
 export { grepTool } from "./grep.js";
-export { handoffTool } from "./handoff.js";
+export { handoffTool, oaiCompactTool } from "./handoff.js";
 export { listThreadsTool } from "./list-threads.js";
 export { readTool } from "./read.js";
 export { readImageTool } from "./read-image.js";
@@ -20,7 +20,7 @@ import { editTool } from "./edit.js";
 import { execCommandTool } from "./exec-command.js";
 import { globTool } from "./glob.js";
 import { grepTool } from "./grep.js";
-import { handoffTool } from "./handoff.js";
+import { oaiCompactTool } from "./handoff.js";
 import { listThreadsTool } from "./list-threads.js";
 import { readTool } from "./read.js";
 import { readImageTool } from "./read-image.js";
@@ -37,7 +37,7 @@ export const codingTools = [
 	listThreadsTool,
 	readThreadTool,
 	readImageTool,
-	handoffTool,
+	oaiCompactTool,
 ];
 
 // All available tools (tool names are lowercase snake_case)
@@ -53,7 +53,7 @@ export const allTools = {
 	read_thread: readThreadTool,
 	read_image: readImageTool,
 	todo_write: todowriteTool,
-	handoff: handoffTool,
+	oai_compact: oaiCompactTool,
 
 	// Codex-style minimal tools
 	exec_command: execCommandTool,

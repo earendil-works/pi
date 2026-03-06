@@ -30,7 +30,7 @@ toolDescriptions:
   read_thread: Read a specific thread's conversation history
   read_image: Analyze images and extract information
   todo_write: Create and manage a structured task list on disk
-  handoff: Hand off to a new session with file context
+  oai_compact: Compact the current thread context into a smaller checkpoint
   exec_command: Execute shell commands
 
 # Guidelines that are conditionally included based on enabled tools

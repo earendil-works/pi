@@ -237,7 +237,7 @@ export async function buildSystemPrompt(options: {
 					{ name: "list_threads" },
 					{ name: "read_thread" },
 					{ name: "read_image" },
-					{ name: "handoff" },
+					{ name: "oai_compact" },
 				];
 
 	const toolNames = promptTools.map((t) => t.name);
@@ -395,6 +395,6 @@ export function getHandoffNudgeReminder(ratio: number): string {
 	return `
 
 <system_reminder>
-Context usage is at ${percent}%. Consider using the handoff tool to start a fresh session with selected file context before auto-handoff triggers at 95%.
+Context usage is at ${percent}%. Consider using oai_compact to replace the current thread history with a smaller checkpoint before automatic compaction triggers at 95%.
 </system_reminder>`;
 }

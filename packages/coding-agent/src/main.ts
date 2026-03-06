@@ -131,7 +131,7 @@ function parseArgs(args: string[]): Args {
 				read_thread: "read_thread",
 				read_image: "read_image",
 				todo_write: "todo_write",
-				handoff: "handoff",
+				oai_compact: "oai_compact",
 				exec_command: "exec_command",
 
 				// Legacy / aliases
@@ -146,7 +146,9 @@ function parseArgs(args: string[]): Args {
 				ReadThread: "read_thread",
 				ReadImage: "read_image",
 				Todo: "todo_write",
-				Handoff: "handoff",
+				Handoff: "oai_compact",
+				handoff: "oai_compact",
+				"oai-compact": "oai_compact",
 				applypatch: "apply_patch",
 				find: "glob",
 				ls: "glob",
@@ -301,14 +303,14 @@ ${chalk.bold("Options:")}
   --print, -p             Non-interactive mode: process prompt and exit
   --continue, -c          Continue previous session
   --resume, -r [uuid]     Resume session (by UUID or pick from list)
-  --session <path>        Use specific session file
-  --no-session            Don't save session (ephemeral)
-  --models <patterns>     Comma-separated model patterns for quick cycling with Ctrl+P
-  --tools <tools>         Comma-separated list of tools to enable (default: read,bash,edit,write,list_threads,read_thread,read_image,handoff)
-                          Available: read, bash, edit, apply_patch, write, grep, glob, list_threads, read_thread, read_image, todo_write, handoff, exec_command
-  --thinking <level>      Set thinking level: off, minimal, low, medium, high
-  --export <file>         Export session file to HTML and exit
-  --help, -h              Show this help
+	--session <path>        Use specific session file
+	--no-session            Don't save session (ephemeral)
+	--models <patterns>     Comma-separated model patterns for quick cycling with Ctrl+P
+	--tools <tools>         Comma-separated list of tools to enable (default: read,bash,edit,write,list_threads,read_thread,read_image,oai_compact)
+	                         Available: read, bash, edit, apply_patch, write, grep, glob, list_threads, read_thread, read_image, todo_write, oai_compact, exec_command
+	--thinking <level>      Set thinking level: off, minimal, low, medium, high
+	--export <file>         Export session file to HTML and exit
+	--help, -h              Show this help
 
 ${chalk.bold("Examples:")}
   # Interactive mode
@@ -363,20 +365,20 @@ ${chalk.bold("Environment Variables:")}
   ZAI_API_KEY             - ZAI API key
   MU_CODING_AGENT_DIR     - Session storage directory (default: ~/.mu/agent)
 
-${chalk.bold("Available Tools (default: read, bash, edit, write, list_threads, read_thread, read_image, handoff):")}
-  read         - Read file contents
-  bash         - Execute bash commands
-  edit         - Edit files with find/replace
-  apply_patch  - Apply patch edits
-  write        - Write files (creates/overwrites)
-  list_threads - List past conversation threads
-  read_thread  - Read a specific thread's conversation history
-  read_image   - Analyze images and extract information
-  todo_write   - Persist todo list to disk and emit a reminder to continue
-  handoff      - Hand off to a new session with file context
-  grep         - Search file contents (off by default)
-  glob         - Find files by glob pattern or list directory contents (off by default)
-  exec_command - Execute shell commands (Codex-style)
+	${chalk.bold("Available Tools (default: read, bash, edit, write, list_threads, read_thread, read_image, oai_compact):")}
+	  read         - Read file contents
+	  bash         - Execute bash commands
+	  edit         - Edit files with find/replace
+	  apply_patch  - Apply patch edits
+	  write        - Write files (creates/overwrites)
+	  list_threads - List past conversation threads
+	  read_thread  - Read a specific thread's conversation history
+	  read_image   - Analyze images and extract information
+	  todo_write   - Persist todo list to disk and emit a reminder to continue
+	  oai_compact  - Compact the current thread context into a smaller checkpoint
+	  grep         - Search file contents (off by default)
+	  glob         - Find files by glob pattern or list directory contents (off by default)
+	  exec_command - Execute shell commands (Codex-style)
 `);
 }
 
