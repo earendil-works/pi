@@ -28,15 +28,13 @@ describe("GPT tools", () => {
 		expect(toolMap.apply_patch?.parameters?.type).toBe("object");
 	});
 
-	it("defaults GPT-* models to the regular tool set", () => {
+	it("defaults GPT-* models to the GPT tool set", () => {
 		const model = getModel("openai", "gpt-4o-mini");
 		const selection = resolveToolSelection(undefined, model);
 
 		expect(selection.toolNames).toEqual([
-			"read",
 			"bash",
-			"edit",
-			"write",
+			"apply_patch",
 			"list_threads",
 			"read_thread",
 			"read_image",

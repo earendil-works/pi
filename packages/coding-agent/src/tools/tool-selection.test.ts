@@ -3,22 +3,20 @@ import { describe, expect, it } from "vitest";
 import { resolveToolSelection } from "./tool-selection.js";
 
 describe("resolveToolSelection", () => {
-	it("defaults GPT-* models to the regular tool set", () => {
+	it("defaults GPT-* models to the GPT tool set", () => {
 		const model = getModel("openai", "gpt-4o-mini");
 		const selection = resolveToolSelection(undefined, model);
 
 		expect(selection.toolNames).toEqual([
-			"read",
 			"bash",
-			"edit",
-			"write",
+			"apply_patch",
 			"list_threads",
 			"read_thread",
 			"read_image",
 			"todo_write",
 			"handoff",
 		]);
-		expect(selection.replacedWithApplyPatch).toBe(false);
+		expect(selection.replacedWithApplyPatch).toBe(true);
 	});
 
 	it("keeps Edit and Write for non-GPT models", () => {
