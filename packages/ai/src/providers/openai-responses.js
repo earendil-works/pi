@@ -11,6 +11,10 @@ import {
 } from "./tool-call-recovery.js";
 import { transformMessages } from "./transorm-messages.js";
 
+function isGptFamilyModelId(modelId) {
+	const normalized = modelId.includes("/") ? (modelId.split("/").pop() ?? modelId) : modelId;
+	return normalized.toLowerCase().startsWith("gpt");
+}
 function normalizeToolName(name, tools) {
 	return normalizeToolNameWithTools(name, tools);
 }
@@ -638,6 +642,9 @@ function buildParams(model, context, options) {
 	}
 	if (options?.toolChoice) {
 		params.tool_choice = options.toolChoice;
+	}
+	if (options?.fastMode && isGptFamilyModelId(model.id)) {
+		params.service_tier = "priority";
 	}
 	if (model.reasoning) {
 		if (options?.reasoningEffort || options?.reasoningSummary) {

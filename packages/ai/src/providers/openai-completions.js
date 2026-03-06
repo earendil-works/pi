@@ -41,6 +41,10 @@ function hasToolHistory(messages) {
 	}
 	return false;
 }
+function isGptFamilyModelId(modelId) {
+	const normalized = modelId.includes("/") ? (modelId.split("/").pop() ?? modelId) : modelId;
+	return normalized.toLowerCase().startsWith("gpt");
+}
 /**
  * Auto-detect OpenAI-completions compatibility settings from URL.
  */
@@ -530,6 +534,9 @@ function buildParams(model, context, options) {
 	}
 	if (options?.toolChoice) {
 		params.tool_choice = options.toolChoice;
+	}
+	if (options?.fastMode && isGptFamilyModelId(model.id)) {
+		params.service_tier = "priority";
 	}
 	if (options?.reasoningEffort && model.reasoning) {
 		// Baseten uses chat_template_args.enable_thinking for Kimi K2.5 and GLM models.

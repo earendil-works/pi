@@ -100,6 +100,7 @@ export interface StreamOptions {
 	maxTokens?: number;
 	signal?: AbortSignal;
 	apiKey?: string;
+	fastMode?: boolean;
 	retry?: RetryOptions;
 }
 export interface SimpleStreamOptions extends StreamOptions {

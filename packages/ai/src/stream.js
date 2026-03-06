@@ -107,6 +107,7 @@ function mapOptionsForApi(model, options, apiKey) {
 		maxTokens: options?.maxTokens || Math.min(model.maxTokens, 32000),
 		signal: options?.signal,
 		apiKey: apiKey || options?.apiKey,
+		fastMode: options?.fastMode,
 	};
 	// Helper to clamp xhigh to high for providers that don't support it
 	const clampReasoning = (effort) => (effort === "xhigh" ? "high" : effort);

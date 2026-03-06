@@ -80,6 +80,10 @@ class CodexStreamError extends Error {
 	}
 }
 const DEFAULT_RETRY_CLASSES = ["429", "5xx", "transport"];
+function isGptFamilyModelId(modelId) {
+	const normalized = modelId.includes("/") ? (modelId.split("/").pop() ?? modelId) : modelId;
+	return normalized.toLowerCase().startsWith("gpt");
+}
 function getRetryAfterMs(headers) {
 	const raw = headers.get("retry-after") ?? headers.get("Retry-After");
 	if (!raw) return undefined;
@@ -396,6 +400,9 @@ function buildRequestBody(model, context, options) {
 		tool_choice: "auto",
 		parallel_tool_calls: options?.parallelToolCalls ?? false,
 	};
+	if (options?.fastMode && isGptFamilyModelId(model.id)) {
+		body.service_tier = "priority";
+	}
 	if (options?.temperature !== undefined) {
 		body.temperature = options.temperature;
 	}
