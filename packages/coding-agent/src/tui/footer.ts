@@ -4,6 +4,7 @@ import { supportsXhigh } from "@kennyfrc/mu-ai";
 import { type Component, visibleWidth } from "@kennyfrc/mu-tui";
 import { existsSync, type FSWatcher, readFileSync, watch } from "fs";
 import { dirname, join } from "path";
+import { supportsFastMode } from "../fast-mode.js";
 import { isModelUsingOAuth } from "../model-config.js";
 import { getActiveOAuthAccount, listOAuthAccounts } from "../oauth/index.js";
 import { theme } from "../theme/theme.js";
@@ -274,6 +275,10 @@ export class FooterComponent implements Component {
 			if (thinkingLevel !== "off" && (thinkingLevel !== "xhigh" || canShowXhigh)) {
 				rightSide = `${modelName} • ${thinkingLevel}`;
 			}
+		}
+
+		if (supportsFastMode(this.state.model)) {
+			rightSide = `${rightSide} • fast:${this.state.fastMode ? "on" : "off"}`;
 		}
 
 		// Append provider to reduce billing/provider ambiguity (e.g., OpenAI vs OpenRouter vs OpenAI Codex)

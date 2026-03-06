@@ -52,6 +52,11 @@ export interface OpenAIResponsesOptions extends StreamOptions {
 	toolChoice?: OpenAIResponsesToolChoice;
 }
 
+function isGptFamilyModelId(modelId: string): boolean {
+	const normalized = modelId.includes("/") ? (modelId.split("/").pop() ?? modelId) : modelId;
+	return normalized.toLowerCase().startsWith("gpt");
+}
+
 type OpenAICustomToolCall = {
 	type: "custom_tool_call";
 	call_id: string;
@@ -767,6 +772,10 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 
 	if (options?.toolChoice) {
 		params.tool_choice = options.toolChoice;
+	}
+
+	if (options?.fastMode && isGptFamilyModelId(model.id)) {
+		params.service_tier = "priority";
 	}
 
 	if (model.reasoning) {

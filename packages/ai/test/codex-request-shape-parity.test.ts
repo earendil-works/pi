@@ -106,4 +106,40 @@ describe("openai-codex request shape parity", () => {
 		expect(body.parallel_tool_calls).toBe(true);
 		expect(body.prompt_cache_key).toBe(sessionId);
 	});
+
+	it("sends service_tier=priority when fast mode is enabled", async () => {
+		let capturedFastInit: RequestInit | undefined;
+
+		global.fetch = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+			capturedFastInit = init;
+			return createSseResponse([
+				{
+					type: "response.done",
+					response: {
+						status: "completed",
+						usage: {
+							input_tokens: 1,
+							output_tokens: 1,
+							total_tokens: 2,
+							input_tokens_details: { cached_tokens: 0 },
+						},
+					},
+				},
+			]);
+		}) as typeof fetch;
+
+		const stream = streamOpenAICodexResponses(createModel(), createContext(), {
+			apiKey: createCodexToken(),
+			fastMode: true,
+			codexRetry: { requestMaxRetries: 0, streamMaxRetries: 0 },
+		});
+
+		for await (const _event of stream) {
+			// consume
+		}
+		await stream.result();
+
+		const body = JSON.parse(String(capturedFastInit?.body ?? "{}")) as Record<string, unknown>;
+		expect(body.service_tier).toBe("priority");
+	});
 });

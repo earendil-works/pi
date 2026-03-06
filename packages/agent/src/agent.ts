@@ -107,6 +107,7 @@ export class Agent {
 		systemPrompt: "",
 		model: getModel("google", "gemini-2.5-flash-lite-preview-06-17"),
 		thinkingLevel: "off",
+		fastMode: false,
 		tools: [],
 		messages: [],
 		isStreaming: false,
@@ -166,6 +167,10 @@ export class Agent {
 
 	setThinkingLevel(l: ThinkingLevel) {
 		this._state.thinkingLevel = l;
+	}
+
+	setFastMode(enabled: boolean) {
+		this._state.fastMode = enabled;
 	}
 
 	setQueueMode(mode: "all" | "one-at-a-time") {
@@ -348,6 +353,7 @@ export class Agent {
 			tools: this._state.tools,
 			model,
 			reasoning,
+			fastMode: this._state.fastMode,
 			preprocessor: this.messagePreprocessor
 				? async (messages: Message[], abortSignal?: AbortSignal) =>
 						await this.messagePreprocessor!(messages, abortSignal)

@@ -38,6 +38,12 @@ import { exportSessionToHtml } from "../export-html.js";
 import type { ExtensionLoader } from "../extensions/loader.js";
 import type { ExtensionManager } from "../extensions/manager.js";
 import type { ExtensionCommandContext, ExtensionCommandPrintColor } from "../extensions/types.js";
+import {
+	applyFastModeCommand,
+	type FastModeSlashCommand,
+	parseFastModeSlashCommand,
+	supportsFastMode,
+} from "../fast-mode.js";
 import { parseHandoffFileSelections } from "../handoff-file-selection.js";
 import { extractHandoffFileTracking } from "../handoff-file-tracking.js";
 import { normalizeAutoHandoffGoal } from "../handoff-goal.js";
@@ -338,6 +344,11 @@ export class TuiRenderer {
 			description: "Select model (opens selector UI)",
 		};
 
+		const fastCommand: SlashCommand = {
+			name: "fast",
+			description: "Toggle GPT fast mode (service_tier=priority)",
+		};
+
 		const exportCommand: SlashCommand = {
 			name: "export",
 			description: "Export session to HTML file",
@@ -447,6 +458,7 @@ export class TuiRenderer {
 			clearCommand,
 			copyCommand,
 			exportCommand,
+			fastCommand,
 			handoffCommand,
 			subscribeCommand,
 			unsubscribeCommand,
@@ -749,6 +761,13 @@ export class TuiRenderer {
 			if (rawText === "/model") {
 				// Show model selector
 				this.showModelSelector();
+				this.editor.setText("");
+				return;
+			}
+
+			const fastModeCommand = parseFastModeSlashCommand(rawText);
+			if (fastModeCommand) {
+				this.handleFastModeSlashCommand(fastModeCommand);
 				this.editor.setText("");
 				return;
 			}
@@ -2269,6 +2288,26 @@ export class TuiRenderer {
 		this.editorContainer.addChild(this.editor);
 		this.queueModeSelector = null;
 		this.ui.setFocus(this.editor);
+	}
+
+	private handleFastModeSlashCommand(command: FastModeSlashCommand): void {
+		const model = this.agent.state.model;
+		if (!supportsFastMode(model)) {
+			this.showError("Fast mode is only available for gpt* models.");
+			return;
+		}
+
+		const next = applyFastModeCommand(this.agent.state.fastMode, command);
+		if (command.type !== "status") {
+			this.agent.setFastMode(next);
+			this.settingsManager.setFastMode(next);
+		}
+
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(
+			new Text(theme.fg("dim", next ? "Fast mode: on (service_tier=priority)" : "Fast mode: off"), 1, 0),
+		);
+		this.ui.requestRender();
 	}
 
 	private showTodosOverlay(): void {

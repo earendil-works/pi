@@ -8,6 +8,7 @@ export interface AgentRunConfig {
 	tools: AgentTool<any>[];
 	model: Model<any>;
 	reasoning?: "low" | "medium" | "high" | "xhigh";
+	fastMode?: boolean;
 	/**
 	 * Transform/prune/inject messages before each LLM call within a multi-turn run.
 	 * Passed through to @kennyfrc/mu-ai's AgentLoopConfig.preprocessor.

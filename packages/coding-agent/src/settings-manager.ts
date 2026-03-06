@@ -11,6 +11,7 @@ export interface Settings {
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+	fastMode?: boolean;
 	queueMode?: "all" | "one-at-a-time";
 	autoHandoffMode?: AutoHandoffMode;
 	theme?: string;
@@ -119,6 +120,15 @@ export class SettingsManager {
 
 	setDefaultThinkingLevel(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh"): void {
 		this.settings.defaultThinkingLevel = level;
+		this.save();
+	}
+
+	getFastMode(): boolean {
+		return this.settings.fastMode === true;
+	}
+
+	setFastMode(enabled: boolean): void {
+		this.settings.fastMode = enabled;
 		this.save();
 	}
 

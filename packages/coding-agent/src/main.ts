@@ -928,6 +928,7 @@ export async function main(args: string[]) {
 	// 6. null (allowed in interactive mode)
 	let initialModel: Model<Api> | null = null;
 	let initialThinking: ThinkingLevel = "off";
+	const initialFastMode = settingsManager.getFastMode();
 
 	if (parsed.provider && parsed.model) {
 		// 1. CLI args take priority
@@ -1154,6 +1155,7 @@ export async function main(args: string[]) {
 			systemPrompt,
 			model: initialModel as any, // Can be null
 			thinkingLevel: initialThinking,
+			fastMode: initialFastMode,
 			tools: selectedTools,
 		},
 		queueMode: settingsManager.getQueueMode(),

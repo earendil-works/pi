@@ -61,6 +61,7 @@ export interface AgentState {
 	systemPrompt: string;
 	model: Model<any>;
 	thinkingLevel: ThinkingLevel;
+	fastMode: boolean;
 	tools: AgentTool<any>[];
 	messages: AppMessage[]; // Can include attachments + custom message types
 	isStreaming: boolean;

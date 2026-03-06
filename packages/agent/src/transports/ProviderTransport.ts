@@ -57,6 +57,7 @@ export class ProviderTransport implements AgentTransport {
 		const pc: AgentLoopConfig = {
 			model,
 			reasoning: cfg.reasoning,
+			fastMode: cfg.fastMode,
 			apiKey,
 			preprocessor: cfg.preprocessor,
 			interrupt: cfg.interrupt,

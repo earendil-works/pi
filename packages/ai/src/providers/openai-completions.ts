@@ -66,6 +66,11 @@ function hasToolHistory(messages: Message[]): boolean {
 	return false;
 }
 
+function isGptFamilyModelId(modelId: string): boolean {
+	const normalized = modelId.includes("/") ? (modelId.split("/").pop() ?? modelId) : modelId;
+	return normalized.toLowerCase().startsWith("gpt");
+}
+
 /**
  * Auto-detect OpenAI-completions compatibility settings from URL.
  */
@@ -644,6 +649,10 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 
 	if (options?.toolChoice) {
 		params.tool_choice = options.toolChoice;
+	}
+
+	if (options?.fastMode && isGptFamilyModelId(model.id)) {
+		params.service_tier = "priority";
 	}
 
 	if (options?.reasoningEffort && model.reasoning) {
