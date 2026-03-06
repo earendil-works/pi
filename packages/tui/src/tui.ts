@@ -91,6 +91,7 @@ export class TUI extends Container {
 	private previousWidth = 0;
 	private focusedComponent: Component | null = null;
 	private renderRequested = false;
+	private resizeBaselineDirty = false;
 	private cursorRow = 0; // Logical cursor row (end of rendered content)
 	private hardwareCursorRow = 0; // Actual terminal cursor row after last write
 	private maxLinesRendered = 0; // Max number of lines ever rendered (working area)
@@ -154,6 +155,12 @@ export class TUI extends Container {
 		if (reason === "tool_progress") {
 			this.requestThrottledRender(this.toolProgressMinIntervalMs);
 			return;
+		}
+		if (reason === "resize") {
+			// A terminal resize can reflow the physical screen even if the final width
+			// ends up matching the last committed render width. In that case our
+			// previousLines/previousWidth baseline is no longer trustworthy.
+			this.resizeBaselineDirty = true;
 		}
 
 		// Input/resize/other should render immediately and also cancel any pending throttle
@@ -250,6 +257,7 @@ export class TUI extends Container {
 
 			this.previousLines = newLines;
 			this.previousWidth = width;
+			this.resizeBaselineDirty = false;
 		};
 
 		// First render - just output everything without clearing (assumes clean screen)
@@ -260,6 +268,11 @@ export class TUI extends Container {
 
 		// Width changed - full re-render
 		if (widthChanged) {
+			fullRender(true);
+			return;
+		}
+
+		if (this.resizeBaselineDirty) {
 			fullRender(true);
 			return;
 		}
