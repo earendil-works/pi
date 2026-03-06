@@ -55,6 +55,7 @@ import {
 	HANDOFF_SUMMARY_SYSTEM_PROMPT,
 } from "../handoff-summary.js";
 import { findModel, getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
+import { WorkspaceNoteStore } from "../notes/workspace-note-store.js";
 import { playNotificationSound, sendNotification } from "../notification.js";
 import {
 	getActiveOAuthAccount,
@@ -135,6 +136,7 @@ import { ToolExecutionComponent } from "./tool-execution.js";
 import { TreeSelectorComponent } from "./tree-selector.js";
 import { UserMessageComponent } from "./user-message.js";
 import { UserMessageSelectorComponent } from "./user-message-selector.js";
+import { WorkspaceNoteOverlayComponent } from "./workspace-note-overlay.js";
 
 function hashContent(content: string): string {
 	return createHash("sha256").update(content).digest("hex");
@@ -246,6 +248,7 @@ export class TuiRenderer {
 
 	// /todos overlay
 	private todoOverlay: TodoOverlayComponent | null = null;
+	private noteOverlay: WorkspaceNoteOverlayComponent | null = null;
 
 	// Model selector
 	private modelSelector: ModelSelectorComponent | null = null;
@@ -433,6 +436,11 @@ export class TuiRenderer {
 			description: "Manage todos (opens overlay UI)",
 		};
 
+		const noteCommand: SlashCommand = {
+			name: "note",
+			description: "Edit the persistent workspace note (opens modal)",
+		};
+
 		const themeCommand: SlashCommand = {
 			name: "theme",
 			description: "Select color theme (opens selector UI)",
@@ -488,6 +496,7 @@ export class TuiRenderer {
 			logoutCommand,
 			modelCommand,
 			newCommand,
+			noteCommand,
 			notifyCommand,
 			queueCommand,
 			reloadCommand,
@@ -907,6 +916,18 @@ export class TuiRenderer {
 			if (rawText === "/todos") {
 				this.showTodosOverlay();
 				this.editor.setText("");
+				return;
+			}
+
+			const noteCommand = rawText.match(/^\/note(?:\s+([\s\S]*))?$/);
+			if (noteCommand) {
+				const quickNoteText = noteCommand[1]?.trim() ?? "";
+				this.editor.setText("");
+				if (quickNoteText) {
+					this.appendWorkspaceNote(quickNoteText);
+				} else {
+					this.showWorkspaceNoteOverlay();
+				}
 				return;
 			}
 
@@ -2383,6 +2404,74 @@ export class TuiRenderer {
 		this.editorContainer.clear();
 		this.editorContainer.addChild(this.todoOverlay);
 		this.ui.setFocus(this.todoOverlay);
+		this.ui.requestRender();
+	}
+
+	private createWorkspaceNoteStore(): WorkspaceNoteStore {
+		return new WorkspaceNoteStore({
+			cwd: process.cwd(),
+			baseDir: this.settingsManager.getBaseDir(),
+		});
+	}
+
+	private appendWorkspaceNote(text: string): void {
+		try {
+			const store = this.createWorkspaceNoteStore();
+			store.appendNote(text);
+			this.showWorkspaceNoteSavedMessage(store.getNote());
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	private showWorkspaceNoteOverlay(): void {
+		try {
+			const store = this.createWorkspaceNoteStore();
+			this.noteOverlay = new WorkspaceNoteOverlayComponent({
+				tui: this.ui,
+				workspaceLabel: store.getWorkspaceKey(),
+				initialText: store.getNote(),
+				onSave: (text) => {
+					const result = store.saveNote(text);
+					this.hideWorkspaceNoteOverlay();
+					if (result.deleted) {
+						this.showWorkspaceNoteClearedMessage();
+					} else {
+						this.showWorkspaceNoteSavedMessage(result.note);
+					}
+				},
+				onCancel: () => {
+					this.hideWorkspaceNoteOverlay();
+				},
+			});
+
+			this.ui.setOverlay(this.noteOverlay, {
+				minWidth: 60,
+				maxWidth: 84,
+				marginX: 6,
+			});
+			this.ui.setFocus(this.noteOverlay);
+			this.ui.requestRender();
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
+	}
+
+	private hideWorkspaceNoteOverlay(): void {
+		this.ui.clearOverlay();
+		this.noteOverlay = null;
+		this.ui.setFocus(this.editor);
+	}
+
+	private showWorkspaceNoteSavedMessage(note: string): void {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.bold(theme.fg("accent", "Workspace note")) + "\n" + note, 1, 0));
+		this.ui.requestRender();
+	}
+
+	private showWorkspaceNoteClearedMessage(): void {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg("dim", "Workspace note cleared"), 1, 0));
 		this.ui.requestRender();
 	}
 

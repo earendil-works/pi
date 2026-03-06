@@ -27,12 +27,17 @@ export interface Settings {
 
 export class SettingsManager {
 	private settingsPath: string;
+	private baseDir: string;
 	private settings: Settings;
 
 	constructor(baseDir?: string) {
-		const dir = baseDir || join(homedir(), ".mu", "agent");
-		this.settingsPath = join(dir, "settings.json");
+		this.baseDir = baseDir || join(homedir(), ".mu", "agent");
+		this.settingsPath = join(this.baseDir, "settings.json");
 		this.settings = this.load();
+	}
+
+	getBaseDir(): string {
+		return this.baseDir;
 	}
 
 	private load(): Settings {
