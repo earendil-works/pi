@@ -1324,7 +1324,7 @@ export class SessionManager {
 				const tsA = new Date(a.entry.timestamp).getTime();
 				const tsB = new Date(b.entry.timestamp).getTime();
 				// If both timestamps are valid, use them
-				if (!isNaN(tsA) && !isNaN(tsB)) return tsA - tsB;
+				if (!Number.isNaN(tsA) && !Number.isNaN(tsB)) return tsA - tsB;
 				// Otherwise, preserve file order (already sorted by position)
 				return 0;
 			});
@@ -1356,7 +1356,7 @@ export class SessionManager {
 		children.sort((a, b) => {
 			const tsA = new Date(a.entry.timestamp).getTime();
 			const tsB = new Date(b.entry.timestamp).getTime();
-			if (!isNaN(tsA) && !isNaN(tsB)) return tsA - tsB;
+			if (!Number.isNaN(tsA) && !Number.isNaN(tsB)) return tsA - tsB;
 			return 0;
 		});
 

@@ -9,7 +9,7 @@
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
-import { initTheme, theme } from "../src/theme/theme.js";
+import { initTheme } from "../src/theme/theme.js";
 import { ToolExecutionComponent } from "../src/tui/tool-execution.js";
 
 // Initialize theme before tests

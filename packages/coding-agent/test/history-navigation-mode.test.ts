@@ -240,7 +240,7 @@ describe("History Navigation Mode", () => {
 					items: [{ label: "/command", value: "/command" }],
 					prefix: "/",
 				}),
-				applyCompletion: (lines, cursorLine, cursorCol, item) => ({
+				applyCompletion: (lines, cursorLine, _cursorCol, item) => ({
 					lines: [...lines.slice(0, cursorLine), item.value, ...lines.slice(cursorLine + 1)],
 					cursorLine,
 					cursorCol: item.value.length,

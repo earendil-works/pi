@@ -30,17 +30,27 @@ describe("handoff summary", () => {
 			"## Goal",
 			"Fix failing tests.",
 			"",
-			"## What's Done",
-			"- Investigated failures.",
+			"## Constraints & Preferences",
+			"- Preserve exact file paths and error messages.",
 			"",
-			"## What's Not Yet Done",
-			"- Apply fix.",
+			"## Progress",
+			"### Done",
+			"- [x] Investigated failures.",
 			"",
-			"## Learnings / Insights so Far",
-			"- Root cause is X.",
+			"### In Progress",
+			"- [ ] Apply fix.",
+			"",
+			"### Blocked",
+			"- None.",
+			"",
+			"## Key Decisions",
+			"- **Root cause**: X.",
 			"",
 			"## Next Steps",
-			"- Implement Y.",
+			"1. Implement Y.",
+			"",
+			"## Critical Context",
+			"- stack trace Z.",
 		].join("\n");
 
 		const draft = buildHandoffDraftFromModelText({
@@ -50,7 +60,10 @@ describe("handoff summary", () => {
 			modifiedFiles: ["b.ts"],
 		});
 
-		expect(draft).toContain("## Guide Questions");
+		expect(draft).toContain("## Constraints & Preferences");
+		expect(draft).toContain("## Progress");
+		expect(draft).toContain("## Key Decisions");
+		expect(draft).not.toContain("## Guide Questions");
 		expect(draft).toContain("<read-files>");
 		expect(draft).toContain("a.ts");
 		expect(draft).toContain("<modified-files>");
@@ -67,19 +80,17 @@ describe("handoff summary", () => {
 
 		expect(draft).toContain("## Goal");
 		expect(draft).toContain("Do the thing");
-		expect(draft).toContain("## What's Done");
-		expect(draft).toContain("## What's Not Yet Done");
-		expect(draft).toContain("## Learnings / Insights so Far");
+		expect(draft).toContain("## Constraints & Preferences");
+		expect(draft).toContain("## Progress");
+		expect(draft).toContain("## Key Decisions");
 		expect(draft).toContain("Just a paragraph, no headings.");
 		expect(draft).toContain("## Next Steps");
+		expect(draft).toContain("## Critical Context");
 	});
 
 	it("exposes a stable system prompt constant", () => {
-		expect(HANDOFF_SUMMARY_SYSTEM_PROMPT).toContain("## Goal");
-		expect(HANDOFF_SUMMARY_SYSTEM_PROMPT).toContain("## What's Done");
-		expect(HANDOFF_SUMMARY_SYSTEM_PROMPT).toContain("## What's Not Yet Done");
-		expect(HANDOFF_SUMMARY_SYSTEM_PROMPT).toContain("## Learnings / Insights so Far");
-		expect(HANDOFF_SUMMARY_SYSTEM_PROMPT).toContain("## Next Steps");
+		expect(HANDOFF_SUMMARY_SYSTEM_PROMPT).toContain("context summarization assistant");
+		expect(HANDOFF_SUMMARY_SYSTEM_PROMPT).toContain("Do NOT continue the conversation");
 	});
 
 	it("formats file tracking tags with one path per line", () => {

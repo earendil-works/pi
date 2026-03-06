@@ -198,7 +198,7 @@ export class TreeSelectorComponent extends Container implements Component {
 		terminalHeight: number,
 		onSelect: (entryId: string) => void,
 		onCancel: () => void,
-		onLabelChange?: (entryId: string, label: string | undefined) => void,
+		_onLabelChange?: (entryId: string, label: string | undefined) => void,
 		initialSelectedId?: string,
 	) {
 		super();

@@ -15,7 +15,7 @@ function createRenderer(modelId: string) {
 	const agent = new Agent({
 		transport: {
 			async *run() {
-				if (false) yield {} as never;
+				yield* [];
 				throw new Error("not used in this test");
 			},
 		} as never,
@@ -65,7 +65,7 @@ describe("/usage command availability", () => {
 		const agent = new Agent({
 			transport: {
 				async *run() {
-					if (false) yield {} as never;
+					yield* [];
 					throw new Error("not used in this test");
 				},
 			} as never,

@@ -21,9 +21,9 @@ import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, extname, join } from "node:path";
 
-import { type AssistantMessage, completeSimple, getModel, type UserMessage } from "@kennyfrc/mu-ai";
+import { completeSimple, getModel, type UserMessage } from "@kennyfrc/mu-ai";
 import { type CostBudget, type CostEntry, CostLedger, DEFAULT_BUDGET } from "./cost-ledger.js";
-import { StateStore, type VarMeta } from "./state-store.js";
+import { StateStore } from "./state-store.js";
 import {
 	type BackendSession,
 	type BridgeHandler,
@@ -183,8 +183,8 @@ export class SandboxSupervisor {
 			}
 
 			case "slice": {
-				const start = Number.parseInt(args[0] || "0");
-				const end = Number.parseInt(args[1] || "10");
+				const start = Number.parseInt(args[0] || "0", 10);
+				const end = Number.parseInt(args[1] || "10", 10);
 				const content = this.stateStore.slice(sessionId, variable, start, end);
 				return {
 					variable,
@@ -316,8 +316,8 @@ export class SandboxSupervisor {
 				return { ok: true, variable, query: q, results };
 			}
 			case "slice": {
-				const start = Number.parseInt(args[0] || "0");
-				const end = Number.parseInt(args[1] || "10");
+				const start = Number.parseInt(args[0] || "0", 10);
+				const end = Number.parseInt(args[1] || "10", 10);
 				return { ok: true, variable, start, end, text: this.stateStore.slice(sessionId, variable, start, end) };
 			}
 			case "count": {

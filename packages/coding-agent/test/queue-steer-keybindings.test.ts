@@ -9,7 +9,7 @@
  */
 
 import { defaultEditorTheme } from "@kennyfrc/mu-tui/test/test-themes.js";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { initTheme } from "../src/theme/theme.js";
 import { CustomEditor } from "../src/tui/custom-editor.js";
 
@@ -230,7 +230,7 @@ describe("Queue/Steer Keybindings", () => {
 					items: [{ label: "/command", value: "/command" }],
 					prefix: "/",
 				}),
-				applyCompletion: (lines, cursorLine, cursorCol, item) => ({
+				applyCompletion: (lines, cursorLine, cursorCol, _item) => ({
 					lines,
 					cursorLine,
 					cursorCol,
@@ -324,7 +324,7 @@ describe("Queue/Steer Keybindings", () => {
 			queuedMessages.push({ raw: "Stop using that approach", kind: "next" });
 
 			// Verify display formatting
-			const display = queuedMessages.map((m, i) => {
+			const display = queuedMessages.map((m, _i) => {
 				const prefix = m.kind === "next" ? "↳ Queued next:" : "↳ Queued:";
 				return `${prefix} ${m.raw}`;
 			});
