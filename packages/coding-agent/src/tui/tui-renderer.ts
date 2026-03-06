@@ -34,7 +34,8 @@ import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
 import { parseCompactSlashCommand } from "../compact-command.js";
 import { createCompactionAdapter } from "../compaction-adapter.js";
-import { scheduleExplicitHandoff } from "../explicit-handoff.js";
+import { buildCompactionCheckpointText, buildCompactionContinuationPrompt } from "../compaction-checkpoint.js";
+import { scheduleExplicitHandoff, submitExplicitHandoff } from "../explicit-handoff.js";
 import { exportSessionToHtml } from "../export-html.js";
 import type { ExtensionLoader } from "../extensions/loader.js";
 import type { ExtensionManager } from "../extensions/manager.js";
@@ -3653,24 +3654,12 @@ export class TuiRenderer {
 		return formatMessagesForHandoffSelection(messages);
 	}
 
-	private buildCompactionSummaryText(formattedMessage: string): string {
-		const summary = formattedMessage
-			.replace(/^# Handoff:/m, "# Compact checkpoint:")
-			.replace(
-				"You have been handed context from a previous session. The files above contain the relevant code. Begin working on the goal.",
-				"Use this compacted checkpoint as the active context for continuing the task.",
-			);
-
-		if (summary.includes("Use this compacted checkpoint as the active context for continuing the task.")) {
-			return summary;
-		}
-
-		return `${summary}\n\nUse this compacted checkpoint as the active context for continuing the task.`;
-	}
-
-	private buildContextCompactionMessages(details: HandoffDetails): Message[] {
+	private buildContextCompactionMessages(details: HandoffDetails & { parentSessionId: string | null }): Message[] {
 		const timestamp = Date.now();
-		const compactSummary = this.buildCompactionSummaryText(details.formattedMessage);
+		const compactSummary = buildCompactionCheckpointText({
+			formattedMessage: details.formattedMessage,
+			parentThreadId: details.parentSessionId,
+		});
 		const replacementMessages: Message[] = [
 			{
 				role: "user",
@@ -3706,6 +3695,20 @@ export class TuiRenderer {
 		return replacementMessages;
 	}
 
+	private async continueFromCompaction(details: HandoffDetails & { parentSessionId: string | null }): Promise<void> {
+		const message = buildCompactionContinuationPrompt({
+			goal: details.goal,
+			parentThreadId: details.parentSessionId,
+		});
+
+		await submitExplicitHandoff({
+			message,
+			prompt: async (promptMessage: string) => {
+				await this.agent.prompt(promptMessage);
+			},
+		});
+	}
+
 	private extractAssistantText(message: AssistantMessage): string {
 		return message.content
 			.filter((c): c is { type: "text"; text: string } => c.type === "text")
@@ -3717,6 +3720,28 @@ export class TuiRenderer {
 		if (model.provider !== "openai-codex") return model;
 		const found = findModel("openai-codex", "gpt-5.3-codex-spark");
 		return found.model ?? model;
+	}
+
+	private async resolveCompactionSummaryModel(model: Model<Api>): Promise<{ model: Model<Api>; apiKey: string }> {
+		const spark = findModel("openai-codex", "gpt-5.3-codex-spark").model;
+		if (spark) {
+			const sparkApiKey = await getApiKeyForModel(spark);
+			if (sparkApiKey) {
+				return {
+					model: spark as Model<Api>,
+					apiKey: sparkApiKey,
+				};
+			}
+		}
+
+		const fallbackModel = this.resolveHandoffLlmModel(model);
+		const fallbackApiKey = await getApiKeyForModel(fallbackModel);
+		if (!fallbackApiKey) throw new Error(`No API key for ${fallbackModel.provider}`);
+
+		return {
+			model: fallbackModel,
+			apiKey: fallbackApiKey,
+		};
 	}
 
 	private async selectHandoffFiles(goal: string, signal: AbortSignal): Promise<string[]> {
@@ -3821,9 +3846,7 @@ export class TuiRenderer {
 		const model = this.agent.state.model;
 		if (!model) throw new Error("No model selected");
 
-		const handoffModel = this.resolveHandoffLlmModel(model as unknown as Model<Api>);
-		const apiKey = await getApiKeyForModel(handoffModel);
-		if (!apiKey) throw new Error(`No API key for ${handoffModel.provider}`);
+		const { model: handoffModel, apiKey } = await this.resolveCompactionSummaryModel(model as unknown as Model<Api>);
 
 		const conversation = this.formatMessagesForHandoff(this.agent.state.messages);
 		const tracking = extractHandoffFileTracking(this.agent.state.messages);
@@ -4188,6 +4211,8 @@ export class TuiRenderer {
 			if (this.settingsManager.getNotificationBanner() !== "none") {
 				sendNotification("Mu - Context compacted", goal);
 			}
+
+			await this.continueFromCompaction(details);
 		} catch (error: unknown) {
 			const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 			this.chatContainer.addChild(new Spacer(1));
