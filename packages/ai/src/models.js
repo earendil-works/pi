@@ -28,7 +28,14 @@ export function calculateCost(model, usage) {
 	return usage.cost;
 }
 /** Models that support xhigh thinking level */
-const XHIGH_MODELS = new Set(["gpt-5.1-codex-max", "gpt-5.2", "gpt-5.2-codex", "gpt-5.3-codex", "gpt-5.3-codex-spark"]);
+const XHIGH_MODELS = new Set([
+	"gpt-5.1-codex-max",
+	"gpt-5.2",
+	"gpt-5.2-codex",
+	"gpt-5.3-codex",
+	"gpt-5.3-codex-spark",
+	"gpt-5.4",
+]);
 /**
  * Check if a model supports xhigh thinking level.
  * Currently only certain OpenAI models support this.
