@@ -370,6 +370,26 @@ async function generateModels() {
 		});
 	}
 
+	if (!allModels.some(m => m.provider === "openai" && m.id === "gpt-5.4")) {
+		allModels.push({
+			id: "gpt-5.4",
+			name: "GPT-5.4",
+			api: "openai-responses",
+			baseUrl: "https://api.openai.com/v1",
+			provider: "openai",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 2.5,
+				output: 15,
+				cacheRead: 0.25,
+				cacheWrite: 0,
+			},
+			contextWindow: 1050000,
+			maxTokens: 128000,
+		});
+	}
+
 	// Add missing Grok models
 	if (!allModels.some(m => m.provider === "xai" && m.id === "grok-code-fast-1")) {
 		allModels.push({
@@ -700,6 +720,18 @@ async function generateModels() {
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 128000,
 			maxTokens: 64000,
+		},
+		{
+			id: "gpt-5.4",
+			name: "GPT-5.4 (ChatGPT Sub)",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: CODEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: CODEX_CONTEXT,
+			maxTokens: CODEX_MAX_TOKENS,
 		},
 	];
 	allModels.push(...codexModels);
