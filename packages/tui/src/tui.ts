@@ -507,7 +507,7 @@ export class TUI extends Container {
 	}
 
 	private shouldEnableMouseTracking(): boolean {
-		return this.focusedComponent !== null;
+		return this.overlay !== null && this.focusedComponent === this.overlay.component;
 	}
 
 	private syncMouseTracking(force = false, enabled = this.shouldEnableMouseTracking()): void {
@@ -523,7 +523,10 @@ export class TUI extends Container {
 	}
 
 	private filterPointerInput(data: string): string {
-		return data;
+		if (this.shouldEnableMouseTracking()) {
+			return data;
+		}
+		return data.replace(/\x1b\[<\d+;\d+;\d+[Mm]/g, "");
 	}
 
 	private translateOverlayMouseInput(data: string): string {

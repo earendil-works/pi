@@ -158,7 +158,7 @@ describe("TUI overlay dialog", () => {
 		}
 	});
 
-	it("enables mouse tracking in chat mode and keeps it available for overlay dialogs", () => {
+	it("keeps mouse tracking off in chat mode and enables it for overlay dialogs", () => {
 		const terminal = new RecordingTerminal(80, 24);
 		const ui = new TUI(terminal);
 		const overlay = new OverlayEditorDialog();
@@ -168,9 +168,14 @@ describe("TUI overlay dialog", () => {
 		ui.start();
 
 		assert.equal(
-			terminal.writes.some((write) => write.includes("\x1b[?1000h\x1b[?1002h\x1b[?1006h")),
+			terminal.writes.some((write) => write.includes("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l")),
 			true,
-			"expected chat mode to enable mouse tracking so wheel input can reach the focused chat component",
+			"expected chat mode to explicitly disable mouse tracking so terminal-native scrolling can work",
+		);
+		assert.equal(
+			terminal.writes.some((write) => write.includes("\x1b[?1000h\x1b[?1002h\x1b[?1006h")),
+			false,
+			"expected chat mode not to enable mouse tracking before a dialog is active",
 		);
 
 		ui.setOverlay(overlay, { width: 20, minWidth: 20, maxWidth: 20, marginX: 6 });
@@ -179,7 +184,7 @@ describe("TUI overlay dialog", () => {
 		assert.equal(
 			terminal.writes.some((write) => write.includes("\x1b[?1000h\x1b[?1002h\x1b[?1006h")),
 			true,
-			"expected dialog mode to keep mouse tracking enabled for overlay interactions",
+			"expected dialog mode to enable mouse tracking for overlay interactions",
 		);
 
 		ui.clearOverlay();
@@ -188,10 +193,10 @@ describe("TUI overlay dialog", () => {
 		const disableWrites = terminal.writes.filter((write) =>
 			write.includes("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"),
 		);
-		assert.ok(disableWrites.length >= 1, "expected clearing focus after dialog mode to disable mouse tracking again");
+		assert.ok(disableWrites.length >= 2, "expected leaving dialog mode to disable mouse tracking again");
 	});
 
-	it("routes mouse wheel input to the focused editor in chat mode", async () => {
+	it("does not route mouse wheel input to the main editor in chat mode", async () => {
 		const terminal = new VirtualTerminal(80, 24);
 		const ui = new TUI(terminal);
 		const chat = new Container();
@@ -213,8 +218,8 @@ describe("TUI overlay dialog", () => {
 
 			assert.equal(
 				editor.seenInputs.includes("\x1b[<65;10;10M"),
-				true,
-				"expected chat-mode wheel input to reach the focused editor again",
+				false,
+				"expected chat-mode wheel input to stay out of the main editor so terminal-native chat scrolling can own it",
 			);
 		} finally {
 			ui.stop();
