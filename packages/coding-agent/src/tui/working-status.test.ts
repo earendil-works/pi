@@ -1,6 +1,6 @@
 import type { AssistantMessage } from "@kennyfrc/mu-ai";
 import { describe, expect, it } from "vitest";
-import { estimateWorkingStatusTokens, formatWorkingStatus } from "./working-status.js";
+import { estimateWorkingStatusTokens, formatDoneStatus, formatWorkingStatus } from "./working-status.js";
 
 function baseAssistantMessage(): AssistantMessage {
 	return {
@@ -31,7 +31,11 @@ describe("working-status", () => {
 		expect(formatWorkingStatus(88_000, 2_112)).toBe("Working (1m 28s • 24 tps • esc to interrupt)");
 	});
 
-	it("estimates tokens from visible assistant text and thinking only", () => {
+	it("formats the done label with elapsed time and rounded tps", () => {
+		expect(formatDoneStatus(88_000, 2_112)).toBe("Done after 1m 28s - 24 tps");
+	});
+
+	it("estimates tokens from visible assistant text, thinking, and tool calls", () => {
 		const message: AssistantMessage = {
 			...baseAssistantMessage(),
 			content: [
@@ -42,8 +46,8 @@ describe("working-status", () => {
 		};
 
 		expect(estimateWorkingStatusTokens(message)).toBeGreaterThan(0);
-		expect(estimateWorkingStatusTokens({ ...message, content: message.content.slice(0, 2) })).toBe(
-			estimateWorkingStatusTokens(message),
+		expect(estimateWorkingStatusTokens(message)).toBeGreaterThan(
+			estimateWorkingStatusTokens({ ...message, content: message.content.slice(0, 2) }),
 		);
 	});
 });

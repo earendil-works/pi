@@ -11,6 +11,7 @@ import { TuiRenderer } from "../src/tui/tui-renderer.js";
 
 interface RendererPrivateView {
 	statusContainer: { render(width: number): string[] };
+	chatContainer: { render(width: number): string[] };
 	agent: Agent;
 	handleEvent(event: AgentEvent, state: Agent["state"]): Promise<void>;
 	agentStartTime: number | null;
@@ -73,6 +74,11 @@ function createRenderer(baseDir: string): TuiRenderer {
 function readStatusText(renderer: TuiRenderer, width: number = 120): string {
 	const statusContainer = (renderer as unknown as RendererPrivateView).statusContainer;
 	return stripAnsi(statusContainer.render(width).join("\n"));
+}
+
+function readChatText(renderer: TuiRenderer, width: number = 120): string {
+	const chatContainer = (renderer as unknown as RendererPrivateView).chatContainer;
+	return stripAnsi(chatContainer.render(width).join("\n"));
 }
 
 async function handleRendererEvent(renderer: TuiRenderer, event: AgentEvent): Promise<void> {
@@ -154,6 +160,65 @@ describe("working status live TPS", () => {
 			});
 
 			expect(readStatusText(renderer)).toContain(`${expectedTps} tps`);
+		} finally {
+			renderer.stop();
+		}
+	});
+
+	it("includes tool call content in the live TPS estimate", async () => {
+		const renderer = createRenderer(settingsDir);
+		const toolCallText = 'bash {"command":"echo hi"}';
+		const expectedTps = Math.round(estimateTokens(toolCallText) / 2);
+
+		const assistantStartMessage: AssistantMessage = baseAssistantMessage();
+		const assistantStreamingMessage: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "echo hi" } }],
+		};
+		const assistantStreamingEvent: AssistantMessageEvent = {
+			type: "toolcall_delta",
+			contentIndex: 0,
+			delta: '{"command":"echo hi"}',
+			partial: assistantStreamingMessage,
+		};
+
+		try {
+			await handleRendererEvent(renderer, { type: "agent_start" });
+			await handleRendererEvent(renderer, { type: "message_start", message: assistantStartMessage });
+
+			(renderer as unknown as RendererPrivateView).agentStartTime = Date.now() - 2_000;
+
+			await handleRendererEvent(renderer, {
+				type: "message_update",
+				message: assistantStreamingMessage,
+				assistantMessageEvent: assistantStreamingEvent,
+			});
+
+			expect(readStatusText(renderer)).toContain(`${expectedTps} tps`);
+		} finally {
+			renderer.stop();
+		}
+	});
+
+	it("shows tps in the done label after completion", async () => {
+		const renderer = createRenderer(settingsDir);
+		const finalText = "hello world";
+		const expectedTps = Math.round(estimateTokens(finalText) / 2);
+
+		const assistantStartMessage: AssistantMessage = baseAssistantMessage();
+		const finalAssistantMessage: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [{ type: "text", text: finalText }],
+		};
+
+		try {
+			await handleRendererEvent(renderer, { type: "agent_start" });
+			await handleRendererEvent(renderer, { type: "message_start", message: assistantStartMessage });
+			(renderer as unknown as RendererPrivateView).agentStartTime = Date.now() - 2_000;
+			await handleRendererEvent(renderer, { type: "message_end", message: finalAssistantMessage });
+			await handleRendererEvent(renderer, { type: "agent_end", messages: [finalAssistantMessage] });
+
+			expect(readChatText(renderer)).toContain(`Done after 2s - ${expectedTps} tps`);
 		} finally {
 			renderer.stop();
 		}

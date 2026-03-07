@@ -109,7 +109,6 @@ import {
 import { autoFenceHtmlInMarkdown } from "../utils/auto-fence-html.js";
 import { generateThreadListingMeta } from "../utils/auto-title.js";
 import { findRepoRoot } from "../utils/find-repo-root.js";
-import { formatElapsed } from "../utils/format-elapsed.js";
 import { addToLimitedSet } from "../utils/limited-set.js";
 import { readAppendedFileChunkSync } from "../utils/read-appended-file-chunk.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
@@ -132,7 +131,7 @@ import { ToolExecutionComponent } from "./tool-execution.js";
 import { TreeSelectorComponent } from "./tree-selector.js";
 import { UserMessageComponent } from "./user-message.js";
 import { UserMessageSelectorComponent } from "./user-message-selector.js";
-import { estimateWorkingStatusTokens, formatWorkingStatus } from "./working-status.js";
+import { estimateWorkingStatusTokens, formatDoneStatus, formatWorkingStatus } from "./working-status.js";
 import { WorkspaceNoteOverlayComponent } from "./workspace-note-overlay.js";
 
 function hashContent(content: string): string {
@@ -987,6 +986,7 @@ export class TuiRenderer {
 				}
 				if (this.streamingComponent && event.message.role === "assistant") {
 					const assistantMsg = event.message as AssistantMessage;
+					this.liveEstimatedOutputTokens = estimateWorkingStatusTokens(assistantMsg);
 
 					// Finalize streaming component with the final message (includes stopReason)
 					this.streamingComponent.finalize(assistantMsg);
@@ -1152,7 +1152,7 @@ export class TuiRenderer {
 
 				// Calculate elapsed time before clearing timer
 				const elapsedMs = this.agentStartTime ? Date.now() - this.agentStartTime : 0;
-				const elapsedStr = formatElapsed(elapsedMs);
+				const doneLabel = formatDoneStatus(elapsedMs, this.liveEstimatedOutputTokens);
 
 				// Stop timer interval
 				if (this.timerIntervalId) {
@@ -1174,8 +1174,8 @@ export class TuiRenderer {
 				}
 				this.pendingTools.clear();
 
-				// Add "Done after Xs" label
-				this.chatContainer.addChild(new LabeledBorder(`Done after ${elapsedStr}`));
+				// Add completion label
+				this.chatContainer.addChild(new LabeledBorder(doneLabel));
 
 				// Note: Don't need to re-enable submit - we never disable it
 				this.ui.requestRender();

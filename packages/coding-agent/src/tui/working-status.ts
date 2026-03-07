@@ -10,6 +10,8 @@ function collectVisibleAssistantText(message: AssistantMessage): string {
 					return [content.text];
 				case "thinking":
 					return [content.thinking];
+				case "toolCall":
+					return [`${content.name} ${JSON.stringify(content.arguments)}`];
 				default:
 					return [];
 			}
@@ -23,7 +25,17 @@ export function estimateWorkingStatusTokens(message: AssistantMessage): number {
 
 export function formatWorkingStatus(elapsedMs: number, estimatedOutputTokens: number): string {
 	const elapsed = formatElapsed(elapsedMs);
-	const elapsedSeconds = Math.max(1, Math.floor(elapsedMs / 1000));
-	const tps = Math.round(estimatedOutputTokens / elapsedSeconds);
+	const tps = formatTps(elapsedMs, estimatedOutputTokens);
 	return `Working (${elapsed} • ${tps} tps • esc to interrupt)`;
+}
+
+export function formatDoneStatus(elapsedMs: number, estimatedOutputTokens: number): string {
+	const elapsed = formatElapsed(elapsedMs);
+	const tps = formatTps(elapsedMs, estimatedOutputTokens);
+	return `Done after ${elapsed} - ${tps} tps`;
+}
+
+function formatTps(elapsedMs: number, estimatedOutputTokens: number): number {
+	const elapsedSeconds = Math.max(1, Math.floor(elapsedMs / 1000));
+	return Math.round(estimatedOutputTokens / elapsedSeconds);
 }
