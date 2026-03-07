@@ -8,7 +8,7 @@ import { SettingsManager } from "../src/settings-manager.js";
 import { initTheme } from "../src/theme/theme.js";
 import { TuiRenderer } from "../src/tui/tui-renderer.js";
 
-function createRenderer(modelId: string) {
+function createRenderer(modelId: string, provider: "openai" | "openai-codex" = "openai") {
 	const baseDir = join(tmpdir(), `mu-usage-command-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 	mkdirSync(baseDir, { recursive: true });
 
@@ -20,7 +20,7 @@ function createRenderer(modelId: string) {
 			},
 		} as never,
 		initialState: {
-			model: getModel("openai", modelId as never),
+			model: getModel(provider as never, modelId as never),
 		},
 	});
 
@@ -48,7 +48,7 @@ describe("/usage command availability", () => {
 	initTheme("dark");
 
 	it("registers /usage for GPT-family models", () => {
-		const { renderer, cleanup } = createRenderer("gpt-5.3-codex-spark");
+		const { renderer, cleanup } = createRenderer("gpt-5.3-codex-spark", "openai-codex");
 		try {
 			const commandNames = (renderer as any).builtInSlashCommands.map((cmd: { name: string }) => cmd.name);
 			expect(commandNames).toContain("usage");

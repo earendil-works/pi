@@ -2,8 +2,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent } from "@kennyfrc/mu-agent-core";
-import { getModel } from "@kennyfrc/mu-ai";
+import { getModel, type OAuthStorage } from "@kennyfrc/mu-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { resetOAuthStorage, setOAuthStorage } from "../src/oauth/index.js";
 import { SettingsManager } from "../src/settings-manager.js";
 import { initTheme } from "../src/theme/theme.js";
 import { TuiRenderer } from "../src/tui/tui-renderer.js";
@@ -26,6 +27,16 @@ interface RendererTestView {
 	ui: TestUiView;
 }
 
+async function pollUntil(predicate: () => boolean, timeoutMs: number = 1_000): Promise<void> {
+	const startedAt = Date.now();
+	while (!predicate()) {
+		if (Date.now() - startedAt >= timeoutMs) {
+			throw new Error(`Timed out after ${timeoutMs}ms`);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+}
+
 function createRenderer(baseDir: string): { renderer: TuiRenderer; view: RendererTestView; agent: Agent } {
 	const agent = new Agent({
 		transport: {
@@ -34,7 +45,7 @@ function createRenderer(baseDir: string): { renderer: TuiRenderer; view: Rendere
 			},
 		} as never,
 		initialState: {
-			model: getModel("openai", "gpt-5.3-codex-spark"),
+			model: getModel("openai-codex", "gpt-5.3-codex-spark"),
 		},
 	});
 
@@ -93,10 +104,37 @@ describe("queued slash commands", () => {
 
 		process.chdir(repoRoot);
 		process.env.OPENAI_API_KEY = "test-openai-key";
+
+		let oauthStorage: OAuthStorage = {
+			"openai-codex": {
+				accounts: [
+					{
+						id: "test-codex-account",
+						credentials: {
+							type: "oauth",
+							refresh: "refresh-token",
+							access: "access-token",
+							expires: Date.now() + 60_000,
+							accountId: "test-codex-account",
+						},
+						label: "Test Codex Account",
+					},
+				],
+				activeAccountId: "test-codex-account",
+			},
+		};
+
+		setOAuthStorage({
+			load: () => oauthStorage,
+			save: (storage) => {
+				oauthStorage = storage;
+			},
+		});
 	});
 
 	afterEach(() => {
 		process.chdir(previousCwd);
+		resetOAuthStorage();
 		if (previousOpenAiApiKey === undefined) {
 			delete process.env.OPENAI_API_KEY;
 		} else {
@@ -117,8 +155,8 @@ describe("queued slash commands", () => {
 			agent.state.isStreaming = true;
 			view.editor.setText("/expand investigate the queue bug");
 			view.editor.onTab?.();
-			await Promise.resolve();
-			await Promise.resolve();
+
+			await pollUntil(() => agent.getQueuedMessages().length === 1);
 
 			const queued = agent.getQueuedMessages();
 			expect(queued).toHaveLength(1);

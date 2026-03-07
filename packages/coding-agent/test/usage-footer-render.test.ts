@@ -9,9 +9,9 @@ function createState(): AgentState {
 		systemPrompt: "test",
 		model: {
 			id: "gpt-5.3-codex-spark",
-			name: "GPT 5.3 Codex Spark",
-			api: "openai-responses",
-			provider: "openai",
+			name: "GPT-5.3 Codex Spark (ChatGPT Sub)",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
 			baseUrl: "https://api.openai.com/v1",
 			reasoning: true,
 			input: ["text"],
@@ -28,8 +28,8 @@ function createState(): AgentState {
 		messages: [
 			{
 				role: "assistant",
-				api: "openai-responses",
-				provider: "openai",
+				api: "openai-codex-responses",
+				provider: "openai-codex",
 				model: "gpt-5.3-codex-spark",
 				timestamp: 1,
 				stopReason: "stop",
@@ -55,7 +55,7 @@ describe("Footer usage-limit rendering", () => {
 		enabledState.fastMode = true;
 		const enabledFooter = new FooterComponent(enabledState);
 		const enabledText = stripAnsi(enabledFooter.render(140).join("\n"));
-		expect(enabledText).toContain("• fast [openai]");
+		expect(enabledText).toContain("• fast [openai-codex]");
 		expect(enabledText).not.toContain("fast:on");
 		expect(enabledText).not.toContain("fast:off");
 

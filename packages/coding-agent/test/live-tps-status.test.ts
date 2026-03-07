@@ -25,8 +25,8 @@ function baseAssistantMessage(): AssistantMessage {
 	return {
 		role: "assistant",
 		content: [],
-		api: "openai-completions",
-		provider: "openai",
+		api: "openai-codex-responses",
+		provider: "openai-codex",
 		model: "gpt-5.3-codex-spark",
 		usage: {
 			input: 0,
@@ -49,7 +49,7 @@ function createRenderer(baseDir: string): TuiRenderer {
 			},
 		} as never,
 		initialState: {
-			model: getModel("openai", "gpt-5.3-codex-spark"),
+			model: getModel("openai-codex", "gpt-5.3-codex-spark"),
 		},
 	});
 
