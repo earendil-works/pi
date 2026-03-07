@@ -2964,7 +2964,6 @@ export class TuiRenderer {
 			},
 			onCancel: () => this.clearDialogOverlay(),
 			onChange: () => {
-				this.ui.invalidate();
 				this.ui.requestRender();
 			},
 		});
