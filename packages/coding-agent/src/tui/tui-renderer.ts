@@ -302,6 +302,9 @@ export class TuiRenderer {
 	private timerIntervalId: NodeJS.Timeout | null = null;
 	private completedEstimatedOutputTokens = 0;
 	private currentAssistantEstimatedOutputTokens = 0;
+	private pendingLatencyStartTime: number | null = null;
+	private accumulatedLatencyMs = 0;
+	private latencyGapCount = 0;
 
 	constructor(
 		agent: Agent,
@@ -807,11 +810,18 @@ export class TuiRenderer {
 
 	private buildWorkingStatusMessage(): string {
 		const elapsedMs = this.getAssistantActiveMs();
-		return formatWorkingStatus(elapsedMs, this.getEstimatedOutputTokens());
+		return formatWorkingStatus(elapsedMs, this.getEstimatedOutputTokens(), this.getAverageLatencyMs());
 	}
 
 	private getEstimatedOutputTokens(): number {
 		return this.completedEstimatedOutputTokens + this.currentAssistantEstimatedOutputTokens;
+	}
+
+	private getAverageLatencyMs(): number {
+		if (this.latencyGapCount === 0) {
+			return 0;
+		}
+		return Math.round(this.accumulatedLatencyMs / this.latencyGapCount);
 	}
 
 	private getAssistantActiveMs(now: number = Date.now()): number {
@@ -832,6 +842,15 @@ export class TuiRenderer {
 			this.accumulatedAssistantActiveMs += now - this.agentStartTime;
 			this.agentStartTime = null;
 		}
+	}
+
+	private recordLatencyGap(now: number = Date.now()): void {
+		if (this.pendingLatencyStartTime === null) {
+			return;
+		}
+		this.accumulatedLatencyMs += now - this.pendingLatencyStartTime;
+		this.latencyGapCount += 1;
+		this.pendingLatencyStartTime = null;
 	}
 
 	private updateWorkingStatusMessage(): void {
@@ -868,6 +887,9 @@ export class TuiRenderer {
 				this.accumulatedAssistantActiveMs = 0;
 				this.completedEstimatedOutputTokens = 0;
 				this.currentAssistantEstimatedOutputTokens = 0;
+				this.pendingLatencyStartTime = Date.now();
+				this.accumulatedLatencyMs = 0;
+				this.latencyGapCount = 0;
 
 				// Create loader with initial message
 				this.loadingAnimation = new Loader(
@@ -965,6 +987,7 @@ export class TuiRenderer {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
+					this.recordLatencyGap();
 					this.currentAssistantEstimatedOutputTokens = 0;
 					this.startAssistantActiveTimer();
 					this.updateWorkingStatusMessage();
@@ -1041,6 +1064,9 @@ export class TuiRenderer {
 					// clear our streaming pointer.
 					this.streamingComponent = null;
 					this.currentAssistantEstimatedOutputTokens = 0;
+					if (this.pendingTools.size === 0) {
+						this.pendingLatencyStartTime = Date.now();
+					}
 
 					// Invalidate footer cache to refresh git branch (in case agent executed git commands)
 					this.footer.invalidate();
@@ -1153,6 +1179,7 @@ export class TuiRenderer {
 					this.pendingTools.delete(event.toolCallId);
 					this.ui.requestRender();
 				}
+				this.pendingLatencyStartTime = Date.now();
 
 				// Detect explicit compact tool completion - queue for execution after agent_end
 				if (
@@ -1182,13 +1209,16 @@ export class TuiRenderer {
 					this.accumulatedAssistantActiveMs = 0;
 					this.completedEstimatedOutputTokens = 0;
 					this.currentAssistantEstimatedOutputTokens = 0;
+					this.pendingLatencyStartTime = null;
+					this.accumulatedLatencyMs = 0;
+					this.latencyGapCount = 0;
 					// Don't touch loadingAnimation - it's owned by handoff now
 					break;
 				}
 
 				// Calculate elapsed time before clearing timer
 				const elapsedMs = this.getAssistantActiveMs();
-				const doneLabel = formatDoneStatus(elapsedMs, this.getEstimatedOutputTokens());
+				const doneLabel = formatDoneStatus(elapsedMs, this.getEstimatedOutputTokens(), this.getAverageLatencyMs());
 
 				// Stop timer interval
 				if (this.timerIntervalId) {
@@ -1199,6 +1229,9 @@ export class TuiRenderer {
 				this.accumulatedAssistantActiveMs = 0;
 				this.completedEstimatedOutputTokens = 0;
 				this.currentAssistantEstimatedOutputTokens = 0;
+				this.pendingLatencyStartTime = null;
+				this.accumulatedLatencyMs = 0;
+				this.latencyGapCount = 0;
 
 				// Stop loading animation
 				if (this.loadingAnimation) {

@@ -35,6 +35,16 @@ describe("working-status", () => {
 		expect(formatDoneStatus(88_000, 2_112)).toBe("Done after 1m 28s - 24 tps");
 	});
 
+	it("formats the working label with average latency", () => {
+		expect(formatWorkingStatus(28_000, 1_176, 3_800)).toBe(
+			"Working (28s • 42 tps • 3.8s avg lat • esc to interrupt)",
+		);
+	});
+
+	it("formats the done label with average latency", () => {
+		expect(formatDoneStatus(28_000, 1_176, 3_800)).toBe("Done after 28s - 42 tps - 3.8s avg lat");
+	});
+
 	it("estimates tokens from visible assistant text, thinking, and tool calls", () => {
 		const message: AssistantMessage = {
 			...baseAssistantMessage(),

@@ -124,7 +124,7 @@ describe("working status live TPS", () => {
 		try {
 			await handleRendererEvent(renderer, { type: "agent_start" });
 
-			expect(readStatusText(renderer)).toContain("Working (0s • 0 tps • esc to interrupt)");
+			expect(readStatusText(renderer)).toContain("Working (0s • 0 tps • 0.0s avg lat • esc to interrupt)");
 		} finally {
 			renderer.stop();
 		}
@@ -248,7 +248,7 @@ describe("working status live TPS", () => {
 		try {
 			await handleRendererEvent(renderer, { type: "agent_start" });
 			vi.advanceTimersByTime(5_000);
-			expect(readStatusText(renderer)).toContain("Working (0s • 0 tps • esc to interrupt)");
+			expect(readStatusText(renderer)).toContain("Working (0s • 0 tps • 0.0s avg lat • esc to interrupt)");
 
 			await handleRendererEvent(renderer, { type: "message_start", message: assistantStartMessage });
 			vi.advanceTimersByTime(2_000);
@@ -258,7 +258,9 @@ describe("working status live TPS", () => {
 				assistantMessageEvent: assistantStreamingEvent,
 			});
 
-			expect(readStatusText(renderer)).toContain(`Working (2s • ${expectedTps} tps • esc to interrupt)`);
+			expect(readStatusText(renderer)).toContain(
+				`Working (2s • ${expectedTps} tps • 5.0s avg lat • esc to interrupt)`,
+			);
 
 			await handleRendererEvent(renderer, { type: "message_end", message: assistantStreamingMessage });
 			await handleRendererEvent(renderer, { type: "agent_end", messages: [assistantStreamingMessage] });
@@ -372,7 +374,9 @@ describe("working status live TPS", () => {
 					partial: firstAssistantMessage,
 				},
 			});
-			expect(readStatusText(renderer)).toContain(`Working (1s • ${expectedWorkingTps} tps • esc to interrupt)`);
+			expect(readStatusText(renderer)).toContain(
+				`Working (1s • ${expectedWorkingTps} tps • 0.0s avg lat • esc to interrupt)`,
+			);
 			await handleRendererEvent(renderer, { type: "message_end", message: firstAssistantMessage });
 
 			vi.advanceTimersByTime(8_000);
@@ -396,6 +400,80 @@ describe("working status live TPS", () => {
 			});
 
 			expect(readChatText(renderer)).toContain(`Done after 2s - ${expectedDoneTps} tps`);
+		} finally {
+			renderer.stop();
+			vi.useRealTimers();
+		}
+	});
+
+	it("shows average latency in the working label after the first assistant response starts", async () => {
+		vi.useFakeTimers();
+		const renderer = createRenderer(settingsDir);
+		const assistantStreamingMessage: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [{ type: "text", text: "hello world" }],
+		};
+
+		try {
+			await handleRendererEvent(renderer, { type: "agent_start" });
+			vi.advanceTimersByTime(3_000);
+			await handleRendererEvent(renderer, { type: "message_start", message: baseAssistantMessage() });
+			vi.advanceTimersByTime(2_000);
+			await handleRendererEvent(renderer, {
+				type: "message_update",
+				message: assistantStreamingMessage,
+				assistantMessageEvent: {
+					type: "text_delta",
+					contentIndex: 0,
+					delta: "hello world",
+					partial: assistantStreamingMessage,
+				},
+			});
+
+			expect(readStatusText(renderer)).toContain("Working (2s • 2 tps • 3.0s avg lat • esc to interrupt)");
+		} finally {
+			renderer.stop();
+			vi.useRealTimers();
+		}
+	});
+
+	it("shows average latency in the done label across initial and post-tool waits", async () => {
+		vi.useFakeTimers();
+		const renderer = createRenderer(settingsDir);
+		const firstAssistantMessage: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "echo hi" } }],
+		};
+		const finalAssistantMessage: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [{ type: "text", text: "done" }],
+		};
+
+		try {
+			await handleRendererEvent(renderer, { type: "agent_start" });
+			vi.advanceTimersByTime(3_000);
+			await handleRendererEvent(renderer, { type: "message_start", message: baseAssistantMessage() });
+			vi.advanceTimersByTime(2_000);
+			await handleRendererEvent(renderer, { type: "message_end", message: firstAssistantMessage });
+
+			vi.advanceTimersByTime(7_000);
+			await handleRendererEvent(renderer, {
+				type: "tool_execution_end",
+				toolCallId: "call_1",
+				toolName: "bash",
+				result: "hi",
+				isError: false,
+			});
+			vi.advanceTimersByTime(3_000);
+			await handleRendererEvent(renderer, { type: "message_start", message: baseAssistantMessage() });
+			vi.advanceTimersByTime(2_000);
+			await handleRendererEvent(renderer, { type: "message_end", message: finalAssistantMessage });
+			await handleRendererEvent(renderer, {
+				type: "agent_end",
+				messages: [firstAssistantMessage, finalAssistantMessage],
+			});
+
+			expect(readChatText(renderer)).toContain("Done after 4s - 3 tps - 3.0s avg lat");
 		} finally {
 			renderer.stop();
 			vi.useRealTimers();
