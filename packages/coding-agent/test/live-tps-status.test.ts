@@ -131,6 +131,7 @@ describe("working status live TPS", () => {
 	});
 
 	it("updates the working status with estimated live TPS while assistant text streams", async () => {
+		vi.useFakeTimers();
 		const renderer = createRenderer(settingsDir);
 		const partialText = "hello world";
 		const expectedTps = Math.round(estimateTokens(partialText) / 2);
@@ -150,8 +151,7 @@ describe("working status live TPS", () => {
 		try {
 			await handleRendererEvent(renderer, { type: "agent_start" });
 			await handleRendererEvent(renderer, { type: "message_start", message: assistantStartMessage });
-
-			(renderer as unknown as RendererPrivateView).agentStartTime = Date.now() - 2_000;
+			vi.advanceTimersByTime(2_000);
 
 			await handleRendererEvent(renderer, {
 				type: "message_update",
@@ -162,10 +162,12 @@ describe("working status live TPS", () => {
 			expect(readStatusText(renderer)).toContain(`${expectedTps} tps`);
 		} finally {
 			renderer.stop();
+			vi.useRealTimers();
 		}
 	});
 
 	it("includes tool call content in the live TPS estimate", async () => {
+		vi.useFakeTimers();
 		const renderer = createRenderer(settingsDir);
 		const toolCallText = 'bash {"command":"echo hi"}';
 		const expectedTps = Math.round(estimateTokens(toolCallText) / 2);
@@ -185,8 +187,7 @@ describe("working status live TPS", () => {
 		try {
 			await handleRendererEvent(renderer, { type: "agent_start" });
 			await handleRendererEvent(renderer, { type: "message_start", message: assistantStartMessage });
-
-			(renderer as unknown as RendererPrivateView).agentStartTime = Date.now() - 2_000;
+			vi.advanceTimersByTime(2_000);
 
 			await handleRendererEvent(renderer, {
 				type: "message_update",
@@ -197,10 +198,12 @@ describe("working status live TPS", () => {
 			expect(readStatusText(renderer)).toContain(`${expectedTps} tps`);
 		} finally {
 			renderer.stop();
+			vi.useRealTimers();
 		}
 	});
 
 	it("shows tps in the done label after completion", async () => {
+		vi.useFakeTimers();
 		const renderer = createRenderer(settingsDir);
 		const finalText = "hello world";
 		const expectedTps = Math.round(estimateTokens(finalText) / 2);
@@ -214,13 +217,14 @@ describe("working status live TPS", () => {
 		try {
 			await handleRendererEvent(renderer, { type: "agent_start" });
 			await handleRendererEvent(renderer, { type: "message_start", message: assistantStartMessage });
-			(renderer as unknown as RendererPrivateView).agentStartTime = Date.now() - 2_000;
+			vi.advanceTimersByTime(2_000);
 			await handleRendererEvent(renderer, { type: "message_end", message: finalAssistantMessage });
 			await handleRendererEvent(renderer, { type: "agent_end", messages: [finalAssistantMessage] });
 
 			expect(readChatText(renderer)).toContain(`Done after 2s - ${expectedTps} tps`);
 		} finally {
 			renderer.stop();
+			vi.useRealTimers();
 		}
 	});
 
@@ -260,6 +264,87 @@ describe("working status live TPS", () => {
 			await handleRendererEvent(renderer, { type: "agent_end", messages: [assistantStreamingMessage] });
 
 			expect(readChatText(renderer)).toContain(`Done after 2s - ${expectedTps} tps`);
+		} finally {
+			renderer.stop();
+			vi.useRealTimers();
+		}
+	});
+
+	it("excludes tool execution and inter-turn waiting from tps timing", async () => {
+		vi.useFakeTimers();
+		const renderer = createRenderer(settingsDir);
+		const firstText = "thinking phase";
+		const toolCallText = 'bash {"command":"echo hi"}';
+		const finalText = "final answer";
+		const totalEstimatedTokens = estimateTokens(`${firstText}\n\n${toolCallText}\n\n${finalText}`);
+		const expectedTps = Math.round(totalEstimatedTokens / 4);
+
+		const assistantStartMessage: AssistantMessage = baseAssistantMessage();
+		const firstAssistantMessage: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [
+				{ type: "thinking", thinking: firstText },
+				{ type: "toolCall", id: "call_1", name: "bash", arguments: { command: "echo hi" } },
+			],
+		};
+		const finalAssistantMessage: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [{ type: "text", text: finalText }],
+		};
+
+		try {
+			await handleRendererEvent(renderer, { type: "agent_start" });
+
+			// First assistant turn: 2s of actual model generation.
+			await handleRendererEvent(renderer, { type: "message_start", message: assistantStartMessage });
+			vi.advanceTimersByTime(2_000);
+			await handleRendererEvent(renderer, {
+				type: "message_update",
+				message: firstAssistantMessage,
+				assistantMessageEvent: {
+					type: "toolcall_delta",
+					contentIndex: 1,
+					delta: '{"command":"echo hi"}',
+					partial: firstAssistantMessage,
+				},
+			});
+			await handleRendererEvent(renderer, { type: "message_end", message: firstAssistantMessage });
+
+			// Tool/runtime waiting: should NOT count.
+			vi.advanceTimersByTime(7_000);
+
+			// Second assistant turn: another 2s of actual model generation.
+			await handleRendererEvent(renderer, { type: "message_start", message: finalAssistantMessage });
+			vi.advanceTimersByTime(2_000);
+			await handleRendererEvent(renderer, {
+				type: "message_update",
+				message: {
+					...finalAssistantMessage,
+					content: [...firstAssistantMessage.content, ...finalAssistantMessage.content],
+				},
+				assistantMessageEvent: {
+					type: "text_delta",
+					contentIndex: 2,
+					delta: finalText,
+					partial: {
+						...finalAssistantMessage,
+						content: [...firstAssistantMessage.content, ...finalAssistantMessage.content],
+					},
+				},
+			});
+			await handleRendererEvent(renderer, {
+				type: "message_end",
+				message: {
+					...finalAssistantMessage,
+					content: [...firstAssistantMessage.content, ...finalAssistantMessage.content],
+				},
+			});
+			await handleRendererEvent(renderer, {
+				type: "agent_end",
+				messages: [firstAssistantMessage, finalAssistantMessage],
+			});
+
+			expect(readChatText(renderer)).toContain(`Done after 4s - ${expectedTps} tps`);
 		} finally {
 			renderer.stop();
 			vi.useRealTimers();

@@ -296,8 +296,9 @@ export class TuiRenderer {
 
 	private unsubscribe?: () => void;
 
-	// Timer tracking for assistant response duration (excludes request latency)
+	// Timer tracking for assistant-active duration only (excludes network/tool latency)
 	private agentStartTime: number | null = null;
+	private accumulatedAssistantActiveMs = 0;
 	private timerIntervalId: NodeJS.Timeout | null = null;
 	private liveEstimatedOutputTokens = 0;
 
@@ -804,8 +805,28 @@ export class TuiRenderer {
 	}
 
 	private buildWorkingStatusMessage(): string {
-		const elapsedMs = this.agentStartTime ? Date.now() - this.agentStartTime : 0;
+		const elapsedMs = this.getAssistantActiveMs();
 		return formatWorkingStatus(elapsedMs, this.liveEstimatedOutputTokens);
+	}
+
+	private getAssistantActiveMs(now: number = Date.now()): number {
+		if (this.agentStartTime === null) {
+			return this.accumulatedAssistantActiveMs;
+		}
+		return this.accumulatedAssistantActiveMs + (now - this.agentStartTime);
+	}
+
+	private startAssistantActiveTimer(now: number = Date.now()): void {
+		if (this.agentStartTime === null) {
+			this.agentStartTime = now;
+		}
+	}
+
+	private pauseAssistantActiveTimer(now: number = Date.now()): void {
+		if (this.agentStartTime !== null) {
+			this.accumulatedAssistantActiveMs += now - this.agentStartTime;
+			this.agentStartTime = null;
+		}
 	}
 
 	private updateWorkingStatusMessage(): void {
@@ -839,6 +860,7 @@ export class TuiRenderer {
 
 				// Start status in a waiting state; actual timing begins when the assistant starts responding.
 				this.agentStartTime = null;
+				this.accumulatedAssistantActiveMs = 0;
 				this.liveEstimatedOutputTokens = 0;
 
 				// Create loader with initial message
@@ -852,7 +874,7 @@ export class TuiRenderer {
 
 				// Update timer every second
 				this.timerIntervalId = setInterval(() => {
-					if (this.loadingAnimation && this.agentStartTime) {
+					if (this.loadingAnimation) {
 						this.updateWorkingStatusMessage();
 					}
 				}, 1000);
@@ -937,10 +959,8 @@ export class TuiRenderer {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
-					if (this.agentStartTime === null) {
-						this.agentStartTime = Date.now();
-						this.updateWorkingStatusMessage();
-					}
+					this.startAssistantActiveTimer();
+					this.updateWorkingStatusMessage();
 					this.maybeAnnounceCodexAccountSwitch();
 					// Create assistant component for streaming. This uses a bounded rolling buffer
 					// during token streaming, then finalizes into full Markdown rendering once the
@@ -991,6 +1011,7 @@ export class TuiRenderer {
 				if (this.streamingComponent && event.message.role === "assistant") {
 					const assistantMsg = event.message as AssistantMessage;
 					this.liveEstimatedOutputTokens = estimateWorkingStatusTokens(assistantMsg);
+					this.pauseAssistantActiveTimer();
 
 					// Finalize streaming component with the final message (includes stopReason)
 					this.streamingComponent.finalize(assistantMsg);
@@ -1149,13 +1170,14 @@ export class TuiRenderer {
 						this.timerIntervalId = null;
 					}
 					this.agentStartTime = null;
+					this.accumulatedAssistantActiveMs = 0;
 					this.liveEstimatedOutputTokens = 0;
 					// Don't touch loadingAnimation - it's owned by handoff now
 					break;
 				}
 
 				// Calculate elapsed time before clearing timer
-				const elapsedMs = this.agentStartTime ? Date.now() - this.agentStartTime : 0;
+				const elapsedMs = this.getAssistantActiveMs();
 				const doneLabel = formatDoneStatus(elapsedMs, this.liveEstimatedOutputTokens);
 
 				// Stop timer interval
@@ -1164,6 +1186,7 @@ export class TuiRenderer {
 					this.timerIntervalId = null;
 				}
 				this.agentStartTime = null;
+				this.accumulatedAssistantActiveMs = 0;
 				this.liveEstimatedOutputTokens = 0;
 
 				// Stop loading animation
