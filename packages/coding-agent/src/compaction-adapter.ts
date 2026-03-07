@@ -503,6 +503,12 @@ export class OpenAIResponsesCompactAdapter implements CompactionAdapter {
 			const body = (await response.json()) as CompactEndpointResponse;
 			const output = body.output ?? [];
 			const replacementMessages = compactOutputItemsToMessages({ model: args.model, output });
+			const structuredSummary = createCompactSummaryFromOutput({
+				goal: args.goal,
+				output,
+				readFiles: args.readFiles,
+				modifiedFiles: args.modifiedFiles,
+			});
 
 			if (replacementMessages.length === 0) {
 				throw new Error("Compact endpoint returned no replayable history items");
@@ -514,9 +520,9 @@ export class OpenAIResponsesCompactAdapter implements CompactionAdapter {
 				details: {
 					handoffType: "explicit",
 					goal: args.goal.trim(),
-					formattedMessage: "",
+					formattedMessage: structuredSummary.formattedMessage,
 					parentSessionId: "",
-					fileTokens: estimateReplacementMessagesTokens(replacementMessages),
+					fileTokens: estimateReplacementMessagesTokens(replacementMessages) + structuredSummary.fileTokens,
 					replacementMessages,
 					keyFiles: buildKeyFiles(args.readFiles, args.modifiedFiles),
 				},

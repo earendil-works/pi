@@ -13,12 +13,29 @@ describe("compaction checkpoint", () => {
 				"### Done",
 				"- [x] Added endpoint support.",
 			].join("\n"),
+			goal: "Continue the release workflow",
 			parentThreadId: "thread-123",
 		});
 
 		expect(text).toContain("**Parent Thread:** `thread-123`");
 		expect(text).toContain("Use `read_thread` with this ID to reference the original conversation.");
 		expect(text).toContain("Use this compacted checkpoint as the active context for continuing the task.");
+	});
+
+	it("builds a fallback structured checkpoint when no formatted summary is provided", () => {
+		const text = buildCompactionCheckpointText({
+			formattedMessage: "",
+			goal: "Continue the release workflow",
+			parentThreadId: "thread-123",
+			keyFiles: ["src/auth.ts"],
+		});
+
+		expect(text).toContain("## Goal");
+		expect(text).toContain("### Done");
+		expect(text).toContain("### In Progress");
+		expect(text).toContain("## Next Steps");
+		expect(text).toContain("src/auth.ts");
+		expect(text).toContain("**Parent Thread:** `thread-123`");
 	});
 
 	it("builds a semantic continuation prompt that references the parent thread and the current goal", () => {

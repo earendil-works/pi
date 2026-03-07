@@ -132,6 +132,7 @@ import { ToolExecutionComponent } from "./tool-execution.js";
 import { TreeSelectorComponent } from "./tree-selector.js";
 import { UserMessageComponent } from "./user-message.js";
 import { UserMessageSelectorComponent } from "./user-message-selector.js";
+import { estimateWorkingStatusTokens, formatWorkingStatus } from "./working-status.js";
 import { WorkspaceNoteOverlayComponent } from "./workspace-note-overlay.js";
 
 function hashContent(content: string): string {
@@ -299,6 +300,7 @@ export class TuiRenderer {
 	// Timer tracking for agent work duration
 	private agentStartTime: number | null = null;
 	private timerIntervalId: NodeJS.Timeout | null = null;
+	private liveEstimatedOutputTokens = 0;
 
 	constructor(
 		agent: Agent,
@@ -802,6 +804,18 @@ export class TuiRenderer {
 		});
 	}
 
+	private buildWorkingStatusMessage(): string {
+		const elapsedMs = this.agentStartTime ? Date.now() - this.agentStartTime : 0;
+		return formatWorkingStatus(elapsedMs, this.liveEstimatedOutputTokens);
+	}
+
+	private updateWorkingStatusMessage(): void {
+		if (!this.loadingAnimation) {
+			return;
+		}
+		this.loadingAnimation.setMessage(this.buildWorkingStatusMessage());
+	}
+
 	private async handleEvent(event: AgentEvent, state: AgentState): Promise<void> {
 		if (!this.isInitialized) {
 			await this.init();
@@ -826,21 +840,21 @@ export class TuiRenderer {
 
 				// Start timer
 				this.agentStartTime = Date.now();
+				this.liveEstimatedOutputTokens = 0;
 
 				// Create loader with initial message
 				this.loadingAnimation = new Loader(
 					this.ui,
 					(spinner) => theme.fg("accent", spinner),
 					(text) => theme.fg("muted", text),
-					"Working (0s • esc to interrupt)",
+					this.buildWorkingStatusMessage(),
 				);
 				this.statusContainer.addChild(this.loadingAnimation);
 
 				// Update timer every second
 				this.timerIntervalId = setInterval(() => {
 					if (this.loadingAnimation && this.agentStartTime) {
-						const elapsed = formatElapsed(Date.now() - this.agentStartTime);
-						this.loadingAnimation.setMessage(`Working (${elapsed} • esc to interrupt)`);
+						this.updateWorkingStatusMessage();
 					}
 				}, 1000);
 
@@ -940,6 +954,8 @@ export class TuiRenderer {
 				if (this.streamingComponent && event.message.role === "assistant") {
 					const assistantMsg = event.message as AssistantMessage;
 					this.streamingComponent.applyAssistantMessageEvent(event.assistantMessageEvent);
+					this.liveEstimatedOutputTokens = estimateWorkingStatusTokens(assistantMsg);
+					this.updateWorkingStatusMessage();
 
 					// Create tool execution components as soon as we see tool calls
 					for (const content of assistantMsg.content) {
@@ -1129,6 +1145,7 @@ export class TuiRenderer {
 						this.timerIntervalId = null;
 					}
 					this.agentStartTime = null;
+					this.liveEstimatedOutputTokens = 0;
 					// Don't touch loadingAnimation - it's owned by handoff now
 					break;
 				}
@@ -1143,6 +1160,7 @@ export class TuiRenderer {
 					this.timerIntervalId = null;
 				}
 				this.agentStartTime = null;
+				this.liveEstimatedOutputTokens = 0;
 
 				// Stop loading animation
 				if (this.loadingAnimation) {
@@ -3656,13 +3674,30 @@ export class TuiRenderer {
 
 	private buildContextCompactionMessages(details: HandoffDetails & { parentSessionId: string | null }): Message[] {
 		if (details.replacementMessages && details.replacementMessages.length > 0) {
-			return details.replacementMessages;
+			const checkpointText = buildCompactionCheckpointText({
+				formattedMessage: details.formattedMessage,
+				goal: details.goal,
+				parentThreadId: details.parentSessionId,
+				keyFiles: details.keyFiles,
+			});
+			const timestamp = Date.now() + details.replacementMessages.length;
+
+			return [
+				...details.replacementMessages,
+				{
+					role: "user",
+					content: [{ type: "text", text: checkpointText }],
+					timestamp,
+				},
+			];
 		}
 
 		const timestamp = Date.now();
 		const compactSummary = buildCompactionCheckpointText({
 			formattedMessage: details.formattedMessage,
+			goal: details.goal,
 			parentThreadId: details.parentSessionId,
+			keyFiles: details.keyFiles,
 		});
 		const replacementMessages: Message[] = [
 			{

@@ -288,6 +288,12 @@ describe("compaction adapter", () => {
 		expect(execution.usedFallback).toBe(false);
 		expect(execution.details.replacementMessages).toHaveLength(2);
 		expect(execution.details.keyFiles).toEqual(["src/auth.ts", "src/session.ts"]);
+		expect(execution.details.formattedMessage).toContain("## Goal");
+		expect(execution.details.formattedMessage).toContain("### Done");
+		expect(execution.details.formattedMessage).toContain("### In Progress");
+		expect(execution.details.formattedMessage).toContain("## Next Steps");
+		expect(execution.details.formattedMessage).toContain("<read-files>");
+		expect(execution.details.formattedMessage).toContain("src/auth.ts");
 	});
 
 	it("normalizes the Codex compact endpoint path to include /codex", async () => {
