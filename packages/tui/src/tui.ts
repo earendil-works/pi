@@ -53,6 +53,9 @@ export interface OverlayOptions {
 	marginX?: number;
 }
 
+const ENABLE_MOUSE_TRACKING = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
+const DISABLE_MOUSE_TRACKING = "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l";
+
 interface ActiveOverlay {
 	component: Component;
 	options: OverlayOptions;
@@ -252,6 +255,8 @@ export class TUI extends Container {
 	private terminal: Terminal;
 	private overlay: ActiveOverlay | null = null;
 	private terminalFocused = true;
+	private started = false;
+	private mouseTrackingEnabled = false;
 	private previousLines: string[] = [];
 	private previousWidth = 0;
 	private focusedComponent: Component | null = null;
@@ -278,6 +283,7 @@ export class TUI extends Container {
 
 	setFocus(component: Component | null): void {
 		this.focusedComponent = component;
+		this.syncMouseTracking();
 	}
 
 	isTerminalFocused = (): boolean => {
@@ -286,10 +292,12 @@ export class TUI extends Container {
 
 	setOverlay(component: Component | null, options: OverlayOptions = {}): void {
 		this.overlay = component ? { component, options } : null;
+		this.syncMouseTracking();
 	}
 
 	clearOverlay(): void {
 		this.overlay = null;
+		this.syncMouseTracking();
 	}
 
 	override invalidate(): void {
@@ -364,11 +372,15 @@ export class TUI extends Container {
 			(data) => this.handleInput(data),
 			() => this.requestRenderWithReason("resize"),
 		);
+		this.started = true;
 		this.terminal.hideCursor();
+		this.syncMouseTracking(true);
 		this.requestRender();
 	}
 
 	stop(): void {
+		this.syncMouseTracking(true, false);
+		this.started = false;
 		// Try to move the cursor below our rendered content so the shell prompt
 		// doesn't overwrite UI content on exit.
 		if (this.previousLines.length > 0) {
@@ -480,7 +492,8 @@ export class TUI extends Container {
 
 	private handleInput(data: string): void {
 		const focusRemaining = this.consumeTerminalFocusEvents(data);
-		const remaining = this.translateOverlayMouseInput(focusRemaining);
+		const pointerFiltered = this.filterPointerInput(focusRemaining);
+		const remaining = this.translateOverlayMouseInput(pointerFiltered);
 		if (remaining.length === 0) {
 			return;
 		}
@@ -491,6 +504,26 @@ export class TUI extends Container {
 			this.focusedComponent.handleInput(remaining);
 			this.requestRenderWithReason("input");
 		}
+	}
+
+	private shouldEnableMouseTracking(): boolean {
+		return this.focusedComponent !== null;
+	}
+
+	private syncMouseTracking(force = false, enabled = this.shouldEnableMouseTracking()): void {
+		if (!this.started) {
+			this.mouseTrackingEnabled = enabled;
+			return;
+		}
+		if (!force && this.mouseTrackingEnabled === enabled) {
+			return;
+		}
+		this.mouseTrackingEnabled = enabled;
+		this.terminal.write(enabled ? ENABLE_MOUSE_TRACKING : DISABLE_MOUSE_TRACKING);
+	}
+
+	private filterPointerInput(data: string): string {
+		return data;
 	}
 
 	private translateOverlayMouseInput(data: string): string {
