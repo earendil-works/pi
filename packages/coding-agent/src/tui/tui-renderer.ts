@@ -115,7 +115,6 @@ import { AssistantMessageComponent } from "./assistant-message.js";
 import { CustomEditor } from "./custom-editor.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { FooterComponent } from "./footer.js";
-import { LabeledBorder } from "./labeled-border.js";
 import { ModelSelectorComponent } from "./model-selector.js";
 import { OAuthAccountSelectorComponent } from "./oauth-account-selector.js";
 import { OAuthSelectorComponent } from "./oauth-selector.js";
@@ -1245,9 +1244,6 @@ export class TuiRenderer {
 				}
 				this.pendingTools.clear();
 				this.statusContainer.addChild(new Text(theme.fg("muted", doneLabel), 0, 0));
-
-				// Add completion label
-				this.chatContainer.addChild(new LabeledBorder(doneLabel));
 
 				// Note: Don't need to re-enable submit - we never disable it
 				this.ui.requestRender();
