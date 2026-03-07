@@ -27,6 +27,19 @@ interface DisplaySlice {
 	endCol: number;
 }
 
+interface ScrollbarGeometry {
+	visibleHeight: number;
+	maxScrollOffset: number;
+	thumbStart: number;
+	thumbSize: number;
+}
+
+interface ScrollbarDragState {
+	startMouseRow: number;
+	startScrollOffset: number;
+	geometry: ScrollbarGeometry;
+}
+
 export interface EditorTheme {
 	borderColor: (str: string) => string;
 	selectList: SelectListTheme;
@@ -44,6 +57,9 @@ export class Editor implements Component {
 
 	public borderColor: (str: string) => string;
 	public maxHeight: number | undefined = 10;
+	public showTopBorder: boolean = true;
+	public showBottomBorder: boolean = true;
+	public cursorStyle: "reverse" | "underline" = "reverse";
 
 	private autocompleteProvider?: AutocompleteProvider;
 	private autocompleteList?: SelectList;
@@ -61,6 +77,7 @@ export class Editor implements Component {
 	private lastLayoutWidth: number = 0;
 	private lastRenderHeight: number = 0;
 	private targetDisplayCol: number | undefined = undefined;
+	private scrollbarDragState: ScrollbarDragState | null = null;
 
 	private isBatchingInput: boolean = false;
 	private pendingEscapeBuffer: string = "";
@@ -85,6 +102,7 @@ export class Editor implements Component {
 		this.lastRenderHeight = 0;
 		this.state.scrollOffset = 0;
 		this.targetDisplayCol = undefined;
+		this.scrollbarDragState = null;
 	}
 
 	render(width: number): string[] {
@@ -130,7 +148,9 @@ export class Editor implements Component {
 			}
 		}
 
-		result.push(horizontal.repeat(width));
+		if (this.showTopBorder) {
+			result.push(horizontal.repeat(width));
+		}
 
 		for (let i = 0; i < visibleLayoutLines.length; i++) {
 			const layoutLine = visibleLayoutLines[i];
@@ -142,17 +162,18 @@ export class Editor implements Component {
 				const after = displayText.slice(layoutLine.cursorPos);
 
 				if (after.length > 0) {
-					const cursor = `\x1b[7m${after[0]}\x1b[0m`; // reverse video
+					const cursor =
+						this.cursorStyle === "underline" ? `\x1b[4m${after[0]}\x1b[24m` : `\x1b[7m${after[0]}\x1b[27m`;
 					const restAfter = after.slice(1);
 					displayText = before + cursor + restAfter;
 				} else {
 					if (visLen < contentWidth) {
-						const cursor = "\x1b[4m \x1b[0m";
+						const cursor = "\x1b[4m \x1b[24m";
 						displayText = before + cursor;
 						visLen = visLen + 1;
 					} else if (before.length > 0) {
 						const lastChar = before[before.length - 1];
-						const cursor = `\x1b[4m${lastChar}\x1b[0m`;
+						const cursor = `\x1b[4m${lastChar}\x1b[24m`;
 						displayText = before.slice(0, -1) + cursor;
 					}
 				}
@@ -169,7 +190,9 @@ export class Editor implements Component {
 			result.push(displayText + padding + scrollbarChar);
 		}
 
-		result.push(horizontal.repeat(width));
+		if (this.showBottomBorder) {
+			result.push(horizontal.repeat(width));
+		}
 
 		if (this.isAutocompleting && this.autocompleteList) {
 			const autocompleteResult = this.autocompleteList.render(width);
@@ -329,6 +352,7 @@ export class Editor implements Component {
 
 		let textChanged = false;
 		let cursorMoved = false;
+		let viewportChanged = false;
 		let i = 0;
 
 		this.isBatchingInput = true;
@@ -389,7 +413,7 @@ export class Editor implements Component {
 					const endMatch = remaining.match(/^\x1b\[<64;\d+;\d+[Mm]/);
 					if (endMatch) {
 						this.scroll(-3);
-						cursorMoved = true;
+						viewportChanged = true;
 						i += endMatch[0].length;
 						continue;
 					}
@@ -398,7 +422,15 @@ export class Editor implements Component {
 					const endMatch = remaining.match(/^\x1b\[<65;\d+;\d+[Mm]/);
 					if (endMatch) {
 						this.scroll(3);
-						cursorMoved = true;
+						viewportChanged = true;
+						i += endMatch[0].length;
+						continue;
+					}
+				}
+				if (remaining.startsWith("\x1b[<32;") && this.maxHeight !== undefined) {
+					const endMatch = remaining.match(/^\x1b\[<32;\d+;\d+[Mm]/);
+					if (endMatch) {
+						viewportChanged = this.handleScrollbarDrag(endMatch[0]) || viewportChanged;
 						i += endMatch[0].length;
 						continue;
 					}
@@ -406,8 +438,15 @@ export class Editor implements Component {
 				if (remaining.startsWith("\x1b[<0;") && this.maxHeight !== undefined) {
 					const endMatch = remaining.match(/^\x1b\[<0;\d+;\d+[Mm]/);
 					if (endMatch) {
-						this.handleScrollbarClick(endMatch[0]);
-						cursorMoved = true;
+						viewportChanged = this.handleScrollbarPointerDown(endMatch[0]) || viewportChanged;
+						i += endMatch[0].length;
+						continue;
+					}
+				}
+				if (remaining.startsWith("\x1b[<") && this.maxHeight !== undefined) {
+					const endMatch = remaining.match(/^\x1b\[<\d+;\d+;\d+m/);
+					if (endMatch) {
+						this.scrollbarDragState = null;
 						i += endMatch[0].length;
 						continue;
 					}
@@ -650,6 +689,8 @@ export class Editor implements Component {
 			const layoutWidth = this.maxHeight !== undefined ? this.lastRenderWidth - 1 : this.lastRenderWidth;
 			this.layoutText(layoutWidth);
 			this.ensureCursorVisible();
+		} else if (viewportChanged) {
+			// Mouse-driven scrolling should not snap back to the cursor.
 		} else if (cursorMoved) {
 			this.ensureCursorVisible();
 		}
@@ -1430,27 +1471,97 @@ export class Editor implements Component {
 		this.clearTargetColumn();
 	}
 
-	/** LIMITATION: Assumes Editor at top of terminal; mouse coords won't map correctly otherwise. */
-	private handleScrollbarClick(data: string): void {
-		const match = data.match(/\x1b\[<0;(\d+);(\d+)([Mm])/);
-		if (!match) return;
+	private getScrollbarGeometry(): ScrollbarGeometry | null {
+		if (this.maxHeight === undefined || this.lastRenderHeight === 0) return null;
 
-		const x = parseInt(match[1], 10);
-		const y = parseInt(match[2], 10);
+		const visibleHeight = this.lastRenderHeight;
+		const totalDisplayLines = this.displaySlices.length;
+		const maxScrollOffset = Math.max(0, totalDisplayLines - visibleHeight);
+		const needsScrollbar = totalDisplayLines > this.maxHeight;
 
-		if (x !== this.lastRenderWidth) return;
+		if (!needsScrollbar) {
+			return {
+				visibleHeight,
+				maxScrollOffset,
+				thumbStart: 0,
+				thumbSize: visibleHeight,
+			};
+		}
+
+		const thumbSize = Math.max(1, Math.floor((visibleHeight / totalDisplayLines) * visibleHeight));
+		let thumbStart = 0;
+		if (maxScrollOffset > 0) {
+			thumbStart = Math.floor((this.state.scrollOffset / maxScrollOffset) * (visibleHeight - thumbSize));
+		}
+
+		return { visibleHeight, maxScrollOffset, thumbStart, thumbSize };
+	}
+
+	private isScrollbarColumn(x: number): boolean {
+		return x === this.lastRenderWidth;
+	}
+
+	private parseMousePosition(data: string): { x: number; y: number } | null {
+		const match = data.match(/\x1b\[<\d+;(\d+);(\d+)[Mm]/);
+		if (!match) return null;
+		return {
+			x: parseInt(match[1], 10),
+			y: parseInt(match[2], 10),
+		};
+	}
+
+	private handleScrollbarPointerDown(data: string): boolean {
+		return this.handleScrollbarClick(data);
+	}
+
+	/** LIMITATION: Assumes Editor receives local mouse coords relative to its own render box. */
+	private handleScrollbarClick(data: string): boolean {
+		const position = this.parseMousePosition(data);
+		if (!position) return false;
+		const { x, y } = position;
+
+		if (!this.isScrollbarColumn(x)) return false;
 
 		const clickedRow = y - 2;
-		if (clickedRow < 0 || clickedRow >= this.lastRenderHeight) return;
+		if (clickedRow < 0 || clickedRow >= this.lastRenderHeight) return false;
 
-		const totalDisplayLines = this.displaySlices.length;
-		const visibleHeight = this.lastRenderHeight;
-		const maxScrollOffset = Math.max(0, totalDisplayLines - visibleHeight);
+		const geometry = this.getScrollbarGeometry();
+		if (!geometry) return false;
 
-		const scrollRatio = clickedRow / Math.max(1, visibleHeight - 1);
-		this.state.scrollOffset = Math.round(scrollRatio * maxScrollOffset);
+		const isOnThumb = clickedRow >= geometry.thumbStart && clickedRow < geometry.thumbStart + geometry.thumbSize;
+		if (isOnThumb) {
+			this.scrollbarDragState = {
+				startMouseRow: clickedRow,
+				startScrollOffset: this.state.scrollOffset,
+				geometry,
+			};
+			return true;
+		}
 
-		this.ensureCursorVisible();
+		const scrollRatio = clickedRow / Math.max(1, geometry.visibleHeight - 1);
+		this.state.scrollOffset = Math.round(scrollRatio * geometry.maxScrollOffset);
+		this.scrollbarDragState = null;
+		return true;
+	}
+
+	private handleScrollbarDrag(data: string): boolean {
+		const position = this.parseMousePosition(data);
+		if (!position) return false;
+		if (!this.scrollbarDragState) return false;
+
+		const clickedRow = position.y - 2;
+		const { geometry, startMouseRow, startScrollOffset } = this.scrollbarDragState;
+		const trackTravel = Math.max(1, geometry.visibleHeight - geometry.thumbSize);
+		const maxScrollOffset = geometry.maxScrollOffset;
+		if (maxScrollOffset === 0) return false;
+
+		const rowDelta = clickedRow - startMouseRow;
+		const scrollDelta = Math.round((rowDelta / trackTravel) * maxScrollOffset);
+		const nextOffset = Math.max(0, Math.min(maxScrollOffset, startScrollOffset + scrollDelta));
+		if (nextOffset === this.state.scrollOffset) return false;
+
+		this.state.scrollOffset = nextOffset;
+		return true;
 	}
 
 	public getScrollOffset(): number {

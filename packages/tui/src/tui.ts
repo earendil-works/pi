@@ -58,6 +58,13 @@ interface ActiveOverlay {
 	options: OverlayOptions;
 }
 
+interface OverlayPlacement {
+	dialogWidth: number;
+	originX: number;
+	originY: number;
+	height: number;
+}
+
 interface AnsiExtractResult {
 	code: string;
 	length: number;
@@ -295,9 +302,9 @@ export class TUI extends Container {
 		return this.composeOverlay(baseLines, width, this.terminal.rows);
 	}
 
-	private composeOverlay(baseLines: string[], width: number, height: number): string[] {
+	private getOverlayPlacement(width: number, height: number): OverlayPlacement | null {
 		if (!this.overlay) {
-			return baseLines;
+			return null;
 		}
 
 		const marginX = Math.max(0, this.overlay.options.marginX ?? 4);
@@ -307,6 +314,28 @@ export class TUI extends Container {
 		const overlayWidth = Math.max(1, Math.min(this.overlay.options.width ?? maxWidth, maxWidth));
 		const dialogWidth = Math.max(minWidth, overlayWidth);
 		const renderedOverlay = this.overlay.component.render(dialogWidth);
+		const croppedHeight = Math.min(renderedOverlay.length, height);
+		const baseLines = super.render(width);
+		const frameHeight = Math.max(baseLines.length, height);
+		const viewportTop = Math.max(0, frameHeight - height);
+		const originX = Math.max(0, Math.floor((width - dialogWidth) / 2));
+		const originY = viewportTop + Math.max(0, Math.floor((height - croppedHeight) / 2));
+
+		return {
+			dialogWidth,
+			originX,
+			originY,
+			height: croppedHeight,
+		};
+	}
+
+	private composeOverlay(baseLines: string[], width: number, height: number): string[] {
+		const placement = this.getOverlayPlacement(width, height);
+		if (!this.overlay || !placement) {
+			return baseLines;
+		}
+
+		const renderedOverlay = this.overlay.component.render(placement.dialogWidth);
 		const croppedOverlay = renderedOverlay.slice(0, height);
 
 		const frameLines = baseLines.slice();
@@ -315,14 +344,16 @@ export class TUI extends Container {
 			frameLines.push("");
 		}
 
-		const viewportTop = Math.max(0, frameLines.length - height);
-		const originX = Math.max(0, Math.floor((width - dialogWidth) / 2));
-		const originY = viewportTop + Math.max(0, Math.floor((height - croppedOverlay.length) / 2));
-
 		for (let i = 0; i < croppedOverlay.length; i++) {
-			const lineIndex = originY + i;
+			const lineIndex = placement.originY + i;
 			const baseLine = frameLines[lineIndex] ?? "";
-			frameLines[lineIndex] = overlayLine(baseLine, croppedOverlay[i] ?? "", originX, dialogWidth, width);
+			frameLines[lineIndex] = overlayLine(
+				baseLine,
+				croppedOverlay[i] ?? "",
+				placement.originX,
+				placement.dialogWidth,
+				width,
+			);
 		}
 
 		return frameLines;
@@ -448,7 +479,8 @@ export class TUI extends Container {
 	}
 
 	private handleInput(data: string): void {
-		const remaining = this.consumeTerminalFocusEvents(data);
+		const focusRemaining = this.consumeTerminalFocusEvents(data);
+		const remaining = this.translateOverlayMouseInput(focusRemaining);
 		if (remaining.length === 0) {
 			return;
 		}
@@ -459,6 +491,24 @@ export class TUI extends Container {
 			this.focusedComponent.handleInput(remaining);
 			this.requestRenderWithReason("input");
 		}
+	}
+
+	private translateOverlayMouseInput(data: string): string {
+		if (!this.overlay || this.focusedComponent !== this.overlay.component) {
+			return data;
+		}
+
+		return data.replace(/\x1b\[<(\d+);(\d+);(\d+)([Mm])/g, (match, code, xText, yText, suffix) => {
+			const placement = this.getOverlayPlacement(this.terminal.columns, this.terminal.rows);
+			if (!placement) return match;
+
+			const x = Number.parseInt(xText, 10);
+			const y = Number.parseInt(yText, 10);
+			const localX = x - placement.originX;
+			const localY = y - placement.originY;
+
+			return `\x1b[<${code};${localX};${localY}${suffix}`;
+		});
 	}
 
 	private doRender(): void {

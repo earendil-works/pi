@@ -76,8 +76,11 @@ export class WorkspaceNoteOverlayComponent implements Component {
 		this.onCancel = options.onCancel;
 
 		this.editor = new Editor(getEditorTheme());
-		this.editor.borderColor = (text: string) => theme.fg("borderAccent", text);
+		this.editor.borderColor = (text: string) => theme.fg("borderMuted", text);
 		this.editor.maxHeight = 8;
+		this.editor.showTopBorder = false;
+		this.editor.showBottomBorder = false;
+		this.editor.cursorStyle = "underline";
 		this.editor.setText(options.initialText);
 		this.editor.onSubmit = (text) => {
 			this.onSave(text);
@@ -98,57 +101,66 @@ export class WorkspaceNoteOverlayComponent implements Component {
 	}
 
 	render(width: number): string[] {
-		const shadowWidth = 2;
-		const cardWidth = Math.max(44, width - shadowWidth);
+		const cardWidth = Math.max(44, width);
 		const contentWidth = Math.max(1, cardWidth - 4);
+		const editorPaddingX = 1;
+		const editorContentWidth = Math.max(1, contentWidth - editorPaddingX * 2);
 		const bg = (text: string) => theme.bg("userMessageBg", text);
-		const sideBorder = (text: string) => theme.fg("borderMuted", text);
-		const topBorder = (text: string) => theme.fg("borderAccent", text);
-		const bottomBorder = (text: string) => theme.fg("borderMuted", text);
-		const shadow = theme.fg("dim", " ░");
+		const border = (text: string) => theme.fg("borderMuted", text);
 
 		const wrapCardLine = (content: string): string => {
-			const raw = `${sideBorder("│")} ${padStyled(content, contentWidth)} ${sideBorder("│")}`;
-			return bg(raw) + shadow;
+			const raw = `${border("│")} ${padStyled(content, contentWidth)} ${border("│")}`;
+			return bg(raw);
 		};
 
-		const title = theme.fg("accent", "✦") + " " + theme.bold("Workspace note");
+		const title = theme.bold(theme.fg("muted", "Workspace note"));
 		const titleFill = Math.max(0, cardWidth - 4 - visibleWidth(title));
-		const topLine = bg(`${topBorder("╭─")} ${title}${topBorder("─".repeat(titleFill))}${topBorder("╮")}`) + shadow;
+		const topLine = bg(`${border("╭─")} ${title}${border("─".repeat(titleFill))}${border("╮")}`);
 
 		const workspacePrefix = theme.fg("dim", "persistent per repo") + theme.fg("muted", "  •  ");
 		const workspacePathWidth = Math.max(8, contentWidth - visibleWidth(workspacePrefix));
-		const workspaceLine = workspacePrefix + shortenWorkspaceLabel(this.workspaceLabel, workspacePathWidth);
+		const workspaceLine =
+			workspacePrefix + theme.fg("muted", shortenWorkspaceLabel(this.workspaceLabel, workspacePathWidth));
 
-		const editorLines = this.editor.render(contentWidth);
+		const editorLines = this.editor
+			.render(editorContentWidth)
+			.map(
+				(line) =>
+					`${" ".repeat(editorPaddingX)}${padStyled(line, editorContentWidth)}${" ".repeat(editorPaddingX)}`,
+			);
 		const footerLine =
-			theme.fg("accent", "Enter") +
+			theme.bold(theme.fg("muted", "Enter")) +
 			theme.fg("muted", " save") +
 			theme.fg("dim", "  •  ") +
-			theme.fg("accent", "Shift+Enter") +
+			theme.bold(theme.fg("muted", "Shift+Enter")) +
 			theme.fg("muted", " newline") +
 			theme.fg("dim", "  •  ") +
-			theme.fg("accent", "Esc") +
+			theme.bold(theme.fg("muted", "Esc")) +
 			theme.fg("muted", " cancel");
-		const divider = bg(`${bottomBorder("├")}${bottomBorder("─".repeat(cardWidth - 2))}${bottomBorder("┤")}`) + shadow;
-		const bottomLine =
-			bg(`${bottomBorder("╰")}${bottomBorder("─".repeat(cardWidth - 2))}${bottomBorder("╯")}`) + shadow;
-		const bottomShadow = " ".repeat(2) + theme.fg("dim", "░".repeat(Math.max(1, cardWidth)));
+		const divider = bg(`${border("├")}${border("─".repeat(cardWidth - 2))}${border("┤")}`);
+		const bottomLine = bg(`${border("╰")}${border("─".repeat(cardWidth - 2))}${border("╯")}`);
 
 		return [
 			topLine,
 			wrapCardLine(workspaceLine),
 			wrapCardLine(""),
+			wrapCardLine(""),
 			...editorLines.map((line) => wrapCardLine(line)),
+			wrapCardLine(""),
 			wrapCardLine(""),
 			divider,
 			wrapCardLine(footerLine),
 			bottomLine,
-			bottomShadow,
 		];
 	}
 
 	handleInput(data: string): void {
+		if (data.charCodeAt(0) === 3) {
+			this.editor.setText("");
+			this.tui.requestRender();
+			return;
+		}
+
 		if (data === "\x1b") {
 			this.onCancel();
 			this.tui.requestRender();

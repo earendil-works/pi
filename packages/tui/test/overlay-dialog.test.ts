@@ -1,9 +1,12 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
+import { Editor } from "../src/components/editor.js";
 import { Text } from "../src/components/text.js";
 import type { Terminal } from "../src/terminal.js";
 import type { Component } from "../src/tui.js";
 import { Container, TUI } from "../src/tui.js";
+import { defaultEditorTheme } from "./test-themes.js";
+import { VirtualTerminal } from "./virtual-terminal.js";
 
 class RecordingTerminal implements Terminal {
 	private _columns: number;
@@ -39,6 +42,31 @@ class StaticDialog implements Component {
 	}
 
 	invalidate(): void {}
+}
+
+class OverlayEditorDialog implements Component {
+	readonly editor: Editor;
+
+	constructor() {
+		this.editor = new Editor(defaultEditorTheme);
+		this.editor.maxHeight = 4;
+		this.editor.setText(Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\n"));
+		for (let i = 0; i < 30; i++) {
+			this.editor.handleInput("\x1b[A");
+		}
+	}
+
+	render(width: number): string[] {
+		return this.editor.render(width);
+	}
+
+	handleInput(data: string): void {
+		this.editor.handleInput(data);
+	}
+
+	invalidate(): void {
+		this.editor.invalidate();
+	}
 }
 
 describe("TUI overlay dialog", () => {
@@ -91,5 +119,30 @@ describe("TUI overlay dialog", () => {
 		);
 		assert.equal(lines[0]?.trim(), "chat 0");
 		assert.equal(lines[1]?.trim(), "chat 1");
+	});
+
+	it("routes a visible overlay scrollbar click to the centered editor", async () => {
+		const terminal = new VirtualTerminal(80, 24);
+		const ui = new TUI(terminal);
+		const overlay = new OverlayEditorDialog();
+
+		ui.setOverlay(overlay, { width: 20, minWidth: 20, maxWidth: 20, marginX: 6 });
+		ui.setFocus(overlay);
+		ui.start();
+
+		try {
+			await terminal.flush();
+			assert.strictEqual(overlay.editor.getScrollOffset(), 0);
+
+			terminal.sendInput("\x1b[<0;50;12M");
+			await terminal.flush();
+
+			assert.ok(
+				overlay.editor.getScrollOffset() > 0,
+				"expected clicking the visible centered scrollbar to scroll the overlay editor",
+			);
+		} finally {
+			ui.stop();
+		}
 	});
 });

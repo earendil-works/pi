@@ -15,6 +15,8 @@ interface RendererPrivateView {
 	agent: Agent;
 	handleEvent(event: AgentEvent, state: Agent["state"]): Promise<void>;
 	agentStartTime: number | null;
+	ignoreNextAgentEndForAutoHandoffAbort: boolean;
+	isAutoHandoffInProgress: boolean;
 }
 
 function stripAnsi(text: string): string {
@@ -234,6 +236,49 @@ describe("working status live TPS", () => {
 		} finally {
 			renderer.stop();
 			vi.useRealTimers();
+		}
+	});
+
+	it("clears the working status for post-compaction continuation completion", async () => {
+		const renderer = createRenderer(settingsDir);
+		const finalAssistantMessage: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [{ type: "text", text: "continued after compaction" }],
+		};
+
+		try {
+			const rendererView = renderer as unknown as RendererPrivateView;
+
+			await handleRendererEvent(renderer, { type: "agent_start" });
+			rendererView.isAutoHandoffInProgress = true;
+			await handleRendererEvent(renderer, { type: "agent_end", messages: [finalAssistantMessage] });
+
+			expect(readStatusText(renderer)).not.toContain("Working (");
+			expect(readChatText(renderer)).toContain("Done after 0s - 0 tps - 0.0s lat.");
+		} finally {
+			renderer.stop();
+		}
+	});
+
+	it("preserves the handoff loader for the single aborted pre-compaction run", async () => {
+		const renderer = createRenderer(settingsDir);
+		const finalAssistantMessage: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [{ type: "text", text: "aborted before handoff" }],
+		};
+
+		try {
+			const rendererView = renderer as unknown as RendererPrivateView;
+
+			await handleRendererEvent(renderer, { type: "agent_start" });
+			rendererView.isAutoHandoffInProgress = true;
+			rendererView.ignoreNextAgentEndForAutoHandoffAbort = true;
+			await handleRendererEvent(renderer, { type: "agent_end", messages: [finalAssistantMessage] });
+
+			expect(readStatusText(renderer)).toContain("Working (");
+			expect(rendererView.ignoreNextAgentEndForAutoHandoffAbort).toBe(false);
+		} finally {
+			renderer.stop();
 		}
 	});
 

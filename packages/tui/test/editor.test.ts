@@ -619,5 +619,64 @@ describe("Editor component", () => {
 			const hasScrollbar = contentLines.some((line) => line.includes("█") || line.includes("░"));
 			assert.strictEqual(hasScrollbar, false);
 		});
+
+		it("can hide top and bottom borders", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.showTopBorder = false;
+			editor.showBottomBorder = false;
+			editor.setText("line1\nline2");
+
+			const result = editor.render(20);
+
+			assert.strictEqual(result.length, 2);
+			assert.ok(result.every((line) => !/^─+$/.test(line)));
+		});
+
+		it("can render an underline cursor instead of reverse video", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.cursorStyle = "underline";
+			editor.setText("hello");
+			editor.handleInput("\x1b[D");
+
+			const result = editor.render(20);
+
+			assert.ok(result.some((line) => line.includes("\x1b[4m")));
+			assert.ok(result.some((line) => line.includes("\x1b[24m")));
+			assert.ok(result.every((line) => !line.includes("\x1b[7m")));
+			assert.ok(result.every((line) => !line.includes("\x1b[0m")));
+		});
+	});
+
+	describe("mouse scrollbar behavior", () => {
+		it("ignores clicks outside the scrollbar column", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = 4;
+			editor.setText(Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\n"));
+
+			editor.render(20);
+			assert.strictEqual(editor.getScrollOffset(), 0);
+
+			editor.handleInput("\x1b[<0;1;1M");
+
+			assert.strictEqual(editor.getScrollOffset(), 0, "expected clicks away from the scrollbar to be ignored");
+		});
+
+		it("drags the scrollbar thumb to update scroll offset", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.maxHeight = 4;
+			editor.setText(Array.from({ length: 20 }, (_, i) => `line ${i + 1}`).join("\n"));
+			for (let i = 0; i < 30; i++) {
+				editor.handleInput("\x1b[A");
+			}
+
+			editor.render(20);
+			assert.strictEqual(editor.getScrollOffset(), 0);
+
+			editor.handleInput("\x1b[<0;20;2M");
+			assert.strictEqual(editor.getScrollOffset(), 0, "expected grabbing the top thumb to keep the current offset");
+			editor.handleInput("\x1b[<32;20;5M");
+
+			assert.ok(editor.getScrollOffset() > 0, "expected dragging the scrollbar thumb to scroll the editor");
+		});
 	});
 });

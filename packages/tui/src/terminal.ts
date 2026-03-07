@@ -52,12 +52,8 @@ export class ProcessTerminal implements Terminal {
 		process.stdout.write("\x1b[?2004h");
 		// Enable focus reporting so the TUI can detect when the terminal loses focus.
 		process.stdout.write("\x1b[?1004h");
-
-		// Force disable mouse tracking to ensure clean state and restore text selection
-		// Terminal modes persist between process executions, so a previous run (or crash)
-		// that enabled mouse reporting leaves the terminal in that state.
-		// 1000: Mouse click/release, 1002: Drag, 1003: Move, 1006: SGR coords
-		process.stdout.write("\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l");
+		// Enable SGR mouse reporting for clicks, wheel, and drag.
+		process.stdout.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
 
 		// Set up event handlers
 		process.stdin.on("data", this.inputHandler);

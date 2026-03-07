@@ -63,9 +63,21 @@ describe("WorkspaceNoteOverlayComponent", () => {
 		});
 
 		const initialRender = stripAnsi(overlay.render(80).join("\n"));
+		const initialLines = initialRender.split("\n");
+		const rawRender = overlay.render(80).join("\n");
 		expect(initialRender).toContain("Workspace note");
 		expect(initialRender).toContain("╭");
 		expect(initialRender).toContain("╰");
+		expect(initialRender).not.toContain("✦");
+		expect(initialRender).not.toContain("░");
+		expect(initialLines.some((line) => /^│ ─+ │$/.test(line))).toBe(false);
+		expect(rawRender).not.toContain("\x1b[7m");
+		expect(rawRender).not.toContain("\x1b[0m");
+		expect(
+			initialLines.filter(
+				(line) => line === "│                                                                              │",
+			).length,
+		).toBeGreaterThanOrEqual(4);
 		expect(initialRender).toContain("Enter save");
 		expect(initialRender).toContain("Remember the docs before editing");
 
@@ -84,6 +96,11 @@ describe("WorkspaceNoteOverlayComponent", () => {
 				cancelCount += 1;
 			},
 		});
+
+		reopened.setText("Clear me with ctrl+c");
+		reopened.handleInput("\x03");
+		expect(reopened.getText()).toBe("");
+		expect(cancelCount).toBe(0);
 
 		reopened.setText("Throw this away");
 		reopened.handleInput("\x1b");
