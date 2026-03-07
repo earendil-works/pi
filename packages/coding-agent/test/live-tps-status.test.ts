@@ -228,8 +228,8 @@ describe("working status live TPS", () => {
 			const combinedText = `${readStatusText(renderer)}\n${readChatText(renderer)}`;
 
 			expect(readStatusText(renderer)).not.toContain("Working (");
-			expect(readStatusText(renderer)).toContain(doneLabel);
-			expect(readChatText(renderer)).not.toContain(doneLabel);
+			expect(readStatusText(renderer)).not.toContain(doneLabel);
+			expect(readChatText(renderer)).toContain(doneLabel);
 			expect(countOccurrences(combinedText, doneLabel)).toBe(1);
 		} finally {
 			renderer.stop();
@@ -272,8 +272,8 @@ describe("working status live TPS", () => {
 			await handleRendererEvent(renderer, { type: "message_end", message: assistantStreamingMessage });
 			await handleRendererEvent(renderer, { type: "agent_end", messages: [assistantStreamingMessage] });
 
-			expect(readStatusText(renderer)).toContain(`Done after 2s - ${expectedTps} tps`);
-			expect(readChatText(renderer)).not.toContain(`Done after 2s - ${expectedTps} tps`);
+			expect(readStatusText(renderer)).not.toContain(`Done after 2s - ${expectedTps} tps`);
+			expect(readChatText(renderer)).toContain(`Done after 2s - ${expectedTps} tps`);
 		} finally {
 			renderer.stop();
 			vi.useRealTimers();
@@ -342,8 +342,8 @@ describe("working status live TPS", () => {
 				messages: [firstAssistantMessage, finalAssistantMessage],
 			});
 
-			expect(readStatusText(renderer)).toContain(`Done after 4s - ${expectedTps} tps`);
-			expect(readChatText(renderer)).not.toContain(`Done after 4s - ${expectedTps} tps`);
+			expect(readStatusText(renderer)).not.toContain(`Done after 4s - ${expectedTps} tps`);
+			expect(readChatText(renderer)).toContain(`Done after 4s - ${expectedTps} tps`);
 		} finally {
 			renderer.stop();
 			vi.useRealTimers();
@@ -408,8 +408,8 @@ describe("working status live TPS", () => {
 				messages: [firstAssistantMessage, finalAssistantMessage],
 			});
 
-			expect(readStatusText(renderer)).toContain(`Done after 2s - ${expectedDoneTps} tps`);
-			expect(readChatText(renderer)).not.toContain(`Done after 2s - ${expectedDoneTps} tps`);
+			expect(readStatusText(renderer)).not.toContain(`Done after 2s - ${expectedDoneTps} tps`);
+			expect(readChatText(renderer)).toContain(`Done after 2s - ${expectedDoneTps} tps`);
 		} finally {
 			renderer.stop();
 			vi.useRealTimers();
@@ -483,8 +483,8 @@ describe("working status live TPS", () => {
 				messages: [firstAssistantMessage, finalAssistantMessage],
 			});
 
-			expect(readStatusText(renderer)).toContain("Done after 4s - 3 tps - 3.0s lat.");
-			expect(readChatText(renderer)).not.toContain("Done after 4s - 3 tps - 3.0s lat.");
+			expect(readStatusText(renderer)).not.toContain("Done after 4s - 3 tps - 3.0s lat.");
+			expect(readChatText(renderer)).toContain("Done after 4s - 3 tps - 3.0s lat.");
 		} finally {
 			renderer.stop();
 			vi.useRealTimers();
