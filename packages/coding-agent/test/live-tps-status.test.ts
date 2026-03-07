@@ -318,33 +318,84 @@ describe("working status live TPS", () => {
 			vi.advanceTimersByTime(2_000);
 			await handleRendererEvent(renderer, {
 				type: "message_update",
-				message: {
-					...finalAssistantMessage,
-					content: [...firstAssistantMessage.content, ...finalAssistantMessage.content],
-				},
+				message: finalAssistantMessage,
 				assistantMessageEvent: {
 					type: "text_delta",
-					contentIndex: 2,
+					contentIndex: 0,
 					delta: finalText,
-					partial: {
-						...finalAssistantMessage,
-						content: [...firstAssistantMessage.content, ...finalAssistantMessage.content],
-					},
+					partial: finalAssistantMessage,
 				},
 			});
-			await handleRendererEvent(renderer, {
-				type: "message_end",
-				message: {
-					...finalAssistantMessage,
-					content: [...firstAssistantMessage.content, ...finalAssistantMessage.content],
-				},
-			});
+			await handleRendererEvent(renderer, { type: "message_end", message: finalAssistantMessage });
 			await handleRendererEvent(renderer, {
 				type: "agent_end",
 				messages: [firstAssistantMessage, finalAssistantMessage],
 			});
 
 			expect(readChatText(renderer)).toContain(`Done after 4s - ${expectedTps} tps`);
+		} finally {
+			renderer.stop();
+			vi.useRealTimers();
+		}
+	});
+
+	it("keeps cumulative TPS stable at completion instead of dropping to the last turn only", async () => {
+		vi.useFakeTimers();
+		const renderer = createRenderer(settingsDir);
+		const firstText = "This is a much longer first answer that should dominate the total token count.";
+		const finalText = "ok";
+		const totalEstimatedTokens = estimateTokens(firstText) + estimateTokens(finalText);
+		const expectedWorkingTps = Math.round(estimateTokens(firstText) / 1);
+		const expectedDoneTps = Math.round(totalEstimatedTokens / 2);
+
+		const firstAssistantMessage: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [{ type: "text", text: firstText }],
+		};
+		const finalAssistantMessage: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [{ type: "text", text: finalText }],
+		};
+
+		try {
+			await handleRendererEvent(renderer, { type: "agent_start" });
+
+			await handleRendererEvent(renderer, { type: "message_start", message: firstAssistantMessage });
+			vi.advanceTimersByTime(1_000);
+			await handleRendererEvent(renderer, {
+				type: "message_update",
+				message: firstAssistantMessage,
+				assistantMessageEvent: {
+					type: "text_delta",
+					contentIndex: 0,
+					delta: firstText,
+					partial: firstAssistantMessage,
+				},
+			});
+			expect(readStatusText(renderer)).toContain(`Working (1s • ${expectedWorkingTps} tps • esc to interrupt)`);
+			await handleRendererEvent(renderer, { type: "message_end", message: firstAssistantMessage });
+
+			vi.advanceTimersByTime(8_000);
+
+			await handleRendererEvent(renderer, { type: "message_start", message: finalAssistantMessage });
+			vi.advanceTimersByTime(1_000);
+			await handleRendererEvent(renderer, {
+				type: "message_update",
+				message: finalAssistantMessage,
+				assistantMessageEvent: {
+					type: "text_delta",
+					contentIndex: 0,
+					delta: finalText,
+					partial: finalAssistantMessage,
+				},
+			});
+			await handleRendererEvent(renderer, { type: "message_end", message: finalAssistantMessage });
+			await handleRendererEvent(renderer, {
+				type: "agent_end",
+				messages: [firstAssistantMessage, finalAssistantMessage],
+			});
+
+			expect(readChatText(renderer)).toContain(`Done after 2s - ${expectedDoneTps} tps`);
 		} finally {
 			renderer.stop();
 			vi.useRealTimers();

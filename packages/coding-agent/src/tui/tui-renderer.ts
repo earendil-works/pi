@@ -300,7 +300,8 @@ export class TuiRenderer {
 	private agentStartTime: number | null = null;
 	private accumulatedAssistantActiveMs = 0;
 	private timerIntervalId: NodeJS.Timeout | null = null;
-	private liveEstimatedOutputTokens = 0;
+	private completedEstimatedOutputTokens = 0;
+	private currentAssistantEstimatedOutputTokens = 0;
 
 	constructor(
 		agent: Agent,
@@ -806,7 +807,11 @@ export class TuiRenderer {
 
 	private buildWorkingStatusMessage(): string {
 		const elapsedMs = this.getAssistantActiveMs();
-		return formatWorkingStatus(elapsedMs, this.liveEstimatedOutputTokens);
+		return formatWorkingStatus(elapsedMs, this.getEstimatedOutputTokens());
+	}
+
+	private getEstimatedOutputTokens(): number {
+		return this.completedEstimatedOutputTokens + this.currentAssistantEstimatedOutputTokens;
 	}
 
 	private getAssistantActiveMs(now: number = Date.now()): number {
@@ -861,7 +866,8 @@ export class TuiRenderer {
 				// Start status in a waiting state; actual timing begins when the assistant starts responding.
 				this.agentStartTime = null;
 				this.accumulatedAssistantActiveMs = 0;
-				this.liveEstimatedOutputTokens = 0;
+				this.completedEstimatedOutputTokens = 0;
+				this.currentAssistantEstimatedOutputTokens = 0;
 
 				// Create loader with initial message
 				this.loadingAnimation = new Loader(
@@ -959,6 +965,7 @@ export class TuiRenderer {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
+					this.currentAssistantEstimatedOutputTokens = 0;
 					this.startAssistantActiveTimer();
 					this.updateWorkingStatusMessage();
 					this.maybeAnnounceCodexAccountSwitch();
@@ -977,7 +984,7 @@ export class TuiRenderer {
 				if (this.streamingComponent && event.message.role === "assistant") {
 					const assistantMsg = event.message as AssistantMessage;
 					this.streamingComponent.applyAssistantMessageEvent(event.assistantMessageEvent);
-					this.liveEstimatedOutputTokens = estimateWorkingStatusTokens(assistantMsg);
+					this.currentAssistantEstimatedOutputTokens = estimateWorkingStatusTokens(assistantMsg);
 					this.updateWorkingStatusMessage();
 
 					// Create tool execution components as soon as we see tool calls
@@ -1010,7 +1017,8 @@ export class TuiRenderer {
 				}
 				if (this.streamingComponent && event.message.role === "assistant") {
 					const assistantMsg = event.message as AssistantMessage;
-					this.liveEstimatedOutputTokens = estimateWorkingStatusTokens(assistantMsg);
+					this.currentAssistantEstimatedOutputTokens = estimateWorkingStatusTokens(assistantMsg);
+					this.completedEstimatedOutputTokens += this.currentAssistantEstimatedOutputTokens;
 					this.pauseAssistantActiveTimer();
 
 					// Finalize streaming component with the final message (includes stopReason)
@@ -1032,6 +1040,7 @@ export class TuiRenderer {
 					// Keep the component in the chat (it now renders the final message), but
 					// clear our streaming pointer.
 					this.streamingComponent = null;
+					this.currentAssistantEstimatedOutputTokens = 0;
 
 					// Invalidate footer cache to refresh git branch (in case agent executed git commands)
 					this.footer.invalidate();
@@ -1171,14 +1180,15 @@ export class TuiRenderer {
 					}
 					this.agentStartTime = null;
 					this.accumulatedAssistantActiveMs = 0;
-					this.liveEstimatedOutputTokens = 0;
+					this.completedEstimatedOutputTokens = 0;
+					this.currentAssistantEstimatedOutputTokens = 0;
 					// Don't touch loadingAnimation - it's owned by handoff now
 					break;
 				}
 
 				// Calculate elapsed time before clearing timer
 				const elapsedMs = this.getAssistantActiveMs();
-				const doneLabel = formatDoneStatus(elapsedMs, this.liveEstimatedOutputTokens);
+				const doneLabel = formatDoneStatus(elapsedMs, this.getEstimatedOutputTokens());
 
 				// Stop timer interval
 				if (this.timerIntervalId) {
@@ -1187,7 +1197,8 @@ export class TuiRenderer {
 				}
 				this.agentStartTime = null;
 				this.accumulatedAssistantActiveMs = 0;
-				this.liveEstimatedOutputTokens = 0;
+				this.completedEstimatedOutputTokens = 0;
+				this.currentAssistantEstimatedOutputTokens = 0;
 
 				// Stop loading animation
 				if (this.loadingAnimation) {
