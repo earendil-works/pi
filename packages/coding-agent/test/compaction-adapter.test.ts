@@ -65,6 +65,10 @@ describe("compaction adapter", () => {
 
 		expect(payload.model).toBe(model.id);
 		expect(payload.instructions).toContain("CONTEXT CHECKPOINT COMPACTION");
+		expect(payload.instructions).toContain("## Goal");
+		expect(payload.instructions).toContain("### Done");
+		expect(payload.instructions).toContain("### In Progress");
+		expect(payload.instructions).toContain("## Next Steps");
 		expect(payload.instructions).toContain("Current goal to continue after compaction: Finish the auth adapter");
 		expect(payload.input).toHaveLength(2);
 		expect(payload.input[0]).toMatchObject({ type: "message", role: "user" });

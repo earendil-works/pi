@@ -8,7 +8,7 @@ import {
 	type ToolResultMessage,
 	type UserMessage,
 } from "@kennyfrc/mu-ai";
-import { buildHandoffDraftFromModelText } from "./handoff-summary.js";
+import { buildHandoffDraftFromModelText, HANDOFF_SUMMARY_SYSTEM_PROMPT } from "./handoff-summary.js";
 import { estimateTokens, type HandoffDetails } from "./tools/handoff.js";
 
 type JsonRecord = Record<string, unknown>;
@@ -432,7 +432,13 @@ function extractCompactOutputText(output: CompactResponseItem[]): string {
 }
 
 function buildCompactInstructions(goal: string): string {
-	return `${UPSTREAM_CODEX_COMPACT_PROMPT}\n\nCurrent goal to continue after compaction: ${goal.trim()}`;
+	return [
+		UPSTREAM_CODEX_COMPACT_PROMPT,
+		"",
+		HANDOFF_SUMMARY_SYSTEM_PROMPT,
+		"",
+		`Current goal to continue after compaction: ${goal.trim()}`,
+	].join("\n");
 }
 
 function resolveCompactEndpoint(model: Model<Api>): string {
