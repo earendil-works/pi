@@ -296,7 +296,7 @@ export class TuiRenderer {
 
 	private unsubscribe?: () => void;
 
-	// Timer tracking for agent work duration
+	// Timer tracking for assistant response duration (excludes request latency)
 	private agentStartTime: number | null = null;
 	private timerIntervalId: NodeJS.Timeout | null = null;
 	private liveEstimatedOutputTokens = 0;
@@ -837,8 +837,8 @@ export class TuiRenderer {
 				}
 				this.statusContainer.clear();
 
-				// Start timer
-				this.agentStartTime = Date.now();
+				// Start status in a waiting state; actual timing begins when the assistant starts responding.
+				this.agentStartTime = null;
 				this.liveEstimatedOutputTokens = 0;
 
 				// Create loader with initial message
@@ -937,6 +937,10 @@ export class TuiRenderer {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
+					if (this.agentStartTime === null) {
+						this.agentStartTime = Date.now();
+						this.updateWorkingStatusMessage();
+					}
 					this.maybeAnnounceCodexAccountSwitch();
 					// Create assistant component for streaming. This uses a bounded rolling buffer
 					// during token streaming, then finalizes into full Markdown rendering once the

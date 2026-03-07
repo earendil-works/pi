@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Agent, type AgentEvent } from "@kennyfrc/mu-agent-core";
 import { type AssistantMessage, type AssistantMessageEvent, getModel } from "@kennyfrc/mu-ai";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsManager } from "../src/settings-manager.js";
 import { initTheme } from "../src/theme/theme.js";
 import { estimateTokens } from "../src/tools/handoff.js";
@@ -221,6 +221,48 @@ describe("working status live TPS", () => {
 			expect(readChatText(renderer)).toContain(`Done after 2s - ${expectedTps} tps`);
 		} finally {
 			renderer.stop();
+		}
+	});
+
+	it("excludes pre-response latency from working and done timing", async () => {
+		vi.useFakeTimers();
+		const renderer = createRenderer(settingsDir);
+		const finalText = "hello world";
+		const expectedTps = Math.round(estimateTokens(finalText) / 2);
+		const assistantStartMessage: AssistantMessage = baseAssistantMessage();
+		const assistantStreamingMessage: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [{ type: "text", text: finalText }],
+		};
+		const assistantStreamingEvent: AssistantMessageEvent = {
+			type: "text_delta",
+			contentIndex: 0,
+			delta: finalText,
+			partial: assistantStreamingMessage,
+		};
+
+		try {
+			await handleRendererEvent(renderer, { type: "agent_start" });
+			vi.advanceTimersByTime(5_000);
+			expect(readStatusText(renderer)).toContain("Working (0s • 0 tps • esc to interrupt)");
+
+			await handleRendererEvent(renderer, { type: "message_start", message: assistantStartMessage });
+			vi.advanceTimersByTime(2_000);
+			await handleRendererEvent(renderer, {
+				type: "message_update",
+				message: assistantStreamingMessage,
+				assistantMessageEvent: assistantStreamingEvent,
+			});
+
+			expect(readStatusText(renderer)).toContain(`Working (2s • ${expectedTps} tps • esc to interrupt)`);
+
+			await handleRendererEvent(renderer, { type: "message_end", message: assistantStreamingMessage });
+			await handleRendererEvent(renderer, { type: "agent_end", messages: [assistantStreamingMessage] });
+
+			expect(readChatText(renderer)).toContain(`Done after 2s - ${expectedTps} tps`);
+		} finally {
+			renderer.stop();
+			vi.useRealTimers();
 		}
 	});
 });
