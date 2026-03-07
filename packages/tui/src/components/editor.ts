@@ -84,6 +84,7 @@ export class Editor implements Component {
 
 	public onSubmit?: (text: string) => void;
 	public onChange?: (text: string) => void;
+	public onAutocompleteChange?: () => void;
 	public disableSubmit: boolean = false;
 
 	constructor(theme: EditorTheme) {
@@ -195,8 +196,10 @@ export class Editor implements Component {
 		}
 
 		if (this.isAutocompleting && this.autocompleteList) {
-			const autocompleteResult = this.autocompleteList.render(width);
-			result.push(...autocompleteResult);
+			if (!this.autocompletePrefix.startsWith("/")) {
+				const autocompleteResult = this.autocompleteList.render(width);
+				result.push(...autocompleteResult);
+			}
 		}
 
 		return result;
@@ -1345,6 +1348,7 @@ export class Editor implements Component {
 			this.autocompletePrefix = suggestions.prefix;
 			this.autocompleteList = new SelectList(suggestions.items, 5, this.theme.selectList);
 			this.isAutocompleting = true;
+			this.onAutocompleteChange?.();
 		} else {
 			this.cancelAutocomplete();
 		}
@@ -1386,6 +1390,7 @@ export class Editor implements Component {
 			this.autocompletePrefix = suggestions.prefix;
 			this.autocompleteList = new SelectList(suggestions.items, 5, this.theme.selectList);
 			this.isAutocompleting = true;
+			this.onAutocompleteChange?.();
 		} else {
 			this.cancelAutocomplete();
 		}
@@ -1395,10 +1400,26 @@ export class Editor implements Component {
 		this.isAutocompleting = false;
 		this.autocompleteList = undefined as any;
 		this.autocompletePrefix = "";
+		this.onAutocompleteChange?.();
 	}
 
 	public isShowingAutocomplete(): boolean {
 		return this.isAutocompleting;
+	}
+
+	public isShowingSlashCommandAutocomplete(): boolean {
+		return this.isAutocompleting && !!this.autocompleteList && this.autocompletePrefix.startsWith("/");
+	}
+
+	public hideAutocomplete(): void {
+		this.cancelAutocomplete();
+	}
+
+	public renderDetachedSlashCommandAutocomplete(width: number): string[] {
+		if (!this.isShowingSlashCommandAutocomplete() || !this.autocompleteList) {
+			return [];
+		}
+		return this.autocompleteList.render(width);
 	}
 
 	private updateAutocomplete(): void {
@@ -1413,6 +1434,7 @@ export class Editor implements Component {
 		if (suggestions && suggestions.items.length > 0) {
 			this.autocompletePrefix = suggestions.prefix;
 			this.autocompleteList = new SelectList(suggestions.items, 5, this.theme.selectList);
+			this.onAutocompleteChange?.();
 		} else {
 			const currentLine = this.state.lines[this.state.cursorLine] || "";
 			const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);

@@ -4,7 +4,7 @@ import * as path from "node:path";
 import type { Agent, AgentEvent, AgentState, Attachment, ThinkingLevel } from "@kennyfrc/mu-agent-core";
 import type { AgentTool, Api, AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@kennyfrc/mu-ai";
 import { complete, supportsXhigh } from "@kennyfrc/mu-ai";
-import type { SlashCommand } from "@kennyfrc/mu-tui";
+import type { Component, SlashCommand } from "@kennyfrc/mu-tui";
 import {
 	CombinedAutocompleteProvider,
 	Container,
@@ -112,15 +112,18 @@ import { findRepoRoot } from "../utils/find-repo-root.js";
 import { addToLimitedSet } from "../utils/limited-set.js";
 import { readAppendedFileChunkSync } from "../utils/read-appended-file-chunk.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
+import { ChatLayoutComponent, createChatContentContainer } from "./chat-layout.js";
 import { CustomEditor } from "./custom-editor.js";
+import { DialogOverlayComponent } from "./dialog-overlay.js";
 import { DynamicBorder } from "./dynamic-border.js";
-import { FooterComponent } from "./footer.js";
+import { FooterComponent, formatModelStatusLabel } from "./footer.js";
 import { LabeledBorder } from "./labeled-border.js";
 import { ModelSelectorComponent } from "./model-selector.js";
 import { OAuthAccountSelectorComponent } from "./oauth-account-selector.js";
 import { OAuthSelectorComponent } from "./oauth-selector.js";
 import { QueueModeSelectorComponent } from "./queue-mode-selector.js";
 import { formatQueuedMessagePreview } from "./queued-message-preview.js";
+import { SlashCommandOverlayComponent } from "./slash-command-overlay.js";
 import { StreamingAssistantMessageComponent } from "./streaming-assistant-message.js";
 import { SubscriptionSelectorComponent } from "./subscription-selector.js";
 import { ThemeSelectorComponent } from "./theme-selector.js";
@@ -178,6 +181,10 @@ export class TuiRenderer {
 	private editor: CustomEditor;
 	private editorContainer: Container; // Container to swap between editor and selector
 	private footer: FooterComponent;
+	private topChrome: Container;
+	private chatLayout: ChatLayoutComponent;
+	private slashCommandOverlay: SlashCommandOverlayComponent | null = null;
+	private activeDialogOverlay: Component | null = null;
 	private agent: Agent;
 	private sessionManager: SessionManager;
 	private settingsManager: SettingsManager;
@@ -345,9 +352,30 @@ export class TuiRenderer {
 		this.pendingMessagesContainer = new RenderCacheContainer();
 		this.statusContainer = new RenderCacheContainer();
 		this.editor = new CustomEditor(getEditorTheme());
+		this.editor.showTopBorder = false;
+		this.editor.showBottomBorder = false;
 		this.editorContainer = new Container(); // Container to hold editor or selector
 		this.editorContainer.addChild(this.editor); // Start with editor
 		this.footer = new FooterComponent(agent.state);
+		this.footer.setShowModelStatus(false);
+		this.topChrome = new Container();
+		this.chatLayout = new ChatLayoutComponent({
+			chatContent: createChatContentContainer(
+				this.topChrome,
+				this.chatContainer,
+				this.pendingMessagesContainer,
+				this.statusContainer,
+			),
+			composerContent: this.editorContainer,
+			inputTarget: this.editor,
+			interceptInput: (data) => this.interceptComposerInput(data),
+			footer: this.footer,
+			getComposerLabel: () => formatModelStatusLabel(this.agent.state),
+			getComposerBorderColor: () => this.editor.borderColor,
+			updateComposerViewport: (maxBodyRows) => {
+				this.editor.maxHeight = maxBodyRows;
+			},
+		});
 		this.footer.setUsageFooterMode(this.usageFooterMode);
 
 		this.rebuildBuiltInSlashCommands();
@@ -511,6 +539,15 @@ export class TuiRenderer {
 	}
 
 	private refreshAutocompleteProvider(): void {
+		const autocompleteProvider = new CombinedAutocompleteProvider(
+			this.getAllSlashCommands(),
+			process.cwd(),
+			this.fdPath,
+		);
+		this.editor.setAutocompleteProvider(autocompleteProvider);
+	}
+
+	private getAllSlashCommands(): SlashCommand[] {
 		const builtInNames = new Set(this.builtInSlashCommands.map((c) => c.name));
 
 		const extensionCommands = this.extensionManager
@@ -524,12 +561,7 @@ export class TuiRenderer {
 				}),
 			);
 
-		const autocompleteProvider = new CombinedAutocompleteProvider(
-			[...this.builtInSlashCommands, ...extensionCommands],
-			process.cwd(),
-			this.fdPath,
-		);
-		this.editor.setAutocompleteProvider(autocompleteProvider);
+		return [...this.builtInSlashCommands, ...extensionCommands];
 	}
 
 	async init(): Promise<void> {
@@ -583,14 +615,14 @@ export class TuiRenderer {
 		const header = new Text(logo + "\n" + instructions, 1, 0);
 
 		// Setup UI layout
-		this.ui.addChild(new Spacer(1));
-		this.ui.addChild(header);
-		this.ui.addChild(new Spacer(1));
+		this.topChrome.addChild(new Spacer(1));
+		this.topChrome.addChild(header);
+		this.topChrome.addChild(new Spacer(1));
 
 		// Add new version notification if available
 		if (this.newVersion) {
-			this.ui.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
-			this.ui.addChild(
+			this.topChrome.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
+			this.topChrome.addChild(
 				new Text(
 					theme.bold(theme.fg("warning", "Update Available")) +
 						"\n" +
@@ -600,28 +632,22 @@ export class TuiRenderer {
 					0,
 				),
 			);
-			this.ui.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
+			this.topChrome.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
 		}
 
 		// Add changelog if provided
 		if (this.changelogMarkdown) {
-			this.ui.addChild(new DynamicBorder());
-			this.ui.addChild(new Text(theme.bold(theme.fg("accent", "What's New")), 1, 0));
-			this.ui.addChild(new Spacer(1));
-			this.ui.addChild(new Markdown(this.changelogMarkdown.trim(), 1, 0, getMarkdownTheme()));
-			this.ui.addChild(new Spacer(1));
-			this.ui.addChild(new DynamicBorder());
+			this.topChrome.addChild(new DynamicBorder());
+			this.topChrome.addChild(new Text(theme.bold(theme.fg("accent", "What's New")), 1, 0));
+			this.topChrome.addChild(new Spacer(1));
+			this.topChrome.addChild(new Markdown(this.changelogMarkdown.trim(), 1, 0, getMarkdownTheme()));
+			this.topChrome.addChild(new Spacer(1));
+			this.topChrome.addChild(new DynamicBorder());
 		}
 
-		this.ui.addChild(this.chatContainer);
-		this.ui.addChild(this.pendingMessagesContainer);
-		this.ui.addChild(this.statusContainer);
-		this.ui.addChild(new Spacer(1));
-		this.ui.addChild(this.bashModeIndicatorContainer);
-		this.ui.addChild(this.editorContainer);
-		this.ui.addChild(new Spacer(1));
+		this.ui.addChild(this.chatLayout);
 		this.ui.addChild(this.footer);
-		this.ui.setFocus(this.editor);
+		this.ui.setFocus(this.chatLayout);
 
 		this.editor.onEscape = () => {
 			if (this.bashAbortController) {
@@ -703,6 +729,12 @@ export class TuiRenderer {
 			this.handleBashExecution(command);
 		};
 
+		this.editor.onAutocompleteChange = () => {
+			if (!this.slashCommandOverlay) {
+				this.syncSlashCommandOverlay();
+			}
+		};
+
 		// Sync edits to queued messages (skip empty to avoid clearing on submit)
 		this.editor.onChange = (text: string) => {
 			if (this.isHandlingQueueEditChange) return;
@@ -762,6 +794,7 @@ export class TuiRenderer {
 
 		// Start the UI
 		this.ui.start();
+		this.updateEditorBorderColor();
 		this.isInitialized = true;
 
 		// Subscribe to agent events for UI updates and session saving
@@ -2068,18 +2101,12 @@ export class TuiRenderer {
 			},
 		);
 
-		// Replace editor with selector
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.thinkingSelector);
-		this.ui.setFocus(this.thinkingSelector.getSelectList());
+		this.showDialogOverlay("Thinking level", this.thinkingSelector, this.thinkingSelector.getSelectList());
 		this.ui.requestRender();
 	}
 
 	private hideThinkingSelector(): void {
-		// Replace selector with editor in the container
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
-		this.ui.setFocus(this.editor);
+		this.clearDialogOverlay();
 		this.thinkingSelector = null;
 	}
 
@@ -2110,18 +2137,12 @@ export class TuiRenderer {
 			},
 		);
 
-		// Replace editor with selector
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.queueModeSelector);
-		this.ui.setFocus(this.queueModeSelector.getSelectList());
+		this.showDialogOverlay("Queue mode", this.queueModeSelector, this.queueModeSelector.getSelectList());
 		this.ui.requestRender();
 	}
 
 	private hideQueueModeSelector(): void {
-		// Replace selector with editor in the container
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
-		this.ui.setFocus(this.editor);
+		this.clearDialogOverlay();
 		this.queueModeSelector = null;
 	}
 
@@ -2166,9 +2187,11 @@ export class TuiRenderer {
 			},
 		});
 
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.todoOverlay);
-		this.ui.setFocus(this.todoOverlay);
+		this.showDialogOverlay("Todos", this.todoOverlay, this.todoOverlay, {
+			minWidth: 68,
+			maxWidth: 96,
+			marginX: 4,
+		});
 		this.ui.requestRender();
 	}
 
@@ -2225,7 +2248,7 @@ export class TuiRenderer {
 	private hideWorkspaceNoteOverlay(): void {
 		this.ui.clearOverlay();
 		this.noteOverlay = null;
-		this.ui.setFocus(this.editor);
+		this.ui.setFocus(this.chatLayout);
 	}
 
 	private showWorkspaceNoteSavedMessage(note: string): void {
@@ -2241,9 +2264,7 @@ export class TuiRenderer {
 	}
 
 	private hideTodosOverlay(): void {
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
-		this.ui.setFocus(this.editor);
+		this.clearDialogOverlay();
 		this.todoOverlay = null;
 	}
 
@@ -2298,18 +2319,12 @@ export class TuiRenderer {
 			},
 		);
 
-		// Replace editor with selector
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.themeSelector);
-		this.ui.setFocus(this.themeSelector.getSelectList());
+		this.showDialogOverlay("Theme", this.themeSelector, this.themeSelector.getSelectList());
 		this.ui.requestRender();
 	}
 
 	private hideThemeSelector(): void {
-		// Replace selector with editor in the container
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
-		this.ui.setFocus(this.editor);
+		this.clearDialogOverlay();
 		this.themeSelector = null;
 	}
 
@@ -2354,18 +2369,16 @@ export class TuiRenderer {
 			},
 		);
 
-		// Replace editor with selector
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.modelSelector);
-		this.ui.setFocus(this.modelSelector);
+		this.showDialogOverlay("Select model", this.modelSelector, this.modelSelector, {
+			minWidth: 68,
+			maxWidth: 92,
+			marginX: 4,
+		});
 		this.ui.requestRender();
 	}
 
 	private hideModelSelector(): void {
-		// Replace selector with editor in the container
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
-		this.ui.setFocus(this.editor);
+		this.clearDialogOverlay();
 		this.modelSelector = null;
 	}
 
@@ -2438,18 +2451,21 @@ export class TuiRenderer {
 			},
 		);
 
-		// Replace editor with selector
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.userMessageSelector);
-		this.ui.setFocus(this.userMessageSelector.getMessageList());
+		this.showDialogOverlay(
+			"Branch from message",
+			this.userMessageSelector,
+			this.userMessageSelector.getMessageList(),
+			{
+				minWidth: 68,
+				maxWidth: 92,
+				marginX: 4,
+			},
+		);
 		this.ui.requestRender();
 	}
 
 	private hideUserMessageSelector(): void {
-		// Replace selector with editor in the container
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
-		this.ui.setFocus(this.editor);
+		this.clearDialogOverlay();
 		this.userMessageSelector = null;
 	}
 
@@ -2516,17 +2532,16 @@ export class TuiRenderer {
 			},
 		);
 
-		// Replace editor with selector
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.treeSelector);
-		this.ui.setFocus(this.treeSelector);
+		this.showDialogOverlay("Session tree", this.treeSelector, this.treeSelector, {
+			minWidth: 68,
+			maxWidth: 96,
+			marginX: 4,
+		});
 		this.ui.requestRender();
 	}
 
 	private hideTreeSelector(): void {
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
-		this.ui.setFocus(this.editor);
+		this.clearDialogOverlay();
 		this.treeSelector = null;
 	}
 
@@ -2621,16 +2636,16 @@ export class TuiRenderer {
 			},
 		);
 
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.subscriptionSelector);
-		this.ui.setFocus(this.subscriptionSelector.getSelectList());
+		this.showDialogOverlay(title, this.subscriptionSelector, this.subscriptionSelector.getSelectList(), {
+			minWidth: 68,
+			maxWidth: 92,
+			marginX: 4,
+		});
 		this.ui.requestRender();
 	}
 
 	private hideSubscriptionSelector(): void {
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
-		this.ui.setFocus(this.editor);
+		this.clearDialogOverlay();
 		this.subscriptionSelector = null;
 	}
 
@@ -2700,7 +2715,7 @@ export class TuiRenderer {
 										// Restore editor
 										this.editorContainer.clear();
 										this.editorContainer.addChild(this.editor);
-										this.ui.setFocus(this.editor);
+										this.ui.setFocus(this.chatLayout);
 										resolve(code);
 									};
 
@@ -2831,18 +2846,16 @@ export class TuiRenderer {
 			},
 		);
 
-		// Replace editor with selector
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.oauthSelector);
-		this.ui.setFocus(this.oauthSelector);
+		this.showDialogOverlay(mode === "login" ? "Login" : "Logout", this.oauthSelector, this.oauthSelector, {
+			minWidth: 60,
+			maxWidth: 84,
+			marginX: 6,
+		});
 		this.ui.requestRender();
 	}
 
 	private hideOAuthSelector(): void {
-		// Replace selector with editor in the container
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
-		this.ui.setFocus(this.editor);
+		this.clearDialogOverlay();
 		this.oauthSelector = null;
 	}
 
@@ -2867,17 +2880,97 @@ export class TuiRenderer {
 			},
 		);
 
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.oauthAccountSelector);
-		this.ui.setFocus(this.oauthAccountSelector);
+		this.showDialogOverlay(
+			mode === "login" ? "Select account" : "Logout account",
+			this.oauthAccountSelector,
+			this.oauthAccountSelector,
+			{
+				minWidth: 60,
+				maxWidth: 84,
+				marginX: 6,
+			},
+		);
 		this.ui.requestRender();
 	}
 
 	private hideOAuthAccountSelector(): void {
-		this.editorContainer.clear();
-		this.editorContainer.addChild(this.editor);
-		this.ui.setFocus(this.editor);
+		this.clearDialogOverlay();
 		this.oauthAccountSelector = null;
+	}
+
+	private showDialogOverlay(
+		title: string,
+		body: Component,
+		focusTarget: Component,
+		options: {
+			width?: number;
+			minWidth?: number;
+			maxWidth?: number;
+			marginX?: number;
+			marginTop?: number;
+			marginBottom?: number;
+		} = {},
+	): void {
+		this.activeDialogOverlay = new DialogOverlayComponent({
+			title,
+			body,
+			focusTarget,
+			onCancel: () => this.clearDialogOverlay(),
+		});
+		this.ui.setOverlay(this.activeDialogOverlay, {
+			marginBottom: 6,
+			...options,
+		});
+		this.ui.setFocus(this.activeDialogOverlay);
+	}
+
+	private clearDialogOverlay(): void {
+		this.ui.clearOverlay();
+		this.activeDialogOverlay = null;
+		this.slashCommandOverlay = null;
+		this.ui.setFocus(this.chatLayout);
+	}
+
+	private interceptComposerInput(data: string): string {
+		if (this.slashCommandOverlay) {
+			this.slashCommandOverlay.handleInput(data);
+			this.ui.requestRender();
+			return "";
+		}
+
+		if (data === "/" && this.editor.getText().length === 0) {
+			this.openSlashCommandOverlay();
+			this.ui.requestRender();
+			return "";
+		}
+
+		return data;
+	}
+
+	private openSlashCommandOverlay(): void {
+		this.editor.hideAutocomplete();
+		this.editor.setText("");
+		this.slashCommandOverlay = new SlashCommandOverlayComponent({
+			getCommands: () => this.getAllSlashCommands(),
+			onSelect: (command) => {
+				this.clearDialogOverlay();
+				void this.handleEditorTextSubmission(`/${command.name}`, "by-end");
+			},
+			onCancel: () => this.clearDialogOverlay(),
+			onChange: () => {
+				this.ui.invalidate();
+				this.ui.requestRender();
+			},
+		});
+		this.showDialogOverlay("Commands", this.slashCommandOverlay, this.slashCommandOverlay, {
+			marginX: 8,
+			marginBottom: 6,
+		});
+	}
+
+	private syncSlashCommandOverlay(): void {
+		// Slash commands now use a dedicated dialog overlay with its own input state.
+		// Keep this hook as a no-op so legacy editor autocomplete state changes don't recurse.
 	}
 
 	private handleExportCommand(text: string): void {

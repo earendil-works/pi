@@ -44,6 +44,7 @@ export class FooterComponent implements Component {
 	private usageLimits: UsageLimitsSnapshot | null = null;
 	private contextTokens: number = 0;
 	private contextWindow: number = 0;
+	private showModelStatus = true;
 
 	constructor(state: AgentState) {
 		this.state = state;
@@ -119,6 +120,10 @@ export class FooterComponent implements Component {
 
 	setUsageFooterMode(mode: UsageFooterMode): void {
 		this.usageFooterMode = mode;
+	}
+
+	setShowModelStatus(show: boolean): void {
+		this.showModelStatus = show;
 	}
 
 	setUsageLimits(snapshot: UsageLimitsSnapshot | null): void {
@@ -246,28 +251,7 @@ export class FooterComponent implements Component {
 
 		const statsLeft = statsParts.join(" ");
 
-		// Add model name on the right side, plus thinking level if model supports it
-		const modelName = this.state.model?.id || "no-model";
-		const providerName = this.state.model?.provider;
-
-		// Add thinking level hint if model supports reasoning and thinking is enabled
-		let rightSide = modelName;
-		if (this.state.model?.reasoning) {
-			const thinkingLevel = this.state.thinkingLevel || "off";
-			const canShowXhigh = this.state.model ? supportsXhigh(this.state.model) : false;
-			if (thinkingLevel !== "off" && (thinkingLevel !== "xhigh" || canShowXhigh)) {
-				rightSide = `${modelName} • ${thinkingLevel}`;
-			}
-		}
-
-		if (supportsFastMode(this.state.model) && this.state.fastMode) {
-			rightSide = `${rightSide} • fast`;
-		}
-
-		// Append provider to reduce billing/provider ambiguity (e.g., OpenAI vs OpenRouter vs OpenAI Codex)
-		if (providerName) {
-			rightSide = `${rightSide} [${providerName}]`;
-		}
+		const rightSide = this.showModelStatus ? formatModelStatusLabel(this.state) : "";
 
 		const statsLeftWidth = visibleWidth(statsLeft);
 		const rightSideWidth = visibleWidth(rightSide);
@@ -338,4 +322,28 @@ export class FooterComponent implements Component {
 
 		return [firstLine, theme.fg("dim", statsLine)];
 	}
+}
+
+export function formatModelStatusLabel(state: AgentState): string {
+	const modelName = state.model?.id || "no-model";
+	const providerName = state.model?.provider;
+
+	let label = modelName;
+	if (state.model?.reasoning) {
+		const thinkingLevel = state.thinkingLevel || "off";
+		const canShowXhigh = state.model ? supportsXhigh(state.model) : false;
+		if (thinkingLevel !== "off" && (thinkingLevel !== "xhigh" || canShowXhigh)) {
+			label = `${modelName} • ${thinkingLevel}`;
+		}
+	}
+
+	if (supportsFastMode(state.model) && state.fastMode) {
+		label = `${label} • fast`;
+	}
+
+	if (providerName) {
+		label = `${label} [${providerName}]`;
+	}
+
+	return label;
 }

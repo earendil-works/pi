@@ -24,6 +24,11 @@ export interface Component {
 	handleInput?(data: string): void;
 
 	/**
+	 * Optional hint that this focused component needs terminal mouse tracking.
+	 */
+	wantsMouseTracking?(): boolean;
+
+	/**
 	 * Invalidate any cached rendering state.
 	 * Called when theme changes or when component needs to re-render from scratch.
 	 */
@@ -51,6 +56,8 @@ export interface OverlayOptions {
 	minWidth?: number;
 	maxWidth?: number;
 	marginX?: number;
+	marginTop?: number;
+	marginBottom?: number;
 }
 
 const ENABLE_MOUSE_TRACKING = "\x1b[?1000h\x1b[?1002h\x1b[?1006h";
@@ -292,11 +299,13 @@ export class TUI extends Container {
 
 	setOverlay(component: Component | null, options: OverlayOptions = {}): void {
 		this.overlay = component ? { component, options } : null;
+		this.resizeBaselineDirty = true;
 		this.syncMouseTracking();
 	}
 
 	clearOverlay(): void {
 		this.overlay = null;
+		this.resizeBaselineDirty = true;
 		this.syncMouseTracking();
 	}
 
@@ -316,18 +325,21 @@ export class TUI extends Container {
 		}
 
 		const marginX = Math.max(0, this.overlay.options.marginX ?? 4);
+		const marginTop = Math.max(0, this.overlay.options.marginTop ?? 0);
+		const marginBottom = Math.max(0, this.overlay.options.marginBottom ?? 0);
 		const availableWidth = Math.max(1, width - marginX * 2);
+		const availableHeight = Math.max(1, height - marginTop - marginBottom);
 		const maxWidth = Math.max(1, Math.min(this.overlay.options.maxWidth ?? availableWidth, availableWidth));
 		const minWidth = Math.max(1, Math.min(this.overlay.options.minWidth ?? Math.min(72, maxWidth), maxWidth));
 		const overlayWidth = Math.max(1, Math.min(this.overlay.options.width ?? maxWidth, maxWidth));
 		const dialogWidth = Math.max(minWidth, overlayWidth);
 		const renderedOverlay = this.overlay.component.render(dialogWidth);
-		const croppedHeight = Math.min(renderedOverlay.length, height);
+		const croppedHeight = Math.min(renderedOverlay.length, availableHeight);
 		const baseLines = super.render(width);
 		const frameHeight = Math.max(baseLines.length, height);
 		const viewportTop = Math.max(0, frameHeight - height);
 		const originX = Math.max(0, Math.floor((width - dialogWidth) / 2));
-		const originY = viewportTop + Math.max(0, Math.floor((height - croppedHeight) / 2));
+		const originY = viewportTop + marginTop + Math.max(0, Math.floor((availableHeight - croppedHeight) / 2));
 
 		return {
 			dialogWidth,
@@ -507,7 +519,10 @@ export class TUI extends Container {
 	}
 
 	private shouldEnableMouseTracking(): boolean {
-		return this.overlay !== null && this.focusedComponent === this.overlay.component;
+		if (this.overlay !== null && this.focusedComponent === this.overlay.component) {
+			return true;
+		}
+		return this.focusedComponent?.wantsMouseTracking?.() ?? false;
 	}
 
 	private syncMouseTracking(force = false, enabled = this.shouldEnableMouseTracking()): void {
