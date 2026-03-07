@@ -1237,13 +1237,14 @@ export class TuiRenderer {
 				if (this.loadingAnimation) {
 					this.loadingAnimation.stop();
 					this.loadingAnimation = null;
-					this.statusContainer.clear();
 				}
+				this.statusContainer.clear();
 				if (this.streamingComponent) {
 					this.chatContainer.removeChild(this.streamingComponent);
 					this.streamingComponent = null;
 				}
 				this.pendingTools.clear();
+				this.statusContainer.addChild(new Text(theme.fg("muted", doneLabel), 0, 0));
 
 				// Add completion label
 				this.chatContainer.addChild(new LabeledBorder(doneLabel));

@@ -221,6 +221,8 @@ describe("working status live TPS", () => {
 			await handleRendererEvent(renderer, { type: "message_end", message: finalAssistantMessage });
 			await handleRendererEvent(renderer, { type: "agent_end", messages: [finalAssistantMessage] });
 
+			expect(readStatusText(renderer)).not.toContain("Working (");
+			expect(readStatusText(renderer)).toContain(`Done after 2s - ${expectedTps} tps`);
 			expect(readChatText(renderer)).toContain(`Done after 2s - ${expectedTps} tps`);
 		} finally {
 			renderer.stop();
