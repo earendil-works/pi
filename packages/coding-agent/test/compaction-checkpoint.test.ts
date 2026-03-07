@@ -40,6 +40,20 @@ describe("compaction checkpoint", () => {
 
 	it("builds a semantic continuation prompt that references the parent thread and the current goal", () => {
 		const prompt = buildCompactionContinuationPrompt({
+			formattedMessage: [
+				"## Goal",
+				"Continue the release workflow",
+				"",
+				"## Progress",
+				"### Done",
+				"- [x] Added endpoint support.",
+				"",
+				"### In Progress",
+				"- Verify the compacted prompt content.",
+				"",
+				"## Next Steps",
+				"1. Rerun the resume flow.",
+			].join("\n"),
 			goal: "Continue the release workflow",
 			parentThreadId: "thread-123",
 			keyFiles: ["src/auth.ts", "src/session.ts"],
@@ -47,6 +61,9 @@ describe("compaction checkpoint", () => {
 
 		expect(prompt).toContain("Continue the task from the compacted checkpoint.");
 		expect(prompt).toContain("Goal: Continue the release workflow");
+		expect(prompt).toContain("### Done");
+		expect(prompt).toContain("### In Progress");
+		expect(prompt).toContain("## Next Steps");
 		expect(prompt).toContain("Key files:");
 		expect(prompt).toContain("- src/auth.ts");
 		expect(prompt).toContain("Parent thread ID: thread-123");
@@ -55,11 +72,15 @@ describe("compaction checkpoint", () => {
 
 	it("prompts without parent-thread recovery text when no parent thread id exists", () => {
 		const prompt = buildCompactionContinuationPrompt({
+			formattedMessage: "",
 			goal: "Continue the release workflow",
 			parentThreadId: null,
 		});
 
 		expect(prompt).toContain("Continue the task from the compacted checkpoint.");
+		expect(prompt).toContain("### Done");
+		expect(prompt).toContain("### In Progress");
+		expect(prompt).toContain("## Next Steps");
 		expect(prompt).not.toContain("Parent thread ID:");
 		expect(prompt).not.toContain("Use `read_thread` if you need more detail from the parent thread.");
 	});
@@ -67,6 +88,7 @@ describe("compaction checkpoint", () => {
 	it("submits a semantic continuation through agent.prompt after compaction", async () => {
 		const prompt = vi.fn(async (_message: string) => {});
 		const continuation = buildCompactionContinuationPrompt({
+			formattedMessage: "",
 			goal: "Continue the release workflow",
 			parentThreadId: "thread-123",
 		});

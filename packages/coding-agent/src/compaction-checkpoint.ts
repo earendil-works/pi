@@ -75,14 +75,25 @@ export function buildCompactionCheckpointText(args: {
 }
 
 export function buildCompactionContinuationPrompt(args: {
+	formattedMessage: string;
 	goal: string;
 	parentThreadId: string | null;
 	keyFiles?: string[];
 }): string {
+	const checkpointSummary = buildCompactionCheckpointText({
+		formattedMessage: args.formattedMessage,
+		goal: args.goal,
+		parentThreadId: args.parentThreadId,
+		keyFiles: args.keyFiles,
+	});
+
 	const lines = [
 		"Continue the task from the compacted checkpoint.",
 		`Goal: ${args.goal.trim()}`,
 		"Use the checkpoint summary's Done / In Progress / Next Steps sections to decide the next concrete action.",
+		"",
+		"Checkpoint summary:",
+		checkpointSummary,
 	];
 
 	if (args.keyFiles && args.keyFiles.length > 0) {

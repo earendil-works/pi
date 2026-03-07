@@ -305,6 +305,7 @@ export class TuiRenderer {
 	private pendingLatencyStartTime: number | null = null;
 	private accumulatedLatencyMs = 0;
 	private latencyGapCount = 0;
+	private ignoreNextAgentEndForAutoHandoffAbort = false;
 
 	constructor(
 		agent: Agent,
@@ -1104,6 +1105,7 @@ export class TuiRenderer {
 							});
 
 							if (shouldEmergencyAutoHandoff) {
+								this.ignoreNextAgentEndForAutoHandoffAbort = true;
 								this.agent.pauseQueueDrain();
 								this.agent.abort();
 
@@ -1200,8 +1202,10 @@ export class TuiRenderer {
 			}
 
 			case "agent_end": {
-				// Skip full handling if emergency handoff already started (this is from aborted run)
-				if (this.isAutoHandoffInProgress) {
+				// Skip the single aborted pre-handoff run. Continuation runs after compaction
+				// must complete with normal done semantics.
+				if (this.ignoreNextAgentEndForAutoHandoffAbort) {
+					this.ignoreNextAgentEndForAutoHandoffAbort = false;
 					// Just clean up timer resources
 					if (this.timerIntervalId) {
 						clearInterval(this.timerIntervalId);
@@ -1214,7 +1218,7 @@ export class TuiRenderer {
 					this.pendingLatencyStartTime = null;
 					this.accumulatedLatencyMs = 0;
 					this.latencyGapCount = 0;
-					// Don't touch loadingAnimation - it's owned by handoff now
+					// Don't touch loadingAnimation - it's still owned by the handoff transition.
 					break;
 				}
 
@@ -3815,6 +3819,7 @@ export class TuiRenderer {
 
 	private async continueFromCompaction(details: HandoffDetails & { parentSessionId: string | null }): Promise<void> {
 		const message = buildCompactionContinuationPrompt({
+			formattedMessage: details.formattedMessage,
 			goal: details.goal,
 			parentThreadId: details.parentSessionId,
 			keyFiles: details.keyFiles,
