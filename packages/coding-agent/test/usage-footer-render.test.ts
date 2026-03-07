@@ -8,8 +8,8 @@ function createState(): AgentState {
 	return {
 		systemPrompt: "test",
 		model: {
-			id: "gpt-5.1-codex",
-			name: "GPT 5.1 Codex",
+			id: "gpt-5.3-codex-spark",
+			name: "GPT 5.3 Codex Spark",
 			api: "openai-responses",
 			provider: "openai",
 			baseUrl: "https://api.openai.com/v1",
@@ -30,7 +30,7 @@ function createState(): AgentState {
 				role: "assistant",
 				api: "openai-responses",
 				provider: "openai",
-				model: "gpt-5.1-codex",
+				model: "gpt-5.3-codex-spark",
 				timestamp: 1,
 				stopReason: "stop",
 				content: [],

@@ -3509,11 +3509,15 @@ export class TuiRenderer {
 			const details =
 				mode === "inject"
 					? await (async () => {
-							const files = await this.selectHandoffFiles(goal, signal);
+							if (!this.handoffAbortController) {
+								throw new Error("Handoff controller missing");
+							}
+							const files = await this.selectHandoffFiles(goal, this.handoffAbortController.signal);
 							if (this.loadingAnimation) {
 								this.loadingAnimation.setMessage("Preparing compact checkpoint... (esc to cancel)");
 							}
-							return await this.buildHandoffDetails(goal, files, signal);
+							const details = await this.buildHandoffDetails(goal, files, this.handoffAbortController.signal);
+							return details;
 						})()
 					: await (async () => {
 							if (this.loadingAnimation) {

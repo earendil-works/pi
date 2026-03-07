@@ -48,7 +48,7 @@ describe("/usage command availability", () => {
 	initTheme("dark");
 
 	it("registers /usage for GPT-family models", () => {
-		const { renderer, cleanup } = createRenderer("gpt-5.1-codex");
+		const { renderer, cleanup } = createRenderer("gpt-5.3-codex-spark");
 		try {
 			const commandNames = (renderer as any).builtInSlashCommands.map((cmd: { name: string }) => cmd.name);
 			expect(commandNames).toContain("usage");

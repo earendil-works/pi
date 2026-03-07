@@ -34,7 +34,7 @@ function createRenderer(baseDir: string): { renderer: TuiRenderer; view: Rendere
 			},
 		} as never,
 		initialState: {
-			model: getModel("openai", "gpt-5.1-codex"),
+			model: getModel("openai", "gpt-5.3-codex-spark"),
 		},
 	});
 

@@ -156,7 +156,11 @@ export class TodoOverlayComponent extends Container {
 	private buildRows(query: string): TodoDisplayRow[] {
 		const filtered = this.todos.filter((t) => this.matchesSearch(t, query));
 
-		const assignedToMe = filtered.filter((t) => t.frontmatter.assigned_to_session === this.who.sessionId);
+		const assignedToMe = filtered.filter(
+			(t) =>
+				t.frontmatter.assigned_to_session === this.who.sessionId &&
+				(t.frontmatter.status === "open" || t.frontmatter.status === "in_progress"),
+		);
 		const openUnassigned = filtered.filter(
 			(t) =>
 				(t.frontmatter.status === "open" || t.frontmatter.status === "in_progress") &&
