@@ -42,6 +42,8 @@ export class FooterComponent implements Component {
 	private title: string | null = null;
 	private usageFooterMode: UsageFooterMode = "hidden";
 	private usageLimits: UsageLimitsSnapshot | null = null;
+	private contextTokens: number = 0;
+	private contextWindow: number = 0;
 
 	constructor(state: AgentState) {
 		this.state = state;
@@ -121,6 +123,11 @@ export class FooterComponent implements Component {
 
 	setUsageLimits(snapshot: UsageLimitsSnapshot | null): void {
 		this.usageLimits = snapshot;
+	}
+
+	setContextUsage(contextTokens: number, contextWindow: number): void {
+		this.contextTokens = contextTokens;
+		this.contextWindow = contextWindow;
 	}
 
 	invalidate(): void {
@@ -215,6 +222,13 @@ export class FooterComponent implements Component {
 			const type = usingSubscription ? (subscriptionSuffix ? ` (sub:${subscriptionSuffix})` : " (sub)") : " (api)";
 			const costStr = `$${totalCost.toFixed(3)}${type}`;
 			statsParts.push(costStr);
+		}
+
+		// Add context usage when available
+		if (this.contextWindow > 0) {
+			const percent = Math.round((this.contextTokens / this.contextWindow) * 100);
+			const windowK = Math.round(this.contextWindow / 1000);
+			statsParts.push(`${percent}% of ${windowK}k`);
 		}
 
 		if (this.usageFooterMode === "visible" && this.usageLimits) {

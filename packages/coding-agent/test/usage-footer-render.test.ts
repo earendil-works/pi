@@ -98,4 +98,38 @@ describe("Footer usage-limit rendering", () => {
 		expect(text).not.toContain("↑");
 		expect(text).not.toContain("↓");
 	});
+
+	describe("context usage rendering", () => {
+		it("shows context usage when setContextUsage is called", () => {
+			const footer = new FooterComponent(createState());
+			footer.setContextUsage(100000, 200000);
+
+			const text = stripAnsi(footer.render(140).join("\n"));
+			expect(text).toContain("50% of 200k");
+		});
+
+		it("rounds context window to nearest k", () => {
+			const footer = new FooterComponent(createState());
+			footer.setContextUsage(50000, 272000);
+
+			const text = stripAnsi(footer.render(140).join("\n"));
+			expect(text).toContain("272k");
+		});
+
+		it("hides context usage when contextWindow is 0", () => {
+			const footer = new FooterComponent(createState());
+			footer.setContextUsage(100000, 0);
+
+			const text = stripAnsi(footer.render(140).join("\n"));
+			expect(text).not.toContain("of 0k");
+		});
+
+		it("shows 0% when no tokens used", () => {
+			const footer = new FooterComponent(createState());
+			footer.setContextUsage(0, 128000);
+
+			const text = stripAnsi(footer.render(140).join("\n"));
+			expect(text).toContain("0% of 128k");
+		});
+	});
 });

@@ -867,6 +867,7 @@ export class TuiRenderer {
 
 		// Update footer with current stats
 		this.footer.updateState(state);
+		this.syncFooterContextUsage();
 
 		switch (event.type) {
 			case "agent_start":
@@ -1071,6 +1072,7 @@ export class TuiRenderer {
 					// Invalidate footer cache to refresh git branch (in case agent executed git commands)
 					this.footer.invalidate();
 					this.footer.updateState(state);
+					this.syncFooterContextUsage();
 					this.footer.setUsageLimits(assistantMessageUsageSnapshot(assistantMsg));
 
 					// Emergency handoff at 95%: abort tools before execution to prevent overflow
@@ -1264,6 +1266,7 @@ export class TuiRenderer {
 
 				// Update footer to clear "Working" status
 				this.footer.updateState(state);
+				this.syncFooterContextUsage();
 				this.syncFooterUsageFromMessages(state.messages);
 
 				// Execute pending explicit compaction (from compact tool)
@@ -1420,6 +1423,7 @@ export class TuiRenderer {
 
 		// Update footer with loaded state
 		this.footer.updateState(state);
+		this.syncFooterContextUsage();
 		this.syncFooterUsageFromMessages(state.messages);
 
 		// Update editor border color based on current thinking level
@@ -4082,6 +4086,14 @@ export class TuiRenderer {
 		const ratio = contextWindow > 0 ? contextTokens / contextWindow : 0;
 
 		return { contextTokens, contextWindow, ratio };
+	}
+
+	/**
+	 * Sync context usage to footer for display.
+	 */
+	private syncFooterContextUsage(): void {
+		const { contextTokens, contextWindow } = this.getContextUsage();
+		this.footer.setContextUsage(contextTokens, contextWindow);
 	}
 
 	/**
