@@ -264,6 +264,8 @@ export class TUI extends Container {
 	private terminalFocused = true;
 	private started = false;
 	private mouseTrackingEnabled = false;
+	private selectionMode = false;
+	private pendingSelectionModeRender = false;
 	private previousLines: string[] = [];
 	private previousWidth = 0;
 	private focusedComponent: Component | null = null;
@@ -291,6 +293,31 @@ export class TUI extends Container {
 	setFocus(component: Component | null): void {
 		this.focusedComponent = component;
 		this.syncMouseTracking();
+	}
+
+	isSelectionMode(): boolean {
+		return this.selectionMode;
+	}
+
+	enterSelectionMode(): void {
+		if (this.selectionMode) {
+			return;
+		}
+		this.selectionMode = true;
+		this.syncMouseTracking(true, false);
+	}
+
+	exitSelectionMode(): void {
+		if (!this.selectionMode) {
+			return;
+		}
+		this.selectionMode = false;
+		this.syncMouseTracking(true);
+		const shouldRender = this.pendingSelectionModeRender;
+		this.pendingSelectionModeRender = false;
+		if (shouldRender) {
+			this.requestImmediateRender();
+		}
 	}
 
 	isTerminalFocused = (): boolean => {
@@ -416,6 +443,14 @@ export class TUI extends Container {
 	}
 
 	requestRenderWithReason(reason: RenderReason): void {
+		if (this.selectionMode) {
+			if (reason === "resize") {
+				this.resizeBaselineDirty = true;
+			}
+			this.pendingSelectionModeRender = true;
+			return;
+		}
+
 		if (reason === "stream") {
 			this.requestThrottledRender(this.streamMinIntervalMs);
 			return;
@@ -504,6 +539,12 @@ export class TUI extends Container {
 
 	private handleInput(data: string): void {
 		const focusRemaining = this.consumeTerminalFocusEvents(data);
+		if (this.selectionMode) {
+			if (focusRemaining === "\x1b") {
+				this.exitSelectionMode();
+			}
+			return;
+		}
 		const pointerFiltered = this.filterPointerInput(focusRemaining);
 		const remaining = this.translateOverlayMouseInput(pointerFiltered);
 		if (remaining.length === 0) {
@@ -519,6 +560,9 @@ export class TUI extends Container {
 	}
 
 	private shouldEnableMouseTracking(): boolean {
+		if (this.selectionMode) {
+			return false;
+		}
 		if (this.overlay !== null && this.focusedComponent === this.overlay.component) {
 			return true;
 		}

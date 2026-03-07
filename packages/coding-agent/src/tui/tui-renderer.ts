@@ -410,6 +410,11 @@ export class TuiRenderer {
 			description: "Copy last agent message to clipboard",
 		};
 
+		const selectCommand: SlashCommand = {
+			name: "select",
+			description: "Temporarily disable mouse capture so you can drag-select text",
+		};
+
 		const sessionCommand: SlashCommand = {
 			name: "session",
 			description: "Show session info and stats",
@@ -525,6 +530,7 @@ export class TuiRenderer {
 			notifyCommand,
 			queueCommand,
 			reloadCommand,
+			selectCommand,
 			sessionCommand,
 			themeCommand,
 			thinkingCommand,
@@ -3102,6 +3108,12 @@ export class TuiRenderer {
 			return;
 		}
 
+		if (rawText === "/select") {
+			this.handleSelectCommand();
+			this.editor.setText("");
+			return;
+		}
+
 		// Check for /session command
 		if (rawText === "/session") {
 			this.handleSessionCommand();
@@ -3460,6 +3472,26 @@ export class TuiRenderer {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(theme.fg("dim", "Copied last agent message to clipboard"), 1, 0));
 		this.ui.requestRender();
+	}
+
+	private handleSelectCommand(): void {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(
+			new Text(
+				theme.fg("accent", "Selection mode") +
+					"\n" +
+					theme.fg(
+						"muted",
+						"Drag with your mouse to select visible text, then copy it in your terminal. Press Esc to return.",
+					),
+				1,
+				0,
+			),
+		);
+		this.ui.requestRender();
+		process.nextTick(() => {
+			this.ui.enterSelectionMode();
+		});
 	}
 
 	private handleSessionCommand(): void {
