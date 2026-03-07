@@ -33,7 +33,7 @@ export function formatWorkingStatus(
 	const avgLatency = formatAverageLatency(averageLatencyMs);
 	return avgLatency === null
 		? `Working (${elapsed} • ${tps} tps • esc to interrupt)`
-		: `Working (${elapsed} • ${tps} tps • ${avgLatency} avg lat • esc to interrupt)`;
+		: `Working (${elapsed} • ${tps} tps • ${avgLatency} lat. • esc to interrupt)`;
 }
 
 export function formatDoneStatus(elapsedMs: number, estimatedOutputTokens: number, averageLatencyMs?: number): string {
@@ -42,7 +42,7 @@ export function formatDoneStatus(elapsedMs: number, estimatedOutputTokens: numbe
 	const avgLatency = formatAverageLatency(averageLatencyMs);
 	return avgLatency === null
 		? `Done after ${elapsed} - ${tps} tps`
-		: `Done after ${elapsed} - ${tps} tps - ${avgLatency} avg lat`;
+		: `Done after ${elapsed} - ${tps} tps - ${avgLatency} lat.`;
 }
 
 function formatTps(elapsedMs: number, estimatedOutputTokens: number): number {

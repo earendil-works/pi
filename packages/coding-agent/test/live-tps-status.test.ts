@@ -124,7 +124,7 @@ describe("working status live TPS", () => {
 		try {
 			await handleRendererEvent(renderer, { type: "agent_start" });
 
-			expect(readStatusText(renderer)).toContain("Working (0s • 0 tps • 0.0s avg lat • esc to interrupt)");
+			expect(readStatusText(renderer)).toContain("Working (0s • 0 tps • 0.0s lat. • esc to interrupt)");
 		} finally {
 			renderer.stop();
 		}
@@ -250,7 +250,7 @@ describe("working status live TPS", () => {
 		try {
 			await handleRendererEvent(renderer, { type: "agent_start" });
 			vi.advanceTimersByTime(5_000);
-			expect(readStatusText(renderer)).toContain("Working (0s • 0 tps • 0.0s avg lat • esc to interrupt)");
+			expect(readStatusText(renderer)).toContain("Working (0s • 0 tps • 0.0s lat. • esc to interrupt)");
 
 			await handleRendererEvent(renderer, { type: "message_start", message: assistantStartMessage });
 			vi.advanceTimersByTime(2_000);
@@ -260,9 +260,7 @@ describe("working status live TPS", () => {
 				assistantMessageEvent: assistantStreamingEvent,
 			});
 
-			expect(readStatusText(renderer)).toContain(
-				`Working (2s • ${expectedTps} tps • 5.0s avg lat • esc to interrupt)`,
-			);
+			expect(readStatusText(renderer)).toContain(`Working (2s • ${expectedTps} tps • 5.0s lat. • esc to interrupt)`);
 
 			await handleRendererEvent(renderer, { type: "message_end", message: assistantStreamingMessage });
 			await handleRendererEvent(renderer, { type: "agent_end", messages: [assistantStreamingMessage] });
@@ -377,7 +375,7 @@ describe("working status live TPS", () => {
 				},
 			});
 			expect(readStatusText(renderer)).toContain(
-				`Working (1s • ${expectedWorkingTps} tps • 0.0s avg lat • esc to interrupt)`,
+				`Working (1s • ${expectedWorkingTps} tps • 0.0s lat. • esc to interrupt)`,
 			);
 			await handleRendererEvent(renderer, { type: "message_end", message: firstAssistantMessage });
 
@@ -432,7 +430,7 @@ describe("working status live TPS", () => {
 				},
 			});
 
-			expect(readStatusText(renderer)).toContain("Working (2s • 2 tps • 3.0s avg lat • esc to interrupt)");
+			expect(readStatusText(renderer)).toContain("Working (2s • 2 tps • 3.0s lat. • esc to interrupt)");
 		} finally {
 			renderer.stop();
 			vi.useRealTimers();
@@ -475,7 +473,7 @@ describe("working status live TPS", () => {
 				messages: [firstAssistantMessage, finalAssistantMessage],
 			});
 
-			expect(readChatText(renderer)).toContain("Done after 4s - 3 tps - 3.0s avg lat");
+			expect(readChatText(renderer)).toContain("Done after 4s - 3 tps - 3.0s lat.");
 		} finally {
 			renderer.stop();
 			vi.useRealTimers();
