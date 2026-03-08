@@ -114,11 +114,12 @@ import { addToLimitedSet } from "../utils/limited-set.js";
 import { readAppendedFileChunkSync } from "../utils/read-appended-file-chunk.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
 import { ChatLayoutComponent, createChatContentContainer } from "./chat-layout.js";
+import { formatComposerStatusLabel } from "./composer-status-label.js";
 import { formatComposerUsageLabel } from "./composer-usage-label.js";
 import { CustomEditor } from "./custom-editor.js";
 import { DialogOverlayComponent } from "./dialog-overlay.js";
 import { DynamicBorder } from "./dynamic-border.js";
-import { FooterComponent, formatModelStatusLabel } from "./footer.js";
+import { FooterComponent } from "./footer.js";
 import { LabeledBorder } from "./labeled-border.js";
 import { ModelSelectorComponent } from "./model-selector.js";
 import { OAuthAccountSelectorComponent } from "./oauth-account-selector.js";
@@ -381,7 +382,7 @@ export class TuiRenderer {
 			inputTarget: this.editor,
 			interceptInput: (data) => this.interceptComposerInput(data),
 			footer: this.footer,
-			getComposerLabel: () => formatModelStatusLabel(this.agent.state),
+			getComposerLabel: () => formatComposerStatusLabel(this.agent.state, this.editor.bashMode),
 			getComposerMetaLabel: () => this.getComposerMetaLabel(),
 			getComposerBorderColor: () => this.editor.borderColor,
 			updateComposerViewport: (maxBodyRows) => {
