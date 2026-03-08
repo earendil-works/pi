@@ -8,8 +8,6 @@ function collectVisibleAssistantText(message: AssistantMessage): string {
 			switch (content.type) {
 				case "text":
 					return [content.text];
-				case "thinking":
-					return [content.thinking];
 				case "toolCall":
 					return [`${content.name} ${JSON.stringify(content.arguments)}`];
 				default:

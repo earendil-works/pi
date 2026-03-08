@@ -43,7 +43,7 @@ describe("working-status", () => {
 		expect(formatDoneStatus(28_000, 1_176, 3_800)).toBe("Done after 28s - 42 tps - 3.8s lat.");
 	});
 
-	it("estimates tokens from visible assistant text, thinking, and tool calls", () => {
+	it("estimates tokens from visible assistant text and tool calls, excluding thinking", () => {
 		const message: AssistantMessage = {
 			...baseAssistantMessage(),
 			content: [
@@ -54,8 +54,20 @@ describe("working-status", () => {
 		};
 
 		expect(estimateWorkingStatusTokens(message)).toBeGreaterThan(0);
-		expect(estimateWorkingStatusTokens(message)).toBeGreaterThan(
-			estimateWorkingStatusTokens({ ...message, content: message.content.slice(0, 2) }),
+		expect(estimateWorkingStatusTokens(message)).toBe(
+			estimateWorkingStatusTokens({
+				...message,
+				content: message.content.filter((content) => content.type !== "thinking"),
+			}),
 		);
+	});
+
+	it("ignores thinking blocks when estimating live TPS tokens", () => {
+		const thinkingOnlyMessage: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [{ type: "thinking", thinking: "internal summary that should not affect tps" }],
+		};
+
+		expect(estimateWorkingStatusTokens(thinkingOnlyMessage)).toBe(0);
 	});
 });
