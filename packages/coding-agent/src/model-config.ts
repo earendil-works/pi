@@ -443,9 +443,14 @@ export async function getAvailableModels(): Promise<{ models: Model<Api>[]; erro
 
 	const availableModels: Model<Api>[] = [];
 	for (const model of allModels) {
-		const apiKey = await getApiKeyForModel(model);
-		if (apiKey) {
-			availableModels.push(model);
+		try {
+			const apiKey = await getApiKeyForModel(model);
+			if (apiKey) {
+				availableModels.push(model);
+			}
+		} catch {
+			// Skip models whose credential resolution fails so selectors can still
+			// show other available providers instead of crashing the whole list.
 		}
 	}
 
