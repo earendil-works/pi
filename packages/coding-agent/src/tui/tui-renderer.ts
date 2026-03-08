@@ -105,6 +105,7 @@ import {
 	parseUsageSlashCommand,
 	supportsUsageCommand,
 	type UsageFooterMode,
+	type UsageLimitsSnapshot,
 } from "../usage-footer.js";
 import { autoFenceHtmlInMarkdown } from "../utils/auto-fence-html.js";
 import { generateThreadListingMeta } from "../utils/auto-title.js";
@@ -113,6 +114,7 @@ import { addToLimitedSet } from "../utils/limited-set.js";
 import { readAppendedFileChunkSync } from "../utils/read-appended-file-chunk.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
 import { ChatLayoutComponent, createChatContentContainer } from "./chat-layout.js";
+import { formatComposerUsageLabel } from "./composer-usage-label.js";
 import { CustomEditor } from "./custom-editor.js";
 import { DialogOverlayComponent } from "./dialog-overlay.js";
 import { DynamicBorder } from "./dynamic-border.js";
@@ -123,6 +125,7 @@ import { OAuthAccountSelectorComponent } from "./oauth-account-selector.js";
 import { OAuthSelectorComponent } from "./oauth-selector.js";
 import { QueueModeSelectorComponent } from "./queue-mode-selector.js";
 import { formatQueuedMessagePreview } from "./queued-message-preview.js";
+import { QueuedMessagePreviewComponent } from "./queued-message-preview-component.js";
 import { SlashCommandOverlayComponent } from "./slash-command-overlay.js";
 import { StreamingAssistantMessageComponent } from "./streaming-assistant-message.js";
 import { SubscriptionSelectorComponent } from "./subscription-selector.js";
@@ -181,6 +184,9 @@ export class TuiRenderer {
 	private editor: CustomEditor;
 	private editorContainer: Container; // Container to swap between editor and selector
 	private footer: FooterComponent;
+	private composerUsageLimits: UsageLimitsSnapshot | null = null;
+	private composerContextTokens = 0;
+	private composerContextWindow = 0;
 	private topChrome: Container;
 	private chatLayout: ChatLayoutComponent;
 	private slashCommandOverlay: SlashCommandOverlayComponent | null = null;
@@ -371,6 +377,7 @@ export class TuiRenderer {
 			interceptInput: (data) => this.interceptComposerInput(data),
 			footer: this.footer,
 			getComposerLabel: () => formatModelStatusLabel(this.agent.state),
+			getComposerMetaLabel: () => this.getComposerMetaLabel(),
 			getComposerBorderColor: () => this.editor.borderColor,
 			updateComposerViewport: (maxBodyRows) => {
 				this.editor.maxHeight = maxBodyRows;
@@ -1113,7 +1120,9 @@ export class TuiRenderer {
 					this.footer.invalidate();
 					this.footer.updateState(state);
 					this.syncFooterContextUsage();
-					this.footer.setUsageLimits(assistantMessageUsageSnapshot(assistantMsg));
+					const snapshot = assistantMessageUsageSnapshot(assistantMsg);
+					this.composerUsageLimits = snapshot;
+					this.footer.setUsageLimits(snapshot);
 
 					// Emergency handoff at 95%: abort tools before execution to prevent overflow
 					if (
@@ -1431,10 +1440,13 @@ export class TuiRenderer {
 		for (let i = messages.length - 1; i >= 0; i--) {
 			const message = messages[i];
 			if (message?.role !== "assistant") continue;
-			this.footer.setUsageLimits(assistantMessageUsageSnapshot(message as AssistantMessage));
+			const snapshot = assistantMessageUsageSnapshot(message as AssistantMessage);
+			this.composerUsageLimits = snapshot;
+			this.footer.setUsageLimits(snapshot);
 			return;
 		}
 
+		this.composerUsageLimits = null;
 		this.footer.setUsageLimits(null);
 	}
 
@@ -4222,7 +4234,27 @@ export class TuiRenderer {
 	 */
 	private syncFooterContextUsage(): void {
 		const { contextTokens, contextWindow } = this.getContextUsage();
+		this.composerContextTokens = contextTokens;
+		this.composerContextWindow = contextWindow;
 		this.footer.setContextUsage(contextTokens, contextWindow);
+	}
+
+	private getComposerMetaLabel(): string {
+		let totalCost = 0;
+		for (const message of this.agent.state.messages) {
+			if (message.role !== "assistant") continue;
+			const assistantMsg = message as AssistantMessage;
+			totalCost += assistantMsg.usage.cost.total;
+		}
+
+		return formatComposerUsageLabel({
+			model: this.agent.state.model,
+			totalCost,
+			usageFooterMode: this.usageFooterMode,
+			usageLimits: this.composerUsageLimits,
+			contextTokens: this.composerContextTokens,
+			contextWindow: this.composerContextWindow,
+		});
 	}
 
 	/**
@@ -4720,7 +4752,9 @@ export class TuiRenderer {
 					this.pendingMessagesContainer.addChild(new TruncatedText(prefix + hint, 1, 0));
 				} else {
 					this.pendingMessagesContainer.addChild(
-						new Text(theme.fg("dim", formatQueuedMessagePreview(message.raw, message.kind)), 1, 0),
+						new QueuedMessagePreviewComponent(
+							theme.fg("dim", formatQueuedMessagePreview(message.raw, message.kind)),
+						),
 					);
 				}
 			}
