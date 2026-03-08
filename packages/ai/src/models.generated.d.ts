@@ -529,6 +529,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "gemini-3.1-flash-lite-preview": {
+			id: string;
+			name: string;
+			api: "google-generative-ai";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "gemini-live-2.5-flash": {
 			id: string;
 			name: string;

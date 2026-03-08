@@ -531,6 +531,23 @@ export const MODELS = {
 			contextWindow: 1048576,
 			maxTokens: 65536,
 		},
+		"gemini-3.1-flash-lite-preview": {
+			id: "gemini-3.1-flash-lite-preview",
+			name: "Gemini 3.1 Flash Lite Preview",
+			api: "google-generative-ai",
+			provider: "google",
+			baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 0.5,
+				output: 3,
+				cacheRead: 0.05,
+				cacheWrite: 0,
+			},
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
 		"gemini-live-2.5-flash": {
 			id: "gemini-live-2.5-flash",
 			name: "Gemini Live 2.5 Flash",
@@ -2330,7 +2347,7 @@ export const MODELS = {
 		},
 		"devstral-medium-latest": {
 			id: "devstral-medium-latest",
-			name: "Devstral 2",
+			name: "Devstral 2 (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -2398,7 +2415,7 @@ export const MODELS = {
 		},
 		"codestral-latest": {
 			id: "codestral-latest",
-			name: "Codestral",
+			name: "Codestral (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -2415,7 +2432,7 @@ export const MODELS = {
 		},
 		"ministral-8b-latest": {
 			id: "ministral-8b-latest",
-			name: "Ministral 8B",
+			name: "Ministral 8B (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -2466,7 +2483,7 @@ export const MODELS = {
 		},
 		"ministral-3b-latest": {
 			id: "ministral-3b-latest",
-			name: "Ministral 3B",
+			name: "Ministral 3B (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -2534,7 +2551,7 @@ export const MODELS = {
 		},
 		"pixtral-large-latest": {
 			id: "pixtral-large-latest",
-			name: "Pixtral Large",
+			name: "Pixtral Large (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -2585,7 +2602,7 @@ export const MODELS = {
 		},
 		"mistral-large-latest": {
 			id: "mistral-large-latest",
-			name: "Mistral Large",
+			name: "Mistral Large (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -2636,7 +2653,7 @@ export const MODELS = {
 		},
 		"mistral-small-latest": {
 			id: "mistral-small-latest",
-			name: "Mistral Small",
+			name: "Mistral Small (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -2670,7 +2687,7 @@ export const MODELS = {
 		},
 		"mistral-medium-latest": {
 			id: "mistral-medium-latest",
-			name: "Mistral Medium",
+			name: "Mistral Medium (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
@@ -2704,7 +2721,7 @@ export const MODELS = {
 		},
 		"magistral-medium-latest": {
 			id: "magistral-medium-latest",
-			name: "Magistral Medium",
+			name: "Magistral Medium (latest)",
 			api: "openai-completions",
 			provider: "mistral",
 			baseUrl: "https://api.mistral.ai/v1",
