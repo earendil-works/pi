@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { Editor } from "../src/components/editor.js";
+import { CURSOR_ACCENT_BG_ANSI, CURSOR_ACCENT_FG_ANSI } from "../src/cursor.js";
 import { defaultEditorTheme } from "./test-themes.js";
 
 describe("Editor component", () => {
@@ -644,6 +645,34 @@ describe("Editor component", () => {
 			assert.ok(result.some((line) => line.includes("\x1b[24m")));
 			assert.ok(result.every((line) => !line.includes("\x1b[7m")));
 			assert.ok(result.every((line) => !line.includes("\x1b[0m")));
+		});
+
+		it("renders an accent block cursor by default when the cursor is on a character", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.setText("hello");
+			editor.handleInput("\x1b[D");
+
+			const result = editor.render(20).join("\n");
+
+			assert.match(
+				result,
+				new RegExp(
+					`${CURSOR_ACCENT_FG_ANSI.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${CURSOR_ACCENT_BG_ANSI.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}o`,
+				),
+			);
+			assert.ok(!result.includes("\x1b[7m"));
+			assert.ok(!result.includes("\x1b[4m"));
+		});
+
+		it("renders an accent block cursor by default at end of line", () => {
+			const editor = new Editor(defaultEditorTheme);
+			editor.setText("abc");
+
+			const result = editor.render(20).join("\n");
+
+			assert.ok(result.includes(`${CURSOR_ACCENT_FG_ANSI}${CURSOR_ACCENT_BG_ANSI} `));
+			assert.ok(!result.includes("\x1b[4m \x1b[24m"));
+			assert.ok(!result.includes("\x1b[7m \x1b[27m"));
 		});
 	});
 

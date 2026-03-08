@@ -1,3 +1,4 @@
+import { DEFAULT_CURSOR_STYLE, renderCursorCell } from "../cursor.js";
 import type { Component } from "../tui.js";
 import { visibleWidth } from "../utils.js";
 
@@ -235,8 +236,7 @@ export class Input implements Component {
 		const atCursor = visibleText[cursorDisplay] || " "; // Character at cursor, or space if at end
 		const afterCursor = visibleText.slice(cursorDisplay + 1);
 
-		// Use inverse video to show cursor
-		const cursorChar = `\x1b[7m${atCursor}\x1b[27m`; // ESC[7m = reverse video, ESC[27m = normal
+		const cursorChar = renderCursorCell(atCursor, DEFAULT_CURSOR_STYLE);
 		const textWithCursor = beforeCursor + cursorChar + afterCursor;
 
 		// Calculate visual width

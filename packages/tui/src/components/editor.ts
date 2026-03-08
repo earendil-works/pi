@@ -1,4 +1,5 @@
 import type { AutocompleteProvider, CombinedAutocompleteProvider } from "../autocomplete.js";
+import { type CursorStyle, DEFAULT_CURSOR_STYLE, renderCursorCell } from "../cursor.js";
 import type { Component } from "../tui.js";
 import { visibleWidth } from "../utils.js";
 import { SelectList, type SelectListTheme } from "./select-list.js";
@@ -59,7 +60,7 @@ export class Editor implements Component {
 	public maxHeight: number | undefined = 10;
 	public showTopBorder: boolean = true;
 	public showBottomBorder: boolean = true;
-	public cursorStyle: "reverse" | "underline" = "reverse";
+	public cursorStyle: CursorStyle = DEFAULT_CURSOR_STYLE;
 
 	private autocompleteProvider?: AutocompleteProvider;
 	private autocompleteList?: SelectList;
@@ -90,6 +91,10 @@ export class Editor implements Component {
 	constructor(theme: EditorTheme) {
 		this.theme = theme;
 		this.borderColor = theme.borderColor;
+	}
+
+	private renderCursor(text: string): string {
+		return renderCursorCell(text, this.cursorStyle);
 	}
 
 	setAutocompleteProvider(provider: AutocompleteProvider): void {
@@ -163,18 +168,17 @@ export class Editor implements Component {
 				const after = displayText.slice(layoutLine.cursorPos);
 
 				if (after.length > 0) {
-					const cursor =
-						this.cursorStyle === "underline" ? `\x1b[4m${after[0]}\x1b[24m` : `\x1b[7m${after[0]}\x1b[27m`;
+					const cursor = this.renderCursor(after[0] ?? " ");
 					const restAfter = after.slice(1);
 					displayText = before + cursor + restAfter;
 				} else {
 					if (visLen < contentWidth) {
-						const cursor = "\x1b[4m \x1b[24m";
+						const cursor = this.renderCursor(" ");
 						displayText = before + cursor;
 						visLen = visLen + 1;
 					} else if (before.length > 0) {
 						const lastChar = before[before.length - 1];
-						const cursor = `\x1b[4m${lastChar}\x1b[24m`;
+						const cursor = this.renderCursor(lastChar);
 						displayText = before.slice(0, -1) + cursor;
 					}
 				}
