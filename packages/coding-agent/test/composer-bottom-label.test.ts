@@ -14,7 +14,7 @@ describe("ChatLayoutComponent composer bottom label", () => {
 			inputTarget: new Text("", 0, 0),
 			footer: new Text("footer line 1\nfooter line 2", 0, 0),
 			getComposerLabel: () => "gpt-5.1 • medium [openai-codex]",
-			getComposerMetaLabel: () => "(sub) 10% of 272k↖5h 75%↖weekly 15%",
+			getComposerMetaLabel: () => "(sub) 10% of 272k • 5h 75% • weekly 15%",
 			getComposerBorderColor: () => (text: string) => text,
 			updateComposerViewport: () => {},
 		});
@@ -24,7 +24,7 @@ describe("ChatLayoutComponent composer bottom label", () => {
 		assert.notEqual(composerStart, -1, "expected composer border to be present");
 		const bottomBorder = rows[composerStart + 3] ?? "";
 
-		expect(bottomBorder).toContain("(sub) 10% of 272k↖5h 75%↖weekly 15%");
+		expect(bottomBorder).toContain("(sub) 10% of 272k • 5h 75% • weekly 15%");
 		expect(bottomBorder.endsWith("weekly 15% ╯")).toBe(true);
 	});
 });

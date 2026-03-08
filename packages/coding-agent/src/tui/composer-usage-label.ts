@@ -54,10 +54,10 @@ export function formatComposerUsageLabel(options: ComposerUsageLabelOptions): st
 		text += (text ? " " : "") + theme.fg("muted", contextPart);
 	}
 	if (primaryPart) {
-		text += `${theme.fg("accent", "↖")}${theme.fg("muted", primaryPart)}`;
+		text += `${theme.fg("muted", " • ")}${theme.fg("muted", primaryPart)}`;
 	}
 	if (secondaryPart) {
-		text += `${theme.fg("accent", "↖")}${theme.fg("muted", secondaryPart)}`;
+		text += `${theme.fg("muted", " • ")}${theme.fg("muted", secondaryPart)}`;
 	}
 
 	return text;

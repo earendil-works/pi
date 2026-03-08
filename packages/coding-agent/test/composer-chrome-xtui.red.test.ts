@@ -287,7 +287,7 @@ describe("xtui + mu composer chrome spec", () => {
 		const bottomRow = rows[composer.bottom] ?? "";
 
 		expect(topRow).toContain("gpt-5.4 • medium • fast [openai-codex]");
-		expect(bottomRow).toContain("(sub) 7% of 272k↖5h 88%↖weekly 96%");
+		expect(bottomRow).toContain("(sub) 7% of 272k • 5h 88% • weekly 96%");
 		expect(bottomRow).toContain("pi-mono");
 		expect(bottomRow.endsWith("╯")).toBe(true);
 	});
@@ -318,11 +318,11 @@ describe("xtui + mu composer chrome spec", () => {
 		const rows = allRowsText(snap);
 		const composer = findComposerRows(rows);
 		const bottomRow = snap.screen.cells[composer.bottom] ?? [];
-		const separatorCells = bottomRow.filter((cell) => cell.char === "↖");
+		const separatorCells = bottomRow.filter((cell) => cell.char === "•");
 
 		expect(separatorCells.length).toBeGreaterThanOrEqual(2);
 		for (const cell of separatorCells) {
-			expect(isRgb(cell.fg, 120, 220, 232)).toBe(true);
+			expect(isRgb(cell.fg, 147, 146, 147)).toBe(true);
 		}
 	});
 });

@@ -24,7 +24,7 @@ describe("formatComposerUsageLabel", () => {
 			contextWindow: 272000,
 		});
 
-		expect(stripAnsi(label)).toBe("(sub) 10% of 272k↖5h 75%↖weekly 15%");
+		expect(stripAnsi(label)).toBe("(sub) 10% of 272k • 5h 75% • weekly 15%");
 	});
 
 	it("treats synthetic models as subscription-backed for display", () => {
@@ -37,7 +37,7 @@ describe("formatComposerUsageLabel", () => {
 			contextWindow: 64000,
 		});
 
-		expect(stripAnsi(label)).toBe("(sub) 10% of 64k↖5h 75%↖weekly 15%");
+		expect(stripAnsi(label)).toBe("(sub) 10% of 64k • 5h 75% • weekly 15%");
 	});
 
 	it("keeps dollar cost for api-backed models", () => {
@@ -50,10 +50,10 @@ describe("formatComposerUsageLabel", () => {
 			contextWindow: 128000,
 		});
 
-		expect(stripAnsi(label)).toBe("$0.123 (api) 5% of 128k↖5h 75%↖weekly 15%");
+		expect(stripAnsi(label)).toBe("$0.123 (api) 5% of 128k • 5h 75% • weekly 15%");
 	});
 
-	it("renders separators in accent color", () => {
+	it("renders separators in muted color", () => {
 		const label = formatComposerUsageLabel({
 			model: getModel("openai-codex", "gpt-5.1"),
 			totalCost: 0,
@@ -63,6 +63,6 @@ describe("formatComposerUsageLabel", () => {
 			contextWindow: 272000,
 		});
 
-		expect(label).toContain("\x1b[38;2;120;220;232m↖");
+		expect(label).toContain("\x1b[38;2;147;146;147m • ");
 	});
 });
