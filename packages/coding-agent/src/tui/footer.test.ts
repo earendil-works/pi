@@ -65,4 +65,23 @@ describe("FooterComponent", () => {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
 	});
+
+	it("keeps the title right-aligned when idle after working state clears", () => {
+		const footer = new FooterComponent(createState());
+		footer.setTitle("Investigate footer layout overflow");
+		footer.setTransientStatus({
+			indicator: "⣠",
+			message: "Working (9s • 21 tps • 2.3s lat. • esc to interrupt)",
+		});
+
+		footer.setTransientStatus(null);
+
+		const lines = footer.render(100).map((line) => stripAnsi(line));
+
+		expect(lines).toHaveLength(2);
+		expect(lines[0].trimStart()).toBe("Investigate footer layout overflow");
+		expect(lines[0].endsWith("Investigate footer layout overflow")).toBe(true);
+		expect(lines[0].startsWith(" ")).toBe(true);
+		expect(lines[1]).toContain("pi-mono");
+	});
 });

@@ -305,7 +305,15 @@ export class FooterComponent implements Component {
 		if (this.showExitHint) {
 			titleLine = theme.fg("text", truncatePlainTextEnd("Press Ctrl+C again to exit", Math.max(1, width)));
 		} else {
-			titleLine = this.title ? theme.fg("dim", truncatePlainTextEnd(this.title, Math.max(1, width))) : "";
+			titleLine = this.title
+				? renderSplitLine({
+						width,
+						leftText: "",
+						rightText: this.title,
+						leftStyle: (text) => text,
+						rightStyle: (text) => theme.fg("dim", text),
+					})
+				: "";
 		}
 
 		if (this.transientStatus) {
