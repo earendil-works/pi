@@ -318,6 +318,7 @@ export class TuiRenderer {
 	private pendingLatencyStartTime: number | null = null;
 	private accumulatedLatencyMs = 0;
 	private latencyGapCount = 0;
+	private workingStatusFrame = 0;
 	private ignoreNextAgentEndForAutoHandoffAbort = false;
 
 	constructor(
@@ -662,6 +663,16 @@ export class TuiRenderer {
 		this.ui.addChild(this.footer);
 		this.ui.setFocus(this.chatLayout);
 
+		const originalExitSelectionMode = this.ui.exitSelectionMode.bind(this.ui);
+		this.ui.exitSelectionMode = () => {
+			const wasSelectionMode = this.ui.isSelectionMode();
+			originalExitSelectionMode();
+			if (wasSelectionMode) {
+				this.showSelectionModeIndicator(false);
+				this.ui.requestRender();
+			}
+		};
+
 		this.editor.onEscape = () => {
 			if (this.bashAbortController) {
 				this.bashAbortController.abort();
@@ -860,6 +871,20 @@ export class TuiRenderer {
 		return formatWorkingStatus(elapsedMs, this.getEstimatedOutputTokens(), this.getAverageLatencyMs());
 	}
 
+	private setWorkingStatusFooterLine(): void {
+		const frames = ["⣀", "⣠", "⣴", "⣾", "⣿", "⣷", "⣧", "⣇", "⡇"] as const;
+		const frame = frames[this.workingStatusFrame % frames.length];
+		this.workingStatusFrame = (this.workingStatusFrame + 1) % frames.length;
+		this.footer.setTransientStatusLine(
+			`${theme.fg("accent", frame)} ${theme.fg("muted", this.buildWorkingStatusMessage())}`,
+		);
+	}
+
+	private clearWorkingStatusFooterLine(): void {
+		this.footer.setTransientStatusLine(null);
+		this.workingStatusFrame = 0;
+	}
+
 	private getEstimatedOutputTokens(): number {
 		return this.completedEstimatedOutputTokens + this.currentAssistantEstimatedOutputTokens;
 	}
@@ -901,10 +926,7 @@ export class TuiRenderer {
 	}
 
 	private updateWorkingStatusMessage(): void {
-		if (!this.loadingAnimation) {
-			return;
-		}
-		this.loadingAnimation.setMessage(this.buildWorkingStatusMessage());
+		this.setWorkingStatusFooterLine();
 	}
 
 	private async handleEvent(event: AgentEvent, state: AgentState): Promise<void> {
@@ -923,12 +945,14 @@ export class TuiRenderer {
 				// Stop old loader and timer before clearing
 				if (this.loadingAnimation) {
 					this.loadingAnimation.stop();
+					this.loadingAnimation = null;
 				}
 				if (this.timerIntervalId) {
 					clearInterval(this.timerIntervalId);
 					this.timerIntervalId = null;
 				}
 				this.statusContainer.clear();
+				this.clearWorkingStatusFooterLine();
 
 				// Start status in a waiting state; actual timing begins when the assistant starts responding.
 				this.agentStartTime = null;
@@ -939,21 +963,13 @@ export class TuiRenderer {
 				this.accumulatedLatencyMs = 0;
 				this.latencyGapCount = 0;
 
-				// Create loader with initial message
-				this.loadingAnimation = new Loader(
-					this.ui,
-					(spinner) => theme.fg("accent", spinner),
-					(text) => theme.fg("muted", text),
-					this.buildWorkingStatusMessage(),
-				);
-				this.statusContainer.addChild(this.loadingAnimation);
+				this.setWorkingStatusFooterLine();
 
-				// Update timer every second
+				// Update footer working status continuously so spinner and timing stay live.
 				this.timerIntervalId = setInterval(() => {
-					if (this.loadingAnimation) {
-						this.updateWorkingStatusMessage();
-					}
-				}, 1000);
+					this.updateWorkingStatusMessage();
+					this.ui.requestRenderWithReason("stream");
+				}, 80);
 
 				this.captureCodexAccountBeforeRun();
 				this.ui.requestRender();
@@ -1266,6 +1282,7 @@ export class TuiRenderer {
 					this.pendingLatencyStartTime = null;
 					this.accumulatedLatencyMs = 0;
 					this.latencyGapCount = 0;
+					this.clearWorkingStatusFooterLine();
 					// Don't touch loadingAnimation - it's still owned by the handoff transition.
 					break;
 				}
@@ -1292,6 +1309,7 @@ export class TuiRenderer {
 					this.loadingAnimation.stop();
 					this.loadingAnimation = null;
 				}
+				this.clearWorkingStatusFooterLine();
 				this.statusContainer.clear();
 				if (this.streamingComponent) {
 					this.chatContainer.removeChild(this.streamingComponent);
@@ -2934,10 +2952,14 @@ export class TuiRenderer {
 			body,
 			focusTarget,
 			onCancel: () => this.clearDialogOverlay(),
+			panelWidth: options.width,
+			minPanelWidth: options.minWidth,
+			maxPanelWidth: options.maxWidth,
 		});
 		this.ui.setOverlay(this.activeDialogOverlay, {
-			marginBottom: 6,
-			...options,
+			marginX: 0,
+			marginTop: options.marginTop,
+			marginBottom: options.marginBottom ?? 6,
 		});
 		this.ui.setFocus(this.activeDialogOverlay);
 	}
@@ -3486,23 +3508,28 @@ export class TuiRenderer {
 	}
 
 	private handleSelectCommand(): void {
-		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(
-			new Text(
-				theme.fg("accent", "Selection mode") +
-					"\n" +
-					theme.fg(
-						"muted",
-						"Drag with your mouse to select visible text, then copy it in your terminal. Press Esc to return.",
-					),
-				1,
-				0,
-			),
-		);
+		this.showSelectionModeIndicator(true);
 		this.ui.requestRender();
 		process.nextTick(() => {
 			this.ui.enterSelectionMode();
 		});
+	}
+
+	private showSelectionModeIndicator(enabled: boolean): void {
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(
+			new Text(
+				theme.fg("accent", `Selection Mode: ${enabled ? "On" : "Off"}`) +
+					(enabled
+						? "\n" +
+							theme.fg("muted", "Drag with your mouse to select visible text.") +
+							"\n" +
+							theme.fg("muted", "Esc or Ctrl+C to return to turn Selection Mode off.")
+						: ""),
+				1,
+				0,
+			),
+		);
 	}
 
 	private handleSessionCommand(): void {

@@ -1,14 +1,10 @@
 import type { AgentState } from "@kennyfrc/mu-agent-core";
-import type { AssistantMessage } from "@kennyfrc/mu-ai";
 import { supportsXhigh } from "@kennyfrc/mu-ai";
 import { type Component, visibleWidth } from "@kennyfrc/mu-tui";
 import { existsSync, type FSWatcher, readFileSync, watch } from "fs";
 import { dirname, join } from "path";
 import { supportsFastMode } from "../fast-mode.js";
-import { isModelUsingOAuth } from "../model-config.js";
-import { getActiveOAuthAccount, listOAuthAccounts } from "../oauth/index.js";
 import { theme } from "../theme/theme.js";
-import type { UsageFooterMode, UsageLimitsSnapshot } from "../usage-footer.js";
 
 /**
  * Find the git root directory by walking up from cwd.
@@ -40,11 +36,8 @@ export class FooterComponent implements Component {
 	private gitWatcher: FSWatcher | null = null;
 	private onBranchChange: (() => void) | null = null;
 	private title: string | null = null;
-	private usageFooterMode: UsageFooterMode = "hidden";
-	private usageLimits: UsageLimitsSnapshot | null = null;
-	private contextTokens: number = 0;
-	private contextWindow: number = 0;
 	private showModelStatus = true;
+	private transientStatusLine: string | null = null;
 
 	constructor(state: AgentState) {
 		this.state = state;
@@ -118,21 +111,18 @@ export class FooterComponent implements Component {
 		this.showExitHint = show;
 	}
 
-	setUsageFooterMode(mode: UsageFooterMode): void {
-		this.usageFooterMode = mode;
-	}
+	setUsageFooterMode(_mode: string): void {}
 
 	setShowModelStatus(show: boolean): void {
 		this.showModelStatus = show;
 	}
 
-	setUsageLimits(snapshot: UsageLimitsSnapshot | null): void {
-		this.usageLimits = snapshot;
-	}
+	setUsageLimits(_snapshot: unknown): void {}
 
-	setContextUsage(contextTokens: number, contextWindow: number): void {
-		this.contextTokens = contextTokens;
-		this.contextWindow = contextWindow;
+	setContextUsage(_contextTokens: number, _contextWindow: number): void {}
+
+	setTransientStatusLine(line: string | null): void {
+		this.transientStatusLine = line;
 	}
 
 	invalidate(): void {
@@ -174,15 +164,6 @@ export class FooterComponent implements Component {
 	}
 
 	render(width: number): string[] {
-		let totalCost = 0;
-
-		for (const message of this.state.messages) {
-			if (message.role === "assistant") {
-				const assistantMsg = message as AssistantMessage;
-				totalCost += assistantMsg.usage.cost.total;
-			}
-		}
-
 		// Replace home directory with ~
 		let pwd = process.cwd();
 		const home = process.env.HOME || process.env.USERPROFILE;
@@ -204,90 +185,30 @@ export class FooterComponent implements Component {
 			pwd = `${start}...${end}`;
 		}
 
-		// Build stats line
-		const statsParts = [];
-
-		// Show cost with (sub) or (api) indicator
-		const usingSubscription = this.state.model ? isModelUsingOAuth(this.state.model) : false;
-		let subscriptionSuffix: string | null = null;
-		if (usingSubscription && this.state.model?.provider === "openai-codex") {
-			const accounts = listOAuthAccounts("openai-codex");
-			if (accounts.length > 1) {
-				const activeAccount = getActiveOAuthAccount("openai-codex");
-				if (activeAccount) {
-					const label = activeAccount.label ?? activeAccount.credentials.email ?? activeAccount.id;
-					const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(label);
-					const displayLabel = isUuid ? `••••${label.slice(-4)}` : label;
-					const truncated = displayLabel.length > 12 ? `${displayLabel.slice(0, 12)}…` : displayLabel;
-					subscriptionSuffix = `${truncated}/${accounts.length}`;
-				}
-			}
-		}
-		if (totalCost || usingSubscription || this.state.model) {
-			const type = usingSubscription ? (subscriptionSuffix ? ` (sub:${subscriptionSuffix})` : " (sub)") : " (api)";
-			const costStr = `$${totalCost.toFixed(3)}${type}`;
-			statsParts.push(costStr);
-		}
-
-		// Add context usage when available
-		if (this.contextWindow > 0) {
-			const percent = Math.round((this.contextTokens / this.contextWindow) * 100);
-			const windowK = Math.round(this.contextWindow / 1000);
-			statsParts.push(`${percent}% of ${windowK}k`);
-		}
-
-		if (this.usageFooterMode === "visible" && this.usageLimits) {
-			if (this.usageLimits.primary) {
-				statsParts.push(
-					`${this.usageLimits.primary.label} ${Math.round(this.usageLimits.primary.percentRemaining)}%`,
-				);
-			}
-			if (this.usageLimits.secondary) {
-				statsParts.push(
-					`${this.usageLimits.secondary.label} ${Math.round(this.usageLimits.secondary.percentRemaining)}%`,
-				);
-			}
-		}
-
-		const statsLeft = statsParts.join(" ");
-
 		const rightSide = this.showModelStatus ? formatModelStatusLabel(this.state) : "";
-
-		const statsLeftWidth = visibleWidth(statsLeft);
 		const rightSideWidth = visibleWidth(rightSide);
 
-		// Calculate available space for padding (minimum 2 spaces between stats and model)
-		const minPadding = 2;
-		const totalNeeded = statsLeftWidth + minPadding + rightSideWidth;
-
 		let statsLine: string;
-		if (totalNeeded <= width) {
-			// Both fit - add padding to right-align model
-			const padding = " ".repeat(width - statsLeftWidth - rightSideWidth);
-			statsLine = statsLeft + padding + rightSide;
+		if (rightSideWidth === 0) {
+			statsLine = "";
+		} else if (rightSideWidth <= width) {
+			const padding = " ".repeat(width - rightSideWidth);
+			statsLine = padding + rightSide;
 		} else {
-			// Need to truncate right side
-			const availableForRight = width - statsLeftWidth - minPadding;
-			if (availableForRight > 3) {
-				// Truncate to fit (strip ANSI codes for length calculation, then truncate raw string)
-				const plainRightSide = rightSide.replace(/\x1b\[[0-9;]*m/g, "");
-				const truncatedPlain = plainRightSide.substring(0, availableForRight);
-				// For simplicity, just use plain truncated version (loses color, but fits)
-				const padding = " ".repeat(width - statsLeftWidth - truncatedPlain.length);
-				statsLine = statsLeft + padding + truncatedPlain;
-			} else {
-				// Not enough space for right side at all
-				statsLine = statsLeft;
-			}
+			const plainRightSide = rightSide.replace(/\x1b\[[0-9;]*m/g, "");
+			statsLine = plainRightSide.substring(0, width);
 		}
 
 		// Build first line: pwd on left, title on right (if available)
 		let firstLine: string;
+		let pwdLine = "";
 
 		if (this.showExitHint) {
 			firstLine = theme.fg("text", "Press Ctrl+C again to exit");
+			pwdLine = firstLine;
 		} else {
 			const pwdStr = theme.fg("dim", pwd);
+			pwdLine = pwdStr;
 			const pwdWidth = visibleWidth(pwdStr);
 
 			if (this.title) {
@@ -320,7 +241,31 @@ export class FooterComponent implements Component {
 			}
 		}
 
-		return [firstLine, theme.fg("dim", statsLine)];
+		if (this.transientStatusLine) {
+			const left = pwdLine;
+			const leftWidth = visibleWidth(left);
+			const right = this.transientStatusLine;
+			const rightWidth = visibleWidth(right);
+			if (leftWidth + 2 + rightWidth <= width) {
+				return [left + " ".repeat(width - leftWidth - rightWidth) + right];
+			}
+			if (rightWidth <= width) {
+				const clippedLeft = visibleWidth(left) > Math.max(0, width - rightWidth - 2) ? "" : left;
+				const clippedLeftWidth = visibleWidth(clippedLeft);
+				const gap =
+					clippedLeftWidth > 0
+						? Math.max(2, width - clippedLeftWidth - rightWidth)
+						: Math.max(0, width - rightWidth);
+				return [clippedLeft + " ".repeat(gap) + right];
+			}
+			return [right.replace(/\x1b\[[0-9;]*m/g, "").slice(0, width)];
+		}
+
+		if (statsLine.length > 0) {
+			return [firstLine, theme.fg("dim", statsLine)];
+		}
+
+		return [firstLine];
 	}
 }
 
