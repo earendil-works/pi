@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -80,6 +80,9 @@ async function waitForRows(
 }
 
 function readSnapRows(path: string): string[] {
+	if (!existsSync(path)) {
+		return [];
+	}
 	const data = JSON.parse(readFileSync(path, "utf8")) as SnapFile;
 	return data.screen.cells.map((row) =>
 		row
@@ -231,7 +234,7 @@ describe("xtui chat layout spec", () => {
 			20,
 			100,
 		);
-		xtui(["send", "--session", sessionName, "--keys-hex", "1b 5b 3c 36 34 3b 35 30 3b 31 30 4d"]);
+		xtui(["send", "--session", sessionName, "--keys-hex", "1b 5b 3c 36 34 3b 39 39 3b 35 4d"]);
 		await new Promise((resolve) => setTimeout(resolve, 400));
 		await waitForRows(
 			sessionName,
@@ -357,7 +360,7 @@ describe("xtui chat layout spec", () => {
 
 		expect(rows.some((row) => row.includes("Select model"))).toBe(true);
 		expect(rows.some((row) => row.includes("Search  /mo"))).toBe(false);
-		expect(rows.some((row) => row.includes("gpt-5.4 [openai-codex]"))).toBe(true);
+		expect(rows.some((row) => row.includes("gpt-5.4") && row.includes("[openai-codex]"))).toBe(true);
 	});
 
 	it("grows and shrinks the composer with multiline input up to the configured max height", async () => {
@@ -438,5 +441,137 @@ describe("xtui chat layout spec", () => {
 		expect(grownComposer.some((row) => /[█░]/.test(row))).toBe(false);
 		expect(shrunkComposer.length).toEqual(beforeComposer.length);
 		expect(shrunkFooter).toEqual(beforeFooter);
+	});
+
+	it("clicks and drags the chat scrollbar while keeping the composer/footer fixed", async () => {
+		const sessionName = `mu-chat-drag-red-${process.pid}-${Date.now()}`;
+		sessionNames.push(sessionName);
+		const outDir = mkdtempSync(join(tmpdir(), "mu-chat-drag-red-"));
+		tempDirs.push(outDir);
+		const beforePath = join(outDir, "before.json");
+		const afterClickPath = join(outDir, "after-click.json");
+		const afterDragPath = join(outDir, "after-drag.json");
+
+		xtui([
+			"session",
+			"start",
+			"--name",
+			sessionName,
+			"--cmd",
+			"OPENAI_API_KEY=test-openai-key npx tsx packages/coding-agent/test/fixtures/chat-layout-xtui.ts",
+			"--cwd",
+			join(process.cwd(), "..", ".."),
+			"--cols",
+			"100",
+			"--rows",
+			"20",
+		]);
+
+		await waitForSessionAlive(sessionName);
+		await waitForRender();
+
+		await waitForRows(
+			sessionName,
+			beforePath,
+			(snapshotRows) => snapshotRows.some((row) => row.includes("XTUI_CHAT_LAYOUT_READY")),
+			20,
+			100,
+		);
+
+		await sendKeys(sessionName, ["--keys-hex", "1b 5b 3c 30 3b 39 39 3b 31 30 4d"]);
+		await new Promise((resolve) => setTimeout(resolve, 400));
+		await waitForRows(
+			sessionName,
+			afterClickPath,
+			(snapshotRows) => snapshotRows.some((row) => row.includes("XTUI_CHAT_LAYOUT_READY")),
+			20,
+			100,
+		);
+
+		await sendKeys(sessionName, ["--keys-hex", "1b 5b 3c 30 3b 39 39 3b 31 30 4d"]);
+		await sendKeys(sessionName, ["--keys-hex", "1b 5b 3c 33 32 3b 39 39 3b 35 4d"]);
+		await sendKeys(sessionName, ["--keys-hex", "1b 5b 3c 30 3b 39 39 3b 35 6d"]);
+		await new Promise((resolve) => setTimeout(resolve, 400));
+		await waitForRows(
+			sessionName,
+			afterDragPath,
+			(snapshotRows) => snapshotRows.some((row) => row.includes("XTUI_CHAT_LAYOUT_READY")),
+			20,
+			100,
+		);
+
+		const beforeRows = readSnapRows(beforePath);
+		const afterClickRows = readSnapRows(afterClickPath);
+		const afterDragRows = readSnapRows(afterDragPath);
+		const beforeComposerRange = findComposerRange(beforeRows);
+		const afterClickComposerRange = findComposerRange(afterClickRows);
+		const afterDragComposerRange = findComposerRange(afterDragRows);
+		const beforeChatRows = beforeRows.slice(0, beforeComposerRange.start);
+		const afterClickChatRows = afterClickRows.slice(0, afterClickComposerRange.start);
+		const afterDragChatRows = afterDragRows.slice(0, afterDragComposerRange.start);
+		const beforeComposerRows = beforeComposerRange.rows;
+		const beforeFooterRows = beforeRows.slice(-2);
+
+		expect(afterClickChatRows).not.toEqual(beforeChatRows);
+		expect(afterDragChatRows).not.toEqual(afterClickChatRows);
+		expect(afterClickComposerRange.rows).toEqual(beforeComposerRows);
+		expect(afterDragComposerRange.rows).toEqual(beforeComposerRows);
+		expect(afterClickRows.slice(-2)).toEqual(beforeFooterRows);
+		expect(beforeRows.slice(-2)).toEqual(beforeFooterRows);
+	});
+
+	it("shows explicit selection-mode on/off indicators and lets Ctrl+C exit selection mode", async () => {
+		const sessionName = `mu-chat-select-indicator-${process.pid}-${Date.now()}`;
+		sessionNames.push(sessionName);
+		const outDir = mkdtempSync(join(tmpdir(), "mu-chat-select-indicator-"));
+		tempDirs.push(outDir);
+		const onPath = join(outDir, "on.json");
+		const offPath = join(outDir, "off.json");
+
+		xtui([
+			"session",
+			"start",
+			"--name",
+			sessionName,
+			"--cmd",
+			"OPENAI_API_KEY=test-openai-key npx tsx packages/coding-agent/test/fixtures/chat-layout-xtui.ts",
+			"--cwd",
+			join(process.cwd(), "..", ".."),
+			"--cols",
+			"100",
+			"--rows",
+			"20",
+		]);
+
+		await waitForSessionAlive(sessionName);
+		await waitForRender();
+		await sendKeys(sessionName, ["--keys", "/select{Enter}"]);
+
+		const onRows = await waitForRows(
+			sessionName,
+			onPath,
+			(snapshotRows) =>
+				snapshotRows.some((row) => row.includes("Selection Mode: On")) &&
+				snapshotRows.some((row) => row.includes("Drag with your mouse to select visible text.")) &&
+				snapshotRows.some((row) => row.includes("Esc or Ctrl+C to return to turn Selection Mode off.")),
+			20,
+			100,
+		);
+
+		expect(onRows.some((row) => row.includes("Selection Mode: On"))).toBe(true);
+		expect(onRows.some((row) => row.includes("Drag with your mouse to select visible text."))).toBe(true);
+		expect(onRows.some((row) => row.includes("Esc or Ctrl+C to return to turn Selection Mode off."))).toBe(true);
+
+		await sendKeys(sessionName, ["--keys-hex", "03"]);
+
+		const offRows = await waitForRows(
+			sessionName,
+			offPath,
+			(snapshotRows) => snapshotRows.some((row) => row.includes("Selection Mode: Off")),
+			20,
+			100,
+		);
+
+		expect(offRows.some((row) => row.includes("Selection Mode: Off"))).toBe(true);
 	});
 });

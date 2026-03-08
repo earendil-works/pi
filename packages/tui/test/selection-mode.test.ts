@@ -135,4 +135,22 @@ describe("TUI selection mode", () => {
 		await terminal.flush();
 		assert.deepEqual(editor.seenInputs, ["z"]);
 	});
+
+	it("exits selection mode on Ctrl+C without forwarding the key to the focused component", async () => {
+		const terminal = new VirtualTerminal(80, 24);
+		const ui = new TUI(terminal);
+		const editor = new SpyEditor(defaultEditorTheme);
+
+		ui.addChild(editor);
+		ui.setFocus(editor);
+		ui.start();
+		await terminal.flush();
+
+		ui.enterSelectionMode();
+		terminal.sendInput("\x03");
+		await terminal.flush();
+
+		assert.equal(ui.isSelectionMode(), false);
+		assert.deepEqual(editor.seenInputs, []);
+	});
 });

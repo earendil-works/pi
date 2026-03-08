@@ -540,7 +540,7 @@ export class TUI extends Container {
 	private handleInput(data: string): void {
 		const focusRemaining = this.consumeTerminalFocusEvents(data);
 		if (this.selectionMode) {
-			if (focusRemaining === "\x1b") {
+			if (focusRemaining === "\x1b" || focusRemaining === "\x03") {
 				this.exitSelectionMode();
 			}
 			return;
