@@ -58,10 +58,11 @@ describe("working-status", () => {
 	});
 
 	it("derives spinner frames from wall-clock time instead of update frequency", () => {
-		expect(getWorkingStatusSpinnerFrame(0)).toBe("⣀");
-		expect(getWorkingStatusSpinnerFrame(119)).toBe("⣀");
-		expect(getWorkingStatusSpinnerFrame(120)).toBe("⣠");
-		expect(getWorkingStatusSpinnerFrame(240)).toBe("⣴");
+		expect(getWorkingStatusSpinnerFrame(0)).toBe("░▒▓█   ");
+		expect(getWorkingStatusSpinnerFrame(119)).toBe("░▒▓█   ");
+		expect(getWorkingStatusSpinnerFrame(120)).toBe(" ░▒▓█  ");
+		expect(getWorkingStatusSpinnerFrame(240)).toBe("  ░▒▓█ ");
+		expect(getWorkingStatusSpinnerFrame(480)).toBe("   █▓▒░");
 	});
 
 	it("estimates tokens from visible assistant text and tool calls, excluding thinking", () => {

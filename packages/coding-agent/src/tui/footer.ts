@@ -116,6 +116,29 @@ function renderSplitLine(options: {
 	return leftStyle(fittedLeft) + " ".repeat(gap) + rightStyle(fittedRight);
 }
 
+function styleWorkingIndicator(indicator: string): string {
+	const accent = theme.getFgAnsi("accent");
+	const muted = theme.getFgAnsi("muted");
+	const dim = theme.getFgAnsi("dim");
+
+	return Array.from(indicator)
+		.map((char) => {
+			switch (char) {
+				case "█":
+					return `\x1b[1m${accent}${char}\x1b[22m\x1b[39m`;
+				case "▓":
+					return `${accent}${char}\x1b[39m`;
+				case "▒":
+					return `${muted}${char}\x1b[39m`;
+				case "░":
+					return `${dim}${char}\x1b[39m`;
+				default:
+					return char;
+			}
+		})
+		.join("");
+}
+
 /**
  * Find the git root directory by walking up from cwd.
  * Returns the path to .git/HEAD if found, null otherwise.
@@ -320,11 +343,11 @@ export class FooterComponent implements Component {
 				leftStyle: (text) => {
 					const spaceIndex = text.indexOf(" ");
 					if (spaceIndex === -1) {
-						return theme.fg("accent", text);
+						return styleWorkingIndicator(text);
 					}
 					const indicator = text.slice(0, spaceIndex);
 					const message = text.slice(spaceIndex + 1);
-					return `${theme.fg("accent", indicator)} ${theme.fg("muted", message)}`;
+					return `${styleWorkingIndicator(indicator)} ${theme.fg("muted", message)}`;
 				},
 				rightStyle: (text) => theme.fg("dim", text),
 				minimumLeftWidth: 12,

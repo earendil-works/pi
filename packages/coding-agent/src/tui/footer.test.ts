@@ -37,7 +37,7 @@ describe("FooterComponent", () => {
 		const footer = new FooterComponent(createState());
 		footer.setTitle("Investigate footer layout overflow");
 		footer.setTransientStatus({
-			indicator: "⣠",
+			indicator: "░▒▓█   ",
 			message: "Working (9s • 21 tps • 2.3s lat. • esc to interrupt)",
 		});
 
@@ -54,7 +54,7 @@ describe("FooterComponent", () => {
 		const footer = new FooterComponent(createState());
 		footer.setTitle("A very long footer title that should be truncated before it collides with the working status");
 		footer.setTransientStatus({
-			indicator: "⣠",
+			indicator: "░▒▓█   ",
 			message: "Working (999s • 999 tps • 99.9s lat. • esc to interrupt)",
 		});
 
@@ -70,7 +70,7 @@ describe("FooterComponent", () => {
 		const footer = new FooterComponent(createState());
 		footer.setTitle("Investigate footer layout overflow");
 		footer.setTransientStatus({
-			indicator: "⣠",
+			indicator: "░▒▓█   ",
 			message: "Working (9s • 21 tps • 2.3s lat. • esc to interrupt)",
 		});
 

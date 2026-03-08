@@ -44,7 +44,7 @@ export function formatDoneStatus(elapsedMs: number, estimatedOutputTokens: numbe
 }
 
 export function getWorkingStatusSpinnerFrame(nowMs: number): string {
-	const frames = ["⣀", "⣠", "⣴", "⣾", "⣿", "⣷", "⣧", "⣇", "⡇"] as const;
+	const frames = ["░▒▓█   ", " ░▒▓█  ", "  ░▒▓█ ", "   ░▒▓█", "   █▓▒░", "  █▓▒░ ", " █▓▒░  ", "█▓▒░   "] as const;
 	const frameDurationMs = 120;
 	return frames[Math.floor(nowMs / frameDurationMs) % frames.length] ?? frames[0];
 }
