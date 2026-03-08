@@ -2,7 +2,16 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Agent, AgentEvent, AgentState, Attachment, ThinkingLevel } from "@kennyfrc/mu-agent-core";
-import type { AgentTool, Api, AssistantMessage, Message, Model, ToolCall, ToolResultMessage } from "@kennyfrc/mu-ai";
+import type {
+	AgentTool,
+	Api,
+	AssistantMessage,
+	AssistantMessageEvent,
+	Message,
+	Model,
+	ToolCall,
+	ToolResultMessage,
+} from "@kennyfrc/mu-ai";
 import { complete, supportsXhigh } from "@kennyfrc/mu-ai";
 import type { Component, SlashCommand } from "@kennyfrc/mu-tui";
 import {
@@ -162,6 +171,14 @@ function stripUserMessageTimePrefix(text: string): string {
 }
 
 type HandoffToolResult = Awaited<ReturnType<typeof handoffTool.execute>>;
+
+export function shouldStartAssistantActiveTiming(event: AssistantMessageEvent): boolean {
+	return event.type === "text_delta" || event.type === "toolcall_delta";
+}
+
+export function shouldPauseAssistantActiveTiming(event: AssistantMessageEvent): boolean {
+	return event.type === "text_end" || event.type === "toolcall_end";
+}
 
 interface SubscriptionEvent {
 	sessionId: string;
@@ -1056,7 +1073,6 @@ export class TuiRenderer {
 				} else if (event.message.role === "assistant") {
 					this.recordLatencyGap();
 					this.currentAssistantEstimatedOutputTokens = 0;
-					this.startAssistantActiveTimer();
 					this.updateWorkingStatusMessage();
 					this.maybeAnnounceCodexAccountSwitch();
 					// Create assistant component for streaming. This uses a bounded rolling buffer
@@ -1073,8 +1089,14 @@ export class TuiRenderer {
 				// Update streaming component
 				if (this.streamingComponent && event.message.role === "assistant") {
 					const assistantMsg = event.message as AssistantMessage;
+					if (shouldStartAssistantActiveTiming(event.assistantMessageEvent)) {
+						this.startAssistantActiveTimer();
+					}
 					this.streamingComponent.applyAssistantMessageEvent(event.assistantMessageEvent);
 					this.currentAssistantEstimatedOutputTokens = estimateWorkingStatusTokens(assistantMsg);
+					if (shouldPauseAssistantActiveTiming(event.assistantMessageEvent)) {
+						this.pauseAssistantActiveTimer();
+					}
 					this.updateWorkingStatusMessage();
 
 					// Create tool execution components as soon as we see tool calls

@@ -50,8 +50,10 @@ export function getWorkingStatusSpinnerFrame(nowMs: number): string {
 }
 
 function formatTps(elapsedMs: number, estimatedOutputTokens: number): number {
-	const elapsedSeconds = Math.max(1, Math.floor(elapsedMs / 1000));
-	return Math.round(estimatedOutputTokens / elapsedSeconds);
+	if (elapsedMs <= 0 || estimatedOutputTokens <= 0) {
+		return 0;
+	}
+	return Math.round((estimatedOutputTokens * 1000) / elapsedMs);
 }
 
 function formatAverageLatency(averageLatencyMs: number | undefined): string | null {

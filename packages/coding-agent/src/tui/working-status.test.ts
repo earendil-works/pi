@@ -36,8 +36,17 @@ describe("working-status", () => {
 		expect(formatWorkingStatus(88_000, 2_112)).toBe("Working (1m 28s • 24 tps • esc to interrupt)");
 	});
 
+	it("uses subsecond elapsed time for working tps", () => {
+		expect(formatWorkingStatus(500, 10)).toBe("Working (0s • 20 tps • esc to interrupt)");
+		expect(formatWorkingStatus(1_500, 10)).toBe("Working (1s • 7 tps • esc to interrupt)");
+	});
+
 	it("formats the done label with elapsed time and rounded tps", () => {
 		expect(formatDoneStatus(88_000, 2_112)).toBe("Done after 1m 28s - 24 tps");
+	});
+
+	it("uses subsecond elapsed time for done tps", () => {
+		expect(formatDoneStatus(250, 25)).toBe("Done after 0s - 100 tps");
 	});
 
 	it("formats the working label with average latency", () => {
