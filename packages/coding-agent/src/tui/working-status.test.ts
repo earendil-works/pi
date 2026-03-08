@@ -1,6 +1,11 @@
 import type { AssistantMessage } from "@kennyfrc/mu-ai";
 import { describe, expect, it } from "vitest";
-import { estimateWorkingStatusTokens, formatDoneStatus, formatWorkingStatus } from "./working-status.js";
+import {
+	estimateWorkingStatusTokens,
+	formatDoneStatus,
+	formatWorkingStatus,
+	getWorkingStatusSpinnerFrame,
+} from "./working-status.js";
 
 function baseAssistantMessage(): AssistantMessage {
 	return {
@@ -41,6 +46,13 @@ describe("working-status", () => {
 
 	it("formats the done label with average latency", () => {
 		expect(formatDoneStatus(28_000, 1_176, 3_800)).toBe("Done after 28s - 42 tps - 3.8s lat.");
+	});
+
+	it("derives spinner frames from wall-clock time instead of update frequency", () => {
+		expect(getWorkingStatusSpinnerFrame(0)).toBe("⣀");
+		expect(getWorkingStatusSpinnerFrame(119)).toBe("⣀");
+		expect(getWorkingStatusSpinnerFrame(120)).toBe("⣠");
+		expect(getWorkingStatusSpinnerFrame(240)).toBe("⣴");
 	});
 
 	it("estimates tokens from visible assistant text and tool calls, excluding thinking", () => {
