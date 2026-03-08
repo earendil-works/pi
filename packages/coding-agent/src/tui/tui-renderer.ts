@@ -137,7 +137,12 @@ import { ToolExecutionComponent } from "./tool-execution.js";
 import { TreeSelectorComponent } from "./tree-selector.js";
 import { UserMessageComponent } from "./user-message.js";
 import { UserMessageSelectorComponent } from "./user-message-selector.js";
-import { estimateWorkingStatusTokens, formatDoneStatus, formatWorkingStatus } from "./working-status.js";
+import {
+	estimateWorkingStatusTokens,
+	formatDoneStatus,
+	formatWorkingStatus,
+	getWorkingStatusSpinnerFrame,
+} from "./working-status.js";
 import { WorkspaceNoteOverlayComponent } from "./workspace-note-overlay.js";
 
 function hashContent(content: string): string {
@@ -318,7 +323,6 @@ export class TuiRenderer {
 	private pendingLatencyStartTime: number | null = null;
 	private accumulatedLatencyMs = 0;
 	private latencyGapCount = 0;
-	private workingStatusFrame = 0;
 	private ignoreNextAgentEndForAutoHandoffAbort = false;
 
 	constructor(
@@ -872,17 +876,15 @@ export class TuiRenderer {
 	}
 
 	private setWorkingStatusFooterLine(): void {
-		const frames = ["⣀", "⣠", "⣴", "⣾", "⣿", "⣷", "⣧", "⣇", "⡇"] as const;
-		const frame = frames[this.workingStatusFrame % frames.length];
-		this.workingStatusFrame = (this.workingStatusFrame + 1) % frames.length;
-		this.footer.setTransientStatusLine(
-			`${theme.fg("accent", frame)} ${theme.fg("muted", this.buildWorkingStatusMessage())}`,
-		);
+		const frame = getWorkingStatusSpinnerFrame(Date.now());
+		this.footer.setTransientStatus({
+			indicator: frame,
+			message: this.buildWorkingStatusMessage(),
+		});
 	}
 
 	private clearWorkingStatusFooterLine(): void {
-		this.footer.setTransientStatusLine(null);
-		this.workingStatusFrame = 0;
+		this.footer.setTransientStatus(null);
 	}
 
 	private getEstimatedOutputTokens(): number {

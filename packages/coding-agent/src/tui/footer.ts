@@ -6,6 +6,116 @@ import { dirname, join } from "path";
 import { supportsFastMode } from "../fast-mode.js";
 import { theme } from "../theme/theme.js";
 
+interface FooterTransientStatus {
+	indicator: string;
+	message: string;
+}
+
+const segmenter = new Intl.Segmenter();
+
+function truncatePlainTextEnd(text: string, maxWidth: number): string {
+	if (maxWidth <= 0) return "";
+	if (visibleWidth(text) <= maxWidth) return text;
+	if (maxWidth <= 1) return "…";
+
+	const ellipsis = "…";
+	const targetWidth = Math.max(0, maxWidth - visibleWidth(ellipsis));
+	const parts = Array.from(segmenter.segment(text), (part) => part.segment);
+
+	let result = "";
+	let resultWidth = 0;
+	for (const part of parts) {
+		const partWidth = visibleWidth(part);
+		if (resultWidth + partWidth > targetWidth) break;
+		result += part;
+		resultWidth += partWidth;
+	}
+
+	return result + ellipsis;
+}
+
+function truncatePlainTextMiddle(text: string, maxWidth: number): string {
+	if (maxWidth <= 0) return "";
+	if (visibleWidth(text) <= maxWidth) return text;
+	if (maxWidth <= 1) return "…";
+
+	const parts = Array.from(segmenter.segment(text), (part) => part.segment);
+	const ellipsis = "…";
+	const targetWidth = Math.max(0, maxWidth - visibleWidth(ellipsis));
+
+	let left = "";
+	let leftWidth = 0;
+	let leftIndex = 0;
+	while (leftIndex < parts.length) {
+		const next = parts[leftIndex] ?? "";
+		const nextWidth = visibleWidth(next);
+		if (leftWidth + nextWidth > Math.ceil(targetWidth / 2)) break;
+		left += next;
+		leftWidth += nextWidth;
+		leftIndex++;
+	}
+
+	let right = "";
+	let rightWidth = 0;
+	let rightIndex = parts.length - 1;
+	while (rightIndex >= leftIndex) {
+		const next = parts[rightIndex] ?? "";
+		const nextWidth = visibleWidth(next);
+		if (leftWidth + rightWidth + nextWidth > targetWidth) break;
+		right = next + right;
+		rightWidth += nextWidth;
+		rightIndex--;
+	}
+
+	return left + ellipsis + right;
+}
+
+function renderSplitLine(options: {
+	width: number;
+	leftText: string;
+	rightText: string;
+	leftStyle: (text: string) => string;
+	rightStyle: (text: string) => string;
+	leftTruncation?: "end" | "middle";
+	minimumLeftWidth?: number;
+}): string {
+	const { width, leftText, rightText, leftStyle, rightStyle, leftTruncation = "end", minimumLeftWidth = 8 } = options;
+
+	if (width <= 0) {
+		return "";
+	}
+
+	if (!leftText && !rightText) {
+		return "";
+	}
+
+	if (!rightText) {
+		const fittedLeft =
+			leftTruncation === "middle" ? truncatePlainTextMiddle(leftText, width) : truncatePlainTextEnd(leftText, width);
+		return leftStyle(fittedLeft);
+	}
+
+	if (!leftText) {
+		const fittedRight = truncatePlainTextEnd(rightText, width);
+		const gap = Math.max(0, width - visibleWidth(fittedRight));
+		return " ".repeat(gap) + rightStyle(fittedRight);
+	}
+
+	const minGap = 2;
+	const rightBudget = Math.max(1, width - minimumLeftWidth - minGap);
+	const fittedRight = truncatePlainTextEnd(rightText, rightBudget);
+	const fittedRightWidth = visibleWidth(fittedRight);
+	const leftBudget = Math.max(1, width - fittedRightWidth - minGap);
+	const fittedLeft =
+		leftTruncation === "middle"
+			? truncatePlainTextMiddle(leftText, leftBudget)
+			: truncatePlainTextEnd(leftText, leftBudget);
+	const fittedLeftWidth = visibleWidth(fittedLeft);
+	const gap = Math.max(minGap, width - fittedLeftWidth - fittedRightWidth);
+
+	return leftStyle(fittedLeft) + " ".repeat(gap) + rightStyle(fittedRight);
+}
+
 /**
  * Find the git root directory by walking up from cwd.
  * Returns the path to .git/HEAD if found, null otherwise.
@@ -37,7 +147,7 @@ export class FooterComponent implements Component {
 	private onBranchChange: (() => void) | null = null;
 	private title: string | null = null;
 	private showModelStatus = true;
-	private transientStatusLine: string | null = null;
+	private transientStatus: FooterTransientStatus | null = null;
 
 	constructor(state: AgentState) {
 		this.state = state;
@@ -121,8 +231,8 @@ export class FooterComponent implements Component {
 
 	setContextUsage(_contextTokens: number, _contextWindow: number): void {}
 
-	setTransientStatusLine(line: string | null): void {
-		this.transientStatusLine = line;
+	setTransientStatus(status: FooterTransientStatus | null): void {
+		this.transientStatus = status;
 	}
 
 	invalidate(): void {
@@ -177,95 +287,53 @@ export class FooterComponent implements Component {
 			pwd = `${pwd} (${branch})`;
 		}
 
-		// Truncate path if too long to fit width
-		const maxPathLength = Math.max(20, width - 10); // Leave some margin
-		if (pwd.length > maxPathLength) {
-			const start = pwd.slice(0, Math.floor(maxPathLength / 2) - 2);
-			const end = pwd.slice(-(Math.floor(maxPathLength / 2) - 1));
-			pwd = `${start}...${end}`;
-		}
+		pwd = truncatePlainTextMiddle(pwd, Math.max(1, width));
 
 		const rightSide = this.showModelStatus ? formatModelStatusLabel(this.state) : "";
-		const rightSideWidth = visibleWidth(rightSide);
 
-		let statsLine: string;
-		if (rightSideWidth === 0) {
-			statsLine = "";
-		} else if (rightSideWidth <= width) {
-			const padding = " ".repeat(width - rightSideWidth);
-			statsLine = padding + rightSide;
-		} else {
-			const plainRightSide = rightSide.replace(/\x1b\[[0-9;]*m/g, "");
-			statsLine = plainRightSide.substring(0, width);
-		}
-
-		// Build first line: pwd on left, title on right (if available)
-		let firstLine: string;
-		let pwdLine = "";
+		let titleLine = "";
+		const secondaryLine = renderSplitLine({
+			width,
+			leftText: this.showExitHint ? "Press Ctrl+C again to exit" : rightSide,
+			rightText: pwd,
+			leftStyle: (text) => theme.fg(this.showExitHint ? "text" : "dim", text),
+			rightStyle: (text) => theme.fg("dim", text),
+			leftTruncation: "end",
+			minimumLeftWidth: 14,
+		});
 
 		if (this.showExitHint) {
-			firstLine = theme.fg("text", "Press Ctrl+C again to exit");
-			pwdLine = firstLine;
+			titleLine = theme.fg("text", truncatePlainTextEnd("Press Ctrl+C again to exit", Math.max(1, width)));
 		} else {
-			const pwdStr = theme.fg("dim", pwd);
-			pwdLine = pwdStr;
-			const pwdWidth = visibleWidth(pwdStr);
+			titleLine = this.title ? theme.fg("dim", truncatePlainTextEnd(this.title, Math.max(1, width))) : "";
+		}
 
-			if (this.title) {
-				// Show pwd on left, title on right
-				const titleStr = theme.fg("dim", this.title);
-				const titleWidth = visibleWidth(titleStr);
-				const minGap = 2;
-				const totalNeeded = pwdWidth + minGap + titleWidth;
-
-				if (totalNeeded <= width) {
-					// Both fit - add padding to right-align title
-					const padding = " ".repeat(width - pwdWidth - titleWidth);
-					firstLine = pwdStr + padding + titleStr;
-				} else {
-					// Not enough space - truncate title
-					const availableForTitle = width - pwdWidth - minGap;
-					if (availableForTitle > 10) {
-						const truncatedTitle = this.title.substring(0, availableForTitle - 3) + "...";
-						const truncatedTitleStr = theme.fg("dim", truncatedTitle);
-						const padding = " ".repeat(width - pwdWidth - visibleWidth(truncatedTitleStr));
-						firstLine = pwdStr + padding + truncatedTitleStr;
-					} else {
-						// No space for title, just show pwd
-						firstLine = pwdStr;
+		if (this.transientStatus) {
+			const workingLine = renderSplitLine({
+				width,
+				leftText: `${this.transientStatus.indicator} ${this.transientStatus.message}`,
+				rightText: this.showExitHint ? "" : (this.title ?? ""),
+				leftStyle: (text) => {
+					const spaceIndex = text.indexOf(" ");
+					if (spaceIndex === -1) {
+						return theme.fg("accent", text);
 					}
-				}
-			} else {
-				// No title, just show pwd
-				firstLine = pwdStr;
-			}
+					const indicator = text.slice(0, spaceIndex);
+					const message = text.slice(spaceIndex + 1);
+					return `${theme.fg("accent", indicator)} ${theme.fg("muted", message)}`;
+				},
+				rightStyle: (text) => theme.fg("dim", text),
+				minimumLeftWidth: 12,
+			});
+
+			return [workingLine, secondaryLine];
 		}
 
-		if (this.transientStatusLine) {
-			const left = pwdLine;
-			const leftWidth = visibleWidth(left);
-			const right = this.transientStatusLine;
-			const rightWidth = visibleWidth(right);
-			if (leftWidth + 2 + rightWidth <= width) {
-				return [left + " ".repeat(width - leftWidth - rightWidth) + right];
-			}
-			if (rightWidth <= width) {
-				const clippedLeft = visibleWidth(left) > Math.max(0, width - rightWidth - 2) ? "" : left;
-				const clippedLeftWidth = visibleWidth(clippedLeft);
-				const gap =
-					clippedLeftWidth > 0
-						? Math.max(2, width - clippedLeftWidth - rightWidth)
-						: Math.max(0, width - rightWidth);
-				return [clippedLeft + " ".repeat(gap) + right];
-			}
-			return [right.replace(/\x1b\[[0-9;]*m/g, "").slice(0, width)];
+		if (titleLine.length > 0) {
+			return [titleLine, secondaryLine];
 		}
 
-		if (statsLine.length > 0) {
-			return [firstLine, theme.fg("dim", statsLine)];
-		}
-
-		return [firstLine];
+		return [secondaryLine];
 	}
 }
 

@@ -43,6 +43,12 @@ export function formatDoneStatus(elapsedMs: number, estimatedOutputTokens: numbe
 		: `Done after ${elapsed} - ${tps} tps - ${avgLatency} lat.`;
 }
 
+export function getWorkingStatusSpinnerFrame(nowMs: number): string {
+	const frames = ["⣀", "⣠", "⣴", "⣾", "⣿", "⣷", "⣧", "⣇", "⡇"] as const;
+	const frameDurationMs = 120;
+	return frames[Math.floor(nowMs / frameDurationMs) % frames.length] ?? frames[0];
+}
+
 function formatTps(elapsedMs: number, estimatedOutputTokens: number): number {
 	const elapsedSeconds = Math.max(1, Math.floor(elapsedMs / 1000));
 	return Math.round(estimatedOutputTokens / elapsedSeconds);
