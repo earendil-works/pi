@@ -33,7 +33,7 @@ function createState(): AgentState {
 }
 
 describe("FooterComponent", () => {
-	it("renders the active footer as two rows with working left/title right and status left/path right", () => {
+	it("renders the active footer as two rows with working duration on the first row and live stats on the second", () => {
 		const footer = new FooterComponent(createState());
 		footer.setTitle("Investigate footer layout overflow");
 		footer.setTransientStatus({
@@ -41,13 +41,27 @@ describe("FooterComponent", () => {
 			message: "Working (9s • 21 tps • 2.3s lat. • esc to interrupt)",
 		});
 
+		const lines = footer.render(120).map((line) => stripAnsi(line));
+
+		expect(lines).toHaveLength(2);
+		expect(lines[0]).toContain("Working • 9s");
+		expect(lines[0]).toContain("Investigate footer layout overflow");
+		expect(lines[1]).toContain("21 tps • 2.3s lat. • esc to interrupt");
+		expect(lines[1]).toContain("pi-mono");
+	});
+
+	it("keeps the second working row compact when latency is unavailable", () => {
+		const footer = new FooterComponent(createState());
+		footer.setTransientStatus({
+			indicator: "░▒▓█   ",
+			message: "Working (9s • 21 tps • esc to interrupt)",
+		});
+
 		const lines = footer.render(100).map((line) => stripAnsi(line));
 
 		expect(lines).toHaveLength(2);
-		expect(lines[0]).toContain("Working (9s • 21 tps • 2.3s lat. • esc to interrupt)");
-		expect(lines[0]).toContain("Investigate footer layout overflow");
-		expect(lines[1]).toContain("gpt-5.4 • medium [openai-codex]");
-		expect(lines[1]).toContain("pi-mono");
+		expect(lines[0]).toContain("Working • 9s");
+		expect(lines[1]).toContain("21 tps • esc to interrupt");
 	});
 
 	it("keeps both footer rows within the available width", () => {

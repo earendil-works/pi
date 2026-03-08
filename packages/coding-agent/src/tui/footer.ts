@@ -11,6 +11,11 @@ interface FooterTransientStatus {
 	message: string;
 }
 
+interface WorkingFooterLines {
+	primary: string;
+	secondary: string;
+}
+
 const segmenter = new Intl.Segmenter();
 
 function truncatePlainTextEnd(text: string, maxWidth: number): string {
@@ -137,6 +142,30 @@ function styleWorkingIndicator(indicator: string): string {
 			}
 		})
 		.join("");
+}
+
+function splitWorkingFooterMessage(message: string): WorkingFooterLines {
+	const match = /^Working \((.+)\)$/.exec(message);
+	if (!match) {
+		return {
+			primary: message,
+			secondary: "",
+		};
+	}
+
+	const segments = match[1].split(" • ");
+	const elapsed = segments.shift();
+	if (!elapsed) {
+		return {
+			primary: message,
+			secondary: "",
+		};
+	}
+
+	return {
+		primary: `Working • ${elapsed}`,
+		secondary: segments.join(" • "),
+	};
 }
 
 /**
@@ -336,9 +365,10 @@ export class FooterComponent implements Component {
 			: "";
 
 		if (this.transientStatus) {
+			const workingLines = splitWorkingFooterMessage(this.transientStatus.message);
 			const workingLine = renderSplitLine({
 				width,
-				leftText: `${this.transientStatus.indicator} ${this.transientStatus.message}`,
+				leftText: `${this.transientStatus.indicator} ${workingLines.primary}`,
 				rightText: this.showExitHint ? "" : (this.title ?? ""),
 				leftStyle: (text) => {
 					const spaceIndex = text.indexOf(" ");
@@ -353,7 +383,17 @@ export class FooterComponent implements Component {
 				minimumLeftWidth: 12,
 			});
 
-			return [workingLine, secondaryLine];
+			const workingDetailLine = renderSplitLine({
+				width,
+				leftText: workingLines.secondary,
+				rightText: pwd,
+				leftStyle: (text) => theme.fg("muted", text),
+				rightStyle: (text) => theme.fg("dim", text),
+				leftTruncation: "end",
+				minimumLeftWidth: 14,
+			});
+
+			return [workingLine, workingDetailLine];
 		}
 
 		if (titleLine.length > 0) {
