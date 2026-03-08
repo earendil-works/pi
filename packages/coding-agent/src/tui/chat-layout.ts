@@ -16,8 +16,23 @@ interface ChatLayoutOptions {
 	interceptInput?: (data: string) => string;
 	footer: Component;
 	getComposerLabel: () => string;
+	getComposerMetaLabel?: () => string;
 	getComposerBorderColor: () => (text: string) => string;
 	updateComposerViewport: (maxBodyRows: number) => void;
+}
+
+interface ChatScrollbarGeometry {
+	visibleHeight: number;
+	maxScrollOffset: number;
+	thumbStart: number;
+	thumbSize: number;
+	trackTravel: number;
+}
+
+interface ChatScrollbarDragState {
+	startMouseRow: number;
+	startScrollOffset: number;
+	geometry: ChatScrollbarGeometry;
 }
 
 export class ChatLayoutComponent implements Component {
@@ -27,11 +42,14 @@ export class ChatLayoutComponent implements Component {
 	private readonly interceptInput?: (data: string) => string;
 	private readonly footer: Component;
 	private readonly getComposerLabel: () => string;
+	private readonly getComposerMetaLabel?: () => string;
 	private readonly getComposerBorderColor: () => (text: string) => string;
 	private readonly updateComposerViewport: (maxBodyRows: number) => void;
 	private scrollOffset = 0;
 	private lastChatHeight = 1;
 	private lastChatLineCount = 0;
+	private lastRenderWidth = 0;
+	private scrollbarDragState: ChatScrollbarDragState | null = null;
 
 	constructor(options: ChatLayoutOptions) {
 		this.chatContent = options.chatContent;
@@ -40,6 +58,7 @@ export class ChatLayoutComponent implements Component {
 		this.interceptInput = options.interceptInput;
 		this.footer = options.footer;
 		this.getComposerLabel = options.getComposerLabel;
+		this.getComposerMetaLabel = options.getComposerMetaLabel;
 		this.getComposerBorderColor = options.getComposerBorderColor;
 		this.updateComposerViewport = options.updateComposerViewport;
 	}
@@ -51,6 +70,24 @@ export class ChatLayoutComponent implements Component {
 
 	handleInput(data: string): void {
 		let remaining = data;
+		remaining = remaining.replace(/\x1b\[<0;\d+;\d+M/g, (match) => {
+			if (this.handleScrollbarPointerDown(match)) {
+				return "";
+			}
+			return match;
+		});
+		remaining = remaining.replace(/\x1b\[<32;\d+;\d+M/g, (match) => {
+			if (this.handleScrollbarDrag(match)) {
+				return "";
+			}
+			return match;
+		});
+		remaining = remaining.replace(/\x1b\[<\d+;\d+;\d+m/g, (match) => {
+			if (this.handleScrollbarRelease(match)) {
+				return "";
+			}
+			return match;
+		});
 		remaining = remaining.replace(/\x1b\[<64;\d+;\d+[Mm]/g, () => {
 			this.scroll(3);
 			return "";
@@ -80,6 +117,7 @@ export class ChatLayoutComponent implements Component {
 	}
 
 	render(width: number): string[] {
+		this.lastRenderWidth = width;
 		const terminalRows = process.stdout.rows || 24;
 		const footerRows = this.footer.render(width).length;
 		const composerLines = this.renderComposer(width, terminalRows);
@@ -121,10 +159,102 @@ export class ChatLayoutComponent implements Component {
 		this.scrollOffset = Math.max(0, Math.min(maxScrollOffset, this.scrollOffset + delta));
 	}
 
+	private getScrollbarGeometry(): ChatScrollbarGeometry | null {
+		if (this.lastChatLineCount <= this.lastChatHeight) {
+			return null;
+		}
+
+		const visibleHeight = this.lastChatHeight;
+		const maxScrollOffset = Math.max(0, this.lastChatLineCount - visibleHeight);
+		const thumbSize = Math.max(1, Math.floor((visibleHeight / this.lastChatLineCount) * visibleHeight));
+		const trackTravel = Math.max(0, visibleHeight - thumbSize);
+		const start = Math.max(0, this.lastChatLineCount - visibleHeight - this.scrollOffset);
+		const thumbStart = trackTravel === 0 ? 0 : Math.floor((start / Math.max(1, maxScrollOffset)) * trackTravel);
+
+		return { visibleHeight, maxScrollOffset, thumbStart, thumbSize, trackTravel };
+	}
+
+	private parseMousePosition(data: string): { x: number; y: number } | null {
+		const match = data.match(/\x1b\[<\d+;(\d+);(\d+)[Mm]/);
+		if (!match) return null;
+		return {
+			x: Number.parseInt(match[1], 10),
+			y: Number.parseInt(match[2], 10),
+		};
+	}
+
+	private isChatScrollbarColumnForWidth(x: number): boolean {
+		return x === Math.max(2, this.lastRenderWidth - 1);
+	}
+
+	private getChatMouseRow(y: number): number {
+		return y - 1;
+	}
+
+	private handleScrollbarPointerDown(data: string): boolean {
+		const position = this.parseMousePosition(data);
+		const geometry = this.getScrollbarGeometry();
+		if (!position || !geometry) return false;
+		if (!this.isChatScrollbarColumnForWidth(position.x)) return false;
+
+		const clickedRow = this.getChatMouseRow(position.y);
+		if (clickedRow < 0 || clickedRow >= geometry.visibleHeight) return false;
+
+		const isOnThumb = clickedRow >= geometry.thumbStart && clickedRow < geometry.thumbStart + geometry.thumbSize;
+		if (isOnThumb) {
+			this.scrollbarDragState = {
+				startMouseRow: clickedRow,
+				startScrollOffset: this.scrollOffset,
+				geometry,
+			};
+			return true;
+		}
+
+		this.scrollOffset = this.scrollOffsetFromThumbRow(clickedRow, geometry);
+		this.scrollbarDragState = null;
+		return true;
+	}
+
+	private handleScrollbarDrag(data: string): boolean {
+		const position = this.parseMousePosition(data);
+		if (!position || !this.scrollbarDragState) return false;
+		if (!this.isChatScrollbarColumnForWidth(position.x)) return false;
+
+		const clickedRow = this.getChatMouseRow(position.y);
+		const { geometry, startMouseRow, startScrollOffset } = this.scrollbarDragState;
+		if (geometry.maxScrollOffset === 0 || geometry.trackTravel === 0) return false;
+
+		const rowDelta = clickedRow - startMouseRow;
+		const scrollDelta = Math.round((rowDelta / geometry.trackTravel) * geometry.maxScrollOffset);
+		const nextOffset = Math.max(0, Math.min(geometry.maxScrollOffset, startScrollOffset - scrollDelta));
+		if (nextOffset === this.scrollOffset) return false;
+
+		this.scrollOffset = nextOffset;
+		return true;
+	}
+
+	private handleScrollbarRelease(data: string): boolean {
+		const position = this.parseMousePosition(data);
+		if (!position || !this.scrollbarDragState) return false;
+		this.scrollbarDragState = null;
+		return this.isChatScrollbarColumnForWidth(position.x);
+	}
+
+	private scrollOffsetFromThumbRow(clickedRow: number, geometry: ChatScrollbarGeometry): number {
+		if (geometry.maxScrollOffset === 0 || geometry.trackTravel === 0) {
+			return 0;
+		}
+
+		const thumbStart = Math.max(0, Math.min(geometry.trackTravel, clickedRow));
+		const start = Math.round((thumbStart / geometry.trackTravel) * geometry.maxScrollOffset);
+		return Math.max(0, Math.min(geometry.maxScrollOffset, geometry.maxScrollOffset - start));
+	}
+
 	private renderComposer(width: number, terminalRows: number): string[] {
 		const frameWidth = Math.max(4, width - 1);
 		const border = this.getComposerBorderColor();
 		const label = this.getComposerLabel();
+		const metaLabel = this.getComposerMetaLabel?.() ?? "";
 		const innerWidth = Math.max(1, frameWidth - 4);
 		const maxBodyRows = Math.max(2, Math.floor(terminalRows / 3));
 		this.updateComposerViewport(maxBodyRows);
@@ -141,7 +271,12 @@ export class ChatLayoutComponent implements Component {
 		}
 
 		const body = content.map((line) => `${border("│")} ${padToWidth(line, innerWidth)} ${border("│")}`);
-		const bottomLine = `${border("╰")}${border("─".repeat(frameWidth - 2))}${border("╯")}`;
+		let bottomLine = `${border("╰")}${border("─".repeat(frameWidth - 2))}${border("╯")}`;
+		if (metaLabel.length > 0) {
+			const metaWidth = visibleWidth(metaLabel);
+			const leftFill = Math.max(0, frameWidth - metaWidth - 4);
+			bottomLine = `${border("╰")}${border("─".repeat(leftFill))} ${metaLabel} ${border("╯")}`;
+		}
 		return [topLine, ...body, bottomLine];
 	}
 }
