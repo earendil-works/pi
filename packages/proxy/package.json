@@ -1,6 +1,6 @@
 {
 	"name": "@kennyfrc/mu-proxy",
-	"version": "0.24.61",
+	"version": "0.24.62",
 	"type": "module",
 	"description": "CORS and authentication proxy for mu-ai",
 	"main": "dist/index.js",
