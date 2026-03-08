@@ -45,9 +45,10 @@ export class ChatLayoutComponent implements Component {
 	private readonly getComposerMetaLabel?: () => string;
 	private readonly getComposerBorderColor: () => (text: string) => string;
 	private readonly updateComposerViewport: (maxBodyRows: number) => void;
-	private scrollOffset = 0;
+	private viewportTopLine: number | null = null;
 	private lastChatHeight = 1;
 	private lastChatLineCount = 0;
+	private lastChatStartLine = 0;
 	private lastRenderWidth = 0;
 	private scrollbarDragState: ChatScrollbarDragState | null = null;
 
@@ -133,15 +134,22 @@ export class ChatLayoutComponent implements Component {
 		const allLines = this.chatContent.render(contentWidth);
 		this.lastChatHeight = height;
 		this.lastChatLineCount = allLines.length;
-		const maxScrollOffset = Math.max(0, allLines.length - height);
-		if (this.scrollOffset > maxScrollOffset) {
-			this.scrollOffset = maxScrollOffset;
-		}
+		const maxStartLine = Math.max(0, allLines.length - height);
 		if (allLines.length <= height) {
+			this.viewportTopLine = null;
+			this.lastChatStartLine = 0;
 			return allLines;
 		}
 
-		const start = Math.max(0, allLines.length - height - this.scrollOffset);
+		let start = this.viewportTopLine ?? maxStartLine;
+		start = Math.max(0, Math.min(maxStartLine, start));
+		if (start >= maxStartLine) {
+			this.viewportTopLine = null;
+			start = maxStartLine;
+		} else {
+			this.viewportTopLine = start;
+		}
+		this.lastChatStartLine = start;
 		const visibleLines = allLines.slice(start, start + height);
 		const thumbSize = Math.max(1, Math.floor((height / allLines.length) * height));
 		const scrollableRange = Math.max(1, allLines.length - height);
@@ -155,8 +163,15 @@ export class ChatLayoutComponent implements Component {
 	}
 
 	private scroll(delta: number): void {
-		const maxScrollOffset = Math.max(0, this.lastChatLineCount - this.lastChatHeight);
-		this.scrollOffset = Math.max(0, Math.min(maxScrollOffset, this.scrollOffset + delta));
+		const maxStartLine = Math.max(0, this.lastChatLineCount - this.lastChatHeight);
+		if (maxStartLine === 0) {
+			this.viewportTopLine = null;
+			return;
+		}
+
+		const currentStartLine = this.viewportTopLine ?? maxStartLine;
+		const nextStartLine = Math.max(0, Math.min(maxStartLine, currentStartLine - delta));
+		this.viewportTopLine = nextStartLine >= maxStartLine ? null : nextStartLine;
 	}
 
 	private getScrollbarGeometry(): ChatScrollbarGeometry | null {
@@ -168,7 +183,7 @@ export class ChatLayoutComponent implements Component {
 		const maxScrollOffset = Math.max(0, this.lastChatLineCount - visibleHeight);
 		const thumbSize = Math.max(1, Math.floor((visibleHeight / this.lastChatLineCount) * visibleHeight));
 		const trackTravel = Math.max(0, visibleHeight - thumbSize);
-		const start = Math.max(0, this.lastChatLineCount - visibleHeight - this.scrollOffset);
+		const start = Math.max(0, Math.min(maxScrollOffset, this.lastChatStartLine));
 		const thumbStart = trackTravel === 0 ? 0 : Math.floor((start / Math.max(1, maxScrollOffset)) * trackTravel);
 
 		return { visibleHeight, maxScrollOffset, thumbStart, thumbSize, trackTravel };
@@ -204,13 +219,14 @@ export class ChatLayoutComponent implements Component {
 		if (isOnThumb) {
 			this.scrollbarDragState = {
 				startMouseRow: clickedRow,
-				startScrollOffset: this.scrollOffset,
+				startScrollOffset: this.lastChatStartLine,
 				geometry,
 			};
 			return true;
 		}
 
-		this.scrollOffset = this.scrollOffsetFromThumbRow(clickedRow, geometry);
+		const nextStartLine = this.scrollOffsetFromThumbRow(clickedRow, geometry);
+		this.viewportTopLine = nextStartLine >= geometry.maxScrollOffset ? null : nextStartLine;
 		this.scrollbarDragState = null;
 		return true;
 	}
@@ -226,10 +242,10 @@ export class ChatLayoutComponent implements Component {
 
 		const rowDelta = clickedRow - startMouseRow;
 		const scrollDelta = Math.round((rowDelta / geometry.trackTravel) * geometry.maxScrollOffset);
-		const nextOffset = Math.max(0, Math.min(geometry.maxScrollOffset, startScrollOffset - scrollDelta));
-		if (nextOffset === this.scrollOffset) return false;
+		const nextOffset = Math.max(0, Math.min(geometry.maxScrollOffset, startScrollOffset + scrollDelta));
+		if (nextOffset === this.lastChatStartLine) return false;
 
-		this.scrollOffset = nextOffset;
+		this.viewportTopLine = nextOffset >= geometry.maxScrollOffset ? null : nextOffset;
 		return true;
 	}
 
@@ -246,8 +262,7 @@ export class ChatLayoutComponent implements Component {
 		}
 
 		const thumbStart = Math.max(0, Math.min(geometry.trackTravel, clickedRow));
-		const start = Math.round((thumbStart / geometry.trackTravel) * geometry.maxScrollOffset);
-		return Math.max(0, Math.min(geometry.maxScrollOffset, geometry.maxScrollOffset - start));
+		return Math.round((thumbStart / geometry.trackTravel) * geometry.maxScrollOffset);
 	}
 
 	private renderComposer(width: number, terminalRows: number): string[] {
