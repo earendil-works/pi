@@ -22,11 +22,12 @@ export { Spacer } from "./components/spacer.js";
 export { Text } from "./components/text.js";
 export { TruncatedText } from "./components/truncated-text.js";
 export {
-	CURSOR_ACCENT_BG_ANSI,
-	CURSOR_ACCENT_FG_ANSI,
 	type CursorStyle,
 	DEFAULT_CURSOR_STYLE,
+	getCursorAccentBgAnsi,
+	getCursorAccentFgAnsi,
 	renderCursorCell,
+	setCursorAccentAnsi,
 } from "./cursor.js";
 // Markdown helpers
 export { containsMarkdownHtmlTokens } from "./markdown-html.js";

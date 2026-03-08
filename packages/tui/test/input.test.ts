@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { Input } from "../src/components/input.js";
-import { CURSOR_ACCENT_BG_ANSI, CURSOR_ACCENT_FG_ANSI } from "../src/cursor.js";
+import { getCursorAccentBgAnsi, getCursorAccentFgAnsi } from "../src/cursor.js";
 
 describe("Input component", () => {
 	it("renders an accent block cursor on a character", () => {
@@ -13,7 +13,7 @@ describe("Input component", () => {
 
 		const result = input.render(20).join("\n");
 
-		assert.ok(result.includes(`${CURSOR_ACCENT_FG_ANSI}${CURSOR_ACCENT_BG_ANSI}c`));
+		assert.ok(result.includes(`${getCursorAccentFgAnsi()}${getCursorAccentBgAnsi()}c`));
 		assert.ok(!result.includes("\x1b[7m"));
 		assert.ok(!result.includes("\x1b[4m"));
 	});
@@ -26,7 +26,7 @@ describe("Input component", () => {
 
 		const result = input.render(20).join("\n");
 
-		assert.ok(result.includes(`${CURSOR_ACCENT_FG_ANSI}${CURSOR_ACCENT_BG_ANSI} `));
+		assert.ok(result.includes(`${getCursorAccentFgAnsi()}${getCursorAccentBgAnsi()} `));
 		assert.ok(!result.includes("\x1b[7m"));
 		assert.ok(!result.includes("\x1b[4m"));
 	});

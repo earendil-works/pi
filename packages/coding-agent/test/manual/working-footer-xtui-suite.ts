@@ -31,7 +31,7 @@ function parseArgs(argv: string[]): SuiteOptions {
 	let muCommand = "npx tsx packages/coding-agent/src/cli.ts --no-session";
 	let cols = 100;
 	let rows = 28;
-	let prompt = "hello";
+	let prompt = "Count from 1 to 400, with each number on its own line.";
 	let outDir = mkdtempSync(join(tmpdir(), "mu-working-footer-xtui-"));
 
 	for (let index = 0; index < argv.length; index++) {
@@ -210,18 +210,18 @@ async function main(): Promise<void> {
 			`Idle layout should show workspace context below the composer; expected to find ${repoName}`,
 		);
 
-		xtui(["send", "--session", sessionName, "--keys", `${options.prompt}{Enter}`, "--wait", "1200"], repoRoot);
+		xtui(["send", "--session", sessionName, "--keys", `${options.prompt}{Enter}`, "--wait", "50"], repoRoot);
 
 		const activeRows = await waitForRows(
 			sessionName,
 			activePath,
 			repoRoot,
-			(rows) => rows.some((row) => row.includes("Working (")) && rows.some((row) => row.startsWith("╭─ ")),
+			(rows) => rows.some((row) => row.includes("Working")) && rows.some((row) => row.startsWith("╭─ ")),
 			30,
 			300,
 		);
 		const activeComposerTop = findComposerTop(activeRows);
-		const workingRows = findRowsContaining(activeRows, "Working (");
+		const workingRows = findRowsContaining(activeRows, "Working");
 		assert(workingRows.length > 0, "Expected an active snapshot containing a Working row");
 
 		if (options.expectation === "current") {

@@ -289,7 +289,11 @@ See the configuration structure above. Create `~/.mu/agent/models.json` with you
 
 ## Themes
 
-Mu supports customizable color themes for the TUI. Two built-in themes are available: `dark` (default) and `light`.
+Mu supports customizable color themes for the TUI. Three built-in themes are available: `nerv` (default), `dark`, and `light`.
+
+- `nerv` — the default Evangelion-inspired NERV console palette with true black backgrounds, phosphor green data, cyan structure lines, and orange institutional labels
+- `dark` — the existing saturated dark theme
+- `light` — a light-background variant
 
 ### Selecting a Theme
 
@@ -302,11 +306,11 @@ mu
 
 # Or edit ~/.mu/agent/settings.json
 {
-  "theme": "dark"  # or "light"
+  "theme": "nerv"  # or "dark" / "light"
 }
 ```
 
-On first run, Mu auto-detects your terminal background (dark/light) and selects an appropriate theme.
+On first run, Mu defaults to `nerv` unless you explicitly choose another theme.
 
 ### Custom Themes
 

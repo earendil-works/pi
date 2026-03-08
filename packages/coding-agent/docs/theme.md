@@ -166,9 +166,13 @@ This is useful for:
 
 ## Built-in Themes
 
-Pi comes with two built-in themes:
+Pi comes with three built-in themes:
 
-### `dark` (default)
+### `nerv` (default)
+
+The default theme. Inspired by the NERV operations console aesthetic: true black backgrounds, orange labels, phosphor-green data, cyan structural accents, and red reserved for alerts.
+
+### `dark`
 
 Optimized for dark terminal backgrounds with bright, saturated colors.
 
@@ -182,13 +186,13 @@ Themes are configured in the settings (accessible via `/settings`):
 
 ```json
 {
-  "theme": "dark"
+  "theme": "nerv"
 }
 ```
 
 Or use the `/theme` command interactively.
 
-On first run, Pi detects your terminal's background and sets a sensible default (`dark` or `light`).
+On first run, Pi defaults to `nerv` unless you explicitly choose another theme.
 
 ## Custom Themes
 

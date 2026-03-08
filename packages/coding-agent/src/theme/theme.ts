@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@kennyfrc/mu-tui";
+import { type EditorTheme, type MarkdownTheme, type SelectListTheme, setCursorAccentAnsi } from "@kennyfrc/mu-tui";
 import { type Static, Type } from "@sinclair/typebox";
 import { TypeCompiler } from "@sinclair/typebox/compiler";
 import chalk from "chalk";
@@ -251,6 +251,8 @@ function resolveThemeColors<T extends Record<string, ColorValue>>(
 // ============================================================================
 
 export class Theme {
+	private fgValues: Map<ThemeColor, string | number>;
+	private bgValues: Map<ThemeBg, string | number>;
 	private fgColors: Map<ThemeColor, string>;
 	private bgColors: Map<ThemeBg, string>;
 	private mode: ColorMode;
@@ -261,12 +263,16 @@ export class Theme {
 		mode: ColorMode,
 	) {
 		this.mode = mode;
+		this.fgValues = new Map();
 		this.fgColors = new Map();
 		for (const [key, value] of Object.entries(fgColors) as [ThemeColor, string | number][]) {
+			this.fgValues.set(key, value);
 			this.fgColors.set(key, fgAnsi(value, mode));
 		}
+		this.bgValues = new Map();
 		this.bgColors = new Map();
 		for (const [key, value] of Object.entries(bgColors) as [ThemeBg, string | number][]) {
+			this.bgValues.set(key, value);
 			this.bgColors.set(key, bgAnsi(value, mode));
 		}
 	}
@@ -307,6 +313,18 @@ export class Theme {
 		return ansi;
 	}
 
+	getBgAnsiFromThemeColor(color: ThemeColor): string {
+		const value = this.fgValues.get(color);
+		if (value === undefined) throw new Error(`Unknown theme color: ${color}`);
+		return bgAnsi(value, this.mode);
+	}
+
+	getFgAnsiFromThemeBg(color: ThemeBg): string {
+		const value = this.bgValues.get(color);
+		if (value === undefined) throw new Error(`Unknown theme background color: ${color}`);
+		return fgAnsi(value, this.mode);
+	}
+
 	getColorMode(): ColorMode {
 		return this.mode;
 	}
@@ -342,9 +360,11 @@ function getBuiltinThemes(): Record<string, ThemeJson> {
 	if (!BUILTIN_THEMES) {
 		const darkPath = path.join(__dirname, "dark.json");
 		const lightPath = path.join(__dirname, "light.json");
+		const nervPath = path.join(__dirname, "nerv.json");
 		BUILTIN_THEMES = {
 			dark: JSON.parse(fs.readFileSync(darkPath, "utf-8")) as ThemeJson,
 			light: JSON.parse(fs.readFileSync(lightPath, "utf-8")) as ThemeJson,
+			nerv: JSON.parse(fs.readFileSync(nervPath, "utf-8")) as ThemeJson,
 		};
 	}
 	return BUILTIN_THEMES;
@@ -430,7 +450,7 @@ function detectTerminalBackground(): "dark" | "light" {
 }
 
 function getDefaultTheme(): string {
-	return detectTerminalBackground();
+	return "nerv";
 }
 
 // ============================================================================
@@ -442,16 +462,22 @@ let currentThemeName: string | undefined;
 let themeWatcher: fs.FSWatcher | undefined;
 let onThemeChangeCallback: (() => void) | undefined;
 
+function applyThemeRuntimeBindings(): void {
+	setCursorAccentAnsi(theme.getFgAnsiFromThemeBg("toolPendingBg"), theme.getBgAnsiFromThemeColor("accent"));
+}
+
 export function initTheme(themeName?: string): void {
 	const name = themeName ?? getDefaultTheme();
 	currentThemeName = name;
 	try {
 		theme = loadTheme(name);
+		applyThemeRuntimeBindings();
 		startThemeWatcher();
 	} catch (error) {
 		// Theme is invalid - fall back to dark theme silently
 		currentThemeName = "dark";
 		theme = loadTheme("dark");
+		applyThemeRuntimeBindings();
 		// Don't start watcher for fallback theme
 	}
 }
@@ -460,12 +486,14 @@ export function setTheme(name: string): { success: boolean; error?: string } {
 	currentThemeName = name;
 	try {
 		theme = loadTheme(name);
+		applyThemeRuntimeBindings();
 		startThemeWatcher();
 		return { success: true };
 	} catch (error) {
 		// Theme is invalid - fall back to dark theme
 		currentThemeName = "dark";
 		theme = loadTheme("dark");
+		applyThemeRuntimeBindings();
 		// Don't start watcher for fallback theme
 		return {
 			success: false,
@@ -486,7 +514,7 @@ function startThemeWatcher(): void {
 	}
 
 	// Only watch if it's a custom theme (not built-in)
-	if (!currentThemeName || currentThemeName === "dark" || currentThemeName === "light") {
+	if (!currentThemeName || currentThemeName in getBuiltinThemes()) {
 		return;
 	}
 
@@ -506,6 +534,7 @@ function startThemeWatcher(): void {
 					try {
 						// Reload the theme
 						theme = loadTheme(currentThemeName!);
+						applyThemeRuntimeBindings();
 						// Notify callback (to invalidate UI)
 						if (onThemeChangeCallback) {
 							onThemeChangeCallback();
@@ -520,6 +549,7 @@ function startThemeWatcher(): void {
 					if (!fs.existsSync(themeFile)) {
 						currentThemeName = "dark";
 						theme = loadTheme("dark");
+						applyThemeRuntimeBindings();
 						if (themeWatcher) {
 							themeWatcher.close();
 							themeWatcher = undefined;
