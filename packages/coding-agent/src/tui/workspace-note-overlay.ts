@@ -80,7 +80,6 @@ export class WorkspaceNoteOverlayComponent implements Component {
 		this.editor.maxHeight = 8;
 		this.editor.showTopBorder = false;
 		this.editor.showBottomBorder = false;
-		this.editor.cursorStyle = "underline";
 		this.editor.setText(options.initialText);
 		this.editor.onSubmit = (text) => {
 			this.onSave(text);

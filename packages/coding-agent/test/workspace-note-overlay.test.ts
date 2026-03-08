@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CURSOR_ACCENT_BG_ANSI, CURSOR_ACCENT_FG_ANSI } from "@kennyfrc/mu-tui";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { getWorkspaceNotesFilePath, WorkspaceNoteStore } from "../src/notes/workspace-note-store.js";
 import { initTheme } from "../src/theme/theme.js";
@@ -71,6 +72,8 @@ describe("WorkspaceNoteOverlayComponent", () => {
 		expect(initialRender).not.toContain("✦");
 		expect(initialRender).not.toContain("░");
 		expect(initialLines.some((line) => /^│ ─+ │$/.test(line))).toBe(false);
+		expect(rawRender).toContain(`${CURSOR_ACCENT_FG_ANSI}${CURSOR_ACCENT_BG_ANSI}`);
+		expect(rawRender).not.toContain("\x1b[4m");
 		expect(rawRender).not.toContain("\x1b[7m");
 		expect(rawRender).not.toContain("\x1b[0m");
 		expect(
