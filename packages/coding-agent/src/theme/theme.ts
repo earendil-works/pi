@@ -610,7 +610,7 @@ export function getMarkdownTheme(): MarkdownTheme {
 export function getSelectListTheme(): SelectListTheme {
 	return {
 		selectedPrefix: (text: string) => theme.fg("accent", text),
-		selectedText: (text: string) => theme.fg("accent", text),
+		selectedText: (text: string) => `\x1b[1m${theme.fg("accent", text)}\x1b[22m`,
 		description: (text: string) => theme.fg("muted", text),
 		scrollInfo: (text: string) => theme.fg("muted", text),
 		noMatch: (text: string) => theme.fg("muted", text),
