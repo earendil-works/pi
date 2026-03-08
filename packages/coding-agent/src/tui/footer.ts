@@ -302,19 +302,15 @@ export class FooterComponent implements Component {
 			minimumLeftWidth: 14,
 		});
 
-		if (this.showExitHint) {
-			titleLine = theme.fg("text", truncatePlainTextEnd("Press Ctrl+C again to exit", Math.max(1, width)));
-		} else {
-			titleLine = this.title
-				? renderSplitLine({
-						width,
-						leftText: "",
-						rightText: this.title,
-						leftStyle: (text) => text,
-						rightStyle: (text) => theme.fg("dim", text),
-					})
-				: "";
-		}
+		titleLine = this.title
+			? renderSplitLine({
+					width,
+					leftText: "",
+					rightText: this.title,
+					leftStyle: (text) => text,
+					rightStyle: (text) => theme.fg("dim", text),
+				})
+			: "";
 
 		if (this.transientStatus) {
 			const workingLine = renderSplitLine({

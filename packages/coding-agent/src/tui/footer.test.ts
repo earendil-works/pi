@@ -84,4 +84,19 @@ describe("FooterComponent", () => {
 		expect(lines[0].startsWith(" ")).toBe(true);
 		expect(lines[1]).toContain("pi-mono");
 	});
+
+	it("renders the Ctrl+C exit hint only on the second footer row", () => {
+		const footer = new FooterComponent(createState());
+		footer.setTitle("Investigate footer layout overflow");
+		footer.setShowExitHint(true);
+
+		const lines = footer.render(100).map((line) => stripAnsi(line));
+		const hint = "Press Ctrl+C again to exit";
+		const hintCount = lines.reduce((total, line) => total + line.split(hint).length - 1, 0);
+
+		expect(lines).toHaveLength(2);
+		expect(lines[0]).not.toContain(hint);
+		expect(lines[1]).toContain(hint);
+		expect(hintCount).toBe(1);
+	});
 });
