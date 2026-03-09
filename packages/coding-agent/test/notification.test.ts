@@ -3,12 +3,20 @@ import { describe, expect, it } from "vitest";
 import { buildTerminalNotificationSequence, detectTerminalNotificationBackend } from "../src/notification.js";
 
 describe("notification terminal backends", () => {
-	it("prefers osc777 for Ghostty", () => {
-		expect(detectTerminalNotificationBackend({ TERM_PROGRAM: "ghostty" }, true)).toBe("osc777");
+	it("does not use terminal-native notifications for Ghostty", () => {
+		expect(detectTerminalNotificationBackend({ TERM_PROGRAM: "ghostty" }, true)).toBeNull();
 	});
 
 	it("uses osc9 for iTerm", () => {
 		expect(detectTerminalNotificationBackend({ ITERM_SESSION_ID: "abc" }, true)).toBe("osc9");
+	});
+
+	it("uses osc9 for WezTerm TERM fallback", () => {
+		expect(detectTerminalNotificationBackend({ TERM: "wezterm" }, true)).toBe("osc9");
+	});
+
+	it("uses osc9 for iTerm TERM_PROGRAM", () => {
+		expect(detectTerminalNotificationBackend({ TERM_PROGRAM: "iTerm.app" }, true)).toBe("osc9");
 	});
 
 	it("disables terminal notifications for non-tty output", () => {

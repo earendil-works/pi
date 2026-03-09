@@ -15,16 +15,16 @@ export function detectTerminalNotificationBackend(
 	if (!isTTY) return null;
 	if (env.WT_SESSION) return null;
 
-	if (env.TERM_PROGRAM === "ghostty" || env.TERM_PROGRAM === "WezTerm") {
-		return "osc777";
-	}
-
 	if (env.ITERM_SESSION_ID) {
 		return "osc9";
 	}
 
+	if (env.TERM_PROGRAM === "iTerm.app") {
+		return "osc9";
+	}
+
 	if (env.TERM === "wezterm" || env.TERM === "wezterm-mux") {
-		return "osc777";
+		return "osc9";
 	}
 
 	return null;
