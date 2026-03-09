@@ -121,24 +121,23 @@ function renderSplitLine(options: {
 	return leftStyle(fittedLeft) + " ".repeat(gap) + rightStyle(fittedRight);
 }
 
-function styleWorkingIndicator(indicator: string): string {
-	const accent = theme.getFgAnsi("accent");
-	const muted = theme.getFgAnsi("muted");
-	const dim = theme.getFgAnsi("dim");
-
+function styleWorkingIndicator(indicator: string, color: string): string {
 	return Array.from(indicator)
 		.map((char) => {
+			if (char.trim().length === 0) {
+				return char;
+			}
 			switch (char) {
 				case "█":
-					return `\x1b[1m${accent}${char}\x1b[22m\x1b[39m`;
+					return `\x1b[1m${color}${char}\x1b[22m\x1b[39m`;
 				case "▓":
-					return `${accent}${char}\x1b[39m`;
+					return `${color}${char}\x1b[39m`;
 				case "▒":
-					return `${muted}${char}\x1b[39m`;
+					return `\x1b[2m${color}${char}\x1b[22m\x1b[39m`;
 				case "░":
-					return `${dim}${char}\x1b[39m`;
+					return `\x1b[2m${color}${char}\x1b[22m\x1b[39m`;
 				default:
-					return char;
+					return `${color}${char}\x1b[39m`;
 			}
 		})
 		.join("");
@@ -365,6 +364,9 @@ export class FooterComponent implements Component {
 			: "";
 
 		if (this.transientStatus) {
+			const workingIndicatorColor = theme.getFgAnsi(
+				theme.getThinkingBorderThemeColor(this.state.thinkingLevel || "off"),
+			);
 			const workingLines = splitWorkingFooterMessage(this.transientStatus.message);
 			const workingLine = renderSplitLine({
 				width,
@@ -373,11 +375,11 @@ export class FooterComponent implements Component {
 				leftStyle: (text) => {
 					const spaceIndex = text.indexOf(" ");
 					if (spaceIndex === -1) {
-						return styleWorkingIndicator(text);
+						return styleWorkingIndicator(text, workingIndicatorColor);
 					}
 					const indicator = text.slice(0, spaceIndex);
 					const message = text.slice(spaceIndex + 1);
-					return `${styleWorkingIndicator(indicator)} ${theme.fg("muted", message)}`;
+					return `${styleWorkingIndicator(indicator, workingIndicatorColor)} ${theme.fg("muted", message)}`;
 				},
 				rightStyle: (text) => theme.fg("dim", text),
 				minimumLeftWidth: 12,

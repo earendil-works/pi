@@ -2,7 +2,7 @@ import type { AgentState } from "@kennyfrc/mu-agent-core";
 import { visibleWidth } from "@kennyfrc/mu-tui";
 import stripAnsi from "strip-ansi";
 import { describe, expect, it } from "vitest";
-import { initTheme } from "../theme/theme.js";
+import { initTheme, theme } from "../theme/theme.js";
 import { FooterComponent } from "./footer.js";
 
 initTheme("dark");
@@ -78,6 +78,25 @@ describe("FooterComponent", () => {
 		for (const line of lines) {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
+	});
+
+	it("uses the active thinking border color for the working indicator", () => {
+		const footer = new FooterComponent(createState());
+		footer.setTransientStatus({
+			indicator: "░▒▓█   ",
+			message: "Working (9s • 21 tps • esc to interrupt)",
+		});
+
+		const rendered = footer.render(100)[0] ?? "";
+		const expectedColor = theme.getFgAnsi(theme.getThinkingBorderThemeColor("medium"));
+
+		expect(rendered).toContain(`\x1b[2m${expectedColor}░\x1b[22m\x1b[39m`);
+		expect(rendered).toContain(`\x1b[2m${expectedColor}▒\x1b[22m\x1b[39m`);
+		expect(rendered).toContain(`${expectedColor}▓\x1b[39m`);
+		expect(rendered).toContain(`\x1b[1m${expectedColor}█\x1b[22m\x1b[39m`);
+		expect(rendered).not.toContain(`${theme.getFgAnsi("accent")}▓\x1b[39m`);
+		expect(rendered).not.toContain(`${theme.getFgAnsi("muted")}▒\x1b[39m`);
+		expect(rendered).not.toContain(`${theme.getFgAnsi("dim")}░\x1b[39m`);
 	});
 
 	it("keeps the title right-aligned when idle after working state clears", () => {
