@@ -1,6 +1,6 @@
 {
 	"name": "@kennyfrc/mu-ai",
-	"version": "0.24.75",
+	"version": "0.24.76",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
