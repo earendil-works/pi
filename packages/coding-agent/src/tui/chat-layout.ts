@@ -186,8 +186,10 @@ export class ChatLayoutComponent implements Component {
 	private renderChat(width: number, height: number): string[] {
 		const fullWidth = Math.max(1, width);
 		const frameWidth = Math.max(1, width - 1);
-		const fullWidthLines = this.chatContent.render(fullWidth);
-		if (fullWidthLines.length <= height) {
+		const contentWidth = Math.max(1, frameWidth - 1);
+		const contentWidthLines = this.chatContent.render(contentWidth);
+		if (contentWidthLines.length <= height) {
+			const fullWidthLines = this.chatContent.render(fullWidth);
 			this.lastChatLines = fullWidthLines;
 			this.lastChatHeight = height;
 			this.lastChatLineCount = fullWidthLines.length;
@@ -202,8 +204,7 @@ export class ChatLayoutComponent implements Component {
 			);
 		}
 
-		const contentWidth = Math.max(1, frameWidth - 1);
-		const allLines = this.chatContent.render(contentWidth);
+		const allLines = contentWidthLines;
 		this.lastChatLines = allLines;
 		this.lastChatHeight = height;
 		this.lastChatLineCount = allLines.length;

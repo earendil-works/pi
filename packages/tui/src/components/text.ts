@@ -10,10 +10,11 @@ export class Text implements Component {
 	private paddingY: number; // Top/bottom padding
 	private customBgFn?: (text: string) => string;
 
-	// Cache for rendered output
-	private cachedText?: string;
-	private cachedWidth?: number;
-	private cachedLines?: string[];
+	// Cache for rendered output across the two most recent widths.
+	private primaryCachedWidth?: number;
+	private primaryCachedLines?: string[];
+	private secondaryCachedWidth?: number;
+	private secondaryCachedLines?: string[];
 
 	constructor(text: string = "", paddingX: number = 1, paddingY: number = 1, customBgFn?: (text: string) => string) {
 		this.text = text;
@@ -25,37 +26,62 @@ export class Text implements Component {
 	setText(text: string): void {
 		if (text === this.text) return;
 		this.text = text;
-		this.cachedText = undefined;
-		this.cachedWidth = undefined;
-		this.cachedLines = undefined;
+		this.clearCache();
 	}
 
 	setCustomBgFn(customBgFn?: (text: string) => string): void {
 		if (customBgFn === this.customBgFn) return;
 		this.customBgFn = customBgFn;
-		this.cachedText = undefined;
-		this.cachedWidth = undefined;
-		this.cachedLines = undefined;
+		this.clearCache();
 	}
 
 	invalidate(): void {
-		this.cachedText = undefined;
-		this.cachedWidth = undefined;
-		this.cachedLines = undefined;
+		this.clearCache();
+	}
+
+	private clearCache(): void {
+		this.primaryCachedWidth = undefined;
+		this.primaryCachedLines = undefined;
+		this.secondaryCachedWidth = undefined;
+		this.secondaryCachedLines = undefined;
+	}
+
+	private getCached(width: number): string[] | undefined {
+		if (this.primaryCachedWidth === width && this.primaryCachedLines) {
+			return this.primaryCachedLines;
+		}
+		if (this.secondaryCachedWidth === width && this.secondaryCachedLines) {
+			const cachedLines = this.secondaryCachedLines;
+			this.secondaryCachedWidth = this.primaryCachedWidth;
+			this.secondaryCachedLines = this.primaryCachedLines;
+			this.primaryCachedWidth = width;
+			this.primaryCachedLines = cachedLines;
+			return cachedLines;
+		}
+		return undefined;
+	}
+
+	private setCached(width: number, lines: string[]): void {
+		if (this.primaryCachedWidth === width) {
+			this.primaryCachedLines = lines;
+			return;
+		}
+		this.secondaryCachedWidth = this.primaryCachedWidth;
+		this.secondaryCachedLines = this.primaryCachedLines;
+		this.primaryCachedWidth = width;
+		this.primaryCachedLines = lines;
 	}
 
 	render(width: number): string[] {
-		// Check cache
-		if (this.cachedLines && this.cachedText === this.text && this.cachedWidth === width) {
-			return this.cachedLines;
+		const cached = this.getCached(width);
+		if (cached) {
+			return cached;
 		}
 
 		// Don't render anything if there's no actual text
 		if (!this.text || this.text.trim() === "") {
 			const result: string[] = [];
-			this.cachedText = this.text;
-			this.cachedWidth = width;
-			this.cachedLines = result;
+			this.setCached(width, result);
 			return result;
 		}
 
@@ -98,10 +124,7 @@ export class Text implements Component {
 
 		const result = [...emptyLines, ...contentLines, ...emptyLines];
 
-		// Update cache
-		this.cachedText = this.text;
-		this.cachedWidth = width;
-		this.cachedLines = result;
+		this.setCached(width, result);
 
 		return result.length > 0 ? result : [""];
 	}

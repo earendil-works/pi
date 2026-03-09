@@ -60,10 +60,11 @@ export class Markdown implements Component {
 	private theme: MarkdownTheme;
 	private renderHtml: boolean;
 
-	// Cache for rendered output
-	private cachedText?: string;
-	private cachedWidth?: number;
-	private cachedLines?: string[];
+	// Cache for rendered output across the two most recent widths.
+	private primaryCachedWidth?: number;
+	private primaryCachedLines?: string[];
+	private secondaryCachedWidth?: number;
+	private secondaryCachedLines?: string[];
 
 	constructor(
 		text: string,
@@ -88,15 +89,42 @@ export class Markdown implements Component {
 	}
 
 	invalidate(): void {
-		this.cachedText = undefined;
-		this.cachedWidth = undefined;
-		this.cachedLines = undefined;
+		this.primaryCachedWidth = undefined;
+		this.primaryCachedLines = undefined;
+		this.secondaryCachedWidth = undefined;
+		this.secondaryCachedLines = undefined;
+	}
+
+	private getCached(width: number): string[] | undefined {
+		if (this.primaryCachedWidth === width && this.primaryCachedLines) {
+			return this.primaryCachedLines;
+		}
+		if (this.secondaryCachedWidth === width && this.secondaryCachedLines) {
+			const cachedLines = this.secondaryCachedLines;
+			this.secondaryCachedWidth = this.primaryCachedWidth;
+			this.secondaryCachedLines = this.primaryCachedLines;
+			this.primaryCachedWidth = width;
+			this.primaryCachedLines = cachedLines;
+			return cachedLines;
+		}
+		return undefined;
+	}
+
+	private setCached(width: number, lines: string[]): void {
+		if (this.primaryCachedWidth === width) {
+			this.primaryCachedLines = lines;
+			return;
+		}
+		this.secondaryCachedWidth = this.primaryCachedWidth;
+		this.secondaryCachedLines = this.primaryCachedLines;
+		this.primaryCachedWidth = width;
+		this.primaryCachedLines = lines;
 	}
 
 	render(width: number): string[] {
-		// Check cache
-		if (this.cachedLines && this.cachedText === this.text && this.cachedWidth === width) {
-			return this.cachedLines;
+		const cached = this.getCached(width);
+		if (cached) {
+			return cached;
 		}
 
 		// Calculate available width for content (subtract horizontal padding)
@@ -105,10 +133,7 @@ export class Markdown implements Component {
 		// Don't render anything if there's no actual text
 		if (!this.text || this.text.trim() === "") {
 			const result: string[] = [];
-			// Update cache
-			this.cachedText = this.text;
-			this.cachedWidth = width;
-			this.cachedLines = result;
+			this.setCached(width, result);
 			return result;
 		}
 
@@ -164,10 +189,7 @@ export class Markdown implements Component {
 		// Combine top padding, content, and bottom padding
 		const result = [...emptyLines, ...contentLines, ...emptyLines];
 
-		// Update cache
-		this.cachedText = this.text;
-		this.cachedWidth = width;
-		this.cachedLines = result;
+		this.setCached(width, result);
 
 		return result.length > 0 ? result : [""];
 	}

@@ -35,4 +35,20 @@ describe("Render caching", () => {
 		const lines2 = t.render(20);
 		assert.strictEqual(lines2, lines1);
 	});
+
+	it("Text reuses cached output when revisiting a previous width", () => {
+		const t = new Text("hello world repeated to wrap across multiple widths", 0, 0);
+		const lines20 = t.render(20);
+		t.render(18);
+		const lines20Again = t.render(20);
+		assert.strictEqual(lines20Again, lines20);
+	});
+
+	it("Markdown reuses cached output when revisiting a previous width", () => {
+		const md = new Markdown("- hello world\n- repeated markdown content", 0, 0, plainTheme);
+		const lines20 = md.render(20);
+		md.render(18);
+		const lines20Again = md.render(20);
+		assert.strictEqual(lines20Again, lines20);
+	});
 });

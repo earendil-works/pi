@@ -13,6 +13,19 @@ class StaticComponent {
 	handleInput(_data: string): void {}
 }
 
+class CountingComponent {
+	public readonly widths: number[] = [];
+
+	constructor(private readonly lines: string[]) {}
+
+	render(width: number): string[] {
+		this.widths.push(width);
+		return [...this.lines];
+	}
+
+	handleInput(_data: string): void {}
+}
+
 class SinkInput {
 	public readonly seen: string[] = [];
 
@@ -85,5 +98,26 @@ describe("ChatLayoutComponent chat scrollbar", () => {
 		const afterDrag = topChatLine(layout);
 		assert.notEqual(afterDrag, beforeDrag, "expected dragging the chat scrollbar thumb to change the viewport");
 		assert.deepEqual(sink.seen, [], "expected chat scrollbar drag events not to leak to the editor input target");
+	});
+
+	it("renders overflowing chat content once at the scrollbar content width", () => {
+		const chatContent = new CountingComponent(makeChatLines(60));
+		const layout = new ChatLayoutComponent({
+			chatContent: chatContent as never,
+			composerContent: new StaticComponent(["composer"]) as never,
+			inputTarget: new SinkInput() as never,
+			footer: new StaticComponent(["footer a", "footer b"]) as never,
+			getComposerLabel: () => "label",
+			getComposerBorderColor: () => (text: string) => text,
+			updateComposerViewport: () => {},
+		});
+
+		layout.render(80);
+
+		assert.deepEqual(
+			chatContent.widths,
+			[78],
+			"expected overflowing chats to render once using the scrollbar content width",
+		);
 	});
 });
