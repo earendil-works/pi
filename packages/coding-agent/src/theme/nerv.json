@@ -3,8 +3,8 @@
 	"name": "nerv",
 	"vars": {
 		"void": "#000000",
-		"voidWarm": "#0A0A08",
-		"voidPanel": "#111110",
+		"voidWarm": "#111113",
+		"voidPanel": "#111113",
 		"nervOrange": "#D9924A",
 		"nervOrangeDim": "#B6783C",
 		"nervOrangeHot": "#E6B36B",
