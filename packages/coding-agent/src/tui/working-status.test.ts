@@ -29,16 +29,16 @@ function baseAssistantMessage(): AssistantMessage {
 
 describe("working-status", () => {
 	it("formats the initial label with 0 tps", () => {
-		expect(formatWorkingStatus(0, 0)).toBe("Working (0s • 0 tps • esc to interrupt)");
+		expect(formatWorkingStatus(0, 0)).toBe("Working (0s • 0 tps • esc→stop)");
 	});
 
 	it("formats elapsed time and rounded tps", () => {
-		expect(formatWorkingStatus(88_000, 2_112)).toBe("Working (1m 28s • 24 tps • esc to interrupt)");
+		expect(formatWorkingStatus(88_000, 2_112)).toBe("Working (1m 28s • 24 tps • esc→stop)");
 	});
 
 	it("uses subsecond elapsed time for working tps", () => {
-		expect(formatWorkingStatus(500, 10)).toBe("Working (0s • 20 tps • esc to interrupt)");
-		expect(formatWorkingStatus(1_500, 10)).toBe("Working (1s • 7 tps • esc to interrupt)");
+		expect(formatWorkingStatus(500, 10)).toBe("Working (0s • 20 tps • esc→stop)");
+		expect(formatWorkingStatus(1_500, 10)).toBe("Working (1s • 7 tps • esc→stop)");
 	});
 
 	it("formats the done label with elapsed time and rounded tps", () => {
@@ -50,7 +50,7 @@ describe("working-status", () => {
 	});
 
 	it("formats the working label with average latency", () => {
-		expect(formatWorkingStatus(28_000, 1_176, 3_800)).toBe("Working (28s • 42 tps • 3.8s lat. • esc to interrupt)");
+		expect(formatWorkingStatus(28_000, 1_176, 3_800)).toBe("Working (28s • 42 tps • 3.8s lat. • esc→stop)");
 	});
 
 	it("formats the done label with average latency", () => {
@@ -58,7 +58,7 @@ describe("working-status", () => {
 	});
 
 	it("keeps working elapsed time independent from TPS elapsed time", () => {
-		expect(formatWorkingStatus(5_000, 40, undefined, 2_000)).toBe("Working (5s • 20 tps • esc to interrupt)");
+		expect(formatWorkingStatus(5_000, 40, undefined, 2_000)).toBe("Working (5s • 20 tps • esc→stop)");
 	});
 
 	it("keeps done elapsed time independent from TPS elapsed time", () => {

@@ -38,7 +38,7 @@ describe("FooterComponent", () => {
 		footer.setTitle("Investigate footer layout overflow");
 		footer.setTransientStatus({
 			indicator: "░▒▓█   ",
-			message: "Working (9s • 21 tps • 2.3s lat. • esc to interrupt)",
+			message: "Working (9s • 21 tps • 2.3s lat. • esc→stop)",
 		});
 
 		const lines = footer.render(120).map((line) => stripAnsi(line));
@@ -46,7 +46,7 @@ describe("FooterComponent", () => {
 		expect(lines).toHaveLength(2);
 		expect(lines[0]).toContain("Working • 9s");
 		expect(lines[0]).toContain("Investigate footer layout overflow");
-		expect(lines[1]).toContain("21 tps • 2.3s lat. • esc to interrupt");
+		expect(lines[1]).toContain("21 tps • 2.3s lat. • esc→stop");
 		expect(lines[1]).toContain("pi-mono");
 	});
 
@@ -54,14 +54,14 @@ describe("FooterComponent", () => {
 		const footer = new FooterComponent(createState());
 		footer.setTransientStatus({
 			indicator: "░▒▓█   ",
-			message: "Working (9s • 21 tps • esc to interrupt)",
+			message: "Working (9s • 21 tps • esc→stop)",
 		});
 
 		const lines = footer.render(100).map((line) => stripAnsi(line));
 
 		expect(lines).toHaveLength(2);
 		expect(lines[0]).toContain("Working • 9s");
-		expect(lines[1]).toContain("21 tps • esc to interrupt");
+		expect(lines[1]).toContain("21 tps • esc→stop");
 	});
 
 	it("keeps both footer rows within the available width", () => {
@@ -69,7 +69,7 @@ describe("FooterComponent", () => {
 		footer.setTitle("A very long footer title that should be truncated before it collides with the working status");
 		footer.setTransientStatus({
 			indicator: "░▒▓█   ",
-			message: "Working (999s • 999 tps • 99.9s lat. • esc to interrupt)",
+			message: "Working (999s • 999 tps • 99.9s lat. • esc→stop)",
 		});
 
 		const width = 56;
@@ -84,7 +84,7 @@ describe("FooterComponent", () => {
 		const footer = new FooterComponent(createState());
 		footer.setTransientStatus({
 			indicator: "░▒▓█   ",
-			message: "Working (9s • 21 tps • esc to interrupt)",
+			message: "Working (9s • 21 tps • esc→stop)",
 		});
 
 		const rendered = footer.render(100)[0] ?? "";
@@ -104,7 +104,7 @@ describe("FooterComponent", () => {
 		footer.setTitle("Investigate footer layout overflow");
 		footer.setTransientStatus({
 			indicator: "░▒▓█   ",
-			message: "Working (9s • 21 tps • 2.3s lat. • esc to interrupt)",
+			message: "Working (9s • 21 tps • 2.3s lat. • esc→stop)",
 		});
 
 		footer.setTransientStatus(null);

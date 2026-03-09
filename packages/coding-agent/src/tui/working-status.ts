@@ -31,8 +31,8 @@ export function formatWorkingStatus(
 	const tps = formatTps(tokensPerSecondElapsedMs, estimatedOutputTokens);
 	const avgLatency = formatAverageLatency(averageLatencyMs);
 	return avgLatency === null
-		? `Working (${elapsed} • ${tps} tps • esc to interrupt)`
-		: `Working (${elapsed} • ${tps} tps • ${avgLatency} lat. • esc to interrupt)`;
+		? `Working (${elapsed} • ${tps} tps • esc→stop)`
+		: `Working (${elapsed} • ${tps} tps • ${avgLatency} lat. • esc→stop)`;
 }
 
 export function formatDoneStatus(
