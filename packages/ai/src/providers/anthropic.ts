@@ -638,19 +638,24 @@ function buildParams(
 	}
 
 	// Configure thinking mode: adaptive (Opus 4.6 and Sonnet 4.6) or budget-based (older models)
-	if (options?.thinkingEnabled && model.reasoning) {
-		if (supportsAdaptiveThinking(model.id)) {
-			// Adaptive thinking: Claude decides when and how much to think
-			params.thinking = { type: "adaptive" };
-			if (options.effort) {
-				params.output_config = { effort: options.effort };
+	if (model.reasoning) {
+		if (options?.thinkingEnabled) {
+			if (supportsAdaptiveThinking(model.id)) {
+				// Adaptive thinking: Claude decides when and how much to think
+				params.thinking = { type: "adaptive" };
+				if (options.effort) {
+					params.output_config = { effort: options.effort };
+				}
+			} else {
+				// Budget-based thinking for older models
+				params.thinking = {
+					type: "enabled",
+					budget_tokens: options.thinkingBudgetTokens || 1024,
+				};
 			}
 		} else {
-			// Budget-based thinking for older models
-			params.thinking = {
-				type: "enabled",
-				budget_tokens: options.thinkingBudgetTokens || 1024,
-			};
+			// When thinking is disabled but model supports reasoning, explicitly disable it
+			params.thinking = { type: "disabled" };
 		}
 	}
 
