@@ -32,5 +32,9 @@ export const defaultMarkdownTheme: MarkdownTheme = {
 
 export const defaultEditorTheme: EditorTheme = {
 	borderColor: (text: string) => chalk.dim(text),
+	cursorAccentAnsi: {
+		fgAnsi: "\x1b[38;5;15m",
+		bgAnsi: "\x1b[48;5;27m",
+	},
 	selectList: defaultSelectListTheme,
 };

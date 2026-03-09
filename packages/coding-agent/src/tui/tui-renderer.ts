@@ -136,7 +136,7 @@ import { OAuthSelectorComponent } from "./oauth-selector.js";
 import { QueueModeSelectorComponent } from "./queue-mode-selector.js";
 import { formatQueuedMessagePreview } from "./queued-message-preview.js";
 import { QueuedMessagePreviewComponent } from "./queued-message-preview-component.js";
-import { SlashCommandOverlayComponent } from "./slash-command-overlay.js";
+import { getSlashCommandQueueKind, SlashCommandOverlayComponent } from "./slash-command-overlay.js";
 import { StreamingAssistantMessageComponent } from "./streaming-assistant-message.js";
 import { SubscriptionSelectorComponent } from "./subscription-selector.js";
 import { ThemeSelectorComponent } from "./theme-selector.js";
@@ -1824,11 +1824,13 @@ export class TuiRenderer {
 	private updateEditorBorderColor(): void {
 		if (this.editor.bashMode) {
 			this.editor.borderColor = (str: string) => theme.fg("warning", str);
+			this.editor.cursorAccentAnsi = theme.getCursorAccentAnsiForThemeColor("warning");
 			this.ui.requestRender();
 			return;
 		}
 		const level = this.agent.state.thinkingLevel || "off";
 		this.editor.borderColor = theme.getThinkingBorderColor(level);
+		this.editor.cursorAccentAnsi = theme.getCursorAccentAnsiForThemeColor(theme.getThinkingBorderThemeColor(level));
 		this.ui.requestRender();
 	}
 
@@ -3017,9 +3019,9 @@ export class TuiRenderer {
 		this.editor.setText("");
 		this.slashCommandOverlay = new SlashCommandOverlayComponent({
 			getCommands: () => this.getAllSlashCommands(),
-			onSelect: (command) => {
+			onSelect: (command, trigger) => {
 				this.clearDialogOverlay();
-				void this.handleEditorTextSubmission(`/${command.name}`, "by-end");
+				void this.handleEditorTextSubmission(`/${command.name}`, getSlashCommandQueueKind(trigger));
 			},
 			onCancel: () => this.clearDialogOverlay(),
 			onChange: () => {

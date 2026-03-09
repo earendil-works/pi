@@ -22,6 +22,7 @@ export { Spacer } from "./components/spacer.js";
 export { Text } from "./components/text.js";
 export { TruncatedText } from "./components/truncated-text.js";
 export {
+	type CursorAccentAnsi,
 	type CursorStyle,
 	DEFAULT_CURSOR_STYLE,
 	getCursorAccentBgAnsi,

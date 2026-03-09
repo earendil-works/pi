@@ -2,7 +2,13 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { type EditorTheme, type MarkdownTheme, type SelectListTheme, setCursorAccentAnsi } from "@kennyfrc/mu-tui";
+import {
+	type CursorAccentAnsi,
+	type EditorTheme,
+	type MarkdownTheme,
+	type SelectListTheme,
+	setCursorAccentAnsi,
+} from "@kennyfrc/mu-tui";
 import { type Static, Type } from "@sinclair/typebox";
 import { TypeCompiler } from "@sinclair/typebox/compiler";
 import chalk from "chalk";
@@ -330,23 +336,35 @@ export class Theme {
 	}
 
 	getThinkingBorderColor(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh"): (str: string) => string {
+		const color = this.getThinkingBorderThemeColor(level);
+		return (str: string) => this.fg(color, str);
+	}
+
+	getThinkingBorderThemeColor(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh"): ThemeColor {
 		// Map thinking levels to dedicated theme colors
 		switch (level) {
 			case "off":
-				return (str: string) => this.fg("thinkingOff", str);
+				return "thinkingOff";
 			case "minimal":
-				return (str: string) => this.fg("thinkingMinimal", str);
+				return "thinkingMinimal";
 			case "low":
-				return (str: string) => this.fg("thinkingLow", str);
+				return "thinkingLow";
 			case "medium":
-				return (str: string) => this.fg("thinkingMedium", str);
+				return "thinkingMedium";
 			case "high":
-				return (str: string) => this.fg("thinkingHigh", str);
+				return "thinkingHigh";
 			case "xhigh":
-				return (str: string) => this.fg("thinkingXhigh", str);
+				return "thinkingXhigh";
 			default:
-				return (str: string) => this.fg("thinkingOff", str);
+				return "thinkingOff";
 		}
+	}
+
+	getCursorAccentAnsiForThemeColor(color: ThemeColor): CursorAccentAnsi {
+		return {
+			fgAnsi: this.getFgAnsiFromThemeBg("toolPendingBg"),
+			bgAnsi: this.getBgAnsiFromThemeColor(color),
+		};
 	}
 }
 
@@ -650,6 +668,7 @@ export function getSelectListTheme(): SelectListTheme {
 export function getEditorTheme(): EditorTheme {
 	return {
 		borderColor: (text: string) => theme.fg("borderMuted", text),
+		cursorAccentAnsi: theme.getCursorAccentAnsiForThemeColor("accent"),
 		selectList: getSelectListTheme(),
 	};
 }

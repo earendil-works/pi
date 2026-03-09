@@ -5,6 +5,18 @@ import { getCursorAccentBgAnsi, getCursorAccentFgAnsi } from "../src/cursor.js";
 import { defaultEditorTheme } from "./test-themes.js";
 
 describe("Editor component", () => {
+	it("renders the cursor with the editor instance accent colors", () => {
+		const editor = new Editor(defaultEditorTheme);
+		editor.handleInput("a");
+
+		const rendered = editor.render(10).join("\n");
+
+		assert.ok(rendered.includes("\x1b[38;5;15m"));
+		assert.ok(rendered.includes("\x1b[48;5;27m"));
+		assert.ok(!rendered.includes(getCursorAccentBgAnsi()));
+		assert.ok(!rendered.includes(getCursorAccentFgAnsi()));
+	});
+
 	describe("Unicode text editing behavior", () => {
 		it("inserts mixed ASCII, umlauts, and emojis as literal text", () => {
 			const editor = new Editor(defaultEditorTheme);
@@ -657,7 +669,7 @@ describe("Editor component", () => {
 			assert.match(
 				result,
 				new RegExp(
-					`${getCursorAccentFgAnsi().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${getCursorAccentBgAnsi().replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}o`,
+					`${defaultEditorTheme.cursorAccentAnsi!.fgAnsi.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}${defaultEditorTheme.cursorAccentAnsi!.bgAnsi.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}o`,
 				),
 			);
 			assert.ok(!result.includes("\x1b[7m"));
@@ -670,7 +682,11 @@ describe("Editor component", () => {
 
 			const result = editor.render(20).join("\n");
 
-			assert.ok(result.includes(`${getCursorAccentFgAnsi()}${getCursorAccentBgAnsi()} `));
+			assert.ok(
+				result.includes(
+					`${defaultEditorTheme.cursorAccentAnsi!.fgAnsi}${defaultEditorTheme.cursorAccentAnsi!.bgAnsi} `,
+				),
+			);
 			assert.ok(!result.includes("\x1b[4m \x1b[24m"));
 			assert.ok(!result.includes("\x1b[7m \x1b[27m"));
 		});

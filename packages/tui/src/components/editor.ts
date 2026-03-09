@@ -1,5 +1,5 @@
 import type { AutocompleteProvider, CombinedAutocompleteProvider } from "../autocomplete.js";
-import { type CursorStyle, DEFAULT_CURSOR_STYLE, renderCursorCell } from "../cursor.js";
+import { type CursorAccentAnsi, type CursorStyle, DEFAULT_CURSOR_STYLE, renderCursorCell } from "../cursor.js";
 import type { Component } from "../tui.js";
 import { visibleWidth } from "../utils.js";
 import { SelectList, type SelectListTheme } from "./select-list.js";
@@ -43,6 +43,7 @@ interface ScrollbarDragState {
 
 export interface EditorTheme {
 	borderColor: (str: string) => string;
+	cursorAccentAnsi?: CursorAccentAnsi;
 	selectList: SelectListTheme;
 }
 
@@ -61,6 +62,7 @@ export class Editor implements Component {
 	public showTopBorder: boolean = true;
 	public showBottomBorder: boolean = true;
 	public cursorStyle: CursorStyle = DEFAULT_CURSOR_STYLE;
+	public cursorAccentAnsi: CursorAccentAnsi | undefined;
 
 	private autocompleteProvider?: AutocompleteProvider;
 	private autocompleteList?: SelectList;
@@ -91,10 +93,11 @@ export class Editor implements Component {
 	constructor(theme: EditorTheme) {
 		this.theme = theme;
 		this.borderColor = theme.borderColor;
+		this.cursorAccentAnsi = theme.cursorAccentAnsi;
 	}
 
 	private renderCursor(text: string): string {
-		return renderCursorCell(text, this.cursorStyle);
+		return renderCursorCell(text, this.cursorStyle, this.cursorAccentAnsi);
 	}
 
 	setAutocompleteProvider(provider: AutocompleteProvider): void {
