@@ -332,7 +332,8 @@ export class TuiRenderer {
 
 	private unsubscribe?: () => void;
 
-	// Timer tracking for assistant-active duration only (excludes network/tool latency)
+	// Timer tracking for overall run duration and assistant-active duration.
+	private workingStartTime: number | null = null;
 	private agentStartTime: number | null = null;
 	private accumulatedAssistantActiveMs = 0;
 	private timerIntervalId: NodeJS.Timeout | null = null;
@@ -889,8 +890,13 @@ export class TuiRenderer {
 	}
 
 	private buildWorkingStatusMessage(): string {
-		const elapsedMs = this.getAssistantActiveMs();
-		return formatWorkingStatus(elapsedMs, this.getEstimatedOutputTokens(), this.getAverageLatencyMs());
+		const elapsedMs = this.getWorkingElapsedMs();
+		return formatWorkingStatus(
+			elapsedMs,
+			this.getEstimatedOutputTokens(),
+			this.getAverageLatencyMs(),
+			this.getAssistantActiveMs(),
+		);
 	}
 
 	private setWorkingStatusFooterLine(): void {
@@ -914,6 +920,13 @@ export class TuiRenderer {
 			return 0;
 		}
 		return Math.round(this.accumulatedLatencyMs / this.latencyGapCount);
+	}
+
+	private getWorkingElapsedMs(now: number = Date.now()): number {
+		if (this.workingStartTime === null) {
+			return 0;
+		}
+		return now - this.workingStartTime;
 	}
 
 	private getAssistantActiveMs(now: number = Date.now()): number {
@@ -974,7 +987,9 @@ export class TuiRenderer {
 				this.statusContainer.clear();
 				this.clearWorkingStatusFooterLine();
 
-				// Start status in a waiting state; actual timing begins when the assistant starts responding.
+				// Start status immediately so elapsed time covers the full run, including thinking,
+				// tool execution, tool results, and assistant response streaming.
+				this.workingStartTime = Date.now();
 				this.agentStartTime = null;
 				this.accumulatedAssistantActiveMs = 0;
 				this.completedEstimatedOutputTokens = 0;
@@ -1300,6 +1315,7 @@ export class TuiRenderer {
 						clearInterval(this.timerIntervalId);
 						this.timerIntervalId = null;
 					}
+					this.workingStartTime = null;
 					this.agentStartTime = null;
 					this.accumulatedAssistantActiveMs = 0;
 					this.completedEstimatedOutputTokens = 0;
@@ -1313,14 +1329,20 @@ export class TuiRenderer {
 				}
 
 				// Calculate elapsed time before clearing timer
-				const elapsedMs = this.getAssistantActiveMs();
-				const doneLabel = formatDoneStatus(elapsedMs, this.getEstimatedOutputTokens(), this.getAverageLatencyMs());
+				const elapsedMs = this.getWorkingElapsedMs();
+				const doneLabel = formatDoneStatus(
+					elapsedMs,
+					this.getEstimatedOutputTokens(),
+					this.getAverageLatencyMs(),
+					this.getAssistantActiveMs(),
+				);
 
 				// Stop timer interval
 				if (this.timerIntervalId) {
 					clearInterval(this.timerIntervalId);
 					this.timerIntervalId = null;
 				}
+				this.workingStartTime = null;
 				this.agentStartTime = null;
 				this.accumulatedAssistantActiveMs = 0;
 				this.completedEstimatedOutputTokens = 0;
@@ -1830,7 +1852,7 @@ export class TuiRenderer {
 		}
 		const level = this.agent.state.thinkingLevel || "off";
 		this.editor.borderColor = theme.getThinkingBorderColor(level);
-		this.editor.cursorAccentAnsi = theme.getCursorAccentAnsiForThemeColor(theme.getThinkingBorderThemeColor(level));
+		this.editor.cursorAccentAnsi = theme.getCursorAccentAnsiForThemeColor("accent");
 		this.ui.requestRender();
 	}
 
