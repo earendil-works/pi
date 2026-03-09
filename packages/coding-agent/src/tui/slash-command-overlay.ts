@@ -1,6 +1,12 @@
 import type { Component, SlashCommand } from "@kennyfrc/mu-tui";
 import { visibleWidth } from "@kennyfrc/mu-tui";
 
+export type SlashCommandSelectTrigger = "enter" | "tab";
+
+export function getSlashCommandQueueKind(trigger: SlashCommandSelectTrigger): "by-end" | "next" {
+	return trigger === "enter" ? "next" : "by-end";
+}
+
 function truncateToWidth(text: string, width: number): string {
 	if (visibleWidth(text) <= width) {
 		return text;
@@ -25,14 +31,14 @@ function padToWidth(text: string, width: number): string {
 
 interface SlashCommandOverlayOptions {
 	getCommands: () => SlashCommand[];
-	onSelect: (command: SlashCommand) => void;
+	onSelect: (command: SlashCommand, trigger: SlashCommandSelectTrigger) => void;
 	onCancel: () => void;
 	onChange?: () => void;
 }
 
 export class SlashCommandOverlayComponent implements Component {
 	private readonly getCommands: () => SlashCommand[];
-	private readonly onSelect: (command: SlashCommand) => void;
+	private readonly onSelect: (command: SlashCommand, trigger: SlashCommandSelectTrigger) => void;
 	private readonly onCancel: () => void;
 	private readonly onChange?: () => void;
 	private query = "";
@@ -70,7 +76,7 @@ export class SlashCommandOverlayComponent implements Component {
 		if (data === "\r" || data === "\t") {
 			const command = this.getFilteredCommands()[this.selectedIndex];
 			if (command) {
-				this.onSelect(command);
+				this.onSelect(command, data === "\r" ? "enter" : "tab");
 			}
 			return;
 		}
