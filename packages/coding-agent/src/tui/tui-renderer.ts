@@ -170,6 +170,25 @@ function stripUserMessageTimePrefix(text: string): string {
 	return text.replace(USER_MESSAGE_TIME_PREFIX_PATTERN, "");
 }
 
+class ToastOverlayComponent implements Component {
+	constructor(private readonly message: string) {}
+
+	render(width: number): string[] {
+		const border = (text: string) => theme.fg("borderMuted", text);
+		const bg = (text: string) => theme.bg("userMessageBg", text);
+		const content = theme.bold(theme.fg("accent", this.message));
+		const contentWidth = Math.max(1, width - 4);
+		const paddedContent = content + " ".repeat(Math.max(0, contentWidth - visibleWidth(content)));
+		return [
+			bg(`${border("╭")}${border("─".repeat(width - 2))}${border("╮")}`),
+			bg(`${border("│")} ${paddedContent} ${border("│")}`),
+			bg(`${border("╰")}${border("─".repeat(width - 2))}${border("╯")}`),
+		];
+	}
+
+	invalidate(): void {}
+}
+
 type HandoffToolResult = Awaited<ReturnType<typeof handoffTool.execute>>;
 
 export function shouldStartAssistantActiveTiming(event: AssistantMessageEvent): boolean {
@@ -337,6 +356,9 @@ export class TuiRenderer {
 	private agentStartTime: number | null = null;
 	private accumulatedAssistantActiveMs = 0;
 	private timerIntervalId: NodeJS.Timeout | null = null;
+	private transcriptCopyToastTimer: NodeJS.Timeout | null = null;
+	private transcriptCopyToastToken = 0;
+	private transcriptCopyToastVisible = false;
 	private completedEstimatedOutputTokens = 0;
 	private currentAssistantEstimatedOutputTokens = 0;
 	private pendingLatencyStartTime: number | null = null;
@@ -399,6 +421,7 @@ export class TuiRenderer {
 			composerContent: this.editorContainer,
 			inputTarget: this.editor,
 			interceptInput: (data) => this.interceptComposerInput(data),
+			onTranscriptSelectionCopy: (text) => this.handleTranscriptSelectionCopy(text),
 			footer: this.footer,
 			getComposerLabel: () => formatComposerStatusLabel(this.agent.state, this.editor.bashMode),
 			getComposerMetaLabel: () => this.getComposerMetaLabel(),
@@ -2996,6 +3019,12 @@ export class TuiRenderer {
 			marginBottom?: number;
 		} = {},
 	): void {
+		if (this.transcriptCopyToastTimer) {
+			clearTimeout(this.transcriptCopyToastTimer);
+			this.transcriptCopyToastTimer = null;
+		}
+		this.transcriptCopyToastVisible = false;
+		this.transcriptCopyToastToken++;
 		this.activeDialogOverlay = new DialogOverlayComponent({
 			title,
 			body,
@@ -3562,6 +3591,58 @@ export class TuiRenderer {
 		process.nextTick(() => {
 			this.ui.enterSelectionMode();
 		});
+	}
+
+	private handleTranscriptSelectionCopy(text: string): void {
+		if (!text.trim()) {
+			return;
+		}
+
+		try {
+			copyToClipboard(text);
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+			return;
+		}
+
+		this.showTranscriptCopyToast();
+	}
+
+	private showTranscriptCopyToast(): void {
+		if (this.activeDialogOverlay) {
+			return;
+		}
+
+		if (this.transcriptCopyToastTimer) {
+			clearTimeout(this.transcriptCopyToastTimer);
+			this.transcriptCopyToastTimer = null;
+		}
+
+		const toastToken = ++this.transcriptCopyToastToken;
+		const message = "Text Copied to Clipboard";
+		const toast = new ToastOverlayComponent(message);
+		const width = visibleWidth(message) + 4;
+
+		this.transcriptCopyToastVisible = true;
+		this.ui.setOverlay(toast, {
+			width,
+			minWidth: width,
+			maxWidth: width,
+			marginX: 0,
+			marginTop: 1,
+			marginBottom: 9999,
+		});
+		this.ui.requestRender();
+
+		this.transcriptCopyToastTimer = setTimeout(() => {
+			if (this.transcriptCopyToastToken !== toastToken || !this.transcriptCopyToastVisible) {
+				return;
+			}
+			this.transcriptCopyToastVisible = false;
+			this.transcriptCopyToastTimer = null;
+			this.ui.clearOverlay();
+			this.ui.requestRender();
+		}, 1200);
 	}
 
 	private showSelectionModeIndicator(enabled: boolean): void {
@@ -4845,6 +4926,10 @@ export class TuiRenderer {
 		if (this.timerIntervalId) {
 			clearInterval(this.timerIntervalId);
 			this.timerIntervalId = null;
+		}
+		if (this.transcriptCopyToastTimer) {
+			clearTimeout(this.transcriptCopyToastTimer);
+			this.transcriptCopyToastTimer = null;
 		}
 		if (this.loadingAnimation) {
 			this.loadingAnimation.stop();

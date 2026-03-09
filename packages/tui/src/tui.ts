@@ -640,9 +640,11 @@ export class TUI extends Container {
 			this.resizeBaselineDirty = false;
 		};
 
-		// First render - just output everything without clearing (assumes clean screen)
+		// First render - clear/home first so the TUI's logical row 0 matches the
+		// terminal's visible top row even when the shell prompt or prior output is
+		// still on screen.
 		if (this.previousLines.length === 0 && !widthChanged) {
-			fullRender(false);
+			fullRender(true);
 			return;
 		}
 

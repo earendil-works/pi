@@ -14,6 +14,7 @@ interface ChatLayoutOptions {
 	composerContent: Component;
 	inputTarget: Component;
 	interceptInput?: (data: string) => string;
+	onTranscriptSelectionCopy?: (text: string) => void;
 	footer: Component;
 	getComposerLabel: () => string;
 	getComposerMetaLabel?: () => string;
@@ -35,11 +36,51 @@ interface ChatScrollbarDragState {
 	geometry: ChatScrollbarGeometry;
 }
 
+interface TranscriptSelectionState {
+	anchorLine: number;
+	anchorColumn: number;
+	focusLine: number;
+	focusColumn: number;
+	hasDragged: boolean;
+}
+
+function stripAnsi(text: string): string {
+	return text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
+}
+
+function normalizeSelectedTextLines(lines: string[]): string {
+	const stripped = lines.map((line) => stripAnsi(line).trimEnd());
+	const nonEmpty = stripped.filter((line) => line.trim().length > 0);
+	if (nonEmpty.length === 0) return "";
+
+	const sharedIndent = nonEmpty.reduce((min, line) => {
+		const indent = line.match(/^\s*/)?.[0].length ?? 0;
+		return Math.min(min, indent);
+	}, Number.POSITIVE_INFINITY);
+
+	return stripped
+		.map((line) => line.slice(Number.isFinite(sharedIndent) ? sharedIndent : 0))
+		.join("\n")
+		.trim();
+}
+
+function clampColumn(x: number, width: number): number {
+	return Math.max(1, Math.min(width, x));
+}
+
+function sliceSelectedColumns(text: string, startColumn: number, endColumn: number): string {
+	const normalized = padToWidth(stripAnsi(text), Math.max(startColumn, endColumn));
+	const start = Math.max(0, Math.min(startColumn, endColumn) - 1);
+	const end = Math.max(start + 1, Math.max(startColumn, endColumn));
+	return normalized.slice(start, end).trimEnd();
+}
+
 export class ChatLayoutComponent implements Component {
 	private readonly chatContent: Component;
 	private readonly composerContent: Component;
 	private readonly inputTarget: Component;
 	private readonly interceptInput?: (data: string) => string;
+	private readonly onTranscriptSelectionCopy?: (text: string) => void;
 	private readonly footer: Component;
 	private readonly getComposerLabel: () => string;
 	private readonly getComposerMetaLabel?: () => string;
@@ -49,14 +90,19 @@ export class ChatLayoutComponent implements Component {
 	private lastChatHeight = 1;
 	private lastChatLineCount = 0;
 	private lastChatStartLine = 0;
+	private lastChatContentWidth = 1;
+	private lastChatHasScrollbar = false;
 	private lastRenderWidth = 0;
 	private scrollbarDragState: ChatScrollbarDragState | null = null;
+	private transcriptSelectionState: TranscriptSelectionState | null = null;
+	private lastChatLines: string[] = [];
 
 	constructor(options: ChatLayoutOptions) {
 		this.chatContent = options.chatContent;
 		this.composerContent = options.composerContent;
 		this.inputTarget = options.inputTarget;
 		this.interceptInput = options.interceptInput;
+		this.onTranscriptSelectionCopy = options.onTranscriptSelectionCopy;
 		this.footer = options.footer;
 		this.getComposerLabel = options.getComposerLabel;
 		this.getComposerMetaLabel = options.getComposerMetaLabel;
@@ -75,16 +121,25 @@ export class ChatLayoutComponent implements Component {
 			if (this.handleScrollbarPointerDown(match)) {
 				return "";
 			}
+			if (this.handleTranscriptSelectionPointerDown(match)) {
+				return "";
+			}
 			return match;
 		});
 		remaining = remaining.replace(/\x1b\[<32;\d+;\d+M/g, (match) => {
 			if (this.handleScrollbarDrag(match)) {
 				return "";
 			}
+			if (this.handleTranscriptSelectionDrag(match)) {
+				return "";
+			}
 			return match;
 		});
 		remaining = remaining.replace(/\x1b\[<\d+;\d+;\d+m/g, (match) => {
 			if (this.handleScrollbarRelease(match)) {
+				return "";
+			}
+			if (this.handleTranscriptSelectionRelease(match)) {
 				return "";
 			}
 			return match;
@@ -129,17 +184,32 @@ export class ChatLayoutComponent implements Component {
 	}
 
 	private renderChat(width: number, height: number): string[] {
-		const frameWidth = Math.max(2, width - 1);
-		const contentWidth = Math.max(1, frameWidth - 1);
-		const allLines = this.chatContent.render(contentWidth);
-		this.lastChatHeight = height;
-		this.lastChatLineCount = allLines.length;
-		const maxStartLine = Math.max(0, allLines.length - height);
-		if (allLines.length <= height) {
+		const fullWidth = Math.max(1, width);
+		const frameWidth = Math.max(1, width - 1);
+		const fullWidthLines = this.chatContent.render(fullWidth);
+		if (fullWidthLines.length <= height) {
+			this.lastChatLines = fullWidthLines;
+			this.lastChatHeight = height;
+			this.lastChatLineCount = fullWidthLines.length;
+			this.lastChatContentWidth = fullWidth;
+			this.lastChatHasScrollbar = false;
 			this.viewportTopLine = null;
 			this.lastChatStartLine = 0;
-			return allLines;
+			return fullWidthLines.map((line, index) =>
+				this.isTranscriptLineSelected(index)
+					? this.highlightSelectedLine(line, fullWidth, this.selectedColumnsForLine(index))
+					: line,
+			);
 		}
+
+		const contentWidth = Math.max(1, frameWidth - 1);
+		const allLines = this.chatContent.render(contentWidth);
+		this.lastChatLines = allLines;
+		this.lastChatHeight = height;
+		this.lastChatLineCount = allLines.length;
+		this.lastChatContentWidth = contentWidth;
+		this.lastChatHasScrollbar = true;
+		const maxStartLine = Math.max(0, allLines.length - height);
 
 		let start = this.viewportTopLine ?? maxStartLine;
 		start = Math.max(0, Math.min(maxStartLine, start));
@@ -157,8 +227,12 @@ export class ChatLayoutComponent implements Component {
 		const thumbStart = thumbTravel === 0 ? 0 : Math.floor((start / scrollableRange) * thumbTravel);
 
 		return visibleLines.map((line, index) => {
+			const absoluteLine = start + index;
+			const content = this.isTranscriptLineSelected(absoluteLine)
+				? this.highlightSelectedLine(line, contentWidth, this.selectedColumnsForLine(absoluteLine))
+				: padToWidth(line, contentWidth);
 			const scrollbarChar = index >= thumbStart && index < thumbStart + thumbSize ? "█" : "░";
-			return padToWidth(line, contentWidth) + scrollbarChar;
+			return content + scrollbarChar;
 		});
 	}
 
@@ -199,11 +273,60 @@ export class ChatLayoutComponent implements Component {
 	}
 
 	private isChatScrollbarColumnForWidth(x: number): boolean {
-		return x === Math.max(2, this.lastRenderWidth - 1);
+		if (!this.lastChatHasScrollbar) return false;
+		return x === this.lastChatContentWidth + 1;
 	}
 
 	private getChatMouseRow(y: number): number {
 		return y - 1;
+	}
+
+	private isChatContentColumnForWidth(x: number): boolean {
+		return x >= 1 && x <= this.lastChatContentWidth;
+	}
+
+	private isTranscriptLineSelected(lineIndex: number): boolean {
+		if (!this.transcriptSelectionState) return false;
+		const start = Math.min(this.transcriptSelectionState.anchorLine, this.transcriptSelectionState.focusLine);
+		const end = Math.max(this.transcriptSelectionState.anchorLine, this.transcriptSelectionState.focusLine);
+		return lineIndex >= start && lineIndex <= end;
+	}
+
+	private selectedColumnsForLine(lineIndex: number): { startColumn: number; endColumn: number } {
+		if (!this.transcriptSelectionState) {
+			return { startColumn: 1, endColumn: 1 };
+		}
+
+		const { anchorLine, anchorColumn, focusLine, focusColumn } = this.transcriptSelectionState;
+		const startsBefore = anchorLine < focusLine || (anchorLine === focusLine && anchorColumn <= focusColumn);
+		const startLine = startsBefore ? anchorLine : focusLine;
+		const startColumn = startsBefore ? anchorColumn : focusColumn;
+		const endLine = startsBefore ? focusLine : anchorLine;
+		const endColumn = startsBefore ? focusColumn : anchorColumn;
+		const plain = stripAnsi(this.lastChatLines[lineIndex] ?? "");
+		const width = Math.max(1, plain.length || this.lastRenderWidth - 2);
+
+		if (startLine === endLine) {
+			return { startColumn, endColumn };
+		}
+		if (lineIndex === startLine) {
+			return { startColumn, endColumn: width };
+		}
+		if (lineIndex === endLine) {
+			return { startColumn: 1, endColumn };
+		}
+		return { startColumn: 1, endColumn: width };
+	}
+
+	private highlightSelectedLine(
+		line: string,
+		width: number,
+		columns: { startColumn: number; endColumn: number },
+	): string {
+		const plain = padToWidth(stripAnsi(line), width);
+		const start = Math.max(0, Math.min(columns.startColumn, columns.endColumn) - 1);
+		const end = Math.max(start + 1, Math.min(width, Math.max(columns.startColumn, columns.endColumn)));
+		return `${plain.slice(0, start)}\x1b[7m${plain.slice(start, end)}\x1b[27m${plain.slice(end)}`;
 	}
 
 	private handleScrollbarPointerDown(data: string): boolean {
@@ -229,6 +352,65 @@ export class ChatLayoutComponent implements Component {
 		this.viewportTopLine = nextStartLine >= geometry.maxScrollOffset ? null : nextStartLine;
 		this.scrollbarDragState = null;
 		return true;
+	}
+
+	private handleTranscriptSelectionPointerDown(data: string): boolean {
+		const position = this.parseMousePosition(data);
+		if (!position) return false;
+		if (!this.isChatContentColumnForWidth(position.x)) return false;
+
+		const clickedRow = this.getChatMouseRow(position.y);
+		if (clickedRow < 0 || clickedRow >= this.lastChatHeight) return false;
+
+		const absoluteLine = this.lastChatStartLine + clickedRow;
+		this.transcriptSelectionState = {
+			anchorLine: absoluteLine,
+			anchorColumn: clampColumn(position.x, this.lastChatContentWidth),
+			focusLine: absoluteLine,
+			focusColumn: clampColumn(position.x, this.lastChatContentWidth),
+			hasDragged: false,
+		};
+		return true;
+	}
+
+	private handleTranscriptSelectionDrag(data: string): boolean {
+		const position = this.parseMousePosition(data);
+		if (!position || !this.transcriptSelectionState) return false;
+		if (!this.isChatContentColumnForWidth(position.x)) return false;
+		const clickedRow = this.getChatMouseRow(position.y);
+		if (clickedRow < 0 || clickedRow >= this.lastChatHeight) return false;
+		this.transcriptSelectionState.focusLine = this.lastChatStartLine + clickedRow;
+		this.transcriptSelectionState.focusColumn = clampColumn(position.x, this.lastChatContentWidth);
+		this.transcriptSelectionState.hasDragged = true;
+		return true;
+	}
+
+	private handleTranscriptSelectionRelease(data: string): boolean {
+		const position = this.parseMousePosition(data);
+		if (!position || !this.transcriptSelectionState) return false;
+		const shouldConsume = this.isChatContentColumnForWidth(position.x);
+		if (shouldConsume && this.transcriptSelectionState.hasDragged) {
+			const selectedText = this.getSelectedTranscriptText();
+			if (selectedText.length > 0) {
+				this.onTranscriptSelectionCopy?.(selectedText);
+			}
+		}
+		this.transcriptSelectionState = null;
+		return shouldConsume;
+	}
+
+	private getSelectedTranscriptText(): string {
+		if (!this.transcriptSelectionState) return "";
+		const start = Math.min(this.transcriptSelectionState.anchorLine, this.transcriptSelectionState.focusLine);
+		const end = Math.max(this.transcriptSelectionState.anchorLine, this.transcriptSelectionState.focusLine);
+		const selectedLines: string[] = [];
+		for (let lineIndex = start; lineIndex <= end; lineIndex++) {
+			const columns = this.selectedColumnsForLine(lineIndex);
+			selectedLines.push(
+				sliceSelectedColumns(this.lastChatLines[lineIndex] ?? "", columns.startColumn, columns.endColumn),
+			);
+		}
+		return normalizeSelectedTextLines(selectedLines);
 	}
 
 	private handleScrollbarDrag(data: string): boolean {
