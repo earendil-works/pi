@@ -57,6 +57,14 @@ describe("working-status", () => {
 		expect(formatDoneStatus(28_000, 1_176, 3_800)).toBe("Done after 28s - 42 tps - 3.8s lat.");
 	});
 
+	it("keeps working elapsed time independent from TPS elapsed time", () => {
+		expect(formatWorkingStatus(5_000, 40, undefined, 2_000)).toBe("Working (5s • 20 tps • esc to interrupt)");
+	});
+
+	it("keeps done elapsed time independent from TPS elapsed time", () => {
+		expect(formatDoneStatus(5_000, 40, undefined, 2_000)).toBe("Done after 5s - 20 tps");
+	});
+
 	it("derives spinner frames from wall-clock time instead of update frequency", () => {
 		expect(getWorkingStatusSpinnerFrame(0)).toBe("░▒▓█   ");
 		expect(getWorkingStatusSpinnerFrame(119)).toBe("░▒▓█   ");

@@ -25,18 +25,24 @@ export function formatWorkingStatus(
 	elapsedMs: number,
 	estimatedOutputTokens: number,
 	averageLatencyMs?: number,
+	tokensPerSecondElapsedMs: number = elapsedMs,
 ): string {
 	const elapsed = formatElapsed(elapsedMs);
-	const tps = formatTps(elapsedMs, estimatedOutputTokens);
+	const tps = formatTps(tokensPerSecondElapsedMs, estimatedOutputTokens);
 	const avgLatency = formatAverageLatency(averageLatencyMs);
 	return avgLatency === null
 		? `Working (${elapsed} • ${tps} tps • esc to interrupt)`
 		: `Working (${elapsed} • ${tps} tps • ${avgLatency} lat. • esc to interrupt)`;
 }
 
-export function formatDoneStatus(elapsedMs: number, estimatedOutputTokens: number, averageLatencyMs?: number): string {
+export function formatDoneStatus(
+	elapsedMs: number,
+	estimatedOutputTokens: number,
+	averageLatencyMs?: number,
+	tokensPerSecondElapsedMs: number = elapsedMs,
+): string {
 	const elapsed = formatElapsed(elapsedMs);
-	const tps = formatTps(elapsedMs, estimatedOutputTokens);
+	const tps = formatTps(tokensPerSecondElapsedMs, estimatedOutputTokens);
 	const avgLatency = formatAverageLatency(averageLatencyMs);
 	return avgLatency === null
 		? `Done after ${elapsed} - ${tps} tps`
