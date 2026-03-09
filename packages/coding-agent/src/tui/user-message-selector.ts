@@ -136,8 +136,9 @@ export class UserMessageSelectorComponent extends Container {
 		this.addChild(new Spacer(1));
 		this.addChild(new DynamicBorder());
 
-		// Auto-cancel if no messages or only one message
-		if (messages.length <= 1) {
+		// Auto-cancel only when there are no branchable user messages.
+		// A single compacted checkpoint message is still a valid branch target.
+		if (messages.length === 0) {
 			setTimeout(() => onCancel(), 100);
 		}
 	}

@@ -46,7 +46,7 @@ async function makeRenderer() {
 			addChild(component: unknown): void;
 		};
 		agent: {
-			replaceMessages(messages: Array<{ role: string; content: Array<{ type: string; text: string }> }>): void;
+			replaceMessages(messages: unknown[]): void;
 		};
 		showModelSelector(): void;
 		showThemeSelector(): void;
@@ -117,6 +117,37 @@ describe("selector overlay routing", () => {
 				renderer.agent.replaceMessages([
 					{ role: "user", content: [{ type: "text", text: "first user" }] },
 					{ role: "user", content: [{ type: "text", text: "second user" }] },
+				]);
+			},
+		);
+	});
+
+	it("uses the dialog overlay path for a single compacted checkpoint user message", async () => {
+		await expectUsesOverlay(
+			(renderer) => renderer.showUserMessageSelector(),
+			(renderer) => {
+				renderer.agent.replaceMessages([
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "Opaque native compacted history" }],
+						api: "openai-codex-responses",
+						provider: "openai-codex",
+						model: "gpt-5.4",
+						usage: {
+							input: 0,
+							output: 0,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 0,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+						},
+						stopReason: "stop",
+						timestamp: 1,
+					},
+					{
+						role: "user",
+						content: [{ type: "text", text: "Compacted checkpoint summary" }],
+					},
 				]);
 			},
 		);

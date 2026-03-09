@@ -2506,8 +2506,11 @@ export class TuiRenderer {
 			}
 		}
 
-		// Don't show selector if there are no messages or only one message
-		if (userMessages.length <= 1) {
+		// Don't show selector if there are no visible user messages.
+		// Compacted threads intentionally collapse history down to a single
+		// checkpoint-style user message, and branching from that checkpoint is
+		// still meaningful.
+		if (userMessages.length === 0) {
 			this.chatContainer.addChild(new Spacer(1));
 			this.chatContainer.addChild(new Text(theme.fg("dim", "No messages to branch from"), 1, 0));
 			this.ui.requestRender();
