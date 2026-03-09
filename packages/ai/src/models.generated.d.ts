@@ -1982,6 +1982,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "grok-4.20-experimental-beta-0304-reasoning": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "grok-3-latest": {
 			id: string;
 			name: string;
@@ -2000,6 +2017,23 @@ export declare const MODELS: {
 			maxTokens: number;
 		};
 		readonly "grok-4-1-fast": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "grok-4.20-multi-agent-experimental-beta-0304": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -2058,6 +2092,23 @@ export declare const MODELS: {
 			baseUrl: string;
 			reasoning: true;
 			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "grok-4.20-experimental-beta-0304-non-reasoning": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: false;
+			input: ("image" | "text")[];
 			cost: {
 				input: number;
 				output: number;
