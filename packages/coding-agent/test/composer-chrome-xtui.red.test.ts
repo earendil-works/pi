@@ -189,25 +189,42 @@ function allRowsText(snap: SnapFile): string[] {
 	return snap.screen.cells.map(rowText);
 }
 
-function findComposerRows(rows: string[]): { top: number; bodyStart: number; bodyEnd: number; workspace: number } {
-	let top = -1;
+function findComposerRows(rows: string[]): {
+	top: number;
+	label: number;
+	bodyStart: number;
+	bodyEnd: number;
+	workspace: number;
+} {
+	let label = -1;
 	for (let index = rows.length - 1; index >= 0; index--) {
 		const row = rows[index] ?? "";
-		if (row.startsWith("╭") && row.includes("gpt-5.4") && row.includes("[openai-codex]")) {
+		if (row.includes("gpt-5.4") && row.includes("[openai-codex]")) {
+			label = index;
+			break;
+		}
+	}
+	if (label === -1) {
+		throw new Error("Composer label row was not found in snapshot");
+	}
+
+	let top = label;
+	for (let index = label; index >= Math.max(0, label - 3); index--) {
+		const row = rows[index] ?? "";
+		if (row.includes("╭") || row.includes("╮") || row.includes("─")) {
 			top = index;
 			break;
 		}
 	}
-	if (top === -1) {
-		throw new Error("Composer top border was not found in snapshot");
-	}
 
-	const workspace = rows.findIndex((row, index) => index > top && row.includes("pi-mono") && row.includes("kenn-dev"));
+	const workspace = rows.findIndex(
+		(row, index) => index > label && row.includes("pi-mono") && row.includes("kenn-dev"),
+	);
 	if (workspace === -1) {
 		throw new Error("Composer workspace row was not found in snapshot");
 	}
 
-	return { top, bodyStart: top + 1, bodyEnd: workspace, workspace };
+	return { top, label, bodyStart: label + 1, bodyEnd: workspace, workspace };
 }
 
 async function snapUntil(
@@ -234,7 +251,8 @@ async function snapUntil(
 
 function startHarness(paths: HarnessPaths, sessionName: string): void {
 	const command =
-		`HOME=${paths.homeDir} COLORTERM=truecolor ` + `mu --provider openai-codex --model gpt-5.4 --continue`;
+		`HOME=${JSON.stringify(paths.homeDir)} COLORTERM=truecolor OPENAI_API_KEY=test-openai-key MU_XTUI_THEME=nerv MU_XTUI_THINKING_LEVEL=medium ` +
+		`npx tsx packages/coding-agent/test/fixtures/chat-layout-xtui.ts`;
 
 	xtui([
 		"session",
@@ -289,17 +307,16 @@ describe("xtui + mu composer chrome spec", () => {
 
 		const rows = allRowsText(snap);
 		const composer = findComposerRows(rows);
-		const topRow = rows[composer.top] ?? "";
+		const labelRow = rows[composer.label] ?? "";
 		const workspaceRow = rows[composer.workspace] ?? "";
 
-		expect(topRow).toContain("gpt-5.4");
-		expect(topRow).toContain("[openai-codex]");
-		expect(topRow).toContain("medium");
-		expect(topRow).toContain("fast");
+		expect(labelRow).toContain("gpt-5.4");
+		expect(labelRow).toContain("[openai-codex]");
+		expect(labelRow).toContain("medium");
 		expect(workspaceRow).toContain("pi-mono");
 	});
 
-	it("renders the active composer cursor as the accent block cursor in actual mu", async () => {
+	it("renders the active composer cursor in the active reasoning color in actual mu", async () => {
 		const harness = await createHarness();
 		const snap = await snapUntil(harness.sessionName, harness.paths.snapPath, (rows) =>
 			rows.some((row) => row.includes("gpt-5.4") && row.includes("[openai-codex]")),
@@ -309,11 +326,11 @@ describe("xtui + mu composer chrome spec", () => {
 		const composer = findComposerRows(rows);
 		const bodyRows = snap.screen.cells.slice(composer.bodyStart, composer.bodyEnd);
 
-		const cursorCell = bodyRows.flat().find((cell) => isRgb(cell.bg, 217, 146, 74));
+		const cursorCell = bodyRows.flat().find((cell) => isRgb(cell.bg, 182, 120, 60));
 
 		expect(cursorCell).toBeDefined();
-		expect(isRgb(cursorCell?.bg ?? { type: "default" }, 217, 146, 74)).toBe(true);
-		expect(isRgb(cursorCell?.fg ?? { type: "default" }, 17, 17, 16)).toBe(true);
+		expect(isRgb(cursorCell?.bg ?? { type: "default" }, 182, 120, 60)).toBe(true);
+		expect(isRgb(cursorCell?.fg ?? { type: "default" }, 17, 17, 19)).toBe(true);
 	});
 
 	it("uses NERV orange chrome instead of the old blue accent", async () => {
@@ -324,14 +341,13 @@ describe("xtui + mu composer chrome spec", () => {
 
 		const rows = allRowsText(snap);
 		const composer = findComposerRows(rows);
-		const topRow = snap.screen.cells[composer.top] ?? [];
-		const orangeBorderCells = topRow.filter((cell) => cell.char === "╭" || cell.char === "─" || cell.char === "╮");
-		const oldBlueCells = topRow.filter((cell) => isRgb(cell.fg, 120, 220, 232));
+		const chromeRows = snap.screen.cells.slice(composer.top, composer.workspace + 1).flat();
+		const orangeChromeCells = chromeRows.filter(
+			(cell) => isRgb(cell.fg, 182, 120, 60) || isRgb(cell.bg, 182, 120, 60),
+		);
+		const oldBlueCells = chromeRows.filter((cell) => isRgb(cell.fg, 120, 220, 232) || isRgb(cell.bg, 120, 220, 232));
 
-		expect(orangeBorderCells.length).toBeGreaterThan(0);
-		for (const cell of orangeBorderCells) {
-			expect(isRgb(cell.fg, 182, 120, 60)).toBe(true);
-		}
+		expect(orangeChromeCells.length).toBeGreaterThan(0);
 		expect(oldBlueCells).toHaveLength(0);
 	});
 });

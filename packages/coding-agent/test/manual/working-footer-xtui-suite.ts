@@ -28,7 +28,7 @@ interface SuiteOptions {
 
 function parseArgs(argv: string[]): SuiteOptions {
 	let expectation: ExpectationMode = "target";
-	let muCommand = "npx tsx packages/coding-agent/src/cli.ts --no-session";
+	let muCommand = `${JSON.stringify(process.execPath)} ${JSON.stringify(join(process.cwd(), "dist", "cli.js"))} --no-session`;
 	let cols = 100;
 	let rows = 28;
 	let prompt = "Count from 1 to 400, with each number on its own line.";
@@ -145,12 +145,16 @@ async function waitForRows(
 	throw new Error(`Unable to capture rows for session ${sessionName}`);
 }
 
-function findComposerTop(rows: string[]): number {
-	const index = rows.findIndex((row) => row.startsWith("╭─ "));
-	if (index === -1) {
-		throw new Error(`Composer top border not found in snapshot:\n${rows.join("\n")}`);
+function findComposerAnchor(rows: string[], repoName: string): number {
+	const topBorderIndex = rows.findIndex((row) => row.trimStart().startsWith("╭─ "));
+	if (topBorderIndex !== -1) {
+		return topBorderIndex;
 	}
-	return index;
+	const workspaceIndex = rows.findIndex((row) => row.includes(repoName));
+	if (workspaceIndex !== -1) {
+		return workspaceIndex;
+	}
+	throw new Error(`Composer anchor not found in snapshot:\n${rows.join("\n")}`);
 }
 
 function findRowsContaining(rows: string[], needle: string): number[] {
@@ -200,13 +204,14 @@ async function main(): Promise<void> {
 		await waitForSessionAlive(sessionName, repoRoot);
 
 		const idleRows = await waitForRows(sessionName, idlePath, repoRoot, (rows) =>
-			rows.some((row) => row.startsWith("╭─ ")),
+			rows.some((row) => row.trimStart().startsWith("╭─ ")),
 		);
-		const idleComposerTop = findComposerTop(idleRows);
+		const idleComposerTop = findComposerAnchor(idleRows, repoName);
 		const idleRowsBelowComposer = idleRows.slice(idleComposerTop + 1);
 
 		assert(
-			idleRowsBelowComposer.some((row) => row.includes(repoName)),
+			idleRowsBelowComposer.some((row) => row.includes(repoName)) ||
+				idleRows[idleComposerTop]?.includes(repoName) === true,
 			`Idle layout should show workspace context below the composer; expected to find ${repoName}`,
 		);
 
@@ -216,11 +221,11 @@ async function main(): Promise<void> {
 			sessionName,
 			activePath,
 			repoRoot,
-			(rows) => rows.some((row) => row.includes("Working")) && rows.some((row) => row.startsWith("╭─ ")),
+			(rows) => rows.some((row) => row.includes("Working")) && rows.some((row) => row.trimStart().startsWith("╭─ ")),
 			30,
 			300,
 		);
-		const activeComposerTop = findComposerTop(activeRows);
+		const activeComposerTop = findComposerAnchor(activeRows, repoName);
 		const workingRows = findRowsContaining(activeRows, "Working");
 		assert(workingRows.length > 0, "Expected an active snapshot containing a Working row");
 

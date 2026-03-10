@@ -360,6 +360,10 @@ export class Theme {
 		}
 	}
 
+	getThinkingCursorAccentAnsi(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh"): CursorAccentAnsi {
+		return this.getCursorAccentAnsiForThemeColor(this.getThinkingBorderThemeColor(level));
+	}
+
 	getCursorAccentAnsiForThemeColor(color: ThemeColor): CursorAccentAnsi {
 		return {
 			fgAnsi: this.getFgAnsiFromThemeBg("toolPendingBg"),

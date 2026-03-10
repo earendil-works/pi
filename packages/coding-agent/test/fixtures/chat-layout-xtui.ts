@@ -6,7 +6,11 @@ import { initTheme } from "../../src/theme/theme.js";
 import { TuiRenderer } from "../../src/tui/tui-renderer.js";
 
 async function main(): Promise<void> {
-	initTheme("dark");
+	const themeName =
+		process.env.MU_XTUI_THEME === "light" || process.env.MU_XTUI_THEME === "nerv"
+			? process.env.MU_XTUI_THEME
+			: "dark";
+	initTheme(themeName);
 	const thinkingLevel =
 		process.env.MU_XTUI_THINKING_LEVEL === "minimal" ||
 		process.env.MU_XTUI_THINKING_LEVEL === "low" ||

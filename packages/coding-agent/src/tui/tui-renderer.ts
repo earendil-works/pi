@@ -1875,7 +1875,7 @@ export class TuiRenderer {
 		}
 		const level = this.agent.state.thinkingLevel || "off";
 		this.editor.borderColor = theme.getThinkingBorderColor(level);
-		this.editor.cursorAccentAnsi = theme.getCursorAccentAnsiForThemeColor("accent");
+		this.editor.cursorAccentAnsi = theme.getThinkingCursorAccentAnsi(level);
 		this.ui.requestRender();
 	}
 

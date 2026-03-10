@@ -88,4 +88,10 @@ describe("thinking level utilities", () => {
 		const color = theme.getThinkingBorderColor("xhigh");
 		expect(color("test")).toBe(theme.fg("thinkingXhigh", "test"));
 	});
+
+	it("maps cursor accent to the active thinking level token", () => {
+		const cursorAccent = theme.getThinkingCursorAccentAnsi("medium");
+		expect(cursorAccent.bgAnsi).toBe(theme.getBgAnsiFromThemeColor("thinkingMedium"));
+		expect(cursorAccent.fgAnsi).toBe(theme.getFgAnsiFromThemeBg("toolPendingBg"));
+	});
 });

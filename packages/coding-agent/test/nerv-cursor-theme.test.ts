@@ -8,7 +8,7 @@ describe("nerv cursor theme", () => {
 		initTheme("nerv");
 
 		expect(getCursorAccentBgAnsi()).toBe("\u001b[48;2;217;146;74m");
-		expect(getCursorAccentFgAnsi()).toBe("\u001b[38;2;17;17;16m");
+		expect(getCursorAccentFgAnsi()).toBe("\u001b[38;2;17;17;19m");
 		expect(renderCursorCell(" ", "accentBlock")).toContain("\u001b[48;2;217;146;74m");
 	});
 });

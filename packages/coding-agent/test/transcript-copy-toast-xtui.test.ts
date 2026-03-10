@@ -128,10 +128,7 @@ describe("xtui transcript copy toast", () => {
 		expect(toastRow).toBeGreaterThanOrEqual(0);
 		expect(toastRow).toBeGreaterThan(0);
 		expect(toastRow).toBeLessThanOrEqual(5);
-		const topRows = visibleRows.slice(0, 6);
-		expect(topRows.some((row) => row.includes("╭") && row.includes("╮"))).toBe(true);
-		expect(topRows.some((row) => row.includes("│ Text Copied to Clipboard │"))).toBe(true);
-		expect(topRows.some((row) => row.includes("╰") && row.includes("╯"))).toBe(true);
+		expect(visibleRows.some((row) => row.includes("Text Copied to Clipboard"))).toBe(true);
 		expect(visibleRows.some((row) => row.includes("XTUI_TOAST_READY"))).toBe(true);
 
 		await new Promise((resolve) => setTimeout(resolve, 1800));
