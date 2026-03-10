@@ -4506,7 +4506,7 @@ export const MODELS = {
 				cacheRead: 0,
 				cacheWrite: 0,
 			},
-			contextWindow: 262144,
+			contextWindow: 131072,
 			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
 		"meituan/longcat-flash-chat": {
