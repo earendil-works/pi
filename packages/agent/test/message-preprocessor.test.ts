@@ -37,7 +37,7 @@ function makeAssistantBase(model: Model<any>): Omit<AssistantMessage, "content" 
 }
 
 function makeFakeStreamFn() {
-	const model = getModel("google", "gemini-2.5-flash");
+	const model = getModel("google-gemini-cli", "gemini-2.5-flash");
 	let callCount = 0;
 
 	return (_m: Model<any>, _ctx: Context, _options?: SimpleStreamOptions): AssistantMessageEventStream => {

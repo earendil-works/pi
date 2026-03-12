@@ -444,8 +444,7 @@ describe("Coding Agent Tools", () => {
 		});
 
 		it("should respect timeout", async () => {
-			// Note: bash tool enforces minimum timeout of 1800s (30 minutes)
-			// Using sleep 2 with test timeout 6000ms ensures it completes before test timeout
+			// Default timeout is short, but a 2s command should still succeed without an explicit override.
 			await bashTool.execute("test-call-10", { command: "sleep 2" });
 		}, 6000);
 	});

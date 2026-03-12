@@ -4,10 +4,173 @@ import { spawn } from "child_process";
 import { createWriteStream, existsSync, unlink, type WriteStream } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { StringDecoder } from "string_decoder";
 import { getToolDescription } from "../prompts/index.js";
 
 const MAX_OUTPUT_BYTES = 32 * 1024; // 32KB
 const MAX_LOG_FILE_BYTES = 100 * 1024 * 1024; // 100MB - prevent disk exhaustion
+const MAX_BACKGROUND_OUTPUT_CHARS = 8 * 1024;
+
+export type BackgroundJobStatus = "running" | "exited" | "killed" | "failed";
+
+export interface BackgroundJobSnapshot {
+	id: string;
+	pid: number;
+	command: string;
+	startedAt: number;
+	endedAt?: number;
+	status: BackgroundJobStatus;
+	exitCode?: number;
+	recentOutput: string;
+	recentStdout: string;
+	recentStderr: string;
+}
+
+interface BackgroundJobState extends BackgroundJobSnapshot {
+	stdoutDecoder: StringDecoder;
+	stderrDecoder: StringDecoder;
+	child: ReturnType<typeof spawn>;
+}
+
+const backgroundJobs = new Map<string, BackgroundJobState>();
+
+function trimRecentOutput(text: string): string {
+	if (text.length <= MAX_BACKGROUND_OUTPUT_CHARS) {
+		return text;
+	}
+
+	const trimStart = text.length - MAX_BACKGROUND_OUTPUT_CHARS;
+	const newlineIndex = text.indexOf("\n", trimStart);
+	const cutPoint = newlineIndex !== -1 ? newlineIndex + 1 : trimStart;
+	return text.slice(cutPoint);
+}
+
+function appendBackgroundOutput(
+	job: BackgroundJobState,
+	key: "recentOutput" | "recentStdout" | "recentStderr",
+	chunk: string,
+): void {
+	job[key] = trimRecentOutput(job[key] + chunk);
+}
+
+export function listBackgroundJobs(): BackgroundJobSnapshot[] {
+	return [...backgroundJobs.values()]
+		.map(({ stdoutDecoder: _stdoutDecoder, stderrDecoder: _stderrDecoder, child: _child, ...job }) => ({ ...job }))
+		.sort((left, right) => right.startedAt - left.startedAt);
+}
+
+export function getBackgroundJob(id: string): BackgroundJobSnapshot | undefined {
+	const job = backgroundJobs.get(id);
+	if (!job) {
+		return undefined;
+	}
+	const { stdoutDecoder: _stdoutDecoder, stderrDecoder: _stderrDecoder, child: _child, ...snapshot } = job;
+	return { ...snapshot };
+}
+
+export function killBackgroundJob(id: string): boolean {
+	const job = backgroundJobs.get(id);
+	if (!job) {
+		return false;
+	}
+	job.status = "killed";
+	job.endedAt = Date.now();
+	killProcessTree(job.pid);
+	return true;
+}
+
+export function killAllBackgroundJobs(): number {
+	const runningJobs = [...backgroundJobs.values()].filter((job) => job.status === "running");
+	for (const job of runningJobs) {
+		job.status = "killed";
+		job.endedAt = Date.now();
+		killProcessTree(job.pid);
+	}
+	return runningJobs.length;
+}
+
+function startBackgroundJob(command: string): BackgroundJobSnapshot {
+	const { shell, args } = getShellConfig();
+	const child = spawn(shell, [...args, command], {
+		detached: true,
+		env: buildBashEnv(),
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	const startedAt = Date.now();
+	const id = Math.random().toString(36).slice(2, 10);
+	const pid = child.pid ?? -1;
+	const job: BackgroundJobState = {
+		id,
+		pid,
+		command,
+		startedAt,
+		status: "running",
+		recentOutput: "",
+		recentStdout: "",
+		recentStderr: "",
+		stdoutDecoder: new StringDecoder("utf8"),
+		stderrDecoder: new StringDecoder("utf8"),
+		child,
+	};
+	backgroundJobs.set(id, job);
+
+	child.on("error", (error) => {
+		job.status = "failed";
+		job.endedAt = Date.now();
+		appendBackgroundOutput(job, "recentStderr", String(error));
+		appendBackgroundOutput(job, "recentOutput", String(error));
+	});
+
+	child.stdout?.on("data", (data: Buffer) => {
+		const text = job.stdoutDecoder.write(data);
+		if (!text) {
+			return;
+		}
+		appendBackgroundOutput(job, "recentStdout", text);
+		appendBackgroundOutput(job, "recentOutput", text);
+	});
+
+	child.stderr?.on("data", (data: Buffer) => {
+		const text = job.stderrDecoder.write(data);
+		if (!text) {
+			return;
+		}
+		appendBackgroundOutput(job, "recentStderr", text);
+		appendBackgroundOutput(job, "recentOutput", text);
+	});
+
+	child.on("close", (code) => {
+		const stdoutTail = job.stdoutDecoder.end();
+		if (stdoutTail) {
+			appendBackgroundOutput(job, "recentStdout", stdoutTail);
+			appendBackgroundOutput(job, "recentOutput", stdoutTail);
+		}
+		const stderrTail = job.stderrDecoder.end();
+		if (stderrTail) {
+			appendBackgroundOutput(job, "recentStderr", stderrTail);
+			appendBackgroundOutput(job, "recentOutput", stderrTail);
+		}
+		job.endedAt = Date.now();
+		job.exitCode = code ?? undefined;
+		if (job.status !== "killed") {
+			job.status = code === 0 ? "exited" : "failed";
+		}
+	});
+
+	return (
+		getBackgroundJob(id) ?? {
+			id,
+			pid,
+			command,
+			startedAt,
+			status: "running",
+			recentOutput: "",
+			recentStdout: "",
+			recentStderr: "",
+		}
+	);
+}
 
 /**
  * UTF-8 decoder that handles partial characters across chunks
@@ -156,14 +319,16 @@ function killProcessTree(pid: number): void {
 	}
 }
 
-const DEFAULT_TIMEOUT = 30 * 60; // 30 minutes in seconds
+const DEFAULT_TIMEOUT = 15; // 15 seconds
 
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
+	background: Type.Optional(
+		Type.Boolean({ description: "Whether to start the command in the background and return immediately." }),
+	),
 	timeout: Type.Optional(
 		Type.Number({
-			description:
-				"Timeout in seconds (default: 1800 seconds / 30 minutes). Minimum is 1800 seconds; lower values are ignored.",
+			description: "Timeout in seconds (default: 15 seconds).",
 		}),
 	),
 });
@@ -180,10 +345,30 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 	parameters: bashSchema,
 	execute: async (
 		_toolCallId: string,
-		{ command, timeout }: { command: string; timeout?: number },
+		{ command, timeout, background }: { command: string; timeout?: number; background?: boolean },
 		signal?: AbortSignal,
 		onProgress?: (chunk: string) => void,
 	) => {
+		if (background) {
+			const job = startBackgroundJob(command);
+			return {
+				content: [
+					{
+						type: "text",
+						text: `Started background job ${job.id} (pid ${job.pid})`,
+					},
+				],
+				details: {
+					backgroundJob: {
+						id: job.id,
+						pid: job.pid,
+						status: job.status,
+						command: job.command,
+					},
+				},
+			};
+		}
+
 		return new Promise((resolve, _reject) => {
 			const { shell, args } = getShellConfig();
 			const child = spawn(shell, [...args, command], {
@@ -402,7 +587,7 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 				_reject(err instanceof Error ? err : new Error(String(err)));
 			});
 
-			const effectiveTimeout = Math.max(timeout ?? DEFAULT_TIMEOUT, DEFAULT_TIMEOUT);
+			const effectiveTimeout = timeout ?? DEFAULT_TIMEOUT;
 			let timeoutHandle: NodeJS.Timeout | undefined;
 			if (effectiveTimeout > 0) {
 				timeoutHandle = setTimeout(() => {

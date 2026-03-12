@@ -894,7 +894,7 @@ Write content to a file. Creates the file if it doesn't exist, overwrites if it 
 Edit a file by replacing exact text. The oldText must match exactly (including whitespace). Use this for precise, surgical edits. Returns an error if the text appears multiple times or isn't found.
 
 **bash**
-Execute a bash command in the current working directory. Returns stdout and stderr. Optionally accepts a `timeout` parameter in seconds (default: 1800 seconds / 30 minutes).
+Execute a bash command in the current working directory. Returns stdout and stderr. Optionally accepts a `timeout` parameter in seconds (default: 15 seconds), or `background: true` to start a long-running command and return immediately with a background job id.
 
 ### Search Tools
 
@@ -999,7 +999,7 @@ If you need parallel work on independent tasks, manually run multiple `mu` sessi
 
 ## Background Bash
 
-**pi does not and will not implement background bash execution.** Instead, tell the agent to use `tmux` or something like [tterminal-cp](https://mariozechner.at/posts/2025-08-15-mcp-vs-cli/). Bonus points: you can watch the agent interact with a CLI like a debugger and even intervene if necessary.
+`bash` supports `background: true` for long-running commands. Use `/ps` to list background jobs, `/kill <id>` to stop one, and `/clean` to stop all running background jobs.
 
 ## Planned Features
 

@@ -347,13 +347,13 @@ export class SandboxSupervisor {
 	): Promise<{ text: string; cost: number }> {
 		const query = typeof params?.query === "string" ? params.query : "";
 		const context = typeof params?.context === "string" ? params.context : "";
-		const modelName =
-			typeof params?.model === "string" && params.model.trim()
-				? params.model
-				: "gemini-2.5-flash-lite-preview-06-17";
+		const modelName = typeof params?.model === "string" && params.model.trim() ? params.model : "gemini-2.5-flash";
 		const maxTokens = typeof params?.max_tokens === "number" ? params.max_tokens : 2048;
 
-		const model = getModel("google", modelName);
+		const model = getModel("google-gemini-cli", modelName);
+		if (!model) {
+			throw new Error(`Unknown RLM model: ${modelName}`);
+		}
 		const userMsg: UserMessage = {
 			role: "user",
 			content: `${query}\n\n[Context]\n${context}`,

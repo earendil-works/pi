@@ -20,7 +20,7 @@ read_image: |
   {"path":"screenshots/before.png","objective":"Identify all visual differences","context":"Reviewing UI changes","referenceFiles":["screenshots/after.png"]}
 
 bash: |
-  Execute a bash command in the current working directory. Returns stdout and stderr. Optionally provide a timeout in seconds (default: 1800 seconds / 30 minutes). Minimum timeout is 1800 seconds; lower values are ignored.
+  Execute a bash command in the current working directory. Returns stdout and stderr. Optionally provide a timeout in seconds (default: 15 seconds), or set `background: true` to start a long-running command and return immediately with a background job id.
 
 edit: |
   Edit a file using hashline mode (preferred) or legacy text matching.

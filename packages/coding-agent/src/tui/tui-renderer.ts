@@ -104,7 +104,7 @@ import {
 import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from "../theme/theme.js";
 import { getTodoRootDirForCwd } from "../todos/todo-path.js";
 import { TodoStore } from "../todos/todo-store.js";
-import { bashTool } from "../tools/bash.js";
+import { bashTool, killAllBackgroundJobs, killBackgroundJob, listBackgroundJobs } from "../tools/bash.js";
 import { estimateTokens, type HandoffDetails, handoffTool } from "../tools/handoff.js";
 import type { ToolSelection } from "../tools/tool-selection.js";
 import { undoFileOperations } from "../undo/undo-file-operations.js";
@@ -519,6 +519,21 @@ export class TuiRenderer {
 			description: "Select message queue mode (one-at-a-time / all)",
 		};
 
+		const psCommand: SlashCommand = {
+			name: "ps",
+			description: "List background bash jobs",
+		};
+
+		const killCommand: SlashCommand = {
+			name: "kill",
+			description: "Stop a background bash job by id",
+		};
+
+		const cleanCommand: SlashCommand = {
+			name: "clean",
+			description: "Stop all background bash jobs",
+		};
+
 		// Note: /steer command removed - Enter now automatically steers when streaming
 
 		const todosCommand: SlashCommand = {
@@ -582,6 +597,7 @@ export class TuiRenderer {
 			newCommand,
 			noteCommand,
 			notifyCommand,
+			psCommand,
 			queueCommand,
 			reloadCommand,
 			selectCommand,
@@ -591,6 +607,8 @@ export class TuiRenderer {
 			todosCommand,
 			treeCommand,
 			undoCommand,
+			killCommand,
+			cleanCommand,
 		];
 
 		if (supportsUsageCommand(this.agent.state.model)) {
@@ -3235,6 +3253,25 @@ export class TuiRenderer {
 			return;
 		}
 
+		if (rawText === "/ps") {
+			this.handleBackgroundJobsPsCommand();
+			this.editor.setText("");
+			return;
+		}
+
+		if (rawText === "/clean") {
+			this.handleBackgroundJobsCleanCommand();
+			this.editor.setText("");
+			return;
+		}
+
+		const killBackgroundJobMatch = rawText.match(/^\/kill\s+(\S+)$/);
+		if (killBackgroundJobMatch) {
+			this.handleBackgroundJobKillCommand(killBackgroundJobMatch[1]);
+			this.editor.setText("");
+			return;
+		}
+
 		// Check for /changelog command
 		if (rawText === "/changelog") {
 			this.handleChangelogCommand();
@@ -3734,6 +3771,51 @@ export class TuiRenderer {
 		// Show info in chat
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(info, 1, 0));
+		this.ui.requestRender();
+	}
+
+	private handleBackgroundJobsPsCommand(): void {
+		const jobs = listBackgroundJobs();
+		let info = `${theme.bold("Background Jobs")}\n\n`;
+
+		if (jobs.length === 0) {
+			info += theme.fg("dim", "No background bash jobs running.");
+		} else {
+			for (const job of jobs) {
+				const runtimeMs = (job.endedAt ?? Date.now()) - job.startedAt;
+				const runtimeSeconds = Math.max(0, Math.floor(runtimeMs / 1000));
+				info += `${theme.fg("dim", job.id)} ${theme.bold(job.status)} ${theme.fg("dim", `(${runtimeSeconds}s)`)}\n`;
+				info += `${job.command}\n`;
+				if (job.recentOutput.trim()) {
+					info += `${theme.fg("dim", job.recentOutput.trim())}\n`;
+				}
+				info += "\n";
+			}
+			info = info.trimEnd();
+		}
+
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(info, 1, 0));
+		this.ui.requestRender();
+	}
+
+	private handleBackgroundJobKillCommand(jobId: string): void {
+		if (!killBackgroundJob(jobId)) {
+			this.showError(`Unknown background job: ${jobId}`);
+			return;
+		}
+
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg("dim", `Stopped background job ${jobId}`), 1, 0));
+		this.ui.requestRender();
+	}
+
+	private handleBackgroundJobsCleanCommand(): void {
+		const killedCount = killAllBackgroundJobs();
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(
+			new Text(theme.fg("dim", `Stopped ${killedCount} background job${killedCount === 1 ? "" : "s"}`), 1, 0),
+		);
 		this.ui.requestRender();
 	}
 

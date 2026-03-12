@@ -49,7 +49,7 @@ async function runTransportWithSse(
 	const cfg: AgentRunConfig = {
 		systemPrompt: "You are helpful",
 		tools: [],
-		model: getModel("openai", "gpt-5-mini"),
+		model: getModel("openai", "gpt-5.4"),
 	};
 
 	const userMessage: Message = {
