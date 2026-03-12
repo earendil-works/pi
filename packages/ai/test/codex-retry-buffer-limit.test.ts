@@ -54,6 +54,71 @@ function createSseResponse(sse: string): Response {
 }
 
 describe("openai-codex retry", () => {
+	it("retries streamed server_error frames before any content by default", async () => {
+		const streamedErrorSse = `data: ${JSON.stringify({
+			type: "error",
+			error: {
+				type: "server_error",
+				code: "server_error",
+				message: "An error occurred while processing your request.",
+			},
+		})}\n\n`;
+
+		const successSse =
+			[
+				`data: ${JSON.stringify({
+					type: "response.output_item.added",
+					item: { type: "message", id: "msg_1", role: "assistant", status: "in_progress", content: [] },
+				})}`,
+				`data: ${JSON.stringify({ type: "response.content_part.added", part: { type: "output_text", text: "" } })}`,
+				`data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Hello" })}`,
+				`data: ${JSON.stringify({
+					type: "response.output_item.done",
+					item: {
+						type: "message",
+						id: "msg_1",
+						role: "assistant",
+						status: "completed",
+						content: [{ type: "output_text", text: "Hello" }],
+					},
+				})}`,
+				`data: ${JSON.stringify({
+					type: "response.done",
+					response: {
+						status: "completed",
+						usage: {
+							input_tokens: 5,
+							output_tokens: 3,
+							total_tokens: 8,
+							input_tokens_details: { cached_tokens: 0 },
+						},
+					},
+				})}`,
+			].join("\n\n") + "\n\n";
+
+		let callCount = 0;
+		global.fetch = vi.fn(async () => {
+			callCount += 1;
+			if (callCount <= 5) {
+				return createSseResponse(streamedErrorSse);
+			}
+			return createSseResponse(successSse);
+		}) as typeof fetch;
+
+		const stream = streamOpenAICodexResponses(createModel(), createContext(), {
+			apiKey: createCodexToken(),
+			codexRetry: { baseDelay: 0, maxDelay: 0 },
+		});
+
+		for await (const _event of stream) {
+			// drain
+		}
+		const result = await stream.result();
+
+		expect(callCount).toBe(6);
+		expect(result.stopReason).toBe("stop");
+	});
+
 	it("retries when the SSE stream emits an upstream buffer-limit error", async () => {
 		const upstreamErrorSse = `data: ${JSON.stringify({
 			type: "error",

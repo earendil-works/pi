@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 let nextStreamEvents: unknown[] = [];
 let failuresRemaining = 0;
+let streamedFailuresRemaining = 0;
 let createCalls = 0;
 
 class StatusError extends Error {
@@ -29,6 +30,15 @@ vi.mock("openai", () => {
 						throw new StatusError(502, "exceeded request buffer limit while retrying upstream");
 					}
 					async function* gen(): AsyncGenerator<unknown> {
+						if (streamedFailuresRemaining > 0) {
+							streamedFailuresRemaining -= 1;
+							yield {
+								type: "error",
+								code: "server_error",
+								message: "An error occurred while processing your request.",
+							};
+							return;
+						}
 						for (const ev of nextStreamEvents) yield ev;
 					}
 					return gen();
@@ -46,6 +56,7 @@ import type { Context, Model } from "../src/types.js";
 afterEach(() => {
 	nextStreamEvents = [];
 	failuresRemaining = 0;
+	streamedFailuresRemaining = 0;
 	createCalls = 0;
 	vi.restoreAllMocks();
 });
@@ -72,6 +83,55 @@ function createContext(): Context {
 }
 
 describe("openai-responses retry", () => {
+	it("retries streamed server_error frames before any content by default", async () => {
+		streamedFailuresRemaining = 5;
+		nextStreamEvents = [
+			{
+				type: "response.output_item.added",
+				item: { type: "message", id: "msg_1", role: "assistant", status: "in_progress", content: [] },
+			},
+			{ type: "response.content_part.added", part: { type: "output_text", text: "" } },
+			{ type: "response.output_text.delta", delta: "Hello" },
+			{
+				type: "response.output_item.done",
+				item: {
+					type: "message",
+					id: "msg_1",
+					role: "assistant",
+					status: "completed",
+					content: [{ type: "output_text", text: "Hello" }],
+				},
+			},
+			{
+				type: "response.completed",
+				response: {
+					status: "completed",
+					usage: {
+						input_tokens: 5,
+						output_tokens: 3,
+						total_tokens: 8,
+						input_tokens_details: { cached_tokens: 0 },
+					},
+				},
+			},
+		];
+
+		const stream = streamOpenAIResponses(createModel(), createContext(), {
+			apiKey: "test-key",
+			retry: { baseDelay: 0, maxDelay: 0 },
+		});
+
+		for await (const _event of stream) {
+			// drain
+		}
+
+		const result = await stream.result();
+
+		expect(createCalls).toBe(6);
+		expect(result.stopReason).toBe("stop");
+		expect(result.errorMessage).toBeUndefined();
+	});
+
 	it("retries request failures before streaming begins (no duplicate start)", async () => {
 		failuresRemaining = 2;
 		nextStreamEvents = [
