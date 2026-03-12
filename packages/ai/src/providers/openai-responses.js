@@ -86,6 +86,24 @@ function getErrorMessage(error) {
 	if (error instanceof Error) return error.message;
 	return typeof error === "string" ? error : JSON.stringify(error);
 }
+class OpenAIResponsesStreamError extends Error {
+	hadContent;
+	status;
+	code;
+	constructor(message, hadContent, options) {
+		super(message);
+		this.name = "OpenAIResponsesStreamError";
+		this.hadContent = hadContent;
+		this.status = options?.status;
+		this.code = options?.code;
+	}
+}
+function getErrorCode(error) {
+	if (error instanceof OpenAIResponsesStreamError) return error.code;
+	const record = asRecord(error);
+	const code = record?.code;
+	return typeof code === "string" && code.trim() ? code : undefined;
+}
 /**
  * Retryable errors for OpenAI Responses.
  *
@@ -99,6 +117,19 @@ function isRetryableOpenAIError(error, signal) {
 		if (status === 408 || status === 409 || status === 429) return true;
 		if (status >= 500 && status <= 599) return true;
 		return false;
+	}
+	const code = getErrorCode(error)?.toLowerCase();
+	if (code) {
+		if (code === "rate_limit_exceeded" || code === "too_many_requests") return true;
+		if (
+			code === "server_error" ||
+			code === "internal_server_error" ||
+			code === "bad_gateway" ||
+			code === "gateway_timeout" ||
+			code === "service_unavailable"
+		) {
+			return true;
+		}
 	}
 	if (error instanceof Error) {
 		const message = error.message.toLowerCase();
@@ -137,7 +168,7 @@ export const streamOpenAIResponses = (model, context, options) => {
 			stopReason: "stop",
 			timestamp: Date.now(),
 		};
-		const maxRetries = options?.retry?.maxRetries ?? 4;
+		const maxRetries = options?.retry?.maxRetries ?? 5;
 		const baseDelay = options?.retry?.baseDelay ?? 200;
 		const maxDelay = options?.retry?.maxDelay ?? 60000;
 		let hasEmittedStart = false;
@@ -503,7 +534,7 @@ export const streamOpenAIResponses = (model, context, options) => {
 						const response = asRecord(event.response);
 						const details = asRecord(response?.incomplete_details);
 						const reason = typeof details?.reason === "string" ? details.reason : "unknown";
-						throw new Error(`Incomplete response returned, reason: ${reason}`);
+						throw new OpenAIResponsesStreamError(`Incomplete response returned, reason: ${reason}`, hadContent);
 					}
 					// Handle completion
 					else if (event.type === "response.completed") {
@@ -529,7 +560,10 @@ export const streamOpenAIResponses = (model, context, options) => {
 						}
 						calculateCost(model, output.usage);
 						if (response?.status === "queued" || response?.status === "in_progress") {
-							throw new Error(`Stream ended with non-terminal status: ${response.status}`);
+							throw new OpenAIResponsesStreamError(
+								`Stream ended with non-terminal status: ${response.status}`,
+								hadContent,
+							);
 						}
 						// Map status to stop reason
 						output.stopReason = mapStopReason(response?.status);
@@ -559,13 +593,24 @@ export const streamOpenAIResponses = (model, context, options) => {
 					}
 					// Handle errors
 					else if (event.type === "error") {
-						throw new Error(`Error Code ${event.code}: ${event.message}` || "Unknown error");
+						const code = typeof event.code === "string" ? event.code : undefined;
+						const message = typeof event.message === "string" ? event.message : "Unknown error";
+						throw new OpenAIResponsesStreamError(code ? `Error Code ${code}: ${message}` : message, hadContent, {
+							code,
+						});
 					} else if (event.type === "response.failed") {
-						throw new Error("OpenAI response failed");
+						const response = asRecord(event.response);
+						const error = asRecord(event.error) ?? asRecord(response?.error);
+						const code = typeof error?.code === "string" ? error.code : undefined;
+						const message = typeof error?.message === "string" ? error.message : "OpenAI response failed";
+						throw new OpenAIResponsesStreamError(message, hadContent, { code });
 					}
 				}
 				if (!sawCompletion) {
-					throw new Error(hadContent ? "Stream terminated before completion" : "Stream terminated");
+					throw new OpenAIResponsesStreamError(
+						hadContent ? "Stream terminated before completion" : "Stream terminated",
+						hadContent,
+					);
 				}
 				if (options?.signal?.aborted) {
 					throw new Error("Request was aborted");
@@ -578,8 +623,14 @@ export const streamOpenAIResponses = (model, context, options) => {
 				return;
 			} catch (error) {
 				lastError = error;
+				const canRetryWithoutContent =
+					error instanceof OpenAIResponsesStreamError &&
+					!error.hadContent &&
+					isRetryableOpenAIError(error, options?.signal);
 				const shouldRetry =
-					!hasEmittedStart && isRetryableOpenAIError(error, options?.signal) && attempt < maxRetries;
+					(!hasEmittedStart || canRetryWithoutContent) &&
+					isRetryableOpenAIError(error, options?.signal) &&
+					attempt < maxRetries;
 				if (shouldRetry) {
 					const delay = getExponentialBackoff(attempt, baseDelay, maxDelay);
 					try {

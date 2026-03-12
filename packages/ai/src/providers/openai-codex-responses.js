@@ -75,10 +75,14 @@ export class CodexHttpError extends Error {
 }
 class CodexStreamError extends Error {
 	hadContent;
-	constructor(message, hadContent) {
+	status;
+	code;
+	constructor(message, hadContent, options) {
 		super(message);
 		this.name = "CodexStreamError";
 		this.hadContent = hadContent;
+		this.status = options?.status;
+		this.code = options?.code;
 	}
 }
 const DEFAULT_RETRY_CLASSES = ["429", "5xx", "transport"];
@@ -111,6 +115,7 @@ function getRetryAfterMs(headers) {
 }
 function getErrorStatus(error) {
 	if (error instanceof CodexHttpError) return error.status;
+	if (error instanceof CodexStreamError) return error.status;
 	if (!error || typeof error !== "object") return undefined;
 	const record = error;
 	const status = record.status;
@@ -120,6 +125,12 @@ function getErrorStatus(error) {
 		return Number.isNaN(parsed) ? undefined : parsed;
 	}
 	return undefined;
+}
+function getErrorCode(error) {
+	if (error instanceof CodexStreamError) return error.code;
+	if (!error || typeof error !== "object") return undefined;
+	const code = error.code;
+	return typeof code === "string" && code.trim() ? code : undefined;
 }
 function getErrorMessage(error) {
 	if (error instanceof Error) return error.message;
@@ -199,6 +210,21 @@ export function isRetryableCodexError(error, signal, retryOn) {
 	if (status !== undefined && status >= 500 && status <= 504 && hasRetryClass(classes, "5xx")) {
 		return true;
 	}
+	const code = getErrorCode(error)?.toLowerCase();
+	if (
+		code &&
+		hasRetryClass(classes, "5xx") &&
+		(code === "server_error" ||
+			code === "internal_server_error" ||
+			code === "bad_gateway" ||
+			code === "gateway_timeout" ||
+			code === "service_unavailable")
+	) {
+		return true;
+	}
+	if (code && hasRetryClass(classes, "429") && (code === "rate_limit_exceeded" || code === "too_many_requests")) {
+		return true;
+	}
 	if (!hasRetryClass(classes, "transport")) {
 		return false;
 	}
@@ -214,7 +240,7 @@ function resolveCodexRetryOptions(options) {
 	const fallbackRetry = options?.retry;
 	const codexRetry = options?.codexRetry;
 	return {
-		requestMaxRetries: codexRetry?.requestMaxRetries ?? fallbackRetry?.maxRetries ?? 3,
+		requestMaxRetries: codexRetry?.requestMaxRetries ?? fallbackRetry?.maxRetries ?? 5,
 		streamMaxRetries: codexRetry?.streamMaxRetries ?? fallbackRetry?.maxRetries ?? 1,
 		baseDelay: codexRetry?.baseDelay ?? fallbackRetry?.baseDelay ?? 1000,
 		maxDelay: codexRetry?.maxDelay ?? fallbackRetry?.maxDelay ?? 60000,
@@ -338,6 +364,10 @@ export const streamOpenAICodexResponses = (model, context, options) => {
 			} catch (error) {
 				lastError = error;
 				const cooldown = classifyCooldown(error);
+				const canRetryWithoutContent =
+					error instanceof CodexStreamError &&
+					!error.hadContent &&
+					isRetryableCodexError(error, options?.signal, retryOn);
 				const canRetryStream =
 					!options?.signal?.aborted &&
 					hasRetryClass(retryOn, "transport") &&
@@ -356,7 +386,7 @@ export const streamOpenAICodexResponses = (model, context, options) => {
 					continue;
 				}
 				const shouldRetryRequest =
-					!hasEmittedStart &&
+					(!hasEmittedStart || canRetryWithoutContent) &&
 					isRetryableCodexError(error, options?.signal, retryOn) &&
 					attemptIndex < requestMaxRetries;
 				if (shouldRetryRequest) {
@@ -945,12 +975,16 @@ async function processStream(response, output, stream, model, tools) {
 				break;
 			}
 			case "error": {
-				const code = event.code || "";
-				const message = event.message || "";
-				throw new Error(formatCodexErrorEvent(event, code, message));
+				const errorRecord = asRecord(event.error);
+				const code = getString(errorRecord?.code) ?? getString(errorRecord?.type) ?? event.code ?? "";
+				const message = getString(errorRecord?.message) ?? event.message ?? "";
+				throw new CodexStreamError(formatCodexErrorEvent(event, code, message), hadContent, { code });
 			}
 			case "response.failed": {
-				throw new Error(formatCodexFailure(event) ?? "Codex response failed");
+				const response = asRecord(event.response);
+				const error = asRecord(event.error) ?? asRecord(response?.error);
+				const code = getString(error?.code) ?? getString(error?.type);
+				throw new CodexStreamError(formatCodexFailure(event) ?? "Codex response failed", hadContent, { code });
 			}
 		}
 	}

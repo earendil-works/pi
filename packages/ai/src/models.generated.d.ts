@@ -2787,6 +2787,91 @@ export declare const MODELS: {
 		};
 	};
 	readonly openrouter: {
+		readonly "openrouter/hunter-alpha": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "openrouter/healer-alpha": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "nvidia/nemotron-3-super-120b-a12b:free": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "bytedance-seed/seed-2.0-lite": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "qwen/qwen3.5-9b": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "openai/gpt-5.4-pro": {
 			id: string;
 			name: string;
@@ -4215,23 +4300,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "z-ai/glm-4.6:exacto": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "anthropic/claude-sonnet-4.5": {
 			id: string;
 			name: string;
@@ -4359,23 +4427,6 @@ export declare const MODELS: {
 			baseUrl: string;
 			reasoning: true;
 			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "deepseek/deepseek-v3.1-terminus:exacto": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
-			input: "text"[];
 			cost: {
 				input: number;
 				output: number;
@@ -4590,23 +4641,6 @@ export declare const MODELS: {
 			maxTokens: number;
 		};
 		readonly "moonshotai/kimi-k2-0905": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "moonshotai/kimi-k2-0905:exacto": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -4861,23 +4895,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-oss-120b:exacto": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "openai/gpt-oss-20b:free": {
 			id: string;
 			name: string;
@@ -5083,23 +5100,6 @@ export declare const MODELS: {
 			maxTokens: number;
 		};
 		readonly "qwen/qwen3-coder": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "qwen/qwen3-coder:exacto": {
 			id: string;
 			name: string;
 			api: "openai-completions";
