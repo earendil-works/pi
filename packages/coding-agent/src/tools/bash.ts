@@ -1,4 +1,4 @@
-import type { AgentTool } from "@kennyfrc/mu-ai";
+import { type AgentTool, StringEnum } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
 import { createWriteStream, existsSync, unlink, type WriteStream } from "fs";
@@ -12,11 +12,14 @@ const MAX_LOG_FILE_BYTES = 100 * 1024 * 1024; // 100MB - prevent disk exhaustion
 const MAX_BACKGROUND_OUTPUT_CHARS = 8 * 1024;
 
 export type BackgroundJobStatus = "running" | "exited" | "killed" | "failed";
+export type BackgroundJobReason = "explicit_background" | "timeout_promoted";
+type BackgroundJobAction = "status" | "wait" | "kill";
 
 export interface BackgroundJobSnapshot {
 	id: string;
 	pid: number;
 	command: string;
+	reason: BackgroundJobReason;
 	startedAt: number;
 	endedAt?: number;
 	status: BackgroundJobStatus;
@@ -96,7 +99,7 @@ export function killAllBackgroundJobs(): number {
 function registerBackgroundJob(
 	command: string,
 	child: ReturnType<typeof spawn>,
-	options?: { startedAt?: number; initialOutput?: string },
+	options?: { startedAt?: number; initialOutput?: string; reason?: BackgroundJobReason },
 ): BackgroundJobSnapshot {
 	const startedAt = options?.startedAt ?? Date.now();
 	const id = Math.random().toString(36).slice(2, 10);
@@ -105,6 +108,7 @@ function registerBackgroundJob(
 		id,
 		pid,
 		command,
+		reason: options?.reason ?? "explicit_background",
 		startedAt,
 		status: "running",
 		recentOutput: trimRecentOutput(options?.initialOutput ?? ""),
@@ -164,6 +168,7 @@ function registerBackgroundJob(
 			id,
 			pid,
 			command,
+			reason: options?.reason ?? "explicit_background",
 			startedAt,
 			status: "running",
 			recentOutput: trimRecentOutput(options?.initialOutput ?? ""),
@@ -181,29 +186,83 @@ function startBackgroundJob(command: string): BackgroundJobSnapshot {
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 
-	return registerBackgroundJob(command, child);
+	return registerBackgroundJob(command, child, { reason: "explicit_background" });
+}
+
+function buildBackgroundJobHelpText(jobId: string): string {
+	return [
+		`Use ${JSON.stringify({ job: jobId, action: "status" })} to check progress.`,
+		`Use ${JSON.stringify({ job: jobId, action: "wait", timeout: 30 })} to wait for completion.`,
+	].join(" ");
 }
 
 function buildBackgroundJobResult(job: BackgroundJobSnapshot): {
 	content: Array<{ type: "text"; text: string }>;
-	details: { backgroundJob: { id: string; pid: number; status: BackgroundJobStatus; command: string } };
+	details: { backgroundJob: BackgroundJobSnapshot };
 } {
+	const text =
+		job.reason === "timeout_promoted"
+			? [
+					`Command exceeded timeout and was moved to background as job ${job.id} (pid ${job.pid}).`,
+					"This preserves in-progress work instead of killing the process.",
+					"The command is still running. This is not a final result or proof of success.",
+					buildBackgroundJobHelpText(job.id),
+				].join(" ")
+			: [
+					`Started background job ${job.id} (pid ${job.pid}) by request.`,
+					"The command is still running. This is not a final result.",
+					buildBackgroundJobHelpText(job.id),
+				].join(" ");
+
 	return {
 		content: [
 			{
 				type: "text",
-				text: `Started background job ${job.id} (pid ${job.pid})`,
+				text,
 			},
 		],
 		details: {
-			backgroundJob: {
-				id: job.id,
-				pid: job.pid,
-				status: job.status,
-				command: job.command,
-			},
+			backgroundJob: job,
 		},
 	};
+}
+
+function buildBackgroundJobStatusResult(job: BackgroundJobSnapshot): {
+	content: Array<{ type: "text"; text: string }>;
+	details: { backgroundJob: BackgroundJobSnapshot };
+} {
+	let text: string;
+	if (job.status === "running") {
+		text = `Background job ${job.id} is still running.`;
+	} else if (job.status === "exited") {
+		text = `Background job ${job.id} completed successfully.`;
+	} else if (job.status === "failed") {
+		text = `Background job ${job.id} failed${job.exitCode !== undefined ? ` with exit code ${job.exitCode}` : ""}.`;
+	} else {
+		text = `Background job ${job.id} was killed.`;
+	}
+
+	const recentOutput = job.recentOutput.trim();
+	if (recentOutput) {
+		text += `\nRecent output:\n${recentOutput}`;
+	}
+
+	return {
+		content: [{ type: "text", text }],
+		details: { backgroundJob: job },
+	};
+}
+
+async function waitForBackgroundJob(id: string, timeoutSeconds: number): Promise<BackgroundJobSnapshot | undefined> {
+	const deadline = Date.now() + timeoutSeconds * 1000;
+	while (Date.now() < deadline) {
+		const job = getBackgroundJob(id);
+		if (!job || job.status !== "running") {
+			return job;
+		}
+		await new Promise((resolve) => setTimeout(resolve, 50));
+	}
+	return getBackgroundJob(id);
 }
 
 /**
@@ -356,7 +415,11 @@ function killProcessTree(pid: number): void {
 const DEFAULT_TIMEOUT = 15; // 15 seconds
 
 const bashSchema = Type.Object({
-	command: Type.String({ description: "Bash command to execute" }),
+	command: Type.Optional(Type.String({ description: "Bash command to execute" })),
+	job: Type.Optional(Type.String({ description: "Background job id to inspect, wait on, or kill." })),
+	action: Type.Optional(
+		StringEnum(["status", "wait", "kill"], { description: "Action for a background job id: status, wait, or kill." }),
+	),
 	background: Type.Optional(
 		Type.Boolean({ description: "Whether to start the command in the background and return immediately." }),
 	),
@@ -379,10 +442,55 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 	parameters: bashSchema,
 	execute: async (
 		_toolCallId: string,
-		{ command, timeout, background }: { command: string; timeout?: number; background?: boolean },
+		{
+			command,
+			job,
+			action,
+			timeout,
+			background,
+		}: { command?: string; job?: string; action?: string; timeout?: number; background?: boolean },
 		signal?: AbortSignal,
 		onProgress?: (chunk: string) => void,
 	) => {
+		if (job) {
+			if (command) {
+				throw new Error("bash accepts either a command or a job id, not both");
+			}
+
+			const existingJob = getBackgroundJob(job);
+			if (!existingJob) {
+				throw new Error(`Unknown background job: ${job}`);
+			}
+
+			const requestedAction: BackgroundJobAction =
+				action === "wait" || action === "kill" || action === "status" ? action : "status";
+			if (requestedAction === "status") {
+				return buildBackgroundJobStatusResult(existingJob);
+			}
+
+			if (requestedAction === "wait") {
+				const waitedJob = await waitForBackgroundJob(job, timeout ?? DEFAULT_TIMEOUT);
+				if (!waitedJob) {
+					throw new Error(`Unknown background job: ${job}`);
+				}
+				return buildBackgroundJobStatusResult(waitedJob);
+			}
+
+			killBackgroundJob(job);
+			const killedJob = getBackgroundJob(job);
+			if (!killedJob) {
+				throw new Error(`Unknown background job: ${job}`);
+			}
+			return {
+				content: [{ type: "text", text: `Killed background job ${job}.` }],
+				details: { backgroundJob: killedJob },
+			};
+		}
+
+		if (!command) {
+			throw new Error("bash requires either a command or a job id");
+		}
+
 		if (background) {
 			const job = startBackgroundJob(command);
 			return buildBackgroundJobResult(job);
@@ -624,7 +732,11 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 					if (signal) {
 						signal.removeEventListener("abort", onAbort);
 					}
-					const job = registerBackgroundJob(command, child, { startedAt, initialOutput: output });
+					const job = registerBackgroundJob(command, child, {
+						startedAt,
+						initialOutput: output,
+						reason: "timeout_promoted",
+					});
 					resolve(buildBackgroundJobResult(job));
 				}, effectiveTimeout * 1000);
 			}

@@ -10,6 +10,7 @@ type ToolResult = {
 			pid: number;
 			status: "running" | "exited" | "killed" | "failed";
 			command: string;
+			reason: "explicit_background" | "timeout_promoted";
 		};
 	};
 };
@@ -35,9 +36,10 @@ describe("bash tool background execution (red)", () => {
 		expect(result.details?.backgroundJob).toBeDefined();
 		expect(result.details?.backgroundJob).toMatchObject({
 			status: "running",
+			reason: "timeout_promoted",
 			command: 'sleep 2; printf "should-not-print"',
 		});
-		expect(getTextOutput(result)).toContain("Started background job");
+		expect(getTextOutput(result)).toContain("Command exceeded timeout");
 	}, 5_000);
 
 	it("returns immediately with background job metadata when background mode is requested", async () => {
@@ -53,11 +55,13 @@ describe("bash tool background execution (red)", () => {
 		expect(result.details?.backgroundJob).toBeDefined();
 		expect(result.details?.backgroundJob).toMatchObject({
 			status: "running",
+			reason: "explicit_background",
 			command: 'sleep 2; printf "background-finished"',
 		});
 		expect(result.details?.backgroundJob?.id).toMatch(/\S+/);
 		expect(result.details?.backgroundJob?.pid).toBeGreaterThan(0);
 
 		expect(getTextOutput(result)).toContain("Started background job");
+		expect(getTextOutput(result)).toContain("by request");
 	}, 5_000);
 });

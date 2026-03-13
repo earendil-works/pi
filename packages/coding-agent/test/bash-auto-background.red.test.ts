@@ -11,6 +11,7 @@ type ToolResult = {
 			pid: number;
 			status: "running" | "exited" | "killed" | "failed";
 			command: string;
+			reason: "explicit_background" | "timeout_promoted";
 		};
 	};
 };
@@ -42,6 +43,7 @@ describe("shell commands auto-background long-running work (red)", () => {
 		expect(job).toBeDefined();
 		expect(job).toMatchObject({
 			status: "running",
+			reason: "timeout_promoted",
 			command: 'sleep 2; printf "background-complete"',
 		});
 		expect(job?.id).toMatch(/\S+/);
@@ -49,7 +51,7 @@ describe("shell commands auto-background long-running work (red)", () => {
 
 		const snapshot = job?.id ? getBackgroundJob(job.id) : undefined;
 		expect(snapshot?.status).toBe("running");
-		expect(getTextOutput(resolved)).toContain("Started background job");
+		expect(getTextOutput(resolved)).toContain("Command exceeded timeout");
 	}, 5_000);
 
 	it("exec_command returns promptly with background metadata when yield_time_ms is exceeded", async () => {
@@ -66,12 +68,13 @@ describe("shell commands auto-background long-running work (red)", () => {
 		expect(job).toBeDefined();
 		expect(job).toMatchObject({
 			status: "running",
+			reason: "timeout_promoted",
 			command: 'sleep 2; printf "exec-background-complete"',
 		});
 		expect(job?.id).toMatch(/\S+/);
 
 		const snapshot = job?.id ? getBackgroundJob(job.id) : undefined;
 		expect(snapshot?.status).toBe("running");
-		expect(getTextOutput(result)).toContain("Started background job");
+		expect(getTextOutput(result)).toContain("Command exceeded timeout");
 	}, 5_000);
 });

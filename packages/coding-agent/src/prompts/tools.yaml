@@ -20,7 +20,20 @@ read_image: |
   {"path":"screenshots/before.png","objective":"Identify all visual differences","context":"Reviewing UI changes","referenceFiles":["screenshots/after.png"]}
 
 bash: |
-  Execute a bash command in the current working directory. Returns stdout and stderr. Optionally provide a timeout in seconds (default: 15 seconds), or set `background: true` to start a long-running command and return immediately with a background job id.
+  Execute a bash command in the current working directory. Returns stdout and stderr for foreground commands.
+
+  You can also inspect or control a tracked background job by passing a `job` id and an `action`.
+
+  Use `background: true` only when long-running work is expected and you intend to check it later.
+
+  If a foreground command exceeds its timeout, it may be moved to a background job instead of being killed. This preserves in-progress work for long-running operations such as imports, indexing, downloads, and builds.
+
+  Important: when bash returns a background job result, the command is still running. It is not the final result and not proof of success. Check the job status or wait for completion before reporting success when completion matters.
+
+  Background job actions:
+  - `{"job":"<id>","action":"status"}` — get current state and recent output
+  - `{"job":"<id>","action":"wait","timeout":30}` — wait for completion or until the wait timeout expires
+  - `{"job":"<id>","action":"kill"}` — stop the job
 
 edit: |
   Edit a file using hashline mode (preferred) or legacy text matching.

@@ -894,7 +894,7 @@ Write content to a file. Creates the file if it doesn't exist, overwrites if it 
 Edit a file by replacing exact text. The oldText must match exactly (including whitespace). Use this for precise, surgical edits. Returns an error if the text appears multiple times or isn't found.
 
 **bash**
-Execute a bash command in the current working directory. Returns stdout and stderr. Optionally accepts a `timeout` parameter in seconds (default: 15 seconds), or `background: true` to start a long-running command and return immediately with a background job id.
+Execute a bash command in the current working directory. Returns stdout and stderr for foreground commands. You can pass `background: true` for long-running work, or inspect an existing background job with `job` + `action`. If a foreground command exceeds its timeout, mu may move it to a background job instead of killing it so in-progress work is preserved. A background-job result means the command is still running, not finished.
 
 ### Search Tools
 
@@ -999,7 +999,17 @@ If you need parallel work on independent tasks, manually run multiple `mu` sessi
 
 ## Background Bash
 
-`bash` supports `background: true` for long-running commands. Use `/ps` to list background jobs, `/kill <id>` to stop one, and `/clean` to stop all running background jobs.
+`bash` supports tracked background jobs for long-running commands.
+
+- `{"command":"long task","background":true}` starts a job immediately and returns a job id.
+- If a foreground command exceeds its timeout, mu may move it to a background job instead of killing it. This preserves progress for imports, indexing, downloads, builds, and similar long-running work.
+- A background-job result means the command is still running. It is not proof of success.
+
+The agent can follow up on a returned job id with:
+
+- `{"job":"<id>","action":"status"}` to inspect current state and recent output
+- `{"job":"<id>","action":"wait","timeout":30}` to wait for completion
+- `{"job":"<id>","action":"kill"}` to stop the job
 
 ## Planned Features
 
