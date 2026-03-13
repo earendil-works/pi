@@ -170,6 +170,17 @@ read_thread: |
   
   Tool calls (bash, read, write, etc.) are visible by default. Use 'detailed: false' for clean transcripts without tool output.
 
+spawn_agent: |
+  Spawn a child mu agent to handle a bounded task and return its result.
+
+  Important:
+  - Do NOT use `spawn_agent` unless the user explicitly asks you to delegate, parallelize, or use a spawned/sub agent.
+
+  Parameters:
+  - message: Task for the spawned agent (required)
+  - model: Optional exact model override in `provider/modelId` form
+  - reasoning: Optional reasoning level override: `inherit`, `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`
+
 todo_write: |
   Create and manage a structured task list for multi-step work.
 

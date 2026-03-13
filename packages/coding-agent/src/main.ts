@@ -15,7 +15,7 @@ import { ExtensionManager } from "./extensions/manager.js";
 import { ensureIdentityEnv } from "./identity-env.js";
 import { findModel, getApiKeyForModel, getAvailableModels } from "./model-config.js";
 import { buildSystemPrompt as buildSystemPromptFromYaml } from "./prompts/index.js";
-import { setCurrentModel } from "./runtime-state.js";
+import { setCurrentModel, setCurrentThinkingLevel } from "./runtime-state.js";
 import { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
 import { initThemeWithGhostty } from "./theme/theme.js";
@@ -172,12 +172,19 @@ function parseArgs(args: string[]): Args {
 			result.tools = validTools;
 		} else if (arg === "--thinking" && i + 1 < args.length) {
 			const level = args[++i];
-			if (level === "off" || level === "minimal" || level === "low" || level === "medium" || level === "high") {
+			if (
+				level === "off" ||
+				level === "minimal" ||
+				level === "low" ||
+				level === "medium" ||
+				level === "high" ||
+				level === "xhigh"
+			) {
 				result.thinking = level;
 			} else {
 				console.error(
 					chalk.yellow(
-						`Warning: Invalid thinking level "${level}". Valid values: off, minimal, low, medium, high`,
+						`Warning: Invalid thinking level "${level}". Valid values: off, minimal, low, medium, high, xhigh`,
 					),
 				);
 			}
@@ -673,10 +680,12 @@ async function runInteractiveMode(
 	// Keep runtime state updated with current model for tools (e.g., read_thread RAG)
 	if (agent.state.model) {
 		setCurrentModel(agent.state.model);
+		setCurrentThinkingLevel(agent.state.thinkingLevel);
 	}
 	agent.subscribe((event) => {
 		if (event.type === "turn_start" && agent.state.model) {
 			setCurrentModel(agent.state.model);
+			setCurrentThinkingLevel(agent.state.thinkingLevel);
 		}
 	});
 
@@ -734,12 +743,14 @@ async function runSingleShotMode(
 	// Keep runtime state updated with current model for tools (e.g., read_thread RAG)
 	if (agent.state.model) {
 		setCurrentModel(agent.state.model);
+		setCurrentThinkingLevel(agent.state.thinkingLevel);
 	}
 
 	// Subscribe to track model changes during execution
 	agent.subscribe((event) => {
 		if (event.type === "turn_start" && agent.state.model) {
 			setCurrentModel(agent.state.model);
+			setCurrentThinkingLevel(agent.state.thinkingLevel);
 		}
 		// In JSON mode, also output events
 		if (mode === "json") {
@@ -774,12 +785,26 @@ async function runRpcMode(agent: Agent, sessionManager: SessionManager): Promise
 	// Keep runtime state updated with current model for tools (e.g., read_thread RAG)
 	if (agent.state.model) {
 		setCurrentModel(agent.state.model);
+		setCurrentThinkingLevel(agent.state.thinkingLevel);
+	}
+
+	if (agent.state.model) {
+		console.log(
+			JSON.stringify({
+				type: "session_meta",
+				sessionId: sessionManager.getSessionId(),
+				sessionFile: sessionManager.getSessionFile(),
+				provider: agent.state.model.provider,
+				modelId: agent.state.model.id,
+			}),
+		);
 	}
 
 	// Subscribe to all events and output as JSON (same pattern as tui-renderer)
 	agent.subscribe(async (event) => {
 		if (event.type === "turn_start" && agent.state.model) {
 			setCurrentModel(agent.state.model);
+			setCurrentThinkingLevel(agent.state.thinkingLevel);
 		}
 		console.log(JSON.stringify(event));
 

@@ -11,6 +11,7 @@ export { listThreadsTool } from "./list-threads.js";
 export { readTool } from "./read.js";
 export { readImageTool } from "./read-image.js";
 export { readThreadTool } from "./read-thread.js";
+export { spawnAgentTool } from "./spawn-agent.js";
 export { todowriteTool } from "./todowrite.js";
 export { writeTool } from "./write.js";
 
@@ -25,6 +26,7 @@ import { listThreadsTool } from "./list-threads.js";
 import { readTool } from "./read.js";
 import { readImageTool } from "./read-image.js";
 import { readThreadTool } from "./read-thread.js";
+import { spawnAgentTool } from "./spawn-agent.js";
 import { todowriteTool } from "./todowrite.js";
 import { writeTool } from "./write.js";
 
@@ -37,6 +39,7 @@ export const codingTools = [
 	listThreadsTool,
 	readThreadTool,
 	readImageTool,
+	spawnAgentTool,
 	compactTool,
 ];
 
@@ -52,6 +55,7 @@ export const allTools = {
 	list_threads: listThreadsTool,
 	read_thread: readThreadTool,
 	read_image: readImageTool,
+	spawn_agent: spawnAgentTool,
 	todo_write: todowriteTool,
 	compact: compactTool,
 

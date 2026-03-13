@@ -4,7 +4,7 @@ import { resolveToolSelection } from "./tool-selection.js";
 
 describe("resolveToolSelection", () => {
 	it("defaults GPT-* models to the GPT tool set", () => {
-		const model = getModel("openai", "gpt-4o-mini");
+		const model = getModel("openai", "gpt-5.1-codex");
 		const selection = resolveToolSelection(undefined, model);
 
 		expect(selection.toolNames).toEqual([
@@ -13,22 +13,24 @@ describe("resolveToolSelection", () => {
 			"list_threads",
 			"read_thread",
 			"read_image",
+			"spawn_agent",
 			"compact",
 		]);
 		expect(selection.replacedWithApplyPatch).toBe(true);
 	});
 
 	it("keeps Edit and Write for non-GPT models", () => {
-		const model = getModel("anthropic", "claude-sonnet-4-5");
+		const model = getModel("xai", "grok-code-fast-1");
 		const selection = resolveToolSelection(undefined, model);
 
 		expect(selection.toolNames).toContain("edit");
 		expect(selection.toolNames).toContain("write");
+		expect(selection.toolNames).toContain("spawn_agent");
 		expect(selection.replacedWithApplyPatch).toBe(false);
 	});
 
 	it("defaults non-GPT-* OpenAI models to the regular tool set", () => {
-		const model = getModel("openai", "codex-mini-latest");
+		const model = getModel("xai", "grok-code-fast-1");
 		const selection = resolveToolSelection(undefined, model);
 
 		expect(selection.toolNames).toEqual([
@@ -39,6 +41,7 @@ describe("resolveToolSelection", () => {
 			"list_threads",
 			"read_thread",
 			"read_image",
+			"spawn_agent",
 			"compact",
 		]);
 	});
