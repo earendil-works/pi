@@ -1,0 +1,108 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import type { MissionDefinition, MissionTask, MissionTaskStatus } from "./types.js";
+
+const TASK_STATUSES: MissionTaskStatus[] = ["todo", "in_progress", "done", "blocked", "discarded"];
+
+function asRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function readRequiredFile(path: string, label: string): string {
+	if (!existsSync(path)) {
+		throw new Error(`Mission is missing required file: ${label} (${path})`);
+	}
+	return readFileSync(path, "utf8");
+}
+
+function parseMissionTask(value: unknown, index: number): MissionTask {
+	if (!asRecord(value)) {
+		throw new Error(`Mission task at index ${index} must be an object`);
+	}
+
+	const id = value.id;
+	const title = value.title;
+	const status = value.status;
+	const validation = value.validation;
+	const notes = value.notes;
+
+	if (typeof id !== "string" || id.trim().length === 0) {
+		throw new Error(`Mission task at index ${index} must have a non-empty string id`);
+	}
+	if (typeof title !== "string" || title.trim().length === 0) {
+		throw new Error(`Mission task "${id}" must have a non-empty string title`);
+	}
+	if (typeof status !== "string" || !TASK_STATUSES.includes(status as MissionTaskStatus)) {
+		throw new Error(
+			`Mission task "${id}" has invalid status "${String(status)}". Expected one of: ${TASK_STATUSES.join(", ")}`,
+		);
+	}
+	if (!Array.isArray(validation) || validation.some((item) => typeof item !== "string")) {
+		throw new Error(`Mission task "${id}" must have a string[] validation field`);
+	}
+	if (typeof notes !== "string") {
+		throw new Error(`Mission task "${id}" must have a string notes field`);
+	}
+
+	return {
+		id,
+		title,
+		status: status as MissionTaskStatus,
+		validation,
+		notes,
+	};
+}
+
+export function parseMissionDefinition(missionDir: string): MissionDefinition {
+	const dir = resolve(missionDir);
+	const specPath = join(dir, "SPEC.md");
+	const tasksPath = join(dir, "TASKS.json");
+	const progressPath = join(dir, "PROGRESS.md");
+	const runbookPath = join(dir, "RUNBOOK.md");
+
+	const specText = readRequiredFile(specPath, "SPEC.md");
+	const progressText = readRequiredFile(progressPath, "PROGRESS.md");
+	const runbookText = readRequiredFile(runbookPath, "RUNBOOK.md");
+	const tasksText = readRequiredFile(tasksPath, "TASKS.json");
+
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(tasksText);
+	} catch (error: unknown) {
+		const message = error instanceof Error ? error.message : String(error);
+		throw new Error(`Mission TASKS.json is not valid JSON: ${message}`);
+	}
+
+	if (!asRecord(parsed) || !Array.isArray(parsed.tasks)) {
+		throw new Error("Mission TASKS.json must contain a top-level tasks array");
+	}
+	if (parsed.tasks.length === 0) {
+		throw new Error("Mission TASKS.json must contain at least one task");
+	}
+
+	const tasks = parsed.tasks.map((task, index) => parseMissionTask(task, index));
+	const seenIds = new Set<string>();
+	for (const task of tasks) {
+		if (seenIds.has(task.id)) {
+			throw new Error(`Mission TASKS.json contains duplicate task id: ${task.id}`);
+		}
+		seenIds.add(task.id);
+	}
+
+	const allTasksDone = tasks.every((task) => task.status === "done");
+	const runnableTasks = tasks.filter((task) => task.status === "todo" || task.status === "in_progress");
+
+	return {
+		dir,
+		specPath,
+		tasksPath,
+		progressPath,
+		runbookPath,
+		specText,
+		progressText,
+		runbookText,
+		tasks,
+		allTasksDone,
+		runnableTasks,
+	};
+}

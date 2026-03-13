@@ -64,6 +64,8 @@ import {
 	buildHandoffSummaryUserText,
 	HANDOFF_SUMMARY_SYSTEM_PROMPT,
 } from "../handoff-summary.js";
+import { runMissionLoop } from "../missions/mission-runner.js";
+import { parseMissionDefinition } from "../missions/parse-mission.js";
 import { findModel, getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
 import { WorkspaceNoteStore } from "../notes/workspace-note-store.js";
 import { playNotificationSound, sendNotification } from "../notification.js";
@@ -597,6 +599,11 @@ export class TuiRenderer {
 			description: "Reload extensions from disk",
 		};
 
+		const missionRunCommand: SlashCommand = {
+			name: "mission-run",
+			description: "Run a mission loop until all task statuses are done",
+		};
+
 		this.builtInSlashCommands = [
 			branchCommand,
 			changelogCommand,
@@ -610,6 +617,7 @@ export class TuiRenderer {
 			loginCommand,
 			logoutCommand,
 			modelCommand,
+			missionRunCommand,
 			newCommand,
 			noteCommand,
 			notifyCommand,
@@ -3464,6 +3472,18 @@ export class TuiRenderer {
 			return;
 		}
 
+		const missionRunMatch = rawText.match(/^\/mission-run(?:\s+([\s\S]+))?$/);
+		if (missionRunMatch) {
+			const missionRef = missionRunMatch[1]?.trim() ?? "";
+			if (!missionRef) {
+				this.showError("Usage: /mission-run <mission-name-or-path>");
+				return;
+			}
+			this.editor.setText("");
+			await this.handleMissionRunCommand(missionRef);
+			return;
+		}
+
 		// Extension slash commands
 		if (await this.tryHandleExtensionCommand(rawText)) {
 			this.editor.setText("");
@@ -4921,6 +4941,68 @@ export class TuiRenderer {
 		this.ui.requestRender();
 	}
 
+	private resolveMissionDir(missionRef: string): string {
+		const trimmed = missionRef.trim();
+		if (!trimmed) {
+			return trimmed;
+		}
+
+		const absoluteCandidate = path.resolve(trimmed);
+		if (fs.existsSync(absoluteCandidate)) {
+			return absoluteCandidate;
+		}
+
+		const repoRoot = findRepoRoot(process.cwd()) ?? process.cwd();
+		return path.join(repoRoot, "devdocs", "missions", trimmed);
+	}
+
+	private async handleMissionRunCommand(missionRef: string): Promise<void> {
+		const missionDir = this.resolveMissionDir(missionRef);
+
+		try {
+			const initialMission = parseMissionDefinition(missionDir);
+			if (!initialMission.allTasksDone) {
+				const currentModel = this.agent.state.model;
+				if (!currentModel) {
+					this.showError(
+						"No model selected.\n\nSet an API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)\n" +
+							"or create ~/.mu/agent/models.json\n\nThen use /model to select a model.",
+					);
+					return;
+				}
+
+				const apiKey = await getApiKeyForModel(currentModel);
+				if (!apiKey) {
+					this.showError(
+						`No API key found for ${currentModel.provider}.\n\nSet the appropriate environment variable or update ~/.mu/agent/models.json`,
+					);
+					return;
+				}
+			}
+
+			const result = await runMissionLoop({
+				missionDir,
+				executeIteration: async ({ prompt }) => {
+					await this.agent.prompt(prompt);
+					await this.agent.waitForIdle();
+				},
+			});
+
+			if (result.status === "done") {
+				const suffix =
+					result.iterations === 0
+						? "already done"
+						: `done after ${result.iterations} iteration${result.iterations === 1 ? "" : "s"}`;
+				this.showWarning(`Mission ${path.basename(initialMission.dir)} ${suffix}.`);
+				return;
+			}
+
+			this.showWarning(`Mission ${path.basename(initialMission.dir)} blocked: ${result.reason}`);
+		} catch (error: unknown) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
+	}
+
 	private handleNotifyCommand(): void {
 		// Toggle notifications
 		const current = this.settingsManager.getNotifications();
@@ -5046,6 +5128,7 @@ export class TuiRenderer {
 	}
 
 	stop(): void {
+		killAllBackgroundJobs();
 		if (this.timerIntervalId) {
 			clearInterval(this.timerIntervalId);
 			this.timerIntervalId = null;
