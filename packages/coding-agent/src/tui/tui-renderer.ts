@@ -452,6 +452,9 @@ export class TuiRenderer {
 		const fastCommand: SlashCommand = {
 			name: "fast",
 			description: "Toggle GPT fast mode (service_tier=priority)",
+			selectionBehavior: "inject",
+			injectedText: "/fast ",
+			injectedDiagnostic: "Prepared /fast draft. Modes: on | off | toggle | status",
 		};
 
 		const exportCommand: SlashCommand = {
@@ -492,6 +495,10 @@ export class TuiRenderer {
 		const compactCommand: SlashCommand = {
 			name: "compact",
 			description: "Compact the current thread; use /compact on|off to toggle auto mode",
+			selectionBehavior: "inject",
+			injectedText: "/compact ",
+			injectedDiagnostic:
+				"Prepared /compact draft. Modes: --summary <goal> | --inject <goal> | on | off | toggle | status",
 		};
 
 		const subscribeCommand: SlashCommand = {
@@ -574,6 +581,9 @@ export class TuiRenderer {
 		const usageCommand: SlashCommand = {
 			name: "usage",
 			description: "Show or toggle usage limits in the footer",
+			selectionBehavior: "inject",
+			injectedText: "/usage ",
+			injectedDiagnostic: "Prepared /usage draft. Modes: on | off | toggle | status",
 		};
 
 		const reloadCommand: SlashCommand = {
@@ -3093,6 +3103,14 @@ export class TuiRenderer {
 			getCommands: () => this.getAllSlashCommands(),
 			onSelect: (command, trigger) => {
 				this.clearDialogOverlay();
+				if (command.selectionBehavior === "inject") {
+					this.editor.setText(command.injectedText ?? `/${command.name} `);
+					if (command.injectedDiagnostic) {
+						this.showWarning(command.injectedDiagnostic);
+					}
+					this.ui.requestRender();
+					return;
+				}
 				void this.handleEditorTextSubmission(`/${command.name}`, getSlashCommandQueueKind(trigger));
 			},
 			onCancel: () => this.clearDialogOverlay(),

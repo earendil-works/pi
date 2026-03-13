@@ -51,6 +51,9 @@ export interface AutocompleteItem {
 export interface SlashCommand {
 	name: string;
 	description?: string;
+	selectionBehavior?: "submit" | "inject";
+	injectedText?: string;
+	injectedDiagnostic?: string;
 	// Function to get argument completions for this command
 	// Returns null if no argument completion is available
 	getArgumentCompletions?(argumentPrefix: string): AutocompleteItem[] | null;
