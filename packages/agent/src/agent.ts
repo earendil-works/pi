@@ -189,6 +189,9 @@ export class Agent {
 	/** Resume queue draining (after auto-handoff session switch) */
 	resumeQueueDrain(): void {
 		this.queueDrainPaused = false;
+		if (this.messageQueue.length > 0 && !this.isDraining && !this.runningPrompt) {
+			void this.drainQueueAfterPrompt();
+		}
 	}
 
 	/** Check if queue draining is paused */
