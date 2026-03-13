@@ -87,6 +87,7 @@ import {
 } from "../prompts/index.js";
 import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
+import { formatSpawnedAgentsReport } from "../spawned-agents.js";
 import {
 	consumeJsonlChunk,
 	createInitialFollowState,
@@ -477,6 +478,11 @@ export class TuiRenderer {
 			description: "Show session info and stats",
 		};
 
+		const agentsCommand: SlashCommand = {
+			name: "agents",
+			description: "Show spawned child agents for this session",
+		};
+
 		const changelogCommand: SlashCommand = {
 			name: "changelog",
 			description: "Show changelog entries",
@@ -611,6 +617,7 @@ export class TuiRenderer {
 			queueCommand,
 			reloadCommand,
 			selectCommand,
+			agentsCommand,
 			sessionCommand,
 			themeCommand,
 			thinkingCommand,
@@ -3271,6 +3278,12 @@ export class TuiRenderer {
 			return;
 		}
 
+		if (rawText === "/agents") {
+			this.handleAgentsCommand();
+			this.editor.setText("");
+			return;
+		}
+
 		if (rawText === "/ps") {
 			this.handleBackgroundJobsPsCommand();
 			this.editor.setText("");
@@ -3789,6 +3802,13 @@ export class TuiRenderer {
 		// Show info in chat
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(info, 1, 0));
+		this.ui.requestRender();
+	}
+
+	private handleAgentsCommand(): void {
+		const report = formatSpawnedAgentsReport(this.sessionManager.getSessionFile());
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(report, 1, 0));
 		this.ui.requestRender();
 	}
 
