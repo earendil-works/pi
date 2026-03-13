@@ -1,8 +1,9 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Agent } from "@kennyfrc/mu-agent-core";
+import { Agent, type AgentTransport } from "@kennyfrc/mu-agent-core";
 import { getModel, type Model } from "@kennyfrc/mu-ai";
+import stripAnsi from "strip-ansi";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { SettingsManager } from "../src/settings-manager.js";
@@ -15,6 +16,7 @@ type MissionRenderer = {
 	showError(errorMessage: string): void;
 	showWarning(message: string): void;
 	handleEditorTextSubmission(text: string, kind: "by-end" | "next"): Promise<void>;
+	getComposerMetaLabel(): string;
 };
 
 function makeMissionDir(): { dir: string; cleanup: () => void } {
@@ -125,6 +127,11 @@ describe("/mission-run submission (red)", () => {
 
 		expect(errors).toEqual([]);
 		expect(warnings.join("\n")).toMatch(/mission.*done/i);
+		const footerLabel = stripAnsi(renderer.getComposerMetaLabel());
+		expect(footerLabel).toContain(`mission ${dir.split("/").at(-1)}`);
+		expect(footerLabel).toContain("iter 0");
+		expect(footerLabel).toContain("done");
+		expect(footerLabel).toContain("1/1 done");
 	});
 
 	it("fails fast on an unfinished mission when no API key is configured instead of entering the loop", async () => {
@@ -193,5 +200,103 @@ describe("/mission-run submission (red)", () => {
 
 		expect(runCalls).toBe(0);
 		expect(errors.join("\n")).toMatch(/no api key/i);
+		const footerLabel = stripAnsi(renderer.getComposerMetaLabel());
+		expect(footerLabel).toContain(`mission ${dir.split("/").at(-1)}`);
+		expect(footerLabel).toContain("iter 0");
+		expect(footerLabel).toContain("blocked");
+		expect(footerLabel).toContain("0/1 done");
+		expect(footerLabel).toContain("task baseline: Still todo");
+	});
+
+	it("shows running mission footer details during the loop and final done counts after one iteration", async () => {
+		initTheme("dark");
+		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
+		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
+
+		const { dir, cleanup } = makeTodoMissionDir();
+		cleanups.push(cleanup);
+
+		const previousOpenAiKey = process.env.OPENAI_API_KEY;
+		process.env.OPENAI_API_KEY = "test-openai-key";
+		cleanups.push(() => {
+			if (previousOpenAiKey === undefined) {
+				delete process.env.OPENAI_API_KEY;
+			} else {
+				process.env.OPENAI_API_KEY = previousOpenAiKey;
+			}
+		});
+
+		let renderer: MissionRenderer;
+		const runningLabels: string[] = [];
+		let runCalls = 0;
+		const transport: AgentTransport = {
+			async *run() {
+				runCalls += 1;
+				runningLabels.push(stripAnsi(renderer.getComposerMetaLabel()));
+				writeFileSync(
+					join(dir, "TASKS.json"),
+					JSON.stringify(
+						{
+							tasks: [{ id: "baseline", title: "Still todo", status: "done", validation: [], notes: "" }],
+						},
+						null,
+						2,
+					),
+				);
+				yield* [];
+			},
+		};
+
+		const agent = new Agent({
+			transport,
+			initialState: {
+				model: getModel("openai", "gpt-4o-mini"),
+				thinkingLevel: "medium",
+			},
+		});
+
+		renderer = new TuiRenderer(
+			agent,
+			{
+				loadTitle: () => null,
+				getSessionId: () => "mission-submit-red",
+			} as never,
+			new SettingsManager(configDir),
+			{
+				listCommands: () => [],
+				getCommand: () => undefined,
+				applyInputHooks: async (text: string) => ({ handled: false, text }),
+				composeToolResultTransformer: <T>(base: T) => base,
+			} as never,
+			{} as never,
+			"0.0.0",
+		) as unknown as MissionRenderer;
+
+		await renderer.init();
+		cleanups.push(() => renderer.stop());
+
+		const warnings: string[] = [];
+		const originalShowWarning = renderer.showWarning.bind(renderer);
+		renderer.showWarning = (message: string) => {
+			warnings.push(message);
+			originalShowWarning(message);
+		};
+
+		await renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
+
+		expect(runCalls).toBe(1);
+		expect(runningLabels[0]).toContain(`mission ${dir.split("/").at(-1)}`);
+		expect(runningLabels[0]).toContain("iter 1");
+		expect(runningLabels[0]).toContain("running");
+		expect(runningLabels[0]).toContain("0/1 done");
+		expect(runningLabels[0]).toContain("task baseline: Still todo");
+		expect(warnings.join("\n")).toMatch(/done after 1 iteration/i);
+
+		const footerLabel = stripAnsi(renderer.getComposerMetaLabel());
+		expect(footerLabel).toContain(`mission ${dir.split("/").at(-1)}`);
+		expect(footerLabel).toContain("iter 1");
+		expect(footerLabel).toContain("done");
+		expect(footerLabel).toContain("1/1 done");
+		expect(footerLabel).not.toContain("task baseline");
 	});
 });

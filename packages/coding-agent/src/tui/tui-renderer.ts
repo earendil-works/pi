@@ -65,6 +65,12 @@ import {
 	HANDOFF_SUMMARY_SYSTEM_PROMPT,
 } from "../handoff-summary.js";
 import { runMissionLoop } from "../missions/mission-runner.js";
+import {
+	buildMissionUiState,
+	formatMissionMetaLabel,
+	type MissionUiState,
+	type MissionUiStatus,
+} from "../missions/mission-ui.js";
 import { parseMissionDefinition } from "../missions/parse-mission.js";
 import { findModel, getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
 import { WorkspaceNoteStore } from "../notes/workspace-note-store.js";
@@ -368,6 +374,7 @@ export class TuiRenderer {
 	private accumulatedLatencyMs = 0;
 	private latencyGapCount = 0;
 	private ignoreNextAgentEndForAutoHandoffAbort = false;
+	private missionUiState: MissionUiState | null = null;
 
 	constructor(
 		agent: Agent,
@@ -4550,7 +4557,7 @@ export class TuiRenderer {
 			totalCost += assistantMsg.usage.cost.total;
 		}
 
-		return formatComposerUsageLabel({
+		const usageLabel = formatComposerUsageLabel({
 			model: this.agent.state.model,
 			totalCost,
 			usageFooterMode: this.usageFooterMode,
@@ -4558,6 +4565,25 @@ export class TuiRenderer {
 			contextTokens: this.composerContextTokens,
 			contextWindow: this.composerContextWindow,
 		});
+		const missionLabel = formatMissionMetaLabel(this.missionUiState);
+		if (!usageLabel) return missionLabel;
+		if (!missionLabel) return usageLabel;
+		return `${usageLabel}${theme.fg("muted", " • ")}${missionLabel}`;
+	}
+
+	private setMissionUiState(
+		missionName: string,
+		iteration: number,
+		status: MissionUiStatus,
+		mission: ReturnType<typeof parseMissionDefinition>,
+	): void {
+		this.missionUiState = buildMissionUiState({
+			missionName,
+			iteration,
+			status,
+			mission,
+		});
+		this.ui.requestRender();
 	}
 
 	/**
@@ -4964,9 +4990,12 @@ export class TuiRenderer {
 
 		try {
 			const initialMission = parseMissionDefinition(missionDir);
+			const missionName = path.basename(initialMission.dir);
+			this.setMissionUiState(missionName, 0, initialMission.allTasksDone ? "done" : "running", initialMission);
 			if (!initialMission.allTasksDone) {
 				const currentModel = this.agent.state.model;
 				if (!currentModel) {
+					this.setMissionUiState(missionName, 0, "blocked", initialMission);
 					this.showError(
 						"No model selected.\n\nSet an API key (ANTHROPIC_API_KEY, OPENAI_API_KEY, etc.)\n" +
 							"or create ~/.mu/agent/models.json\n\nThen use /model to select a model.",
@@ -4976,6 +5005,7 @@ export class TuiRenderer {
 
 				const apiKey = await getApiKeyForModel(currentModel);
 				if (!apiKey) {
+					this.setMissionUiState(missionName, 0, "blocked", initialMission);
 					this.showError(
 						`No API key found for ${currentModel.provider}.\n\nSet the appropriate environment variable or update ~/.mu/agent/models.json`,
 					);
@@ -4985,22 +5015,34 @@ export class TuiRenderer {
 
 			const result = await runMissionLoop({
 				missionDir,
-				executeIteration: async ({ prompt }) => {
+				executeIteration: async ({ mission, prompt }) => {
+					const iteration = this.missionUiState ? this.missionUiState.iteration + 1 : 1;
+					this.setMissionUiState(missionName, iteration, "running", mission);
 					await this.agent.prompt(prompt);
 					await this.agent.waitForIdle();
+					const refreshedMission = parseMissionDefinition(missionDir);
+					this.setMissionUiState(
+						missionName,
+						iteration,
+						refreshedMission.allTasksDone ? "done" : "running",
+						refreshedMission,
+					);
 				},
 			});
+
+			const finalMission = parseMissionDefinition(missionDir);
+			this.setMissionUiState(missionName, result.iterations, result.status, finalMission);
 
 			if (result.status === "done") {
 				const suffix =
 					result.iterations === 0
 						? "already done"
 						: `done after ${result.iterations} iteration${result.iterations === 1 ? "" : "s"}`;
-				this.showWarning(`Mission ${path.basename(initialMission.dir)} ${suffix}.`);
+				this.showWarning(`Mission ${missionName} ${suffix}.`);
 				return;
 			}
 
-			this.showWarning(`Mission ${path.basename(initialMission.dir)} blocked: ${result.reason}`);
+			this.showWarning(`Mission ${missionName} blocked: ${result.reason}`);
 		} catch (error: unknown) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
