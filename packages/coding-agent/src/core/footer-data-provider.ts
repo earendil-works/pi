@@ -1,11 +1,18 @@
+import { spawnSync } from "child_process";
 import { existsSync, type FSWatcher, readFileSync, statSync, watch } from "fs";
 import { dirname, join, resolve } from "path";
 
+type GitPaths = {
+	repoDir: string;
+	commonGitDir: string;
+	headPath: string;
+};
+
 /**
- * Find the git HEAD path by walking up from cwd.
+ * Find git metadata paths by walking up from cwd.
  * Handles both regular git repos (.git is a directory) and worktrees (.git is a file).
  */
-function findGitHeadPath(): string | null {
+function findGitPaths(): GitPaths | null {
 	let dir = process.cwd();
 	while (true) {
 		const gitPath = join(dir, ".git");
@@ -15,13 +22,19 @@ function findGitHeadPath(): string | null {
 				if (stat.isFile()) {
 					const content = readFileSync(gitPath, "utf8").trim();
 					if (content.startsWith("gitdir: ")) {
-						const gitDir = content.slice(8);
-						const headPath = resolve(dir, gitDir, "HEAD");
-						if (existsSync(headPath)) return headPath;
+						const gitDir = resolve(dir, content.slice(8).trim());
+						const headPath = join(gitDir, "HEAD");
+						if (!existsSync(headPath)) return null;
+						const commonDirPath = join(gitDir, "commondir");
+						const commonGitDir = existsSync(commonDirPath)
+							? resolve(gitDir, readFileSync(commonDirPath, "utf8").trim())
+							: gitDir;
+						return { repoDir: dir, commonGitDir, headPath };
 					}
 				} else if (stat.isDirectory()) {
 					const headPath = join(gitPath, "HEAD");
-					if (existsSync(headPath)) return headPath;
+					if (!existsSync(headPath)) return null;
+					return { repoDir: dir, commonGitDir: gitPath, headPath };
 				}
 			} catch {
 				return null;
@@ -33,6 +46,17 @@ function findGitHeadPath(): string | null {
 	}
 }
 
+/** Ask git for the current branch. Returns null on detached HEAD or if git is unavailable. */
+function resolveBranchWithGit(repoDir: string): string | null {
+	const result = spawnSync("git", ["--no-optional-locks", "symbolic-ref", "--quiet", "--short", "HEAD"], {
+		cwd: repoDir,
+		encoding: "utf8",
+		stdio: ["ignore", "pipe", "ignore"],
+	});
+	const branch = result.status === 0 ? result.stdout.trim() : "";
+	return branch || null;
+}
+
 /**
  * Provides git branch and extension statuses - data not otherwise accessible to extensions.
  * Token stats, model info available via ctx.sessionManager and ctx.model.
@@ -40,11 +64,14 @@ function findGitHeadPath(): string | null {
 export class FooterDataProvider {
 	private extensionStatuses = new Map<string, string>();
 	private cachedBranch: string | null | undefined = undefined;
-	private gitWatcher: FSWatcher | null = null;
+	private gitPaths: GitPaths | null | undefined = undefined;
+	private headWatcher: FSWatcher | null = null;
+	private reftableWatcher: FSWatcher | null = null;
 	private branchChangeCallbacks = new Set<() => void>();
 	private availableProviderCount = 0;
 
 	constructor() {
+		this.gitPaths = findGitPaths();
 		this.setupGitWatcher();
 	}
 
@@ -53,13 +80,18 @@ export class FooterDataProvider {
 		if (this.cachedBranch !== undefined) return this.cachedBranch;
 
 		try {
-			const gitHeadPath = findGitHeadPath();
-			if (!gitHeadPath) {
+			if (!this.gitPaths) {
 				this.cachedBranch = null;
 				return null;
 			}
-			const content = readFileSync(gitHeadPath, "utf8").trim();
-			this.cachedBranch = content.startsWith("ref: refs/heads/") ? content.slice(16) : "detached";
+			const content = readFileSync(this.gitPaths.headPath, "utf8").trim();
+			if (content.startsWith("ref: refs/heads/")) {
+				const branch = content.slice(16);
+				this.cachedBranch =
+					branch === ".invalid" ? (resolveBranchWithGit(this.gitPaths.repoDir) ?? "detached") : branch;
+			} else {
+				this.cachedBranch = "detached";
+			}
 		} catch {
 			this.cachedBranch = null;
 		}
@@ -103,36 +135,49 @@ export class FooterDataProvider {
 
 	/** Internal: cleanup */
 	dispose(): void {
-		if (this.gitWatcher) {
-			this.gitWatcher.close();
-			this.gitWatcher = null;
+		if (this.headWatcher) {
+			this.headWatcher.close();
+			this.headWatcher = null;
+		}
+		if (this.reftableWatcher) {
+			this.reftableWatcher.close();
+			this.reftableWatcher = null;
 		}
 		this.branchChangeCallbacks.clear();
 	}
 
-	private setupGitWatcher(): void {
-		if (this.gitWatcher) {
-			this.gitWatcher.close();
-			this.gitWatcher = null;
-		}
+	private invalidateGitBranch(): void {
+		this.cachedBranch = undefined;
+		for (const cb of this.branchChangeCallbacks) cb();
+	}
 
-		const gitHeadPath = findGitHeadPath();
-		if (!gitHeadPath) return;
+	private setupGitWatcher(): void {
+		if (!this.gitPaths) return;
 
 		// Watch the directory containing HEAD, not HEAD itself.
 		// Git uses atomic writes (write temp, rename over HEAD), which changes the inode.
 		// fs.watch on a file stops working after the inode changes.
-		const gitDir = dirname(gitHeadPath);
-
 		try {
-			this.gitWatcher = watch(gitDir, (_eventType, filename) => {
-				if (filename === "HEAD") {
-					this.cachedBranch = undefined;
-					for (const cb of this.branchChangeCallbacks) cb();
+			this.headWatcher = watch(dirname(this.gitPaths.headPath), (_eventType, filename) => {
+				if (!filename || filename.toString() === "HEAD") {
+					this.invalidateGitBranch();
 				}
 			});
 		} catch {
 			// Silently fail if we can't watch
+		}
+
+		// In reftable repos, branch switches update files in the reftable directory
+		// instead of HEAD. Watch it separately so the footer picks up those changes.
+		const reftableDir = join(this.gitPaths.commonGitDir, "reftable");
+		if (existsSync(reftableDir)) {
+			try {
+				this.reftableWatcher = watch(reftableDir, () => {
+					this.invalidateGitBranch();
+				});
+			} catch {
+				// Silently fail if we can't watch
+			}
 		}
 	}
 }
