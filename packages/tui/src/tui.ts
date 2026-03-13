@@ -623,7 +623,7 @@ export class TUI extends Container {
 			}
 			for (let i = 0; i < newLines.length; i++) {
 				if (i > 0) buffer += "\r\n";
-				buffer += newLines[i];
+				buffer += newLines[i] + "\x1b[0m";
 			}
 			buffer += "\x1b[?2026l"; // End synchronized output
 			this.terminal.write(buffer);
@@ -770,7 +770,7 @@ export class TUI extends Container {
 			if (visibleWidth(newLines[i]) > width) {
 				throw new Error(`Rendered line ${i} exceeds terminal width\n\n${newLines[i]}`);
 			}
-			buffer += newLines[i];
+			buffer += newLines[i] + "\x1b[0m";
 		}
 
 		buffer += "\x1b[?2026l"; // End synchronized output

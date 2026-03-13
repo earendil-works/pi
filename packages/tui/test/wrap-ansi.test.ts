@@ -30,6 +30,16 @@ describe("wrapTextWithAnsi", () => {
 		assert.ok(visibleWidth(lines[1]) <= 20);
 	});
 
+	it("closes styled wrapped lines so later terminal lines do not inherit styling", () => {
+		const text = chalk.italic(chalk.gray("hello world this is styled text that wraps"));
+		const lines = wrapTextWithAnsi(text, 16);
+
+		assert.ok(lines.length > 1);
+		for (const line of lines.slice(0, -1)) {
+			assert.ok(line.includes("\x1b[0m"), `expected wrapped line to self-close style: ${JSON.stringify(line)}`);
+		}
+	});
+
 	it("handles text with resets", () => {
 		const text = chalk.bold("bold ") + "normal " + chalk.cyan("cyan");
 		const lines = wrapTextWithAnsi(text, 30);

@@ -152,6 +152,12 @@ class AnsiCodeTracker {
 	}
 }
 
+function closeActiveAnsi(text: string, tracker: AnsiCodeTracker): string {
+	if (!tracker.hasActiveCodes()) return text;
+	if (text.endsWith("\x1b[0m")) return text;
+	return `${text}\x1b[0m`;
+}
+
 function updateTrackerFromText(text: string, tracker: AnsiCodeTracker): void {
 	let i = 0;
 	while (i < text.length) {
@@ -254,7 +260,7 @@ function wrapSingleLine(line: string, width: number): string[] {
 		// Token itself is too long - break it character by character
 		if (tokenVisibleLength > width && !isWhitespace) {
 			if (currentLine) {
-				wrapped.push(currentLine);
+				wrapped.push(closeActiveAnsi(currentLine, tracker));
 				currentLine = "";
 				currentVisibleLength = 0;
 			}
@@ -272,7 +278,7 @@ function wrapSingleLine(line: string, width: number): string[] {
 
 		if (totalNeeded > width && currentVisibleLength > 0) {
 			// Wrap to next line - trim trailing whitespace from current line
-			wrapped.push(currentLine.trimEnd());
+			wrapped.push(closeActiveAnsi(currentLine.trimEnd(), tracker));
 			if (isWhitespace) {
 				// Don't start new line with whitespace
 				currentLine = tracker.getActiveCodes();
@@ -291,7 +297,7 @@ function wrapSingleLine(line: string, width: number): string[] {
 	}
 
 	if (currentLine) {
-		wrapped.push(currentLine);
+		wrapped.push(closeActiveAnsi(currentLine, tracker));
 	}
 
 	return wrapped.length > 0 ? wrapped : [""];
@@ -344,7 +350,7 @@ function breakLongWord(word: string, width: number, tracker: AnsiCodeTracker): s
 		const graphemeWidth = visibleWidth(grapheme);
 
 		if (currentWidth + graphemeWidth > width) {
-			lines.push(currentLine);
+			lines.push(closeActiveAnsi(currentLine, tracker));
 			currentLine = tracker.getActiveCodes();
 			currentWidth = 0;
 		}
@@ -354,7 +360,7 @@ function breakLongWord(word: string, width: number, tracker: AnsiCodeTracker): s
 	}
 
 	if (currentLine) {
-		lines.push(currentLine);
+		lines.push(closeActiveAnsi(currentLine, tracker));
 	}
 
 	return lines.length > 0 ? lines : [""];

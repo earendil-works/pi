@@ -1,7 +1,9 @@
 import assert from "node:assert";
 import { type Component, Container, Text, visibleWidth } from "@kennyfrc/mu-tui";
+import { Terminal } from "@xterm/headless";
 import { describe, it } from "vitest";
 import { initTheme, theme } from "../theme/theme.js";
+import { AssistantMessageComponent } from "./assistant-message.js";
 import { ChatLayoutComponent } from "./chat-layout.js";
 
 class StubComponent implements Component {
@@ -155,6 +157,70 @@ describe("ChatLayoutComponent scrolling during streaming", () => {
 
 			assert.ok(visibleWidth(composerBottomLine) <= width, composerBottomLine);
 			assert.ok(composerBottomLine.includes("…"), composerBottomLine);
+		});
+	});
+
+	it("does not leak thinking italics into the composer when overflow shows a mid-thinking slice", async () => {
+		initTheme("dark");
+		withTerminalSize(8, 40, () => {
+			const chatContent = new Container();
+			for (let i = 1; i <= 3; i++) {
+				chatContent.addChild(new Text(`filler-${i}`, 0, 0));
+			}
+
+			chatContent.addChild(
+				new AssistantMessageComponent({
+					role: "assistant",
+					content: [
+						{
+							type: "thinking",
+							thinking:
+								"This is a long thinking block that should wrap across several visual lines and stay italic until its final wrapped line closes the style.",
+						},
+					],
+					api: "openai-completions",
+					provider: "openai",
+					model: "test-model",
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "stop",
+					timestamp: Date.now(),
+				}),
+			);
+
+			const layout = createLayout(chatContent);
+			layout.render(40);
+			layout.handleInput("\x1b[<64;1;1M");
+			const rendered = layout.render(40);
+
+			const terminal = new Terminal({ cols: 40, rows: 8, allowProposedApi: true, disableStdin: true });
+			return new Promise<void>((resolve, reject) => {
+				terminal.write(rendered.join("\r\n"), () => {
+					try {
+						const promptRow = rendered.findIndex((line) => line.includes("prompt"));
+						assert.ok(promptRow >= 0, "expected prompt row to be visible");
+						const line = terminal.buffer.active.getLine(promptRow);
+						const italicPromptChars: string[] = [];
+						for (let x = 0; x < 40; x++) {
+							const cell = line?.getCell(x);
+							if (!cell) continue;
+							const ch = cell.getChars();
+							if (!ch || !/[a-z]/i.test(ch)) continue;
+							if ((cell.isItalic?.() ?? 0) !== 0) italicPromptChars.push(ch);
+						}
+						assert.deepEqual(italicPromptChars, [], "expected composer prompt to stay non-italic");
+						resolve();
+					} catch (error) {
+						reject(error);
+					}
+				});
+			});
 		});
 	});
 });
