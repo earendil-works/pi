@@ -602,6 +602,9 @@ export class TuiRenderer {
 		const missionRunCommand: SlashCommand = {
 			name: "mission-run",
 			description: "Run a mission loop until all task statuses are done",
+			selectionBehavior: "inject",
+			injectedText: "/mission-run ",
+			injectedDiagnostic: "Prepared /mission-run draft. Enter a mission name or path.",
 		};
 
 		this.builtInSlashCommands = [
