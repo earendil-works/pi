@@ -13,6 +13,7 @@ export { readImageTool } from "./read-image.js";
 export { readThreadTool } from "./read-thread.js";
 export { spawnAgentTool } from "./spawn-agent.js";
 export { todowriteTool } from "./todowrite.js";
+export { waitAgentTool } from "./wait-agent.js";
 export { writeTool } from "./write.js";
 
 import { applyPatchTool } from "./apply-patch.js";
@@ -28,6 +29,7 @@ import { readImageTool } from "./read-image.js";
 import { readThreadTool } from "./read-thread.js";
 import { spawnAgentTool } from "./spawn-agent.js";
 import { todowriteTool } from "./todowrite.js";
+import { waitAgentTool } from "./wait-agent.js";
 import { writeTool } from "./write.js";
 
 // Default tools for full access mode
@@ -40,6 +42,7 @@ export const codingTools = [
 	readThreadTool,
 	readImageTool,
 	spawnAgentTool,
+	waitAgentTool,
 	compactTool,
 ];
 
@@ -56,6 +59,7 @@ export const allTools = {
 	read_thread: readThreadTool,
 	read_image: readImageTool,
 	spawn_agent: spawnAgentTool,
+	wait_agent: waitAgentTool,
 	todo_write: todowriteTool,
 	compact: compactTool,
 

@@ -12,6 +12,7 @@ export const DEFAULT_TOOL_NAMES: ToolName[] = [
 	"read_thread",
 	"read_image",
 	"spawn_agent",
+	"wait_agent",
 	"compact",
 ];
 
@@ -22,6 +23,7 @@ export const GPT_DEFAULT_TOOL_NAMES: ToolName[] = [
 	"read_thread",
 	"read_image",
 	"spawn_agent",
+	"wait_agent",
 	"compact",
 ];
 

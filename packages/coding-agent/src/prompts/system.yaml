@@ -30,6 +30,7 @@ toolDescriptions:
   read_thread: Read a specific thread's conversation history
   read_image: Analyze images and extract information
   spawn_agent: Delegate a bounded task to a spawned child agent only when the user explicitly asks for delegation
+  wait_agent: Wait for spawned child agents and collect their final responses
   todo_write: Create and manage a structured task list on disk
   compact: Compact the current thread context into a smaller checkpoint
   exec_command: Execute shell commands

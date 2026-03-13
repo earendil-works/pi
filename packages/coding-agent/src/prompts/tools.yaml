@@ -171,15 +171,26 @@ read_thread: |
   Tool calls (bash, read, write, etc.) are visible by default. Use 'detailed: false' for clean transcripts without tool output.
 
 spawn_agent: |
-  Spawn a child mu agent to handle a bounded task and return its result.
+  Spawn a child mu agent to handle a bounded task and return a child session handle immediately.
 
   Important:
   - Do NOT use `spawn_agent` unless the user explicitly asks you to delegate, parallelize, or use a spawned/sub agent.
+  - After spawning the child you should usually call `wait_agent` to collect its final response before relying on its work.
+  - If you spawn multiple children and need all of them, prefer waiting on them in parallel with one `wait_agent` call over the full set of ids.
 
   Parameters:
   - message: Task for the spawned agent (required)
   - model: Optional exact model override in `provider/modelId` form
   - reasoning: Optional reasoning level override: `inherit`, `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`
+
+wait_agent: |
+  Wait for one or more spawned child agents to finish and return their final assistant responses.
+
+  Use this after `spawn_agent` when you need the child results before continuing.
+
+  Parameters:
+  - ids: Array of spawned child session ids to wait for (required)
+  - timeoutMs: Maximum time to wait before unfinished children are returned as timed_out
 
 todo_write: |
   Create and manage a structured task list for multi-step work.
