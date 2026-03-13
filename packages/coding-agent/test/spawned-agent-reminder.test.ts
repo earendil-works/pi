@@ -171,4 +171,22 @@ describe("spawned agent reminder preprocessor", () => {
 		const processed = await preprocessor([input]);
 		expect(getLastUserText(processed)).not.toContain("<system_reminder");
 	});
+
+	test("fails closed when the parent session file is missing", async () => {
+		const model = getModel("openai", "gpt-5.1-codex");
+		if (!model) throw new Error("Expected model to exist");
+
+		const parent = new SessionManager(false, undefined, false, workspacePath);
+		parent.startSession({ model, thinkingLevel: "off" } as never);
+		parent.setSessionFile(join(configDir, "missing-parent-session.jsonl"));
+
+		const preprocessor = createSpawnedAgentsReminderPreprocessor(parent);
+		const input: UserMessage = {
+			role: "user",
+			content: [{ type: "text", text: "continue" }],
+			timestamp: Date.now(),
+		};
+
+		await expect(preprocessor([input])).resolves.toEqual([input]);
+	});
 });

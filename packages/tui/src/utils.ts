@@ -35,27 +35,120 @@ function extractAnsiCode(str: string, pos: number): { code: string; length: numb
  * Track active ANSI SGR codes to preserve styling across line breaks.
  */
 class AnsiCodeTracker {
-	private activeAnsiCodes: string[] = [];
+	private modifiers: Map<number, string> = new Map();
+	private foreground?: string;
+	private background?: string;
+	private otherCodes: string[] = [];
 
 	process(ansiCode: string): void {
 		if (!ansiCode.endsWith("m")) {
 			return;
 		}
 
-		// Full reset clears everything
-		if (ansiCode === "\x1b[0m" || ansiCode === "\x1b[m") {
-			this.activeAnsiCodes.length = 0;
-		} else {
-			this.activeAnsiCodes.push(ansiCode);
+		const paramsText = ansiCode.slice(2, -1);
+		const rawParams = paramsText.length === 0 ? ["0"] : paramsText.split(";");
+
+		for (let i = 0; i < rawParams.length; i++) {
+			const raw = rawParams[i] ?? "0";
+			const param = Number.parseInt(raw, 10);
+			if (!Number.isFinite(param)) continue;
+
+			if (param === 0) {
+				this.modifiers.clear();
+				this.foreground = undefined;
+				this.background = undefined;
+				this.otherCodes = [];
+				continue;
+			}
+
+			if (param === 38 || param === 48) {
+				const mode = rawParams[i + 1];
+				if (mode === undefined) continue;
+				const chunkLength = mode === "2" ? 5 : mode === "5" ? 3 : 1;
+				const chunk = rawParams.slice(i, i + chunkLength).join(";");
+				const code = `\x1b[${chunk}m`;
+				if (param === 38) {
+					this.foreground = code;
+				} else {
+					this.background = code;
+				}
+				i += chunkLength - 1;
+				continue;
+			}
+
+			const code = `\x1b[${param}m`;
+
+			if ((param >= 30 && param <= 37) || (param >= 90 && param <= 97)) {
+				this.foreground = code;
+				continue;
+			}
+			if ((param >= 40 && param <= 47) || (param >= 100 && param <= 107)) {
+				this.background = code;
+				continue;
+			}
+			if (param === 39) {
+				this.foreground = undefined;
+				continue;
+			}
+			if (param === 49) {
+				this.background = undefined;
+				continue;
+			}
+
+			if ([1, 2, 3, 4, 5, 7, 8, 9].includes(param)) {
+				this.modifiers.set(param, code);
+				continue;
+			}
+			if (param === 22) {
+				this.modifiers.delete(1);
+				this.modifiers.delete(2);
+				continue;
+			}
+			if (param === 23) {
+				this.modifiers.delete(3);
+				continue;
+			}
+			if (param === 24) {
+				this.modifiers.delete(4);
+				continue;
+			}
+			if (param === 25) {
+				this.modifiers.delete(5);
+				continue;
+			}
+			if (param === 27) {
+				this.modifiers.delete(7);
+				continue;
+			}
+			if (param === 28) {
+				this.modifiers.delete(8);
+				continue;
+			}
+			if (param === 29) {
+				this.modifiers.delete(9);
+				continue;
+			}
+
+			this.otherCodes.push(code);
 		}
 	}
 
 	getActiveCodes(): string {
-		return this.activeAnsiCodes.join("");
+		return [
+			...this.modifiers.values(),
+			...(this.foreground ? [this.foreground] : []),
+			...(this.background ? [this.background] : []),
+			...this.otherCodes,
+		].join("");
 	}
 
 	hasActiveCodes(): boolean {
-		return this.activeAnsiCodes.length > 0;
+		return (
+			this.modifiers.size > 0 ||
+			this.foreground !== undefined ||
+			this.background !== undefined ||
+			this.otherCodes.length > 0
+		);
 	}
 }
 

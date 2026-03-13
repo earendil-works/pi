@@ -39,6 +39,16 @@ describe("wrapTextWithAnsi", () => {
 		assert.ok(lines[0].includes("\x1b["));
 	});
 
+	it("does not resurrect foreground color after a 39m reset on wrapped continuation lines", () => {
+		const red = "\x1b[31m";
+		const resetFg = "\x1b[39m";
+		const text = `${red}red${resetFg} plain words here`;
+		const lines = wrapTextWithAnsi(text, 8);
+
+		assert.ok(lines.length > 1);
+		assert.ok(!lines[1]?.startsWith(red), `unexpected stale foreground carry: ${JSON.stringify(lines)}`);
+	});
+
 	it("does NOT pad lines", () => {
 		const text = "hello";
 		const lines = wrapTextWithAnsi(text, 20);

@@ -1,6 +1,6 @@
 import stripAnsi from "strip-ansi";
 import { describe, expect, it } from "vitest";
-import { initTheme } from "../theme/theme.js";
+import { initTheme, theme } from "../theme/theme.js";
 import { ToolExecutionComponent } from "./tool-execution.js";
 
 function renderText(component: ToolExecutionComponent, width: number): string {
@@ -38,6 +38,41 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 		expect(text).not.toContain("webfetch");
 		expect(text).toContain("ok · exit=0");
 		expect(text).not.toContain('"argv"');
+	});
+
+	it("renders mu_display.call.tokens with theme-aware syntax colors", () => {
+		const component = new ToolExecutionComponent("read", {
+			path: "/tmp/example.ts",
+		});
+
+		component.updateResult({
+			content: [{ type: "text", text: "ok" }],
+			isError: false,
+			details: {
+				mu_display: {
+					version: 1,
+					call: {
+						style: "argv",
+						text: "/tmp/example.ts:10",
+						tokens: [
+							{ text: "/", tone: "punctuation" },
+							{ text: "tmp", tone: "string" },
+							{ text: "/", tone: "punctuation" },
+							{ text: "example", tone: "string" },
+							{ text: ".", tone: "punctuation" },
+							{ text: "ts", tone: "string" },
+							{ text: ":", tone: "punctuation" },
+							{ text: "10", tone: "number" },
+						],
+					},
+				},
+			},
+		});
+
+		const rendered = component.render(120).join("\n");
+		expect(rendered).toContain(theme.getFgAnsi("syntaxString"));
+		expect(rendered).toContain(theme.getFgAnsi("syntaxPunctuation"));
+		expect(rendered).toContain(theme.getFgAnsi("syntaxNumber"));
 	});
 
 	it("collapses long output using mu_display.output.collapse", () => {

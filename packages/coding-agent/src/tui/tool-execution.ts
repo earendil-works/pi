@@ -1,21 +1,16 @@
-import * as os from "node:os";
 import { Container, Spacer, Text } from "@kennyfrc/mu-tui";
 import stripAnsi from "strip-ansi";
+import {
+	deriveBuiltinMuDisplayV1,
+	type MuDisplayV1,
+	type MuDisplayV1CallToken,
+	readMuDisplayV1,
+	shortenPathForDisplay,
+} from "../display/mu-display.js";
 import { theme } from "../theme/theme.js";
 import { type ApplyPatchParseResult, parseApplyPatchInput } from "../tools/apply-patch/parse.js";
 import { stripSystemReminderTagsForDisplay } from "../utils/system-reminder.js";
 import { truncateToVisualLines } from "./visual-truncate.js";
-
-/**
- * Convert absolute path to tilde notation if it's in home directory
- */
-function shortenPath(path: string): string {
-	const home = os.homedir();
-	if (path.startsWith(home)) {
-		return "~" + path.slice(home.length);
-	}
-	return path;
-}
 
 /**
  * Replace tabs with spaces for consistent rendering
@@ -49,6 +44,171 @@ function quoteArgForDisplay(arg: string): string {
 	// Unquoted if it's a simple token (no whitespace, no shell-ish punctuation)
 	if (/^[A-Za-z0-9._/:=-]+$/.test(arg)) return arg;
 	return JSON.stringify(arg);
+}
+
+function highlightShellAssignment(token: string): string {
+	const equalsIndex = token.indexOf("=");
+	if (equalsIndex === -1) return token;
+	const name = token.slice(0, equalsIndex);
+	const value = token.slice(equalsIndex + 1);
+	const highlighted = theme.fg("syntaxVariable", name) + theme.fg("syntaxOperator", "=");
+	if (!value) return highlighted;
+	if (value.startsWith('"') || value.startsWith("'")) {
+		return highlighted + theme.fg("syntaxString", value);
+	}
+	if (value.startsWith("$")) {
+		return highlighted + theme.fg("syntaxVariable", value);
+	}
+	if (/^\d+$/.test(value)) {
+		return highlighted + theme.fg("syntaxNumber", value);
+	}
+	return highlighted + value;
+}
+
+function highlightDoubleQuotedString(token: string): string {
+	if (token.length < 2) return theme.fg("syntaxString", token);
+	const inner = token.slice(1, -1);
+	let result = theme.fg("syntaxString", '"');
+	let index = 0;
+
+	while (index < inner.length) {
+		const rest = inner.slice(index);
+		const variableMatch = rest.match(/^(\$\{[^}]+\}|\$\([^)]+\)|\$[A-Za-z_][A-Za-z0-9_]*)/);
+		if (variableMatch) {
+			result += theme.fg("syntaxVariable", variableMatch[0]);
+			index += variableMatch[0].length;
+			continue;
+		}
+		const escapeMatch = rest.match(/^\\./);
+		if (escapeMatch) {
+			result += theme.fg("syntaxString", escapeMatch[0]);
+			index += escapeMatch[0].length;
+			continue;
+		}
+		result += theme.fg("syntaxString", inner[index]!);
+		index += 1;
+	}
+
+	result += theme.fg("syntaxString", '"');
+	return result;
+}
+
+function highlightShellLine(line: string): string {
+	let result = "";
+	let expectCommand = true;
+	let index = 0;
+
+	while (index < line.length) {
+		const rest = line.slice(index);
+
+		const whitespaceMatch = rest.match(/^\s+/);
+		if (whitespaceMatch) {
+			result += whitespaceMatch[0];
+			index += whitespaceMatch[0].length;
+			continue;
+		}
+
+		if (rest.startsWith("#")) {
+			result += theme.fg("syntaxComment", rest);
+			break;
+		}
+
+		const stringMatch = rest.match(/^("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')/);
+		if (stringMatch) {
+			const token = stringMatch[0];
+			result += token.startsWith('"') ? highlightDoubleQuotedString(token) : theme.fg("syntaxString", token);
+			index += stringMatch[0].length;
+			expectCommand = false;
+			continue;
+		}
+
+		const variableMatch = rest.match(/^(\$\{[^}]+\}|\$\([^)]+\)|\$[A-Za-z_][A-Za-z0-9_]*)/);
+		if (variableMatch) {
+			result += theme.fg("syntaxVariable", variableMatch[0]);
+			index += variableMatch[0].length;
+			expectCommand = false;
+			continue;
+		}
+
+		const operatorMatch = rest.match(/^(\|\||&&|>>|<<|[|&;<>])/);
+		if (operatorMatch) {
+			result += theme.fg("syntaxOperator", operatorMatch[0]);
+			index += operatorMatch[0].length;
+			expectCommand = true;
+			continue;
+		}
+
+		const punctuationMatch = rest.match(/^[(){}[\]\\]/);
+		if (punctuationMatch) {
+			result += theme.fg("syntaxPunctuation", punctuationMatch[0]);
+			index += punctuationMatch[0].length;
+			continue;
+		}
+
+		const numberMatch = rest.match(/^\d+/);
+		if (numberMatch) {
+			result += theme.fg("syntaxNumber", numberMatch[0]);
+			index += numberMatch[0].length;
+			expectCommand = false;
+			continue;
+		}
+
+		const wordMatch = rest.match(/^[^\s|&;<>()[\]{}\\#]+/);
+		if (wordMatch) {
+			const token = wordMatch[0];
+			if (expectCommand && /^[A-Za-z_][A-Za-z0-9_]*=.*/.test(token)) {
+				result += highlightShellAssignment(token);
+				index += token.length;
+				continue;
+			}
+			if (expectCommand) {
+				result += theme.fg("syntaxFunction", token);
+				expectCommand = false;
+			} else {
+				result += token;
+			}
+			index += token.length;
+			continue;
+		}
+
+		result += line[index];
+		index += 1;
+	}
+
+	return result;
+}
+
+function highlightShellCommand(command: string): string {
+	return command
+		.split("\n")
+		.map((line) => highlightShellLine(line))
+		.join("\n");
+}
+
+function highlightPathForDisplay(path: string): string {
+	let result = "";
+	for (const char of path) {
+		if (char === "/" || char === "." || char === "~" || char === "-" || char === "_") {
+			result += theme.fg("syntaxPunctuation", char);
+		} else {
+			result += theme.fg("syntaxString", char);
+		}
+	}
+	return result;
+}
+
+function highlightPatternForDisplay(pattern: string, wrapper?: { open: string; close: string }): string {
+	const content = pattern
+		.split("")
+		.map((char) => {
+			if ("*?{}[]().|/\\_-".includes(char)) {
+				return theme.fg("syntaxPunctuation", char);
+			}
+			return theme.fg("syntaxString", char);
+		})
+		.join("");
+	if (!wrapper) return content;
+	return theme.fg("syntaxPunctuation", wrapper.open) + content + theme.fg("syntaxPunctuation", wrapper.close);
 }
 
 function formatCommandLineForDisplay(command: string, argv: string[]): string {
@@ -127,43 +287,34 @@ function deriveWebToolCallText(toolName: string, args: Record<string, unknown>):
 	return null;
 }
 
-type MuDisplayV1Severity = "ok" | "warning" | "error" | "info";
-
-interface MuDisplayV1 {
-	version: 1;
-	call?: {
-		style: "argv";
-		text: string;
-		command?: string;
-		argv?: string[];
-		cwd?: string;
-	};
-	summary?: {
-		text: string;
-		severity?: MuDisplayV1Severity;
-	};
-	output?: {
-		collapse?: {
-			maxVisualLines: number;
-			expandHint?: string;
-		};
-		format?: "text" | "markdown" | "json" | "html";
-	};
-	sections?: Array<{
-		title: string;
-		format?: "text" | "json";
-		content: string;
-		collapsedByDefault?: boolean;
-		collapse?: { maxVisualLines: number };
-	}>;
+function renderMuDisplayToken(token: MuDisplayV1CallToken): string {
+	switch (token.tone) {
+		case "string":
+			return theme.fg("syntaxString", token.text);
+		case "punctuation":
+			return theme.fg("syntaxPunctuation", token.text);
+		case "number":
+			return theme.fg("syntaxNumber", token.text);
+		case "operator":
+			return theme.fg("syntaxOperator", token.text);
+		case "variable":
+			return theme.fg("syntaxVariable", token.text);
+		case "function":
+			return theme.fg("syntaxFunction", token.text);
+		case "comment":
+			return theme.fg("syntaxComment", token.text);
+		default:
+			return token.text;
+	}
 }
 
-function readMuDisplayV1(details: unknown): MuDisplayV1 | undefined {
-	if (!isRecord(details)) return undefined;
-	const candidate = details.mu_display;
-	if (!isRecord(candidate)) return undefined;
-	if (candidate.version !== 1) return undefined;
-	return candidate as unknown as MuDisplayV1;
+function renderMuDisplayCallText(call: NonNullable<MuDisplayV1["call"]>): string {
+	if (Array.isArray(call.tokens) && call.tokens.length > 0) {
+		return call.tokens.map(renderMuDisplayToken).join("");
+	}
+	const argv = Array.isArray(call.argv) ? call.argv.filter((v): v is string => typeof v === "string") : [];
+	const callText = argv.length > 0 ? formatArgvForDisplay(argv) : (call.text ?? "");
+	return callText ? theme.fg("accent", callText) : theme.fg("toolOutput", "...");
 }
 
 function normalizeToolName(toolName: string): string {
@@ -352,11 +503,13 @@ export class ToolExecutionComponent extends Container {
 			stdin?: unknown;
 		};
 		const args = (isRecord(this.args) ? this.args : {}) as ToolArgs;
+		const effectiveMuDisplay = readMuDisplayV1(this.result?.details) ?? deriveBuiltinMuDisplayV1(this.toolName, args);
 
 		// Format based on tool type
 		if (this.toolName === "bash") {
 			const command = typeof args.command === "string" ? args.command : "";
-			text = theme.fg("toolTitle", theme.bold(`$ ${command || theme.fg("toolOutput", "...")}`));
+			const commandDisplay = command ? highlightShellCommand(command) : theme.fg("toolOutput", "...");
+			text = theme.fg("toolTitle", theme.bold("$")) + " " + commandDisplay;
 
 			// Use final result if available, otherwise show streaming partial output
 			let output = "";
@@ -404,14 +557,16 @@ export class ToolExecutionComponent extends Container {
 			const firstLine = cmdLines[0]?.trim() ? cmdLines[0]!.trimEnd() : "";
 			const remainingCmd = cmdLines.length > 1 ? cmdLines.slice(1).join("\n") : "";
 
-			const workdirSuffix = workdir?.trim() ? theme.fg("muted", ` (in ${shortenPath(workdir.trim())})`) : "";
-			const headerCmd = firstLine ? theme.fg("accent", firstLine) : theme.fg("toolOutput", "...");
+			const workdirSuffix = workdir?.trim()
+				? theme.fg("muted", ` (in ${shortenPathForDisplay(workdir.trim())})`)
+				: "";
+			const headerCmd = firstLine ? highlightShellCommand(firstLine) : theme.fg("toolOutput", "...");
 			text = theme.fg("toolTitle", theme.bold("exec_command")) + " " + headerCmd + workdirSuffix;
 
 			if (remainingCmd.trim()) {
 				const styledRemainingCmd = remainingCmd
 					.split("\n")
-					.map((line: string) => theme.fg("accent", line))
+					.map((line: string) => highlightShellLine(line))
 					.join("\n");
 
 				if (this.expanded) {
@@ -464,18 +619,13 @@ export class ToolExecutionComponent extends Container {
 		} else if (this.toolName === "read") {
 			const rawPath =
 				typeof args.file_path === "string" ? args.file_path : typeof args.path === "string" ? args.path : "";
-			const path = shortenPath(rawPath);
-			const offset = typeof args.offset === "number" ? args.offset : undefined;
-			const limit = typeof args.limit === "number" ? args.limit : undefined;
-
-			// Build path display with offset/limit suffix
-			let pathDisplay = path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
-			if (offset !== undefined) {
-				const endLine = limit !== undefined ? offset + limit : "";
-				pathDisplay += theme.fg("toolOutput", `:${offset}${endLine ? `-${endLine}` : ""}`);
-			}
-
-			text = theme.fg("toolTitle", theme.bold("read")) + " " + pathDisplay;
+			const path = shortenPathForDisplay(rawPath);
+			text =
+				theme.fg("toolTitle", theme.bold("read")) +
+				" " +
+				(effectiveMuDisplay?.call
+					? renderMuDisplayCallText(effectiveMuDisplay.call)
+					: highlightPathForDisplay(path));
 
 			if (this.result) {
 				const output = this.getTextOutput();
@@ -496,7 +646,7 @@ export class ToolExecutionComponent extends Container {
 		} else if (this.toolName === "write") {
 			const rawPath =
 				typeof args.file_path === "string" ? args.file_path : typeof args.path === "string" ? args.path : "";
-			const path = shortenPath(rawPath);
+			const path = shortenPathForDisplay(rawPath);
 			const fileContent = typeof args.content === "string" ? args.content : "";
 			const lines = fileContent ? fileContent.split("\n") : [];
 			const totalLines = lines.length;
@@ -504,10 +654,11 @@ export class ToolExecutionComponent extends Container {
 			text =
 				theme.fg("toolTitle", theme.bold("write")) +
 				" " +
-				(path ? theme.fg("accent", path) : theme.fg("toolOutput", "..."));
-			if (totalLines > 10) {
-				text += ` (${totalLines} lines)`;
-			}
+				(effectiveMuDisplay?.call
+					? renderMuDisplayCallText(effectiveMuDisplay.call)
+					: path
+						? highlightPathForDisplay(path)
+						: theme.fg("toolOutput", "..."));
 
 			// Handle streaming output or final result
 			if (this.result) {
@@ -553,11 +704,15 @@ export class ToolExecutionComponent extends Container {
 		} else if (this.toolName === "edit") {
 			const rawPath =
 				typeof args.file_path === "string" ? args.file_path : typeof args.path === "string" ? args.path : "";
-			const path = shortenPath(rawPath);
+			const path = shortenPathForDisplay(rawPath);
 			text =
 				theme.fg("toolTitle", theme.bold("edit")) +
 				" " +
-				(path ? theme.fg("accent", path) : theme.fg("toolOutput", "..."));
+				(effectiveMuDisplay?.call
+					? renderMuDisplayCallText(effectiveMuDisplay.call)
+					: path
+						? highlightPathForDisplay(path)
+						: theme.fg("toolOutput", "..."));
 
 			if (this.result) {
 				// Show error message if it's an error
@@ -676,21 +831,24 @@ export class ToolExecutionComponent extends Container {
 			}
 		} else if (this.toolName === "glob") {
 			const pattern = typeof args.pattern === "string" ? args.pattern : "";
-			const path = shortenPath(typeof args.path === "string" ? args.path : ".");
+			const path = shortenPathForDisplay(typeof args.path === "string" ? args.path : ".");
 			const limit = typeof args.limit === "number" ? args.limit : undefined;
 
 			// If pattern is empty, it's "ls mode" - list directory contents
 			if (!pattern) {
-				text = theme.fg("toolTitle", theme.bold("glob")) + " " + theme.fg("accent", path);
+				text =
+					theme.fg("toolTitle", theme.bold("glob")) +
+					" " +
+					(effectiveMuDisplay?.call
+						? renderMuDisplayCallText(effectiveMuDisplay.call)
+						: highlightPathForDisplay(path));
 			} else {
 				text =
 					theme.fg("toolTitle", theme.bold("glob")) +
 					" " +
-					theme.fg("accent", pattern) +
-					theme.fg("toolOutput", ` in ${path}`);
-			}
-			if (limit !== undefined) {
-				text += theme.fg("toolOutput", ` (limit ${limit})`);
+					(effectiveMuDisplay?.call
+						? renderMuDisplayCallText(effectiveMuDisplay.call)
+						: highlightPatternForDisplay(pattern));
 			}
 
 			if (this.result) {
@@ -713,21 +871,18 @@ export class ToolExecutionComponent extends Container {
 			}
 		} else if (this.toolName === "grep") {
 			const pattern = typeof args.pattern === "string" ? args.pattern : "";
-			const path = shortenPath(typeof args.path === "string" ? args.path : ".");
+			const path = shortenPathForDisplay(typeof args.path === "string" ? args.path : ".");
 			const globPattern = typeof args.glob === "string" ? args.glob : "";
 			const limit = typeof args.limit === "number" ? args.limit : undefined;
 
 			text =
 				theme.fg("toolTitle", theme.bold("grep")) +
 				" " +
-				theme.fg("accent", `/${pattern}/`) +
-				theme.fg("toolOutput", ` in ${path}`);
-			if (globPattern) {
-				text += theme.fg("toolOutput", ` (${globPattern})`);
-			}
-			if (limit !== undefined) {
-				text += theme.fg("toolOutput", ` limit ${limit}`);
-			}
+				(effectiveMuDisplay?.call
+					? renderMuDisplayCallText(effectiveMuDisplay.call)
+					: highlightPatternForDisplay(pattern, { open: "/", close: "/" }) +
+						theme.fg("toolOutput", " in ") +
+						highlightPathForDisplay(path));
 
 			if (this.result) {
 				const output = this.getTextOutput().trim();
@@ -747,22 +902,17 @@ export class ToolExecutionComponent extends Container {
 					}
 				}
 			}
-		} else if (readMuDisplayV1(this.result?.details)) {
-			const muDisplay = readMuDisplayV1(this.result?.details)!;
+		} else if (effectiveMuDisplay && readMuDisplayV1(this.result?.details)) {
+			const muDisplay = effectiveMuDisplay;
 
-			// TUI convention: tool name is the "command"; show argv only.
-			const argv = Array.isArray(muDisplay.call?.argv)
-				? muDisplay.call!.argv.filter((v): v is string => typeof v === "string")
-				: [];
-			const callText = argv.length > 0 ? formatArgvForDisplay(argv) : (muDisplay.call?.text ?? "");
 			const cwdSuffix = muDisplay.call?.cwd?.trim()
-				? theme.fg("muted", ` (in ${shortenPath(muDisplay.call.cwd.trim())})`)
+				? theme.fg("muted", ` (in ${shortenPathForDisplay(muDisplay.call.cwd.trim())})`)
 				: "";
 
 			text =
 				theme.fg("toolTitle", theme.bold(this.toolName)) +
 				" " +
-				(callText ? theme.fg("accent", callText) : theme.fg("toolOutput", "...")) +
+				(muDisplay.call ? renderMuDisplayCallText(muDisplay.call) : theme.fg("toolOutput", "...")) +
 				cwdSuffix;
 
 			if (muDisplay.summary?.text?.trim()) {
@@ -803,7 +953,9 @@ export class ToolExecutionComponent extends Container {
 		} else if (this.toolName === "todo") {
 			const action = typeof args.action === "string" ? args.action : "";
 			text = theme.fg("toolTitle", theme.bold("todo"));
-			if (action) {
+			if (effectiveMuDisplay?.call) {
+				text += " " + renderMuDisplayCallText(effectiveMuDisplay.call);
+			} else if (action) {
 				text += theme.fg("dim", ` (${action})`);
 			}
 
@@ -826,8 +978,13 @@ export class ToolExecutionComponent extends Container {
 			const callText = deriveWebToolCallText(this.toolName, args);
 
 			if (hasArgv || this.partialOutput || callText) {
-				const head = hasArgv ? formatArgvForDisplay(argv) : (callText ?? "");
-				text = theme.fg("toolTitle", theme.bold(this.toolName)) + (head ? " " + theme.fg("accent", head) : "");
+				text =
+					theme.fg("toolTitle", theme.bold(this.toolName)) +
+					(effectiveMuDisplay?.call
+						? " " + renderMuDisplayCallText(effectiveMuDisplay.call)
+						: hasArgv || callText
+							? " " + theme.fg("accent", hasArgv ? formatArgvForDisplay(argv) : (callText ?? ""))
+							: "");
 
 				// Prefer final result output, otherwise streaming partial output.
 				let output = "";

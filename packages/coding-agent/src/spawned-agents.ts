@@ -139,7 +139,12 @@ export function inspectSpawnedAgentSession(
 }
 
 export function collectSpawnedAgentsFromParentSession(parentSessionFile: string): SpawnedAgentSummary[] {
-	const { messages } = loadThreadMessagesFromSessionFile(parentSessionFile);
+	let messages: Message[];
+	try {
+		({ messages } = loadThreadMessagesFromSessionFile(parentSessionFile));
+	} catch {
+		return [];
+	}
 	const waitedBySessionId = new Map<string, WaitAgentResultLike>();
 	const summaries: SpawnedAgentSummary[] = [];
 
