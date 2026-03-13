@@ -17,6 +17,7 @@ type MissionRenderer = {
 	showWarning(message: string): void;
 	handleEditorTextSubmission(text: string, kind: "by-end" | "next"): Promise<void>;
 	getComposerMetaLabel(): string;
+	editor: { handleInput(data: string): void };
 };
 
 function extractTextContent(value: unknown): string {
@@ -428,6 +429,86 @@ describe("/mission-run submission (red)", () => {
 		expect(earlyFooter).toContain("0s");
 		expect(laterFooter).toContain("1s");
 		expect(laterFooter).not.toBe(earlyFooter);
+	});
+
+	it("stops the mission loop when escape is pressed during a running iteration", async () => {
+		initTheme("dark");
+		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
+		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
+
+		const { dir, cleanup } = makeTodoMissionDir();
+		cleanups.push(cleanup);
+
+		const previousOpenAiKey = process.env.OPENAI_API_KEY;
+		process.env.OPENAI_API_KEY = "test-openai-key";
+		cleanups.push(() => {
+			if (previousOpenAiKey === undefined) {
+				delete process.env.OPENAI_API_KEY;
+			} else {
+				process.env.OPENAI_API_KEY = previousOpenAiKey;
+			}
+		});
+
+		let runCalls = 0;
+		const transport: AgentTransport = {
+			async *run(_messages, _userMessage, _config, signal) {
+				runCalls += 1;
+				await new Promise<void>((resolve) => {
+					if (signal?.aborted) {
+						resolve();
+						return;
+					}
+					signal?.addEventListener("abort", () => resolve(), { once: true });
+				});
+				yield* [];
+			},
+		};
+
+		const agent = new Agent({
+			transport,
+			initialState: {
+				model: getModel("openai", "gpt-4o-mini"),
+				thinkingLevel: "medium",
+			},
+		});
+
+		const renderer = new TuiRenderer(
+			agent,
+			{
+				appendContextCompaction: () => {},
+				loadTitle: () => null,
+				getSessionId: () => "mission-submit-red",
+			} as never,
+			new SettingsManager(configDir),
+			{
+				listCommands: () => [],
+				getCommand: () => undefined,
+				applyInputHooks: async (text: string) => ({ handled: false, text }),
+				composeToolResultTransformer: <T>(base: T) => base,
+			} as never,
+			{} as never,
+			"0.0.0",
+		) as unknown as MissionRenderer;
+
+		await renderer.init();
+		cleanups.push(() => renderer.stop());
+
+		const warnings: string[] = [];
+		renderer.showWarning = (message: string) => {
+			warnings.push(message);
+		};
+
+		const submissionPromise = renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		renderer.editor.handleInput("\x1b");
+		await submissionPromise;
+
+		expect(runCalls).toBe(1);
+		expect(warnings.join("\n")).toMatch(/stopped/i);
+		const footerLabel = stripAnsi(renderer.getComposerMetaLabel());
+		expect(footerLabel).toContain(`mission ${dir.split("/").at(-1)}`);
+		expect(footerLabel).toContain("stopped");
+		expect(footerLabel).toContain("0/1 done");
 	});
 
 	it("compacts before every mission iteration, not just the first one", async () => {

@@ -1,7 +1,7 @@
 import { theme } from "../theme/theme.js";
 import type { MissionDefinition, MissionTask } from "./types.js";
 
-export type MissionUiStatus = "running" | "blocked" | "done";
+export type MissionUiStatus = "running" | "blocked" | "done" | "stopped";
 
 export interface MissionUiState {
 	missionName: string;
@@ -48,7 +48,14 @@ export function formatMissionMetaLabel(state: MissionUiState | null): string {
 	const parts = [
 		theme.fg("accent", `mission ${state.missionName}`),
 		theme.fg("muted", `iter ${state.iteration}`),
-		theme.fg(state.status === "done" ? "accent" : state.status === "blocked" ? "warning" : "muted", state.status),
+		theme.fg(
+			state.status === "done"
+				? "accent"
+				: state.status === "blocked" || state.status === "stopped"
+					? "warning"
+					: "muted",
+			state.status,
+		),
 		theme.fg("muted", `${state.doneCount}/${state.totalCount} done`),
 	];
 

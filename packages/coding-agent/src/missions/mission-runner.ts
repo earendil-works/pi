@@ -11,10 +11,12 @@ export interface RunMissionLoopOptions {
 	missionDir: string;
 	maxIterations?: number;
 	executeIteration: (execution: MissionIterationExecution) => Promise<void>;
+	signal?: AbortSignal;
 }
 
 export type MissionLoopResult =
 	| { status: "done"; iterations: number }
+	| { status: "stopped"; iterations: number }
 	| { status: "blocked"; iterations: number; reason: string };
 
 export async function runMissionLoop(options: RunMissionLoopOptions): Promise<MissionLoopResult> {
@@ -22,10 +24,17 @@ export async function runMissionLoop(options: RunMissionLoopOptions): Promise<Mi
 	let iterations = 0;
 
 	while (iterations <= maxIterations) {
+		if (options.signal?.aborted) {
+			return { status: "stopped", iterations };
+		}
+
 		const mission = parseMissionDefinition(options.missionDir);
 		if (mission.mode === "optimize") {
 			const prompt = buildMissionIterationPrompt(mission);
 			await options.executeIteration({ mission, prompt });
+			if (options.signal?.aborted) {
+				return { status: "stopped", iterations: iterations + 1 };
+			}
 			iterations += 1;
 			continue;
 		}
@@ -43,6 +52,9 @@ export async function runMissionLoop(options: RunMissionLoopOptions): Promise<Mi
 
 		const prompt = buildMissionIterationPrompt(mission);
 		await options.executeIteration({ mission, prompt });
+		if (options.signal?.aborted) {
+			return { status: "stopped", iterations: iterations + 1 };
+		}
 		iterations += 1;
 	}
 

@@ -346,6 +346,7 @@ export class TuiRenderer {
 
 	private bashAbortController: AbortController | null = null;
 	private handoffAbortController: AbortController | null = null;
+	private missionRunAbortController: AbortController | null = null;
 	private isAutoHandoffInProgress = false;
 	private shouldIncludeHandoffNudge = false; // 85% threshold nudge state
 	private pendingExplicitHandoff: (HandoffDetails & { parentSessionId: string | null }) | null = null;
@@ -781,6 +782,14 @@ export class TuiRenderer {
 
 			if (this.handoffAbortController) {
 				this.handoffAbortController.abort();
+				return;
+			}
+
+			if (this.missionRunAbortController) {
+				this.missionRunAbortController.abort();
+				if (this.agent.state.isStreaming) {
+					this.agent.abort();
+				}
 				return;
 			}
 
@@ -5047,6 +5056,9 @@ export class TuiRenderer {
 
 	private async handleMissionRunCommand(missionRef: string): Promise<void> {
 		const missionDir = this.resolveMissionDir(missionRef);
+		const missionRunAbortController = new AbortController();
+		this.missionRunAbortController = missionRunAbortController;
+		const { signal } = missionRunAbortController;
 
 		try {
 			const initialMission = parseMissionDefinition(missionDir);
@@ -5077,13 +5089,23 @@ export class TuiRenderer {
 
 			const result = await runMissionLoop({
 				missionDir,
+				signal,
 				executeIteration: async ({ mission, prompt }) => {
+					if (signal.aborted) {
+						return;
+					}
 					const iteration = this.missionUiState ? this.missionUiState.iteration + 1 : 1;
 					const compactionGoal = `Continue mission ${missionName} at iteration ${iteration}`;
 					await this.applyCompactionCheckpoint(this.buildMissionCompactionDetails(compactionGoal));
+					if (signal.aborted) {
+						return;
+					}
 					this.setMissionUiState(missionName, iteration, "running", mission);
 					await this.agent.prompt(prompt);
 					await this.agent.waitForIdle();
+					if (signal.aborted) {
+						return;
+					}
 					const refreshedMission = parseMissionDefinition(missionDir);
 					this.setMissionUiState(
 						missionName,
@@ -5106,10 +5128,20 @@ export class TuiRenderer {
 				return;
 			}
 
+			if (result.status === "stopped") {
+				const suffix =
+					result.iterations === 0
+						? "stopped before the first iteration"
+						: `stopped after ${result.iterations} iteration${result.iterations === 1 ? "" : "s"}`;
+				this.showWarning(`Mission ${missionName} ${suffix}.`);
+				return;
+			}
+
 			this.showWarning(`Mission ${missionName} blocked: ${result.reason}`);
 		} catch (error: unknown) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		} finally {
+			this.missionRunAbortController = null;
 			this.endMissionRunWorkingStatus();
 		}
 	}
