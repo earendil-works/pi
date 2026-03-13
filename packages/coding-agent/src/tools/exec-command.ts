@@ -42,14 +42,21 @@ export const execCommandTool: AgentTool<typeof execCommandSchema, undefined> = {
 		{
 			cmd,
 			workdir,
+			yield_time_ms,
 		}: {
 			cmd: string;
 			workdir?: string;
+			yield_time_ms?: number;
 		},
 		signal?: AbortSignal,
 		onProgress?: (chunk: string) => void,
 	) => {
 		const command = workdir?.trim() ? `cd ${bashQuote(workdir)} && ${cmd}` : cmd;
-		return bashTool.execute(toolCallId, { command }, signal, onProgress);
+		return bashTool.execute(
+			toolCallId,
+			yield_time_ms !== undefined ? { command, timeout: yield_time_ms / 1000 } : { command },
+			signal,
+			onProgress,
+		);
 	},
 };

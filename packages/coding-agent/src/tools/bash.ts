@@ -53,9 +53,14 @@ function appendBackgroundOutput(
 	job[key] = trimRecentOutput(job[key] + chunk);
 }
 
+function snapshotBackgroundJob(job: BackgroundJobState): BackgroundJobSnapshot {
+	const { stdoutDecoder: _stdoutDecoder, stderrDecoder: _stderrDecoder, child: _child, ...snapshot } = job;
+	return { ...snapshot };
+}
+
 export function listBackgroundJobs(): BackgroundJobSnapshot[] {
 	return [...backgroundJobs.values()]
-		.map(({ stdoutDecoder: _stdoutDecoder, stderrDecoder: _stderrDecoder, child: _child, ...job }) => ({ ...job }))
+		.map((job) => snapshotBackgroundJob(job))
 		.sort((left, right) => right.startedAt - left.startedAt);
 }
 
@@ -64,8 +69,7 @@ export function getBackgroundJob(id: string): BackgroundJobSnapshot | undefined 
 	if (!job) {
 		return undefined;
 	}
-	const { stdoutDecoder: _stdoutDecoder, stderrDecoder: _stderrDecoder, child: _child, ...snapshot } = job;
-	return { ...snapshot };
+	return snapshotBackgroundJob(job);
 }
 
 export function killBackgroundJob(id: string): boolean {
@@ -89,15 +93,12 @@ export function killAllBackgroundJobs(): number {
 	return runningJobs.length;
 }
 
-function startBackgroundJob(command: string): BackgroundJobSnapshot {
-	const { shell, args } = getShellConfig();
-	const child = spawn(shell, [...args, command], {
-		detached: true,
-		env: buildBashEnv(),
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-
-	const startedAt = Date.now();
+function registerBackgroundJob(
+	command: string,
+	child: ReturnType<typeof spawn>,
+	options?: { startedAt?: number; initialOutput?: string },
+): BackgroundJobSnapshot {
+	const startedAt = options?.startedAt ?? Date.now();
 	const id = Math.random().toString(36).slice(2, 10);
 	const pid = child.pid ?? -1;
 	const job: BackgroundJobState = {
@@ -106,7 +107,7 @@ function startBackgroundJob(command: string): BackgroundJobSnapshot {
 		command,
 		startedAt,
 		status: "running",
-		recentOutput: "",
+		recentOutput: trimRecentOutput(options?.initialOutput ?? ""),
 		recentStdout: "",
 		recentStderr: "",
 		stdoutDecoder: new StringDecoder("utf8"),
@@ -165,11 +166,44 @@ function startBackgroundJob(command: string): BackgroundJobSnapshot {
 			command,
 			startedAt,
 			status: "running",
-			recentOutput: "",
+			recentOutput: trimRecentOutput(options?.initialOutput ?? ""),
 			recentStdout: "",
 			recentStderr: "",
 		}
 	);
+}
+
+function startBackgroundJob(command: string): BackgroundJobSnapshot {
+	const { shell, args } = getShellConfig();
+	const child = spawn(shell, [...args, command], {
+		detached: true,
+		env: buildBashEnv(),
+		stdio: ["ignore", "pipe", "pipe"],
+	});
+
+	return registerBackgroundJob(command, child);
+}
+
+function buildBackgroundJobResult(job: BackgroundJobSnapshot): {
+	content: Array<{ type: "text"; text: string }>;
+	details: { backgroundJob: { id: string; pid: number; status: BackgroundJobStatus; command: string } };
+} {
+	return {
+		content: [
+			{
+				type: "text",
+				text: `Started background job ${job.id} (pid ${job.pid})`,
+			},
+		],
+		details: {
+			backgroundJob: {
+				id: job.id,
+				pid: job.pid,
+				status: job.status,
+				command: job.command,
+			},
+		},
+	};
 }
 
 /**
@@ -351,22 +385,7 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 	) => {
 		if (background) {
 			const job = startBackgroundJob(command);
-			return {
-				content: [
-					{
-						type: "text",
-						text: `Started background job ${job.id} (pid ${job.pid})`,
-					},
-				],
-				details: {
-					backgroundJob: {
-						id: job.id,
-						pid: job.pid,
-						status: job.status,
-						command: job.command,
-					},
-				},
-			};
+			return buildBackgroundJobResult(job);
 		}
 
 		return new Promise((resolve, _reject) => {
@@ -427,11 +446,12 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 
 			// Single combined output buffer - preserves interleaved stdout/stderr order
 			let output = "";
-			let timedOut = false;
 			let totalOutputBytes = 0;
 			let active = true;
 			let didTruncate = false;
 			let truncationProgressShown = false;
+			let settled = false;
+			const startedAt = Date.now();
 
 			// Throttling state for progress events
 			let pendingChunk = "";
@@ -591,8 +611,21 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 			let timeoutHandle: NodeJS.Timeout | undefined;
 			if (effectiveTimeout > 0) {
 				timeoutHandle = setTimeout(() => {
-					timedOut = true;
-					onAbort();
+					if (settled) {
+						return;
+					}
+					settled = true;
+					active = false;
+					if (flushTimer) {
+						clearTimeout(flushTimer);
+						flushTimer = null;
+					}
+					pendingChunk = "";
+					if (signal) {
+						signal.removeEventListener("abort", onAbort);
+					}
+					const job = registerBackgroundJob(command, child, { startedAt, initialOutput: output });
+					resolve(buildBackgroundJobResult(job));
 				}, effectiveTimeout * 1000);
 			}
 
@@ -623,28 +656,20 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 					signal.removeEventListener("abort", onAbort);
 				}
 
-				if (signal?.aborted) {
-					let result = output;
-					if (result) result += "\n\n";
-					result += "Command aborted";
-
+				if (settled) {
 					finalizeLogStream(() => {
-						// Keep log file if truncated, otherwise delete
-						if (didTruncate && logPath) {
-							result += `\n\nFull output saved to: ${logPath}`;
-						} else if (logPath) {
+						if (logPath && !didTruncate) {
 							unlink(logPath, () => {});
 						}
-
-						_reject(new Error(result));
 					});
 					return;
 				}
 
-				if (timedOut) {
+				if (signal?.aborted) {
+					settled = true;
 					let result = output;
 					if (result) result += "\n\n";
-					result += `Command timed out after ${effectiveTimeout} seconds`;
+					result += "Command aborted";
 
 					finalizeLogStream(() => {
 						// Keep log file if truncated, otherwise delete
@@ -671,6 +696,7 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 				let result = output;
 
 				finalizeLogStream(() => {
+					settled = true;
 					// Show truncation notice only if we actually dropped bytes
 					if (didTruncate) {
 						result += `\n\n... (output truncated to ${MAX_OUTPUT_BYTES} bytes)`;
