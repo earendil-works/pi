@@ -26,13 +26,18 @@ describe("bash tool background execution (red)", () => {
 		// Keep tests isolated from each other if later implementations add process tracking.
 	});
 
-	it("honors explicit foreground timeouts below the old 1800s floor", async () => {
-		await expect(
-			bashTool.execute("bash-red-timeout", {
-				command: 'sleep 2; printf "should-not-print"',
-				timeout: 1,
-			}),
-		).rejects.toThrow(/timed out after 1 seconds/i);
+	it("promotes long-running commands to background jobs when the timeout budget is exceeded", async () => {
+		const result = (await bashTool.execute("bash-red-timeout", {
+			command: 'sleep 2; printf "should-not-print"',
+			timeout: 1,
+		} as unknown as { command: string; timeout?: number })) as ToolResult;
+
+		expect(result.details?.backgroundJob).toBeDefined();
+		expect(result.details?.backgroundJob).toMatchObject({
+			status: "running",
+			command: 'sleep 2; printf "should-not-print"',
+		});
+		expect(getTextOutput(result)).toContain("Started background job");
 	}, 5_000);
 
 	it("returns immediately with background job metadata when background mode is requested", async () => {
