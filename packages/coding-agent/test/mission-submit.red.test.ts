@@ -119,6 +119,7 @@ describe("/mission-run submission (red)", () => {
 				appendContextCompaction: () => {},
 				loadTitle: () => null,
 				getSessionId: () => "mission-submit-red",
+				reset: () => {},
 			} as never,
 			new SettingsManager(configDir),
 			{
@@ -158,13 +159,136 @@ describe("/mission-run submission (red)", () => {
 		expect(footerLabel).toContain("1/1 done");
 	});
 
+	it("clears a completed mission footer when /new starts a fresh session", async () => {
+		initTheme("dark");
+		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
+		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
+
+		const { dir, cleanup } = makeMissionDir();
+		cleanups.push(cleanup);
+
+		const agent = new Agent({
+			transport: {
+				async *run() {
+					yield* [];
+				},
+			} as never,
+			initialState: {
+				model: getModel("openai-codex", "gpt-5.4"),
+				thinkingLevel: "medium",
+			},
+		});
+
+		const renderer = new TuiRenderer(
+			agent,
+			{
+				appendContextCompaction: () => {},
+				loadTitle: () => null,
+				getSessionId: () => "mission-submit-red",
+				reset: () => {},
+			} as never,
+			new SettingsManager(configDir),
+			{
+				listCommands: () => [],
+				getCommand: () => undefined,
+				applyInputHooks: async (text: string) => ({ handled: false, text }),
+				composeToolResultTransformer: <T>(base: T) => base,
+			} as never,
+			{} as never,
+			"0.0.0",
+		) as unknown as MissionRenderer;
+
+		await renderer.init();
+		cleanups.push(() => renderer.stop());
+
+		await renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
+		expect(stripAnsi(renderer.getComposerMetaLabel())).toContain(`mission ${dir.split("/").at(-1)}`);
+
+		await renderer.handleEditorTextSubmission("/new", "by-end");
+
+		expect(stripAnsi(renderer.getComposerMetaLabel())).not.toContain("mission ");
+	});
+
+	it("clears a completed mission footer when a compaction checkpoint replaces the thread", async () => {
+		initTheme("dark");
+		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
+		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
+
+		const { dir, cleanup } = makeMissionDir();
+		cleanups.push(cleanup);
+
+		const agent = new Agent({
+			transport: {
+				async *run() {
+					yield* [];
+				},
+			} as never,
+			initialState: {
+				model: getModel("openai-codex", "gpt-5.4"),
+				thinkingLevel: "medium",
+			},
+		});
+
+		const renderer = new TuiRenderer(
+			agent,
+			{
+				appendContextCompaction: () => {},
+				loadTitle: () => null,
+				getSessionId: () => "mission-submit-red",
+			} as never,
+			new SettingsManager(configDir),
+			{
+				listCommands: () => [],
+				getCommand: () => undefined,
+				applyInputHooks: async (text: string) => ({ handled: false, text }),
+				composeToolResultTransformer: <T>(base: T) => base,
+			} as never,
+			{} as never,
+			"0.0.0",
+		) as unknown as MissionRenderer;
+
+		await renderer.init();
+		cleanups.push(() => renderer.stop());
+
+		await renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
+		expect(stripAnsi(renderer.getComposerMetaLabel())).toContain(`mission ${dir.split("/").at(-1)}`);
+
+		agent.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "Keep going" }],
+			timestamp: Date.now(),
+		} as never);
+
+		await (
+			renderer as unknown as {
+				applyCompactionCheckpoint(details: {
+					handoffType: "explicit";
+					goal: string;
+					formattedMessage: string;
+					parentSessionId: string | null;
+					fileTokens: number;
+					keyFiles: string[];
+				}): Promise<void>;
+			}
+		).applyCompactionCheckpoint({
+			handoffType: "explicit",
+			goal: "Continue with manual follow-up",
+			formattedMessage: "- checkpoint",
+			parentSessionId: "mission-submit-red",
+			fileTokens: 42,
+			keyFiles: [],
+		});
+
+		expect(stripAnsi(renderer.getComposerMetaLabel())).not.toContain("mission ");
+	});
+
 	it("resolves @mission-name to devdocs/missions/<mission-name>", async () => {
 		initTheme("dark");
 		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
 		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
 
 		const missionName = `mu-mission-tag-red-${Date.now()}`;
-		const missionDir = resolve(process.cwd(), "..", "..", "devdocs", "missions", missionName);
+		const missionDir = resolve(process.cwd(), "devdocs", "missions", missionName);
 		mkdirSync(missionDir, { recursive: true });
 		writeFileSync(join(missionDir, "SPEC.md"), "# Goal\nShip /mission-run\n", { flag: "wx" });
 		writeFileSync(join(missionDir, "PROGRESS.md"), "# Progress\n\n## Status\n- all done\n", { flag: "wx" });

@@ -2645,6 +2645,7 @@ export class TuiRenderer {
 				// Truncate messages in agent state to before the selected message
 				const truncatedMessages = this.agent.state.messages.slice(0, messageIndex);
 				this.agent.replaceMessages(truncatedMessages);
+				this.maybeClearCompletedMissionUiState();
 
 				// Clear and re-render the chat
 				this.chatContainer.clear();
@@ -3505,14 +3506,14 @@ export class TuiRenderer {
 
 		// Check for /clear or /new command
 		if (rawText === "/clear" || rawText === "/new") {
-			this.handleClearCommand();
+			await this.handleClearCommand();
 			this.editor.setText("");
 			return;
 		}
 
 		// Check for /undo command
 		if (rawText === "/undo") {
-			this.handleUndoCommand();
+			await this.handleUndoCommand();
 			this.editor.setText("");
 			return;
 		}
@@ -4349,6 +4350,7 @@ export class TuiRenderer {
 		this.streamingComponent = null;
 		this.shouldIncludeHandoffNudge = false;
 		this.updateToolResultTransformer();
+		this.maybeClearCompletedMissionUiState();
 
 		this.editingQueueIndex = null;
 		this.savedEditorText = null;
@@ -4693,6 +4695,23 @@ export class TuiRenderer {
 		this.ui.requestRender();
 	}
 
+	private clearMissionUiState(): void {
+		if (!this.missionUiState) {
+			return;
+		}
+
+		this.missionUiState = null;
+		this.ui.requestRender();
+	}
+
+	private maybeClearCompletedMissionUiState(): void {
+		if (this.missionUiState?.status !== "done") {
+			return;
+		}
+
+		this.clearMissionUiState();
+	}
+
 	/**
 	 * Update the tool result transformer based on current nudge state.
 	 * Called when autohandoff mode changes or nudge state changes.
@@ -4957,6 +4976,7 @@ export class TuiRenderer {
 		// Reset handoff nudge state
 		this.shouldIncludeHandoffNudge = false;
 		this.updateToolResultTransformer();
+		this.clearMissionUiState();
 
 		// Show confirmation
 		this.chatContainer.addChild(new Spacer(1));
@@ -5007,6 +5027,7 @@ export class TuiRenderer {
 
 		const truncatedMessages = messages.slice(0, lastUserIndex);
 		this.agent.replaceMessages(truncatedMessages);
+		this.maybeClearCompletedMissionUiState();
 
 		this.chatContainer.clear();
 		this.isFirstUserMessage = true;
