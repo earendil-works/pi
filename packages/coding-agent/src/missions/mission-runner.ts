@@ -23,6 +23,13 @@ export async function runMissionLoop(options: RunMissionLoopOptions): Promise<Mi
 
 	while (iterations <= maxIterations) {
 		const mission = parseMissionDefinition(options.missionDir);
+		if (mission.mode === "optimize") {
+			const prompt = buildMissionIterationPrompt(mission);
+			await options.executeIteration({ mission, prompt });
+			iterations += 1;
+			continue;
+		}
+
 		if (mission.allTasksDone) {
 			return { status: "done", iterations };
 		}

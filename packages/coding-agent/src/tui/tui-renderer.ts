@@ -4279,6 +4279,57 @@ export class TuiRenderer {
 		});
 	}
 
+	private async applyCompactionCheckpoint(
+		details: HandoffDetails & { parentSessionId: string | null },
+	): Promise<void> {
+		const { goal, fileTokens } = details;
+		const replacementMessages = this.buildContextCompactionMessages(details);
+
+		this.sessionManager.appendContextCompaction(replacementMessages);
+		this.agent.replaceMessages(replacementMessages);
+
+		this.chatContainer.clear();
+		this.pendingTools.clear();
+		this.streamingComponent = null;
+		this.shouldIncludeHandoffNudge = false;
+		this.updateToolResultTransformer();
+
+		this.editingQueueIndex = null;
+		this.savedEditorText = null;
+		this.isHandlingQueueEditChange = false;
+		this.pendingExplicitHandoffMessage = null;
+
+		this.renderInitialMessages(this.agent.state);
+
+		this.chatContainer.addChild(new Spacer(1));
+		const compactLines = [theme.fg("accent", `✓ Context compacted: ${goal}`)];
+		compactLines.push(theme.fg("dim", `Checkpoint: ${fileTokens.toLocaleString()} tokens`));
+		this.chatContainer.addChild(new Text(compactLines.join("\n"), 1, 0));
+		this.chatContainer.addChild(new Spacer(1));
+
+		this.updatePendingMessagesDisplay();
+		this.ui.requestRender();
+
+		if (this.settingsManager.getNotificationSound() !== "none") {
+			playNotificationSound();
+		}
+		if (this.settingsManager.getNotificationBanner() !== "none") {
+			sendNotification("Mu - Context compacted", goal);
+		}
+	}
+
+	private buildMissionCompactionDetails(goal: string): HandoffDetails & { parentSessionId: string | null } {
+		const tracking = extractHandoffFileTracking(this.agent.state.messages);
+		return {
+			handoffType: "explicit",
+			goal,
+			formattedMessage: "",
+			parentSessionId: this.sessionManager.getSessionId(),
+			fileTokens: 0,
+			keyFiles: Array.from(new Set([...tracking.readFiles, ...tracking.modifiedFiles])),
+		};
+	}
+
 	private extractAssistantText(message: AssistantMessage): string {
 		return message.content
 			.filter((c): c is { type: "text"; text: string } => c.type === "text")
@@ -4790,46 +4841,8 @@ export class TuiRenderer {
 	 * Apply an explicit same-thread compaction triggered by the compact tool.
 	 */
 	private async executeExplicitHandoff(details: HandoffDetails & { parentSessionId: string | null }): Promise<void> {
-		const { goal, fileTokens } = details;
-		const replacementMessages = this.buildContextCompactionMessages(details);
-
 		try {
-			this.sessionManager.appendContextCompaction(replacementMessages);
-			this.agent.replaceMessages(replacementMessages);
-
-			this.chatContainer.clear();
-			this.pendingTools.clear();
-			this.streamingComponent = null;
-			this.shouldIncludeHandoffNudge = false;
-			this.updateToolResultTransformer();
-
-			// Reset queue editing state
-			this.editingQueueIndex = null;
-			this.savedEditorText = null;
-			this.isHandlingQueueEditChange = false;
-			this.pendingExplicitHandoffMessage = null;
-
-			this.renderInitialMessages(this.agent.state);
-
-			this.chatContainer.addChild(new Spacer(1));
-			const compactLines = [theme.fg("accent", `✓ Context compacted: ${goal}`)];
-			compactLines.push(theme.fg("dim", `Checkpoint: ${fileTokens.toLocaleString()} tokens`));
-			this.chatContainer.addChild(new Text(compactLines.join("\n"), 1, 0));
-			this.chatContainer.addChild(new Spacer(1));
-
-			// Update pending messages display
-			this.updatePendingMessagesDisplay();
-
-			this.ui.requestRender();
-
-			// Send notification if enabled
-			if (this.settingsManager.getNotificationSound() !== "none") {
-				playNotificationSound();
-			}
-			if (this.settingsManager.getNotificationBanner() !== "none") {
-				sendNotification("Mu - Context compacted", goal);
-			}
-
+			await this.applyCompactionCheckpoint(details);
 			await this.continueFromCompaction(details);
 		} catch (error: unknown) {
 			const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
@@ -5017,6 +5030,8 @@ export class TuiRenderer {
 				missionDir,
 				executeIteration: async ({ mission, prompt }) => {
 					const iteration = this.missionUiState ? this.missionUiState.iteration + 1 : 1;
+					const compactionGoal = `Continue mission ${missionName} at iteration ${iteration}`;
+					await this.applyCompactionCheckpoint(this.buildMissionCompactionDetails(compactionGoal));
 					this.setMissionUiState(missionName, iteration, "running", mission);
 					await this.agent.prompt(prompt);
 					await this.agent.waitForIdle();

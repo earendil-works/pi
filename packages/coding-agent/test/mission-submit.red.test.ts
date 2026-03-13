@@ -19,6 +19,28 @@ type MissionRenderer = {
 	getComposerMetaLabel(): string;
 };
 
+function extractTextContent(value: unknown): string {
+	if (typeof value === "string") {
+		return value;
+	}
+	if (!Array.isArray(value)) {
+		return "";
+	}
+	return value
+		.filter((content): content is { type: "text"; text: string } => {
+			return (
+				typeof content === "object" &&
+				content !== null &&
+				"type" in content &&
+				content.type === "text" &&
+				"text" in content &&
+				typeof content.text === "string"
+			);
+		})
+		.map((content) => content.text)
+		.join("\n");
+}
+
 function makeMissionDir(): { dir: string; cleanup: () => void } {
 	const dir = mkdtempSync(join(tmpdir(), "mu-mission-submit-red-"));
 	writeFileSync(join(dir, "SPEC.md"), "# Goal\nShip /mission-run\n");
@@ -93,6 +115,7 @@ describe("/mission-run submission (red)", () => {
 		const renderer = new TuiRenderer(
 			agent,
 			{
+				appendContextCompaction: () => {},
 				loadTitle: () => null,
 				getSessionId: () => "mission-submit-red",
 			} as never,
@@ -172,6 +195,7 @@ describe("/mission-run submission (red)", () => {
 		const renderer = new TuiRenderer(
 			agent,
 			{
+				appendContextCompaction: () => {},
 				loadTitle: () => null,
 				getSessionId: () => "mission-submit-red",
 			} as never,
@@ -228,11 +252,15 @@ describe("/mission-run submission (red)", () => {
 
 		let renderer: MissionRenderer;
 		const runningLabels: string[] = [];
+		const prePromptHistorySnapshots: string[] = [];
 		let runCalls = 0;
 		const transport: AgentTransport = {
-			async *run() {
+			async *run(messages) {
 				runCalls += 1;
 				runningLabels.push(stripAnsi(renderer.getComposerMetaLabel()));
+				prePromptHistorySnapshots.push(
+					messages.map((message) => extractTextContent(message.content)).join("\n\n---\n\n"),
+				);
 				writeFileSync(
 					join(dir, "TASKS.json"),
 					JSON.stringify(
@@ -258,6 +286,7 @@ describe("/mission-run submission (red)", () => {
 		renderer = new TuiRenderer(
 			agent,
 			{
+				appendContextCompaction: () => {},
 				loadTitle: () => null,
 				getSessionId: () => "mission-submit-red",
 			} as never,
@@ -285,6 +314,8 @@ describe("/mission-run submission (red)", () => {
 		await renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
 
 		expect(runCalls).toBe(1);
+		expect(prePromptHistorySnapshots[0]).toContain("Use this compacted checkpoint as the active context");
+		expect(prePromptHistorySnapshots[0]).toContain("Continue mission");
 		expect(runningLabels[0]).toContain(`mission ${dir.split("/").at(-1)}`);
 		expect(runningLabels[0]).toContain("iter 1");
 		expect(runningLabels[0]).toContain("running");
@@ -298,5 +329,103 @@ describe("/mission-run submission (red)", () => {
 		expect(footerLabel).toContain("done");
 		expect(footerLabel).toContain("1/1 done");
 		expect(footerLabel).not.toContain("task baseline");
+	});
+
+	it("compacts before every mission iteration, not just the first one", async () => {
+		initTheme("dark");
+		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
+		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
+
+		const { dir, cleanup } = makeTodoMissionDir();
+		cleanups.push(cleanup);
+
+		const previousOpenAiKey = process.env.OPENAI_API_KEY;
+		process.env.OPENAI_API_KEY = "test-openai-key";
+		cleanups.push(() => {
+			if (previousOpenAiKey === undefined) {
+				delete process.env.OPENAI_API_KEY;
+			} else {
+				process.env.OPENAI_API_KEY = previousOpenAiKey;
+			}
+		});
+
+		let renderer: MissionRenderer;
+		const prePromptHistorySnapshots: string[] = [];
+		let runCalls = 0;
+		const transport: AgentTransport = {
+			async *run(messages) {
+				runCalls += 1;
+				prePromptHistorySnapshots.push(
+					messages.map((message) => extractTextContent(message.content)).join("\n\n---\n\n"),
+				);
+
+				if (runCalls === 1) {
+					writeFileSync(
+						join(dir, "TASKS.json"),
+						JSON.stringify(
+							{
+								tasks: [{ id: "baseline", title: "Still todo", status: "todo", validation: [], notes: "" }],
+							},
+							null,
+							2,
+						),
+					);
+				} else {
+					writeFileSync(
+						join(dir, "TASKS.json"),
+						JSON.stringify(
+							{
+								tasks: [{ id: "baseline", title: "Still todo", status: "done", validation: [], notes: "" }],
+							},
+							null,
+							2,
+						),
+					);
+				}
+				yield* [];
+			},
+		};
+
+		const agent = new Agent({
+			transport,
+			initialState: {
+				model: getModel("openai", "gpt-4o-mini"),
+				thinkingLevel: "medium",
+			},
+		});
+
+		renderer = new TuiRenderer(
+			agent,
+			{
+				appendContextCompaction: () => {},
+				loadTitle: () => null,
+				getSessionId: () => "mission-submit-red",
+			} as never,
+			new SettingsManager(configDir),
+			{
+				listCommands: () => [],
+				getCommand: () => undefined,
+				applyInputHooks: async (text: string) => ({ handled: false, text }),
+				composeToolResultTransformer: <T>(base: T) => base,
+			} as never,
+			{} as never,
+			"0.0.0",
+		) as unknown as MissionRenderer;
+
+		await renderer.init();
+		cleanups.push(() => renderer.stop());
+
+		await renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
+
+		expect(runCalls).toBe(2);
+		expect(prePromptHistorySnapshots).toHaveLength(2);
+		for (const snapshot of prePromptHistorySnapshots) {
+			expect(snapshot).toContain("Use this compacted checkpoint as the active context");
+			expect(snapshot).toContain("Continue mission");
+		}
+
+		const footerLabel = stripAnsi(renderer.getComposerMetaLabel());
+		expect(footerLabel).toContain("iter 2");
+		expect(footerLabel).toContain("done");
 	});
 });

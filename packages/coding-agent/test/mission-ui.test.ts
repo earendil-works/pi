@@ -6,6 +6,7 @@ import { initTheme } from "../src/theme/theme.js";
 
 function makeMission(overrides?: Partial<MissionDefinition>): MissionDefinition {
 	return {
+		mode: "build",
 		dir: "/tmp/example-mission",
 		specPath: "/tmp/example-mission/SPEC.md",
 		tasksPath: "/tmp/example-mission/TASKS.json",

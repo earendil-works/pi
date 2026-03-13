@@ -1,11 +1,58 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { MissionDefinition, MissionTask, MissionTaskStatus } from "./types.js";
+import type {
+	MissionDefinition,
+	MissionMetricDirection,
+	MissionMode,
+	MissionTask,
+	MissionTaskStatus,
+} from "./types.js";
 
 const TASK_STATUSES: MissionTaskStatus[] = ["todo", "in_progress", "done", "blocked", "discarded"];
 
 function asRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
+}
+
+function parseSpecFrontmatter(specText: string): {
+	mode: MissionMode;
+	metric?: string;
+	direction?: MissionMetricDirection;
+} {
+	if (!specText.startsWith("---\n")) {
+		return { mode: "build" };
+	}
+
+	const endMarker = specText.indexOf("\n---", 4);
+	if (endMarker === -1) {
+		return { mode: "build" };
+	}
+
+	const headerText = specText.slice(4, endMarker);
+	const fields = new Map<string, string>();
+	for (const line of headerText.split("\n")) {
+		const separator = line.indexOf(":");
+		if (separator === -1) continue;
+		const key = line.slice(0, separator).trim();
+		const value = line.slice(separator + 1).trim();
+		if (key) fields.set(key, value);
+	}
+
+	const modeValue = fields.get("mode");
+	if (modeValue !== undefined && modeValue !== "build" && modeValue !== "optimize") {
+		throw new Error(`Mission SPEC.md has invalid mode "${modeValue}". Expected build or optimize`);
+	}
+
+	const directionValue = fields.get("direction");
+	if (directionValue !== undefined && directionValue !== "lower" && directionValue !== "higher") {
+		throw new Error(`Mission SPEC.md has invalid direction "${directionValue}". Expected lower or higher`);
+	}
+
+	return {
+		mode: modeValue === "optimize" ? "optimize" : "build",
+		metric: fields.get("metric"),
+		direction: directionValue as MissionMetricDirection | undefined,
+	};
 }
 
 function readRequiredFile(path: string, label: string): string {
@@ -57,50 +104,63 @@ export function parseMissionDefinition(missionDir: string): MissionDefinition {
 	const dir = resolve(missionDir);
 	const specPath = join(dir, "SPEC.md");
 	const tasksPath = join(dir, "TASKS.json");
+	const experimentsPath = join(dir, "EXPERIMENTS.jsonl");
 	const progressPath = join(dir, "PROGRESS.md");
 	const runbookPath = join(dir, "RUNBOOK.md");
 
 	const specText = readRequiredFile(specPath, "SPEC.md");
+	const specFrontmatter = parseSpecFrontmatter(specText);
 	const progressText = readRequiredFile(progressPath, "PROGRESS.md");
 	const runbookText = readRequiredFile(runbookPath, "RUNBOOK.md");
-	const tasksText = readRequiredFile(tasksPath, "TASKS.json");
+	const experimentsText =
+		specFrontmatter.mode === "optimize" ? readRequiredFile(experimentsPath, "EXPERIMENTS.jsonl") : undefined;
 
-	let parsed: unknown;
-	try {
-		parsed = JSON.parse(tasksText);
-	} catch (error: unknown) {
-		const message = error instanceof Error ? error.message : String(error);
-		throw new Error(`Mission TASKS.json is not valid JSON: ${message}`);
-	}
+	let tasks: MissionTask[] = [];
+	if (specFrontmatter.mode === "build" || existsSync(tasksPath)) {
+		const tasksText = readRequiredFile(tasksPath, "TASKS.json");
 
-	if (!asRecord(parsed) || !Array.isArray(parsed.tasks)) {
-		throw new Error("Mission TASKS.json must contain a top-level tasks array");
-	}
-	if (parsed.tasks.length === 0) {
-		throw new Error("Mission TASKS.json must contain at least one task");
-	}
-
-	const tasks = parsed.tasks.map((task, index) => parseMissionTask(task, index));
-	const seenIds = new Set<string>();
-	for (const task of tasks) {
-		if (seenIds.has(task.id)) {
-			throw new Error(`Mission TASKS.json contains duplicate task id: ${task.id}`);
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(tasksText);
+		} catch (error: unknown) {
+			const message = error instanceof Error ? error.message : String(error);
+			throw new Error(`Mission TASKS.json is not valid JSON: ${message}`);
 		}
-		seenIds.add(task.id);
+
+		if (!asRecord(parsed) || !Array.isArray(parsed.tasks)) {
+			throw new Error("Mission TASKS.json must contain a top-level tasks array");
+		}
+		if (parsed.tasks.length === 0) {
+			throw new Error("Mission TASKS.json must contain at least one task");
+		}
+
+		tasks = parsed.tasks.map((task, index) => parseMissionTask(task, index));
+		const seenIds = new Set<string>();
+		for (const task of tasks) {
+			if (seenIds.has(task.id)) {
+				throw new Error(`Mission TASKS.json contains duplicate task id: ${task.id}`);
+			}
+			seenIds.add(task.id);
+		}
 	}
 
-	const allTasksDone = tasks.every((task) => task.status === "done");
+	const allTasksDone = specFrontmatter.mode === "build" && tasks.every((task) => task.status === "done");
 	const runnableTasks = tasks.filter((task) => task.status === "todo" || task.status === "in_progress");
 
 	return {
+		mode: specFrontmatter.mode,
 		dir,
 		specPath,
-		tasksPath,
+		tasksPath: existsSync(tasksPath) ? tasksPath : undefined,
+		experimentsPath: experimentsText !== undefined ? experimentsPath : undefined,
 		progressPath,
 		runbookPath,
 		specText,
 		progressText,
 		runbookText,
+		experimentsText,
+		metric: specFrontmatter.metric,
+		direction: specFrontmatter.direction,
 		tasks,
 		allTasksDone,
 		runnableTasks,
