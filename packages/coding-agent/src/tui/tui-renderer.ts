@@ -5045,13 +5045,20 @@ export class TuiRenderer {
 			return trimmed;
 		}
 
+		const normalizedRef = trimmed.startsWith("@") ? trimmed.slice(1) : trimmed;
+
 		const absoluteCandidate = path.resolve(trimmed);
 		if (fs.existsSync(absoluteCandidate)) {
 			return absoluteCandidate;
 		}
 
+		const normalizedAbsoluteCandidate = path.resolve(normalizedRef);
+		if (normalizedRef && fs.existsSync(normalizedAbsoluteCandidate)) {
+			return normalizedAbsoluteCandidate;
+		}
+
 		const repoRoot = findRepoRoot(process.cwd()) ?? process.cwd();
-		return path.join(repoRoot, "devdocs", "missions", trimmed);
+		return path.join(repoRoot, "devdocs", "missions", normalizedRef);
 	}
 
 	private async handleMissionRunCommand(missionRef: string): Promise<void> {

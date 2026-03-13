@@ -1,6 +1,6 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { Agent, type AgentTransport } from "@kennyfrc/mu-agent-core";
 import { getModel, type Model } from "@kennyfrc/mu-ai";
 import stripAnsi from "strip-ansi";
@@ -156,6 +156,78 @@ describe("/mission-run submission (red)", () => {
 		expect(footerLabel).toContain("iter 0");
 		expect(footerLabel).toContain("done");
 		expect(footerLabel).toContain("1/1 done");
+	});
+
+	it("resolves @mission-name to devdocs/missions/<mission-name>", async () => {
+		initTheme("dark");
+		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
+		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
+
+		const missionName = `mu-mission-tag-red-${Date.now()}`;
+		const missionDir = resolve(process.cwd(), "..", "..", "devdocs", "missions", missionName);
+		mkdirSync(missionDir, { recursive: true });
+		writeFileSync(join(missionDir, "SPEC.md"), "# Goal\nShip /mission-run\n", { flag: "wx" });
+		writeFileSync(join(missionDir, "PROGRESS.md"), "# Progress\n\n## Status\n- all done\n", { flag: "wx" });
+		writeFileSync(join(missionDir, "RUNBOOK.md"), "# Runbook\n\n1. Work one task at a time.\n", { flag: "wx" });
+		writeFileSync(
+			join(missionDir, "TASKS.json"),
+			JSON.stringify(
+				{
+					tasks: [{ id: "baseline", title: "Done already", status: "done", validation: [], notes: "" }],
+				},
+				null,
+				2,
+			),
+			{ flag: "wx" },
+		);
+		cleanups.push(() => rmSync(missionDir, { recursive: true, force: true }));
+
+		const agent = new Agent({
+			transport: {
+				async *run() {
+					yield* [];
+				},
+			} as never,
+			initialState: {
+				model: getModel("openai-codex", "gpt-5.4"),
+				thinkingLevel: "medium",
+			},
+		});
+
+		const renderer = new TuiRenderer(
+			agent,
+			{
+				appendContextCompaction: () => {},
+				loadTitle: () => null,
+				getSessionId: () => "mission-submit-red",
+			} as never,
+			new SettingsManager(configDir),
+			{
+				listCommands: () => [],
+				getCommand: () => undefined,
+				applyInputHooks: async (text: string) => ({ handled: false, text }),
+				composeToolResultTransformer: <T>(base: T) => base,
+			} as never,
+			{} as never,
+			"0.0.0",
+		) as unknown as MissionRenderer;
+
+		await renderer.init();
+		cleanups.push(() => renderer.stop());
+
+		const warnings: string[] = [];
+		const originalShowWarning = renderer.showWarning.bind(renderer);
+		renderer.showWarning = (message: string) => {
+			warnings.push(message);
+			originalShowWarning(message);
+		};
+
+		await renderer.handleEditorTextSubmission(`/mission-run @${missionName}`, "by-end");
+
+		expect(warnings.join("\n")).toMatch(/already done/i);
+		const footerLabel = stripAnsi(renderer.getComposerMetaLabel());
+		expect(footerLabel).toContain(`mission ${missionName}`);
+		expect(footerLabel).toContain("done");
 	});
 
 	it("fails fast on an unfinished mission when no API key is configured instead of entering the loop", async () => {
