@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import type { ThinkingLevel } from "@kennyfrc/mu-agent-core";
-import type { AgentTool, AssistantMessage, TextContent } from "@kennyfrc/mu-ai";
+import type { AgentTool } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { getToolDescription } from "../prompts/index.js";
 import { getCurrentModel, getCurrentThinkingLevel } from "../runtime-state.js";
@@ -38,7 +38,6 @@ export interface SpawnAgentDetails {
 	sessionFile: string;
 	effectiveModel: string;
 	effectiveReasoning: string;
-	outputText: string;
 }
 
 export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentDetails | undefined> = {
@@ -119,8 +118,6 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentDetail
 					modelId: string;
 			  }
 			| undefined;
-		let finalAssistantText = "";
-		let childErrorMessage: string | undefined;
 		let stderr = "";
 
 		child.stderr.on("data", (chunk: Buffer | string) => {
@@ -134,16 +131,38 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentDetail
 			sessionFile: string;
 			effectiveModel: string;
 			effectiveReasoning: string;
-			outputText: string;
 		}>((resolve, reject) => {
 			const timeout = setTimeout(() => {
 				reject(new Error(`spawn_agent timed out. stderr: ${stderr || "(empty)"}`));
 				abortChild();
 			}, 120000);
+			let settled = false;
 
-			child.on("error", (error) => {
+			const resolveOnce = (value: {
+				sessionId: string;
+				sessionFile: string;
+				effectiveModel: string;
+				effectiveReasoning: string;
+			}) => {
+				if (settled) {
+					return;
+				}
+				settled = true;
+				clearTimeout(timeout);
+				resolve(value);
+			};
+
+			const rejectOnce = (error: Error) => {
+				if (settled) {
+					return;
+				}
+				settled = true;
 				clearTimeout(timeout);
 				reject(error);
+			};
+
+			child.on("error", (error) => {
+				rejectOnce(error);
 			});
 
 			rl.on("line", (line: string) => {
@@ -162,67 +181,50 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentDetail
 						modelId: String(event.modelId),
 					};
 					child.stdin.write(JSON.stringify({ type: "prompt", message: resolved.message }) + "\n");
+					resolveOnce({
+						sessionId: sessionMeta.sessionId,
+						sessionFile: sessionMeta.sessionFile,
+						effectiveModel: `${resolved.effectiveModel.provider}/${resolved.effectiveModel.id}`,
+						effectiveReasoning: resolved.effectiveReasoning,
+					});
 					return;
 				}
 
-				if (event.type === "message_end") {
-					const message = event.message as AssistantMessage | undefined;
-					if (message?.role === "assistant") {
-						if (message.stopReason === "error" && message.errorMessage) {
-							childErrorMessage = message.errorMessage;
-						}
-						finalAssistantText = message.content
-							.filter((content): content is TextContent => content.type === "text")
-							.map((content) => content.text)
-							.join("\n");
-					}
+				if (event.type === "tool_execution_progress") {
+					onProgress?.(String(event.output ?? ""));
 					return;
 				}
 
 				if (event.type === "error") {
-					clearTimeout(timeout);
-					reject(new Error(String(event.error || "spawned child failed")));
+					rejectOnce(new Error(String(event.error || "spawned child failed")));
 					abortChild();
 					return;
 				}
 
 				if (event.type === "agent_end") {
-					clearTimeout(timeout);
 					child.stdin.end();
 					child.kill("SIGTERM");
 					if (!sessionMeta) {
-						reject(new Error("spawn_agent child ended without session metadata"));
-						return;
+						rejectOnce(new Error("spawn_agent child ended without session metadata"));
 					}
-					resolve({
-						sessionId: sessionMeta.sessionId,
-						sessionFile: sessionMeta.sessionFile,
-						effectiveModel: `${resolved.effectiveModel.provider}/${resolved.effectiveModel.id}`,
-						effectiveReasoning: resolved.effectiveReasoning,
-						outputText: finalAssistantText,
-					});
 				}
 			});
 
 			rl.on("close", () => {
 				if (!child.killed && !signal?.aborted) {
-					clearTimeout(timeout);
-					reject(new Error(`spawn_agent child stdout closed unexpectedly. stderr: ${stderr || "(empty)"}`));
+					rejectOnce(new Error(`spawn_agent child stdout closed unexpectedly. stderr: ${stderr || "(empty)"}`));
 				}
 			});
 		});
 
 		signal?.removeEventListener("abort", abortChild);
-		if (childErrorMessage) {
-			return {
-				content: [{ type: "text" as const, text: childErrorMessage }],
-				details: { ...result, outputText: childErrorMessage },
-				isError: true,
-			};
-		}
-
 		return {
-			content: [{ type: "text" as const, text: result.outputText }],
+			content: [
+				{
+					type: "text" as const,
+					text: `Spawned agent started in session ${result.sessionId}. Inspect ${result.sessionFile} for transcript output.`,
+				},
+			],
 			details: result,
 		};
 	},
