@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import * as readline from "node:readline";
 import { fileURLToPath } from "node:url";
 import type { ThinkingLevel } from "@kennyfrc/mu-agent-core";
-import type { AgentTool } from "@kennyfrc/mu-ai";
+import { type AgentTool, StringEnum } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
 import { getToolDescription } from "../prompts/index.js";
 import { getCurrentModel, getCurrentThinkingLevel } from "../runtime-state.js";
@@ -21,15 +21,9 @@ const spawnAgentSchema = Type.Object({
 	message: Type.String({ description: "Task for the spawned agent." }),
 	model: Type.Optional(Type.String({ description: "Exact model override in provider/modelId form." })),
 	reasoning: Type.Optional(
-		Type.Union([
-			Type.Literal("inherit"),
-			Type.Literal("off"),
-			Type.Literal("minimal"),
-			Type.Literal("low"),
-			Type.Literal("medium"),
-			Type.Literal("high"),
-			Type.Literal("xhigh"),
-		]),
+		StringEnum(["inherit", "off", "minimal", "low", "medium", "high", "xhigh"] as const, {
+			description: "Reasoning level override.",
+		}),
 	),
 });
 

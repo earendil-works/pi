@@ -1,7 +1,7 @@
 import assert from "node:assert";
-import { type Component, Container, Text } from "@kennyfrc/mu-tui";
+import { type Component, Container, Text, visibleWidth } from "@kennyfrc/mu-tui";
 import { describe, it } from "vitest";
-import { initTheme } from "../theme/theme.js";
+import { initTheme, theme } from "../theme/theme.js";
 import { ChatLayoutComponent } from "./chat-layout.js";
 
 class StubComponent implements Component {
@@ -124,6 +124,37 @@ describe("ChatLayoutComponent scrolling during streaming", () => {
 			const afterClick = visibleChatLines(layout, 80);
 
 			assert.equal(afterClick[0], "line-01");
+		});
+	});
+
+	it("truncates long composer meta labels so the composer frame stays within width", () => {
+		initTheme("dark");
+		withTerminalSize(24, 80, () => {
+			const layout = new ChatLayoutComponent({
+				chatContent: createChatLines(3),
+				composerContent: new StubComponent(["prompt"]),
+				inputTarget: new StubComponent([]),
+				footer: new StubComponent(["footer"]),
+				getComposerLabel: () => "Composer",
+				getComposerMetaLabel: () =>
+					[
+						theme.fg("muted", "(sub) 0% of 262k"),
+						theme.fg("muted", "mission levell-readiness"),
+						theme.fg("muted", "iter 1"),
+						theme.fg("muted", "running"),
+						theme.fg("muted", "0/10 done"),
+						theme.fg("muted", "task L1-001: Define and document the Level 1 baseline"),
+					].join(theme.fg("muted", " • ")),
+				getComposerBorderColor: () => (text: string) => text,
+				updateComposerViewport: () => {},
+			});
+
+			const width = 56;
+			const rendered = layout.render(width);
+			const composerBottomLine = rendered[rendered.length - 1] ?? "";
+
+			assert.ok(visibleWidth(composerBottomLine) <= width, composerBottomLine);
+			assert.ok(composerBottomLine.includes("…"), composerBottomLine);
 		});
 	});
 });

@@ -5,6 +5,45 @@ function padToWidth(text: string, width: number): string {
 	return text + " ".repeat(Math.max(0, width - visibleWidth(text)));
 }
 
+function truncateAnsiTextEnd(text: string, maxWidth: number): string {
+	if (maxWidth <= 0) return "";
+	if (visibleWidth(text) <= maxWidth) return text;
+	if (maxWidth === 1) return "…";
+
+	const ellipsis = "…";
+	const targetWidth = Math.max(0, maxWidth - visibleWidth(ellipsis));
+
+	let result = "";
+	let width = 0;
+	let index = 0;
+
+	while (index < text.length) {
+		if (text[index] === "\x1b" && text[index + 1] === "[") {
+			let end = index + 2;
+			while (end < text.length && !/[A-Za-z]/.test(text[end] ?? "")) {
+				end += 1;
+			}
+			if (end < text.length) {
+				result += text.slice(index, end + 1);
+				index = end + 1;
+				continue;
+			}
+		}
+
+		const char = text[index] ?? "";
+		const charWidth = visibleWidth(char);
+		if (width + charWidth > targetWidth) {
+			break;
+		}
+
+		result += char;
+		width += charWidth;
+		index += 1;
+	}
+
+	return `${result}\x1b[0m${ellipsis}`;
+}
+
 function stripTrailingViewportScrollbar(text: string): string {
 	return text.replace(/[█░]$/u, "");
 }
@@ -471,9 +510,11 @@ export class ChatLayoutComponent implements Component {
 		const body = content.map((line) => `${border("│")} ${padToWidth(line, innerWidth)} ${border("│")}`);
 		let bottomLine = `${border("╰")}${border("─".repeat(frameWidth - 2))}${border("╯")}`;
 		if (metaLabel.length > 0) {
-			const metaWidth = visibleWidth(metaLabel);
+			const maxMetaWidth = Math.max(1, frameWidth - 4);
+			const fittedMetaLabel = truncateAnsiTextEnd(metaLabel, maxMetaWidth);
+			const metaWidth = visibleWidth(fittedMetaLabel);
 			const leftFill = Math.max(0, frameWidth - metaWidth - 4);
-			bottomLine = `${border("╰")}${border("─".repeat(leftFill))} ${metaLabel} ${border("╯")}`;
+			bottomLine = `${border("╰")}${border("─".repeat(leftFill))} ${fittedMetaLabel} ${border("╯")}`;
 		}
 		return [topLine, ...body, bottomLine];
 	}
