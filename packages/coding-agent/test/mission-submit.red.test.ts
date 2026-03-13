@@ -331,6 +331,105 @@ describe("/mission-run submission (red)", () => {
 		expect(footerLabel).not.toContain("task baseline");
 	});
 
+	it("keeps the working footer spinner and timer advancing during a slow mission iteration", async () => {
+		initTheme("dark");
+		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
+		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
+
+		const dir = mkdtempSync(join(tmpdir(), "mu-ms-"));
+		cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+		writeFileSync(join(dir, "SPEC.md"), "# Goal\nShip /mission-run\n");
+		writeFileSync(join(dir, "PROGRESS.md"), "# Progress\n\n## Status\n- not done\n");
+		writeFileSync(join(dir, "RUNBOOK.md"), "# Runbook\n\n1. Work one task at a time.\n");
+		writeFileSync(
+			join(dir, "TASKS.json"),
+			JSON.stringify(
+				{
+					tasks: [{ id: "baseline", title: "Still todo", status: "todo", validation: [], notes: "" }],
+				},
+				null,
+				2,
+			),
+		);
+
+		const previousOpenAiKey = process.env.OPENAI_API_KEY;
+		process.env.OPENAI_API_KEY = "test-openai-key";
+		cleanups.push(() => {
+			if (previousOpenAiKey === undefined) {
+				delete process.env.OPENAI_API_KEY;
+			} else {
+				process.env.OPENAI_API_KEY = previousOpenAiKey;
+			}
+		});
+
+		let renderer: MissionRenderer;
+		const transport: AgentTransport = {
+			async *run() {
+				await new Promise((resolve) => setTimeout(resolve, 1_350));
+				writeFileSync(
+					join(dir, "TASKS.json"),
+					JSON.stringify(
+						{
+							tasks: [{ id: "baseline", title: "Still todo", status: "done", validation: [], notes: "" }],
+						},
+						null,
+						2,
+					),
+				);
+				yield* [];
+			},
+		};
+
+		const agent = new Agent({
+			transport,
+			initialState: {
+				model: getModel("openai", "gpt-4o-mini"),
+				thinkingLevel: "medium",
+			},
+		});
+
+		renderer = new TuiRenderer(
+			agent,
+			{
+				appendContextCompaction: () => {},
+				loadTitle: () => null,
+				getSessionId: () => "mission-submit-red",
+			} as never,
+			new SettingsManager(configDir),
+			{
+				listCommands: () => [],
+				getCommand: () => undefined,
+				applyInputHooks: async (text: string) => ({ handled: false, text }),
+				composeToolResultTransformer: <T>(base: T) => base,
+			} as never,
+			{} as never,
+			"0.0.0",
+		) as unknown as MissionRenderer;
+
+		await renderer.init();
+		cleanups.push(() => renderer.stop());
+
+		const submissionPromise = renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
+
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		const earlyFooter = stripAnsi(
+			(renderer as unknown as { footer: { render: (width: number) => string[] } }).footer.render(120).join("\n"),
+		);
+
+		await new Promise((resolve) => setTimeout(resolve, 1_100));
+		const laterFooter = stripAnsi(
+			(renderer as unknown as { footer: { render: (width: number) => string[] } }).footer.render(120).join("\n"),
+		);
+
+		await submissionPromise;
+
+		expect(earlyFooter).toContain("Working");
+		expect(laterFooter).toContain("Working");
+		expect(earlyFooter).toContain("0s");
+		expect(laterFooter).toContain("1s");
+		expect(laterFooter).not.toBe(earlyFooter);
+	});
+
 	it("compacts before every mission iteration, not just the first one", async () => {
 		initTheme("dark");
 		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));

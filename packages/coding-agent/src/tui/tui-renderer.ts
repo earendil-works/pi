@@ -365,6 +365,7 @@ export class TuiRenderer {
 	private agentStartTime: number | null = null;
 	private accumulatedAssistantActiveMs = 0;
 	private timerIntervalId: NodeJS.Timeout | null = null;
+	private missionRunWorkingStatusActive = false;
 	private transcriptCopyToastTimer: NodeJS.Timeout | null = null;
 	private transcriptCopyToastToken = 0;
 	private transcriptCopyToastVisible = false;
@@ -987,6 +988,60 @@ export class TuiRenderer {
 		this.footer.setTransientStatus(null);
 	}
 
+	private startWorkingStatusTimer(): void {
+		if (this.timerIntervalId) {
+			return;
+		}
+
+		this.timerIntervalId = setInterval(() => {
+			this.updateWorkingStatusMessage();
+			this.ui.requestRenderWithReason("stream");
+		}, 80);
+	}
+
+	private resetWorkingStatusMetrics(now: number = Date.now()): void {
+		this.agentStartTime = null;
+		this.accumulatedAssistantActiveMs = 0;
+		this.completedEstimatedOutputTokens = 0;
+		this.currentAssistantEstimatedOutputTokens = 0;
+		this.pendingLatencyStartTime = now;
+		this.accumulatedLatencyMs = 0;
+		this.latencyGapCount = 0;
+	}
+
+	private clearWorkingStatusMetrics(): void {
+		this.workingStartTime = null;
+		this.agentStartTime = null;
+		this.accumulatedAssistantActiveMs = 0;
+		this.completedEstimatedOutputTokens = 0;
+		this.currentAssistantEstimatedOutputTokens = 0;
+		this.pendingLatencyStartTime = null;
+		this.accumulatedLatencyMs = 0;
+		this.latencyGapCount = 0;
+	}
+
+	private beginMissionRunWorkingStatus(): void {
+		this.missionRunWorkingStatusActive = true;
+		if (this.workingStartTime === null) {
+			this.workingStartTime = Date.now();
+		}
+		this.resetWorkingStatusMetrics();
+		this.setWorkingStatusFooterLine();
+		this.startWorkingStatusTimer();
+		this.ui.requestRender();
+	}
+
+	private endMissionRunWorkingStatus(): void {
+		this.missionRunWorkingStatusActive = false;
+		if (this.timerIntervalId) {
+			clearInterval(this.timerIntervalId);
+			this.timerIntervalId = null;
+		}
+		this.clearWorkingStatusMetrics();
+		this.clearWorkingStatusFooterLine();
+		this.ui.requestRender();
+	}
+
 	private getEstimatedOutputTokens(): number {
 		return this.completedEstimatedOutputTokens + this.currentAssistantEstimatedOutputTokens;
 	}
@@ -1056,31 +1111,26 @@ export class TuiRenderer {
 					this.loadingAnimation.stop();
 					this.loadingAnimation = null;
 				}
-				if (this.timerIntervalId) {
+				if (this.timerIntervalId && !this.missionRunWorkingStatusActive) {
 					clearInterval(this.timerIntervalId);
 					this.timerIntervalId = null;
 				}
 				this.statusContainer.clear();
-				this.clearWorkingStatusFooterLine();
+				if (!this.missionRunWorkingStatusActive) {
+					this.clearWorkingStatusFooterLine();
+				}
 
 				// Start status immediately so elapsed time covers the full run, including thinking,
 				// tool execution, tool results, and assistant response streaming.
-				this.workingStartTime = Date.now();
-				this.agentStartTime = null;
-				this.accumulatedAssistantActiveMs = 0;
-				this.completedEstimatedOutputTokens = 0;
-				this.currentAssistantEstimatedOutputTokens = 0;
-				this.pendingLatencyStartTime = Date.now();
-				this.accumulatedLatencyMs = 0;
-				this.latencyGapCount = 0;
+				if (this.workingStartTime === null) {
+					this.workingStartTime = Date.now();
+				}
+				this.resetWorkingStatusMetrics();
 
 				this.setWorkingStatusFooterLine();
 
 				// Update footer working status continuously so spinner and timing stay live.
-				this.timerIntervalId = setInterval(() => {
-					this.updateWorkingStatusMessage();
-					this.ui.requestRenderWithReason("stream");
-				}, 80);
+				this.startWorkingStatusTimer();
 
 				this.captureCodexAccountBeforeRun();
 				this.ui.requestRender();
@@ -1387,19 +1437,14 @@ export class TuiRenderer {
 				if (this.ignoreNextAgentEndForAutoHandoffAbort) {
 					this.ignoreNextAgentEndForAutoHandoffAbort = false;
 					// Just clean up timer resources
-					if (this.timerIntervalId) {
+					if (this.timerIntervalId && !this.missionRunWorkingStatusActive) {
 						clearInterval(this.timerIntervalId);
 						this.timerIntervalId = null;
 					}
-					this.workingStartTime = null;
-					this.agentStartTime = null;
-					this.accumulatedAssistantActiveMs = 0;
-					this.completedEstimatedOutputTokens = 0;
-					this.currentAssistantEstimatedOutputTokens = 0;
-					this.pendingLatencyStartTime = null;
-					this.accumulatedLatencyMs = 0;
-					this.latencyGapCount = 0;
-					this.clearWorkingStatusFooterLine();
+					if (!this.missionRunWorkingStatusActive) {
+						this.clearWorkingStatusMetrics();
+						this.clearWorkingStatusFooterLine();
+					}
 					// Don't touch loadingAnimation - it's still owned by the handoff transition.
 					break;
 				}
@@ -1414,25 +1459,27 @@ export class TuiRenderer {
 				);
 
 				// Stop timer interval
-				if (this.timerIntervalId) {
+				if (this.timerIntervalId && !this.missionRunWorkingStatusActive) {
 					clearInterval(this.timerIntervalId);
 					this.timerIntervalId = null;
 				}
-				this.workingStartTime = null;
-				this.agentStartTime = null;
-				this.accumulatedAssistantActiveMs = 0;
-				this.completedEstimatedOutputTokens = 0;
-				this.currentAssistantEstimatedOutputTokens = 0;
-				this.pendingLatencyStartTime = null;
-				this.accumulatedLatencyMs = 0;
-				this.latencyGapCount = 0;
+				if (this.missionRunWorkingStatusActive) {
+					this.resetWorkingStatusMetrics();
+					this.pendingLatencyStartTime = null;
+				} else {
+					this.clearWorkingStatusMetrics();
+				}
 
 				// Stop loading animation
 				if (this.loadingAnimation) {
 					this.loadingAnimation.stop();
 					this.loadingAnimation = null;
 				}
-				this.clearWorkingStatusFooterLine();
+				if (this.missionRunWorkingStatusActive) {
+					this.setWorkingStatusFooterLine();
+				} else {
+					this.clearWorkingStatusFooterLine();
+				}
 				this.statusContainer.clear();
 				if (this.streamingComponent) {
 					this.chatContainer.removeChild(this.streamingComponent);
@@ -5026,6 +5073,8 @@ export class TuiRenderer {
 				}
 			}
 
+			this.beginMissionRunWorkingStatus();
+
 			const result = await runMissionLoop({
 				missionDir,
 				executeIteration: async ({ mission, prompt }) => {
@@ -5060,6 +5109,8 @@ export class TuiRenderer {
 			this.showWarning(`Mission ${missionName} blocked: ${result.reason}`);
 		} catch (error: unknown) {
 			this.showError(error instanceof Error ? error.message : String(error));
+		} finally {
+			this.endMissionRunWorkingStatus();
 		}
 	}
 
