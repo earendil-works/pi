@@ -1363,6 +1363,8 @@ export interface ExtensionRuntimeState {
 	flagValues: Map<string, boolean | string>;
 	/** Provider registrations queued during extension loading, processed when runner binds */
 	pendingProviderRegistrations: Array<{ name: string; config: ProviderConfig; extensionPath: string }>;
+	/** Hold conditions queued during extension loading, processed when runner binds */
+	pendingHoldConditions: Array<() => Promise<string[]>>;
 	/**
 	 * Register or unregister a provider.
 	 *

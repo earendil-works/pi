@@ -139,7 +139,13 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		setThinkingLevel: notInitialized,
 		flagValues: new Map(),
 		pendingProviderRegistrations: [],
-		setHoldCondition: notInitialized,
+		pendingHoldConditions: [],
+		setHoldCondition: (fn) => {
+			runtime.pendingHoldConditions.push(fn);
+			return () => {
+				runtime.pendingHoldConditions = runtime.pendingHoldConditions.filter((c) => c !== fn);
+			};
+		},
 		// Pre-bind: queue registrations so bindCore() can flush them once the
 		// model registry is available. bindCore() replaces both with direct calls.
 		registerProvider: (name, config, extensionPath = "<unknown>") => {
