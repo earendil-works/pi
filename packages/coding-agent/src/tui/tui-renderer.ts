@@ -616,6 +616,14 @@ export class TuiRenderer {
 			injectedDiagnostic: "Prepared /mission-run draft. Enter a mission name or path.",
 		};
 
+		const missionResumeCommand: SlashCommand = {
+			name: "mission-resume",
+			description: "Resume a mission from the current TASKS.json state",
+			selectionBehavior: "inject",
+			injectedText: "/mission-resume ",
+			injectedDiagnostic: "Prepared /mission-resume draft. Enter a mission name or path.",
+		};
+
 		this.builtInSlashCommands = [
 			branchCommand,
 			changelogCommand,
@@ -629,6 +637,7 @@ export class TuiRenderer {
 			loginCommand,
 			logoutCommand,
 			modelCommand,
+			missionResumeCommand,
 			missionRunCommand,
 			newCommand,
 			noteCommand,
@@ -3540,10 +3549,15 @@ export class TuiRenderer {
 		}
 
 		const missionRunMatch = rawText.match(/^\/mission-run(?:\s+([\s\S]+))?$/);
-		if (missionRunMatch) {
-			const missionRef = missionRunMatch[1]?.trim() ?? "";
+		const missionResumeMatch = rawText.match(/^\/mission-resume(?:\s+([\s\S]+))?$/);
+		if (missionRunMatch || missionResumeMatch) {
+			const missionRef = missionRunMatch?.[1]?.trim() ?? missionResumeMatch?.[1]?.trim() ?? "";
 			if (!missionRef) {
-				this.showError("Usage: /mission-run <mission-name-or-path>");
+				this.showError(
+					missionResumeMatch
+						? "Usage: /mission-resume <mission-name-or-path>"
+						: "Usage: /mission-run <mission-name-or-path>",
+				);
 				return;
 			}
 			this.editor.setText("");
@@ -5082,6 +5096,22 @@ export class TuiRenderer {
 		return path.join(repoRoot, "devdocs", "missions", normalizedRef);
 	}
 
+	private progressSuggestsUnfinishedWork(progressText: string): boolean {
+		return /\*\*Next step:\*\*/i.test(progressText) || /\bnext step\b/i.test(progressText);
+	}
+
+	private buildCompletedMissionWarning(
+		missionName: string,
+		mission: ReturnType<typeof parseMissionDefinition>,
+	): string {
+		const inconsistentProgress = this.progressSuggestsUnfinishedWork(mission.progressText);
+		if (inconsistentProgress) {
+			return `Mission ${missionName} already done, but PROGRESS.md still points at unfinished work. Edit TASKS.json to resume.`;
+		}
+
+		return `Mission ${missionName} already done. Edit TASKS.json to resume.`;
+	}
+
 	private async handleMissionRunCommand(missionRef: string): Promise<void> {
 		const missionDir = this.resolveMissionDir(missionRef);
 		const missionRunAbortController = new AbortController();
@@ -5148,11 +5178,13 @@ export class TuiRenderer {
 			this.setMissionUiState(missionName, result.iterations, result.status, finalMission);
 
 			if (result.status === "done") {
-				const suffix =
-					result.iterations === 0
-						? "already done"
-						: `done after ${result.iterations} iteration${result.iterations === 1 ? "" : "s"}`;
-				this.showWarning(`Mission ${missionName} ${suffix}.`);
+				if (result.iterations === 0) {
+					this.showWarning(this.buildCompletedMissionWarning(missionName, finalMission));
+					return;
+				}
+				this.showWarning(
+					`Mission ${missionName} done after ${result.iterations} iteration${result.iterations === 1 ? "" : "s"}.`,
+				);
 				return;
 			}
 

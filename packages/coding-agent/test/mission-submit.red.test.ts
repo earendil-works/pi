@@ -63,6 +63,30 @@ function makeMissionDir(): { dir: string; cleanup: () => void } {
 	};
 }
 
+function makeInconsistentDoneMissionDir(): { dir: string; cleanup: () => void } {
+	const dir = mkdtempSync(join(tmpdir(), "mu-mission-submit-inconsistent-red-"));
+	writeFileSync(join(dir, "SPEC.md"), "# Goal\nShip /mission-run\n");
+	writeFileSync(
+		join(dir, "PROGRESS.md"),
+		"# Progress\n\n### 2026-03-13 — SIF-015 complete\n- **Next step:** SIF-016 — create red tests for exchange-planning heuristics\n",
+	);
+	writeFileSync(join(dir, "RUNBOOK.md"), "# Runbook\n\n1. Work one task at a time.\n");
+	writeFileSync(
+		join(dir, "TASKS.json"),
+		JSON.stringify(
+			{
+				tasks: [{ id: "baseline", title: "Done already", status: "done", validation: [], notes: "" }],
+			},
+			null,
+			2,
+		),
+	);
+	return {
+		dir,
+		cleanup: () => rmSync(dir, { recursive: true, force: true }),
+	};
+}
+
 function makeTodoMissionDir(): { dir: string; cleanup: () => void } {
 	const dir = mkdtempSync(join(tmpdir(), "mu-mission-submit-todo-red-"));
 	writeFileSync(join(dir, "SPEC.md"), "# Goal\nShip /mission-run\n");
@@ -157,6 +181,125 @@ describe("/mission-run submission (red)", () => {
 		expect(footerLabel).toContain("iter 0");
 		expect(footerLabel).toContain("done");
 		expect(footerLabel).toContain("1/1 done");
+	});
+
+	it("handles /mission-resume for a completed mission and tells the user to edit TASKS.json to resume", async () => {
+		initTheme("dark");
+		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
+		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
+
+		const { dir, cleanup } = makeMissionDir();
+		cleanups.push(cleanup);
+
+		const agent = new Agent({
+			transport: {
+				async *run() {
+					yield* [];
+				},
+			} as never,
+			initialState: {
+				model: getModel("openai-codex", "gpt-5.4"),
+				thinkingLevel: "medium",
+			},
+		});
+
+		const renderer = new TuiRenderer(
+			agent,
+			{
+				appendContextCompaction: () => {},
+				loadTitle: () => null,
+				getSessionId: () => "mission-submit-red",
+				reset: () => {},
+			} as never,
+			new SettingsManager(configDir),
+			{
+				listCommands: () => [],
+				getCommand: () => undefined,
+				applyInputHooks: async (text: string) => ({ handled: false, text }),
+				composeToolResultTransformer: <T>(base: T) => base,
+			} as never,
+			{} as never,
+			"0.0.0",
+		) as unknown as MissionRenderer;
+
+		await renderer.init();
+		cleanups.push(() => renderer.stop());
+
+		const errors: string[] = [];
+		const warnings: string[] = [];
+		const originalShowError = renderer.showError.bind(renderer);
+		const originalShowWarning = renderer.showWarning.bind(renderer);
+		renderer.showError = (message: string) => {
+			errors.push(message);
+			originalShowError(message);
+		};
+		renderer.showWarning = (message: string) => {
+			warnings.push(message);
+			originalShowWarning(message);
+		};
+
+		await renderer.handleEditorTextSubmission(`/mission-resume ${dir}`, "by-end");
+
+		expect(errors).toEqual([]);
+		expect(warnings.join("\n")).toMatch(/edit tasks\.json to resume/i);
+		const footerLabel = stripAnsi(renderer.getComposerMetaLabel());
+		expect(footerLabel).toContain(`mission ${dir.split("/").at(-1)}`);
+		expect(footerLabel).toContain("done");
+	});
+
+	it("warns when /mission-resume sees a done mission whose progress still points at unfinished work", async () => {
+		initTheme("dark");
+		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
+		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
+
+		const { dir, cleanup } = makeInconsistentDoneMissionDir();
+		cleanups.push(cleanup);
+
+		const agent = new Agent({
+			transport: {
+				async *run() {
+					yield* [];
+				},
+			} as never,
+			initialState: {
+				model: getModel("openai-codex", "gpt-5.4"),
+				thinkingLevel: "medium",
+			},
+		});
+
+		const renderer = new TuiRenderer(
+			agent,
+			{
+				appendContextCompaction: () => {},
+				loadTitle: () => null,
+				getSessionId: () => "mission-submit-red",
+				reset: () => {},
+			} as never,
+			new SettingsManager(configDir),
+			{
+				listCommands: () => [],
+				getCommand: () => undefined,
+				applyInputHooks: async (text: string) => ({ handled: false, text }),
+				composeToolResultTransformer: <T>(base: T) => base,
+			} as never,
+			{} as never,
+			"0.0.0",
+		) as unknown as MissionRenderer;
+
+		await renderer.init();
+		cleanups.push(() => renderer.stop());
+
+		const warnings: string[] = [];
+		const originalShowWarning = renderer.showWarning.bind(renderer);
+		renderer.showWarning = (message: string) => {
+			warnings.push(message);
+			originalShowWarning(message);
+		};
+
+		await renderer.handleEditorTextSubmission(`/mission-resume ${dir}`, "by-end");
+
+		expect(warnings.join("\n")).toMatch(/progress\.md still points at unfinished work/i);
+		expect(warnings.join("\n")).toMatch(/edit tasks\.json to resume/i);
 	});
 
 	it("clears a completed mission footer when /new starts a fresh session", async () => {
