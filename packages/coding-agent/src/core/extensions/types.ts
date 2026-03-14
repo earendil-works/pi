@@ -1130,6 +1130,30 @@ export interface ExtensionAPI {
 	setThinkingLevel(level: ThinkingLevel): void;
 
 	// =========================================================================
+	// Hold Conditions
+	// =========================================================================
+
+	/**
+	 * Register a hold condition that keeps print mode alive after prompts complete.
+	 *
+	 * The callback is invoked in a loop after each prompt. If it returns a non-empty
+	 * array of strings, those strings are delivered as follow-up user messages and
+	 * the agent processes another turn. The loop continues until all hold conditions
+	 * return empty arrays.
+	 *
+	 * Returns an unsubscribe function to remove the hold condition.
+	 *
+	 * @example
+	 * const unsubscribe = pi.setHoldCondition(async () => {
+	 *   const running = subagents.filter(a => a.isRunning());
+	 *   if (running.length === 0) return [];
+	 *   await Promise.all(running.map(a => a.waitForCompletion()));
+	 *   return running.map(a => `Result: ${a.getResult()}`);
+	 * });
+	 */
+	setHoldCondition(fn: () => Promise<string[]>): () => void;
+
+	// =========================================================================
 	// Provider Registration
 	// =========================================================================
 
@@ -1368,6 +1392,7 @@ export interface ExtensionActions {
 	setModel: SetModelHandler;
 	getThinkingLevel: GetThinkingLevelHandler;
 	setThinkingLevel: SetThinkingLevelHandler;
+	setHoldCondition: (fn: () => Promise<string[]>) => () => void;
 }
 
 /**

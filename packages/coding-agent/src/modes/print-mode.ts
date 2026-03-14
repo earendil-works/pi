@@ -90,6 +90,9 @@ export async function runPrintMode(session: AgentSession, options: PrintModeOpti
 		await session.prompt(message);
 	}
 
+	// Wait for any extension hold conditions (e.g. subagents) to complete
+	await session.waitForPendingWork();
+
 	// In text mode, output final response
 	if (mode === "text") {
 		const state = session.state;

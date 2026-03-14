@@ -267,6 +267,7 @@ export class AgentSession {
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
 	private _extensionShutdownHandler?: ShutdownHandler;
 	private _extensionErrorListener?: ExtensionErrorListener;
+	private _holdConditions: Array<() => Promise<string[]>> = [];
 	private _extensionErrorUnsubscriber?: () => void;
 
 	// Model registry for API key resolution
@@ -2168,6 +2169,12 @@ export class AgentSession {
 				},
 				getThinkingLevel: () => this.thinkingLevel,
 				setThinkingLevel: (level) => this.setThinkingLevel(level),
+				setHoldCondition: (fn) => {
+					this._holdConditions.push(fn);
+					return () => {
+						this._holdConditions = this._holdConditions.filter((c) => c !== fn);
+					};
+				},
 			},
 			{
 				getModel: () => this.model,
@@ -2487,6 +2494,47 @@ export class AgentSession {
 	 */
 	setAutoRetryEnabled(enabled: boolean): void {
 		this.settingsManager.setRetryEnabled(enabled);
+	}
+
+	// =========================================================================
+	// Hold Conditions (for print mode)
+	// =========================================================================
+
+	/**
+	 * Wait for all registered hold conditions to resolve.
+	 *
+	 * Called by print mode after prompts complete. Loops until all hold
+	 * condition callbacks return empty arrays. Any strings returned are
+	 * delivered as follow-up user messages, triggering additional agent turns.
+	 */
+	async waitForPendingWork(): Promise<void> {
+		while (this._holdConditions.length > 0) {
+			await this._agentEventQueue;
+			const results = await Promise.all(
+				this._holdConditions.map((fn) =>
+					fn().catch((err) => {
+						this._extensionRunner?.emitError({
+							extensionPath: "<hold-condition>",
+							event: "hold_condition",
+							error: err instanceof Error ? err.message : String(err),
+							stack: err instanceof Error ? err.stack : undefined,
+						});
+						return [] as string[];
+					}),
+				),
+			);
+			const messages = results.flat();
+			if (messages.length === 0) break;
+			for (const text of messages) {
+				this.agent.followUp({
+					role: "user",
+					content: [{ type: "text", text }],
+					timestamp: Date.now(),
+				});
+			}
+			await this.agent.continue();
+			await this.waitForRetry();
+		}
 	}
 
 	// =========================================================================
