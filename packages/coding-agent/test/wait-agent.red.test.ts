@@ -163,6 +163,42 @@ describe("wait_agent red suite", () => {
 		);
 	});
 
+	test("uses a 5 minute default timeout but still returns early once the child finishes", async () => {
+		const toolMap = allTools as Record<string, unknown>;
+		const waitAgentTool = toolMap.wait_agent as WaitAgentToolLike | undefined;
+		expect(waitAgentTool?.execute).toBeDefined();
+
+		if (!waitAgentTool?.execute) {
+			return;
+		}
+
+		const child = createChildSession();
+		const childSessionId = child.getSessionId();
+
+		const timer = setTimeout(() => {
+			child.saveMessage(buildAssistantMessage("DEFAULT_TIMEOUT_EARLY_RETURN"));
+		}, 120);
+
+		const startedAt = Date.now();
+		const result = await waitAgentTool.execute("toolcall_wait_default", { ids: [childSessionId] });
+		const elapsedMs = Date.now() - startedAt;
+		clearTimeout(timer);
+
+		expect(result.isError).not.toBe(true);
+		expect(result.content.map((block) => block.text).join("\n")).toContain("DEFAULT_TIMEOUT_EARLY_RETURN");
+		expect(elapsedMs).toBeLessThan(2_000);
+		expect(result.details?.results).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					sessionId: childSessionId,
+					status: "completed",
+					stopReason: "stop",
+					text: expect.stringContaining("DEFAULT_TIMEOUT_EARLY_RETURN"),
+				}),
+			]),
+		);
+	});
+
 	test("returns one completed result per child when waiting on multiple child sessions", async () => {
 		const toolMap = allTools as Record<string, unknown>;
 		const waitAgentTool = toolMap.wait_agent as WaitAgentToolLike | undefined;

@@ -206,10 +206,11 @@ wait_agent: |
   Wait for one or more spawned child agents to finish and return their final assistant responses.
 
   Use this after `spawn_agent` when you need the child results before continuing.
+  Default to a generous wait like 5 minutes when completion matters. The wait returns early as soon as the requested child sessions finish; it does not hold the full timeout if results are already available.
 
   Parameters:
   - ids: Array of spawned child session ids to wait for (required)
-  - timeoutMs: Maximum time to wait before unfinished children are returned as timed_out
+  - timeoutMs: Maximum time to wait before unfinished children are returned as timed_out (default: 300000 / 5 minutes)
 
 todo_write: |
   Create and manage a structured task list for multi-step work.

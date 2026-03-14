@@ -3,13 +3,18 @@ import { Type } from "@sinclair/typebox";
 import { getToolDescription } from "../prompts/index.js";
 import { inspectSpawnedAgentSession } from "../spawned-agents.js";
 
+const DEFAULT_WAIT_AGENT_TIMEOUT_MS = 5 * 60 * 1000;
+
 const waitAgentSchema = Type.Object({
 	ids: Type.Array(Type.String({ description: "Child session id to wait for." }), {
 		minItems: 1,
 		description: "One or more spawned child session ids to wait for.",
 	}),
 	timeoutMs: Type.Optional(
-		Type.Number({ description: "Maximum time to wait before returning timed_out results for unfinished children." }),
+		Type.Number({
+			description:
+				"Maximum time to wait before returning timed_out results for unfinished children. Defaults to 300000 (5 minutes).",
+		}),
 	),
 });
 
@@ -76,7 +81,7 @@ export const waitAgentTool: AgentTool<typeof waitAgentSchema, WaitAgentDetails> 
 	description: getToolDescription("wait_agent"),
 	parameters: waitAgentSchema,
 	execute: async (_toolCallId, args: { ids: string[]; timeoutMs?: number }, signal?: AbortSignal) => {
-		const timeoutMs = Math.max(1, Math.floor(args.timeoutMs ?? 30_000));
+		const timeoutMs = Math.max(1, Math.floor(args.timeoutMs ?? DEFAULT_WAIT_AGENT_TIMEOUT_MS));
 		const deadline = Date.now() + timeoutMs;
 		const results = await Promise.all(args.ids.map((sessionId) => waitForSingleSession(sessionId, deadline, signal)));
 		const lines = results.map((result) => {
