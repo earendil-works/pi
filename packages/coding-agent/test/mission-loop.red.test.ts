@@ -104,4 +104,27 @@ describe("mission loop runner (red)", () => {
 		expect(iterations).toBe(0);
 		expect(result.reason).toMatch(/no runnable tasks/i);
 	});
+
+	it("honors maxIterations exactly instead of running one extra iteration", async () => {
+		const { dir, cleanup } = makeMissionDir();
+		cleanups.push(cleanup);
+		writeMission(dir, [{ id: "baseline", title: "Run baseline", status: "todo" }]);
+
+		let iterations = 0;
+		const result = await runMissionLoop({
+			missionDir: dir,
+			maxIterations: 2,
+			executeIteration: async () => {
+				iterations += 1;
+			},
+		});
+
+		expect(iterations).toBe(2);
+		expect(result.status).toBe("blocked");
+		if (result.status !== "blocked") {
+			throw new Error(`Expected blocked result, received ${result.status}`);
+		}
+		expect(result.iterations).toBe(2);
+		expect(result.reason).toMatch(/max iteration limit \(2\)/i);
+	});
 });

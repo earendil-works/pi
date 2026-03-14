@@ -347,6 +347,9 @@ export class TuiRenderer {
 	private bashAbortController: AbortController | null = null;
 	private handoffAbortController: AbortController | null = null;
 	private missionRunAbortController: AbortController | null = null;
+	private missionStopAfterIteration = false;
+	private missionIterationsRemaining: number | null = null;
+	private missionIterationInProgress = false;
 	private isAutoHandoffInProgress = false;
 	private shouldIncludeHandoffNudge = false; // 85% threshold nudge state
 	private pendingExplicitHandoff: (HandoffDetails & { parentSessionId: string | null }) | null = null;
@@ -624,6 +627,19 @@ export class TuiRenderer {
 			injectedDiagnostic: "Prepared /mission-resume draft. Enter a mission name or path.",
 		};
 
+		const missionHaltCommand: SlashCommand = {
+			name: "mission-halt",
+			description: "Stop the active mission after the current iteration finishes",
+		};
+
+		const missionIterationsCommand: SlashCommand = {
+			name: "mission-iterations",
+			description: "Set how many more iterations the active mission may run",
+			selectionBehavior: "inject",
+			injectedText: "/mission-iterations ",
+			injectedDiagnostic: "Prepared /mission-iterations draft. Enter a number or 'unlimited'.",
+		};
+
 		this.builtInSlashCommands = [
 			branchCommand,
 			changelogCommand,
@@ -636,6 +652,8 @@ export class TuiRenderer {
 			unsubscribeCommand,
 			loginCommand,
 			logoutCommand,
+			missionHaltCommand,
+			missionIterationsCommand,
 			modelCommand,
 			missionResumeCommand,
 			missionRunCommand,
@@ -3548,6 +3566,20 @@ export class TuiRenderer {
 			return;
 		}
 
+		if (rawText === "/mission-halt") {
+			this.handleMissionHaltCommand();
+			this.editor.setText("");
+			return;
+		}
+
+		const missionIterationsMatch = rawText.match(/^\/mission-iterations(?:\s+([\s\S]+))?$/);
+		if (missionIterationsMatch) {
+			const arg = missionIterationsMatch[1]?.trim() ?? "";
+			this.handleMissionIterationsCommand(arg);
+			this.editor.setText("");
+			return;
+		}
+
 		const missionRunMatch = rawText.match(/^\/mission-run(?:\s+([\s\S]+))?$/);
 		const missionResumeMatch = rawText.match(/^\/mission-resume(?:\s+([\s\S]+))?$/);
 		if (missionRunMatch || missionResumeMatch) {
@@ -5112,10 +5144,56 @@ export class TuiRenderer {
 		return `Mission ${missionName} already done. Edit TASKS.json to resume.`;
 	}
 
+	private hasActiveMissionRun(): boolean {
+		return this.missionRunAbortController !== null;
+	}
+
+	private handleMissionHaltCommand(): void {
+		if (!this.hasActiveMissionRun()) {
+			this.showWarning("No active mission run.");
+			return;
+		}
+
+		this.missionStopAfterIteration = true;
+		this.showWarning("Mission will stop after the current iteration.");
+	}
+
+	private handleMissionIterationsCommand(rawArg: string): void {
+		if (!this.hasActiveMissionRun()) {
+			this.showWarning("No active mission run.");
+			return;
+		}
+
+		if (!rawArg) {
+			this.showError("Usage: /mission-iterations <n|unlimited>");
+			return;
+		}
+
+		if (rawArg === "unlimited") {
+			this.missionIterationsRemaining = null;
+			this.missionStopAfterIteration = false;
+			this.showWarning("Mission iteration limit cleared.");
+			return;
+		}
+
+		const parsed = Number.parseInt(rawArg, 10);
+		if (!Number.isFinite(parsed) || parsed < 0 || String(parsed) !== rawArg) {
+			this.showError("Usage: /mission-iterations <n|unlimited>");
+			return;
+		}
+
+		this.missionStopAfterIteration = false;
+		this.missionIterationsRemaining = parsed + (this.missionIterationInProgress ? 1 : 0);
+		this.showWarning(`Mission will stop after ${parsed} more iteration${parsed === 1 ? "" : "s"}.`);
+	}
+
 	private async handleMissionRunCommand(missionRef: string): Promise<void> {
 		const missionDir = this.resolveMissionDir(missionRef);
 		const missionRunAbortController = new AbortController();
 		this.missionRunAbortController = missionRunAbortController;
+		this.missionStopAfterIteration = false;
+		this.missionIterationsRemaining = null;
+		this.missionIterationInProgress = false;
 		const { signal } = missionRunAbortController;
 
 		try {
@@ -5148,29 +5226,48 @@ export class TuiRenderer {
 			const result = await runMissionLoop({
 				missionDir,
 				signal,
+				shouldContinue: () => {
+					if (this.missionStopAfterIteration) {
+						return false;
+					}
+					if (this.missionIterationsRemaining === null) {
+						return true;
+					}
+					return this.missionIterationsRemaining > 0;
+				},
+				onIterationComplete: () => {
+					if (this.missionIterationsRemaining !== null && this.missionIterationsRemaining > 0) {
+						this.missionIterationsRemaining -= 1;
+					}
+				},
 				executeIteration: async ({ mission, prompt }) => {
 					if (signal.aborted) {
 						return;
 					}
+					this.missionIterationInProgress = true;
 					const iteration = this.missionUiState ? this.missionUiState.iteration + 1 : 1;
 					const compactionGoal = `Continue mission ${missionName} at iteration ${iteration}`;
-					await this.applyCompactionCheckpoint(this.buildMissionCompactionDetails(compactionGoal));
-					if (signal.aborted) {
-						return;
+					try {
+						await this.applyCompactionCheckpoint(this.buildMissionCompactionDetails(compactionGoal));
+						if (signal.aborted) {
+							return;
+						}
+						this.setMissionUiState(missionName, iteration, "running", mission);
+						await this.agent.prompt(prompt);
+						await this.agent.waitForIdle();
+						if (signal.aborted) {
+							return;
+						}
+						const refreshedMission = parseMissionDefinition(missionDir);
+						this.setMissionUiState(
+							missionName,
+							iteration,
+							refreshedMission.allTasksDone ? "done" : "running",
+							refreshedMission,
+						);
+					} finally {
+						this.missionIterationInProgress = false;
 					}
-					this.setMissionUiState(missionName, iteration, "running", mission);
-					await this.agent.prompt(prompt);
-					await this.agent.waitForIdle();
-					if (signal.aborted) {
-						return;
-					}
-					const refreshedMission = parseMissionDefinition(missionDir);
-					this.setMissionUiState(
-						missionName,
-						iteration,
-						refreshedMission.allTasksDone ? "done" : "running",
-						refreshedMission,
-					);
 				},
 			});
 
@@ -5202,6 +5299,9 @@ export class TuiRenderer {
 			this.showError(error instanceof Error ? error.message : String(error));
 		} finally {
 			this.missionRunAbortController = null;
+			this.missionStopAfterIteration = false;
+			this.missionIterationsRemaining = null;
+			this.missionIterationInProgress = false;
 			this.endMissionRunWorkingStatus();
 		}
 	}

@@ -850,6 +850,195 @@ describe("/mission-run submission (red)", () => {
 		expect(footerLabel).toContain("0/1 done");
 	});
 
+	it("halts after the current iteration when /mission-halt is submitted during a running mission", async () => {
+		initTheme("dark");
+		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
+		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
+
+		const { dir, cleanup } = makeTodoMissionDir();
+		cleanups.push(cleanup);
+
+		const previousOpenAiKey = process.env.OPENAI_API_KEY;
+		process.env.OPENAI_API_KEY = "test-openai-key";
+		cleanups.push(() => {
+			if (previousOpenAiKey === undefined) {
+				delete process.env.OPENAI_API_KEY;
+			} else {
+				process.env.OPENAI_API_KEY = previousOpenAiKey;
+			}
+		});
+
+		let runCalls = 0;
+		let abortCount = 0;
+		const releaseFirstIterationRef: { current: (() => void) | null } = { current: null };
+		let resolveFirstIterationStarted: (() => void) | null = null;
+		const firstIterationStarted = new Promise<void>((resolve) => {
+			resolveFirstIterationStarted = resolve;
+		});
+
+		const transport: AgentTransport = {
+			async *run(_messages, _userMessage, _config, signal) {
+				runCalls += 1;
+				if (runCalls === 1) {
+					resolveFirstIterationStarted?.();
+					await new Promise<void>((done) => {
+						releaseFirstIterationRef.current = done;
+						signal?.addEventListener(
+							"abort",
+							() => {
+								abortCount += 1;
+								done();
+							},
+							{ once: true },
+						);
+					});
+				}
+				yield* [];
+			},
+		};
+
+		const agent = new Agent({
+			transport,
+			initialState: {
+				model: getModel("openai", "gpt-4o-mini"),
+				thinkingLevel: "medium",
+			},
+		});
+
+		const renderer = new TuiRenderer(
+			agent,
+			{
+				appendContextCompaction: () => {},
+				loadTitle: () => null,
+				getSessionId: () => "mission-submit-red",
+			} as never,
+			new SettingsManager(configDir),
+			{
+				listCommands: () => [],
+				getCommand: () => undefined,
+				applyInputHooks: async (text: string) => ({ handled: false, text }),
+				composeToolResultTransformer: <T>(base: T) => base,
+			} as never,
+			{} as never,
+			"0.0.0",
+		) as unknown as MissionRenderer;
+
+		await renderer.init();
+		cleanups.push(() => renderer.stop());
+
+		const warnings: string[] = [];
+		renderer.showWarning = (message: string) => {
+			warnings.push(message);
+		};
+
+		const submissionPromise = renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
+		await firstIterationStarted;
+		await renderer.handleEditorTextSubmission("/mission-halt", "by-end");
+		if (!releaseFirstIterationRef.current) {
+			throw new Error("Expected first iteration release handle to be set");
+		}
+		releaseFirstIterationRef.current();
+		await submissionPromise;
+
+		expect(abortCount).toBe(0);
+		expect(runCalls).toBe(1);
+		expect(warnings.join("\n")).toMatch(/stopped after 1 iteration/i);
+	});
+
+	it("runs exactly the requested number of additional iterations when /mission-iterations is submitted during a running mission", async () => {
+		initTheme("dark");
+		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
+		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
+
+		const { dir, cleanup } = makeTodoMissionDir();
+		cleanups.push(cleanup);
+
+		const previousOpenAiKey = process.env.OPENAI_API_KEY;
+		process.env.OPENAI_API_KEY = "test-openai-key";
+		cleanups.push(() => {
+			if (previousOpenAiKey === undefined) {
+				delete process.env.OPENAI_API_KEY;
+			} else {
+				process.env.OPENAI_API_KEY = previousOpenAiKey;
+			}
+		});
+
+		let runCalls = 0;
+		let abortCount = 0;
+		const releaseFirstIterationRef: { current: (() => void) | null } = { current: null };
+		let resolveFirstIterationStarted: (() => void) | null = null;
+		const firstIterationStarted = new Promise<void>((resolve) => {
+			resolveFirstIterationStarted = resolve;
+		});
+
+		const transport: AgentTransport = {
+			async *run(_messages, _userMessage, _config, signal) {
+				runCalls += 1;
+				signal?.addEventListener(
+					"abort",
+					() => {
+						abortCount += 1;
+					},
+					{ once: true },
+				);
+				if (runCalls === 1) {
+					resolveFirstIterationStarted?.();
+					await new Promise<void>((done) => {
+						releaseFirstIterationRef.current = done;
+					});
+				}
+				yield* [];
+			},
+		};
+
+		const agent = new Agent({
+			transport,
+			initialState: {
+				model: getModel("openai", "gpt-4o-mini"),
+				thinkingLevel: "medium",
+			},
+		});
+
+		const renderer = new TuiRenderer(
+			agent,
+			{
+				appendContextCompaction: () => {},
+				loadTitle: () => null,
+				getSessionId: () => "mission-submit-red",
+			} as never,
+			new SettingsManager(configDir),
+			{
+				listCommands: () => [],
+				getCommand: () => undefined,
+				applyInputHooks: async (text: string) => ({ handled: false, text }),
+				composeToolResultTransformer: <T>(base: T) => base,
+			} as never,
+			{} as never,
+			"0.0.0",
+		) as unknown as MissionRenderer;
+
+		await renderer.init();
+		cleanups.push(() => renderer.stop());
+
+		const warnings: string[] = [];
+		renderer.showWarning = (message: string) => {
+			warnings.push(message);
+		};
+
+		const submissionPromise = renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
+		await firstIterationStarted;
+		await renderer.handleEditorTextSubmission("/mission-iterations 2", "by-end");
+		if (!releaseFirstIterationRef.current) {
+			throw new Error("Expected first iteration release handle to be set");
+		}
+		releaseFirstIterationRef.current();
+		await submissionPromise;
+
+		expect(abortCount).toBe(0);
+		expect(runCalls).toBe(3);
+		expect(warnings.join("\n")).toMatch(/stopped after 3 iteration/i);
+	});
+
 	it("compacts before every mission iteration, not just the first one", async () => {
 		initTheme("dark");
 		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
