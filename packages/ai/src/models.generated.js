@@ -3172,13 +3172,13 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text"],
 			cost: {
-				input: 0.27,
-				output: 0.95,
-				cacheRead: 0.0299999997,
+				input: 0.25,
+				output: 1.2,
+				cacheRead: 0,
 				cacheWrite: 0,
 			},
 			contextWindow: 196608,
-			maxTokens: 4096,
+			maxTokens: 196608,
 		},
 		"z-ai/glm-5": {
 			id: "z-ai/glm-5",
