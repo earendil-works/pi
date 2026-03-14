@@ -192,7 +192,7 @@ function startBackgroundJob(command: string): BackgroundJobSnapshot {
 function buildBackgroundJobHelpText(jobId: string): string {
 	return [
 		`Use ${JSON.stringify({ job: jobId, action: "status" })} to check progress.`,
-		`Use ${JSON.stringify({ job: jobId, action: "wait", timeout: 30 })} to wait for completion.`,
+		`Use ${JSON.stringify({ job: jobId, action: "wait", timeout: 30 })} to wait for the final result when completion matters.`,
 	].join(" ");
 }
 
@@ -205,12 +205,14 @@ function buildBackgroundJobResult(job: BackgroundJobSnapshot): {
 			? [
 					`Command exceeded timeout and was moved to background as job ${job.id} (pid ${job.pid}).`,
 					"This preserves in-progress work instead of killing the process.",
-					"The command is still running. This is not a final result or proof of success.",
+					"The command is still running. This is not a completed result.",
+					"Do not report success yet.",
 					buildBackgroundJobHelpText(job.id),
 				].join(" ")
 			: [
 					`Started background job ${job.id} (pid ${job.pid}) by request.`,
-					"The command is still running. This is not a final result.",
+					"The command is still running. This is not a completed result.",
+					"If you need the outcome before continuing or concluding, wait for it.",
 					buildBackgroundJobHelpText(job.id),
 				].join(" ");
 

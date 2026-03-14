@@ -1003,7 +1003,9 @@ If you need parallel work on independent tasks, manually run multiple `mu` sessi
 
 - `{"command":"long task","background":true}` starts a job immediately and returns a job id.
 - If a foreground command exceeds its timeout, mu may move it to a background job instead of killing it. This preserves progress for imports, indexing, downloads, builds, and similar long-running work.
-- A background-job result means the command is still running. It is not proof of success.
+- A background-job result means the command is still running. It is not a completed result and not evidence of success.
+- If the task depends on that command finishing, use `{"job":"<id>","action":"wait","timeout":30}` before concluding.
+- Use `status` for a quick progress check. Use `wait` when you need the final outcome.
 
 The agent can follow up on a returned job id with:
 

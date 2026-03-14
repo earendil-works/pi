@@ -56,8 +56,11 @@ describe("bash tool background job controls (red)", () => {
 		const text = getTextOutput(result);
 		expect(text).toContain("Command exceeded timeout");
 		expect(text).toContain("preserves in-progress work instead of killing the process");
+		expect(text).toContain("This is not a completed result");
+		expect(text).toContain("Do not report success yet");
 		expect(text).toContain(`{"job":"${job?.id}","action":"status"}`);
 		expect(text).toContain(`{"job":"${job?.id}","action":"wait","timeout":30}`);
+		expect(text).toContain("final result when completion matters");
 	}, 5_000);
 
 	it("returns an agent-facing explicit background diagnostic with a reusable job handle", async () => {
@@ -77,7 +80,10 @@ describe("bash tool background job controls (red)", () => {
 		const text = getTextOutput(result);
 		expect(text).toContain("Started background job");
 		expect(text).toContain("by request");
+		expect(text).toContain("This is not a completed result");
+		expect(text).toContain("If you need the outcome before continuing or concluding, wait for it");
 		expect(text).toContain(`{"job":"${job?.id}","action":"status"}`);
+		expect(text).toContain(`{"job":"${job?.id}","action":"wait","timeout":30}`);
 	}, 5_000);
 
 	it("reports current progress for a running background job via action=status", async () => {

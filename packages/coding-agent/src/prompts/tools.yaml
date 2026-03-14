@@ -28,7 +28,13 @@ bash: |
 
   If a foreground command exceeds its timeout, it may be moved to a background job instead of being killed. This preserves in-progress work for long-running operations such as imports, indexing, downloads, and builds.
 
-  Important: when bash returns a background job result, the command is still running. It is not the final result and not proof of success. Check the job status or wait for completion before reporting success when completion matters.
+  Important: when bash returns a background job result, the command is still running. This is not a completed result and not evidence of success.
+
+  If completion matters, call `{"job":"<id>","action":"wait","timeout":30}` before concluding or reporting success.
+
+  Use `status` for a quick progress check. Use `wait` when you need the final outcome.
+
+  Do not merely say that you will wait; actually invoke `wait`.
 
   Background job actions:
   - `{"job":"<id>","action":"status"}` — get current state and recent output
