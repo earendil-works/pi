@@ -945,7 +945,7 @@ describe("/mission-run submission (red)", () => {
 		expect(warnings.join("\n")).toMatch(/stopped after 1 iteration/i);
 	});
 
-	it("runs exactly the requested number of additional iterations when /mission-iterations is submitted during a running mission", async () => {
+	it("stops by the requested absolute iteration when /mission-iterations is submitted during a running mission", async () => {
 		initTheme("dark");
 		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
 		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
@@ -1035,8 +1035,8 @@ describe("/mission-run submission (red)", () => {
 		await submissionPromise;
 
 		expect(abortCount).toBe(0);
-		expect(runCalls).toBe(3);
-		expect(warnings.join("\n")).toMatch(/stopped after 3 iteration/i);
+		expect(runCalls).toBe(2);
+		expect(warnings.join("\n")).toMatch(/stopped after 2 iteration/i);
 	});
 
 	it("compacts before every mission iteration, not just the first one", async () => {

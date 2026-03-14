@@ -348,8 +348,7 @@ export class TuiRenderer {
 	private handoffAbortController: AbortController | null = null;
 	private missionRunAbortController: AbortController | null = null;
 	private missionStopAfterIteration = false;
-	private missionIterationsRemaining: number | null = null;
-	private missionIterationInProgress = false;
+	private missionIterationLimit: number | null = null;
 	private isAutoHandoffInProgress = false;
 	private shouldIncludeHandoffNudge = false; // 85% threshold nudge state
 	private pendingExplicitHandoff: (HandoffDetails & { parentSessionId: string | null }) | null = null;
@@ -634,7 +633,7 @@ export class TuiRenderer {
 
 		const missionIterationsCommand: SlashCommand = {
 			name: "mission-iterations",
-			description: "Set how many more iterations the active mission may run",
+			description: "Set the iteration number where the active mission should stop",
 			selectionBehavior: "inject",
 			injectedText: "/mission-iterations ",
 			injectedDiagnostic: "Prepared /mission-iterations draft. Enter a number or 'unlimited'.",
@@ -5170,7 +5169,7 @@ export class TuiRenderer {
 		}
 
 		if (rawArg === "unlimited") {
-			this.missionIterationsRemaining = null;
+			this.missionIterationLimit = null;
 			this.missionStopAfterIteration = false;
 			this.showWarning("Mission iteration limit cleared.");
 			return;
@@ -5183,8 +5182,8 @@ export class TuiRenderer {
 		}
 
 		this.missionStopAfterIteration = false;
-		this.missionIterationsRemaining = parsed + (this.missionIterationInProgress ? 1 : 0);
-		this.showWarning(`Mission will stop after ${parsed} more iteration${parsed === 1 ? "" : "s"}.`);
+		this.missionIterationLimit = parsed;
+		this.showWarning(`Mission will stop by iteration ${parsed}.`);
 	}
 
 	private async handleMissionRunCommand(missionRef: string): Promise<void> {
@@ -5192,8 +5191,7 @@ export class TuiRenderer {
 		const missionRunAbortController = new AbortController();
 		this.missionRunAbortController = missionRunAbortController;
 		this.missionStopAfterIteration = false;
-		this.missionIterationsRemaining = null;
-		this.missionIterationInProgress = false;
+		this.missionIterationLimit = null;
 		const { signal } = missionRunAbortController;
 
 		try {
@@ -5230,44 +5228,35 @@ export class TuiRenderer {
 					if (this.missionStopAfterIteration) {
 						return false;
 					}
-					if (this.missionIterationsRemaining === null) {
+					if (this.missionIterationLimit === null) {
 						return true;
 					}
-					return this.missionIterationsRemaining > 0;
+					return (this.missionUiState?.iteration ?? 0) < this.missionIterationLimit;
 				},
-				onIterationComplete: () => {
-					if (this.missionIterationsRemaining !== null && this.missionIterationsRemaining > 0) {
-						this.missionIterationsRemaining -= 1;
-					}
-				},
+				onIterationComplete: () => {},
 				executeIteration: async ({ mission, prompt }) => {
 					if (signal.aborted) {
 						return;
 					}
-					this.missionIterationInProgress = true;
 					const iteration = this.missionUiState ? this.missionUiState.iteration + 1 : 1;
 					const compactionGoal = `Continue mission ${missionName} at iteration ${iteration}`;
-					try {
-						await this.applyCompactionCheckpoint(this.buildMissionCompactionDetails(compactionGoal));
-						if (signal.aborted) {
-							return;
-						}
-						this.setMissionUiState(missionName, iteration, "running", mission);
-						await this.agent.prompt(prompt);
-						await this.agent.waitForIdle();
-						if (signal.aborted) {
-							return;
-						}
-						const refreshedMission = parseMissionDefinition(missionDir);
-						this.setMissionUiState(
-							missionName,
-							iteration,
-							refreshedMission.allTasksDone ? "done" : "running",
-							refreshedMission,
-						);
-					} finally {
-						this.missionIterationInProgress = false;
+					await this.applyCompactionCheckpoint(this.buildMissionCompactionDetails(compactionGoal));
+					if (signal.aborted) {
+						return;
 					}
+					this.setMissionUiState(missionName, iteration, "running", mission);
+					await this.agent.prompt(prompt);
+					await this.agent.waitForIdle();
+					if (signal.aborted) {
+						return;
+					}
+					const refreshedMission = parseMissionDefinition(missionDir);
+					this.setMissionUiState(
+						missionName,
+						iteration,
+						refreshedMission.allTasksDone ? "done" : "running",
+						refreshedMission,
+					);
 				},
 			});
 
@@ -5300,8 +5289,7 @@ export class TuiRenderer {
 		} finally {
 			this.missionRunAbortController = null;
 			this.missionStopAfterIteration = false;
-			this.missionIterationsRemaining = null;
-			this.missionIterationInProgress = false;
+			this.missionIterationLimit = null;
 			this.endMissionRunWorkingStatus();
 		}
 	}
