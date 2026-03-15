@@ -656,6 +656,7 @@ describe("/mission-run submission (red)", () => {
 		expect(runCalls).toBe(1);
 		expect(prePromptHistorySnapshots[0]).toContain("Use this compacted checkpoint as the active context");
 		expect(prePromptHistorySnapshots[0]).toContain("Continue mission");
+		expect(prePromptHistorySnapshots[0]).not.toContain("at iteration");
 		expect(runningLabels[0]).toContain(`mission ${dir.split("/").at(-1)}`);
 		expect(runningLabels[0]).toContain("iter 1");
 		expect(runningLabels[0]).toContain("running");
@@ -1130,6 +1131,7 @@ describe("/mission-run submission (red)", () => {
 		for (const snapshot of prePromptHistorySnapshots) {
 			expect(snapshot).toContain("Use this compacted checkpoint as the active context");
 			expect(snapshot).toContain("Continue mission");
+			expect(snapshot).not.toContain("at iteration");
 		}
 
 		const footerLabel = stripAnsi(renderer.getComposerMetaLabel());

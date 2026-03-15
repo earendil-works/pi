@@ -5239,7 +5239,7 @@ export class TuiRenderer {
 						return;
 					}
 					const iteration = this.missionUiState ? this.missionUiState.iteration + 1 : 1;
-					const compactionGoal = `Continue mission ${missionName} at iteration ${iteration}`;
+					const compactionGoal = `Continue mission ${missionName}`;
 					await this.applyCompactionCheckpoint(this.buildMissionCompactionDetails(compactionGoal));
 					if (signal.aborted) {
 						return;
