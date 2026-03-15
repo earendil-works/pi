@@ -4462,6 +4462,9 @@ export class InteractiveMode {
 			id: provider.id,
 			name: provider.name,
 			authType: "oauth",
+			credentialsProviderId: provider.credentialsProviderId,
+			parentProviderId: provider.parentProviderId,
+			loginOptionLabel: provider.loginOptionLabel,
 		}));
 
 		const modelProviders = new Set(this.session.modelRegistry.getAll().map((model) => model.provider));
@@ -4618,18 +4621,23 @@ export class InteractiveMode {
 		this.session.modelRegistry.refresh();
 
 		const actionLabel = authType === "oauth" ? `Logged in to ${providerName}` : `Saved API key for ${providerName}`;
+		const providerInfo =
+			authType === "oauth"
+				? this.session.modelRegistry.authStorage.getOAuthProviders().find((provider) => provider.id === providerId)
+				: undefined;
+		const modelProviderId = providerInfo?.credentialsProviderId ?? providerId;
 
 		let selectedModel: Model<any> | undefined;
 		let selectionError: string | undefined;
 		if (isUnknownModel(previousModel)) {
 			const availableModels = this.session.modelRegistry.getAvailable();
-			const providerModels = availableModels.filter((model) => model.provider === providerId);
-			if (!hasDefaultModelProvider(providerId)) {
-				selectionError = `${actionLabel}, but no default model is configured for provider "${providerId}". Use /model to select a model.`;
+			const providerModels = availableModels.filter((model) => model.provider === modelProviderId);
+			if (!hasDefaultModelProvider(modelProviderId)) {
+				selectionError = `${actionLabel}, but no default model is configured for provider "${modelProviderId}". Use /model to select a model.`;
 			} else if (providerModels.length === 0) {
 				selectionError = `${actionLabel}, but no models are available for that provider. Use /model to select a model.`;
 			} else {
-				const defaultModelId = defaultModelPerProvider[providerId];
+				const defaultModelId = defaultModelPerProvider[modelProviderId];
 				selectedModel = providerModels.find((model) => model.id === defaultModelId);
 				if (!selectedModel) {
 					selectionError = `${actionLabel}, but its default model "${defaultModelId}" is not available. Use /model to select a model.`;

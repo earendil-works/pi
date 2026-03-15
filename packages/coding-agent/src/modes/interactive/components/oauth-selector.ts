@@ -15,12 +15,16 @@ export type AuthSelectorProvider = {
 	id: string;
 	name: string;
 	authType: "oauth" | "api_key";
+	credentialsProviderId?: string;
+	parentProviderId?: string;
+	loginOptionLabel?: string;
 };
 
 /**
  * Component that renders an auth provider selector
  */
 export class OAuthSelectorComponent extends Container implements Focusable {
+	private titleContainer: Container;
 	private searchInput: Input;
 
 	// Focusable implementation - propagate to search input for IME cursor positioning
@@ -42,6 +46,7 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 	private getAuthStatus: (providerId: string) => AuthStatus;
 	private onSelectCallback: (providerId: string) => void;
 	private onCancelCallback: () => void;
+	private loginMethodParentProviderId: string | null = null;
 
 	constructor(
 		mode: "login" | "logout",
@@ -66,16 +71,13 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 		this.addChild(new Spacer(1));
 
 		// Add title
-		const title = mode === "login" ? "Select provider to configure:" : "Select provider to logout:";
-		this.addChild(new TruncatedText(theme.fg("accent", theme.bold(title)), 1, 0));
+		this.titleContainer = new Container();
+		this.addChild(this.titleContainer);
 		this.addChild(new Spacer(1));
 
 		this.searchInput = new Input();
 		this.searchInput.onSubmit = () => {
-			const selectedProvider = this.filteredProviders[this.selectedIndex];
-			if (selectedProvider) {
-				this.onSelectCallback(selectedProvider.id);
-			}
+			this.selectCurrentProvider();
 		};
 		this.addChild(this.searchInput);
 		this.addChild(new Spacer(1));
@@ -93,15 +95,63 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 		this.filterProviders("");
 	}
 
+	private getParentProvider(): AuthSelectorProvider | undefined {
+		if (!this.loginMethodParentProviderId) return undefined;
+		return this.allProviders.find((provider) => provider.id === this.loginMethodParentProviderId);
+	}
+
+	private getSelectableProviders(): AuthSelectorProvider[] {
+		if (this.mode !== "login" || !this.loginMethodParentProviderId) {
+			return this.allProviders.filter((provider) => !provider.parentProviderId);
+		}
+
+		const parentProvider = this.getParentProvider();
+		if (!parentProvider) {
+			return this.allProviders.filter((provider) => !provider.parentProviderId);
+		}
+
+		const alternateProviders = this.allProviders.filter(
+			(provider) => provider.parentProviderId === this.loginMethodParentProviderId,
+		);
+		return [parentProvider, ...alternateProviders];
+	}
+
 	private filterProviders(query: string): void {
+		const selectableProviders = this.getSelectableProviders();
 		this.filteredProviders = query
-			? fuzzyFilter(this.allProviders, query, (provider) => `${provider.name} ${provider.id} ${provider.authType}`)
-			: this.allProviders;
+			? fuzzyFilter(
+					selectableProviders,
+					query,
+					(provider) => `${provider.name} ${provider.id} ${provider.authType} ${provider.loginOptionLabel ?? ""}`,
+				)
+			: selectableProviders;
 		this.selectedIndex = Math.max(0, Math.min(this.selectedIndex, Math.max(0, this.filteredProviders.length - 1)));
 		this.updateList();
 	}
 
+	private getTitle(): string {
+		if (this.mode === "logout") {
+			return "Select provider to logout:";
+		}
+
+		const parentProvider = this.getParentProvider();
+		if (parentProvider) {
+			return `Select login method for ${parentProvider.name}:`;
+		}
+
+		return "Select provider to configure:";
+	}
+
+	private getProviderLabel(provider: AuthSelectorProvider): string {
+		if (this.mode === "login" && this.loginMethodParentProviderId) {
+			return provider.loginOptionLabel ?? provider.name;
+		}
+		return provider.name;
+	}
+
 	private updateList(): void {
+		this.titleContainer.clear();
+		this.titleContainer.addChild(new TruncatedText(theme.fg("accent", theme.bold(this.getTitle())), 1, 0));
 		this.listContainer.clear();
 
 		const maxVisible = 8;
@@ -116,15 +166,16 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 			if (!provider) continue;
 
 			const isSelected = i === this.selectedIndex;
+			const statusIndicator = this.loginMethodParentProviderId ? "" : this.formatStatusIndicator(provider);
+			const label = this.getProviderLabel(provider);
 
-			const statusIndicator = this.formatStatusIndicator(provider);
 			let line = "";
 			if (isSelected) {
 				const prefix = theme.fg("accent", "→ ");
-				const text = theme.fg("accent", provider.name);
+				const text = theme.fg("accent", label);
 				line = prefix + text + statusIndicator;
 			} else {
-				const text = `  ${theme.fg("text", provider.name)}`;
+				const text = `  ${theme.fg("text", label)}`;
 				line = text + statusIndicator;
 			}
 
@@ -174,6 +225,40 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 		}
 	}
 
+	private openLoginMethodSelector(provider: AuthSelectorProvider): void {
+		this.loginMethodParentProviderId = provider.id;
+		this.selectedIndex = 0;
+		this.filterProviders(this.searchInput.getValue());
+	}
+
+	private closeLoginMethodSelector(): boolean {
+		if (!this.loginMethodParentProviderId) {
+			return false;
+		}
+
+		this.loginMethodParentProviderId = null;
+		this.selectedIndex = 0;
+		this.filterProviders(this.searchInput.getValue());
+		return true;
+	}
+
+	private selectCurrentProvider(): void {
+		const selectedProvider = this.filteredProviders[this.selectedIndex];
+		if (!selectedProvider) return;
+
+		const hasAlternateLoginMethods =
+			this.mode === "login" &&
+			!this.loginMethodParentProviderId &&
+			this.allProviders.some((provider) => provider.parentProviderId === selectedProvider.id);
+
+		if (hasAlternateLoginMethods) {
+			this.openLoginMethodSelector(selectedProvider);
+			return;
+		}
+
+		this.onSelectCallback(selectedProvider.id);
+	}
+
 	handleInput(keyData: string): void {
 		const kb = getKeybindings();
 		// Up arrow
@@ -190,14 +275,13 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 		}
 		// Enter
 		else if (kb.matches(keyData, "tui.select.confirm")) {
-			const selectedProvider = this.filteredProviders[this.selectedIndex];
-			if (selectedProvider) {
-				this.onSelectCallback(selectedProvider.id);
-			}
+			this.selectCurrentProvider();
 		}
 		// Escape or Ctrl+C
 		else if (kb.matches(keyData, "tui.select.cancel")) {
-			this.onCancelCallback();
+			if (!this.closeLoginMethodSelector()) {
+				this.onCancelCallback();
+			}
 		}
 		// Pass everything else to search input
 		else {

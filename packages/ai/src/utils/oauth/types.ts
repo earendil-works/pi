@@ -47,6 +47,15 @@ export interface OAuthProviderInterface {
 	readonly id: OAuthProviderId;
 	readonly name: string;
 
+	/** Optional canonical provider ID used to store/retrieve credentials for aliases. */
+	readonly credentialsProviderId?: OAuthProviderId;
+
+	/** Optional parent provider ID for alternate login methods shown under a primary provider. */
+	readonly parentProviderId?: OAuthProviderId;
+
+	/** Optional label used when presenting this provider as a login method choice. */
+	readonly loginOptionLabel?: string;
+
 	/** Run the login flow, return credentials to persist */
 	login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials>;
 

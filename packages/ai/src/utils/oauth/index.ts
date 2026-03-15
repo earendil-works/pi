@@ -18,7 +18,13 @@ export {
 	refreshGitHubCopilotToken,
 } from "./github-copilot.ts";
 // OpenAI Codex (ChatGPT OAuth)
-export { loginOpenAICodex, openaiCodexOAuthProvider, refreshOpenAICodexToken } from "./openai-codex.ts";
+export {
+	loginOpenAICodex,
+	loginOpenAICodexDeviceCode,
+	openaiCodexDeviceCodeOAuthProvider,
+	openaiCodexOAuthProvider,
+	refreshOpenAICodexToken,
+} from "./openai-codex.ts";
 
 export * from "./types.ts";
 
@@ -28,13 +34,14 @@ export * from "./types.ts";
 
 import { anthropicOAuthProvider } from "./anthropic.ts";
 import { githubCopilotOAuthProvider } from "./github-copilot.ts";
-import { openaiCodexOAuthProvider } from "./openai-codex.ts";
+import { openaiCodexDeviceCodeOAuthProvider, openaiCodexOAuthProvider } from "./openai-codex.ts";
 import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.ts";
 
 const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
 	anthropicOAuthProvider,
 	githubCopilotOAuthProvider,
 	openaiCodexOAuthProvider,
+	openaiCodexDeviceCodeOAuthProvider,
 ];
 
 const oauthProviderRegistry = new Map<string, OAuthProviderInterface>(
@@ -46,6 +53,14 @@ const oauthProviderRegistry = new Map<string, OAuthProviderInterface>(
  */
 export function getOAuthProvider(id: OAuthProviderId): OAuthProviderInterface | undefined {
 	return oauthProviderRegistry.get(id);
+}
+
+/**
+ * Resolve the credential storage ID for a provider.
+ * Alias providers can share stored credentials with a canonical provider ID.
+ */
+export function getOAuthCredentialStorageId(id: OAuthProviderId): OAuthProviderId {
+	return getOAuthProvider(id)?.credentialsProviderId ?? id;
 }
 
 /**
@@ -133,7 +148,8 @@ export async function getOAuthApiKey(
 		throw new Error(`Unknown OAuth provider: ${providerId}`);
 	}
 
-	let creds = credentials[providerId];
+	const credentialsProviderId = getOAuthCredentialStorageId(providerId);
+	let creds = credentials[credentialsProviderId];
 	if (!creds) {
 		return null;
 	}

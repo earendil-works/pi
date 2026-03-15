@@ -23,11 +23,16 @@ import type { OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, OAuthProviderI
 
 const CALLBACK_HOST = process.env.PI_OAUTH_CALLBACK_HOST || "127.0.0.1";
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
-const AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
-const TOKEN_URL = "https://auth.openai.com/oauth/token";
+const AUTH_BASE_URL = "https://auth.openai.com";
+const AUTHORIZE_URL = `${AUTH_BASE_URL}/oauth/authorize`;
+const TOKEN_URL = `${AUTH_BASE_URL}/oauth/token`;
+const DEVICE_AUTH_BASE_URL = `${AUTH_BASE_URL}/api/accounts`;
+const DEVICE_VERIFICATION_URL = `${AUTH_BASE_URL}/codex/device`;
+const DEVICE_REDIRECT_URI = `${AUTH_BASE_URL}/deviceauth/callback`;
 const REDIRECT_URI = "http://localhost:1455/auth/callback";
 const SCOPE = "openid profile email offline_access";
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
+const DEVICE_CODE_MAX_WAIT_MS = 15 * 60 * 1000; // 15 minutes
 
 type TokenSuccess = { type: "success"; access: string; refresh: string; expires: number };
 type TokenFailure = { type: "failed"; message: string; status?: number };
@@ -287,6 +292,185 @@ function startLocalOAuthServer(state: string): Promise<OAuthServerInfo> {
 	});
 }
 
+// ============================================================================
+// Device Code Flow (headless / SSH-friendly)
+// ============================================================================
+
+type DeviceCodeUserCodeResponse = {
+	device_auth_id: string;
+	user_code: string;
+	interval: string | number;
+};
+
+type DeviceCodeTokenResponse = {
+	authorization_code: string;
+	code_challenge: string;
+	code_verifier: string;
+};
+
+/**
+ * Request a device code from OpenAI's device auth endpoint.
+ * Returns null if the endpoint is not available (404).
+ */
+async function requestDeviceCode(): Promise<{
+	deviceAuthId: string;
+	userCode: string;
+	interval: number;
+} | null> {
+	const url = `${DEVICE_AUTH_BASE_URL}/deviceauth/usercode`;
+	const response = await fetch(url, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ client_id: CLIENT_ID }),
+	});
+
+	if (response.status === 404) {
+		// Device code login not enabled for this client
+		return null;
+	}
+
+	if (!response.ok) {
+		throw new Error(`Device code request failed with status ${response.status}`);
+	}
+
+	const data = (await response.json()) as DeviceCodeUserCodeResponse;
+	const interval = typeof data.interval === "string" ? Number.parseInt(data.interval, 10) : data.interval;
+
+	return {
+		deviceAuthId: data.device_auth_id,
+		userCode: data.user_code,
+		interval: Number.isNaN(interval) ? 5 : interval,
+	};
+}
+
+/**
+ * Poll the device auth token endpoint until the user completes login
+ * or the timeout is reached.
+ */
+async function pollDeviceCodeToken(
+	deviceAuthId: string,
+	userCode: string,
+	intervalSeconds: number,
+	signal?: AbortSignal,
+): Promise<DeviceCodeTokenResponse> {
+	const url = `${DEVICE_AUTH_BASE_URL}/deviceauth/token`;
+	const deadline = Date.now() + DEVICE_CODE_MAX_WAIT_MS;
+
+	while (Date.now() < deadline) {
+		if (signal?.aborted) {
+			throw new Error("Login cancelled");
+		}
+
+		const response = await fetch(url, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				device_auth_id: deviceAuthId,
+				user_code: userCode,
+			}),
+		});
+
+		if (response.ok) {
+			return (await response.json()) as DeviceCodeTokenResponse;
+		}
+
+		// 403 = authorization_pending, 404 = not yet authorized - keep polling
+		if (response.status === 403 || response.status === 404) {
+			const remaining = deadline - Date.now();
+			const sleepMs = Math.min(intervalSeconds * 1000, remaining);
+			if (sleepMs <= 0) break;
+			await abortableSleep(sleepMs, signal);
+			continue;
+		}
+
+		throw new Error(`Device auth polling failed with status ${response.status}`);
+	}
+
+	throw new Error("Device code login timed out after 15 minutes");
+}
+
+/**
+ * Sleep that can be interrupted by an AbortSignal.
+ */
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted) {
+			reject(new Error("Login cancelled"));
+			return;
+		}
+		const timeout = setTimeout(resolve, ms);
+		signal?.addEventListener(
+			"abort",
+			() => {
+				clearTimeout(timeout);
+				reject(new Error("Login cancelled"));
+			},
+			{ once: true },
+		);
+	});
+}
+
+/**
+ * Login with OpenAI Codex using the device code flow.
+ * No local server or browser redirect needed - works over SSH.
+ *
+ * Flow:
+ * 1. Request a one-time user code from OpenAI
+ * 2. User visits verification URL and enters the code
+ * 3. Poll until the user completes login
+ * 4. Exchange the returned authorization code for tokens
+ */
+export async function loginOpenAICodexDeviceCode(options: {
+	onAuth: (info: { url: string; instructions?: string }) => void;
+	onProgress?: (message: string) => void;
+	onWaiting?: (message: string) => void;
+	signal?: AbortSignal;
+}): Promise<OAuthCredentials> {
+	const deviceCode = await requestDeviceCode();
+	if (!deviceCode) {
+		throw new Error("Device code login is not available for this client");
+	}
+
+	options.onAuth({
+		url: DEVICE_VERIFICATION_URL,
+		instructions: `Enter code: ${deviceCode.userCode}`,
+	});
+
+	options.onWaiting?.("Waiting for you to complete login in your browser...");
+
+	const tokenResponse = await pollDeviceCodeToken(
+		deviceCode.deviceAuthId,
+		deviceCode.userCode,
+		deviceCode.interval,
+		options.signal,
+	);
+
+	options.onProgress?.("Exchanging authorization code for tokens...");
+
+	// The device code flow returns server-generated PKCE values
+	const tokenResult = await exchangeAuthorizationCode(
+		tokenResponse.authorization_code,
+		tokenResponse.code_verifier,
+		DEVICE_REDIRECT_URI,
+	);
+
+	if (tokenResult.type !== "success") {
+		throw new Error("Token exchange failed");
+	}
+
+	const accountId = getAccountId(tokenResult.access);
+	if (!accountId) {
+		throw new Error("Failed to extract accountId from token");
+	}
+
+	return {
+		access: tokenResult.access,
+		refresh: tokenResult.refresh,
+		expires: tokenResult.expires,
+		accountId,
+	};
+}
+
 function getAccountId(accessToken: string): string | null {
 	const payload = decodeJwt(accessToken);
 	const auth = payload?.[JWT_CLAIM_PATH];
@@ -437,6 +621,7 @@ export async function refreshOpenAICodexToken(refreshToken: string): Promise<OAu
 export const openaiCodexOAuthProvider: OAuthProviderInterface = {
 	id: "openai-codex",
 	name: "ChatGPT Plus/Pro (Codex Subscription)",
+	loginOptionLabel: "Browser login (default)",
 	usesCallbackServer: true,
 
 	async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
@@ -445,6 +630,32 @@ export const openaiCodexOAuthProvider: OAuthProviderInterface = {
 			onPrompt: callbacks.onPrompt,
 			onProgress: callbacks.onProgress,
 			onManualCodeInput: callbacks.onManualCodeInput,
+		});
+	},
+
+	async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
+		return refreshOpenAICodexToken(credentials.refresh);
+	},
+
+	getApiKey(credentials: OAuthCredentials): string {
+		return credentials.access;
+	},
+};
+
+export const openaiCodexDeviceCodeOAuthProvider: OAuthProviderInterface = {
+	id: "openai-codex-device-code",
+	name: "ChatGPT Plus/Pro (Codex Subscription) - Device Code (for remote flows)",
+	credentialsProviderId: "openai-codex",
+	parentProviderId: "openai-codex",
+	loginOptionLabel: "Device Code (for remote flows)",
+	usesCallbackServer: false,
+
+	async login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials> {
+		return loginOpenAICodexDeviceCode({
+			onAuth: callbacks.onAuth,
+			onProgress: callbacks.onProgress,
+			onWaiting: callbacks.onProgress,
+			signal: callbacks.signal,
 		});
 	},
 

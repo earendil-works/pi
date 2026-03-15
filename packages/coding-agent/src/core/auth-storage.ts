@@ -13,7 +13,12 @@ import {
 	type OAuthLoginCallbacks,
 	type OAuthProviderId,
 } from "@earendil-works/pi-ai";
-import { getOAuthApiKey, getOAuthProvider, getOAuthProviders } from "@earendil-works/pi-ai/oauth";
+import {
+	getOAuthApiKey,
+	getOAuthCredentialStorageId,
+	getOAuthProvider,
+	getOAuthProviders,
+} from "@earendil-works/pi-ai/oauth";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
@@ -293,27 +298,33 @@ export class AuthStorage {
 		}
 	}
 
+	private resolveCredentialProviderId(provider: string): string {
+		return getOAuthCredentialStorageId(provider);
+	}
+
 	/**
 	 * Get credential for a provider.
 	 */
 	get(provider: string): AuthCredential | undefined {
-		return this.data[provider] ?? undefined;
+		return this.data[this.resolveCredentialProviderId(provider)] ?? undefined;
 	}
 
 	/**
 	 * Set credential for a provider.
 	 */
 	set(provider: string, credential: AuthCredential): void {
-		this.data[provider] = credential;
-		this.persistProviderChange(provider, credential);
+		const credentialProviderId = this.resolveCredentialProviderId(provider);
+		this.data[credentialProviderId] = credential;
+		this.persistProviderChange(credentialProviderId, credential);
 	}
 
 	/**
 	 * Remove credential for a provider.
 	 */
 	remove(provider: string): void {
-		delete this.data[provider];
-		this.persistProviderChange(provider, undefined);
+		const credentialProviderId = this.resolveCredentialProviderId(provider);
+		delete this.data[credentialProviderId];
+		this.persistProviderChange(credentialProviderId, undefined);
 	}
 
 	/**
@@ -327,7 +338,7 @@ export class AuthStorage {
 	 * Check if credentials exist for a provider in auth.json.
 	 */
 	has(provider: string): boolean {
-		return provider in this.data;
+		return this.resolveCredentialProviderId(provider) in this.data;
 	}
 
 	/**
@@ -335,8 +346,9 @@ export class AuthStorage {
 	 * Unlike getApiKey(), this doesn't refresh OAuth tokens.
 	 */
 	hasAuth(provider: string): boolean {
+		const credentialProviderId = this.resolveCredentialProviderId(provider);
 		if (this.runtimeOverrides.has(provider)) return true;
-		if (this.data[provider]) return true;
+		if (this.data[credentialProviderId]) return true;
 		if (getEnvApiKey(provider)) return true;
 		if (this.fallbackResolver?.(provider)) return true;
 		return false;
@@ -411,12 +423,13 @@ export class AuthStorage {
 			return null;
 		}
 
+		const credentialProviderId = this.resolveCredentialProviderId(providerId);
 		const result = await this.storage.withLockAsync(async (current) => {
 			const currentData = this.parseStorageData(current);
 			this.data = currentData;
 			this.loadError = null;
 
-			const cred = currentData[providerId];
+			const cred = currentData[credentialProviderId];
 			if (cred?.type !== "oauth") {
 				return { result: null };
 			}
@@ -439,7 +452,7 @@ export class AuthStorage {
 
 			const merged: AuthStorageData = {
 				...currentData,
-				[providerId]: { type: "oauth", ...refreshed.newCredentials },
+				[credentialProviderId]: { type: "oauth", ...refreshed.newCredentials },
 			};
 			this.data = merged;
 			this.loadError = null;
@@ -459,13 +472,15 @@ export class AuthStorage {
 	 * 5. Fallback resolver (models.json custom providers)
 	 */
 	async getApiKey(providerId: string, options?: { includeFallback?: boolean }): Promise<string | undefined> {
+		const credentialProviderId = this.resolveCredentialProviderId(providerId);
+
 		// Runtime override takes highest priority
 		const runtimeKey = this.runtimeOverrides.get(providerId);
 		if (runtimeKey) {
 			return runtimeKey;
 		}
 
-		const cred = this.data[providerId];
+		const cred = this.data[credentialProviderId];
 
 		if (cred?.type === "api_key") {
 			return resolveConfigValue(cred.key);
@@ -492,7 +507,7 @@ export class AuthStorage {
 					this.recordError(error);
 					// Refresh failed - re-read file to check if another instance succeeded
 					this.reload();
-					const updatedCred = this.data[providerId];
+					const updatedCred = this.data[credentialProviderId];
 
 					if (updatedCred?.type === "oauth" && Date.now() < updatedCred.expires) {
 						// Another instance refreshed successfully, use those credentials
