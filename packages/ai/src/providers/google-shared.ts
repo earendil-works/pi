@@ -223,7 +223,29 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 		}
 	}
 
-	return contents;
+	return mergeConsecutiveRoles(contents);
+}
+
+/**
+ * Merge consecutive turns with the same role into a single turn.
+ *
+ * The Gemini API requires strictly alternating user/model roles.
+ * After filtering empty blocks (e.g. empty thinking without signatures),
+ * assistant turns can produce zero parts and get skipped, leaving
+ * consecutive same-role turns (e.g. user → [skipped] → user).
+ */
+function mergeConsecutiveRoles(contents: Content[]): Content[] {
+	const merged: Content[] = [];
+	for (const entry of contents) {
+		const last = merged[merged.length - 1];
+		if (last && last.role === entry.role) {
+			last.parts = last.parts ?? [];
+			if (entry.parts) last.parts.push(...entry.parts);
+		} else {
+			merged.push(entry);
+		}
+	}
+	return merged;
 }
 
 /**
