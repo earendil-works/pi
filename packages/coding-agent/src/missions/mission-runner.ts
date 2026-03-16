@@ -34,6 +34,13 @@ export async function runMissionLoop(options: RunMissionLoopOptions): Promise<Mi
 		if (mission.mode !== "optimize" && mission.allTasksDone) {
 			return { status: "done", iterations };
 		}
+		if (mission.mode === "optimize" && mission.latestExperimentResult?.status === "blocked") {
+			return {
+				status: "blocked",
+				iterations,
+				reason: mission.latestExperimentResult.reason ?? "Mission recorded a blocked optimize iteration",
+			};
+		}
 		if (options.shouldContinue && !options.shouldContinue()) {
 			return { status: "stopped", iterations };
 		}

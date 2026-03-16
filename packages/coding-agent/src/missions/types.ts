@@ -1,6 +1,13 @@
 export type MissionTaskStatus = "todo" | "in_progress" | "done" | "blocked" | "discarded";
 export type MissionMode = "build" | "optimize";
 export type MissionMetricDirection = "lower" | "higher";
+export type MissionExperimentStatus = "keep" | "discard" | "crash" | "blocked";
+
+export interface MissionLatestExperimentResult {
+	status: MissionExperimentStatus;
+	reason?: string;
+	raw: Record<string, unknown>;
+}
 
 export interface MissionTask {
 	id: string;
@@ -22,6 +29,7 @@ export interface MissionDefinition {
 	progressText: string;
 	runbookText: string;
 	experimentsText?: string;
+	latestExperimentResult?: MissionLatestExperimentResult;
 	metric?: string;
 	direction?: MissionMetricDirection;
 	tasks: MissionTask[];

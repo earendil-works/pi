@@ -147,6 +147,41 @@ describe("optimize-mode missions (red)", () => {
 		expect(iterations).toBe(1);
 	});
 
+	it("terminates optimize mode after a blocked iteration recorded in EXPERIMENTS.jsonl", async () => {
+		const { dir, cleanup } = makeMissionDir();
+		cleanups.push(cleanup);
+		writeOptimizeMissionFiles(dir, {
+			tasksJson: JSON.stringify(
+				{
+					tasks: [{ id: "seed", title: "Needs user login", status: "blocked", validation: [], notes: "" }],
+				},
+				null,
+				2,
+			),
+		});
+
+		let iterations = 0;
+		const result = await runMissionLoop({
+			missionDir: dir,
+			maxIterations: 5,
+			executeIteration: async () => {
+				iterations += 1;
+				appendFileSync(
+					join(dir, "EXPERIMENTS.jsonl"),
+					JSON.stringify({ run: iterations, status: "blocked", reason: "User must restore auth first" }) + "\n",
+				);
+			},
+		});
+
+		expect(iterations).toBe(1);
+		expect(result.status).toBe("blocked");
+		if (result.status !== "blocked") {
+			throw new Error(`Expected blocked result, received ${result.status}`);
+		}
+		expect(result.iterations).toBe(1);
+		expect(result.reason).toMatch(/restore auth/i);
+	});
+
 	it("treats EXPERIMENTS.jsonl as append-only optimize history", async () => {
 		const { dir, cleanup } = makeMissionDir();
 		cleanups.push(cleanup);
