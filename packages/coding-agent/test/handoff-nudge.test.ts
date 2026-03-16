@@ -1,8 +1,8 @@
 /**
  * Handoff Nudge Tests
  *
- * Tests the 80% threshold nudge system that encourages voluntary handoff
- * before forced auto-handoff at 95%.
+ * Tests the 80% threshold nudge system that encourages voluntary compaction
+ * when context usage is high.
  */
 
 import { beforeEach, describe, expect, it } from "vitest";
@@ -33,9 +33,9 @@ describe("Handoff Nudge", () => {
 			expect(reminder).toContain("compact");
 		});
 
-		it("mentions 95% auto-handoff", () => {
+		it("suggests compacting", () => {
 			const reminder = getHandoffNudgeReminder(0.85);
-			expect(reminder).toContain("95%");
+			expect(reminder).toContain("compact");
 		});
 	});
 });

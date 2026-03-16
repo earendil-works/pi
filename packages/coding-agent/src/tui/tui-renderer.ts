@@ -1312,10 +1312,18 @@ export class TuiRenderer {
 					// Finalize streaming component with the final message (includes stopReason)
 					this.streamingComponent.finalize(assistantMsg);
 
-					// If message was aborted or errored, mark all pending tool components as failed
-					if (assistantMsg.stopReason === "aborted" || assistantMsg.stopReason === "error") {
+					// If message was aborted, errored, or hit context limit, mark all pending tool components as failed
+					if (
+						assistantMsg.stopReason === "aborted" ||
+						assistantMsg.stopReason === "error" ||
+						assistantMsg.stopReason === "length"
+					) {
 						const errorMessage =
-							assistantMsg.stopReason === "aborted" ? "Operation aborted" : assistantMsg.errorMessage || "Error";
+							assistantMsg.stopReason === "aborted"
+								? "Operation aborted"
+								: assistantMsg.stopReason === "length"
+									? "Context limit reached"
+									: assistantMsg.errorMessage || "Error";
 						for (const [toolCallId, component] of this.pendingTools.entries()) {
 							component.updateResult({
 								content: [{ type: "text", text: errorMessage }],
@@ -1731,12 +1739,18 @@ export class TuiRenderer {
 						const component = new ToolExecutionComponent(content.name, content.arguments);
 						this.chatContainer.addChild(component);
 
-						// If message was aborted/errored, immediately mark tool as failed
-						if (assistantMsg.stopReason === "aborted" || assistantMsg.stopReason === "error") {
+						// If message was aborted/errored/length, immediately mark tool as failed
+						if (
+							assistantMsg.stopReason === "aborted" ||
+							assistantMsg.stopReason === "error" ||
+							assistantMsg.stopReason === "length"
+						) {
 							const errorMessage =
 								assistantMsg.stopReason === "aborted"
 									? "Operation aborted"
-									: assistantMsg.errorMessage || "Error";
+									: assistantMsg.stopReason === "length"
+										? "Context limit reached"
+										: assistantMsg.errorMessage || "Error";
 							component.updateResult({
 								content: [{ type: "text", text: errorMessage }],
 								isError: true,

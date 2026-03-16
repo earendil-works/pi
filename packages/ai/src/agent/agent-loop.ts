@@ -87,8 +87,8 @@ export function agentLoop(
 			const message = await streamAssistantResponse(currentContext, config, signal, stream, streamFn);
 			newMessages.push(message);
 
-			if (message.stopReason === "error" || message.stopReason === "aborted") {
-				// Stop the loop on error or abort
+			if (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "length") {
+				// Stop the loop on error, abort, or context-length exceeded
 				stream.push({ type: "turn_end", message, toolResults: [] });
 				const cleanedMessages = stripThinkingFromMessages(newMessages);
 				stream.push({ type: "agent_end", messages: cleanedMessages });

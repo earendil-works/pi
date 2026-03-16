@@ -766,9 +766,8 @@ function mapStopReason(reason: Anthropic.Messages.StopReason): StopReason {
 			return "stop";
 		case "stop_sequence":
 			return "stop"; // We don't supply stop sequences, so this should never happen
-		default: {
-			const _exhaustive: never = reason;
-			throw new Error(`Unhandled stop reason: ${_exhaustive}`);
-		}
+		default:
+			// Non-standard stop reasons treated as errors.
+			return "error";
 	}
 }

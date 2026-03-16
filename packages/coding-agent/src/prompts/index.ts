@@ -395,6 +395,6 @@ export function getHandoffNudgeReminder(ratio: number): string {
 	return `
 
 <system_reminder>
-Context usage is at ${percent}%. Consider using compact to replace the current thread history with a smaller checkpoint before automatic compaction triggers at 95%.
+Context usage is at ${percent}%. Consider using compact to replace the current thread history with a smaller checkpoint.
 </system_reminder>`;
 }
