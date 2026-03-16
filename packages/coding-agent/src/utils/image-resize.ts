@@ -1,4 +1,5 @@
 import type { ImageContent } from "@mariozechner/pi-ai";
+import { applyExifOrientation } from "./exif-orientation.js";
 import { loadPhoton } from "./photon.js";
 
 export interface ImageResizeOptions {
@@ -69,7 +70,10 @@ export async function resizeImage(img: ImageContent, options?: ImageResizeOption
 
 	let image: ReturnType<typeof photon.PhotonImage.new_from_byteslice> | undefined;
 	try {
-		image = photon.PhotonImage.new_from_byteslice(new Uint8Array(inputBuffer));
+		const inputBytes = new Uint8Array(inputBuffer);
+		const rawImage = photon.PhotonImage.new_from_byteslice(inputBytes);
+		image = applyExifOrientation(photon, rawImage, inputBytes);
+		if (image !== rawImage) rawImage.free();
 
 		const originalWidth = image.get_width();
 		const originalHeight = image.get_height();

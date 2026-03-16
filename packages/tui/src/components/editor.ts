@@ -4,10 +4,78 @@ import { decodeKittyPrintable, matchesKey } from "../keys.js";
 import { KillRing } from "../kill-ring.js";
 import { type Component, CURSOR_MARKER, type Focusable, type TUI } from "../tui.js";
 import { UndoStack } from "../undo-stack.js";
-import { getSegmenter, isPunctuationChar, isWhitespaceChar, visibleWidth } from "../utils.js";
-import { SelectList, type SelectListTheme } from "./select-list.js";
+import { getSegmenter, isPunctuationChar, isWhitespaceChar, truncateToWidth, visibleWidth } from "../utils.js";
+import { SelectList, type SelectListLayoutOptions, type SelectListTheme } from "./select-list.js";
 
-const segmenter = getSegmenter();
+const baseSegmenter = getSegmenter();
+
+/** Regex matching paste markers like `[paste #1 +123 lines]` or `[paste #2 1234 chars]`. */
+const PASTE_MARKER_REGEX = /\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]/g;
+
+/** Non-global version for single-segment testing. */
+const PASTE_MARKER_SINGLE = /^\[paste #(\d+)( (\+\d+ lines|\d+ chars))?\]$/;
+
+/** Check if a segment is a paste marker (i.e. was merged by segmentWithMarkers). */
+function isPasteMarker(segment: string): boolean {
+	return segment.length >= 10 && PASTE_MARKER_SINGLE.test(segment);
+}
+
+/**
+ * A segmenter that wraps Intl.Segmenter and merges graphemes that fall
+ * within paste markers into single atomic segments.  This makes cursor
+ * movement, deletion, word-wrap, etc. treat paste markers as single units.
+ *
+ * Only markers whose numeric ID exists in `validIds` are merged.
+ */
+function segmentWithMarkers(text: string, validIds: Set<number>): Iterable<Intl.SegmentData> {
+	// Fast path: no paste markers in the text or no valid IDs.
+	if (validIds.size === 0 || !text.includes("[paste #")) {
+		return baseSegmenter.segment(text);
+	}
+
+	// Find all marker spans with valid IDs.
+	const markers: Array<{ start: number; end: number }> = [];
+	for (const m of text.matchAll(PASTE_MARKER_REGEX)) {
+		const id = Number.parseInt(m[1]!, 10);
+		if (!validIds.has(id)) continue;
+		markers.push({ start: m.index, end: m.index + m[0].length });
+	}
+	if (markers.length === 0) {
+		return baseSegmenter.segment(text);
+	}
+
+	// Build merged segment list.
+	const baseSegments = baseSegmenter.segment(text);
+	const result: Intl.SegmentData[] = [];
+	let markerIdx = 0;
+
+	for (const seg of baseSegments) {
+		// Skip past markers that are entirely before this segment.
+		while (markerIdx < markers.length && markers[markerIdx]!.end <= seg.index) {
+			markerIdx++;
+		}
+
+		const marker = markerIdx < markers.length ? markers[markerIdx]! : null;
+
+		if (marker && seg.index >= marker.start && seg.index < marker.end) {
+			// This segment falls inside a marker.
+			// If this is the first segment of the marker, emit a merged segment.
+			if (seg.index === marker.start) {
+				const markerText = text.slice(marker.start, marker.end);
+				result.push({
+					segment: markerText,
+					index: marker.start,
+					input: text,
+				});
+			}
+			// Otherwise skip (already merged into the first segment).
+		} else {
+			result.push(seg);
+		}
+	}
+
+	return result;
+}
 
 /**
  * Represents a chunk of text for word-wrap layout.
@@ -26,9 +94,11 @@ export interface TextChunk {
  *
  * @param line - The text line to wrap
  * @param maxWidth - Maximum visible width per chunk
+ * @param preSegmented - Optional pre-segmented graphemes (e.g. with paste-marker awareness).
+ *                       When omitted the default Intl.Segmenter is used.
  * @returns Array of chunks with text and position information
  */
-export function wordWrapLine(line: string, maxWidth: number): TextChunk[] {
+export function wordWrapLine(line: string, maxWidth: number, preSegmented?: Intl.SegmentData[]): TextChunk[] {
 	if (!line || maxWidth <= 0) {
 		return [{ text: "", startIndex: 0, endIndex: 0 }];
 	}
@@ -39,7 +109,7 @@ export function wordWrapLine(line: string, maxWidth: number): TextChunk[] {
 	}
 
 	const chunks: TextChunk[] = [];
-	const segments = [...segmenter.segment(line)];
+	const segments = preSegmented ?? [...baseSegmenter.segment(line)];
 
 	let currentWidth = 0;
 	let chunkStart = 0;
@@ -54,22 +124,45 @@ export function wordWrapLine(line: string, maxWidth: number): TextChunk[] {
 		const grapheme = seg.segment;
 		const gWidth = visibleWidth(grapheme);
 		const charIndex = seg.index;
-		const isWs = isWhitespaceChar(grapheme);
+		const isWs = !isPasteMarker(grapheme) && isWhitespaceChar(grapheme);
 
 		// Overflow check before advancing.
 		if (currentWidth + gWidth > maxWidth) {
-			if (wrapOppIndex >= 0) {
-				// Backtrack to last wrap opportunity.
+			if (wrapOppIndex >= 0 && currentWidth - wrapOppWidth + gWidth <= maxWidth) {
+				// Backtrack to last wrap opportunity (the remaining content
+				// plus the current grapheme still fits within maxWidth).
 				chunks.push({ text: line.slice(chunkStart, wrapOppIndex), startIndex: chunkStart, endIndex: wrapOppIndex });
 				chunkStart = wrapOppIndex;
 				currentWidth -= wrapOppWidth;
 			} else if (chunkStart < charIndex) {
-				// No wrap opportunity: force-break at current position.
+				// No viable wrap opportunity: force-break at current position.
+				// This also handles the case where backtracking to a word
+				// boundary wouldn't help because the remaining content plus
+				// the current grapheme (e.g. a wide character) still exceeds
+				// maxWidth.
 				chunks.push({ text: line.slice(chunkStart, charIndex), startIndex: chunkStart, endIndex: charIndex });
 				chunkStart = charIndex;
 				currentWidth = 0;
 			}
 			wrapOppIndex = -1;
+		}
+
+		if (gWidth > maxWidth) {
+			// Single atomic segment wider than maxWidth (e.g. paste marker
+			// in a narrow terminal). Re-wrap it at grapheme granularity.
+
+			// The segment remains logically atomic for cursor
+			// movement / editing — the split is purely visual for word-wrap layout.
+			const subChunks = wordWrapLine(grapheme, maxWidth);
+			for (let j = 0; j < subChunks.length - 1; j++) {
+				const sc = subChunks[j]!;
+				chunks.push({ text: sc.text, startIndex: charIndex + sc.startIndex, endIndex: charIndex + sc.endIndex });
+			}
+			const last = subChunks[subChunks.length - 1]!;
+			chunkStart = charIndex + last.startIndex;
+			currentWidth = visibleWidth(last.text);
+			wrapOppIndex = -1;
+			continue;
 		}
 
 		// Advance.
@@ -79,7 +172,7 @@ export function wordWrapLine(line: string, maxWidth: number): TextChunk[] {
 		// Multiple spaces join (no break between them); the break point is
 		// after the last space before the next word.
 		const next = segments[i + 1];
-		if (isWs && next && !isWhitespaceChar(next.segment)) {
+		if (isWs && next && (isPasteMarker(next.segment) || !isWhitespaceChar(next.segment))) {
 			wrapOppIndex = next.index;
 			wrapOppWidth = currentWidth;
 		}
@@ -113,6 +206,11 @@ export interface EditorOptions {
 	paddingX?: number;
 	autocompleteMaxVisible?: number;
 }
+
+const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
+	minPrimaryColumnWidth: 12,
+	maxPrimaryColumnWidth: 32,
+};
 
 export class Editor implements Component, Focusable {
 	private state: EditorState = {
@@ -181,6 +279,16 @@ export class Editor implements Component, Focusable {
 		this.paddingX = Number.isFinite(paddingX) ? Math.max(0, Math.floor(paddingX)) : 0;
 		const maxVisible = options.autocompleteMaxVisible ?? 5;
 		this.autocompleteMaxVisible = Number.isFinite(maxVisible) ? Math.max(3, Math.min(20, Math.floor(maxVisible))) : 5;
+	}
+
+	/** Set of currently valid paste IDs, for marker-aware segmentation. */
+	private validPasteIds(): Set<number> {
+		return new Set(this.pastes.keys());
+	}
+
+	/** Segment text with paste-marker awareness, only merging markers with valid IDs. */
+	private segment(text: string): Iterable<Intl.SegmentData> {
+		return segmentWithMarkers(text, this.validPasteIds());
 	}
 
 	getPaddingX(): number {
@@ -267,7 +375,7 @@ export class Editor implements Component, Focusable {
 
 	/** Internal setText that doesn't reset history state - used by navigateHistory */
 	private setTextInternal(text: string): void {
-		const lines = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").split("\n");
+		const lines = text.split("\n");
 		this.state.lines = lines.length === 0 ? [""] : lines;
 		this.state.cursorLine = this.state.lines.length - 1;
 		this.setCursorCol(this.state.lines[this.state.cursorLine]?.length || 0);
@@ -330,7 +438,11 @@ export class Editor implements Component, Focusable {
 		if (this.scrollOffset > 0) {
 			const indicator = `─── ↑ ${this.scrollOffset} more `;
 			const remaining = width - visibleWidth(indicator);
-			result.push(this.borderColor(indicator + "─".repeat(Math.max(0, remaining))));
+			if (remaining >= 0) {
+				result.push(this.borderColor(indicator + "─".repeat(remaining)));
+			} else {
+				result.push(this.borderColor(truncateToWidth(indicator, width)));
+			}
 		} else {
 			result.push(horizontal.repeat(width));
 		}
@@ -355,7 +467,7 @@ export class Editor implements Component, Focusable {
 				if (after.length > 0) {
 					// Cursor is on a character (grapheme) - replace it with highlighted version
 					// Get the first grapheme from 'after'
-					const afterGraphemes = [...segmenter.segment(after)];
+					const afterGraphemes = [...this.segment(after)];
 					const firstGrapheme = afterGraphemes[0]?.segment || "";
 					const restAfter = after.slice(firstGrapheme.length);
 					const cursor = `\x1b[7m${firstGrapheme}\x1b[0m`;
@@ -733,7 +845,7 @@ export class Editor implements Component, Focusable {
 				}
 			} else {
 				// Line needs wrapping - use word-aware wrapping
-				const chunks = wordWrapLine(line, contentWidth);
+				const chunks = wordWrapLine(line, contentWidth, [...this.segment(line)]);
 
 				for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
 					const chunk = chunks[chunkIndex];
@@ -790,17 +902,21 @@ export class Editor implements Component, Focusable {
 		return this.state.lines.join("\n");
 	}
 
+	private expandPasteMarkers(text: string): string {
+		let result = text;
+		for (const [pasteId, pasteContent] of this.pastes) {
+			const markerRegex = new RegExp(`\\[paste #${pasteId}( (\\+\\d+ lines|\\d+ chars))?\\]`, "g");
+			result = result.replace(markerRegex, () => pasteContent);
+		}
+		return result;
+	}
+
 	/**
 	 * Get text with paste markers expanded to their actual content.
 	 * Use this when you need the full content (e.g., for external editor).
 	 */
 	getExpandedText(): string {
-		let result = this.state.lines.join("\n");
-		for (const [pasteId, pasteContent] of this.pastes) {
-			const markerRegex = new RegExp(`\\[paste #${pasteId}( (\\+\\d+ lines|\\d+ chars))?\\]`, "g");
-			result = result.replace(markerRegex, pasteContent);
-		}
-		return result;
+		return this.expandPasteMarkers(this.state.lines.join("\n"));
 	}
 
 	getLines(): string[] {
@@ -814,11 +930,12 @@ export class Editor implements Component, Focusable {
 	setText(text: string): void {
 		this.lastAction = null;
 		this.historyIndex = -1; // Exit history browsing mode
+		const normalized = this.normalizeText(text);
 		// Push undo snapshot if content differs (makes programmatic changes undoable)
-		if (this.getText() !== text) {
+		if (this.getText() !== normalized) {
 			this.pushUndoSnapshot();
 		}
-		this.setTextInternal(text);
+		this.setTextInternal(normalized);
 	}
 
 	/**
@@ -835,6 +952,15 @@ export class Editor implements Component, Focusable {
 	}
 
 	/**
+	 * Normalize text for editor storage:
+	 * - Normalize line endings (\r\n and \r -> \n)
+	 * - Expand tabs to 4 spaces
+	 */
+	private normalizeText(text: string): string {
+		return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\t/g, "    ");
+	}
+
+	/**
 	 * Internal text insertion at cursor. Handles single and multi-line text.
 	 * Does not push undo snapshots or trigger autocomplete - caller is responsible.
 	 * Normalizes line endings and calls onChange once at the end.
@@ -842,8 +968,8 @@ export class Editor implements Component, Focusable {
 	private insertTextAtCursorInternal(text: string): void {
 		if (!text) return;
 
-		// Normalize line endings
-		const normalized = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+		// Normalize line endings and tabs
+		const normalized = this.normalizeText(text);
 		const insertedLines = normalized.split("\n");
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
@@ -950,14 +1076,11 @@ export class Editor implements Component, Focusable {
 
 		this.pushUndoSnapshot();
 
-		// Clean the pasted text
-		const cleanText = pastedText.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-
-		// Convert tabs to spaces (4 spaces per tab)
-		const tabExpandedText = cleanText.replace(/\t/g, "    ");
+		// Clean the pasted text: normalize line endings, expand tabs
+		const cleanText = this.normalizeText(pastedText);
 
 		// Filter out non-printable characters except newlines
-		let filteredText = tabExpandedText
+		let filteredText = cleanText
 			.split("")
 			.filter((char) => char === "\n" || char.charCodeAt(0) >= 32)
 			.join("");
@@ -1038,11 +1161,7 @@ export class Editor implements Component, Focusable {
 	}
 
 	private submitValue(): void {
-		let result = this.state.lines.join("\n").trim();
-		for (const [pasteId, pasteContent] of this.pastes) {
-			const markerRegex = new RegExp(`\\[paste #${pasteId}( (\\+\\d+ lines|\\d+ chars))?\\]`, "g");
-			result = result.replace(markerRegex, pasteContent);
-		}
+		const result = this.expandPasteMarkers(this.state.lines.join("\n")).trim();
 
 		this.state = { lines: [""], cursorLine: 0, cursorCol: 0 };
 		this.pastes.clear();
@@ -1068,7 +1187,7 @@ export class Editor implements Component, Focusable {
 			const beforeCursor = line.slice(0, this.state.cursorCol);
 
 			// Find the last grapheme in the text before cursor
-			const graphemes = [...segmenter.segment(beforeCursor)];
+			const graphemes = [...this.segment(beforeCursor)];
 			const lastGrapheme = graphemes[graphemes.length - 1];
 			const graphemeLength = lastGrapheme ? lastGrapheme.segment.length : 1;
 
@@ -1159,6 +1278,20 @@ export class Editor implements Component, Focusable {
 			const targetCol = targetVL.startCol + moveToVisualCol;
 			const logicalLine = this.state.lines[targetVL.logicalLine] || "";
 			this.state.cursorCol = Math.min(targetCol, logicalLine.length);
+
+			// Snap cursor to atomic segment boundary (e.g. paste markers)
+			// so the cursor never lands in the middle of a multi-grapheme unit.
+			// Single-grapheme segments don't need snapping.
+			const segments = [...this.segment(logicalLine)];
+			for (const seg of segments) {
+				if (seg.index > this.state.cursorCol) break;
+				if (seg.segment.length <= 1) continue;
+				if (this.state.cursorCol < seg.index + seg.segment.length) {
+					// jump to the start of the segment when moving up, to the end when moving down.
+					this.state.cursorCol = currentVisualLine > targetVisualLine ? seg.index : seg.index + seg.segment.length;
+					break;
+				}
+			}
 		}
 	}
 
@@ -1393,7 +1526,7 @@ export class Editor implements Component, Focusable {
 			const afterCursor = currentLine.slice(this.state.cursorCol);
 
 			// Find the first grapheme at cursor
-			const graphemes = [...segmenter.segment(afterCursor)];
+			const graphemes = [...this.segment(afterCursor)];
 			const firstGrapheme = graphemes[0];
 			const graphemeLength = firstGrapheme ? firstGrapheme.segment.length : 1;
 
@@ -1450,7 +1583,7 @@ export class Editor implements Component, Focusable {
 				visualLines.push({ logicalLine: i, startCol: 0, length: line.length });
 			} else {
 				// Line needs wrapping - use word-aware wrapping
-				const chunks = wordWrapLine(line, width);
+				const chunks = wordWrapLine(line, width, [...this.segment(line)]);
 				for (const chunk of chunks) {
 					visualLines.push({
 						logicalLine: i,
@@ -1508,7 +1641,7 @@ export class Editor implements Component, Focusable {
 				// Moving right - move by one grapheme (handles emojis, combining characters, etc.)
 				if (this.state.cursorCol < currentLine.length) {
 					const afterCursor = currentLine.slice(this.state.cursorCol);
-					const graphemes = [...segmenter.segment(afterCursor)];
+					const graphemes = [...this.segment(afterCursor)];
 					const firstGrapheme = graphemes[0];
 					this.setCursorCol(this.state.cursorCol + (firstGrapheme ? firstGrapheme.segment.length : 1));
 				} else if (this.state.cursorLine < this.state.lines.length - 1) {
@@ -1526,7 +1659,7 @@ export class Editor implements Component, Focusable {
 				// Moving left - move by one grapheme (handles emojis, combining characters, etc.)
 				if (this.state.cursorCol > 0) {
 					const beforeCursor = currentLine.slice(0, this.state.cursorCol);
-					const graphemes = [...segmenter.segment(beforeCursor)];
+					const graphemes = [...this.segment(beforeCursor)];
 					const lastGrapheme = graphemes[graphemes.length - 1];
 					this.setCursorCol(this.state.cursorCol - (lastGrapheme ? lastGrapheme.segment.length : 1));
 				} else if (this.state.cursorLine > 0) {
@@ -1570,19 +1703,30 @@ export class Editor implements Component, Focusable {
 		}
 
 		const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-		const graphemes = [...segmenter.segment(textBeforeCursor)];
+		const graphemes = [...this.segment(textBeforeCursor)];
 		let newCol = this.state.cursorCol;
 
 		// Skip trailing whitespace
-		while (graphemes.length > 0 && isWhitespaceChar(graphemes[graphemes.length - 1]?.segment || "")) {
+		while (
+			graphemes.length > 0 &&
+			!isPasteMarker(graphemes[graphemes.length - 1]?.segment || "") &&
+			isWhitespaceChar(graphemes[graphemes.length - 1]?.segment || "")
+		) {
 			newCol -= graphemes.pop()?.segment.length || 0;
 		}
 
 		if (graphemes.length > 0) {
 			const lastGrapheme = graphemes[graphemes.length - 1]?.segment || "";
-			if (isPunctuationChar(lastGrapheme)) {
+			if (isPasteMarker(lastGrapheme)) {
+				// Paste marker is a single atomic word
+				newCol -= graphemes.pop()?.segment.length || 0;
+			} else if (isPunctuationChar(lastGrapheme)) {
 				// Skip punctuation run
-				while (graphemes.length > 0 && isPunctuationChar(graphemes[graphemes.length - 1]?.segment || "")) {
+				while (
+					graphemes.length > 0 &&
+					isPunctuationChar(graphemes[graphemes.length - 1]?.segment || "") &&
+					!isPasteMarker(graphemes[graphemes.length - 1]?.segment || "")
+				) {
 					newCol -= graphemes.pop()?.segment.length || 0;
 				}
 			} else {
@@ -1590,7 +1734,8 @@ export class Editor implements Component, Focusable {
 				while (
 					graphemes.length > 0 &&
 					!isWhitespaceChar(graphemes[graphemes.length - 1]?.segment || "") &&
-					!isPunctuationChar(graphemes[graphemes.length - 1]?.segment || "")
+					!isPunctuationChar(graphemes[graphemes.length - 1]?.segment || "") &&
+					!isPasteMarker(graphemes[graphemes.length - 1]?.segment || "")
 				) {
 					newCol -= graphemes.pop()?.segment.length || 0;
 				}
@@ -1785,28 +1930,36 @@ export class Editor implements Component, Focusable {
 		}
 
 		const textAfterCursor = currentLine.slice(this.state.cursorCol);
-		const segments = segmenter.segment(textAfterCursor);
+		const segments = this.segment(textAfterCursor);
 		const iterator = segments[Symbol.iterator]();
 		let next = iterator.next();
 		let newCol = this.state.cursorCol;
 
 		// Skip leading whitespace
-		while (!next.done && isWhitespaceChar(next.value.segment)) {
+		while (!next.done && !isPasteMarker(next.value.segment) && isWhitespaceChar(next.value.segment)) {
 			newCol += next.value.segment.length;
 			next = iterator.next();
 		}
 
 		if (!next.done) {
 			const firstGrapheme = next.value.segment;
-			if (isPunctuationChar(firstGrapheme)) {
+			if (isPasteMarker(firstGrapheme)) {
+				// Paste marker is a single atomic word
+				newCol += firstGrapheme.length;
+			} else if (isPunctuationChar(firstGrapheme)) {
 				// Skip punctuation run
-				while (!next.done && isPunctuationChar(next.value.segment)) {
+				while (!next.done && isPunctuationChar(next.value.segment) && !isPasteMarker(next.value.segment)) {
 					newCol += next.value.segment.length;
 					next = iterator.next();
 				}
 			} else {
 				// Skip word run
-				while (!next.done && !isWhitespaceChar(next.value.segment) && !isPunctuationChar(next.value.segment)) {
+				while (
+					!next.done &&
+					!isWhitespaceChar(next.value.segment) &&
+					!isPunctuationChar(next.value.segment) &&
+					!isPasteMarker(next.value.segment)
+				) {
 					newCol += next.value.segment.length;
 					next = iterator.next();
 				}
@@ -1883,6 +2036,14 @@ export class Editor implements Component, Focusable {
 		return firstPrefixIndex;
 	}
 
+	private createAutocompleteList(
+		prefix: string,
+		items: Array<{ value: string; label: string; description?: string }>,
+	): SelectList {
+		const layout = prefix.startsWith("/") ? SLASH_COMMAND_SELECT_LIST_LAYOUT : undefined;
+		return new SelectList(items, this.autocompleteMaxVisible, this.theme.selectList, layout);
+	}
+
 	private tryTriggerAutocomplete(explicitTab: boolean = false): void {
 		if (!this.autocompleteProvider) return;
 
@@ -1905,7 +2066,7 @@ export class Editor implements Component, Focusable {
 
 		if (suggestions && suggestions.items.length > 0) {
 			this.autocompletePrefix = suggestions.prefix;
-			this.autocompleteList = new SelectList(suggestions.items, this.autocompleteMaxVisible, this.theme.selectList);
+			this.autocompleteList = this.createAutocompleteList(suggestions.prefix, suggestions.items);
 
 			// If typed prefix exactly matches one of the suggestions, select that item
 			const bestMatchIndex = this.getBestAutocompleteMatchIndex(suggestions.items, suggestions.prefix);
@@ -1981,7 +2142,7 @@ https://github.com/EsotericSoftware/spine-runtimes/actions/runs/19536643416/job/
 			}
 
 			this.autocompletePrefix = suggestions.prefix;
-			this.autocompleteList = new SelectList(suggestions.items, this.autocompleteMaxVisible, this.theme.selectList);
+			this.autocompleteList = this.createAutocompleteList(suggestions.prefix, suggestions.items);
 
 			// If typed prefix exactly matches one of the suggestions, select that item
 			const bestMatchIndex = this.getBestAutocompleteMatchIndex(suggestions.items, suggestions.prefix);
@@ -2021,7 +2182,7 @@ https://github.com/EsotericSoftware/spine-runtimes/actions/runs/19536643416/job/
 		if (suggestions && suggestions.items.length > 0) {
 			this.autocompletePrefix = suggestions.prefix;
 			// Always create new SelectList to ensure update
-			this.autocompleteList = new SelectList(suggestions.items, this.autocompleteMaxVisible, this.theme.selectList);
+			this.autocompleteList = this.createAutocompleteList(suggestions.prefix, suggestions.items);
 
 			// If typed prefix exactly matches one of the suggestions, select that item
 			const bestMatchIndex = this.getBestAutocompleteMatchIndex(suggestions.items, suggestions.prefix);

@@ -57,5 +57,4 @@ export {
 	type ToolResultEvent,
 	type TurnEndEvent,
 	type TurnStartEvent,
-	wrapToolsWithExtensions,
 } from "./extensions/index.js";

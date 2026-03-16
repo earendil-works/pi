@@ -1,6 +1,11 @@
-import { Container, type SelectItem, SelectList } from "@mariozechner/pi-tui";
+import { Container, type SelectItem, SelectList, type SelectListLayoutOptions } from "@mariozechner/pi-tui";
 import { getSelectListTheme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
+
+const SHOW_IMAGES_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
+	minPrimaryColumnWidth: 12,
+	maxPrimaryColumnWidth: 32,
+};
 
 /**
  * Component that renders a show images selector with borders
@@ -20,7 +25,7 @@ export class ShowImagesSelectorComponent extends Container {
 		this.addChild(new DynamicBorder());
 
 		// Create selector
-		this.selectList = new SelectList(items, 5, getSelectListTheme());
+		this.selectList = new SelectList(items, 5, getSelectListTheme(), SHOW_IMAGES_SELECT_LIST_LAYOUT);
 
 		// Preselect current value
 		this.selectList.setSelectedIndex(currentValue ? 0 : 1);

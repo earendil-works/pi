@@ -39,10 +39,9 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { DynamicBorder } from "@mariozechner/pi-coding-agent";
+import { DynamicBorder, getAgentDir } from "@mariozechner/pi-coding-agent";
 import { Container, Key, type SelectItem, SelectList, Text } from "@mariozechner/pi-tui";
 
 // Preset configuration
@@ -68,7 +67,7 @@ interface PresetsConfig {
  * Project-local presets override global presets with the same name.
  */
 function loadPresets(cwd: string): PresetsConfig {
-	const globalPath = join(homedir(), ".pi", "agent", "presets.json");
+	const globalPath = join(getAgentDir(), "presets.json");
 	const projectPath = join(cwd, ".pi", "presets.json");
 
 	let globalPresets: PresetsConfig = {};

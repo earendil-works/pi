@@ -32,6 +32,8 @@ export class AgentInterface extends LitElement {
 	@property({ attribute: false }) onBeforeToolCall?: (toolName: string, args: any) => boolean | Promise<boolean>;
 	// Optional callback called when cost display is clicked
 	@property({ attribute: false }) onCostClick?: () => void;
+	// Optional callback to override model selector behavior
+	@property({ attribute: false }) onModelSelect?: () => void;
 
 	// References
 	@query("message-editor") private _messageEditor!: MessageEditor;
@@ -151,10 +153,17 @@ export class AgentInterface extends LitElement {
 		this._unsubscribeSession = this.session.subscribe(async (ev: AgentEvent) => {
 			switch (ev.type) {
 				case "message_start":
-				case "message_end":
 				case "turn_start":
 				case "turn_end":
 				case "agent_start":
+					this.requestUpdate();
+					break;
+				case "message_end":
+					// Clear streaming container when a message completes
+					// to prevent duplicate rendering (stable list now has this message)
+					if (this._streamingContainer) {
+						this._streamingContainer.setMessage(null, true);
+					}
 					this.requestUpdate();
 					break;
 				case "agent_end":
@@ -364,7 +373,11 @@ export class AgentInterface extends LitElement {
 							}}
 							.onAbort=${() => session.abort()}
 							.onModelSelect=${() => {
-								ModelSelector.open(state.model, (model) => session.setModel(model));
+								if (this.onModelSelect) {
+									this.onModelSelect();
+								} else {
+									ModelSelector.open(state.model, (model) => session.setModel(model));
+								}
 							}}
 							.onThinkingChange=${
 								this.enableThinkingSelector

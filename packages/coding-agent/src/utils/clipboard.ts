@@ -2,6 +2,20 @@ import { execSync, spawn } from "child_process";
 import { platform } from "os";
 import { isWaylandSession } from "./clipboard-image.js";
 
+type NativeClipboardExecOptions = {
+	input: string;
+	timeout: number;
+	stdio: ["pipe", "ignore", "ignore"];
+};
+
+function copyToX11Clipboard(options: NativeClipboardExecOptions): void {
+	try {
+		execSync("xclip -selection clipboard", options);
+	} catch {
+		execSync("xsel --clipboard --input", options);
+	}
+}
+
 export function copyToClipboard(text: string): void {
 	// Always emit OSC 52 - works over SSH/mosh, harmless locally
 	const encoded = Buffer.from(text).toString("base64");
@@ -9,7 +23,7 @@ export function copyToClipboard(text: string): void {
 
 	// Also try native tools (best effort for local sessions)
 	const p = platform();
-	const options = { input: text, timeout: 5000 };
+	const options: NativeClipboardExecOptions = { input: text, timeout: 5000, stdio: ["pipe", "ignore", "ignore"] };
 
 	try {
 		if (p === "darwin") {
@@ -27,8 +41,10 @@ export function copyToClipboard(text: string): void {
 				}
 			}
 
+			const hasWaylandDisplay = Boolean(process.env.WAYLAND_DISPLAY);
+			const hasX11Display = Boolean(process.env.DISPLAY);
 			const isWayland = isWaylandSession();
-			if (isWayland) {
+			if (isWayland && hasWaylandDisplay) {
 				try {
 					// Verify wl-copy exists (spawn errors are async and won't be caught)
 					execSync("which wl-copy", { stdio: "ignore" });
@@ -41,19 +57,12 @@ export function copyToClipboard(text: string): void {
 					proc.stdin.end();
 					proc.unref();
 				} catch {
-					// Fall back to xclip/xsel (works on XWayland)
-					try {
-						execSync("xclip -selection clipboard", options);
-					} catch {
-						execSync("xsel --clipboard --input", options);
+					if (hasX11Display) {
+						copyToX11Clipboard(options);
 					}
 				}
-			} else {
-				try {
-					execSync("xclip -selection clipboard", options);
-				} catch {
-					execSync("xsel --clipboard --input", options);
-				}
+			} else if (hasX11Display) {
+				copyToX11Clipboard(options);
 			}
 		}
 	} catch {

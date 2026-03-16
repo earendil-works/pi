@@ -5,11 +5,12 @@ import { chmodSync, createWriteStream, existsSync, mkdirSync, readdirSync, renam
 import { arch, platform } from "os";
 import { join } from "path";
 import { Readable } from "stream";
-import { finished } from "stream/promises";
+import { pipeline } from "stream/promises";
 import { APP_NAME, getBinDir } from "../config.js";
 
 const TOOLS_DIR = getBinDir();
-const NETWORK_TIMEOUT_MS = 10000;
+const NETWORK_TIMEOUT_MS = 10_000;
+const DOWNLOAD_TIMEOUT_MS = 120_000;
 
 function isOfflineModeEnabled(): boolean {
 	const value = process.env.PI_OFFLINE;
@@ -116,7 +117,7 @@ async function getLatestVersion(repo: string): Promise<string> {
 // Download a file from URL
 async function downloadFile(url: string, dest: string): Promise<void> {
 	const response = await fetch(url, {
-		signal: AbortSignal.timeout(NETWORK_TIMEOUT_MS),
+		signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
 	});
 
 	if (!response.ok) {
@@ -128,7 +129,7 @@ async function downloadFile(url: string, dest: string): Promise<void> {
 	}
 
 	const fileStream = createWriteStream(dest);
-	await finished(Readable.fromWeb(response.body as any).pipe(fileStream));
+	await pipeline(Readable.fromWeb(response.body as any), fileStream);
 }
 
 function findBinaryRecursively(rootDir: string, binaryFileName: string): string | null {

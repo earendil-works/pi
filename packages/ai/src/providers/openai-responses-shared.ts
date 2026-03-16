@@ -2,6 +2,7 @@ import type OpenAI from "openai";
 import type {
 	Tool as OpenAITool,
 	ResponseCreateParamsStreaming,
+	ResponseFunctionCallOutputItemList,
 	ResponseFunctionToolCall,
 	ResponseInput,
 	ResponseInputContent,
@@ -206,48 +207,45 @@ export function convertResponsesMessages<TApi extends Api>(
 			if (output.length === 0) continue;
 			messages.push(...output);
 		} else if (msg.role === "toolResult") {
-			// Extract text and image content
 			const textResult = msg.content
 				.filter((c): c is TextContent => c.type === "text")
 				.map((c) => c.text)
 				.join("\n");
 			const hasImages = msg.content.some((c): c is ImageContent => c.type === "image");
-
-			// Always send function_call_output with text (or placeholder if only images)
 			const hasText = textResult.length > 0;
 			const [callId] = msg.toolCallId.split("|");
-			messages.push({
-				type: "function_call_output",
-				call_id: callId,
-				output: sanitizeSurrogates(hasText ? textResult : "(see attached image)"),
-			});
 
-			// If there are images and model supports them, send a follow-up user message with images
+			let output: string | ResponseFunctionCallOutputItemList;
 			if (hasImages && model.input.includes("image")) {
-				const contentParts: ResponseInputContent[] = [];
+				const contentParts: ResponseFunctionCallOutputItemList = [];
 
-				// Add text prefix
-				contentParts.push({
-					type: "input_text",
-					text: "Attached image(s) from tool result:",
-				} satisfies ResponseInputText);
+				if (hasText) {
+					contentParts.push({
+						type: "input_text",
+						text: sanitizeSurrogates(textResult),
+					});
+				}
 
-				// Add images
 				for (const block of msg.content) {
 					if (block.type === "image") {
 						contentParts.push({
 							type: "input_image",
 							detail: "auto",
 							image_url: `data:${block.mimeType};base64,${block.data}`,
-						} satisfies ResponseInputImage);
+						});
 					}
 				}
 
-				messages.push({
-					role: "user",
-					content: contentParts,
-				});
+				output = contentParts;
+			} else {
+				output = sanitizeSurrogates(hasText ? textResult : "(see attached image)");
 			}
+
+			messages.push({
+				type: "function_call_output",
+				call_id: callId,
+				output,
+			});
 		}
 		msgIndex++;
 	}

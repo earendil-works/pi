@@ -5,12 +5,30 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DefaultPackageManager, type ProgressEvent, type ResolvedResource } from "../src/core/package-manager.js";
 import { SettingsManager } from "../src/core/settings-manager.js";
 
-// Helper to check if a resource is enabled
-const isEnabled = (r: ResolvedResource, pathMatch: string, matchFn: "endsWith" | "includes" = "endsWith") =>
-	matchFn === "endsWith" ? r.path.endsWith(pathMatch) && r.enabled : r.path.includes(pathMatch) && r.enabled;
+function normalizeForMatch(value: string): string {
+	return value.replace(/\\/g, "/");
+}
 
-const isDisabled = (r: ResolvedResource, pathMatch: string, matchFn: "endsWith" | "includes" = "endsWith") =>
-	matchFn === "endsWith" ? r.path.endsWith(pathMatch) && !r.enabled : r.path.includes(pathMatch) && !r.enabled;
+function pathEndsWith(actualPath: string, suffix: string): boolean {
+	return normalizeForMatch(actualPath).endsWith(normalizeForMatch(suffix));
+}
+
+// Helper to check if a resource is enabled
+const isEnabled = (r: ResolvedResource, pathMatch: string, matchFn: "endsWith" | "includes" = "endsWith") => {
+	const normalizedPath = normalizeForMatch(r.path);
+	const normalizedMatch = normalizeForMatch(pathMatch);
+	return matchFn === "endsWith"
+		? normalizedPath.endsWith(normalizedMatch) && r.enabled
+		: normalizedPath.includes(normalizedMatch) && r.enabled;
+};
+
+const isDisabled = (r: ResolvedResource, pathMatch: string, matchFn: "endsWith" | "includes" = "endsWith") => {
+	const normalizedPath = normalizeForMatch(r.path);
+	const normalizedMatch = normalizeForMatch(pathMatch);
+	return matchFn === "endsWith"
+		? normalizedPath.endsWith(normalizedMatch) && !r.enabled
+		: normalizedPath.includes(normalizedMatch) && !r.enabled;
+};
 
 describe("DefaultPackageManager", () => {
 	let tempDir: string;
@@ -155,7 +173,7 @@ Content`,
 			);
 
 			// Should NOT find helper.ts (not declared in manifest)
-			expect(result.extensions.some((r) => r.path.endsWith("helper.ts"))).toBe(false);
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "helper.ts"))).toBe(false);
 		});
 	});
 
@@ -331,8 +349,8 @@ Content`,
 			writeFileSync(join(pkgDir, "themes", "dark.json"), "{}");
 
 			const result = await packageManager.resolveExtensionSources([pkgDir]);
-			expect(result.extensions.some((r) => r.path.endsWith("main.ts") && r.enabled)).toBe(true);
-			expect(result.themes.some((r) => r.path.endsWith("dark.json") && r.enabled)).toBe(true);
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "main.ts") && r.enabled)).toBe(true);
+			expect(result.themes.some((r) => pathEndsWith(r.path, "dark.json") && r.enabled)).toBe(true);
 		});
 	});
 
@@ -349,6 +367,68 @@ Content`,
 
 			// For now just verify no errors - npm/git would trigger actual events
 			expect(events.length).toBe(0);
+		});
+	});
+
+	describe("npmCommand", () => {
+		it("should use npmCommand argv for npm installs", async () => {
+			settingsManager = SettingsManager.inMemory({
+				npmCommand: ["mise", "exec", "node@20", "--", "npm"],
+			});
+			packageManager = new DefaultPackageManager({
+				cwd: tempDir,
+				agentDir,
+				settingsManager,
+			});
+
+			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
+
+			await packageManager.install("npm:@scope/pkg");
+
+			expect(runCommandSpy).toHaveBeenCalledWith(
+				"mise",
+				["exec", "node@20", "--", "npm", "install", "-g", "@scope/pkg"],
+				undefined,
+			);
+		});
+
+		it("should use npmCommand argv for npm root lookup and invalidate cached root when npmCommand changes", () => {
+			settingsManager = SettingsManager.inMemory({
+				npmCommand: ["mise", "exec", "node@20", "--", "npm"],
+			});
+			packageManager = new DefaultPackageManager({
+				cwd: tempDir,
+				agentDir,
+				settingsManager,
+			});
+
+			const root20 = join(tempDir, "node20", "lib", "node_modules");
+			const root22 = join(tempDir, "node22", "lib", "node_modules");
+			mkdirSync(join(root20, "@scope", "pkg"), { recursive: true });
+
+			const runCommandSyncSpy = vi
+				.spyOn(packageManager as any, "runCommandSync")
+				.mockImplementation((...callArgs: unknown[]) => {
+					const [command, args] = callArgs as [string, string[]];
+					if (command !== "mise") {
+						throw new Error(`unexpected command ${command}`);
+					}
+					if (args[1] === "node@20") {
+						return root20;
+					}
+					if (args[1] === "node@22") {
+						return root22;
+					}
+					throw new Error(`unexpected args ${args.join(" ")}`);
+				});
+
+			expect(packageManager.getInstalledPath("npm:@scope/pkg", "user")).toBe(join(root20, "@scope", "pkg"));
+			expect(runCommandSyncSpy).toHaveBeenNthCalledWith(1, "mise", ["exec", "node@20", "--", "npm", "root", "-g"]);
+
+			settingsManager.setNpmCommand(["mise", "exec", "node@22", "--", "npm"]);
+
+			expect(packageManager.getInstalledPath("npm:@scope/pkg", "user")).toBeUndefined();
+			expect(runCommandSyncSpy).toHaveBeenNthCalledWith(2, "mise", ["exec", "node@22", "--", "npm", "root", "-g"]);
 		});
 	});
 
@@ -669,7 +749,7 @@ Content`,
 			const result = await packageManager.resolveExtensionSources([pkgDir]);
 			expect(result.extensions.some((r) => isEnabled(r, "local.ts"))).toBe(true);
 			expect(result.extensions.some((r) => isEnabled(r, "remote.ts"))).toBe(true);
-			expect(result.extensions.some((r) => r.path.endsWith("skip.ts"))).toBe(false);
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "skip.ts"))).toBe(false);
 		});
 
 		it("should support glob patterns in manifest skills", async () => {
@@ -736,7 +816,7 @@ Content`,
 			// bar.ts should be excluded (by user)
 			expect(result.extensions.some((r) => isDisabled(r, "bar.ts"))).toBe(true);
 			// baz.ts should be excluded (by manifest)
-			expect(result.extensions.some((r) => r.path.endsWith("baz.ts"))).toBe(false);
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "baz.ts"))).toBe(false);
 		});
 
 		it("should exclude extensions from package with ! pattern", async () => {
@@ -1132,11 +1212,11 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			const result = await packageManager.resolveExtensionSources([pkgDir]);
 
 			// Should find the index.ts and standalone.ts
-			expect(result.extensions.some((r) => r.path.endsWith("subagent/index.ts") && r.enabled)).toBe(true);
-			expect(result.extensions.some((r) => r.path.endsWith("standalone.ts") && r.enabled)).toBe(true);
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "subagent/index.ts") && r.enabled)).toBe(true);
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "standalone.ts") && r.enabled)).toBe(true);
 
 			// Should NOT find agents.ts as a standalone extension
-			expect(result.extensions.some((r) => r.path.endsWith("agents.ts"))).toBe(false);
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "agents.ts"))).toBe(false);
 		});
 
 		it("should respect package.json pi.extensions manifest in subdirectories", async () => {
@@ -1158,10 +1238,10 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			const result = await packageManager.resolveExtensionSources([pkgDir]);
 
 			// Should find main.ts declared in manifest
-			expect(result.extensions.some((r) => r.path.endsWith("custom/main.ts") && r.enabled)).toBe(true);
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "custom/main.ts") && r.enabled)).toBe(true);
 
 			// Should NOT find utils.ts (not declared in manifest)
-			expect(result.extensions.some((r) => r.path.endsWith("utils.ts"))).toBe(false);
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "utils.ts"))).toBe(false);
 		});
 
 		it("should handle mixed top-level files and subdirectories", async () => {
@@ -1182,12 +1262,12 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			const result = await packageManager.resolveExtensionSources([pkgDir]);
 
 			// Should find simple.ts and complex/index.ts
-			expect(result.extensions.some((r) => r.path.endsWith("simple.ts") && r.enabled)).toBe(true);
-			expect(result.extensions.some((r) => r.path.endsWith("complex/index.ts") && r.enabled)).toBe(true);
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "simple.ts") && r.enabled)).toBe(true);
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "complex/index.ts") && r.enabled)).toBe(true);
 
 			// Should NOT find helper modules
-			expect(result.extensions.some((r) => r.path.endsWith("complex/a.ts"))).toBe(false);
-			expect(result.extensions.some((r) => r.path.endsWith("complex/b.ts"))).toBe(false);
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "complex/a.ts"))).toBe(false);
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "complex/b.ts"))).toBe(false);
 
 			// Total should be exactly 2
 			expect(result.extensions.filter((r) => r.enabled).length).toBe(2);
@@ -1207,7 +1287,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			const result = await packageManager.resolveExtensionSources([pkgDir]);
 
 			// Should only find the valid top-level extension
-			expect(result.extensions.some((r) => r.path.endsWith("valid.ts") && r.enabled)).toBe(true);
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "valid.ts") && r.enabled)).toBe(true);
 			expect(result.extensions.filter((r) => r.enabled).length).toBe(1);
 		});
 	});
@@ -1237,7 +1317,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			const refreshTemporaryGitSourceSpy = vi.spyOn(packageManager as any, "refreshTemporaryGitSource");
 
 			const result = await packageManager.resolveExtensionSources([gitSource], { temporary: true });
-			expect(result.extensions.some((r) => r.path.endsWith("extensions/index.ts") && r.enabled)).toBe(true);
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "extensions/index.ts") && r.enabled)).toBe(true);
 			expect(refreshTemporaryGitSourceSpy).not.toHaveBeenCalled();
 		});
 

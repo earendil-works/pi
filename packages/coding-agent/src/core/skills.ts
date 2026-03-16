@@ -140,8 +140,9 @@ export interface LoadSkillsFromDirOptions {
  * Load skills from a directory.
  *
  * Discovery rules:
- * - direct .md children in the root
- * - recursive SKILL.md under subdirectories
+ * - if a directory contains SKILL.md, treat it as a skill root and do not recurse further
+ * - otherwise, load direct .md children in the root
+ * - recurse into subdirectories to find SKILL.md
  */
 export function loadSkillsFromDir(options: LoadSkillsFromDirOptions): LoadSkillsResult {
 	const { dir, source } = options;
@@ -168,6 +169,35 @@ function loadSkillsFromDirInternal(
 
 	try {
 		const entries = readdirSync(dir, { withFileTypes: true });
+
+		for (const entry of entries) {
+			if (entry.name !== "SKILL.md") {
+				continue;
+			}
+
+			const fullPath = join(dir, entry.name);
+
+			let isFile = entry.isFile();
+			if (entry.isSymbolicLink()) {
+				try {
+					isFile = statSync(fullPath).isFile();
+				} catch {
+					continue;
+				}
+			}
+
+			const relPath = toPosixPath(relative(root, fullPath));
+			if (!isFile || ig.ignores(relPath)) {
+				continue;
+			}
+
+			const result = loadSkillFromFile(fullPath, source);
+			if (result.skill) {
+				skills.push(result.skill);
+			}
+			diagnostics.push(...result.diagnostics);
+			return { skills, diagnostics };
+		}
 
 		for (const entry of entries) {
 			if (entry.name.startsWith(".")) {
@@ -208,13 +238,7 @@ function loadSkillsFromDirInternal(
 				continue;
 			}
 
-			if (!isFile) {
-				continue;
-			}
-
-			const isRootMd = includeRootFiles && entry.name.endsWith(".md");
-			const isSkillMd = !includeRootFiles && entry.name === "SKILL.md";
-			if (!isRootMd && !isSkillMd) {
+			if (!isFile || !includeRootFiles || !entry.name.endsWith(".md")) {
 				continue;
 			}
 

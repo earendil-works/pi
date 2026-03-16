@@ -127,9 +127,12 @@ describe("ExtensionRunner", () => {
 		});
 
 		it("warns but allows when extension uses non-reserved built-in shortcut", async () => {
+			const pasteImageKey = Array.isArray(DEFAULT_KEYBINDINGS.pasteImage)
+				? (DEFAULT_KEYBINDINGS.pasteImage[0] ?? "")
+				: DEFAULT_KEYBINDINGS.pasteImage;
 			const extCode = `
 				export default function(pi) {
-					pi.registerShortcut("ctrl+v", {
+					pi.registerShortcut("${pasteImageKey}", {
 						description: "Overrides non-reserved",
 						handler: async () => {},
 					});
@@ -144,7 +147,7 @@ describe("ExtensionRunner", () => {
 			const shortcuts = runner.getShortcuts(DEFAULT_KEYBINDINGS);
 
 			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("built-in shortcut for pasteImage"));
-			expect(shortcuts.has("ctrl+v")).toBe(true);
+			expect(shortcuts.has(pasteImageKey as KeyId)).toBe(true);
 
 			warnSpy.mockRestore();
 		});

@@ -1,6 +1,11 @@
-import { Container, type SelectItem, SelectList } from "@mariozechner/pi-tui";
+import { Container, type SelectItem, SelectList, type SelectListLayoutOptions } from "@mariozechner/pi-tui";
 import { getAvailableThemes, getSelectListTheme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
+
+const THEME_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
+	minPrimaryColumnWidth: 12,
+	maxPrimaryColumnWidth: 32,
+};
 
 /**
  * Component that renders a theme selector
@@ -30,7 +35,7 @@ export class ThemeSelectorComponent extends Container {
 		this.addChild(new DynamicBorder());
 
 		// Create selector
-		this.selectList = new SelectList(themeItems, 10, getSelectListTheme());
+		this.selectList = new SelectList(themeItems, 10, getSelectListTheme(), THEME_SELECT_LIST_LAYOUT);
 
 		// Preselect current theme
 		const currentIndex = themes.indexOf(currentTheme);

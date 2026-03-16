@@ -48,18 +48,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 		skills: providedSkills,
 	} = options;
 	const resolvedCwd = cwd ?? process.cwd();
+	const promptCwd = resolvedCwd.replace(/\\/g, "/");
 
-	const now = new Date();
-	const dateTime = now.toLocaleString("en-US", {
-		weekday: "long",
-		year: "numeric",
-		month: "long",
-		day: "numeric",
-		hour: "2-digit",
-		minute: "2-digit",
-		second: "2-digit",
-		timeZoneName: "short",
-	});
+	const date = new Date().toISOString().slice(0, 10);
 
 	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : "";
 
@@ -88,9 +79,9 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 			prompt += formatSkillsForPrompt(skills);
 		}
 
-		// Add date/time and working directory last
-		prompt += `\nCurrent date and time: ${dateTime}`;
-		prompt += `\nCurrent working directory: ${resolvedCwd}`;
+		// Add date and working directory last
+		prompt += `\nCurrent date: ${date}`;
+		prompt += `\nCurrent working directory: ${promptCwd}`;
 
 		return prompt;
 	}
@@ -210,9 +201,9 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 		prompt += formatSkillsForPrompt(skills);
 	}
 
-	// Add date/time and working directory last
-	prompt += `\nCurrent date and time: ${dateTime}`;
-	prompt += `\nCurrent working directory: ${resolvedCwd}`;
+	// Add date and working directory last
+	prompt += `\nCurrent date: ${date}`;
+	prompt += `\nCurrent working directory: ${promptCwd}`;
 
 	return prompt;
 }

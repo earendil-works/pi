@@ -216,6 +216,142 @@ describe("AgentSession concurrent prompt guard", () => {
 		await expect(session.prompt("Second message")).resolves.not.toThrow();
 	});
 
+	it("should wait for queued agent events before emitting tool_call", async () => {
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const tool = {
+			name: "dummy",
+			description: "Dummy tool",
+			label: "dummy",
+			parameters: Type.Object({ q: Type.String() }),
+			execute: async (_toolCallId: string, params: unknown) => {
+				const q =
+					typeof params === "object" && params !== null && "q" in params
+						? String((params as { q: unknown }).q)
+						: "";
+				return {
+					content: [{ type: "text" as const, text: `result:${q}` }],
+					details: {},
+				};
+			},
+		};
+
+		const agent = new Agent({
+			getApiKey: () => "test-key",
+			initialState: {
+				model,
+				systemPrompt: "Test",
+				tools: [tool],
+			},
+			streamFn: async (_model, context) => {
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					const toolResultCount = context.messages.filter((message) => message.role === "toolResult").length;
+					if (toolResultCount > 0) {
+						const message: AssistantMessage = {
+							role: "assistant",
+							content: [{ type: "text", text: "done" }],
+							api: "anthropic-messages",
+							provider: "anthropic",
+							model: "mock",
+							usage: {
+								input: 1,
+								output: 1,
+								cacheRead: 0,
+								cacheWrite: 0,
+								totalTokens: 2,
+								cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+							},
+							stopReason: "stop",
+							timestamp: Date.now(),
+						};
+						stream.push({ type: "start", partial: { ...message, content: [] } });
+						stream.push({ type: "done", reason: "stop", message });
+						return;
+					}
+
+					const message: AssistantMessage = {
+						role: "assistant",
+						content: [
+							{ type: "toolCall", id: "toolu_1", name: "dummy", arguments: { q: "x" } },
+							{ type: "toolCall", id: "toolu_2", name: "dummy", arguments: { q: "y" } },
+						],
+						api: "anthropic-messages",
+						provider: "anthropic",
+						model: "mock",
+						usage: {
+							input: 1,
+							output: 1,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 2,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+						},
+						stopReason: "toolUse",
+						timestamp: Date.now(),
+					};
+
+					stream.push({ type: "start", partial: { ...message, content: [] } });
+					stream.push({ type: "done", reason: "toolUse", message });
+				});
+				return stream;
+			},
+		});
+
+		const sessionManager = SessionManager.inMemory();
+		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+		const modelRegistry = new ModelRegistry(authStorage, tempDir);
+		authStorage.setRuntimeApiKey("anthropic", "test-key");
+
+		session = new AgentSession({
+			agent,
+			sessionManager,
+			settingsManager,
+			cwd: tempDir,
+			modelRegistry,
+			resourceLoader: createTestResourceLoader(),
+			baseToolsOverride: { dummy: tool },
+		});
+
+		const snapshots: string[][] = [];
+		const sessionWithRunner = session as unknown as {
+			_extensionRunner?: {
+				hasHandlers: (eventType: string) => boolean;
+				emit: (event: { type: string; message?: { role?: string } }) => Promise<void>;
+				emitToolCall: (event: { type: string; toolCallId: string }) => Promise<undefined>;
+				emitInput: (
+					text: string,
+					images: unknown,
+					source: "interactive" | "rpc" | "extension",
+				) => Promise<{ action: "continue" }>;
+				emitBeforeAgentStart: (prompt: string, images: unknown, systemPrompt: string) => Promise<undefined>;
+			};
+		};
+		sessionWithRunner._extensionRunner = {
+			hasHandlers: (eventType) => eventType === "tool_call",
+			emit: async () => {},
+			emitToolCall: async () => {
+				snapshots.push(
+					sessionManager
+						.getEntries()
+						.filter((entry) => entry.type === "message")
+						.map((entry) => entry.message.role),
+				);
+				return undefined;
+			},
+			emitInput: async () => ({ action: "continue" }),
+			emitBeforeAgentStart: async () => undefined,
+		};
+
+		await session.prompt("hi");
+		await session.agent.waitForIdle();
+
+		expect(snapshots).toEqual([
+			["user", "assistant"],
+			["user", "assistant"],
+		]);
+	});
+
 	it("should persist message_end events in order with slow extension handlers", async () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
 		const tool = {

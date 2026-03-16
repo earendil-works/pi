@@ -1,8 +1,13 @@
 import { getEditorKeybindings } from "../keybindings.js";
 import type { Component } from "../tui.js";
-import { truncateToWidth } from "../utils.js";
+import { truncateToWidth, visibleWidth } from "../utils.js";
+
+const DEFAULT_PRIMARY_COLUMN_WIDTH = 32;
+const PRIMARY_COLUMN_GAP = 2;
+const MIN_DESCRIPTION_WIDTH = 10;
 
 const normalizeToSingleLine = (text: string): string => text.replace(/[\r\n]+/g, " ").trim();
+const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(value, max));
 
 export interface SelectItem {
 	value: string;
@@ -18,22 +23,38 @@ export interface SelectListTheme {
 	noMatch: (text: string) => string;
 }
 
+export interface SelectListTruncatePrimaryContext {
+	text: string;
+	maxWidth: number;
+	columnWidth: number;
+	item: SelectItem;
+	isSelected: boolean;
+}
+
+export interface SelectListLayoutOptions {
+	minPrimaryColumnWidth?: number;
+	maxPrimaryColumnWidth?: number;
+	truncatePrimary?: (context: SelectListTruncatePrimaryContext) => string;
+}
+
 export class SelectList implements Component {
 	private items: SelectItem[] = [];
 	private filteredItems: SelectItem[] = [];
 	private selectedIndex: number = 0;
 	private maxVisible: number = 5;
 	private theme: SelectListTheme;
+	private layout: SelectListLayoutOptions;
 
 	public onSelect?: (item: SelectItem) => void;
 	public onCancel?: () => void;
 	public onSelectionChange?: (item: SelectItem) => void;
 
-	constructor(items: SelectItem[], maxVisible: number, theme: SelectListTheme) {
+	constructor(items: SelectItem[], maxVisible: number, theme: SelectListTheme, layout: SelectListLayoutOptions = {}) {
 		this.items = items;
 		this.filteredItems = items;
 		this.maxVisible = maxVisible;
 		this.theme = theme;
+		this.layout = layout;
 	}
 
 	setFilter(filter: string): void {
@@ -59,6 +80,8 @@ export class SelectList implements Component {
 			return lines;
 		}
 
+		const primaryColumnWidth = this.getPrimaryColumnWidth();
+
 		// Calculate visible range with scrolling
 		const startIndex = Math.max(
 			0,
@@ -73,68 +96,7 @@ export class SelectList implements Component {
 
 			const isSelected = i === this.selectedIndex;
 			const descriptionSingleLine = item.description ? normalizeToSingleLine(item.description) : undefined;
-
-			let line = "";
-			if (isSelected) {
-				// Use arrow indicator for selection - entire line uses selectedText color
-				const prefixWidth = 2; // "→ " is 2 characters visually
-				const displayValue = item.label || item.value;
-
-				if (descriptionSingleLine && width > 40) {
-					// Calculate how much space we have for value + description
-					const maxValueWidth = Math.min(30, width - prefixWidth - 4);
-					const truncatedValue = truncateToWidth(displayValue, maxValueWidth, "");
-					const spacing = " ".repeat(Math.max(1, 32 - truncatedValue.length));
-
-					// Calculate remaining space for description using visible widths
-					const descriptionStart = prefixWidth + truncatedValue.length + spacing.length;
-					const remainingWidth = width - descriptionStart - 2; // -2 for safety
-
-					if (remainingWidth > 10) {
-						const truncatedDesc = truncateToWidth(descriptionSingleLine, remainingWidth, "");
-						// Apply selectedText to entire line content
-						line = this.theme.selectedText(`→ ${truncatedValue}${spacing}${truncatedDesc}`);
-					} else {
-						// Not enough space for description
-						const maxWidth = width - prefixWidth - 2;
-						line = this.theme.selectedText(`→ ${truncateToWidth(displayValue, maxWidth, "")}`);
-					}
-				} else {
-					// No description or not enough width
-					const maxWidth = width - prefixWidth - 2;
-					line = this.theme.selectedText(`→ ${truncateToWidth(displayValue, maxWidth, "")}`);
-				}
-			} else {
-				const displayValue = item.label || item.value;
-				const prefix = "  ";
-
-				if (descriptionSingleLine && width > 40) {
-					// Calculate how much space we have for value + description
-					const maxValueWidth = Math.min(30, width - prefix.length - 4);
-					const truncatedValue = truncateToWidth(displayValue, maxValueWidth, "");
-					const spacing = " ".repeat(Math.max(1, 32 - truncatedValue.length));
-
-					// Calculate remaining space for description
-					const descriptionStart = prefix.length + truncatedValue.length + spacing.length;
-					const remainingWidth = width - descriptionStart - 2; // -2 for safety
-
-					if (remainingWidth > 10) {
-						const truncatedDesc = truncateToWidth(descriptionSingleLine, remainingWidth, "");
-						const descText = this.theme.description(spacing + truncatedDesc);
-						line = prefix + truncatedValue + descText;
-					} else {
-						// Not enough space for description
-						const maxWidth = width - prefix.length - 2;
-						line = prefix + truncateToWidth(displayValue, maxWidth, "");
-					}
-				} else {
-					// No description or not enough width
-					const maxWidth = width - prefix.length - 2;
-					line = prefix + truncateToWidth(displayValue, maxWidth, "");
-				}
-			}
-
-			lines.push(line);
+			lines.push(this.renderItem(item, isSelected, width, descriptionSingleLine, primaryColumnWidth));
 		}
 
 		// Add scroll indicators if needed
@@ -172,6 +134,85 @@ export class SelectList implements Component {
 				this.onCancel();
 			}
 		}
+	}
+
+	private renderItem(
+		item: SelectItem,
+		isSelected: boolean,
+		width: number,
+		descriptionSingleLine: string | undefined,
+		primaryColumnWidth: number,
+	): string {
+		const prefix = isSelected ? "→ " : "  ";
+		const prefixWidth = visibleWidth(prefix);
+
+		if (descriptionSingleLine && width > 40) {
+			const effectivePrimaryColumnWidth = Math.max(1, Math.min(primaryColumnWidth, width - prefixWidth - 4));
+			const maxPrimaryWidth = Math.max(1, effectivePrimaryColumnWidth - PRIMARY_COLUMN_GAP);
+			const truncatedValue = this.truncatePrimary(item, isSelected, maxPrimaryWidth, effectivePrimaryColumnWidth);
+			const truncatedValueWidth = visibleWidth(truncatedValue);
+			const spacing = " ".repeat(Math.max(1, effectivePrimaryColumnWidth - truncatedValueWidth));
+			const descriptionStart = prefixWidth + truncatedValueWidth + spacing.length;
+			const remainingWidth = width - descriptionStart - 2; // -2 for safety
+
+			if (remainingWidth > MIN_DESCRIPTION_WIDTH) {
+				const truncatedDesc = truncateToWidth(descriptionSingleLine, remainingWidth, "");
+				if (isSelected) {
+					return this.theme.selectedText(`${prefix}${truncatedValue}${spacing}${truncatedDesc}`);
+				}
+
+				const descText = this.theme.description(spacing + truncatedDesc);
+				return prefix + truncatedValue + descText;
+			}
+		}
+
+		const maxWidth = width - prefixWidth - 2;
+		const truncatedValue = this.truncatePrimary(item, isSelected, maxWidth, maxWidth);
+		if (isSelected) {
+			return this.theme.selectedText(`${prefix}${truncatedValue}`);
+		}
+
+		return prefix + truncatedValue;
+	}
+
+	private getPrimaryColumnWidth(): number {
+		const { min, max } = this.getPrimaryColumnBounds();
+		const widestPrimary = this.filteredItems.reduce((widest, item) => {
+			return Math.max(widest, visibleWidth(this.getDisplayValue(item)) + PRIMARY_COLUMN_GAP);
+		}, 0);
+
+		return clamp(widestPrimary, min, max);
+	}
+
+	private getPrimaryColumnBounds(): { min: number; max: number } {
+		const rawMin =
+			this.layout.minPrimaryColumnWidth ?? this.layout.maxPrimaryColumnWidth ?? DEFAULT_PRIMARY_COLUMN_WIDTH;
+		const rawMax =
+			this.layout.maxPrimaryColumnWidth ?? this.layout.minPrimaryColumnWidth ?? DEFAULT_PRIMARY_COLUMN_WIDTH;
+
+		return {
+			min: Math.max(1, Math.min(rawMin, rawMax)),
+			max: Math.max(1, Math.max(rawMin, rawMax)),
+		};
+	}
+
+	private truncatePrimary(item: SelectItem, isSelected: boolean, maxWidth: number, columnWidth: number): string {
+		const displayValue = this.getDisplayValue(item);
+		const truncatedValue = this.layout.truncatePrimary
+			? this.layout.truncatePrimary({
+					text: displayValue,
+					maxWidth,
+					columnWidth,
+					item,
+					isSelected,
+				})
+			: truncateToWidth(displayValue, maxWidth, "");
+
+		return truncateToWidth(truncatedValue, maxWidth, "");
+	}
+
+	private getDisplayValue(item: SelectItem): string {
+		return item.label || item.value;
 	}
 
 	private notifySelectionChange(): void {

@@ -25,6 +25,7 @@ read README.md, then ask which module(s) to work on. Based on the answer, read t
 - NEVER run: `npm run dev`, `npm run build`, `npm test`
 - Only run specific tests if user instructs: `npx tsx ../../node_modules/vitest/dist/cli.js --run test/specific.test.ts`
 - Run tests from the package root, not the repo root.
+- If you create or modify a test file, you MUST run that test file and iterate until it passes.
 - When writing tests, run them, identify issues in either the test or implementation, and iterate until fixed.
 - NEVER commit unless user asks
 
@@ -35,6 +36,13 @@ When reading issues:
   ```bash
   gh issue view <number> --json title,body,comments,labels,state
   ```
+
+## OSS Weekend
+- If the user says `enable OSS weekend mode until X`, run `node scripts/oss-weekend.mjs --mode=close --end-date=YYYY-MM-DD --git` with the requested end date
+- If the user says `end OSS weekend mode`, run `node scripts/oss-weekend.mjs --mode=open --git`
+- The script updates `README.md`, `packages/coding-agent/README.md`, and `.github/oss-weekend.json`
+- With `--git`, the script stages only those OSS weekend files, commits them, and pushes them
+- During OSS weekend, `.github/workflows/oss-weekend-issues.yml` auto-closes new issues from non-maintainers, and `.github/workflows/pr-gate.yml` auto-closes PRs from approved non-maintainers with the weekend message
 
 When creating issues:
 - Add `pkg:*` labels to indicate which package(s) the issue affects

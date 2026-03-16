@@ -25,7 +25,11 @@ export function shouldUseProxyForProvider(provider: string, apiKey: string): boo
 		case "anthropic":
 			// Anthropic OAuth tokens (sk-ant-oat-*) require proxy
 			// Regular API keys (sk-ant-api-*) do NOT require proxy
-			return apiKey.startsWith("sk-ant-oat");
+			return apiKey.startsWith("sk-ant-oat") || apiKey.startsWith("{");
+
+		case "openai-codex":
+			// Codex uses chatgpt.com/backend-api which has no CORS
+			return true;
 
 		// These providers work without proxy
 		case "openai":
@@ -36,6 +40,7 @@ export function shouldUseProxyForProvider(provider: string, apiKey: string): boo
 		case "xai":
 		case "ollama":
 		case "lmstudio":
+		case "github-copilot":
 			return false;
 
 		// Unknown providers - assume no proxy needed

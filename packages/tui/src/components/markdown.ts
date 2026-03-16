@@ -282,7 +282,7 @@ export class Markdown implements Component {
 					styledHeading = this.theme.heading(this.theme.bold(headingPrefix + headingText));
 				}
 				lines.push(styledHeading);
-				if (nextTokenType !== "space") {
+				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after headings (unless space token follows)
 				}
 				break;
@@ -314,7 +314,7 @@ export class Markdown implements Component {
 					}
 				}
 				lines.push(this.theme.codeBlockBorder("```"));
-				if (nextTokenType !== "space") {
+				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after code blocks (unless space token follows)
 				}
 				break;
@@ -329,7 +329,7 @@ export class Markdown implements Component {
 			}
 
 			case "table": {
-				const tableLines = this.renderTable(token as any, width, styleContext);
+				const tableLines = this.renderTable(token as any, width, nextTokenType, styleContext);
 				lines.push(...tableLines);
 				break;
 			}
@@ -377,7 +377,7 @@ export class Markdown implements Component {
 						lines.push(this.theme.quoteBorder("│ ") + wrappedLine);
 					}
 				}
-				if (nextTokenType !== "space") {
+				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after blockquotes (unless space token follows)
 				}
 				break;
@@ -385,7 +385,7 @@ export class Markdown implements Component {
 
 			case "hr":
 				lines.push(this.theme.hr("─".repeat(Math.min(width, 80))));
-				if (nextTokenType !== "space") {
+				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after horizontal rules (unless space token follows)
 				}
 				break;
@@ -638,6 +638,7 @@ export class Markdown implements Component {
 	private renderTable(
 		token: Token & { header: any[]; rows: any[][]; raw?: string },
 		availableWidth: number,
+		nextTokenType?: string,
 		styleContext?: InlineStyleContext,
 	): string[] {
 		const lines: string[] = [];
@@ -654,7 +655,9 @@ export class Markdown implements Component {
 		if (availableForCells < numCols) {
 			// Too narrow to render a stable table. Fall back to raw markdown.
 			const fallbackLines = token.raw ? wrapTextWithAnsi(token.raw, availableWidth) : [];
-			fallbackLines.push("");
+			if (nextTokenType && nextTokenType !== "space") {
+				fallbackLines.push("");
+			}
 			return fallbackLines;
 		}
 
@@ -800,7 +803,9 @@ export class Markdown implements Component {
 		const bottomBorderCells = columnWidths.map((w) => "─".repeat(w));
 		lines.push(`└─${bottomBorderCells.join("─┴─")}─┘`);
 
-		lines.push(""); // Add spacing after table
+		if (nextTokenType && nextTokenType !== "space") {
+			lines.push(""); // Add spacing after table
+		}
 		return lines;
 	}
 }

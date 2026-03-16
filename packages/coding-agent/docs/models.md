@@ -35,6 +35,32 @@ For local models (Ollama, LM Studio, vLLM), only `id` is required per model:
 
 The `apiKey` is required but Ollama ignores it, so any value works.
 
+Some OpenAI-compatible servers do not understand the `developer` role used for reasoning-capable models. For those providers, set `compat.supportsDeveloperRole` to `false` so pi sends the system prompt as a `system` message instead. If the server also does not support `reasoning_effort`, set `compat.supportsReasoningEffort` to `false` too.
+
+You can set `compat` at the provider level to apply to all models, or at the model level to override a specific model. This commonly applies to Ollama, vLLM, SGLang, and similar OpenAI-compatible servers.
+
+```json
+{
+  "providers": {
+    "ollama": {
+      "baseUrl": "http://localhost:11434/v1",
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "gpt-oss:20b",
+          "reasoning": true
+        }
+      ]
+    }
+  }
+}
+```
+
 ## Full Example
 
 Override defaults when you need specific values:
@@ -136,6 +162,7 @@ The `apiKey` and `headers` fields support three formats:
 | `contextWindow` | No | `128000` | Context window size in tokens |
 | `maxTokens` | No | `16384` | Maximum output tokens |
 | `cost` | No | all zeros | `{"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}` (per million tokens) |
+| `compat` | No | provider `compat` | OpenAI compatibility overrides. Merged with provider-level `compat` when both are set. |
 
 Current behavior:
 - `/model` and `--list-models` list entries by model `id`.
@@ -211,7 +238,10 @@ Behavior notes:
 
 ## OpenAI Compatibility
 
-For providers with partial OpenAI compatibility, use the `compat` field:
+For providers with partial OpenAI compatibility, use the `compat` field.
+
+- Provider-level `compat` applies defaults to all models under that provider.
+- Model-level `compat` overrides provider-level values for that model.
 
 ```json
 {
@@ -234,10 +264,18 @@ For providers with partial OpenAI compatibility, use the `compat` field:
 | `supportsStore` | Provider supports `store` field |
 | `supportsDeveloperRole` | Use `developer` vs `system` role |
 | `supportsReasoningEffort` | Support for `reasoning_effort` parameter |
+| `reasoningEffortMap` | Map pi thinking levels to provider-specific `reasoning_effort` values |
 | `supportsUsageInStreaming` | Supports `stream_options: { include_usage: true }` (default: `true`) |
 | `maxTokensField` | Use `max_completion_tokens` or `max_tokens` |
+| `requiresToolResultName` | Include `name` on tool result messages |
+| `requiresAssistantAfterToolResult` | Insert an assistant message before a user message after tool results |
+| `requiresThinkingAsText` | Convert thinking blocks to plain text |
+| `thinkingFormat` | Use `reasoning_effort`, `zai`, `qwen`, or `qwen-chat-template` thinking parameters |
+| `supportsStrictMode` | Include the `strict` field in tool definitions |
 | `openRouterRouting` | OpenRouter routing config passed to OpenRouter for model/provider selection |
 | `vercelGatewayRouting` | Vercel AI Gateway routing config for provider selection (`only`, `order`) |
+
+`qwen` uses top-level `enable_thinking`. Use `qwen-chat-template` for local Qwen-compatible servers that require `chat_template_kwargs.enable_thinking`.
 
 Example:
 

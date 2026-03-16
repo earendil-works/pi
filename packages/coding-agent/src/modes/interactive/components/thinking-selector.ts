@@ -1,7 +1,12 @@
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
-import { Container, type SelectItem, SelectList } from "@mariozechner/pi-tui";
+import { Container, type SelectItem, SelectList, type SelectListLayoutOptions } from "@mariozechner/pi-tui";
 import { getSelectListTheme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
+
+const THINKING_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
+	minPrimaryColumnWidth: 12,
+	maxPrimaryColumnWidth: 32,
+};
 
 const LEVEL_DESCRIPTIONS: Record<ThinkingLevel, string> = {
 	off: "No reasoning",
@@ -36,7 +41,12 @@ export class ThinkingSelectorComponent extends Container {
 		this.addChild(new DynamicBorder());
 
 		// Create selector
-		this.selectList = new SelectList(thinkingLevels, thinkingLevels.length, getSelectListTheme());
+		this.selectList = new SelectList(
+			thinkingLevels,
+			thinkingLevels.length,
+			getSelectListTheme(),
+			THINKING_SELECT_LIST_LAYOUT,
+		);
 
 		// Preselect current level
 		const currentIndex = thinkingLevels.findIndex((item) => item.value === currentLevel);

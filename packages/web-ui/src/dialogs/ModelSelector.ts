@@ -15,6 +15,37 @@ import { formatModelCost } from "../utils/format.js";
 import { i18n } from "../utils/i18n.js";
 import { discoverModels } from "../utils/model-discovery.js";
 
+/**
+ * Score a query against a text using subsequence matching.
+ * All query characters must appear in order in the text.
+ * Higher score = tighter match (fewer gaps between matched characters).
+ * Returns 0 if no match.
+ */
+function subsequenceScore(query: string, text: string): number {
+	let qi = 0;
+	let ti = 0;
+	let gaps = 0;
+	let lastMatchIndex = -1;
+
+	while (qi < query.length && ti < text.length) {
+		if (query[qi] === text[ti]) {
+			if (lastMatchIndex >= 0) {
+				gaps += ti - lastMatchIndex - 1;
+			}
+			lastMatchIndex = ti;
+			qi++;
+		}
+		ti++;
+	}
+
+	// All query chars must match
+	if (qi < query.length) return 0;
+
+	// Score: longer query match = better, fewer gaps = better
+	// Normalize so exact substring gets highest score
+	return query.length / (query.length + gaps);
+}
+
 @customElement("agent-model-selector")
 export class ModelSelector extends DialogBase {
 	@state() currentModel: Model<any> | null = null;
@@ -27,16 +58,24 @@ export class ModelSelector extends DialogBase {
 	@state() private customProviderModels: Model<any>[] = [];
 
 	private onSelectCallback?: (model: Model<any>) => void;
+	private allowedProviders?: Set<string>;
 	private scrollContainerRef = createRef<HTMLDivElement>();
 	private searchInputRef = createRef<HTMLInputElement>();
 	private lastMousePosition = { x: 0, y: 0 };
 
 	protected override modalWidth = "min(400px, 90vw)";
 
-	static async open(currentModel: Model<any> | null, onSelect: (model: Model<any>) => void) {
+	static async open(
+		currentModel: Model<any> | null,
+		onSelect: (model: Model<any>) => void,
+		allowedProviders?: string[],
+	) {
 		const selector = new ModelSelector();
 		selector.currentModel = currentModel;
 		selector.onSelectCallback = onSelect;
+		if (allowedProviders) {
+			selector.allowedProviders = new Set(allowedProviders);
+		}
 		selector.open();
 		selector.loadCustomProviders();
 	}
@@ -173,19 +212,30 @@ export class ModelSelector extends DialogBase {
 			allModels.push({ provider: model.provider, id: model.id, model });
 		}
 
+		// Filter by allowed providers if set
+		if (this.allowedProviders) {
+			const allowed = this.allowedProviders;
+			allModels.splice(0, allModels.length, ...allModels.filter(({ provider }) => allowed.has(provider)));
+		}
+
 		// Filter models based on search and capability filters
 		let filteredModels = allModels;
 
-		// Apply search filter
+		// Apply search filter (subsequence match: characters must appear in order)
 		if (this.searchQuery) {
-			filteredModels = filteredModels.filter(({ provider, id, model }) => {
-				const searchTokens = this.searchQuery
-					.toLowerCase()
-					.split(/\s+/)
-					.filter((t) => t);
-				const searchText = `${provider} ${id} ${model.name}`.toLowerCase();
-				return searchTokens.every((token) => searchText.includes(token));
-			});
+			const query = this.searchQuery.toLowerCase().replace(/\s+/g, "");
+			if (query) {
+				const scored: Array<{ item: (typeof allModels)[0]; score: number }> = [];
+				for (const entry of filteredModels) {
+					const searchText = `${entry.provider} ${entry.id} ${entry.model.name}`.toLowerCase();
+					const score = subsequenceScore(query, searchText);
+					if (score > 0) {
+						scored.push({ item: entry, score });
+					}
+				}
+				scored.sort((a, b) => b.score - a.score);
+				filteredModels = scored.map((s) => s.item);
+			}
 		}
 
 		// Apply capability filters
@@ -196,14 +246,18 @@ export class ModelSelector extends DialogBase {
 			filteredModels = filteredModels.filter(({ model }) => model.input.includes("image"));
 		}
 
-		// Sort: current model first, then by provider
-		filteredModels.sort((a, b) => {
-			const aIsCurrent = modelsAreEqual(this.currentModel, a.model);
-			const bIsCurrent = modelsAreEqual(this.currentModel, b.model);
-			if (aIsCurrent && !bIsCurrent) return -1;
-			if (!aIsCurrent && bIsCurrent) return 1;
-			return a.provider.localeCompare(b.provider);
-		});
+		// Sort: when not searching, current model first then by provider.
+		// When searching, preserve the score-based order from above,
+		// but still float the current model to the top.
+		if (!this.searchQuery) {
+			filteredModels.sort((a, b) => {
+				const aIsCurrent = modelsAreEqual(this.currentModel, a.model);
+				const bIsCurrent = modelsAreEqual(this.currentModel, b.model);
+				if (aIsCurrent && !bIsCurrent) return -1;
+				if (!aIsCurrent && bIsCurrent) return 1;
+				return a.provider.localeCompare(b.provider);
+			});
+		}
 
 		return filteredModels;
 	}

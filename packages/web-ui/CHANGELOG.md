@@ -2,6 +2,35 @@
 
 ## [Unreleased]
 
+### Added
+
+- `onModelSelect` callback on `AgentInterface` and `ChatPanel.setAgent` config
+- `allowedProviders` filter on `ModelSelector.open()` to restrict visible models
+- `onClose` callback on `SettingsDialog.open()`
+- `state_change` event emitted by Agent on `setModel()` and `setThinkingLevel()`
+- Subsequence-based fuzzy search in model selector (replaces substring matching)
+- `openai-codex` and `github-copilot` to `shouldUseProxyForProvider`
+
+### Changed
+
+- Anthropic test model updated from `claude-3-5-haiku-20241022` to `claude-haiku-4-5`
+
+### Fixed
+
+- `AgentInterface` clears streaming container on `message_end` to prevent duplicate tool rendering
+
+## [0.58.3] - 2026-03-15
+
+### Fixed
+
+- Build `@mariozechner/pi-web-ui` with `tsc` instead of `tsgo` so Lit decorator-based state updates rerender correctly.
+
+## [0.58.2] - 2026-03-15
+
+## [0.58.1] - 2026-03-14
+
+## [0.58.0] - 2026-03-14
+
 ## [0.57.1] - 2026-03-07
 
 ## [0.57.0] - 2026-03-07

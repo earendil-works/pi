@@ -183,10 +183,12 @@ models: [{
     },
       maxTokensField: "max_tokens",      // instead of "max_completion_tokens"
       requiresToolResultName: true,      // tool results need name field
-      thinkingFormat: "qwen"             // uses enable_thinking: true
+      thinkingFormat: "qwen"            // top-level enable_thinking: true
     }
   }]
 ```
+
+Use `qwen-chat-template` instead for local Qwen-compatible servers that read `chat_template_kwargs.enable_thinking`.
 
 > Migration note: Mistral moved from `openai-completions` to `mistral-conversations`.
 > Use `mistral-conversations` for native Mistral models.
@@ -586,7 +588,9 @@ interface ProviderModelConfig {
     requiresToolResultName?: boolean;
     requiresAssistantAfterToolResult?: boolean;
     requiresThinkingAsText?: boolean;
-    thinkingFormat?: "openai" | "zai" | "qwen";
+    thinkingFormat?: "openai" | "zai" | "qwen" | "qwen-chat-template";
   };
 }
 ```
+
+`qwen` is for DashScope-style top-level `enable_thinking`. Use `qwen-chat-template` for local Qwen-compatible servers that read `chat_template_kwargs.enable_thinking`.

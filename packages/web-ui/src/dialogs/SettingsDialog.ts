@@ -122,9 +122,12 @@ export class SettingsDialog extends LitElement {
 		return this;
 	}
 
-	static async open(tabs: SettingsTab[]) {
+	private onCloseCallback?: () => void;
+
+	static async open(tabs: SettingsTab[], onClose?: () => void) {
 		const dialog = new SettingsDialog();
 		dialog.tabs = tabs;
+		dialog.onCloseCallback = onClose;
 		dialog.isOpen = true;
 		document.body.appendChild(dialog);
 	}
@@ -173,6 +176,7 @@ export class SettingsDialog extends LitElement {
 			onClose: () => {
 				this.isOpen = false;
 				this.remove();
+				this.onCloseCallback?.();
 			},
 			width: "min(1000px, 90vw)",
 			height: "min(800px, 90vh)",

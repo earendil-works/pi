@@ -50,15 +50,15 @@ export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage
  *
  * Supported today:
  * - GPT-5.2 / GPT-5.3 / GPT-5.4 model families
- * - Anthropic Messages API Opus 4.6 models (xhigh maps to adaptive effort "max")
+ * - Opus 4.6 models (xhigh maps to adaptive effort "max" on Anthropic-compatible providers)
  */
 export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
 	if (model.id.includes("gpt-5.2") || model.id.includes("gpt-5.3") || model.id.includes("gpt-5.4")) {
 		return true;
 	}
 
-	if (model.api === "anthropic-messages") {
-		return model.id.includes("opus-4-6") || model.id.includes("opus-4.6");
+	if (model.id.includes("opus-4-6") || model.id.includes("opus-4.6")) {
+		return true;
 	}
 
 	return false;

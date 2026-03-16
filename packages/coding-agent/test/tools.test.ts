@@ -442,6 +442,36 @@ describe("edit tool fuzzy matching", () => {
 		expect(content).toBe("replaced\nline three\n");
 	});
 
+	it("should match fullwidth punctuation in Chinese text", async () => {
+		const testFile = join(testDir, "chinese-punctuation.txt");
+		writeFileSync(testFile, "你好，世界\n你好（世界）\n");
+
+		const result = await editTool.execute("test-fuzzy-chinese", {
+			path: testFile,
+			oldText: "你好,世界\n你好(世界)\n",
+			newText: "你好，pi\n你好(pi)\n",
+		});
+
+		expect(getTextOutput(result)).toContain("Successfully replaced");
+		const content = readFileSync(testFile, "utf-8");
+		expect(content).toBe("你好，pi\n你好(pi)\n");
+	});
+
+	it("should match compatibility-equivalent Unicode forms", async () => {
+		const testFile = join(testDir, "unicode-compatibility.txt");
+		writeFileSync(testFile, "ＡＢＣ１２３\ncafe\u0301\n");
+
+		const result = await editTool.execute("test-fuzzy-unicode", {
+			path: testFile,
+			oldText: "ABC123\ncafé\n",
+			newText: "XYZ789\ncoffee\n",
+		});
+
+		expect(getTextOutput(result)).toContain("Successfully replaced");
+		const content = readFileSync(testFile, "utf-8");
+		expect(content).toBe("XYZ789\ncoffee\n");
+	});
+
 	it("should match smart single quotes to ASCII quotes", async () => {
 		const testFile = join(testDir, "smart-quotes.txt");
 		// File has smart/curly single quotes (U+2018, U+2019)

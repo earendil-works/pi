@@ -447,6 +447,26 @@ describe("Markdown component", () => {
 			const tableRow = plainLines.find((line) => line.includes("│"));
 			assert.ok(tableRow?.startsWith("  "), "Table should have left padding");
 		});
+
+		it("should not add a trailing blank line when table is the last rendered block", () => {
+			const markdown = new Markdown(
+				`| Name |
+| --- |
+| Alice |`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
+
+			assert.notStrictEqual(
+				plainLines.at(-1),
+				"",
+				`Expected table to end without a blank line: ${JSON.stringify(plainLines)}`,
+			);
+		});
 	});
 
 	describe("Combined features", () => {
@@ -601,6 +621,52 @@ again, hello world`,
 				`Expected 1 empty line after code block, but found ${emptyLineCount}. Lines after backticks: ${JSON.stringify(afterBackticks.slice(0, 5))}`,
 			);
 		});
+
+		it("should normalize paragraph and code block spacing to one blank line", () => {
+			const cases = [
+				`hello this is text
+\`\`\`
+code block
+\`\`\`
+more text`,
+				`hello this is text
+
+\`\`\`
+code block
+\`\`\`
+
+more text`,
+			];
+			const expectedLines = ["hello this is text", "", "```", "  code block", "```", "", "more text"];
+
+			for (const text of cases) {
+				const markdown = new Markdown(text, 0, 0, defaultMarkdownTheme);
+				const lines = markdown.render(80);
+				const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
+
+				assert.deepStrictEqual(
+					plainLines,
+					expectedLines,
+					`Unexpected spacing for markdown: ${JSON.stringify(text)}`,
+				);
+			}
+		});
+
+		it("should not add a trailing blank line when code block is the last rendered block", () => {
+			const cases = ["```js\nconst hello = 'world';\n```", "hello world\n\n```js\nconst hello = 'world';\n```"];
+
+			for (const text of cases) {
+				const markdown = new Markdown(text, 0, 0, defaultMarkdownTheme);
+				const lines = markdown.render(80);
+				const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
+
+				assert.notStrictEqual(
+					plainLines.at(-1),
+					"",
+					`Expected code block to end without a blank line: ${JSON.stringify(plainLines)}`,
+				);
+			}
+		});
 	});
 
 	describe("Spacing after dividers", () => {
@@ -631,6 +697,18 @@ again, hello world`,
 				`Expected 1 empty line after divider, but found ${emptyLineCount}. Lines after divider: ${JSON.stringify(afterDivider.slice(0, 5))}`,
 			);
 		});
+
+		it("should not add a trailing blank line when divider is the last rendered block", () => {
+			const markdown = new Markdown("---", 0, 0, defaultMarkdownTheme);
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
+
+			assert.notStrictEqual(
+				plainLines.at(-1),
+				"",
+				`Expected divider to end without a blank line: ${JSON.stringify(plainLines)}`,
+			);
+		});
 	});
 
 	describe("Spacing after headings", () => {
@@ -657,6 +735,18 @@ This is a paragraph`,
 				emptyLineCount,
 				1,
 				`Expected 1 empty line after heading, but found ${emptyLineCount}. Lines after heading: ${JSON.stringify(afterHeading.slice(0, 5))}`,
+			);
+		});
+
+		it("should not add a trailing blank line when heading is the last rendered block", () => {
+			const markdown = new Markdown("# Hello", 0, 0, defaultMarkdownTheme);
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
+
+			assert.notStrictEqual(
+				plainLines.at(-1),
+				"",
+				`Expected heading to end without a blank line: ${JSON.stringify(plainLines)}`,
 			);
 		});
 	});
@@ -687,6 +777,18 @@ again, hello world`,
 				emptyLineCount,
 				1,
 				`Expected 1 empty line after blockquote, but found ${emptyLineCount}. Lines after quote: ${JSON.stringify(afterQuote.slice(0, 5))}`,
+			);
+		});
+
+		it("should not add a trailing blank line when blockquote is the last rendered block", () => {
+			const markdown = new Markdown("> This is a quote", 0, 0, defaultMarkdownTheme);
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
+
+			assert.notStrictEqual(
+				plainLines.at(-1),
+				"",
+				`Expected blockquote to end without a blank line: ${JSON.stringify(plainLines)}`,
 			);
 		});
 	});

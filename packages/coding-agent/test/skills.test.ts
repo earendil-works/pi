@@ -86,6 +86,18 @@ describe("skills", () => {
 			expect(diagnostics).toHaveLength(0);
 		});
 
+		it("should prefer a directory's root SKILL.md over nested SKILL.md files", () => {
+			const { skills, diagnostics } = loadSkillsFromDir({
+				dir: join(fixturesDir, "root-skill-preferred"),
+				source: "test",
+			});
+
+			expect(skills).toHaveLength(1);
+			expect(skills[0].name).toBe("root-skill-preferred");
+			expect(skills[0].description).toBe("Root skill should win.");
+			expect(diagnostics).toHaveLength(0);
+		});
+
 		it("should skip files without frontmatter", () => {
 			const { skills, diagnostics } = loadSkillsFromDir({
 				dir: join(fixturesDir, "no-frontmatter"),

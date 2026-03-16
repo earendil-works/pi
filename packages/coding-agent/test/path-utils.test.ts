@@ -1,6 +1,6 @@
 import { mkdtempSync, readdirSync, rmdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { expandPath, resolveReadPath, resolveToCwd } from "../src/core/tools/path-utils.js";
 
@@ -32,7 +32,7 @@ describe("path-utils", () => {
 
 		it("should resolve relative paths against cwd", () => {
 			const result = resolveToCwd("relative/file.txt", "/some/cwd");
-			expect(result).toBe("/some/cwd/relative/file.txt");
+			expect(result).toBe(resolve("/some/cwd", "relative/file.txt"));
 		});
 	});
 

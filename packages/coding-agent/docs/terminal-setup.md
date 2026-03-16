@@ -86,6 +86,17 @@ Add to `settings.json` (Ctrl+Shift+, or Settings → Open JSON file) to forward 
 
 If you already have an `actions` array, add the objects to it. If the old fullscreen behavior persists, fully close and reopen Windows Terminal.
 
+## xfce4-terminal, terminator
+
+These terminals have limited escape sequence support. Modified Enter keys like `Ctrl+Enter` and `Shift+Enter` cannot be distinguished from plain `Enter`, preventing custom keybindings such as `submit: ["ctrl+enter"]` from working.
+
+For the best experience, use a terminal that supports the Kitty keyboard protocol:
+- [Kitty](https://sw.kovidgoyal.net/kitty/)
+- [Ghostty](https://ghostty.org/)
+- [WezTerm](https://wezfurlong.org/wezterm/)
+- [iTerm2](https://iterm2.com/)
+- [Alacritty](https://github.com/alacritty/alacritty) (requires compilation with Kitty protocol support)
+
 ## IntelliJ IDEA (Integrated Terminal)
 
 The built-in terminal has limited escape sequence support. Shift+Enter cannot be distinguished from Enter in IntelliJ's terminal.

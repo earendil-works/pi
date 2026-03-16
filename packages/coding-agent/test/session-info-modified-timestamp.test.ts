@@ -1,7 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { SessionHeader } from "../src/core/session-manager.js";
 import { SessionManager } from "../src/core/session-manager.js";
@@ -74,7 +74,7 @@ describe("SessionInfo.modified", () => {
 			timestamp: msgTime,
 		});
 
-		const sessions = await SessionManager.list("/tmp", filePath.replace(/\/[^/]+$/, ""));
+		const sessions = await SessionManager.list("/tmp", dirname(filePath));
 		const s = sessions.find((x) => x.path === filePath);
 		expect(s).toBeDefined();
 		expect(s!.modified.getTime()).toBe(msgTime);

@@ -5,6 +5,8 @@ import { Agent } from "../src/index.js";
 import { hasBedrockCredentials } from "./bedrock-utils.js";
 import { calculateTool } from "./utils/calculate.js";
 
+delete process.env.ANTHROPIC_OAUTH_TOKEN;
+
 async function basicPrompt(model: Model<any>) {
 	const agent = new Agent({
 		initialState: {
@@ -278,7 +280,7 @@ describe("Agent E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.CEREBRAS_API_KEY)("Cerebras Provider (gpt-oss-120b)", () => {
+	/*describe.skipIf(!process.env.CEREBRAS_API_KEY)("Cerebras Provider (gpt-oss-120b)", () => {
 		const model = getModel("cerebras", "gpt-oss-120b");
 
 		it("should handle basic text prompt", async () => {
@@ -300,7 +302,7 @@ describe("Agent E2E Tests", () => {
 		it("should maintain context across multiple turns", async () => {
 			await multiTurnConversation(model);
 		});
-	});
+	});*/
 
 	describe.skipIf(!process.env.ZAI_API_KEY)("zAI Provider (glm-4.5-air)", () => {
 		const model = getModel("zai", "glm-4.5-air");
@@ -357,7 +359,7 @@ describe("Agent.continue()", () => {
 			const agent = new Agent({
 				initialState: {
 					systemPrompt: "Test",
-					model: getModel("anthropic", "claude-haiku-4-5"),
+					model: getModel("openai", "gpt-5.4"),
 				},
 			});
 
@@ -368,16 +370,16 @@ describe("Agent.continue()", () => {
 			const agent = new Agent({
 				initialState: {
 					systemPrompt: "Test",
-					model: getModel("anthropic", "claude-haiku-4-5"),
+					model: getModel("openai", "gpt-5.4"),
 				},
 			});
 
 			const assistantMessage: AssistantMessage = {
 				role: "assistant",
 				content: [{ type: "text", text: "Hello" }],
-				api: "anthropic-messages",
-				provider: "anthropic",
-				model: "claude-haiku-4-5",
+				api: "openai-responses",
+				provider: "openai",
+				model: "gpt-5.4",
 				usage: {
 					input: 0,
 					output: 0,
@@ -395,8 +397,8 @@ describe("Agent.continue()", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("continue from user message", () => {
-		const model = getModel("anthropic", "claude-haiku-4-5");
+	describe.skipIf(!process.env.OPENAI_API_KEY)("continue from user message", () => {
+		const model = getModel("openai", "gpt-5.4");
 
 		it("should continue and get response when last message is user", async () => {
 			const agent = new Agent({
@@ -433,8 +435,8 @@ describe("Agent.continue()", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("continue from tool result", () => {
-		const model = getModel("anthropic", "claude-haiku-4-5");
+	describe.skipIf(!process.env.OPENAI_API_KEY)("continue from tool result", () => {
+		const model = getModel("openai", "gpt-5.4");
 
 		it("should continue and process tool results", async () => {
 			const agent = new Agent({

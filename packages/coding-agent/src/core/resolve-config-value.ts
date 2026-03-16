@@ -3,7 +3,8 @@
  * Used by auth-storage.ts and model-registry.ts.
  */
 
-import { execSync } from "child_process";
+import { execSync, spawnSync } from "child_process";
+import { getShellConfig } from "../utils/shell.js";
 
 // Cache for shell command results (persists for process lifetime)
 const commandResultCache = new Map<string, string | undefined>();
@@ -21,23 +22,62 @@ export function resolveConfigValue(config: string): string | undefined {
 	return envValue || config;
 }
 
-function executeCommand(commandConfig: string): string | undefined {
-	if (commandResultCache.has(commandConfig)) {
-		return commandResultCache.get(commandConfig);
-	}
+function executeWithConfiguredShell(command: string): { executed: boolean; value: string | undefined } {
+	try {
+		const { shell, args } = getShellConfig();
+		const result = spawnSync(shell, [...args, command], {
+			encoding: "utf-8",
+			timeout: 10000,
+			stdio: ["ignore", "pipe", "ignore"],
+			shell: false,
+			windowsHide: true,
+		});
 
-	const command = commandConfig.slice(1);
-	let result: string | undefined;
+		if (result.error) {
+			const error = result.error as NodeJS.ErrnoException;
+			if (error.code === "ENOENT") {
+				return { executed: false, value: undefined };
+			}
+			return { executed: true, value: undefined };
+		}
+
+		if (result.status !== 0) {
+			return { executed: true, value: undefined };
+		}
+
+		const value = (result.stdout ?? "").trim();
+		return { executed: true, value: value || undefined };
+	} catch {
+		return { executed: false, value: undefined };
+	}
+}
+
+function executeWithDefaultShell(command: string): string | undefined {
 	try {
 		const output = execSync(command, {
 			encoding: "utf-8",
 			timeout: 10000,
 			stdio: ["ignore", "pipe", "ignore"],
 		});
-		result = output.trim() || undefined;
+		return output.trim() || undefined;
 	} catch {
-		result = undefined;
+		return undefined;
 	}
+}
+
+function executeCommand(commandConfig: string): string | undefined {
+	if (commandResultCache.has(commandConfig)) {
+		return commandResultCache.get(commandConfig);
+	}
+
+	const command = commandConfig.slice(1);
+	const result =
+		process.platform === "win32"
+			? (() => {
+					const configuredResult = executeWithConfiguredShell(command);
+					return configuredResult.executed ? configuredResult.value : executeWithDefaultShell(command);
+				})()
+			: executeWithDefaultShell(command);
 
 	commandResultCache.set(commandConfig, result);
 	return result;

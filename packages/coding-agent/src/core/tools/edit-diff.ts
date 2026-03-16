@@ -34,6 +34,7 @@ export function restoreLineEndings(text: string, ending: "\r\n" | "\n"): string 
 export function normalizeForFuzzyMatch(text: string): string {
 	return (
 		text
+			.normalize("NFKC")
 			// Strip trailing whitespace per line
 			.split("\n")
 			.map((line) => line.trimEnd())

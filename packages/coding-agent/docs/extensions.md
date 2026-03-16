@@ -247,11 +247,11 @@ user sends prompt ────────────────────�
   │   ├─► before_provider_request (can inspect or replace payload)
   │   │                                            │       │
   │   │   LLM responds, may call tools:            │       │
-  │   │     ├─► tool_call (can block)              │       │
   │   │     ├─► tool_execution_start               │       │
+  │   │     ├─► tool_call (can block)              │       │
   │   │     ├─► tool_execution_update              │       │
-  │   │     ├─► tool_execution_end                 │       │
-  │   │     └─► tool_result (can modify)           │       │
+  │   │     ├─► tool_result (can modify)           │       │
+  │   │     └─► tool_execution_end                 │       │
   │   │                                            │       │
   │   └─► turn_end                                 │       │
   │                                                        │
@@ -485,6 +485,11 @@ pi.on("message_end", async (event, ctx) => {
 
 Fired for tool execution lifecycle updates.
 
+In parallel tool mode:
+- `tool_execution_start` is emitted in assistant source order during the preflight phase
+- `tool_execution_update` events may interleave across tools
+- `tool_execution_end` is emitted in assistant source order, matching final tool result message order
+
 ```typescript
 pi.on("tool_execution_start", async (event, ctx) => {
   // event.toolCallId, event.toolName, event.args
@@ -553,7 +558,11 @@ Use this to update UI elements (status bars, footers) or perform model-specific 
 
 #### tool_call
 
-Fired before tool executes. **Can block.** Use `isToolCallEventType` to narrow and get typed inputs.
+Fired after `tool_execution_start`, before the tool executes. **Can block.** Use `isToolCallEventType` to narrow and get typed inputs.
+
+Before `tool_call` runs, pi waits for previously emitted Agent events to finish draining through `AgentSession`. This means `ctx.sessionManager` is up to date through the current assistant tool-calling message.
+
+In the default parallel tool execution mode, sibling tool calls from the same assistant message are preflighted sequentially, then executed concurrently. `tool_call` is not guaranteed to see sibling tool results from that same assistant message in `ctx.sessionManager`.
 
 ```typescript
 import { isToolCallEventType } from "@mariozechner/pi-coding-agent";
@@ -602,7 +611,7 @@ pi.on("tool_call", (event) => {
 
 #### tool_result
 
-Fired after tool executes. **Can modify result.**
+Fired after tool execution finishes and before `tool_execution_end` plus the final tool result message events are emitted. **Can modify result.**
 
 `tool_result` handlers chain like middleware:
 - Handlers run in extension load order
@@ -714,6 +723,8 @@ Current working directory.
 ### ctx.sessionManager
 
 Read-only access to session state. See [session.md](session.md) for the full SessionManager API and entry types.
+
+For `tool_call`, this state is synchronized through the current assistant message before handlers run. In parallel tool execution mode it is still not guaranteed to include sibling tool results from the same assistant message.
 
 ```typescript
 ctx.sessionManager.getEntries()       // All entries

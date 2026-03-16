@@ -19,47 +19,101 @@ jobs:
             const prAuthor = context.payload.pull_request.user.login;
             const defaultBranch = context.payload.repository.default_branch;
 
-            // Skip bots
             if (prAuthor.endsWith('[bot]') || prAuthor === 'dependabot[bot]') {
               console.log(`Skipping bot: ${prAuthor}`);
               return;
             }
 
-            // Check if user is a collaborator (has write access)
-            try {
-              const { data: permissionLevel } = await github.rest.repos.getCollaboratorPermissionLevel({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                username: prAuthor
-              });
-              if (['admin', 'write'].includes(permissionLevel.permission)) {
-                console.log(`${prAuthor} is a collaborator with ${permissionLevel.permission} access`);
-                return;
+            async function getPermission(username) {
+              try {
+                const { data: permissionLevel } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  username,
+                });
+                return permissionLevel.permission;
+              } catch {
+                return null;
               }
-            } catch (e) {
-              // User is not a collaborator, continue with check
             }
 
-            // Fetch approved contributors list
-            const { data: fileContent } = await github.rest.repos.getContent({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              path: '.github/APPROVED_CONTRIBUTORS',
-              ref: defaultBranch
-            });
+            async function getTextFile(path) {
+              const { data: fileContent } = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path,
+                ref: defaultBranch,
+              });
 
-            const content = Buffer.from(fileContent.content, 'base64').toString('utf8');
-            const approvedList = content
+              if (!('content' in fileContent) || typeof fileContent.content !== 'string') {
+                throw new Error(`Expected file content for ${path}`);
+              }
+
+              return Buffer.from(fileContent.content, 'base64').toString('utf8');
+            }
+
+            async function closePullRequest(message) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.payload.pull_request.number,
+                body: message,
+              });
+
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: context.payload.pull_request.number,
+                state: 'closed',
+              });
+            }
+
+            const permission = await getPermission(prAuthor);
+            if (['admin', 'maintain', 'write'].includes(permission)) {
+              console.log(`${prAuthor} is a collaborator with ${permission} access`);
+              return;
+            }
+
+            const approvedContent = await getTextFile('.github/APPROVED_CONTRIBUTORS');
+            const approvedList = approvedContent
               .split('\n')
               .map(line => line.trim().toLowerCase())
               .filter(line => line && !line.startsWith('#'));
+            const isApprovedContributor = approvedList.includes(prAuthor.toLowerCase());
 
-            if (approvedList.includes(prAuthor.toLowerCase())) {
+            let weekendState = null;
+            try {
+              weekendState = JSON.parse(await getTextFile('.github/oss-weekend.json'));
+            } catch (error) {
+              if (!(error && typeof error === 'object' && 'status' in error && error.status === 404)) {
+                throw error;
+              }
+            }
+
+            if (weekendState?.active && isApprovedContributor) {
+              console.log(`${prAuthor} is approved, but OSS weekend is active`);
+
+              const reopenDate = weekendState.reopensOnText || weekendState.reopensOn || 'after the weekend';
+              const discordUrl = weekendState.discordUrl || 'https://discord.com/invite/3cU7Bz4UPx';
+              const message = [
+                `Hi @${prAuthor}, thanks for the PR.`,
+                '',
+                `OSS weekend is active until ${reopenDate}, so external PRs are being paused for now.`,
+                '',
+                'You are already on the approved contributors list, so you can resubmit this PR after the weekend without reapproval.',
+                '',
+                `This PR will be closed automatically. For support, join [Discord](${discordUrl}).`,
+              ].join('\n');
+
+              await closePullRequest(message);
+              return;
+            }
+
+            if (isApprovedContributor) {
               console.log(`${prAuthor} is in the approved contributors list`);
               return;
             }
 
-            // Not approved - close PR with comment
             console.log(`${prAuthor} is not approved, closing PR`);
 
             const message = [
@@ -72,19 +126,7 @@ jobs:
               '2. Once a maintainer approves with `lgtm`, you\'ll be added to the approved contributors list',
               '3. Then you can submit your PR',
               '',
-              `This PR will be closed automatically. See https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md for more details.`
+              `This PR will be closed automatically. See https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md for more details.`,
             ].join('\n');
 
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: message
-            });
-
-            await github.rest.pulls.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number,
-              state: 'closed'
-            });
+            await closePullRequest(message);

@@ -28,10 +28,9 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { StringEnum } from "@mariozechner/pi-ai";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import { type ExtensionAPI, getAgentDir } from "@mariozechner/pi-coding-agent";
 import { type Static, Type } from "@sinclair/typebox";
 
 const PROVIDER = "google-antigravity";
@@ -184,7 +183,8 @@ function readConfigFile(path: string): ExtensionConfig {
 }
 
 function loadConfig(cwd: string): ExtensionConfig {
-	const globalConfig = readConfigFile(join(homedir(), ".pi", "agent", "extensions", "antigravity-image-gen.json"));
+	const globalPath = join(getAgentDir(), "extensions", "antigravity-image-gen.json");
+	const globalConfig = readConfigFile(globalPath);
 	const projectConfig = readConfigFile(join(cwd, ".pi", "extensions", "antigravity-image-gen.json"));
 	return { ...globalConfig, ...projectConfig };
 }
@@ -204,7 +204,8 @@ function resolveSaveConfig(params: ToolParams, cwd: string): SaveConfig {
 	}
 
 	if (mode === "global") {
-		return { mode, outputDir: join(homedir(), ".pi", "agent", "generated-images") };
+		const outputDir = join(getAgentDir(), "generated-images");
+		return { mode, outputDir };
 	}
 
 	if (mode === "custom") {

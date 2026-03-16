@@ -99,6 +99,15 @@ prompt("Read config.json")
 └─ agent_end
 ```
 
+Tool execution mode is configurable:
+
+- `parallel` (default): preflight tool calls sequentially, execute allowed tools concurrently, emit final `tool_execution_end` and `toolResult` messages in assistant source order
+- `sequential`: execute tool calls one by one, matching the historical behavior
+
+The `beforeToolCall` hook runs after `tool_execution_start` and validated argument parsing. It can block execution. The `afterToolCall` hook runs after tool execution finishes and before `tool_execution_end` and final tool result message events are emitted.
+
+When you use the `Agent` class, assistant `message_end` processing is treated as a barrier before tool preflight begins. That means `beforeToolCall` sees agent state that already includes the assistant message that requested the tool call.
+
 ### continue() Event Sequence
 
 `continue()` resumes from existing context without adding a new message. Use it for retries after errors.
@@ -159,6 +168,23 @@ const agent = new Agent({
   // Dynamic API key resolution (for expiring OAuth tokens)
   getApiKey: async (provider) => refreshToken(),
 
+  // Tool execution mode: "parallel" (default) or "sequential"
+  toolExecution: "parallel",
+
+  // Preflight each tool call after args are validated. Can block execution.
+  beforeToolCall: async ({ toolCall, args, context }) => {
+    if (toolCall.name === "bash") {
+      return { block: true, reason: "bash is disabled" };
+    }
+  },
+
+  // Postprocess each tool result before final tool events are emitted.
+  afterToolCall: async ({ toolCall, result, isError, context }) => {
+    if (!isError) {
+      return { details: { ...result.details, audited: true } };
+    }
+  },
+
   // Custom thinking budgets for token-based providers
   thinkingBudgets: {
     minimal: 128,
@@ -214,6 +240,9 @@ agent.setSystemPrompt("New prompt");
 agent.setModel(getModel("openai", "gpt-4o"));
 agent.setThinkingLevel("medium");
 agent.setTools([myTool]);
+agent.setToolExecution("sequential");
+agent.setBeforeToolCall(async ({ toolCall }) => undefined);
+agent.setAfterToolCall(async ({ toolCall, result }) => undefined);
 agent.replaceMessages(newMessages);
 agent.appendMessage(message);
 agent.clearMessages();
@@ -393,6 +422,9 @@ const context: AgentContext = {
 const config: AgentLoopConfig = {
   model: getModel("openai", "gpt-4o"),
   convertToLlm: (msgs) => msgs.filter(m => ["user", "assistant", "toolResult"].includes(m.role)),
+  toolExecution: "parallel",
+  beforeToolCall: async ({ toolCall, args, context }) => undefined,
+  afterToolCall: async ({ toolCall, result, isError, context }) => undefined,
 };
 
 const userMessage = { role: "user", content: "Hello", timestamp: Date.now() };
@@ -406,6 +438,8 @@ for await (const event of agentLoopContinue(context, config)) {
   console.log(event.type);
 }
 ```
+
+These low-level streams are observational. They preserve event order, but they do not wait for your async event handling to settle before later producer phases continue. If you need message processing to act as a barrier before tool preflight, use the `Agent` class instead of raw `agentLoop()` or `agentLoopContinue()`.
 
 ## License
 

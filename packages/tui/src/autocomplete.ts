@@ -6,6 +6,42 @@ import { fuzzyFilter } from "./fuzzy.js";
 
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
 
+function toDisplayPath(value: string): string {
+	return value.replace(/\\/g, "/");
+}
+
+function escapeRegex(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function buildFdPathQuery(query: string): string {
+	const normalized = toDisplayPath(query);
+	if (!normalized.includes("/")) {
+		return normalized;
+	}
+
+	const hasTrailingSeparator = normalized.endsWith("/");
+	const trimmed = normalized.replace(/^\/+|\/+$/g, "");
+	if (!trimmed) {
+		return normalized;
+	}
+
+	const separatorPattern = "[\\\\/]";
+	const segments = trimmed
+		.split("/")
+		.filter(Boolean)
+		.map((segment) => escapeRegex(segment));
+	if (segments.length === 0) {
+		return normalized;
+	}
+
+	let pattern = segments.join(separatorPattern);
+	if (hasTrailingSeparator) {
+		pattern += separatorPattern;
+	}
+	return pattern;
+}
+
 function findLastDelimiter(text: string): number {
 	for (let i = text.length - 1; i >= 0; i -= 1) {
 		if (PATH_DELIMITERS.has(text[i] ?? "")) {
@@ -112,7 +148,7 @@ function walkDirectoryWithFd(
 
 	// Add query as pattern if provided
 	if (query) {
-		args.push(query);
+		args.push(buildFdPathQuery(query));
 	}
 
 	const result = spawnSync(fdPath, args, {
@@ -129,15 +165,17 @@ function walkDirectoryWithFd(
 	const results: Array<{ path: string; isDirectory: boolean }> = [];
 
 	for (const line of lines) {
-		const normalizedPath = line.endsWith("/") ? line.slice(0, -1) : line;
+		const displayLine = toDisplayPath(line);
+		const hasTrailingSeparator = displayLine.endsWith("/");
+		const normalizedPath = hasTrailingSeparator ? displayLine.slice(0, -1) : displayLine;
 		if (normalizedPath === ".git" || normalizedPath.startsWith(".git/") || normalizedPath.includes("/.git/")) {
 			continue;
 		}
 
 		// fd outputs directories with trailing /
-		const isDirectory = line.endsWith("/");
+		const isDirectory = hasTrailingSeparator;
 		results.push({
-			path: line,
+			path: displayLine,
 			isDirectory,
 		});
 	}
@@ -448,13 +486,14 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	}
 
 	private resolveScopedFuzzyQuery(rawQuery: string): { baseDir: string; query: string; displayBase: string } | null {
-		const slashIndex = rawQuery.lastIndexOf("/");
+		const normalizedQuery = toDisplayPath(rawQuery);
+		const slashIndex = normalizedQuery.lastIndexOf("/");
 		if (slashIndex === -1) {
 			return null;
 		}
 
-		const displayBase = rawQuery.slice(0, slashIndex + 1);
-		const query = rawQuery.slice(slashIndex + 1);
+		const displayBase = normalizedQuery.slice(0, slashIndex + 1);
+		const query = normalizedQuery.slice(slashIndex + 1);
 
 		let baseDir: string;
 		if (displayBase.startsWith("~/")) {
@@ -477,10 +516,11 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	}
 
 	private scopedPathForDisplay(displayBase: string, relativePath: string): string {
+		const normalizedRelativePath = toDisplayPath(relativePath);
 		if (displayBase === "/") {
-			return `/${relativePath}`;
+			return `/${normalizedRelativePath}`;
 		}
-		return `${displayBase}${relativePath}`;
+		return `${toDisplayPath(displayBase)}${normalizedRelativePath}`;
 	}
 
 	// Get file/directory suggestions for a given path prefix
@@ -559,7 +599,7 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 				if (displayPrefix.endsWith("/")) {
 					// If prefix ends with /, append entry to the prefix
 					relativePath = displayPrefix + name;
-				} else if (displayPrefix.includes("/")) {
+				} else if (displayPrefix.includes("/") || displayPrefix.includes("\\")) {
 					// Preserve ~/ format for home directory paths
 					if (displayPrefix.startsWith("~/")) {
 						const homeRelativeDir = displayPrefix.slice(2); // Remove ~/
@@ -575,6 +615,10 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 						}
 					} else {
 						relativePath = join(dirname(displayPrefix), name);
+						// path.join normalizes away ./ prefix, preserve it
+						if (displayPrefix.startsWith("./") && !relativePath.startsWith("./")) {
+							relativePath = `./${relativePath}`;
+						}
 					}
 				} else {
 					// For standalone entries, preserve ~/ if original prefix was ~/
@@ -585,6 +629,7 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 					}
 				}
 
+				relativePath = toDisplayPath(relativePath);
 				const pathValue = isDirectory ? `${relativePath}/` : relativePath;
 				const value = buildCompletionValue(pathValue, {
 					isDirectory,

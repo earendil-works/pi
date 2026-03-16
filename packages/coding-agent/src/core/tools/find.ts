@@ -8,6 +8,10 @@ import { ensureTool } from "../../utils/tools-manager.js";
 import { resolveToCwd } from "./path-utils.js";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.js";
 
+function toPosixPath(value: string): string {
+	return value.split(path.sep).join("/");
+}
+
 const findSchema = Type.Object({
 	pattern: Type.String({
 		description: "Glob pattern to match files, e.g. '*.ts', '**/*.json', or 'src/**/*.spec.ts'",
@@ -102,9 +106,9 @@ export function createFindTool(cwd: string, options?: FindToolOptions): AgentToo
 							// Relativize paths
 							const relativized = results.map((p) => {
 								if (p.startsWith(searchPath)) {
-									return p.slice(searchPath.length + 1);
+									return toPosixPath(p.slice(searchPath.length + 1));
 								}
-								return path.relative(searchPath, p);
+								return toPosixPath(path.relative(searchPath, p));
 							});
 
 							const resultLimitReached = relativized.length >= effectiveLimit;
@@ -228,7 +232,7 @@ export function createFindTool(cwd: string, options?: FindToolOptions): AgentToo
 								relativePath += "/";
 							}
 
-							relativized.push(relativePath);
+							relativized.push(toPosixPath(relativePath));
 						}
 
 						const resultLimitReached = relativized.length >= effectiveLimit;

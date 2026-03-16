@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.58.3] - 2026-03-15
+
+## [0.58.2] - 2026-03-15
+
+## [0.58.1] - 2026-03-14
+
+## [0.58.0] - 2026-03-14
+
+### Added
+
+- Added `beforeToolCall` and `afterToolCall` hooks to `AgentOptions` and `AgentLoopConfig` for preflight blocking and post-execution tool result mutation.
+
+### Changed
+
+- Added configurable tool execution mode to `Agent` and `agentLoop` via `toolExecution: "parallel" | "sequential"`, with `parallel` as the default. Parallel mode preflights tool calls sequentially, executes allowed tools concurrently, and emits final tool results in assistant source order.
+
 ## [0.57.1] - 2026-03-07
 
 ## [0.57.0] - 2026-03-07
