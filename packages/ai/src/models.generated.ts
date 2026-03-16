@@ -2792,6 +2792,23 @@ export const MODELS = {
 		} satisfies Model<"openai-completions">,
 	},
 	openrouter: {
+		"z-ai/glm-5-turbo": {
+			id: "z-ai/glm-5-turbo",
+			name: "Z.ai: GLM 5 Turbo",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0.96,
+				output: 3.1999999999999997,
+				cacheRead: 0.192,
+				cacheWrite: 0,
+			},
+			contextWindow: 202752,
+			maxTokens: 131072,
+		} satisfies Model<"openai-completions">,
 		"x-ai/grok-4.20-beta": {
 			id: "x-ai/grok-4.20-beta",
 			name: "xAI: Grok 4.20 Beta",
@@ -2816,7 +2833,7 @@ export const MODELS = {
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
 			reasoning: true,
-			input: ["text"],
+			input: ["text", "image"],
 			cost: {
 				input: 0,
 				output: 0,
@@ -3165,6 +3182,23 @@ export const MODELS = {
 			},
 			contextWindow: 262144,
 			maxTokens: 65536,
+		} satisfies Model<"openai-completions">,
+		"minimax/minimax-m2.5:free": {
+			id: "minimax/minimax-m2.5:free",
+			name: "MiniMax: MiniMax M2.5 (free)",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 196608,
+			maxTokens: 196608,
 		} satisfies Model<"openai-completions">,
 		"minimax/minimax-m2.5": {
 			id: "minimax/minimax-m2.5",
