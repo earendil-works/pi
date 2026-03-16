@@ -5,6 +5,7 @@ import { type AgentRunner, getOrCreateRunner } from "./agent.js";
 import { downloadChannel } from "./download.js";
 import { createEventsWatcher } from "./events.js";
 import * as log from "./log.js";
+import { getThreadParentTs } from "./reply-mode.js";
 import { parseSandboxArg, type SandboxConfig, validateSandbox } from "./sandbox.js";
 import { type MomHandler, type SlackBot, SlackBot as SlackBotClass, type SlackEvent } from "./slack.js";
 import { ChannelStore } from "./store.js";
@@ -118,6 +119,7 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 	let isWorking = true;
 	const workingIndicator = " ...";
 	let updatePromise = Promise.resolve();
+	const threadParentTs = getThreadParentTs(event, isEvent);
 
 	const user = slack.getUser(event.user);
 
@@ -157,7 +159,9 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 					if (messageTs) {
 						await slack.updateMessage(event.channel, messageTs, displayText);
 					} else {
-						messageTs = await slack.postMessage(event.channel, displayText);
+						messageTs = threadParentTs
+							? await slack.postInThread(event.channel, threadParentTs, displayText)
+							: await slack.postMessage(event.channel, displayText);
 					}
 
 					if (shouldLog && messageTs) {
@@ -187,7 +191,9 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 					if (messageTs) {
 						await slack.updateMessage(event.channel, messageTs, displayText);
 					} else {
-						messageTs = await slack.postMessage(event.channel, displayText);
+						messageTs = threadParentTs
+							? await slack.postInThread(event.channel, threadParentTs, displayText)
+							: await slack.postMessage(event.channel, displayText);
 					}
 				} catch (err) {
 					log.logWarning("Slack replaceMessage error", err instanceof Error ? err.message : String(err));
@@ -199,7 +205,8 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 		respondInThread: async (text: string) => {
 			updatePromise = updatePromise.then(async () => {
 				try {
-					if (messageTs) {
+					const threadAnchor = threadParentTs || messageTs;
+					if (threadAnchor) {
 						// Truncate thread messages if too long (20K limit for safety)
 						const MAX_THREAD_LENGTH = 20000;
 						let threadText = text;
@@ -207,7 +214,7 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 							threadText = `${threadText.substring(0, MAX_THREAD_LENGTH - 50)}\n\n_(truncated)_`;
 						}
 
-						const ts = await slack.postInThread(event.channel, messageTs, threadText);
+						const ts = await slack.postInThread(event.channel, threadAnchor, threadText);
 						threadMessageTs.push(ts);
 					}
 				} catch (err) {
@@ -223,7 +230,9 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 					try {
 						if (!messageTs) {
 							accumulatedText = eventFilename ? `_Starting event: ${eventFilename}_` : "_Thinking_";
-							messageTs = await slack.postMessage(event.channel, accumulatedText + workingIndicator);
+							messageTs = threadParentTs
+								? await slack.postInThread(event.channel, threadParentTs, accumulatedText + workingIndicator)
+								: await slack.postMessage(event.channel, accumulatedText + workingIndicator);
 						}
 					} catch (err) {
 						log.logWarning("Slack setTyping error", err instanceof Error ? err.message : String(err));
