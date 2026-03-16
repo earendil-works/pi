@@ -193,6 +193,7 @@ export interface AssistantMessage {
 	api: Api;
 	provider: Provider;
 	model: string;
+	responseId?: string;
 	usage: Usage;
 	stopReason: StopReason;
 	errorMessage?: string;

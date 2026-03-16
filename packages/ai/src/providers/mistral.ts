@@ -285,6 +285,7 @@ async function consumeChatStream(
 
 	for await (const event of mistralStream) {
 		const chunk = event.data;
+		if (!output.responseId && chunk.id) output.responseId = chunk.id;
 
 		if (chunk.usage) {
 			output.usage.input = chunk.usage.promptTokens || 0;

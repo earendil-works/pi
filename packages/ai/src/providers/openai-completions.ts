@@ -127,6 +127,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			};
 
 			for await (const chunk of openaiStream) {
+				if (!output.responseId && chunk.id) output.responseId = chunk.id;
 				if (chunk.usage) {
 					output.usage = parseChunkUsage(chunk.usage, model);
 				}

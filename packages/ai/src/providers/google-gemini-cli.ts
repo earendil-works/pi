@@ -704,6 +704,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli", GoogleGe
 									},
 								};
 								calculateCost(model, output.usage);
+								if (responseData.responseId) output.responseId = responseData.responseId;
 							}
 						}
 					}
