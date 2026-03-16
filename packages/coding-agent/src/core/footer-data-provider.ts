@@ -77,23 +77,8 @@ export class FooterDataProvider {
 
 	/** Current git branch, null if not in repo, "detached" if detached HEAD */
 	getGitBranch(): string | null {
-		if (this.cachedBranch !== undefined) return this.cachedBranch;
-
-		try {
-			if (!this.gitPaths) {
-				this.cachedBranch = null;
-				return null;
-			}
-			const content = readFileSync(this.gitPaths.headPath, "utf8").trim();
-			if (content.startsWith("ref: refs/heads/")) {
-				const branch = content.slice(16);
-				this.cachedBranch =
-					branch === ".invalid" ? (resolveBranchWithGit(this.gitPaths.repoDir) ?? "detached") : branch;
-			} else {
-				this.cachedBranch = "detached";
-			}
-		} catch {
-			this.cachedBranch = null;
+		if (this.cachedBranch === undefined) {
+			this.cachedBranch = this.resolveGitBranch();
 		}
 		return this.cachedBranch;
 	}
@@ -146,9 +131,32 @@ export class FooterDataProvider {
 		this.branchChangeCallbacks.clear();
 	}
 
-	private invalidateGitBranch(): void {
-		this.cachedBranch = undefined;
+	private notifyBranchChange(): void {
 		for (const cb of this.branchChangeCallbacks) cb();
+	}
+
+	private refreshGitBranch(): void {
+		const nextBranch = this.resolveGitBranch();
+		if (this.cachedBranch !== undefined && this.cachedBranch !== nextBranch) {
+			this.cachedBranch = nextBranch;
+			this.notifyBranchChange();
+			return;
+		}
+		this.cachedBranch = nextBranch;
+	}
+
+	private resolveGitBranch(): string | null {
+		try {
+			if (!this.gitPaths) return null;
+			const content = readFileSync(this.gitPaths.headPath, "utf8").trim();
+			if (content.startsWith("ref: refs/heads/")) {
+				const branch = content.slice(16);
+				return branch === ".invalid" ? (resolveBranchWithGit(this.gitPaths.repoDir) ?? "detached") : branch;
+			}
+			return "detached";
+		} catch {
+			return null;
+		}
 	}
 
 	private setupGitWatcher(): void {
@@ -160,7 +168,7 @@ export class FooterDataProvider {
 		try {
 			this.headWatcher = watch(dirname(this.gitPaths.headPath), (_eventType, filename) => {
 				if (!filename || filename.toString() === "HEAD") {
-					this.invalidateGitBranch();
+					this.refreshGitBranch();
 				}
 			});
 		} catch {
@@ -173,7 +181,7 @@ export class FooterDataProvider {
 		if (existsSync(reftableDir)) {
 			try {
 				this.reftableWatcher = watch(reftableDir, () => {
-					this.invalidateGitBranch();
+					this.refreshGitBranch();
 				});
 			} catch {
 				// Silently fail if we can't watch
