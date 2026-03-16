@@ -867,7 +867,9 @@ export class AgentSession {
 
 		// Handle extension commands first (execute immediately, even during streaming)
 		// Extension commands manage their own LLM interaction via pi.sendMessage()
-		if (expandPromptTemplates && text.startsWith("/")) {
+		// Note: This check runs regardless of expandPromptTemplates so that sendUserMessage()
+		// can properly dispatch slash commands to registered extension handlers.
+		if (text.startsWith("/")) {
 			const handled = await this._tryExecuteExtensionCommand(text);
 			if (handled) {
 				// Extension command executed, no prompt to send
