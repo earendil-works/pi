@@ -891,19 +891,21 @@ function convertTools(tools: Tool[]): OpenAI.Chat.Completions.ChatCompletionTool
 
 function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"]): StopReason {
 	if (reason === null) return "stop";
-	switch (reason) {
+	// Use a wide string type so non-standard finish_reason values from
+	// OpenAI-compatible endpoints don't cause type errors.
+	const r = reason as string;
+	switch (r) {
 		case "stop":
 			return "stop";
 		case "length":
+		case "model_context_window_exceeded":
 			return "length";
 		case "function_call":
 		case "tool_calls":
 			return "toolUse";
 		case "content_filter":
-			return "error";
+		case "network_error":
 		default:
-			// Non-standard finish_reason values (e.g. "model_context_window_exceeded"
-			// from GLM-5) are treated as context-length limits.
-			return "length";
+			return "error";
 	}
 }
