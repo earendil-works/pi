@@ -39,6 +39,8 @@ export function detectInstallMethod(): InstallMethod {
 	if (resolvedPath.includes("/yarn/") || resolvedPath.includes("/.yarn/") || resolvedPath.includes("\\yarn\\")) {
 		return "yarn";
 	}
+	// Check bun runtime BEFORE checking for node_modules path, since bun installations
+	// also contain "node_modules" in their path and would otherwise be detected as npm
 	if (isBunRuntime) {
 		return "bun";
 	}
