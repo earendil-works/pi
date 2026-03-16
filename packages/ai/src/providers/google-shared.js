@@ -163,10 +163,9 @@ export function mapStopReason(reason) {
 		case FinishReason.IMAGE_SAFETY:
 		case FinishReason.IMAGE_PROHIBITED_CONTENT:
 			return "error";
-		default: {
-			const _exhaustive = reason;
-			throw new Error(`Unhandled stop reason: ${_exhaustive}`);
-		}
+		default:
+			// Unknown finish reasons treated as errors.
+			return "error";
 	}
 }
 /**

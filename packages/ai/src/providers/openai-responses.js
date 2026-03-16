@@ -899,10 +899,9 @@ function mapStopReason(status) {
 		case "in_progress":
 		case "queued":
 			return "error";
-		default: {
-			const _exhaustive = status;
-			throw new Error(`Unhandled stop reason: ${_exhaustive}`);
-		}
+		default:
+			// Non-standard status values are treated as errors.
+			return "error";
 	}
 }
 //# sourceMappingURL=openai-responses.js.map

@@ -755,10 +755,10 @@ function mapStopReason(reason) {
 			return "toolUse";
 		case "content_filter":
 			return "error";
-		default: {
-			const _exhaustive = reason;
-			throw new Error(`Unhandled stop reason: ${_exhaustive}`);
-		}
+		default:
+			// Non-standard finish_reason values (e.g. "model_context_window_exceeded"
+			// from GLM-5) are treated as context-length limits.
+			return "length";
 	}
 }
 //# sourceMappingURL=openai-completions.js.map
