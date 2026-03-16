@@ -1,7 +1,16 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "paths": {
+      "@mariozechner/pi-ai": ["../ai/src/index.ts"],
+      "@mariozechner/pi-ai/*": ["../ai/src/*"],
+      "@mariozechner/pi-agent-core": ["../agent/src/index.ts"],
+      "@mariozechner/pi-agent-core/*": ["../agent/src/*"],
+      "@mariozechner/pi-tui": ["../tui/src/index.ts"],
+      "@mariozechner/pi-tui/*": ["../tui/src/*"]
+    }
   },
   "include": ["src/**/*"]
 }

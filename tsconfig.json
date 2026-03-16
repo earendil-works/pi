@@ -6,6 +6,7 @@
 			"*": ["./*"],
 			"@mariozechner/pi-ai": ["./packages/ai/src/index.ts"],
 			"@mariozechner/pi-ai/oauth": ["./packages/ai/src/oauth.ts"],
+			"@mariozechner/pi-ai/bedrock-provider": ["./packages/ai/src/bedrock-provider.ts"],
 			"@mariozechner/pi-ai/*": ["./packages/ai/src/*"],
 			"@mariozechner/pi-ai/dist/*": ["./packages/ai/src/*"],
 			"@mariozechner/pi-agent-core": ["./packages/agent/src/index.ts"],
