@@ -66,12 +66,26 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
+			const openWithCode = async (file: string) => {
+				if (process.platform === "win32") {
+					return pi.exec("cmd", ["/d", "/s", "/c", "code", "-g", file], { cwd: ctx.cwd });
+				}
+				return pi.exec("code", ["-g", file], { cwd: ctx.cwd });
+			};
+
 			const openSelected = async (fileInfo: FileInfo): Promise<void> => {
 				try {
 					// Open in VS Code diff view.
 					// For untracked files, git difftool won't work, so fall back to just opening the file.
 					if (fileInfo.status === "?") {
-						await pi.exec("code", ["-g", fileInfo.file], { cwd: ctx.cwd });
+						const openResult = await openWithCode(fileInfo.file);
+						if (openResult.code !== 0) {
+							const openStderr = openResult.stderr.trim();
+							ctx.ui.notify(
+								`Failed to open ${fileInfo.file} (exit ${openResult.code})${openStderr ? `: ${openStderr}` : ""}`,
+								"error",
+							);
+						}
 						return;
 					}
 
@@ -79,7 +93,24 @@ export default function (pi: ExtensionAPI) {
 						cwd: ctx.cwd,
 					});
 					if (diffResult.code !== 0) {
-						await pi.exec("code", ["-g", fileInfo.file], { cwd: ctx.cwd });
+						const diffStderr = diffResult.stderr.trim();
+						ctx.ui.notify(
+							`Failed to show diff with vscode for ${fileInfo.file} (exit ${diffResult.code})${diffStderr ? `: ${diffStderr}` : ""}`,
+							"error",
+						);
+						ctx.ui.notify(
+							"Troubleshooting: check git difftool config (e.g. `git config --get difftool.vscode.cmd`).",
+							"info",
+						);
+
+						const openResult = await openWithCode(fileInfo.file);
+						if (openResult.code !== 0) {
+							const openStderr = openResult.stderr.trim();
+							ctx.ui.notify(
+								`Failed to open ${fileInfo.file} (exit ${openResult.code})${openStderr ? `: ${openStderr}` : ""}`,
+								"error",
+							);
+						}
 					}
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);
