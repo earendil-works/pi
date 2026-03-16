@@ -29,6 +29,13 @@ function createPlainReftableRepo(tempDir: string): string {
 	return repoDir;
 }
 
+function createPlainRepo(tempDir: string): string {
+	const repoDir = join(tempDir, "repo");
+	mkdirSync(join(repoDir, ".git"), { recursive: true });
+	writeFileSync(join(repoDir, ".git", "HEAD"), "ref: refs/heads/main\n");
+	return repoDir;
+}
+
 function createReftableWorktree(tempDir: string): WorktreeFixture {
 	const repoDir = join(tempDir, "repo");
 	const commonGitDir = join(repoDir, ".git");
@@ -48,6 +55,16 @@ function createReftableWorktree(tempDir: string): WorktreeFixture {
 	return { worktreeDir, reftableDir };
 }
 
+async function waitFor(condition: () => boolean, timeoutMs = 2000): Promise<void> {
+	const startedAt = Date.now();
+	while (!condition()) {
+		if (Date.now() - startedAt > timeoutMs) {
+			throw new Error("Timed out waiting for condition");
+		}
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+}
+
 describe("FooterDataProvider reftable branch detection", () => {
 	let originalCwd: string;
 	let tempDir: string;
@@ -63,6 +80,21 @@ describe("FooterDataProvider reftable branch detection", () => {
 		process.chdir(originalCwd);
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("uses HEAD directly in a regular repo from a nested directory", () => {
+		const repoDir = createPlainRepo(tempDir);
+		const nestedDir = join(repoDir, "src", "nested");
+		mkdirSync(nestedDir, { recursive: true });
+		process.chdir(nestedDir);
+
+		const provider = new FooterDataProvider();
+		try {
+			expect(provider.getGitBranch()).toBe("main");
+			expect(vi.mocked(spawnSync)).not.toHaveBeenCalled();
+		} finally {
+			provider.dispose();
 		}
 	});
 
@@ -107,6 +139,27 @@ describe("FooterDataProvider reftable branch detection", () => {
 		const provider = new FooterDataProvider();
 		try {
 			expect(provider.getGitBranch()).toBe("detached");
+		} finally {
+			provider.dispose();
+		}
+	});
+
+	it("does not notify listeners when reftable updates keep the same branch", async () => {
+		const { worktreeDir, reftableDir } = createReftableWorktree(tempDir);
+		process.chdir(worktreeDir);
+
+		const provider = new FooterDataProvider();
+		try {
+			expect(provider.getGitBranch()).toBe("main");
+			vi.mocked(spawnSync).mockClear();
+			const onBranchChange = vi.fn();
+			provider.onBranchChange(onBranchChange);
+
+			writeFileSync(join(reftableDir, "tables.list"), "1\n");
+			await waitFor(() => vi.mocked(spawnSync).mock.calls.length > 0);
+
+			expect(provider.getGitBranch()).toBe("main");
+			expect(onBranchChange).not.toHaveBeenCalled();
 		} finally {
 			provider.dispose();
 		}
