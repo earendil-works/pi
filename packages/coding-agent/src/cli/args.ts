@@ -291,6 +291,10 @@ ${chalk.bold("Environment Variables:")}
   AI_GATEWAY_API_KEY               - Vercel AI Gateway API key
   ZAI_API_KEY                      - ZAI API key
   MISTRAL_API_KEY                  - Mistral API key
+  GIGACHAT_CREDENTIALS             - GigaChat authorization key
+  GIGACHAT_ACCESS_TOKEN            - GigaChat access token (alternative to credentials)
+  GIGACHAT_SCOPE                   - GigaChat OAuth scope (default: GIGACHAT_API_PERS)
+  GIGACHAT_BASE_URL                - GigaChat API base URL override
   MINIMAX_API_KEY                  - MiniMax API key
   OPENCODE_API_KEY                 - OpenCode Zen/OpenCode Go API key
   KIMI_API_KEY                     - Kimi For Coding API key

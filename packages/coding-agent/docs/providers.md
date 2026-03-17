@@ -58,6 +58,7 @@ pi
 | OpenAI | `OPENAI_API_KEY` | `openai` |
 | Google Gemini | `GEMINI_API_KEY` | `google` |
 | Mistral | `MISTRAL_API_KEY` | `mistral` |
+| GigaChat | `GIGACHAT_CREDENTIALS` or `GIGACHAT_ACCESS_TOKEN` | `gigachat` |
 | Groq | `GROQ_API_KEY` | `groq` |
 | Cerebras | `CEREBRAS_API_KEY` | `cerebras` |
 | xAI | `XAI_API_KEY` | `xai` |
@@ -82,6 +83,7 @@ Store credentials in `~/.pi/agent/auth.json`:
   "anthropic": { "type": "api_key", "key": "sk-ant-..." },
   "openai": { "type": "api_key", "key": "sk-..." },
   "google": { "type": "api_key", "key": "..." },
+  "gigachat": { "type": "api_key", "key": "..." },
   "opencode": { "type": "api_key", "key": "..." },
   "opencode-go": { "type": "api_key", "key": "..." }
 }
@@ -171,6 +173,32 @@ export GOOGLE_CLOUD_LOCATION=us-central1
 ```
 
 Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
+
+### GigaChat
+
+Pi supports GigaChat through the official `gigachat` client and native chat completions API.
+
+```bash
+export GIGACHAT_CREDENTIALS=...
+# Optional, defaults to GIGACHAT_API_PERS
+export GIGACHAT_SCOPE=GIGACHAT_API_PERS
+```
+
+If you already have a short-lived access token, you can use:
+
+```bash
+export GIGACHAT_ACCESS_TOKEN=...
+```
+
+Optional:
+
+```bash
+export GIGACHAT_BASE_URL=https://gigachat.devices.sberbank.ru/api/v1
+```
+
+```bash
+pi --provider gigachat --model GigaChat-2-Pro
+```
 
 ## Custom Providers
 

@@ -94,6 +94,8 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "mistral", model: "devstral-medium-latest", label: "mistral-devstral-medium" },
 	// MiniMax
 	{ provider: "minimax", model: "MiniMax-M2.1", label: "minimax-m2.1" },
+	// GigaChat
+	{ provider: "gigachat", model: "GigaChat-2-Pro", label: "gigachat-2-pro" },
 	// OpenCode Zen
 	{ provider: "opencode", model: "big-pickle", label: "zen-big-pickle" },
 	{ provider: "opencode", model: "claude-sonnet-4-5", label: "zen-claude-sonnet-4-5" },

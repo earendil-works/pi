@@ -1436,6 +1436,46 @@ async function generateModels() {
 		}
 	}
 
+	const gigachatModels: Model<"gigachat">[] = [
+		{
+			id: "GigaChat-2-Max",
+			name: "GigaChat 2 Max",
+			api: "gigachat",
+			provider: "gigachat",
+			baseUrl: "https://gigachat.devices.sberbank.ru/api/v1",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 128000,
+			maxTokens: 8192,
+		},
+		{
+			id: "GigaChat-2-Pro",
+			name: "GigaChat 2 Pro",
+			api: "gigachat",
+			provider: "gigachat",
+			baseUrl: "https://gigachat.devices.sberbank.ru/api/v1",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 128000,
+			maxTokens: 8192,
+		},
+		{
+			id: "GigaChat-2",
+			name: "GigaChat 2",
+			api: "gigachat",
+			provider: "gigachat",
+			baseUrl: "https://gigachat.devices.sberbank.ru/api/v1",
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 128000,
+			maxTokens: 8192,
+		},
+	];
+	allModels.push(...gigachatModels);
+
 	const azureOpenAiModels: Model<Api>[] = allModels
 		.filter((model) => model.provider === "openai" && model.api === "openai-responses")
 		.map((model) => ({

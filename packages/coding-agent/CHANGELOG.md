@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added built-in GigaChat provider support, including CLI/env var help text and default model selection
+
 ## [0.58.3] - 2026-03-15
 
 ## [0.58.2] - 2026-03-15

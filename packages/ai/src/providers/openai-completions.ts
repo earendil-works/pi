@@ -638,7 +638,7 @@ export function convertMessages(
 					tool_call_id: toolMsg.toolCallId,
 				};
 				if (compat.requiresToolResultName && toolMsg.toolName) {
-					(toolResultMsg as any).name = toolMsg.toolName;
+					(toolResultMsg as { name?: string }).name = toolMsg.toolName;
 				}
 				params.push(toolResultMsg);
 

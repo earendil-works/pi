@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added built-in GigaChat provider support via the official `gigachat` client and native chat completions API
+
 ## [0.58.3] - 2026-03-15
 
 ## [0.58.2] - 2026-03-15

@@ -54,6 +54,7 @@ Unified LLM API with automatic model discovery, provider configuration, token an
 - **Google**
 - **Vertex AI** (Gemini via Vertex AI)
 - **Mistral**
+- **GigaChat**
 - **Groq**
 - **Cerebras**
 - **xAI**
@@ -932,6 +933,7 @@ In Node.js environments, you can set environment variables to avoid passing API 
 | Google | `GEMINI_API_KEY` |
 | Vertex AI | `GOOGLE_CLOUD_API_KEY` or `GOOGLE_CLOUD_PROJECT` (or `GCLOUD_PROJECT`) + `GOOGLE_CLOUD_LOCATION` + ADC |
 | Mistral | `MISTRAL_API_KEY` |
+| GigaChat | `GIGACHAT_CREDENTIALS` or `GIGACHAT_ACCESS_TOKEN` (optional `GIGACHAT_SCOPE`, `GIGACHAT_BASE_URL`) |
 | Groq | `GROQ_API_KEY` |
 | Cerebras | `CEREBRAS_API_KEY` |
 | xAI | `XAI_API_KEY` |
@@ -985,6 +987,36 @@ import { getEnvApiKey } from '@mariozechner/pi-ai';
 // Check if an API key is set in environment variables
 const key = getEnvApiKey('openai');  // checks OPENAI_API_KEY
 ```
+
+### GigaChat
+
+GigaChat uses the official [`gigachat`](https://www.npmjs.com/package/gigachat) client and its native chat completions API.
+
+Set either:
+
+```bash
+export GIGACHAT_CREDENTIALS=...
+# Optional, defaults to GIGACHAT_API_PERS
+export GIGACHAT_SCOPE=GIGACHAT_API_PERS
+```
+
+or a short-lived access token directly:
+
+```bash
+export GIGACHAT_ACCESS_TOKEN=...
+```
+
+Optional:
+
+```bash
+export GIGACHAT_BASE_URL=https://gigachat.devices.sberbank.ru/api/v1
+```
+
+Built-in models:
+
+- `GigaChat-2`
+- `GigaChat-2-Pro`
+- `GigaChat-2-Max`
 
 ## OAuth Providers
 

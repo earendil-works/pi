@@ -3,6 +3,7 @@ import type { AssistantMessageEventStream } from "./utils/event-stream.js";
 export type { AssistantMessageEventStream } from "./utils/event-stream.js";
 
 export type KnownApi =
+	| "gigachat"
 	| "openai-completions"
 	| "mistral-conversations"
 	| "openai-responses"
@@ -19,6 +20,7 @@ export type Api = KnownApi | (string & {});
 export type KnownProvider =
 	| "amazon-bedrock"
 	| "anthropic"
+	| "gigachat"
 	| "google"
 	| "google-gemini-cli"
 	| "google-antigravity"

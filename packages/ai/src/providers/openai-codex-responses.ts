@@ -489,9 +489,9 @@ function getWebSocketConstructor(): WebSocketConstructor | null {
 
 function headersToRecord(headers: Headers): Record<string, string> {
 	const out: Record<string, string> = {};
-	for (const [key, value] of headers.entries()) {
+	headers.forEach((value, key) => {
 		out[key] = value;
-	}
+	});
 	return out;
 }
 
