@@ -500,7 +500,13 @@ export class AgentSession {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
 
-			// Check for retryable errors first (overloaded, rate limit, server errors)
+			// Check for image-too-large errors first (strip oversized images from history)
+			if (this._isImageTooLargeError(msg)) {
+				const didRecover = this._handleImageTooLargeError(msg);
+				if (didRecover) return; // Recovery was initiated
+			}
+
+			// Check for retryable errors (overloaded, rate limit, server errors)
 			if (this._isRetryableError(msg)) {
 				const didRetry = await this._handleRetryableError(msg);
 				if (didRetry) return; // Retry was initiated, don't proceed to compaction
@@ -2303,6 +2309,64 @@ export class AgentSession {
 	// =========================================================================
 	// Auto-Retry
 	// =========================================================================
+
+	/**
+	 * Check if an error is an image-too-large error from Anthropic API.
+	 * These errors are not retryable but require stripping the oversized image from history.
+	 */
+	private _isImageTooLargeError(message: AssistantMessage): boolean {
+		if (message.stopReason !== "error" || !message.errorMessage) return false;
+		return /image exceeds \d+ MB maximum/i.test(message.errorMessage);
+	}
+
+	/**
+	 * Handle image-too-large errors by stripping the oversized image from message history.
+	 * This prevents infinite loops where the oversized image stays in context.
+	 * @returns true if recovery was successful
+	 */
+	private _handleImageTooLargeError(_message: AssistantMessage): boolean {
+		// Find the tool result with the oversized image and replace it with a text error
+		const messages = this.agent.state.messages;
+		let modified = false;
+
+		for (let i = messages.length - 1; i >= 0; i--) {
+			const msg = messages[i];
+			if (msg.role === "toolResult") {
+				// Check if this tool result contains an image
+				const content = msg.content;
+				if (Array.isArray(content)) {
+					const hasImage = content.some((c) => c.type === "image");
+					if (hasImage) {
+						// Replace image with text error, keep other content
+						const newContent = content.map((c) => {
+							if (c.type === "image") {
+								return { type: "text" as const, text: "[Image removed: exceeds 5MB size limit]" };
+							}
+							return c;
+						});
+						messages[i] = { ...msg, content: newContent };
+						modified = true;
+						break; // Only fix the most recent tool result with an image
+					}
+				}
+			}
+		}
+
+		if (modified) {
+			// Remove the error assistant message so the agent can continue cleanly
+			const lastMsg = messages[messages.length - 1];
+			if (lastMsg?.role === "assistant") {
+				this.agent.replaceMessages(messages.slice(0, -1));
+			}
+			// Trigger a continue to proceed
+			setTimeout(() => {
+				this.agent.continue().catch(() => {});
+			}, 0);
+			return true;
+		}
+
+		return false;
+	}
 
 	/**
 	 * Check if an error is retryable (overloaded, rate limit, server errors).

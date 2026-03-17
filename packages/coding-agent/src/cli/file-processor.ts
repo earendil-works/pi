@@ -57,6 +57,10 @@ export async function processFileArguments(fileArgs: string[], options?: Process
 
 			if (autoResizeImages) {
 				const resized = await resizeImage({ type: "image", data: base64Content, mimeType });
+				if (!resized) {
+					console.error(chalk.red(`Error: Image file exceeds 5MB limit and could not be resized: ${absolutePath}`));
+					process.exit(1);
+				}
 				dimensionNote = formatDimensionNote(resized);
 				attachment = {
 					type: "image",

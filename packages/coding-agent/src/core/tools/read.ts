@@ -107,17 +107,34 @@ export function createReadTool(cwd: string, options?: ReadToolOptions): AgentToo
 								if (autoResizeImages) {
 									// Resize image if needed
 									const resized = await resizeImage({ type: "image", data: base64, mimeType });
-									const dimensionNote = formatDimensionNote(resized);
 
-									let textNote = `Read image file [${resized.mimeType}]`;
-									if (dimensionNote) {
-										textNote += `\n${dimensionNote}`;
+									// Handle case where image couldn't be resized to fit limits
+									if (!resized) {
+										content = [
+											{ type: "text", text: `Error: Image file exceeds 5MB limit and could not be resized: ${path}` },
+										];
+									} else {
+										// Final safety check: ensure resized image is under 5MB
+										const resizedBuffer = Buffer.from(resized.data, "base64");
+										const maxBytes = 5 * 1024 * 1024; // 5MB Anthropic limit
+										if (resizedBuffer.length > maxBytes) {
+											content = [
+												{ type: "text", text: `Error: Image file exceeds 5MB limit even after resize: ${path} (${Math.round(resizedBuffer.length / 1024 / 1024 * 100) / 100}MB)` },
+											];
+										} else {
+											const dimensionNote = formatDimensionNote(resized);
+
+											let textNote = `Read image file [${resized.mimeType}]`;
+											if (dimensionNote) {
+												textNote += `\n${dimensionNote}`;
+											}
+
+											content = [
+												{ type: "text", text: textNote },
+												{ type: "image", data: resized.data, mimeType: resized.mimeType },
+											];
+										}
 									}
-
-									content = [
-										{ type: "text", text: textNote },
-										{ type: "image", data: resized.data, mimeType: resized.mimeType },
-									];
 								} else {
 									const textNote = `Read image file [${mimeType}]`;
 									content = [
