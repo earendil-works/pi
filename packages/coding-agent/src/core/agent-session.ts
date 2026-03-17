@@ -500,6 +500,12 @@ export class AgentSession {
 			const msg = this._lastAssistantMessage;
 			this._lastAssistantMessage = undefined;
 
+			// Check for image-too-large errors first — strip oversized images so the loop can continue
+			if (this._isImageTooLargeError(msg)) {
+				this._handleImageTooLargeError(msg);
+				return;
+			}
+
 			// Check for retryable errors first (overloaded, rate limit, server errors)
 			if (this._isRetryableError(msg)) {
 				const didRetry = await this._handleRetryableError(msg);
@@ -2297,6 +2303,51 @@ export class AgentSession {
 		if (this._extensionRunner && hasBindings) {
 			await this._extensionRunner.emit({ type: "session_start" });
 			await this.extendResourcesFromExtensions("reload");
+		}
+	}
+
+	// =========================================================================
+	// Image Too Large Recovery
+	// =========================================================================
+
+	/**
+	 * Check if an error is caused by an oversized image in tool results.
+	 * These are 400 errors from the API when base64 images exceed size limits.
+	 */
+	private _isImageTooLargeError(message: AssistantMessage): boolean {
+		if (message.stopReason !== "error" || !message.errorMessage) return false;
+		return /image exceeds \d+ MB|image.source.base64|payload too large|request too large/i.test(message.errorMessage);
+	}
+
+	/**
+	 * Handle image-too-large errors by stripping oversized image blocks from message history.
+	 * Replaces image blocks with text explanations so the agent can continue cleanly.
+	 */
+	private _handleImageTooLargeError(message: AssistantMessage): void {
+		const messages = this.agent.state.messages;
+
+		// Strip oversized image blocks from tool results in message history
+		for (const msg of messages) {
+			if (msg.role !== "user" || !Array.isArray(msg.content)) continue;
+			for (let i = 0; i < msg.content.length; i++) {
+				const block = msg.content[i];
+				if (block.type === "image") {
+					const imageBlock = block as ImageContent;
+					const sizeBytes = Buffer.from(imageBlock.data, "base64").length;
+					if (sizeBytes > 5 * 1024 * 1024) {
+						// Replace with text explanation
+						(msg.content as (TextContent | ImageContent)[])[i] = {
+							type: "text",
+							text: `[Image removed: exceeded 5MB API limit (${(sizeBytes / 1024 / 1024).toFixed(1)}MB). Use bash to inspect the file directly.]`,
+						};
+					}
+				}
+			}
+		}
+
+		// Remove the error assistant message so the agent can continue
+		if (messages.length > 0 && messages[messages.length - 1] === message) {
+			messages.pop();
 		}
 	}
 

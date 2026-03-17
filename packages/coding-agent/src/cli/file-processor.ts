@@ -57,6 +57,11 @@ export async function processFileArguments(fileArgs: string[], options?: Process
 
 			if (autoResizeImages) {
 				const resized = await resizeImage({ type: "image", data: base64Content, mimeType });
+				if (!resized) {
+					// Image too large and cannot be resized — include as text error
+					text += `<file name="${absolutePath}">[Error: Image exceeds maximum size limit and could not be resized]</file>\n`;
+					continue;
+				}
 				dimensionNote = formatDimensionNote(resized);
 				attachment = {
 					type: "image",

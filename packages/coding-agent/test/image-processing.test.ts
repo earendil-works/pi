@@ -52,12 +52,13 @@ describe("resizeImage", () => {
 			{ maxWidth: 100, maxHeight: 100, maxBytes: 1024 * 1024 },
 		);
 
-		expect(result.wasResized).toBe(false);
-		expect(result.data).toBe(TINY_PNG);
-		expect(result.originalWidth).toBe(2);
-		expect(result.originalHeight).toBe(2);
-		expect(result.width).toBe(2);
-		expect(result.height).toBe(2);
+		expect(result).not.toBeNull();
+		expect(result!.wasResized).toBe(false);
+		expect(result!.data).toBe(TINY_PNG);
+		expect(result!.originalWidth).toBe(2);
+		expect(result!.originalHeight).toBe(2);
+		expect(result!.width).toBe(2);
+		expect(result!.height).toBe(2);
 	});
 
 	it("should resize image exceeding dimension limits", async () => {
@@ -66,26 +67,38 @@ describe("resizeImage", () => {
 			{ maxWidth: 50, maxHeight: 50, maxBytes: 1024 * 1024 },
 		);
 
-		expect(result.wasResized).toBe(true);
-		expect(result.originalWidth).toBe(100);
-		expect(result.originalHeight).toBe(100);
-		expect(result.width).toBeLessThanOrEqual(50);
-		expect(result.height).toBeLessThanOrEqual(50);
+		expect(result).not.toBeNull();
+		expect(result!.wasResized).toBe(true);
+		expect(result!.originalWidth).toBe(100);
+		expect(result!.originalHeight).toBe(100);
+		expect(result!.width).toBeLessThanOrEqual(50);
+		expect(result!.height).toBeLessThanOrEqual(50);
 	});
 
 	it("should resize image exceeding byte limit", async () => {
 		const originalBuffer = Buffer.from(LARGE_PNG_200x200, "base64");
 		const originalSize = originalBuffer.length;
 
-		// Set maxBytes to less than the original image size
+		// Set maxBytes below original but achievable with resize (90% of original)
 		const result = await resizeImage(
 			{ type: "image", data: LARGE_PNG_200x200, mimeType: "image/png" },
-			{ maxWidth: 2000, maxHeight: 2000, maxBytes: Math.floor(originalSize / 2) },
+			{ maxWidth: 2000, maxHeight: 2000, maxBytes: Math.floor(originalSize * 0.9) },
 		);
 
 		// Should have tried to reduce size
-		const resultBuffer = Buffer.from(result.data, "base64");
+		expect(result).not.toBeNull();
+		const resultBuffer = Buffer.from(result!.data, "base64");
 		expect(resultBuffer.length).toBeLessThan(originalSize);
+	});
+
+	it("should return null when image cannot be resized below maxBytes", async () => {
+		// Set impossibly small maxBytes that can never be satisfied
+		const result = await resizeImage(
+			{ type: "image", data: LARGE_PNG_200x200, mimeType: "image/png" },
+			{ maxWidth: 2000, maxHeight: 2000, maxBytes: 1 },
+		);
+
+		expect(result).toBeNull();
 	});
 
 	it("should handle JPEG input", async () => {
@@ -94,9 +107,10 @@ describe("resizeImage", () => {
 			{ maxWidth: 100, maxHeight: 100, maxBytes: 1024 * 1024 },
 		);
 
-		expect(result.wasResized).toBe(false);
-		expect(result.originalWidth).toBe(2);
-		expect(result.originalHeight).toBe(2);
+		expect(result).not.toBeNull();
+		expect(result!.wasResized).toBe(false);
+		expect(result!.originalWidth).toBe(2);
+		expect(result!.originalHeight).toBe(2);
 	});
 });
 

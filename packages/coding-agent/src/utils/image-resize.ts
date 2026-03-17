@@ -50,13 +50,16 @@ function pickSmaller(
  * 3. If still too large, try JPEG with decreasing quality
  * 4. If still too large, progressively reduce dimensions
  */
-export async function resizeImage(img: ImageContent, options?: ImageResizeOptions): Promise<ResizedImage> {
+export async function resizeImage(img: ImageContent, options?: ImageResizeOptions): Promise<ResizedImage | null> {
 	const opts = { ...DEFAULT_OPTIONS, ...options };
 	const inputBuffer = Buffer.from(img.data, "base64");
 
 	const photon = await loadPhoton();
 	if (!photon) {
-		// Photon not available, return original image
+		// Photon not available — return null if original exceeds maxBytes
+		if (inputBuffer.length > opts.maxBytes) {
+			return null;
+		}
 		return {
 			data: img.data,
 			mimeType: img.mimeType,
@@ -193,7 +196,10 @@ export async function resizeImage(img: ImageContent, options?: ImageResizeOption
 			}
 		}
 
-		// Last resort: return smallest version we produced
+		// Last resort: return null if still exceeds maxBytes
+		if (best.buffer.length > opts.maxBytes) {
+			return null;
+		}
 		return {
 			data: Buffer.from(best.buffer).toString("base64"),
 			mimeType: best.mimeType,
@@ -204,7 +210,10 @@ export async function resizeImage(img: ImageContent, options?: ImageResizeOption
 			wasResized: true,
 		};
 	} catch {
-		// Failed to load image
+		// Failed to load image — return null if original exceeds maxBytes
+		if (inputBuffer.length > opts.maxBytes) {
+			return null;
+		}
 		return {
 			data: img.data,
 			mimeType: img.mimeType,

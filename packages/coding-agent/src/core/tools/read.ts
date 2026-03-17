@@ -107,17 +107,28 @@ export function createReadTool(cwd: string, options?: ReadToolOptions): AgentToo
 								if (autoResizeImages) {
 									// Resize image if needed
 									const resized = await resizeImage({ type: "image", data: base64, mimeType });
-									const dimensionNote = formatDimensionNote(resized);
 
-									let textNote = `Read image file [${resized.mimeType}]`;
-									if (dimensionNote) {
-										textNote += `\n${dimensionNote}`;
+									if (!resized) {
+										// Image too large and cannot be resized below limit
+										content = [
+											{
+												type: "text",
+												text: `Error: Image ${absolutePath} exceeds the maximum size limit and could not be resized. The file is too large to include as an image.`,
+											},
+										];
+									} else {
+										const dimensionNote = formatDimensionNote(resized);
+
+										let textNote = `Read image file [${resized.mimeType}]`;
+										if (dimensionNote) {
+											textNote += `\n${dimensionNote}`;
+										}
+
+										content = [
+											{ type: "text", text: textNote },
+											{ type: "image", data: resized.data, mimeType: resized.mimeType },
+										];
 									}
-
-									content = [
-										{ type: "text", text: textNote },
-										{ type: "image", data: resized.data, mimeType: resized.mimeType },
-									];
 								} else {
 									const textNote = `Read image file [${mimeType}]`;
 									content = [
