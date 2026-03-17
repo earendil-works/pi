@@ -73,7 +73,7 @@ export function transformMessages<TApi extends Api>(
 						delete (normalizedToolCall as { thoughtSignature?: string }).thoughtSignature;
 					}
 
-					if (!isSameModel && normalizeToolCallId) {
+					if (normalizeToolCallId) {
 						const normalizedId = normalizeToolCallId(toolCall.id, model, assistantMsg);
 						if (normalizedId !== toolCall.id) {
 							toolCallIdMap.set(toolCall.id, normalizedId);
