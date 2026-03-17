@@ -2580,7 +2580,7 @@ export const MODELS = {
 				cacheRead: 0,
 				cacheWrite: 0,
 			},
-			contextWindow: 128000,
+			contextWindow: 1000000,
 			maxTokens: 64000,
 		} satisfies Model<"anthropic-messages">,
 		"claude-sonnet-4": {
@@ -2634,7 +2634,7 @@ export const MODELS = {
 				cacheRead: 0,
 				cacheWrite: 0,
 			},
-			contextWindow: 128000,
+			contextWindow: 1000000,
 			maxTokens: 32000,
 		} satisfies Model<"anthropic-messages">,
 		"gemini-2.5-pro": {
@@ -3393,7 +3393,7 @@ export const MODELS = {
 				cacheRead: 0.5,
 				cacheWrite: 6.25,
 			},
-			contextWindow: 200000,
+			contextWindow: 1000000,
 			maxTokens: 128000,
 		} satisfies Model<"google-gemini-cli">,
 		"claude-sonnet-4-5": {
@@ -3444,7 +3444,7 @@ export const MODELS = {
 				cacheRead: 0.3,
 				cacheWrite: 3.75,
 			},
-			contextWindow: 200000,
+			contextWindow: 1000000,
 			maxTokens: 64000,
 		} satisfies Model<"google-gemini-cli">,
 		"gemini-3-flash": {
