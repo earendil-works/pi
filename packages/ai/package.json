@@ -1,6 +1,6 @@
 {
 	"name": "@mariozechner/pi-ai",
-	"version": "0.58.4",
+	"version": "0.59.0",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -10,13 +10,49 @@
 			"types": "./dist/index.d.ts",
 			"import": "./dist/index.js"
 		},
+		"./anthropic": {
+			"types": "./dist/providers/anthropic.d.ts",
+			"import": "./dist/providers/anthropic.js"
+		},
+		"./azure-openai-responses": {
+			"types": "./dist/providers/azure-openai-responses.d.ts",
+			"import": "./dist/providers/azure-openai-responses.js"
+		},
+		"./google": {
+			"types": "./dist/providers/google.d.ts",
+			"import": "./dist/providers/google.js"
+		},
+		"./google-gemini-cli": {
+			"types": "./dist/providers/google-gemini-cli.d.ts",
+			"import": "./dist/providers/google-gemini-cli.js"
+		},
+		"./google-vertex": {
+			"types": "./dist/providers/google-vertex.d.ts",
+			"import": "./dist/providers/google-vertex.js"
+		},
+		"./mistral": {
+			"types": "./dist/providers/mistral.d.ts",
+			"import": "./dist/providers/mistral.js"
+		},
+		"./openai-codex-responses": {
+			"types": "./dist/providers/openai-codex-responses.d.ts",
+			"import": "./dist/providers/openai-codex-responses.js"
+		},
+		"./openai-completions": {
+			"types": "./dist/providers/openai-completions.d.ts",
+			"import": "./dist/providers/openai-completions.js"
+		},
+		"./openai-responses": {
+			"types": "./dist/providers/openai-responses.d.ts",
+			"import": "./dist/providers/openai-responses.js"
+		},
 		"./oauth": {
 			"types": "./dist/oauth.d.ts",
 			"import": "./dist/oauth.js"
 		},
 		"./bedrock-provider": {
-			"types": "./bedrock-provider.d.ts",
-			"import": "./bedrock-provider.js"
+			"types": "./dist/bedrock-provider.d.ts",
+			"import": "./dist/bedrock-provider.js"
 		}
 	},
 	"bin": {
@@ -24,8 +60,6 @@
 	},
 	"files": [
 		"dist",
-		"bedrock-provider.js",
-		"bedrock-provider.d.ts",
 		"README.md"
 	],
 	"scripts": {

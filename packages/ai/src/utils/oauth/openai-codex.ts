@@ -17,6 +17,7 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 	});
 }
 
+import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.js";
 import { generatePKCE } from "./pkce.js";
 import type { OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, OAuthProviderInterface } from "./types.js";
 
@@ -26,18 +27,6 @@ const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const REDIRECT_URI = "http://localhost:1455/auth/callback";
 const SCOPE = "openid profile email offline_access";
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
-
-const SUCCESS_HTML = `<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Authentication successful</title>
-</head>
-<body>
-  <p>Authentication successful. Return to your terminal to continue.</p>
-</body>
-</html>`;
 
 type TokenSuccess = { type: "success"; access: string; refresh: string; expires: number };
 type TokenFailure = { type: "failed" };
@@ -213,34 +202,47 @@ function startLocalOAuthServer(state: string): Promise<OAuthServerInfo> {
 	if (!_http) {
 		throw new Error("OpenAI Codex OAuth is only available in Node.js environments");
 	}
-	let lastCode: string | null = null;
-	let cancelled = false;
+
+	let settleWait: ((value: { code: string } | null) => void) | undefined;
+	const waitForCodePromise = new Promise<{ code: string } | null>((resolve) => {
+		let settled = false;
+		settleWait = (value) => {
+			if (settled) return;
+			settled = true;
+			resolve(value);
+		};
+	});
+
 	const server = _http.createServer((req, res) => {
 		try {
 			const url = new URL(req.url || "", "http://localhost");
 			if (url.pathname !== "/auth/callback") {
 				res.statusCode = 404;
-				res.end("Not found");
+				res.setHeader("Content-Type", "text/html; charset=utf-8");
+				res.end(oauthErrorHtml("Callback route not found."));
 				return;
 			}
 			if (url.searchParams.get("state") !== state) {
 				res.statusCode = 400;
-				res.end("State mismatch");
+				res.setHeader("Content-Type", "text/html; charset=utf-8");
+				res.end(oauthErrorHtml("State mismatch."));
 				return;
 			}
 			const code = url.searchParams.get("code");
 			if (!code) {
 				res.statusCode = 400;
-				res.end("Missing authorization code");
+				res.setHeader("Content-Type", "text/html; charset=utf-8");
+				res.end(oauthErrorHtml("Missing authorization code."));
 				return;
 			}
 			res.statusCode = 200;
 			res.setHeader("Content-Type", "text/html; charset=utf-8");
-			res.end(SUCCESS_HTML);
-			lastCode = code;
+			res.end(oauthSuccessHtml("OpenAI authentication completed. You can close this window."));
+			settleWait?.({ code });
 		} catch {
 			res.statusCode = 500;
-			res.end("Internal error");
+			res.setHeader("Content-Type", "text/html; charset=utf-8");
+			res.end(oauthErrorHtml("Internal error while processing OAuth callback."));
 		}
 	});
 
@@ -250,17 +252,9 @@ function startLocalOAuthServer(state: string): Promise<OAuthServerInfo> {
 				resolve({
 					close: () => server.close(),
 					cancelWait: () => {
-						cancelled = true;
+						settleWait?.(null);
 					},
-					waitForCode: async () => {
-						const sleep = () => new Promise((r) => setTimeout(r, 100));
-						for (let i = 0; i < 600; i += 1) {
-							if (lastCode) return { code: lastCode };
-							if (cancelled) return null;
-							await sleep();
-						}
-						return null;
-					},
+					waitForCode: () => waitForCodePromise,
 				});
 			})
 			.on("error", (err: NodeJS.ErrnoException) => {
@@ -269,6 +263,7 @@ function startLocalOAuthServer(state: string): Promise<OAuthServerInfo> {
 					err.code,
 					") Falling back to manual paste.",
 				);
+				settleWait?.(null);
 				resolve({
 					close: () => {
 						try {

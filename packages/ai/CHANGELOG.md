@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-03-17
+
+### Added
+
+- Added `client` injection support to `AnthropicOptions`, allowing callers to provide a pre-built Anthropic-compatible client instead of constructing one internally.
+
+### Changed
+
+- Lazy-load built-in provider modules and root provider wrappers so importing `@mariozechner/pi-ai` no longer eagerly loads provider SDKs, significantly reducing base startup cost without changing dependency installation footprint ([#2297](https://github.com/badlogic/pi-mono/issues/2297))
+
+### Fixed
+
+- Added provider-specific `responseId` support on `AssistantMessage` for providers that expose upstream response or message identifiers, including Anthropic, OpenAI, Google, Gemini CLI, and Mistral, and added end-to-end coverage for supported OAuth and API key providers ([#2245](https://github.com/badlogic/pi-mono/issues/2245))
+- Fixed Claude 4.6 context window overrides in generated model metadata so build-time catalogs reflect the intended values ([#2286](https://github.com/badlogic/pi-mono/issues/2286))
+
 ## [0.58.4] - 2026-03-16
 
 ## [0.58.3] - 2026-03-15

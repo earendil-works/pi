@@ -112,10 +112,12 @@ function isAppAction(action: string): action is AppAction {
  */
 export class KeybindingsManager {
 	private config: KeybindingsConfig;
+	private configPath: string | undefined;
 	private appActionToKeys: Map<AppAction, KeyId[]>;
 
-	private constructor(config: KeybindingsConfig) {
+	private constructor(config: KeybindingsConfig, configPath?: string) {
 		this.config = config;
+		this.configPath = configPath;
 		this.appActionToKeys = new Map();
 		this.buildMaps();
 	}
@@ -126,18 +128,8 @@ export class KeybindingsManager {
 	static create(agentDir: string = getAgentDir()): KeybindingsManager {
 		const configPath = join(agentDir, "keybindings.json");
 		const config = KeybindingsManager.loadFromFile(configPath);
-		const manager = new KeybindingsManager(config);
-
-		// Set up editor keybindings globally
-		// Include both editor actions and expandTools (shared between app and editor)
-		const editorConfig: EditorKeybindingsConfig = {};
-		for (const [action, keys] of Object.entries(config)) {
-			if (!isAppAction(action) || action === "expandTools") {
-				editorConfig[action as EditorAction] = keys;
-			}
-		}
-		setEditorKeybindings(new EditorKeybindingsManager(editorConfig));
-
+		const manager = new KeybindingsManager(config, configPath);
+		manager.applyEditorKeybindings();
 		return manager;
 	}
 
@@ -146,6 +138,13 @@ export class KeybindingsManager {
 	 */
 	static inMemory(config: KeybindingsConfig = {}): KeybindingsManager {
 		return new KeybindingsManager(config);
+	}
+
+	reload(): void {
+		if (!this.configPath) return;
+		this.config = KeybindingsManager.loadFromFile(this.configPath);
+		this.buildMaps();
+		this.applyEditorKeybindings();
 	}
 
 	private static loadFromFile(path: string): KeybindingsConfig {
@@ -172,6 +171,16 @@ export class KeybindingsManager {
 			const keyArray = Array.isArray(keys) ? keys : [keys];
 			this.appActionToKeys.set(action, keyArray);
 		}
+	}
+
+	private applyEditorKeybindings(): void {
+		const editorConfig: EditorKeybindingsConfig = {};
+		for (const [action, keys] of Object.entries(this.config)) {
+			if (!isAppAction(action) || action === "expandTools") {
+				editorConfig[action as EditorAction] = keys;
+			}
+		}
+		setEditorKeybindings(new EditorKeybindingsManager(editorConfig));
 	}
 
 	/**

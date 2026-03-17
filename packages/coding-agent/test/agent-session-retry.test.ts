@@ -168,4 +168,62 @@ describe("AgentSession retry", () => {
 		expect(created.getCallCount()).toBe(2);
 		expect(created.session.isRetrying).toBe(false);
 	});
+
+	it("retries provider network_error failures", async () => {
+		const created = createSession({ failCount: 0 });
+		let callCount = 0;
+		const streamFn = () => {
+			callCount++;
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callCount === 1) {
+					const msg = createAssistantMessage("", {
+						stopReason: "error",
+						errorMessage: "Provider finish_reason: network_error",
+					});
+					stream.push({ type: "start", partial: msg });
+					stream.push({ type: "error", reason: "error", error: msg });
+					return;
+				}
+
+				const msg = createAssistantMessage("Recovered after retry");
+				stream.push({ type: "start", partial: msg });
+				stream.push({ type: "done", reason: "stop", message: msg });
+			});
+			return stream;
+		};
+		created.session.dispose();
+
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const agent = new Agent({
+			getApiKey: () => "test-key",
+			initialState: { model, systemPrompt: "Test", tools: [] },
+			streamFn,
+		});
+		const sessionManager = SessionManager.inMemory();
+		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+		const modelRegistry = new ModelRegistry(authStorage, tempDir);
+		authStorage.setRuntimeApiKey("anthropic", "test-key");
+		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } });
+		session = new AgentSession({
+			agent,
+			sessionManager,
+			settingsManager,
+			cwd: tempDir,
+			modelRegistry,
+			resourceLoader: createTestResourceLoader(),
+		});
+
+		const events: string[] = [];
+		session.subscribe((event) => {
+			if (event.type === "auto_retry_start") events.push(`start:${event.attempt}`);
+			if (event.type === "auto_retry_end") events.push(`end:success=${event.success}`);
+		});
+
+		await session.prompt("Test");
+
+		expect(callCount).toBe(2);
+		expect(events).toEqual(["start:1", "end:success=true"]);
+	});
 });

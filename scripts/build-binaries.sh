@@ -107,9 +107,9 @@ for platform in "${PLATFORMS[@]}"; do
     # call site has a try/catch fallback. For Windows builds, we copy the
     # appropriate .node file alongside the binary below.
     if [[ "$platform" == "windows-x64" ]]; then
-        bun build --compile --external koffi --target=bun-$platform ./dist/cli.js --outfile binaries/$platform/pi.exe
+        bun build --compile --external koffi --target=bun-$platform ./dist/bun/cli.js --outfile binaries/$platform/pi.exe
     else
-        bun build --compile --external koffi --target=bun-$platform ./dist/cli.js --outfile binaries/$platform/pi
+        bun build --compile --external koffi --target=bun-$platform ./dist/bun/cli.js --outfile binaries/$platform/pi
     fi
 done
 

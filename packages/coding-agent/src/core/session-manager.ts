@@ -565,12 +565,10 @@ async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 		let name: string | undefined;
 
 		for (const entry of entries) {
-			// Extract session name (use latest)
+			// Extract session name (use latest, including explicit clears)
 			if (entry.type === "session_info") {
 				const infoEntry = entry as SessionInfoEntry;
-				if (infoEntry.name) {
-					name = infoEntry.name.trim();
-				}
+				name = infoEntry.name?.trim() || undefined;
 			}
 
 			if (entry.type !== "message") continue;
@@ -913,12 +911,13 @@ export class SessionManager {
 
 	/** Get the current session name from the latest session_info entry, if any. */
 	getSessionName(): string | undefined {
-		// Walk entries in reverse to find the latest session_info with a name
+		// Walk entries in reverse to find the latest session_info entry.
+		// Empty names explicitly clear the session title.
 		const entries = this.getEntries();
 		for (let i = entries.length - 1; i >= 0; i--) {
 			const entry = entries[i];
-			if (entry.type === "session_info" && entry.name) {
-				return entry.name;
+			if (entry.type === "session_info") {
+				return entry.name?.trim() || undefined;
 			}
 		}
 		return undefined;

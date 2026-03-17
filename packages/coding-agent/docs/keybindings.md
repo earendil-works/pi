@@ -2,6 +2,8 @@
 
 All keyboard shortcuts can be customized via `~/.pi/agent/keybindings.json`. Each action can be bound to one or more keys.
 
+After editing `keybindings.json`, run `/reload` in pi to apply the changes without restarting the session.
+
 ## Key Format
 
 `modifier+key` where modifiers are `ctrl`, `shift`, `alt` (combinable) and keys are:

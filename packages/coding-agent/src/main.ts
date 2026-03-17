@@ -11,6 +11,7 @@ import { createInterface } from "readline";
 import { type Args, parseArgs, printHelp } from "./cli/args.js";
 import { selectConfig } from "./cli/config-selector.js";
 import { processFileArguments } from "./cli/file-processor.js";
+import { buildInitialMessage } from "./cli/initial-message.js";
 import { listModels } from "./cli/list-models.js";
 import { selectSession } from "./cli/session-picker.js";
 import { APP_NAME, getAgentDir, getModelsPath, VERSION } from "./config.js";
@@ -311,28 +312,22 @@ async function handlePackageCommand(args: string[]): Promise<boolean> {
 async function prepareInitialMessage(
 	parsed: Args,
 	autoResizeImages: boolean,
+	stdinContent?: string,
 ): Promise<{
 	initialMessage?: string;
 	initialImages?: ImageContent[];
 }> {
 	if (parsed.fileArgs.length === 0) {
-		return {};
+		return buildInitialMessage({ parsed, stdinContent });
 	}
 
 	const { text, images } = await processFileArguments(parsed.fileArgs, { autoResizeImages });
-
-	let initialMessage: string;
-	if (parsed.messages.length > 0) {
-		initialMessage = text + parsed.messages[0];
-		parsed.messages.shift();
-	} else {
-		initialMessage = text;
-	}
-
-	return {
-		initialMessage,
-		initialImages: images.length > 0 ? images : undefined,
-	};
+	return buildInitialMessage({
+		parsed,
+		fileText: text,
+		fileImages: images,
+		stdinContent,
+	});
 }
 
 /** Result from resolving a session argument */
@@ -675,13 +670,12 @@ export async function main(args: string[]) {
 	}
 
 	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
+	let stdinContent: string | undefined;
 	if (parsed.mode !== "rpc") {
-		const stdinContent = await readPipedStdin();
+		stdinContent = await readPipedStdin();
 		if (stdinContent !== undefined) {
 			// Force print mode since interactive mode requires a TTY for keyboard input
 			parsed.print = true;
-			// Prepend stdin content to messages
-			parsed.messages.unshift(stdinContent);
 		}
 	}
 
@@ -704,7 +698,11 @@ export async function main(args: string[]) {
 		process.exit(1);
 	}
 
-	const { initialMessage, initialImages } = await prepareInitialMessage(parsed, settingsManager.getImageAutoResize());
+	const { initialMessage, initialImages } = await prepareInitialMessage(
+		parsed,
+		settingsManager.getImageAutoResize(),
+		stdinContent,
+	);
 	const isInteractive = !parsed.print && parsed.mode === undefined;
 	const mode = parsed.mode || "text";
 	initTheme(settingsManager.getTheme(), isInteractive);

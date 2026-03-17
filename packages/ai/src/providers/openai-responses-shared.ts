@@ -285,7 +285,9 @@ export async function processResponsesStream<TApi extends Api>(
 	const blockIndex = () => blocks.length - 1;
 
 	for await (const event of openaiStream) {
-		if (event.type === "response.output_item.added") {
+		if (event.type === "response.created") {
+			output.responseId = event.response.id;
+		} else if (event.type === "response.output_item.added") {
 			const item = event.item;
 			if (item.type === "reasoning") {
 				currentItem = item;
@@ -442,6 +444,9 @@ export async function processResponsesStream<TApi extends Api>(
 			}
 		} else if (event.type === "response.completed") {
 			const response = event.response;
+			if (response?.id) {
+				output.responseId = response.id;
+			}
 			if (response?.usage) {
 				const cachedTokens = response.usage.input_tokens_details?.cached_tokens || 0;
 				output.usage = {

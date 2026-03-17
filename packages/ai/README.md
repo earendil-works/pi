@@ -519,6 +519,8 @@ Every `AssistantMessage` includes a `stopReason` field that indicates how the ge
 - `"error"` - An error occurred during generation
 - `"aborted"` - Request was cancelled via abort signal
 
+`AssistantMessage` may also include `responseId`, a provider-specific upstream response or message identifier when the underlying API exposes one. Do not assume it is always present across providers.
+
 ## Error Handling
 
 When a request ends with an error (including aborts and tool call validation errors), the streaming API emits an error event:
@@ -1159,6 +1161,9 @@ Create a new provider file (for example `amazon-bedrock.ts`) that exports:
 #### 3. API Registry Integration (`src/providers/register-builtins.ts`)
 
 - Register the API with `registerApiProvider()`
+- Add a package subpath export in `package.json` for the provider module (`./dist/providers/<provider>.js`)
+- Add lazy loader wrappers in `src/providers/register-builtins.ts`, do not statically import provider implementation modules there
+- Add any root-level `export type` re-exports in `src/index.ts` that should remain available from `@mariozechner/pi-ai`
 - Add credential detection in `env-api-keys.ts` for the new provider
 - Ensure `streamSimple` handles auth lookup via `getEnvApiKey()` or provider-specific auth
 

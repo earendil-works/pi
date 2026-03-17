@@ -89,9 +89,23 @@ export default function (pi: ExtensionAPI) {
 			// Sort by most recent first
 			const files = Array.from(fileMap.values()).sort((a, b) => b.lastTimestamp - a.lastTimestamp);
 
+			const openWithCode = async (path: string) => {
+				if (process.platform === "win32") {
+					return pi.exec("cmd", ["/d", "/s", "/c", "code", "-g", path], { cwd: ctx.cwd });
+				}
+				return pi.exec("code", ["-g", path], { cwd: ctx.cwd });
+			};
+
 			const openSelected = async (file: FileEntry): Promise<void> => {
 				try {
-					await pi.exec("code", ["-g", file.path], { cwd: ctx.cwd });
+					const openResult = await openWithCode(file.path);
+					if (openResult.code !== 0) {
+						const openStderr = openResult.stderr.trim();
+						ctx.ui.notify(
+							`Failed to open ${file.path} (exit ${openResult.code})${openStderr ? `: ${openStderr}` : ""}`,
+							"error",
+						);
+					}
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);
 					ctx.ui.notify(`Failed to open ${file.path}: ${message}`, "error");

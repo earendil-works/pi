@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-03-17
+
 ### Added
 
 - Exported `CustomProviderDialog` from `@mariozechner/pi-web-ui` ([#2267](https://github.com/badlogic/pi-mono/issues/2267))

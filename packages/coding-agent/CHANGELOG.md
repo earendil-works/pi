@@ -2,9 +2,30 @@
 
 ## [Unreleased]
 
+## [0.59.0] - 2026-03-17
+
+### New Features
+
+- Faster startup by lazy-loading `@mariozechner/pi-ai` provider SDKs on first use instead of import time ([#2297](https://github.com/badlogic/pi-mono/issues/2297))
+- Better provider retry behavior when providers return error messages as responses ([#2264](https://github.com/badlogic/pi-mono/issues/2264))
+- Better terminal integration via OSC 133 command-executed markers ([#2242](https://github.com/badlogic/pi-mono/issues/2242))
+- Better Git footer branch detection for repositories using reftable storage ([#2300](https://github.com/badlogic/pi-mono/issues/2300))
+
 ### Breaking Changes
 
 - Changed custom tool system prompt behavior so extension and SDK tools are included in the default `Available tools` section only when they provide `promptSnippet`. Omitting `promptSnippet` now leaves the tool out of that section instead of falling back to `description` ([#2285](https://github.com/badlogic/pi-mono/issues/2285))
+
+### Changed
+
+- Lazy-load built-in `@mariozechner/pi-ai` provider modules and root provider wrappers so coding-agent startup no longer eagerly loads provider SDKs before first use ([#2297](https://github.com/badlogic/pi-mono/issues/2297))
+
+### Fixed
+
+- Fixed session title handling in `/tree`, compaction, and branch summarization so empty title clears render correctly and `session_info` entries stay out of summaries ([#2304](https://github.com/badlogic/pi-mono/pull/2304) by [@aliou](https://github.com/aliou))
+- Fixed footer branch detection for Git repositories using reftable storage so branch names still appear correctly in the footer ([#2300](https://github.com/badlogic/pi-mono/issues/2300))
+- Fixed rendered user messages to emit an OSC 133 command-executed marker after command output, improving terminal prompt integration ([#2242](https://github.com/badlogic/pi-mono/issues/2242))
+- Fixed provider retry handling to treat provider-returned error messages as retryable failures instead of successful responses ([#2264](https://github.com/badlogic/pi-mono/issues/2264))
+- Fixed Claude 4.6 context window overrides in bundled model metadata so coding-agent sees the intended model limits after generated catalogs are rebuilt ([#2286](https://github.com/badlogic/pi-mono/issues/2286))
 
 ## [0.58.4] - 2026-03-16
 

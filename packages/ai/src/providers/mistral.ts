@@ -285,6 +285,9 @@ async function consumeChatStream(
 
 	for await (const event of mistralStream) {
 		const chunk = event.data;
+		// Mistral's streamed CompletionChunk carries an id field. Keep the first non-empty one,
+		// mirroring how OpenAI-style streaming exposes a stable response identifier per stream.
+		output.responseId ||= chunk.id;
 
 		if (chunk.usage) {
 			output.usage.input = chunk.usage.promptTokens || 0;

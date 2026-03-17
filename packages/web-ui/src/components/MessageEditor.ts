@@ -333,7 +333,9 @@ export class MessageEditor extends LitElement {
 											{ value: "high", label: i18n("High"), icon: icon(Brain, "sm") },
 										] as SelectOption[],
 										onChange: (value: string) => {
-											this.onThinkingChange?.(value as "off" | "minimal" | "low" | "medium" | "high");
+											const level = value as "off" | "minimal" | "low" | "medium" | "high";
+											this.thinkingLevel = level;
+											this.onThinkingChange?.(level);
 										},
 										width: "80px",
 										size: "sm",

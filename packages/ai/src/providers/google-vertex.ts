@@ -101,6 +101,9 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 			const blocks = output.content;
 			const blockIndex = () => blocks.length - 1;
 			for await (const chunk of googleStream) {
+				// Vertex uses the same @google/genai GenerateContentResponse type as Gemini.
+				// responseId is documented there as an output-only identifier for each response.
+				output.responseId ||= chunk.responseId;
 				const candidate = chunk.candidates?.[0];
 				if (candidate?.content?.parts) {
 					for (const part of candidate.content.parts) {

@@ -548,6 +548,9 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli", GoogleGe
 							// Unwrap the response
 							const responseData = chunk.response;
 							if (!responseData) continue;
+							// Cloud Code Assist mirrors Gemini's responseId field. Keep the first non-empty one.
+							// A single streamed response should retain the same ID across chunks.
+							output.responseId ||= responseData.responseId;
 
 							const candidate = responseData.candidates?.[0];
 							if (candidate?.content?.parts) {

@@ -193,6 +193,7 @@ export interface AssistantMessage {
 	api: Api;
 	provider: Provider;
 	model: string;
+	responseId?: string; // Provider-specific response/message identifier when the upstream API exposes one
 	usage: Usage;
 	stopReason: StopReason;
 	errorMessage?: string;

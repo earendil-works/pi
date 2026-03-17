@@ -154,7 +154,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/copy` | Copy last assistant message to clipboard |
 | `/export [file]` | Export session to HTML file |
 | `/share` | Upload as private GitHub gist with shareable HTML link |
-| `/reload` | Reload extensions, skills, prompts, context files (themes hot-reload automatically) |
+| `/reload` | Reload keybindings, extensions, skills, prompts, and context files (themes hot-reload automatically) |
 | `/hotkeys` | Show all keyboard shortcuts |
 | `/changelog` | Display version history |
 | `/quit`, `/exit` | Quit pi |
@@ -451,6 +451,12 @@ pi config                    # Enable/disable package resources
 | `--mode rpc` | RPC mode for process integration (see [docs/rpc.md](docs/rpc.md)) |
 | `--export <in> [out]` | Export session to HTML |
 
+In print mode, pi also reads piped stdin and merges it into the initial prompt:
+
+```bash
+cat README.md | pi -p "Summarize this text"
+```
+
 ### Model Options
 
 | Option | Description |
@@ -524,6 +530,9 @@ pi "List all .ts files in src/"
 
 # Non-interactive
 pi -p "Summarize this codebase"
+
+# Non-interactive with piped stdin
+cat README.md | pi -p "Summarize this text"
 
 # Different model
 pi --provider openai --model gpt-4o "Help me refactor"
