@@ -26,6 +26,25 @@ function mockToken(): string {
 	return `aaa.${payload}.bbb`;
 }
 
+function mockOpaqueToken(): string {
+	return "opaque-bearer-token";
+}
+
+function createModel(baseUrl: string = "https://chatgpt.com/backend-api"): Model<"openai-codex-responses"> {
+	return {
+		id: "gpt-5.1-codex",
+		name: "GPT-5.1 Codex",
+		api: "openai-codex-responses",
+		provider: "openai-codex",
+		baseUrl,
+		reasoning: true,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 400000,
+		maxTokens: 128000,
+	};
+}
+
 function buildSSEPayload({
 	status,
 	includeDone = false,
@@ -183,6 +202,115 @@ describe("openai-codex streaming", () => {
 
 		expect(sawTextDelta).toBe(true);
 		expect(sawDone).toBe(true);
+	});
+
+	it("keeps official chatgpt.com auth strict for opaque bearer tokens", async () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
+		process.env.PI_CODING_AGENT_DIR = tempDir;
+
+		const context: Context = {
+			systemPrompt: "You are a helpful assistant.",
+			messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+		};
+
+		const result = await streamOpenAICodexResponses(createModel(), context, { apiKey: mockOpaqueToken() }).result();
+
+		expect(result.stopReason).toBe("error");
+		expect(result.errorMessage).toBe("Failed to extract accountId from token");
+	});
+
+	it("allows opaque bearer tokens for non-official codex base URLs without chatgpt-account-id", async () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
+		process.env.PI_CODING_AGENT_DIR = tempDir;
+		const token = mockOpaqueToken();
+		const encoder = new TextEncoder();
+		const sse = buildSSEPayload({ status: "completed", includeDone: true });
+
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(encoder.encode(sse));
+				controller.close();
+			},
+		});
+
+		global.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url === "https://api.github.com/repos/openai/codex/releases/latest") {
+				return new Response(JSON.stringify({ tag_name: "rust-v0.0.0" }), { status: 200 });
+			}
+			if (url.startsWith("https://raw.githubusercontent.com/openai/codex/")) {
+				return new Response("PROMPT", { status: 200, headers: { etag: '"etag"' } });
+			}
+			if (url === "http://127.0.0.1:2455/backend-api/codex/responses") {
+				const headers = init?.headers instanceof Headers ? init.headers : undefined;
+				expect(headers?.get("Authorization")).toBe(`Bearer ${token}`);
+				expect(headers?.get("chatgpt-account-id")).toBeNull();
+				return new Response(stream, {
+					status: 200,
+					headers: { "content-type": "text/event-stream" },
+				});
+			}
+			return new Response("not found", { status: 404 });
+		}) as typeof fetch;
+
+		const context: Context = {
+			systemPrompt: "You are a helpful assistant.",
+			messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+		};
+
+		const result = await streamOpenAICodexResponses(createModel("http://127.0.0.1:2455/backend-api/codex"), context, {
+			apiKey: token,
+		}).result();
+
+		expect(result.stopReason).toBe("stop");
+		expect(result.content.find((c) => c.type === "text")?.text).toBe("Hello");
+	});
+
+	it("still forwards chatgpt-account-id for non-official codex base URLs when the token contains one", async () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
+		process.env.PI_CODING_AGENT_DIR = tempDir;
+		const token = mockToken();
+		const encoder = new TextEncoder();
+		const sse = buildSSEPayload({ status: "completed", includeDone: true });
+
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(encoder.encode(sse));
+				controller.close();
+			},
+		});
+
+		global.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url === "https://api.github.com/repos/openai/codex/releases/latest") {
+				return new Response(JSON.stringify({ tag_name: "rust-v0.0.0" }), { status: 200 });
+			}
+			if (url.startsWith("https://raw.githubusercontent.com/openai/codex/")) {
+				return new Response("PROMPT", { status: 200, headers: { etag: '"etag"' } });
+			}
+			if (url === "http://127.0.0.1:2455/backend-api/codex/responses") {
+				const headers = init?.headers instanceof Headers ? init.headers : undefined;
+				expect(headers?.get("Authorization")).toBe(`Bearer ${token}`);
+				expect(headers?.get("chatgpt-account-id")).toBe("acc_test");
+				return new Response(stream, {
+					status: 200,
+					headers: { "content-type": "text/event-stream" },
+				});
+			}
+			return new Response("not found", { status: 404 });
+		}) as typeof fetch;
+
+		const context: Context = {
+			systemPrompt: "You are a helpful assistant.",
+			messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+		};
+
+		const result = await streamOpenAICodexResponses(createModel("http://127.0.0.1:2455/backend-api/codex"), context, {
+			apiKey: token,
+		}).result();
+
+		expect(result.stopReason).toBe("stop");
+		expect(result.content.find((c) => c.type === "text")?.text).toBe("Hello");
 	});
 
 	it("completes after response.completed even when the SSE body stays open", async () => {
