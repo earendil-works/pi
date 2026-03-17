@@ -162,6 +162,7 @@ function getMessageFromEntry(entry: SessionEntry): AgentMessage | undefined {
 		case "model_change":
 		case "custom":
 		case "label":
+		case "session_info":
 			return undefined;
 	}
 }
