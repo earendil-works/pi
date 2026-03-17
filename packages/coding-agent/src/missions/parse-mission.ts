@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type {
+	MissionConvergenceKind,
 	MissionDefinition,
 	MissionExperimentStatus,
 	MissionLatestExperimentResult,
@@ -21,6 +22,8 @@ function parseSpecFrontmatter(specText: string): {
 	mode: MissionMode;
 	metric?: string;
 	direction?: MissionMetricDirection;
+	convergeAfter?: number;
+	convergenceKind?: MissionConvergenceKind;
 } {
 	if (!specText.startsWith("---\n")) {
 		return { mode: "build" };
@@ -51,10 +54,35 @@ function parseSpecFrontmatter(specText: string): {
 		throw new Error(`Mission SPEC.md has invalid direction "${directionValue}". Expected lower or higher`);
 	}
 
+	const convergenceKindValue = fields.get("convergence_kind");
+	if (
+		convergenceKindValue !== undefined &&
+		convergenceKindValue !== "discard" &&
+		convergenceKindValue !== "non-keep"
+	) {
+		throw new Error(
+			`Mission SPEC.md has invalid convergence_kind "${convergenceKindValue}". Expected discard or non-keep`,
+		);
+	}
+
+	const convergeAfterValue = fields.get("converge_after");
+	let convergeAfter: number | undefined;
+	if (convergeAfterValue !== undefined) {
+		const parsed = Number.parseInt(convergeAfterValue, 10);
+		if (!Number.isFinite(parsed) || parsed <= 0 || String(parsed) !== convergeAfterValue) {
+			throw new Error(
+				`Mission SPEC.md has invalid converge_after "${convergeAfterValue}". Expected a positive integer`,
+			);
+		}
+		convergeAfter = parsed;
+	}
+
 	return {
 		mode: modeValue === "optimize" ? "optimize" : "build",
 		metric: fields.get("metric"),
 		direction: directionValue as MissionMetricDirection | undefined,
+		convergeAfter,
+		convergenceKind: convergenceKindValue as MissionConvergenceKind | undefined,
 	};
 }
 
@@ -198,6 +226,8 @@ export function parseMissionDefinition(missionDir: string): MissionDefinition {
 		latestExperimentResult,
 		metric: specFrontmatter.metric,
 		direction: specFrontmatter.direction,
+		convergeAfter: specFrontmatter.convergeAfter,
+		convergenceKind: specFrontmatter.convergenceKind,
 		tasks,
 		allTasksDone,
 		runnableTasks,

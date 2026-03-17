@@ -1,6 +1,6 @@
 import { buildMissionIterationPrompt } from "./build-mission-prompt.js";
 import { parseMissionDefinition } from "./parse-mission.js";
-import type { MissionDefinition } from "./types.js";
+import type { MissionConvergencePolicy, MissionDefinition, MissionExperimentStatus } from "./types.js";
 
 export interface MissionIterationExecution {
 	mission: MissionDefinition;
@@ -14,12 +14,93 @@ export interface RunMissionLoopOptions {
 	signal?: AbortSignal;
 	shouldContinue?: () => boolean;
 	onIterationComplete?: () => void;
+	convergencePolicy?: MissionConvergencePolicy;
 }
 
 export type MissionLoopResult =
 	| { status: "done"; iterations: number }
 	| { status: "stopped"; iterations: number }
+	| { status: "converged"; iterations: number; reason: string }
 	| { status: "blocked"; iterations: number; reason: string };
+
+function getOptimizeStatuses(experimentsText: string | undefined): MissionExperimentStatus[] {
+	if (!experimentsText) {
+		return [];
+	}
+
+	const statuses: MissionExperimentStatus[] = [];
+	for (const line of experimentsText.split("\n")) {
+		const trimmed = line.trim();
+		if (!trimmed) {
+			continue;
+		}
+
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(trimmed);
+		} catch {
+			continue;
+		}
+
+		if (typeof parsed !== "object" || parsed === null || !("status" in parsed)) {
+			continue;
+		}
+
+		const status = parsed.status;
+		if (status === "keep" || status === "discard" || status === "crash" || status === "blocked") {
+			statuses.push(status);
+		}
+	}
+
+	return statuses;
+}
+
+function getConvergencePolicy(
+	mission: MissionDefinition,
+	override: MissionConvergencePolicy | undefined,
+): MissionConvergencePolicy {
+	if (override) {
+		return override;
+	}
+
+	return {
+		after: mission.convergeAfter ?? 3,
+		kind: mission.convergenceKind ?? "non-keep",
+	};
+}
+
+function hasConverged(statuses: MissionExperimentStatus[], policy: MissionConvergencePolicy): boolean {
+	if (policy.after === null) {
+		return false;
+	}
+
+	let streak = 0;
+	for (let index = statuses.length - 1; index >= 0; index -= 1) {
+		const status = statuses[index];
+		if (status === "blocked") {
+			break;
+		}
+		if (status === "keep") {
+			break;
+		}
+		if (policy.kind === "discard") {
+			if (status !== "discard") {
+				break;
+			}
+			streak += 1;
+			continue;
+		}
+
+		if (status === "discard" || status === "crash") {
+			streak += 1;
+			continue;
+		}
+
+		break;
+	}
+
+	return streak >= policy.after;
+}
 
 export async function runMissionLoop(options: RunMissionLoopOptions): Promise<MissionLoopResult> {
 	const maxIterations = options.maxIterations ?? 100;
@@ -40,6 +121,16 @@ export async function runMissionLoop(options: RunMissionLoopOptions): Promise<Mi
 				iterations,
 				reason: mission.latestExperimentResult.reason ?? "Mission recorded a blocked optimize iteration",
 			};
+		}
+		if (mission.mode === "optimize") {
+			const convergencePolicy = getConvergencePolicy(mission, options.convergencePolicy);
+			if (hasConverged(getOptimizeStatuses(mission.experimentsText), convergencePolicy)) {
+				return {
+					status: "converged",
+					iterations,
+					reason: `Mission reached ${convergencePolicy.after} consecutive ${convergencePolicy.kind} results`,
+				};
+			}
 		}
 		if (options.shouldContinue && !options.shouldContinue()) {
 			return { status: "stopped", iterations };

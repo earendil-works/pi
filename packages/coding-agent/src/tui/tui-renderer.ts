@@ -349,6 +349,9 @@ export class TuiRenderer {
 	private missionRunAbortController: AbortController | null = null;
 	private missionStopAfterIteration = false;
 	private missionIterationLimit: number | null = null;
+	private missionConvergeAfterOverride: number | null | undefined = undefined;
+	private missionConvergenceKindOverride: "discard" | "non-keep" | undefined = undefined;
+	private resumableMissionDir: string | null = null;
 	private isAutoHandoffInProgress = false;
 	private shouldIncludeHandoffNudge = false; // 85% threshold nudge state
 	private pendingExplicitHandoff: (HandoffDetails & { parentSessionId: string | null }) | null = null;
@@ -615,7 +618,7 @@ export class TuiRenderer {
 			description: "Run a mission loop until all task statuses are done",
 			selectionBehavior: "inject",
 			injectedText: "/mission-run ",
-			injectedDiagnostic: "Prepared /mission-run draft. Enter a mission name or path.",
+			injectedDiagnostic: "Prepared /mission-run draft. Enter an explicit mission path.",
 		};
 
 		const missionResumeCommand: SlashCommand = {
@@ -623,7 +626,7 @@ export class TuiRenderer {
 			description: "Resume a mission from the current TASKS.json state",
 			selectionBehavior: "inject",
 			injectedText: "/mission-resume ",
-			injectedDiagnostic: "Prepared /mission-resume draft. Enter a mission name or path.",
+			injectedDiagnostic: "Prepared /mission-resume draft. Enter an explicit mission path.",
 		};
 
 		const missionHaltCommand: SlashCommand = {
@@ -639,6 +642,15 @@ export class TuiRenderer {
 			injectedDiagnostic: "Prepared /mission-iterations draft. Enter a number or 'unlimited'.",
 		};
 
+		const missionConvergenceCommand: SlashCommand = {
+			name: "mission-convergence",
+			description: "Show or change optimize convergence after N straight non-keep or discard results",
+			selectionBehavior: "inject",
+			injectedText: "/mission-convergence ",
+			injectedDiagnostic:
+				"Prepared /mission-convergence draft. Modes: status | <n> [non-keep|discard] | unlimited [non-keep|discard]",
+		};
+
 		this.builtInSlashCommands = [
 			branchCommand,
 			changelogCommand,
@@ -652,6 +664,7 @@ export class TuiRenderer {
 			loginCommand,
 			logoutCommand,
 			missionHaltCommand,
+			missionConvergenceCommand,
 			missionIterationsCommand,
 			modelCommand,
 			missionResumeCommand,
@@ -3593,15 +3606,21 @@ export class TuiRenderer {
 			return;
 		}
 
+		const missionConvergenceMatch = rawText.match(/^\/mission-convergence(?:\s+([\s\S]+))?$/);
+		if (missionConvergenceMatch) {
+			const arg = missionConvergenceMatch[1]?.trim() ?? "";
+			this.handleMissionConvergenceCommand(arg);
+			this.editor.setText("");
+			return;
+		}
+
 		const missionRunMatch = rawText.match(/^\/mission-run(?:\s+([\s\S]+))?$/);
 		const missionResumeMatch = rawText.match(/^\/mission-resume(?:\s+([\s\S]+))?$/);
 		if (missionRunMatch || missionResumeMatch) {
 			const missionRef = missionRunMatch?.[1]?.trim() ?? missionResumeMatch?.[1]?.trim() ?? "";
 			if (!missionRef) {
 				this.showError(
-					missionResumeMatch
-						? "Usage: /mission-resume <mission-name-or-path>"
-						: "Usage: /mission-run <mission-name-or-path>",
+					missionResumeMatch ? "Usage: /mission-resume <mission-path>" : "Usage: /mission-run <mission-path>",
 				);
 				return;
 			}
@@ -3618,6 +3637,10 @@ export class TuiRenderer {
 
 		// Note: /steer command removed - Enter now automatically steers when streaming
 		const sentText = autoFenceHtmlInMarkdown(rawText);
+
+		if (await this.maybeAutoResumeMissionFromPlainMessage(rawText)) {
+			return;
+		}
 
 		// Normal message submission - validate model and API key first
 		const currentModel = this.agent.state.model;
@@ -4760,7 +4783,24 @@ export class TuiRenderer {
 		}
 
 		this.missionUiState = null;
+		this.resumableMissionDir = null;
 		this.ui.requestRender();
+	}
+
+	private async maybeAutoResumeMissionFromPlainMessage(rawText: string): Promise<boolean> {
+		if (this.hasActiveMissionRun()) {
+			return false;
+		}
+		if (!this.resumableMissionDir) {
+			return false;
+		}
+		if (this.missionUiState?.status !== "stopped" && this.missionUiState?.status !== "blocked") {
+			return false;
+		}
+
+		this.editor.setText("");
+		await this.handleMissionRunCommand(this.resumableMissionDir, rawText);
+		return true;
 	}
 
 	private maybeClearCompletedMissionUiState(): void {
@@ -5137,8 +5177,7 @@ export class TuiRenderer {
 			return normalizedAbsoluteCandidate;
 		}
 
-		const repoRoot = findRepoRoot(process.cwd()) ?? process.cwd();
-		return path.join(repoRoot, "devdocs", "missions", normalizedRef);
+		return normalizedRef ? normalizedAbsoluteCandidate : absoluteCandidate;
 	}
 
 	private progressSuggestsUnfinishedWork(progressText: string): boolean {
@@ -5200,12 +5239,75 @@ export class TuiRenderer {
 		this.showWarning(`Mission will stop by iteration ${parsed}.`);
 	}
 
-	private async handleMissionRunCommand(missionRef: string): Promise<void> {
+	private getActiveMissionConvergencePolicy(): { after: number | null; kind: "discard" | "non-keep" } | null {
+		if (!this.resumableMissionDir) {
+			return null;
+		}
+
+		const mission = parseMissionDefinition(this.resumableMissionDir);
+		if (mission.mode !== "optimize") {
+			return null;
+		}
+
+		return {
+			after: this.missionConvergeAfterOverride ?? mission.convergeAfter ?? 3,
+			kind: this.missionConvergenceKindOverride ?? mission.convergenceKind ?? "non-keep",
+		};
+	}
+
+	private handleMissionConvergenceCommand(rawArg: string): void {
+		if (!this.hasActiveMissionRun()) {
+			this.showWarning("No active mission run.");
+			return;
+		}
+
+		const policy = this.getActiveMissionConvergencePolicy();
+		if (!policy) {
+			this.showWarning("No active optimize mission.");
+			return;
+		}
+
+		if (!rawArg || rawArg === "status") {
+			const afterLabel = policy.after === null ? "unlimited" : String(policy.after);
+			this.showWarning(`Mission convergence: ${afterLabel} ${policy.kind}.`);
+			return;
+		}
+
+		const [countArg, kindArg] = rawArg.split(/\s+/, 2);
+		if (kindArg !== undefined && kindArg !== "discard" && kindArg !== "non-keep") {
+			this.showError("Usage: /mission-convergence <status|n|unlimited> [discard|non-keep]");
+			return;
+		}
+
+		if (countArg === "unlimited") {
+			this.missionConvergeAfterOverride = null;
+			this.missionConvergenceKindOverride = kindArg === undefined ? policy.kind : kindArg;
+			const kind = this.missionConvergenceKindOverride;
+			this.showWarning(`Mission convergence disabled (${kind}).`);
+			return;
+		}
+
+		const parsed = Number.parseInt(countArg, 10);
+		if (!Number.isFinite(parsed) || parsed <= 0 || String(parsed) !== countArg) {
+			this.showError("Usage: /mission-convergence <status|n|unlimited> [discard|non-keep]");
+			return;
+		}
+
+		this.missionConvergeAfterOverride = parsed;
+		this.missionConvergenceKindOverride = kindArg === undefined ? policy.kind : kindArg;
+		this.showWarning(`Mission convergence set to ${parsed} consecutive ${this.missionConvergenceKindOverride}.`);
+	}
+
+	private async handleMissionRunCommand(missionRef: string, resumeText?: string): Promise<void> {
 		const missionDir = this.resolveMissionDir(missionRef);
+		this.resumableMissionDir = missionDir;
+		let shouldInjectResumeText = resumeText !== undefined;
 		const missionRunAbortController = new AbortController();
 		this.missionRunAbortController = missionRunAbortController;
 		this.missionStopAfterIteration = false;
 		this.missionIterationLimit = null;
+		this.missionConvergeAfterOverride = undefined;
+		this.missionConvergenceKindOverride = undefined;
 		const { signal } = missionRunAbortController;
 
 		try {
@@ -5238,6 +5340,7 @@ export class TuiRenderer {
 			const result = await runMissionLoop({
 				missionDir,
 				signal,
+				convergencePolicy: this.getActiveMissionConvergencePolicy() ?? undefined,
 				shouldContinue: () => {
 					if (this.missionStopAfterIteration) {
 						return false;
@@ -5259,7 +5362,13 @@ export class TuiRenderer {
 						return;
 					}
 					this.setMissionUiState(missionName, iteration, "running", mission);
-					await this.agent.prompt(prompt);
+					const iterationPrompt =
+						shouldInjectResumeText && resumeText !== undefined
+							? `${prompt}\n\nUser resume note:\n${resumeText}`
+							: prompt;
+					await this.agent.prompt(iterationPrompt);
+					shouldInjectResumeText = false;
+					resumeText = undefined;
 					await this.agent.waitForIdle();
 					if (signal.aborted) {
 						return;
@@ -5297,6 +5406,13 @@ export class TuiRenderer {
 				return;
 			}
 
+			if (result.status === "converged") {
+				this.showWarning(
+					`Mission ${missionName} converged after ${result.iterations} iteration${result.iterations === 1 ? "" : "s"}. ${result.reason}`,
+				);
+				return;
+			}
+
 			this.showWarning(`Mission ${missionName} blocked: ${result.reason}`);
 		} catch (error: unknown) {
 			this.showError(error instanceof Error ? error.message : String(error));
@@ -5304,6 +5420,8 @@ export class TuiRenderer {
 			this.missionRunAbortController = null;
 			this.missionStopAfterIteration = false;
 			this.missionIterationLimit = null;
+			this.missionConvergeAfterOverride = undefined;
+			this.missionConvergenceKindOverride = undefined;
 			this.endMissionRunWorkingStatus();
 		}
 	}

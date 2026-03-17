@@ -2,6 +2,12 @@ export type MissionTaskStatus = "todo" | "in_progress" | "done" | "blocked" | "d
 export type MissionMode = "build" | "optimize";
 export type MissionMetricDirection = "lower" | "higher";
 export type MissionExperimentStatus = "keep" | "discard" | "crash" | "blocked";
+export type MissionConvergenceKind = "discard" | "non-keep";
+
+export interface MissionConvergencePolicy {
+	after: number | null;
+	kind: MissionConvergenceKind;
+}
 
 export interface MissionLatestExperimentResult {
 	status: MissionExperimentStatus;
@@ -32,6 +38,8 @@ export interface MissionDefinition {
 	latestExperimentResult?: MissionLatestExperimentResult;
 	metric?: string;
 	direction?: MissionMetricDirection;
+	convergeAfter?: number;
+	convergenceKind?: MissionConvergenceKind;
 	tasks: MissionTask[];
 	allTasksDone: boolean;
 	runnableTasks: MissionTask[];

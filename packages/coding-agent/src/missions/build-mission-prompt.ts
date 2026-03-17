@@ -14,6 +14,7 @@ export function buildMissionIterationPrompt(mission: MissionDefinition): string 
 			"If no baseline benchmark has been recorded yet, run the baseline benchmark first.",
 			"This is optimize mode: brainstorm the single most promising small change, then benchmark and validate it.",
 			"Each iteration must end with keep, discard, crash, or blocked.",
+			`Stop if there are ${mission.convergeAfter ?? 3} consecutive ${mission.convergenceKind ?? "non-keep"} results without a keep.`,
 			"Do not stop because seed tasks are done; TASKS.json is only optional starting ideas in optimize mode.",
 			"",
 			"Seed ideas:",
