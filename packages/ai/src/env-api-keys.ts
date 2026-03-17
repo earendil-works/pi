@@ -110,6 +110,9 @@ export function getEnvApiKey(provider: any): string | undefined {
 	}
 
 	if (provider === "gigachat") {
+		if (process.env.GIGACHAT_USER && process.env.GIGACHAT_PASSWORD) {
+			return "<authenticated>";
+		}
 		return process.env.GIGACHAT_ACCESS_TOKEN || process.env.GIGACHAT_CREDENTIALS;
 	}
 

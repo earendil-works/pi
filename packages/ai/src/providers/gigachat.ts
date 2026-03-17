@@ -24,7 +24,6 @@ import type {
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
-import { buildBaseOptions } from "./simple-options.js";
 import { transformMessages } from "./transform-messages.js";
 
 const GIGACHAT_DEFAULT_MODEL = "GigaChat";
@@ -36,9 +35,15 @@ export interface GigaChatOptions extends StreamOptions {
 	functionCall?: "auto" | "none" | { name: string };
 	scope?: string;
 	baseUrl?: string;
+	user?: string;
+	password?: string;
 }
 
 type ToolCallBlock = ToolCall & { partialArgs?: string };
+type GigaChatAuth =
+	| { kind: "accessToken"; accessToken: string }
+	| { kind: "credentials"; credentials: string; scope?: string }
+	| { kind: "password"; user: string; password: string };
 
 export const streamGigaChat: StreamFunction<"gigachat", GigaChatOptions> = (
 	model: Model<"gigachat">,
@@ -51,12 +56,8 @@ export const streamGigaChat: StreamFunction<"gigachat", GigaChatOptions> = (
 		const output = createOutput(model);
 
 		try {
-			const apiKey = options?.apiKey || getEnvApiKey(model.provider);
-			if (!apiKey) {
-				throw new Error(`No API key for provider: ${model.provider}`);
-			}
-
-			const client = createClient(model, apiKey, options);
+			const auth = resolveAuth(model.provider, options);
+			const client = createClient(model, auth, options);
 			let payload = buildChatPayload(model, context, options);
 			const nextPayload = await options?.onPayload?.(payload, model);
 			if (nextPayload !== undefined) {
@@ -95,13 +96,8 @@ export const streamSimpleGigaChat: StreamFunction<"gigachat", SimpleStreamOption
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
-	const apiKey = options?.apiKey || getEnvApiKey(model.provider);
-	if (!apiKey) {
-		throw new Error(`No API key for provider: ${model.provider}`);
-	}
-
-	const base = buildBaseOptions(model, options, apiKey);
-	return streamGigaChat(model, context, base);
+	resolveAuth(model.provider, options);
+	return streamGigaChat(model, context, options);
 };
 
 function createOutput(model: Model<"gigachat">): AssistantMessage {
@@ -124,14 +120,21 @@ function createOutput(model: Model<"gigachat">): AssistantMessage {
 	};
 }
 
-function createClient(model: Model<"gigachat">, apiKey: string, options?: GigaChatOptions): GigaChat {
+function createClient(model: Model<"gigachat">, auth: GigaChatAuth, options?: GigaChatOptions): GigaChat {
 	const config: GigaChatClientConfig = {};
 
-	if (isAccessToken(apiKey)) {
-		config.accessToken = apiKey;
-	} else {
-		config.credentials = apiKey;
-		config.scope = options?.scope || process.env.GIGACHAT_SCOPE;
+	switch (auth.kind) {
+		case "accessToken":
+			config.accessToken = auth.accessToken;
+			break;
+		case "credentials":
+			config.credentials = auth.credentials;
+			config.scope = auth.scope;
+			break;
+		case "password":
+			config.user = auth.user;
+			config.password = auth.password;
+			break;
 	}
 
 	config.model = model.id || GIGACHAT_DEFAULT_MODEL;
@@ -140,6 +143,29 @@ function createClient(model: Model<"gigachat">, apiKey: string, options?: GigaCh
 	config.dangerouslyAllowBrowser = true;
 
 	return new GigaChat(config);
+}
+
+function resolveAuth(provider: string, options?: GigaChatOptions): GigaChatAuth {
+	const envApiKey = getEnvApiKey(provider);
+	const apiKey = options?.apiKey || (envApiKey === "<authenticated>" ? undefined : envApiKey);
+	if (apiKey) {
+		if (isAccessToken(apiKey)) {
+			return { kind: "accessToken", accessToken: apiKey };
+		}
+		return {
+			kind: "credentials",
+			credentials: apiKey,
+			scope: options?.scope || process.env.GIGACHAT_SCOPE,
+		};
+	}
+
+	const user = options?.user || process.env.GIGACHAT_USER;
+	const password = options?.password || process.env.GIGACHAT_PASSWORD;
+	if (user && password) {
+		return { kind: "password", user, password };
+	}
+
+	throw new Error(`No authentication configured for provider: ${provider}`);
 }
 
 function buildChatPayload(model: Model<"gigachat">, context: Context, options?: GigaChatOptions): GigaChatChat {

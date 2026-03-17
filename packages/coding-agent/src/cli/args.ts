@@ -293,6 +293,8 @@ ${chalk.bold("Environment Variables:")}
   MISTRAL_API_KEY                  - Mistral API key
   GIGACHAT_CREDENTIALS             - GigaChat authorization key
   GIGACHAT_ACCESS_TOKEN            - GigaChat access token (alternative to credentials)
+  GIGACHAT_USER                    - GigaChat username
+  GIGACHAT_PASSWORD                - GigaChat password
   GIGACHAT_SCOPE                   - GigaChat OAuth scope (default: GIGACHAT_API_PERS)
   GIGACHAT_BASE_URL                - GigaChat API base URL override
   MINIMAX_API_KEY                  - MiniMax API key

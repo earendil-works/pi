@@ -58,7 +58,7 @@ pi
 | OpenAI | `OPENAI_API_KEY` | `openai` |
 | Google Gemini | `GEMINI_API_KEY` | `google` |
 | Mistral | `MISTRAL_API_KEY` | `mistral` |
-| GigaChat | `GIGACHAT_CREDENTIALS` or `GIGACHAT_ACCESS_TOKEN` | `gigachat` |
+| GigaChat | `GIGACHAT_CREDENTIALS` or `GIGACHAT_ACCESS_TOKEN` or `GIGACHAT_USER` + `GIGACHAT_PASSWORD` | `gigachat` |
 | Groq | `GROQ_API_KEY` | `groq` |
 | Cerebras | `CEREBRAS_API_KEY` | `cerebras` |
 | xAI | `XAI_API_KEY` | `xai` |
@@ -188,6 +188,13 @@ If you already have a short-lived access token, you can use:
 
 ```bash
 export GIGACHAT_ACCESS_TOKEN=...
+```
+
+Or use username/password authentication:
+
+```bash
+export GIGACHAT_USER=...
+export GIGACHAT_PASSWORD=...
 ```
 
 Optional:

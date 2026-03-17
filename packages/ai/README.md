@@ -933,7 +933,7 @@ In Node.js environments, you can set environment variables to avoid passing API 
 | Google | `GEMINI_API_KEY` |
 | Vertex AI | `GOOGLE_CLOUD_API_KEY` or `GOOGLE_CLOUD_PROJECT` (or `GCLOUD_PROJECT`) + `GOOGLE_CLOUD_LOCATION` + ADC |
 | Mistral | `MISTRAL_API_KEY` |
-| GigaChat | `GIGACHAT_CREDENTIALS` or `GIGACHAT_ACCESS_TOKEN` (optional `GIGACHAT_SCOPE`, `GIGACHAT_BASE_URL`) |
+| GigaChat | `GIGACHAT_CREDENTIALS` or `GIGACHAT_ACCESS_TOKEN` or `GIGACHAT_USER` + `GIGACHAT_PASSWORD` (optional `GIGACHAT_SCOPE`, `GIGACHAT_BASE_URL`) |
 | Groq | `GROQ_API_KEY` |
 | Cerebras | `CEREBRAS_API_KEY` |
 | xAI | `XAI_API_KEY` |
@@ -1004,6 +1004,13 @@ or a short-lived access token directly:
 
 ```bash
 export GIGACHAT_ACCESS_TOKEN=...
+```
+
+or username/password authentication:
+
+```bash
+export GIGACHAT_USER=...
+export GIGACHAT_PASSWORD=...
 ```
 
 Optional:

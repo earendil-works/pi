@@ -55,6 +55,8 @@ describe("GigaChat Provider", () => {
 		delete process.env.GIGACHAT_ACCESS_TOKEN;
 		delete process.env.GIGACHAT_SCOPE;
 		delete process.env.GIGACHAT_BASE_URL;
+		delete process.env.GIGACHAT_USER;
+		delete process.env.GIGACHAT_PASSWORD;
 		mockState.constructorOptions = undefined;
 		mockState.streamPayload = undefined;
 	});
@@ -132,6 +134,25 @@ describe("GigaChat Provider", () => {
 			stream: true,
 			messages: [{ role: "user", content: "Hi" }],
 		});
+		expect(response.stopReason).toBe("stop");
+		expect(response.content[0]).toMatchObject({ type: "text", text: "Hello" });
+	});
+
+	it("supports username and password authentication from the environment", async () => {
+		process.env.GIGACHAT_USER = "gigachat-user";
+		process.env.GIGACHAT_PASSWORD = "gigachat-password";
+
+		const response = await complete(getModel("gigachat", "GigaChat-2"), {
+			messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+		});
+
+		expect(mockState.constructorOptions).toMatchObject({
+			user: "gigachat-user",
+			password: "gigachat-password",
+			model: "GigaChat-2",
+		});
+		expect((mockState.constructorOptions as { credentials?: string } | undefined)?.credentials).toBeUndefined();
+		expect((mockState.constructorOptions as { accessToken?: string } | undefined)?.accessToken).toBeUndefined();
 		expect(response.stopReason).toBe("stop");
 		expect(response.content[0]).toMatchObject({ type: "text", text: "Hello" });
 	});
