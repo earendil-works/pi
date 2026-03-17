@@ -130,6 +130,7 @@ const ProviderConfigSchema = Type.Object({
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
 	compat: Type.Optional(OpenAICompatSchema),
 	authHeader: Type.Optional(Type.Boolean()),
+	cacheTtl: Type.Optional(Type.Number({ minimum: 0 })),
 	models: Type.Optional(Type.Array(ModelDefinitionSchema)),
 	modelOverrides: Type.Optional(Type.Record(Type.String(), ModelOverrideSchema)),
 });
@@ -240,6 +241,7 @@ export const clearApiKeyCache = clearConfigValueCache;
 export class ModelRegistry {
 	private models: Model<Api>[] = [];
 	private customProviderApiKeys: Map<string, string> = new Map();
+	private customProviderCacheTtls: Map<string, number> = new Map();
 	private registeredProviders: Map<string, ProviderConfigInput> = new Map();
 	private loadError: string | undefined = undefined;
 
@@ -251,7 +253,7 @@ export class ModelRegistry {
 		this.authStorage.setFallbackResolver((provider) => {
 			const keyConfig = this.customProviderApiKeys.get(provider);
 			if (keyConfig) {
-				return resolveConfigValue(keyConfig);
+				return resolveConfigValue(keyConfig, this.customProviderCacheTtls.get(provider));
 			}
 			return undefined;
 		});
@@ -265,7 +267,11 @@ export class ModelRegistry {
 	 */
 	refresh(): void {
 		this.customProviderApiKeys.clear();
+		this.customProviderCacheTtls.clear();
 		this.loadError = undefined;
+
+		// Clear shell command result cache so ! commands are re-executed
+		clearConfigValueCache();
 
 		// Ensure dynamic API/OAuth registrations are rebuilt from current provider state.
 		resetApiProviders();
@@ -400,6 +406,9 @@ export class ModelRegistry {
 				// Store API key for fallback resolver.
 				if (providerConfig.apiKey) {
 					this.customProviderApiKeys.set(providerName, providerConfig.apiKey);
+					if (providerConfig.cacheTtl !== undefined) {
+						this.customProviderCacheTtls.set(providerName, providerConfig.cacheTtl);
+					}
 				}
 
 				if (providerConfig.modelOverrides) {
@@ -471,6 +480,9 @@ export class ModelRegistry {
 			// Store API key config for fallback resolver
 			if (providerConfig.apiKey) {
 				this.customProviderApiKeys.set(providerName, providerConfig.apiKey);
+				if (providerConfig.cacheTtl !== undefined) {
+					this.customProviderCacheTtls.set(providerName, providerConfig.cacheTtl);
+				}
 			}
 
 			for (const modelDef of modelDefs) {
@@ -479,14 +491,14 @@ export class ModelRegistry {
 
 				// Merge headers: provider headers are base, model headers override
 				// Resolve env vars and shell commands in header values
-				const providerHeaders = resolveHeaders(providerConfig.headers);
-				const modelHeaders = resolveHeaders(modelDef.headers);
+				const providerHeaders = resolveHeaders(providerConfig.headers, providerConfig.cacheTtl);
+				const modelHeaders = resolveHeaders(modelDef.headers, providerConfig.cacheTtl);
 				const compat = mergeCompat(providerConfig.compat, modelDef.compat);
 				let headers = providerHeaders || modelHeaders ? { ...providerHeaders, ...modelHeaders } : undefined;
 
 				// If authHeader is true, add Authorization header with resolved API key
 				if (providerConfig.authHeader && providerConfig.apiKey) {
-					const resolvedKey = resolveConfigValue(providerConfig.apiKey);
+					const resolvedKey = resolveConfigValue(providerConfig.apiKey, providerConfig.cacheTtl);
 					if (resolvedKey) {
 						headers = { ...headers, Authorization: `Bearer ${resolvedKey}` };
 					}
@@ -585,6 +597,7 @@ export class ModelRegistry {
 		if (!this.registeredProviders.has(providerName)) return;
 		this.registeredProviders.delete(providerName);
 		this.customProviderApiKeys.delete(providerName);
+		this.customProviderCacheTtls.delete(providerName);
 		this.refresh();
 	}
 
@@ -617,6 +630,9 @@ export class ModelRegistry {
 		// Store API key for auth resolution
 		if (config.apiKey) {
 			this.customProviderApiKeys.set(providerName, config.apiKey);
+			if (config.cacheTtl !== undefined) {
+				this.customProviderCacheTtls.set(providerName, config.cacheTtl);
+			}
 		}
 
 		if (config.models && config.models.length > 0) {
@@ -639,13 +655,13 @@ export class ModelRegistry {
 				}
 
 				// Merge headers
-				const providerHeaders = resolveHeaders(config.headers);
-				const modelHeaders = resolveHeaders(modelDef.headers);
+				const providerHeaders = resolveHeaders(config.headers, config.cacheTtl);
+				const modelHeaders = resolveHeaders(modelDef.headers, config.cacheTtl);
 				let headers = providerHeaders || modelHeaders ? { ...providerHeaders, ...modelHeaders } : undefined;
 
 				// If authHeader is true, add Authorization header
 				if (config.authHeader && config.apiKey) {
-					const resolvedKey = resolveConfigValue(config.apiKey);
+					const resolvedKey = resolveConfigValue(config.apiKey, config.cacheTtl);
 					if (resolvedKey) {
 						headers = { ...headers, Authorization: `Bearer ${resolvedKey}` };
 					}
@@ -699,6 +715,8 @@ export interface ProviderConfigInput {
 	streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
 	headers?: Record<string, string>;
 	authHeader?: boolean;
+	/** TTL in seconds for shell command (!) cache entries. When set, cached results expire and commands are re-executed. */
+	cacheTtl?: number;
 	/** OAuth provider for /login support */
 	oauth?: Omit<OAuthProviderInterface, "id">;
 	models?: Array<{
