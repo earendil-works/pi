@@ -8,6 +8,7 @@
 // NEVER convert to top-level imports - breaks browser/Vite builds (web-ui)
 let _randomBytes: typeof import("node:crypto").randomBytes | null = null;
 let _http: typeof import("node:http") | null = null;
+let _proxyFetch: typeof fetch | null = null;
 if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
 	import("node:crypto").then((m) => {
 		_randomBytes = m.randomBytes;
@@ -15,6 +16,38 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 	import("node:http").then((m) => {
 		_http = m;
 	});
+
+	// Node.js native fetch does not respect HTTP_PROXY / HTTPS_PROXY environment
+	// variables. Users behind a proxy (common in regions where OpenAI blocks
+	// direct access) would get 403 "unsupported_country_region_territory" during
+	// token exchange even though the browser-side OAuth flow succeeds through
+	// their system proxy.  Use undici ProxyAgent when a proxy env var is set.
+	const _proxyUrl =
+		process.env.HTTPS_PROXY ||
+		process.env.https_proxy ||
+		process.env.HTTP_PROXY ||
+		process.env.http_proxy ||
+		process.env.ALL_PROXY ||
+		process.env.all_proxy;
+	if (_proxyUrl) {
+		import("node:module")
+			.then((mod) => {
+				try {
+					const require_ = mod.createRequire(import.meta.url);
+					// eslint-disable-next-line @typescript-eslint/no-require-imports
+					const undici = require_("undici") as typeof import("undici");
+					const agent = new undici.ProxyAgent(_proxyUrl);
+					_proxyFetch = ((url: string | URL | Request, init?: RequestInit) =>
+						undici.fetch(url as Parameters<typeof undici.fetch>[0], {
+							...(init as Parameters<typeof undici.fetch>[1]),
+							dispatcher: agent,
+						})) as typeof fetch;
+				} catch {
+					// undici not available — fall back to global fetch
+				}
+			})
+			.catch(() => {});
+	}
 }
 
 import { generatePKCE } from "./pkce.js";
@@ -26,6 +59,11 @@ const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const REDIRECT_URI = "http://localhost:1455/auth/callback";
 const SCOPE = "openid profile email offline_access";
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
+
+/** Use proxy-aware fetch when available, otherwise fall back to global fetch. */
+function proxyAwareFetch(url: string | URL | Request, init?: RequestInit): Promise<Response> {
+	return (_proxyFetch ?? fetch)(url, init);
+}
 
 const SUCCESS_HTML = `<!doctype html>
 <html lang="en">
@@ -104,7 +142,7 @@ async function exchangeAuthorizationCode(
 	verifier: string,
 	redirectUri: string = REDIRECT_URI,
 ): Promise<TokenResult> {
-	const response = await fetch(TOKEN_URL, {
+	const response = await proxyAwareFetch(TOKEN_URL, {
 		method: "POST",
 		headers: { "Content-Type": "application/x-www-form-urlencoded" },
 		body: new URLSearchParams({
@@ -143,7 +181,7 @@ async function exchangeAuthorizationCode(
 
 async function refreshAccessToken(refreshToken: string): Promise<TokenResult> {
 	try {
-		const response = await fetch(TOKEN_URL, {
+		const response = await proxyAwareFetch(TOKEN_URL, {
 			method: "POST",
 			headers: { "Content-Type": "application/x-www-form-urlencoded" },
 			body: new URLSearchParams({
