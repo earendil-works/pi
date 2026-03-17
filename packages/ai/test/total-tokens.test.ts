@@ -371,6 +371,25 @@ describe("totalTokens field", () => {
 		);
 	});
 
+	describe.skipIf(!process.env.TOGETHER_API_KEY)("Together", () => {
+		it(
+			"moonshotai/Kimi-K2.5 - should return totalTokens equal to sum of components",
+			{ retry: 3, timeout: 60000 },
+			async () => {
+				const llm = getModel("together", "moonshotai/Kimi-K2.5");
+
+				console.log(`\nTogether / ${llm.id}:`);
+				const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.TOGETHER_API_KEY });
+
+				logUsage("First request", first);
+				logUsage("Second request", second);
+
+				assertTotalTokensEqualsComponents(first);
+				assertTotalTokensEqualsComponents(second);
+			},
+		);
+	});
+
 	// =========================================================================
 	// MiniMax
 	// =========================================================================

@@ -37,6 +37,7 @@ const OVERFLOW_PATTERNS = [
 	/greater than the context length/i, // LM Studio
 	/context window exceeds limit/i, // MiniMax
 	/exceeded model token limit/i, // Kimi For Coding
+	/input \(\d+ tokens\) is longer than the model's context length \(\d+ tokens\)/i, // Together AI
 	/too large for model with \d+ maximum context length/i, // Mistral
 	/model_context_window_exceeded/i, // z.ai non-standard finish_reason surfaced as error text
 	/context[_ ]length[_ ]exceeded/i, // Generic fallback

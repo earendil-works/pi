@@ -27,6 +27,7 @@ export type KnownProvider =
 	| "azure-openai-responses"
 	| "openai-codex"
 	| "github-copilot"
+	| "together"
 	| "xai"
 	| "groq"
 	| "cerebras"

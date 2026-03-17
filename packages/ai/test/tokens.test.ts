@@ -33,13 +33,14 @@ async function testTokensOnAbort<TApi extends Api>(llm: Model<TApi>, options: St
 
 	const controller = new AbortController();
 	const response = stream(llm, context, { ...options, signal: controller.signal });
+	const minCharsBeforeAbort = llm.provider === "together" ? 250 : 1000;
 
 	let abortFired = false;
 	let text = "";
 	for await (const event of response) {
 		if (!abortFired && (event.type === "text_delta" || event.type === "thinking_delta")) {
 			text += event.delta;
-			if (text.length >= 1000) {
+			if (text.length >= minCharsBeforeAbort) {
 				abortFired = true;
 				controller.abort();
 			}
@@ -173,6 +174,14 @@ describe("Token Statistics on Abort", () => {
 
 	describe.skipIf(!process.env.MISTRAL_API_KEY)("Mistral Provider", () => {
 		const llm = getModel("mistral", "devstral-medium-latest");
+
+		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
+			await testTokensOnAbort(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.TOGETHER_API_KEY)("Together Provider", () => {
+		const llm = getModel("together", "moonshotai/Kimi-K2.5");
 
 		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
 			await testTokensOnAbort(llm);

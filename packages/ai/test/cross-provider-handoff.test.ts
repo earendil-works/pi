@@ -82,6 +82,13 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	},
 	// xAI
 	{ provider: "xai", model: "grok-code-fast-1", label: "xai-grok-code-fast-1" },
+	// Together
+	{ provider: "together", model: "moonshotai/Kimi-K2.5", label: "together-kimi-k2.5" },
+	{
+		provider: "together",
+		model: "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+		label: "together-llama-4-maverick",
+	},
 	// Cerebras
 	{ provider: "cerebras", model: "zai-glm-4.7", label: "cerebras-zai-glm-4.7" },
 	// Groq

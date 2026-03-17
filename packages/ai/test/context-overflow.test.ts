@@ -430,6 +430,22 @@ describe("Context overflow error handling", () => {
 		}, 120000);
 	});
 
+	describe.skipIf(!process.env.TOGETHER_API_KEY)("Together", () => {
+		it("moonshotai/Kimi-K2.5 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("together", "moonshotai/Kimi-K2.5");
+			const result = await testContextOverflow(model, process.env.TOGETHER_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(result.errorMessage).toMatch(
+				/input \(\d+ tokens\) is longer than the model's context length \(\d+ tokens\)|503 service unavailable/i,
+			);
+			if (!/503 service unavailable/i.test(result.errorMessage || "")) {
+				expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+			}
+		}, 120000);
+	});
+
 	// =============================================================================
 	// MiniMax
 	// Expected pattern: TBD - need to test actual error message

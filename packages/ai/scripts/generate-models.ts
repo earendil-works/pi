@@ -46,6 +46,19 @@ interface AiGatewayModel {
 	};
 }
 
+interface TogetherModel {
+	id: string;
+	display_name?: string;
+	context_length?: number;
+	config?: {
+		max_output_length?: number;
+	};
+	pricing?: {
+		input?: number;
+		output?: number;
+	};
+}
+
 const COPILOT_STATIC_HEADERS = {
 	"User-Agent": "GitHubCopilotChat/0.35.0",
 	"Editor-Version": "vscode/1.107.0",
@@ -55,6 +68,90 @@ const COPILOT_STATIC_HEADERS = {
 
 const AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1";
 const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
+const TOGETHER_BASE_URL = "https://api.together.xyz/v1";
+const TOGETHER_MODELS = [
+	{
+		id: "moonshotai/Kimi-K2.5",
+		name: "Kimi K2.5",
+		reasoning: true,
+		input: ["text"] as ("text" | "image")[],
+		contextWindow: 262144,
+		maxTokens: 32768,
+		cost: { input: 0.5, output: 2.8, cacheRead: 0, cacheWrite: 0 },
+	},
+	{
+		id: "zai-org/GLM-5",
+		name: "GLM-5",
+		reasoning: true,
+		input: ["text"] as ("text" | "image")[],
+		contextWindow: 202752,
+		maxTokens: 32768,
+		cost: { input: 1, output: 3.2, cacheRead: 0, cacheWrite: 0 },
+	},
+	{
+		id: "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+		name: "Llama 4 Maverick Instruct (17Bx128E)",
+		reasoning: false,
+		input: ["text", "image"] as ("text" | "image")[],
+		contextWindow: 1048576,
+		maxTokens: 32768,
+		cost: { input: 0.27, output: 0.85, cacheRead: 0, cacheWrite: 0 },
+	},
+] as const;
+
+async function fetchTogetherModels(): Promise<Model<"openai-completions">[]> {
+	const apiKey = process.env.TOGETHER_API_KEY;
+	if (!apiKey) {
+		console.log("Skipping Together models fetch (TOGETHER_API_KEY not set)...");
+		return [];
+	}
+
+	try {
+		console.log("Fetching models from Together API...");
+		const response = await fetch("https://api.together.xyz/v1/models", {
+			headers: {
+				Authorization: `Bearer ${apiKey}`,
+			},
+		});
+
+		if (!response.ok) {
+			throw new Error(`${response.status} ${response.statusText}`);
+		}
+
+		const data = await response.json();
+		const items = Array.isArray(data) ? (data as TogetherModel[]) : [];
+		const byId = new Map(items.map((model) => [model.id, model]));
+
+		const models = TOGETHER_MODELS.flatMap((model): Model<"openai-completions">[] => {
+			const live = byId.get(model.id);
+			if (!live) return [];
+
+			return [{
+				id: live.id,
+				name: live.display_name || model.name,
+				api: "openai-completions",
+				provider: "together",
+				baseUrl: TOGETHER_BASE_URL,
+				reasoning: model.reasoning,
+				input: model.input,
+				cost: {
+					input: live.pricing?.input ?? model.cost.input,
+					output: live.pricing?.output ?? model.cost.output,
+					cacheRead: 0,
+					cacheWrite: 0,
+				},
+				contextWindow: live.context_length ?? model.contextWindow,
+				maxTokens: live.config?.max_output_length ?? model.maxTokens,
+			}];
+		});
+
+		console.log(`Fetched ${models.length} curated Together models`);
+		return models;
+	} catch (error) {
+		console.error("Failed to fetch Together models:", error);
+		return [];
+	}
+}
 
 async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 	try {
@@ -645,9 +742,10 @@ async function generateModels() {
 	const modelsDevModels = await loadModelsDevData();
 	const openRouterModels = await fetchOpenRouterModels();
 	const aiGatewayModels = await fetchAiGatewayModels();
+	const togetherModels = await fetchTogetherModels();
 
 	// Combine models (models.dev has priority)
-	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels].filter(
+	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels, ...togetherModels].filter(
 		(model) =>
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
 	);
@@ -1433,6 +1531,23 @@ async function generateModels() {
 	for (const model of kimiCodingModels) {
 		if (!allModels.some(m => m.provider === "kimi-coding" && m.id === model.id)) {
 			allModels.push(model);
+		}
+	}
+
+	for (const model of TOGETHER_MODELS) {
+		if (!allModels.some((candidate) => candidate.provider === "together" && candidate.id === model.id)) {
+			allModels.push({
+				id: model.id,
+				name: model.name,
+				api: "openai-completions",
+				provider: "together",
+				baseUrl: TOGETHER_BASE_URL,
+				reasoning: model.reasoning,
+				input: [...model.input],
+				cost: { ...model.cost },
+				contextWindow: model.contextWindow,
+				maxTokens: model.maxTokens,
+			});
 		}
 	}
 

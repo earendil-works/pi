@@ -54,6 +54,7 @@ Unified LLM API with automatic model discovery, provider configuration, token an
 - **Google**
 - **Vertex AI** (Gemini via Vertex AI)
 - **Mistral**
+- **Together AI**
 - **Groq**
 - **Cerebras**
 - **xAI**
@@ -932,6 +933,7 @@ In Node.js environments, you can set environment variables to avoid passing API 
 | Google | `GEMINI_API_KEY` |
 | Vertex AI | `GOOGLE_CLOUD_API_KEY` or `GOOGLE_CLOUD_PROJECT` (or `GCLOUD_PROJECT`) + `GOOGLE_CLOUD_LOCATION` + ADC |
 | Mistral | `MISTRAL_API_KEY` |
+| Together AI | `TOGETHER_API_KEY` |
 | Groq | `GROQ_API_KEY` |
 | Cerebras | `CEREBRAS_API_KEY` |
 | xAI | `XAI_API_KEY` |

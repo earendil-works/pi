@@ -208,6 +208,89 @@ async function handleToolWithTextAndImageResult<TApi extends Api>(
 	}
 }
 
+async function handleManualToolResultWithImage<TApi extends Api>(
+	model: Model<TApi>,
+	content: ToolResultMessage["content"],
+	expectColor: boolean,
+	options?: StreamOptionsWithExtras,
+) {
+	if (!model.input.includes("image")) {
+		console.log(`Skipping manual tool image result test - model ${model.id} doesn't support images`);
+		return;
+	}
+
+	const getImageSchema = Type.Object({});
+	const getImageTool: Tool<typeof getImageSchema> = {
+		name: "get_circle",
+		description: "Returns a circle image for visualization",
+		parameters: getImageSchema,
+	};
+
+	const toolCallId = "call_manual_image_1";
+	const context: Context = {
+		systemPrompt: "You are a helpful assistant that uses tools when asked.",
+		messages: [
+			{
+				role: "user",
+				content: "Use the get_circle tool to fetch the image.",
+				timestamp: Date.now(),
+			},
+			{
+				role: "assistant",
+				content: [
+					{
+						type: "toolCall",
+						id: toolCallId,
+						name: "get_circle",
+						arguments: {},
+					},
+				],
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "toolUse",
+				timestamp: Date.now(),
+			},
+			{
+				role: "toolResult",
+				toolCallId,
+				toolName: "get_circle",
+				content,
+				isError: false,
+				timestamp: Date.now(),
+			},
+			{
+				role: "user",
+				content: "Describe the tool result image and mention the color and shape.",
+				timestamp: Date.now(),
+			},
+		],
+		tools: [getImageTool],
+	};
+
+	const response = await complete(model, context, options);
+	expect(response.stopReason).toBe("stop");
+	expect(response.errorMessage).toBeFalsy();
+
+	const textContent = response.content.find((block) => block.type === "text");
+	expect(textContent).toBeTruthy();
+	if (textContent && textContent.type === "text") {
+		const lowerContent = textContent.text.toLowerCase();
+		expect(lowerContent).toContain("circle");
+		if (expectColor) {
+			expect(lowerContent).toContain("red");
+		}
+	}
+}
+
 describe("Tool Results with Images", () => {
 	describe.skipIf(!process.env.GEMINI_API_KEY)("Google Provider (gemini-2.5-flash)", () => {
 		const llm = getModel("google", "gemini-2.5-flash");
@@ -297,6 +380,44 @@ describe("Tool Results with Images", () => {
 
 		it("should handle tool result with text and image", { retry: 5, timeout: 30000 }, async () => {
 			await handleToolWithTextAndImageResult(llm);
+		});
+	});
+
+	describe.skipIf(!process.env.TOGETHER_API_KEY)("Together Provider (Llama 4 Maverick)", () => {
+		const llm = getModel("together", "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8");
+		const imagePath = join(__dirname, "data", "red-circle.png");
+		const base64Image = readFileSync(imagePath).toString("base64");
+
+		it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
+			await handleManualToolResultWithImage(
+				llm,
+				[
+					{
+						type: "image",
+						data: base64Image,
+						mimeType: "image/png",
+					},
+				],
+				false,
+			);
+		});
+
+		it("should handle tool result with text and image", { retry: 3, timeout: 30000 }, async () => {
+			await handleManualToolResultWithImage(
+				llm,
+				[
+					{
+						type: "text",
+						text: "This is a geometric shape with specific properties: it has a diameter of 100 pixels.",
+					},
+					{
+						type: "image",
+						data: base64Image,
+						mimeType: "image/png",
+					},
+				],
+				true,
+			);
 		});
 	});
 

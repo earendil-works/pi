@@ -113,6 +113,7 @@ export function getEnvApiKey(provider: any): string | undefined {
 		openai: "OPENAI_API_KEY",
 		"azure-openai-responses": "AZURE_OPENAI_API_KEY",
 		google: "GEMINI_API_KEY",
+		together: "TOGETHER_API_KEY",
 		groq: "GROQ_API_KEY",
 		cerebras: "CEREBRAS_API_KEY",
 		xai: "XAI_API_KEY",

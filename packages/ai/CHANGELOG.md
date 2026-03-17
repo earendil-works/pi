@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added built-in Together AI provider support with curated `openai-completions` models and `TOGETHER_API_KEY` auth.
+
 ## [0.58.4] - 2026-03-16
 
 ## [0.58.3] - 2026-03-15

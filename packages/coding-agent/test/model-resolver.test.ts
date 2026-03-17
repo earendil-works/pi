@@ -378,6 +378,10 @@ describe("default model selection", () => {
 		expect(defaultModelPerProvider["openai-codex"]).toBe("gpt-5.4");
 	});
 
+	test("together default is Kimi K2.5", () => {
+		expect(defaultModelPerProvider.together).toBe("moonshotai/Kimi-K2.5");
+	});
+
 	test("ai-gateway default is opus 4.6", () => {
 		expect(defaultModelPerProvider["vercel-ai-gateway"]).toBe("anthropic/claude-opus-4-6");
 	});

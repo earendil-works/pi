@@ -709,13 +709,14 @@ function parseChunkUsage(
 	rawUsage: {
 		prompt_tokens?: number;
 		completion_tokens?: number;
+		reasoning_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number };
 		completion_tokens_details?: { reasoning_tokens?: number };
 	},
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
 	const cachedTokens = rawUsage.prompt_tokens_details?.cached_tokens || 0;
-	const reasoningTokens = rawUsage.completion_tokens_details?.reasoning_tokens || 0;
+	const reasoningTokens = rawUsage.completion_tokens_details?.reasoning_tokens || rawUsage.reasoning_tokens || 0;
 	// OpenAI includes cached tokens in prompt_tokens, so subtract to get non-cached input
 	const input = (rawUsage.prompt_tokens || 0) - cachedTokens;
 	// Compute totalTokens ourselves since we add reasoning_tokens to output

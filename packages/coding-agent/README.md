@@ -101,6 +101,7 @@ For each built-in provider, pi maintains a list of tool-capable models, updated 
 - Google Vertex
 - Amazon Bedrock
 - Mistral
+- Together AI
 - Groq
 - Cerebras
 - xAI
