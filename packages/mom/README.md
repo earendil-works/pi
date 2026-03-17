@@ -237,7 +237,7 @@ description: Read, search, and send Gmail via IMAP/SMTP
 
 When mom responds, she's given the names, descriptions, and file locations of all `SKILL.md` files in `/workspace/skills/` and `/workspace/<channel>/skills/`, so she knows what's available to handle your request. When mom decides to use a skill, she reads the `SKILL.md` in full, after which she's able to use the skill by invoking its scripts and programs.
 
-You can find a set of basic skills at <https://github.com/badlogic/pi-skills|github.com/badlogic/pi-skills>. Just tell mom to clone this repository into `/workspace/skills/pi-skills` and she'll help you set up the rest.
+You can find a set of basic skills at [github.com/badlogic/pi-skills](https://github.com/badlogic/pi-skills). Just tell mom to clone this repository into `/workspace/skills/pi-skills` and she'll help you set up the rest.
 
 #### Creating a Skill
 
