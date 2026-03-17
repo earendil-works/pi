@@ -82,7 +82,7 @@ export const streamGigaChat: StreamFunction<"gigachat", GigaChatOptions> = (
 			stream.end();
 		} catch (error) {
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : String(error);
+			output.errorMessage = await getErrorMessage(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -140,7 +140,7 @@ function createClient(model: Model<"gigachat">, auth: GigaChatAuth, options?: Gi
 	config.model = model.id || GIGACHAT_DEFAULT_MODEL;
 	config.baseUrl = options?.baseUrl || process.env.GIGACHAT_BASE_URL || model.baseUrl;
 	config.profanityCheck = options?.profanityCheck;
-	config.dangerouslyAllowBrowser = true;
+	config.dangerouslyAllowBrowser = isBrowserRuntime();
 
 	return new GigaChat(config);
 }
@@ -350,7 +350,7 @@ function convertMessages(model: Model<"gigachat">, context: Context): GigaChatMe
 		messages.push({
 			role: "function",
 			name: toolMessage.toolName || toolNameById.get(toolMessage.toolCallId) || "function",
-			content: text.length > 0 ? text : "(no content)",
+			content: JSON.stringify(text.length > 0 ? text : "(no content)"),
 		});
 	}
 
@@ -462,4 +462,109 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function asOptionalString(value: unknown): string | undefined {
 	return typeof value === "string" ? value : undefined;
+}
+
+async function getErrorMessage(error: unknown): Promise<string> {
+	if (error instanceof Error && error.message && error.message !== "[object ReadableStream]") {
+		if (error.message !== "[object Object]") {
+			return error.message;
+		}
+	}
+
+	const response = asRecord(error)?.response;
+	if (response) {
+		const responseError = extractResponseErrorMessage(await readResponseData(asRecord(response)?.data));
+		if (responseError) {
+			return responseError;
+		}
+	}
+
+	if (error instanceof Error) {
+		return error.message;
+	}
+
+	return String(error);
+}
+
+function extractResponseErrorMessage(value: unknown): string | undefined {
+	if (typeof value === "string" && value.trim().length > 0) {
+		return value;
+	}
+
+	const record = asRecord(value);
+	if (!record) {
+		return undefined;
+	}
+
+	for (const key of ["message", "error", "detail"]) {
+		const candidate = record[key];
+		if (typeof candidate === "string" && candidate.trim().length > 0) {
+			return candidate;
+		}
+	}
+
+	return undefined;
+}
+
+function isBrowserRuntime(): boolean {
+	const scope = globalThis as { window?: unknown; document?: unknown };
+	return typeof scope.window !== "undefined" && typeof scope.document !== "undefined";
+}
+
+async function readResponseData(value: unknown): Promise<unknown> {
+	if (typeof value === "string") {
+		return tryParseJson(value);
+	}
+
+	const webStream = asReadableStream(value);
+	if (webStream) {
+		const reader = webStream.getReader();
+		const chunks: Uint8Array[] = [];
+		while (true) {
+			const { done, value: chunk } = await reader.read();
+			if (done) break;
+			if (chunk) chunks.push(chunk);
+		}
+		const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
+		const merged = new Uint8Array(totalLength);
+		let offset = 0;
+		for (const chunk of chunks) {
+			merged.set(chunk, offset);
+			offset += chunk.length;
+		}
+		return tryParseJson(new TextDecoder().decode(merged));
+	}
+
+	const nodeStream = asNodeReadable(value);
+	if (nodeStream) {
+		let body = "";
+		for await (const chunk of nodeStream) {
+			body += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf-8");
+		}
+		return tryParseJson(body);
+	}
+
+	return value;
+}
+
+function tryParseJson(value: string): unknown {
+	try {
+		return JSON.parse(value);
+	} catch {
+		return value;
+	}
+}
+
+function asReadableStream(value: unknown): ReadableStream<Uint8Array> | undefined {
+	if (typeof ReadableStream === "undefined") {
+		return undefined;
+	}
+	return value instanceof ReadableStream ? value : undefined;
+}
+
+function asNodeReadable(value: unknown): AsyncIterable<Uint8Array | string> | undefined {
+	if (!value || typeof value !== "object") {
+		return undefined;
+	}
+	return Symbol.asyncIterator in value ? (value as AsyncIterable<Uint8Array | string>) : undefined;
 }

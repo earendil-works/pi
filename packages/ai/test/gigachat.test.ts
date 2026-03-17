@@ -92,7 +92,7 @@ describe("GigaChat Provider", () => {
 			scope: "GIGACHAT_API_PERS",
 			model: "GigaChat-2-Pro",
 			baseUrl: "https://gigachat.devices.sberbank.ru/api/v1",
-			dangerouslyAllowBrowser: true,
+			dangerouslyAllowBrowser: false,
 		});
 		expect((mockState.constructorOptions as { accessToken?: string } | undefined)?.accessToken).toBeUndefined();
 		expect(capturedPayload).toMatchObject({
@@ -155,5 +155,48 @@ describe("GigaChat Provider", () => {
 		expect((mockState.constructorOptions as { accessToken?: string } | undefined)?.accessToken).toBeUndefined();
 		expect(response.stopReason).toBe("stop");
 		expect(response.content[0]).toMatchObject({ type: "text", text: "Hello" });
+	});
+
+	it("serializes tool results as JSON strings for function messages", async () => {
+		process.env.GIGACHAT_CREDENTIALS = "test-gigachat-credentials";
+
+		await complete(getModel("gigachat", "GigaChat-2"), {
+			messages: [
+				{ role: "user", content: "Read the file", timestamp: Date.now() },
+				{
+					role: "assistant",
+					content: [{ type: "toolCall", id: "call-1", name: "read", arguments: { path: "README.md" } }],
+					api: "gigachat",
+					provider: "gigachat",
+					model: "GigaChat-2",
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "toolUse",
+					timestamp: Date.now(),
+				},
+				{
+					role: "toolResult",
+					toolCallId: "call-1",
+					toolName: "read",
+					content: [{ type: "text", text: "file contents" }],
+					isError: false,
+					timestamp: Date.now(),
+				},
+			],
+		});
+
+		expect(mockState.streamPayload).toMatchObject({
+			messages: [
+				{ role: "user", content: "Read the file" },
+				{ role: "assistant", function_call: { name: "read", arguments: { path: "README.md" } } },
+				{ role: "function", name: "read", content: '"file contents"' },
+			],
+		});
 	});
 });
