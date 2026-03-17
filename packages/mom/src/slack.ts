@@ -184,6 +184,17 @@ export class SlackBot {
 		return Array.from(this.channels.values());
 	}
 
+	/**
+	 * Convert Slack user mentions from <@U123> format to @username
+	 * Preserves unknown mentions as-is
+	 */
+	private convertMentions(text: string): string {
+		return text.replace(/<@([A-Z0-9]+)>/gi, (match, userId) => {
+			const user = this.users.get(userId);
+			return user ? `@${user.userName}` : match;
+		});
+	}
+
 	async postMessage(channel: string, text: string): Promise<string> {
 		const result = await this.webClient.chat.postMessage({ channel, text });
 		return result.ts as string;
@@ -291,7 +302,7 @@ export class SlackBot {
 				channel: e.channel,
 				ts: e.ts,
 				user: e.user,
-				text: e.text.replace(/<@[A-Z0-9]+>/gi, "").trim(),
+				text: this.convertMentions(e.text).trim(),
 				files: e.files,
 			};
 
@@ -370,7 +381,7 @@ export class SlackBot {
 				channel: e.channel,
 				ts: e.ts,
 				user: e.user,
-				text: (e.text || "").replace(/<@[A-Z0-9]+>/gi, "").trim(),
+				text: this.convertMentions(e.text || "").trim(),
 				files: e.files,
 			};
 
@@ -506,8 +517,8 @@ export class SlackBot {
 		for (const msg of relevantMessages) {
 			const isMomMessage = msg.user === this.botUserId;
 			const user = this.users.get(msg.user!);
-			// Strip @mentions from text (same as live messages)
-			const text = (msg.text || "").replace(/<@[A-Z0-9]+>/gi, "").trim();
+			// Convert @mentions from <@U123> to @username (same as live messages)
+			const text = this.convertMentions(msg.text || "").trim();
 			// Process attachments - queues downloads in background
 			const attachments = msg.files ? this.store.processAttachments(channelId, msg.files, msg.ts!) : [];
 
