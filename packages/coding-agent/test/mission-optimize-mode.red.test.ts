@@ -90,6 +90,30 @@ describe("optimize-mode missions (red)", () => {
 		expect((mission as { mode?: string }).mode).toBe("optimize");
 	});
 
+	it("parses optimize convergence settings from SPEC.md frontmatter", () => {
+		const { dir, cleanup } = makeMissionDir();
+		cleanups.push(cleanup);
+		writeOptimizeMissionFiles(dir, {
+			spec: [
+				"---",
+				"mode: optimize",
+				"metric: duration_seconds",
+				"direction: lower",
+				"converge_after: 3",
+				"convergence_kind: discard",
+				"---",
+				"",
+				"# Goal",
+				"Optimize the billing benchmark.",
+			].join("\n"),
+		});
+
+		const mission = parseMissionDefinition(dir) as { convergeAfter?: number; convergenceKind?: string };
+
+		expect(mission.convergeAfter).toBe(3);
+		expect(mission.convergenceKind).toBe("discard");
+	});
+
 	it("builds an optimize-specific stable prompt instead of the build-mode stop rule", () => {
 		const { dir, cleanup } = makeMissionDir();
 		cleanups.push(cleanup);
@@ -180,6 +204,143 @@ describe("optimize-mode missions (red)", () => {
 		}
 		expect(result.iterations).toBe(1);
 		expect(result.reason).toMatch(/restore auth/i);
+	});
+
+	it("converges optimize mode after three straight discards when SPEC.md asks for discard convergence", async () => {
+		const { dir, cleanup } = makeMissionDir();
+		cleanups.push(cleanup);
+		writeOptimizeMissionFiles(dir, {
+			spec: [
+				"---",
+				"mode: optimize",
+				"metric: duration_seconds",
+				"direction: lower",
+				"converge_after: 3",
+				"convergence_kind: discard",
+				"---",
+				"",
+				"# Goal",
+				"Optimize the billing benchmark.",
+				"",
+				"# Benchmark",
+				"./benchmark.sh",
+				"",
+				"# Validation",
+				"npm test",
+			].join("\n"),
+		});
+
+		let iterations = 0;
+		const result = (await runMissionLoop({
+			missionDir: dir,
+			maxIterations: 5,
+			executeIteration: async () => {
+				iterations += 1;
+				appendFileSync(
+					join(dir, "EXPERIMENTS.jsonl"),
+					JSON.stringify({
+						run: iterations,
+						status: "discard",
+						metric: 42.3 + iterations,
+						description: `try ${iterations}`,
+					}) + "\n",
+				);
+			},
+		})) as { status: string; iterations: number; reason?: string };
+
+		expect(result.status).toBe("converged");
+		expect(result.iterations).toBe(3);
+		expect(iterations).toBe(3);
+	});
+
+	it("uses non-keep convergence by default so discard, crash, discard stops optimize mode after three tries without a keep", async () => {
+		const { dir, cleanup } = makeMissionDir();
+		cleanups.push(cleanup);
+		writeOptimizeMissionFiles(dir, {
+			spec: [
+				"---",
+				"mode: optimize",
+				"metric: duration_seconds",
+				"direction: lower",
+				"converge_after: 3",
+				"---",
+				"",
+				"# Goal",
+				"Optimize the billing benchmark.",
+				"",
+				"# Benchmark",
+				"./benchmark.sh",
+				"",
+				"# Validation",
+				"npm test",
+			].join("\n"),
+		});
+
+		let iterations = 0;
+		const statuses = ["discard", "crash", "discard"] as const;
+		const result = (await runMissionLoop({
+			missionDir: dir,
+			maxIterations: 5,
+			executeIteration: async () => {
+				const status = statuses[iterations] ?? "discard";
+				iterations += 1;
+				appendFileSync(
+					join(dir, "EXPERIMENTS.jsonl"),
+					JSON.stringify({
+						run: iterations,
+						status,
+						metric: 42.3 + iterations,
+						description: `try ${iterations}`,
+					}) + "\n",
+				);
+			},
+		})) as { status: string; iterations: number; reason?: string };
+
+		expect(result.status).toBe("converged");
+		expect(result.iterations).toBe(3);
+		expect(iterations).toBe(3);
+	});
+
+	it("resets the convergence streak after a keep before counting later non-keeps", async () => {
+		const { dir, cleanup } = makeMissionDir();
+		cleanups.push(cleanup);
+		writeOptimizeMissionFiles(dir, {
+			spec: [
+				"---",
+				"mode: optimize",
+				"metric: duration_seconds",
+				"direction: lower",
+				"converge_after: 3",
+				"---",
+				"",
+				"# Goal",
+				"Optimize the billing benchmark.",
+			].join("\n"),
+		});
+
+		let iterations = 0;
+		const statuses = ["discard", "discard", "keep", "discard", "discard", "discard"] as const;
+		const result = (await runMissionLoop({
+			missionDir: dir,
+			maxIterations: 8,
+			executeIteration: async () => {
+				const status = statuses[iterations] ?? "discard";
+				iterations += 1;
+				appendFileSync(
+					join(dir, "EXPERIMENTS.jsonl"),
+					JSON.stringify({
+						run: iterations,
+						status,
+						metric: 42.3 + iterations,
+						description: `try ${iterations}`,
+					}) + "\n",
+				);
+			},
+		})) as { status: string; iterations: number; reason?: string };
+
+		expect(result.status).toBe("converged");
+		expect(result.iterations).toBe(6);
+		expect(iterations).toBe(6);
 	});
 
 	it("treats EXPERIMENTS.jsonl as append-only optimize history", async () => {

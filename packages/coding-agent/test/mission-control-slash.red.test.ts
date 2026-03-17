@@ -108,6 +108,19 @@ describe("mission control slash commands (red)", () => {
 		expect(commands.find((command) => command.name === "mission-iterations")?.description).toMatch(/iteration/i);
 	});
 
+	it("registers /mission-convergence in the live TUI renderer", async () => {
+		const { renderer, cleanup } = await makeRenderer();
+		cleanups.push(cleanup);
+
+		const commands = renderer.getAllSlashCommands();
+		const names = commands.map((command) => command.name);
+
+		expect(names).toContain("mission-convergence");
+		expect(commands.find((command) => command.name === "mission-convergence")?.description).toMatch(
+			/conver|streak|non-keep/i,
+		);
+	});
+
 	it("handles /mission-halt as a built-in command instead of falling through to normal chat submission", async () => {
 		const { renderer, getRunCount, cleanup } = await makeRenderer();
 		cleanups.push(cleanup);
@@ -154,5 +167,29 @@ describe("mission control slash commands (red)", () => {
 		expect(getRunCount()).toBe(0);
 		expect(errors).toEqual([]);
 		expect(warnings.join("\n")).toMatch(/no active mission/i);
+	});
+
+	it("handles /mission-convergence status as a built-in command instead of falling through to normal chat submission", async () => {
+		const { renderer, getRunCount, cleanup } = await makeRenderer();
+		cleanups.push(cleanup);
+
+		const errors: string[] = [];
+		const warnings: string[] = [];
+		const originalShowError = renderer.showError.bind(renderer);
+		const originalShowWarning = renderer.showWarning.bind(renderer);
+		renderer.showError = (message: string) => {
+			errors.push(message);
+			originalShowError(message);
+		};
+		renderer.showWarning = (message: string) => {
+			warnings.push(message);
+			originalShowWarning(message);
+		};
+
+		await renderer.handleEditorTextSubmission("/mission-convergence status", "by-end");
+
+		expect(getRunCount()).toBe(0);
+		expect(errors).toEqual([]);
+		expect(warnings.join("\n")).toMatch(/no active mission|no active optimize mission/i);
 	});
 });
