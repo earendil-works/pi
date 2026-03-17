@@ -279,15 +279,16 @@ describe("matchesKey", () => {
 			assert.strictEqual(parseKey("\x1b\x1f"), "ctrl+alt+-");
 		});
 
-		it("should distinguish backspace (0x7f) from ctrl+backspace (0x08)", () => {
+		it("should match 0x08 as both backspace and ctrl+backspace", () => {
 			setKittyProtocolActive(false);
 			// 0x7f is plain backspace
 			assert.strictEqual(matchesKey("\x7f", "backspace"), true);
 			assert.strictEqual(matchesKey("\x7f", "ctrl+backspace"), false);
 			assert.strictEqual(parseKey("\x7f"), "backspace");
-			// 0x08 is ctrl+backspace (Windows Terminal sends this for Ctrl+Backspace)
+			// 0x08 matches both backspace (tmux sends this for plain backspace)
+			// and ctrl+backspace (Windows Terminal sends this for Ctrl+Backspace)
 			assert.strictEqual(matchesKey("\x08", "ctrl+backspace"), true);
-			assert.strictEqual(matchesKey("\x08", "backspace"), false);
+			assert.strictEqual(matchesKey("\x08", "backspace"), true);
 			assert.strictEqual(parseKey("\x08"), "ctrl+backspace");
 			// 0x08 also matches ctrl+h (same byte, ambiguous in legacy terminals)
 			assert.strictEqual(matchesKey("\x08", "ctrl+h"), true);
