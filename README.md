@@ -55,7 +55,7 @@ npm run check        # Lint, format, and type check
 ./pi-test.sh         # Run pi from sources (must be run from repo root)
 ```
 
-> **Note:** `npm run check` requires `npm run build` to be run first. The web-ui package uses `tsc` which needs compiled `.d.ts` files from dependencies.
+> **Note:** `npm run check` requires `npm run build` to be run first. The web-ui package uses `tsc` which needs to compile `.d.ts` files from dependencies.
 
 ## License
 
