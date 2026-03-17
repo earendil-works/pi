@@ -167,6 +167,33 @@ describe("matchesKey", () => {
 			assert.strictEqual(parseKey("\x1b[27;3;9~"), "alt+tab");
 		});
 
+		it("should match xterm modifyOtherKeys Backspace variants", () => {
+			setKittyProtocolActive(false);
+			// Unmodified backspace: modifier 1 (xterm 1-indexed) = modifier 0
+			assert.strictEqual(matchesKey("\x1b[27;1;127~", "backspace"), true);
+			assert.strictEqual(parseKey("\x1b[27;1;127~"), "backspace");
+			// Ctrl+Backspace
+			assert.strictEqual(matchesKey("\x1b[27;5;127~", "ctrl+backspace"), true);
+			assert.strictEqual(parseKey("\x1b[27;5;127~"), "ctrl+backspace");
+			// Alt+Backspace
+			assert.strictEqual(matchesKey("\x1b[27;3;127~", "alt+backspace"), true);
+			assert.strictEqual(parseKey("\x1b[27;3;127~"), "alt+backspace");
+		});
+
+		it("should match xterm modifyOtherKeys Escape", () => {
+			setKittyProtocolActive(false);
+			assert.strictEqual(matchesKey("\x1b[27;1;27~", "escape"), true);
+			assert.strictEqual(parseKey("\x1b[27;1;27~"), "escape");
+		});
+
+		it("should match xterm modifyOtherKeys Space variants", () => {
+			setKittyProtocolActive(false);
+			assert.strictEqual(matchesKey("\x1b[27;1;32~", "space"), true);
+			assert.strictEqual(parseKey("\x1b[27;1;32~"), "space");
+			assert.strictEqual(matchesKey("\x1b[27;5;32~", "ctrl+space"), true);
+			assert.strictEqual(parseKey("\x1b[27;5;32~"), "ctrl+space");
+		});
+
 		it("should match xterm modifyOtherKeys symbol combos", () => {
 			setKittyProtocolActive(false);
 			assert.strictEqual(matchesKey("\x1b[27;5;47~", "ctrl+/"), true);
