@@ -159,9 +159,17 @@ export function convertResponsesMessages<TApi extends Api>(
 				assistantMsg.provider === model.provider &&
 				assistantMsg.api === model.api;
 
+			// Check if any thinking blocks have empty content (reasoning was incomplete
+			// or discarded). GPT-5 models can return reasoning items with empty summary;
+			// the thinkingSignature is discarded at receive time, but the empty thinking
+			// block remains. We must strip paired fc_xxx IDs to avoid pairing validation.
+			const hasSkippedThinking = msg.content.some(
+				(block) => block.type === "thinking" && block.thinking.trim().length === 0,
+			);
+
 			for (const block of msg.content) {
 				if (block.type === "thinking") {
-					if (block.thinkingSignature) {
+					if (block.thinkingSignature && block.thinking.trim().length > 0) {
 						const reasoningItem = JSON.parse(block.thinkingSignature) as ResponseReasoningItem;
 						output.push(reasoningItem);
 					}
@@ -191,7 +199,7 @@ export function convertResponsesMessages<TApi extends Api>(
 					// For different-model messages, set id to undefined to avoid pairing validation.
 					// OpenAI tracks which fc_xxx IDs were paired with rs_xxx reasoning items.
 					// By omitting the id, we avoid triggering that validation (like cross-provider does).
-					if (isDifferentModel && itemId?.startsWith("fc_")) {
+					if ((isDifferentModel || hasSkippedThinking) && itemId?.startsWith("fc_")) {
 						itemId = undefined;
 					}
 
@@ -407,7 +415,12 @@ export async function processResponsesStream<TApi extends Api>(
 
 			if (item.type === "reasoning" && currentBlock?.type === "thinking") {
 				currentBlock.thinking = item.summary?.map((s) => s.text).join("\n\n") || "";
-				currentBlock.thinkingSignature = JSON.stringify(item);
+				// Only store thinkingSignature when summary has content. GPT-5 models
+				// intermittently return reasoning items with encrypted_content but
+				// empty summary (summary: []). Replaying these causes 400 errors.
+				if (currentBlock.thinking.trim().length > 0) {
+					currentBlock.thinkingSignature = JSON.stringify(item);
+				}
 				stream.push({
 					type: "thinking_end",
 					contentIndex: blockIndex(),
