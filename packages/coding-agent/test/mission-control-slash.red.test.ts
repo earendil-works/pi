@@ -121,6 +121,21 @@ describe("mission control slash commands (red)", () => {
 		);
 	});
 
+	it("registers /campaign-run, /campaign-exit, and /mission-exit in the live TUI renderer", async () => {
+		const { renderer, cleanup } = await makeRenderer();
+		cleanups.push(cleanup);
+
+		const commands = renderer.getAllSlashCommands();
+		const names = commands.map((command) => command.name);
+
+		expect(names).toContain("campaign-run");
+		expect(names).toContain("campaign-exit");
+		expect(names).toContain("mission-exit");
+		expect(commands.find((command) => command.name === "campaign-run")?.description).toMatch(/campaign/i);
+		expect(commands.find((command) => command.name === "campaign-exit")?.description).toMatch(/exit|leave|stop/i);
+		expect(commands.find((command) => command.name === "mission-exit")?.description).toMatch(/exit|leave|stop/i);
+	});
+
 	it("handles /mission-halt as a built-in command instead of falling through to normal chat submission", async () => {
 		const { renderer, getRunCount, cleanup } = await makeRenderer();
 		cleanups.push(cleanup);
@@ -191,5 +206,53 @@ describe("mission control slash commands (red)", () => {
 		expect(getRunCount()).toBe(0);
 		expect(errors).toEqual([]);
 		expect(warnings.join("\n")).toMatch(/no active mission|no active optimize mission/i);
+	});
+
+	it("handles /mission-exit as a built-in command instead of falling through to normal chat submission", async () => {
+		const { renderer, getRunCount, cleanup } = await makeRenderer();
+		cleanups.push(cleanup);
+
+		const errors: string[] = [];
+		const warnings: string[] = [];
+		const originalShowError = renderer.showError.bind(renderer);
+		const originalShowWarning = renderer.showWarning.bind(renderer);
+		renderer.showError = (message: string) => {
+			errors.push(message);
+			originalShowError(message);
+		};
+		renderer.showWarning = (message: string) => {
+			warnings.push(message);
+			originalShowWarning(message);
+		};
+
+		await renderer.handleEditorTextSubmission("/mission-exit", "by-end");
+
+		expect(getRunCount()).toBe(0);
+		expect(errors).toEqual([]);
+		expect(warnings.join("\n")).toMatch(/no active mission/i);
+	});
+
+	it("handles /campaign-exit as a built-in command instead of falling through to normal chat submission", async () => {
+		const { renderer, getRunCount, cleanup } = await makeRenderer();
+		cleanups.push(cleanup);
+
+		const errors: string[] = [];
+		const warnings: string[] = [];
+		const originalShowError = renderer.showError.bind(renderer);
+		const originalShowWarning = renderer.showWarning.bind(renderer);
+		renderer.showError = (message: string) => {
+			errors.push(message);
+			originalShowError(message);
+		};
+		renderer.showWarning = (message: string) => {
+			warnings.push(message);
+			originalShowWarning(message);
+		};
+
+		await renderer.handleEditorTextSubmission("/campaign-exit", "by-end");
+
+		expect(getRunCount()).toBe(0);
+		expect(errors).toEqual([]);
+		expect(warnings.join("\n")).toMatch(/no active campaign/i);
 	});
 });

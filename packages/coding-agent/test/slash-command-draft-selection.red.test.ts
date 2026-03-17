@@ -157,10 +157,10 @@ describe("slash command draft selection", () => {
 			originalShowWarning(message);
 		};
 
-		selectSlashCommand(renderer, "miss");
+		selectSlashCommand(renderer, "mission-run");
 
 		expect(renderer.editor.getText()).toBe("/mission-run ");
 		expect(errors).toEqual([]);
-		expect(warnings).toContain("Prepared /mission-run draft. Enter a mission name or path.");
+		expect(warnings).toContain("Prepared /mission-run draft. Enter an explicit mission path.");
 	});
 });

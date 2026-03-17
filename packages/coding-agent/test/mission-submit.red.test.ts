@@ -20,6 +20,10 @@ type MissionRenderer = {
 	editor: { handleInput(data: string): void };
 };
 
+type MissionRuntimeRenderer = MissionRenderer & {
+	onInputCallback?: (text: string) => void;
+};
+
 function extractTextContent(value: unknown): string {
 	if (typeof value === "string") {
 		return value;
@@ -425,7 +429,7 @@ describe("/mission-run submission (red)", () => {
 		expect(stripAnsi(renderer.getComposerMetaLabel())).not.toContain("mission ");
 	});
 
-	it("resolves @mission-name to devdocs/missions/<mission-name>", async () => {
+	it("requires an explicit mission path instead of defaulting bare names into devdocs/missions", async () => {
 		initTheme("dark");
 		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
 		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
@@ -482,19 +486,19 @@ describe("/mission-run submission (red)", () => {
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
 
-		const warnings: string[] = [];
-		const originalShowWarning = renderer.showWarning.bind(renderer);
-		renderer.showWarning = (message: string) => {
-			warnings.push(message);
-			originalShowWarning(message);
+		const errors: string[] = [];
+		const originalShowError = renderer.showError.bind(renderer);
+		renderer.showError = (message: string) => {
+			errors.push(message);
+			originalShowError(message);
 		};
 
 		await renderer.handleEditorTextSubmission(`/mission-run @${missionName}`, "by-end");
 
-		expect(warnings.join("\n")).toMatch(/already done/i);
-		const footerLabel = stripAnsi(renderer.getComposerMetaLabel());
-		expect(footerLabel).toContain(`mission ${missionName}`);
-		expect(footerLabel).toContain("done");
+		expect(errors).toContain(
+			`Mission is missing required file: SPEC.md (${resolve(process.cwd(), missionName, "SPEC.md")})`,
+		);
+		expect(stripAnsi(renderer.getComposerMetaLabel())).not.toContain(`mission ${missionName}`);
 	});
 
 	it("fails fast on an unfinished mission when no API key is configured instead of entering the loop", async () => {
@@ -944,6 +948,200 @@ describe("/mission-run submission (red)", () => {
 		expect(abortCount).toBe(0);
 		expect(runCalls).toBe(1);
 		expect(warnings.join("\n")).toMatch(/stopped after 1 iteration/i);
+	});
+
+	it("auto-resumes the stopped mission on the next plain message after /mission-halt instead of falling back to regular chat", async () => {
+		initTheme("dark");
+		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
+		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
+
+		const { dir, cleanup } = makeTodoMissionDir();
+		cleanups.push(cleanup);
+
+		const previousOpenAiKey = process.env.OPENAI_API_KEY;
+		process.env.OPENAI_API_KEY = "test-openai-key";
+		cleanups.push(() => {
+			if (previousOpenAiKey === undefined) {
+				delete process.env.OPENAI_API_KEY;
+			} else {
+				process.env.OPENAI_API_KEY = previousOpenAiKey;
+			}
+		});
+
+		let runCalls = 0;
+		const releaseFirstIterationRef: { current: (() => void) | null } = { current: null };
+		let resolveFirstIterationStarted: (() => void) | null = null;
+		const firstIterationStarted = new Promise<void>((resolve) => {
+			resolveFirstIterationStarted = resolve;
+		});
+
+		const transport: AgentTransport = {
+			async *run(_messages, _userMessage, _config, signal) {
+				runCalls += 1;
+				if (runCalls === 1) {
+					resolveFirstIterationStarted?.();
+					await new Promise<void>((done) => {
+						releaseFirstIterationRef.current = done;
+						signal?.addEventListener("abort", () => done(), { once: true });
+					});
+				} else if (runCalls === 2) {
+					writeFileSync(
+						join(dir, "TASKS.json"),
+						JSON.stringify(
+							{
+								tasks: [{ id: "baseline", title: "Still todo", status: "done", validation: [], notes: "" }],
+							},
+							null,
+							2,
+						),
+					);
+				}
+				yield* [];
+			},
+		};
+
+		const agent = new Agent({
+			transport,
+			initialState: {
+				model: getModel("openai", "gpt-4o-mini"),
+				thinkingLevel: "medium",
+			},
+		});
+
+		const renderer = new TuiRenderer(
+			agent,
+			{
+				appendContextCompaction: () => {},
+				loadTitle: () => null,
+				getSessionId: () => "mission-submit-red",
+			} as never,
+			new SettingsManager(configDir),
+			{
+				listCommands: () => [],
+				getCommand: () => undefined,
+				applyInputHooks: async (text: string) => ({ handled: false, text }),
+				composeToolResultTransformer: <T>(base: T) => base,
+			} as never,
+			{} as never,
+			"0.0.0",
+		) as unknown as MissionRuntimeRenderer;
+
+		await renderer.init();
+		cleanups.push(() => renderer.stop());
+
+		const fallbackSubmissions: string[] = [];
+		renderer.onInputCallback = (text: string) => {
+			fallbackSubmissions.push(text);
+			renderer.onInputCallback = undefined;
+		};
+
+		const submissionPromise = renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
+		await firstIterationStarted;
+		await renderer.handleEditorTextSubmission("/mission-halt", "by-end");
+		if (!releaseFirstIterationRef.current) {
+			throw new Error("Expected first iteration release handle to be set");
+		}
+		releaseFirstIterationRef.current();
+		await submissionPromise;
+
+		await renderer.handleEditorTextSubmission("please continue the mission", "by-end");
+
+		expect(fallbackSubmissions).toEqual([]);
+		expect(runCalls).toBe(2);
+	});
+
+	it("auto-resumes the stopped mission on the next plain message after an abort instead of falling back to regular chat", async () => {
+		initTheme("dark");
+		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
+		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
+
+		const { dir, cleanup } = makeTodoMissionDir();
+		cleanups.push(cleanup);
+
+		const previousOpenAiKey = process.env.OPENAI_API_KEY;
+		process.env.OPENAI_API_KEY = "test-openai-key";
+		cleanups.push(() => {
+			if (previousOpenAiKey === undefined) {
+				delete process.env.OPENAI_API_KEY;
+			} else {
+				process.env.OPENAI_API_KEY = previousOpenAiKey;
+			}
+		});
+
+		let runCalls = 0;
+		let resolveFirstIterationStarted: (() => void) | null = null;
+		const firstIterationStarted = new Promise<void>((resolve) => {
+			resolveFirstIterationStarted = resolve;
+		});
+
+		const transport: AgentTransport = {
+			async *run(_messages, _userMessage, _config, signal) {
+				runCalls += 1;
+				if (runCalls === 1) {
+					resolveFirstIterationStarted?.();
+					await new Promise<void>((done) => {
+						signal?.addEventListener("abort", () => done(), { once: true });
+					});
+				} else if (runCalls === 2) {
+					writeFileSync(
+						join(dir, "TASKS.json"),
+						JSON.stringify(
+							{
+								tasks: [{ id: "baseline", title: "Still todo", status: "done", validation: [], notes: "" }],
+							},
+							null,
+							2,
+						),
+					);
+				}
+				yield* [];
+			},
+		};
+
+		const agent = new Agent({
+			transport,
+			initialState: {
+				model: getModel("openai", "gpt-4o-mini"),
+				thinkingLevel: "medium",
+			},
+		});
+
+		const renderer = new TuiRenderer(
+			agent,
+			{
+				appendContextCompaction: () => {},
+				loadTitle: () => null,
+				getSessionId: () => "mission-submit-red",
+			} as never,
+			new SettingsManager(configDir),
+			{
+				listCommands: () => [],
+				getCommand: () => undefined,
+				applyInputHooks: async (text: string) => ({ handled: false, text }),
+				composeToolResultTransformer: <T>(base: T) => base,
+			} as never,
+			{} as never,
+			"0.0.0",
+		) as unknown as MissionRuntimeRenderer;
+
+		await renderer.init();
+		cleanups.push(() => renderer.stop());
+
+		const fallbackSubmissions: string[] = [];
+		renderer.onInputCallback = (text: string) => {
+			fallbackSubmissions.push(text);
+			renderer.onInputCallback = undefined;
+		};
+
+		const submissionPromise = renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
+		await firstIterationStarted;
+		renderer.editor.handleInput("\x1b");
+		await submissionPromise;
+
+		await renderer.handleEditorTextSubmission("please continue the mission", "by-end");
+
+		expect(fallbackSubmissions).toEqual([]);
+		expect(runCalls).toBe(2);
 	});
 
 	it("stops by the requested absolute iteration when /mission-iterations is submitted during a running mission", async () => {

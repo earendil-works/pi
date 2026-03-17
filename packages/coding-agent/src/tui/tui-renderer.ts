@@ -352,6 +352,7 @@ export class TuiRenderer {
 	private missionConvergeAfterOverride: number | null | undefined = undefined;
 	private missionConvergenceKindOverride: "discard" | "non-keep" | undefined = undefined;
 	private resumableMissionDir: string | null = null;
+	private resumableCampaignPath: string | null = null;
 	private isAutoHandoffInProgress = false;
 	private shouldIncludeHandoffNudge = false; // 85% threshold nudge state
 	private pendingExplicitHandoff: (HandoffDetails & { parentSessionId: string | null }) | null = null;
@@ -634,6 +635,24 @@ export class TuiRenderer {
 			description: "Stop the active mission after the current iteration finishes",
 		};
 
+		const missionExitCommand: SlashCommand = {
+			name: "mission-exit",
+			description: "Exit mission control and return plain messages to normal chat",
+		};
+
+		const campaignRunCommand: SlashCommand = {
+			name: "campaign-run",
+			description: "Run a campaign file that sequences multiple missions",
+			selectionBehavior: "inject",
+			injectedText: "/campaign-run ",
+			injectedDiagnostic: "Prepared /campaign-run draft. Enter an explicit campaign path.",
+		};
+
+		const campaignExitCommand: SlashCommand = {
+			name: "campaign-exit",
+			description: "Exit campaign control and return plain messages to normal chat",
+		};
+
 		const missionIterationsCommand: SlashCommand = {
 			name: "mission-iterations",
 			description: "Set the iteration number where the active mission should stop",
@@ -663,8 +682,11 @@ export class TuiRenderer {
 			unsubscribeCommand,
 			loginCommand,
 			logoutCommand,
+			campaignExitCommand,
+			campaignRunCommand,
 			missionHaltCommand,
 			missionConvergenceCommand,
+			missionExitCommand,
 			missionIterationsCommand,
 			modelCommand,
 			missionResumeCommand,
@@ -3598,6 +3620,18 @@ export class TuiRenderer {
 			return;
 		}
 
+		if (rawText === "/mission-exit") {
+			this.handleMissionExitCommand();
+			this.editor.setText("");
+			return;
+		}
+
+		if (rawText === "/campaign-exit") {
+			this.handleCampaignExitCommand();
+			this.editor.setText("");
+			return;
+		}
+
 		const missionIterationsMatch = rawText.match(/^\/mission-iterations(?:\s+([\s\S]+))?$/);
 		if (missionIterationsMatch) {
 			const arg = missionIterationsMatch[1]?.trim() ?? "";
@@ -3616,6 +3650,7 @@ export class TuiRenderer {
 
 		const missionRunMatch = rawText.match(/^\/mission-run(?:\s+([\s\S]+))?$/);
 		const missionResumeMatch = rawText.match(/^\/mission-resume(?:\s+([\s\S]+))?$/);
+		const campaignRunMatch = rawText.match(/^\/campaign-run(?:\s+([\s\S]+))?$/);
 		if (missionRunMatch || missionResumeMatch) {
 			const missionRef = missionRunMatch?.[1]?.trim() ?? missionResumeMatch?.[1]?.trim() ?? "";
 			if (!missionRef) {
@@ -3629,6 +3664,17 @@ export class TuiRenderer {
 			return;
 		}
 
+		if (campaignRunMatch) {
+			const campaignRef = campaignRunMatch[1]?.trim() ?? "";
+			if (!campaignRef) {
+				this.showError("Usage: /campaign-run <campaign-path>");
+				return;
+			}
+			this.editor.setText("");
+			await this.handleCampaignRunCommand(campaignRef);
+			return;
+		}
+
 		// Extension slash commands
 		if (await this.tryHandleExtensionCommand(rawText)) {
 			this.editor.setText("");
@@ -3637,6 +3683,10 @@ export class TuiRenderer {
 
 		// Note: /steer command removed - Enter now automatically steers when streaming
 		const sentText = autoFenceHtmlInMarkdown(rawText);
+
+		if (await this.maybeAutoResumeCampaignFromPlainMessage(rawText)) {
+			return;
+		}
 
 		if (await this.maybeAutoResumeMissionFromPlainMessage(rawText)) {
 			return;
@@ -4787,6 +4837,22 @@ export class TuiRenderer {
 		this.ui.requestRender();
 	}
 
+	private async maybeAutoResumeCampaignFromPlainMessage(rawText: string): Promise<boolean> {
+		if (this.hasActiveMissionRun()) {
+			return false;
+		}
+		if (!this.resumableCampaignPath) {
+			return false;
+		}
+		if (this.missionUiState?.status !== "stopped" && this.missionUiState?.status !== "blocked") {
+			return false;
+		}
+
+		this.editor.setText("");
+		await this.handleCampaignRunCommand(this.resumableCampaignPath, rawText);
+		return true;
+	}
+
 	private async maybeAutoResumeMissionFromPlainMessage(rawText: string): Promise<boolean> {
 		if (this.hasActiveMissionRun()) {
 			return false;
@@ -4809,6 +4875,59 @@ export class TuiRenderer {
 		}
 
 		this.clearMissionUiState();
+	}
+
+	private resolveExplicitPath(targetRef: string, label: string): string {
+		const trimmed = targetRef.trim();
+		if (!trimmed) {
+			throw new Error(`Usage: /${label}-run <${label}-path>`);
+		}
+
+		const resolved = path.resolve(trimmed);
+		if (!fs.existsSync(resolved)) {
+			throw new Error(`${label[0]?.toUpperCase() ?? ""}${label.slice(1)} path does not exist: ${trimmed}`);
+		}
+
+		return resolved;
+	}
+
+	private parseCampaignFile(campaignRef: string): { campaignPath: string; missionPaths: string[] } {
+		const campaignPath = this.resolveExplicitPath(campaignRef, "campaign");
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(fs.readFileSync(campaignPath, "utf8"));
+		} catch (error: unknown) {
+			const message = error instanceof Error ? error.message : String(error);
+			throw new Error(`Campaign file is not valid JSON: ${message}`);
+		}
+
+		if (
+			typeof parsed !== "object" ||
+			parsed === null ||
+			!("missions" in parsed) ||
+			!Array.isArray((parsed as { missions?: unknown }).missions)
+		) {
+			throw new Error("Campaign file must contain a top-level missions array");
+		}
+
+		const campaignDir = path.dirname(campaignPath);
+		const missionRefs = (parsed as { missions: unknown[] }).missions;
+		if (missionRefs.length === 0) {
+			throw new Error("Campaign file must contain at least one mission path");
+		}
+
+		const missionPaths = missionRefs.map((missionRef, index) => {
+			if (typeof missionRef !== "string" || missionRef.trim().length === 0) {
+				throw new Error(`Campaign mission at index ${index} must be a non-empty string path`);
+			}
+			const resolvedPath = path.isAbsolute(missionRef) ? missionRef : path.resolve(campaignDir, missionRef);
+			if (!fs.existsSync(resolvedPath)) {
+				throw new Error(`Campaign mission path does not exist: ${missionRef}`);
+			}
+			return resolvedPath;
+		});
+
+		return { campaignPath, missionPaths };
 	}
 
 	/**
@@ -5210,6 +5329,41 @@ export class TuiRenderer {
 		this.showWarning("Mission will stop after the current iteration.");
 	}
 
+	private abortActiveMissionRunIfNeeded(): void {
+		if (!this.missionRunAbortController) {
+			return;
+		}
+
+		this.missionRunAbortController.abort();
+		if (this.agent.state.isStreaming) {
+			this.agent.abort();
+		}
+	}
+
+	private handleMissionExitCommand(): void {
+		if (!this.resumableMissionDir && !this.hasActiveMissionRun()) {
+			this.showWarning("No active mission.");
+			return;
+		}
+
+		this.abortActiveMissionRunIfNeeded();
+		this.resumableCampaignPath = null;
+		this.clearMissionUiState();
+		this.showWarning("Exited mission control.");
+	}
+
+	private handleCampaignExitCommand(): void {
+		if (!this.resumableCampaignPath) {
+			this.showWarning("No active campaign.");
+			return;
+		}
+
+		this.abortActiveMissionRunIfNeeded();
+		this.resumableCampaignPath = null;
+		this.clearMissionUiState();
+		this.showWarning("Exited campaign control.");
+	}
+
 	private handleMissionIterationsCommand(rawArg: string): void {
 		if (!this.hasActiveMissionRun()) {
 			this.showWarning("No active mission run.");
@@ -5298,8 +5452,15 @@ export class TuiRenderer {
 		this.showWarning(`Mission convergence set to ${parsed} consecutive ${this.missionConvergenceKindOverride}.`);
 	}
 
-	private async handleMissionRunCommand(missionRef: string, resumeText?: string): Promise<void> {
+	private async handleMissionRunCommand(
+		missionRef: string,
+		resumeText?: string,
+		options?: { preserveCampaign?: boolean },
+	): Promise<void> {
 		const missionDir = this.resolveMissionDir(missionRef);
+		if (!options?.preserveCampaign) {
+			this.resumableCampaignPath = null;
+		}
 		this.resumableMissionDir = missionDir;
 		let shouldInjectResumeText = resumeText !== undefined;
 		const missionRunAbortController = new AbortController();
@@ -5423,6 +5584,47 @@ export class TuiRenderer {
 			this.missionConvergeAfterOverride = undefined;
 			this.missionConvergenceKindOverride = undefined;
 			this.endMissionRunWorkingStatus();
+		}
+	}
+
+	private async handleCampaignRunCommand(campaignRef: string, _resumeText?: string): Promise<void> {
+		try {
+			const { campaignPath, missionPaths } = this.parseCampaignFile(campaignRef);
+			const campaignName = path.basename(path.dirname(campaignPath)) || path.basename(campaignPath);
+			this.resumableCampaignPath = campaignPath;
+
+			for (const missionPath of missionPaths) {
+				const mission = parseMissionDefinition(missionPath);
+				if (mission.mode !== "optimize" && mission.allTasksDone) {
+					continue;
+				}
+
+				await this.handleMissionRunCommand(missionPath, undefined, { preserveCampaign: true });
+				const missionStatus = this.missionUiState?.status;
+				const missionName = path.basename(missionPath);
+
+				if (missionStatus === "done" || missionStatus === "converged") {
+					continue;
+				}
+
+				if (missionStatus === "blocked") {
+					this.showWarning(`Campaign ${campaignName} blocked at mission ${missionName}.`);
+					return;
+				}
+
+				if (missionStatus === "stopped") {
+					this.showWarning(`Campaign ${campaignName} stopped at mission ${missionName}.`);
+					return;
+				}
+
+				this.showError(`Campaign ${campaignName} could not determine the outcome for mission ${missionName}.`);
+				return;
+			}
+
+			this.resumableCampaignPath = null;
+			this.showWarning(`Campaign ${campaignName} done.`);
+		} catch (error: unknown) {
+			this.showError(error instanceof Error ? error.message : String(error));
 		}
 	}
 
