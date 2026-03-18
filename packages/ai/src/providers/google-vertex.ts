@@ -368,7 +368,10 @@ function createClientWithApiKey(
 }
 
 function resolveApiKey(options?: GoogleVertexOptions): string | undefined {
-	return options?.apiKey || process.env.GOOGLE_CLOUD_API_KEY;
+	const key = options?.apiKey || process.env.GOOGLE_CLOUD_API_KEY;
+	// "<authenticated>" is a sentinel returned by getEnvApiKey() when ADC is available.
+	// It must not be forwarded to the SDK as an actual API key.
+	return key === "<authenticated>" ? undefined : key;
 }
 
 function resolveProject(options?: GoogleVertexOptions): string {
