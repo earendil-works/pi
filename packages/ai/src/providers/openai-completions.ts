@@ -408,7 +408,7 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 		(params as any).enable_thinking = !!options?.reasoningEffort;
 	} else if (compat.thinkingFormat === "qwen-chat-template" && model.reasoning) {
 		(params as any).chat_template_kwargs = { enable_thinking: !!options?.reasoningEffort };
-	} else if (options?.reasoningEffort && model.reasoning && model.baseUrl.includes("openrouter.ai")) {
+	} else if (compat.thinkingFormat === "openrouter" && options?.reasoningEffort && model.reasoning) {
 		// OpenRouter normalizes reasoning across providers via a nested reasoning object.
 		const openRouterParams = params as typeof params & { reasoning?: { effort?: string } };
 		openRouterParams.reasoning = {
@@ -822,7 +822,11 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 		requiresToolResultName: false,
 		requiresAssistantAfterToolResult: false,
 		requiresThinkingAsText: false,
-		thinkingFormat: isZai ? "zai" : "openai",
+		thinkingFormat: isZai
+			? "zai"
+			: provider === "openrouter" || baseUrl.includes("openrouter.ai")
+				? "openrouter"
+				: "openai",
 		openRouterRouting: {},
 		vercelGatewayRouting: {},
 		supportsStrictMode: true,

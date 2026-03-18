@@ -63,6 +63,7 @@ const OpenAICompletionsCompatSchema = Type.Object({
 	thinkingFormat: Type.Optional(
 		Type.Union([
 			Type.Literal("openai"),
+			Type.Literal("openrouter"),
 			Type.Literal("zai"),
 			Type.Literal("qwen"),
 			Type.Literal("qwen-chat-template"),
