@@ -399,6 +399,53 @@ describe("StdinBuffer", () => {
 		});
 	});
 
+	describe("Implicit paste detection (no bracketed markers)", () => {
+		let emittedPaste: string[] = [];
+
+		beforeEach(() => {
+			emittedPaste = [];
+			buffer.on("paste", (data) => {
+				emittedPaste.push(data);
+			});
+		});
+
+		it("should detect multi-line content without brackets as paste", () => {
+			// Simulates tmux paste-buffer which doesn't emit bracketed paste markers
+			processInput("line one\nline two\nline three");
+
+			assert.deepStrictEqual(emittedPaste, ["line one\nline two\nline three"]);
+			assert.deepStrictEqual(emittedSequences, []);
+		});
+
+		it("should detect content with carriage returns as paste", () => {
+			processInput("line one\r\nline two\r\nline three");
+
+			assert.deepStrictEqual(emittedPaste, ["line one\nline two\nline three"]);
+			assert.deepStrictEqual(emittedSequences, []);
+		});
+
+		it("should NOT treat a single newline as paste", () => {
+			processInput("\r");
+
+			assert.deepStrictEqual(emittedPaste, []);
+			assert.strictEqual(emittedSequences.length, 1);
+		});
+
+		it("should NOT treat a single \\n as paste", () => {
+			processInput("\n");
+
+			assert.deepStrictEqual(emittedPaste, []);
+			assert.strictEqual(emittedSequences.length, 1);
+		});
+
+		it("should still prefer bracketed paste when markers present", () => {
+			processInput("\x1b[200~line one\nline two\x1b[201~");
+
+			assert.deepStrictEqual(emittedPaste, ["line one\nline two"]);
+			assert.deepStrictEqual(emittedSequences, []);
+		});
+	});
+
 	describe("Destroy", () => {
 		it("should clear buffer on destroy", () => {
 			processInput("\x1b[<35");

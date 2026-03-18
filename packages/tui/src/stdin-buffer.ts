@@ -280,6 +280,26 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 
 		this.buffer += str;
 
+		// Implicit paste detection: when a single data chunk contains newlines
+		// but no bracketed paste markers, treat it as a paste. This handles
+		// environments like tmux where paste-buffer doesn't emit bracketed
+		// paste markers. A single newline (\r or \n) alone is a normal Enter
+		// keypress, but multiple characters arriving together with embedded
+		// newlines indicate pasted content.
+		if (
+			!this.pasteMode &&
+			!this.buffer.includes(BRACKETED_PASTE_START) &&
+			str.length > 1 &&
+			/[\r\n]/.test(str) &&
+			str.replace(/[\r\n]+/g, "").length > 0
+		) {
+			// Normalize line endings and emit as paste
+			const content = str.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+			this.buffer = "";
+			this.emit("paste", content);
+			return;
+		}
+
 		if (this.pasteMode) {
 			this.pasteBuffer += this.buffer;
 			this.buffer = "";
