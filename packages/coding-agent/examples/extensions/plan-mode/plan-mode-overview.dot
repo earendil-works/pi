@@ -1,0 +1,72 @@
+digraph PlanModeOverview {
+  rankdir=TB
+  node [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=12]
+  edge [fontname="Helvetica", fontsize=10]
+
+  // Phases
+  idle [label="IDLE\n(clean state)", fillcolor="#e8f5e9"]
+  interview [label="INTERVIEW\n(clearance checks)", fillcolor="#fff3e0"]
+  planGen [label="PLAN GENERATION\n(Metis + wave plan)", fillcolor="#e3f2fd"]
+  highAccuracy [label="HIGH ACCURACY\n(Momus review loop)", fillcolor="#fce4ec"]
+  execution [label="EXECUTION\n(wave-parallel dispatch)", fillcolor="#f3e5f5"]
+
+  // Entry transitions
+  idle -> planGen [label="classifyTrivial\n(≤7 words, questions)", color="#4caf50", fontcolor="#2e7d32"]
+  idle -> interview [label="classifySimple\nclassifyComplex\nmanualPlanMode", color="#ff9800", fontcolor="#e65100"]
+
+  // Interview flow
+  interview -> planGen [label="clearancePass\n(all 6 markers)", color="#2196f3", fontcolor="#1565c0"]
+
+  // Plan generation exits
+  planGen -> execution [label="startWork", color="#9c27b0", fontcolor="#6a1b9a", style=bold]
+  planGen -> highAccuracy [label="startHighAccuracy", color="#e91e63", fontcolor="#880e4f"]
+
+  // High accuracy loop
+  highAccuracy -> highAccuracy [label="momusReject\n(cycles 0→1→2→3)\nresetMomusCycles\n(3→0)", color="#e91e63", fontcolor="#880e4f"]
+  highAccuracy -> execution [label="startWorkAfterReview\n(verdict=OKAY)\nforceStartWork\n(override)", color="#9c27b0", fontcolor="#6a1b9a", style=bold]
+  highAccuracy -> planGen [label="refineFromReview", color="#2196f3", fontcolor="#1565c0", style=dashed]
+
+  // Execution exits
+  execution -> idle [label="completeExecution\n(all todos done)", color="#4caf50", fontcolor="#2e7d32", style=bold]
+  execution -> execution [label="startVerification\nendVerification", color="#9c27b0", fontcolor="#6a1b9a", style=dotted]
+
+  // Force reset from anywhere
+  edge [style=dashed, color="#9e9e9e", fontcolor="#757575"]
+  interview -> idle [label="forceReset\n(/plan toggle)"]
+  planGen -> idle [label="forceReset"]
+  highAccuracy -> idle [label="forceReset"]
+  execution -> idle [label="forceReset"]
+
+  // Legend
+  subgraph cluster_legend {
+    label="Legend"
+    style=rounded
+    color="#bdbdbd"
+    fontname="Helvetica"
+    fontsize=11
+
+    node [shape=plaintext, fillcolor=white]
+    l1 [label="Solid = forward flow"]
+    l2 [label="Dashed = backward/reset"]
+    l3 [label="Dotted = within-phase"]
+    l4 [label="Bold = to execution"]
+  }
+
+  // Invariants annotation
+  subgraph cluster_invariants {
+    label="Proven Invariants (TLC)"
+    style=rounded
+    color="#bdbdbd"
+    fontname="Helvetica"
+    fontsize=11
+
+    node [shape=plaintext, fillcolor=white]
+    i1 [label="INV-1: execution → hasTodos"]
+    i2 [label="INV-2: interview → intent ≠ trivial"]
+    i3 [label="INV-3: highAccuracy → hasPlanText"]
+    i4 [label="INV-4: momusCycles ≤ 3"]
+    i5 [label="INV-5: planGen → clearanceComplete"]
+    i6 [label="INV-6: idle → clean state"]
+    i7 [label="INV-7: verifyingStep → execution"]
+  }
+}

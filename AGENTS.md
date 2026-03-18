@@ -11,6 +11,27 @@ read README.md, then ask which module(s) to work on. Based on the answer, read t
 - packages/pods/README.md
 - packages/web-ui/README.md
 
+## Local Pi Installation Context (IMPORTANT)
+- Snapshot date: `2026-03-18`
+- Local pi install root: `/Users/besi/.pi`
+- Runtime root: `/Users/besi/.pi/agent`
+- Runtime AGENTS pointer: `/Users/besi/.pi/agent/AGENTS.MD` -> `/Users/besi/.claude/CLAUDE.md`
+- Runtime settings file: `/Users/besi/.pi/agent/settings.json`
+- Installed runtime packages (`settings.json > packages`):
+  - `npm:pi-mcp-adapter`
+  - `npm:pi-rewind`
+  - `https://github.com/davebcn87/pi-autoresearch`
+- Installed `pi-autoresearch` checkout path:
+  - `/Users/besi/.pi/agent/git/github.com/davebcn87/pi-autoresearch`
+- Agent spec directory:
+  - `/Users/besi/.pi/agent/agents` (14 files: debug, devops, explore, frontend, librarian, memory, metis, momus, orchestrator, prometheus, reviewer, sentinel, tester, tla-precheck)
+- Extension directory:
+  - `/Users/besi/.pi/agent/extensions` (`model-fallback`, `plan-mode`, `pre-commit-gate`, `quality-gate`, `ralph`, `subagent`)
+
+When `.pi` installation details change:
+- Update this section and `README-Before-Update.md` section `Local Pi Installation Snapshot` in the same task.
+- If `pi-autoresearch` source changes, explicitly record old source and new source.
+
 ## Code Quality
 - No `any` types unless absolutely necessary
 - Check node_modules for external API type definitions instead of guessing
