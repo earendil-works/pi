@@ -375,33 +375,40 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 		}
 
 		// Process zAi models
-		if (data.zai?.models) {
-			for (const [modelId, model] of Object.entries(data.zai.models)) {
-				const m = model as ModelsDevModel;
-				if (m.tool_call !== true) continue;
-				const supportsImage = m.modalities?.input?.includes("image")
+		const zaiVariants = [
+			{ key: "zai", provider: "zai", baseUrl: "https://api.z.ai/api/coding/paas/v4" },
+			{ key: "zhipuai", provider: "zhipuai", baseUrl: "https://open.bigmodel.cn/api/coding/paas/v4" },
+		] as const;
 
-				models.push({
-				id: modelId,
-				name: m.name || modelId,
-				api: "openai-completions",
-				provider: "zai",
-				baseUrl: "https://api.z.ai/api/coding/paas/v4",
-				reasoning: m.reasoning === true,
-				input: supportsImage ? ["text", "image"] : ["text"],
-				cost: {
-					input: m.cost?.input || 0,
-					output: m.cost?.output || 0,
-					cacheRead: m.cost?.cache_read || 0,
-					cacheWrite: m.cost?.cache_write || 0,
-				},
-				compat: {
-					supportsDeveloperRole: false,
-					thinkingFormat: "zai",
-				},
-				contextWindow: m.limit?.context || 4096,
-				maxTokens: m.limit?.output || 4096,
-				});
+		for (const { key, provider, baseUrl } of zaiVariants) {
+			if (data[key]?.models) {
+				for (const [modelId, model] of Object.entries(data[key].models)) {
+					const m = model as ModelsDevModel;
+					if (m.tool_call !== true) continue;
+					const supportsImage = m.modalities?.input?.includes("image")
+
+					models.push({
+					id: modelId,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider,
+					baseUrl,
+					reasoning: m.reasoning === true,
+					input: supportsImage ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					compat: {
+						supportsDeveloperRole: false,
+						thinkingFormat: "zai",
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+					});
+				}
 			}
 		}
 
