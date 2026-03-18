@@ -312,6 +312,50 @@ describe("Agent", () => {
 		expect(responseCount).toBe(2);
 	});
 
+	it("should emit message_start and message_end for error messages from catch block", async () => {
+		const events: Array<{ type: string; message?: any }> = [];
+		const agent = new Agent({
+			streamFn: () => {
+				// Throw an error to trigger the catch block in _runLoop
+				throw new Error("Network failure");
+			},
+		});
+
+		agent.subscribe((event) => {
+			if (event.type === "message_start" || event.type === "message_end" || event.type === "agent_end") {
+				events.push({ type: event.type, message: "message" in event ? event.message : undefined });
+			}
+		});
+
+		await agent.prompt("hello");
+
+		// Should have: message_start (error), message_end (error), agent_end
+		const eventTypes = events.map((e) => e.type);
+		expect(eventTypes).toContain("message_start");
+		expect(eventTypes).toContain("message_end");
+		expect(eventTypes).toContain("agent_end");
+
+		// Error message_start and message_end should come before agent_end
+		const errorMsgStartIdx = events.findIndex((e) => e.type === "message_start" && e.message?.role === "assistant");
+		const errorMsgEndIdx = events.findIndex((e) => e.type === "message_end" && e.message?.role === "assistant");
+		const agentEndIdx = eventTypes.indexOf("agent_end");
+		expect(errorMsgStartIdx).toBeGreaterThanOrEqual(0);
+		expect(errorMsgEndIdx).toBeGreaterThanOrEqual(0);
+		expect(errorMsgStartIdx).toBeLessThan(agentEndIdx);
+		expect(errorMsgEndIdx).toBeLessThan(agentEndIdx);
+
+		// The error message should have stopReason "error"
+		const messageEndEvent = events.find((e) => e.type === "message_end" && e.message?.role === "assistant");
+		expect(messageEndEvent).toBeDefined();
+		expect(messageEndEvent?.message?.stopReason).toBe("error");
+		expect(messageEndEvent?.message?.errorMessage).toBe("Network failure");
+
+		// The error message should also be in agent state
+		const lastMessage = agent.state.messages[agent.state.messages.length - 1];
+		expect(lastMessage.role).toBe("assistant");
+		expect((lastMessage as any).stopReason).toBe("error");
+	});
+
 	it("forwards sessionId to streamFn options", async () => {
 		let receivedSessionId: string | undefined;
 		const agent = new Agent({

@@ -496,17 +496,31 @@ export class AgentSession {
 		}
 
 		// Check auto-retry and auto-compaction after agent completes
-		if (event.type === "agent_end" && this._lastAssistantMessage) {
-			const msg = this._lastAssistantMessage;
+		if (event.type === "agent_end") {
+			// Prefer _lastAssistantMessage (set by message_end events during normal
+			// loop processing). Fall back to the last assistant in event.messages as
+			// a safety net — this covers edge cases where the error message was
+			// emitted only via agent_end without a preceding message_end.
+			let msg = this._lastAssistantMessage;
+			if (!msg) {
+				for (let i = event.messages.length - 1; i >= 0; i--) {
+					if (event.messages[i].role === "assistant") {
+						msg = event.messages[i] as AssistantMessage;
+						break;
+					}
+				}
+			}
 			this._lastAssistantMessage = undefined;
 
-			// Check for retryable errors first (overloaded, rate limit, server errors)
-			if (this._isRetryableError(msg)) {
-				const didRetry = await this._handleRetryableError(msg);
-				if (didRetry) return; // Retry was initiated, don't proceed to compaction
-			}
+			if (msg) {
+				// Check for retryable errors first (overloaded, rate limit, server errors)
+				if (this._isRetryableError(msg)) {
+					const didRetry = await this._handleRetryableError(msg);
+					if (didRetry) return; // Retry was initiated, don't proceed to compaction
+				}
 
-			await this._checkCompaction(msg);
+				await this._checkCompaction(msg);
+			}
 		}
 	}
 

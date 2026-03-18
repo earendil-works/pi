@@ -593,6 +593,15 @@ export class Agent {
 
 			this.appendMessage(errorMsg);
 			this._state.error = err?.message || String(err);
+
+			// Emit message_start + message_end so the error message is properly
+			// tracked and persisted by listeners (e.g. agent-session). Without
+			// these events, _lastAssistantMessage won't be updated, the error
+			// won't be persisted to the session file, and retry/compaction
+			// logic will operate on a stale previous message — causing the
+			// agent to silently stall after compaction.
+			this.emit({ type: "message_start", message: errorMsg });
+			this.emit({ type: "message_end", message: errorMsg });
 			this.emit({ type: "agent_end", messages: [errorMsg] });
 		} finally {
 			this._state.isStreaming = false;
