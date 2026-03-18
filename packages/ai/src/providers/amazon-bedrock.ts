@@ -430,10 +430,22 @@ function resolveCacheRetention(cacheRetention?: CacheRetention): CacheRetention 
 /**
  * Check if the model supports prompt caching.
  * Supported: Claude 3.5 Haiku, Claude 3.7 Sonnet, Claude 4.x models
+ *
+ * For base models and system-defined inference profiles the model ID / ARN
+ * contains the model name, so we can decide locally.
+ *
+ * For application inference profiles (whose ARNs don't contain the model name),
+ * set AWS_BEDROCK_FORCE_CACHE=1 to enable cache points.  Amazon Nova models
+ * have automatic caching and don't need explicit cache points.
  */
 function supportsPromptCaching(model: Model<"bedrock-converse-stream">): boolean {
 	const id = model.id.toLowerCase();
-	if (!id.includes("claude")) return false;
+	if (!id.includes("claude")) {
+		// Application inference profiles don't contain the model name in the ARN.
+		// Allow users to force cache points via environment variable.
+		if (typeof process !== "undefined" && process.env.AWS_BEDROCK_FORCE_CACHE === "1") return true;
+		return false;
+	}
 	// Claude 4.x models (opus-4, sonnet-4, haiku-4)
 	if (id.includes("-4-") || id.includes("-4.")) return true;
 	// Claude 3.7 Sonnet
