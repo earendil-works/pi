@@ -102,7 +102,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 						};
 					}
 				});
-				const filteredParts = !model.input.includes("image") ? parts.filter((p) => p.text !== undefined) : parts;
+				const filteredParts = !(model.input?.includes("image")) ? parts.filter((p) => p.text !== undefined) : parts;
 				if (filteredParts.length === 0) continue;
 				contents.push({
 					role: "user",
@@ -168,7 +168,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 			// Extract text and image content
 			const textContent = msg.content.filter((c): c is TextContent => c.type === "text");
 			const textResult = textContent.map((c) => c.text).join("\n");
-			const imageContent = model.input.includes("image")
+			const imageContent = model.input?.includes("image")
 				? msg.content.filter((c): c is ImageContent => c.type === "image")
 				: [];
 

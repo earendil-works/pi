@@ -734,7 +734,7 @@ function convertMessages(
 						};
 					}
 				});
-				let filteredBlocks = !model?.input.includes("image") ? blocks.filter((b) => b.type !== "image") : blocks;
+				let filteredBlocks = !(model?.input?.includes("image")) ? blocks.filter((b) => b.type !== "image") : blocks;
 				filteredBlocks = filteredBlocks.filter((b) => {
 					if (b.type === "text") {
 						return b.text.trim().length > 0;

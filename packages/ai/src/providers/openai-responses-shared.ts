@@ -142,7 +142,7 @@ export function convertResponsesMessages<TApi extends Api>(
 						image_url: `data:${item.mimeType};base64,${item.data}`,
 					} satisfies ResponseInputImage;
 				});
-				const filteredContent = !model.input.includes("image")
+				const filteredContent = !(model.input?.includes("image"))
 					? content.filter((c) => c.type !== "input_image")
 					: content;
 				if (filteredContent.length === 0) continue;
@@ -216,7 +216,7 @@ export function convertResponsesMessages<TApi extends Api>(
 			const [callId] = msg.toolCallId.split("|");
 
 			let output: string | ResponseFunctionCallOutputItemList;
-			if (hasImages && model.input.includes("image")) {
+			if (hasImages && model.input?.includes("image")) {
 				const contentParts: ResponseFunctionCallOutputItemList = [];
 
 				if (hasText) {

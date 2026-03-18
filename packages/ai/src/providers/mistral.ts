@@ -232,7 +232,7 @@ function buildChatPayload(
 	const payload: ChatCompletionStreamRequest = {
 		model: model.id,
 		stream: true,
-		messages: toChatMessages(messages, model.input.includes("image")),
+		messages: toChatMessages(messages, model.input?.includes("image") ?? false),
 	};
 
 	if (context.tools?.length) payload.tools = toFunctionTools(context.tools);
