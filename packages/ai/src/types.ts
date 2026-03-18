@@ -221,7 +221,7 @@ export interface Tool<TParameters extends TSchema = TSchema> {
 }
 
 export interface Context {
-	systemPrompt?: string;
+	systemPrompt?: string | string[];
 	messages: Message[];
 	tools?: Tool[];
 }
