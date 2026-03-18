@@ -628,21 +628,40 @@ function buildParams(
 			},
 		];
 		if (context.systemPrompt) {
-			params.system.push({
-				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
-				...(cacheControl ? { cache_control: cacheControl } : {}),
-			});
+			if (Array.isArray(context.systemPrompt)) {
+				// Multi-block: cache all blocks except the last (dynamic) one
+				const blocks = context.systemPrompt.map((block, i) => ({
+					type: "text" as const,
+					text: sanitizeSurrogates(block),
+					...(cacheControl && i < (context.systemPrompt as string[]).length - 1 ? { cache_control: cacheControl } : {}),
+				}));
+				params.system!.push(...blocks);
+			} else {
+				params.system!.push({
+					type: "text",
+					text: sanitizeSurrogates(context.systemPrompt),
+					...(cacheControl ? { cache_control: cacheControl } : {}),
+				});
+			}
 		}
 	} else if (context.systemPrompt) {
 		// Add cache control to system prompt for non-OAuth tokens
-		params.system = [
-			{
-				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
-				...(cacheControl ? { cache_control: cacheControl } : {}),
-			},
-		];
+		if (Array.isArray(context.systemPrompt)) {
+			// Multi-block: cache all blocks except the last (dynamic) one
+			params.system = context.systemPrompt.map((block, i) => ({
+				type: "text" as const,
+				text: sanitizeSurrogates(block),
+				...(cacheControl && i < (context.systemPrompt as string[]).length - 1 ? { cache_control: cacheControl } : {}),
+			}));
+		} else {
+			params.system = [
+				{
+					type: "text",
+					text: sanitizeSurrogates(context.systemPrompt),
+					...(cacheControl ? { cache_control: cacheControl } : {}),
+				},
+			];
+		}
 	}
 
 	// Temperature is incompatible with extended thinking (adaptive or budget-based).
