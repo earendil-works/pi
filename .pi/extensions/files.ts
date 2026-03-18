@@ -89,9 +89,20 @@ export default function (pi: ExtensionAPI) {
 			// Sort by most recent first
 			const files = Array.from(fileMap.values()).sort((a, b) => b.lastTimestamp - a.lastTimestamp);
 
+			const WINDOWS_UNSAFE_CMD_CHARS_RE = /[&|<>^%\r\n]/;
+			const quoteCmdArg = (value: string) => `"${value.replace(/"/g, '""')}"`;
+
 			const openWithCode = async (path: string) => {
 				if (process.platform === "win32") {
-					return pi.exec("cmd", ["/d", "/s", "/c", "code", "-g", path], { cwd: ctx.cwd });
+					if (WINDOWS_UNSAFE_CMD_CHARS_RE.test(path)) {
+						ctx.ui.notify(
+							`Refusing to open ${path}: path contains Windows cmd metacharacters (& | < > ^ % or newline).`,
+							"error",
+						);
+						return null;
+					}
+					const commandLine = `code -g ${quoteCmdArg(path)}`;
+					return pi.exec("cmd", ["/d", "/s", "/c", commandLine], { cwd: ctx.cwd });
 				}
 				return pi.exec("code", ["-g", path], { cwd: ctx.cwd });
 			};
@@ -99,6 +110,7 @@ export default function (pi: ExtensionAPI) {
 			const openSelected = async (file: FileEntry): Promise<void> => {
 				try {
 					const openResult = await openWithCode(file.path);
+					if (!openResult) return;
 					if (openResult.code !== 0) {
 						const openStderr = openResult.stderr.trim();
 						ctx.ui.notify(
