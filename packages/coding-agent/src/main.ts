@@ -408,6 +408,32 @@ async function callSessionDirectoryHook(extensions: LoadExtensionsResult, cwd: s
 	return customSessionDir;
 }
 
+function validateForkFlags(parsed: Args): void {
+	if (!parsed.fork) return;
+
+	const conflictingFlags = [
+		parsed.session ? "--session" : undefined,
+		parsed.continue ? "--continue" : undefined,
+		parsed.resume ? "--resume" : undefined,
+		parsed.noSession ? "--no-session" : undefined,
+	].filter((flag): flag is string => flag !== undefined);
+
+	if (conflictingFlags.length > 0) {
+		console.error(chalk.red(`Error: --fork cannot be combined with ${conflictingFlags.join(", ")}`));
+		process.exit(1);
+	}
+}
+
+function forkSessionOrExit(sourcePath: string, cwd: string, sessionDir?: string): SessionManager {
+	try {
+		return SessionManager.forkFrom(sourcePath, cwd, sessionDir);
+	} catch (error: unknown) {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(chalk.red(`Error: ${message}`));
+		process.exit(1);
+	}
+}
+
 async function createSessionManager(
 	parsed: Args,
 	cwd: string,
@@ -421,6 +447,21 @@ async function createSessionManager(
 	let effectiveSessionDir = parsed.sessionDir;
 	if (!effectiveSessionDir) {
 		effectiveSessionDir = await callSessionDirectoryHook(extensions, cwd);
+	}
+
+	if (parsed.fork) {
+		const resolved = await resolveSessionPath(parsed.fork, cwd, effectiveSessionDir);
+
+		switch (resolved.type) {
+			case "path":
+			case "local":
+			case "global":
+				return forkSessionOrExit(resolved.path, cwd, effectiveSessionDir);
+
+			case "not_found":
+				console.error(chalk.red(`No session found matching '${resolved.arg}'`));
+				process.exit(1);
+		}
 	}
 
 	if (parsed.session) {
@@ -439,7 +480,7 @@ async function createSessionManager(
 					console.log(chalk.dim("Aborted."));
 					process.exit(0);
 				}
-				return SessionManager.forkFrom(resolved.path, cwd, effectiveSessionDir);
+				return forkSessionOrExit(resolved.path, cwd, effectiveSessionDir);
 			}
 
 			case "not_found":
@@ -697,6 +738,8 @@ export async function main(args: string[]) {
 		console.error(chalk.red("Error: @file arguments are not supported in RPC mode"));
 		process.exit(1);
 	}
+
+	validateForkFlags(parsed);
 
 	const { initialMessage, initialImages } = await prepareInitialMessage(
 		parsed,

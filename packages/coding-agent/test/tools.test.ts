@@ -2,7 +2,8 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { bashTool, createBashTool } from "../src/core/tools/bash.js";
+import { executeBash } from "../src/core/bash-executor.js";
+import { bashTool, createBashTool, createLocalBashOperations } from "../src/core/tools/bash.js";
 import { editTool } from "../src/core/tools/edit.js";
 import { findTool } from "../src/core/tools/find.js";
 import { grepTool } from "../src/core/tools/grep.js";
@@ -323,6 +324,26 @@ describe("Coding Agent Tools", () => {
 
 			const result = await bashWithoutPrefix.execute("test-prefix-3", { command: "echo no-prefix" });
 			expect(getTextOutput(result).trim()).toBe("no-prefix");
+		});
+
+		it("should expose local bash operations for extension reuse", async () => {
+			const ops = createLocalBashOperations();
+			const chunks: Buffer[] = [];
+
+			const result = await ops.exec("echo $TEST_LOCAL_BASH_OPS", testDir, {
+				onData: (data) => chunks.push(data),
+				env: { ...process.env, TEST_LOCAL_BASH_OPS: "from-local-ops" },
+			});
+
+			expect(result.exitCode).toBe(0);
+			expect(Buffer.concat(chunks).toString("utf-8").trim()).toBe("from-local-ops");
+		});
+
+		it("should preserve executeBash sanitization when using local bash operations", async () => {
+			const result = await executeBash("printf '\\033[31mred\\033[0m\\r\\n'");
+
+			expect(result.exitCode).toBe(0);
+			expect(result.output).toBe("red\n");
 		});
 	});
 

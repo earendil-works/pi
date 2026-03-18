@@ -53,88 +53,94 @@ export interface BashOperations {
 }
 
 /**
- * Default bash operations using local shell
+ * Create bash operations using pi's built-in local shell execution backend.
+ *
+ * This is useful for extensions that intercept user_bash and want to keep
+ * pi's standard local shell behavior while still wrapping or rewriting
+ * commands before execution.
  */
-const defaultBashOperations: BashOperations = {
-	exec: (command, cwd, { onData, signal, timeout, env }) => {
-		return new Promise((resolve, reject) => {
-			const { shell, args } = getShellConfig();
+export function createLocalBashOperations(): BashOperations {
+	return {
+		exec: (command, cwd, { onData, signal, timeout, env }) => {
+			return new Promise((resolve, reject) => {
+				const { shell, args } = getShellConfig();
 
-			if (!existsSync(cwd)) {
-				reject(new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`));
-				return;
-			}
+				if (!existsSync(cwd)) {
+					reject(new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`));
+					return;
+				}
 
-			const child = spawn(shell, [...args, command], {
-				cwd,
-				detached: true,
-				env: env ?? getShellEnv(),
-				stdio: ["ignore", "pipe", "pipe"],
-			});
+				const child = spawn(shell, [...args, command], {
+					cwd,
+					detached: true,
+					env: env ?? getShellEnv(),
+					stdio: ["ignore", "pipe", "pipe"],
+				});
 
-			let timedOut = false;
+				let timedOut = false;
 
-			// Set timeout if provided
-			let timeoutHandle: NodeJS.Timeout | undefined;
-			if (timeout !== undefined && timeout > 0) {
-				timeoutHandle = setTimeout(() => {
-					timedOut = true;
+				// Set timeout if provided
+				let timeoutHandle: NodeJS.Timeout | undefined;
+				if (timeout !== undefined && timeout > 0) {
+					timeoutHandle = setTimeout(() => {
+						timedOut = true;
+						if (child.pid) {
+							killProcessTree(child.pid);
+						}
+					}, timeout * 1000);
+				}
+
+				// Stream stdout and stderr
+				if (child.stdout) {
+					child.stdout.on("data", onData);
+				}
+				if (child.stderr) {
+					child.stderr.on("data", onData);
+				}
+
+				// Handle shell spawn errors
+				child.on("error", (err) => {
+					if (timeoutHandle) clearTimeout(timeoutHandle);
+					if (signal) signal.removeEventListener("abort", onAbort);
+					reject(err);
+				});
+
+				// Handle abort signal - kill entire process tree
+				const onAbort = () => {
 					if (child.pid) {
 						killProcessTree(child.pid);
 					}
-				}, timeout * 1000);
-			}
+				};
 
-			// Stream stdout and stderr
-			if (child.stdout) {
-				child.stdout.on("data", onData);
-			}
-			if (child.stderr) {
-				child.stderr.on("data", onData);
-			}
+				if (signal) {
+					if (signal.aborted) {
+						onAbort();
+					} else {
+						signal.addEventListener("abort", onAbort, { once: true });
+					}
+				}
 
-			// Handle shell spawn errors
-			child.on("error", (err) => {
-				if (timeoutHandle) clearTimeout(timeoutHandle);
-				if (signal) signal.removeEventListener("abort", onAbort);
-				reject(err);
+				// Handle process exit
+				child.on("close", (code) => {
+					if (timeoutHandle) clearTimeout(timeoutHandle);
+					if (signal) signal.removeEventListener("abort", onAbort);
+
+					if (signal?.aborted) {
+						reject(new Error("aborted"));
+						return;
+					}
+
+					if (timedOut) {
+						reject(new Error(`timeout:${timeout}`));
+						return;
+					}
+
+					resolve({ exitCode: code });
+				});
 			});
-
-			// Handle abort signal - kill entire process tree
-			const onAbort = () => {
-				if (child.pid) {
-					killProcessTree(child.pid);
-				}
-			};
-
-			if (signal) {
-				if (signal.aborted) {
-					onAbort();
-				} else {
-					signal.addEventListener("abort", onAbort, { once: true });
-				}
-			}
-
-			// Handle process exit
-			child.on("close", (code) => {
-				if (timeoutHandle) clearTimeout(timeoutHandle);
-				if (signal) signal.removeEventListener("abort", onAbort);
-
-				if (signal?.aborted) {
-					reject(new Error("aborted"));
-					return;
-				}
-
-				if (timedOut) {
-					reject(new Error(`timeout:${timeout}`));
-					return;
-				}
-
-				resolve({ exitCode: code });
-			});
-		});
-	},
-};
+		},
+	};
+}
 
 export interface BashSpawnContext {
 	command: string;
@@ -164,7 +170,7 @@ export interface BashToolOptions {
 }
 
 export function createBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {
-	const ops = options?.operations ?? defaultBashOperations;
+	const ops = options?.operations ?? createLocalBashOperations();
 	const commandPrefix = options?.commandPrefix;
 	const spawnHook = options?.spawnHook;
 

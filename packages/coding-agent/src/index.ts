@@ -223,6 +223,7 @@ export {
 	type BashToolOptions,
 	bashTool,
 	codingTools,
+	createLocalBashOperations,
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
 	type EditOperations,

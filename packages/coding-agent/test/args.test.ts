@@ -110,6 +110,12 @@ describe("parseArgs", () => {
 			expect(result.session).toBe("/path/to/session.jsonl");
 		});
 
+		test("parses --fork", () => {
+			const result = parseArgs(["--fork", "1234abcd"]);
+			expect(result.fork).toBe("1234abcd");
+			expect(result.messages).toEqual([]);
+		});
+
 		test("parses --export", () => {
 			const result = parseArgs(["--export", "session.jsonl"]);
 			expect(result.export).toBe("session.jsonl");

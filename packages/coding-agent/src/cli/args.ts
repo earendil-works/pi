@@ -23,6 +23,7 @@ export interface Args {
 	mode?: Mode;
 	noSession?: boolean;
 	session?: string;
+	fork?: string;
 	sessionDir?: string;
 	models?: string[];
 	tools?: ToolName[];
@@ -89,6 +90,8 @@ export function parseArgs(args: string[], extensionFlags?: Map<string, { type: "
 			result.noSession = true;
 		} else if (arg === "--session" && i + 1 < args.length) {
 			result.session = args[++i];
+		} else if (arg === "--fork" && i + 1 < args.length) {
+			result.fork = args[++i];
 		} else if (arg === "--session-dir" && i + 1 < args.length) {
 			result.sessionDir = args[++i];
 		} else if (arg === "--models" && i + 1 < args.length) {
@@ -202,6 +205,7 @@ ${chalk.bold("Options:")}
   --continue, -c                 Continue previous session
   --resume, -r                   Select a session to resume
   --session <path>               Use specific session file
+  --fork <path>                  Fork specific session file or partial UUID into a new session
   --session-dir <dir>            Directory for session storage and lookup
   --no-session                   Don't save session (ephemeral)
   --models <patterns>            Comma-separated model patterns for Ctrl+P cycling

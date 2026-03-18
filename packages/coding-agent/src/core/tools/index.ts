@@ -7,6 +7,7 @@ export {
 	type BashToolOptions,
 	bashTool,
 	createBashTool,
+	createLocalBashOperations,
 } from "./bash.js";
 export {
 	createEditTool,

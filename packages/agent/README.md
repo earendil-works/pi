@@ -310,10 +310,10 @@ agent.clearAllQueues();
 
 Use clearSteeringQueue, clearFollowUpQueue, or clearAllQueues to drop queued messages.
 
-When steering messages are detected after a tool completes:
-1. Remaining tools are skipped with error results
+When steering messages are detected after a turn completes:
+1. All tool calls from the current assistant message have already finished
 2. Steering messages are injected
-3. LLM responds to the interruption
+3. The LLM responds on the next turn
 
 Follow-up messages are checked only when there are no more tool calls and no steering messages. If any are queued, they are injected and another turn runs.
 

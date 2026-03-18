@@ -66,9 +66,20 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
+			const WINDOWS_UNSAFE_CMD_CHARS_RE = /[&|<>^%\r\n]/;
+			const quoteCmdArg = (value: string) => `"${value.replace(/"/g, '""')}"`;
+
 			const openWithCode = async (file: string) => {
 				if (process.platform === "win32") {
-					return pi.exec("cmd", ["/d", "/s", "/c", "code", "-g", file], { cwd: ctx.cwd });
+					if (WINDOWS_UNSAFE_CMD_CHARS_RE.test(file)) {
+						ctx.ui.notify(
+							`Refusing to open ${file}: path contains Windows cmd metacharacters (& | < > ^ % or newline).`,
+							"error",
+						);
+						return null;
+					}
+					const commandLine = `code -g ${quoteCmdArg(file)}`;
+					return pi.exec("cmd", ["/d", "/s", "/c", commandLine], { cwd: ctx.cwd });
 				}
 				return pi.exec("code", ["-g", file], { cwd: ctx.cwd });
 			};
@@ -79,6 +90,7 @@ export default function (pi: ExtensionAPI) {
 					// For untracked files, git difftool won't work, so fall back to just opening the file.
 					if (fileInfo.status === "?") {
 						const openResult = await openWithCode(fileInfo.file);
+						if (!openResult) return;
 						if (openResult.code !== 0) {
 							const openStderr = openResult.stderr.trim();
 							ctx.ui.notify(
@@ -104,6 +116,7 @@ export default function (pi: ExtensionAPI) {
 						);
 
 						const openResult = await openWithCode(fileInfo.file);
+						if (!openResult) return;
 						if (openResult.code !== 0) {
 							const openStderr = openResult.stderr.trim();
 							ctx.ui.notify(

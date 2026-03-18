@@ -34,6 +34,7 @@ import type {
 	InputEventResult,
 	InputSource,
 	MessageRenderer,
+	ProviderConfig,
 	RegisteredCommand,
 	RegisteredTool,
 	ResourcesDiscoverEvent,
@@ -235,7 +236,14 @@ export class ExtensionRunner {
 		this.modelRegistry = modelRegistry;
 	}
 
-	bindCore(actions: ExtensionActions, contextActions: ExtensionContextActions): void {
+	bindCore(
+		actions: ExtensionActions,
+		contextActions: ExtensionContextActions,
+		providerActions?: {
+			registerProvider?: (name: string, config: ProviderConfig) => void;
+			unregisterProvider?: (name: string) => void;
+		},
+	): void {
 		// Copy actions into the shared runtime (all extension APIs reference this)
 		this.runtime.sendMessage = actions.sendMessage;
 		this.runtime.sendUserMessage = actions.sendUserMessage;
@@ -264,14 +272,30 @@ export class ExtensionRunner {
 
 		// Flush provider registrations queued during extension loading
 		for (const { name, config } of this.runtime.pendingProviderRegistrations) {
-			this.modelRegistry.registerProvider(name, config);
+			if (providerActions?.registerProvider) {
+				providerActions.registerProvider(name, config);
+			} else {
+				this.modelRegistry.registerProvider(name, config);
+			}
 		}
 		this.runtime.pendingProviderRegistrations = [];
 
 		// From this point on, provider registration/unregistration takes effect immediately
 		// without requiring a /reload.
-		this.runtime.registerProvider = (name, config) => this.modelRegistry.registerProvider(name, config);
-		this.runtime.unregisterProvider = (name) => this.modelRegistry.unregisterProvider(name);
+		this.runtime.registerProvider = (name, config) => {
+			if (providerActions?.registerProvider) {
+				providerActions.registerProvider(name, config);
+				return;
+			}
+			this.modelRegistry.registerProvider(name, config);
+		};
+		this.runtime.unregisterProvider = (name) => {
+			if (providerActions?.unregisterProvider) {
+				providerActions.unregisterProvider(name);
+				return;
+			}
+			this.modelRegistry.unregisterProvider(name);
+		};
 	}
 
 	bindCommandContext(actions?: ExtensionCommandContextActions): void {

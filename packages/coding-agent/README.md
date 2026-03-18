@@ -181,7 +181,7 @@ See `/hotkeys` for the full list. Customize via `~/.pi/agent/keybindings.json`. 
 
 Submit messages while the agent is working:
 
-- **Enter** queues a *steering* message, delivered after current tool execution (interrupts remaining tools)
+- **Enter** queues a *steering* message, delivered after the current assistant turn finishes executing its tool calls
 - **Alt+Enter** queues a *follow-up* message, delivered only after the agent finishes all work
 - **Escape** aborts and restores queued messages to editor
 - **Alt+Up** retrieves queued messages back to editor
@@ -205,6 +205,7 @@ pi -c                  # Continue most recent session
 pi -r                  # Browse and select from past sessions
 pi --no-session        # Ephemeral mode (don't save)
 pi --session <path>    # Use specific session file or ID
+pi --fork <path>       # Fork specific session file or ID into a new session
 ```
 
 ### Branching
@@ -218,6 +219,8 @@ pi --session <path>    # Use specific session file or ID
 - Press `l` to label entries as bookmarks
 
 **`/fork`** - Create a new session file from the current branch. Opens a selector, copies history up to the selected point, and places that message in the editor for modification.
+
+**`--fork <path|id>`** - Fork an existing session file or partial session UUID directly from the CLI. This copies the full source session into a new session file in the current project.
 
 ### Compaction
 
@@ -475,6 +478,7 @@ cat README.md | pi -p "Summarize this text"
 | `-c`, `--continue` | Continue most recent session |
 | `-r`, `--resume` | Browse and select session |
 | `--session <path>` | Use specific session file or partial UUID |
+| `--fork <path>` | Fork specific session file or partial UUID into a new session |
 | `--session-dir <dir>` | Custom session storage directory |
 | `--no-session` | Ephemeral mode (don't save) |
 
