@@ -36,7 +36,7 @@
  */
 
 import { CustomEditor, type ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { matchesKey, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import { matchesKey, visibleWidth } from "@mariozechner/pi-tui";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -95,6 +95,9 @@ class ModalEditor extends CustomEditor {
 	// Pending find character: f/F/t/T
 	private pendingFind: "f" | "F" | "t" | "T" | null = null;
 	private lastFind: { type: "f" | "F" | "t" | "T"; char: string } | null = null;
+
+	// Pending 'g' keystroke for gg motion
+	private pendingG: boolean = false;
 
 	// ─── Input dispatcher ─────────────────────────────────────────────────
 
@@ -408,30 +411,22 @@ class ModalEditor extends CustomEditor {
 		if (data === "g") {
 			// Wait for second g
 			if (this.pendingOp === null && this.count === 0) {
-				// Simple gg check: we set a marker
 				this.setStatus("g");
-				this.pendingOp = null;
-				// Use a trick: store 'g' as a pseudo-pending for next keypress
-				const origHandler = this.handleNormalMode.bind(this);
-				const self = this;
-				// Override next call
-				(this as any)._pendingG = true;
+				this.pendingG = true;
 				return true;
 			}
-			// If already pending g, go to line
 			return false;
 		}
 
 		// Second g of gg
-		if ((this as any)._pendingG && data === "g") {
-			delete (this as any)._pendingG;
+		if (this.pendingG && data === "g") {
+			this.pendingG = false;
 			if (this.pendingOp) {
 				// Operator to start of buffer
 				this.execOpToPos(this.pendingOp, 0, 0);
 				this.clearPending();
 			} else {
 				// Go to top
-				const lines = this.getLines();
 				const cursor = this.getCursor();
 				for (let i = cursor.line; i > 0; i--) {
 					super.handleInput(SEQ.up);
@@ -441,9 +436,9 @@ class ModalEditor extends CustomEditor {
 			this.setStatus("");
 			return true;
 		}
-		if ((this as any)._pendingG) {
+		if (this.pendingG) {
 			// g followed by non-g: cancel
-			delete (this as any)._pendingG;
+			this.pendingG = false;
 			this.setStatus("");
 			return false;
 		}
@@ -475,6 +470,39 @@ class ModalEditor extends CustomEditor {
 		return false;
 	}
 
+	/** Execute a single motion step (shared by doMotion and execOpWithMotion) */
+	private execMotionStep(motion: string): void {
+		switch (motion) {
+			case "h":
+				super.handleInput(SEQ.left);
+				break;
+			case "l":
+				super.handleInput(SEQ.right);
+				break;
+			case "j":
+				super.handleInput(SEQ.down);
+				break;
+			case "k":
+				super.handleInput(SEQ.up);
+				break;
+			case "w":
+				super.handleInput(SEQ.wordRight);
+				break;
+			case "b":
+				super.handleInput(SEQ.wordLeft);
+				break;
+			case "e":
+				this.moveToEndOfWord();
+				break;
+			case "$":
+				super.handleInput(SEQ.end);
+				break;
+			case "^":
+				this.firstNonBlank();
+				break;
+		}
+	}
+
 	/**
 	 * Execute a motion, applying any pending operator if present.
 	 * Returns true if the key was handled.
@@ -488,35 +516,7 @@ class ModalEditor extends CustomEditor {
 
 		// Pure movement
 		for (let i = 0; i < n; i++) {
-			switch (motion) {
-				case "h":
-					super.handleInput(SEQ.left);
-					break;
-				case "l":
-					super.handleInput(SEQ.right);
-					break;
-				case "j":
-					super.handleInput(SEQ.down);
-					break;
-				case "k":
-					super.handleInput(SEQ.up);
-					break;
-				case "w":
-					super.handleInput(SEQ.wordRight);
-					break;
-				case "b":
-					super.handleInput(SEQ.wordLeft);
-					break;
-				case "e":
-					this.moveToEndOfWord();
-					break;
-				case "$":
-					super.handleInput(SEQ.end);
-					break;
-				case "^":
-					this.firstNonBlank();
-					break;
-			}
+			this.execMotionStep(motion);
 		}
 		return true;
 	}
@@ -530,35 +530,7 @@ class ModalEditor extends CustomEditor {
 
 		// Perform motion to find target position
 		for (let i = 0; i < n; i++) {
-			switch (motion) {
-				case "h":
-					super.handleInput(SEQ.left);
-					break;
-				case "l":
-					super.handleInput(SEQ.right);
-					break;
-				case "j":
-					super.handleInput(SEQ.down);
-					break;
-				case "k":
-					super.handleInput(SEQ.up);
-					break;
-				case "w":
-					super.handleInput(SEQ.wordRight);
-					break;
-				case "b":
-					super.handleInput(SEQ.wordLeft);
-					break;
-				case "e":
-					this.moveToEndOfWord();
-					break;
-				case "$":
-					super.handleInput(SEQ.end);
-					break;
-				case "^":
-					this.firstNonBlank();
-					break;
-			}
+			this.execMotionStep(motion);
 		}
 
 		const after = this.getCursor();
@@ -687,8 +659,6 @@ class ModalEditor extends CustomEditor {
 			this.setMode("normal");
 			return;
 		}
-
-		const n = 1;
 
 		// Movement in visual mode
 		if (data === "h") {
@@ -967,7 +937,7 @@ class ModalEditor extends CustomEditor {
 		this.pendingOp = null;
 		this.count = 0;
 		this.pendingFind = null;
-		delete (this as any)._pendingG;
+		this.pendingG = false;
 		if (mode === "normal") this.setStatus("");
 		if (mode === "command") this.setStatus(":");
 	}
@@ -1140,26 +1110,12 @@ class ModalEditor extends CustomEditor {
 		const lastLine = lines[last]!;
 		const lastWidth = visibleWidth(lastLine);
 
-		// Compose: [mode] ... [status] [pos]
+		// Compose: [mode] ─── [status] [pos]
 		const totalLabelWidth = visibleWidth(modeLabel) + visibleWidth(rightLabel) + visibleWidth(posLabel);
 		if (lastWidth >= totalLabelWidth) {
-			lines[last] =
-				truncateToWidth(lastLine, visibleWidth(modeLabel), "") +
-				modeLabel +
-				truncateToWidth(
-					lastLine.slice(visibleWidth(modeLabel) + modeLabel.length),
-					width - totalLabelWidth,
-					"",
-				).padEnd(width - totalLabelWidth) +
-				rightLabel +
-				posLabel;
-
-			// Simpler approach: just replace the bottom border line
-			const fill = width - visibleWidth(modeLabel) - visibleWidth(rightLabel) - visibleWidth(posLabel);
+			const fill = width - totalLabelWidth;
 			if (fill >= 0) {
 				lines[last] = modeLabel + "─".repeat(fill) + rightLabel + posLabel;
-			} else {
-				lines[last] = truncateToWidth(lastLine, width - visibleWidth(modeLabel), "") + modeLabel;
 			}
 		}
 
