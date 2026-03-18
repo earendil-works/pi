@@ -719,6 +719,9 @@ function parseChunkUsage(
 	rawUsage: {
 		prompt_tokens?: number;
 		completion_tokens?: number;
+		// Some OpenAI-compatible servers (mlx-vlm, vLLM) use input_tokens/output_tokens instead
+		input_tokens?: number;
+		output_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number };
 		completion_tokens_details?: { reasoning_tokens?: number };
 	},
@@ -727,10 +730,11 @@ function parseChunkUsage(
 	const cachedTokens = rawUsage.prompt_tokens_details?.cached_tokens || 0;
 	const reasoningTokens = rawUsage.completion_tokens_details?.reasoning_tokens || 0;
 	// OpenAI includes cached tokens in prompt_tokens, so subtract to get non-cached input
-	const input = (rawUsage.prompt_tokens || 0) - cachedTokens;
+	// Fall back to input_tokens/output_tokens for compatible servers (mlx-vlm, vLLM)
+	const input = (rawUsage.prompt_tokens ?? rawUsage.input_tokens ?? 0) - cachedTokens;
 	// Compute totalTokens ourselves since we add reasoning_tokens to output
 	// and some providers (e.g., Groq) don't include them in total_tokens
-	const outputTokens = (rawUsage.completion_tokens || 0) + reasoningTokens;
+	const outputTokens = (rawUsage.completion_tokens ?? rawUsage.output_tokens ?? 0) + reasoningTokens;
 	const usage: AssistantMessage["usage"] = {
 		input,
 		output: outputTokens,
