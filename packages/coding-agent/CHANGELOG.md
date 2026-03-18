@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Changed package startup behavior so installed unpinned packages are no longer checked or updated during startup. Use `pi update` to apply npm/git package updates, while interactive mode now checks for available package updates in the background and notifies you when updates are available ([#1963](https://github.com/badlogic/pi-mono/issues/1963))
+
 ## [0.59.0] - 2026-03-17
 
 ### New Features

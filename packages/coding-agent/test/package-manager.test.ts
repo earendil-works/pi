@@ -1321,21 +1321,82 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			expect(refreshTemporaryGitSourceSpy).not.toHaveBeenCalled();
 		});
 
-		it("should not call fetch in npmNeedsUpdate when offline", async () => {
-			process.env.PI_OFFLINE = "1";
-			const installedPath = join(tempDir, "installed-package");
-			mkdirSync(installedPath, { recursive: true });
-			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ version: "1.0.0" }));
+		it("should not fetch npm registry during resolve for installed unpinned packages", async () => {
+			const installedPath = join(tempDir, ".pi", "npm", "node_modules", "example");
+			mkdirSync(join(installedPath, "extensions"), { recursive: true });
+			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }));
+			writeFileSync(join(installedPath, "extensions", "index.ts"), "export default function() {};");
+			settingsManager.setProjectPackages(["npm:example"]);
 
 			const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-			const needsUpdate = await (packageManager as any).npmNeedsUpdate(
-				{ type: "npm", spec: "example", name: "example", pinned: false },
-				installedPath,
-			);
-
-			expect(needsUpdate).toBe(false);
+			const result = await packageManager.resolve();
+			expect(result.extensions.some((r) => pathEndsWith(r.path, "extensions/index.ts") && r.enabled)).toBe(true);
 			expect(fetchSpy).not.toHaveBeenCalled();
+		});
+
+		it("should reinstall pinned npm packages when installed version does not match", async () => {
+			const installedPath = join(tempDir, ".pi", "npm", "node_modules", "example");
+			mkdirSync(installedPath, { recursive: true });
+			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }));
+			settingsManager.setProjectPackages(["npm:example@2.0.0"]);
+
+			const installParsedSourceSpy = vi
+				.spyOn(packageManager as any, "installParsedSource")
+				.mockResolvedValue(undefined);
+
+			await packageManager.resolve();
+			expect(installParsedSourceSpy).toHaveBeenCalledTimes(1);
+		});
+
+		it("should not check package updates when offline", async () => {
+			process.env.PI_OFFLINE = "1";
+			const fetchSpy = vi.spyOn(globalThis, "fetch");
+
+			const updates = await packageManager.checkForAvailableUpdates();
+			expect(updates).toEqual([]);
+			expect(fetchSpy).not.toHaveBeenCalled();
+		});
+
+		it("should report updates for installed unpinned npm packages", async () => {
+			const installedPath = join(tempDir, ".pi", "npm", "node_modules", "example");
+			mkdirSync(installedPath, { recursive: true });
+			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }));
+			settingsManager.setProjectPackages(["npm:example"]);
+
+			const fetchMock = vi.fn().mockResolvedValue({
+				ok: true,
+				json: async () => ({ version: "1.2.3" }),
+			});
+			vi.stubGlobal("fetch", fetchMock);
+
+			const updates = await packageManager.checkForAvailableUpdates();
+			expect(updates).toEqual([
+				{
+					source: "npm:example",
+					displayName: "example",
+					type: "npm",
+					scope: "project",
+				},
+			]);
+		});
+
+		it("should skip pinned packages when checking for updates", async () => {
+			const installedNpmPath = join(tempDir, ".pi", "npm", "node_modules", "example");
+			mkdirSync(installedNpmPath, { recursive: true });
+			writeFileSync(join(installedNpmPath, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }));
+			const parsedGitSource = (packageManager as any).parseSource("git:github.com/example/repo@v1");
+			const installedGitPath = (packageManager as any).getGitInstallPath(parsedGitSource, "project") as string;
+			mkdirSync(installedGitPath, { recursive: true });
+			settingsManager.setProjectPackages(["npm:example@1.0.0", "git:github.com/example/repo@v1"]);
+
+			const fetchSpy = vi.spyOn(globalThis, "fetch");
+			const gitUpdateSpy = vi.spyOn(packageManager as any, "gitHasAvailableUpdate");
+
+			const updates = await packageManager.checkForAvailableUpdates();
+			expect(updates).toEqual([]);
+			expect(fetchSpy).not.toHaveBeenCalled();
+			expect(gitUpdateSpy).not.toHaveBeenCalled();
 		});
 
 		it("should pass an AbortSignal timeout when fetching npm latest version", async () => {

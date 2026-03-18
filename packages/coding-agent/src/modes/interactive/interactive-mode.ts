@@ -38,6 +38,7 @@ import {
 import { spawn, spawnSync } from "child_process";
 import {
 	APP_NAME,
+	getAgentDir,
 	getAuthPath,
 	getDebugLogPath,
 	getShareViewerUrl,
@@ -57,6 +58,7 @@ import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/
 import { type AppAction, KeybindingsManager } from "../../core/keybindings.js";
 import { createCompactionSummaryMessage } from "../../core/messages.js";
 import { findExactModelReferenceMatch, resolveModelScope } from "../../core/model-resolver.js";
+import { DefaultPackageManager } from "../../core/package-manager.js";
 import type { ResourceDiagnostic } from "../../core/resource-loader.js";
 import { type SessionContext, SessionManager } from "../../core/session-manager.js";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.js";
@@ -512,6 +514,13 @@ export class InteractiveMode {
 			}
 		});
 
+		// Start package update check asynchronously
+		this.checkForPackageUpdates().then((updates) => {
+			if (updates.length > 0) {
+				this.showPackageUpdateNotification(updates);
+			}
+		});
+
 		// Check tmux keyboard setup asynchronously
 		this.checkTmuxKeyboardSetup().then((warning) => {
 			if (warning) {
@@ -590,6 +599,24 @@ export class InteractiveMode {
 			return undefined;
 		} catch {
 			return undefined;
+		}
+	}
+
+	private async checkForPackageUpdates(): Promise<string[]> {
+		if (process.env.PI_OFFLINE) {
+			return [];
+		}
+
+		try {
+			const packageManager = new DefaultPackageManager({
+				cwd: process.cwd(),
+				agentDir: getAgentDir(),
+				settingsManager: this.settingsManager,
+			});
+			const updates = await packageManager.checkForAvailableUpdates();
+			return updates.map((update) => update.displayName);
+		} catch {
+			return [];
 		}
 	}
 
@@ -2879,6 +2906,24 @@ export class InteractiveMode {
 		this.chatContainer.addChild(
 			new Text(
 				`${theme.bold(theme.fg("warning", "Update Available"))}\n${updateInstruction}\n${changelogLine}`,
+				1,
+				0,
+			),
+		);
+		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
+		this.ui.requestRender();
+	}
+
+	showPackageUpdateNotification(packages: string[]): void {
+		const action = theme.fg("accent", `${APP_NAME} update`);
+		const updateInstruction = theme.fg("muted", "Package updates are available. Run ") + action;
+		const packageLines = packages.map((pkg) => `- ${pkg}`).join("\n");
+
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new DynamicBorder((text) => theme.fg("warning", text)));
+		this.chatContainer.addChild(
+			new Text(
+				`${theme.bold(theme.fg("warning", "Package Updates Available"))}\n${updateInstruction}\n${theme.fg("muted", "Packages:")}\n${packageLines}`,
 				1,
 				0,
 			),
