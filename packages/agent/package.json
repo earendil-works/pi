@@ -1,6 +1,6 @@
 {
 	"name": "@kennyfrc/mu-agent-core",
-	"version": "0.24.109",
+	"version": "0.24.110",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -18,8 +18,8 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-		"@kennyfrc/mu-ai": "^0.24.109",
-		"@kennyfrc/mu-tui": "^0.24.109"
+		"@kennyfrc/mu-ai": "^0.24.110",
+		"@kennyfrc/mu-tui": "^0.24.110"
 	},
 	"keywords": [
 		"ai",
