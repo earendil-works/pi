@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added built-in keybinding scope metadata and exports to distinguish editor, selection, session picker, tree picker, and global shortcut contexts ([#2403](https://github.com/badlogic/pi-mono/pull/2403) by [@aliou](https://github.com/aliou))
+
 ## [0.60.0] - 2026-03-18
 
 ### Fixed

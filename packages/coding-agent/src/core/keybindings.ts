@@ -3,6 +3,7 @@ import {
 	type EditorAction,
 	type EditorKeybindingsConfig,
 	EditorKeybindingsManager,
+	type KeybindingScope,
 	type KeyId,
 	matchesKey,
 	setEditorKeybindings,
@@ -48,29 +49,41 @@ export type KeybindingsConfig = {
 };
 
 /**
+ * Default application keybinding metadata.
+ */
+export const DEFAULT_APP_KEYBINDING_METADATA: Record<AppAction, AppKeybindingMetadata> = {
+	interrupt: { keys: "escape", scope: "global" },
+	clear: { keys: "ctrl+c", scope: "editor" },
+	exit: { keys: "ctrl+d", scope: "editor" },
+	suspend: { keys: "ctrl+z", scope: "global" },
+	cycleThinkingLevel: { keys: "shift+tab", scope: "global" },
+	cycleModelForward: { keys: "ctrl+p", scope: "editor" },
+	cycleModelBackward: { keys: "shift+ctrl+p", scope: "editor" },
+	selectModel: { keys: "ctrl+l", scope: "editor" },
+	expandTools: { keys: "ctrl+o", scope: "editor" },
+	toggleThinking: { keys: "ctrl+t", scope: "global" },
+	toggleSessionNamedFilter: { keys: "ctrl+n", scope: "sessionPicker" },
+	externalEditor: { keys: "ctrl+g", scope: "editor" },
+	followUp: { keys: "alt+enter", scope: "editor" },
+	dequeue: { keys: "alt+up", scope: "editor" },
+	pasteImage: { keys: process.platform === "win32" ? "alt+v" : "ctrl+v", scope: "editor" },
+	newSession: { keys: [], scope: "global" },
+	tree: { keys: [], scope: "global" },
+	fork: { keys: [], scope: "global" },
+	resume: { keys: [], scope: "global" },
+};
+
+/**
  * Default application keybindings.
  */
-export const DEFAULT_APP_KEYBINDINGS: Record<AppAction, KeyId | KeyId[]> = {
-	interrupt: "escape",
-	clear: "ctrl+c",
-	exit: "ctrl+d",
-	suspend: "ctrl+z",
-	cycleThinkingLevel: "shift+tab",
-	cycleModelForward: "ctrl+p",
-	cycleModelBackward: "shift+ctrl+p",
-	selectModel: "ctrl+l",
-	expandTools: "ctrl+o",
-	toggleThinking: "ctrl+t",
-	toggleSessionNamedFilter: "ctrl+n",
-	externalEditor: "ctrl+g",
-	followUp: "alt+enter",
-	dequeue: "alt+up",
-	pasteImage: process.platform === "win32" ? "alt+v" : "ctrl+v",
-	newSession: [],
-	tree: [],
-	fork: [],
-	resume: [],
-};
+export const DEFAULT_APP_KEYBINDINGS: Record<AppAction, KeyId | KeyId[]> = Object.fromEntries(
+	Object.entries(DEFAULT_APP_KEYBINDING_METADATA).map(([action, metadata]) => [action, metadata.keys]),
+) as Record<AppAction, KeyId | KeyId[]>;
+
+export interface AppKeybindingMetadata {
+	keys: KeyId | KeyId[];
+	scope: KeybindingScope;
+}
 
 /**
  * All default keybindings (app + editor).
@@ -160,8 +173,8 @@ export class KeybindingsManager {
 		this.appActionToKeys.clear();
 
 		// Set defaults for app actions
-		for (const [action, keys] of Object.entries(DEFAULT_APP_KEYBINDINGS)) {
-			const keyArray = Array.isArray(keys) ? keys : [keys];
+		for (const [action, metadata] of Object.entries(DEFAULT_APP_KEYBINDING_METADATA)) {
+			const keyArray = Array.isArray(metadata.keys) ? metadata.keys : [metadata.keys];
 			this.appActionToKeys.set(action as AppAction, [...keyArray]);
 		}
 

@@ -4,10 +4,15 @@
 
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ImageContent, Model } from "@mariozechner/pi-ai";
-import type { KeyId } from "@mariozechner/pi-tui";
+import { DEFAULT_EDITOR_KEYBINDING_METADATA, type KeybindingScope, type KeyId } from "@mariozechner/pi-tui";
 import { type Theme, theme } from "../../modes/interactive/theme/theme.js";
 import type { ResourceDiagnostic } from "../diagnostics.js";
-import type { KeyAction, KeybindingsConfig } from "../keybindings.js";
+import {
+	type AppAction,
+	DEFAULT_APP_KEYBINDING_METADATA,
+	type KeyAction,
+	type KeybindingsConfig,
+} from "../keybindings.js";
 import type { ModelRegistry } from "../model-registry.js";
 import type { SessionManager } from "../session-manager.js";
 import type {
@@ -72,19 +77,44 @@ const RESERVED_ACTIONS_FOR_EXTENSION_CONFLICTS: ReadonlyArray<KeyAction> = [
 	"deleteToLineEnd",
 ];
 
-type BuiltInKeyBindings = Partial<Record<KeyId, { action: KeyAction; restrictOverride: boolean }>>;
+const EXTENSION_CONFLICT_SCOPES: ReadonlySet<KeybindingScope> = new Set(["global", "editor"]);
+
+type BuiltInKeyBinding = { action: KeyAction; restrictOverride: boolean; scope: KeybindingScope };
+
+type BuiltInKeyBindings = Partial<Record<KeyId, BuiltInKeyBinding>>;
+
+const shouldCheckExtensionConflictForScope = (scope: KeybindingScope): boolean => EXTENSION_CONFLICT_SCOPES.has(scope);
 
 const buildBuiltinKeybindings = (effectiveKeybindings: Required<KeybindingsConfig>): BuiltInKeyBindings => {
 	const builtinKeybindings = {} as BuiltInKeyBindings;
-	for (const [action, keys] of Object.entries(effectiveKeybindings)) {
+	for (const [action, metadata] of Object.entries(DEFAULT_EDITOR_KEYBINDING_METADATA)) {
+		if (!shouldCheckExtensionConflictForScope(metadata.scope)) continue;
 		const keyAction = action as KeyAction;
-		const keyList = Array.isArray(keys) ? keys : [keys];
+		const configuredKeys = effectiveKeybindings[keyAction];
+		const keyList = Array.isArray(configuredKeys) ? configuredKeys : [configuredKeys];
 		const restrictOverride = RESERVED_ACTIONS_FOR_EXTENSION_CONFLICTS.includes(keyAction);
 		for (const key of keyList) {
 			const normalizedKey = key.toLowerCase() as KeyId;
 			builtinKeybindings[normalizedKey] = {
 				action: keyAction,
-				restrictOverride: restrictOverride,
+				restrictOverride,
+				scope: metadata.scope,
+			};
+		}
+	}
+
+	for (const [action, metadata] of Object.entries(DEFAULT_APP_KEYBINDING_METADATA)) {
+		if (!shouldCheckExtensionConflictForScope(metadata.scope)) continue;
+		const appAction = action as AppAction;
+		const configuredKeys = effectiveKeybindings[appAction];
+		const keyList = Array.isArray(configuredKeys) ? configuredKeys : [configuredKeys];
+		const restrictOverride = RESERVED_ACTIONS_FOR_EXTENSION_CONFLICTS.includes(appAction);
+		for (const key of keyList) {
+			const normalizedKey = key.toLowerCase() as KeyId;
+			builtinKeybindings[normalizedKey] = {
+				action: appAction,
+				restrictOverride,
+				scope: metadata.scope,
 			};
 		}
 	}
@@ -404,7 +434,7 @@ export class ExtensionRunner {
 
 				if (builtInKeybinding?.restrictOverride === false) {
 					addDiagnostic(
-						`Extension shortcut conflict: '${key}' is built-in shortcut for ${builtInKeybinding.action} and ${shortcut.extensionPath}. Using ${shortcut.extensionPath}.`,
+						`Extension shortcut conflict: '${key}' is built-in shortcut for ${builtInKeybinding.action} in ${builtInKeybinding.scope} scope. Using ${shortcut.extensionPath}.`,
 						shortcut.extensionPath,
 					);
 				}

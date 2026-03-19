@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Changed built-in keybinding conflict detection to use keybinding scopes so extension shortcut conflicts are checked only against built-in shortcuts active in global and editor contexts ([#2403](https://github.com/badlogic/pi-mono/pull/2403) by [@aliou](https://github.com/aliou))
+
 ### Fixed
 
 - Tests for session-selector-rename and tree-selector are now keybinding-agnostic, resetting editor keybindings to defaults before each test so user `keybindings.json` cannot cause failures ([#2360](https://github.com/badlogic/pi-mono/issues/2360))

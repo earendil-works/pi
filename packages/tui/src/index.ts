@@ -32,11 +32,14 @@ export type { EditorComponent } from "./editor-component.js";
 export { type FuzzyMatch, fuzzyFilter, fuzzyMatch } from "./fuzzy.js";
 // Keybindings
 export {
+	DEFAULT_EDITOR_KEYBINDING_METADATA,
 	DEFAULT_EDITOR_KEYBINDINGS,
 	type EditorAction,
+	type EditorKeybindingMetadata,
 	type EditorKeybindingsConfig,
 	EditorKeybindingsManager,
 	getEditorKeybindings,
+	type KeybindingScope,
 	setEditorKeybindings,
 } from "./keybindings.js";
 // Keyboard input handling

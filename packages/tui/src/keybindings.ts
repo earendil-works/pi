@@ -1,5 +1,7 @@
 import { type KeyId, matchesKey } from "./keys.js";
 
+export type KeybindingScope = "global" | "editor" | "selection" | "sessionPicker" | "treePicker";
+
 /**
  * Editor actions that can be bound to keys.
  */
@@ -64,60 +66,72 @@ export type EditorKeybindingsConfig = {
 	[K in EditorAction]?: KeyId | KeyId[];
 };
 
+export interface EditorKeybindingMetadata {
+	keys: KeyId | KeyId[];
+	scope: KeybindingScope;
+}
+
+/**
+ * Default editor keybinding metadata.
+ */
+export const DEFAULT_EDITOR_KEYBINDING_METADATA: Record<EditorAction, EditorKeybindingMetadata> = {
+	// Cursor movement
+	cursorUp: { keys: "up", scope: "editor" },
+	cursorDown: { keys: "down", scope: "editor" },
+	cursorLeft: { keys: ["left", "ctrl+b"], scope: "editor" },
+	cursorRight: { keys: ["right", "ctrl+f"], scope: "editor" },
+	cursorWordLeft: { keys: ["alt+left", "ctrl+left", "alt+b"], scope: "editor" },
+	cursorWordRight: { keys: ["alt+right", "ctrl+right", "alt+f"], scope: "editor" },
+	cursorLineStart: { keys: ["home", "ctrl+a"], scope: "editor" },
+	cursorLineEnd: { keys: ["end", "ctrl+e"], scope: "editor" },
+	jumpForward: { keys: "ctrl+]", scope: "editor" },
+	jumpBackward: { keys: "ctrl+alt+]", scope: "editor" },
+	pageUp: { keys: "pageUp", scope: "editor" },
+	pageDown: { keys: "pageDown", scope: "editor" },
+	// Deletion
+	deleteCharBackward: { keys: "backspace", scope: "editor" },
+	deleteCharForward: { keys: ["delete", "ctrl+d"], scope: "editor" },
+	deleteWordBackward: { keys: ["ctrl+w", "alt+backspace"], scope: "editor" },
+	deleteWordForward: { keys: ["alt+d", "alt+delete"], scope: "editor" },
+	deleteToLineStart: { keys: "ctrl+u", scope: "editor" },
+	deleteToLineEnd: { keys: "ctrl+k", scope: "editor" },
+	// Text input
+	newLine: { keys: "shift+enter", scope: "editor" },
+	submit: { keys: "enter", scope: "editor" },
+	tab: { keys: "tab", scope: "editor" },
+	// Selection/autocomplete
+	selectUp: { keys: "up", scope: "selection" },
+	selectDown: { keys: "down", scope: "selection" },
+	selectPageUp: { keys: "pageUp", scope: "selection" },
+	selectPageDown: { keys: "pageDown", scope: "selection" },
+	selectConfirm: { keys: "enter", scope: "selection" },
+	selectCancel: { keys: ["escape", "ctrl+c"], scope: "selection" },
+	// Clipboard
+	copy: { keys: "ctrl+c", scope: "editor" },
+	// Kill ring
+	yank: { keys: "ctrl+y", scope: "editor" },
+	yankPop: { keys: "alt+y", scope: "editor" },
+	// Undo
+	undo: { keys: "ctrl+-", scope: "editor" },
+	// Tool output
+	expandTools: { keys: "ctrl+o", scope: "editor" },
+	// Tree navigation
+	treeFoldOrUp: { keys: ["ctrl+left", "alt+left"], scope: "treePicker" },
+	treeUnfoldOrDown: { keys: ["ctrl+right", "alt+right"], scope: "treePicker" },
+	// Session
+	toggleSessionPath: { keys: "ctrl+p", scope: "sessionPicker" },
+	toggleSessionSort: { keys: "ctrl+s", scope: "sessionPicker" },
+	renameSession: { keys: "ctrl+r", scope: "sessionPicker" },
+	deleteSession: { keys: "ctrl+d", scope: "sessionPicker" },
+	deleteSessionNoninvasive: { keys: "ctrl+backspace", scope: "sessionPicker" },
+};
+
 /**
  * Default editor keybindings.
  */
-export const DEFAULT_EDITOR_KEYBINDINGS: Required<EditorKeybindingsConfig> = {
-	// Cursor movement
-	cursorUp: "up",
-	cursorDown: "down",
-	cursorLeft: ["left", "ctrl+b"],
-	cursorRight: ["right", "ctrl+f"],
-	cursorWordLeft: ["alt+left", "ctrl+left", "alt+b"],
-	cursorWordRight: ["alt+right", "ctrl+right", "alt+f"],
-	cursorLineStart: ["home", "ctrl+a"],
-	cursorLineEnd: ["end", "ctrl+e"],
-	jumpForward: "ctrl+]",
-	jumpBackward: "ctrl+alt+]",
-	pageUp: "pageUp",
-	pageDown: "pageDown",
-	// Deletion
-	deleteCharBackward: "backspace",
-	deleteCharForward: ["delete", "ctrl+d"],
-	deleteWordBackward: ["ctrl+w", "alt+backspace"],
-	deleteWordForward: ["alt+d", "alt+delete"],
-	deleteToLineStart: "ctrl+u",
-	deleteToLineEnd: "ctrl+k",
-	// Text input
-	newLine: "shift+enter",
-	submit: "enter",
-	tab: "tab",
-	// Selection/autocomplete
-	selectUp: "up",
-	selectDown: "down",
-	selectPageUp: "pageUp",
-	selectPageDown: "pageDown",
-	selectConfirm: "enter",
-	selectCancel: ["escape", "ctrl+c"],
-	// Clipboard
-	copy: "ctrl+c",
-	// Kill ring
-	yank: "ctrl+y",
-	yankPop: "alt+y",
-	// Undo
-	undo: "ctrl+-",
-	// Tool output
-	expandTools: "ctrl+o",
-	// Tree navigation
-	treeFoldOrUp: ["ctrl+left", "alt+left"],
-	treeUnfoldOrDown: ["ctrl+right", "alt+right"],
-	// Session
-	toggleSessionPath: "ctrl+p",
-	toggleSessionSort: "ctrl+s",
-	renameSession: "ctrl+r",
-	deleteSession: "ctrl+d",
-	deleteSessionNoninvasive: "ctrl+backspace",
-};
+export const DEFAULT_EDITOR_KEYBINDINGS: Required<EditorKeybindingsConfig> = Object.fromEntries(
+	Object.entries(DEFAULT_EDITOR_KEYBINDING_METADATA).map(([action, metadata]) => [action, metadata.keys]),
+) as Required<EditorKeybindingsConfig>;
 
 /**
  * Manages keybindings for the editor.
@@ -134,8 +148,8 @@ export class EditorKeybindingsManager {
 		this.actionToKeys.clear();
 
 		// Start with defaults
-		for (const [action, keys] of Object.entries(DEFAULT_EDITOR_KEYBINDINGS)) {
-			const keyArray = Array.isArray(keys) ? keys : [keys];
+		for (const [action, metadata] of Object.entries(DEFAULT_EDITOR_KEYBINDING_METADATA)) {
+			const keyArray = Array.isArray(metadata.keys) ? metadata.keys : [metadata.keys];
 			this.actionToKeys.set(action as EditorAction, [...keyArray]);
 		}
 
