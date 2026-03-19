@@ -1,3 +1,4 @@
+import type { AssistantMessage } from "@kennyfrc/mu-ai";
 import { describe, expect, it, vi } from "vitest";
 import { initTheme } from "../src/theme/theme.js";
 import type { HandoffDetails } from "../src/tools/handoff.js";
@@ -229,5 +230,80 @@ describe("explicit compaction transition", () => {
 			loaderMessage: "Compacting thread history... (esc to cancel)",
 		});
 		expect(harness.pendingExplicitCompactionGoal).toBeNull();
+	});
+
+	it("suppresses the transient aborted assistant status during explicit compaction handoff", async () => {
+		const finalizedMessages: AssistantMessage[] = [];
+		const finalize = vi.fn((message: AssistantMessage) => {
+			finalizedMessages.push(message);
+		});
+		const harness = {
+			isInitialized: true,
+			streamingComponent: {
+				finalize,
+			},
+			suppressNextAbortedAssistantStatusForExplicitCompaction: true,
+			currentAssistantEstimatedOutputTokens: 0,
+			completedEstimatedOutputTokens: 0,
+			pauseAssistantActiveTimer: vi.fn(),
+			pendingTools: new Map(),
+			footer: { invalidate: vi.fn(), updateState: vi.fn(), setUsageLimits: vi.fn() },
+			syncFooterContextUsage: vi.fn(),
+			footerUsageState: null,
+			composerUsageLimits: null,
+			ui: { requestRender: vi.fn() },
+			pendingLatencyStartTime: null as number | null,
+			agent: { state: { model: null } },
+			missionRunWorkingStatusActive: false,
+			timerIntervalId: null as NodeJS.Timeout | null,
+			clearWorkingStatusMetrics: vi.fn(),
+			clearWorkingStatusFooterLine: vi.fn(),
+			getEstimatedOutputTokens: vi.fn(() => 0),
+			getAverageLatencyMs: vi.fn(() => 0),
+			getAssistantActiveMs: vi.fn(() => 0),
+			getWorkingElapsedMs: vi.fn(() => 0),
+			statusContainer: { clear: vi.fn() },
+			chatContainer: { removeChild: vi.fn() },
+			loadingAnimation: null,
+		};
+
+		const handleEvent = (
+			TuiRenderer.prototype as unknown as {
+				handleEvent: (
+					this: typeof harness,
+					event: Record<string, unknown>,
+					state: Record<string, unknown>,
+				) => Promise<void>;
+			}
+		).handleEvent;
+
+		await handleEvent.call(
+			harness,
+			{
+				type: "message_end",
+				message: {
+					role: "assistant",
+					content: [{ type: "text", text: 'Compaction requested: "Fix the login page tests"' }],
+					api: "openai-completions",
+					provider: "openai",
+					model: "gpt-test",
+					usage: {
+						input: 0,
+						output: 0,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 0,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+					},
+					stopReason: "aborted",
+					timestamp: Date.now(),
+				},
+			},
+			{},
+		);
+
+		expect(finalize).toHaveBeenCalledOnce();
+		expect(finalizedMessages[0]?.stopReason).toBe("stop");
+		expect(harness.suppressNextAbortedAssistantStatusForExplicitCompaction).toBe(false);
 	});
 });

@@ -398,6 +398,7 @@ export class TuiRenderer {
 	private latencyGapCount = 0;
 	private ignoreNextAgentEndForAutoHandoffAbort = false;
 	private ignoreNextAgentEndForExplicitCompactionAbort = false;
+	private suppressNextAbortedAssistantStatusForExplicitCompaction = false;
 	private missionUiState: MissionUiState | null = null;
 	private anthropicUsageRefreshVersion = 0;
 
@@ -1394,7 +1395,17 @@ export class TuiRenderer {
 					break;
 				}
 				if (this.streamingComponent && event.message.role === "assistant") {
-					const assistantMsg = event.message as AssistantMessage;
+					let assistantMsg = event.message as AssistantMessage;
+					if (
+						assistantMsg.stopReason === "aborted" &&
+						this.suppressNextAbortedAssistantStatusForExplicitCompaction
+					) {
+						this.suppressNextAbortedAssistantStatusForExplicitCompaction = false;
+						assistantMsg = {
+							...assistantMsg,
+							stopReason: "stop",
+						};
+					}
 					this.currentAssistantEstimatedOutputTokens = estimateWorkingStatusTokens(assistantMsg);
 					this.completedEstimatedOutputTokens += this.currentAssistantEstimatedOutputTokens;
 					this.pauseAssistantActiveTimer();
@@ -1563,6 +1574,7 @@ export class TuiRenderer {
 				) {
 					const details = event.result.details as HandoffDetails;
 					this.ignoreNextAgentEndForExplicitCompactionAbort = true;
+					this.suppressNextAbortedAssistantStatusForExplicitCompaction = true;
 					this.agent.pauseQueueDrain();
 					this.agent.abort();
 
