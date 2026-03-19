@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn, spawnSync } from "node:child_process";
-import { existsSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import * as readline from "node:readline";
@@ -8,6 +8,7 @@ import { getModel } from "@kennyfrc/mu-ai";
 import { TypeGuard } from "@sinclair/typebox";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { setCurrentModel, setCurrentThinkingLevel } from "../src/runtime-state.js";
+import { inspectSpawnedAgentSession } from "../src/spawned-agents.js";
 import { allTools } from "../src/tools/index.js";
 import { spawnAgentTool } from "../src/tools/spawn-agent.js";
 import { resolveSpawnAgentRequest } from "../src/tools/spawn-agent-config.js";
@@ -136,6 +137,111 @@ describe("spawn_agent red suite", () => {
 		expect(sessionMeta).toHaveProperty("sessionFile");
 		expect(sessionMeta).toHaveProperty("provider", "openai");
 		expect(sessionMeta).toHaveProperty("modelId", "gpt-5.1-codex");
+	}, 15000);
+
+	test("rpc mode only emits a child handle after the session file is active and discoverable", async () => {
+		agent = spawn("node", ["dist/cli.js", "--mode", "rpc", "--provider", "openai", "--model", "gpt-5.1-codex"], {
+			cwd: join(__dirname, ".."),
+			env: {
+				...process.env,
+				OPENAI_API_KEY: process.env.OPENAI_API_KEY || "test-openai-key",
+				MU_CODING_AGENT_DIR: sessionDir,
+			},
+		});
+
+		const rl = readline.createInterface({ input: agent.stdout!, terminal: false });
+		let stderr = "";
+		agent.stderr?.on("data", (data) => {
+			stderr += data.toString();
+		});
+
+		const sessionMeta = await new Promise<Record<string, unknown>>((resolve, reject) => {
+			const timeout = setTimeout(
+				() => reject(new Error(`Timeout waiting for session_meta. Stderr: ${stderr || "(empty)"}`)),
+				10000,
+			);
+
+			rl.on("line", (line: string) => {
+				try {
+					const event = JSON.parse(line) as Record<string, unknown>;
+					if (event.type === "session_meta") {
+						clearTimeout(timeout);
+						resolve(event);
+					}
+				} catch {
+					// Ignore non-JSON lines.
+				}
+			});
+
+			rl.on("close", () => {
+				clearTimeout(timeout);
+				reject(new Error(`RPC stdout closed before session_meta. Stderr: ${stderr || "(empty)"}`));
+			});
+		});
+
+		const sessionId = String(sessionMeta.sessionId);
+		const sessionFile = String(sessionMeta.sessionFile);
+		const inspected = inspectSpawnedAgentSession(sessionId, sessionFile);
+
+		expect(existsSync(sessionFile)).toBe(true);
+		expect(inspected.status).not.toBe("not_found");
+
+		const header = JSON.parse(readFileSync(sessionFile, "utf8").split("\n")[0] ?? "null") as {
+			type?: string;
+			id?: string;
+		};
+		expect(header.type).toBe("session");
+		expect(header.id).toBe(sessionId);
+	}, 15000);
+
+	test("rpc mode emits child metadata that spawned-agent status inspection can resolve immediately", async () => {
+		agent = spawn("node", ["dist/cli.js", "--mode", "rpc", "--provider", "openai", "--model", "gpt-5.1-codex"], {
+			cwd: join(__dirname, ".."),
+			env: {
+				...process.env,
+				OPENAI_API_KEY: process.env.OPENAI_API_KEY || "test-openai-key",
+				MU_CODING_AGENT_DIR: sessionDir,
+			},
+		});
+
+		const rl = readline.createInterface({ input: agent.stdout!, terminal: false });
+		let stderr = "";
+		agent.stderr?.on("data", (data) => {
+			stderr += data.toString();
+		});
+
+		const sessionMeta = await new Promise<Record<string, unknown>>((resolve, reject) => {
+			const timeout = setTimeout(
+				() => reject(new Error(`Timeout waiting for session_meta. Stderr: ${stderr || "(empty)"}`)),
+				10000,
+			);
+
+			rl.on("line", (line: string) => {
+				try {
+					const event = JSON.parse(line) as Record<string, unknown>;
+					if (event.type === "session_meta") {
+						clearTimeout(timeout);
+						resolve(event);
+					}
+				} catch {
+					// Ignore non-JSON lines.
+				}
+			});
+
+			rl.on("close", () => {
+				clearTimeout(timeout);
+				reject(new Error(`RPC stdout closed before session_meta. Stderr: ${stderr || "(empty)"}`));
+			});
+		});
+
+		const inspected = inspectSpawnedAgentSession(String(sessionMeta.sessionId), String(sessionMeta.sessionFile));
+
+		expect(
+			inspected.status === "running" ||
+				inspected.status === "completed" ||
+				inspected.status === "error" ||
+				inspected.status === "aborted",
+		).toBe(true);
 	}, 15000);
 
 	test("cli accepts xhigh thinking so spawn_agent can forward the strongest supported reasoning level", () => {
