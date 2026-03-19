@@ -1,5 +1,5 @@
 import { supportsXhigh } from "./models.js";
-import { type AnthropicOptions, streamAnthropic } from "./providers/anthropic.js";
+import { type AnthropicEffort, type AnthropicOptions, streamAnthropic } from "./providers/anthropic.js";
 import { type GoogleOptions, streamGoogle } from "./providers/google.js";
 import { type GoogleGeminiCliOptions, streamGoogleGeminiCli } from "./providers/google-gemini-cli.js";
 import { streamOpenAICodexResponses } from "./providers/openai-codex-responses.js";
@@ -206,6 +206,14 @@ function mapOptionsForApi<TApi extends Api>(
 				return { ...base, thinkingEnabled: false } satisfies AnthropicOptions;
 			}
 
+			if (supportsAdaptiveAnthropicThinking(model.id)) {
+				return {
+					...base,
+					thinkingEnabled: true,
+					effort: mapReasoningToAnthropicEffort(options.reasoning, model.id),
+				} satisfies AnthropicOptions;
+			}
+
 			const anthropicBudgets = {
 				minimal: 1024,
 				low: 2048,
@@ -294,6 +302,29 @@ function mapOptionsForApi<TApi extends Api>(
 }
 
 type ClampedReasoningEffort = Exclude<ReasoningEffort, "xhigh">;
+
+function supportsAdaptiveAnthropicThinking(modelId: string): boolean {
+	return (
+		modelId.includes("opus-4-6") ||
+		modelId.includes("opus-4.6") ||
+		modelId.includes("sonnet-4-6") ||
+		modelId.includes("sonnet-4.6")
+	);
+}
+
+function mapReasoningToAnthropicEffort(reasoning: ReasoningEffort, modelId: string): AnthropicEffort {
+	switch (reasoning) {
+		case "minimal":
+		case "low":
+			return "low";
+		case "medium":
+			return "medium";
+		case "high":
+			return "high";
+		case "xhigh":
+			return modelId.includes("opus-4-6") || modelId.includes("opus-4.6") ? "max" : "high";
+	}
+}
 
 function getGoogleBudget(model: Model<"google-generative-ai">, effort: ClampedReasoningEffort): number {
 	// See https://ai.google.dev/gemini-api/docs/thinking#set-budget

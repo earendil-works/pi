@@ -117,6 +117,13 @@ function mapOptionsForApi(model, options, apiKey) {
 			if (!options?.reasoning) {
 				return { ...base, thinkingEnabled: false };
 			}
+			if (supportsAdaptiveAnthropicThinking(model.id)) {
+				return {
+					...base,
+					thinkingEnabled: true,
+					effort: mapReasoningToAnthropicEffort(options.reasoning, model.id),
+				};
+			}
 			const anthropicBudgets = {
 				minimal: 1024,
 				low: 2048,
@@ -188,6 +195,27 @@ function mapOptionsForApi(model, options, apiKey) {
 			const _exhaustive = model.api;
 			throw new Error(`Unhandled API in mapOptionsForApi: ${_exhaustive}`);
 		}
+	}
+}
+function supportsAdaptiveAnthropicThinking(modelId) {
+	return (
+		modelId.includes("opus-4-6") ||
+		modelId.includes("opus-4.6") ||
+		modelId.includes("sonnet-4-6") ||
+		modelId.includes("sonnet-4.6")
+	);
+}
+function mapReasoningToAnthropicEffort(reasoning, modelId) {
+	switch (reasoning) {
+		case "minimal":
+		case "low":
+			return "low";
+		case "medium":
+			return "medium";
+		case "high":
+			return "high";
+		case "xhigh":
+			return modelId.includes("opus-4-6") || modelId.includes("opus-4.6") ? "max" : "high";
 	}
 }
 function getGoogleBudget(model, effort) {

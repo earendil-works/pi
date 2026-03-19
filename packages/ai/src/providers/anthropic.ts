@@ -30,6 +30,8 @@ import { transformMessages } from "./transorm-messages.js";
 
 const claudeCodeVersion = "2.1.2";
 
+export type AnthropicEffort = "low" | "medium" | "high" | "max";
+
 /**
  * Convert content blocks to Anthropic API format
  */
@@ -85,8 +87,18 @@ function convertContentBlocks(content: (TextContent | ImageContent)[]):
 export interface AnthropicOptions extends StreamOptions {
 	thinkingEnabled?: boolean;
 	thinkingBudgetTokens?: number;
+	effort?: AnthropicEffort;
 	interleavedThinking?: boolean;
 	toolChoice?: "auto" | "any" | "none" | { type: "tool"; name: string };
+}
+
+function supportsAdaptiveThinking(modelId: string): boolean {
+	return (
+		modelId.includes("opus-4-6") ||
+		modelId.includes("opus-4.6") ||
+		modelId.includes("sonnet-4-6") ||
+		modelId.includes("sonnet-4.6")
+	);
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -492,7 +504,7 @@ function buildParams(
 	isOAuthToken: boolean,
 	options?: AnthropicOptions,
 ): MessageCreateParamsStreaming {
-	const params: MessageCreateParamsStreaming = {
+	const params: MessageCreateParamsStreaming & { output_config?: { effort: AnthropicEffort } } = {
 		model: model.id,
 		messages: convertMessages(context.messages, model),
 		max_tokens: options?.maxTokens || (model.maxTokens / 3) | 0,
@@ -540,10 +552,17 @@ function buildParams(
 	}
 
 	if (options?.thinkingEnabled && model.reasoning) {
-		params.thinking = {
-			type: "enabled",
-			budget_tokens: options.thinkingBudgetTokens || 1024,
-		};
+		if (supportsAdaptiveThinking(model.id)) {
+			Object.assign(params as { thinking?: unknown }, { thinking: { type: "adaptive" } });
+			if (options.effort) {
+				params.output_config = { effort: options.effort };
+			}
+		} else {
+			params.thinking = {
+				type: "enabled",
+				budget_tokens: options.thinkingBudgetTokens || 1024,
+			};
+		}
 	}
 
 	if (options?.toolChoice) {

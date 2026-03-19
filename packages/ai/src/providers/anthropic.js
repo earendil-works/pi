@@ -8,6 +8,14 @@ import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { transformMessages } from "./transorm-messages.js";
 
 const claudeCodeVersion = "2.1.2";
+function supportsAdaptiveThinking(modelId) {
+	return (
+		modelId.includes("opus-4-6") ||
+		modelId.includes("opus-4.6") ||
+		modelId.includes("sonnet-4-6") ||
+		modelId.includes("sonnet-4.6")
+	);
+}
 /**
  * Convert content blocks to Anthropic API format
  */
@@ -431,10 +439,17 @@ function buildParams(model, context, isOAuthToken, options) {
 		params.tools = convertTools(context.tools);
 	}
 	if (options?.thinkingEnabled && model.reasoning) {
-		params.thinking = {
-			type: "enabled",
-			budget_tokens: options.thinkingBudgetTokens || 1024,
-		};
+		if (supportsAdaptiveThinking(model.id)) {
+			params.thinking = { type: "adaptive" };
+			if (options.effort) {
+				params.output_config = { effort: options.effort };
+			}
+		} else {
+			params.thinking = {
+				type: "enabled",
+				budget_tokens: options.thinkingBudgetTokens || 1024,
+			};
+		}
 	}
 	if (options?.toolChoice) {
 		if (typeof options.toolChoice === "string") {
