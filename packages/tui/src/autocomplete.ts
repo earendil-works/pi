@@ -1,4 +1,4 @@
-import { spawnSync } from "child_process";
+import { spawn } from "child_process";
 import { readdirSync, statSync } from "fs";
 import { homedir } from "os";
 import { basename, dirname, join } from "path";
@@ -120,13 +120,7 @@ function buildCompletionValue(
 	return `${openQuote}${path}${closeQuote}`;
 }
 
-// Use fd to walk directory tree (fast, respects .gitignore)
-function walkDirectoryWithFd(
-	baseDir: string,
-	fdPath: string,
-	query: string,
-	maxResults: number,
-): Array<{ path: string; isDirectory: boolean }> {
+function buildFdArgs(baseDir: string, query: string, maxResults: number, maxDepth?: number): string[] {
 	const args = [
 		"--base-directory",
 		baseDir,
@@ -146,22 +140,19 @@ function walkDirectoryWithFd(
 		".git/**",
 	];
 
-	// Add query as pattern if provided
+	if (maxDepth !== undefined) {
+		args.push("--max-depth", String(maxDepth));
+	}
+
 	if (query) {
 		args.push(buildFdPathQuery(query));
 	}
 
-	const result = spawnSync(fdPath, args, {
-		encoding: "utf-8",
-		stdio: ["pipe", "pipe", "pipe"],
-		maxBuffer: 10 * 1024 * 1024,
-	});
+	return args;
+}
 
-	if (result.status !== 0 || !result.stdout) {
-		return [];
-	}
-
-	const lines = result.stdout.trim().split("\n").filter(Boolean);
+function parseFdOutput(stdout: string): Array<{ path: string; isDirectory: boolean }> {
+	const lines = stdout.trim().split("\n").filter(Boolean);
 	const results: Array<{ path: string; isDirectory: boolean }> = [];
 
 	for (const line of lines) {
@@ -172,7 +163,6 @@ function walkDirectoryWithFd(
 			continue;
 		}
 
-		// fd outputs directories with trailing /
 		const isDirectory = hasTrailingSeparator;
 		results.push({
 			path: displayLine,
@@ -181,6 +171,58 @@ function walkDirectoryWithFd(
 	}
 
 	return results;
+}
+
+export interface AsyncFdHandle {
+	promise: Promise<Array<{ path: string; isDirectory: boolean }>>;
+	abort: () => void;
+}
+
+function walkDirectoryWithFdAsync(
+	baseDir: string,
+	fdPath: string,
+	query: string,
+	maxResults: number,
+	maxDepth?: number,
+): AsyncFdHandle {
+	const args = buildFdArgs(baseDir, query, maxResults, maxDepth);
+	const child = spawn(fdPath, args, {
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+
+	let aborted = false;
+
+	const promise = new Promise<Array<{ path: string; isDirectory: boolean }>>((resolve) => {
+		let stdout = "";
+		const timeout = setTimeout(() => {
+			aborted = true;
+			child.kill();
+			resolve(parseFdOutput(stdout));
+		}, 5000);
+
+		child.stdout?.on("data", (chunk: Buffer) => {
+			stdout += chunk.toString();
+		});
+
+		child.on("close", () => {
+			clearTimeout(timeout);
+			if (aborted) return;
+			resolve(parseFdOutput(stdout));
+		});
+
+		child.on("error", () => {
+			clearTimeout(timeout);
+			resolve([]);
+		});
+	});
+
+	return {
+		promise,
+		abort: () => {
+			aborted = true;
+			child.kill();
+		},
+	};
 }
 
 export interface AutocompleteItem {
@@ -224,6 +266,11 @@ export interface AutocompleteProvider {
 	};
 }
 
+export interface AsyncSuggestionsHandle {
+	promise: Promise<{ items: AutocompleteItem[]; prefix: string } | null>;
+	abort: () => void;
+}
+
 // Combined provider that handles both slash commands and file paths
 export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	private commands: (SlashCommand | AutocompleteItem)[];
@@ -248,17 +295,10 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		const currentLine = lines[cursorLine] || "";
 		const textBeforeCursor = currentLine.slice(0, cursorCol);
 
-		// Check for @ file reference (fuzzy search) - must be after a delimiter or at start
+		// Check for @ file reference (fuzzy search) - handled asynchronously via getSuggestionsAsync
 		const atPrefix = this.extractAtPrefix(textBeforeCursor);
 		if (atPrefix) {
-			const { rawPrefix, isQuotedPrefix } = parsePathPrefix(atPrefix);
-			const suggestions = this.getFuzzyFileSuggestions(rawPrefix, { isQuotedPrefix: isQuotedPrefix });
-			if (suggestions.length === 0) return null;
-
-			return {
-				items: suggestions,
-				prefix: atPrefix,
-			};
+			return null;
 		}
 
 		// Check for slash commands
@@ -424,6 +464,47 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			cursorLine,
 			cursorCol: beforePrefix.length + cursorOffset,
 		};
+	}
+
+	/**
+	 * Check if the current input is in an @ fuzzy search context.
+	 * Used by the editor to decide whether to trigger async suggestions.
+	 */
+	isAtFuzzyContext(lines: string[], cursorLine: number, cursorCol: number): string | null {
+		const currentLine = lines[cursorLine] || "";
+		const textBeforeCursor = currentLine.slice(0, cursorCol);
+		return this.extractAtPrefix(textBeforeCursor);
+	}
+
+	/**
+	 * Async fuzzy file suggestions for @ references.
+	 * Returns a handle with a promise and an abort function.
+	 */
+	getSuggestionsAsync(lines: string[], cursorLine: number, cursorCol: number): AsyncSuggestionsHandle | null {
+		const currentLine = lines[cursorLine] || "";
+		const textBeforeCursor = currentLine.slice(0, cursorCol);
+
+		const atPrefix = this.extractAtPrefix(textBeforeCursor);
+		if (!atPrefix || !this.fdPath) {
+			return null;
+		}
+
+		const { rawPrefix, isQuotedPrefix } = parsePathPrefix(atPrefix);
+		const scopedQuery = this.resolveScopedFuzzyQuery(rawPrefix);
+		const fdBaseDir = scopedQuery?.baseDir ?? this.basePath;
+		const fdQuery = scopedQuery?.query ?? rawPrefix;
+		const isOutsideProject =
+			scopedQuery !== null && !fdBaseDir.startsWith(`${this.basePath}/`) && fdBaseDir !== this.basePath;
+		const maxDepth = isOutsideProject ? 3 : undefined;
+		const handle = walkDirectoryWithFdAsync(fdBaseDir, this.fdPath, fdQuery, 100, maxDepth);
+
+		const promise = handle.promise.then((entries) => {
+			const suggestions = this.buildFuzzySuggestions(entries, fdQuery, scopedQuery, isQuotedPrefix);
+			if (suggestions.length === 0) return null;
+			return { items: suggestions, prefix: atPrefix };
+		});
+
+		return { promise, abort: handle.abort };
 	}
 
 	// Extract @ prefix for fuzzy file suggestions
@@ -684,57 +765,44 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	}
 
 	// Fuzzy file search using fd (fast, respects .gitignore)
-	private getFuzzyFileSuggestions(query: string, options: { isQuotedPrefix: boolean }): AutocompleteItem[] {
-		if (!this.fdPath) {
-			// fd not available, return empty results
-			return [];
+	private buildFuzzySuggestions(
+		entries: Array<{ path: string; isDirectory: boolean }>,
+		fdQuery: string,
+		scopedQuery: { baseDir: string; query: string; displayBase: string } | null,
+		isQuotedPrefix: boolean,
+	): AutocompleteItem[] {
+		const scoredEntries = entries
+			.map((entry) => ({
+				...entry,
+				score: fdQuery ? this.scoreEntry(entry.path, fdQuery, entry.isDirectory) : 1,
+			}))
+			.filter((entry) => entry.score > 0);
+
+		scoredEntries.sort((a, b) => b.score - a.score);
+		const topEntries = scoredEntries.slice(0, 20);
+
+		const suggestions: AutocompleteItem[] = [];
+		for (const { path: entryPath, isDirectory } of topEntries) {
+			const pathWithoutSlash = isDirectory ? entryPath.slice(0, -1) : entryPath;
+			const displayPath = scopedQuery
+				? this.scopedPathForDisplay(scopedQuery.displayBase, pathWithoutSlash)
+				: pathWithoutSlash;
+			const entryName = basename(pathWithoutSlash);
+			const completionPath = isDirectory ? `${displayPath}/` : displayPath;
+			const value = buildCompletionValue(completionPath, {
+				isDirectory,
+				isAtPrefix: true,
+				isQuotedPrefix,
+			});
+
+			suggestions.push({
+				value,
+				label: entryName + (isDirectory ? "/" : ""),
+				description: displayPath,
+			});
 		}
 
-		try {
-			const scopedQuery = this.resolveScopedFuzzyQuery(query);
-			const fdBaseDir = scopedQuery?.baseDir ?? this.basePath;
-			const fdQuery = scopedQuery?.query ?? query;
-			const entries = walkDirectoryWithFd(fdBaseDir, this.fdPath, fdQuery, 100);
-
-			// Score entries
-			const scoredEntries = entries
-				.map((entry) => ({
-					...entry,
-					score: fdQuery ? this.scoreEntry(entry.path, fdQuery, entry.isDirectory) : 1,
-				}))
-				.filter((entry) => entry.score > 0);
-
-			// Sort by score (descending) and take top 20
-			scoredEntries.sort((a, b) => b.score - a.score);
-			const topEntries = scoredEntries.slice(0, 20);
-
-			// Build suggestions
-			const suggestions: AutocompleteItem[] = [];
-			for (const { path: entryPath, isDirectory } of topEntries) {
-				// fd already includes trailing / for directories
-				const pathWithoutSlash = isDirectory ? entryPath.slice(0, -1) : entryPath;
-				const displayPath = scopedQuery
-					? this.scopedPathForDisplay(scopedQuery.displayBase, pathWithoutSlash)
-					: pathWithoutSlash;
-				const entryName = basename(pathWithoutSlash);
-				const completionPath = isDirectory ? `${displayPath}/` : displayPath;
-				const value = buildCompletionValue(completionPath, {
-					isDirectory,
-					isAtPrefix: true,
-					isQuotedPrefix: options.isQuotedPrefix,
-				});
-
-				suggestions.push({
-					value,
-					label: entryName + (isDirectory ? "/" : ""),
-					description: displayPath,
-				});
-			}
-
-			return suggestions;
-		} catch {
-			return [];
-		}
+		return suggestions;
 	}
 
 	// Force file completion (called on Tab key) - always returns suggestions

@@ -1,4 +1,4 @@
-import type { AutocompleteProvider, CombinedAutocompleteProvider } from "../autocomplete.js";
+import type { AsyncSuggestionsHandle, AutocompleteProvider, CombinedAutocompleteProvider } from "../autocomplete.js";
 import { getEditorKeybindings } from "../keybindings.js";
 import { decodeKittyPrintable, matchesKey } from "../keys.js";
 import { KillRing } from "../kill-ring.js";
@@ -241,6 +241,9 @@ export class Editor implements Component, Focusable {
 	private autocompleteState: "regular" | "force" | null = null;
 	private autocompletePrefix: string = "";
 	private autocompleteMaxVisible: number = 5;
+	private asyncAutocompleteHandle: AsyncSuggestionsHandle | null = null;
+	private asyncAutocompleteDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+	private autocompleteLoading: boolean = false;
 
 	// Paste tracking for large pastes
 	private pastes: Map<number, string> = new Map();
@@ -511,6 +514,11 @@ export class Editor implements Component, Focusable {
 				const linePadding = " ".repeat(Math.max(0, contentWidth - lineWidth));
 				result.push(`${leftPadding}${line}${linePadding}${rightPadding}`);
 			}
+		} else if (this.autocompleteLoading) {
+			const loadingText = this.theme.borderColor("  Searching...");
+			const lineWidth = visibleWidth(loadingText);
+			const linePadding = " ".repeat(Math.max(0, contentWidth - lineWidth));
+			result.push(`${leftPadding}${loadingText}${linePadding}${rightPadding}`);
 		}
 
 		return result;
@@ -582,7 +590,14 @@ export class Editor implements Component, Focusable {
 				this.cancelAutocomplete();
 				return;
 			}
+		} else if (this.autocompleteLoading) {
+			if (kb.matches(data, "selectCancel")) {
+				this.cancelAutocomplete();
+				return;
+			}
+		}
 
+		if (this.autocompleteState && this.autocompleteList) {
 			if (kb.matches(data, "selectUp") || kb.matches(data, "selectDown")) {
 				this.autocompleteList.handleInput(data);
 				return;
@@ -644,7 +659,7 @@ export class Editor implements Component, Focusable {
 		}
 
 		// Tab - trigger completion
-		if (kb.matches(data, "tab") && !this.autocompleteState) {
+		if (kb.matches(data, "tab") && !this.autocompleteState && !this.autocompleteLoading) {
 			this.handleTabCompletion();
 			return;
 		}
@@ -2065,6 +2080,7 @@ export class Editor implements Component, Focusable {
 		);
 
 		if (suggestions && suggestions.items.length > 0) {
+			this.cancelAsyncAutocomplete();
 			this.autocompletePrefix = suggestions.prefix;
 			this.autocompleteList = this.createAutocompleteList(suggestions.prefix, suggestions.items);
 
@@ -2076,8 +2092,55 @@ export class Editor implements Component, Focusable {
 
 			this.autocompleteState = "regular";
 		} else {
-			this.cancelAutocomplete();
+			this.tryTriggerAsyncAutocomplete();
 		}
+	}
+
+	private tryTriggerAsyncAutocomplete(): void {
+		const provider = this.autocompleteProvider as CombinedAutocompleteProvider;
+		if (typeof provider.isAtFuzzyContext !== "function") return;
+
+		const atPrefix = provider.isAtFuzzyContext(this.state.lines, this.state.cursorLine, this.state.cursorCol);
+		if (!atPrefix) {
+			this.cancelAutocomplete();
+			return;
+		}
+
+		this.cancelAsyncAutocomplete();
+		this.autocompleteLoading = true;
+		this.tui.requestRender();
+
+		this.asyncAutocompleteDebounceTimer = setTimeout(() => {
+			this.asyncAutocompleteDebounceTimer = null;
+
+			if (typeof provider.getSuggestionsAsync !== "function") return;
+			const handle = provider.getSuggestionsAsync(this.state.lines, this.state.cursorLine, this.state.cursorCol);
+			if (!handle) {
+				this.autocompleteLoading = false;
+				this.tui.requestRender();
+				return;
+			}
+
+			this.asyncAutocompleteHandle = handle;
+			handle.promise.then((result) => {
+				if (this.asyncAutocompleteHandle !== handle) return;
+
+				this.asyncAutocompleteHandle = null;
+				this.autocompleteLoading = false;
+
+				if (result && result.items.length > 0) {
+					this.autocompletePrefix = result.prefix;
+					this.autocompleteList = this.createAutocompleteList(result.prefix, result.items);
+					this.autocompleteState = "regular";
+				} else {
+					this.autocompleteState = null;
+					this.autocompleteList = undefined;
+					this.autocompletePrefix = "";
+				}
+
+				this.tui.requestRender();
+			});
+		}, 150);
 	}
 
 	private handleTabCompletion(): void {
@@ -2160,14 +2223,28 @@ https://github.com/EsotericSoftware/spine-runtimes/actions/runs/19536643416/job/
 		this.autocompleteState = null;
 		this.autocompleteList = undefined;
 		this.autocompletePrefix = "";
+		this.cancelAsyncAutocomplete();
+	}
+
+	private cancelAsyncAutocomplete(): void {
+		if (this.asyncAutocompleteDebounceTimer) {
+			clearTimeout(this.asyncAutocompleteDebounceTimer);
+			this.asyncAutocompleteDebounceTimer = null;
+		}
+		if (this.asyncAutocompleteHandle) {
+			this.asyncAutocompleteHandle.abort();
+			this.asyncAutocompleteHandle = null;
+		}
+		this.autocompleteLoading = false;
 	}
 
 	public isShowingAutocomplete(): boolean {
-		return this.autocompleteState !== null;
+		return this.autocompleteState !== null || this.autocompleteLoading;
 	}
 
 	private updateAutocomplete(): void {
-		if (!this.autocompleteState || !this.autocompleteProvider) return;
+		if (!this.autocompleteState && !this.autocompleteLoading) return;
+		if (!this.autocompleteProvider) return;
 
 		if (this.autocompleteState === "force") {
 			this.forceFileAutocomplete();
@@ -2180,17 +2257,19 @@ https://github.com/EsotericSoftware/spine-runtimes/actions/runs/19536643416/job/
 			this.state.cursorCol,
 		);
 		if (suggestions && suggestions.items.length > 0) {
+			this.cancelAsyncAutocomplete();
 			this.autocompletePrefix = suggestions.prefix;
-			// Always create new SelectList to ensure update
 			this.autocompleteList = this.createAutocompleteList(suggestions.prefix, suggestions.items);
 
-			// If typed prefix exactly matches one of the suggestions, select that item
 			const bestMatchIndex = this.getBestAutocompleteMatchIndex(suggestions.items, suggestions.prefix);
 			if (bestMatchIndex >= 0) {
 				this.autocompleteList.setSelectedIndex(bestMatchIndex);
 			}
 		} else {
-			this.cancelAutocomplete();
+			this.autocompleteState = null;
+			this.autocompleteList = undefined;
+			this.autocompletePrefix = "";
+			this.tryTriggerAsyncAutocomplete();
 		}
 	}
 }

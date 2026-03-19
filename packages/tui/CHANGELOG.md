@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Made `@` file autocomplete async using `spawn` instead of `spawnSync` to prevent UI freezes during `fd` directory walks
+
 ## [0.60.0] - 2026-03-18
 
 ### Fixed

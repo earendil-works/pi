@@ -2,6 +2,7 @@
 
 // Autocomplete support
 export {
+	type AsyncSuggestionsHandle,
 	type AutocompleteItem,
 	type AutocompleteProvider,
 	CombinedAutocompleteProvider,
