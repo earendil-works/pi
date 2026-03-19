@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a built-in `gigachat` login provider to `@mariozechner/pi-ai/oauth`, letting `/login gigachat` exchange a Sber authorization key for short-lived access tokens for custom providers.
+
 ## [0.58.3] - 2026-03-15
 
 ## [0.58.2] - 2026-03-15

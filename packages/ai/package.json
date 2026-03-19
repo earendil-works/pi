@@ -46,6 +46,7 @@
 		"ajv": "^8.17.1",
 		"ajv-formats": "^3.0.1",
 		"chalk": "^5.6.2",
+		"gigachat": "^0.0.18",
 		"openai": "6.26.0",
 		"partial-json": "^0.1.7",
 		"proxy-agent": "^6.5.0",

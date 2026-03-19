@@ -69,12 +69,14 @@ export ANTHROPIC_API_KEY=sk-ant-...
 pi
 ```
 
-Or use your existing subscription:
+Or use interactive login:
 
 ```bash
 pi
 /login  # Then select provider
 ```
+
+This includes built-in subscription providers and the `gigachat` login helper for custom `gigachat` providers.
 
 Then just talk to pi. By default, pi gives the model four tools: `read`, `write`, `edit`, and `bash`. The model uses these to fulfill your requests. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [pi packages](#pi-packages).
 
@@ -114,6 +116,8 @@ For each built-in provider, pi maintains a list of tool-capable models, updated 
 - MiniMax
 
 See [docs/providers.md](docs/providers.md) for detailed setup instructions.
+
+GigaChat is also available via `/login gigachat` as a login-only helper for custom `gigachat` providers. It does not add built-in models on its own.
 
 **Custom providers & models:** Add providers via `~/.pi/agent/models.json` if they speak a supported API (OpenAI, Anthropic, Google). For custom APIs or OAuth, use extensions. See [docs/models.md](docs/models.md) and [docs/custom-provider.md](docs/custom-provider.md).
 

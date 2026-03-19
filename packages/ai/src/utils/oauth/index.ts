@@ -1,16 +1,14 @@
 /**
- * OAuth credential management for AI providers.
+ * Credential management for interactive login providers.
  *
- * This module handles login, token refresh, and credential storage
- * for OAuth-based providers:
- * - Anthropic (Claude Pro/Max)
- * - GitHub Copilot
- * - Google Cloud Code Assist (Gemini CLI)
- * - Antigravity (Gemini 3, Claude, GPT-OSS via Google Cloud)
+ * Most providers below use OAuth. GigaChat uses an authorization-key exchange
+ * that returns short-lived access tokens.
  */
 
 // Anthropic
 export { anthropicOAuthProvider, loginAnthropic, refreshAnthropicToken } from "./anthropic.js";
+// GigaChat
+export { gigachatOAuthProvider, loginGigaChat, refreshGigaChatToken } from "./gigachat.js";
 // GitHub Copilot
 export {
 	getGitHubCopilotBaseUrl,
@@ -33,6 +31,7 @@ export * from "./types.js";
 // ============================================================================
 
 import { anthropicOAuthProvider } from "./anthropic.js";
+import { gigachatOAuthProvider } from "./gigachat.js";
 import { githubCopilotOAuthProvider } from "./github-copilot.js";
 import { antigravityOAuthProvider } from "./google-antigravity.js";
 import { geminiCliOAuthProvider } from "./google-gemini-cli.js";
@@ -42,6 +41,7 @@ import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProvide
 const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
 	anthropicOAuthProvider,
 	githubCopilotOAuthProvider,
+	gigachatOAuthProvider,
 	geminiCliOAuthProvider,
 	antigravityOAuthProvider,
 	openaiCodexOAuthProvider,

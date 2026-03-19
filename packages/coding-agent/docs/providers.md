@@ -1,17 +1,17 @@
 # Providers
 
-Pi supports subscription-based providers via OAuth and API key providers via environment variables or auth file. For each provider, pi knows all available models. The list is updated with every pi release.
+Pi supports built-in providers with model catalogs, interactive login helpers via `/login`, and API key providers via environment variables or auth file. Most `/login` entries correspond to built-in model providers. GigaChat is a login-only helper for custom providers that use `gigachat` as their provider ID.
 
 ## Table of Contents
 
-- [Subscriptions](#subscriptions)
+- [Interactive Login](#interactive-login)
 - [API Keys](#api-keys)
 - [Auth File](#auth-file)
 - [Cloud Providers](#cloud-providers)
 - [Custom Providers](#custom-providers)
 - [Resolution Order](#resolution-order)
 
-## Subscriptions
+## Interactive Login
 
 Use `/login` in interactive mode, then select a provider:
 
@@ -20,6 +20,7 @@ Use `/login` in interactive mode, then select a provider:
 - GitHub Copilot
 - Google Gemini CLI
 - Google Antigravity
+- GigaChat (login-only helper for custom `gigachat` providers)
 
 Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired.
 
@@ -39,6 +40,13 @@ Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json`
 
 - Requires ChatGPT Plus or Pro subscription
 - Personal use only; for production, use the OpenAI Platform API
+
+### GigaChat
+
+- Prompts for a Sber Developers authorization key and optional scope (`GIGACHAT_API_PERS` by default; `GIGACHAT_API_B2B` and `GIGACHAT_API_CORP` are also supported)
+- Refreshes access tokens automatically by reusing the stored authorization key
+- Intended for custom providers that use `gigachat` as the provider ID; it does not add built-in models
+- If token exchange fails with a TLS certificate error, install the Russian Trusted Root CA and point `NODE_EXTRA_CA_CERTS` at it
 
 ## API Keys
 
@@ -175,6 +183,8 @@ Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
 ## Custom Providers
 
 **Via models.json:** Add Ollama, LM Studio, vLLM, or any provider that speaks a supported API (OpenAI Completions, OpenAI Responses, Anthropic Messages, Google Generative AI). See [models.md](models.md).
+
+For GigaChat, configure your custom provider with the provider name `gigachat` so `/login gigachat` can supply the access token automatically.
 
 **Via extensions:** For providers that need custom API implementations or OAuth flows, create an extension. See [custom-provider.md](custom-provider.md) and [examples/extensions/custom-provider-gitlab-duo](../examples/extensions/custom-provider-gitlab-duo/).
 
