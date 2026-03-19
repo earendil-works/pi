@@ -6,7 +6,7 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Editor, type EditorTheme, Key, matchesKey, Text, truncateToWidth } from "@mariozechner/pi-tui";
+import { Editor, type EditorTheme, Key, matchesKey, Text, truncateToWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 
 // Types
@@ -106,6 +106,7 @@ export default function questionnaire(pi: ExtensionAPI) {
 				let inputMode = false;
 				let inputQuestionId: string | null = null;
 				let cachedLines: string[] | undefined;
+				let cachedWidth: number | undefined;
 				const answers = new Map<string, Answer>();
 
 				// Editor for "Type something" option
@@ -256,14 +257,19 @@ export default function questionnaire(pi: ExtensionAPI) {
 				}
 
 				function render(width: number): string[] {
-					if (cachedLines) return cachedLines;
+					if (cachedLines && cachedWidth === width) return cachedLines;
 
 					const lines: string[] = [];
 					const q = currentQuestion();
 					const opts = currentOptions();
 
-					// Helper to add truncated line
-					const add = (s: string) => lines.push(truncateToWidth(s, width));
+					// Helper to add a line, wrapping if it exceeds width
+					const add = (s: string) => {
+						const wrapped = wrapTextWithAnsi(s, width);
+						for (const line of wrapped) {
+							lines.push(line);
+						}
+					};
 
 					add(theme.fg("accent", "─".repeat(width)));
 
@@ -297,16 +303,29 @@ export default function questionnaire(pi: ExtensionAPI) {
 							const opt = opts[i];
 							const selected = i === optionIndex;
 							const isOther = opt.isOther === true;
-							const prefix = selected ? theme.fg("accent", "> ") : "  ";
+							const prefixStr = "> ";
+							const prefix = selected ? theme.fg("accent", prefixStr) : "  ";
 							const color = selected ? "accent" : "text";
-							// Mark "Type something" differently when in input mode
-							if (isOther && inputMode) {
-								add(prefix + theme.fg("accent", `${i + 1}. ${opt.label} ✎`));
-							} else {
-								add(prefix + theme.fg(color, `${i + 1}. ${opt.label}`));
+							const numStr = `${i + 1}. `;
+							const indent = prefixStr.length + numStr.length;
+							const availWidth = Math.max(width - indent, 20);
+
+							// Wrap the label text
+							const labelText = isOther && inputMode ? `${opt.label} ✎` : opt.label;
+							const labelColor = isOther && inputMode ? "accent" : color;
+							const wrappedLabel = wrapTextWithAnsi(theme.fg(labelColor, labelText), availWidth);
+							const pad = " ".repeat(indent);
+
+							lines.push(prefix + theme.fg(labelColor, numStr) + wrappedLabel[0]);
+							for (let j = 1; j < wrappedLabel.length; j++) {
+								lines.push(pad + wrappedLabel[j]);
 							}
+
 							if (opt.description) {
-								add(`     ${theme.fg("muted", opt.description)}`);
+								const wrappedDesc = wrapTextWithAnsi(theme.fg("muted", opt.description), availWidth);
+								for (const line of wrappedDesc) {
+									lines.push(pad + line);
+								}
 							}
 						}
 					}
@@ -360,6 +379,7 @@ export default function questionnaire(pi: ExtensionAPI) {
 					add(theme.fg("accent", "─".repeat(width)));
 
 					cachedLines = lines;
+					cachedWidth = width;
 					return lines;
 				}
 
