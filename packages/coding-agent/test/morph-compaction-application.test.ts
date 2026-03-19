@@ -34,7 +34,7 @@ function flattenText(message: Message): string {
 }
 
 describe("Morph compaction application", () => {
-	it("applies pure Morph compaction as goal plus actual replacement history only", () => {
+	it("applies pure Morph compaction as actual replacement history plus checkpoint footer", () => {
 		const replacementMessages: Message[] = [
 			{
 				role: "assistant",
@@ -68,13 +68,24 @@ describe("Morph compaction application", () => {
 		});
 
 		expect(messages).toHaveLength(2);
-		expect(messages[0]?.role).toBe("user");
-		expect(flattenText(messages[0]!)).toBe("Goal: Fix the login page tests");
-		expect(messages[1]).toEqual(replacementMessages[0]);
+		expect(messages[0]).toEqual(replacementMessages[0]);
+		expect(messages[1]?.role).toBe("user");
+		expect(flattenText(messages[1]!)).toBe(`---
+
+**CHECKPOINT**
+You are continuing from a compacted conversation. See your goal below.
+
+**Goal**
+Fix the login page tests
+
+**Thread Context**
+Parent thread ID: thread-123
+Use \`read_thread\` if you need more detail from the parent thread.
+
+---`);
 
 		const joined = messages.map(flattenText).join("\n\n");
 		expect(joined).not.toContain("Use this compacted checkpoint as the active context");
-		expect(joined).not.toContain("Parent Thread");
 		expect(joined).not.toContain("## Progress");
 	});
 });

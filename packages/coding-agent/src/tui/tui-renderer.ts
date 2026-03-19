@@ -41,8 +41,12 @@ import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
 import { parseCompactSlashCommand } from "../compact-command.js";
 import { createCompactionAdapter } from "../compaction-adapter.js";
-import { buildCompactionCheckpointText, buildCompactionContinuationPrompt } from "../compaction-checkpoint.js";
-import { scheduleExplicitHandoff, submitExplicitHandoff } from "../explicit-handoff.js";
+import {
+	buildCompactionCheckpointText,
+	buildCompactionContinuationPrompt,
+	buildMorphCompactionCheckpointText,
+} from "../compaction-checkpoint.js";
+import { submitExplicitHandoff } from "../explicit-handoff.js";
 import { exportSessionToHtml } from "../export-html.js";
 import type { ExtensionLoader } from "../extensions/loader.js";
 import type { ExtensionManager } from "../extensions/manager.js";
@@ -1609,6 +1613,29 @@ export class TuiRenderer {
 				}
 				this.pendingTools.clear();
 
+				// Update footer to clear "Working" status before any synchronous compaction transition.
+				this.footer.updateState(state);
+				this.syncFooterContextUsage();
+				this.syncFooterUsageFromMessages(state.messages);
+
+				if (this.pendingExplicitCompactionGoal) {
+					const goal = this.pendingExplicitCompactionGoal;
+					this.pendingExplicitCompactionGoal = null;
+					try {
+						await this.runExplicitCompactionTransition({
+							goal,
+							parentSessionId: this.sessionManager.getSessionId(),
+							signal: new AbortController().signal,
+							loaderMessage: "Compacting thread history... (esc to cancel)",
+						});
+						break;
+					} catch (error: unknown) {
+						const message = error instanceof Error ? error.message : String(error);
+						this.showError(`Compaction failed: ${message}`);
+						break;
+					}
+				}
+
 				// Add completion label in the chat area, aligned with message content.
 				this.chatContainer.addChild(new LabeledBorder(doneLabel));
 
@@ -1624,37 +1651,6 @@ export class TuiRenderer {
 					const title = this.footer.getTitle();
 					const notificationTitle = title ? `Mu - ${title}` : "Mu";
 					sendNotification(notificationTitle, `${modelName} finished`);
-				}
-
-				// Update footer to clear "Working" status
-				this.footer.updateState(state);
-				this.syncFooterContextUsage();
-				this.syncFooterUsageFromMessages(state.messages);
-
-				if (this.pendingExplicitCompactionGoal) {
-					const goal = this.pendingExplicitCompactionGoal;
-					this.pendingExplicitCompactionGoal = null;
-					try {
-						const handoff = {
-							...(await this.buildSummaryCompactionDetails(goal, new AbortController().signal)),
-							parentSessionId: this.sessionManager.getSessionId(),
-						};
-						if (this.hasActiveMissionRun()) {
-							this.beginMissionCompactTransition(handoff);
-							break;
-						}
-						scheduleExplicitHandoff({
-							pauseQueueDrain: () => this.agent.pauseQueueDrain(),
-							execute: () => {
-								void this.executeExplicitHandoff(handoff);
-							},
-						});
-						break;
-					} catch (error: unknown) {
-						const message = error instanceof Error ? error.message : String(error);
-						this.showError(`Compaction failed: ${message}`);
-						break;
-					}
 				}
 
 				void this.drainSubscriptionEvents();
@@ -4210,38 +4206,16 @@ export class TuiRenderer {
 			return;
 		}
 
-		// Show loading state
-		if (this.loadingAnimation) {
-			this.loadingAnimation.stop();
-		}
-		this.statusContainer.clear();
-		this.loadingAnimation = new Loader(
-			this.ui,
-			(spinner) => theme.fg("accent", spinner),
-			(text) => theme.fg("muted", text),
-			"Preparing compact thread history... (esc to cancel)",
-		);
-		this.statusContainer.addChild(this.loadingAnimation);
-		this.ui.requestRender();
-
 		const handoffAbortController = new AbortController();
 		this.handoffAbortController = handoffAbortController;
 		const { signal } = handoffAbortController;
 
 		try {
-			if (this.loadingAnimation) {
-				this.loadingAnimation.setMessage("Compacting thread history... (esc to cancel)");
-			}
-			const details = await this.buildSummaryCompactionDetails(goal, signal);
-
-			scheduleExplicitHandoff({
-				pauseQueueDrain: () => this.agent.pauseQueueDrain(),
-				execute: () => {
-					void this.executeExplicitHandoff({
-						...details,
-						parentSessionId: parentId,
-					});
-				},
+			await this.runExplicitCompactionTransition({
+				goal,
+				parentSessionId: parentId,
+				signal,
+				loaderMessage: "Compacting thread history... (esc to cancel)",
 			});
 		} catch (err: unknown) {
 			const error = err as Error;
@@ -4251,12 +4225,50 @@ export class TuiRenderer {
 				this.showError(`Compaction failed: ${error.message}`);
 			}
 		} finally {
+			this.handoffAbortController = null;
+			this.ui.requestRender();
+		}
+	}
+
+	private async runExplicitCompactionTransition(args: {
+		goal: string;
+		parentSessionId: string;
+		signal: AbortSignal;
+		loaderMessage: string;
+	}): Promise<void> {
+		if (this.loadingAnimation) {
+			this.loadingAnimation.stop();
+		}
+		this.statusContainer.clear();
+		this.loadingAnimation = new Loader(
+			this.ui,
+			(spinner) => theme.fg("accent", spinner),
+			(text) => theme.fg("muted", text),
+			args.loaderMessage,
+		);
+		this.statusContainer.addChild(this.loadingAnimation);
+		this.ui.requestRender();
+
+		try {
+			const details = await this.buildSummaryCompactionDetails(args.goal, args.signal);
+			const handoff = {
+				...details,
+				parentSessionId: args.parentSessionId,
+			};
+
+			if (this.hasActiveMissionRun()) {
+				await this.applyCompactionCheckpoint(handoff);
+				return;
+			}
+
+			this.agent.pauseQueueDrain();
+			await this.executeExplicitHandoff(handoff);
+		} finally {
 			if (this.loadingAnimation) {
 				this.loadingAnimation.stop();
 				this.loadingAnimation = null;
 			}
 			this.statusContainer.clear();
-			this.handoffAbortController = null;
 			this.ui.requestRender();
 		}
 	}
@@ -4459,13 +4471,19 @@ export class TuiRenderer {
 	private buildContextCompactionMessages(details: HandoffDetails & { parentSessionId: string | null }): Message[] {
 		if (details.replacementMessages && details.replacementMessages.length > 0) {
 			if (details.compactionApplicationMode === "goal-plus-replacement-history") {
+				const checkpointText = buildMorphCompactionCheckpointText({
+					goal: details.goal,
+					parentThreadId: details.parentSessionId,
+				});
+				const timestamp = Date.now() + details.replacementMessages.length;
+
 				return [
+					...details.replacementMessages,
 					{
 						role: "user",
-						content: [{ type: "text", text: `Goal: ${details.goal}` }],
-						timestamp: Date.now(),
+						content: [{ type: "text", text: checkpointText }],
+						timestamp,
 					},
-					...details.replacementMessages,
 				];
 			}
 
@@ -4551,21 +4569,6 @@ export class TuiRenderer {
 		}
 
 		await this.pendingMissionCompactTransition;
-	}
-
-	private beginMissionCompactTransition(details: HandoffDetails & { parentSessionId: string | null }): void {
-		let transition: Promise<void> | null = null;
-		transition = (async () => {
-			try {
-				await this.applyCompactionCheckpoint(details);
-			} finally {
-				if (this.pendingMissionCompactTransition === transition) {
-					this.pendingMissionCompactTransition = null;
-				}
-			}
-		})();
-
-		this.pendingMissionCompactTransition = transition;
 	}
 
 	private async applyCompactionCheckpoint(

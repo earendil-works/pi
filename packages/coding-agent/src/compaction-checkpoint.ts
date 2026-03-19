@@ -74,6 +74,30 @@ export function buildCompactionCheckpointText(args: {
 	return `${formatParentThreadReference(args.parentThreadId)}${withContinuationInstruction}`;
 }
 
+export function buildMorphCompactionCheckpointText(args: { goal: string; parentThreadId: string | null }): string {
+	const lines = [
+		"---",
+		"",
+		"**CHECKPOINT**",
+		"You are continuing from a compacted conversation. See your goal below.",
+		"",
+		"**Goal**",
+		args.goal.trim(),
+	];
+
+	if (args.parentThreadId) {
+		lines.push(
+			"",
+			"**Thread Context**",
+			`Parent thread ID: ${args.parentThreadId}`,
+			"Use `read_thread` if you need more detail from the parent thread.",
+		);
+	}
+
+	lines.push("", "---");
+	return lines.join("\n");
+}
+
 export function buildCompactionContinuationPrompt(args: {
 	formattedMessage: string;
 	goal: string;
