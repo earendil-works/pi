@@ -98,6 +98,20 @@ export function buildMorphCompactionCheckpointText(args: { goal: string; parentT
 	return lines.join("\n");
 }
 
+export function appendCheckpointToReplacementHistory(args: {
+	replacementText: string;
+	goal: string;
+	parentThreadId: string | null;
+}): string {
+	const replacementText = args.replacementText.trimEnd();
+	const checkpointText = buildMorphCompactionCheckpointText({
+		goal: args.goal,
+		parentThreadId: args.parentThreadId,
+	});
+
+	return `${replacementText}\n\n${checkpointText}`;
+}
+
 export function buildCompactionContinuationPrompt(args: {
 	formattedMessage: string;
 	goal: string;

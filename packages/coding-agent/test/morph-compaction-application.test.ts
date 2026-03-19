@@ -34,7 +34,7 @@ function flattenText(message: Message): string {
 }
 
 describe("Morph compaction application", () => {
-	it("applies pure Morph compaction as actual replacement history plus checkpoint footer", () => {
+	it("appends the checkpoint footer to the compacted replacement message", () => {
 		const replacementMessages: Message[] = [
 			{
 				role: "assistant",
@@ -67,10 +67,11 @@ describe("Morph compaction application", () => {
 			compactionNotificationLabel: "Morph compaction",
 		});
 
-		expect(messages).toHaveLength(2);
-		expect(messages[0]).toEqual(replacementMessages[0]);
-		expect(messages[1]?.role).toBe("user");
-		expect(flattenText(messages[1]!)).toBe(`---
+		expect(messages).toHaveLength(1);
+		expect(messages[0]?.role).toBe("assistant");
+		expect(flattenText(messages[0]!)).toBe(`Morph-compacted visible history
+
+---
 
 **CHECKPOINT**
 You are continuing from a compacted conversation. See your goal below.

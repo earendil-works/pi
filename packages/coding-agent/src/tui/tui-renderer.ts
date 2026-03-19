@@ -42,6 +42,7 @@ import { copyToClipboard } from "../clipboard.js";
 import { parseCompactSlashCommand } from "../compact-command.js";
 import { createCompactionAdapter } from "../compaction-adapter.js";
 import {
+	appendCheckpointToReplacementHistory,
 	buildCompactionCheckpointText,
 	buildCompactionContinuationPrompt,
 	buildMorphCompactionCheckpointText,
@@ -4471,20 +4472,74 @@ export class TuiRenderer {
 	private buildContextCompactionMessages(details: HandoffDetails & { parentSessionId: string | null }): Message[] {
 		if (details.replacementMessages && details.replacementMessages.length > 0) {
 			if (details.compactionApplicationMode === "goal-plus-replacement-history") {
-				const checkpointText = buildMorphCompactionCheckpointText({
-					goal: details.goal,
-					parentThreadId: details.parentSessionId,
-				});
-				const timestamp = Date.now() + details.replacementMessages.length;
+				const lastMessage = details.replacementMessages.at(-1);
+				if (!lastMessage) {
+					return details.replacementMessages;
+				}
 
-				return [
-					...details.replacementMessages,
-					{
-						role: "user",
-						content: [{ type: "text", text: checkpointText }],
-						timestamp,
-					},
-				];
+				if (lastMessage.role !== "assistant") {
+					const timestamp = Date.now() + details.replacementMessages.length;
+					return [
+						...details.replacementMessages,
+						{
+							role: "user",
+							content: [
+								{
+									type: "text",
+									text: buildMorphCompactionCheckpointText({
+										goal: details.goal,
+										parentThreadId: details.parentSessionId,
+									}),
+								},
+							],
+							timestamp,
+						},
+					];
+				}
+
+				const updatedReplacementMessages: Message[] = details.replacementMessages.slice(0, -1);
+
+				const lastTextIndex = [...lastMessage.content]
+					.map((block, index) => (block.type === "text" ? index : -1))
+					.filter((index) => index >= 0)
+					.at(-1);
+
+				if (lastTextIndex === undefined) {
+					updatedReplacementMessages.push({
+						...lastMessage,
+						content: [
+							...lastMessage.content,
+							{
+								type: "text",
+								text: buildMorphCompactionCheckpointText({
+									goal: details.goal,
+									parentThreadId: details.parentSessionId,
+								}),
+							},
+						],
+					});
+					return updatedReplacementMessages;
+				}
+
+				updatedReplacementMessages.push({
+					...lastMessage,
+					content: lastMessage.content.map((block, index) => {
+						if (index !== lastTextIndex || block.type !== "text") {
+							return block;
+						}
+
+						return {
+							...block,
+							text: appendCheckpointToReplacementHistory({
+								replacementText: block.text,
+								goal: details.goal,
+								parentThreadId: details.parentSessionId,
+							}),
+						};
+					}),
+				});
+
+				return updatedReplacementMessages;
 			}
 
 			const checkpointText = buildCompactionCheckpointText({
