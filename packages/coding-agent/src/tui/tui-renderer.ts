@@ -363,6 +363,7 @@ export class TuiRenderer {
 	private missionIterationLimit: number | null = null;
 	private missionConvergeAfterOverride: number | null | undefined = undefined;
 	private missionConvergenceKindOverride: "discard" | "non-keep" | undefined = undefined;
+	private pendingMissionCompactTransition: Promise<void> | null = null;
 	private resumableMissionDir: string | null = null;
 	private resumableCampaignPath: string | null = null;
 	private isAutoHandoffInProgress = false;
@@ -1653,6 +1654,10 @@ export class TuiRenderer {
 				if (this.pendingExplicitHandoff) {
 					const handoff = this.pendingExplicitHandoff;
 					this.pendingExplicitHandoff = null;
+					if (this.hasActiveMissionRun()) {
+						this.beginMissionCompactTransition(handoff);
+						break;
+					}
 					scheduleExplicitHandoff({
 						pauseQueueDrain: () => this.agent.pauseQueueDrain(),
 						execute: () => {
@@ -4578,6 +4583,29 @@ export class TuiRenderer {
 		});
 	}
 
+	private async waitForPendingMissionCompactTransition(): Promise<void> {
+		if (!this.pendingMissionCompactTransition) {
+			return;
+		}
+
+		await this.pendingMissionCompactTransition;
+	}
+
+	private beginMissionCompactTransition(details: HandoffDetails & { parentSessionId: string | null }): void {
+		let transition: Promise<void> | null = null;
+		transition = (async () => {
+			try {
+				await this.applyCompactionCheckpoint(details);
+			} finally {
+				if (this.pendingMissionCompactTransition === transition) {
+					this.pendingMissionCompactTransition = null;
+				}
+			}
+		})();
+
+		this.pendingMissionCompactTransition = transition;
+	}
+
 	private async applyCompactionCheckpoint(
 		details: HandoffDetails & { parentSessionId: string | null },
 	): Promise<void> {
@@ -5738,6 +5766,7 @@ export class TuiRenderer {
 						shouldInjectResumeText = false;
 						resumeText = undefined;
 						await this.agent.waitForIdle();
+						await this.waitForPendingMissionCompactTransition();
 						const missionRuntimeError = this.getMissionIterationRuntimeError();
 						if (missionRuntimeError) {
 							throw new Error(`Mission iteration failed: ${missionRuntimeError}`);
@@ -5809,6 +5838,7 @@ export class TuiRenderer {
 		} finally {
 			this.missionRunAbortController = null;
 			this.missionStopAfterIteration = false;
+			this.pendingMissionCompactTransition = null;
 			this.pendingMissionIterationMessages = [];
 			this.missionIterationLimit = null;
 			this.missionConvergeAfterOverride = undefined;
