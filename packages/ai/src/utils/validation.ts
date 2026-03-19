@@ -67,8 +67,14 @@ export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 		return toolCall.arguments;
 	}
 
-	// Compile the schema.
-	const validate = ajv.compile(tool.parameters);
+	// Compile the schema – may fail in restricted runtimes (e.g. Cloudflare Workers).
+	let validate: ReturnType<typeof ajv.compile>;
+	try {
+		validate = ajv.compile(tool.parameters);
+	} catch (e) {
+		console.warn(`AJV schema compilation failed for tool "${tool.name}", skipping validation: ${e}`);
+		return toolCall.arguments;
+	}
 
 	// Clone arguments so AJV can safely mutate for type coercion
 	const args = structuredClone(toolCall.arguments);

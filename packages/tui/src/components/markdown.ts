@@ -476,8 +476,12 @@ export class Markdown implements Component {
 					break;
 
 				case "del": {
-					const delContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
-					result += this.theme.strikethrough(delContent) + stylePrefix;
+					if (token.raw.startsWith("~~")) {
+						const delContent = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
+						result += this.theme.strikethrough(delContent) + stylePrefix;
+					} else {
+						result += applyTextWithNewlines(token.raw);
+					}
 					break;
 				}
 

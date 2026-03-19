@@ -1233,6 +1233,15 @@ export class AgentSession {
 			if (images.length === 0) images = undefined;
 		}
 
+		// Dispatch slash commands before calling prompt() since expandPromptTemplates: false
+		// skips the command check inside prompt()
+		if (text.startsWith("/")) {
+			const handled = await this._tryExecuteExtensionCommand(text);
+			if (handled) {
+				return;
+			}
+		}
+
 		// Use prompt() with expandPromptTemplates: false to skip command handling and template expansion
 		await this.prompt(text, {
 			expandPromptTemplates: false,
