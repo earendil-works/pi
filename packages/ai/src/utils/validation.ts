@@ -58,8 +58,9 @@ export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 		return toolCall.arguments;
 	}
 
-	// Compile the schema
-	const validate = ajv.compile(tool.parameters);
+	// Compile the schema — may throw in restricted runtimes (e.g. Workers)
+	let validate: any;
+	try { validate = ajv.compile(tool.parameters); } catch { return toolCall.arguments; }
 
 	// Clone arguments so AJV can safely mutate for type coercion
 	const args = structuredClone(toolCall.arguments);
