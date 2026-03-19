@@ -15,8 +15,9 @@ type AutoHandoffHarness = {
 	ui: { requestRender(): void; requestRenderWithReason(reason: string): void };
 	agent: { resumeQueueDrain(): void };
 	sessionManager: { getSessionId(): string };
-	generateAutoHandoffGoal(signal: AbortSignal): Promise<string>;
-	buildSummaryCompactionDetails(goal: string, signal: AbortSignal): Promise<HandoffDetails>;
+	getAutoCompactionSourceMessages(isEmergency: boolean): Message[];
+	generateAutoHandoffGoal(signal: AbortSignal, messages?: Message[]): Promise<string>;
+	buildSummaryCompactionDetails(goal: string, signal: AbortSignal, messages?: Message[]): Promise<HandoffDetails>;
 	executeExplicitHandoff(details: HandoffDetails & { parentSessionId: string | null }): Promise<void>;
 	showWarning?(message: string): void;
 	showError?(message: string): void;
@@ -79,6 +80,7 @@ describe("automatic Morph compaction integration", () => {
 			ui: { requestRender: vi.fn(), requestRenderWithReason: vi.fn() },
 			agent: { resumeQueueDrain: vi.fn() },
 			sessionManager: { getSessionId: vi.fn(() => "parent-session-123") },
+			getAutoCompactionSourceMessages: vi.fn(() => []),
 			generateAutoHandoffGoal,
 			buildSummaryCompactionDetails,
 			executeExplicitHandoff,
@@ -89,11 +91,12 @@ describe("automatic Morph compaction integration", () => {
 
 		await handleAutoHandoff.call(harness, false);
 
-		expect(generateAutoHandoffGoal).toHaveBeenCalledWith(expect.any(AbortSignal));
+		expect(generateAutoHandoffGoal).toHaveBeenCalledWith(expect.any(AbortSignal), []);
 		expect(buildSummaryCompactionDetails).toHaveBeenCalledOnce();
 		expect(buildSummaryCompactionDetails).toHaveBeenCalledWith(
 			"Continue fixing the login page tests",
 			expect.any(AbortSignal),
+			[],
 		);
 		expect(executeExplicitHandoff).toHaveBeenCalledWith({
 			...details,

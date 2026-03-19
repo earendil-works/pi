@@ -9,14 +9,48 @@
  * - parsing of user-triggered /autohandoff commands
  */
 
+import type { Api, Model } from "@kennyfrc/mu-ai";
+
 export type AutoHandoffMode = "on" | "off";
 
 export const DEFAULT_AUTO_HANDOFF_MODE: AutoHandoffMode = "off";
 
 /** One-way nudge threshold (ratio) for encouraging handoff. */
 export const HANDOFF_NUDGE_THRESHOLD = 0.8;
+export const AUTO_HANDOFF_STANDARD_THRESHOLD = 0.9;
 
 export const AUTO_HANDOFF_EMERGENCY_THRESHOLD = 0.95;
+export const TARGETED_AUTO_COMPACTION_CONTEXT_WINDOW = 256000;
+
+function normalizeModelId(modelId: string): string {
+	return modelId.includes("/") ? (modelId.split("/").pop() ?? modelId) : modelId;
+}
+
+export function isTargetedAutoCompactionModel(model: Pick<Model<Api>, "provider" | "id"> | null | undefined): boolean {
+	if (!model) return false;
+	const normalized = normalizeModelId(model.id).toLowerCase();
+	if (model.provider === "anthropic") {
+		return normalized === "claude-sonnet-4-6" || normalized === "claude-opus-4-6";
+	}
+
+	return model.provider === "openai" && normalized.startsWith("gpt-");
+}
+
+export function shouldAutoCompactForModel(params: {
+	autoHandoffMode: AutoHandoffMode;
+	model: Pick<Model<Api>, "provider" | "id"> | null | undefined;
+}): boolean {
+	if (params.autoHandoffMode === "on") return true;
+	return isTargetedAutoCompactionModel(params.model);
+}
+
+export function getAutoCompactionContextWindow(
+	model: Pick<Model<Api>, "provider" | "id" | "contextWindow"> | null | undefined,
+): number {
+	if (!model) return 0;
+	if (!isTargetedAutoCompactionModel(model)) return model.contextWindow;
+	return Math.min(model.contextWindow, TARGETED_AUTO_COMPACTION_CONTEXT_WINDOW);
+}
 
 export function isAutoHandoffMode(value: unknown): value is AutoHandoffMode {
 	return value === "on" || value === "off";
@@ -87,6 +121,19 @@ export function shouldTriggerEmergencyAutoHandoff(params: {
 	if (params.stopReason !== "toolUse") return false;
 
 	return params.ratio >= AUTO_HANDOFF_EMERGENCY_THRESHOLD;
+}
+
+export function shouldTriggerStandardAutoHandoff(params: {
+	autoHandoffMode: AutoHandoffMode;
+	ratio: number;
+	isAutoHandoffInProgress: boolean;
+	hasModel: boolean;
+}): boolean {
+	if (params.autoHandoffMode !== "on") return false;
+	if (params.isAutoHandoffInProgress) return false;
+	if (!params.hasModel) return false;
+
+	return params.ratio >= AUTO_HANDOFF_STANDARD_THRESHOLD;
 }
 
 export function shouldEnableHandoffNudge(params: {

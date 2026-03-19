@@ -33,9 +33,13 @@ import { exec } from "child_process";
 import { createHash, randomUUID } from "crypto";
 import {
 	AUTO_HANDOFF_EMERGENCY_THRESHOLD,
+	AUTO_HANDOFF_STANDARD_THRESHOLD,
 	type AutoHandoffMode,
+	getAutoCompactionContextWindow,
+	shouldAutoCompactForModel,
 	shouldEnableHandoffNudge,
 	shouldTriggerEmergencyAutoHandoff,
+	shouldTriggerStandardAutoHandoff,
 } from "../auto-handoff.js";
 import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
@@ -1442,9 +1446,15 @@ export class TuiRenderer {
 						!this.isAutoHandoffInProgress &&
 						this.agent.state.model != null
 					) {
+						const autoCompactionMode = shouldAutoCompactForModel({
+							autoHandoffMode: this.autoHandoffMode,
+							model: this.agent.state.model as Model<Api>,
+						})
+							? "on"
+							: "off";
 						const { input, output, cacheRead, cacheWrite } = assistantMsg.usage;
 						const contextTokens = input + output + cacheRead + cacheWrite;
-						const contextWindow = this.agent.state.model.contextWindow || 0;
+						const contextWindow = getAutoCompactionContextWindow(this.agent.state.model as Model<Api>) || 0;
 						const ratio = contextWindow > 0 ? contextTokens / contextWindow : 0;
 
 						if (ratio >= AUTO_HANDOFF_EMERGENCY_THRESHOLD) {
@@ -1457,7 +1467,7 @@ export class TuiRenderer {
 							this.pendingTools.clear();
 
 							const shouldEmergencyAutoHandoff = shouldTriggerEmergencyAutoHandoff({
-								autoHandoffMode: this.autoHandoffMode,
+								autoHandoffMode: autoCompactionMode,
 								ratio,
 								isAutoHandoffInProgress: this.isAutoHandoffInProgress,
 								hasModel: this.agent.state.model != null,
@@ -1618,6 +1628,26 @@ export class TuiRenderer {
 				this.footer.updateState(state);
 				this.syncFooterContextUsage();
 				this.syncFooterUsageFromMessages(state.messages);
+
+				const autoCompactionMode = shouldAutoCompactForModel({
+					autoHandoffMode: this.autoHandoffMode,
+					model: this.agent.state.model as Model<Api> | null | undefined,
+				})
+					? "on"
+					: "off";
+				const autoCompactionUsage = this.getAutoCompactionUsage();
+				if (
+					shouldTriggerStandardAutoHandoff({
+						autoHandoffMode: autoCompactionMode,
+						ratio: autoCompactionUsage.ratio,
+						isAutoHandoffInProgress: this.isAutoHandoffInProgress,
+						hasModel: this.agent.state.model != null,
+					})
+				) {
+					this.agent.pauseQueueDrain();
+					await this.handleAutoHandoff(false);
+					break;
+				}
 
 				if (this.pendingExplicitCompactionGoal) {
 					const goal = this.pendingExplicitCompactionGoal;
@@ -4791,15 +4821,19 @@ export class TuiRenderer {
 		};
 	}
 
-	private async buildSummaryCompactionDetails(goal: string, signal: AbortSignal): Promise<HandoffDetails> {
+	private async buildSummaryCompactionDetails(
+		goal: string,
+		signal: AbortSignal,
+		messages: Message[] = this.agent.state.messages,
+	): Promise<HandoffDetails> {
 		const model = this.agent.state.model;
 		if (!model) throw new Error("No model selected");
 
-		const tracking = extractHandoffFileTracking(this.agent.state.messages);
+		const tracking = extractHandoffFileTracking(messages);
 		const adapter = createCompactionAdapter(model as Model<Api>);
 		const execution = await executeExplicitCompactionStrategy({
 			model: model as Model<Api>,
-			messages: this.agent.state.messages,
+			messages,
 			goal,
 			morphMode: this.morphCompactionMode,
 			morphApiKey: process.env.MORPH_API_KEY,
@@ -4868,6 +4902,25 @@ export class TuiRenderer {
 			: 0;
 
 		const contextWindow = this.agent.state.model?.contextWindow || 0;
+		const ratio = contextWindow > 0 ? contextTokens / contextWindow : 0;
+
+		return { contextTokens, contextWindow, ratio };
+	}
+
+	private getAutoCompactionUsage(): { contextTokens: number; contextWindow: number; ratio: number } {
+		const lastAssistantMessage = this.agent.state.messages
+			.slice()
+			.reverse()
+			.find((m) => m.role === "assistant" && m.stopReason !== "aborted") as AssistantMessage | undefined;
+
+		const contextTokens = lastAssistantMessage
+			? lastAssistantMessage.usage.input +
+				lastAssistantMessage.usage.output +
+				lastAssistantMessage.usage.cacheRead +
+				lastAssistantMessage.usage.cacheWrite
+			: 0;
+
+		const contextWindow = getAutoCompactionContextWindow(this.agent.state.model as Model<Api> | null | undefined);
 		const ratio = contextWindow > 0 ? contextTokens / contextWindow : 0;
 
 		return { contextTokens, contextWindow, ratio };
@@ -5090,12 +5143,20 @@ export class TuiRenderer {
 		this.agent.setToolResultTransformer(this.extensionManager.composeToolResultTransformer(base));
 	}
 
+	private getAutoCompactionSourceMessages(isEmergency: boolean): Message[] {
+		if (!isEmergency) return this.agent.state.messages;
+		const lastMessage = this.agent.state.messages.at(-1);
+		if (lastMessage?.role === "assistant" && lastMessage.stopReason === "toolUse") {
+			return this.agent.state.messages.slice(0, -1);
+		}
+		return this.agent.state.messages;
+	}
+
 	/**
 	 * Extract tail transcript for goal generation (last N user/assistant text only).
 	 * Strips tool calls, tool results, and timestamp prefixes.
 	 */
-	private extractTailTranscript(maxTurns: number = 8): string {
-		const messages = this.agent.state.messages;
+	private extractTailTranscript(messages: Message[] = this.agent.state.messages, maxTurns: number = 8): string {
 		const userAssistantMessages = messages.filter((m) => m.role === "user" || m.role === "assistant");
 		const tailMessages = userAssistantMessages.slice(-maxTurns);
 
@@ -5127,7 +5188,10 @@ export class TuiRenderer {
 	 * Generate a goal for auto-handoff using LLM.
 	 * Returns a short imperative goal string.
 	 */
-	private async generateAutoHandoffGoal(signal: AbortSignal): Promise<string> {
+	private async generateAutoHandoffGoal(
+		signal: AbortSignal,
+		messages: Message[] = this.agent.state.messages,
+	): Promise<string> {
 		const model = this.agent.state.model;
 		if (!model) throw new Error("No model selected");
 
@@ -5135,7 +5199,7 @@ export class TuiRenderer {
 		const apiKey = await getApiKeyForModel(handoffModel);
 		if (!apiKey) throw new Error(`No API key for ${handoffModel.provider}`);
 
-		const transcript = this.extractTailTranscript(8);
+		const transcript = this.extractTailTranscript(messages, 8);
 		const systemPrompt = getAutoHandoffGoalPrompt();
 
 		const result =
@@ -5183,7 +5247,7 @@ export class TuiRenderer {
 			.join("")
 			.trim();
 
-		return normalizeAutoHandoffGoal({ modelGoal: goal, messages: this.agent.state.messages });
+		return normalizeAutoHandoffGoal({ modelGoal: goal, messages });
 	}
 
 	/**
@@ -5194,7 +5258,10 @@ export class TuiRenderer {
 		if (this.isAutoHandoffInProgress) return;
 		this.isAutoHandoffInProgress = true;
 
-		const threshold = isEmergency ? "95%" : "90%";
+		const threshold = isEmergency
+			? `${AUTO_HANDOFF_EMERGENCY_THRESHOLD * 100}%`
+			: `${AUTO_HANDOFF_STANDARD_THRESHOLD * 100}%`;
+		const compactionSourceMessages = this.getAutoCompactionSourceMessages(isEmergency);
 
 		// Show notification in chat
 		this.chatContainer.addChild(new Spacer(1));
@@ -5222,13 +5289,17 @@ export class TuiRenderer {
 
 		try {
 			// Step 1: Generate goal
-			const goal = await this.generateAutoHandoffGoal(this.handoffAbortController.signal);
+			const goal = await this.generateAutoHandoffGoal(this.handoffAbortController.signal, compactionSourceMessages);
 
 			// Update loader - stage 2: compaction preparation
 			if (this.loadingAnimation) {
 				this.loadingAnimation.setMessage("Auto-compaction: compacting thread history... (esc to cancel)");
 			}
-			const details = await this.buildSummaryCompactionDetails(goal, this.handoffAbortController.signal);
+			const details = await this.buildSummaryCompactionDetails(
+				goal,
+				this.handoffAbortController.signal,
+				compactionSourceMessages,
+			);
 
 			await this.executeExplicitHandoff({
 				...details,

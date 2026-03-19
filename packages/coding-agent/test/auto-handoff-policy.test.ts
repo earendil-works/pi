@@ -8,13 +8,63 @@ import { describe, expect, it } from "vitest";
 
 import {
 	AUTO_HANDOFF_EMERGENCY_THRESHOLD,
+	AUTO_HANDOFF_STANDARD_THRESHOLD,
+	getAutoCompactionContextWindow,
+	isTargetedAutoCompactionModel,
+	shouldAutoCompactForModel,
 	shouldEnableHandoffNudge,
 	shouldTriggerEmergencyAutoHandoff,
+	shouldTriggerStandardAutoHandoff,
 } from "../src/auto-handoff.js";
 
 describe("Auto-handoff policy", () => {
 	it("uses expected threshold", () => {
 		expect(AUTO_HANDOFF_EMERGENCY_THRESHOLD).toBe(0.95);
+		expect(AUTO_HANDOFF_STANDARD_THRESHOLD).toBe(0.9);
+	});
+
+	describe("targeted 256k auto-compaction models", () => {
+		it("matches Claude 4.6 and OpenAI GPT models", () => {
+			expect(isTargetedAutoCompactionModel({ provider: "anthropic", id: "claude-sonnet-4-6" } as never)).toBe(true);
+			expect(isTargetedAutoCompactionModel({ provider: "anthropic", id: "claude-opus-4-6" } as never)).toBe(true);
+			expect(isTargetedAutoCompactionModel({ provider: "openai", id: "gpt-5.4" } as never)).toBe(true);
+			expect(isTargetedAutoCompactionModel({ provider: "anthropic", id: "claude-sonnet-4-5" } as never)).toBe(false);
+		});
+
+		it("forces auto-compaction even when autohandoff mode is off", () => {
+			expect(
+				shouldAutoCompactForModel({
+					autoHandoffMode: "off",
+					model: { provider: "anthropic", id: "claude-sonnet-4-6" } as never,
+				}),
+			).toBe(true);
+			expect(
+				shouldAutoCompactForModel({
+					autoHandoffMode: "off",
+					model: { provider: "anthropic", id: "claude-sonnet-4-5" } as never,
+				}),
+			).toBe(false);
+		});
+
+		it("caps targeted models at a 256k effective context window", () => {
+			expect(
+				getAutoCompactionContextWindow({
+					provider: "anthropic",
+					id: "claude-sonnet-4-6",
+					contextWindow: 1_000_000,
+				} as never),
+			).toBe(256000);
+			expect(
+				getAutoCompactionContextWindow({ provider: "openai", id: "gpt-5.4", contextWindow: 400_000 } as never),
+			).toBe(256000);
+			expect(
+				getAutoCompactionContextWindow({
+					provider: "anthropic",
+					id: "claude-sonnet-4-5",
+					contextWindow: 200_000,
+				} as never),
+			).toBe(200000);
+		});
 	});
 
 	describe("shouldTriggerEmergencyAutoHandoff", () => {
@@ -50,6 +100,30 @@ describe("Auto-handoff policy", () => {
 					hasModel: true,
 					isAutoHandoffInProgress: false,
 					stopReason: "stop",
+				}),
+			).toBe(false);
+		});
+	});
+
+	describe("shouldTriggerStandardAutoHandoff", () => {
+		it("triggers when mode=on at 90% after a completed turn", () => {
+			expect(
+				shouldTriggerStandardAutoHandoff({
+					autoHandoffMode: "on",
+					ratio: 0.9,
+					hasModel: true,
+					isAutoHandoffInProgress: false,
+				}),
+			).toBe(true);
+		});
+
+		it("does not trigger below 90%", () => {
+			expect(
+				shouldTriggerStandardAutoHandoff({
+					autoHandoffMode: "on",
+					ratio: 0.89,
+					hasModel: true,
+					isAutoHandoffInProgress: false,
 				}),
 			).toBe(false);
 		});
