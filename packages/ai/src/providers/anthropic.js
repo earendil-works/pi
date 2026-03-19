@@ -8,14 +8,6 @@ import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { transformMessages } from "./transorm-messages.js";
 
 const claudeCodeVersion = "2.1.2";
-function supportsAdaptiveThinking(modelId) {
-	return (
-		modelId.includes("opus-4-6") ||
-		modelId.includes("opus-4.6") ||
-		modelId.includes("sonnet-4-6") ||
-		modelId.includes("sonnet-4.6")
-	);
-}
 /**
  * Convert content blocks to Anthropic API format
  */
@@ -51,6 +43,14 @@ function convertContentBlocks(content) {
 		});
 	}
 	return blocks;
+}
+function supportsAdaptiveThinking(modelId) {
+	return (
+		modelId.includes("opus-4-6") ||
+		modelId.includes("opus-4.6") ||
+		modelId.includes("sonnet-4-6") ||
+		modelId.includes("sonnet-4.6")
+	);
 }
 function asRecord(value) {
 	return typeof value === "object" && value !== null ? value : null;
@@ -440,7 +440,7 @@ function buildParams(model, context, isOAuthToken, options) {
 	}
 	if (options?.thinkingEnabled && model.reasoning) {
 		if (supportsAdaptiveThinking(model.id)) {
-			params.thinking = { type: "adaptive" };
+			Object.assign(params, { thinking: { type: "adaptive" } });
 			if (options.effort) {
 				params.output_config = { effort: options.effort };
 			}
