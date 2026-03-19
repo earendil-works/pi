@@ -159,6 +159,12 @@ const readImageSchema = Type.Object({
 	objective: Type.String({
 		description: "Natural-language description of the analysis goal (e.g., summarize, extract data, describe image).",
 	}),
+	mode: Type.Optional(
+		StringEnum(["delegate", "self"] as const, {
+			description:
+				"How to handle the image: delegate = analyze via the dedicated image reader model, self = inject the image into the current chat so the active model reads it in the same context.",
+		}),
+	),
 	context: Type.Optional(
 		Type.String({
 			description:
@@ -178,7 +184,30 @@ const readImageSchema = Type.Object({
 	),
 });
 
-export const readImageTool: AgentTool<typeof readImageSchema> = {
+export interface ReadImageLoadedImage {
+	role: "primary" | "reference";
+	source: string;
+	mimeType: string;
+	base64: string;
+}
+
+export interface ReadImageSelfDetails {
+	mode: "self";
+	objective: string;
+	context?: string;
+	images: ReadImageLoadedImage[];
+}
+
+export interface ReadImageDelegateDetails {
+	mode: "delegate";
+	provider: string;
+	model: string;
+	referenceCount: number;
+}
+
+export type ReadImageDetails = ReadImageSelfDetails | ReadImageDelegateDetails | undefined;
+
+export const readImageTool: AgentTool<typeof readImageSchema, ReadImageDetails> = {
 	name: "read_image",
 	label: "read_image",
 	description: getToolDescription("read_image"),
@@ -188,12 +217,14 @@ export const readImageTool: AgentTool<typeof readImageSchema> = {
 		{
 			path,
 			objective,
+			mode,
 			context,
 			referenceFiles,
 			model,
 		}: {
 			path: string;
 			objective: string;
+			mode?: "delegate" | "self";
 			context?: string;
 			referenceFiles?: string[];
 			model?: "gemini";
@@ -201,58 +232,7 @@ export const readImageTool: AgentTool<typeof readImageSchema> = {
 		signal?: AbortSignal,
 		_onProgress?: (chunk: string) => void,
 	) => {
-		// Note: `model` is intentionally restricted to "gemini" (schema-level).
-		// This tool always uses Gemini 3 Flash Preview via the Gemini CLI provider.
-		void model;
-
-		const provider = "google-gemini-cli";
-		const authType: "sub" = "sub";
-
-		const modelResult = findModel(provider, "gemini-3-flash-preview");
-		if (!modelResult.model) {
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>Model gemini-3-flash-preview not found for provider ${provider}</error></image_extract>`,
-					},
-				],
-				details: undefined,
-				isError: true,
-			};
-		}
-
-		const selectedModel = modelResult.model;
-
-		let apiKey: string | undefined;
-		try {
-			apiKey = await getApiKeyForModel(selectedModel);
-		} catch (error) {
-			const msg = error instanceof Error ? error.message : String(error);
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>${escapeXmlAttr(msg)}</error></image_extract>`,
-					},
-				],
-				details: undefined,
-				isError: true,
-			};
-		}
-
-		if (!apiKey) {
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>No OAuth token available for ${provider}</error></image_extract>`,
-					},
-				],
-				details: undefined,
-				isError: true,
-			};
-		}
+		const requestedMode = mode ?? "delegate";
 
 		// Check if already aborted - return tool-shaped error instead of throwing
 		if (signal?.aborted) {
@@ -347,6 +327,91 @@ export const readImageTool: AgentTool<typeof readImageSchema> = {
 				};
 			}
 
+			if (requestedMode === "self") {
+				const selfImages: ReadImageLoadedImage[] = [
+					{
+						role: "primary",
+						source: primaryImageResult.source,
+						mimeType: primaryImageResult.mimeType,
+						base64: primaryImageResult.base64,
+					},
+					...referenceImages.map((image) => ({
+						role: "reference" as const,
+						source: image.source,
+						mimeType: image.mimeType,
+						base64: image.base64,
+					})),
+				];
+
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `<image_injection mode="self" source="${escapeXmlAttr(path)}"${referenceImages.length > 0 ? ` references="${referenceImages.length}"` : ""}><message>The image has been injected into the current chat context for the active model to read directly.</message></image_injection>`,
+						},
+					],
+					details: {
+						mode: "self",
+						objective,
+						context,
+						images: selfImages,
+					},
+				};
+			}
+
+			// Note: `model` is intentionally restricted to "gemini" (schema-level).
+			// Delegate mode always uses Gemini 3 Flash Preview via the Gemini CLI provider.
+			void model;
+
+			const provider = "google-gemini-cli";
+			const authType: "sub" = "sub";
+
+			const modelResult = findModel(provider, "gemini-3-flash-preview");
+			if (!modelResult.model) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>Model gemini-3-flash-preview not found for provider ${provider}</error></image_extract>`,
+						},
+					],
+					details: undefined,
+					isError: true,
+				};
+			}
+
+			const selectedModel = modelResult.model;
+
+			let apiKey: string | undefined;
+			try {
+				apiKey = await getApiKeyForModel(selectedModel);
+			} catch (error) {
+				const msg = error instanceof Error ? error.message : String(error);
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>${escapeXmlAttr(msg)}</error></image_extract>`,
+						},
+					],
+					details: undefined,
+					isError: true,
+				};
+			}
+
+			if (!apiKey) {
+				return {
+					content: [
+						{
+							type: "text" as const,
+							text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>No OAuth token available for ${provider}</error></image_extract>`,
+						},
+					],
+					details: undefined,
+					isError: true,
+				};
+			}
+
 			// Build the user message content with primary image and optional reference images
 			const messageContent: Array<
 				{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }
@@ -434,7 +499,12 @@ CRITICAL CONSTRAINTS:
 						text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}" model="${selectedModel.id}" type="${authType}" provider="${provider}"${referenceImages.length > 0 ? ` references="${referenceImages.length}"` : ""}>${referencesXml}\n<analysis>\n${safeExtractedText}\n</analysis>\n</image_extract>`,
 					},
 				],
-				details: undefined,
+				details: {
+					mode: "delegate",
+					provider,
+					model: selectedModel.id,
+					referenceCount: referenceImages.length,
+				},
 			};
 		} catch (error: unknown) {
 			if (abortState.current) {

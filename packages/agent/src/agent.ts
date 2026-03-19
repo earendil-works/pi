@@ -27,6 +27,115 @@ function formatMessageTimestamp(epochMs: number): string {
 	});
 }
 
+interface ReadImageSelfDetailsImage {
+	role: "primary" | "reference";
+	source: string;
+	mimeType: string;
+	base64: string;
+}
+
+interface ReadImageSelfDetails {
+	mode: "self";
+	objective: string;
+	context?: string;
+	images: ReadImageSelfDetailsImage[];
+}
+
+function isReadImageSelfDetails(value: unknown): value is ReadImageSelfDetails {
+	if (typeof value !== "object" || value === null) return false;
+	const candidate = value as {
+		mode?: unknown;
+		objective?: unknown;
+		context?: unknown;
+		images?: unknown;
+	};
+	if (candidate.mode !== "self") return false;
+	if (typeof candidate.objective !== "string") return false;
+	if (candidate.context !== undefined && typeof candidate.context !== "string") return false;
+	if (!Array.isArray(candidate.images)) return false;
+	return candidate.images.every((image) => {
+		if (typeof image !== "object" || image === null) return false;
+		const item = image as {
+			role?: unknown;
+			source?: unknown;
+			mimeType?: unknown;
+			base64?: unknown;
+		};
+		return (
+			(item.role === "primary" || item.role === "reference") &&
+			typeof item.source === "string" &&
+			typeof item.mimeType === "string" &&
+			typeof item.base64 === "string"
+		);
+	});
+}
+
+function buildTimestampedUserMessage(content: Array<TextContent | ImageContent>, timestamp: number): UserMessage {
+	const formattedTime = formatMessageTimestamp(timestamp);
+	const timestampXml = `<user_message_time>${formattedTime}</user_message_time>`;
+	const prefixedContent: Array<TextContent | ImageContent> = [{ type: "text", text: timestampXml }, ...content];
+	return { role: "user", content: prefixedContent, timestamp };
+}
+
+function buildQueuedInjectionMessage(text: string, attachments: Attachment[], timestamp: number): UserMessage {
+	const content: Array<TextContent | ImageContent> = [{ type: "text", text }];
+	for (const a of attachments) {
+		if (a.type === "image") {
+			content.push({ type: "image", data: a.content, mimeType: a.mimeType });
+		} else if (a.type === "document" && a.extractedText) {
+			content.push({
+				type: "text",
+				text: `\n\n[Document: ${a.fileName}]\n${a.extractedText}`,
+				isDocument: true,
+			} as TextContent);
+		}
+	}
+	return buildTimestampedUserMessage(content, timestamp);
+}
+
+function buildReadImageInjectionMessage(details: ReadImageSelfDetails, timestamp: number): UserMessage {
+	const lines = [
+		`<read_image_self>`,
+		`Objective: ${details.objective}`,
+		...(details.context ? [`Context: ${details.context}`] : []),
+		`Analyze the attached image(s) directly in this same chat context.`,
+		`Do not call read_image again for these same attachments unless new files are needed.`,
+		`</read_image_self>`,
+	];
+	const content: Array<TextContent | ImageContent> = [{ type: "text", text: lines.join("\n") }];
+	for (const image of details.images) {
+		content.push({
+			type: "text",
+			text: `${image.role === "primary" ? "Primary" : "Reference"} image: ${image.source}`,
+		});
+		content.push({ type: "image", data: image.base64, mimeType: image.mimeType });
+	}
+	return buildTimestampedUserMessage(content, timestamp);
+}
+
+function buildInterruptInjectedMessages(
+	queuedMessages: AgentQueuedMessage[],
+	toolResults: ToolResultMessage[],
+	timestamp: number,
+): UserMessage[] {
+	const injectedMessages: UserMessage[] = [];
+
+	for (const toolResult of toolResults) {
+		if (toolResult.isError) continue;
+		if (toolResult.toolName !== "read_image") continue;
+		if (!isReadImageSelfDetails(toolResult.details)) continue;
+		injectedMessages.push(buildReadImageInjectionMessage(toolResult.details, timestamp));
+	}
+
+	if (queuedMessages.length > 0) {
+		const combinedText = queuedMessages.map((m) => m.text).join("\n\n");
+		const combinedAttachments = queuedMessages.flatMap((m) => m.attachments || []);
+		injectedMessages.push(buildQueuedInjectionMessage(combinedText, combinedAttachments, timestamp));
+	}
+
+	return injectedMessages;
+}
+
 /**
  * Internal representation of a queued message with its attachments.
  */
@@ -311,30 +420,9 @@ export class Agent {
 
 		// Capture timestamp and format for LLM visibility
 		const now = Date.now();
-		const formattedTime = formatMessageTimestamp(now);
-		const timestampXml = `<user_message_time>${formattedTime}</user_message_time>`;
-
-		// Prepend timestamp to user input
-		const textWithTimestamp = `${timestampXml}\n\n${input}`;
-
-		const content: Array<TextContent | ImageContent> = [{ type: "text", text: textWithTimestamp }];
-		if (attachments?.length) {
-			for (const a of attachments) {
-				if (a.type === "image") {
-					content.push({ type: "image", data: a.content, mimeType: a.mimeType });
-				} else if (a.type === "document" && a.extractedText) {
-					content.push({
-						type: "text",
-						text: `\n\n[Document: ${a.fileName}]\n${a.extractedText}`,
-						isDocument: true,
-					} as TextContent);
-				}
-			}
-		}
-
 		const userMessage: AppMessage = {
 			role: "user",
-			content,
+			content: buildQueuedInjectionMessage(input, attachments || [], now).content,
 			attachments: attachments?.length ? attachments : undefined,
 			timestamp: now,
 		};
@@ -362,43 +450,18 @@ export class Agent {
 						await this.messagePreprocessor!(messages, abortSignal)
 				: undefined,
 			interrupt: async (
-				_args: {
+				args: {
 					assistantMessage: AssistantMessage;
 					toolResults: ToolResultMessage[];
 					messages: Message[];
 				},
 				abortSignal?: AbortSignal,
 			): Promise<UserMessage[] | undefined> => {
-				// If we have queued steering messages while tools were running, inject them now so the
-				// continuation LLM call can react.
 				if (abortSignal?.aborted) return undefined;
 				const allMessages = this.drainQueuedMessages("next");
-				if (allMessages.length === 0) return undefined;
-				const combinedText = allMessages.map((m) => m.text).join("\n\n");
-				const combinedAttachments = allMessages.flatMap((m) => m.attachments || []);
-
 				const now = Date.now();
-				const formattedTime = formatMessageTimestamp(now);
-				const timestampXml = `<user_message_time>${formattedTime}</user_message_time>`;
-				const textWithTimestamp = `${timestampXml}\n\n${combinedText}`;
-
-				const content: Array<TextContent | ImageContent> = [{ type: "text", text: textWithTimestamp }];
-				if (combinedAttachments.length > 0) {
-					for (const a of combinedAttachments) {
-						if (a.type === "image") {
-							content.push({ type: "image", data: a.content, mimeType: a.mimeType });
-						} else if (a.type === "document" && a.extractedText) {
-							content.push({
-								type: "text",
-								text: `\n\n[Document: ${a.fileName}]\n${a.extractedText}`,
-								isDocument: true,
-							} as TextContent);
-						}
-					}
-				}
-
-				const injected: UserMessage = { role: "user", content, timestamp: now };
-				return [injected];
+				const injected = buildInterruptInjectedMessages(allMessages, args.toolResults, now);
+				return injected.length > 0 ? injected : undefined;
 			},
 			toolResultTransformer: this.toolResultTransformer,
 		};
