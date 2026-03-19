@@ -1364,6 +1364,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "gpt-5.4-nano": {
+			id: string;
+			name: string;
+			api: "openai-responses";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "gpt-5.1-chat-latest": {
 			id: string;
 			name: string;
@@ -1422,6 +1439,23 @@ export declare const MODELS: {
 			provider: string;
 			baseUrl: string;
 			reasoning: false;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "gpt-5.4-mini": {
+			id: string;
+			name: string;
+			api: "openai-responses";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
 			input: ("image" | "text")[];
 			cost: {
 				input: number;
@@ -2804,6 +2838,108 @@ export declare const MODELS: {
 		};
 	};
 	readonly openrouter: {
+		readonly "xiaomi/mimo-v2-omni": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "xiaomi/mimo-v2-pro": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "minimax/minimax-m2.7": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "openai/gpt-5.4-nano": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "openai/gpt-5.4-mini": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "mistralai/mistral-small-2603": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "z-ai/glm-5-turbo": {
 			id: string;
 			name: string;
@@ -2838,41 +2974,24 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openrouter/hunter-alpha": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "openrouter/healer-alpha": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "nvidia/nemotron-3-super-120b-a12b:free": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "nvidia/nemotron-3-super-120b-a12b": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -5881,40 +6000,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "google/gemma-3-27b-it:free": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "google/gemma-3-27b-it": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "qwen/qwq-32b": {
 			id: string;
 			name: string;
@@ -6006,7 +6091,7 @@ export declare const MODELS: {
 			api: "openai-completions";
 			provider: string;
 			baseUrl: string;
-			reasoning: false;
+			reasoning: true;
 			input: "text"[];
 			cost: {
 				input: number;
@@ -6108,7 +6193,7 @@ export declare const MODELS: {
 			api: "openai-completions";
 			provider: string;
 			baseUrl: string;
-			reasoning: false;
+			reasoning: true;
 			input: "text"[];
 			cost: {
 				input: number;
@@ -6176,7 +6261,7 @@ export declare const MODELS: {
 			api: "openai-completions";
 			provider: string;
 			baseUrl: string;
-			reasoning: false;
+			reasoning: true;
 			input: ("image" | "text")[];
 			cost: {
 				input: number;
