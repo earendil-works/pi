@@ -39,6 +39,13 @@ function makeTodoMissionDir(): { dir: string; cleanup: () => void } {
 	};
 }
 
+function makeSilentSettingsManager(configDir: string): SettingsManager {
+	const settings = new SettingsManager(configDir);
+	settings.setNotificationBanner("none");
+	settings.setNotificationSound("none");
+	return settings;
+}
+
 describe("mission abort resume semantics (red)", () => {
 	const cleanups: Array<() => void> = [];
 
@@ -128,7 +135,7 @@ describe("mission abort resume semantics (red)", () => {
 				loadTitle: () => null,
 				getSessionId: () => "mission-abort-resume-red",
 			} as never,
-			new SettingsManager(configDir),
+			makeSilentSettingsManager(configDir),
 			{
 				listCommands: () => [],
 				getCommand: () => undefined,
@@ -245,7 +252,7 @@ describe("mission abort resume semantics (red)", () => {
 				loadTitle: () => null,
 				getSessionId: () => "mission-abort-resume-red",
 			} as never,
-			new SettingsManager(configDir),
+			makeSilentSettingsManager(configDir),
 			{
 				listCommands: () => [],
 				getCommand: () => undefined,

@@ -4,6 +4,10 @@ export type TerminalNotificationBackend = "osc9" | "osc777";
 
 type NotificationEnv = Record<string, string | undefined>;
 
+function notificationsDisabledForTests(env: NotificationEnv = process.env): boolean {
+	return env.MU_TEST_DISABLE_NOTIFICATIONS === "1" || env.VITEST === "true";
+}
+
 function escapeOscComponent(value: string): string {
 	return value.replace(/[\u0007\u001b]/g, " ").replace(/;/g, ":");
 }
@@ -55,6 +59,7 @@ export function buildTerminalNotificationSequence(
  * Fire-and-forget: does not block and ignores errors.
  */
 export function sendNotification(title: string, message: string): void {
+	if (notificationsDisabledForTests()) return;
 	if (process.platform !== "darwin") return;
 
 	const terminalBackend = detectTerminalNotificationBackend();
@@ -94,6 +99,7 @@ export function sendNotification(title: string, message: string): void {
  * Fire-and-forget: does not block and ignores errors.
  */
 export function playNotificationSound(): void {
+	if (notificationsDisabledForTests()) return;
 	if (process.platform !== "darwin") return;
 
 	const soundPath = "/System/Library/Sounds/Tink.aiff";

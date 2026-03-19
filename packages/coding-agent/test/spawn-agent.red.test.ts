@@ -14,6 +14,7 @@ import { resolveSpawnAgentRequest } from "../src/tools/spawn-agent-config.js";
 import { resolveToolSelection } from "../src/tools/tool-selection.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const runLiveOpenAiTests = process.env.MU_RUN_LIVE_TESTS === "1" && Boolean(process.env.OPENAI_API_KEY);
 
 describe("spawn_agent red suite", () => {
 	let agent: ChildProcess | undefined;
@@ -158,7 +159,7 @@ describe("spawn_agent red suite", () => {
 		expect(resolveToolSelection(undefined, regularModel!).toolNames).toContain("spawn_agent");
 	});
 
-	test.runIf(Boolean(process.env.OPENAI_API_KEY))(
+	test.runIf(runLiveOpenAiTests)(
 		"inherits the current thinking level when reasoning is omitted for the spawned child handle",
 		async () => {
 			const parentModel = getModel("openai", "gpt-5.1-codex");
@@ -184,7 +185,7 @@ describe("spawn_agent red suite", () => {
 		120000,
 	);
 
-	test.runIf(Boolean(process.env.OPENAI_API_KEY))(
+	test.runIf(runLiveOpenAiTests)(
 		"runs a delegated child and returns child metadata immediately",
 		async () => {
 			const parentModel = getModel("openai", "gpt-5.1-codex");
@@ -217,7 +218,7 @@ describe("spawn_agent red suite", () => {
 		120000,
 	);
 
-	test.runIf(Boolean(process.env.OPENAI_API_KEY))(
+	test.runIf(runLiveOpenAiTests)(
 		"streams child tool progress through the spawn_agent onProgress callback",
 		async () => {
 			const parentModel = getModel("openai", "gpt-5.1-codex");
@@ -278,7 +279,7 @@ describe("spawn_agent red suite", () => {
 		120000,
 	);
 
-	test.runIf(Boolean(process.env.OPENAI_API_KEY))(
+	test.runIf(runLiveOpenAiTests)(
 		"returns a spawned child handle before a long-running delegated command finishes",
 		async () => {
 			const parentModel = getModel("openai", "gpt-5.1-codex");
