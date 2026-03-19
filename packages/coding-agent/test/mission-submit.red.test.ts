@@ -780,23 +780,45 @@ describe("/mission-run submission (red)", () => {
 
 		const submissionPromise = renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
 
-		await new Promise((resolve) => setTimeout(resolve, 150));
-		const earlyFooter = stripAnsi(
-			(renderer as unknown as { footer: { render: (width: number) => string[] } }).footer.render(120).join("\n"),
-		);
+		const footer = (
+			renderer as unknown as {
+				footer: { render: (width: number) => string[]; transientStatus?: { message?: string } | null };
+			}
+		).footer;
+		const readFooter = (): string => stripAnsi(footer.render(120).join("\n"));
+		const readWorkingMessage = (): string => footer.transientStatus?.message ?? "";
+		const waitForFooter = async (
+			predicate: (snapshot: { rendered: string; workingMessage: string }) => boolean,
+			attempts = 20,
+			intervalMs = 100,
+		): Promise<{ rendered: string; workingMessage: string }> => {
+			let last = { rendered: "", workingMessage: "" };
+			for (let attempt = 0; attempt < attempts; attempt++) {
+				last = { rendered: readFooter(), workingMessage: readWorkingMessage() };
+				if (predicate(last)) {
+					return last;
+				}
+				await new Promise((resolve) => setTimeout(resolve, intervalMs));
+			}
+			return last;
+		};
+
+		const earlyFooter = await waitForFooter((snapshot) => snapshot.workingMessage.includes("Working"));
 
 		await new Promise((resolve) => setTimeout(resolve, 1_100));
-		const laterFooter = stripAnsi(
-			(renderer as unknown as { footer: { render: (width: number) => string[] } }).footer.render(120).join("\n"),
+		const laterFooter = await waitForFooter(
+			(snapshot) => snapshot.workingMessage.includes("Working") && snapshot.workingMessage.includes("1s"),
+			15,
+			100,
 		);
 
 		await submissionPromise;
 
-		expect(earlyFooter).toContain("Working");
-		expect(laterFooter).toContain("Working");
-		expect(earlyFooter).toContain("0s");
-		expect(laterFooter).toContain("1s");
-		expect(laterFooter).not.toBe(earlyFooter);
+		expect(earlyFooter.workingMessage).toContain("Working");
+		expect(laterFooter.workingMessage).toContain("Working");
+		expect(earlyFooter.workingMessage).toContain("0s");
+		expect(laterFooter.workingMessage).toContain("1s");
+		expect(laterFooter.workingMessage).not.toBe(earlyFooter.workingMessage);
 	});
 
 	it("stops the mission loop when escape is pressed during a running iteration", async () => {

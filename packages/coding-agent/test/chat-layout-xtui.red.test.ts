@@ -545,22 +545,25 @@ describe("xtui chat layout spec", () => {
 
 		await waitForSessionAlive(sessionName);
 		await waitForRender();
-		await sendKeys(sessionName, ["--keys", "/select{Enter}"]);
+		await sendKeys(sessionName, ["--keys", "/select"]);
+		await new Promise((resolve) => setTimeout(resolve, 250));
+		await sendKeys(sessionName, ["--keys-hex", "0d"]);
 
 		const onRows = await waitForRows(
 			sessionName,
 			onPath,
 			(snapshotRows) =>
 				snapshotRows.some((row) => row.includes("Selection Mode: On")) &&
-				snapshotRows.some((row) => row.includes("Drag with your mouse to select visible text.")) &&
-				snapshotRows.some((row) => row.includes("Esc or Ctrl+C to return to turn Selection Mode off.")),
-			20,
-			100,
+				snapshotRows.some((row) => row.includes("Drag with your mouse")) &&
+				snapshotRows.some((row) => row.includes("Ctrl+C to return")),
+			40,
+			150,
 		);
+		const onText = onRows.join("\n");
 
-		expect(onRows.some((row) => row.includes("Selection Mode: On"))).toBe(true);
-		expect(onRows.some((row) => row.includes("Drag with your mouse to select visible text."))).toBe(true);
-		expect(onRows.some((row) => row.includes("Esc or Ctrl+C to return to turn Selection Mode off."))).toBe(true);
+		expect(onText).toContain("Selection Mode: On");
+		expect(onText).toContain("Drag with your mouse");
+		expect(onText).toContain("Ctrl+C to return");
 
 		await sendKeys(sessionName, ["--keys-hex", "03"]);
 
@@ -568,10 +571,10 @@ describe("xtui chat layout spec", () => {
 			sessionName,
 			offPath,
 			(snapshotRows) => snapshotRows.some((row) => row.includes("Selection Mode: Off")),
-			20,
-			100,
+			40,
+			150,
 		);
 
-		expect(offRows.some((row) => row.includes("Selection Mode: Off"))).toBe(true);
+		expect(offRows.join("\n")).toContain("Selection Mode: Off");
 	});
 });

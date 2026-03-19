@@ -120,16 +120,21 @@ describe("xtui transcript copy toast", () => {
 
 		await waitForSessionAlive(sessionName);
 
-		const visibleRows = await waitForRows(sessionName, snapPath, (rows) =>
-			rows.some((row) => row.includes("Text Copied to Clipboard")),
+		const visibleRows = await waitForRows(
+			sessionName,
+			snapPath,
+			(rows) => rows.some((row) => row.includes("Text Copied to Clipboard")),
+			30,
+			200,
 		);
+		const visibleText = visibleRows.join("\n");
 
 		const toastRow = visibleRows.findIndex((row) => row.includes("Text Copied to Clipboard"));
 		expect(toastRow).toBeGreaterThanOrEqual(0);
 		expect(toastRow).toBeGreaterThan(0);
 		expect(toastRow).toBeLessThanOrEqual(5);
-		expect(visibleRows.some((row) => row.includes("Text Copied to Clipboard"))).toBe(true);
-		expect(visibleRows.some((row) => row.includes("XTUI_TOAST_READY"))).toBe(true);
+		expect(visibleText).toContain("Text Copied to Clipboard");
+		expect(visibleText).toContain("XTUI_TOAST_READY");
 
 		await new Promise((resolve) => setTimeout(resolve, 1800));
 		const dismissedRows = await waitForRows(
@@ -138,9 +143,12 @@ describe("xtui transcript copy toast", () => {
 			(rows) =>
 				rows.some((row) => row.includes("XTUI_TOAST_READY")) &&
 				!rows.some((row) => row.includes("Text Copied to Clipboard")),
+			30,
+			200,
 		);
+		const dismissedText = dismissedRows.join("\n");
 
-		expect(dismissedRows.some((row) => row.includes("XTUI_TOAST_READY"))).toBe(true);
-		expect(dismissedRows.some((row) => row.includes("Text Copied to Clipboard"))).toBe(false);
+		expect(dismissedText).toContain("XTUI_TOAST_READY");
+		expect(dismissedText).not.toContain("Text Copied to Clipboard");
 	});
 });

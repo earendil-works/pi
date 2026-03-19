@@ -20,6 +20,18 @@ type AnthropicUsageResponse = {
 
 let cachedValue: ServiceUsageLimits | null = null;
 let cacheExpiresAt = 0;
+let inFlightRequest: Promise<ServiceUsageLimits | null> | null = null;
+
+function parseRetryAfterMs(retryAfter: string | null): number | null {
+	if (!retryAfter) return null;
+	const seconds = Number(retryAfter);
+	if (Number.isFinite(seconds) && seconds >= 0) {
+		return Math.ceil(seconds * 1000);
+	}
+	const retryAt = Date.parse(retryAfter);
+	if (Number.isNaN(retryAt)) return null;
+	return Math.max(0, retryAt - Date.now());
+}
 
 function toEpochSeconds(timestamp: string | null | undefined): number | undefined {
 	if (!timestamp) return undefined;
@@ -52,6 +64,7 @@ export function parseAnthropicOAuthUsageResponse(payload: AnthropicUsageResponse
 export function resetAnthropicOAuthUsageCache(): void {
 	cachedValue = null;
 	cacheExpiresAt = 0;
+	inFlightRequest = null;
 }
 
 export async function fetchAnthropicOAuthUsageLimits(options?: {
@@ -61,34 +74,45 @@ export async function fetchAnthropicOAuthUsageLimits(options?: {
 	if (!options?.force && now < cacheExpiresAt) {
 		return cachedValue;
 	}
-
-	const token = await getOAuthApiKey("anthropic");
-	if (!token) {
-		cacheExpiresAt = now + ERROR_CACHE_MS;
-		return cachedValue;
+	if (inFlightRequest) {
+		return inFlightRequest;
 	}
 
-	try {
-		const response = await fetch(USAGE_ENDPOINT, {
-			method: "GET",
-			headers: {
-				Authorization: `Bearer ${token}`,
-				"anthropic-beta": USAGE_BETA_HEADER,
-				"content-type": "application/json",
-			},
-		});
-
-		if (!response.ok) {
-			cacheExpiresAt = now + ERROR_CACHE_MS;
+	inFlightRequest = (async () => {
+		const token = await getOAuthApiKey("anthropic");
+		if (!token) {
+			cacheExpiresAt = Date.now() + ERROR_CACHE_MS;
 			return cachedValue;
 		}
 
-		const body = (await response.json()) as AnthropicUsageResponse;
-		cachedValue = parseAnthropicOAuthUsageResponse(body);
-		cacheExpiresAt = now + SUCCESS_CACHE_MS;
-		return cachedValue;
-	} catch {
-		cacheExpiresAt = now + ERROR_CACHE_MS;
-		return cachedValue;
-	}
+		try {
+			const response = await fetch(USAGE_ENDPOINT, {
+				method: "GET",
+				headers: {
+					Authorization: `Bearer ${token}`,
+					"anthropic-beta": USAGE_BETA_HEADER,
+					"content-type": "application/json",
+				},
+			});
+
+			if (!response.ok) {
+				const retryAfterMs =
+					response.status === 429 ? parseRetryAfterMs(response.headers.get("retry-after")) : null;
+				cacheExpiresAt = Date.now() + Math.max(ERROR_CACHE_MS, retryAfterMs ?? 0);
+				return cachedValue;
+			}
+
+			const body = (await response.json()) as AnthropicUsageResponse;
+			cachedValue = parseAnthropicOAuthUsageResponse(body);
+			cacheExpiresAt = Date.now() + SUCCESS_CACHE_MS;
+			return cachedValue;
+		} catch {
+			cacheExpiresAt = Date.now() + ERROR_CACHE_MS;
+			return cachedValue;
+		} finally {
+			inFlightRequest = null;
+		}
+	})();
+
+	return inFlightRequest;
 }

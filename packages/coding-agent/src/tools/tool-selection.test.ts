@@ -14,6 +14,7 @@ describe("resolveToolSelection", () => {
 			"read_thread",
 			"read_image",
 			"spawn_agent",
+			"wait_agent",
 			"compact",
 		]);
 		expect(selection.replacedWithApplyPatch).toBe(true);
@@ -29,7 +30,7 @@ describe("resolveToolSelection", () => {
 		expect(selection.replacedWithApplyPatch).toBe(false);
 	});
 
-	it("defaults non-GPT-* OpenAI models to the regular tool set", () => {
+	it("defaults non-GPT models to the regular tool set", () => {
 		const model = getModel("xai", "grok-code-fast-1");
 		const selection = resolveToolSelection(undefined, model);
 
@@ -42,6 +43,7 @@ describe("resolveToolSelection", () => {
 			"read_thread",
 			"read_image",
 			"spawn_agent",
+			"wait_agent",
 			"compact",
 		]);
 	});

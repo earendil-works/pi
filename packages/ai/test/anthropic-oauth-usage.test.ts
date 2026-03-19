@@ -66,4 +66,42 @@ describe("Anthropic OAuth usage", () => {
 		expect(first).toEqual(second);
 		expect(fetchMock).toHaveBeenCalledTimes(2);
 	});
+
+	it("deduplicates concurrent refreshes into a single upstream request", async () => {
+		getOAuthApiKeyMock.mockResolvedValue("sk-ant-oat-test");
+
+		type FetchResponse = { ok: true; json: () => Promise<unknown> };
+		let resolveFetch!: (value: FetchResponse) => void;
+		const fetchMock = vi.fn(
+			() =>
+				new Promise<FetchResponse>((resolve) => {
+					resolveFetch = resolve;
+				}),
+		);
+		vi.stubGlobal("fetch", fetchMock);
+
+		const { fetchAnthropicOAuthUsageLimits, resetAnthropicOAuthUsageCache } = await import(
+			"../src/utils/anthropic-oauth-usage.js"
+		);
+		resetAnthropicOAuthUsageCache();
+
+		const firstPromise = fetchAnthropicOAuthUsageLimits({ force: true });
+		const secondPromise = fetchAnthropicOAuthUsageLimits({ force: true });
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(fetchMock).toHaveBeenCalledTimes(1);
+		expect(getOAuthApiKeyMock).toHaveBeenCalledTimes(1);
+
+		resolveFetch({
+			ok: true,
+			json: async () => ({
+				five_hour: { utilization: 25, resets_at: "2030-01-01T05:00:00.000Z" },
+				seven_day: { utilization: 10, resets_at: "2030-01-07T00:00:00.000Z" },
+			}),
+		});
+
+		const [first, second] = await Promise.all([firstPromise, secondPromise]);
+		expect(first).toEqual(second);
+	});
 });

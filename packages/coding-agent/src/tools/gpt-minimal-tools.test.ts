@@ -38,6 +38,8 @@ describe("GPT tools", () => {
 			"list_threads",
 			"read_thread",
 			"read_image",
+			"spawn_agent",
+			"wait_agent",
 			"compact",
 		]);
 		expect(selection.tools.map((t) => t.name)).toEqual(selection.toolNames);
