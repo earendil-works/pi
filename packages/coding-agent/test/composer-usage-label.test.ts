@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { initTheme } from "../src/theme/theme.js";
 import { formatComposerUsageLabel } from "../src/tui/composer-usage-label.js";
 import type { UsageLimitsSnapshot } from "../src/usage-footer.js";
+import { getEffectiveUsageFooterMode } from "../src/usage-footer.js";
 
 const usageLimits: UsageLimitsSnapshot = {
 	capturedAt: Date.now(),
@@ -64,5 +65,45 @@ describe("formatComposerUsageLabel", () => {
 		});
 
 		expect(label).toContain("\x1b[38;2;147;146;147m • ");
+	});
+
+	it("auto-shows Anthropic usage chips when usage exists and no explicit preference is set", () => {
+		const mode = getEffectiveUsageFooterMode({
+			savedMode: "hidden",
+			hasExplicitPreference: false,
+			model: getModel("anthropic", "claude-sonnet-4-20250514"),
+			usageLimits,
+		});
+
+		const label = formatComposerUsageLabel({
+			model: getModel("anthropic", "claude-sonnet-4-20250514"),
+			totalCost: 0,
+			usageFooterMode: mode,
+			usageLimits,
+			contextTokens: 20000,
+			contextWindow: 200000,
+		});
+
+		expect(stripAnsi(label)).toBe("(sub) 10% of 200k • 5h 75% • weekly 15%");
+	});
+
+	it("respects an explicit hidden preference for Anthropic", () => {
+		const mode = getEffectiveUsageFooterMode({
+			savedMode: "hidden",
+			hasExplicitPreference: true,
+			model: getModel("anthropic", "claude-sonnet-4-20250514"),
+			usageLimits,
+		});
+
+		const label = formatComposerUsageLabel({
+			model: getModel("anthropic", "claude-sonnet-4-20250514"),
+			totalCost: 0,
+			usageFooterMode: mode,
+			usageLimits,
+			contextTokens: 20000,
+			contextWindow: 200000,
+		});
+
+		expect(stripAnsi(label)).toBe("(sub) 10% of 200k");
 	});
 });

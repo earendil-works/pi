@@ -29,4 +29,21 @@ describe("SettingsManager usage footer mode", () => {
 			rmSync(baseDir, { recursive: true, force: true });
 		}
 	});
+
+	it("distinguishes unset from explicit hidden", () => {
+		const baseDir = join(tmpdir(), `mu-usage-settings-test-${Date.now()}`);
+		mkdirSync(baseDir, { recursive: true });
+		try {
+			const settingsA = new SettingsManager(baseDir);
+			expect(settingsA.hasUsageFooterModePreference()).toBe(false);
+
+			settingsA.setUsageFooterMode("hidden");
+
+			const settingsB = new SettingsManager(baseDir);
+			expect(settingsB.getUsageFooterMode()).toBe("hidden");
+			expect(settingsB.hasUsageFooterModePreference()).toBe(true);
+		} finally {
+			rmSync(baseDir, { recursive: true, force: true });
+		}
+	});
 });
