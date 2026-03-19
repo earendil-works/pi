@@ -2,6 +2,7 @@ import * as os from "node:os";
 import type { AgentTool } from "@kennyfrc/mu-ai";
 import { completeSimple, StringEnum } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
+import { createCanvas, loadImage } from "canvas";
 import { access, constants, readFile } from "fs/promises";
 import { extname, resolve as resolvePath } from "path";
 import { findModel, getApiKeyForModel } from "../model-config.js";
@@ -191,6 +192,50 @@ export interface ReadImageLoadedImage {
 	base64: string;
 }
 
+const ANTHROPIC_MULTI_IMAGE_MAX_DIMENSION = 2000;
+
+async function downscaleImageForMultiImageRequest(image: ReadImageLoadedImage): Promise<ReadImageLoadedImage> {
+	const buffer = Buffer.from(image.base64, "base64");
+	const loaded = await loadImage(buffer);
+	const width = loaded.width;
+	const height = loaded.height;
+	const longestSide = Math.max(width, height);
+
+	if (longestSide <= ANTHROPIC_MULTI_IMAGE_MAX_DIMENSION) {
+		return image;
+	}
+
+	const scale = ANTHROPIC_MULTI_IMAGE_MAX_DIMENSION / longestSide;
+	const targetWidth = Math.max(1, Math.round(width * scale));
+	const targetHeight = Math.max(1, Math.round(height * scale));
+	const canvas = createCanvas(targetWidth, targetHeight);
+	const context = canvas.getContext("2d");
+	context.drawImage(loaded, 0, 0, targetWidth, targetHeight);
+
+	return {
+		...image,
+		mimeType: "image/png",
+		base64: canvas.toBuffer("image/png").toString("base64"),
+	};
+}
+
+async function normalizeSelfModeImages(images: ReadImageLoadedImage[]): Promise<ReadImageLoadedImage[]> {
+	if (images.length <= 1) {
+		return images;
+	}
+
+	const normalized: ReadImageLoadedImage[] = [];
+	for (const image of images) {
+		try {
+			normalized.push(await downscaleImageForMultiImageRequest(image));
+		} catch {
+			normalized.push(image);
+		}
+	}
+
+	return normalized;
+}
+
 export interface ReadImageSelfDetails {
 	mode: "self";
 	objective: string;
@@ -328,7 +373,7 @@ export const readImageTool: AgentTool<typeof readImageSchema, ReadImageDetails> 
 			}
 
 			if (requestedMode === "self") {
-				const selfImages: ReadImageLoadedImage[] = [
+				const selfImages = await normalizeSelfModeImages([
 					{
 						role: "primary",
 						source: primaryImageResult.source,
@@ -341,7 +386,7 @@ export const readImageTool: AgentTool<typeof readImageSchema, ReadImageDetails> 
 						mimeType: image.mimeType,
 						base64: image.base64,
 					})),
-				];
+				]);
 
 				return {
 					content: [
