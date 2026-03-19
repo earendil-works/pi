@@ -7,9 +7,12 @@ read: |
 read_image: |
   Analyze an image and extract information based on an objective. Use this tool only for image files or image URLs. Supported formats: jpg, jpeg, png, gif, webp. Do not use this tool for reading text files. Accepts a local file path or remote URL. Returns XML-delimited analysis output.
 
+  On Anthropic models, prefer `mode: "self"` when you want Claude to inspect the image directly in the current conversation context.
+
   Parameters:
-  - path: Path to the image file (local or URL)
+  - path: Path to the image file to read (local file path or remote URL)
   - objective: What to extract/analyze from the image
+  - mode (optional): `self` is encouraged on Anthropic when the active model should read the image in-context; `delegate` uses the dedicated image reader model
   - context (optional): Why this analysis matters (helps focus the analysis)
   - referenceFiles (optional): Paths to reference images for comparison
   - model (optional): "gemini" (default: gemini)

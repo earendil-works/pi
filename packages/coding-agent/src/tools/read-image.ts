@@ -162,7 +162,7 @@ const readImageSchema = Type.Object({
 	mode: Type.Optional(
 		StringEnum(["delegate", "self"] as const, {
 			description:
-				"How to handle the image: delegate = analyze via the dedicated image reader model, self = inject the image into the current chat so the active model reads it in the same context.",
+				'How to handle the image: delegate = analyze via the dedicated image reader model, self = inject the image into the current chat so the active model reads it in the same context. On Anthropic models, prefer `mode: "self"` when you want Claude to inspect the image directly in the current conversation.',
 		}),
 	),
 	context: Type.Optional(

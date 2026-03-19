@@ -12,6 +12,13 @@ import { type ApplyPatchParseResult, parseApplyPatchInput } from "../tools/apply
 import { stripSystemReminderTagsForDisplay } from "../utils/system-reminder.js";
 import { truncateToVisualLines } from "./visual-truncate.js";
 
+interface BackgroundJobDisplaySnapshot {
+	id: string;
+	pid: number;
+	status: "running" | "exited" | "killed" | "failed";
+	recentOutput: string;
+}
+
 /**
  * Replace tabs with spaces for consistent rendering
  */
@@ -38,6 +45,28 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNonEmptyString(value: unknown): value is string {
 	return typeof value === "string" && value.trim().length > 0;
+}
+
+function readBackgroundJobSnapshot(details: unknown): BackgroundJobDisplaySnapshot | null {
+	if (!isRecord(details)) return null;
+	const backgroundJob = details.backgroundJob;
+	if (!isRecord(backgroundJob)) return null;
+	if (!isNonEmptyString(backgroundJob.id)) return null;
+	if (typeof backgroundJob.pid !== "number") return null;
+	if (
+		backgroundJob.status !== "running" &&
+		backgroundJob.status !== "exited" &&
+		backgroundJob.status !== "killed" &&
+		backgroundJob.status !== "failed"
+	) {
+		return null;
+	}
+	return {
+		id: backgroundJob.id,
+		pid: backgroundJob.pid,
+		status: backgroundJob.status,
+		recentOutput: typeof backgroundJob.recentOutput === "string" ? backgroundJob.recentOutput : "",
+	};
 }
 
 function quoteArgForDisplay(arg: string): string {
@@ -510,6 +539,7 @@ export class ToolExecutionComponent extends Container {
 			const command = typeof args.command === "string" ? args.command : "";
 			const commandDisplay = command ? highlightShellCommand(command) : theme.fg("toolOutput", "...");
 			text = theme.fg("toolTitle", theme.bold("$")) + " " + commandDisplay;
+			const backgroundJob = readBackgroundJobSnapshot(this.result?.details);
 
 			// Use final result if available, otherwise show streaming partial output
 			let output = "";
@@ -519,7 +549,33 @@ export class ToolExecutionComponent extends Container {
 				output = stripAnsi(this.partialOutput).trim();
 			}
 
-			if (output) {
+			if (backgroundJob?.status === "running") {
+				const statusLines = [
+					theme.fg("warning", `Background job still running: ${backgroundJob.id}`) +
+						theme.fg("muted", ` (pid ${backgroundJob.pid})`),
+					theme.fg("warning", "Wait for completion before concluding success."),
+					theme.fg("muted", `wait: ${JSON.stringify({ job: backgroundJob.id, action: "wait", timeout: 30 })}`),
+					theme.fg("muted", `status: ${JSON.stringify({ job: backgroundJob.id, action: "status" })}`),
+				];
+				text += "\n\n" + statusLines.join("\n");
+
+				const previewSource = backgroundJob.recentOutput.trim() || output;
+				if (previewSource) {
+					const contentWidth = Math.max(1, width - 2);
+					const recentOutputText = [theme.fg("toolTitle", "Recent output:"), previewSource]
+						.join("\n")
+						.split("\n")
+						.map((line: string) => (line === "Recent output:" ? line : theme.fg("toolOutput", line)))
+						.join("\n");
+
+					if (this.expanded) {
+						text += "\n\n" + recentOutputText;
+					} else {
+						const result = truncateToVisualLines(recentOutputText, 5, contentWidth, 0);
+						text += "\n\n" + result.visualLines.join("\n");
+					}
+				}
+			} else if (output) {
 				const contentWidth = Math.max(1, width - 2); // contentText has paddingX=1
 				const styledOutput = output
 					.split("\n")

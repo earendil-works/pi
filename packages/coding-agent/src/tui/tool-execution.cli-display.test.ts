@@ -207,4 +207,40 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 		expect(text).not.toContain("system_reminder");
 		expect(text).not.toContain("Continue now.");
 	});
+
+	it("renders a prominent in-progress banner for running bash background jobs", () => {
+		const component = new ToolExecutionComponent("bash", {
+			command: "git status --short && bun run build:minify",
+		});
+
+		component.updateResult({
+			content: [
+				{
+					type: "text",
+					text: "Started background job riec59cc (pid 27216) by request. The command is still running. This is not a completed result.",
+				},
+			],
+			isError: false,
+			details: {
+				backgroundJob: {
+					id: "riec59cc",
+					pid: 27216,
+					command: "git status --short && bun run build:minify",
+					reason: "explicit_background",
+					startedAt: Date.now(),
+					status: "running",
+					recentOutput: '{"/js/app.js":"/js/app-123.js"}',
+					recentStdout: '{"/js/app.js":"/js/app-123.js"}',
+					recentStderr: "",
+				},
+			},
+		});
+
+		const text = renderText(component, 100);
+		expect(text).toContain("Background job still running: riec59cc");
+		expect(text).toContain("Wait for completion before concluding success.");
+		expect(text).toContain('{"job":"riec59cc","action":"wait","timeout":30}');
+		expect(text).toContain('{"job":"riec59cc","action":"status"}');
+		expect(text).toContain("Recent output:");
+	});
 });
