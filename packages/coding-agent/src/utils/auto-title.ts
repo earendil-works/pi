@@ -7,7 +7,7 @@ export interface ThreadListingMeta {
 	preview: string;
 }
 
-const USER_MESSAGE_TIME_PREFIX_PATTERN = /^(?:<user_message_time>[\s\S]*?<\/user_message_time>\n\n)+/;
+const USER_MESSAGE_TIME_PREFIX_PATTERN = /^(?:<user_message_time>[\s\S]*?<\/user_message_time>(?:\n\n|\n)?)+/;
 
 export function stripUserMessageTimePrefix(text: string): string {
 	return text.replace(USER_MESSAGE_TIME_PREFIX_PATTERN, "");

@@ -89,7 +89,7 @@ function getRelativeDate(date: Date): string {
 	return date.toLocaleDateString();
 }
 
-const USER_MESSAGE_TIME_PREFIX_PATTERN = /^(?:<user_message_time>[\s\S]*?<\/user_message_time>\n\n)+/;
+const USER_MESSAGE_TIME_PREFIX_PATTERN = /^(?:<user_message_time>[\s\S]*?<\/user_message_time>(?:\n\n|\n)?)+/;
 
 function stripUserMessageTimePrefix(text: string): string {
 	return text.replace(USER_MESSAGE_TIME_PREFIX_PATTERN, "");

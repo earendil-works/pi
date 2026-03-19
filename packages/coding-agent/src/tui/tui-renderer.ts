@@ -176,7 +176,7 @@ const SUBSCRIPTION_RECENT_WINDOW_MS = 24 * 60 * 60 * 1000;
 // User messages in Agent state are stored with a timestamp prefix for LLM visibility:
 //   <user_message_time>...</user_message_time>\n\n
 // That prefix should never leak back into editor buffers or prompt history.
-const USER_MESSAGE_TIME_PREFIX_PATTERN = /^(?:<user_message_time>[\s\S]*?<\/user_message_time>\n\n)+/;
+const USER_MESSAGE_TIME_PREFIX_PATTERN = /^(?:<user_message_time>[\s\S]*?<\/user_message_time>(?:\n\n|\n)?)+/;
 
 function stripUserMessageTimePrefix(text: string): string {
 	return text.replace(USER_MESSAGE_TIME_PREFIX_PATTERN, "");

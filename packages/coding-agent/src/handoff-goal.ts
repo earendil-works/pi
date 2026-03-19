@@ -30,7 +30,7 @@ function isGenericGoal(goal: string): boolean {
 }
 
 function stripUserMessageTimePrefix(text: string): string {
-	return text.replace(/^<user_message_time>[\s\S]*?<\/user_message_time>\n\n/, "");
+	return text.replace(/^(?:<user_message_time>[\s\S]*?<\/user_message_time>(?:\n\n|\n)?)+/, "");
 }
 
 function extractLastUserText(messages: Message[]): string | null {
