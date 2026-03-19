@@ -2,6 +2,11 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
 import { type AutoHandoffMode, DEFAULT_AUTO_HANDOFF_MODE, isAutoHandoffMode } from "./auto-handoff.js";
+import {
+	DEFAULT_MORPH_COMPACTION_MODE,
+	isMorphCompactionMode,
+	type MorphCompactionMode,
+} from "./morph-compaction-mode.js";
 import type { UsageFooterMode } from "./usage-footer.js";
 
 export type NotificationBannerMode = "native" | "none";
@@ -15,6 +20,7 @@ export interface Settings {
 	fastMode?: boolean;
 	queueMode?: "all" | "one-at-a-time";
 	autoHandoffMode?: AutoHandoffMode;
+	morphCompactionMode?: MorphCompactionMode;
 	usageFooterMode?: UsageFooterMode;
 	theme?: string;
 	notificationBanner?: NotificationBannerMode;
@@ -146,6 +152,16 @@ export class SettingsManager {
 
 	setAutoHandoffMode(mode: AutoHandoffMode): void {
 		this.settings.autoHandoffMode = mode;
+		this.save();
+	}
+
+	getMorphCompactionMode(): MorphCompactionMode {
+		const mode = this.settings.morphCompactionMode;
+		return isMorphCompactionMode(mode) ? mode : DEFAULT_MORPH_COMPACTION_MODE;
+	}
+
+	setMorphCompactionMode(mode: MorphCompactionMode): void {
+		this.settings.morphCompactionMode = mode;
 		this.save();
 	}
 

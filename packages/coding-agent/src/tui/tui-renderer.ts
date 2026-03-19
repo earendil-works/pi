@@ -74,6 +74,13 @@ import {
 } from "../missions/mission-ui.js";
 import { parseMissionDefinition } from "../missions/parse-mission.js";
 import { findModel, getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
+import { executeExplicitCompactionStrategy } from "../morph-compaction-explicit.js";
+import {
+	applyMorphCompactionCommand,
+	type MorphCompactionMode,
+	type MorphCompactionSlashCommand,
+	parseMorphCompactionSlashCommand,
+} from "../morph-compaction-mode.js";
 import { WorkspaceNoteStore } from "../notes/workspace-note-store.js";
 import { playNotificationSound, sendNotification } from "../notification.js";
 import {
@@ -251,6 +258,7 @@ export class TuiRenderer {
 	private extensionManager: ExtensionManager;
 	private extensionLoader: ExtensionLoader;
 	private autoHandoffMode: AutoHandoffMode;
+	private morphCompactionMode: MorphCompactionMode;
 
 	// Slash command autocomplete state
 	private builtInSlashCommands: SlashCommand[] = [];
@@ -410,6 +418,7 @@ export class TuiRenderer {
 		this.extensionManager = extensionManager;
 		this.extensionLoader = extensionLoader;
 		this.autoHandoffMode = settingsManager.getAutoHandoffMode();
+		this.morphCompactionMode = settingsManager.getMorphCompactionMode();
 		this.usageFooterMode = settingsManager.getUsageFooterMode();
 		this.hasExplicitUsageFooterPreference = settingsManager.hasUsageFooterModePreference();
 
@@ -557,6 +566,14 @@ export class TuiRenderer {
 			injectedText: "/compact ",
 			injectedDiagnostic:
 				"Prepared /compact draft. Modes: --summary <goal> | --inject <goal> | on | off | toggle | status",
+		};
+
+		const morphCompactionCommand: SlashCommand = {
+			name: "morph-compaction",
+			description: "Control Morph-backed compaction mode (on / off / auto / toggle / status)",
+			selectionBehavior: "inject",
+			injectedText: "/morph-compaction ",
+			injectedDiagnostic: "Prepared /morph-compaction draft. Modes: on | off | auto | toggle | status",
 		};
 
 		const subscribeCommand: SlashCommand = {
@@ -721,6 +738,7 @@ export class TuiRenderer {
 			exportCommand,
 			fastCommand,
 			compactCommand,
+			morphCompactionCommand,
 			subscribeCommand,
 			unsubscribeCommand,
 			loginCommand,
@@ -3568,6 +3586,19 @@ export class TuiRenderer {
 			return;
 		}
 
+		const morphCompactionCommand = parseMorphCompactionSlashCommand(rawText);
+		if (morphCompactionCommand) {
+			this.promptHistory.savePrompt(rawText);
+			this.editor.setText("");
+			this.handleMorphCompactionSlashCommand(morphCompactionCommand);
+			return;
+		}
+
+		if (rawText.startsWith("/morph-compaction")) {
+			this.showError("Usage: /morph-compaction on | off | auto | toggle | status");
+			return;
+		}
+
 		const unsubscribeCommand = parseUnsubscribeCommand(rawText);
 		if (unsubscribeCommand) {
 			this.handleUnsubscribeCommand(unsubscribeCommand.sessionId);
@@ -4550,7 +4581,7 @@ export class TuiRenderer {
 	private async applyCompactionCheckpoint(
 		details: HandoffDetails & { parentSessionId: string | null },
 	): Promise<void> {
-		const { goal, fileTokens } = details;
+		const { goal, fileTokens, compactionBackendLabel } = details;
 		const replacementMessages = this.buildContextCompactionMessages(details);
 
 		this.sessionManager.appendContextCompaction(replacementMessages);
@@ -4573,6 +4604,9 @@ export class TuiRenderer {
 		this.chatContainer.addChild(new Spacer(1));
 		const compactLines = [theme.fg("accent", `✓ Context compacted: ${goal}`)];
 		compactLines.push(theme.fg("dim", `Checkpoint: ${fileTokens.toLocaleString()} tokens`));
+		if (compactionBackendLabel) {
+			compactLines.push(theme.fg("muted", `Backend: ${compactionBackendLabel}`));
+		}
 		this.chatContainer.addChild(new Text(compactLines.join("\n"), 1, 0));
 		this.chatContainer.addChild(new Spacer(1));
 
@@ -4813,27 +4847,51 @@ export class TuiRenderer {
 		const model = this.agent.state.model;
 		if (!model) throw new Error("No model selected");
 
-		const apiKey = await getApiKeyForModel(model);
-		if (!apiKey) throw new Error(`No API key for ${model.provider}`);
-
 		const tracking = extractHandoffFileTracking(this.agent.state.messages);
 		const adapter = createCompactionAdapter(model as Model<Api>);
-		const execution = await adapter.compactSummary({
+		const execution = await executeExplicitCompactionStrategy({
 			model: model as Model<Api>,
-			apiKey,
 			messages: this.agent.state.messages,
 			goal,
-			readFiles: tracking.readFiles,
-			modifiedFiles: tracking.modifiedFiles,
+			morphMode: this.morphCompactionMode,
+			morphApiKey: process.env.MORPH_API_KEY,
+			keyFiles: Array.from(new Set([...tracking.readFiles, ...tracking.modifiedFiles])),
 			signal,
-			localFallback: () => this.buildHandoffSummaryDetails(goal, signal),
+			localSummaryFallback: () => this.buildHandoffSummaryDetails(goal, signal),
+			nativeReplayCompact: async () => {
+				const apiKey = await getApiKeyForModel(model);
+				if (!apiKey) throw new Error(`No API key for ${model.provider}`);
+
+				return await adapter.compactSummary({
+					model: model as Model<Api>,
+					apiKey,
+					messages: this.agent.state.messages,
+					goal,
+					readFiles: tracking.readFiles,
+					modifiedFiles: tracking.modifiedFiles,
+					signal,
+					localFallback: () => this.buildHandoffSummaryDetails(goal, signal),
+				});
+			},
 		});
 
 		if (execution.usedFallback && execution.fallbackReason) {
-			this.showWarning(`Remote compaction unavailable, used local summary instead: ${execution.fallbackReason}`);
+			this.showWarning(`Compaction fallback used: ${execution.fallbackReason}`);
 		}
 
-		return execution.details;
+		const compactionBackendLabel =
+			execution.usedFallback ||
+			execution.strategy.kind === "local-summary-fallback" ||
+			execution.strategy.kind === "skip-compaction"
+				? "Local summary fallback"
+				: execution.strategy.kind === "morph-compact"
+					? `Morph compaction (${execution.strategy.effectiveMode}, ratio ${execution.strategy.compressionRatio})`
+					: "Native replay compact";
+
+		return {
+			...execution.details,
+			compactionBackendLabel,
+		};
 	}
 
 	/**
@@ -5856,6 +5914,22 @@ export class TuiRenderer {
 				? theme.fg("accent", "Automatic compaction: ON")
 				: theme.fg("warning", "Automatic compaction: OFF");
 		const hint = theme.fg("muted", "Use /compact [on|off|toggle|status]");
+		this.chatContainer.addChild(new Text(label + "\n" + hint, 1, 0));
+		this.ui.requestRender();
+	}
+
+	private handleMorphCompactionSlashCommand(command: MorphCompactionSlashCommand): void {
+		const previous = this.morphCompactionMode;
+		const next = applyMorphCompactionCommand(previous, command);
+
+		this.morphCompactionMode = next;
+		if (command.type !== "status" && next !== previous) {
+			this.settingsManager.setMorphCompactionMode(next);
+		}
+
+		this.chatContainer.addChild(new Spacer(1));
+		const label = theme.fg("dim", `Morph compaction mode: ${next}`);
+		const hint = theme.fg("muted", "Use /morph-compaction [on|off|auto|toggle|status]");
 		this.chatContainer.addChild(new Text(label + "\n" + hint, 1, 0));
 		this.ui.requestRender();
 	}

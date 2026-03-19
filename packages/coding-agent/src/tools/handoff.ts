@@ -41,6 +41,7 @@ export interface HandoffDetails {
 	formattedMessage: string;
 	parentSessionId: string;
 	fileTokens: number;
+	compactionBackendLabel?: string;
 	replacementMessages?: Message[];
 	keyFiles?: string[];
 }
