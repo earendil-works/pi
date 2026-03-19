@@ -18,6 +18,8 @@ type AutoHandoffHarness = {
 	getAutoCompactionSourceMessages(isEmergency: boolean): Message[];
 	generateAutoHandoffGoal(signal: AbortSignal, messages?: Message[]): Promise<string>;
 	buildSummaryCompactionDetails(goal: string, signal: AbortSignal, messages?: Message[]): Promise<HandoffDetails>;
+	hasActiveMissionRun(): boolean;
+	applyCompactionCheckpoint(details: HandoffDetails & { parentSessionId: string | null }): Promise<void>;
 	executeExplicitHandoff(details: HandoffDetails & { parentSessionId: string | null }): Promise<void>;
 	showWarning?(message: string): void;
 	showError?(message: string): void;
@@ -69,6 +71,7 @@ describe("automatic Morph compaction integration", () => {
 		const details = buildMorphDetails();
 		const generateAutoHandoffGoal = vi.fn(async () => "Continue fixing the login page tests");
 		const buildSummaryCompactionDetails = vi.fn(async () => details);
+		const applyCompactionCheckpoint = vi.fn(async () => undefined);
 		const executeExplicitHandoff = vi.fn(async () => undefined);
 
 		const harness: AutoHandoffHarness = {
@@ -83,6 +86,8 @@ describe("automatic Morph compaction integration", () => {
 			getAutoCompactionSourceMessages: vi.fn(() => []),
 			generateAutoHandoffGoal,
 			buildSummaryCompactionDetails,
+			hasActiveMissionRun: () => false,
+			applyCompactionCheckpoint,
 			executeExplicitHandoff,
 		};
 
@@ -105,5 +110,43 @@ describe("automatic Morph compaction integration", () => {
 		expect(harness.isAutoHandoffInProgress).toBe(false);
 		expect(harness.handoffAbortController).toBeNull();
 		harness.loadingAnimation?.stop();
+	});
+
+	it("keeps mission auto-compaction on the mission path instead of auto-sending the generic continuation prompt", async () => {
+		initTheme("dark");
+
+		const details = buildMorphDetails();
+		const generateAutoHandoffGoal = vi.fn(async () => "Continue mission login-hardening");
+		const buildSummaryCompactionDetails = vi.fn(async () => details);
+		const applyCompactionCheckpoint = vi.fn(async () => undefined);
+		const executeExplicitHandoff = vi.fn(async () => undefined);
+
+		const harness: AutoHandoffHarness = {
+			isAutoHandoffInProgress: false,
+			handoffAbortController: null,
+			loadingAnimation: null,
+			chatContainer: { addChild: vi.fn() },
+			statusContainer: { clear: vi.fn(), addChild: vi.fn() },
+			ui: { requestRender: vi.fn(), requestRenderWithReason: vi.fn() },
+			agent: { resumeQueueDrain: vi.fn() },
+			sessionManager: { getSessionId: vi.fn(() => "parent-session-123") },
+			getAutoCompactionSourceMessages: vi.fn(() => []),
+			generateAutoHandoffGoal,
+			buildSummaryCompactionDetails,
+			hasActiveMissionRun: () => true,
+			applyCompactionCheckpoint,
+			executeExplicitHandoff,
+		};
+
+		const handleAutoHandoff = (TuiRenderer.prototype as unknown as { handleAutoHandoff: HandleAutoHandoff })
+			.handleAutoHandoff;
+
+		await handleAutoHandoff.call(harness, false);
+
+		expect(applyCompactionCheckpoint).toHaveBeenCalledWith({
+			...details,
+			parentSessionId: "parent-session-123",
+		});
+		expect(executeExplicitHandoff).not.toHaveBeenCalled();
 	});
 });

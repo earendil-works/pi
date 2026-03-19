@@ -13,12 +13,13 @@ type RunExplicitCompactionTransition = (
 		hasActiveMissionRun(): boolean;
 		applyCompactionCheckpoint(details: HandoffDetails & { parentSessionId: string | null }): Promise<void>;
 		executeExplicitHandoff(details: HandoffDetails & { parentSessionId: string | null }): Promise<void>;
+		continueFromCompaction(details: HandoffDetails & { parentSessionId: string | null }): Promise<void>;
 	},
 	args: { goal: string; parentSessionId: string; signal: AbortSignal; loaderMessage: string },
 ) => Promise<void>;
 
 describe("explicit compaction transition", () => {
-	it("applies compaction and ends the turn without continuing the agent", async () => {
+	it("applies compaction and auto-sends the continuation prompt", async () => {
 		const details: HandoffDetails = {
 			handoffType: "explicit",
 			goal: "Fix the login page tests",
@@ -52,8 +53,50 @@ describe("explicit compaction transition", () => {
 		);
 
 		expect(applyCompactionCheckpoint).toHaveBeenCalledWith({ ...details, parentSessionId: "thread-123" });
-		expect(continueFromCompaction).not.toHaveBeenCalled();
+		expect(continueFromCompaction).toHaveBeenCalledWith({ ...details, parentSessionId: "thread-123" });
 		expect(agent.resumeQueueDrain).toHaveBeenCalledOnce();
+	});
+
+	it("uses the semantic continuation prompt when auto-sending after compaction", async () => {
+		const prompt = vi.fn(async () => undefined);
+		const continueFromCompaction = (
+			TuiRenderer.prototype as unknown as {
+				continueFromCompaction: (
+					this: { agent: { prompt(message: string): Promise<void> } },
+					details: HandoffDetails & { parentSessionId: string | null },
+				) => Promise<void>;
+			}
+		).continueFromCompaction;
+
+		await continueFromCompaction.call(
+			{
+				agent: { prompt },
+			},
+			{
+				handoffType: "explicit",
+				goal: "Fix the login page tests",
+				formattedMessage: [
+					"## Goal",
+					"Fix the login page tests",
+					"",
+					"## Progress",
+					"### Done",
+					"- [x] Reproduced the compaction issue.",
+				].join("\n"),
+				parentSessionId: "thread-123",
+				fileTokens: 12,
+				keyFiles: ["src/login.ts"],
+			},
+		);
+
+		expect(prompt).toHaveBeenCalledOnce();
+		const promptCalls = prompt.mock.calls as unknown[][];
+		const continuationPrompt = promptCalls[0]?.[0];
+		expect(typeof continuationPrompt).toBe("string");
+		expect(continuationPrompt).toContain("Continue the task from the compacted checkpoint.");
+		expect(continuationPrompt).toContain("Goal: Fix the login page tests");
+		expect(continuationPrompt).toContain("Parent thread ID: thread-123");
+		expect(continuationPrompt).toContain("Use `read_thread` if you need more detail from the parent thread.");
 	});
 
 	it("keeps a loader visible and waits synchronously for compaction execution", async () => {
@@ -88,6 +131,7 @@ describe("explicit compaction transition", () => {
 			buildSummaryCompactionDetails,
 			hasActiveMissionRun: () => false,
 			applyCompactionCheckpoint,
+			continueFromCompaction: vi.fn(async () => undefined),
 			executeExplicitHandoff,
 		};
 

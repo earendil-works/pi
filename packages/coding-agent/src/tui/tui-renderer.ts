@@ -48,6 +48,7 @@ import { createCompactionAdapter } from "../compaction-adapter.js";
 import {
 	appendCheckpointToReplacementHistory,
 	buildCompactionCheckpointText,
+	buildCompactionContinuationPrompt,
 	buildMorphCompactionCheckpointText,
 } from "../compaction-checkpoint.js";
 import { exportSessionToHtml } from "../export-html.js";
@@ -5290,11 +5291,17 @@ export class TuiRenderer {
 				this.handoffAbortController.signal,
 				compactionSourceMessages,
 			);
-
-			await this.executeExplicitHandoff({
+			const handoff = {
 				...details,
 				parentSessionId: this.sessionManager.getSessionId(),
-			});
+			};
+
+			if (this.hasActiveMissionRun()) {
+				await this.applyCompactionCheckpoint(handoff);
+				return;
+			}
+
+			await this.executeExplicitHandoff(handoff);
 		} catch (err: unknown) {
 			const error = err as Error;
 
@@ -5328,6 +5335,7 @@ export class TuiRenderer {
 	private async executeExplicitHandoff(details: HandoffDetails & { parentSessionId: string | null }): Promise<void> {
 		try {
 			await this.applyCompactionCheckpoint(details);
+			await this.continueFromCompaction(details);
 		} catch (error: unknown) {
 			const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 			this.chatContainer.addChild(new Spacer(1));
@@ -5336,6 +5344,17 @@ export class TuiRenderer {
 		} finally {
 			this.agent.resumeQueueDrain();
 		}
+	}
+
+	private async continueFromCompaction(details: HandoffDetails & { parentSessionId: string | null }): Promise<void> {
+		const prompt = buildCompactionContinuationPrompt({
+			formattedMessage: details.formattedMessage,
+			goal: details.goal,
+			parentThreadId: details.parentSessionId,
+			keyFiles: details.keyFiles,
+		});
+
+		await this.agent.prompt(prompt);
 	}
 
 	private async handleClearCommand(): Promise<void> {
