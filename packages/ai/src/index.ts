@@ -11,5 +11,6 @@ export * from "./providers/openai-completions.js";
 export * from "./providers/openai-responses.js";
 export * from "./stream.js";
 export * from "./types.js";
+export * from "./utils/anthropic-oauth-usage.js";
 export * from "./utils/oauth/index.js";
 export * from "./utils/typebox-helpers.js";

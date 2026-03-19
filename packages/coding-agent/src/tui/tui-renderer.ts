@@ -12,7 +12,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "@kennyfrc/mu-ai";
-import { complete, supportsXhigh } from "@kennyfrc/mu-ai";
+import { complete, fetchAnthropicOAuthUsageLimits, supportsXhigh } from "@kennyfrc/mu-ai";
 import type { Component, SlashCommand } from "@kennyfrc/mu-tui";
 import {
 	CombinedAutocompleteProvider,
@@ -125,6 +125,7 @@ import {
 	supportsUsageCommand,
 	type UsageFooterMode,
 	type UsageLimitsSnapshot,
+	usageLimitsToSnapshot,
 } from "../usage-footer.js";
 import { autoFenceHtmlInMarkdown } from "../utils/auto-fence-html.js";
 import { generateThreadListingMeta } from "../utils/auto-title.js";
@@ -384,6 +385,7 @@ export class TuiRenderer {
 	private latencyGapCount = 0;
 	private ignoreNextAgentEndForAutoHandoffAbort = false;
 	private missionUiState: MissionUiState | null = null;
+	private anthropicUsageRefreshVersion = 0;
 
 	constructor(
 		agent: Agent,
@@ -454,6 +456,34 @@ export class TuiRenderer {
 		this.rebuildBuiltInSlashCommands();
 		this.fdPath = fdPath;
 		this.refreshAutocompleteProvider();
+		void this.refreshAnthropicUsageLimits();
+	}
+
+	private async refreshAnthropicUsageLimits(options?: { force?: boolean; clearBeforeFetch?: boolean }): Promise<void> {
+		const currentModel = this.agent.state.model;
+		if (!currentModel || currentModel.provider !== "anthropic") {
+			return;
+		}
+
+		const refreshVersion = ++this.anthropicUsageRefreshVersion;
+		if (options?.clearBeforeFetch) {
+			this.composerUsageLimits = null;
+			this.footer.setUsageLimits(null);
+			this.ui.requestRender();
+		}
+
+		const usageLimits = await fetchAnthropicOAuthUsageLimits({ force: options?.force });
+		if (refreshVersion !== this.anthropicUsageRefreshVersion) {
+			return;
+		}
+		if (this.agent.state.model?.provider !== "anthropic") {
+			return;
+		}
+
+		const snapshot = usageLimitsToSnapshot(usageLimits ?? undefined);
+		this.composerUsageLimits = snapshot;
+		this.footer.setUsageLimits(snapshot);
+		this.ui.requestRender();
 	}
 
 	private rebuildBuiltInSlashCommands(): void {
@@ -1719,11 +1749,17 @@ export class TuiRenderer {
 			const snapshot = assistantMessageUsageSnapshot(message as AssistantMessage);
 			this.composerUsageLimits = snapshot;
 			this.footer.setUsageLimits(snapshot);
+			if (this.agent.state.model?.provider === "anthropic") {
+				void this.refreshAnthropicUsageLimits();
+			}
 			return;
 		}
 
 		this.composerUsageLimits = null;
 		this.footer.setUsageLimits(null);
+		if (this.agent.state.model?.provider === "anthropic") {
+			void this.refreshAnthropicUsageLimits();
+		}
 	}
 
 	private addMessageToChat(message: Message): void {
@@ -2147,6 +2183,9 @@ export class TuiRenderer {
 
 			// Switch model
 			this.agent.setModel(nextModel);
+			if (nextModel.provider === "anthropic") {
+				void this.refreshAnthropicUsageLimits({ clearBeforeFetch: true });
+			}
 			this.rebuildBuiltInSlashCommands();
 			this.refreshAutocompleteProvider();
 			await this.updateToolsForModel(nextModel);
@@ -2216,6 +2255,9 @@ export class TuiRenderer {
 
 			// Switch model
 			this.agent.setModel(nextModel);
+			if (nextModel.provider === "anthropic") {
+				void this.refreshAnthropicUsageLimits({ clearBeforeFetch: true });
+			}
 			this.rebuildBuiltInSlashCommands();
 			this.refreshAutocompleteProvider();
 			await this.updateToolsForModel(nextModel);
@@ -2639,6 +2681,9 @@ export class TuiRenderer {
 			async (model) => {
 				// Apply the selected model
 				this.agent.setModel(model);
+				if (model.provider === "anthropic") {
+					void this.refreshAnthropicUsageLimits({ clearBeforeFetch: true });
+				}
 				this.rebuildBuiltInSlashCommands();
 				this.refreshAutocompleteProvider();
 				await this.updateToolsForModel(model);
@@ -3040,6 +3085,9 @@ export class TuiRenderer {
 
 						// Success - invalidate OAuth cache so footer updates
 						invalidateOAuthCache();
+						if (providerId === "anthropic" && this.agent.state.model?.provider === "anthropic") {
+							void this.refreshAnthropicUsageLimits({ force: true, clearBeforeFetch: true });
+						}
 						this.chatContainer.addChild(new Spacer(1));
 						this.chatContainer.addChild(
 							new Text(theme.fg("success", `✓ Successfully logged in to ${providerId}`), 1, 0),
