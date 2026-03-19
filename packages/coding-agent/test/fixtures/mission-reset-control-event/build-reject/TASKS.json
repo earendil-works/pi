@@ -1,0 +1,11 @@
+{
+	"tasks": [
+		{
+			"id": "only-task",
+			"title": "Remain a build mission fixture",
+			"status": "todo",
+			"validation": [],
+			"notes": "This fixture exists only to verify `/mission-reset` rejection."
+		}
+	]
+}

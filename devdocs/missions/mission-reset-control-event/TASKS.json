@@ -1,0 +1,59 @@
+{
+  "tasks": [
+    {
+      "id": "fixture-missions",
+      "title": "Add fixture missions for reset verification",
+      "status": "done",
+      "validation": [
+        "test -f devdocs/missions/mission-reset-control-event/SPEC.md",
+        "test -f devdocs/missions/mission-reset-control-event/ARCHITECTURE.md"
+      ],
+      "notes": "Create one real optimize mission fixture for XTUI verification and synthetic fixtures for targeted automated tests."
+    },
+    {
+      "id": "red-runner-tests",
+      "title": "Add failing tests that prove reset is currently missing",
+      "status": "done",
+      "validation": [
+        "echo 'Targeted mission runner tests fail before implementation for converged and blocked resume cases'"
+      ],
+      "notes": "Use real mission history files and assert that resume currently halts before any new iteration after convergence or blocked stop."
+    },
+    {
+      "id": "history-control-event",
+      "title": "Teach mission history parsing and runner logic about control resume-reset barriers",
+      "status": "done",
+      "validation": [
+        "echo 'Targeted mission history and runner tests pass with control barrier semantics'"
+      ],
+      "notes": "Control events must not count as experiments and must remain append-only."
+    },
+    {
+      "id": "slash-command",
+      "title": "Add /mission-reset command wiring and user-facing messages",
+      "status": "done",
+      "validation": [
+        "echo 'Slash command tests pass for success and rejection cases'"
+      ],
+      "notes": "Require an explicit path and reject build-mode missions clearly."
+    },
+    {
+      "id": "xtui-verification",
+      "title": "Add and run XTUI verification against a real fixture mission",
+      "status": "done",
+      "validation": [
+        "echo 'XTUI session shows /mission-reset success and fixture EXPERIMENTS.jsonl contains control/resume-reset event'"
+      ],
+      "notes": "Use a controlled workspace and assert on both terminal output and appended mission history."
+    },
+    {
+      "id": "finish",
+      "title": "Mark the mission complete once automated and XTUI verification are green",
+      "status": "done",
+      "validation": [
+        "python3 - <<'PY'\nimport json\nfrom pathlib import Path\npath = Path('devdocs/missions/mission-reset-control-event/TASKS.json')\ndata = json.loads(path.read_text())\nassert all(task['status'] == 'done' for task in data['tasks'])\nPY"
+      ],
+      "notes": "Only do this after the implementation exists, tests pass, and PROGRESS.md says the mission is complete."
+    }
+  ]
+}

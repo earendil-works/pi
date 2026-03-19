@@ -163,4 +163,28 @@ describe("slash command draft selection", () => {
 		expect(errors).toEqual([]);
 		expect(warnings).toContain("Prepared /mission-run draft. Enter an explicit mission path.");
 	});
+
+	it("injects a /mission-reset draft instead of executing the bare command from the slash dialog", async () => {
+		const { renderer, cleanup } = await makeRenderer();
+		cleanups.push(cleanup);
+
+		const errors: string[] = [];
+		const warnings: string[] = [];
+		const originalShowError = renderer.showError.bind(renderer);
+		const originalShowWarning = renderer.showWarning.bind(renderer);
+		renderer.showError = (message: string) => {
+			errors.push(message);
+			originalShowError(message);
+		};
+		renderer.showWarning = (message: string) => {
+			warnings.push(message);
+			originalShowWarning(message);
+		};
+
+		selectSlashCommand(renderer, "mission-reset");
+
+		expect(renderer.editor.getText()).toBe("/mission-reset ");
+		expect(errors).toEqual([]);
+		expect(warnings).toContain("Prepared /mission-reset draft. Enter an explicit mission path.");
+	});
 });

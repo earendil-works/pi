@@ -64,6 +64,7 @@ import {
 	buildHandoffSummaryUserText,
 	HANDOFF_SUMMARY_SYSTEM_PROMPT,
 } from "../handoff-summary.js";
+import { appendMissionResumeResetEvent } from "../missions/mission-reset.js";
 import { runMissionLoop } from "../missions/mission-runner.js";
 import {
 	buildMissionUiState,
@@ -630,6 +631,14 @@ export class TuiRenderer {
 			injectedDiagnostic: "Prepared /mission-resume draft. Enter an explicit mission path.",
 		};
 
+		const missionResetCommand: SlashCommand = {
+			name: "mission-reset",
+			description: "Append a resume-reset barrier so an optimize mission can be resumed again",
+			selectionBehavior: "inject",
+			injectedText: "/mission-reset ",
+			injectedDiagnostic: "Prepared /mission-reset draft. Enter an explicit mission path.",
+		};
+
 		const missionHaltCommand: SlashCommand = {
 			name: "mission-halt",
 			description: "Stop the active mission after the current iteration finishes",
@@ -688,6 +697,7 @@ export class TuiRenderer {
 			missionConvergenceCommand,
 			missionExitCommand,
 			missionIterationsCommand,
+			missionResetCommand,
 			modelCommand,
 			missionResumeCommand,
 			missionRunCommand,
@@ -3648,6 +3658,18 @@ export class TuiRenderer {
 			return;
 		}
 
+		const missionResetMatch = rawText.match(/^\/mission-reset(?:\s+([\s\S]+))?$/);
+		if (missionResetMatch) {
+			const missionRef = missionResetMatch[1]?.trim() ?? "";
+			if (!missionRef) {
+				this.showError("Usage: /mission-reset <mission-path>");
+				return;
+			}
+			this.editor.setText("");
+			this.handleMissionResetCommand(missionRef);
+			return;
+		}
+
 		const missionRunMatch = rawText.match(/^\/mission-run(?:\s+([\s\S]+))?$/);
 		const missionResumeMatch = rawText.match(/^\/mission-resume(?:\s+([\s\S]+))?$/);
 		const campaignRunMatch = rawText.match(/^\/campaign-run(?:\s+([\s\S]+))?$/);
@@ -5450,6 +5472,23 @@ export class TuiRenderer {
 		this.missionConvergeAfterOverride = parsed;
 		this.missionConvergenceKindOverride = kindArg === undefined ? policy.kind : kindArg;
 		this.showWarning(`Mission convergence set to ${parsed} consecutive ${this.missionConvergenceKindOverride}.`);
+	}
+
+	private handleMissionResetCommand(missionRef: string): void {
+		try {
+			const missionDir = this.resolveMissionDir(missionRef);
+			const { resolvedMissionDir, event } = appendMissionResumeResetEvent(missionDir);
+			this.showWarning(
+				[
+					`Mission reset appended.`,
+					`Resolved path: ${resolvedMissionDir}`,
+					`Event: ${event.kind}`,
+					`You can now run /mission-resume ${missionRef}`,
+				].join("\n"),
+			);
+		} catch (error: unknown) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
 	}
 
 	private async handleMissionRunCommand(

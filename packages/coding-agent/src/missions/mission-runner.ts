@@ -23,38 +23,6 @@ export type MissionLoopResult =
 	| { status: "converged"; iterations: number; reason: string }
 	| { status: "blocked"; iterations: number; reason: string };
 
-function getOptimizeStatuses(experimentsText: string | undefined): MissionExperimentStatus[] {
-	if (!experimentsText) {
-		return [];
-	}
-
-	const statuses: MissionExperimentStatus[] = [];
-	for (const line of experimentsText.split("\n")) {
-		const trimmed = line.trim();
-		if (!trimmed) {
-			continue;
-		}
-
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(trimmed);
-		} catch {
-			continue;
-		}
-
-		if (typeof parsed !== "object" || parsed === null || !("status" in parsed)) {
-			continue;
-		}
-
-		const status = parsed.status;
-		if (status === "keep" || status === "discard" || status === "crash" || status === "blocked") {
-			statuses.push(status);
-		}
-	}
-
-	return statuses;
-}
-
 function getConvergencePolicy(
 	mission: MissionDefinition,
 	override: MissionConvergencePolicy | undefined,
@@ -124,7 +92,7 @@ export async function runMissionLoop(options: RunMissionLoopOptions): Promise<Mi
 		}
 		if (mission.mode === "optimize") {
 			const convergencePolicy = getConvergencePolicy(mission, options.convergencePolicy);
-			if (hasConverged(getOptimizeStatuses(mission.experimentsText), convergencePolicy)) {
+			if (hasConverged(mission.optimizeStatusesSinceReset ?? [], convergencePolicy)) {
 				return {
 					status: "converged",
 					iterations,

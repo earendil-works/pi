@@ -36,6 +36,7 @@ export interface MissionDefinition {
 	runbookText: string;
 	experimentsText?: string;
 	latestExperimentResult?: MissionLatestExperimentResult;
+	optimizeStatusesSinceReset?: MissionExperimentStatus[];
 	metric?: string;
 	direction?: MissionMetricDirection;
 	convergeAfter?: number;

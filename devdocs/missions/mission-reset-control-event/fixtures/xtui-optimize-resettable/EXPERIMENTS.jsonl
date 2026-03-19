@@ -1,0 +1,4 @@
+{"type":"config","metric":"score_ms","direction":"lower"}
+{"run":1,"status":"discard","metric":140,"description":"baseline was noisy"}
+{"run":2,"status":"crash","reason":"benchmark harness timed out"}
+{"run":3,"status":"discard","metric":143,"description":"retry regressed again"}

@@ -1,0 +1,4 @@
+{"type":"config","metric":"duration_seconds","direction":"lower"}
+{"run":1,"status":"discard","metric":45.2}
+{"run":2,"status":"crash","reason":"benchmark crashed"}
+{"run":3,"status":"discard","metric":47.8}

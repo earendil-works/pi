@@ -1,0 +1,3 @@
+{"type":"config","metric":"duration_seconds","direction":"lower"}
+{"run":1,"status":"keep","metric":40.0}
+{"run":2,"status":"blocked","reason":"User must restore access token"}

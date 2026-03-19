@@ -1,10 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { parseMissionHistory } from "./mission-history.js";
 import type {
 	MissionConvergenceKind,
 	MissionDefinition,
-	MissionExperimentStatus,
-	MissionLatestExperimentResult,
 	MissionMetricDirection,
 	MissionMode,
 	MissionTask,
@@ -12,8 +11,6 @@ import type {
 } from "./types.js";
 
 const TASK_STATUSES: MissionTaskStatus[] = ["todo", "in_progress", "done", "blocked", "discarded"];
-const EXPERIMENT_STATUSES: MissionExperimentStatus[] = ["keep", "discard", "crash", "blocked"];
-
 function asRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
@@ -131,38 +128,6 @@ function parseMissionTask(value: unknown, index: number): MissionTask {
 	};
 }
 
-function parseLatestExperimentResult(experimentsText: string): MissionLatestExperimentResult | undefined {
-	const lines = experimentsText
-		.split("\n")
-		.map((line) => line.trim())
-		.filter((line) => line.length > 0);
-
-	for (let index = lines.length - 1; index >= 0; index -= 1) {
-		const line = lines[index];
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(line);
-		} catch {
-			continue;
-		}
-		if (!asRecord(parsed)) {
-			continue;
-		}
-		const status = parsed.status;
-		if (typeof status !== "string" || !EXPERIMENT_STATUSES.includes(status as MissionExperimentStatus)) {
-			continue;
-		}
-		const reason = typeof parsed.reason === "string" && parsed.reason.trim().length > 0 ? parsed.reason : undefined;
-		return {
-			status: status as MissionExperimentStatus,
-			reason,
-			raw: parsed,
-		};
-	}
-
-	return undefined;
-}
-
 export function parseMissionDefinition(missionDir: string): MissionDefinition {
 	const dir = resolve(missionDir);
 	const specPath = join(dir, "SPEC.md");
@@ -177,7 +142,7 @@ export function parseMissionDefinition(missionDir: string): MissionDefinition {
 	const runbookText = readRequiredFile(runbookPath, "RUNBOOK.md");
 	const experimentsText =
 		specFrontmatter.mode === "optimize" ? readRequiredFile(experimentsPath, "EXPERIMENTS.jsonl") : undefined;
-	const latestExperimentResult = experimentsText ? parseLatestExperimentResult(experimentsText) : undefined;
+	const parsedHistory = parseMissionHistory(experimentsText);
 
 	let tasks: MissionTask[] = [];
 	if (specFrontmatter.mode === "build" || existsSync(tasksPath)) {
@@ -223,7 +188,8 @@ export function parseMissionDefinition(missionDir: string): MissionDefinition {
 		progressText,
 		runbookText,
 		experimentsText,
-		latestExperimentResult,
+		latestExperimentResult: parsedHistory.latestExperimentResult,
+		optimizeStatusesSinceReset: parsedHistory.optimizeStatusesSinceReset,
 		metric: specFrontmatter.metric,
 		direction: specFrontmatter.direction,
 		convergeAfter: specFrontmatter.convergeAfter,
