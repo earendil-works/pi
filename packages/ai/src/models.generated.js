@@ -2035,23 +2035,6 @@ export const MODELS = {
 			contextWindow: 256000,
 			maxTokens: 64000,
 		},
-		"grok-4.20-multi-agent-beta-latest": {
-			id: "grok-4.20-multi-agent-beta-latest",
-			name: "Grok 4.20 Multi-Agent Beta",
-			api: "openai-completions",
-			provider: "xai",
-			baseUrl: "https://api.x.ai/v1",
-			reasoning: true,
-			input: ["text", "image"],
-			cost: {
-				input: 2,
-				output: 6,
-				cacheRead: 0.2,
-				cacheWrite: 0,
-			},
-			contextWindow: 2000000,
-			maxTokens: 30000,
-		},
 		"grok-3-latest": {
 			id: "grok-3-latest",
 			name: "Grok 3 Latest",

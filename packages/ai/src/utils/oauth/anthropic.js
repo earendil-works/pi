@@ -9,6 +9,8 @@ const CLIENT_ID = decode("OWQxYzI1MGEtZTYxYi00NGQ5LTg4ZWQtNTk0NGQxOTYyZjVl");
 const AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
 const TOKEN_URL = "https://console.anthropic.com/v1/oauth/token";
 const REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback";
+// `user:profile` is required for Anthropic's OAuth usage endpoint
+// (`GET /api/oauth/usage`) which we use to surface 5h/weekly subscription usage.
 const SCOPES = "org:create_api_key user:profile user:inference";
 /**
  * Generate PKCE code verifier and challenge
