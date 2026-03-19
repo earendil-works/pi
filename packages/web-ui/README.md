@@ -88,7 +88,7 @@ document.body.appendChild(chatPanel);
 
 ```
 ┌─────────────────────────────────────────────────────┐
-│                    ChatPanel                         │
+│                    ChatPanel                        │
 │  ┌─────────────────────┐  ┌─────────────────────┐   │
 │  │   AgentInterface    │  │   ArtifactsPanel    │   │
 │  │  (messages, input)  │  │  (HTML, SVG, MD)    │   │
@@ -96,20 +96,20 @@ document.body.appendChild(chatPanel);
 └─────────────────────────────────────────────────────┘
                           │
                           ▼
-┌─────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────┐
 │              Agent (from pi-agent-core)              │
 │  - State management (messages, model, tools)         │
 │  - Event emission (agent_start, message_update, ...) │
 │  - Tool execution                                    │
-└─────────────────────────────────────────────────────┘
+└──────────────────────────────────────────────────────┘
                           │
                           ▼
 ┌─────────────────────────────────────────────────────┐
-│                   AppStorage                         │
-│  ┌──────────┐ ┌──────────┐ ┌──────────┐            │
-│  │ Settings │ │ Provider │ │ Sessions │            │
-│  │  Store   │ │Keys Store│ │  Store   │            │
-│  └──────────┘ └──────────┘ └──────────┘            │
+│                   AppStorage                        │
+│  ┌──────────┐ ┌──────────┐ ┌──────────┐             │
+│  │ Settings │ │ Provider │ │ Sessions │             │
+│  │  Store   │ │Keys Store│ │  Store   │             │
+│  └──────────┘ └──────────┘ └──────────┘             │
 │                     │                               │
 │              IndexedDBStorageBackend                │
 └─────────────────────────────────────────────────────┘
