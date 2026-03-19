@@ -1,4 +1,4 @@
-import { spawnSync } from "child_process";
+import { execFile, spawnSync } from "child_process";
 import { existsSync, type FSWatcher, readFileSync, statSync, watch } from "fs";
 import { dirname, join, resolve } from "path";
 
@@ -46,9 +46,11 @@ function findGitPaths(): GitPaths | null {
 	}
 }
 
-/** Ask git for the current branch. Returns null on detached HEAD or if git is unavailable. */
-function resolveBranchWithGit(repoDir: string): string | null {
-	const result = spawnSync("git", ["--no-optional-locks", "symbolic-ref", "--quiet", "--short", "HEAD"], {
+const GIT_SYMBOLIC_REF_ARGS = ["--no-optional-locks", "symbolic-ref", "--quiet", "--short", "HEAD"] as const;
+
+/** Ask git for the current branch (sync, for initial resolution). */
+function resolveBranchWithGitSync(repoDir: string): string | null {
+	const result = spawnSync("git", GIT_SYMBOLIC_REF_ARGS, {
 		cwd: repoDir,
 		encoding: "utf8",
 		stdio: ["ignore", "pipe", "ignore"],
@@ -56,6 +58,19 @@ function resolveBranchWithGit(repoDir: string): string | null {
 	const branch = result.status === 0 ? result.stdout.trim() : "";
 	return branch || null;
 }
+
+/** Ask git for the current branch (async, for watcher-triggered refreshes). */
+function resolveBranchWithGitAsync(repoDir: string): Promise<string | null> {
+	return new Promise((res) => {
+		execFile("git", [...GIT_SYMBOLIC_REF_ARGS], { cwd: repoDir, encoding: "utf8" }, (error, stdout) => {
+			const branch = !error ? stdout.trim() : "";
+			res(branch || null);
+		});
+	});
+}
+
+/** Debounce delay for watcher-triggered branch refreshes (ms). */
+const WATCHER_DEBOUNCE_MS = 200;
 
 /**
  * Provides git branch and extension statuses - data not otherwise accessible to extensions.
@@ -67,6 +82,7 @@ export class FooterDataProvider {
 	private gitPaths: GitPaths | null | undefined = undefined;
 	private headWatcher: FSWatcher | null = null;
 	private reftableWatcher: FSWatcher | null = null;
+	private refreshTimer: ReturnType<typeof setTimeout> | null = null;
 	private branchChangeCallbacks = new Set<() => void>();
 	private availableProviderCount = 0;
 
@@ -78,7 +94,7 @@ export class FooterDataProvider {
 	/** Current git branch, null if not in repo, "detached" if detached HEAD */
 	getGitBranch(): string | null {
 		if (this.cachedBranch === undefined) {
-			this.cachedBranch = this.resolveGitBranch();
+			this.cachedBranch = this.resolveGitBranchSync();
 		}
 		return this.cachedBranch;
 	}
@@ -128,6 +144,10 @@ export class FooterDataProvider {
 			this.reftableWatcher.close();
 			this.reftableWatcher = null;
 		}
+		if (this.refreshTimer) {
+			clearTimeout(this.refreshTimer);
+			this.refreshTimer = null;
+		}
 		this.branchChangeCallbacks.clear();
 	}
 
@@ -135,8 +155,18 @@ export class FooterDataProvider {
 		for (const cb of this.branchChangeCallbacks) cb();
 	}
 
-	private refreshGitBranch(): void {
-		const nextBranch = this.resolveGitBranch();
+	/** Schedule a debounced, async branch refresh. Collapses rapid watcher events. */
+	private scheduleRefresh(): void {
+		if (this.refreshTimer) clearTimeout(this.refreshTimer);
+		this.refreshTimer = setTimeout(() => {
+			this.refreshTimer = null;
+			this.refreshGitBranchAsync();
+		}, WATCHER_DEBOUNCE_MS);
+	}
+
+	/** Async branch refresh for watcher events. Avoids blocking the event loop. */
+	private async refreshGitBranchAsync(): Promise<void> {
+		const nextBranch = await this.resolveGitBranchAsync();
 		if (this.cachedBranch !== undefined && this.cachedBranch !== nextBranch) {
 			this.cachedBranch = nextBranch;
 			this.notifyBranchChange();
@@ -145,13 +175,31 @@ export class FooterDataProvider {
 		this.cachedBranch = nextBranch;
 	}
 
-	private resolveGitBranch(): string | null {
+	/** Sync branch resolution (used once for the initial getGitBranch() call). */
+	private resolveGitBranchSync(): string | null {
 		try {
 			if (!this.gitPaths) return null;
 			const content = readFileSync(this.gitPaths.headPath, "utf8").trim();
 			if (content.startsWith("ref: refs/heads/")) {
 				const branch = content.slice(16);
-				return branch === ".invalid" ? (resolveBranchWithGit(this.gitPaths.repoDir) ?? "detached") : branch;
+				return branch === ".invalid" ? (resolveBranchWithGitSync(this.gitPaths.repoDir) ?? "detached") : branch;
+			}
+			return "detached";
+		} catch {
+			return null;
+		}
+	}
+
+	/** Async branch resolution (used for watcher-triggered refreshes). */
+	private async resolveGitBranchAsync(): Promise<string | null> {
+		try {
+			if (!this.gitPaths) return null;
+			const content = readFileSync(this.gitPaths.headPath, "utf8").trim();
+			if (content.startsWith("ref: refs/heads/")) {
+				const branch = content.slice(16);
+				return branch === ".invalid"
+					? ((await resolveBranchWithGitAsync(this.gitPaths.repoDir)) ?? "detached")
+					: branch;
 			}
 			return "detached";
 		} catch {
@@ -168,7 +216,7 @@ export class FooterDataProvider {
 		try {
 			this.headWatcher = watch(dirname(this.gitPaths.headPath), (_eventType, filename) => {
 				if (!filename || filename.toString() === "HEAD") {
-					this.refreshGitBranch();
+					this.scheduleRefresh();
 				}
 			});
 		} catch {
@@ -181,7 +229,7 @@ export class FooterDataProvider {
 		if (existsSync(reftableDir)) {
 			try {
 				this.reftableWatcher = watch(reftableDir, () => {
-					this.refreshGitBranch();
+					this.scheduleRefresh();
 				});
 			} catch {
 				// Silently fail if we can't watch

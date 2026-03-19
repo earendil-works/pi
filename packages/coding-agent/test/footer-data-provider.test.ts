@@ -1,4 +1,4 @@
-import { spawnSync } from "child_process";
+import { execFile, spawnSync } from "child_process";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -13,6 +13,17 @@ vi.mock("child_process", () => ({
 		}
 		return { status: 1, stdout: "", stderr: "" };
 	}),
+	execFile: vi.fn(
+		(
+			_command: string,
+			_args: readonly string[],
+			_opts: unknown,
+			cb: (err: Error | null, stdout: string, stderr: string) => void,
+		) => {
+			const branch = resolvedBranch;
+			process.nextTick(() => cb(branch ? null : new Error("not on branch"), branch ? `${branch}\n` : "", ""));
+		},
+	),
 }));
 
 import { FooterDataProvider } from "../src/core/footer-data-provider.js";
@@ -74,6 +85,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 		tempDir = mkdtempSync(join(tmpdir(), "footer-data-provider-"));
 		resolvedBranch = "main";
 		vi.mocked(spawnSync).mockClear();
+		vi.mocked(execFile).mockClear();
 	});
 
 	afterEach(() => {
@@ -151,12 +163,15 @@ describe("FooterDataProvider reftable branch detection", () => {
 		const provider = new FooterDataProvider();
 		try {
 			expect(provider.getGitBranch()).toBe("main");
-			vi.mocked(spawnSync).mockClear();
+			vi.mocked(execFile).mockClear();
 			const onBranchChange = vi.fn();
 			provider.onBranchChange(onBranchChange);
 
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
-			await waitFor(() => vi.mocked(spawnSync).mock.calls.length > 0);
+			// Wait for debounce + async execFile to complete
+			await waitFor(() => vi.mocked(execFile).mock.calls.length > 0);
+			// Let the async callback settle
+			await new Promise((resolve) => setTimeout(resolve, 50));
 
 			expect(provider.getGitBranch()).toBe("main");
 			expect(onBranchChange).not.toHaveBeenCalled();
@@ -175,7 +190,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 			resolvedBranch = "foo";
 
 			await new Promise<void>((resolve, reject) => {
-				const timeout = setTimeout(() => reject(new Error("Timed out waiting for branch change")), 2000);
+				const timeout = setTimeout(() => reject(new Error("Timed out waiting for branch change")), 3000);
 				provider.onBranchChange(() => {
 					clearTimeout(timeout);
 					resolve();
