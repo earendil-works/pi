@@ -105,6 +105,7 @@ export class ToolExecutionComponent extends Container {
 	private writeHighlightCache?: WriteHighlightCache;
 	// When true, this component intentionally renders no lines
 	private hideComponent = false;
+	private bashStartTime?: number;
 
 	constructor(
 		toolName: string,
@@ -509,8 +510,25 @@ export class ToolExecutionComponent extends Container {
 		const command = str(this.args?.command);
 		const timeout = this.args?.timeout as number | undefined;
 
+		// Record start time on first render with timeout (idempotent)
+		if (timeout && !this.bashStartTime) {
+			this.bashStartTime = Date.now();
+		}
+
 		// Header
-		const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
+		let timeoutSuffix = '';
+		if (timeout && this.bashStartTime) {
+			if (this.result) {
+				const elapsed = ((Date.now() - this.bashStartTime) / 1000).toFixed(1);
+				timeoutSuffix = theme.fg('muted', ` (timeout ${timeout}s, took ${elapsed}s)`);
+			} else {
+				const startDate = new Date(this.bashStartTime);
+				const hh = String(startDate.getHours()).padStart(2, '0');
+				const mm = String(startDate.getMinutes()).padStart(2, '0');
+				const ss = String(startDate.getSeconds()).padStart(2, '0');
+				timeoutSuffix = theme.fg('muted', ` (timeout ${timeout}s, started ${hh}:${mm}:${ss})`);
+			}
+		}
 		const commandDisplay =
 			command === null ? theme.fg("error", "[invalid arg]") : command ? command : theme.fg("toolOutput", "...");
 		this.contentBox.addChild(
