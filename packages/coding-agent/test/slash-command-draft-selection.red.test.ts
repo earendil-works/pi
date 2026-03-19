@@ -109,11 +109,9 @@ describe("slash command draft selection", () => {
 
 		selectSlashCommand(renderer, "comp");
 
-		expect(renderer.editor.getText()).toBe("/compact ");
+		expect(renderer.editor.getText()).toBe("/compact --summary ");
 		expect(errors).toEqual([]);
-		expect(warnings).toContain(
-			"Prepared /compact draft. Modes: --summary <goal> | --inject <goal> | on | off | toggle | status",
-		);
+		expect(warnings).toContain("Prepared /compact --summary <goal> draft.");
 	});
 
 	it("injects a /fast draft instead of toggling fast mode from the slash dialog", async () => {

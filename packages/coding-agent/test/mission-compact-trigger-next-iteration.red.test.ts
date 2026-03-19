@@ -15,6 +15,17 @@ type MissionRenderer = {
 	showError(errorMessage: string): void;
 	showWarning(message: string): void;
 	handleEditorTextSubmission(text: string, kind: "by-end" | "next"): Promise<void>;
+	buildSummaryCompactionDetails(
+		goal: string,
+		signal: AbortSignal,
+	): Promise<{
+		handoffType: "explicit";
+		goal: string;
+		formattedMessage: string;
+		parentSessionId: string;
+		fileTokens: number;
+		keyFiles?: string[];
+	}>;
 };
 
 const COMPACTION_CONTINUATION_PREFIX = "Continue the task from the compacted checkpoint.";
@@ -135,14 +146,14 @@ describe("mission loop compact handling (red)", () => {
 						toolName: "compact",
 						isError: false,
 						result: {
-							content: [{ type: "text", text: "Prepared compact checkpoint" }],
+							content: [{ type: "text", text: 'Compaction requested: "Continue mission compact-red"' }],
 							details: {
 								handoffType: "explicit",
 								goal: "Continue mission compact-red",
-								formattedMessage: "# Handoff: Continue mission compact-red",
+								formattedMessage: "",
 								parentSessionId: "",
-								fileTokens: 55,
-								keyFiles: ["TASKS.json"],
+								fileTokens: 0,
+								keyFiles: [],
 							},
 						},
 					};
@@ -160,6 +171,14 @@ describe("mission loop compact handling (red)", () => {
 			},
 		});
 		const renderer = createMissionRenderer({ configDir, agent, warnings, errors });
+		renderer.buildSummaryCompactionDetails = async (goal) => ({
+			handoffType: "explicit",
+			goal,
+			formattedMessage: "# Handoff: Continue mission compact-red",
+			parentSessionId: "",
+			fileTokens: 55,
+			keyFiles: ["TASKS.json"],
+		});
 		cleanups.push(() => renderer.stop());
 
 		await renderer.init();
@@ -212,14 +231,14 @@ describe("mission loop compact handling (red)", () => {
 						toolName: "compact",
 						isError: false,
 						result: {
-							content: [{ type: "text", text: "Prepared compact checkpoint" }],
+							content: [{ type: "text", text: 'Compaction requested: "Continue mission compact-red"' }],
 							details: {
 								handoffType: "explicit",
 								goal: "Continue mission compact-red",
-								formattedMessage: "# Handoff: Continue mission compact-red",
+								formattedMessage: "",
 								parentSessionId: "",
-								fileTokens: 55,
-								keyFiles: ["TASKS.json"],
+								fileTokens: 0,
+								keyFiles: [],
 							},
 						},
 					};
@@ -241,6 +260,14 @@ describe("mission loop compact handling (red)", () => {
 			},
 		});
 		const renderer = createMissionRenderer({ configDir, agent, warnings, errors });
+		renderer.buildSummaryCompactionDetails = async (goal) => ({
+			handoffType: "explicit",
+			goal,
+			formattedMessage: "# Handoff: Continue mission compact-red",
+			parentSessionId: "",
+			fileTokens: 55,
+			keyFiles: ["TASKS.json"],
+		});
 		cleanups.push(() => renderer.stop());
 
 		await renderer.init();

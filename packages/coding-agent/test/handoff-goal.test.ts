@@ -56,10 +56,9 @@ describe("handoff goal normalization", () => {
 	it("handoffTool.execute normalizes generic goals", async () => {
 		const result = await handoffTool.execute("id", {
 			goal: GENERIC_HANDOFF_GOAL,
-			files: ["README.md:1-3"],
 		});
 
-		expect(result.details.goal).toBe("Continue work in README.md");
-		expect(result.details.formattedMessage).toContain("## Goal\nContinue work in README.md");
+		expect(result.details.goal).toBe(GENERIC_HANDOFF_GOAL);
+		expect(result.details.formattedMessage).toBe("");
 	});
 });

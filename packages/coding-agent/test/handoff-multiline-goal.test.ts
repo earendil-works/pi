@@ -1,4 +1,4 @@
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -16,19 +16,12 @@ describe("handoffTool multiline goal", () => {
 		mkdirSync(dir, { recursive: true });
 
 		try {
-			const file = join(dir, "a.ts");
-			writeFileSync(file, "export const x = 1;\n");
-
 			const goal = "Fix handoff prompt\n\nContext: users paste multiline goals";
-			const result = (await handoffTool.execute("call", { goal, files: [file] })) as ToolResult;
+			const result = (await handoffTool.execute("call", { goal })) as ToolResult;
 			expect(result.isError).not.toBe(true);
 
-			// Title stays short.
-			expect(result.details.goal).toBe("Fix handoff prompt");
-			expect(result.details.formattedMessage).toContain("# Handoff: Fix handoff prompt");
-
-			// But the full goal should be included for the next session.
-			expect(result.details.formattedMessage).toContain("Context: users paste multiline goals");
+			expect(result.details.goal).toBe(goal);
+			expect(result.details.formattedMessage).toBe("");
 		} finally {
 			rmSync(dir, { recursive: true, force: true });
 		}

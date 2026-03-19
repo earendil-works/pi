@@ -10,11 +10,8 @@ import { execFileSync } from "node:child_process";
 import * as os from "node:os";
 import type { AgentTool, Message, TextContent } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
-import { existsSync, readFileSync } from "fs";
 import { isAbsolute, relative, resolve } from "path";
-import { GENERIC_HANDOFF_GOAL, normalizeHandoffGoalFromFiles } from "../handoff-goal.js";
 import { getToolDescription } from "../prompts/index.js";
-import { findRepoRoot } from "../utils/find-repo-root.js";
 
 // -----------------------------------------------------------------------------
 // Types
@@ -436,19 +433,10 @@ export function buildHandoffMessage(
 // Tool Definition
 // -----------------------------------------------------------------------------
 
-const DEFAULT_TOKEN_LIMIT = 100_000;
-
 const handoffSchema = Type.Object({
 	goal: Type.String({
-		description: "Concise imperative goal for the new session (e.g., 'Implement OAuth logout flow')",
+		description: "Concise imperative goal for summary compaction (e.g., 'Implement OAuth logout flow')",
 	}),
-	files: Type.Array(
-		Type.String({
-			description: "File selections: 'path', 'path:line', or 'path:start-end'",
-		}),
-		{ description: "Files to inject as context", minItems: 1 },
-	),
-	token_limit: Type.Optional(Type.Number({ description: "Max tokens for file context (default: 100000)" })),
 });
 
 export const compactTool: AgentTool<typeof handoffSchema, HandoffDetails> = {
@@ -459,124 +447,37 @@ export const compactTool: AgentTool<typeof handoffSchema, HandoffDetails> = {
 
 	execute: async (
 		_toolCallId: string,
-		{ goal, files, token_limit }: { goal: string; files: string[]; token_limit?: number },
+		{ goal }: { goal: string },
 		signal?: AbortSignal,
 		_onProgress?: (chunk: string) => void,
 	): Promise<{ content: TextContent[]; details: HandoffDetails; isError?: boolean }> => {
-		const limit = token_limit ?? DEFAULT_TOKEN_LIMIT;
-
-		// Check for abort
 		if (signal?.aborted) {
 			throw new Error("Aborted");
 		}
 
-		// Parse all file specifications
-		const slices = files.map((f) => {
-			const expanded = expandPath(f);
-			const slice = parseSlice(expanded);
-			// Ensure path is expanded in the slice
-			return { ...slice, path: expandPath(slice.path) };
-		});
-
-		const repoRoot = findRepoRoot(process.cwd());
-
-		// Read and extract each file
-		const fileResults: FileResult[] = [];
-		const errors: string[] = [];
-
-		for (const slice of slices) {
-			const candidates = resolveSliceCandidates(slice.path, repoRoot);
-			const resolvedPath = candidates.find((candidate) => existsSync(candidate));
-
-			if (!resolvedPath) {
-				errors.push(`File not found: ${slice.path}`);
-				continue;
-			}
-
-			try {
-				const fullContent = readFileSync(resolvedPath, "utf-8");
-				const content = extractLines(fullContent, slice);
-				const tokens = estimateTokens(content);
-				fileResults.push({ slice: { ...slice, path: resolvedPath }, content, tokens });
-			} catch (err: unknown) {
-				const message = err instanceof Error ? err.message : String(err);
-				errors.push(`Failed to read ${slice.path}: ${message}`);
-			}
-		}
-
-		// Return errors if any files couldn't be read
-		if (errors.length > 0) {
+		const normalizedGoal = goal.trim();
+		if (!normalizedGoal) {
 			return {
-				content: [{ type: "text", text: `Errors:\n${errors.join("\n")}` }],
+				content: [{ type: "text", text: "Error: goal is required" }],
 				details: undefined as unknown as HandoffDetails,
 				isError: true,
 			};
 		}
-
-		const diffText = getGitDiff(
-			repoRoot,
-			fileResults.map((result) => result.slice.path),
-		);
-		const diffTokens = diffText ? estimateTokens(diffText) : 0;
-
-		// Check token budget
-		const totalTokens = fileResults.reduce((sum, f) => sum + f.tokens, 0) + diffTokens;
-
-		if (totalTokens > limit) {
-			const sorted = [...fileResults].sort((a, b) => b.tokens - a.tokens);
-			const breakdown = sorted
-				.slice(0, 5)
-				.map((f) => `- ${formatSlice(f.slice)}: ~${f.tokens.toLocaleString()} tokens`)
-				.join("\n");
-			const diffLine = diffTokens > 0 ? `- Diff: ~${diffTokens.toLocaleString()} tokens` : "";
-
-			return {
-				content: [
-					{
-						type: "text",
-						text: `Error: Files exceed ${limit.toLocaleString()} token limit (estimated: ${totalTokens.toLocaleString()}).
-
-Largest selections:
-${breakdown}${diffLine ? `\n${diffLine}` : ""}
-
-Suggestions:
-- Use line ranges to select specific sections (e.g., 'file.ts:100-200')
-- Remove lower-priority files
-- Split into multiple handoffs for different concerns`,
-					},
-				],
-				details: undefined as unknown as HandoffDetails,
-				isError: true,
-			};
-		}
-
-		const diffBlock = formatFileDiff(diffText);
-		const normalizedGoal = normalizeHandoffGoalFromFiles({ goal, files });
-		const trimmedGoal = goal.trim();
-		const isBareGenericGoal =
-			trimmedGoal.length > 0 &&
-			!trimmedGoal.includes("\n") &&
-			trimmedGoal.toLowerCase() === GENERIC_HANDOFF_GOAL.toLowerCase();
-		const goalBody = isBareGenericGoal ? normalizedGoal : trimmedGoal || normalizedGoal;
-
-		// Format the handoff message
-		const fileContext = formatFileContext(fileResults);
-		// parentSessionId will be filled by TUI
-		const formattedMessage = buildHandoffMessage(normalizedGoal, fileContext, null, diffBlock, goalBody);
 
 		return {
 			content: [
 				{
 					type: "text",
-					text: `Handoff prepared: "${normalizedGoal}" (${totalTokens.toLocaleString()} tokens in ${files.length} file(s))`,
+					text: `Compaction requested: "${normalizedGoal}"`,
 				},
 			],
 			details: {
 				handoffType: "explicit",
 				goal: normalizedGoal,
-				formattedMessage,
-				parentSessionId: "", // Filled by TUI
-				fileTokens: totalTokens,
+				formattedMessage: "",
+				parentSessionId: "",
+				fileTokens: 0,
+				keyFiles: [],
 			},
 		};
 	},

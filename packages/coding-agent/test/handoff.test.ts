@@ -1,9 +1,5 @@
-import { execSync } from "node:child_process";
 import type { TextContent } from "@kennyfrc/mu-ai";
-import { mkdirSync, rmSync, writeFileSync } from "fs";
-import { tmpdir } from "os";
-import { dirname, join } from "path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 import {
 	buildHandoffMessage,
 	countScripts,
@@ -374,253 +370,36 @@ describe("formatParentThreadReference", () => {
 // -----------------------------------------------------------------------------
 
 describe("handoffTool.execute", () => {
-	const testDir = join(tmpdir(), "handoff-test-" + Date.now());
-
-	beforeAll(() => {
-		mkdirSync(testDir, { recursive: true });
-		writeFileSync(join(testDir, "small.ts"), "const x = 1;\nconst y = 2;\nconst z = 3;");
-		writeFileSync(join(testDir, "medium.ts"), "line\n".repeat(100));
-
-		// Create a file that would exceed token limit alone
-		writeFileSync(join(testDir, "huge.ts"), "x".repeat(500000));
-	});
-
-	afterAll(() => {
-		rmSync(testDir, { recursive: true, force: true });
-	});
-
-	it("succeeds with valid files under token limit", async () => {
+	it("returns a summary-only compaction request for a valid goal", async () => {
 		const result = (await handoffTool.execute("test-call", {
 			goal: "Test goal",
-			files: [join(testDir, "small.ts")],
 		})) as ToolResult;
 
 		expect(result.isError).toBeFalsy();
 		expect(result.details).toBeDefined();
 		expect(result.details.handoffType).toBe("explicit");
 		expect(result.details.goal).toBe("Test goal");
-		expect(result.details.formattedMessage).toContain("const x = 1");
-		expect(result.details.fileTokens).toBeGreaterThan(0);
-	});
-
-	it("returns error for missing file", async () => {
-		const result = (await handoffTool.execute("test-call", {
-			goal: "Test goal",
-			files: [join(testDir, "nonexistent.ts")],
-		})) as ToolResult;
-
-		expect(result.isError).toBe(true);
-		expect(result.content[0].text).toContain("File not found");
-	});
-
-	it("resolves repo-root relative paths from nested cwd", async () => {
-		const repoRoot = join(tmpdir(), `handoff-repo-${Date.now()}`);
-		const gitHeadPath = join(repoRoot, ".git", "HEAD");
-		const nestedCwd = join(repoRoot, "packages", "coding-agent");
-		const targetFile = join(repoRoot, "packages", "tui", "src", "nested.ts");
-		const previousCwd = process.cwd();
-
-		try {
-			mkdirSync(dirname(gitHeadPath), { recursive: true });
-			writeFileSync(gitHeadPath, "ref: refs/heads/main");
-			mkdirSync(nestedCwd, { recursive: true });
-			mkdirSync(dirname(targetFile), { recursive: true });
-			writeFileSync(targetFile, "const nested = true;");
-
-			process.chdir(nestedCwd);
-			const result = (await handoffTool.execute("test-call", {
-				goal: "Test goal",
-				files: ["packages/tui/src/nested.ts"],
-			})) as ToolResult;
-
-			expect(result.isError).toBeFalsy();
-			expect(result.details.formattedMessage).toContain("const nested = true;");
-		} finally {
-			process.chdir(previousCwd);
-			rmSync(repoRoot, { recursive: true, force: true });
-		}
-	});
-
-	it("includes git diff for selected files", async () => {
-		const repoRoot = join(tmpdir(), `handoff-diff-${Date.now()}`);
-		const targetFile = join(repoRoot, "file.txt");
-		const previousCwd = process.cwd();
-
-		try {
-			mkdirSync(repoRoot, { recursive: true });
-			execSync("git init", { cwd: repoRoot });
-			execSync('git config user.email "handoff@example.com"', { cwd: repoRoot });
-			execSync('git config user.name "Handoff Test"', { cwd: repoRoot });
-			writeFileSync(targetFile, "line1\n");
-			execSync("git add file.txt", { cwd: repoRoot });
-			execSync('git commit -m "init"', { cwd: repoRoot });
-
-			writeFileSync(targetFile, "line1\nline2\n");
-
-			process.chdir(repoRoot);
-			const result = (await handoffTool.execute("test-call", {
-				goal: "Test goal",
-				files: ["file.txt"],
-			})) as ToolResult;
-
-			expect(result.isError).toBeFalsy();
-			expect(result.details.formattedMessage).toContain("diff --git");
-			expect(result.details.formattedMessage).toContain("+line2");
-		} finally {
-			process.chdir(previousCwd);
-			rmSync(repoRoot, { recursive: true, force: true });
-		}
-	});
-
-	it("counts diff tokens toward the limit", async () => {
-		const repoRoot = join(tmpdir(), `handoff-diff-budget-${Date.now()}`);
-		const targetFile = join(repoRoot, "file.txt");
-		const previousCwd = process.cwd();
-		const expandedLines = Array.from({ length: 200 }, (_, index) => `line-${index + 1}`).join("\n");
-
-		try {
-			mkdirSync(repoRoot, { recursive: true });
-			execSync("git init", { cwd: repoRoot });
-			execSync('git config user.email "handoff@example.com"', { cwd: repoRoot });
-			execSync('git config user.name "Handoff Test"', { cwd: repoRoot });
-			writeFileSync(targetFile, "base\n");
-			execSync("git add file.txt", { cwd: repoRoot });
-			execSync('git commit -m "init"', { cwd: repoRoot });
-
-			writeFileSync(targetFile, `base\n${expandedLines}\n`);
-
-			process.chdir(repoRoot);
-			const result = (await handoffTool.execute("test-call", {
-				goal: "Test goal",
-				files: ["file.txt:1"],
-				token_limit: 50,
-			})) as ToolResult;
-
-			expect(result.isError).toBe(true);
-			expect(result.content[0].text).toContain("token limit");
-		} finally {
-			process.chdir(previousCwd);
-			rmSync(repoRoot, { recursive: true, force: true });
-		}
-	});
-
-	it("returns error when exceeding token limit", async () => {
-		const result = (await handoffTool.execute("test-call", {
-			goal: "Test goal",
-			files: [join(testDir, "huge.ts")],
-			token_limit: 1000,
-		})) as ToolResult;
-
-		expect(result.isError).toBe(true);
-		expect(result.content[0].text).toContain("exceed");
-		expect(result.content[0].text).toContain("token limit");
-		expect(result.content[0].text).toContain("Suggestions");
-	});
-
-	it("handles line range selection", async () => {
-		const result = (await handoffTool.execute("test-call", {
-			goal: "Test goal",
-			files: [`${join(testDir, "small.ts")}:1-2`],
-		})) as ToolResult;
-
-		expect(result.isError).toBeFalsy();
-		expect(result.details.formattedMessage).toContain("const x = 1");
-		expect(result.details.formattedMessage).toContain("const y = 2");
-		expect(result.details.formattedMessage).not.toContain("const z = 3");
-	});
-
-	it("handles single line selection", async () => {
-		const result = (await handoffTool.execute("test-call", {
-			goal: "Test goal",
-			files: [`${join(testDir, "small.ts")}:2`],
-		})) as ToolResult;
-
-		expect(result.isError).toBeFalsy();
-		expect(result.details.formattedMessage).toContain("const y = 2");
-		expect(result.details.formattedMessage).not.toContain("const x = 1");
-	});
-
-	it("respects custom token limit", async () => {
-		// medium.ts has 100 lines, should be under default 100k but may exceed low limit
-		const result = (await handoffTool.execute("test-call", {
-			goal: "Test goal",
-			files: [join(testDir, "medium.ts")],
-			token_limit: 10, // Very low limit
-		})) as ToolResult;
-
-		expect(result.isError).toBe(true);
-		expect(result.content[0].text).toContain("10"); // Shows the limit
-	});
-
-	it("handles multiple files", async () => {
-		const result = (await handoffTool.execute("test-call", {
-			goal: "Test goal",
-			files: [join(testDir, "small.ts"), `${join(testDir, "medium.ts")}:1-5`],
-		})) as ToolResult;
-
-		expect(result.isError).toBeFalsy();
-		expect(result.details.formattedMessage).toContain("small.ts");
-		expect(result.details.formattedMessage).toContain("medium.ts");
-	});
-
-	it("reports token count in success message", async () => {
-		const result = (await handoffTool.execute("test-call", {
-			goal: "Test goal",
-			files: [join(testDir, "small.ts")],
-		})) as ToolResult;
-
-		expect(result.isError).toBeFalsy();
-		expect(result.content[0].text).toMatch(/\d+ tokens/);
-		expect(result.content[0].text).toContain("1 file(s)");
+		expect(result.details.formattedMessage).toBe("");
+		expect(result.details.fileTokens).toBe(0);
+		expect(result.details.keyFiles).toEqual([]);
+		expect(result.content[0]?.text).toBe('Compaction requested: "Test goal"');
 	});
 
 	it("throws on abort signal", async () => {
 		const controller = new AbortController();
 		controller.abort();
 
-		await expect(
-			handoffTool.execute(
-				"test-call",
-				{
-					goal: "Test goal",
-					files: [join(testDir, "small.ts")],
-				},
-				controller.signal,
-			),
-		).rejects.toThrow("Aborted");
+		await expect(handoffTool.execute("test-call", { goal: "Test goal" }, controller.signal)).rejects.toThrow(
+			"Aborted",
+		);
 	});
 
-	it("handles infinite range selection", async () => {
+	it("returns an error for an empty goal", async () => {
 		const result = (await handoffTool.execute("test-call", {
-			goal: "Test goal",
-			files: [`${join(testDir, "small.ts")}:2-`],
-		})) as ToolResult;
-
-		expect(result.isError).toBeFalsy();
-		expect(result.details.formattedMessage).toContain("const y = 2");
-		expect(result.details.formattedMessage).toContain("const z = 3");
-		expect(result.details.formattedMessage).not.toContain("const x = 1");
-	});
-
-	it("shows largest files in error when over budget", async () => {
-		const result = (await handoffTool.execute("test-call", {
-			goal: "Test goal",
-			files: [join(testDir, "huge.ts"), join(testDir, "medium.ts"), join(testDir, "small.ts")],
-			token_limit: 100,
+			goal: "",
 		})) as ToolResult;
 
 		expect(result.isError).toBe(true);
-		// Should list the largest file first
-		expect(result.content[0].text).toContain("huge.ts");
-	});
-
-	it("handles empty goal gracefully", async () => {
-		const result = (await handoffTool.execute("test-call", {
-			goal: "",
-			files: [join(testDir, "small.ts")],
-		})) as ToolResult;
-
-		// Empty goal is allowed - the model decides if it makes sense
-		expect(result.isError).toBeFalsy();
+		expect(result.content[0]?.text).toBe("Error: goal is required");
 	});
 });

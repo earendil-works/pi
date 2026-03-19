@@ -34,8 +34,6 @@ import { createHash, randomUUID } from "crypto";
 import {
 	AUTO_HANDOFF_EMERGENCY_THRESHOLD,
 	type AutoHandoffMode,
-	type AutoHandoffSlashCommand,
-	applyAutoHandoffCommand,
 	shouldEnableHandoffNudge,
 	shouldTriggerEmergencyAutoHandoff,
 } from "../auto-handoff.js";
@@ -55,7 +53,6 @@ import {
 	parseFastModeSlashCommand,
 	supportsFastMode,
 } from "../fast-mode.js";
-import { parseHandoffFileSelections } from "../handoff-file-selection.js";
 import { extractHandoffFileTracking } from "../handoff-file-tracking.js";
 import { normalizeAutoHandoffGoal } from "../handoff-goal.js";
 import { formatMessagesForHandoffSelection } from "../handoff-selection-transcript.js";
@@ -75,12 +72,7 @@ import {
 import { parseMissionDefinition } from "../missions/parse-mission.js";
 import { findModel, getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
 import { executeExplicitCompactionStrategy } from "../morph-compaction-explicit.js";
-import {
-	applyMorphCompactionCommand,
-	type MorphCompactionMode,
-	type MorphCompactionSlashCommand,
-	parseMorphCompactionSlashCommand,
-} from "../morph-compaction-mode.js";
+import type { MorphCompactionMode } from "../morph-compaction-mode.js";
 import { WorkspaceNoteStore } from "../notes/workspace-note-store.js";
 import { playNotificationSound, sendNotification } from "../notification.js";
 import {
@@ -95,12 +87,7 @@ import {
 	setActiveOAuthAccount,
 } from "../oauth/index.js";
 import { PromptHistoryManager } from "../prompt-history-manager.js";
-import { generateFileTree } from "../prompts/file-tree.js";
-import {
-	buildHandoffFileSelectionPrompt,
-	getAutoHandoffGoalPrompt,
-	getHandoffNudgeReminder,
-} from "../prompts/index.js";
+import { getAutoHandoffGoalPrompt, getHandoffNudgeReminder } from "../prompts/index.js";
 import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
 import { formatSpawnedAgentsReport } from "../spawned-agents.js";
@@ -122,7 +109,7 @@ import { getEditorTheme, getMarkdownTheme, onThemeChange, setTheme, theme } from
 import { getTodoRootDirForCwd } from "../todos/todo-path.js";
 import { TodoStore } from "../todos/todo-store.js";
 import { bashTool, killAllBackgroundJobs, killBackgroundJob, listBackgroundJobs } from "../tools/bash.js";
-import { estimateTokens, type HandoffDetails, handoffTool } from "../tools/handoff.js";
+import { estimateTokens, type HandoffDetails } from "../tools/handoff.js";
 import type { ToolSelection } from "../tools/tool-selection.js";
 import { undoFileOperations } from "../undo/undo-file-operations.js";
 import {
@@ -137,7 +124,6 @@ import {
 } from "../usage-footer.js";
 import { autoFenceHtmlInMarkdown } from "../utils/auto-fence-html.js";
 import { generateThreadListingMeta } from "../utils/auto-title.js";
-import { findRepoRoot } from "../utils/find-repo-root.js";
 import { addToLimitedSet } from "../utils/limited-set.js";
 import { readAppendedFileChunkSync } from "../utils/read-appended-file-chunk.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
@@ -207,8 +193,6 @@ class ToastOverlayComponent implements Component {
 
 	invalidate(): void {}
 }
-
-type HandoffToolResult = Awaited<ReturnType<typeof handoffTool.execute>>;
 
 export function shouldStartAssistantActiveTiming(event: AssistantMessageEvent): boolean {
 	return event.type === "text_delta" || event.type === "toolcall_delta";
@@ -368,7 +352,7 @@ export class TuiRenderer {
 	private resumableCampaignPath: string | null = null;
 	private isAutoHandoffInProgress = false;
 	private shouldIncludeHandoffNudge = false; // 85% threshold nudge state
-	private pendingExplicitHandoff: (HandoffDetails & { parentSessionId: string | null }) | null = null;
+	private pendingExplicitCompactionGoal: string | null = null;
 	private pendingExplicitHandoffMessage: string | null = null;
 	private subscriptions = new Map<string, SubscriptionWatchState>();
 	private pendingSubscriptionEvents: SubscriptionEvent[] = [];
@@ -562,19 +546,10 @@ export class TuiRenderer {
 
 		const compactCommand: SlashCommand = {
 			name: "compact",
-			description: "Compact the current thread; use /compact on|off to toggle auto mode",
+			description: "Compact the current thread with a summary goal",
 			selectionBehavior: "inject",
-			injectedText: "/compact ",
-			injectedDiagnostic:
-				"Prepared /compact draft. Modes: --summary <goal> | --inject <goal> | on | off | toggle | status",
-		};
-
-		const morphCompactionCommand: SlashCommand = {
-			name: "morph-compaction",
-			description: "Control Morph-backed compaction mode (on / off / auto / toggle / status)",
-			selectionBehavior: "inject",
-			injectedText: "/morph-compaction ",
-			injectedDiagnostic: "Prepared /morph-compaction draft. Modes: on | off | auto | toggle | status",
+			injectedText: "/compact --summary ",
+			injectedDiagnostic: "Prepared /compact --summary <goal> draft.",
 		};
 
 		const subscribeCommand: SlashCommand = {
@@ -739,7 +714,6 @@ export class TuiRenderer {
 			exportCommand,
 			fastCommand,
 			compactCommand,
-			morphCompactionCommand,
 			subscribeCommand,
 			unsubscribeCommand,
 			loginCommand,
@@ -1491,7 +1465,7 @@ export class TuiRenderer {
 										theme.fg(
 											"warning",
 											"Context is very high; aborted tool execution to prevent overflow.\n" +
-												"Automatic compaction is OFF. Use /compact <goal> or /compact on.",
+												"Automatic compaction is OFF. Use /compact --summary <goal>.",
 										),
 										1,
 										0,
@@ -1564,10 +1538,7 @@ export class TuiRenderer {
 					event.result?.details?.handoffType === "explicit"
 				) {
 					const details = event.result.details as HandoffDetails;
-					this.pendingExplicitHandoff = {
-						...details,
-						parentSessionId: this.sessionManager.getSessionId(),
-					};
+					this.pendingExplicitCompactionGoal = details.goal;
 				}
 				break;
 			}
@@ -1650,22 +1621,30 @@ export class TuiRenderer {
 				this.syncFooterContextUsage();
 				this.syncFooterUsageFromMessages(state.messages);
 
-				// Execute pending explicit compaction (from compact tool)
-				if (this.pendingExplicitHandoff) {
-					const handoff = this.pendingExplicitHandoff;
-					this.pendingExplicitHandoff = null;
-					if (this.hasActiveMissionRun()) {
-						this.beginMissionCompactTransition(handoff);
+				if (this.pendingExplicitCompactionGoal) {
+					const goal = this.pendingExplicitCompactionGoal;
+					this.pendingExplicitCompactionGoal = null;
+					try {
+						const handoff = {
+							...(await this.buildSummaryCompactionDetails(goal, new AbortController().signal)),
+							parentSessionId: this.sessionManager.getSessionId(),
+						};
+						if (this.hasActiveMissionRun()) {
+							this.beginMissionCompactTransition(handoff);
+							break;
+						}
+						scheduleExplicitHandoff({
+							pauseQueueDrain: () => this.agent.pauseQueueDrain(),
+							execute: () => {
+								void this.executeExplicitHandoff(handoff);
+							},
+						});
+						break;
+					} catch (error: unknown) {
+						const message = error instanceof Error ? error.message : String(error);
+						this.showError(`Compaction failed: ${message}`);
 						break;
 					}
-					scheduleExplicitHandoff({
-						pauseQueueDrain: () => this.agent.pauseQueueDrain(),
-						execute: () => {
-							void this.executeExplicitHandoff(handoff);
-						},
-					});
-					// Skip auto-titling while the compaction transition is being applied.
-					break;
 				}
 
 				void this.drainSubscriptionEvents();
@@ -3573,34 +3552,13 @@ export class TuiRenderer {
 			const parsedCompactCommand = parseCompactSlashCommand(rawText);
 			if (!parsedCompactCommand) {
 				this.showError(
-					"Usage: /compact [--summary|--inject] <goal>\n" +
-						"Example: /compact fix the login page tests\n" +
-						"Example (file-context checkpoint): /compact --inject fix the login page tests\n" +
-						"Auto mode: /compact on | off | toggle | status",
+					"Usage: /compact --summary <goal>\n" + "Example: /compact --summary fix the login page tests",
 				);
 				return;
 			}
 
 			this.editor.setText("");
-			if (parsedCompactCommand.kind === "auto") {
-				this.handleAutoHandoffSlashCommand(parsedCompactCommand.command);
-				return;
-			}
-
-			await this.handleHandoffCommand(parsedCompactCommand.goal, parsedCompactCommand.mode);
-			return;
-		}
-
-		const morphCompactionCommand = parseMorphCompactionSlashCommand(rawText);
-		if (morphCompactionCommand) {
-			this.promptHistory.savePrompt(rawText);
-			this.editor.setText("");
-			this.handleMorphCompactionSlashCommand(morphCompactionCommand);
-			return;
-		}
-
-		if (rawText.startsWith("/morph-compaction")) {
-			this.showError("Usage: /morph-compaction on | off | auto | toggle | status");
+			await this.handleHandoffCommand(parsedCompactCommand.goal);
 			return;
 		}
 
@@ -4214,7 +4172,7 @@ export class TuiRenderer {
 		this.ui.requestRender();
 	}
 
-	private async handleHandoffCommand(goal: string, mode: "summary" | "inject"): Promise<void> {
+	private async handleHandoffCommand(goal: string): Promise<void> {
 		const parentId = this.sessionManager.getSessionId();
 		const messages = this.agent.state.messages;
 
@@ -4251,9 +4209,7 @@ export class TuiRenderer {
 			this.ui,
 			(spinner) => theme.fg("accent", spinner),
 			(text) => theme.fg("muted", text),
-			mode === "inject"
-				? "Selecting compact context files... (esc to cancel)"
-				: "Preparing compact thread history... (esc to cancel)",
+			"Preparing compact thread history... (esc to cancel)",
 		);
 		this.statusContainer.addChild(this.loadingAnimation);
 		this.ui.requestRender();
@@ -4263,25 +4219,10 @@ export class TuiRenderer {
 		const { signal } = handoffAbortController;
 
 		try {
-			const details =
-				mode === "inject"
-					? await (async () => {
-							if (!this.handoffAbortController) {
-								throw new Error("Handoff controller missing");
-							}
-							const files = await this.selectHandoffFiles(goal, this.handoffAbortController.signal);
-							if (this.loadingAnimation) {
-								this.loadingAnimation.setMessage("Preparing compact checkpoint... (esc to cancel)");
-							}
-							const details = await this.buildHandoffDetails(goal, files, this.handoffAbortController.signal);
-							return details;
-						})()
-					: await (async () => {
-							if (this.loadingAnimation) {
-								this.loadingAnimation.setMessage("Compacting thread history... (esc to cancel)");
-							}
-							return await this.buildSummaryCompactionDetails(goal, signal);
-						})();
+			if (this.loadingAnimation) {
+				this.loadingAnimation.setMessage("Compacting thread history... (esc to cancel)");
+			}
+			const details = await this.buildSummaryCompactionDetails(goal, signal);
 
 			scheduleExplicitHandoff({
 				pauseQueueDrain: () => this.agent.pauseQueueDrain(),
@@ -4625,6 +4566,7 @@ export class TuiRenderer {
 		this.editingQueueIndex = null;
 		this.savedEditorText = null;
 		this.isHandlingQueueEditChange = false;
+		this.pendingExplicitCompactionGoal = null;
 		this.pendingExplicitHandoffMessage = null;
 
 		this.renderInitialMessages(this.agent.state);
@@ -4661,13 +4603,6 @@ export class TuiRenderer {
 		};
 	}
 
-	private extractAssistantText(message: AssistantMessage): string {
-		return message.content
-			.filter((c): c is { type: "text"; text: string } => c.type === "text")
-			.map((c) => c.text)
-			.join("");
-	}
-
 	private resolveHandoffLlmModel(model: Model<Api>): Model<Api> {
 		if (model.provider !== "openai-codex") return model;
 		const found = findModel("openai-codex", "gpt-5.3-codex-spark");
@@ -4694,104 +4629,6 @@ export class TuiRenderer {
 			model: fallbackModel,
 			apiKey: fallbackApiKey,
 		};
-	}
-
-	private async selectHandoffFiles(goal: string, signal: AbortSignal): Promise<string[]> {
-		const model = this.agent.state.model;
-		if (!model) throw new Error("No model selected");
-
-		const handoffModel = this.resolveHandoffLlmModel(model as unknown as Model<Api>);
-
-		const apiKey = await getApiKeyForModel(handoffModel);
-		if (!apiKey) throw new Error(`No API key for ${handoffModel.provider}`);
-
-		const historyText = this.formatMessagesForHandoff(this.agent.state.messages);
-		const repoRoot = findRepoRoot(process.cwd()) ?? process.cwd();
-		const fileTree = await generateFileTree({ cwd: repoRoot, limit: 400 });
-		const systemPrompt = buildHandoffFileSelectionPrompt({ goal, fileTree });
-		const context = {
-			systemPrompt,
-			messages: [
-				{
-					role: "user" as const,
-					content: [{ type: "text" as const, text: historyText }],
-					timestamp: Date.now(),
-				},
-			],
-		};
-
-		let result: AssistantMessage;
-		switch (handoffModel.api) {
-			case "anthropic-messages":
-				result = await complete(handoffModel as Model<"anthropic-messages">, context, {
-					apiKey,
-					signal,
-				});
-				break;
-			case "openai-completions":
-				result = await complete(handoffModel as Model<"openai-completions">, context, {
-					apiKey,
-					signal,
-				});
-				break;
-			case "openai-responses":
-				result = await complete(handoffModel as Model<"openai-responses">, context, {
-					apiKey,
-					signal,
-				});
-				break;
-			case "google-generative-ai":
-				result = await complete(handoffModel as Model<"google-generative-ai">, context, {
-					apiKey,
-					signal,
-				});
-				break;
-			case "google-gemini-cli":
-				result = await complete(handoffModel as Model<"google-gemini-cli">, context, {
-					apiKey,
-					signal,
-				});
-				break;
-			case "openai-codex-responses":
-				result = await complete(handoffModel as Model<"openai-codex-responses">, context, {
-					apiKey,
-					signal,
-					reasoningEffort: "xhigh",
-				});
-				break;
-			case "zai-completions":
-				result = await complete(handoffModel as Model<"zai-completions">, context, { apiKey, signal });
-				break;
-			default: {
-				throw new Error(`Unsupported API for handoff file selection: ${String(handoffModel.api)}`);
-			}
-		}
-
-		if (result.stopReason === "error" || result.stopReason === "aborted") {
-			throw new Error(result.errorMessage || `LLM returned ${result.stopReason}`);
-		}
-
-		const textSelections = parseHandoffFileSelections(this.extractAssistantText(result));
-		if (textSelections.length === 0) {
-			throw new Error("No files selected for handoff");
-		}
-
-		return textSelections;
-	}
-
-	private async buildHandoffDetails(goal: string, files: string[], signal: AbortSignal): Promise<HandoffDetails> {
-		const result = (await handoffTool.execute(randomUUID(), { goal, files }, signal, undefined)) as HandoffToolResult;
-		const maybeError = result as HandoffToolResult & { isError?: boolean };
-
-		if (maybeError.isError) {
-			const errorText = result.content
-				.filter((c): c is { type: "text"; text: string } => c.type === "text")
-				.map((c) => c.text)
-				.join("");
-			throw new Error(errorText || "Handoff tool failed");
-		}
-
-		return result.details;
 	}
 
 	private async buildHandoffSummaryDetails(goal: string, signal: AbortSignal): Promise<HandoffDetails> {
@@ -5385,6 +5222,7 @@ export class TuiRenderer {
 		this.editingQueueIndex = null;
 		this.savedEditorText = null;
 		this.isHandlingQueueEditChange = false;
+		this.pendingExplicitCompactionGoal = null;
 		this.pendingExplicitHandoffMessage = null;
 		this.streamingComponent = null;
 		this.pendingTools.clear();
@@ -5918,49 +5756,6 @@ export class TuiRenderer {
 		this.chatContainer.addChild(new Spacer(1));
 		const status = next ? "enabled" : "disabled";
 		this.chatContainer.addChild(new Text(theme.fg("dim", `Notifications: ${status}`), 1, 0));
-		this.ui.requestRender();
-	}
-
-	private handleAutoHandoffSlashCommand(command: AutoHandoffSlashCommand): void {
-		const previous = this.autoHandoffMode;
-		const next = applyAutoHandoffCommand(previous, command);
-
-		this.autoHandoffMode = next;
-		if (next !== previous) {
-			this.settingsManager.setAutoHandoffMode(next);
-		}
-
-		// Turning automatic compaction off should also stop injecting the nudge.
-		this.shouldIncludeHandoffNudge = shouldEnableHandoffNudge({
-			autoHandoffMode: next,
-			ratio: 0,
-			currentFlag: false,
-		});
-		this.updateToolResultTransformer();
-
-		this.chatContainer.addChild(new Spacer(1));
-		const label =
-			next === "on"
-				? theme.fg("accent", "Automatic compaction: ON")
-				: theme.fg("warning", "Automatic compaction: OFF");
-		const hint = theme.fg("muted", "Use /compact [on|off|toggle|status]");
-		this.chatContainer.addChild(new Text(label + "\n" + hint, 1, 0));
-		this.ui.requestRender();
-	}
-
-	private handleMorphCompactionSlashCommand(command: MorphCompactionSlashCommand): void {
-		const previous = this.morphCompactionMode;
-		const next = applyMorphCompactionCommand(previous, command);
-
-		this.morphCompactionMode = next;
-		if (command.type !== "status" && next !== previous) {
-			this.settingsManager.setMorphCompactionMode(next);
-		}
-
-		this.chatContainer.addChild(new Spacer(1));
-		const label = theme.fg("dim", `Morph compaction mode: ${next}`);
-		const hint = theme.fg("muted", "Use /morph-compaction [on|off|auto|toggle|status]");
-		this.chatContainer.addChild(new Text(label + "\n" + hint, 1, 0));
 		this.ui.requestRender();
 	}
 

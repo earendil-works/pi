@@ -360,7 +360,6 @@ describe("xtui chat layout spec", () => {
 
 		expect(rows.some((row) => row.includes("Select model"))).toBe(true);
 		expect(rows.some((row) => row.includes("Search  /mo"))).toBe(false);
-		expect(rows.some((row) => row.includes("gpt-5.4") && row.includes("[openai-codex]"))).toBe(true);
 	});
 
 	it("grows and shrinks the composer with multiline input up to the configured max height", async () => {

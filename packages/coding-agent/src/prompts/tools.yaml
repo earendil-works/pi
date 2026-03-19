@@ -220,24 +220,18 @@ todo_write: |
   Replaces the full list each call.
 
 compact: |
-  Compact the current thread into a smaller in-thread checkpoint with curated file context.
+  Compact the current thread into a smaller in-thread checkpoint using summary compaction.
 
   Use when: current context is cluttered, you are near the context window, or you need a smaller baseline before continuing in the same session.
 
   Parameters:
   - goal: Imperative statement of what to accomplish (required)
-  - files: Array of file selections using slice syntax (required):
-    - 'src/foo.ts' - full file
-    - 'src/foo.ts:42' - single line
-    - 'src/foo.ts:10-50' - line range
-  - 'src/foo.ts:100-' - from line 100 to end
-  - token_limit: Max tokens for file context (default: 100000)
 
-  The tool validates files exist, checks token limits, and prepares a compact checkpoint.
+  The tool requests summary compaction for the current thread toward the provided goal.
   On success, the active thread history is replaced with a smaller checkpoint so work can continue in the same session.
 
   Example:
-  {"goal":"Implement OAuth logout flow","files":["src/auth/oauth.ts:50-150","src/routes/auth.ts","src/types/auth.ts:1-30"]}
+  {"goal":"Implement OAuth logout flow"}
 
 exec_command: |
   Execute a shell command.
