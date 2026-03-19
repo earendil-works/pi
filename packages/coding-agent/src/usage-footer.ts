@@ -1,4 +1,4 @@
-import type { AssistantMessage, Model, ServiceUsageLimits, ServiceUsageLimitWindow } from "@kennyfrc/mu-ai";
+import type { Api, AssistantMessage, Model, ServiceUsageLimits, ServiceUsageLimitWindow } from "@kennyfrc/mu-ai";
 
 export type UsageFooterMode = "hidden" | "visible";
 
@@ -85,6 +85,19 @@ export function applyUsageCommand(current: UsageFooterMode, command: UsageSlashC
 		case "status":
 			return current;
 	}
+}
+
+export function getEffectiveUsageFooterMode(options: {
+	savedMode: UsageFooterMode;
+	hasExplicitPreference: boolean;
+	model: Model<Api> | null | undefined;
+	usageLimits: UsageLimitsSnapshot | null;
+}): UsageFooterMode {
+	const { savedMode, hasExplicitPreference, model, usageLimits } = options;
+	if (savedMode === "visible") return "visible";
+	if (hasExplicitPreference) return savedMode;
+	if (model?.provider === "anthropic" && usageLimits) return "visible";
+	return savedMode;
 }
 
 export function supportsUsageCommand(model: Model<any> | null | undefined): boolean {

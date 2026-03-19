@@ -121,6 +121,7 @@ import { undoFileOperations } from "../undo/undo-file-operations.js";
 import {
 	applyUsageCommand,
 	assistantMessageUsageSnapshot,
+	getEffectiveUsageFooterMode,
 	parseUsageSlashCommand,
 	supportsUsageCommand,
 	type UsageFooterMode,
@@ -366,6 +367,7 @@ export class TuiRenderer {
 	private lastCodexAccountId: string | null = null;
 	private bashModeIndicatorContainer: Container = new Container();
 	private usageFooterMode: UsageFooterMode;
+	private hasExplicitUsageFooterPreference: boolean;
 
 	private unsubscribe?: () => void;
 
@@ -408,6 +410,7 @@ export class TuiRenderer {
 		this.extensionLoader = extensionLoader;
 		this.autoHandoffMode = settingsManager.getAutoHandoffMode();
 		this.usageFooterMode = settingsManager.getUsageFooterMode();
+		this.hasExplicitUsageFooterPreference = settingsManager.hasUsageFooterModePreference();
 
 		// Set up tool result transformer for handoff nudge injection
 		this.updateToolResultTransformer();
@@ -4868,10 +4871,17 @@ export class TuiRenderer {
 			totalCost += assistantMsg.usage.cost.total;
 		}
 
+		const effectiveUsageFooterMode = getEffectiveUsageFooterMode({
+			savedMode: this.usageFooterMode,
+			hasExplicitPreference: this.hasExplicitUsageFooterPreference,
+			model: this.agent.state.model,
+			usageLimits: this.composerUsageLimits,
+		});
+
 		const usageLabel = formatComposerUsageLabel({
 			model: this.agent.state.model,
 			totalCost,
-			usageFooterMode: this.usageFooterMode,
+			usageFooterMode: effectiveUsageFooterMode,
 			usageLimits: this.composerUsageLimits,
 			contextTokens: this.composerContextTokens,
 			contextWindow: this.composerContextWindow,
@@ -5803,6 +5813,7 @@ export class TuiRenderer {
 		}
 
 		this.usageFooterMode = applyUsageCommand(this.usageFooterMode, command);
+		this.hasExplicitUsageFooterPreference = true;
 		this.settingsManager.setUsageFooterMode(this.usageFooterMode);
 		this.footer.setUsageFooterMode(this.usageFooterMode);
 

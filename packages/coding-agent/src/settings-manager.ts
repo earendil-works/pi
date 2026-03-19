@@ -153,6 +153,10 @@ export class SettingsManager {
 		return this.settings.usageFooterMode === "visible" ? "visible" : "hidden";
 	}
 
+	hasUsageFooterModePreference(): boolean {
+		return this.settings.usageFooterMode === "visible" || this.settings.usageFooterMode === "hidden";
+	}
+
 	setUsageFooterMode(mode: UsageFooterMode): void {
 		this.settings.usageFooterMode = mode;
 		this.save();
