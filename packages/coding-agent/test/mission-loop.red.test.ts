@@ -102,7 +102,32 @@ describe("mission loop runner (red)", () => {
 		expect(result.status).toBe("blocked");
 		expect(result.iterations).toBe(0);
 		expect(iterations).toBe(0);
-		expect(result.reason).toMatch(/no runnable tasks/i);
+		expect(result.reason).toMatch(/blocked task/i);
+	});
+
+	it("stops immediately when any build-mode task is marked blocked even if later tasks remain todo", async () => {
+		const { dir, cleanup } = makeMissionDir();
+		cleanups.push(cleanup);
+		writeMission(dir, [
+			{ id: "a", title: "Needs external input", status: "blocked" },
+			{ id: "b", title: "Later task", status: "todo" },
+		]);
+
+		let iterations = 0;
+		const result = await runMissionLoop({
+			missionDir: dir,
+			executeIteration: async () => {
+				iterations += 1;
+			},
+		});
+
+		expect(result.status).toBe("blocked");
+		if (result.status !== "blocked") {
+			throw new Error(`Expected blocked result, received ${result.status}`);
+		}
+		expect(result.iterations).toBe(0);
+		expect(iterations).toBe(0);
+		expect(result.reason).toMatch(/blocked task/i);
 	});
 
 	it("honors maxIterations exactly instead of running one extra iteration", async () => {

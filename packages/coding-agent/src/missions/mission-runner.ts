@@ -23,6 +23,19 @@ export type MissionLoopResult =
 	| { status: "converged"; iterations: number; reason: string }
 	| { status: "blocked"; iterations: number; reason: string };
 
+function getBlockedBuildTaskReason(mission: MissionDefinition): string | undefined {
+	if (mission.mode === "optimize") {
+		return undefined;
+	}
+
+	const blockedTask = mission.tasks.find((task) => task.status === "blocked");
+	if (!blockedTask) {
+		return undefined;
+	}
+
+	return `Mission has blocked task ${blockedTask.id}: ${blockedTask.title}`;
+}
+
 function getConvergencePolicy(
 	mission: MissionDefinition,
 	override: MissionConvergencePolicy | undefined,
@@ -82,6 +95,14 @@ export async function runMissionLoop(options: RunMissionLoopOptions): Promise<Mi
 		const mission = parseMissionDefinition(options.missionDir);
 		if (mission.mode !== "optimize" && mission.allTasksDone) {
 			return { status: "done", iterations };
+		}
+		const blockedBuildTaskReason = getBlockedBuildTaskReason(mission);
+		if (blockedBuildTaskReason) {
+			return {
+				status: "blocked",
+				iterations,
+				reason: blockedBuildTaskReason,
+			};
 		}
 		if (mission.mode === "optimize" && mission.latestExperimentResult?.status === "blocked") {
 			return {

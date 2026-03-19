@@ -122,7 +122,7 @@ describe("mission runner parsing contract (red)", () => {
 		expect(prompt).toContain("PROGRESS.md");
 		expect(prompt).toContain("RUNBOOK.md");
 		expect(prompt).toMatch(/one task at a time/i);
-		expect(prompt).toMatch(/all task statuses.*done/i);
+		expect(prompt).toMatch(/all task statuses.*done|task.*blocked/i);
 		expect(prompt).toMatch(/keep|discard|blocked/i);
 	});
 });

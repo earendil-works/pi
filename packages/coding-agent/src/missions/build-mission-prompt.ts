@@ -42,7 +42,7 @@ export function buildMissionIterationPrompt(mission: MissionDefinition): string 
 		"Treat SPEC.md, TASKS.json, PROGRESS.md, and RUNBOOK.md as the source of truth.",
 		"Work exactly one task at a time.",
 		"Keep the change only if validation passes; otherwise discard it or mark the task blocked with the exact reason.",
-		"Stop only when all task statuses in TASKS.json are done.",
+		"Stop when all task statuses in TASKS.json are done, or when a task is marked blocked.",
 		"",
 		"Current tasks:",
 		taskSummary,
