@@ -787,6 +787,9 @@ async function runRpcMode(agent: Agent, sessionManager: SessionManager): Promise
 	if (agent.state.model) {
 		setCurrentModel(agent.state.model);
 		setCurrentThinkingLevel(agent.state.thinkingLevel);
+		if (!sessionManager.isInitialized()) {
+			sessionManager.startSession(agent.state);
+		}
 	}
 
 	if (agent.state.model) {
