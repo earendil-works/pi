@@ -4,6 +4,10 @@ export interface ExplicitHandoffScheduleOptions {
 	defer?: (task: () => void) => void;
 }
 
+function deferExplicitHandoff(task: () => void): void {
+	setTimeout(task, 0);
+}
+
 export interface ExplicitHandoffSubmitOptions {
 	message: string;
 	prompt: (message: string) => Promise<void>;
@@ -13,7 +17,7 @@ export interface ExplicitHandoffSubmitOptions {
 export type ExplicitHandoffSubmitResult = "input" | "prompt";
 
 export function scheduleExplicitHandoff(options: ExplicitHandoffScheduleOptions): void {
-	const { pauseQueueDrain, execute, defer = queueMicrotask } = options;
+	const { pauseQueueDrain, execute, defer = deferExplicitHandoff } = options;
 
 	pauseQueueDrain();
 	defer(execute);
