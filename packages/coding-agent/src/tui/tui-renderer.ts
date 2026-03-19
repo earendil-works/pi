@@ -175,6 +175,16 @@ function stripUserMessageTimePrefix(text: string): string {
 	return text.replace(USER_MESSAGE_TIME_PREFIX_PATTERN, "");
 }
 
+export function buildCompactionNotification(args: { goal: string; compactionNotificationLabel?: string }): {
+	title: string;
+	body: string;
+} {
+	return {
+		title: args.compactionNotificationLabel ? `Mu - ${args.compactionNotificationLabel}` : "Mu - Context compacted",
+		body: args.goal,
+	};
+}
+
 class ToastOverlayComponent implements Component {
 	constructor(private readonly message: string) {}
 
@@ -4448,6 +4458,17 @@ export class TuiRenderer {
 
 	private buildContextCompactionMessages(details: HandoffDetails & { parentSessionId: string | null }): Message[] {
 		if (details.replacementMessages && details.replacementMessages.length > 0) {
+			if (details.compactionApplicationMode === "goal-plus-replacement-history") {
+				return [
+					{
+						role: "user",
+						content: [{ type: "text", text: `Goal: ${details.goal}` }],
+						timestamp: Date.now(),
+					},
+					...details.replacementMessages,
+				];
+			}
+
 			const checkpointText = buildCompactionCheckpointText({
 				formattedMessage: details.formattedMessage,
 				goal: details.goal,
@@ -4587,7 +4608,11 @@ export class TuiRenderer {
 			playNotificationSound();
 		}
 		if (this.settingsManager.getNotificationBanner() !== "none") {
-			sendNotification("Mu - Context compacted", goal);
+			const notification = buildCompactionNotification({
+				goal,
+				compactionNotificationLabel: details.compactionNotificationLabel,
+			});
+			sendNotification(notification.title, notification.body);
 		}
 	}
 
@@ -4752,10 +4777,18 @@ export class TuiRenderer {
 				: execution.strategy.kind === "morph-compact"
 					? `Morph compaction (${execution.strategy.effectiveMode}, ratio ${execution.strategy.compressionRatio})`
 					: "Native replay compact";
+		const compactionApplicationMode =
+			execution.usedFallback || execution.strategy.kind !== "morph-compact"
+				? "checkpoint-summary"
+				: "goal-plus-replacement-history";
+		const compactionNotificationLabel =
+			execution.usedFallback || execution.strategy.kind !== "morph-compact" ? undefined : "Morph compaction";
 
 		return {
 			...execution.details,
 			compactionBackendLabel,
+			compactionApplicationMode,
+			compactionNotificationLabel,
 		};
 	}
 

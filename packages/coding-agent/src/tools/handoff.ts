@@ -39,6 +39,8 @@ export interface HandoffDetails {
 	parentSessionId: string;
 	fileTokens: number;
 	compactionBackendLabel?: string;
+	compactionApplicationMode?: "checkpoint-summary" | "goal-plus-replacement-history";
+	compactionNotificationLabel?: string;
 	replacementMessages?: Message[];
 	keyFiles?: string[];
 }
