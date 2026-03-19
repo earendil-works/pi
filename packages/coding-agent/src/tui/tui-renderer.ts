@@ -48,10 +48,8 @@ import { createCompactionAdapter } from "../compaction-adapter.js";
 import {
 	appendCheckpointToReplacementHistory,
 	buildCompactionCheckpointText,
-	buildCompactionContinuationPrompt,
 	buildMorphCompactionCheckpointText,
 } from "../compaction-checkpoint.js";
-import { submitExplicitHandoff } from "../explicit-handoff.js";
 import { exportSessionToHtml } from "../export-html.js";
 import type { ExtensionLoader } from "../extensions/loader.js";
 import type { ExtensionManager } from "../extensions/manager.js";
@@ -371,7 +369,6 @@ export class TuiRenderer {
 	private resumableCampaignPath: string | null = null;
 	private isAutoHandoffInProgress = false;
 	private shouldIncludeHandoffNudge = false; // 85% threshold nudge state
-	private pendingExplicitCompactionGoal: string | null = null;
 	private pendingExplicitHandoffMessage: string | null = null;
 	private subscriptions = new Map<string, SubscriptionWatchState>();
 	private pendingSubscriptionEvents: SubscriptionEvent[] = [];
@@ -399,6 +396,7 @@ export class TuiRenderer {
 	private accumulatedLatencyMs = 0;
 	private latencyGapCount = 0;
 	private ignoreNextAgentEndForAutoHandoffAbort = false;
+	private ignoreNextAgentEndForExplicitCompactionAbort = false;
 	private missionUiState: MissionUiState | null = null;
 	private anthropicUsageRefreshVersion = 0;
 
@@ -1555,7 +1553,7 @@ export class TuiRenderer {
 				}
 				this.pendingLatencyStartTime = Date.now();
 
-				// Detect explicit compact tool completion - queue for execution after agent_end
+				// Detect explicit compact tool completion - end the current run immediately
 				if (
 					event.toolName === "compact" &&
 					!event.isError &&
@@ -1563,7 +1561,21 @@ export class TuiRenderer {
 					event.result?.details?.handoffType === "explicit"
 				) {
 					const details = event.result.details as HandoffDetails;
-					this.pendingExplicitCompactionGoal = details.goal;
+					this.ignoreNextAgentEndForExplicitCompactionAbort = true;
+					this.agent.pauseQueueDrain();
+					this.agent.abort();
+
+					try {
+						await this.runExplicitCompactionTransition({
+							goal: details.goal,
+							parentSessionId: this.sessionManager.getSessionId(),
+							signal: new AbortController().signal,
+							loaderMessage: "Compacting thread history... (esc to cancel)",
+						});
+					} catch (error: unknown) {
+						const message = error instanceof Error ? error.message : String(error);
+						this.showError(`Compaction failed: ${message}`);
+					}
 				}
 				break;
 			}
@@ -1583,6 +1595,19 @@ export class TuiRenderer {
 						this.clearWorkingStatusFooterLine();
 					}
 					// Don't touch loadingAnimation - it's still owned by the handoff transition.
+					break;
+				}
+
+				if (this.ignoreNextAgentEndForExplicitCompactionAbort) {
+					this.ignoreNextAgentEndForExplicitCompactionAbort = false;
+					if (this.timerIntervalId && !this.missionRunWorkingStatusActive) {
+						clearInterval(this.timerIntervalId);
+						this.timerIntervalId = null;
+					}
+					if (!this.missionRunWorkingStatusActive) {
+						this.clearWorkingStatusMetrics();
+						this.clearWorkingStatusFooterLine();
+					}
 					break;
 				}
 
@@ -1647,24 +1672,6 @@ export class TuiRenderer {
 					this.agent.pauseQueueDrain();
 					await this.handleAutoHandoff(false);
 					break;
-				}
-
-				if (this.pendingExplicitCompactionGoal) {
-					const goal = this.pendingExplicitCompactionGoal;
-					this.pendingExplicitCompactionGoal = null;
-					try {
-						await this.runExplicitCompactionTransition({
-							goal,
-							parentSessionId: this.sessionManager.getSessionId(),
-							signal: new AbortController().signal,
-							loaderMessage: "Compacting thread history... (esc to cancel)",
-						});
-						break;
-					} catch (error: unknown) {
-						const message = error instanceof Error ? error.message : String(error);
-						this.showError(`Compaction failed: ${message}`);
-						break;
-					}
 				}
 
 				// Add completion label in the chat area, aligned with message content.
@@ -4632,22 +4639,6 @@ export class TuiRenderer {
 		return replacementMessages;
 	}
 
-	private async continueFromCompaction(details: HandoffDetails & { parentSessionId: string | null }): Promise<void> {
-		const message = buildCompactionContinuationPrompt({
-			formattedMessage: details.formattedMessage,
-			goal: details.goal,
-			parentThreadId: details.parentSessionId,
-			keyFiles: details.keyFiles,
-		});
-
-		await submitExplicitHandoff({
-			message,
-			prompt: async (promptMessage: string) => {
-				await this.agent.prompt(promptMessage);
-			},
-		});
-	}
-
 	private async waitForPendingMissionCompactTransition(): Promise<void> {
 		if (!this.pendingMissionCompactTransition) {
 			return;
@@ -4675,7 +4666,6 @@ export class TuiRenderer {
 		this.editingQueueIndex = null;
 		this.savedEditorText = null;
 		this.isHandlingQueueEditChange = false;
-		this.pendingExplicitCompactionGoal = null;
 		this.pendingExplicitHandoffMessage = null;
 
 		this.renderInitialMessages(this.agent.state);
@@ -5338,7 +5328,6 @@ export class TuiRenderer {
 	private async executeExplicitHandoff(details: HandoffDetails & { parentSessionId: string | null }): Promise<void> {
 		try {
 			await this.applyCompactionCheckpoint(details);
-			await this.continueFromCompaction(details);
 		} catch (error: unknown) {
 			const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 			this.chatContainer.addChild(new Spacer(1));
@@ -5384,7 +5373,6 @@ export class TuiRenderer {
 		this.editingQueueIndex = null;
 		this.savedEditorText = null;
 		this.isHandlingQueueEditChange = false;
-		this.pendingExplicitCompactionGoal = null;
 		this.pendingExplicitHandoffMessage = null;
 		this.streamingComponent = null;
 		this.pendingTools.clear();

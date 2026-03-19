@@ -18,6 +18,44 @@ type RunExplicitCompactionTransition = (
 ) => Promise<void>;
 
 describe("explicit compaction transition", () => {
+	it("applies compaction and ends the turn without continuing the agent", async () => {
+		const details: HandoffDetails = {
+			handoffType: "explicit",
+			goal: "Fix the login page tests",
+			formattedMessage: "formatted",
+			parentSessionId: "",
+			fileTokens: 12,
+			keyFiles: [],
+		};
+
+		const applyCompactionCheckpoint = vi.fn(async () => undefined);
+		const continueFromCompaction = vi.fn(async () => undefined);
+		const agent = { resumeQueueDrain: vi.fn() };
+		const chatContainer = { addChild: vi.fn() };
+		const ui = { requestRender: vi.fn() };
+
+		const executeExplicitHandoff = (
+			TuiRenderer.prototype as unknown as {
+				executeExplicitHandoff: (details: HandoffDetails & { parentSessionId: string | null }) => Promise<void>;
+			}
+		).executeExplicitHandoff;
+
+		await executeExplicitHandoff.call(
+			{
+				applyCompactionCheckpoint,
+				continueFromCompaction,
+				agent,
+				chatContainer,
+				ui,
+			},
+			{ ...details, parentSessionId: "thread-123" },
+		);
+
+		expect(applyCompactionCheckpoint).toHaveBeenCalledWith({ ...details, parentSessionId: "thread-123" });
+		expect(continueFromCompaction).not.toHaveBeenCalled();
+		expect(agent.resumeQueueDrain).toHaveBeenCalledOnce();
+	});
+
 	it("keeps a loader visible and waits synchronously for compaction execution", async () => {
 		initTheme("dark");
 
@@ -85,5 +123,67 @@ describe("explicit compaction transition", () => {
 		expect(harness.loadingAnimation).toBeNull();
 		expect(statusContainer.addChild).toHaveBeenCalledOnce();
 		expect(ui.requestRender).toHaveBeenCalled();
+	});
+
+	it("starts explicit compaction immediately after the compact tool result and aborts the current run", async () => {
+		const updateResult = vi.fn();
+		const runExplicitCompactionTransition = vi.fn(async () => undefined);
+		const harness = {
+			isInitialized: true,
+			footer: { updateState: vi.fn() },
+			syncFooterContextUsage: vi.fn(),
+			pendingTools: new Map([["tool-1", { updateResult }]]),
+			ui: { requestRender: vi.fn() },
+			pendingLatencyStartTime: null as number | null,
+			agent: { pauseQueueDrain: vi.fn(), abort: vi.fn() },
+			sessionManager: { getSessionId: vi.fn(() => "thread-123") },
+			pendingExplicitCompactionGoal: null as string | null,
+			ignoreNextAgentEndForExplicitCompactionAbort: false,
+			runExplicitCompactionTransition,
+		};
+
+		const handleEvent = (
+			TuiRenderer.prototype as unknown as {
+				handleEvent: (
+					this: typeof harness,
+					event: Record<string, unknown>,
+					state: Record<string, unknown>,
+				) => Promise<void>;
+			}
+		).handleEvent;
+
+		await handleEvent.call(
+			harness,
+			{
+				type: "tool_execution_end",
+				toolCallId: "tool-1",
+				toolName: "compact",
+				isError: false,
+				result: {
+					content: [{ type: "text", text: 'Compaction requested: "Fix the login page tests"' }],
+					details: {
+						handoffType: "explicit",
+						goal: "Fix the login page tests",
+						formattedMessage: "",
+						parentSessionId: "",
+						fileTokens: 0,
+						keyFiles: [],
+					},
+				},
+			},
+			{},
+		);
+
+		expect(updateResult).toHaveBeenCalledOnce();
+		expect(harness.agent.pauseQueueDrain).toHaveBeenCalledOnce();
+		expect(harness.agent.abort).toHaveBeenCalledOnce();
+		expect(harness.ignoreNextAgentEndForExplicitCompactionAbort).toBe(true);
+		expect(runExplicitCompactionTransition).toHaveBeenCalledWith({
+			goal: "Fix the login page tests",
+			parentSessionId: "thread-123",
+			signal: expect.any(AbortSignal),
+			loaderMessage: "Compacting thread history... (esc to cancel)",
+		});
+		expect(harness.pendingExplicitCompactionGoal).toBeNull();
 	});
 });
