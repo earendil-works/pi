@@ -3,6 +3,7 @@
  */
 
 import { spawn } from "node:child_process";
+import { waitForChildProcess } from "../utils/child-process.js";
 
 /**
  * Options for executing shell commands.
@@ -85,20 +86,22 @@ export async function execCommand(
 			stderr += data.toString();
 		});
 
-		proc.on("close", (code) => {
-			if (timeoutId) clearTimeout(timeoutId);
-			if (options?.signal) {
-				options.signal.removeEventListener("abort", killProcess);
-			}
-			resolve({ stdout, stderr, code: code ?? 0, killed });
-		});
-
-		proc.on("error", (_err) => {
-			if (timeoutId) clearTimeout(timeoutId);
-			if (options?.signal) {
-				options.signal.removeEventListener("abort", killProcess);
-			}
-			resolve({ stdout, stderr, code: 1, killed });
-		});
+		// Wait for process termination without hanging on inherited stdio handles
+		// held open by detached descendants.
+		waitForChildProcess(proc)
+			.then((code) => {
+				if (timeoutId) clearTimeout(timeoutId);
+				if (options?.signal) {
+					options.signal.removeEventListener("abort", killProcess);
+				}
+				resolve({ stdout, stderr, code: code ?? 0, killed });
+			})
+			.catch((_err) => {
+				if (timeoutId) clearTimeout(timeoutId);
+				if (options?.signal) {
+					options.signal.removeEventListener("abort", killProcess);
+				}
+				resolve({ stdout, stderr, code: 1, killed });
+			});
 	});
 }

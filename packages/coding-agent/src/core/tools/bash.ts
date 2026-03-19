@@ -5,6 +5,7 @@ import { join } from "node:path";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
+import { waitForChildProcess } from "../../utils/child-process.js";
 import { getShellConfig, getShellEnv, killProcessTree } from "../../utils/shell.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateTail } from "./truncate.js";
 
@@ -98,13 +99,6 @@ export function createLocalBashOperations(): BashOperations {
 					child.stderr.on("data", onData);
 				}
 
-				// Handle shell spawn errors
-				child.on("error", (err) => {
-					if (timeoutHandle) clearTimeout(timeoutHandle);
-					if (signal) signal.removeEventListener("abort", onAbort);
-					reject(err);
-				});
-
 				// Handle abort signal - kill entire process tree
 				const onAbort = () => {
 					if (child.pid) {
@@ -120,23 +114,30 @@ export function createLocalBashOperations(): BashOperations {
 					}
 				}
 
-				// Handle process exit
-				child.on("close", (code) => {
-					if (timeoutHandle) clearTimeout(timeoutHandle);
-					if (signal) signal.removeEventListener("abort", onAbort);
+				// Handle shell spawn errors and wait for the process to terminate without hanging
+				// on inherited stdio handles held by detached descendants.
+				waitForChildProcess(child)
+					.then((code) => {
+						if (timeoutHandle) clearTimeout(timeoutHandle);
+						if (signal) signal.removeEventListener("abort", onAbort);
 
-					if (signal?.aborted) {
-						reject(new Error("aborted"));
-						return;
-					}
+						if (signal?.aborted) {
+							reject(new Error("aborted"));
+							return;
+						}
 
-					if (timedOut) {
-						reject(new Error(`timeout:${timeout}`));
-						return;
-					}
+						if (timedOut) {
+							reject(new Error(`timeout:${timeout}`));
+							return;
+						}
 
-					resolve({ exitCode: code });
-				});
+						resolve({ exitCode: code });
+					})
+					.catch((err) => {
+						if (timeoutHandle) clearTimeout(timeoutHandle);
+						if (signal) signal.removeEventListener("abort", onAbort);
+						reject(err);
+					});
 			});
 		},
 	};
