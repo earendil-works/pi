@@ -112,6 +112,30 @@ function makeTodoMissionDir(): { dir: string; cleanup: () => void } {
 	};
 }
 
+function makeOptimizeMissionDir(): { dir: string; cleanup: () => void } {
+	const dir = mkdtempSync(join(tmpdir(), "mu-mission-submit-optimize-red-"));
+	writeFileSync(
+		join(dir, "SPEC.md"),
+		[
+			"---",
+			"mode: optimize",
+			"metric: duration_seconds",
+			"direction: lower",
+			"---",
+			"",
+			"# Goal",
+			"Optimize the benchmark.",
+		].join("\n"),
+	);
+	writeFileSync(join(dir, "PROGRESS.md"), "# Progress\n\n## Baseline\n- none\n");
+	writeFileSync(join(dir, "RUNBOOK.md"), "# Runbook\n\n1. Try one small experiment.\n");
+	writeFileSync(join(dir, "EXPERIMENTS.jsonl"), "");
+	return {
+		dir,
+		cleanup: () => rmSync(dir, { recursive: true, force: true }),
+	};
+}
+
 describe("/mission-run submission (red)", () => {
 	const cleanups: Array<() => void> = [];
 
@@ -853,6 +877,152 @@ describe("/mission-run submission (red)", () => {
 		expect(footerLabel).toContain(`mission ${dir.split("/").at(-1)}`);
 		expect(footerLabel).toContain("stopped");
 		expect(footerLabel).toContain("0/1 done");
+	});
+
+	it("fails hard after the first unrecoverable build-mission iteration error instead of looping until max iterations", async () => {
+		initTheme("dark");
+		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
+		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
+
+		const { dir, cleanup } = makeTodoMissionDir();
+		cleanups.push(cleanup);
+
+		const previousOpenAiKey = process.env.OPENAI_API_KEY;
+		process.env.OPENAI_API_KEY = "test-openai-key";
+		cleanups.push(() => {
+			if (previousOpenAiKey === undefined) {
+				delete process.env.OPENAI_API_KEY;
+			} else {
+				process.env.OPENAI_API_KEY = previousOpenAiKey;
+			}
+		});
+
+		let runCalls = 0;
+		const transport: AgentTransport = {
+			async *run() {
+				if (Date.now() < 0) {
+					yield undefined as never;
+				}
+				runCalls += 1;
+				throw new Error("429 Too Many Requests: synthetic unrecoverable failure");
+			},
+		};
+
+		const agent = new Agent({
+			transport,
+			initialState: {
+				model: getModel("openai", "gpt-4o-mini"),
+				thinkingLevel: "medium",
+			},
+		});
+
+		const renderer = new TuiRenderer(
+			agent,
+			{
+				appendContextCompaction: () => {},
+				loadTitle: () => null,
+				getSessionId: () => "mission-submit-red",
+			} as never,
+			new SettingsManager(configDir),
+			{
+				listCommands: () => [],
+				getCommand: () => undefined,
+				applyInputHooks: async (text: string) => ({ handled: false, text }),
+				composeToolResultTransformer: <T>(base: T) => base,
+			} as never,
+			{} as never,
+			"0.0.0",
+		) as unknown as MissionRenderer;
+
+		await renderer.init();
+		cleanups.push(() => renderer.stop());
+
+		const errors: string[] = [];
+		renderer.showError = (message: string) => {
+			errors.push(message);
+		};
+
+		await renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
+
+		expect(runCalls).toBe(1);
+		expect(errors.join("\n")).toMatch(/mission iteration failed/i);
+		expect(errors.join("\n")).toMatch(/429 Too Many Requests/i);
+		const footerLabel = stripAnsi(renderer.getComposerMetaLabel());
+		expect(footerLabel).toContain(`mission ${dir.split("/").at(-1)}`);
+		expect(footerLabel).toContain("blocked");
+	});
+
+	it("fails hard after the first unrecoverable optimize-mission iteration error instead of retrying forever", async () => {
+		initTheme("dark");
+		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
+		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
+
+		const { dir, cleanup } = makeOptimizeMissionDir();
+		cleanups.push(cleanup);
+
+		const previousOpenAiKey = process.env.OPENAI_API_KEY;
+		process.env.OPENAI_API_KEY = "test-openai-key";
+		cleanups.push(() => {
+			if (previousOpenAiKey === undefined) {
+				delete process.env.OPENAI_API_KEY;
+			} else {
+				process.env.OPENAI_API_KEY = previousOpenAiKey;
+			}
+		});
+
+		let runCalls = 0;
+		const transport: AgentTransport = {
+			async *run() {
+				if (Date.now() < 0) {
+					yield undefined as never;
+				}
+				runCalls += 1;
+				throw new Error("429 Too Many Requests: synthetic unrecoverable failure");
+			},
+		};
+
+		const agent = new Agent({
+			transport,
+			initialState: {
+				model: getModel("openai", "gpt-4o-mini"),
+				thinkingLevel: "medium",
+			},
+		});
+
+		const renderer = new TuiRenderer(
+			agent,
+			{
+				appendContextCompaction: () => {},
+				loadTitle: () => null,
+				getSessionId: () => "mission-submit-red",
+			} as never,
+			new SettingsManager(configDir),
+			{
+				listCommands: () => [],
+				getCommand: () => undefined,
+				applyInputHooks: async (text: string) => ({ handled: false, text }),
+				composeToolResultTransformer: <T>(base: T) => base,
+			} as never,
+			{} as never,
+			"0.0.0",
+		) as unknown as MissionRenderer;
+
+		await renderer.init();
+		cleanups.push(() => renderer.stop());
+
+		const errors: string[] = [];
+		renderer.showError = (message: string) => {
+			errors.push(message);
+		};
+
+		await renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
+
+		expect(runCalls).toBe(1);
+		expect(errors.join("\n")).toMatch(/mission iteration failed/i);
+		expect(errors.join("\n")).toMatch(/429 Too Many Requests/i);
+		const footerLabel = stripAnsi(renderer.getComposerMetaLabel());
+		expect(footerLabel).toContain(`mission ${dir.split("/").at(-1)}`);
+		expect(footerLabel).toContain("blocked");
 	});
 
 	it("halts after the current iteration when /mission-halt is submitted during a running mission", async () => {

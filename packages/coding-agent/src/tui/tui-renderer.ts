@@ -5545,6 +5545,7 @@ export class TuiRenderer {
 		options?: { preserveCampaign?: boolean },
 	): Promise<void> {
 		const missionDir = this.resolveMissionDir(missionRef);
+		let missionName: string | null = null;
 		if (!options?.preserveCampaign) {
 			this.resumableCampaignPath = null;
 		}
@@ -5560,8 +5561,14 @@ export class TuiRenderer {
 
 		try {
 			const initialMission = parseMissionDefinition(missionDir);
-			const missionName = path.basename(initialMission.dir);
-			this.setMissionUiState(missionName, 0, initialMission.allTasksDone ? "done" : "running", initialMission);
+			const currentMissionName = path.basename(initialMission.dir);
+			missionName = currentMissionName;
+			this.setMissionUiState(
+				currentMissionName,
+				0,
+				initialMission.allTasksDone ? "done" : "running",
+				initialMission,
+			);
 			if (!initialMission.allTasksDone) {
 				const currentModel = this.agent.state.model;
 				if (!currentModel) {
@@ -5604,12 +5611,12 @@ export class TuiRenderer {
 						return;
 					}
 					const iteration = this.missionUiState ? this.missionUiState.iteration + 1 : 1;
-					const compactionGoal = `Continue mission ${missionName}`;
+					const compactionGoal = `Continue mission ${currentMissionName}`;
 					await this.applyCompactionCheckpoint(this.buildMissionCompactionDetails(compactionGoal));
 					if (signal.aborted) {
 						return;
 					}
-					this.setMissionUiState(missionName, iteration, "running", mission);
+					this.setMissionUiState(currentMissionName, iteration, "running", mission);
 					const iterationPrompt =
 						shouldInjectResumeText && resumeText !== undefined
 							? `${prompt}\n\nUser resume note:\n${resumeText}`
@@ -5621,9 +5628,13 @@ export class TuiRenderer {
 					if (signal.aborted) {
 						return;
 					}
+					const missionRuntimeError = this.getMissionIterationRuntimeError();
+					if (missionRuntimeError) {
+						throw new Error(`Mission iteration failed: ${missionRuntimeError}`);
+					}
 					const refreshedMission = parseMissionDefinition(missionDir);
 					this.setMissionUiState(
-						missionName,
+						currentMissionName,
 						iteration,
 						refreshedMission.allTasksDone ? "done" : "running",
 						refreshedMission,
@@ -5632,15 +5643,15 @@ export class TuiRenderer {
 			});
 
 			const finalMission = parseMissionDefinition(missionDir);
-			this.setMissionUiState(missionName, result.iterations, result.status, finalMission);
+			this.setMissionUiState(currentMissionName, result.iterations, result.status, finalMission);
 
 			if (result.status === "done") {
 				if (result.iterations === 0) {
-					this.showWarning(this.buildCompletedMissionWarning(missionName, finalMission));
+					this.showWarning(this.buildCompletedMissionWarning(currentMissionName, finalMission));
 					return;
 				}
 				this.showWarning(
-					`Mission ${missionName} done after ${result.iterations} iteration${result.iterations === 1 ? "" : "s"}.`,
+					`Mission ${currentMissionName} done after ${result.iterations} iteration${result.iterations === 1 ? "" : "s"}.`,
 				);
 				return;
 			}
@@ -5650,19 +5661,27 @@ export class TuiRenderer {
 					result.iterations === 0
 						? "stopped before the first iteration"
 						: `stopped after ${result.iterations} iteration${result.iterations === 1 ? "" : "s"}`;
-				this.showWarning(`Mission ${missionName} ${suffix}.`);
+				this.showWarning(`Mission ${currentMissionName} ${suffix}.`);
 				return;
 			}
 
 			if (result.status === "converged") {
 				this.showWarning(
-					`Mission ${missionName} converged after ${result.iterations} iteration${result.iterations === 1 ? "" : "s"}. ${result.reason}`,
+					`Mission ${currentMissionName} converged after ${result.iterations} iteration${result.iterations === 1 ? "" : "s"}. ${result.reason}`,
 				);
 				return;
 			}
 
-			this.showWarning(`Mission ${missionName} blocked: ${result.reason}`);
+			this.showWarning(`Mission ${currentMissionName} blocked: ${result.reason}`);
 		} catch (error: unknown) {
+			if (missionName) {
+				try {
+					const currentMission = parseMissionDefinition(missionDir);
+					this.setMissionUiState(missionName, this.missionUiState?.iteration ?? 0, "blocked", currentMission);
+				} catch {
+					// Ignore parse failures while surfacing the original mission error.
+				}
+			}
 			this.showError(error instanceof Error ? error.message : String(error));
 		} finally {
 			this.missionRunAbortController = null;
@@ -5672,6 +5691,26 @@ export class TuiRenderer {
 			this.missionConvergenceKindOverride = undefined;
 			this.endMissionRunWorkingStatus();
 		}
+	}
+
+	private getMissionIterationRuntimeError(): string | undefined {
+		const runtimeError = this.agent.state.error?.trim();
+		if (runtimeError) {
+			return runtimeError;
+		}
+
+		for (let index = this.agent.state.messages.length - 1; index >= 0; index -= 1) {
+			const message = this.agent.state.messages[index];
+			if (message.role !== "assistant") {
+				continue;
+			}
+			if (message.stopReason === "error") {
+				return message.errorMessage?.trim() || "Assistant run ended with an error";
+			}
+			break;
+		}
+
+		return undefined;
 	}
 
 	private async handleCampaignRunCommand(campaignRef: string, _resumeText?: string): Promise<void> {
