@@ -83,43 +83,67 @@ function hasConverged(statuses: MissionExperimentStatus[], policy: MissionConver
 	return streak >= policy.after;
 }
 
+function getTerminalMissionResult(
+	mission: MissionDefinition,
+	iterations: number,
+	convergencePolicyOverride?: MissionConvergencePolicy,
+): Exclude<MissionLoopResult, { status: "stopped" }> | null {
+	if (mission.mode !== "optimize" && mission.allTasksDone) {
+		return { status: "done", iterations };
+	}
+
+	const blockedBuildTaskReason = getBlockedBuildTaskReason(mission);
+	if (blockedBuildTaskReason) {
+		return {
+			status: "blocked",
+			iterations,
+			reason: blockedBuildTaskReason,
+		};
+	}
+
+	if (mission.mode === "optimize" && mission.latestExperimentResult?.status === "blocked") {
+		return {
+			status: "blocked",
+			iterations,
+			reason: mission.latestExperimentResult.reason ?? "Mission recorded a blocked optimize iteration",
+		};
+	}
+
+	if (mission.mode === "optimize") {
+		const convergencePolicy = getConvergencePolicy(mission, convergencePolicyOverride);
+		if (hasConverged(mission.optimizeStatusesSinceReset ?? [], convergencePolicy)) {
+			return {
+				status: "converged",
+				iterations,
+				reason: `Mission reached ${convergencePolicy.after} consecutive ${convergencePolicy.kind} results`,
+			};
+		}
+	}
+
+	return null;
+}
+
 export async function runMissionLoop(options: RunMissionLoopOptions): Promise<MissionLoopResult> {
 	const maxIterations = options.maxIterations ?? 100;
 	let iterations = 0;
 
 	while (true) {
 		if (options.signal?.aborted) {
+			const terminalResult = getTerminalMissionResult(
+				parseMissionDefinition(options.missionDir),
+				iterations,
+				options.convergencePolicy,
+			);
+			if (terminalResult) {
+				return terminalResult;
+			}
 			return { status: "stopped", iterations };
 		}
 
 		const mission = parseMissionDefinition(options.missionDir);
-		if (mission.mode !== "optimize" && mission.allTasksDone) {
-			return { status: "done", iterations };
-		}
-		const blockedBuildTaskReason = getBlockedBuildTaskReason(mission);
-		if (blockedBuildTaskReason) {
-			return {
-				status: "blocked",
-				iterations,
-				reason: blockedBuildTaskReason,
-			};
-		}
-		if (mission.mode === "optimize" && mission.latestExperimentResult?.status === "blocked") {
-			return {
-				status: "blocked",
-				iterations,
-				reason: mission.latestExperimentResult.reason ?? "Mission recorded a blocked optimize iteration",
-			};
-		}
-		if (mission.mode === "optimize") {
-			const convergencePolicy = getConvergencePolicy(mission, options.convergencePolicy);
-			if (hasConverged(mission.optimizeStatusesSinceReset ?? [], convergencePolicy)) {
-				return {
-					status: "converged",
-					iterations,
-					reason: `Mission reached ${convergencePolicy.after} consecutive ${convergencePolicy.kind} results`,
-				};
-			}
+		const terminalResult = getTerminalMissionResult(mission, iterations, options.convergencePolicy);
+		if (terminalResult) {
+			return terminalResult;
 		}
 		if (options.shouldContinue && !options.shouldContinue()) {
 			return { status: "stopped", iterations };
@@ -138,6 +162,14 @@ export async function runMissionLoop(options: RunMissionLoopOptions): Promise<Mi
 			iterations += 1;
 			options.onIterationComplete?.();
 			if (options.signal?.aborted) {
+				const terminalAfterIteration = getTerminalMissionResult(
+					parseMissionDefinition(options.missionDir),
+					iterations,
+					options.convergencePolicy,
+				);
+				if (terminalAfterIteration) {
+					return terminalAfterIteration;
+				}
 				return { status: "stopped", iterations };
 			}
 			continue;
@@ -156,6 +188,14 @@ export async function runMissionLoop(options: RunMissionLoopOptions): Promise<Mi
 		iterations += 1;
 		options.onIterationComplete?.();
 		if (options.signal?.aborted) {
+			const terminalAfterIteration = getTerminalMissionResult(
+				parseMissionDefinition(options.missionDir),
+				iterations,
+				options.convergencePolicy,
+			);
+			if (terminalAfterIteration) {
+				return terminalAfterIteration;
+			}
 			return { status: "stopped", iterations };
 		}
 	}

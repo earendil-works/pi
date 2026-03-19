@@ -288,6 +288,7 @@ export class TuiRenderer {
 
 	// Message queueing
 	private queuedMessages: Array<{ raw: string; sent: string; kind: "by-end" | "next" }> = [];
+	private pendingMissionIterationMessages: Array<{ raw: string; sent: string; kind: "by-end" | "next" }> = [];
 
 	// Queue editing state
 	private editingQueueIndex: number | null = null;
@@ -3757,6 +3758,11 @@ export class TuiRenderer {
 		// Note: /steer command removed - Enter now automatically steers when streaming
 		const sentText = autoFenceHtmlInMarkdown(rawText);
 
+		if (this.hasActiveMissionRun()) {
+			this.queueMissionIterationMessage(rawText, sentText, streamingQueueKind);
+			return;
+		}
+
 		if (await this.maybeAutoResumeCampaignFromPlainMessage(rawText)) {
 			return;
 		}
@@ -4949,6 +4955,37 @@ export class TuiRenderer {
 		return true;
 	}
 
+	private queueMissionIterationMessage(raw: string, sent: string, kind: "by-end" | "next"): void {
+		this.pendingMissionIterationMessages.push({ raw, sent, kind });
+		this.queuedMessages.push({ raw, sent, kind });
+		this.updatePendingMessagesDisplay();
+		this.editor.setText("");
+		this.ui.requestRender();
+	}
+
+	private drainPendingMissionIterationPrompt(): string | null {
+		if (this.pendingMissionIterationMessages.length === 0) {
+			return null;
+		}
+
+		const nextMessages = this.pendingMissionIterationMessages.filter((message) => message.kind === "next");
+		if (nextMessages.length > 0) {
+			this.pendingMissionIterationMessages = this.pendingMissionIterationMessages.filter(
+				(message) => message.kind !== "next",
+			);
+			return nextMessages.map((message) => message.sent).join("\n\n");
+		}
+
+		if (this.agent.getQueueMode() === "all") {
+			const byEndMessages = this.pendingMissionIterationMessages.filter((message) => message.kind === "by-end");
+			this.pendingMissionIterationMessages = [];
+			return byEndMessages.map((message) => message.sent).join("\n\n");
+		}
+
+		const nextMessage = this.pendingMissionIterationMessages.shift();
+		return nextMessage?.sent ?? null;
+	}
+
 	private maybeClearCompletedMissionUiState(): void {
 		if (this.missionUiState?.status !== "done") {
 			return;
@@ -5428,6 +5465,7 @@ export class TuiRenderer {
 
 		this.abortActiveMissionRunIfNeeded();
 		this.resumableCampaignPath = null;
+		this.pendingMissionIterationMessages = [];
 		this.clearMissionUiState();
 		this.showWarning("Exited mission control.");
 	}
@@ -5440,6 +5478,7 @@ export class TuiRenderer {
 
 		this.abortActiveMissionRunIfNeeded();
 		this.resumableCampaignPath = null;
+		this.pendingMissionIterationMessages = [];
 		this.clearMissionUiState();
 		this.showWarning("Exited campaign control.");
 	}
@@ -5560,6 +5599,7 @@ export class TuiRenderer {
 			this.resumableCampaignPath = null;
 		}
 		this.resumableMissionDir = missionDir;
+		this.pendingMissionIterationMessages = [];
 		let shouldInjectResumeText = resumeText !== undefined;
 		const missionRunAbortController = new AbortController();
 		this.missionRunAbortController = missionRunAbortController;
@@ -5607,6 +5647,9 @@ export class TuiRenderer {
 				signal,
 				convergencePolicy: this.getActiveMissionConvergencePolicy() ?? undefined,
 				shouldContinue: () => {
+					if (this.pendingMissionIterationMessages.length > 0) {
+						return true;
+					}
 					if (this.missionStopAfterIteration) {
 						return false;
 					}
@@ -5617,30 +5660,42 @@ export class TuiRenderer {
 				},
 				onIterationComplete: () => {},
 				executeIteration: async ({ mission, prompt }) => {
-					if (signal.aborted) {
+					if (signal.aborted && this.pendingMissionIterationMessages.length === 0) {
 						return;
 					}
 					const iteration = this.missionUiState ? this.missionUiState.iteration + 1 : 1;
 					const compactionGoal = `Continue mission ${currentMissionName}`;
 					await this.applyCompactionCheckpoint(this.buildMissionCompactionDetails(compactionGoal));
-					if (signal.aborted) {
+					if (signal.aborted && this.pendingMissionIterationMessages.length === 0) {
 						return;
 					}
 					this.setMissionUiState(currentMissionName, iteration, "running", mission);
-					const iterationPrompt =
+					let currentPrompt: string | null =
 						shouldInjectResumeText && resumeText !== undefined
 							? `${prompt}\n\nUser resume note:\n${resumeText}`
 							: prompt;
-					await this.agent.prompt(iterationPrompt);
-					shouldInjectResumeText = false;
-					resumeText = undefined;
-					await this.agent.waitForIdle();
-					if (signal.aborted) {
-						return;
-					}
-					const missionRuntimeError = this.getMissionIterationRuntimeError();
-					if (missionRuntimeError) {
-						throw new Error(`Mission iteration failed: ${missionRuntimeError}`);
+
+					while (currentPrompt) {
+						await this.agent.prompt(currentPrompt);
+						shouldInjectResumeText = false;
+						resumeText = undefined;
+						await this.agent.waitForIdle();
+						const missionRuntimeError = this.getMissionIterationRuntimeError();
+						if (missionRuntimeError) {
+							throw new Error(`Mission iteration failed: ${missionRuntimeError}`);
+						}
+
+						const nextPrompt = this.drainPendingMissionIterationPrompt();
+						if (nextPrompt) {
+							currentPrompt = nextPrompt;
+							continue;
+						}
+
+						if (signal.aborted) {
+							break;
+						}
+
+						currentPrompt = null;
 					}
 					const refreshedMission = parseMissionDefinition(missionDir);
 					this.setMissionUiState(
@@ -5696,6 +5751,7 @@ export class TuiRenderer {
 		} finally {
 			this.missionRunAbortController = null;
 			this.missionStopAfterIteration = false;
+			this.pendingMissionIterationMessages = [];
 			this.missionIterationLimit = null;
 			this.missionConvergeAfterOverride = undefined;
 			this.missionConvergenceKindOverride = undefined;
