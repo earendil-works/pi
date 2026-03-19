@@ -318,7 +318,7 @@ function formatTimestamp(timestamp: number | string | undefined): string {
  * Returns { timestamp, content } where timestamp may be undefined.
  */
 function parseMessageTimestamp(text: string): { timestamp: string | undefined; content: string } {
-	const match = text.match(/^<user_message_time>([^<]+)<\/user_message_time>\n\n/);
+	const match = text.match(/^<user_message_time>([^<]+)<\/user_message_time>(?:\n\n|\n)?/);
 	if (match) {
 		return {
 			timestamp: match[1],
