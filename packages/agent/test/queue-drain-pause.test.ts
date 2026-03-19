@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { Agent } from "../src/agent.js";
 import type { AgentRunConfig, AgentTransport } from "../src/transports/types.js";
 
-const USER_MESSAGE_TIME_PREFIX_PATTERN = /^(?:<user_message_time>[\s\S]*?<\/user_message_time>\n\n)+/;
+const USER_MESSAGE_TIME_PREFIX_PATTERN = /^(?:<user_message_time>[\s\S]*?<\/user_message_time>(?:\n\n|\n)?)+/;
 
 function stripUserMessageTimePrefix(text: string): string {
 	return text.replace(USER_MESSAGE_TIME_PREFIX_PATTERN, "");

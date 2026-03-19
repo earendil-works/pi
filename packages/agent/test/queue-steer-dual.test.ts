@@ -64,11 +64,15 @@ class InterruptCapturingTransport implements AgentTransport {
 			if (!first) {
 				this.injectedText = null;
 			} else if (typeof first.content === "string") {
-				this.injectedText = first.content;
+				this.injectedText = stripUserMessageTimePrefix(first.content);
 			} else {
 				const blocks: Array<TextContent | ImageContent> = first.content;
-				const firstTextBlock = blocks.find((c): c is TextContent => c.type === "text");
-				this.injectedText = firstTextBlock ? firstTextBlock.text : null;
+				this.injectedText = stripUserMessageTimePrefix(
+					blocks
+						.filter((c): c is TextContent => c.type === "text")
+						.map((c) => c.text)
+						.join("\n"),
+				);
 			}
 		}
 
@@ -103,7 +107,7 @@ class RecordingTransport implements AgentTransport {
 	}
 }
 
-const USER_MESSAGE_TIME_PREFIX_PATTERN = /^(?:<user_message_time>[\s\S]*?<\/user_message_time>\n\n)+/;
+const USER_MESSAGE_TIME_PREFIX_PATTERN = /^(?:<user_message_time>[\s\S]*?<\/user_message_time>(?:\n\n|\n)?)+/;
 
 function stripUserMessageTimePrefix(text: string): string {
 	return text.replace(USER_MESSAGE_TIME_PREFIX_PATTERN, "");

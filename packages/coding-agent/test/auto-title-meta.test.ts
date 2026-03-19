@@ -16,4 +16,9 @@ describe("auto-title: thread listing meta", () => {
 		const input = "<user_message_time>Monday, Feb 16</user_message_time>\n\nHow do I do X?";
 		expect(stripUserMessageTimePrefix(input)).toBe("How do I do X?");
 	});
+
+	it("strips user_message_time prefix when timestamp and prompt are split across text blocks", () => {
+		const input = "<user_message_time>Monday, Feb 16</user_message_time>How do I do X?";
+		expect(stripUserMessageTimePrefix(input)).toBe("How do I do X?");
+	});
 });
