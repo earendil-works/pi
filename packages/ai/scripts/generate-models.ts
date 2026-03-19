@@ -715,6 +715,27 @@ async function generateModels() {
 	}
 
 
+	// Add MiniMax M2.7 to opencode-go until models.dev includes it.
+	if (!allModels.some((m) => m.provider === "opencode-go" && m.id === "minimax-m2.7")) {
+		allModels.push({
+			id: "minimax-m2.7",
+			name: "MiniMax M2.7",
+			api: "anthropic-messages",
+			provider: "opencode-go",
+			baseUrl: "https://opencode.ai/zen/go",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0.3,
+				output: 1.2,
+				cacheRead: 0.03,
+				cacheWrite: 0,
+			},
+			contextWindow: 204800,
+			maxTokens: 131072,
+		});
+	}
+
 	// Add missing EU Opus 4.6 profile
 	if (!allModels.some((m) => m.provider === "amazon-bedrock" && m.id === "eu.anthropic.claude-opus-4-6-v1")) {
 		allModels.push({
