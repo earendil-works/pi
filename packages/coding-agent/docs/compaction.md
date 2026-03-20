@@ -338,6 +338,25 @@ pi.on("session_before_compact", async (event, ctx) => {
 
 See [custom-compaction.ts](../examples/extensions/custom-compaction.ts) for a complete example using a different model.
 
+#### Why Use a Different Model?
+
+By default, compaction uses the active conversation model. That is often the right choice, but an extension can route summarization to a different model when you want different trade-offs:
+
+- **Lower cost**: use a cheaper model for summarization than for the main conversation.
+- **Lower latency**: use a faster model so auto-compaction or `/compact` finishes sooner.
+- **Different summary style**: use a model that is better at concise summaries, long-context condensation, or structured output.
+- **Provider separation**: keep your main conversation on one provider while running compaction on another.
+
+The extension API keeps this flexible on purpose. Pi does not have a built-in `compaction.model` setting. Instead, use `session_before_compact` to resolve whatever model fits your workflow, then fall back to the default compaction path if that model is unavailable.
+
+Common patterns:
+
+- Use a fast/cheap model for compaction and keep your main conversation on a stronger model.
+- Keep the default compaction logic, but swap only the summarization model.
+- Customize the prompt for compaction without changing the conversation model.
+
+The [custom-compaction.ts](../examples/extensions/custom-compaction.ts) example shows one concrete version of this pattern.
+
 ### session_before_tree
 
 Fired before `/tree` navigation. Always fires regardless of whether user chose to summarize. Can cancel navigation or provide custom summary.
