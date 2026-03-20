@@ -23,7 +23,7 @@ import AjvModule from "ajv";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { getAgentDir } from "../config.js";
-import type { AuthStorage } from "./auth-storage.js";
+import type { AuthStorage, GetApiKeyOptions } from "./auth-storage.js";
 import { clearConfigValueCache, resolveConfigValue, resolveHeaders } from "./resolve-config-value.js";
 
 const Ajv = (AjvModule as any).default || AjvModule;
@@ -541,15 +541,15 @@ export class ModelRegistry {
 	/**
 	 * Get API key for a model.
 	 */
-	async getApiKey(model: Model<Api>): Promise<string | undefined> {
-		return this.authStorage.getApiKey(model.provider);
+	async getApiKey(model: Model<Api>, options?: GetApiKeyOptions): Promise<string | undefined> {
+		return this.authStorage.getApiKey(model.provider, options);
 	}
 
 	/**
 	 * Get API key for a provider.
 	 */
-	async getApiKeyForProvider(provider: string): Promise<string | undefined> {
-		return this.authStorage.getApiKey(provider);
+	async getApiKeyForProvider(provider: string, options?: GetApiKeyOptions): Promise<string | undefined> {
+		return this.authStorage.getApiKey(provider, options);
 	}
 
 	/**

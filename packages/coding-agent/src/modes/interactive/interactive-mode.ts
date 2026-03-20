@@ -3748,8 +3748,8 @@ export class InteractiveMode {
 					// For Anthropic: onPrompt is called immediately after
 				},
 
-				onPrompt: async (prompt: { message: string; placeholder?: string }) => {
-					return dialog.showPrompt(prompt.message, prompt.placeholder);
+				onPrompt: async (prompt) => {
+					return dialog.showPrompt(prompt);
 				},
 
 				onProgress: (message: string) => {

@@ -345,6 +345,39 @@ describe("AuthStorage", () => {
 			const secondTry = await authStorage.getApiKey(providerId);
 			expect(secondTry).toBe("Bearer refreshed-access-token");
 		});
+
+		test("can throw the underlying OAuth refresh error for active requests", async () => {
+			const providerId = `test-oauth-provider-error-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+			registerOAuthProvider({
+				id: providerId,
+				name: "Test OAuth Error Provider",
+				async login() {
+					throw new Error("Not used in this test");
+				},
+				async refreshToken() {
+					throw new Error("scope data format invalid");
+				},
+				getApiKey(credentials) {
+					return `Bearer ${credentials.access}`;
+				},
+			});
+
+			writeAuthJson({
+				[providerId]: {
+					type: "oauth",
+					refresh: "refresh-token",
+					access: "expired-access-token",
+					expires: Date.now() - 10_000,
+				},
+			});
+
+			authStorage = AuthStorage.create(authJsonPath);
+
+			await expect(authStorage.getApiKey(providerId)).resolves.toBeUndefined();
+			await expect(authStorage.getApiKey(providerId, { throwOnRefreshError: true })).rejects.toThrow(
+				"scope data format invalid",
+			);
+		});
 	});
 
 	describe("persistence semantics", () => {

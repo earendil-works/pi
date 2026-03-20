@@ -109,6 +109,13 @@ export function getEnvApiKey(provider: any): string | undefined {
 		}
 	}
 
+	if (provider === "gigachat") {
+		if (process.env.GIGACHAT_USER && process.env.GIGACHAT_PASSWORD) {
+			return "<authenticated>";
+		}
+		return process.env.GIGACHAT_ACCESS_TOKEN || process.env.GIGACHAT_CREDENTIALS;
+	}
+
 	const envMap: Record<string, string> = {
 		openai: "OPENAI_API_KEY",
 		"azure-openai-responses": "AZURE_OPENAI_API_KEY",

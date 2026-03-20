@@ -317,7 +317,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			if (!resolvedProvider) {
 				throw new Error("No model selected");
 			}
-			const key = await modelRegistry.getApiKeyForProvider(resolvedProvider);
+			const key = await modelRegistry.getApiKeyForProvider(resolvedProvider, { throwOnRefreshError: true });
 			if (!key) {
 				const model = agent.state.model;
 				const isOAuth = model && modelRegistry.isUsingOAuth(model);

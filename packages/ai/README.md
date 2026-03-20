@@ -941,6 +941,7 @@ In Node.js environments, you can set environment variables to avoid passing API 
 | MiniMax | `MINIMAX_API_KEY` |
 | OpenCode Zen / OpenCode Go | `OPENCODE_API_KEY` |
 | Kimi For Coding | `KIMI_API_KEY` |
+| GigaChat | `GIGACHAT_CREDENTIALS`, `GIGACHAT_ACCESS_TOKEN`, or `GIGACHAT_USER` + `GIGACHAT_PASSWORD` (optional `GIGACHAT_SCOPE`: `GIGACHAT_API_PERS`, `GIGACHAT_API_B2B`, or `GIGACHAT_API_CORP`) |
 | GitHub Copilot | `COPILOT_GITHUB_TOKEN` or `GH_TOKEN` or `GITHUB_TOKEN` |
 
 When set, the library automatically uses these keys:
@@ -988,16 +989,16 @@ const key = getEnvApiKey('openai');  // checks OPENAI_API_KEY
 
 ## Login Providers
 
-The `@mariozechner/pi-ai/oauth` entry point exposes built-in interactive login providers. Most use OAuth. GigaChat uses an authorization-key exchange that returns a short-lived access token.
+The `@mariozechner/pi-ai/oauth` entry point exposes built-in interactive login providers. Most use OAuth. GigaChat uses an interactive login flow that returns a short-lived access token.
 
 - **Anthropic** (Claude Pro/Max subscription)
 - **OpenAI Codex** (ChatGPT Plus/Pro subscription, access to GPT-5.x Codex models)
 - **GitHub Copilot** (Copilot subscription)
 - **Google Gemini CLI** (Gemini 2.0/2.5 via Google Cloud Code Assist; free tier or paid subscription)
 - **Antigravity** (Free Gemini 3, Claude, GPT-OSS via Google Cloud)
-- **GigaChat** (Sber authorization key -> 30-minute access token for custom `gigachat` providers)
+- **GigaChat** (Built-in provider with native GigaChat models, plus `/login` support for basic or token auth)
 
-GigaChat login is a credential helper only. It does not add a built-in model catalog. Use it with a custom provider or model configuration that uses `gigachat` as the provider ID.
+GigaChat includes a built-in model catalog and native provider implementation. You can authenticate with `GIGACHAT_CREDENTIALS`, `GIGACHAT_ACCESS_TOKEN`, `GIGACHAT_USER`/`GIGACHAT_PASSWORD`, or `/login gigachat`.
 
 For paid Cloud Code Assist subscriptions, set `GOOGLE_CLOUD_PROJECT` or `GOOGLE_CLOUD_PROJECT_ID` to your project ID.
 
@@ -1135,7 +1136,7 @@ const response = await complete(model, {
 
 **GitHub Copilot**: If you get "The requested model is not supported" error, enable the model manually in VS Code: open Copilot Chat, click the model selector, select the model (warning icon), and click "Enable".
 
-**GigaChat**: `/login gigachat` prompts for the Sber authorization key and optional scope (`GIGACHAT_API_PERS` by default), then exchanges it for a 30-minute access token. It is intended for custom providers that use `gigachat` as their provider ID. Token requests may require the Russian Trusted Root CA to be installed or configured via `NODE_EXTRA_CA_CERTS`.
+**GigaChat**: `/login gigachat` first prompts for personal vs business access, then for auth mode. Basic auth asks for username and password sequentially, stores them, and refreshes expired access tokens automatically by reusing those stored credentials. Token auth stores a provided access token directly and may require re-login once it expires because it cannot be refreshed automatically. This gives four interactive combinations: personal/basic, personal/token, business/basic, and business/token. Built-in models are available under the `gigachat` provider, and custom providers can also reuse the `gigachat` provider ID so `/login gigachat` supplies credentials automatically. Token requests may require the Russian Trusted Root CA to be installed or configured via `NODE_EXTRA_CA_CERTS`.
 
 **Google Gemini CLI / Antigravity**: These use Google Cloud OAuth. The `apiKey` returned by `getOAuthApiKey()` is a JSON string containing both the token and project ID, which the library handles automatically.
 

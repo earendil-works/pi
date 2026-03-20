@@ -16,6 +16,7 @@ export type OAuthPrompt = {
 	message: string;
 	placeholder?: string;
 	allowEmpty?: boolean;
+	choices?: string[];
 };
 
 export type OAuthAuthInfo = {

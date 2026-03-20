@@ -32,6 +32,10 @@ export type AuthCredential = ApiKeyCredential | OAuthCredential;
 
 export type AuthStorageData = Record<string, AuthCredential>;
 
+export interface GetApiKeyOptions {
+	throwOnRefreshError?: boolean;
+}
+
 type LockResult<T> = {
 	result: T;
 	next?: string;
@@ -234,6 +238,13 @@ export class AuthStorage {
 		this.errors.push(normalizedError);
 	}
 
+	private unwrapAuthRefreshError(error: unknown): Error {
+		if (error instanceof Error && error.cause instanceof Error) {
+			return error.cause;
+		}
+		return error instanceof Error ? error : new Error(String(error));
+	}
+
 	private parseStorageData(content: string | undefined): AuthStorageData {
 		if (!content) {
 			return {};
@@ -277,6 +288,40 @@ export class AuthStorage {
 			});
 		} catch (error) {
 			this.recordError(error);
+		}
+	}
+
+	private persistProviderChangeStrict(provider: string, credential: AuthCredential | undefined): void {
+		if (this.loadError) {
+			this.reload();
+		}
+
+		if (this.loadError) {
+			throw new Error("Cannot persist credentials because auth storage could not be loaded.", {
+				cause: this.loadError,
+			});
+		}
+
+		this.storage.withLock((current) => {
+			const currentData = this.parseStorageData(current);
+			const merged: AuthStorageData = { ...currentData };
+			if (credential) {
+				merged[provider] = credential;
+			} else {
+				delete merged[provider];
+			}
+			return { result: undefined, next: JSON.stringify(merged, null, 2) };
+		});
+
+		this.reload();
+		const persisted = this.data[provider];
+		const success = credential ? persisted !== undefined : persisted === undefined;
+		if (!success) {
+			throw new Error(
+				credential
+					? `Failed to persist credentials for ${provider}.`
+					: `Failed to remove credentials for ${provider}.`,
+			);
 		}
 	}
 
@@ -352,14 +397,14 @@ export class AuthStorage {
 		}
 
 		const credentials = await provider.login(callbacks);
-		this.set(providerId, { type: "oauth", ...credentials });
+		this.persistProviderChangeStrict(providerId, { type: "oauth", ...credentials });
 	}
 
 	/**
 	 * Logout from a provider.
 	 */
 	logout(provider: string): void {
-		this.remove(provider);
+		this.persistProviderChangeStrict(provider, undefined);
 	}
 
 	/**
@@ -421,7 +466,7 @@ export class AuthStorage {
 	 * 4. Environment variable
 	 * 5. Fallback resolver (models.json custom providers)
 	 */
-	async getApiKey(providerId: string): Promise<string | undefined> {
+	async getApiKey(providerId: string, options?: GetApiKeyOptions): Promise<string | undefined> {
 		// Runtime override takes highest priority
 		const runtimeKey = this.runtimeOverrides.get(providerId);
 		if (runtimeKey) {
@@ -452,7 +497,8 @@ export class AuthStorage {
 						return result.apiKey;
 					}
 				} catch (error) {
-					this.recordError(error);
+					const refreshError = this.unwrapAuthRefreshError(error);
+					this.recordError(refreshError);
 					// Refresh failed - re-read file to check if another instance succeeded
 					this.reload();
 					const updatedCred = this.data[providerId];
@@ -460,6 +506,10 @@ export class AuthStorage {
 					if (updatedCred?.type === "oauth" && Date.now() < updatedCred.expires) {
 						// Another instance refreshed successfully, use those credentials
 						return provider.getApiKey(updatedCred);
+					}
+
+					if (options?.throwOnRefreshError) {
+						throw refreshError;
 					}
 
 					// Refresh truly failed - return undefined so model discovery skips this provider
