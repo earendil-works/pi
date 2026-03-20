@@ -366,6 +366,47 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	) => Component | undefined;
 }
 
+/**
+ * Identity helper that enables TypeScript to infer parameter types from a
+ * TypeBox schema when defining a tool as a standalone value or in an array.
+ *
+ * **When you need this:** assigning to a plain `ToolDefinition` variable,
+ * passing tools in a `ToolDefinition[]` array (e.g. `customTools`), or using
+ * `satisfies ToolDefinition`. In these cases TypeScript widens `TParams` to
+ * `TSchema` and `params` becomes `unknown`.
+ *
+ * **When you don't need this:** passing an inline object literal directly to
+ * `pi.registerTool({ ... })`, which already infers `TParams` from its own
+ * generic signature.
+ *
+ * Note: `defineTool` cannot recover type information once `parameters` has
+ * already been widened to bare `TSchema` (e.g. passed through a non-generic
+ * variable).
+ *
+ * @example
+ * ```ts
+ * // Standalone tool definition — params.name is typed as string
+ * const helloTool = defineTool({
+ *   name: "hello",
+ *   label: "Hello",
+ *   description: "A simple greeting tool",
+ *   parameters: Type.Object({
+ *     name: Type.String({ description: "Name to greet" }),
+ *   }),
+ *   async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
+ *     params.name; // ✅ string
+ *   },
+ * });
+ *
+ * pi.registerTool(helloTool);
+ * ```
+ */
+export function defineTool<TParams extends TSchema, TDetails = unknown>(
+	tool: ToolDefinition<TParams, TDetails>,
+): ToolDefinition<TParams, TDetails> {
+	return tool;
+}
+
 // ============================================================================
 // Resource Events
 // ============================================================================

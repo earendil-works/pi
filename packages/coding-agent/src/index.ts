@@ -126,6 +126,7 @@ export type {
 } from "./core/extensions/index.js";
 export {
 	createExtensionRuntime,
+	defineTool,
 	discoverAndLoadExtensions,
 	ExtensionRunner,
 	isBashToolResult,

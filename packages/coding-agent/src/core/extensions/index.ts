@@ -154,6 +154,7 @@ export type {
 } from "./types.js";
 // Type guards
 export {
+	defineTool,
 	isBashToolResult,
 	isEditToolResult,
 	isFindToolResult,
