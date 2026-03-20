@@ -66,10 +66,17 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 
 		// Append project context files
 		if (contextFiles.length > 0) {
-			prompt += "\n\n# Project Context\n\n";
-			prompt += "Project-specific instructions and guidelines:\n\n";
+			prompt += "\n\n# Workspace Context\n\n";
+
+			const hasSoul = contextFiles.some((f) => f.path.toLowerCase().endsWith("soul.md"));
+			if (hasSoul) {
+				prompt +=
+					"⚠️ SOUL.md is present: Embody its persona and tone.\nAvoid stiff, generic replies; follow its guidance unless higher-priority instructions override it.\n\n";
+			}
+
+			prompt += "The following project context files have been loaded:\n\n";
 			for (const { path: filePath, content } of contextFiles) {
-				prompt += `## ${filePath}\n\n${content}\n\n`;
+				prompt += `## ${filePath}\n${content}\n\n`;
 			}
 		}
 
@@ -190,10 +197,17 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 
 	// Append project context files
 	if (contextFiles.length > 0) {
-		prompt += "\n\n# Project Context\n\n";
-		prompt += "Project-specific instructions and guidelines:\n\n";
+		prompt += "\n\n# Workspace Context\n\n";
+
+		const hasSoul = contextFiles.some((f) => f.path.toLowerCase().endsWith("soul.md"));
+		if (hasSoul) {
+			prompt +=
+				"⚠️ SOUL.md is present: Embody its persona and tone.\nAvoid stiff, generic replies; follow its guidance unless higher-priority instructions override it.\n\n";
+		}
+
+		prompt += "The following project context files have been loaded:\n\n";
 		for (const { path: filePath, content } of contextFiles) {
-			prompt += `## ${filePath}\n\n${content}\n\n`;
+			prompt += `## ${filePath}\n${content}\n\n`;
 		}
 	}
 

@@ -54,22 +54,23 @@ function resolvePromptInput(input: string | undefined, description: string): str
 	return input;
 }
 
-function loadContextFileFromDir(dir: string): { path: string; content: string } | null {
-	const candidates = ["AGENTS.md", "CLAUDE.md"];
+function loadContextFileFromDir(dir: string): Array<{ path: string; content: string }> {
+	const candidates = ["SOUL.md", "AGENTS.md", "CLAUDE.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"];
+	const results: Array<{ path: string; content: string }> = [];
 	for (const filename of candidates) {
 		const filePath = join(dir, filename);
 		if (existsSync(filePath)) {
 			try {
-				return {
+				results.push({
 					path: filePath,
 					content: readFileSync(filePath, "utf-8"),
-				};
+				});
 			} catch (error) {
 				console.error(chalk.yellow(`Warning: Could not read ${filePath}: ${error}`));
 			}
 		}
 	}
-	return null;
+	return results;
 }
 
 function loadProjectContextFiles(
@@ -81,10 +82,12 @@ function loadProjectContextFiles(
 	const contextFiles: Array<{ path: string; content: string }> = [];
 	const seenPaths = new Set<string>();
 
-	const globalContext = loadContextFileFromDir(resolvedAgentDir);
-	if (globalContext) {
-		contextFiles.push(globalContext);
-		seenPaths.add(globalContext.path);
+	const globalContexts = loadContextFileFromDir(resolvedAgentDir);
+	for (const ctx of globalContexts) {
+		if (!seenPaths.has(ctx.path)) {
+			contextFiles.push(ctx);
+			seenPaths.add(ctx.path);
+		}
 	}
 
 	const ancestorContextFiles: Array<{ path: string; content: string }> = [];
@@ -93,10 +96,12 @@ function loadProjectContextFiles(
 	const root = resolve("/");
 
 	while (true) {
-		const contextFile = loadContextFileFromDir(currentDir);
-		if (contextFile && !seenPaths.has(contextFile.path)) {
-			ancestorContextFiles.unshift(contextFile);
-			seenPaths.add(contextFile.path);
+		const localContexts = loadContextFileFromDir(currentDir);
+		for (const ctx of localContexts) {
+			if (!seenPaths.has(ctx.path)) {
+				ancestorContextFiles.unshift(ctx);
+				seenPaths.add(ctx.path);
+			}
 		}
 
 		if (currentDir === root) break;
