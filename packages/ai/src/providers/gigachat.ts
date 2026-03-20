@@ -9,6 +9,7 @@ import type {
 	Message as GigaChatMessage,
 } from "gigachat/interfaces";
 import { getEnvApiKey } from "../env-api-keys.js";
+import { calculateCost } from "../models.js";
 import type {
 	AssistantMessage,
 	Context,
@@ -27,6 +28,7 @@ import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { transformMessages } from "./transform-messages.js";
 
 const GIGACHAT_DEFAULT_MODEL = "GigaChat";
+const EVENT_STREAM_CONTENT_TYPE = "text/event-stream";
 
 export interface GigaChatOptions extends StreamOptions {
 	profanityCheck?: boolean;
@@ -44,6 +46,12 @@ type GigaChatAuth =
 	| { kind: "accessToken"; accessToken: string }
 	| { kind: "credentials"; credentials: string; scope?: string }
 	| { kind: "password"; user: string; password: string };
+
+type GigaChatResponse = {
+	status?: number;
+	headers?: Record<string, string | string[] | undefined>;
+	data?: unknown;
+};
 
 export const streamGigaChat: StreamFunction<"gigachat", GigaChatOptions> = (
 	model: Model<"gigachat">,
@@ -66,8 +74,8 @@ export const streamGigaChat: StreamFunction<"gigachat", GigaChatOptions> = (
 
 			stream.push({ type: "start", partial: output });
 
-			for await (const chunk of client.stream(payload, options?.signal)) {
-				consumeChunk(output, stream, chunk);
+			for await (const chunk of client.streamRobust(payload, options?.signal)) {
+				consumeChunk(output, stream, chunk, model);
 			}
 
 			if (options?.signal?.aborted) {
@@ -120,7 +128,70 @@ function createOutput(model: Model<"gigachat">): AssistantMessage {
 	};
 }
 
-function createClient(model: Model<"gigachat">, auth: GigaChatAuth, options?: GigaChatOptions): GigaChat {
+class PiGigaChatClient extends GigaChat {
+	get accessToken(): string | undefined {
+		return this._accessToken?.access_token;
+	}
+
+	async updateTokenQuietly(): Promise<void> {
+		const originalConsoleInfo = console.info;
+		console.info = () => {};
+		try {
+			await this.updateToken();
+		} finally {
+			console.info = originalConsoleInfo;
+		}
+	}
+
+	async *streamRobust(payload: GigaChatChat, abortSignal?: AbortSignal): AsyncGenerator<ChatCompletionChunk> {
+		if (this.useAuth) {
+			if (this.checkValidityToken()) {
+				try {
+					yield* this.requestStream(payload, abortSignal);
+					return;
+				} catch (error) {
+					if (isAuthenticationError(error)) {
+						this.resetToken();
+					} else {
+						throw error;
+					}
+				}
+			}
+			await this.updateTokenQuietly();
+		}
+
+		yield* this.requestStream(payload, abortSignal);
+	}
+
+	private async *requestStream(payload: GigaChatChat, abortSignal?: AbortSignal): AsyncGenerator<ChatCompletionChunk> {
+		const headers: Record<string, string> = {
+			Accept: EVENT_STREAM_CONTENT_TYPE,
+			"Cache-Control": "no-store",
+		};
+		if (this.accessToken) {
+			headers.Authorization = `Bearer ${this.accessToken}`;
+		}
+
+		const response = (await this._client.request({
+			method: "POST",
+			url: "/chat/completions",
+			responseType: "stream",
+			data: { ...payload, stream: true },
+			headers,
+			signal: abortSignal,
+		})) as GigaChatResponse;
+
+		ensureSuccessfulStreamResponse(response);
+		const body = response.data;
+		if (!body) {
+			throw new Error("GigaChat returned an empty streaming response body");
+		}
+
+		yield* parseGigaChatStream(body);
+	}
+}
+
+function createClient(model: Model<"gigachat">, auth: GigaChatAuth, options?: GigaChatOptions): PiGigaChatClient {
 	const config: GigaChatClientConfig = {};
 
 	switch (auth.kind) {
@@ -142,7 +213,7 @@ function createClient(model: Model<"gigachat">, auth: GigaChatAuth, options?: Gi
 	config.profanityCheck = options?.profanityCheck;
 	config.dangerouslyAllowBrowser = isBrowserRuntime();
 
-	return new GigaChat(config);
+	return new PiGigaChatClient(config);
 }
 
 function resolveAuth(provider: string, options?: GigaChatOptions): GigaChatAuth {
@@ -186,7 +257,17 @@ function buildChatPayload(model: Model<"gigachat">, context: Context, options?: 
 	return payload;
 }
 
-function consumeChunk(output: AssistantMessage, stream: AssistantMessageEventStream, chunk: ChatCompletionChunk): void {
+function consumeChunk(
+	output: AssistantMessage,
+	stream: AssistantMessageEventStream,
+	chunk: ChatCompletionChunk,
+	model: Model<"gigachat">,
+): void {
+	const usage = asRecord(asRecord(chunk)?.usage);
+	if (usage) {
+		output.usage = parseUsage(usage, model);
+	}
+
 	const choice = chunk.choices[0];
 	if (!choice) return;
 
@@ -452,6 +533,201 @@ function mapStopReason(reason: string): StopReason {
 	}
 }
 
+function parseUsage(rawUsage: Record<string, unknown>, model: Model<"gigachat">): AssistantMessage["usage"] {
+	const promptTokens = asOptionalNumber(rawUsage.prompt_tokens) || 0;
+	const completionTokens = asOptionalNumber(rawUsage.completion_tokens) || 0;
+	const totalTokens = asOptionalNumber(rawUsage.total_tokens) || promptTokens + completionTokens;
+
+	const usage: AssistantMessage["usage"] = {
+		input: promptTokens,
+		output: completionTokens,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens,
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	};
+	calculateCost(model, usage);
+	return usage;
+}
+
+function ensureSuccessfulStreamResponse(response: GigaChatResponse): void {
+	if (response.status === 200) {
+		const contentType = getHeaderValue(response.headers, "content-type")?.split(";")[0];
+		if (contentType !== EVENT_STREAM_CONTENT_TYPE) {
+			throw createGigaChatResponseError(
+				response,
+				`Expected response Content-Type to be '${EVENT_STREAM_CONTENT_TYPE}', got '${contentType ?? "unknown"}'`,
+			);
+		}
+		return;
+	}
+
+	if (response.status === 401) {
+		throw createGigaChatAuthenticationError(response);
+	}
+
+	throw createGigaChatResponseError(
+		response,
+		`GigaChat streaming request failed with status ${response.status ?? "unknown"}`,
+	);
+}
+
+function createGigaChatAuthenticationError(response: GigaChatResponse): Error & { response: GigaChatResponse } {
+	const error = new Error("GigaChat authentication failed") as Error & { response: GigaChatResponse };
+	error.response = response;
+	return error;
+}
+
+function createGigaChatResponseError(
+	response: GigaChatResponse,
+	message: string,
+): Error & { response: GigaChatResponse } {
+	const error = new Error(message) as Error & { response: GigaChatResponse };
+	error.response = response;
+	return error;
+}
+
+function isAuthenticationError(error: unknown): boolean {
+	if (!(error instanceof Error)) {
+		return false;
+	}
+
+	const response = asRecord(asRecord(error)?.response);
+	return response?.status === 401 || error.message === "GigaChat authentication failed";
+}
+
+async function* parseGigaChatStream(body: unknown): AsyncGenerator<ChatCompletionChunk> {
+	const webStream = asReadableStream(body);
+	if (webStream) {
+		yield* parseSSEJsonChunks(readWebStream(webStream));
+		return;
+	}
+
+	const nodeStream = asNodeReadable(body);
+	if (nodeStream) {
+		yield* parseSSEJsonChunks(readNodeStream(nodeStream));
+		return;
+	}
+
+	throw new Error("Unsupported GigaChat streaming response body");
+}
+
+async function* readWebStream(stream: ReadableStream<Uint8Array>): AsyncGenerator<string> {
+	const reader = stream.getReader();
+	const decoder = new TextDecoder();
+
+	try {
+		while (true) {
+			const { done, value } = await reader.read();
+			if (done) {
+				break;
+			}
+			if (value) {
+				yield decoder.decode(value, { stream: true });
+			}
+		}
+
+		const tail = decoder.decode();
+		if (tail) {
+			yield tail;
+		}
+	} finally {
+		try {
+			await reader.cancel();
+		} catch {}
+		try {
+			reader.releaseLock();
+		} catch {}
+	}
+}
+
+async function* readNodeStream(stream: AsyncIterable<Uint8Array | string>): AsyncGenerator<string> {
+	for await (const chunk of stream) {
+		yield typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf-8");
+	}
+}
+
+async function* parseSSEJsonChunks(chunks: AsyncIterable<string>): AsyncGenerator<ChatCompletionChunk> {
+	let buffer = "";
+
+	for await (const chunk of chunks) {
+		buffer += chunk;
+
+		let boundary = findSSEBoundary(buffer);
+		while (boundary) {
+			const eventBlock = buffer.slice(0, boundary.index);
+			buffer = buffer.slice(boundary.index + boundary.length);
+
+			const eventData = extractSSEData(eventBlock);
+			if (eventData && eventData !== "[DONE]") {
+				yield parseSSEJsonChunk(eventData);
+			}
+
+			boundary = findSSEBoundary(buffer);
+		}
+	}
+
+	const trailingData = extractSSEData(buffer);
+	if (trailingData && trailingData !== "[DONE]") {
+		yield parseSSEJsonChunk(trailingData);
+	}
+}
+
+function findSSEBoundary(buffer: string): { index: number; length: number } | undefined {
+	const lf = buffer.indexOf("\n\n");
+	const crlf = buffer.indexOf("\r\n\r\n");
+
+	if (lf === -1 && crlf === -1) {
+		return undefined;
+	}
+
+	if (lf === -1 || (crlf !== -1 && crlf < lf)) {
+		return { index: crlf, length: 4 };
+	}
+
+	return { index: lf, length: 2 };
+}
+
+function extractSSEData(eventBlock: string): string | undefined {
+	const dataLines = eventBlock
+		.split(/\r?\n/)
+		.filter((line) => line.startsWith("data:"))
+		.map((line) => line.slice(5).trimStart());
+
+	if (dataLines.length === 0) {
+		return undefined;
+	}
+
+	const data = dataLines.join("\n").trim();
+	return data.length > 0 ? data : undefined;
+}
+
+function parseSSEJsonChunk(data: string): ChatCompletionChunk {
+	try {
+		return JSON.parse(data) as ChatCompletionChunk;
+	} catch (error) {
+		const preview = data.length > 400 ? `${data.slice(0, 400)}...` : data;
+		throw new Error(`Failed to parse GigaChat SSE chunk: ${preview}`, {
+			cause: error instanceof Error ? error : undefined,
+		});
+	}
+}
+
+function getHeaderValue(
+	headers: Record<string, string | string[] | undefined> | undefined,
+	name: string,
+): string | undefined {
+	if (!headers) {
+		return undefined;
+	}
+
+	const value = headers[name.toLowerCase()] ?? headers[name];
+	if (Array.isArray(value)) {
+		return value[0];
+	}
+	return typeof value === "string" ? value : undefined;
+}
+
 function isAccessToken(value: string): boolean {
 	return value.split(".").length >= 3;
 }
@@ -462,6 +738,10 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 
 function asOptionalString(value: unknown): string | undefined {
 	return typeof value === "string" ? value : undefined;
+}
+
+function asOptionalNumber(value: unknown): number | undefined {
+	return typeof value === "number" ? value : undefined;
 }
 
 async function getErrorMessage(error: unknown): Promise<string> {
