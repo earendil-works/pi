@@ -193,6 +193,8 @@ export interface SessionStats {
 		total: number;
 	};
 	cost: number;
+	/** Current context window usage (estimated tokens, percent, window size). */
+	contextUsage?: ContextUsage;
 }
 
 // ============================================================================
@@ -2994,6 +2996,7 @@ export class AgentSession {
 				total: totalInput + totalOutput + totalCacheRead + totalCacheWrite,
 			},
 			cost: totalCost,
+			contextUsage: this.getContextUsage(),
 		};
 	}
 
