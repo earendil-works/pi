@@ -914,6 +914,46 @@ async function generateModels() {
 		});
 	}
 
+	const minimaxDirectProviders = ["minimax", "minimax-cn"] as const;
+	const minimaxAnthropicIds = new Set([
+		"MiniMax-M2",
+		"MiniMax-M2.1",
+		"MiniMax-M2.1-highspeed",
+		"MiniMax-M2.5",
+		"MiniMax-M2.5-highspeed",
+		"MiniMax-M2.7",
+		"MiniMax-M2.7-highspeed",
+	]);
+
+	for (const candidate of allModels) {
+		if (
+			(candidate.provider === "minimax" || candidate.provider === "minimax-cn") &&
+			minimaxAnthropicIds.has(candidate.id)
+		) {
+			candidate.contextWindow = 204800;
+			candidate.maxTokens = 131072;
+		}
+	}
+
+	for (const provider of minimaxDirectProviders) {
+		const baseModel = allModels.find((m) => m.provider === provider && m.id === "MiniMax-M2.1");
+		if (!baseModel) continue;
+		if (allModels.some((m) => m.provider === provider && m.id === "MiniMax-M2.1-highspeed")) continue;
+
+		allModels.push({
+			...baseModel,
+			id: "MiniMax-M2.1-highspeed",
+			name: "MiniMax-M2.1-highspeed",
+			cost: {
+				...baseModel.cost,
+				input: baseModel.cost.input * 2,
+				output: baseModel.cost.output * 2,
+			},
+			contextWindow: 204800,
+			maxTokens: 131072,
+		});
+	}
+
 	// OpenAI Codex (ChatGPT OAuth) models
 	// NOTE: These are not fetched from models.dev; we keep a small, explicit list to avoid aliases.
 	// Context window is based on observed server limits (400s above ~272k), not marketing numbers.
