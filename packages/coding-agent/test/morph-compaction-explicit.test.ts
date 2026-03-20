@@ -102,39 +102,37 @@ describe("executeExplicitCompactionStrategy", () => {
 		expect(fetchImpl).toHaveBeenCalledOnce();
 		expect(localSummaryFallback).not.toHaveBeenCalled();
 		expect(nativeReplayCompact).not.toHaveBeenCalled();
-		expect(execution.usedFallback).toBe(false);
 		expect(execution.strategy.kind).toBe("morph-compact");
 		expect(execution.details.replacementMessages).toHaveLength(1);
 		expect(execution.details.formattedMessage).toContain("Morph compaction completed");
 	});
 
-	it("falls back to local summary when Morph is unavailable on a safe explicit path", async () => {
+	it("fails when Morph is unavailable on a safe explicit path", async () => {
 		const details = buildLocalFallbackDetails();
 		const localSummaryFallback = vi.fn(async () => details);
 		const nativeReplayCompact = vi.fn(async () => ({ details, usedFallback: false }));
 		const fetchImpl: typeof fetch = vi.fn();
 
-		const execution = await executeExplicitCompactionStrategy({
-			model: smallContextAnthropicModel,
-			messages: visibleMessages,
-			goal: "Fix the login page tests",
-			morphMode: "auto",
-			morphApiKey: "",
-			keyFiles: [],
-			localSummaryFallback,
-			nativeReplayCompact,
-			fetchImpl,
-		});
+		await expect(
+			executeExplicitCompactionStrategy({
+				model: smallContextAnthropicModel,
+				messages: visibleMessages,
+				goal: "Fix the login page tests",
+				morphMode: "auto",
+				morphApiKey: "",
+				keyFiles: [],
+				localSummaryFallback,
+				nativeReplayCompact,
+				fetchImpl,
+			}),
+		).rejects.toThrow("MORPH_API_KEY");
 
 		expect(fetchImpl).not.toHaveBeenCalled();
 		expect(nativeReplayCompact).not.toHaveBeenCalled();
-		expect(localSummaryFallback).toHaveBeenCalledOnce();
-		expect(execution.usedFallback).toBe(true);
-		expect(execution.strategy.kind).toBe("local-summary-fallback");
-		expect(execution.details).toBe(details);
+		expect(localSummaryFallback).not.toHaveBeenCalled();
 	});
 
-	it("prefers native replay compaction for OpenAI explicit compaction paths", async () => {
+	it("fails instead of using native replay compaction for OpenAI explicit compaction paths", async () => {
 		const details = buildLocalFallbackDetails();
 		const localSummaryFallback = vi.fn(async () => details);
 		const nativeReplayCompact = vi.fn(async () => ({
@@ -143,25 +141,26 @@ describe("executeExplicitCompactionStrategy", () => {
 		}));
 		const fetchImpl: typeof fetch = vi.fn();
 
-		const execution = await executeExplicitCompactionStrategy({
-			model: openaiModel,
-			messages: visibleMessages,
-			goal: "Fix the login page tests",
-			morphMode: "auto",
-			morphApiKey: "test-morph-key",
-			keyFiles: [],
-			localSummaryFallback,
-			nativeReplayCompact,
-			fetchImpl,
-		});
+		await expect(
+			executeExplicitCompactionStrategy({
+				model: openaiModel,
+				messages: visibleMessages,
+				goal: "Fix the login page tests",
+				morphMode: "auto",
+				morphApiKey: "test-morph-key",
+				keyFiles: [],
+				localSummaryFallback,
+				nativeReplayCompact,
+				fetchImpl,
+			}),
+		).rejects.toThrow("native replay");
 
-		expect(nativeReplayCompact).toHaveBeenCalledOnce();
+		expect(nativeReplayCompact).not.toHaveBeenCalled();
 		expect(localSummaryFallback).not.toHaveBeenCalled();
 		expect(fetchImpl).not.toHaveBeenCalled();
-		expect(execution.strategy.kind).toBe("native-replay-compact");
 	});
 
-	it("falls back to local summary when the Morph request fails", async () => {
+	it("fails when the Morph request fails", async () => {
 		const details = buildLocalFallbackDetails();
 		const localSummaryFallback = vi.fn(async () => details);
 		const nativeReplayCompact = vi.fn(async () => ({ details, usedFallback: false }));
@@ -169,21 +168,57 @@ describe("executeExplicitCompactionStrategy", () => {
 			async () => new Response(JSON.stringify({ error: "boom" }), { status: 500 }),
 		);
 
-		const execution = await executeExplicitCompactionStrategy({
-			model: smallContextAnthropicModel,
-			messages: visibleMessages,
-			goal: "Fix the login page tests",
-			morphMode: "on",
-			morphApiKey: "test-morph-key",
-			keyFiles: [],
-			localSummaryFallback,
-			nativeReplayCompact,
-			fetchImpl,
-		});
+		await expect(
+			executeExplicitCompactionStrategy({
+				model: smallContextAnthropicModel,
+				messages: visibleMessages,
+				goal: "Fix the login page tests",
+				morphMode: "on",
+				morphApiKey: "test-morph-key",
+				keyFiles: [],
+				localSummaryFallback,
+				nativeReplayCompact,
+				fetchImpl,
+			}),
+		).rejects.toThrow("Morph compaction failed");
 
 		expect(fetchImpl).toHaveBeenCalledOnce();
-		expect(localSummaryFallback).toHaveBeenCalledOnce();
-		expect(execution.usedFallback).toBe(true);
-		expect(execution.fallbackReason).toContain("Morph compaction failed");
+		expect(localSummaryFallback).not.toHaveBeenCalled();
+	});
+
+	it("fails when native compact replay items already exist in history", async () => {
+		const details = buildLocalFallbackDetails();
+		const localSummaryFallback = vi.fn(async () => details);
+		const nativeReplayCompact = vi.fn(async () => ({ details, usedFallback: false }));
+		const fetchImpl: typeof fetch = vi.fn();
+
+		await expect(
+			executeExplicitCompactionStrategy({
+				model: smallContextAnthropicModel,
+				messages: [
+					...visibleMessages,
+					{
+						role: "user",
+						content: [],
+						timestamp: 3,
+						__muCompactResponseItem: {
+							type: "compaction",
+							encrypted_content: "opaque-blob",
+						},
+					} as Message,
+				],
+				goal: "Fix the login page tests",
+				morphMode: "on",
+				morphApiKey: "test-morph-key",
+				keyFiles: [],
+				localSummaryFallback,
+				nativeReplayCompact,
+				fetchImpl,
+			}),
+		).rejects.toThrow("native replay");
+
+		expect(fetchImpl).not.toHaveBeenCalled();
+		expect(localSummaryFallback).not.toHaveBeenCalled();
+		expect(nativeReplayCompact).not.toHaveBeenCalled();
 	});
 });

@@ -5,10 +5,10 @@ type MorphCompactionMode = "on" | "off" | "auto";
 
 type MorphCompressionDecision =
 	| {
-			kind: "skip";
+			kind: "cannot-compact";
 			targetTokens: number;
 			estimatedHistoryTokens: number;
-			reason: "under-target-budget" | "missing-context-window";
+			reason: "missing-context-window";
 	  }
 	| {
 			kind: "compact";
@@ -18,10 +18,8 @@ type MorphCompressionDecision =
 	  };
 
 type MorphCompactionStrategy =
-	| { kind: "skip-compaction"; reason: string }
 	| { kind: "morph-compact"; effectiveMode: MorphCompactionMode; compressionRatio: number }
-	| { kind: "native-replay-compact"; reason: string }
-	| { kind: "local-summary-fallback"; reason: string };
+	| { kind: "cannot-compact"; reason: string };
 
 type MorphCompactionStrategyModule = {
 	selectMorphCompressionRatio(args: {
@@ -52,13 +50,13 @@ function requireModel(provider: Parameters<typeof getModel>[0], modelId: string)
 }
 
 describe("selectMorphCompressionRatio", () => {
-	it("skips compaction when history already fits inside 40 percent of the context window", async () => {
+	it("still returns a valid Morph ratio when history is already under the 40 percent target", async () => {
 		const mod = await loadMorphCompactionStrategyModule();
 		expect(mod.selectMorphCompressionRatio({ estimatedHistoryTokens: 39_500, contextWindow: 100_000 })).toEqual({
-			kind: "skip",
+			kind: "compact",
 			targetTokens: 40_000,
 			estimatedHistoryTokens: 39_500,
-			reason: "under-target-budget",
+			compressionRatio: 0.7,
 		});
 	});
 
@@ -97,7 +95,7 @@ describe("selectCompactionStrategy", () => {
 	const anthropicModel = requireModel("anthropic", "claude-sonnet-4-5");
 	const openaiModel = requireModel("openai", "gpt-4o-mini");
 
-	it("uses local summary fallback when Morph is disabled on a visible-history-safe path", async () => {
+	it("fails when Morph is disabled on a visible-history-safe path", async () => {
 		const mod = await loadMorphCompactionStrategyModule();
 		expect(
 			mod.selectCompactionStrategy({
@@ -108,7 +106,7 @@ describe("selectCompactionStrategy", () => {
 				estimatedHistoryTokens: 100_000,
 				contextWindow: 100_000,
 			}),
-		).toMatchObject({ kind: "local-summary-fallback" });
+		).toMatchObject({ kind: "cannot-compact" });
 	});
 
 	it("uses Morph when forced on and the API key is available", async () => {
@@ -139,7 +137,7 @@ describe("selectCompactionStrategy", () => {
 		).toEqual({ kind: "morph-compact", effectiveMode: "auto", compressionRatio: 0.4 });
 	});
 
-	it("falls back when auto mode cannot use Morph because the key is absent", async () => {
+	it("fails when auto mode cannot use Morph because the key is absent", async () => {
 		const mod = await loadMorphCompactionStrategyModule();
 		expect(
 			mod.selectCompactionStrategy({
@@ -150,10 +148,10 @@ describe("selectCompactionStrategy", () => {
 				estimatedHistoryTokens: 100_000,
 				contextWindow: 100_000,
 			}),
-		).toMatchObject({ kind: "local-summary-fallback" });
+		).toMatchObject({ kind: "cannot-compact" });
 	});
 
-	it("prefers native replay compaction when the current path requires opaque replay preservation", async () => {
+	it("fails when the current path requires opaque native replay preservation", async () => {
 		const mod = await loadMorphCompactionStrategyModule();
 		expect(
 			mod.selectCompactionStrategy({
@@ -164,6 +162,6 @@ describe("selectCompactionStrategy", () => {
 				estimatedHistoryTokens: 100_000,
 				contextWindow: 100_000,
 			}),
-		).toMatchObject({ kind: "native-replay-compact" });
+		).toMatchObject({ kind: "cannot-compact" });
 	});
 });

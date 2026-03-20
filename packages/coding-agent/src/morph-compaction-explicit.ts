@@ -23,8 +23,6 @@ type NativeReplayExecution = {
 export type ExplicitCompactionExecution = {
 	strategy: MorphCompactionStrategy;
 	details: HandoffDetails;
-	usedFallback: boolean;
-	fallbackReason?: string;
 };
 
 function buildMorphFormattedMessage(args: {
@@ -176,47 +174,21 @@ export async function executeExplicitCompactionStrategy(args: {
 		contextWindow: args.model.contextWindow,
 	});
 
-	if (strategy.kind === "native-replay-compact") {
-		const execution = await args.nativeReplayCompact();
-		return {
-			strategy,
-			details: execution.details,
-			usedFallback: execution.usedFallback,
-			fallbackReason: execution.fallbackReason,
-		};
+	if (strategy.kind === "cannot-compact") {
+		throw new Error(strategy.reason);
 	}
 
-	if (strategy.kind === "local-summary-fallback" || strategy.kind === "skip-compaction") {
-		return {
-			strategy,
-			details: await args.localSummaryFallback(),
-			usedFallback: true,
-			fallbackReason: strategy.reason,
-		};
-	}
-
-	try {
-		return {
-			strategy,
-			details: await compactVisibleHistoryWithMorph({
-				model: args.model,
-				messages: args.messages,
-				goal: args.goal,
-				apiKey: morphApiKey,
-				compressionRatio: strategy.compressionRatio,
-				keyFiles: args.keyFiles,
-				signal: args.signal,
-				fetchImpl: args.fetchImpl,
-			}),
-			usedFallback: false,
-		};
-	} catch (error) {
-		const message = error instanceof Error ? error.message : String(error);
-		return {
-			strategy,
-			details: await args.localSummaryFallback(),
-			usedFallback: true,
-			fallbackReason: message,
-		};
-	}
+	return {
+		strategy,
+		details: await compactVisibleHistoryWithMorph({
+			model: args.model,
+			messages: args.messages,
+			goal: args.goal,
+			apiKey: morphApiKey,
+			compressionRatio: strategy.compressionRatio,
+			keyFiles: args.keyFiles,
+			signal: args.signal,
+			fetchImpl: args.fetchImpl,
+		}),
+	};
 }

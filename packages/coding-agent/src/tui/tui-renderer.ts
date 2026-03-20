@@ -44,7 +44,6 @@ import {
 import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
 import { parseCompactSlashCommand } from "../compact-command.js";
-import { createCompactionAdapter } from "../compaction-adapter.js";
 import {
 	appendCheckpointToReplacementHistory,
 	buildCompactionCheckpointText,
@@ -4833,7 +4832,6 @@ export class TuiRenderer {
 		if (!model) throw new Error("No model selected");
 
 		const tracking = extractHandoffFileTracking(messages);
-		const adapter = createCompactionAdapter(model as Model<Api>);
 		const execution = await executeExplicitCompactionStrategy({
 			model: model as Model<Api>,
 			messages,
@@ -4844,40 +4842,16 @@ export class TuiRenderer {
 			signal,
 			localSummaryFallback: () => this.buildHandoffSummaryDetails(goal, signal),
 			nativeReplayCompact: async () => {
-				const apiKey = await getApiKeyForModel(model);
-				if (!apiKey) throw new Error(`No API key for ${model.provider}`);
-
-				return await adapter.compactSummary({
-					model: model as Model<Api>,
-					apiKey,
-					messages: this.agent.state.messages,
-					goal,
-					readFiles: tracking.readFiles,
-					modifiedFiles: tracking.modifiedFiles,
-					signal,
-					localFallback: () => this.buildHandoffSummaryDetails(goal, signal),
-				});
+				throw new Error("Native replay compaction is disabled; Morph-only compaction must fail instead");
 			},
 		});
-
-		if (execution.usedFallback && execution.fallbackReason) {
-			this.showWarning(`Compaction fallback used: ${execution.fallbackReason}`);
+		if (execution.strategy.kind !== "morph-compact") {
+			throw new Error(`Compaction failed: ${execution.strategy.reason}`);
 		}
 
-		const compactionBackendLabel =
-			execution.usedFallback ||
-			execution.strategy.kind === "local-summary-fallback" ||
-			execution.strategy.kind === "skip-compaction"
-				? "Local summary fallback"
-				: execution.strategy.kind === "morph-compact"
-					? `Morph compaction (${execution.strategy.effectiveMode}, ratio ${execution.strategy.compressionRatio})`
-					: "Native replay compact";
-		const compactionApplicationMode =
-			execution.usedFallback || execution.strategy.kind !== "morph-compact"
-				? "checkpoint-summary"
-				: "goal-plus-replacement-history";
-		const compactionNotificationLabel =
-			execution.usedFallback || execution.strategy.kind !== "morph-compact" ? undefined : "Morph compaction";
+		const compactionBackendLabel = `Morph compaction (${execution.strategy.effectiveMode}, ratio ${execution.strategy.compressionRatio})`;
+		const compactionApplicationMode = "goal-plus-replacement-history";
+		const compactionNotificationLabel = "Morph compaction";
 
 		return {
 			...execution.details,
