@@ -928,7 +928,7 @@ export class AgentSession {
 		}
 
 		// Validate API key
-		const apiKey = await this._modelRegistry.getApiKey(this.model);
+		const apiKey = await this._modelRegistry.getApiKey(this.model, { throwOnRefreshError: true });
 		if (!apiKey) {
 			const isOAuth = this._modelRegistry.isUsingOAuth(this.model);
 			if (isOAuth) {
@@ -1368,7 +1368,7 @@ export class AgentSession {
 	 * @throws Error if no API key available for the model
 	 */
 	async setModel(model: Model<any>): Promise<void> {
-		const apiKey = await this._modelRegistry.getApiKey(model);
+		const apiKey = await this._modelRegistry.getApiKey(model, { throwOnRefreshError: true });
 		if (!apiKey) {
 			throw new Error(`No API key for ${model.provider}/${model.id}`);
 		}
@@ -1461,7 +1461,7 @@ export class AgentSession {
 		const nextIndex = direction === "forward" ? (currentIndex + 1) % len : (currentIndex - 1 + len) % len;
 		const nextModel = availableModels[nextIndex];
 
-		const apiKey = await this._modelRegistry.getApiKey(nextModel);
+		const apiKey = await this._modelRegistry.getApiKey(nextModel, { throwOnRefreshError: true });
 		if (!apiKey) {
 			throw new Error(`No API key for ${nextModel.provider}/${nextModel.id}`);
 		}
@@ -1613,7 +1613,7 @@ export class AgentSession {
 				throw new Error("No model selected");
 			}
 
-			const apiKey = await this._modelRegistry.getApiKey(this.model);
+			const apiKey = await this._modelRegistry.getApiKey(this.model, { throwOnRefreshError: true });
 			if (!apiKey) {
 				throw new Error(`No API key for ${this.model.provider}`);
 			}
@@ -1833,7 +1833,7 @@ export class AgentSession {
 				return;
 			}
 
-			const apiKey = await this._modelRegistry.getApiKey(this.model);
+			const apiKey = await this._modelRegistry.getApiKey(this.model, { throwOnRefreshError: true });
 			if (!apiKey) {
 				this._emit({ type: "auto_compaction_end", result: undefined, aborted: false, willRetry: false });
 				return;
@@ -2797,7 +2797,7 @@ export class AgentSession {
 		let summaryDetails: unknown;
 		if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
 			const model = this.model!;
-			const apiKey = await this._modelRegistry.getApiKey(model);
+			const apiKey = await this._modelRegistry.getApiKey(model, { throwOnRefreshError: true });
 			if (!apiKey) {
 				throw new Error(`No API key for ${model.provider}`);
 			}

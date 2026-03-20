@@ -5,6 +5,12 @@
 ### Added
 
 - Added built-in GigaChat provider support via the official `gigachat` client and native chat completions API
+- Added a built-in `gigachat` login provider to `@mariozechner/pi-ai/oauth`, letting `/login gigachat` exchange a Sber authorization key for short-lived access tokens for custom providers.
+- Restored the built-in `gigachat` model catalog and native provider wiring so GigaChat models appear in pi model selection and use the official SDK.
+
+### Changed
+
+- Updated `/login gigachat` to prompt for personal vs business access first, then basic vs token auth, and to accept direct access-token logins that require re-login after expiry.
 
 ## [0.58.3] - 2026-03-15
 

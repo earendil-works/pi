@@ -1,18 +1,19 @@
 {
-  "extends": "../../tsconfig.base.json",
-  "compilerOptions": {
-    "noEmit": true,
-    "paths": {
-      "*": ["./*"],
-      "@mariozechner/pi-agent-core": ["../../packages/agent/src/index.ts"],
-      "@mariozechner/pi-agent-core/*": ["../../packages/agent/src/*"],
-      "@mariozechner/pi-ai": ["../../packages/ai/src/index.ts"],
-      "@mariozechner/pi-ai/*": ["../../packages/ai/src/*"],
-      "@mariozechner/pi-tui": ["../../packages/tui/src/index.ts"],
-      "@mariozechner/pi-tui/*": ["../../packages/tui/src/*"],
-      "@mariozechner/pi-web-ui": ["../../packages/web-ui/src/index.ts"],
-      "@mariozechner/pi-web-ui/*": ["../../packages/web-ui/src/*"]
-    }
-  },
-  "include": ["src/**/*"]
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+		"noEmit": true,
+		"paths": {
+			"*": ["./*"],
+			"@mariozechner/pi-agent-core": ["../agent/src/index.ts"],
+			"@mariozechner/pi-agent-core/*": ["../agent/src/*"],
+			"@mariozechner/pi-ai": ["../ai/src/index.ts"],
+			"@mariozechner/pi-ai/*": ["../ai/src/*"],
+			"@mariozechner/pi-tui": ["../tui/src/index.ts"],
+			"@mariozechner/pi-tui/*": ["../tui/src/*"],
+			"@mariozechner/pi-web-ui": ["./src/index.ts"],
+			"@mariozechner/pi-web-ui/*": ["./src/*"]
+		}
+	},
+	"include": ["src/**/*"]
 }

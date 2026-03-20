@@ -36,12 +36,12 @@ Unified LLM API with automatic model discovery, provider configuration, token an
   - [Browser Compatibility Notes](#browser-compatibility-notes)
   - [Environment Variables](#environment-variables-nodejs-only)
   - [Checking Environment Variables](#checking-environment-variables)
-- [OAuth Providers](#oauth-providers)
+- [Login Providers](#login-providers)
   - [Vertex AI](#vertex-ai)
   - [CLI Login](#cli-login)
-  - [Programmatic OAuth](#programmatic-oauth)
+  - [Programmatic Login](#programmatic-login)
   - [Login Flow Example](#login-flow-example)
-  - [Using OAuth Tokens](#using-oauth-tokens)
+  - [Using Stored Credentials](#using-stored-credentials)
   - [Provider Notes](#provider-notes)
 - [License](#license)
 
@@ -917,9 +917,9 @@ const response = await complete(model, {
 ### Browser Compatibility Notes
 
 - Amazon Bedrock (`bedrock-converse-stream`) is not supported in browser environments.
-- OAuth login flows are not supported in browser environments. Use the `@mariozechner/pi-ai/oauth` entry point in Node.js.
+- Interactive login flows are not supported in browser environments. Use the `@mariozechner/pi-ai/oauth` entry point in Node.js.
 - In browser builds, Bedrock can still appear in model lists. Calls to Bedrock models fail at runtime.
-- Use a server-side proxy or backend service if you need Bedrock or OAuth-based auth from a web app.
+- Use a server-side proxy or backend service if you need Bedrock or login-based auth from a web app.
 
 ### Environment Variables (Node.js only)
 
@@ -943,6 +943,7 @@ In Node.js environments, you can set environment variables to avoid passing API 
 | MiniMax | `MINIMAX_API_KEY` |
 | OpenCode Zen / OpenCode Go | `OPENCODE_API_KEY` |
 | Kimi For Coding | `KIMI_API_KEY` |
+| GigaChat | `GIGACHAT_CREDENTIALS`, `GIGACHAT_ACCESS_TOKEN`, or `GIGACHAT_USER` + `GIGACHAT_PASSWORD` (optional `GIGACHAT_SCOPE`: `GIGACHAT_API_PERS`, `GIGACHAT_API_B2B`, or `GIGACHAT_API_CORP`) |
 | GitHub Copilot | `COPILOT_GITHUB_TOKEN` or `GH_TOKEN` or `GITHUB_TOKEN` |
 
 When set, the library automatically uses these keys:
@@ -1025,15 +1026,18 @@ Built-in models:
 - `GigaChat-2-Pro`
 - `GigaChat-2-Max`
 
-## OAuth Providers
+## Login Providers
 
-Several providers require OAuth authentication instead of static API keys:
+The `@mariozechner/pi-ai/oauth` entry point exposes built-in interactive login providers. Most use OAuth. GigaChat uses an interactive login flow that returns a short-lived access token.
 
 - **Anthropic** (Claude Pro/Max subscription)
 - **OpenAI Codex** (ChatGPT Plus/Pro subscription, access to GPT-5.x Codex models)
 - **GitHub Copilot** (Copilot subscription)
 - **Google Gemini CLI** (Gemini 2.0/2.5 via Google Cloud Code Assist; free tier or paid subscription)
 - **Antigravity** (Free Gemini 3, Claude, GPT-OSS via Google Cloud)
+- **GigaChat** (Built-in provider with native GigaChat models, plus `/login` support for basic or token auth)
+
+GigaChat includes a built-in model catalog and native provider implementation. You can authenticate with `GIGACHAT_CREDENTIALS`, `GIGACHAT_ACCESS_TOKEN`, `GIGACHAT_USER`/`GIGACHAT_PASSWORD`, or `/login gigachat`.
 
 For paid Cloud Code Assist subscriptions, set `GOOGLE_CLOUD_PROJECT` or `GOOGLE_CLOUD_PROJECT_ID` to your project ID.
 
@@ -1090,7 +1094,7 @@ npx @mariozechner/pi-ai list               # list available providers
 
 Credentials are saved to `auth.json` in the current directory.
 
-### Programmatic OAuth
+### Programmatic Login
 
 The library provides login and token refresh functions via the `@mariozechner/pi-ai/oauth` entry point. Credential storage is the caller's responsibility.
 
@@ -1100,6 +1104,7 @@ import {
   loginAnthropic,
   loginOpenAICodex,
   loginGitHubCopilot,
+  loginGigaChat,
   loginGeminiCli,
   loginAntigravity,
 
@@ -1108,7 +1113,7 @@ import {
   getOAuthApiKey,      // (provider, credentialsMap) => { newCredentials, apiKey } | null
 
   // Types
-  type OAuthProvider,  // 'anthropic' | 'openai-codex' | 'github-copilot' | 'google-gemini-cli' | 'google-antigravity'
+  type OAuthProvider,  // 'anthropic' | 'openai-codex' | 'github-copilot' | 'gigachat' | 'google-gemini-cli' | 'google-antigravity'
   type OAuthCredentials,
 } from '@mariozechner/pi-ai/oauth';
 ```
@@ -1135,7 +1140,7 @@ const auth = { 'github-copilot': { type: 'oauth', ...credentials } };
 writeFileSync('auth.json', JSON.stringify(auth, null, 2));
 ```
 
-### Using OAuth Tokens
+### Using Stored Credentials
 
 Use `getOAuthApiKey()` to get an API key, automatically refreshing if expired:
 
@@ -1169,6 +1174,8 @@ const response = await complete(model, {
 **Azure OpenAI (Responses)**: Uses the Responses API only. Set `AZURE_OPENAI_API_KEY` and either `AZURE_OPENAI_BASE_URL` or `AZURE_OPENAI_RESOURCE_NAME`. Use `AZURE_OPENAI_API_VERSION` (defaults to `v1`) to override the API version if needed. Deployment names are treated as model IDs by default, override with `azureDeploymentName` or `AZURE_OPENAI_DEPLOYMENT_NAME_MAP` using comma-separated `model-id=deployment` pairs (for example `gpt-4o-mini=my-deployment,gpt-4o=prod`). Legacy deployment-based URLs are intentionally unsupported.
 
 **GitHub Copilot**: If you get "The requested model is not supported" error, enable the model manually in VS Code: open Copilot Chat, click the model selector, select the model (warning icon), and click "Enable".
+
+**GigaChat**: `/login gigachat` first prompts for personal vs business access, then for auth mode. Basic auth asks for username and password sequentially, stores them, and refreshes expired access tokens automatically by reusing those stored credentials. Token auth stores a provided access token directly and may require re-login once it expires because it cannot be refreshed automatically. This gives four interactive combinations: personal/basic, personal/token, business/basic, and business/token. Built-in models are available under the `gigachat` provider, and custom providers can also reuse the `gigachat` provider ID so `/login gigachat` supplies credentials automatically. Token requests may require the Russian Trusted Root CA to be installed or configured via `NODE_EXTRA_CA_CERTS`.
 
 **Google Gemini CLI / Antigravity**: These use Google Cloud OAuth. The `apiKey` returned by `getOAuthApiKey()` is a JSON string containing both the token and project ID, which the library handles automatically.
 
