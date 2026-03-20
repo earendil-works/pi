@@ -2,7 +2,13 @@ import { homedir } from "os";
 import { join, resolve } from "path";
 import { describe, expect, it } from "vitest";
 import type { ResourceDiagnostic } from "../src/core/diagnostics.js";
-import { formatSkillsForPrompt, loadSkills, loadSkillsFromDir, type Skill } from "../src/core/skills.js";
+import {
+	formatSkillsForPrompt,
+	interpolateShellCommands,
+	loadSkills,
+	loadSkillsFromDir,
+	type Skill,
+} from "../src/core/skills.js";
 
 const fixturesDir = resolve(__dirname, "fixtures/skills");
 const collisionFixturesDir = resolve(__dirname, "fixtures/skills-collision");
@@ -418,6 +424,56 @@ describe("skills", () => {
 			expect(skillMap.get("calendar")?.source).toBe("first");
 			expect(collisionWarnings).toHaveLength(1);
 			expect(collisionWarnings[0].message).toContain("name collision");
+		});
+	});
+
+	describe("interpolateShellCommands", () => {
+		it("should replace !`command` with stdout when allowed-tools includes Bash", () => {
+			const result = interpolateShellCommands("output: !`echo hello`", "/tmp", "Bash");
+			expect(result).toBe("output: hello");
+		});
+
+		it("should handle multiple commands", () => {
+			const result = interpolateShellCommands("a: !`echo one` b: !`echo two`", "/tmp", "Bash");
+			expect(result).toBe("a: one b: two");
+		});
+
+		it("should pass through content without interpolation patterns", () => {
+			const content = "no commands here, just `backticks`";
+			expect(interpolateShellCommands(content, "/tmp", "Bash")).toBe(content);
+		});
+
+		it("should produce error marker on failed command", () => {
+			const result = interpolateShellCommands("!`command_that_does_not_exist_xyz`", "/tmp", "Bash");
+			expect(result).toMatch(/\[error: `command_that_does_not_exist_xyz` failed:/);
+		});
+
+		it("should use the provided cwd", () => {
+			const result = interpolateShellCommands("!`pwd`", "/tmp", "Bash");
+			// /tmp may resolve to /private/tmp on macOS
+			expect(result).toMatch(/\/tmp/);
+		});
+
+		it("should trim trailing newlines from output", () => {
+			const result = interpolateShellCommands("!`echo hello`", "/tmp", "Bash");
+			expect(result).toBe("hello");
+			expect(result.endsWith("\n")).toBe(false);
+		});
+
+		it("should NOT execute when allowed-tools is undefined", () => {
+			const content = "output: !`echo hello`";
+			expect(interpolateShellCommands(content, "/tmp")).toBe(content);
+			expect(interpolateShellCommands(content, "/tmp", undefined)).toBe(content);
+		});
+
+		it("should NOT execute when allowed-tools has no Bash permission", () => {
+			const content = "output: !`echo hello`";
+			expect(interpolateShellCommands(content, "/tmp", "Read Write")).toBe(content);
+		});
+
+		it("should execute with Bash(pattern) allowed-tools", () => {
+			const result = interpolateShellCommands("!`echo ok`", "/tmp", "Bash(git:*) Read");
+			expect(result).toBe("ok");
 		});
 	});
 });

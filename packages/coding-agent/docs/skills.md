@@ -11,6 +11,7 @@ Pi implements the [Agent Skills standard](https://agentskills.io/specification),
 - [Locations](#locations)
 - [How Skills Work](#how-skills-work)
 - [Skill Commands](#skill-commands)
+- [Dynamic Content](#dynamic-content)
 - [Skill Structure](#skill-structure)
 - [Frontmatter](#frontmatter)
 - [Validation](#validation)
@@ -87,6 +88,36 @@ Toggle skill commands via `/settings` in interactive mode or in `settings.json`:
   "enableSkillCommands": true
 }
 ```
+
+## Dynamic Content
+
+Skills can embed shell commands that execute at invocation time using `!`command`` syntax. The command runs, and the model sees only the output.
+
+**Security:** Interpolation only runs when the skill declares `allowed-tools` with a Bash permission in its frontmatter. Without it, `!`command`` patterns are left as-is. This prevents untrusted skills from executing arbitrary commands.
+
+```markdown
+---
+name: pr-summary
+description: Summarize changes in a pull request
+allowed-tools: Bash(git:*) Bash(gh:*)
+---
+
+# PR Summary
+
+- PR diff: !`gh pr diff`
+- Changed files: !`gh pr diff --name-only`
+- Current branch: !`git branch --show-current`
+```
+
+When invoked via `/skill:pr-summary`, pi replaces each `!`command`` with its stdout before the model sees the content.
+
+**Behavior:**
+- Requires `allowed-tools` with `Bash` or `Bash(pattern)` in frontmatter
+- Commands run in the skill's directory (where SKILL.md lives)
+- Each command has a 10-second timeout
+- Failed commands produce an inline error marker: `[error: \`command\` failed: ...]`
+- Content without `!`...`` patterns passes through unchanged
+- Compatible with [Claude Code's skill interpolation syntax](https://x.com/lydiahallie/status/2034337963820327017)
 
 ## Skill Structure
 

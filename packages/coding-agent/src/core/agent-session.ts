@@ -75,6 +75,7 @@ import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.j
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.js";
 import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.js";
 import type { SettingsManager } from "./settings-manager.js";
+import { interpolateShellCommands } from "./skills.js";
 import { BUILTIN_SLASH_COMMANDS, type SlashCommandInfo, type SlashCommandLocation } from "./slash-commands.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import type { BashOperations } from "./tools/bash.js";
@@ -1051,7 +1052,8 @@ export class AgentSession {
 
 		try {
 			const content = readFileSync(skill.filePath, "utf-8");
-			const body = stripFrontmatter(content).trim();
+			let body = stripFrontmatter(content).trim();
+			body = interpolateShellCommands(body, skill.baseDir, skill.allowedTools);
 			const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
 			return args ? `${skillBlock}\n\n${args}` : skillBlock;
 		} catch (err) {

@@ -1,3 +1,4 @@
+import { execSync } from "child_process";
 import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "fs";
 import ignore from "ignore";
 import { homedir } from "os";
@@ -67,6 +68,7 @@ export interface SkillFrontmatter {
 	name?: string;
 	description?: string;
 	"disable-model-invocation"?: boolean;
+	"allowed-tools"?: string;
 	[key: string]: unknown;
 }
 
@@ -77,6 +79,7 @@ export interface Skill {
 	baseDir: string;
 	source: string;
 	disableModelInvocation: boolean;
+	allowedTools: string | undefined;
 }
 
 export interface LoadSkillsResult {
@@ -293,6 +296,7 @@ function loadSkillFromFile(
 				baseDir: skillDir,
 				source,
 				disableModelInvocation: frontmatter["disable-model-invocation"] === true,
+				allowedTools: typeof frontmatter["allowed-tools"] === "string" ? frontmatter["allowed-tools"] : undefined,
 			},
 			diagnostics,
 		};
@@ -301,6 +305,48 @@ function loadSkillFromFile(
 		diagnostics.push({ type: "warning", message, path: filePath });
 		return { skill: null, diagnostics };
 	}
+}
+
+/** Max time for a single shell interpolation command */
+const INTERPOLATION_TIMEOUT_MS = 10_000;
+
+/**
+ * Check whether allowed-tools includes a Bash permission.
+ * Accepts "Bash", "Bash(*)", "Bash(git:*)", etc.
+ */
+function allowsBash(allowedTools: string | undefined): boolean {
+	if (!allowedTools) return false;
+	return allowedTools.split(/\s+/).some((t) => t === "Bash" || t.startsWith("Bash("));
+}
+
+/**
+ * Replace !`command` patterns in skill content with their shell output.
+ * Runs each command via execSync in the given cwd (typically the skill's baseDir).
+ * On failure or timeout, replaces with an inline error marker.
+ *
+ * Only executes when the skill declares allowed-tools with a Bash permission
+ * in its frontmatter. Without it, !`command` patterns are left as-is.
+ * This prevents untrusted skills from executing arbitrary commands.
+ *
+ * Matches Claude Code's skill interpolation syntax for cross-compatibility.
+ * See: https://x.com/lydiahallie/status/2034337963820327017
+ */
+export function interpolateShellCommands(content: string, cwd: string, allowedTools?: string): string {
+	if (!allowsBash(allowedTools)) return content;
+
+	return content.replace(/!`([^`]+)`/g, (_match, command: string) => {
+		try {
+			return execSync(command, {
+				cwd,
+				timeout: INTERPOLATION_TIMEOUT_MS,
+				encoding: "utf-8",
+				stdio: ["pipe", "pipe", "pipe"],
+			}).trimEnd();
+		} catch (err) {
+			const message = err instanceof Error ? err.message.split("\n")[0] : String(err);
+			return `[error: \`${command}\` failed: ${message}]`;
+		}
+	});
 }
 
 /**
