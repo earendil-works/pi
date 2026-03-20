@@ -1202,6 +1202,38 @@ export class AgentSession {
 		}
 	}
 
+	async appendAssistantMessage(
+		message: {
+			content: TextContent[];
+			api: AssistantMessage["api"];
+			provider: AssistantMessage["provider"];
+			model: AssistantMessage["model"];
+			usage: AssistantMessage["usage"];
+			stopReason: AssistantMessage["stopReason"];
+			errorMessage?: AssistantMessage["errorMessage"];
+		},
+	): Promise<AssistantMessage> {
+		if (!message.content.every((block) => block.type === "text")) {
+			throw new Error("appendAssistantMessage only supports text content blocks");
+		}
+		const appMessage: AssistantMessage = {
+			role: "assistant",
+			content: message.content.map((block) => ({ ...block })),
+			api: message.api,
+			provider: message.provider,
+			model: message.model,
+			usage: message.usage,
+			stopReason: message.stopReason,
+			errorMessage: message.errorMessage,
+			timestamp: Date.now(),
+		};
+		this.agent.appendMessage(appMessage);
+		this.sessionManager.appendMessage(appMessage);
+		this._emit({ type: "message_start", message: appMessage });
+		this._emit({ type: "message_end", message: appMessage });
+		return appMessage;
+	}
+
 	/**
 	 * Send a user message to the agent. Always triggers a turn.
 	 * When the agent is streaming, use deliverAs to specify how to queue the message.
@@ -2135,6 +2167,7 @@ export class AgentSession {
 				appendEntry: (customType, data) => {
 					this.sessionManager.appendCustomEntry(customType, data);
 				},
+				appendAssistantMessage: (message) => this.appendAssistantMessage(message),
 				setSessionName: (name) => {
 					this.sessionManager.appendSessionInfo(name);
 				},

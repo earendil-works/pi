@@ -125,6 +125,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		sendMessage: notInitialized,
 		sendUserMessage: notInitialized,
 		appendEntry: notInitialized,
+		appendAssistantMessage: () => Promise.reject(new Error("Extension runtime not initialized")),
 		setSessionName: notInitialized,
 		getSessionName: notInitialized,
 		setLabel: notInitialized,
@@ -224,6 +225,10 @@ function createExtensionAPI(
 
 		appendEntry(customType: string, data?: unknown): void {
 			runtime.appendEntry(customType, data);
+		},
+
+		appendAssistantMessage(message) {
+			return runtime.appendAssistantMessage(message);
 		},
 
 		setSessionName(name: string): void {

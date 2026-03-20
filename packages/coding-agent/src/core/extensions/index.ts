@@ -24,6 +24,8 @@ export type {
 	// Re-exports
 	AgentToolResult,
 	AgentToolUpdateCallback,
+	AppendAssistantMessageHandler,
+	AppendAssistantMessageInput,
 	AppendEntryHandler,
 	// App keybindings (for custom editors)
 	AppKeybinding,

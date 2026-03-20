@@ -1057,6 +1057,9 @@ export interface ExtensionAPI {
 	/** Append a custom entry to the session for state persistence (not sent to LLM). */
 	appendEntry<T = unknown>(customType: string, data?: T): void;
 
+	/** Append a real assistant message to the session without triggering a new turn. */
+	appendAssistantMessage(message: AppendAssistantMessageInput): Promise<AssistantMessage>;
+
 	// =========================================================================
 	// Session Metadata
 	// =========================================================================
@@ -1275,6 +1278,15 @@ export type SendUserMessageHandler = (
 
 export type AppendEntryHandler = <T = unknown>(customType: string, data?: T) => void;
 
+export type AppendAssistantMessageInput = Omit<
+	Pick<AssistantMessage, "content" | "api" | "provider" | "model" | "usage" | "stopReason" | "errorMessage">,
+	"content"
+> & {
+	content: TextContent[];
+};
+
+export type AppendAssistantMessageHandler = (message: AppendAssistantMessageInput) => Promise<AssistantMessage>;
+
 export type SetSessionNameHandler = (name: string) => void;
 
 export type GetSessionNameHandler = () => string | undefined;
@@ -1326,6 +1338,7 @@ export interface ExtensionActions {
 	sendMessage: SendMessageHandler;
 	sendUserMessage: SendUserMessageHandler;
 	appendEntry: AppendEntryHandler;
+	appendAssistantMessage: AppendAssistantMessageHandler;
 	setSessionName: SetSessionNameHandler;
 	getSessionName: GetSessionNameHandler;
 	setLabel: SetLabelHandler;
