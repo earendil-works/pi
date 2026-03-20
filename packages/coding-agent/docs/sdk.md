@@ -444,10 +444,10 @@ const { session } = await createAgentSession({
 
 ```typescript
 import { Type } from "@sinclair/typebox";
-import { createAgentSession, type ToolDefinition } from "@mariozechner/pi-coding-agent";
+import { createAgentSession, defineTool } from "@mariozechner/pi-coding-agent";
 
-// Inline custom tool
-const myTool: ToolDefinition = {
+// defineTool() infers params from the TypeBox schema.
+const myTool = defineTool({
   name: "my_tool",
   label: "My Tool",
   description: "Does something useful",
@@ -455,10 +455,11 @@ const myTool: ToolDefinition = {
     input: Type.String({ description: "Input value" }),
   }),
   execute: async (toolCallId, params, onUpdate, ctx, signal) => ({
+    //                        ^? { input: string }
     content: [{ type: "text", text: `Result: ${params.input}` }],
     details: {},
   }),
-};
+});
 
 // Pass custom tools directly
 const { session } = await createAgentSession({
@@ -773,7 +774,7 @@ import {
   SettingsManager,
   readTool,
   bashTool,
-  type ToolDefinition,
+  defineTool,
 } from "@mariozechner/pi-coding-agent";
 
 // Set up auth storage (custom location)
@@ -787,8 +788,8 @@ if (process.env.MY_KEY) {
 // Model registry (no custom models.json)
 const modelRegistry = new ModelRegistry(authStorage);
 
-// Inline tool
-const statusTool: ToolDefinition = {
+// Inline tool — defineTool() infers params from the schema
+const statusTool = defineTool({
   name: "status",
   label: "Status",
   description: "Get system status",
@@ -797,7 +798,7 @@ const statusTool: ToolDefinition = {
     content: [{ type: "text", text: `Uptime: ${process.uptime()}s` }],
     details: {},
   }),
-};
+});
 
 const model = getModel("anthropic", "claude-opus-4-5");
 if (!model) throw new Error("Model not found");
