@@ -70,6 +70,53 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
 }
 
+const BUILTIN_LONG_FLAGS = new Set([
+	"help",
+	"version",
+	"mode",
+	"continue",
+	"resume",
+	"provider",
+	"model",
+	"api-key",
+	"system-prompt",
+	"append-system-prompt",
+	"no-session",
+	"session",
+	"fork",
+	"session-dir",
+	"models",
+	"no-tools",
+	"tools",
+	"thinking",
+	"print",
+	"export",
+	"extension",
+	"no-extensions",
+	"skill",
+	"prompt-template",
+	"theme",
+	"no-skills",
+	"no-prompt-templates",
+	"no-themes",
+	"list-models",
+	"verbose",
+	"offline",
+]);
+
+function hasPotentialExtensionFlags(args: string[]): boolean {
+	for (const arg of args) {
+		if (!arg.startsWith("--")) {
+			continue;
+		}
+		const flagName = arg.slice(2);
+		if (!BUILTIN_LONG_FLAGS.has(flagName)) {
+			return true;
+		}
+	}
+	return false;
+}
+
 type PackageCommand = "install" | "remove" | "update" | "list";
 
 interface PackageCommandOptions {
@@ -641,8 +688,18 @@ export async function main(args: string[]) {
 	// First pass: parse args to get --extension paths
 	const firstPass = parseArgs(args);
 
-	// Early load extensions to discover their CLI flags
-	const deferExtensionStartup = firstPass.mode === "rpc";
+	// Defer extension startup on Bun's interactive path where eager extension loading is especially expensive.
+	const needsExtensionFlagDiscovery = hasPotentialExtensionFlags(args);
+	const isLikelyInteractiveStartup =
+		process.versions.bun !== undefined &&
+		firstPass.mode === undefined &&
+		!firstPass.print &&
+		!firstPass.export &&
+		firstPass.listModels === undefined &&
+		!firstPass.help &&
+		!firstPass.version;
+	const deferExtensionStartup =
+		firstPass.mode === "rpc" || (isLikelyInteractiveStartup && !needsExtensionFlagDiscovery);
 	const cwd = process.cwd();
 	const agentDir = getAgentDir();
 	const settingsManager = SettingsManager.create(cwd, agentDir);
