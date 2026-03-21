@@ -106,6 +106,7 @@ export class ToolExecutionComponent extends Container {
 	// When true, this component intentionally renders no lines
 	private hideComponent = false;
 	private bashStartedAt?: number;
+	private bashFinalDurationMs?: number;
 	private bashElapsedInterval?: NodeJS.Timeout;
 
 	constructor(
@@ -178,6 +179,9 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private stopBashElapsedTimer(): void {
+		if (this.bashStartedAt !== undefined) {
+			this.bashFinalDurationMs = Date.now() - this.bashStartedAt;
+		}
 		if (!this.bashElapsedInterval) return;
 		clearInterval(this.bashElapsedInterval);
 		this.bashElapsedInterval = undefined;
@@ -185,6 +189,7 @@ export class ToolExecutionComponent extends Container {
 
 	private getBashDurationMs(): number | undefined {
 		if (this.toolName !== "bash" || this.bashStartedAt === undefined) return undefined;
+		if (this.bashFinalDurationMs !== undefined) return this.bashFinalDurationMs;
 		return Date.now() - this.bashStartedAt;
 	}
 

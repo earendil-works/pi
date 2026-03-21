@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed bash tool duration timer continuing to increase after execution completes when toggling expand/collapse with ctrl+o ([#2485](https://github.com/badlogic/pi-mono/pull/2485) by [@aliou](https://github.com/aliou))
+
 ## [0.61.1] - 2026-03-20
 
 ### New Features
