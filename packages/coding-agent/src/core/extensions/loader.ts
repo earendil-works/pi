@@ -15,6 +15,7 @@ import { getAgentDir, isBunBinary } from "../../config.js";
 import { createEventBus, type EventBus } from "../event-bus.js";
 import type { ExecOptions } from "../exec.js";
 import { execCommand } from "../exec.js";
+import { createExtensionRuntime } from "./runtime.js";
 import type {
 	Extension,
 	ExtensionAPI,
@@ -91,46 +92,6 @@ function resolvePath(extPath: string, cwd: string): string {
 }
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
-
-/**
- * Create a runtime with throwing stubs for action methods.
- * Runner.bindCore() replaces these with real implementations.
- */
-export function createExtensionRuntime(): ExtensionRuntime {
-	const notInitialized = () => {
-		throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
-	};
-
-	const runtime: ExtensionRuntime = {
-		sendMessage: notInitialized,
-		sendUserMessage: notInitialized,
-		appendEntry: notInitialized,
-		setSessionName: notInitialized,
-		getSessionName: notInitialized,
-		setLabel: notInitialized,
-		getActiveTools: notInitialized,
-		getAllTools: notInitialized,
-		setActiveTools: notInitialized,
-		// registerTool() is valid during extension load; refresh is only needed post-bind.
-		refreshTools: () => {},
-		getCommands: notInitialized,
-		setModel: () => Promise.reject(new Error("Extension runtime not initialized")),
-		getThinkingLevel: notInitialized,
-		setThinkingLevel: notInitialized,
-		flagValues: new Map(),
-		pendingProviderRegistrations: [],
-		// Pre-bind: queue registrations so bindCore() can flush them once the
-		// model registry is available. bindCore() replaces both with direct calls.
-		registerProvider: (name, config, extensionPath = "<unknown>") => {
-			runtime.pendingProviderRegistrations.push({ name, config, extensionPath });
-		},
-		unregisterProvider: (name) => {
-			runtime.pendingProviderRegistrations = runtime.pendingProviderRegistrations.filter((r) => r.name !== name);
-		},
-	};
-
-	return runtime;
-}
 
 /**
  * Create the ExtensionAPI for an extension.

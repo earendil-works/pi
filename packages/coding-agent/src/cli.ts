@@ -8,9 +8,26 @@
 process.title = "pi";
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 
-import { EnvHttpProxyAgent, setGlobalDispatcher } from "undici";
+import { createRequire } from "node:module";
+import type * as Undici from "undici";
 import { main } from "./main.js";
 
-setGlobalDispatcher(new EnvHttpProxyAgent());
+const require = createRequire(import.meta.url);
+
+function hasProxyConfiguration(): boolean {
+	return [
+		process.env.HTTP_PROXY,
+		process.env.HTTPS_PROXY,
+		process.env.ALL_PROXY,
+		process.env.http_proxy,
+		process.env.https_proxy,
+		process.env.all_proxy,
+	].some((value) => value !== undefined && value.trim() !== "");
+}
+
+if (hasProxyConfiguration()) {
+	const { EnvHttpProxyAgent, setGlobalDispatcher } = require("undici") as typeof Undici;
+	setGlobalDispatcher(new EnvHttpProxyAgent());
+}
 
 main(process.argv.slice(2));

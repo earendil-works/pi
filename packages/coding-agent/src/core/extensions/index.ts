@@ -3,12 +3,7 @@
  */
 
 export type { SlashCommandInfo, SlashCommandLocation, SlashCommandSource } from "../slash-commands.js";
-export {
-	createExtensionRuntime,
-	discoverAndLoadExtensions,
-	loadExtensionFromFactory,
-	loadExtensions,
-} from "./loader.js";
+export { discoverAndLoadExtensions, loadExtensionFromFactory, loadExtensions } from "./loader.js";
 export type {
 	ExtensionErrorListener,
 	ForkHandler,
@@ -18,6 +13,7 @@ export type {
 	SwitchSessionHandler,
 } from "./runner.js";
 export { ExtensionRunner } from "./runner.js";
+export { createExtensionRuntime } from "./runtime.js";
 export type {
 	AgentEndEvent,
 	AgentStartEvent,

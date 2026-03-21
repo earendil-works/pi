@@ -13,7 +13,7 @@ import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { type AssistantMessage, getModel, Type } from "@mariozechner/pi-ai";
 import { AuthStorage } from "../src/core/auth-storage.js";
-import { createExtensionRuntime } from "../src/core/extensions/loader.js";
+import { createExtensionRuntime } from "../src/core/extensions/runtime.js";
 import type { ToolDefinition } from "../src/core/extensions/types.js";
 import { ModelRegistry } from "../src/core/model-registry.js";
 import type { ResourceLoader } from "../src/core/resource-loader.js";

@@ -43,32 +43,30 @@ import {
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
 import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.js";
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
-import {
-	type ContextUsage,
-	createExtensionRuntime,
-	type ExtensionCommandContextActions,
-	type ExtensionErrorListener,
-	ExtensionRunner,
-	type ExtensionUIContext,
-	type InputSource,
-	type MessageEndEvent,
-	type MessageStartEvent,
-	type MessageUpdateEvent,
-	type SessionBeforeCompactResult,
-	type SessionBeforeForkResult,
-	type SessionBeforeSwitchResult,
-	type SessionBeforeTreeResult,
-	type ShutdownHandler,
-	type ToolDefinition,
-	type ToolExecutionEndEvent,
-	type ToolExecutionStartEvent,
-	type ToolExecutionUpdateEvent,
-	type ToolInfo,
-	type TreePreparation,
-	type TurnEndEvent,
-	type TurnStartEvent,
-	wrapRegisteredTools,
-} from "./extensions/index.js";
+import { type ExtensionErrorListener, ExtensionRunner, type ShutdownHandler } from "./extensions/runner.js";
+import { createExtensionRuntime } from "./extensions/runtime.js";
+import type {
+	ContextUsage,
+	ExtensionCommandContextActions,
+	ExtensionUIContext,
+	InputSource,
+	MessageEndEvent,
+	MessageStartEvent,
+	MessageUpdateEvent,
+	SessionBeforeCompactResult,
+	SessionBeforeForkResult,
+	SessionBeforeSwitchResult,
+	SessionBeforeTreeResult,
+	ToolDefinition,
+	ToolExecutionEndEvent,
+	ToolExecutionStartEvent,
+	ToolExecutionUpdateEvent,
+	ToolInfo,
+	TreePreparation,
+	TurnEndEvent,
+	TurnStartEvent,
+} from "./extensions/types.js";
+import { wrapRegisteredTools } from "./extensions/wrapper.js";
 import type { BashExecutionMessage, CustomMessage } from "./messages.js";
 import type { ModelRegistry } from "./model-registry.js";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";

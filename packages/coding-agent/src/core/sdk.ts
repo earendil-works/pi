@@ -5,12 +5,9 @@ import { getAgentDir, getDocsPath } from "../config.js";
 import { AgentSession } from "./agent-session.js";
 import { AuthStorage } from "./auth-storage.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
-import {
-	createExtensionRuntime,
-	type ExtensionRunner,
-	type LoadExtensionsResult,
-	type ToolDefinition,
-} from "./extensions/index.js";
+import type { ExtensionRunner } from "./extensions/runner.js";
+import { createExtensionRuntime } from "./extensions/runtime.js";
+import type { LoadExtensionsResult, ToolDefinition } from "./extensions/types.js";
 import { convertToLlm } from "./messages.js";
 import { ModelRegistry } from "./model-registry.js";
 import { findInitialModel } from "./model-resolver.js";

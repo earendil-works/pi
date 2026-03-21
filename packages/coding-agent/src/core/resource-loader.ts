@@ -1,15 +1,18 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME, getAgentDir } from "../config.js";
-import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.js";
+import { CONFIG_DIR_NAME, getAgentDir, getPackageDir } from "../config.js";
+import type * as ThemeModule from "../modes/interactive/theme/theme.js";
+import type { Theme } from "../modes/interactive/theme/theme.js";
 import type { ResourceDiagnostic } from "./diagnostics.js";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.js";
 
 import { createEventBus, type EventBus } from "./event-bus.js";
-import { createExtensionRuntime, loadExtensionFromFactory, loadExtensions } from "./extensions/loader.js";
+import type * as ExtensionsLoaderModule from "./extensions/loader.js";
+import { createExtensionRuntime } from "./extensions/runtime.js";
 import type { Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResult } from "./extensions/types.js";
 import { DefaultPackageManager, type PathMetadata } from "./package-manager.js";
 import type { PromptTemplate } from "./prompt-templates.js";
@@ -17,6 +20,42 @@ import { loadPromptTemplates } from "./prompt-templates.js";
 import { SettingsManager } from "./settings-manager.js";
 import type { Skill } from "./skills.js";
 import { loadSkills } from "./skills.js";
+
+const require = createRequire(import.meta.url);
+const isSourceRuntime = import.meta.url.endsWith(".ts");
+let cachedThemeModule: typeof ThemeModule | undefined;
+let cachedExtensionsLoaderModule: typeof ExtensionsLoaderModule | undefined;
+
+function loadThemeModule(): typeof ThemeModule {
+	if (!cachedThemeModule) {
+		cachedThemeModule = require(
+			join(
+				getPackageDir(),
+				isSourceRuntime ? "src" : "dist",
+				"modes",
+				"interactive",
+				"theme",
+				`theme.${isSourceRuntime ? "ts" : "cjs"}`,
+			),
+		) as typeof ThemeModule;
+	}
+	return cachedThemeModule;
+}
+
+function loadExtensionsLoaderModule(): typeof ExtensionsLoaderModule {
+	if (!cachedExtensionsLoaderModule) {
+		cachedExtensionsLoaderModule = require(
+			join(
+				getPackageDir(),
+				isSourceRuntime ? "src" : "dist",
+				"core",
+				"extensions",
+				`loader.${isSourceRuntime ? "ts" : "cjs"}`,
+			),
+		) as typeof ExtensionsLoaderModule;
+	}
+	return cachedExtensionsLoaderModule;
+}
 
 export interface ResourceExtensionPaths {
 	skillPaths?: Array<{ path: string; metadata: PathMetadata }>;
@@ -467,6 +506,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private async updateExtensionsFromPaths(extensionPaths: string[]): Promise<void> {
+		const { loadExtensions } = loadExtensionsLoaderModule();
 		const extensionsResult = await loadExtensions(extensionPaths, this.cwd, this.eventBus);
 		const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
 		extensionsResult.extensions.push(...inlineExtensions.extensions);
@@ -752,6 +792,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	private loadThemeFromFile(filePath: string, themes: Theme[], diagnostics: ResourceDiagnostic[]): void {
 		try {
+			const { loadThemeFromPath } = loadThemeModule();
 			themes.push(loadThemeFromPath(filePath));
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "failed to load theme";
@@ -765,6 +806,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}> {
 		const extensions: Extension[] = [];
 		const errors: Array<{ path: string; error: string }> = [];
+
+		const { loadExtensionFromFactory } = loadExtensionsLoaderModule();
 
 		for (const [index, factory] of this.extensionFactories.entries()) {
 			const extensionPath = `<inline:${index + 1}>`;
