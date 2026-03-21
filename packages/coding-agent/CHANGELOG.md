@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Deferred interactive startup-only work such as changelog rendering, `fd`/`rg` readiness, provider-count footer metadata, and keybinding migration, removed TypeBox compiler startup cost from theme loading, moved `models.json` validation off AJV/TypeBox startup work, and split syntax-highlighting helpers out of the base theme module so RPC/core startup no longer loads `cli-highlight` eagerly.
+- Deferred interactive startup-only work such as changelog rendering, `fd`/`rg` readiness, provider-count footer metadata, and keybinding migration, removed TypeBox compiler startup cost from theme loading, moved `models.json` validation off AJV/TypeBox startup work, split syntax-highlighting helpers out of the base theme module, lazily exposed extension SDK exports through the extension loader alias, and deferred resource/system-prompt materialization until first use so RPC/core startup does less unrelated work.
 
 ## [0.61.1] - 2026-03-20
 

@@ -197,6 +197,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private lastSkillPaths: string[];
 	private lastPromptPaths: string[];
 	private lastThemePaths: string[];
+	private skillsLoaded: boolean;
+	private promptsLoaded: boolean;
+	private themesLoaded: boolean;
+	private promptResourcesLoaded: boolean;
 
 	constructor(options: DefaultResourceLoaderOptions) {
 		this.cwd = options.cwd ?? process.cwd();
@@ -240,6 +244,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.lastSkillPaths = [];
 		this.lastPromptPaths = [];
 		this.lastThemePaths = [];
+		this.skillsLoaded = false;
+		this.promptsLoaded = false;
+		this.themesLoaded = false;
+		this.promptResourcesLoaded = false;
 	}
 
 	getExtensions(): LoadExtensionsResult {
@@ -247,26 +255,32 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] } {
+		this.ensureSkillsLoaded();
 		return { skills: this.skills, diagnostics: this.skillDiagnostics };
 	}
 
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] } {
+		this.ensurePromptsLoaded();
 		return { prompts: this.prompts, diagnostics: this.promptDiagnostics };
 	}
 
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] } {
+		this.ensureThemesLoaded();
 		return { themes: this.themes, diagnostics: this.themeDiagnostics };
 	}
 
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> } {
+		this.ensurePromptResourcesLoaded();
 		return { agentsFiles: this.agentsFiles };
 	}
 
 	getSystemPrompt(): string | undefined {
+		this.ensurePromptResourcesLoaded();
 		return this.systemPrompt;
 	}
 
 	getAppendSystemPrompt(): string[] {
+		this.ensurePromptResourcesLoaded();
 		return this.appendSystemPrompt;
 	}
 
@@ -284,7 +298,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 				this.lastSkillPaths,
 				skillPaths.map((entry) => entry.path),
 			);
-			this.updateSkillsFromPaths(this.lastSkillPaths, skillPaths);
+			this.skillsLoaded = false;
+			for (const entry of skillPaths) {
+				if (!this.pathMetadata.has(entry.path)) {
+					this.pathMetadata.set(entry.path, entry.metadata);
+				}
+			}
 		}
 
 		if (promptPaths.length > 0) {
@@ -292,7 +311,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 				this.lastPromptPaths,
 				promptPaths.map((entry) => entry.path),
 			);
-			this.updatePromptsFromPaths(this.lastPromptPaths, promptPaths);
+			this.promptsLoaded = false;
+			for (const entry of promptPaths) {
+				if (!this.pathMetadata.has(entry.path)) {
+					this.pathMetadata.set(entry.path, entry.metadata);
+				}
+			}
 		}
 
 		if (themePaths.length > 0) {
@@ -300,7 +324,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 				this.lastThemePaths,
 				themePaths.map((entry) => entry.path),
 			);
-			this.updateThemesFromPaths(this.lastThemePaths, themePaths);
+			this.themesLoaded = false;
+			for (const entry of themePaths) {
+				if (!this.pathMetadata.has(entry.path)) {
+					this.pathMetadata.set(entry.path, entry.metadata);
+				}
+			}
 		}
 	}
 
@@ -397,24 +426,65 @@ export class DefaultResourceLoader implements ResourceLoader {
 			: this.mergePaths([...enabledSkills, ...cliEnabledSkills], this.additionalSkillPaths);
 
 		this.lastSkillPaths = skillPaths;
-		this.updateSkillsFromPaths(skillPaths);
+		this.skills = [];
+		this.skillDiagnostics = [];
+		this.skillsLoaded = false;
 
 		const promptPaths = this.noPromptTemplates
 			? this.mergePaths(cliEnabledPrompts, this.additionalPromptTemplatePaths)
 			: this.mergePaths([...enabledPrompts, ...cliEnabledPrompts], this.additionalPromptTemplatePaths);
 
 		this.lastPromptPaths = promptPaths;
-		this.updatePromptsFromPaths(promptPaths);
+		this.prompts = [];
+		this.promptDiagnostics = [];
+		this.promptsLoaded = false;
 
 		const themePaths = this.noThemes
 			? this.mergePaths(cliEnabledThemes, this.additionalThemePaths)
 			: this.mergePaths([...enabledThemes, ...cliEnabledThemes], this.additionalThemePaths);
 
 		this.lastThemePaths = themePaths;
-		this.updateThemesFromPaths(themePaths);
+		this.themes = [];
+		this.themeDiagnostics = [];
+		this.themesLoaded = false;
 
 		for (const extension of this.extensionsResult.extensions) {
 			this.addDefaultMetadataForPath(extension.path);
+		}
+
+		this.agentsFiles = [];
+		this.systemPrompt = undefined;
+		this.appendSystemPrompt = [];
+		this.promptResourcesLoaded = false;
+	}
+
+	private ensureSkillsLoaded(): void {
+		if (this.skillsLoaded) {
+			return;
+		}
+		this.updateSkillsFromPaths(this.lastSkillPaths);
+		this.skillsLoaded = true;
+	}
+
+	private ensurePromptsLoaded(): void {
+		if (this.promptsLoaded) {
+			return;
+		}
+		this.updatePromptsFromPaths(this.lastPromptPaths);
+		this.promptsLoaded = true;
+	}
+
+	private ensureThemesLoaded(): void {
+		if (this.themesLoaded) {
+			return;
+		}
+		this.updateThemesFromPaths(this.lastThemePaths);
+		this.themesLoaded = true;
+	}
+
+	private ensurePromptResourcesLoaded(): void {
+		if (this.promptResourcesLoaded) {
+			return;
 		}
 
 		const agentsFiles = { agentsFiles: loadProjectContextFiles({ cwd: this.cwd, agentDir: this.agentDir }) };
@@ -433,6 +503,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.appendSystemPrompt = this.appendSystemPromptOverride
 			? this.appendSystemPromptOverride(baseAppend)
 			: baseAppend;
+		this.promptResourcesLoaded = true;
 	}
 
 	private normalizeExtensionPaths(

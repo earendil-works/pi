@@ -273,6 +273,7 @@ export class AgentSession {
 
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
+	private _baseSystemPromptDirty = true;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -686,7 +687,7 @@ export class AgentSession {
 
 	/** Current effective system prompt (includes any per-turn extension modifications) */
 	get systemPrompt(): string {
-		return this.agent.state.systemPrompt;
+		return this._ensureBaseSystemPrompt();
 	}
 
 	/** Current retry attempt (0 if not retrying) */
@@ -731,9 +732,9 @@ export class AgentSession {
 		}
 		this.agent.setTools(tools);
 
-		// Rebuild base system prompt with new tool set
-		this._baseSystemPrompt = this._rebuildSystemPrompt(validToolNames);
-		this.agent.setSystemPrompt(this._baseSystemPrompt);
+		// Rebuild base system prompt lazily with the new tool set.
+		// Tool changes only need to take effect on the next turn.
+		this._baseSystemPromptDirty = true;
 	}
 
 	/** Whether compaction or branch summarization is currently running */
@@ -812,6 +813,15 @@ export class AgentSession {
 			}
 		}
 		return Array.from(unique);
+	}
+
+	private _ensureBaseSystemPrompt(toolNames: string[] = this.getActiveToolNames()): string {
+		if (this._baseSystemPromptDirty) {
+			this._baseSystemPrompt = this._rebuildSystemPrompt(toolNames);
+			this._baseSystemPromptDirty = false;
+			this.agent.setSystemPrompt(this._baseSystemPrompt);
+		}
+		return this._baseSystemPrompt;
 	}
 
 	private _rebuildSystemPrompt(toolNames: string[]): string {
@@ -970,13 +980,11 @@ export class AgentSession {
 		}
 		this._pendingNextTurnMessages = [];
 
+		const baseSystemPrompt = this._ensureBaseSystemPrompt();
+
 		// Emit before_agent_start extension event
 		if (this._extensionRunner) {
-			const result = await this._extensionRunner.emitBeforeAgentStart(
-				expandedText,
-				currentImages,
-				this._baseSystemPrompt,
-			);
+			const result = await this._extensionRunner.emitBeforeAgentStart(expandedText, currentImages, baseSystemPrompt);
 			// Add all custom messages from extensions
 			if (result?.messages) {
 				for (const msg of result.messages) {
@@ -995,7 +1003,7 @@ export class AgentSession {
 				this.agent.setSystemPrompt(result.systemPrompt);
 			} else {
 				// Ensure we're using the base prompt (in case previous turn had modifications)
-				this.agent.setSystemPrompt(this._baseSystemPrompt);
+				this.agent.setSystemPrompt(baseSystemPrompt);
 			}
 		}
 
@@ -2016,8 +2024,7 @@ export class AgentSession {
 		};
 
 		this._resourceLoader.extendResources(extensionPaths);
-		this._baseSystemPrompt = this._rebuildSystemPrompt(this.getActiveToolNames());
-		this.agent.setSystemPrompt(this._baseSystemPrompt);
+		this._baseSystemPromptDirty = true;
 	}
 
 	private buildExtensionResourcePaths(entries: Array<{ path: string; extensionPath: string }>): Array<{
@@ -3049,6 +3056,7 @@ export class AgentSession {
 	 * @returns Path to exported file
 	 */
 	async exportToHtml(outputPath?: string): Promise<string> {
+		this._ensureBaseSystemPrompt();
 		const themeName = this.settingsManager.getTheme();
 
 		// Create tool renderer if we have an extension runner (for custom tool HTML rendering)
