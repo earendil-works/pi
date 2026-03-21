@@ -280,44 +280,50 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 		},
 	});
 
-	// Set up extensions with RPC-based UI context
-	await session.bindExtensions({
-		uiContext: createExtensionUIContext(),
-		commandContextActions: {
-			waitForIdle: () => session.agent.waitForIdle(),
-			newSession: async (options) => {
-				// Delegate to AgentSession (handles setup + agent state sync)
-				const success = await session.newSession(options);
-				return { cancelled: !success };
+	let extensionsBound = false;
+	const ensureExtensionsBound = async (): Promise<void> => {
+		if (extensionsBound) {
+			return;
+		}
+		await session.bindExtensions({
+			uiContext: createExtensionUIContext(),
+			commandContextActions: {
+				waitForIdle: () => session.agent.waitForIdle(),
+				newSession: async (options) => {
+					// Delegate to AgentSession (handles setup + agent state sync)
+					const success = await session.newSession(options);
+					return { cancelled: !success };
+				},
+				fork: async (entryId) => {
+					const result = await session.fork(entryId);
+					return { cancelled: result.cancelled };
+				},
+				navigateTree: async (targetId, options) => {
+					const result = await session.navigateTree(targetId, {
+						summarize: options?.summarize,
+						customInstructions: options?.customInstructions,
+						replaceInstructions: options?.replaceInstructions,
+						label: options?.label,
+					});
+					return { cancelled: result.cancelled };
+				},
+				switchSession: async (sessionPath) => {
+					const success = await session.switchSession(sessionPath);
+					return { cancelled: !success };
+				},
+				reload: async () => {
+					await session.reload();
+				},
 			},
-			fork: async (entryId) => {
-				const result = await session.fork(entryId);
-				return { cancelled: result.cancelled };
+			shutdownHandler: () => {
+				shutdownRequested = true;
 			},
-			navigateTree: async (targetId, options) => {
-				const result = await session.navigateTree(targetId, {
-					summarize: options?.summarize,
-					customInstructions: options?.customInstructions,
-					replaceInstructions: options?.replaceInstructions,
-					label: options?.label,
-				});
-				return { cancelled: result.cancelled };
+			onError: (err) => {
+				output({ type: "extension_error", extensionPath: err.extensionPath, event: err.event, error: err.error });
 			},
-			switchSession: async (sessionPath) => {
-				const success = await session.switchSession(sessionPath);
-				return { cancelled: !success };
-			},
-			reload: async () => {
-				await session.reload();
-			},
-		},
-		shutdownHandler: () => {
-			shutdownRequested = true;
-		},
-		onError: (err) => {
-			output({ type: "extension_error", extensionPath: err.extensionPath, event: err.event, error: err.error });
-		},
-	});
+		});
+		extensionsBound = true;
+	};
 
 	// Output all agent events as JSON
 	session.subscribe((event) => {
@@ -327,6 +333,9 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 	// Handle a single command
 	const handleCommand = async (command: RpcCommand): Promise<RpcResponse> => {
 		const id = command.id;
+		if (command.type !== "get_state") {
+			await ensureExtensionsBound();
+		}
 
 		switch (command.type) {
 			// =================================================================
