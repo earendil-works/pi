@@ -18,130 +18,428 @@ import {
 	type SimpleStreamOptions,
 } from "@mariozechner/pi-ai";
 import { registerOAuthProvider, resetOAuthProviders } from "@mariozechner/pi-ai/oauth";
-import { type Static, Type } from "@sinclair/typebox";
-import AjvModule from "ajv";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
 import { getAgentDir } from "../config.js";
 import type { AuthStorage } from "./auth-storage.js";
 import { clearConfigValueCache, resolveConfigValue, resolveHeaders } from "./resolve-config-value.js";
 
-const Ajv = (AjvModule as any).default || AjvModule;
-const ajv = new Ajv();
+interface ReasoningEffortMap {
+	minimal?: string;
+	low?: string;
+	medium?: string;
+	high?: string;
+	xhigh?: string;
+}
 
-// Schema for OpenRouter routing preferences
-const OpenRouterRoutingSchema = Type.Object({
-	only: Type.Optional(Type.Array(Type.String())),
-	order: Type.Optional(Type.Array(Type.String())),
-});
+interface OpenRouterRouting {
+	only?: string[];
+	order?: string[];
+}
 
-// Schema for Vercel AI Gateway routing preferences
-const VercelGatewayRoutingSchema = Type.Object({
-	only: Type.Optional(Type.Array(Type.String())),
-	order: Type.Optional(Type.Array(Type.String())),
-});
+interface VercelGatewayRouting {
+	only?: string[];
+	order?: string[];
+}
 
-// Schema for OpenAI compatibility settings
-const ReasoningEffortMapSchema = Type.Object({
-	minimal: Type.Optional(Type.String()),
-	low: Type.Optional(Type.String()),
-	medium: Type.Optional(Type.String()),
-	high: Type.Optional(Type.String()),
-	xhigh: Type.Optional(Type.String()),
-});
+interface ModelCost {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+}
 
-const OpenAICompletionsCompatSchema = Type.Object({
-	supportsStore: Type.Optional(Type.Boolean()),
-	supportsDeveloperRole: Type.Optional(Type.Boolean()),
-	supportsReasoningEffort: Type.Optional(Type.Boolean()),
-	reasoningEffortMap: Type.Optional(ReasoningEffortMapSchema),
-	supportsUsageInStreaming: Type.Optional(Type.Boolean()),
-	maxTokensField: Type.Optional(Type.Union([Type.Literal("max_completion_tokens"), Type.Literal("max_tokens")])),
-	requiresToolResultName: Type.Optional(Type.Boolean()),
-	requiresAssistantAfterToolResult: Type.Optional(Type.Boolean()),
-	requiresThinkingAsText: Type.Optional(Type.Boolean()),
-	thinkingFormat: Type.Optional(
-		Type.Union([
-			Type.Literal("openai"),
-			Type.Literal("openrouter"),
-			Type.Literal("zai"),
-			Type.Literal("qwen"),
-			Type.Literal("qwen-chat-template"),
-		]),
-	),
-	openRouterRouting: Type.Optional(OpenRouterRoutingSchema),
-	vercelGatewayRouting: Type.Optional(VercelGatewayRoutingSchema),
-	supportsStrictMode: Type.Optional(Type.Boolean()),
-});
+interface PartialModelCost {
+	input?: number;
+	output?: number;
+	cacheRead?: number;
+	cacheWrite?: number;
+}
 
-const OpenAIResponsesCompatSchema = Type.Object({
-	// Reserved for future use
-});
+interface ModelsJsonModelDefinition {
+	id: string;
+	name?: string;
+	api?: string;
+	baseUrl?: string;
+	reasoning?: boolean;
+	input?: Array<"text" | "image">;
+	cost?: ModelCost;
+	contextWindow?: number;
+	maxTokens?: number;
+	headers?: Record<string, string>;
+	compat?: OpenAICompletionsCompat | OpenAIResponsesCompat;
+}
 
-const OpenAICompatSchema = Type.Union([OpenAICompletionsCompatSchema, OpenAIResponsesCompatSchema]);
+interface ModelOverride {
+	name?: string;
+	reasoning?: boolean;
+	input?: Array<"text" | "image">;
+	cost?: PartialModelCost;
+	contextWindow?: number;
+	maxTokens?: number;
+	headers?: Record<string, string>;
+	compat?: OpenAICompletionsCompat | OpenAIResponsesCompat;
+}
 
-// Schema for custom model definition
-// Most fields are optional with sensible defaults for local models (Ollama, LM Studio, etc.)
-const ModelDefinitionSchema = Type.Object({
-	id: Type.String({ minLength: 1 }),
-	name: Type.Optional(Type.String({ minLength: 1 })),
-	api: Type.Optional(Type.String({ minLength: 1 })),
-	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
-	reasoning: Type.Optional(Type.Boolean()),
-	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
-	cost: Type.Optional(
-		Type.Object({
-			input: Type.Number(),
-			output: Type.Number(),
-			cacheRead: Type.Number(),
-			cacheWrite: Type.Number(),
-		}),
-	),
-	contextWindow: Type.Optional(Type.Number()),
-	maxTokens: Type.Optional(Type.Number()),
-	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
-	compat: Type.Optional(OpenAICompatSchema),
-});
+interface ModelsJsonProviderConfig {
+	baseUrl?: string;
+	apiKey?: string;
+	api?: string;
+	headers?: Record<string, string>;
+	compat?: OpenAICompletionsCompat | OpenAIResponsesCompat;
+	authHeader?: boolean;
+	models?: ModelsJsonModelDefinition[];
+	modelOverrides?: Record<string, ModelOverride>;
+}
 
-// Schema for per-model overrides (all fields optional, merged with built-in model)
-const ModelOverrideSchema = Type.Object({
-	name: Type.Optional(Type.String({ minLength: 1 })),
-	reasoning: Type.Optional(Type.Boolean()),
-	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
-	cost: Type.Optional(
-		Type.Object({
-			input: Type.Optional(Type.Number()),
-			output: Type.Optional(Type.Number()),
-			cacheRead: Type.Optional(Type.Number()),
-			cacheWrite: Type.Optional(Type.Number()),
-		}),
-	),
-	contextWindow: Type.Optional(Type.Number()),
-	maxTokens: Type.Optional(Type.Number()),
-	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
-	compat: Type.Optional(OpenAICompatSchema),
-});
+interface ModelsConfig {
+	providers: Record<string, ModelsJsonProviderConfig>;
+}
 
-type ModelOverride = Static<typeof ModelOverrideSchema>;
+const VALID_MODEL_INPUT_TYPES = new Set(["text", "image"]);
+const VALID_MAX_TOKENS_FIELDS = new Set(["max_completion_tokens", "max_tokens"]);
+const VALID_THINKING_FORMATS = new Set(["openai", "openrouter", "zai", "qwen", "qwen-chat-template"]);
 
-const ProviderConfigSchema = Type.Object({
-	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
-	apiKey: Type.Optional(Type.String({ minLength: 1 })),
-	api: Type.Optional(Type.String({ minLength: 1 })),
-	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
-	compat: Type.Optional(OpenAICompatSchema),
-	authHeader: Type.Optional(Type.Boolean()),
-	models: Type.Optional(Type.Array(ModelDefinitionSchema)),
-	modelOverrides: Type.Optional(Type.Record(Type.String(), ModelOverrideSchema)),
-});
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
-const ModelsConfigSchema = Type.Object({
-	providers: Type.Record(Type.String(), ProviderConfigSchema),
-});
+function isNonEmptyString(value: unknown): value is string {
+	return typeof value === "string" && value.length > 0;
+}
 
-ajv.addSchema(ModelsConfigSchema, "ModelsConfig");
+function pushExpectedObjectError(errors: string[], path: string): void {
+	errors.push(`  - ${path}: expected object`);
+}
 
-type ModelsConfig = Static<typeof ModelsConfigSchema>;
+function parseStringArray(path: string, value: unknown, errors: string[]): string[] | undefined {
+	if (value === undefined) {
+		return undefined;
+	}
+	if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+		errors.push(`  - ${path}: expected array of strings`);
+		return undefined;
+	}
+	return value;
+}
+
+function parseStringRecord(path: string, value: unknown, errors: string[]): Record<string, string> | undefined {
+	if (value === undefined) {
+		return undefined;
+	}
+	if (!isRecord(value)) {
+		pushExpectedObjectError(errors, path);
+		return undefined;
+	}
+	const result: Record<string, string> = {};
+	for (const [key, entry] of Object.entries(value)) {
+		if (typeof entry !== "string") {
+			errors.push(`  - ${path}/${key}: expected string`);
+			continue;
+		}
+		result[key] = entry;
+	}
+	return result;
+}
+
+function parseModelCost(
+	path: string,
+	value: unknown,
+	errors: string[],
+	partial: boolean,
+): ModelCost | PartialModelCost | undefined {
+	if (value === undefined) {
+		return undefined;
+	}
+	if (!isRecord(value)) {
+		pushExpectedObjectError(errors, path);
+		return undefined;
+	}
+
+	const result: PartialModelCost = {};
+	for (const key of ["input", "output", "cacheRead", "cacheWrite"] as const) {
+		const entry = value[key];
+		if (entry === undefined) {
+			if (!partial) {
+				errors.push(`  - ${path}/${key}: expected number`);
+			}
+			continue;
+		}
+		if (typeof entry !== "number") {
+			errors.push(`  - ${path}/${key}: expected number`);
+			continue;
+		}
+		result[key] = entry;
+	}
+
+	return partial ? result : (result as ModelCost);
+}
+
+function parseCompat(
+	path: string,
+	value: unknown,
+	errors: string[],
+): OpenAICompletionsCompat | OpenAIResponsesCompat | undefined {
+	if (value === undefined) {
+		return undefined;
+	}
+	if (!isRecord(value)) {
+		pushExpectedObjectError(errors, path);
+		return undefined;
+	}
+
+	const compat: OpenAICompletionsCompat = {};
+
+	for (const key of [
+		"supportsStore",
+		"supportsDeveloperRole",
+		"supportsReasoningEffort",
+		"supportsUsageInStreaming",
+		"requiresToolResultName",
+		"requiresAssistantAfterToolResult",
+		"requiresThinkingAsText",
+		"supportsStrictMode",
+	] as const) {
+		const entry = value[key];
+		if (entry === undefined) continue;
+		if (typeof entry !== "boolean") {
+			errors.push(`  - ${path}/${key}: expected boolean`);
+			continue;
+		}
+		compat[key] = entry;
+	}
+
+	const maxTokensField = value.maxTokensField;
+	if (maxTokensField !== undefined) {
+		if (typeof maxTokensField !== "string" || !VALID_MAX_TOKENS_FIELDS.has(maxTokensField)) {
+			errors.push(`  - ${path}/maxTokensField: invalid value`);
+		} else {
+			compat.maxTokensField = maxTokensField as OpenAICompletionsCompat["maxTokensField"];
+		}
+	}
+
+	const thinkingFormat = value.thinkingFormat;
+	if (thinkingFormat !== undefined) {
+		if (typeof thinkingFormat !== "string" || !VALID_THINKING_FORMATS.has(thinkingFormat)) {
+			errors.push(`  - ${path}/thinkingFormat: invalid value`);
+		} else {
+			compat.thinkingFormat = thinkingFormat as OpenAICompletionsCompat["thinkingFormat"];
+		}
+	}
+
+	const reasoningEffortMapValue = value.reasoningEffortMap;
+	if (reasoningEffortMapValue !== undefined) {
+		if (!isRecord(reasoningEffortMapValue)) {
+			pushExpectedObjectError(errors, `${path}/reasoningEffortMap`);
+		} else {
+			const reasoningEffortMap: ReasoningEffortMap = {};
+			for (const key of ["minimal", "low", "medium", "high", "xhigh"] as const) {
+				const entry = reasoningEffortMapValue[key];
+				if (entry === undefined) continue;
+				if (typeof entry !== "string") {
+					errors.push(`  - ${path}/reasoningEffortMap/${key}: expected string`);
+					continue;
+				}
+				reasoningEffortMap[key] = entry;
+			}
+			compat.reasoningEffortMap = reasoningEffortMap;
+		}
+	}
+
+	for (const [routingKey, compatKey] of [
+		["openRouterRouting", "openRouterRouting"],
+		["vercelGatewayRouting", "vercelGatewayRouting"],
+	] as const) {
+		const routingValue = value[routingKey];
+		if (routingValue === undefined) continue;
+		if (!isRecord(routingValue)) {
+			pushExpectedObjectError(errors, `${path}/${routingKey}`);
+			continue;
+		}
+		const routing = {
+			only: parseStringArray(`${path}/${routingKey}/only`, routingValue.only, errors),
+			order: parseStringArray(`${path}/${routingKey}/order`, routingValue.order, errors),
+		};
+		compat[compatKey] = routing as OpenRouterRouting & VercelGatewayRouting;
+	}
+
+	return compat;
+}
+
+function parseModelInput(path: string, value: unknown, errors: string[]): Array<"text" | "image"> | undefined {
+	if (value === undefined) {
+		return undefined;
+	}
+	if (!Array.isArray(value)) {
+		errors.push(`  - ${path}: expected array`);
+		return undefined;
+	}
+	const input: Array<"text" | "image"> = [];
+	for (let i = 0; i < value.length; i++) {
+		const entry = value[i];
+		if (typeof entry !== "string" || !VALID_MODEL_INPUT_TYPES.has(entry)) {
+			errors.push(`  - ${path}/${i}: invalid value`);
+			continue;
+		}
+		input.push(entry as "text" | "image");
+	}
+	return input;
+}
+
+function parseModelDefinition(path: string, value: unknown, errors: string[]): ModelsJsonModelDefinition | undefined {
+	if (!isRecord(value)) {
+		pushExpectedObjectError(errors, path);
+		return undefined;
+	}
+
+	const id = value.id;
+	if (!isNonEmptyString(id)) {
+		errors.push(`  - ${path}/id: expected non-empty string`);
+		return undefined;
+	}
+
+	const name = value.name;
+	const api = value.api;
+	const baseUrl = value.baseUrl;
+	const reasoning = value.reasoning;
+	const contextWindow = value.contextWindow;
+	const maxTokens = value.maxTokens;
+
+	if (name !== undefined && !isNonEmptyString(name)) errors.push(`  - ${path}/name: expected non-empty string`);
+	if (api !== undefined && !isNonEmptyString(api)) errors.push(`  - ${path}/api: expected non-empty string`);
+	if (baseUrl !== undefined && !isNonEmptyString(baseUrl))
+		errors.push(`  - ${path}/baseUrl: expected non-empty string`);
+	if (reasoning !== undefined && typeof reasoning !== "boolean")
+		errors.push(`  - ${path}/reasoning: expected boolean`);
+	if (contextWindow !== undefined && typeof contextWindow !== "number")
+		errors.push(`  - ${path}/contextWindow: expected number`);
+	if (maxTokens !== undefined && typeof maxTokens !== "number") errors.push(`  - ${path}/maxTokens: expected number`);
+
+	return {
+		id,
+		name: isNonEmptyString(name) ? name : undefined,
+		api: isNonEmptyString(api) ? api : undefined,
+		baseUrl: isNonEmptyString(baseUrl) ? baseUrl : undefined,
+		reasoning: typeof reasoning === "boolean" ? reasoning : undefined,
+		input: parseModelInput(`${path}/input`, value.input, errors),
+		cost: parseModelCost(`${path}/cost`, value.cost, errors, false) as ModelCost | undefined,
+		contextWindow: typeof contextWindow === "number" ? contextWindow : undefined,
+		maxTokens: typeof maxTokens === "number" ? maxTokens : undefined,
+		headers: parseStringRecord(`${path}/headers`, value.headers, errors),
+		compat: parseCompat(`${path}/compat`, value.compat, errors),
+	};
+}
+
+function parseModelOverride(path: string, value: unknown, errors: string[]): ModelOverride | undefined {
+	if (!isRecord(value)) {
+		pushExpectedObjectError(errors, path);
+		return undefined;
+	}
+
+	const name = value.name;
+	const reasoning = value.reasoning;
+	const contextWindow = value.contextWindow;
+	const maxTokens = value.maxTokens;
+
+	if (name !== undefined && !isNonEmptyString(name)) errors.push(`  - ${path}/name: expected non-empty string`);
+	if (reasoning !== undefined && typeof reasoning !== "boolean")
+		errors.push(`  - ${path}/reasoning: expected boolean`);
+	if (contextWindow !== undefined && typeof contextWindow !== "number")
+		errors.push(`  - ${path}/contextWindow: expected number`);
+	if (maxTokens !== undefined && typeof maxTokens !== "number") errors.push(`  - ${path}/maxTokens: expected number`);
+
+	return {
+		name: isNonEmptyString(name) ? name : undefined,
+		reasoning: typeof reasoning === "boolean" ? reasoning : undefined,
+		input: parseModelInput(`${path}/input`, value.input, errors),
+		cost: parseModelCost(`${path}/cost`, value.cost, errors, true) as PartialModelCost | undefined,
+		contextWindow: typeof contextWindow === "number" ? contextWindow : undefined,
+		maxTokens: typeof maxTokens === "number" ? maxTokens : undefined,
+		headers: parseStringRecord(`${path}/headers`, value.headers, errors),
+		compat: parseCompat(`${path}/compat`, value.compat, errors),
+	};
+}
+
+function parseProviderConfig(path: string, value: unknown, errors: string[]): ModelsJsonProviderConfig | undefined {
+	if (!isRecord(value)) {
+		pushExpectedObjectError(errors, path);
+		return undefined;
+	}
+
+	const baseUrl = value.baseUrl;
+	const apiKey = value.apiKey;
+	const api = value.api;
+	const authHeader = value.authHeader;
+
+	if (baseUrl !== undefined && !isNonEmptyString(baseUrl))
+		errors.push(`  - ${path}/baseUrl: expected non-empty string`);
+	if (apiKey !== undefined && !isNonEmptyString(apiKey)) errors.push(`  - ${path}/apiKey: expected non-empty string`);
+	if (api !== undefined && !isNonEmptyString(api)) errors.push(`  - ${path}/api: expected non-empty string`);
+	if (authHeader !== undefined && typeof authHeader !== "boolean")
+		errors.push(`  - ${path}/authHeader: expected boolean`);
+
+	let models: ModelsJsonModelDefinition[] | undefined;
+	if (value.models !== undefined) {
+		if (!Array.isArray(value.models)) {
+			errors.push(`  - ${path}/models: expected array`);
+		} else {
+			models = value.models
+				.map((entry, index) => parseModelDefinition(`${path}/models/${index}`, entry, errors))
+				.filter((entry): entry is ModelsJsonModelDefinition => entry !== undefined);
+		}
+	}
+
+	let modelOverrides: Record<string, ModelOverride> | undefined;
+	if (value.modelOverrides !== undefined) {
+		if (!isRecord(value.modelOverrides)) {
+			pushExpectedObjectError(errors, `${path}/modelOverrides`);
+		} else {
+			modelOverrides = {};
+			for (const [modelId, overrideValue] of Object.entries(value.modelOverrides)) {
+				const override = parseModelOverride(`${path}/modelOverrides/${modelId}`, overrideValue, errors);
+				if (override) {
+					modelOverrides[modelId] = override;
+				}
+			}
+		}
+	}
+
+	return {
+		baseUrl: isNonEmptyString(baseUrl) ? baseUrl : undefined,
+		apiKey: isNonEmptyString(apiKey) ? apiKey : undefined,
+		api: isNonEmptyString(api) ? api : undefined,
+		headers: parseStringRecord(`${path}/headers`, value.headers, errors),
+		compat: parseCompat(`${path}/compat`, value.compat, errors),
+		authHeader: typeof authHeader === "boolean" ? authHeader : undefined,
+		models,
+		modelOverrides,
+	};
+}
+
+function parseModelsConfig(value: unknown): ModelsConfig {
+	const errors: string[] = [];
+	if (!isRecord(value)) {
+		throw new Error("Invalid models.json schema:\n  - root: expected object");
+	}
+
+	if (!isRecord(value.providers)) {
+		throw new Error("Invalid models.json schema:\n  - /providers: expected object");
+	}
+
+	const providers: Record<string, ModelsJsonProviderConfig> = {};
+	for (const [providerName, providerValue] of Object.entries(value.providers)) {
+		const providerConfig = parseProviderConfig(`/providers/${providerName}`, providerValue, errors);
+		if (providerConfig) {
+			providers[providerName] = providerConfig;
+		}
+	}
+
+	if (errors.length > 0) {
+		throw new Error(`Invalid models.json schema:\n${errors.join("\n")}`);
+	}
+
+	return { providers };
+}
 
 /** Provider override config (baseUrl, headers, apiKey, compat) without custom models */
 interface ProviderOverride {
@@ -370,16 +668,8 @@ export class ModelRegistry {
 
 		try {
 			const content = readFileSync(modelsJsonPath, "utf-8");
-			const config: ModelsConfig = JSON.parse(content);
-
-			// Validate schema
-			const validate = ajv.getSchema("ModelsConfig")!;
-			if (!validate(config)) {
-				const errors =
-					validate.errors?.map((e: any) => `  - ${e.instancePath || "root"}: ${e.message}`).join("\n") ||
-					"Unknown schema error";
-				return emptyCustomModelsResult(`Invalid models.json schema:\n${errors}\n\nFile: ${modelsJsonPath}`);
-			}
+			const parsed = JSON.parse(content) as unknown;
+			const config = parseModelsConfig(parsed);
 
 			// Additional validation
 			this.validateConfig(config);
