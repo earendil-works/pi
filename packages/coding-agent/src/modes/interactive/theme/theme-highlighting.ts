@@ -1,12 +1,33 @@
+import { createRequire } from "node:module";
 import type { MarkdownTheme } from "@mariozechner/pi-tui";
 import chalk from "chalk";
-import { highlight, supportsLanguage } from "cli-highlight";
 import { type Theme, theme } from "./theme.js";
 
 type CliHighlightTheme = Record<string, (s: string) => string>;
 
+type CliHighlightModule = {
+	highlight: (
+		code: string,
+		options: {
+			language?: string;
+			ignoreIllegals?: boolean;
+			theme: CliHighlightTheme;
+		},
+	) => string;
+	supportsLanguage: (language: string) => boolean;
+};
+
+const require = createRequire(import.meta.url);
+let cliHighlightModule: CliHighlightModule | undefined;
 let cachedHighlightThemeFor: Theme | undefined;
 let cachedCliHighlightTheme: CliHighlightTheme | undefined;
+
+function getCliHighlightModule(): CliHighlightModule {
+	if (!cliHighlightModule) {
+		cliHighlightModule = require("cli-highlight") as CliHighlightModule;
+	}
+	return cliHighlightModule;
+}
 
 function buildCliHighlightTheme(t: Theme): CliHighlightTheme {
 	return {
@@ -41,6 +62,7 @@ function getCliHighlightTheme(t: Theme): CliHighlightTheme {
  * Returns array of highlighted lines.
  */
 export function highlightCode(code: string, lang?: string): string[] {
+	const { highlight, supportsLanguage } = getCliHighlightModule();
 	// Validate language before highlighting to avoid stderr spam from cli-highlight
 	const validLang = lang && supportsLanguage(lang) ? lang : undefined;
 	// Skip highlighting when no valid language is specified. cli-highlight's
@@ -149,6 +171,7 @@ export function getMarkdownTheme(): MarkdownTheme {
 		underline: (text: string) => theme.underline(text),
 		strikethrough: (text: string) => chalk.strikethrough(text),
 		highlightCode: (code: string, lang?: string): string[] => {
+			const { highlight, supportsLanguage } = getCliHighlightModule();
 			// Validate language before highlighting to avoid stderr spam from cli-highlight
 			const validLang = lang && supportsLanguage(lang) ? lang : undefined;
 			// Skip highlighting when no valid language is specified. cli-highlight's
