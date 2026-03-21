@@ -3,6 +3,39 @@
  * Transforms to Message[] only at the LLM call boundary.
  */
 
+/**
+ * Simple counting semaphore for capping parallel tool executions.
+ *
+ * `acquire()` resolves immediately when a slot is free, otherwise queues the
+ * caller.  `release()` unblocks the next waiter or increments the slot count.
+ */
+class Semaphore {
+	private slots: number;
+	private readonly queue: Array<() => void> = [];
+
+	constructor(limit: number) {
+		if (limit < 1) throw new RangeError(`Semaphore limit must be >= 1 (got ${limit})`);
+		this.slots = limit;
+	}
+
+	acquire(): Promise<void> {
+		if (this.slots > 0) {
+			this.slots--;
+			return Promise.resolve();
+		}
+		return new Promise((resolve) => this.queue.push(resolve));
+	}
+
+	release(): void {
+		const next = this.queue.shift();
+		if (next) {
+			next();
+		} else {
+			this.slots++;
+		}
+	}
+}
+
 import {
 	type AssistantMessage,
 	type Context,
@@ -414,9 +447,22 @@ async function executeToolCallsParallel(
 		}
 	}
 
+	// Cap concurrency with a semaphore so a large batch of tools cannot
+	// overwhelm downstream APIs or exhaust local resources.
+	// Default to 5; values < 1 are clamped to 1 (never deadlock).
+	const limit = Math.max(1, config.maxParallelTools ?? 5);
+	const sem = new Semaphore(limit);
+
 	const runningCalls = runnableCalls.map((prepared) => ({
 		prepared,
-		execution: executePreparedToolCall(prepared, signal, emit),
+		execution: (async () => {
+			await sem.acquire();
+			try {
+				return await executePreparedToolCall(prepared, signal, emit);
+			} finally {
+				sem.release();
+			}
+		})(),
 	}));
 
 	for (const running of runningCalls) {

@@ -192,6 +192,17 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	toolExecution?: ToolExecutionMode;
 
 	/**
+	 * Maximum number of tool calls to execute concurrently when `toolExecution` is `"parallel"`.
+	 *
+	 * Defaults to `5`. Set to `1` for effectively sequential execution, or a higher value
+	 * to allow more concurrency. Without a limit, a batch of many tools can overwhelm
+	 * downstream APIs or local resources.
+	 *
+	 * @default 5
+	 */
+	maxParallelTools?: number;
+
+	/**
 	 * Called before a tool is executed, after arguments have been validated.
 	 *
 	 * Return `{ block: true }` to prevent execution. The loop emits an error tool result instead.
