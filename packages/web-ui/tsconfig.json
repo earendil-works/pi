@@ -1,7 +1,17 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true
+    "noEmit": true,
+    "target": "ES2022",
+    "module": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "paths": {
+      "@mariozechner/pi-agent-core": ["../agent/src/index.ts"],
+      "@mariozechner/pi-ai": ["../ai/src/index.ts"],
+      "@mariozechner/pi-tui": ["../tui/src/index.ts"]
+    }
   },
   "include": ["src/**/*"]
 }
