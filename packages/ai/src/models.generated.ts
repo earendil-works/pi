@@ -5097,12 +5097,12 @@ export const MODELS = {
 			input: ["text"],
 			cost: {
 				input: 0.03,
-				output: 0.14,
-				cacheRead: 0,
+				output: 0.11,
+				cacheRead: 0.015,
 				cacheWrite: 0,
 			},
 			contextWindow: 131072,
-			maxTokens: 4096,
+			maxTokens: 131072,
 		} satisfies Model<"openai-completions">,
 		"anthropic/claude-opus-4.1": {
 			id: "anthropic/claude-opus-4.1",
