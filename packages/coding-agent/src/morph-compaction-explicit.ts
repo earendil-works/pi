@@ -1,6 +1,5 @@
 import type { Api, AssistantMessage, Message, Model } from "@kennyfrc/mu-ai";
 
-import { supportsUpstreamResponsesCompact } from "./compaction-adapter.js";
 import type { MorphCompactionMode } from "./morph-compaction-mode.js";
 import {
 	containsNativeCompactReplay,
@@ -161,8 +160,7 @@ export async function executeExplicitCompactionStrategy(args: {
 }): Promise<ExplicitCompactionExecution> {
 	const transcript = projectMessagesToMorphTranscript(args.messages);
 	const estimatedHistoryTokens = estimateTokens(transcript);
-	const requiresNativeReplay =
-		containsNativeCompactReplay(args.messages) || supportsUpstreamResponsesCompact(args.model);
+	const requiresNativeReplay = containsNativeCompactReplay(args.messages);
 	const morphApiKey = args.morphApiKey?.trim() || "";
 
 	const strategy = selectCompactionStrategy({

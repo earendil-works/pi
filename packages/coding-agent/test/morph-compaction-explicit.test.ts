@@ -132,32 +132,48 @@ describe("executeExplicitCompactionStrategy", () => {
 		expect(localSummaryFallback).not.toHaveBeenCalled();
 	});
 
-	it("fails instead of using native replay compaction for OpenAI explicit compaction paths", async () => {
+	it("uses Morph for OpenAI explicit compaction paths when history has no opaque native replay items", async () => {
 		const details = buildLocalFallbackDetails();
 		const localSummaryFallback = vi.fn(async () => details);
 		const nativeReplayCompact = vi.fn(async () => ({
 			details,
 			usedFallback: false,
 		}));
-		const fetchImpl: typeof fetch = vi.fn();
+		const fetchImpl: typeof fetch = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+			const parsed = JSON.parse(String(init?.body ?? "{}")) as {
+				input?: string;
+				query?: string;
+				compression_ratio?: number;
+			};
+			expect(parsed.query).toBe("Fix the login page tests");
+			expect(parsed.compression_ratio).toBeGreaterThanOrEqual(0.3);
+			expect(parsed.compression_ratio).toBeLessThanOrEqual(0.7);
+			expect(parsed.input).toContain("User: Fix the login page tests");
 
-		await expect(
-			executeExplicitCompactionStrategy({
-				model: openaiModel,
-				messages: visibleMessages,
-				goal: "Fix the login page tests",
-				morphMode: "auto",
-				morphApiKey: "test-morph-key",
-				keyFiles: [],
-				localSummaryFallback,
-				nativeReplayCompact,
-				fetchImpl,
-			}),
-		).rejects.toThrow("native replay");
+			return new Response(JSON.stringify({ output: "OpenAI Morph-compacted visible history" }), {
+				status: 200,
+				headers: { "content-type": "application/json" },
+			});
+		});
 
+		const execution = await executeExplicitCompactionStrategy({
+			model: openaiModel,
+			messages: visibleMessages,
+			goal: "Fix the login page tests",
+			morphMode: "auto",
+			morphApiKey: "test-morph-key",
+			keyFiles: ["src/login.ts"],
+			localSummaryFallback,
+			nativeReplayCompact,
+			fetchImpl,
+		});
+
+		expect(fetchImpl).toHaveBeenCalledOnce();
 		expect(nativeReplayCompact).not.toHaveBeenCalled();
 		expect(localSummaryFallback).not.toHaveBeenCalled();
-		expect(fetchImpl).not.toHaveBeenCalled();
+		expect(execution.strategy.kind).toBe("morph-compact");
+		expect(execution.details.replacementMessages).toHaveLength(1);
+		expect(execution.details.formattedMessage).toContain("Morph compaction completed");
 	});
 
 	it("fails when the Morph request fails", async () => {
