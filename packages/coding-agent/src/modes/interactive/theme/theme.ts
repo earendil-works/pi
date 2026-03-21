@@ -1,8 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@mariozechner/pi-tui";
-import { type Static, Type } from "@sinclair/typebox";
-import { TypeCompiler } from "@sinclair/typebox/compiler";
 import chalk from "chalk";
 import { highlight, supportsLanguage } from "cli-highlight";
 import { getCustomThemesDir, getThemesDir } from "../../../config.js";
@@ -11,89 +9,82 @@ import { getCustomThemesDir, getThemesDir } from "../../../config.js";
 // Types & Schema
 // ============================================================================
 
-const ColorValueSchema = Type.Union([
-	Type.String(), // hex "#ff0000", var ref "primary", or empty ""
-	Type.Integer({ minimum: 0, maximum: 255 }), // 256-color index
-]);
+type ColorValue = string | number;
 
-type ColorValue = Static<typeof ColorValueSchema>;
+interface ThemeJsonExport {
+	pageBg?: ColorValue;
+	cardBg?: ColorValue;
+	infoBg?: ColorValue;
+}
 
-const ThemeJsonSchema = Type.Object({
-	$schema: Type.Optional(Type.String()),
-	name: Type.String(),
-	vars: Type.Optional(Type.Record(Type.String(), ColorValueSchema)),
-	colors: Type.Object({
-		// Core UI (10 colors)
-		accent: ColorValueSchema,
-		border: ColorValueSchema,
-		borderAccent: ColorValueSchema,
-		borderMuted: ColorValueSchema,
-		success: ColorValueSchema,
-		error: ColorValueSchema,
-		warning: ColorValueSchema,
-		muted: ColorValueSchema,
-		dim: ColorValueSchema,
-		text: ColorValueSchema,
-		thinkingText: ColorValueSchema,
-		// Backgrounds & Content Text (11 colors)
-		selectedBg: ColorValueSchema,
-		userMessageBg: ColorValueSchema,
-		userMessageText: ColorValueSchema,
-		customMessageBg: ColorValueSchema,
-		customMessageText: ColorValueSchema,
-		customMessageLabel: ColorValueSchema,
-		toolPendingBg: ColorValueSchema,
-		toolSuccessBg: ColorValueSchema,
-		toolErrorBg: ColorValueSchema,
-		toolTitle: ColorValueSchema,
-		toolOutput: ColorValueSchema,
-		// Markdown (10 colors)
-		mdHeading: ColorValueSchema,
-		mdLink: ColorValueSchema,
-		mdLinkUrl: ColorValueSchema,
-		mdCode: ColorValueSchema,
-		mdCodeBlock: ColorValueSchema,
-		mdCodeBlockBorder: ColorValueSchema,
-		mdQuote: ColorValueSchema,
-		mdQuoteBorder: ColorValueSchema,
-		mdHr: ColorValueSchema,
-		mdListBullet: ColorValueSchema,
-		// Tool Diffs (3 colors)
-		toolDiffAdded: ColorValueSchema,
-		toolDiffRemoved: ColorValueSchema,
-		toolDiffContext: ColorValueSchema,
-		// Syntax Highlighting (9 colors)
-		syntaxComment: ColorValueSchema,
-		syntaxKeyword: ColorValueSchema,
-		syntaxFunction: ColorValueSchema,
-		syntaxVariable: ColorValueSchema,
-		syntaxString: ColorValueSchema,
-		syntaxNumber: ColorValueSchema,
-		syntaxType: ColorValueSchema,
-		syntaxOperator: ColorValueSchema,
-		syntaxPunctuation: ColorValueSchema,
-		// Thinking Level Borders (6 colors)
-		thinkingOff: ColorValueSchema,
-		thinkingMinimal: ColorValueSchema,
-		thinkingLow: ColorValueSchema,
-		thinkingMedium: ColorValueSchema,
-		thinkingHigh: ColorValueSchema,
-		thinkingXhigh: ColorValueSchema,
-		// Bash Mode (1 color)
-		bashMode: ColorValueSchema,
-	}),
-	export: Type.Optional(
-		Type.Object({
-			pageBg: Type.Optional(ColorValueSchema),
-			cardBg: Type.Optional(ColorValueSchema),
-			infoBg: Type.Optional(ColorValueSchema),
-		}),
-	),
-});
+interface ThemeJsonColors {
+	// Core UI (10 colors)
+	accent: ColorValue;
+	border: ColorValue;
+	borderAccent: ColorValue;
+	borderMuted: ColorValue;
+	success: ColorValue;
+	error: ColorValue;
+	warning: ColorValue;
+	muted: ColorValue;
+	dim: ColorValue;
+	text: ColorValue;
+	thinkingText: ColorValue;
+	// Backgrounds & Content Text (11 colors)
+	selectedBg: ColorValue;
+	userMessageBg: ColorValue;
+	userMessageText: ColorValue;
+	customMessageBg: ColorValue;
+	customMessageText: ColorValue;
+	customMessageLabel: ColorValue;
+	toolPendingBg: ColorValue;
+	toolSuccessBg: ColorValue;
+	toolErrorBg: ColorValue;
+	toolTitle: ColorValue;
+	toolOutput: ColorValue;
+	// Markdown (10 colors)
+	mdHeading: ColorValue;
+	mdLink: ColorValue;
+	mdLinkUrl: ColorValue;
+	mdCode: ColorValue;
+	mdCodeBlock: ColorValue;
+	mdCodeBlockBorder: ColorValue;
+	mdQuote: ColorValue;
+	mdQuoteBorder: ColorValue;
+	mdHr: ColorValue;
+	mdListBullet: ColorValue;
+	// Tool Diffs (3 colors)
+	toolDiffAdded: ColorValue;
+	toolDiffRemoved: ColorValue;
+	toolDiffContext: ColorValue;
+	// Syntax Highlighting (9 colors)
+	syntaxComment: ColorValue;
+	syntaxKeyword: ColorValue;
+	syntaxFunction: ColorValue;
+	syntaxVariable: ColorValue;
+	syntaxString: ColorValue;
+	syntaxNumber: ColorValue;
+	syntaxType: ColorValue;
+	syntaxOperator: ColorValue;
+	syntaxPunctuation: ColorValue;
+	// Thinking Level Borders (6 colors)
+	thinkingOff: ColorValue;
+	thinkingMinimal: ColorValue;
+	thinkingLow: ColorValue;
+	thinkingMedium: ColorValue;
+	thinkingHigh: ColorValue;
+	thinkingXhigh: ColorValue;
+	// Bash Mode (1 color)
+	bashMode: ColorValue;
+}
 
-type ThemeJson = Static<typeof ThemeJsonSchema>;
-
-const validateThemeJson = TypeCompiler.Compile(ThemeJsonSchema);
+interface ThemeJson {
+	$schema?: string;
+	name: string;
+	vars?: Record<string, ColorValue>;
+	colors: ThemeJsonColors;
+	export?: ThemeJsonExport;
+}
 
 export type ThemeColor =
 	| "accent"
@@ -151,6 +142,62 @@ export type ThemeBg =
 	| "toolErrorBg";
 
 type ColorMode = "truecolor" | "256color";
+
+const REQUIRED_THEME_COLOR_KEYS = [
+	"accent",
+	"border",
+	"borderAccent",
+	"borderMuted",
+	"success",
+	"error",
+	"warning",
+	"muted",
+	"dim",
+	"text",
+	"thinkingText",
+	"selectedBg",
+	"userMessageBg",
+	"userMessageText",
+	"customMessageBg",
+	"customMessageText",
+	"customMessageLabel",
+	"toolPendingBg",
+	"toolSuccessBg",
+	"toolErrorBg",
+	"toolTitle",
+	"toolOutput",
+	"mdHeading",
+	"mdLink",
+	"mdLinkUrl",
+	"mdCode",
+	"mdCodeBlock",
+	"mdCodeBlockBorder",
+	"mdQuote",
+	"mdQuoteBorder",
+	"mdHr",
+	"mdListBullet",
+	"toolDiffAdded",
+	"toolDiffRemoved",
+	"toolDiffContext",
+	"syntaxComment",
+	"syntaxKeyword",
+	"syntaxFunction",
+	"syntaxVariable",
+	"syntaxString",
+	"syntaxNumber",
+	"syntaxType",
+	"syntaxOperator",
+	"syntaxPunctuation",
+	"thinkingOff",
+	"thinkingMinimal",
+	"thinkingLow",
+	"thinkingMedium",
+	"thinkingHigh",
+	"thinkingXhigh",
+	"bashMode",
+] as const satisfies readonly (ThemeColor | ThemeBg)[];
+
+const THEME_EXPORT_KEYS = ["pageBg", "cardBg", "infoBg"] as const;
 
 // ============================================================================
 // Color Utilities
@@ -323,12 +370,12 @@ function resolveVarRefs(
 	return resolveVarRefs(vars[value], vars, visited);
 }
 
-function resolveThemeColors<T extends Record<string, ColorValue>>(
+function resolveThemeColors<T extends object>(
 	colors: T,
 	vars: Record<string, ColorValue> = {},
 ): Record<keyof T, string | number> {
 	const resolved: Record<string, string | number> = {};
-	for (const [key, value] of Object.entries(colors)) {
+	for (const [key, value] of Object.entries(colors as Record<string, ColorValue>)) {
 		resolved[key] = resolveVarRefs(value, vars);
 	}
 	return resolved as Record<keyof T, string | number>;
@@ -441,23 +488,31 @@ export class Theme {
 // Theme Loading
 // ============================================================================
 
-let BUILTIN_THEMES: Record<string, ThemeJson> | undefined;
+const BUILTIN_THEME_NAMES = ["dark", "light"] as const;
+type BuiltinThemeName = (typeof BUILTIN_THEME_NAMES)[number];
 
-function getBuiltinThemes(): Record<string, ThemeJson> {
-	if (!BUILTIN_THEMES) {
-		const themesDir = getThemesDir();
-		const darkPath = path.join(themesDir, "dark.json");
-		const lightPath = path.join(themesDir, "light.json");
-		BUILTIN_THEMES = {
-			dark: JSON.parse(fs.readFileSync(darkPath, "utf-8")) as ThemeJson,
-			light: JSON.parse(fs.readFileSync(lightPath, "utf-8")) as ThemeJson,
-		};
+const BUILTIN_THEMES = new Map<BuiltinThemeName, ThemeJson>();
+
+function isBuiltinThemeName(name: string): name is BuiltinThemeName {
+	return (BUILTIN_THEME_NAMES as readonly string[]).includes(name);
+}
+
+function getBuiltinThemePath(name: BuiltinThemeName): string {
+	return path.join(getThemesDir(), `${name}.json`);
+}
+
+function getBuiltinTheme(name: BuiltinThemeName): ThemeJson {
+	const cached = BUILTIN_THEMES.get(name);
+	if (cached) {
+		return cached;
 	}
-	return BUILTIN_THEMES;
+	const themeJson = JSON.parse(fs.readFileSync(getBuiltinThemePath(name), "utf-8")) as ThemeJson;
+	BUILTIN_THEMES.set(name, themeJson);
+	return themeJson;
 }
 
 export function getAvailableThemes(): string[] {
-	const themes = new Set<string>(Object.keys(getBuiltinThemes()));
+	const themes = new Set<string>(BUILTIN_THEME_NAMES);
 	const customThemesDir = getCustomThemesDir();
 	if (fs.existsSync(customThemesDir)) {
 		const files = fs.readdirSync(customThemesDir);
@@ -479,14 +534,11 @@ export interface ThemeInfo {
 }
 
 export function getAvailableThemesWithPaths(): ThemeInfo[] {
-	const themesDir = getThemesDir();
 	const customThemesDir = getCustomThemesDir();
-	const result: ThemeInfo[] = [];
-
-	// Built-in themes
-	for (const name of Object.keys(getBuiltinThemes())) {
-		result.push({ name, path: path.join(themesDir, `${name}.json`) });
-	}
+	const result: ThemeInfo[] = BUILTIN_THEME_NAMES.map((name) => ({
+		name,
+		path: getBuiltinThemePath(name),
+	}));
 
 	// Custom themes
 	if (fs.existsSync(customThemesDir)) {
@@ -509,22 +561,110 @@ export function getAvailableThemesWithPaths(): ThemeInfo[] {
 	return result.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-function parseThemeJson(label: string, json: unknown): ThemeJson {
-	if (!validateThemeJson.Check(json)) {
-		const errors = Array.from(validateThemeJson.Errors(json));
-		const missingColors: string[] = [];
-		const otherErrors: string[] = [];
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
 
-		for (const e of errors) {
-			// Check for missing required color properties
-			const match = e.path.match(/^\/colors\/(\w+)$/);
-			if (match && e.message.includes("Required")) {
-				missingColors.push(match[1]);
-			} else {
-				otherErrors.push(`  - ${e.path}: ${e.message}`);
+function isColorValue(value: unknown): value is ColorValue {
+	return (
+		typeof value === "string" || (typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 255)
+	);
+}
+
+function validateColorRecord(
+	section: string,
+	value: unknown,
+	otherErrors: string[],
+): Record<string, ColorValue> | undefined {
+	if (value === undefined) {
+		return undefined;
+	}
+	if (!isRecord(value)) {
+		otherErrors.push(`  - /${section}: Expected object`);
+		return undefined;
+	}
+
+	const result: Record<string, ColorValue> = {};
+	for (const [key, entryValue] of Object.entries(value)) {
+		if (!isColorValue(entryValue)) {
+			otherErrors.push(`  - /${section}/${key}: Invalid color value`);
+			continue;
+		}
+		result[key] = entryValue;
+	}
+	return result;
+}
+
+function parseThemeJson(label: string, json: unknown): ThemeJson {
+	if (!isRecord(json)) {
+		throw new Error(`Invalid theme "${label}":\n\nOther errors:\n  - /: Expected object`);
+	}
+
+	const missingColors: string[] = [];
+	const otherErrors: string[] = [];
+
+	const name = json.name;
+	if (typeof name !== "string") {
+		otherErrors.push("  - /name: Expected string");
+	}
+
+	const schemaValue = json.$schema;
+	if (schemaValue !== undefined && typeof schemaValue !== "string") {
+		otherErrors.push("  - /$schema: Expected string");
+	}
+
+	const vars = validateColorRecord("vars", json.vars, otherErrors);
+	const colorsValue = json.colors;
+	let colors: Record<string, ColorValue> | undefined;
+	if (!isRecord(colorsValue)) {
+		otherErrors.push("  - /colors: Expected object");
+	} else {
+		colors = {};
+		for (const colorKey of REQUIRED_THEME_COLOR_KEYS) {
+			const colorValue = colorsValue[colorKey];
+			if (colorValue === undefined) {
+				missingColors.push(colorKey);
+				continue;
+			}
+			if (!isColorValue(colorValue)) {
+				otherErrors.push(`  - /colors/${colorKey}: Invalid color value`);
+				continue;
+			}
+			colors[colorKey] = colorValue;
+		}
+		for (const [key, value] of Object.entries(colorsValue)) {
+			if ((REQUIRED_THEME_COLOR_KEYS as readonly string[]).includes(key)) {
+				continue;
+			}
+			if (!isColorValue(value)) {
+				otherErrors.push(`  - /colors/${key}: Invalid color value`);
+				continue;
+			}
+			colors[key] = value;
+		}
+	}
+
+	let exportSection: ThemeJsonExport | undefined;
+	if (json.export !== undefined) {
+		if (!isRecord(json.export)) {
+			otherErrors.push("  - /export: Expected object");
+		} else {
+			exportSection = {};
+			for (const key of THEME_EXPORT_KEYS) {
+				const value = json.export[key];
+				if (value === undefined) {
+					continue;
+				}
+				if (!isColorValue(value)) {
+					otherErrors.push(`  - /export/${key}: Invalid color value`);
+					continue;
+				}
+				exportSection[key] = value;
 			}
 		}
+	}
 
+	if (missingColors.length > 0 || otherErrors.length > 0) {
 		let errorMessage = `Invalid theme "${label}":\n`;
 		if (missingColors.length > 0) {
 			errorMessage += "\nMissing required color tokens:\n";
@@ -535,11 +675,16 @@ function parseThemeJson(label: string, json: unknown): ThemeJson {
 		if (otherErrors.length > 0) {
 			errorMessage += `\n\nOther errors:\n${otherErrors.join("\n")}`;
 		}
-
 		throw new Error(errorMessage);
 	}
 
-	return json as ThemeJson;
+	return {
+		$schema: typeof schemaValue === "string" ? schemaValue : undefined,
+		name: typeof name === "string" ? name : label,
+		vars,
+		colors: colors as unknown as ThemeJsonColors,
+		export: exportSection,
+	};
 }
 
 function parseThemeJsonContent(label: string, content: string): ThemeJson {
@@ -553,9 +698,8 @@ function parseThemeJsonContent(label: string, content: string): ThemeJson {
 }
 
 function loadThemeJson(name: string): ThemeJson {
-	const builtinThemes = getBuiltinThemes();
-	if (name in builtinThemes) {
-		return builtinThemes[name];
+	if (isBuiltinThemeName(name)) {
+		return getBuiltinTheme(name);
 	}
 	const registeredTheme = registeredThemes.get(name);
 	if (registeredTheme?.sourcePath) {

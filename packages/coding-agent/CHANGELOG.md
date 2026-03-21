@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Deferred interactive startup-only work such as changelog rendering, `fd`/`rg` readiness, provider-count footer metadata, and keybinding migration, and removed TypeBox compiler startup cost from theme loading.
+
 ## [0.61.1] - 2026-03-20
 
 ### New Features

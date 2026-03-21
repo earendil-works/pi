@@ -231,6 +231,7 @@ export class InteractiveMode {
 
 	// Header container that holds the built-in or custom header
 	private headerContainer: Container;
+	private changelogContainer: Container;
 
 	// Built-in header (logo + keybinding hints + changelog)
 	private builtInHeader: Component | undefined = undefined;
@@ -258,6 +259,7 @@ export class InteractiveMode {
 		this.ui = new TUI(new ProcessTerminal(), this.settingsManager.getShowHardwareCursor());
 		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
 		this.headerContainer = new Container();
+		this.changelogContainer = new Container();
 		this.chatContainer = new Container();
 		this.pendingMessagesContainer = new Container();
 		this.statusContainer = new Container();
@@ -363,27 +365,14 @@ export class InteractiveMode {
 		}
 	}
 
-	async init(): Promise<void> {
-		if (this.isInitialized) return;
+	private buildStartupHeader(): void {
+		this.headerContainer.clear();
+		this.changelogContainer.clear();
+		this.headerContainer.addChild(new Spacer(1));
 
-		// Load changelog (only show new entries, skip for resumed sessions)
-		this.changelogMarkdown = this.getChangelogForDisplay();
-
-		// Ensure fd and rg are available (downloads if missing, adds to PATH via getBinDir)
-		// Both are needed: fd for autocomplete, rg for grep tool and bash commands
-		const [fdPath] = await Promise.all([ensureTool("fd"), ensureTool("rg")]);
-		this.fdPath = fdPath;
-
-		// Add header container as first child
-		this.ui.addChild(this.headerContainer);
-
-		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
 			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
-
-			// Build startup instructions using keybinding hint helpers
 			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
-
 			const instructions = [
 				hint("app.interrupt", "to interrupt"),
 				hint("app.clear", "to clear"),
@@ -406,43 +395,89 @@ export class InteractiveMode {
 				rawKeyHint("drop files", "to attach"),
 			].join("\n");
 			this.builtInHeader = new Text(`${logo}\n${instructions}`, 1, 0);
-
-			// Setup UI layout
-			this.headerContainer.addChild(new Spacer(1));
-			this.headerContainer.addChild(this.builtInHeader);
-			this.headerContainer.addChild(new Spacer(1));
-
-			// Add changelog if provided
-			if (this.changelogMarkdown) {
-				this.headerContainer.addChild(new DynamicBorder());
-				if (this.settingsManager.getCollapseChangelog()) {
-					const versionMatch = this.changelogMarkdown.match(/##\s+\[?(\d+\.\d+\.\d+)\]?/);
-					const latestVersion = versionMatch ? versionMatch[1] : this.version;
-					const condensedText = `Updated to v${latestVersion}. Use ${theme.bold("/changelog")} to view full changelog.`;
-					this.headerContainer.addChild(new Text(condensedText, 1, 0));
-				} else {
-					this.headerContainer.addChild(new Text(theme.bold(theme.fg("accent", "What's New")), 1, 0));
-					this.headerContainer.addChild(new Spacer(1));
-					this.headerContainer.addChild(
-						new Markdown(this.changelogMarkdown.trim(), 1, 0, this.getMarkdownThemeWithSettings()),
-					);
-					this.headerContainer.addChild(new Spacer(1));
-				}
-				this.headerContainer.addChild(new DynamicBorder());
-			}
 		} else {
-			// Minimal header when silenced
 			this.builtInHeader = new Text("", 0, 0);
-			this.headerContainer.addChild(this.builtInHeader);
-			if (this.changelogMarkdown) {
-				// Still show changelog notification even in silent mode
-				this.headerContainer.addChild(new Spacer(1));
+		}
+
+		this.headerContainer.addChild(this.builtInHeader);
+		this.headerContainer.addChild(new Spacer(1));
+		this.headerContainer.addChild(this.changelogContainer);
+	}
+
+	private renderChangelogHeader(): void {
+		this.changelogContainer.clear();
+		if (!this.changelogMarkdown) {
+			return;
+		}
+
+		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
+			this.changelogContainer.addChild(new DynamicBorder());
+			if (this.settingsManager.getCollapseChangelog()) {
 				const versionMatch = this.changelogMarkdown.match(/##\s+\[?(\d+\.\d+\.\d+)\]?/);
 				const latestVersion = versionMatch ? versionMatch[1] : this.version;
 				const condensedText = `Updated to v${latestVersion}. Use ${theme.bold("/changelog")} to view full changelog.`;
-				this.headerContainer.addChild(new Text(condensedText, 1, 0));
+				this.changelogContainer.addChild(new Text(condensedText, 1, 0));
+			} else {
+				this.changelogContainer.addChild(new Text(theme.bold(theme.fg("accent", "What's New")), 1, 0));
+				this.changelogContainer.addChild(new Spacer(1));
+				this.changelogContainer.addChild(
+					new Markdown(this.changelogMarkdown.trim(), 1, 0, this.getMarkdownThemeWithSettings()),
+				);
+				this.changelogContainer.addChild(new Spacer(1));
 			}
+			this.changelogContainer.addChild(new DynamicBorder());
+		} else {
+			this.changelogContainer.addChild(new Spacer(1));
+			const versionMatch = this.changelogMarkdown.match(/##\s+\[?(\d+\.\d+\.\d+)\]?/);
+			const latestVersion = versionMatch ? versionMatch[1] : this.version;
+			const condensedText = `Updated to v${latestVersion}. Use ${theme.bold("/changelog")} to view full changelog.`;
+			this.changelogContainer.addChild(new Text(condensedText, 1, 0));
 		}
+	}
+
+	private async loadDeferredStartupDecorations(): Promise<void> {
+		this.changelogMarkdown = this.getChangelogForDisplay();
+		if (!this.isInitialized) {
+			return;
+		}
+		this.renderChangelogHeader();
+		this.ui.requestRender();
+	}
+
+	private async primeToolReadiness(): Promise<void> {
+		try {
+			const [fdPath] = await Promise.all([ensureTool("fd", true), ensureTool("rg", true)]);
+			if (!this.isInitialized) {
+				return;
+			}
+			this.fdPath = fdPath;
+			this.setupAutocomplete(fdPath);
+			this.ui.requestRender();
+		} catch {
+			// Ignore deferred tool readiness errors; first use will surface them if needed.
+		}
+	}
+
+	private async updateAvailableProviderCountInBackground(): Promise<void> {
+		try {
+			await this.updateAvailableProviderCount();
+			if (!this.isInitialized) {
+				return;
+			}
+			this.ui.requestRender();
+		} catch {
+			// Ignore footer metadata failures during startup.
+		}
+	}
+
+	async init(): Promise<void> {
+		if (this.isInitialized) return;
+
+		this.buildStartupHeader();
+		this.setupAutocomplete(undefined);
+
+		// Add header container as first child
+		this.ui.addChild(this.headerContainer);
 
 		this.ui.addChild(this.chatContainer);
 		this.ui.addChild(this.pendingMessagesContainer);
@@ -485,8 +520,9 @@ export class InteractiveMode {
 			this.ui.requestRender();
 		});
 
-		// Initialize available provider count for footer display
-		await this.updateAvailableProviderCount();
+		void this.loadDeferredStartupDecorations();
+		void this.primeToolReadiness();
+		void this.updateAvailableProviderCountInBackground();
 	}
 
 	/**

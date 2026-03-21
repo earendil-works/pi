@@ -739,8 +739,6 @@ export async function main(args: string[]) {
 		process.exit(0);
 	}
 
-	migrateKeybindingsConfigFile(agentDir);
-
 	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {
 		console.error(chalk.red("Error: @file arguments are not supported in RPC mode"));
 		process.exit(1);
@@ -754,6 +752,9 @@ export async function main(args: string[]) {
 		stdinContent,
 	);
 	const isInteractive = !parsed.print && parsed.mode === undefined;
+	if (isInteractive) {
+		migrateKeybindingsConfigFile(agentDir);
+	}
 	const startupBenchmark = isTruthyEnvFlag(process.env.PI_STARTUP_BENCHMARK);
 	if (startupBenchmark && !isInteractive) {
 		console.error(chalk.red("Error: PI_STARTUP_BENCHMARK only supports interactive mode"));
@@ -762,8 +763,8 @@ export async function main(args: string[]) {
 	const mode = parsed.mode || "text";
 	initTheme(settingsManager.getTheme(), isInteractive);
 
-	// Show deprecation warnings in interactive mode
-	if (isInteractive && deprecationWarnings.length > 0) {
+	// Show deprecation warnings in interactive mode after startup benchmarking
+	if (isInteractive && !startupBenchmark && deprecationWarnings.length > 0) {
 		await showDeprecationWarnings(deprecationWarnings);
 	}
 
