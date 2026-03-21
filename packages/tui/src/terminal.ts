@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as path from "node:path";
 import { createRequire } from "node:module";
 import { setKittyProtocolActive } from "./keys.js";
 import { StdinBuffer } from "./stdin-buffer.js";
@@ -60,7 +61,20 @@ export class ProcessTerminal implements Terminal {
 	private _modifyOtherKeysActive = false;
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string) => void;
-	private writeLogPath = process.env.PI_TUI_WRITE_LOG || "";
+	private writeLogPath = (() => {
+		const env = process.env.PI_TUI_WRITE_LOG || "";
+		if (!env) return "";
+		try {
+			if (fs.statSync(env).isDirectory()) {
+				const now = new Date();
+				const ts = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}_${String(now.getHours()).padStart(2, "0")}-${String(now.getMinutes()).padStart(2, "0")}-${String(now.getSeconds()).padStart(2, "0")}`;
+				return path.join(env, `tui-${ts}-${process.pid}.log`);
+			}
+		} catch {
+			// Not an existing directory - use as-is (file path)
+		}
+		return env;
+	})();
 
 	get kittyProtocolActive(): boolean {
 		return this._kittyProtocolActive;
