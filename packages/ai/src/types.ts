@@ -279,6 +279,8 @@ export interface OpenAICompletionsCompat {
 	vercelGatewayRouting?: VercelGatewayRouting;
 	/** Whether the provider supports the `strict` field in tool definitions. Default: true. */
 	supportsStrictMode?: boolean;
+	/** Whether the provider should prefer non-streaming chat completions and map the full response back into stream events. Default: false. */
+	preferNonStreamingResponses?: boolean;
 }
 
 /** Compatibility settings for OpenAI Responses APIs. */

@@ -21,14 +21,48 @@ const mockState = vi.hoisted(() => ({
 				  }
 		  >
 		| undefined,
+	response: undefined as
+		| {
+				choices?: Array<{
+					message?: {
+						content?: string | null;
+						tool_calls?: Array<{
+							id?: string;
+							function?: { name?: string; arguments?: string };
+						}>;
+						reasoning_content?: string | null;
+					};
+					finish_reason?: string | null;
+				}>;
+				usage?: {
+					prompt_tokens: number;
+					completion_tokens: number;
+					prompt_tokens_details: { cached_tokens: number };
+					completion_tokens_details: { reasoning_tokens: number };
+				};
+		  }
+		| undefined,
 }));
 
 vi.mock("openai", () => {
 	class FakeOpenAI {
 		chat = {
 			completions: {
-				create: async (params: unknown) => {
+				create: async (params: { stream?: boolean }) => {
 					mockState.lastParams = params;
+					if (params.stream === false) {
+						return (
+							mockState.response ?? {
+								choices: [{ message: { content: "OK" }, finish_reason: "stop" }],
+								usage: {
+									prompt_tokens: 1,
+									completion_tokens: 1,
+									prompt_tokens_details: { cached_tokens: 0 },
+									completion_tokens_details: { reasoning_tokens: 0 },
+								},
+							}
+						);
+					}
 					return {
 						async *[Symbol.asyncIterator]() {
 							const chunks = mockState.chunks ?? [
@@ -59,6 +93,7 @@ describe("openai-completions tool_choice", () => {
 	beforeEach(() => {
 		mockState.lastParams = undefined;
 		mockState.chunks = undefined;
+		mockState.response = undefined;
 	});
 
 	it("forwards toolChoice from simple options to payload", async () => {
@@ -310,5 +345,73 @@ describe("openai-completions tool_choice", () => {
 		};
 		expect(params.reasoning).toEqual({ effort: "high" });
 		expect(params.reasoning_effort).toBeUndefined();
+	});
+
+	it("can prefer non-streaming responses for openai-compatible providers", async () => {
+		mockState.response = {
+			choices: [
+				{
+					message: {
+						content: "Used a tool.",
+						reasoning_content: "Need to inspect runtime state first.",
+						tool_calls: [
+							{
+								id: "call_1",
+								function: {
+									name: "exec",
+									arguments: "{\"command\":\"df -h\"}",
+								},
+							},
+						],
+					},
+					finish_reason: "tool_calls",
+				},
+			],
+			usage: {
+				prompt_tokens: 10,
+				completion_tokens: 4,
+				prompt_tokens_details: { cached_tokens: 0 },
+				completion_tokens_details: { reasoning_tokens: 2 },
+			},
+		};
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = {
+			...baseModel,
+			api: "openai-completions",
+			compat: { preferNonStreamingResponses: true },
+		} as const;
+
+		const response = await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "How much free disk space is available?",
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect((mockState.lastParams as { stream?: boolean } | undefined)?.stream).toBe(false);
+		expect(response.stopReason).toBe("toolUse");
+		expect(response.content).toEqual([
+			{
+				type: "thinking",
+				thinking: "Need to inspect runtime state first.",
+				thinkingSignature: "reasoning",
+			},
+			{ type: "text", text: "Used a tool." },
+			{
+				type: "toolCall",
+				id: "call_1",
+				name: "exec",
+				arguments: { command: "df -h" },
+			},
+		]);
+		expect(response.usage.output).toBe(6);
 	});
 });

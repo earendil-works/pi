@@ -91,6 +91,40 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			if (nextParams !== undefined) {
 				params = nextParams as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
 			}
+			const compat = getCompat(model);
+			if (compat.preferNonStreamingResponses) {
+				const response = await client.chat.completions.create(
+					{
+						...(params as OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming),
+						stream: false,
+					},
+					{ signal: options?.signal },
+				);
+				stream.push({ type: "start", partial: output });
+
+				if (response.usage) {
+					output.usage = parseChunkUsage(response.usage, model);
+				}
+
+				const choice = response.choices?.[0];
+				const finishReasonResult = mapStopReason(choice?.finish_reason || "stop");
+				output.stopReason = finishReasonResult.stopReason;
+				if (finishReasonResult.errorMessage) {
+					output.errorMessage = finishReasonResult.errorMessage;
+				}
+				appendNonStreamingMessageContent(output, choice?.message);
+
+				if (options?.signal?.aborted || output.stopReason === "aborted") {
+					throw new Error("Request was aborted");
+				}
+				if (output.stopReason === "error") {
+					throw new Error(output.errorMessage || "Provider returned an error stop reason");
+				}
+
+				stream.push({ type: "done", reason: output.stopReason, message: output });
+				stream.end();
+				return;
+			}
 			const openaiStream = await client.chat.completions.create(params, { signal: options?.signal });
 			stream.push({ type: "start", partial: output });
 
@@ -445,6 +479,58 @@ function mapReasoningEffort(
 	reasoningEffortMap: Partial<Record<NonNullable<OpenAICompletionsOptions["reasoningEffort"]>, string>>,
 ): string {
 	return reasoningEffortMap[effort] ?? effort;
+}
+
+function appendNonStreamingMessageContent(
+	output: AssistantMessage,
+	message:
+		| {
+				content?: unknown;
+				tool_calls?: Array<{
+					id?: string | null;
+					function?: { name?: string | null; arguments?: string | null } | null;
+				}> | null;
+				reasoning_content?: string | null;
+				reasoning?: string | null;
+				reasoning_text?: string | null;
+		  }
+		| null
+		| undefined,
+): void {
+	if (!message) return;
+
+	const reasoning = message.reasoning_content || message.reasoning || message.reasoning_text;
+	if (typeof reasoning === "string" && reasoning.length > 0) {
+		output.content.push({
+			type: "thinking",
+			thinking: reasoning,
+			thinkingSignature: "reasoning",
+		});
+	}
+
+	if (typeof message.content === "string" && message.content.length > 0) {
+		output.content.push({ type: "text", text: message.content });
+	} else if (Array.isArray(message.content)) {
+		const text = message.content
+			.map((part) =>
+				part && typeof part === "object" && "text" in part && typeof part.text === "string"
+					? part.text
+					: "",
+			)
+			.join("");
+		if (text.length > 0) {
+			output.content.push({ type: "text", text });
+		}
+	}
+
+	for (const toolCall of message.tool_calls ?? []) {
+		output.content.push({
+			type: "toolCall",
+			id: toolCall.id || "",
+			name: toolCall.function?.name || "",
+			arguments: parseStreamingJson(toolCall.function?.arguments || "{}"),
+		});
+	}
 }
 
 function maybeAddOpenRouterAnthropicCacheControl(
@@ -832,6 +918,7 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 		openRouterRouting: {},
 		vercelGatewayRouting: {},
 		supportsStrictMode: true,
+		preferNonStreamingResponses: false,
 	};
 }
 
@@ -858,5 +945,7 @@ function getCompat(model: Model<"openai-completions">): Required<OpenAICompletio
 		openRouterRouting: model.compat.openRouterRouting ?? {},
 		vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
+		preferNonStreamingResponses:
+			model.compat.preferNonStreamingResponses ?? detected.preferNonStreamingResponses,
 	};
 }
