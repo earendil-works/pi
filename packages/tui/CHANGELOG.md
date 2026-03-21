@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `PI_TUI_WRITE_LOG` now accepts a directory path, creating a unique log file (`tui-<timestamp>-<pid>.log`) per instance for easier debugging of multiple pi sessions
+
 ### Fixed
 
 - Fixed `truncateToWidth()` to stream truncation for very large strings, keep contiguous prefixes, and always terminate truncated SGR styling safely ([#2447](https://github.com/badlogic/pi-mono/issues/2447))
