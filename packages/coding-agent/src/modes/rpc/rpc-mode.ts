@@ -596,9 +596,7 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 	 */
 	let detachInput = () => {};
 
-	async function checkShutdownRequested(): Promise<void> {
-		if (!shutdownRequested) return;
-
+	async function shutdown(): Promise<never> {
 		const currentRunner = session.extensionRunner;
 		if (currentRunner?.hasHandlers("session_shutdown")) {
 			await currentRunner.emit({ type: "session_shutdown" });
@@ -607,6 +605,11 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 		detachInput();
 		process.stdin.pause();
 		process.exit(0);
+	}
+
+	async function checkShutdownRequested(): Promise<void> {
+		if (!shutdownRequested) return;
+		await shutdown();
 	}
 
 	const handleInputLine = async (line: string) => {
@@ -636,9 +639,20 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 		}
 	};
 
-	detachInput = attachJsonlLineReader(process.stdin, (line) => {
-		void handleInputLine(line);
-	});
+	const onInputEnd = () => {
+		void shutdown();
+	};
+	process.stdin.on("end", onInputEnd);
+
+	detachInput = (() => {
+		const detachJsonl = attachJsonlLineReader(process.stdin, (line) => {
+			void handleInputLine(line);
+		});
+		return () => {
+			detachJsonl();
+			process.stdin.off("end", onInputEnd);
+		};
+	})();
 
 	// Keep process alive forever
 	return new Promise(() => {});
