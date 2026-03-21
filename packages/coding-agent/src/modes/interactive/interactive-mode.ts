@@ -98,7 +98,6 @@ import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
 	getEditorTheme,
-	getMarkdownTheme,
 	getThemeByName,
 	initTheme,
 	onThemeChange,
@@ -109,6 +108,7 @@ import {
 	type ThemeColor,
 	theme,
 } from "./theme/theme.js";
+import { getMarkdownTheme } from "./theme/theme-highlighting.js";
 
 /** Interface for components that can be expanded/collapsed */
 interface Expandable {

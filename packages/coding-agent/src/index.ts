@@ -314,17 +314,15 @@ export {
 	UserMessageSelectorComponent,
 	type VisualTruncateResult,
 } from "./modes/interactive/components/index.js";
-// Theme utilities for custom tools and extensions
 export {
-	getLanguageFromPath,
-	getMarkdownTheme,
 	getSelectListTheme,
 	getSettingsListTheme,
-	highlightCode,
 	initTheme,
 	Theme,
 	type ThemeColor,
 } from "./modes/interactive/theme/theme.js";
+// Theme utilities for custom tools and extensions
+export { getLanguageFromPath, getMarkdownTheme, highlightCode } from "./modes/interactive/theme/theme-highlighting.js";
 // Clipboard utilities
 export { copyToClipboard } from "./utils/clipboard.js";
 export { parseFrontmatter, stripFrontmatter } from "./utils/frontmatter.js";

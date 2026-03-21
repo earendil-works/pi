@@ -3,7 +3,8 @@ import type { Component } from "@mariozechner/pi-tui";
 import { Box, Container, Markdown, type MarkdownTheme, Spacer, Text } from "@mariozechner/pi-tui";
 import type { MessageRenderer } from "../../../core/extensions/types.js";
 import type { CustomMessage } from "../../../core/messages.js";
-import { getMarkdownTheme, theme } from "../theme/theme.js";
+import { theme } from "../theme/theme.js";
+import { getMarkdownTheme } from "../theme/theme-highlighting.js";
 
 /**
  * Component that renders a custom message entry from extensions.

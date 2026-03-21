@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Deferred interactive startup-only work such as changelog rendering, `fd`/`rg` readiness, provider-count footer metadata, and keybinding migration, and removed TypeBox compiler startup cost from theme loading.
+- Deferred interactive startup-only work such as changelog rendering, `fd`/`rg` readiness, provider-count footer metadata, and keybinding migration, removed TypeBox compiler startup cost from theme loading, and split syntax-highlighting helpers out of the base theme module so RPC/core startup no longer loads `cli-highlight` eagerly.
 
 ## [0.61.1] - 2026-03-20
 

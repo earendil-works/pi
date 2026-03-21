@@ -1,5 +1,6 @@
 import { Container, Markdown, type MarkdownTheme, Spacer } from "@mariozechner/pi-tui";
-import { getMarkdownTheme, theme } from "../theme/theme.js";
+import { theme } from "../theme/theme.js";
+import { getMarkdownTheme } from "../theme/theme-highlighting.js";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
