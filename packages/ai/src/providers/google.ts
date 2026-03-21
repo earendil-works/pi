@@ -331,7 +331,7 @@ function createClient(
 	});
 }
 
-function buildParams(
+export function buildParams(
 	model: Model<"google-generative-ai">,
 	context: Context,
 	options: GoogleOptions = {},
@@ -371,6 +371,13 @@ function buildParams(
 			thinkingConfig.thinkingBudget = options.thinking.budgetTokens;
 		}
 		config.thinkingConfig = thinkingConfig;
+	} else if (model.reasoning && options.thinking && !options.thinking.enabled) {
+		// Reasoning-capable model with thinking explicitly disabled: send thinkingBudget: 0.
+		// Without this, models like gemini-2.5-flash default to thinking ON when
+		// thinkingConfig is omitted, consuming maxOutputTokens with thinking tokens.
+		// Only triggers when thinking is explicitly passed as { enabled: false },
+		// preserving API default behavior when thinking option is omitted entirely.
+		config.thinkingConfig = { thinkingBudget: 0 };
 	}
 
 	if (options.signal) {
