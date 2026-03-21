@@ -155,6 +155,9 @@ export class InteractiveMode {
 	private editorContainer: Container;
 	private footer: FooterComponent;
 	private footerDataProvider: FooterDataProvider;
+	private deferredExtensionsInitTimer: ReturnType<typeof setTimeout> | undefined;
+	private deferredExtensionsInitPromise: Promise<void> | undefined;
+	private deferredExtensionsInitResolve: (() => void) | undefined;
 	// Stored so the same manager can be injected into custom editors, selectors, and extension UI.
 	private keybindings: KeybindingsManager;
 	private version: string;
@@ -470,6 +473,51 @@ export class InteractiveMode {
 		}
 	}
 
+	private scheduleDeferredExtensionsInit(): void {
+		if (this.deferredExtensionsInitPromise) {
+			return;
+		}
+
+		this.deferredExtensionsInitPromise = new Promise((resolve) => {
+			this.deferredExtensionsInitResolve = resolve;
+		});
+		this.deferredExtensionsInitTimer = setTimeout(() => {
+			this.deferredExtensionsInitTimer = undefined;
+			void this.runDeferredExtensionsInit();
+		}, 0);
+	}
+
+	private async runDeferredExtensionsInit(): Promise<void> {
+		try {
+			if (!this.isInitialized) {
+				return;
+			}
+			await this.initExtensions();
+		} catch (error) {
+			if (this.isInitialized) {
+				this.showError(
+					`Failed to initialize extensions: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
+		} finally {
+			this.deferredExtensionsInitResolve?.();
+			this.deferredExtensionsInitResolve = undefined;
+		}
+	}
+
+	private async ensureExtensionsReady(): Promise<void> {
+		if (!this.deferredExtensionsInitPromise) {
+			await this.initExtensions();
+			return;
+		}
+		if (this.deferredExtensionsInitTimer) {
+			clearTimeout(this.deferredExtensionsInitTimer);
+			this.deferredExtensionsInitTimer = undefined;
+			await this.runDeferredExtensionsInit();
+		}
+		await this.deferredExtensionsInitPromise;
+	}
+
 	async init(): Promise<void> {
 		if (this.isInitialized) return;
 
@@ -496,16 +544,13 @@ export class InteractiveMode {
 		this.ui.start();
 		this.isInitialized = true;
 
-		// Initialize extensions first so resources are shown before messages
-		await this.initExtensions();
-
-		// Render initial messages AFTER showing loaded resources
+		// Render initial messages immediately so first paint does not wait on extension startup.
 		this.renderInitialMessages();
 
 		// Set terminal title
 		this.updateTerminalTitle();
 
-		// Subscribe to agent events
+		// Subscribe to agent events before deferred extension startup so session_start messages are captured.
 		this.subscribeToAgent();
 
 		// Set up theme file watcher
@@ -520,6 +565,7 @@ export class InteractiveMode {
 			this.ui.requestRender();
 		});
 
+		this.scheduleDeferredExtensionsInit();
 		void this.loadDeferredStartupDecorations();
 		void this.primeToolReadiness();
 		void this.updateAvailableProviderCountInBackground();
@@ -581,6 +627,8 @@ export class InteractiveMode {
 		if (modelFallbackMessage) {
 			this.showWarning(modelFallbackMessage);
 		}
+
+		await this.ensureExtensionsReady();
 
 		// Process initial messages
 		if (initialMessage) {
@@ -1116,6 +1164,10 @@ export class InteractiveMode {
 	 * Initialize the extension system with TUI-based UI context.
 	 */
 	private async initExtensions(): Promise<void> {
+		if (!this.isInitialized) {
+			return;
+		}
+
 		const uiContext = this.createExtensionUIContext();
 		await this.session.bindExtensions({
 			uiContext,
@@ -1199,6 +1251,10 @@ export class InteractiveMode {
 				this.showExtensionError(error.extensionPath, error.error, error.stack);
 			},
 		});
+
+		if (!this.isInitialized) {
+			return;
+		}
 
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
 		this.setupAutocomplete(this.fdPath);
@@ -1990,6 +2046,8 @@ export class InteractiveMode {
 		this.defaultEditor.onSubmit = async (text: string) => {
 			text = text.trim();
 			if (!text) return;
+
+			await this.ensureExtensionsReady();
 
 			// Handle commands
 			if (text === "/settings") {
@@ -4588,6 +4646,12 @@ export class InteractiveMode {
 	}
 
 	stop(): void {
+		if (this.deferredExtensionsInitTimer) {
+			clearTimeout(this.deferredExtensionsInitTimer);
+			this.deferredExtensionsInitTimer = undefined;
+			this.deferredExtensionsInitResolve?.();
+			this.deferredExtensionsInitResolve = undefined;
+		}
 		if (this.loadingAnimation) {
 			this.loadingAnimation.stop();
 			this.loadingAnimation = undefined;

@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Deferred interactive startup-only work such as changelog rendering, `fd`/`rg` readiness, provider-count footer metadata, and keybinding migration, removed TypeBox compiler startup cost from theme loading, moved `models.json` validation off AJV/TypeBox startup work, split syntax-highlighting helpers out of the base theme module, lazily exposed extension SDK exports through the extension loader alias, switched Bun extension virtual modules to the lazy extension API shim, deferred resource/system-prompt materialization until first use, delayed RPC extension binding until the first non-`get_state` command, and skipped eager RPC extension loading/CLI flag discovery so startup does less unrelated work.
+- Deferred interactive startup-only work such as changelog rendering, `fd`/`rg` readiness, provider-count footer metadata, keybinding migration, and interactive extension initialization until after the first render, removed TypeBox compiler startup cost from theme loading, moved `models.json` validation off AJV/TypeBox startup work, split syntax-highlighting helpers out of the base theme module, lazily exposed extension SDK exports through the extension loader alias, switched Bun extension virtual modules to the lazy extension API shim, deferred resource/system-prompt materialization until first use, delayed RPC extension binding until the first non-`get_state` command, and skipped eager RPC extension loading/CLI flag discovery so startup does less unrelated work.
 
 ## [0.61.1] - 2026-03-20
 
