@@ -46,6 +46,7 @@ const cwd = process.cwd();
 
 const resourceLoader: ResourceLoader = {
 	getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
+	loadExtensions: async () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
 	getSkills: () => ({ skills: [], diagnostics: [] }),
 	getPrompts: () => ({ prompts: [], diagnostics: [] }),
 	getThemes: () => ({ themes: [], diagnostics: [] }),

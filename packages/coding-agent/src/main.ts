@@ -17,7 +17,7 @@ import { selectSession } from "./cli/session-picker.js";
 import { APP_NAME, getAgentDir, getModelsPath, VERSION } from "./config.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { exportFromFile } from "./core/export-html/index.js";
-import type { LoadExtensionsResult } from "./core/extensions/index.js";
+import { createExtensionRuntime, type LoadExtensionsResult } from "./core/extensions/index.js";
 import { migrateKeybindingsConfigFile } from "./core/keybindings.js";
 import { ModelRegistry } from "./core/model-registry.js";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
@@ -642,6 +642,7 @@ export async function main(args: string[]) {
 	const firstPass = parseArgs(args);
 
 	// Early load extensions to discover their CLI flags
+	const deferExtensionStartup = firstPass.mode === "rpc";
 	const cwd = process.cwd();
 	const agentDir = getAgentDir();
 	const settingsManager = SettingsManager.create(cwd, agentDir);
@@ -653,6 +654,7 @@ export async function main(args: string[]) {
 		cwd,
 		agentDir,
 		settingsManager,
+		deferExtensions: deferExtensionStartup,
 		additionalExtensionPaths: firstPass.extensions,
 		additionalSkillPaths: firstPass.skills,
 		additionalPromptTemplatePaths: firstPass.promptTemplates,
@@ -667,32 +669,38 @@ export async function main(args: string[]) {
 	await resourceLoader.reload();
 	time("resourceLoader.reload");
 
-	const extensionsResult: LoadExtensionsResult = resourceLoader.getExtensions();
-	for (const { path, error } of extensionsResult.errors) {
-		console.error(chalk.red(`Failed to load extension "${path}": ${error}`));
-	}
-
-	// Apply pending provider registrations from extensions immediately
-	// so they're available for model resolution before AgentSession is created
-	for (const { name, config, extensionPath } of extensionsResult.runtime.pendingProviderRegistrations) {
-		try {
-			modelRegistry.registerProvider(name, config);
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			console.error(chalk.red(`Extension "${extensionPath}" error: ${message}`));
+	const extensionsResult: LoadExtensionsResult = deferExtensionStartup
+		? { extensions: [], errors: [], runtime: createExtensionRuntime() }
+		: await resourceLoader.loadExtensions();
+	if (!deferExtensionStartup) {
+		for (const { path, error } of extensionsResult.errors) {
+			console.error(chalk.red(`Failed to load extension "${path}": ${error}`));
 		}
+
+		// Apply pending provider registrations from extensions immediately
+		// so they're available for model resolution before AgentSession is created
+		for (const { name, config, extensionPath } of extensionsResult.runtime.pendingProviderRegistrations) {
+			try {
+				modelRegistry.registerProvider(name, config);
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				console.error(chalk.red(`Extension "${extensionPath}" error: ${message}`));
+			}
+		}
+		extensionsResult.runtime.pendingProviderRegistrations = [];
 	}
-	extensionsResult.runtime.pendingProviderRegistrations = [];
 
 	const extensionFlags = new Map<string, { type: "boolean" | "string" }>();
-	for (const ext of extensionsResult.extensions) {
-		for (const [name, flag] of ext.flags) {
-			extensionFlags.set(name, { type: flag.type });
+	if (!deferExtensionStartup) {
+		for (const ext of extensionsResult.extensions) {
+			for (const [name, flag] of ext.flags) {
+				extensionFlags.set(name, { type: flag.type });
+			}
 		}
 	}
 
 	// Second pass: parse args with extension flags
-	const parsed = parseArgs(args, extensionFlags);
+	const parsed = deferExtensionStartup ? firstPass : parseArgs(args, extensionFlags);
 
 	// Pass flag values to extensions via runtime
 	for (const [name, value] of parsed.unknownFlags) {
@@ -804,6 +812,7 @@ export async function main(args: string[]) {
 	sessionOptions.authStorage = authStorage;
 	sessionOptions.modelRegistry = modelRegistry;
 	sessionOptions.resourceLoader = resourceLoader;
+	sessionOptions.deferExtensions = deferExtensionStartup;
 
 	// Handle CLI --api-key as runtime override (not persisted)
 	if (parsed.apiKey) {

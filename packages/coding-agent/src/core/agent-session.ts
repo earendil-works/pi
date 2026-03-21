@@ -45,6 +45,7 @@ import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.
 import { createToolHtmlRenderer } from "./export-html/tool-renderer.js";
 import {
 	type ContextUsage,
+	createExtensionRuntime,
 	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
 	ExtensionRunner,
@@ -147,6 +148,8 @@ export interface AgentSessionConfig {
 	baseToolsOverride?: Record<string, AgentTool>;
 	/** Mutable ref used by Agent to access the current ExtensionRunner */
 	extensionRunnerRef?: { current?: ExtensionRunner };
+	/** Defer extension loading until bindExtensions() is called. */
+	deferExtensions?: boolean;
 }
 
 export interface ExtensionBindings {
@@ -262,6 +265,7 @@ export class AgentSession {
 	private _extensionShutdownHandler?: ShutdownHandler;
 	private _extensionErrorListener?: ExtensionErrorListener;
 	private _extensionErrorUnsubscriber?: () => void;
+	private _extensionsLoaded: boolean;
 
 	// Model registry for API key resolution
 	private _modelRegistry: ModelRegistry;
@@ -287,6 +291,7 @@ export class AgentSession {
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._baseToolsOverride = config.baseToolsOverride;
+		this._extensionsLoaded = !config.deferExtensions;
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
@@ -296,6 +301,7 @@ export class AgentSession {
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
 			includeAllExtensionTools: true,
+			loadExtensions: this._extensionsLoaded,
 		});
 	}
 
@@ -1983,6 +1989,8 @@ export class AgentSession {
 	}
 
 	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
+		await this._ensureExtensionsLoaded();
+
 		if (bindings.uiContext !== undefined) {
 			this._extensionUIContext = bindings.uiContext;
 		}
@@ -2200,6 +2208,23 @@ export class AgentSession {
 		);
 	}
 
+	private async _ensureExtensionsLoaded(): Promise<void> {
+		if (this._extensionsLoaded) {
+			return;
+		}
+
+		const flagValues = this._extensionRunner?.getFlagValues();
+		await this._resourceLoader.loadExtensions();
+		this._buildRuntime({
+			activeToolNames: this.getActiveToolNames(),
+			flagValues,
+			includeAllExtensionTools: true,
+			loadExtensions: true,
+		});
+		this._extensionsLoaded = true;
+		this._baseSystemPromptDirty = true;
+	}
+
 	private _refreshToolRegistry(options?: { activeToolNames?: string[]; includeAllExtensionTools?: boolean }): void {
 		const previousRegistryNames = new Set(this._toolRegistry.keys());
 		const previousActiveToolNames = this.getActiveToolNames();
@@ -2258,6 +2283,7 @@ export class AgentSession {
 		activeToolNames?: string[];
 		flagValues?: Map<string, boolean | string>;
 		includeAllExtensionTools?: boolean;
+		loadExtensions?: boolean;
 	}): void {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
@@ -2270,7 +2296,10 @@ export class AgentSession {
 
 		this._baseToolRegistry = new Map(Object.entries(baseTools).map(([name, tool]) => [name, tool as AgentTool]));
 
-		const extensionsResult = this._resourceLoader.getExtensions();
+		const extensionsResult =
+			options.loadExtensions === false
+				? { extensions: [], errors: [], runtime: createExtensionRuntime() }
+				: this._resourceLoader.getExtensions();
 		if (options.flagValues) {
 			for (const [name, value] of options.flagValues) {
 				extensionsResult.runtime.flagValues.set(name, value);
@@ -2317,7 +2346,9 @@ export class AgentSession {
 			activeToolNames: this.getActiveToolNames(),
 			flagValues: previousFlagValues,
 			includeAllExtensionTools: true,
+			loadExtensions: true,
 		});
+		this._extensionsLoaded = true;
 
 		const hasBindings =
 			this._extensionUIContext ||

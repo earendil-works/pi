@@ -26,6 +26,7 @@ export interface ResourceExtensionPaths {
 
 export interface ResourceLoader {
 	getExtensions(): LoadExtensionsResult;
+	loadExtensions(): Promise<LoadExtensionsResult>;
 	getSkills(): { skills: Skill[]; diagnostics: ResourceDiagnostic[] };
 	getPrompts(): { prompts: PromptTemplate[]; diagnostics: ResourceDiagnostic[] };
 	getThemes(): { themes: Theme[]; diagnostics: ResourceDiagnostic[] };
@@ -127,6 +128,7 @@ export interface DefaultResourceLoaderOptions {
 	noThemes?: boolean;
 	systemPrompt?: string;
 	appendSystemPrompt?: string;
+	deferExtensions?: boolean;
 	extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
 	skillsOverride?: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
 		skills: Skill[];
@@ -194,9 +196,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private systemPrompt?: string;
 	private appendSystemPrompt: string[];
 	private pathMetadata: Map<string, PathMetadata>;
+	private lastExtensionPaths: string[];
 	private lastSkillPaths: string[];
 	private lastPromptPaths: string[];
 	private lastThemePaths: string[];
+	private deferExtensions: boolean;
+	private extensionsLoaded: boolean;
 	private skillsLoaded: boolean;
 	private promptsLoaded: boolean;
 	private themesLoaded: boolean;
@@ -230,6 +235,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.agentsFilesOverride = options.agentsFilesOverride;
 		this.systemPromptOverride = options.systemPromptOverride;
 		this.appendSystemPromptOverride = options.appendSystemPromptOverride;
+		this.deferExtensions = options.deferExtensions ?? false;
 
 		this.extensionsResult = { extensions: [], errors: [], runtime: createExtensionRuntime() };
 		this.skills = [];
@@ -241,9 +247,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.agentsFiles = [];
 		this.appendSystemPrompt = [];
 		this.pathMetadata = new Map();
+		this.lastExtensionPaths = [];
 		this.lastSkillPaths = [];
 		this.lastPromptPaths = [];
 		this.lastThemePaths = [];
+		this.extensionsLoaded = false;
 		this.skillsLoaded = false;
 		this.promptsLoaded = false;
 		this.themesLoaded = false;
@@ -251,6 +259,13 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	getExtensions(): LoadExtensionsResult {
+		return this.extensionsResult;
+	}
+
+	async loadExtensions(): Promise<LoadExtensionsResult> {
+		if (!this.extensionsLoaded) {
+			await this.updateExtensionsFromPaths(this.lastExtensionPaths);
+		}
 		return this.extensionsResult;
 	}
 
@@ -407,19 +422,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 			? cliEnabledExtensions
 			: this.mergePaths(cliEnabledExtensions, enabledExtensions);
 
-		const extensionsResult = await loadExtensions(extensionPaths, this.cwd, this.eventBus);
-		const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
-		extensionsResult.extensions.push(...inlineExtensions.extensions);
-		extensionsResult.errors.push(...inlineExtensions.errors);
-
-		// Detect extension conflicts (tools, commands, flags with same names from different extensions)
-		// Keep all extensions loaded. Conflicts are reported as diagnostics, and precedence is handled by load order.
-		const conflicts = this.detectExtensionConflicts(extensionsResult.extensions);
-		for (const conflict of conflicts) {
-			extensionsResult.errors.push({ path: conflict.path, error: conflict.message });
+		this.lastExtensionPaths = extensionPaths;
+		this.extensionsResult = { extensions: [], errors: [], runtime: createExtensionRuntime() };
+		this.extensionsLoaded = false;
+		if (!this.deferExtensions) {
+			await this.updateExtensionsFromPaths(extensionPaths);
 		}
-
-		this.extensionsResult = this.extensionsOverride ? this.extensionsOverride(extensionsResult) : extensionsResult;
 
 		const skillPaths = this.noSkills
 			? this.mergePaths(cliEnabledSkills, this.additionalSkillPaths)
@@ -456,6 +464,21 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.systemPrompt = undefined;
 		this.appendSystemPrompt = [];
 		this.promptResourcesLoaded = false;
+	}
+
+	private async updateExtensionsFromPaths(extensionPaths: string[]): Promise<void> {
+		const extensionsResult = await loadExtensions(extensionPaths, this.cwd, this.eventBus);
+		const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
+		extensionsResult.extensions.push(...inlineExtensions.extensions);
+		extensionsResult.errors.push(...inlineExtensions.errors);
+
+		const conflicts = this.detectExtensionConflicts(extensionsResult.extensions);
+		for (const conflict of conflicts) {
+			extensionsResult.errors.push({ path: conflict.path, error: conflict.message });
+		}
+
+		this.extensionsResult = this.extensionsOverride ? this.extensionsOverride(extensionsResult) : extensionsResult;
+		this.extensionsLoaded = true;
 	}
 
 	private ensureSkillsLoaded(): void {

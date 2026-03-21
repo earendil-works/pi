@@ -5,7 +5,12 @@ import { getAgentDir, getDocsPath } from "../config.js";
 import { AgentSession } from "./agent-session.js";
 import { AuthStorage } from "./auth-storage.js";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.js";
-import type { ExtensionRunner, LoadExtensionsResult, ToolDefinition } from "./extensions/index.js";
+import {
+	createExtensionRuntime,
+	type ExtensionRunner,
+	type LoadExtensionsResult,
+	type ToolDefinition,
+} from "./extensions/index.js";
 import { convertToLlm } from "./messages.js";
 import { ModelRegistry } from "./model-registry.js";
 import { findInitialModel } from "./model-resolver.js";
@@ -64,6 +69,8 @@ export interface CreateAgentSessionOptions {
 
 	/** Resource loader. When omitted, DefaultResourceLoader is used. */
 	resourceLoader?: ResourceLoader;
+	/** Defer extension loading until bindExtensions() is called. */
+	deferExtensions?: boolean;
 
 	/** Session manager. Default: SessionManager.create(cwd) */
 	sessionManager?: SessionManager;
@@ -179,7 +186,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
 
 	if (!resourceLoader) {
-		resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
+		resourceLoader = new DefaultResourceLoader({
+			cwd,
+			agentDir,
+			settingsManager,
+			deferExtensions: options.deferExtensions,
+		});
 		await resourceLoader.reload();
 		time("resourceLoader.reload");
 	}
@@ -364,8 +376,11 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		modelRegistry,
 		initialActiveToolNames,
 		extensionRunnerRef,
+		deferExtensions: options.deferExtensions,
 	});
-	const extensionsResult = resourceLoader.getExtensions();
+	const extensionsResult = options.deferExtensions
+		? { extensions: [], errors: [], runtime: createExtensionRuntime() }
+		: resourceLoader.getExtensions();
 
 	return {
 		session,
