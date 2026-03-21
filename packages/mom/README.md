@@ -62,9 +62,12 @@ npm install @mariozechner/pi-mom
 # Set environment variables
 export MOM_SLACK_APP_TOKEN=xapp-...
 export MOM_SLACK_BOT_TOKEN=xoxb-...
-# Option 1: Anthropic API key
+# Option 1: Anthropic API key (default provider)
 export ANTHROPIC_API_KEY=sk-ant-...
 # Option 2: use /login command in pi agent, then copy/link auth.json to ~/.pi/mom/
+# Option 3: use a different provider (e.g. GitHub Copilot)
+export MOM_PROVIDER=github-copilot
+export MOM_MODEL=claude-sonnet-4.5
 
 # Create Docker sandbox (recommended)
 docker run -d \
@@ -95,11 +98,16 @@ Options:
 |----------|-------------|
 | `MOM_SLACK_APP_TOKEN` | Slack app-level token (xapp-...) |
 | `MOM_SLACK_BOT_TOKEN` | Slack bot token (xoxb-...) |
-| `ANTHROPIC_API_KEY` | (Optional) Anthropic API key |
+| `MOM_PROVIDER` | (Optional) LLM provider — defaults to `anthropic` |
+| `MOM_MODEL` | (Optional) Model ID — defaults to `claude-sonnet-4-5` |
+| `ANTHROPIC_API_KEY` | (Optional) Anthropic API key — or set any other provider key |
 
 ## Authentication
 
-Mom needs credentials for Anthropic API. The options to set it are:
+Mom needs credentials for the LLM provider. By default it uses Anthropic, but any provider supported
+by pi can be used via `MOM_PROVIDER` / `MOM_MODEL` env vars.
+
+### Default (Anthropic)
 
 1. **Environment Variable**
 ```bash
@@ -113,6 +121,18 @@ export ANTHROPIC_API_KEY=sk-ant-...
   - choose "Anthropic" provider
   - follow instructions in the browser
 - link `auth.json` to mom: `ln -s ~/.pi/agent/auth.json ~/.pi/mom/auth.json`
+
+### Other providers (e.g. GitHub Copilot)
+
+```bash
+export MOM_PROVIDER=github-copilot
+export MOM_MODEL=claude-sonnet-4.5   # any model available for that provider
+```
+
+Then authenticate via the coding agent (`/login → GitHub Copilot`) and link `auth.json`:
+```bash
+ln -s ~/.pi/agent/auth.json ~/.pi/mom/auth.json
+```
 
 ## How Mom Works
 

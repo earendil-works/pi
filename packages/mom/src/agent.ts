@@ -1,5 +1,5 @@
 import { Agent, type AgentEvent } from "@mariozechner/pi-agent-core";
-import { getModel, type ImageContent } from "@mariozechner/pi-ai";
+import { getModels, type ImageContent, type KnownProvider, type Model } from "@mariozechner/pi-ai";
 import {
 	AgentSession,
 	AuthStorage,
@@ -23,8 +23,33 @@ import type { ChannelInfo, SlackContext, UserInfo } from "./slack.js";
 import type { ChannelStore } from "./store.js";
 import { createMomTools, setUploadFunction } from "./tools/index.js";
 
-// Hardcoded model for now - TODO: make configurable (issue #63)
-const model = getModel("anthropic", "claude-sonnet-4-5");
+// Model is configurable via MOM_PROVIDER and MOM_MODEL env vars.
+// Defaults to anthropic/claude-sonnet-4-5 for backward compatibility.
+// Closes: https://github.com/badlogic/pi-mono/issues/63
+const DEFAULT_PROVIDER: KnownProvider = "anthropic";
+const DEFAULT_MODEL_ID = "claude-sonnet-4-5";
+
+function resolveModel(): { model: Model<any>; provider: KnownProvider } {
+	const provider = (process.env.MOM_PROVIDER ?? DEFAULT_PROVIDER) as KnownProvider;
+	const modelId = process.env.MOM_MODEL ?? DEFAULT_MODEL_ID;
+
+	const models = getModels(provider);
+	const model = models.find((m) => m.id === modelId);
+
+	if (!model) {
+		const available = models.map((m) => m.id).join(", ");
+		throw new Error(
+			`Unknown model "${modelId}" for provider "${provider}".\n` +
+				`Available models: ${available || "(none — check provider name)"}\n\n` +
+				`Set MOM_PROVIDER and MOM_MODEL environment variables to configure.\n` +
+				`Example: MOM_PROVIDER=github-copilot MOM_MODEL=claude-sonnet-4.5`,
+		);
+	}
+
+	return { model, provider };
+}
+
+const { model, provider: modelProvider } = resolveModel();
 
 export interface PendingMessage {
 	userName: string;
@@ -42,12 +67,12 @@ export interface AgentRunner {
 	abort(): void;
 }
 
-async function getAnthropicApiKey(authStorage: AuthStorage): Promise<string> {
-	const key = await authStorage.getApiKey("anthropic");
+async function getProviderApiKey(authStorage: AuthStorage): Promise<string> {
+	const key = await authStorage.getApiKey(modelProvider);
 	if (!key) {
 		throw new Error(
-			"No API key found for anthropic.\n\n" +
-				"Set an API key environment variable, or use /login with Anthropic and link to auth.json from " +
+			`No API key found for "${modelProvider}".\n\n` +
+				`Use /login or set an API key environment variable. See ` +
 				join(homedir(), ".pi", "mom", "auth.json"),
 		);
 	}
@@ -440,7 +465,7 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 			tools,
 		},
 		convertToLlm,
-		getApiKey: async () => getAnthropicApiKey(authStorage),
+		getApiKey: async () => getProviderApiKey(authStorage),
 	});
 
 	// Load existing messages
