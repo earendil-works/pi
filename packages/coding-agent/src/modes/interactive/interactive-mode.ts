@@ -158,6 +158,8 @@ export class InteractiveMode {
 	private deferredExtensionsInitTimer: ReturnType<typeof setTimeout> | undefined;
 	private deferredExtensionsInitPromise: Promise<void> | undefined;
 	private deferredExtensionsInitResolve: (() => void) | undefined;
+	private deferredToolReadinessTimer: ReturnType<typeof setTimeout> | undefined;
+	private toolReadinessStarted = false;
 	// Stored so the same manager can be injected into custom editors, selectors, and extension UI.
 	private keybindings: KeybindingsManager;
 	private version: string;
@@ -447,7 +449,24 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	private scheduleDeferredToolReadiness(delayMs = 1000): void {
+		if (this.toolReadinessStarted) {
+			return;
+		}
+		if (this.deferredToolReadinessTimer) {
+			clearTimeout(this.deferredToolReadinessTimer);
+		}
+		this.deferredToolReadinessTimer = setTimeout(() => {
+			this.deferredToolReadinessTimer = undefined;
+			void this.primeToolReadiness();
+		}, delayMs);
+	}
+
 	private async primeToolReadiness(): Promise<void> {
+		if (this.toolReadinessStarted) {
+			return;
+		}
+		this.toolReadinessStarted = true;
 		try {
 			const [fdPath] = await Promise.all([ensureTool("fd", true), ensureTool("rg", true)]);
 			if (!this.isInitialized) {
@@ -473,18 +492,22 @@ export class InteractiveMode {
 		}
 	}
 
-	private scheduleDeferredExtensionsInit(): void {
-		if (this.deferredExtensionsInitPromise) {
+	private scheduleDeferredExtensionsInit(delayMs = 1000): void {
+		if (this.deferredExtensionsInitPromise && !this.deferredExtensionsInitResolve) {
 			return;
 		}
-
-		this.deferredExtensionsInitPromise = new Promise((resolve) => {
-			this.deferredExtensionsInitResolve = resolve;
-		});
+		if (!this.deferredExtensionsInitPromise) {
+			this.deferredExtensionsInitPromise = new Promise((resolve) => {
+				this.deferredExtensionsInitResolve = resolve;
+			});
+		}
+		if (this.deferredExtensionsInitTimer) {
+			clearTimeout(this.deferredExtensionsInitTimer);
+		}
 		this.deferredExtensionsInitTimer = setTimeout(() => {
 			this.deferredExtensionsInitTimer = undefined;
 			void this.runDeferredExtensionsInit();
-		}, 0);
+		}, delayMs);
 	}
 
 	private async runDeferredExtensionsInit(): Promise<void> {
@@ -566,8 +589,8 @@ export class InteractiveMode {
 		});
 
 		this.scheduleDeferredExtensionsInit();
+		this.scheduleDeferredToolReadiness();
 		void this.loadDeferredStartupDecorations();
-		void this.primeToolReadiness();
 		void this.updateAvailableProviderCountInBackground();
 	}
 
@@ -2012,6 +2035,8 @@ export class InteractiveMode {
 			if (wasBashMode !== this.isBashMode) {
 				this.updateEditorBorderColor();
 			}
+			this.scheduleDeferredExtensionsInit();
+			this.scheduleDeferredToolReadiness();
 		};
 
 		// Handle clipboard image paste (triggered on Ctrl+V)
@@ -4651,6 +4676,10 @@ export class InteractiveMode {
 			this.deferredExtensionsInitTimer = undefined;
 			this.deferredExtensionsInitResolve?.();
 			this.deferredExtensionsInitResolve = undefined;
+		}
+		if (this.deferredToolReadinessTimer) {
+			clearTimeout(this.deferredToolReadinessTimer);
+			this.deferredToolReadinessTimer = undefined;
 		}
 		if (this.loadingAnimation) {
 			this.loadingAnimation.stop();

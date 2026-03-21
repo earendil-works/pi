@@ -689,10 +689,9 @@ export async function main(args: string[]) {
 	// First pass: parse args to get --extension paths
 	const firstPass = parseArgs(args);
 
-	// Defer extension startup on Bun's interactive path where eager extension loading is especially expensive.
+	// Defer extension startup on hot interactive/RPC paths when extension CLI flag discovery is not needed.
 	const needsExtensionFlagDiscovery = hasPotentialExtensionFlags(args);
 	const isLikelyInteractiveStartup =
-		process.versions.bun !== undefined &&
 		firstPass.mode === undefined &&
 		!firstPass.print &&
 		!firstPass.export &&
