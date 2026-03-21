@@ -59,15 +59,16 @@ describe("compaction checkpoint", () => {
 			keyFiles: ["src/auth.ts", "src/session.ts"],
 		});
 
-		expect(prompt).toContain("Continue the task from the compacted checkpoint.");
-		expect(prompt).toContain("Goal: Continue the release workflow");
-		expect(prompt).toContain("### Done");
-		expect(prompt).toContain("### In Progress");
-		expect(prompt).toContain("## Next Steps");
-		expect(prompt).toContain("Key files:");
+		expect(prompt).toContain("**CHECKPOINT**");
+		expect(prompt).toContain("You are continuing from a compacted conversation.");
+		expect(prompt).toContain("**Goal**");
+		expect(prompt).toContain("Continue the release workflow");
+		expect(prompt).toContain("**Touched Files**");
 		expect(prompt).toContain("- src/auth.ts");
 		expect(prompt).toContain("Parent thread ID: thread-123");
 		expect(prompt).toContain("Use `read_thread` if you need more detail from the parent thread.");
+		expect(prompt).not.toContain("### Done");
+		expect(prompt).not.toContain("## Next Steps");
 	});
 
 	it("prompts without parent-thread recovery text when no parent thread id exists", () => {
@@ -77,12 +78,12 @@ describe("compaction checkpoint", () => {
 			parentThreadId: null,
 		});
 
-		expect(prompt).toContain("Continue the task from the compacted checkpoint.");
-		expect(prompt).toContain("### Done");
-		expect(prompt).toContain("### In Progress");
-		expect(prompt).toContain("## Next Steps");
+		expect(prompt).toContain("**CHECKPOINT**");
+		expect(prompt).toContain("You are continuing from a compacted conversation.");
+		expect(prompt).toContain("**Goal**");
 		expect(prompt).not.toContain("Parent thread ID:");
 		expect(prompt).not.toContain("Use `read_thread` if you need more detail from the parent thread.");
+		expect(prompt).not.toContain("### Done");
 	});
 
 	it("submits a semantic continuation through agent.prompt after compaction", async () => {

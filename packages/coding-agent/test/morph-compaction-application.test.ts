@@ -34,7 +34,7 @@ function flattenText(message: Message): string {
 }
 
 describe("Morph compaction application", () => {
-	it("appends the checkpoint footer to the compacted replacement message", () => {
+	it("keeps the compacted replacement message untouched", () => {
 		const replacementMessages: Message[] = [
 			{
 				role: "assistant",
@@ -69,24 +69,9 @@ describe("Morph compaction application", () => {
 
 		expect(messages).toHaveLength(1);
 		expect(messages[0]?.role).toBe("assistant");
-		expect(flattenText(messages[0]!)).toBe(`Morph-compacted visible history
-
----
-
-**CHECKPOINT**
-You are continuing from a compacted conversation. See your goal below.
-
-**Goal**
-Fix the login page tests
-
-**Thread Context**
-Parent thread ID: thread-123
-Use \`read_thread\` if you need more detail from the parent thread.
-
----`);
+		expect(flattenText(messages[0]!)).toBe("Morph-compacted visible history");
 
 		const joined = messages.map(flattenText).join("\n\n");
-		expect(joined).not.toContain("Use this compacted checkpoint as the active context");
-		expect(joined).not.toContain("## Progress");
+		expect(joined).not.toContain("**CHECKPOINT**");
 	});
 });

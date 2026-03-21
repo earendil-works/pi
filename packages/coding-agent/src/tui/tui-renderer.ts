@@ -44,12 +44,7 @@ import {
 import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
 import { parseCompactSlashCommand } from "../compact-command.js";
-import {
-	appendCheckpointToReplacementHistory,
-	buildCompactionCheckpointText,
-	buildCompactionContinuationPrompt,
-	buildMorphCompactionCheckpointText,
-} from "../compaction-checkpoint.js";
+import { buildCompactionCheckpointText, buildCompactionContinuationPrompt } from "../compaction-checkpoint.js";
 import { exportSessionToHtml } from "../export-html.js";
 import type { ExtensionLoader } from "../extensions/loader.js";
 import type { ExtensionManager } from "../extensions/manager.js";
@@ -4521,74 +4516,7 @@ export class TuiRenderer {
 	private buildContextCompactionMessages(details: HandoffDetails & { parentSessionId: string | null }): Message[] {
 		if (details.replacementMessages && details.replacementMessages.length > 0) {
 			if (details.compactionApplicationMode === "goal-plus-replacement-history") {
-				const lastMessage = details.replacementMessages.at(-1);
-				if (!lastMessage) {
-					return details.replacementMessages;
-				}
-
-				if (lastMessage.role !== "assistant") {
-					const timestamp = Date.now() + details.replacementMessages.length;
-					return [
-						...details.replacementMessages,
-						{
-							role: "user",
-							content: [
-								{
-									type: "text",
-									text: buildMorphCompactionCheckpointText({
-										goal: details.goal,
-										parentThreadId: details.parentSessionId,
-									}),
-								},
-							],
-							timestamp,
-						},
-					];
-				}
-
-				const updatedReplacementMessages: Message[] = details.replacementMessages.slice(0, -1);
-
-				const lastTextIndex = [...lastMessage.content]
-					.map((block, index) => (block.type === "text" ? index : -1))
-					.filter((index) => index >= 0)
-					.at(-1);
-
-				if (lastTextIndex === undefined) {
-					updatedReplacementMessages.push({
-						...lastMessage,
-						content: [
-							...lastMessage.content,
-							{
-								type: "text",
-								text: buildMorphCompactionCheckpointText({
-									goal: details.goal,
-									parentThreadId: details.parentSessionId,
-								}),
-							},
-						],
-					});
-					return updatedReplacementMessages;
-				}
-
-				updatedReplacementMessages.push({
-					...lastMessage,
-					content: lastMessage.content.map((block, index) => {
-						if (index !== lastTextIndex || block.type !== "text") {
-							return block;
-						}
-
-						return {
-							...block,
-							text: appendCheckpointToReplacementHistory({
-								replacementText: block.text,
-								goal: details.goal,
-								parentThreadId: details.parentSessionId,
-							}),
-						};
-					}),
-				});
-
-				return updatedReplacementMessages;
+				return details.replacementMessages;
 			}
 
 			const checkpointText = buildCompactionCheckpointText({
@@ -4838,7 +4766,7 @@ export class TuiRenderer {
 			goal,
 			morphMode: this.morphCompactionMode,
 			morphApiKey: process.env.MORPH_API_KEY,
-			keyFiles: Array.from(new Set([...tracking.readFiles, ...tracking.modifiedFiles])),
+			keyFiles: tracking.modifiedFiles,
 			signal,
 			localSummaryFallback: () => this.buildHandoffSummaryDetails(goal, signal),
 			nativeReplayCompact: async () => {

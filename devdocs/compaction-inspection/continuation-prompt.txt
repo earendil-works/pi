@@ -1,0 +1,34 @@
+**CHECKPOINT**
+You are continuing from a compacted conversation.
+
+**Goal**
+Inspect how compaction gets injected on the next turn
+
+**Thread Context**
+Parent thread ID: 2cc64008-843f-4d1a-afb8-3dbc7c71ecef
+Use `read_thread` if you need more detail from the parent thread.
+
+**Touched Files**
+- devdocs/missions/fireworks-native-tool-calling-prod-compat/TASKS.json
+- devdocs/missions/fireworks-native-tool-calling-prod-compat/SPEC.md
+- devdocs/missions/fireworks-native-tool-calling-prod-compat/RUNBOOK.md
+- devdocs/missions/fireworks-native-tool-calling-prod-compat/PROGRESS.md
+- test/services/model_registry_test.rb
+- test/services/omni_tool_transport_test.rb
+- models/model_registry.rb
+- services/omni_chat_completion_service.rb
+- test/services/omni_glm_5_ttft_fallback_test.rb
+- test/services/omni_route_guard_test.rb
+- lib/prompt_templates/compiler.rb
+- test/services/omni_call_signature_test.rb
+- services/fireworks_chat_completion_service.rb
+- test/services/reasoning_content_prompt_injection_test.rb
+- test/services/fireworks_stream_parser_test.rb
+- services/fireworks_stream_parser.rb
+- helpers/append_only_message_formatter.rb
+- event_sources/agent_stream_event_source.rb
+- test/services/append_only_message_formatter_test.rb
+- javascripts/utils/reasoning-content.ts
+- javascripts/utils/reasoning-content.test.ts
+- test/live/agent_stream_cli_tool_red_test.rb
+- scripts/verify-conductor-turbo-web-native-proof.cdp.sh

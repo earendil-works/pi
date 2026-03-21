@@ -118,32 +118,28 @@ export function buildCompactionContinuationPrompt(args: {
 	parentThreadId: string | null;
 	keyFiles?: string[];
 }): string {
-	const checkpointSummary = buildCompactionCheckpointText({
-		formattedMessage: args.formattedMessage,
-		goal: args.goal,
-		parentThreadId: args.parentThreadId,
-		keyFiles: args.keyFiles,
-	});
-
 	const lines = [
-		"Continue the task from the compacted checkpoint.",
-		`Goal: ${args.goal.trim()}`,
-		"Use the checkpoint summary's Done / In Progress / Next Steps sections to decide the next concrete action.",
+		"**CHECKPOINT**",
+		"You are continuing from a compacted conversation.",
 		"",
-		"Checkpoint summary:",
-		checkpointSummary,
+		"**Goal**",
+		args.goal.trim(),
 	];
 
+	if (args.parentThreadId) {
+		lines.push(
+			"",
+			"**Thread Context**",
+			`Parent thread ID: ${args.parentThreadId}`,
+			"Use `read_thread` if you need more detail from the parent thread.",
+		);
+	}
+
 	if (args.keyFiles && args.keyFiles.length > 0) {
-		lines.push("Key files:");
+		lines.push("", "**Touched Files**");
 		for (const file of args.keyFiles) {
 			lines.push(`- ${file}`);
 		}
-	}
-
-	if (args.parentThreadId) {
-		lines.push(`Parent thread ID: ${args.parentThreadId}`);
-		lines.push("Use `read_thread` if you need more detail from the parent thread.");
 	}
 
 	return lines.join("\n");
