@@ -1,4 +1,4 @@
-import OpenAI from "openai";
+import OpenAI, { AzureOpenAI } from "openai";
 import type {
 	ChatCompletionAssistantMessageParam,
 	ChatCompletionChunk,
@@ -352,6 +352,23 @@ function createClient(
 	// Merge options headers last so they can override defaults
 	if (optionsHeaders) {
 		Object.assign(headers, optionsHeaders);
+	}
+
+	// Azure OpenAI: use AzureOpenAI client for correct api-version query parameter
+	// handling. The standard OpenAI client doesn't append ?api-version= which Azure
+	// cognitiveservices endpoints require. Also ensure the api-key header is set,
+	// as Azure uses header-based auth rather than Bearer token auth.
+	if (model.provider === "azure-openai" || (model.baseUrl && model.baseUrl.includes(".openai.azure.com"))) {
+		if (!headers["api-key"] && apiKey) {
+			headers["api-key"] = apiKey;
+		}
+		return new AzureOpenAI({
+			apiKey,
+			apiVersion: process.env.AZURE_OPENAI_API_VERSION || "2025-01-01-preview",
+			baseURL: model.baseUrl,
+			dangerouslyAllowBrowser: true,
+			defaultHeaders: headers,
+		});
 	}
 
 	return new OpenAI({
