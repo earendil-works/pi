@@ -25,7 +25,7 @@ OSS weekend runs Friday, March 20, 2026 through Monday, March 23, 2026. New issu
 
 # Pi Monorepo
 
-> **Looking for the pi coding agent?** See **[packages/coding-agent](packages/coding-agent)** for installation and usage.
+> **Looking for the pi coding agent?** Check **[packages/coding-agent](packages/coding-agent)** for installation and usage.
 
 Tools for building AI agents and managing LLM deployments.
 
@@ -55,8 +55,8 @@ npm run check        # Lint, format, and type check
 ./pi-test.sh         # Run pi from sources (must be run from repo root)
 ```
 
-> **Note:** `npm run check` requires `npm run build` to be run first. The web-ui package uses `tsc` which needs compiled `.d.ts` files from dependencies.
-
+> **Note:** Run `npm run build` **before** `npm run check`, otherwise type checking may fail.  
+> This is because the `web-ui` package uses `tsc` and depends on compiled `.d.ts` files from other packages.
 ## License
 
 MIT
