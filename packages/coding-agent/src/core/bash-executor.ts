@@ -6,12 +6,9 @@
  * - Direct calls from modes that need bash execution
  */
 
-import { randomBytes } from "node:crypto";
-import { createWriteStream, type WriteStream } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import stripAnsi from "strip-ansi";
 import { sanitizeBinaryOutput } from "../utils/shell.js";
+import { createTempOutputCapture } from "./temp-output-capture.js";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.js";
 import { DEFAULT_MAX_BYTES, truncateTail } from "./tools/truncate.js";
 
@@ -75,7 +72,7 @@ export async function executeBashWithOperations(
 	const maxOutputBytes = DEFAULT_MAX_BYTES * 2;
 
 	let tempFilePath: string | undefined;
-	let tempFileStream: WriteStream | undefined;
+	let tempOutputCapture: ReturnType<typeof createTempOutputCapture> | undefined;
 	let totalBytes = 0;
 
 	const decoder = new TextDecoder();
@@ -87,18 +84,15 @@ export async function executeBashWithOperations(
 		const text = sanitizeBinaryOutput(stripAnsi(decoder.decode(data, { stream: true }))).replace(/\r/g, "");
 
 		// Start writing to temp file if exceeds threshold
-		if (totalBytes > DEFAULT_MAX_BYTES && !tempFilePath) {
-			const id = randomBytes(8).toString("hex");
-			tempFilePath = join(tmpdir(), `pi-bash-${id}.log`);
-			tempFileStream = createWriteStream(tempFilePath);
+		if (totalBytes > DEFAULT_MAX_BYTES && !tempOutputCapture) {
+			tempOutputCapture = createTempOutputCapture("pi-bash-", ".log");
+			tempFilePath = tempOutputCapture?.path;
 			for (const chunk of outputChunks) {
-				tempFileStream.write(chunk);
+				tempOutputCapture?.write(chunk);
 			}
 		}
 
-		if (tempFileStream) {
-			tempFileStream.write(text);
-		}
+		tempOutputCapture?.write(text);
 
 		// Keep rolling buffer
 		outputChunks.push(text);
@@ -120,9 +114,7 @@ export async function executeBashWithOperations(
 			signal: options?.signal,
 		});
 
-		if (tempFileStream) {
-			tempFileStream.end();
-		}
+		tempOutputCapture?.close();
 
 		const fullOutput = outputChunks.join("");
 		const truncationResult = truncateTail(fullOutput);
@@ -136,9 +128,7 @@ export async function executeBashWithOperations(
 			fullOutputPath: tempFilePath,
 		};
 	} catch (err) {
-		if (tempFileStream) {
-			tempFileStream.end();
-		}
+		tempOutputCapture?.close();
 
 		// Check if it was an abort
 		if (options?.signal?.aborted) {

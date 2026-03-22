@@ -1,21 +1,11 @@
-import { randomBytes } from "node:crypto";
-import { createWriteStream, existsSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { type Static, Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
 import { waitForChildProcess } from "../../utils/child-process.js";
 import { getShellConfig, getShellEnv, killProcessTree } from "../../utils/shell.js";
+import { createTempOutputCapture } from "../temp-output-capture.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateTail } from "./truncate.js";
-
-/**
- * Generate a unique temp file path for bash output
- */
-function getTempFilePath(): string {
-	const id = randomBytes(8).toString("hex");
-	return join(tmpdir(), `pi-bash-${id}.log`);
-}
 
 const bashSchema = Type.Object({
 	command: Type.String({ description: "Bash command to execute" }),
@@ -27,6 +17,12 @@ export type BashToolInput = Static<typeof bashSchema>;
 export interface BashToolDetails {
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
+}
+
+function formatFullOutputNotice(fullOutputPath: string | undefined): string {
+	return fullOutputPath
+		? `Full output: ${fullOutputPath}`
+		: "Full output unavailable: unable to create a temp log file.";
 }
 
 /**
@@ -193,7 +189,7 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 			return new Promise((resolve, reject) => {
 				// We'll stream to a temp file if output gets large
 				let tempFilePath: string | undefined;
-				let tempFileStream: ReturnType<typeof createWriteStream> | undefined;
+				let tempOutputCapture: ReturnType<typeof createTempOutputCapture> | undefined;
 				let totalBytes = 0;
 
 				// Keep a rolling buffer of the last chunk for tail truncation
@@ -206,19 +202,17 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 					totalBytes += data.length;
 
 					// Start writing to temp file once we exceed the threshold
-					if (totalBytes > DEFAULT_MAX_BYTES && !tempFilePath) {
-						tempFilePath = getTempFilePath();
-						tempFileStream = createWriteStream(tempFilePath);
+					if (totalBytes > DEFAULT_MAX_BYTES && !tempOutputCapture) {
+						tempOutputCapture = createTempOutputCapture("pi-bash-", ".log");
+						tempFilePath = tempOutputCapture?.path;
 						// Write all buffered chunks to the file
 						for (const chunk of chunks) {
-							tempFileStream.write(chunk);
+							tempOutputCapture?.write(chunk);
 						}
 					}
 
 					// Write to temp file if we have one
-					if (tempFileStream) {
-						tempFileStream.write(data);
-					}
+					tempOutputCapture?.write(data);
 
 					// Keep rolling buffer of recent data
 					chunks.push(data);
@@ -253,9 +247,7 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 				})
 					.then(({ exitCode }) => {
 						// Close temp file stream
-						if (tempFileStream) {
-							tempFileStream.end();
-						}
+						tempOutputCapture?.close();
 
 						// Combine all buffered chunks
 						const fullBuffer = Buffer.concat(chunks);
@@ -281,11 +273,11 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 							if (truncation.lastLinePartial) {
 								// Edge case: last line alone > 30KB
 								const lastLineSize = formatSize(Buffer.byteLength(fullOutput.split("\n").pop() || "", "utf-8"));
-								outputText += `\n\n[Showing last ${formatSize(truncation.outputBytes)} of line ${endLine} (line is ${lastLineSize}). Full output: ${tempFilePath}]`;
+								outputText += `\n\n[Showing last ${formatSize(truncation.outputBytes)} of line ${endLine} (line is ${lastLineSize}). ${formatFullOutputNotice(tempFilePath)}]`;
 							} else if (truncation.truncatedBy === "lines") {
-								outputText += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. Full output: ${tempFilePath}]`;
+								outputText += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines}. ${formatFullOutputNotice(tempFilePath)}]`;
 							} else {
-								outputText += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Full output: ${tempFilePath}]`;
+								outputText += `\n\n[Showing lines ${startLine}-${endLine} of ${truncation.totalLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). ${formatFullOutputNotice(tempFilePath)}]`;
 							}
 						}
 
@@ -298,9 +290,7 @@ export function createBashTool(cwd: string, options?: BashToolOptions): AgentToo
 					})
 					.catch((err: Error) => {
 						// Close temp file stream
-						if (tempFileStream) {
-							tempFileStream.end();
-						}
+						tempOutputCapture?.close();
 
 						// Combine all buffered chunks for error output
 						const fullBuffer = Buffer.concat(chunks);
