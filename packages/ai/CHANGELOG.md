@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `requestMetadata` option to `BedrockOptions` for AWS cost allocation tagging; key-value pairs are forwarded to the Bedrock Converse API `requestMetadata` field and appear in AWS Cost Explorer split cost allocation data.
+- Exported `BedrockOptions` type from the package root entry point, consistent with other provider option types.
+
 ### Fixed
 
 - Fixed OpenAI Responses replay for foreign tool-call item IDs by hashing foreign `function_call.id` values into bounded `fc_<hash>` IDs instead of preserving backend-specific normalized shapes that OpenAI Codex rejects.

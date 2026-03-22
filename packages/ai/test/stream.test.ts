@@ -1246,6 +1246,60 @@ describe("Generate E2E Tests", () => {
 			expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "max" });
 			expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
 		});
+
+		it("should pass requestMetadata to the SDK payload", { retry: 3 }, async () => {
+			const llmSonnet = getModel("amazon-bedrock", "global.anthropic.claude-sonnet-4-5-20250929-v1:0");
+			let capturedPayload: unknown;
+			const metadata = { app: "pi-test", env: "ci" };
+			const response = await complete(
+				llmSonnet,
+				{
+					messages: [
+						{
+							role: "user",
+							content: "Say hi.",
+							timestamp: Date.now(),
+						},
+					],
+				},
+				{
+					requestMetadata: metadata,
+					onPayload: (payload) => {
+						capturedPayload = payload;
+					},
+				},
+			);
+
+			expect(response.stopReason, `Error: ${response.errorMessage}`).not.toBe("error");
+			expect(capturedPayload).toBeTruthy();
+			expect((capturedPayload as { requestMetadata?: unknown }).requestMetadata).toEqual(metadata);
+		});
+
+		it("should omit requestMetadata from payload when not provided", { retry: 3 }, async () => {
+			const llmSonnet = getModel("amazon-bedrock", "global.anthropic.claude-sonnet-4-5-20250929-v1:0");
+			let capturedPayload: unknown;
+			const response = await complete(
+				llmSonnet,
+				{
+					messages: [
+						{
+							role: "user",
+							content: "Say hi.",
+							timestamp: Date.now(),
+						},
+					],
+				},
+				{
+					onPayload: (payload) => {
+						capturedPayload = payload;
+					},
+				},
+			);
+
+			expect(response.stopReason, `Error: ${response.errorMessage}`).not.toBe("error");
+			expect(capturedPayload).toBeTruthy();
+			expect("requestMetadata" in (capturedPayload as object)).toBe(false);
+		});
 	});
 
 	// Check if ollama is installed and local LLM tests are enabled
