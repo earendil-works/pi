@@ -220,14 +220,14 @@ export default function (pi: ExtensionAPI) {
 			}
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, _context) {
 			let text = theme.fg("toolTitle", theme.bold("todo ")) + theme.fg("muted", args.action);
 			if (args.text) text += ` ${theme.fg("dim", `"${args.text}"`)}`;
 			if (args.id !== undefined) text += ` ${theme.fg("accent", `#${args.id}`)}`;
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { expanded }, theme) {
+		renderResult(result, { expanded }, theme, _context) {
 			const details = result.details as TodoDetails | undefined;
 			if (!details) {
 				const text = result.content[0];

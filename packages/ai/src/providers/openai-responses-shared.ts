@@ -97,14 +97,20 @@ export function convertResponsesMessages<TApi extends Api>(
 		return normalized.replace(/_+$/, "");
 	};
 
-	const normalizeToolCallId = (id: string): string => {
+	const buildForeignResponsesItemId = (itemId: string): string => {
+		const normalized = `fc_${shortHash(itemId)}`;
+		return normalized.length > 64 ? normalized.slice(0, 64) : normalized;
+	};
+
+	const normalizeToolCallId = (id: string, _targetModel: Model<TApi>, source: AssistantMessage): string => {
 		if (!allowedToolCallProviders.has(model.provider)) return normalizeIdPart(id);
 		if (!id.includes("|")) return normalizeIdPart(id);
 		const [callId, itemId] = id.split("|");
 		const normalizedCallId = normalizeIdPart(callId);
-		let normalizedItemId = normalizeIdPart(itemId);
+		const isForeignToolCall = source.provider !== model.provider || source.api !== model.api;
+		let normalizedItemId = isForeignToolCall ? buildForeignResponsesItemId(itemId) : normalizeIdPart(itemId);
 		// OpenAI Responses API requires item id to start with "fc"
-		if (!normalizedItemId.startsWith("fc")) {
+		if (!normalizedItemId.startsWith("fc_")) {
 			normalizedItemId = normalizeIdPart(`fc_${normalizedItemId}`);
 		}
 		return `${normalizedCallId}|${normalizedItemId}`;

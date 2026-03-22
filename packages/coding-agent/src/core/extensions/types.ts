@@ -329,10 +329,38 @@ export interface ToolRenderResultOptions {
 	isPartial: boolean;
 }
 
+/** Context passed to tool renderers. */
+export interface ToolRenderContext<TState = any, TArgs = any> {
+	/** Current tool call arguments. Shared across call/result renders for the same tool call. */
+	args: TArgs;
+	/** Unique id for this tool execution. Stable across call/result renders for the same tool call. */
+	toolCallId: string;
+	/** Invalidate just this tool execution component for redraw. */
+	invalidate: () => void;
+	/** Previously returned component for this render slot, if any. */
+	lastComponent: Component | undefined;
+	/** Shared renderer state for this tool row. Initialized by tool-execution.ts. */
+	state: TState;
+	/** Working directory for this tool execution. */
+	cwd: string;
+	/** Whether the tool execution has started. */
+	executionStarted: boolean;
+	/** Whether the tool call arguments are complete. */
+	argsComplete: boolean;
+	/** Whether the tool result is partial/streaming. */
+	isPartial: boolean;
+	/** Whether the result view is expanded. */
+	expanded: boolean;
+	/** Whether inline images are currently shown in the TUI. */
+	showImages: boolean;
+	/** Whether the current result is an error. */
+	isError: boolean;
+}
+
 /**
  * Tool definition for registerTool().
  */
-export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown> {
+export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown, TState = any> {
 	/** Tool name (used in LLM tool calls) */
 	name: string;
 	/** Human-readable label for UI */
@@ -356,14 +384,15 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	): Promise<AgentToolResult<TDetails>>;
 
 	/** Custom rendering for tool call display */
-	renderCall?: (args: Static<TParams>, theme: Theme) => Component | undefined;
+	renderCall?: (args: Static<TParams>, theme: Theme, context: ToolRenderContext<TState, Static<TParams>>) => Component;
 
 	/** Custom rendering for tool result display */
 	renderResult?: (
 		result: AgentToolResult<TDetails>,
 		options: ToolRenderResultOptions,
 		theme: Theme,
-	) => Component | undefined;
+		context: ToolRenderContext<TState, Static<TParams>>,
+	) => Component;
 }
 
 // ============================================================================
@@ -997,7 +1026,9 @@ export interface ExtensionAPI {
 	// =========================================================================
 
 	/** Register a tool that the LLM can call. */
-	registerTool<TParams extends TSchema = TSchema, TDetails = unknown>(tool: ToolDefinition<TParams, TDetails>): void;
+	registerTool<TParams extends TSchema = TSchema, TDetails = unknown, TState = any>(
+		tool: ToolDefinition<TParams, TDetails, TState>,
+	): void;
 
 	// =========================================================================
 	// Command, Shortcut, Flag Registration

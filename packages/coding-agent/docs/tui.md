@@ -394,7 +394,7 @@ Components accept theme objects for styling.
 **In `renderCall`/`renderResult`**, use the `theme` parameter:
 
 ```typescript
-renderResult(result, options, theme) {
+renderResult(result, options, theme, context) {
   // Use theme.fg() for foreground colors
   return new Text(theme.fg("success", "Done!"), 0, 0);
   
@@ -428,7 +428,7 @@ renderResult(result, options, theme) {
 import { getMarkdownTheme } from "@mariozechner/pi-coding-agent";
 import { Markdown } from "@mariozechner/pi-tui";
 
-renderResult(result, options, theme) {
+renderResult(result, options, theme, context) {
   const mdTheme = getMarkdownTheme();
   return new Markdown(result.details.markdown, 0, 0, mdTheme);
 }

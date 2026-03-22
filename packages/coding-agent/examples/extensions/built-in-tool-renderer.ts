@@ -42,7 +42,7 @@ export default function (pi: ExtensionAPI) {
 			return originalRead.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, _context) {
 			let text = theme.fg("toolTitle", theme.bold("read "));
 			text += theme.fg("accent", args.path);
 			if (args.offset || args.limit) {
@@ -54,7 +54,7 @@ export default function (pi: ExtensionAPI) {
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { expanded, isPartial }, theme) {
+		renderResult(result, { expanded, isPartial }, theme, _context) {
 			if (isPartial) return new Text(theme.fg("warning", "Reading..."), 0, 0);
 
 			const details = result.details as ReadToolDetails | undefined;
@@ -101,7 +101,7 @@ export default function (pi: ExtensionAPI) {
 			return originalBash.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, _context) {
 			let text = theme.fg("toolTitle", theme.bold("$ "));
 			const cmd = args.command.length > 80 ? `${args.command.slice(0, 77)}...` : args.command;
 			text += theme.fg("accent", cmd);
@@ -111,7 +111,7 @@ export default function (pi: ExtensionAPI) {
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { expanded, isPartial }, theme) {
+		renderResult(result, { expanded, isPartial }, theme, _context) {
 			if (isPartial) return new Text(theme.fg("warning", "Running..."), 0, 0);
 
 			const details = result.details as BashToolDetails | undefined;
@@ -160,13 +160,13 @@ export default function (pi: ExtensionAPI) {
 			return originalEdit.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, _context) {
 			let text = theme.fg("toolTitle", theme.bold("edit "));
 			text += theme.fg("accent", args.path);
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { expanded, isPartial }, theme) {
+		renderResult(result, { expanded, isPartial }, theme, _context) {
 			if (isPartial) return new Text(theme.fg("warning", "Editing..."), 0, 0);
 
 			const details = result.details as EditToolDetails | undefined;
@@ -224,7 +224,7 @@ export default function (pi: ExtensionAPI) {
 			return originalWrite.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, _context) {
 			let text = theme.fg("toolTitle", theme.bold("write "));
 			text += theme.fg("accent", args.path);
 			const lineCount = args.content.split("\n").length;
@@ -232,7 +232,7 @@ export default function (pi: ExtensionAPI) {
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { isPartial }, theme) {
+		renderResult(result, { isPartial }, theme, _context) {
 			if (isPartial) return new Text(theme.fg("warning", "Writing..."), 0, 0);
 
 			const content = result.content[0];

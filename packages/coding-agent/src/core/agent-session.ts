@@ -77,7 +77,8 @@ import type { SettingsManager } from "./settings-manager.js";
 import { BUILTIN_SLASH_COMMANDS, type SlashCommandInfo, type SlashCommandLocation } from "./slash-commands.js";
 import { buildSystemPrompt } from "./system-prompt.js";
 import type { BashOperations } from "./tools/bash.js";
-import { createAllTools } from "./tools/index.js";
+import { createAllToolDefinitions } from "./tools/index.js";
+import { createToolDefinitionFromAgentTool, wrapToolDefinition } from "./tools/tool-definition-wrapper.js";
 
 // ============================================================================
 // Skill Block Parsing
@@ -142,7 +143,12 @@ export interface AgentSessionConfig {
 	modelRegistry: ModelRegistry;
 	/** Initial active built-in tool names. Default: [read, bash, edit, write] */
 	initialActiveToolNames?: string[];
-	/** Override base tools (useful for custom runtimes). */
+	/**
+	 * Override base tools (useful for custom runtimes).
+	 *
+	 * These are synthesized into minimal ToolDefinitions internally so AgentSession can keep
+	 * a definition-first registry even when callers provide plain AgentTool instances.
+	 */
 	baseToolsOverride?: Record<string, AgentTool>;
 	/** Mutable ref used by Agent to access the current ExtensionRunner */
 	extensionRunnerRef?: { current?: ExtensionRunner };
@@ -253,7 +259,7 @@ export class AgentSession {
 
 	private _resourceLoader: ResourceLoader;
 	private _customTools: ToolDefinition[];
-	private _baseToolRegistry: Map<string, AgentTool> = new Map();
+	private _baseToolDefinitions: Map<string, ToolDefinition> = new Map();
 	private _cwd: string;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
@@ -270,6 +276,7 @@ export class AgentSession {
 
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
+	private _toolDefinitions: Map<string, ToolDefinition> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
 
@@ -711,11 +718,15 @@ export class AgentSession {
 	 * Get all configured tools with name, description, and parameter schema.
 	 */
 	getAllTools(): ToolInfo[] {
-		return Array.from(this._toolRegistry.values()).map((t) => ({
+		return Array.from(this._toolDefinitions.values()).map((t) => ({
 			name: t.name,
 			description: t.description,
 			parameters: t.parameters,
 		}));
+	}
+
+	getToolDefinition(name: string): ToolDefinition | undefined {
+		return this._toolDefinitions.get(name);
 	}
 
 	/**
@@ -2232,19 +2243,24 @@ export class AgentSession {
 			...registeredTools,
 			...this._customTools.map((def) => ({ definition: def, extensionPath: "<sdk>" })),
 		];
+		const definitionRegistry = new Map(this._baseToolDefinitions);
+		for (const { definition } of allCustomTools) {
+			definitionRegistry.set(definition.name, definition);
+		}
+		this._toolDefinitions = definitionRegistry;
 		this._toolPromptSnippets = new Map(
-			allCustomTools
-				.map((registeredTool) => {
-					const snippet = this._normalizePromptSnippet(registeredTool.definition.promptSnippet);
-					return snippet ? ([registeredTool.definition.name, snippet] as const) : undefined;
+			Array.from(definitionRegistry.values())
+				.map((definition) => {
+					const snippet = this._normalizePromptSnippet(definition.promptSnippet);
+					return snippet ? ([definition.name, snippet] as const) : undefined;
 				})
 				.filter((entry): entry is readonly [string, string] => entry !== undefined),
 		);
 		this._toolPromptGuidelines = new Map(
-			allCustomTools
-				.map((registeredTool) => {
-					const guidelines = this._normalizePromptGuidelines(registeredTool.definition.promptGuidelines);
-					return guidelines.length > 0 ? ([registeredTool.definition.name, guidelines] as const) : undefined;
+			Array.from(definitionRegistry.values())
+				.map((definition) => {
+					const guidelines = this._normalizePromptGuidelines(definition.promptGuidelines);
+					return guidelines.length > 0 ? ([definition.name, guidelines] as const) : undefined;
 				})
 				.filter((entry): entry is readonly [string, string[]] => entry !== undefined),
 		);
@@ -2252,7 +2268,12 @@ export class AgentSession {
 			? wrapRegisteredTools(allCustomTools, this._extensionRunner)
 			: [];
 
-		const toolRegistry = new Map(this._baseToolRegistry);
+		const toolRegistry = new Map(
+			Array.from(this._baseToolDefinitions.values()).map((definition) => [
+				definition.name,
+				wrapToolDefinition(definition),
+			]),
+		);
 		for (const tool of wrappedExtensionTools as AgentTool[]) {
 			toolRegistry.set(tool.name, tool);
 		}
@@ -2285,14 +2306,21 @@ export class AgentSession {
 	}): void {
 		const autoResizeImages = this.settingsManager.getImageAutoResize();
 		const shellCommandPrefix = this.settingsManager.getShellCommandPrefix();
-		const baseTools = this._baseToolsOverride
-			? this._baseToolsOverride
-			: createAllTools(this._cwd, {
+		const baseToolDefinitions = this._baseToolsOverride
+			? Object.fromEntries(
+					Object.entries(this._baseToolsOverride).map(([name, tool]) => [
+						name,
+						createToolDefinitionFromAgentTool(tool),
+					]),
+				)
+			: createAllToolDefinitions(this._cwd, {
 					read: { autoResizeImages },
 					bash: { commandPrefix: shellCommandPrefix },
 				});
 
-		this._baseToolRegistry = new Map(Object.entries(baseTools).map(([name, tool]) => [name, tool as AgentTool]));
+		this._baseToolDefinitions = new Map(
+			Object.entries(baseToolDefinitions).map(([name, tool]) => [name, tool as ToolDefinition]),
+		);
 
 		const extensionsResult =
 			options.loadExtensions === false
@@ -3089,13 +3117,10 @@ export class AgentSession {
 		const themeName = this.settingsManager.getTheme();
 
 		// Create tool renderer if we have an extension runner (for custom tool HTML rendering)
-		let toolRenderer: ToolHtmlRenderer | undefined;
-		if (this._extensionRunner) {
-			toolRenderer = createToolHtmlRenderer({
-				getToolDefinition: (name) => this._extensionRunner!.getToolDefinition(name),
-				theme,
-			});
-		}
+		const toolRenderer: ToolHtmlRenderer = createToolHtmlRenderer({
+			getToolDefinition: (name) => this.getToolDefinition(name),
+			theme,
+		});
 
 		return await exportSessionToHtml(this.sessionManager, this.state, {
 			outputPath,

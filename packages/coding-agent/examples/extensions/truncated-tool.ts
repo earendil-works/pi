@@ -135,7 +135,7 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		// Custom rendering of the tool call (shown before/during execution)
-		renderCall(args, theme) {
+		renderCall(args, theme, _context) {
 			let text = theme.fg("toolTitle", theme.bold("rg "));
 			text += theme.fg("accent", `"${args.pattern}"`);
 			if (args.path) {
@@ -148,7 +148,7 @@ export default function (pi: ExtensionAPI) {
 		},
 
 		// Custom rendering of the tool result
-		renderResult(result, { expanded, isPartial }, theme) {
+		renderResult(result, { expanded, isPartial }, theme, _context) {
 			const details = result.details as RgDetails | undefined;
 
 			// Handle streaming/partial results

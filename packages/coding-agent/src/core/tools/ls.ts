@@ -1,8 +1,13 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
+import { Text } from "@mariozechner/pi-tui";
 import { type Static, Type } from "@sinclair/typebox";
 import { existsSync, readdirSync, statSync } from "fs";
 import nodePath from "path";
+import { keyHint } from "../../modes/interactive/components/keybinding-hints.js";
+import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.js";
 import { resolveToCwd } from "./path-utils.js";
+import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.js";
+import { wrapToolDefinition } from "./tool-definition-wrapper.js";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.js";
 
 const lsSchema = Type.Object({
@@ -21,12 +26,12 @@ export interface LsToolDetails {
 
 /**
  * Pluggable operations for the ls tool.
- * Override these to delegate directory listing to remote systems (e.g., SSH).
+ * Override these to delegate directory listing to remote systems (for example SSH).
  */
 export interface LsOperations {
 	/** Check if path exists */
 	exists: (absolutePath: string) => Promise<boolean> | boolean;
-	/** Get file/directory stats. Throws if not found. */
+	/** Get file or directory stats. Throws if not found. */
 	stat: (absolutePath: string) => Promise<{ isDirectory: () => boolean }> | { isDirectory: () => boolean };
 	/** Read directory entries */
 	readdir: (absolutePath: string) => Promise<string[]> | string[];
@@ -43,19 +48,72 @@ export interface LsToolOptions {
 	operations?: LsOperations;
 }
 
-export function createLsTool(cwd: string, options?: LsToolOptions): AgentTool<typeof lsSchema> {
-	const ops = options?.operations ?? defaultLsOperations;
+function formatLsCall(
+	args: { path?: string; limit?: number } | undefined,
+	theme: typeof import("../../modes/interactive/theme/theme.js").theme,
+): string {
+	const rawPath = str(args?.path);
+	const path = rawPath !== null ? shortenPath(rawPath || ".") : null;
+	const limit = args?.limit;
+	const invalidArg = invalidArgText(theme);
+	let text = `${theme.fg("toolTitle", theme.bold("ls"))} ${path === null ? invalidArg : theme.fg("accent", path)}`;
+	if (limit !== undefined) {
+		text += theme.fg("toolOutput", ` (limit ${limit})`);
+	}
+	return text;
+}
 
+function formatLsResult(
+	result: {
+		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+		details?: LsToolDetails;
+	},
+	options: ToolRenderResultOptions,
+	theme: typeof import("../../modes/interactive/theme/theme.js").theme,
+	showImages: boolean,
+): string {
+	const output = getTextOutput(result, showImages).trim();
+	let text = "";
+	if (output) {
+		const lines = output.split("\n");
+		const maxLines = options.expanded ? lines.length : 20;
+		const displayLines = lines.slice(0, maxLines);
+		const remaining = lines.length - maxLines;
+		text += `\n${displayLines.map((line) => theme.fg("toolOutput", line)).join("\n")}`;
+		if (remaining > 0) {
+			text += `${theme.fg("muted", `\n... (${remaining} more lines,`)} ${keyHint("app.tools.expand", "to expand")})`;
+		}
+	}
+
+	const entryLimit = result.details?.entryLimitReached;
+	const truncation = result.details?.truncation;
+	if (entryLimit || truncation?.truncated) {
+		const warnings: string[] = [];
+		if (entryLimit) warnings.push(`${entryLimit} entries limit`);
+		if (truncation?.truncated) warnings.push(`${formatSize(truncation.maxBytes ?? DEFAULT_MAX_BYTES)} limit`);
+		text += `\n${theme.fg("warning", `[Truncated: ${warnings.join(", ")}]`)}`;
+	}
+	return text;
+}
+
+export function createLsToolDefinition(
+	cwd: string,
+	options?: LsToolOptions,
+): ToolDefinition<typeof lsSchema, LsToolDetails | undefined> {
+	const ops = options?.operations ?? defaultLsOperations;
 	return {
 		name: "ls",
 		label: "ls",
 		description: `List directory contents. Returns entries sorted alphabetically, with '/' suffix for directories. Includes dotfiles. Output is truncated to ${DEFAULT_LIMIT} entries or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
+		promptSnippet: "List directory contents",
 		parameters: lsSchema,
-		execute: async (
-			_toolCallId: string,
+		async execute(
+			_toolCallId,
 			{ path, limit }: { path?: string; limit?: number },
 			signal?: AbortSignal,
-		) => {
+			_onUpdate?,
+			_ctx?,
+		) {
 			return new Promise((resolve, reject) => {
 				if (signal?.aborted) {
 					reject(new Error("Operation aborted"));
@@ -70,20 +128,20 @@ export function createLsTool(cwd: string, options?: LsToolOptions): AgentTool<ty
 						const dirPath = resolveToCwd(path || ".", cwd);
 						const effectiveLimit = limit ?? DEFAULT_LIMIT;
 
-						// Check if path exists
+						// Check if path exists.
 						if (!(await ops.exists(dirPath))) {
 							reject(new Error(`Path not found: ${dirPath}`));
 							return;
 						}
 
-						// Check if path is a directory
+						// Check if path is a directory.
 						const stat = await ops.stat(dirPath);
 						if (!stat.isDirectory()) {
 							reject(new Error(`Not a directory: ${dirPath}`));
 							return;
 						}
 
-						// Read directory entries
+						// Read directory entries.
 						let entries: string[];
 						try {
 							entries = await ops.readdir(dirPath);
@@ -92,13 +150,12 @@ export function createLsTool(cwd: string, options?: LsToolOptions): AgentTool<ty
 							return;
 						}
 
-						// Sort alphabetically (case-insensitive)
+						// Sort alphabetically, case-insensitive.
 						entries.sort((a, b) => a.toLowerCase().localeCompare(b.toLowerCase()));
 
-						// Format entries with directory indicators
+						// Format entries with directory indicators.
 						const results: string[] = [];
 						let entryLimitReached = false;
-
 						for (const entry of entries) {
 							if (results.length >= effectiveLimit) {
 								entryLimitReached = true;
@@ -107,17 +164,13 @@ export function createLsTool(cwd: string, options?: LsToolOptions): AgentTool<ty
 
 							const fullPath = nodePath.join(dirPath, entry);
 							let suffix = "";
-
 							try {
 								const entryStat = await ops.stat(fullPath);
-								if (entryStat.isDirectory()) {
-									suffix = "/";
-								}
+								if (entryStat.isDirectory()) suffix = "/";
 							} catch {
-								// Skip entries we can't stat
+								// Skip entries we cannot stat.
 								continue;
 							}
-
 							results.push(entry + suffix);
 						}
 
@@ -128,26 +181,21 @@ export function createLsTool(cwd: string, options?: LsToolOptions): AgentTool<ty
 							return;
 						}
 
-						// Apply byte truncation (no line limit since we already have entry limit)
 						const rawOutput = results.join("\n");
+						// Apply byte truncation. There is no separate line limit because entry count is already capped.
 						const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
-
 						let output = truncation.content;
 						const details: LsToolDetails = {};
-
-						// Build notices
+						// Build actionable notices for truncation and entry limits.
 						const notices: string[] = [];
-
 						if (entryLimitReached) {
 							notices.push(`${effectiveLimit} entries limit reached. Use limit=${effectiveLimit * 2} for more`);
 							details.entryLimitReached = effectiveLimit;
 						}
-
 						if (truncation.truncated) {
 							notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
 							details.truncation = truncation;
 						}
-
 						if (notices.length > 0) {
 							output += `\n\n[${notices.join(". ")}]`;
 						}
@@ -163,8 +211,23 @@ export function createLsTool(cwd: string, options?: LsToolOptions): AgentTool<ty
 				})();
 			});
 		},
+		renderCall(args, theme, context) {
+			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+			text.setText(formatLsCall(args, theme));
+			return text;
+		},
+		renderResult(result, options, theme, context) {
+			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+			text.setText(formatLsResult(result as any, options, theme, context.showImages));
+			return text;
+		},
 	};
 }
 
-/** Default ls tool using process.cwd() - for backwards compatibility */
+export function createLsTool(cwd: string, options?: LsToolOptions): AgentTool<typeof lsSchema> {
+	return wrapToolDefinition(createLsToolDefinition(cwd, options));
+}
+
+/** Default ls tool using process.cwd() for backwards compatibility. */
+export const lsToolDefinition = createLsToolDefinition(process.cwd());
 export const lsTool = createLsTool(process.cwd());

@@ -80,7 +80,7 @@ export default function (pi: ExtensionAPI) {
 			return tools.read.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, _context) {
 			const path = shortenPath(args.path || "");
 			let pathDisplay = path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
 
@@ -94,7 +94,7 @@ export default function (pi: ExtensionAPI) {
 			return new Text(`${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}`, 0, 0);
 		},
 
-		renderResult(result, { expanded }, theme) {
+		renderResult(result, { expanded }, theme, _context) {
 			// Minimal mode: show nothing in collapsed state
 			if (!expanded) {
 				return new Text("", 0, 0);
@@ -127,7 +127,7 @@ export default function (pi: ExtensionAPI) {
 			return tools.bash.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, _context) {
 			const command = args.command || "...";
 			const timeout = args.timeout as number | undefined;
 			const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
@@ -135,7 +135,7 @@ export default function (pi: ExtensionAPI) {
 			return new Text(theme.fg("toolTitle", theme.bold(`$ ${command}`)) + timeoutSuffix, 0, 0);
 		},
 
-		renderResult(result, { expanded }, theme) {
+		renderResult(result, { expanded }, theme, _context) {
 			// Minimal mode: show nothing in collapsed state
 			if (!expanded) {
 				return new Text("", 0, 0);
@@ -176,7 +176,7 @@ export default function (pi: ExtensionAPI) {
 			return tools.write.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, _context) {
 			const path = shortenPath(args.path || "");
 			const pathDisplay = path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
 			const lineCount = args.content ? args.content.split("\n").length : 0;
@@ -185,7 +185,7 @@ export default function (pi: ExtensionAPI) {
 			return new Text(`${theme.fg("toolTitle", theme.bold("write"))} ${pathDisplay}${lineInfo}`, 0, 0);
 		},
 
-		renderResult(result, { expanded }, theme) {
+		renderResult(result, { expanded }, theme, _context) {
 			// Minimal mode: show nothing (file was written)
 			if (!expanded) {
 				return new Text("", 0, 0);
@@ -218,14 +218,14 @@ export default function (pi: ExtensionAPI) {
 			return tools.edit.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, _context) {
 			const path = shortenPath(args.path || "");
 			const pathDisplay = path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
 
 			return new Text(`${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}`, 0, 0);
 		},
 
-		renderResult(result, { expanded }, theme) {
+		renderResult(result, { expanded }, theme, _context) {
 			// Minimal mode: show nothing in collapsed state
 			if (!expanded) {
 				return new Text("", 0, 0);
@@ -263,7 +263,7 @@ export default function (pi: ExtensionAPI) {
 			return tools.find.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, _context) {
 			const pattern = args.pattern || "";
 			const path = shortenPath(args.path || ".");
 			const limit = args.limit;
@@ -277,7 +277,7 @@ export default function (pi: ExtensionAPI) {
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { expanded }, theme) {
+		renderResult(result, { expanded }, theme, _context) {
 			if (!expanded) {
 				// Minimal: just show count
 				const textContent = result.content.find((c) => c.type === "text");
@@ -321,7 +321,7 @@ export default function (pi: ExtensionAPI) {
 			return tools.grep.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, _context) {
 			const pattern = args.pattern || "";
 			const path = shortenPath(args.path || ".");
 			const glob = args.glob;
@@ -339,7 +339,7 @@ export default function (pi: ExtensionAPI) {
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { expanded }, theme) {
+		renderResult(result, { expanded }, theme, _context) {
 			if (!expanded) {
 				// Minimal: just show match count
 				const textContent = result.content.find((c) => c.type === "text");
@@ -383,7 +383,7 @@ export default function (pi: ExtensionAPI) {
 			return tools.ls.execute(toolCallId, params, signal, onUpdate);
 		},
 
-		renderCall(args, theme) {
+		renderCall(args, theme, _context) {
 			const path = shortenPath(args.path || ".");
 			const limit = args.limit;
 
@@ -395,7 +395,7 @@ export default function (pi: ExtensionAPI) {
 			return new Text(text, 0, 0);
 		},
 
-		renderResult(result, { expanded }, theme) {
+		renderResult(result, { expanded }, theme, _context) {
 			if (!expanded) {
 				// Minimal: just show entry count
 				const textContent = result.content.find((c) => c.type === "text");

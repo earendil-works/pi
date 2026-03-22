@@ -25,8 +25,14 @@ describe("buildSystemPrompt", () => {
 	});
 
 	describe("default tools", () => {
-		test("includes all default tools", () => {
+		test("includes all default tools when snippets are provided", () => {
 			const prompt = buildSystemPrompt({
+				toolSnippets: {
+					read: "Read file contents",
+					bash: "Execute bash commands",
+					edit: "Make surgical edits",
+					write: "Create or overwrite files",
+				},
 				contextFiles: [],
 				skills: [],
 			});

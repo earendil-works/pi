@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed OpenAI Responses replay for foreign tool-call item IDs by hashing foreign `function_call.id` values into bounded `fc_<hash>` IDs instead of preserving backend-specific normalized shapes that OpenAI Codex rejects.
+
 ## [0.61.1] - 2026-03-20
 
 ### Changed

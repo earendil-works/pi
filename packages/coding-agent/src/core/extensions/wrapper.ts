@@ -6,6 +6,7 @@
  */
 
 import type { AgentTool } from "@mariozechner/pi-agent-core";
+import { wrapToolDefinition } from "../tools/tool-definition-wrapper.js";
 import type { ExtensionRunner } from "./runner.js";
 import type { RegisteredTool } from "./types.js";
 
@@ -14,15 +15,7 @@ import type { RegisteredTool } from "./types.js";
  * Uses the runner's createContext() for consistent context across tools and event handlers.
  */
 export function wrapRegisteredTool(registeredTool: RegisteredTool, runner: ExtensionRunner): AgentTool {
-	const { definition } = registeredTool;
-	return {
-		name: definition.name,
-		label: definition.label,
-		description: definition.description,
-		parameters: definition.parameters,
-		execute: (toolCallId, params, signal, onUpdate) =>
-			definition.execute(toolCallId, params, signal, onUpdate, runner.createContext()),
-	};
+	return wrapToolDefinition(registeredTool.definition, () => runner.createContext());
 }
 
 /**

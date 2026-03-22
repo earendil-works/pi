@@ -976,8 +976,8 @@ pi.registerTool({
   },
 
   // Optional: Custom rendering
-  renderCall(args, theme) { ... },
-  renderResult(result, options, theme) { ... },
+  renderCall(args, theme, context) { ... },
+  renderResult(result, options, theme, context) { ... },
 });
 ```
 
@@ -1427,8 +1427,8 @@ pi.registerTool({
   },
 
   // Optional: Custom rendering
-  renderCall(args, theme) { ... },
-  renderResult(result, options, theme) { ... },
+  renderCall(args, theme, context) { ... },
+  renderResult(result, options, theme, context) { ... },
 });
 ```
 
@@ -1463,7 +1463,9 @@ pi --no-tools -e ./my-extension.ts
 
 See [examples/extensions/tool-override.ts](../examples/extensions/tool-override.ts) for a complete example that overrides `read` with logging and access control.
 
-**Rendering:** If your override doesn't provide custom `renderCall`/`renderResult` functions, the built-in renderer is used automatically (syntax highlighting, diffs, etc.). This lets you wrap built-in tools for logging or access control without reimplementing the UI.
+**Rendering:** Built-in renderer inheritance is resolved per slot. Execution override and rendering override are independent. If your override omits `renderCall`, the built-in `renderCall` is used. If your override omits `renderResult`, the built-in `renderResult` is used. If your override omits both, the built-in renderer is used automatically (syntax highlighting, diffs, etc.). This lets you wrap built-in tools for logging or access control without reimplementing the UI.
+
+**Prompt metadata:** `promptSnippet` and `promptGuidelines` are not inherited from the built-in tool. If your override should keep those prompt instructions, define them on the override explicitly.
 
 **Your implementation must match the exact result shape**, including the `details` type. The UI and session logic depend on these shapes for rendering and state tracking.
 
@@ -1597,44 +1599,52 @@ export default function (pi: ExtensionAPI) {
 
 ### Custom Rendering
 
-Tools can provide `renderCall` and `renderResult` for custom TUI display. See [tui.md](tui.md) for the full component API and [tool-execution.ts](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/modes/interactive/components/tool-execution.ts) for how built-in tools render.
+Tools can provide `renderCall` and `renderResult` for custom TUI display. See [tui.md](tui.md) for the full component API and [tool-execution.ts](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/src/modes/interactive/components/tool-execution.ts) for how tool rows are composed.
 
-Tool output is wrapped in a `Box` that handles padding and background. Your render methods return `Component` instances (typically `Text`).
+Tool output is wrapped in a `Box` that handles padding and background. A defined `renderCall` or `renderResult` must return a `Component`. If a slot renderer is not defined, `tool-execution.ts` uses fallback rendering for that slot.
+
+`renderCall` and `renderResult` each receive a `context` object with:
+- `args` - the current tool call arguments
+- `state` - shared row-local state across `renderCall` and `renderResult`
+- `lastComponent` - the previously returned component for that slot, if any
+- `invalidate()` - request a rerender of this tool row
+- `toolCallId`, `cwd`, `executionStarted`, `argsComplete`, `isPartial`, `expanded`, `showImages`, `isError`
+
+Use `context.state` for cross-slot shared state. Keep slot-local caches on the returned component instance when you want to reuse and mutate the same component across renders.
 
 #### renderCall
 
-Renders the tool call (before/during execution):
+Renders the tool call or header:
 
 ```typescript
 import { Text } from "@mariozechner/pi-tui";
 
-renderCall(args, theme) {
-  let text = theme.fg("toolTitle", theme.bold("my_tool "));
-  text += theme.fg("muted", args.action);
+renderCall(args, theme, context) {
+  const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
+  let content = theme.fg("toolTitle", theme.bold("my_tool "));
+  content += theme.fg("muted", args.action);
   if (args.text) {
-    text += " " + theme.fg("dim", `"${args.text}"`);
+    content += " " + theme.fg("dim", `"${args.text}"`);
   }
-  return new Text(text, 0, 0);  // 0,0 padding - Box handles it
+  text.setText(content);
+  return text;
 }
 ```
 
 #### renderResult
 
-Renders the tool result:
+Renders the tool result or output:
 
 ```typescript
-renderResult(result, { expanded, isPartial }, theme) {
-  // Handle streaming
+renderResult(result, { expanded, isPartial }, theme, context) {
   if (isPartial) {
     return new Text(theme.fg("warning", "Processing..."), 0, 0);
   }
 
-  // Handle errors
   if (result.details?.error) {
     return new Text(theme.fg("error", `Error: ${result.details.error}`), 0, 0);
   }
 
-  // Normal result - support expanded view (Ctrl+O)
   let text = theme.fg("success", "✓ Done");
   if (expanded && result.details?.items) {
     for (const item of result.details.items) {
@@ -1645,6 +1655,8 @@ renderResult(result, { expanded, isPartial }, theme) {
 }
 ```
 
+If a slot intentionally has no visible content, return an empty `Component` such as an empty `Container`.
+
 #### Keybinding Hints
 
 Use `keyHint()` to display keybinding hints that respect the active keybinding configuration:
@@ -1652,7 +1664,7 @@ Use `keyHint()` to display keybinding hints that respect the active keybinding c
 ```typescript
 import { keyHint } from "@mariozechner/pi-coding-agent";
 
-renderResult(result, { expanded }, theme) {
+renderResult(result, { expanded }, theme, context) {
   let text = theme.fg("success", "✓ Done");
   if (!expanded) {
     text += ` (${keyHint("app.tools.expand", "to expand")})`;
@@ -1676,16 +1688,19 @@ Custom editors and `ctx.ui.custom()` components receive `keybindings: Keybinding
 
 #### Best Practices
 
-- Use `Text` with padding `(0, 0)` - the Box handles padding
-- Use `\n` for multi-line content
-- Handle `isPartial` for streaming progress
-- Support `expanded` for detail on demand
-- Keep default view compact
+- Use `Text` with padding `(0, 0)`. The Box handles padding.
+- Use `\n` for multi-line content.
+- Handle `isPartial` for streaming progress.
+- Support `expanded` for detail on demand.
+- Keep default view compact.
+- Read `context.args` in `renderResult` instead of copying args into `context.state`.
+- Use `context.state` only for data that must be shared across call and result slots.
+- Reuse `context.lastComponent` when the same component instance can be updated in place.
 
 #### Fallback
 
-If `renderCall`/`renderResult` is not defined or throws:
-- `renderCall`: Shows tool name
+If a slot renderer is not defined or throws:
+- `renderCall`: Shows the tool name
 - `renderResult`: Shows raw text from `content`
 
 ## Custom UI
