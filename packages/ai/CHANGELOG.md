@@ -2,9 +2,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `minimax-tokenplan` provider with `MiniMax-M2`, `MiniMax-M2.1`, `MiniMax-M2.5`, and `MiniMax-M2.7` models using OpenAI completions API
+
 ### Fixed
 
-- Fixed OpenAI Responses replay for foreign tool-call item IDs by hashing foreign `function_call.id` values into bounded `fc_<hash>` IDs instead of preserving backend-specific normalized shapes that OpenAI Codex rejects.
+- Fixed thinking extraction for providers that return thinking as `<thinking>...</thinking>` tags in the content field instead of a separate `reasoning_content` field
+- Implemented state machine in streaming parser to properly handle thinking tags that span multiple chunks
+- Added `extractThinkingFromText` compat option for providers that embed thinking in text content
+- Fixed OpenAI Responses replay for foreign tool-call item IDs by hashing foreign `function_call.id` values into bounded `fc_<hash>` IDs instead of preserving backend-specific normalized shapes that OpenAI Codex rejects
 
 ## [0.61.1] - 2026-03-20
 

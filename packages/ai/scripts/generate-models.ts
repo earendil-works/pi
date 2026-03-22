@@ -570,11 +570,12 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 
 		// Process MiniMax models
 		const minimaxVariants = [
-			{ key: "minimax", provider: "minimax", baseUrl: "https://api.minimax.io/anthropic" },
-			{ key: "minimax-cn", provider: "minimax-cn", baseUrl: "https://api.minimaxi.com/anthropic" },
+			{ key: "minimax", provider: "minimax", baseUrl: "https://api.minimax.io/anthropic", api: "anthropic-messages" as const },
+			{ key: "minimax-cn", provider: "minimax-cn", baseUrl: "https://api.minimaxi.com/anthropic", api: "anthropic-messages" as const },
+			{ key: "minimax-tokenplan", provider: "minimax-tokenplan", baseUrl: "https://api.minimax.io/v1", api: "openai-completions" as const },
 		] as const;
 
-		for (const { key, provider, baseUrl } of minimaxVariants) {
+		for (const { key, provider, baseUrl, api } of minimaxVariants) {
 			if (data[key]?.models) {
 				for (const [modelId, model] of Object.entries(data[key].models)) {
 					const m = model as ModelsDevModel;
@@ -583,9 +584,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					models.push({
 						id: modelId,
 						name: m.name || modelId,
-						api: "anthropic-messages",
+						api,
 						provider,
-						// MiniMax's Anthropic-compatible API - SDK appends /v1/messages
 						baseUrl,
 						reasoning: m.reasoning === true,
 						input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
@@ -927,7 +927,7 @@ async function generateModels() {
 
 	for (const candidate of allModels) {
 		if (
-			(candidate.provider === "minimax" || candidate.provider === "minimax-cn") &&
+			(candidate.provider === "minimax" || candidate.provider === "minimax-cn" || candidate.provider === "minimax-tokenplan") &&
 			minimaxAnthropicIds.has(candidate.id)
 		) {
 			candidate.contextWindow = 204800;
@@ -1494,6 +1494,27 @@ async function generateModels() {
 	for (const model of kimiCodingModels) {
 		if (!allModels.some(m => m.provider === "kimi-coding" && m.id === model.id)) {
 			allModels.push(model);
+		}
+	}
+
+	// MiniMax Token Plan models
+	// These use a different base URL (https://api.minimax.io/v1) than the standard MiniMax API
+	// and use OpenAI completions API instead of Anthropic messages
+	// Copy models from minimax provider with the new baseUrl, provider name, and API
+	const MINIMAX_TOKENPLAN_BASE_URL = "https://api.minimax.io/v1";
+	const minimaxModels = allModels.filter(m => m.provider === "minimax" && !m.id.includes("highspeed"));
+	for (const model of minimaxModels) {
+		if (!allModels.some(m => m.provider === "minimax-tokenplan" && m.id === model.id)) {
+			allModels.push({
+				...model,
+				provider: "minimax-tokenplan",
+				baseUrl: MINIMAX_TOKENPLAN_BASE_URL,
+				api: "openai-completions",
+				compat: {
+					supportsDeveloperRole: false,
+					extractThinkingFromText: true,
+				},
+			});
 		}
 	}
 

@@ -86,6 +86,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 		try {
 			const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
 			const client = createClient(model, context, apiKey, options?.headers);
+			const compat = getCompat(model);
 			let params = buildParams(model, context, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -159,25 +160,118 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 						choice.delta.content !== undefined &&
 						choice.delta.content.length > 0
 					) {
-						if (!currentBlock || currentBlock.type !== "text") {
-							finishCurrentBlock(currentBlock);
-							currentBlock = { type: "text", text: "" };
-							output.content.push(currentBlock);
-							stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+						if (compat.extractThinkingFromText) {
+							// MiniMax returns thinking as <think>...</think> tags in content.
+							// Use a state machine to properly handle thinking tags that span chunks.
+							const content = choice.delta.content;
+							const inThinking = currentBlock?.type === "thinking";
+
+							// If in thinking mode, check if content has the thinking end tag
+							if (inThinking && content.includes("</think>")) {
+								// Thinking ends in this chunk
+								const endIdx = content.indexOf("</think>");
+								const thinkingContent = content.slice(0, endIdx);
+								const textAfter = content.slice(endIdx + "</think>".length);
+
+								// Append thinking content and end thinking
+								if (currentBlock?.type === "thinking") {
+									currentBlock.thinking += thinkingContent;
+									stream.push({ type: "thinking_delta", contentIndex: blockIndex(), delta: thinkingContent, partial: output });
+									stream.push({ type: "thinking_end", contentIndex: blockIndex(), content: thinkingContent, partial: output });
+								}
+
+								// Emit text after thinking
+								if (textAfter) {
+									finishCurrentBlock(currentBlock);
+									currentBlock = { type: "text", text: "" };
+									output.content.push(currentBlock);
+									stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+									if (currentBlock.type === "text") {
+										currentBlock.text += textAfter;
+										stream.push({ type: "text_delta", contentIndex: blockIndex(), delta: textAfter, partial: output });
+									}
+								}
+								continue;
+							}
+
+							// If in thinking mode and content has no thinking end, just append
+							if (inThinking) {
+								if (currentBlock?.type === "thinking") {
+									currentBlock.thinking += content;
+									stream.push({ type: "thinking_delta", contentIndex: blockIndex(), delta: content, partial: output });
+								}
+								continue;
+							}
+
+							// Not in thinking mode - check for thinking start
+							if (content.startsWith("<think>")) {
+								// Start new thinking block
+								finishCurrentBlock(currentBlock);
+								currentBlock = { type: "thinking", thinking: "", thinkingSignature: "thinking" };
+								output.content.push(currentBlock);
+								stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+
+								// Extract content after <think> tag
+								const afterTag = content.slice("<think>".length);
+								if (afterTag.includes("</think>")) {
+									// Thinking ends in same chunk
+									const endIdx = afterTag.indexOf("</think>");
+									const thinkingContent = afterTag.slice(0, endIdx);
+									const textAfter = afterTag.slice(endIdx + "</think>".length);
+
+									if (currentBlock.type === "thinking") {
+										currentBlock.thinking += thinkingContent;
+										stream.push({ type: "thinking_delta", contentIndex: blockIndex(), delta: thinkingContent, partial: output });
+										stream.push({ type: "thinking_end", contentIndex: blockIndex(), content: thinkingContent, partial: output });
+									}
+
+									if (textAfter) {
+										finishCurrentBlock(currentBlock);
+										currentBlock = { type: "text", text: "" };
+										output.content.push(currentBlock);
+										stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+										if (currentBlock.type === "text") {
+											currentBlock.text += textAfter;
+											stream.push({ type: "text_delta", contentIndex: blockIndex(), delta: textAfter, partial: output });
+										}
+									}
+								} else {
+									// Thinking continues in next chunks
+									if (currentBlock.type === "thinking") {
+										currentBlock.thinking += afterTag;
+										stream.push({ type: "thinking_delta", contentIndex: blockIndex(), delta: afterTag, partial: output });
+									}
+								}
+								continue;
+							}
+
+							// Plain text with no thinking tags - emit as text
+								if (!currentBlock || currentBlock.type !== "text") {
+									finishCurrentBlock(currentBlock);
+									currentBlock = { type: "text", text: "" };
+									output.content.push(currentBlock);
+									stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+								}
+								if (currentBlock.type === "text") {
+									currentBlock.text += content;
+									stream.push({ type: "text_delta", contentIndex: blockIndex(), delta: content, partial: output });
+								}
+							} else {
+								// Default: emit as text
+								if (!currentBlock || currentBlock.type !== "text") {
+									finishCurrentBlock(currentBlock);
+									currentBlock = { type: "text", text: "" };
+									output.content.push(currentBlock);
+									stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+								}
+								if (currentBlock.type === "text") {
+									currentBlock.text += choice.delta.content;
+									stream.push({ type: "text_delta", contentIndex: blockIndex(), delta: choice.delta.content, partial: output });
+								}
+							}
 						}
 
-						if (currentBlock.type === "text") {
-							currentBlock.text += choice.delta.content;
-							stream.push({
-								type: "text_delta",
-								contentIndex: blockIndex(),
-								delta: choice.delta.content,
-								partial: output,
-							});
-						}
-					}
-
-					// Some endpoints return reasoning in reasoning_content (llama.cpp),
+						// Some endpoints return reasoning in reasoning_content (llama.cpp),
 					// or reasoning (other openai compatible endpoints)
 					// Use the first non-empty reasoning field to avoid duplication
 					// (e.g., chutes.ai returns both reasoning_content and reasoning with same content)
@@ -824,6 +918,7 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 		requiresToolResultName: false,
 		requiresAssistantAfterToolResult: false,
 		requiresThinkingAsText: false,
+		extractThinkingFromText: false,
 		thinkingFormat: isZai
 			? "zai"
 			: provider === "openrouter" || baseUrl.includes("openrouter.ai")
@@ -854,6 +949,7 @@ function getCompat(model: Model<"openai-completions">): Required<OpenAICompletio
 		requiresAssistantAfterToolResult:
 			model.compat.requiresAssistantAfterToolResult ?? detected.requiresAssistantAfterToolResult,
 		requiresThinkingAsText: model.compat.requiresThinkingAsText ?? detected.requiresThinkingAsText,
+		extractThinkingFromText: model.compat.extractThinkingFromText ?? detected.extractThinkingFromText,
 		thinkingFormat: model.compat.thinkingFormat ?? detected.thinkingFormat,
 		openRouterRouting: model.compat.openRouterRouting ?? {},
 		vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,

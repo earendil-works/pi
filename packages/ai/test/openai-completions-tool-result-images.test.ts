@@ -29,6 +29,7 @@ const compat: Required<OpenAICompletionsCompat> = {
 	requiresToolResultName: false,
 	requiresAssistantAfterToolResult: false,
 	requiresThinkingAsText: false,
+	extractThinkingFromText: false,
 	thinkingFormat: "openai",
 	openRouterRouting: {},
 	vercelGatewayRouting: {},
