@@ -11,7 +11,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createJiti } from "@mariozechner/jiti";
 import type { KeyId } from "@mariozechner/pi-tui";
-import { getAgentDir, isBunBinary } from "../../config.js";
+import { getAgentDir } from "../../config.js";
 import { createEventBus, type EventBus } from "../event-bus.js";
 import type { ExecOptions } from "../exec.js";
 import { execCommand } from "../exec.js";
@@ -33,9 +33,10 @@ const require = createRequire(import.meta.url);
 
 /**
  * Get aliases for jiti (used in Node.js/development mode).
- * In Bun binary mode, virtualModules is used instead.
+ * In Bun runtime, virtualModules are preferred so extensions reuse the host's pi packages.
  */
 let _aliases: Record<string, string> | null = null;
+let _bunVirtualModules: Record<string, unknown> | null = null;
 function getAliases(): Record<string, string> {
 	if (_aliases) return _aliases;
 
@@ -64,6 +65,32 @@ function getAliases(): Record<string, string> {
 	};
 
 	return _aliases;
+}
+
+function getBunVirtualModules(): Record<string, unknown> | undefined {
+	const registeredVirtualModules = getExtensionVirtualModules();
+	if (registeredVirtualModules) {
+		return registeredVirtualModules;
+	}
+	if (!process.versions.bun) {
+		return undefined;
+	}
+	if (_bunVirtualModules) {
+		return _bunVirtualModules;
+	}
+
+	const __dirname = path.dirname(fileURLToPath(import.meta.url));
+	const packageIndex = path.resolve(__dirname, "../..", "extension-api.cjs");
+
+	_bunVirtualModules = {
+		"@sinclair/typebox": require("@sinclair/typebox"),
+		"@mariozechner/pi-agent-core": require("@mariozechner/pi-agent-core"),
+		"@mariozechner/pi-tui": require("@mariozechner/pi-tui"),
+		"@mariozechner/pi-ai": require("@mariozechner/pi-ai"),
+		"@mariozechner/pi-ai/oauth": require("@mariozechner/pi-ai/oauth"),
+		"@mariozechner/pi-coding-agent": require(packageIndex),
+	};
+	return _bunVirtualModules;
 }
 
 const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
@@ -226,14 +253,12 @@ function createExtensionAPI(
 }
 
 async function loadExtensionModule(extensionPath: string) {
+	const virtualModules = getBunVirtualModules();
 	const jiti = createJiti(import.meta.url, {
 		moduleCache: false,
-		// In Bun binary: use virtualModules for bundled packages (no filesystem resolution)
-		// Also disable tryNative so jiti handles ALL imports (not just the entry point)
-		// In Node.js/dev: use aliases to resolve to node_modules paths
-		...(isBunBinary
-			? { virtualModules: getExtensionVirtualModules() ?? {}, tryNative: false }
-			: { alias: getAliases() }),
+		// In Bun, route package imports through host-provided virtual modules so extensions do not
+		// resolve their own installed copies of pi packages. In Node.js/dev mode, use filesystem aliases.
+		...(virtualModules ? { virtualModules, tryNative: false } : { alias: getAliases() }),
 	});
 
 	const module = await jiti.import(extensionPath, { default: true });

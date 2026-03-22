@@ -689,7 +689,8 @@ export async function main(args: string[]) {
 	// First pass: parse args to get --extension paths
 	const firstPass = parseArgs(args);
 
-	// Defer extension startup on hot interactive/RPC paths when extension CLI flag discovery is not needed.
+	// Defer extension startup only for likely interactive startup when extension CLI flag discovery is not needed.
+	// RPC must still load extensions eagerly because extension-defined CLI flags participate in RPC startup semantics.
 	const needsExtensionFlagDiscovery = hasPotentialExtensionFlags(args);
 	const isLikelyInteractiveStartup =
 		firstPass.mode === undefined &&
@@ -698,8 +699,7 @@ export async function main(args: string[]) {
 		firstPass.listModels === undefined &&
 		!firstPass.help &&
 		!firstPass.version;
-	const deferExtensionStartup =
-		firstPass.mode === "rpc" || (isLikelyInteractiveStartup && !needsExtensionFlagDiscovery);
+	const deferExtensionStartup = isLikelyInteractiveStartup && !needsExtensionFlagDiscovery;
 	const cwd = process.cwd();
 	const agentDir = getAgentDir();
 	const settingsManager = SettingsManager.create(cwd, agentDir);

@@ -159,7 +159,12 @@ export class InteractiveMode {
 	private deferredExtensionsInitPromise: Promise<void> | undefined;
 	private deferredExtensionsInitResolve: (() => void) | undefined;
 	private deferredToolReadinessTimer: ReturnType<typeof setTimeout> | undefined;
+	private deferredBackgroundStartupTimer: ReturnType<typeof setTimeout> | undefined;
+	private extensionsInitInFlight: Promise<void> | undefined;
+	private extensionsInitialized = false;
 	private toolReadinessStarted = false;
+	private backgroundStartupTasksStarted = false;
+	private lastEditorActivityAt = Date.now();
 	// Stored so the same manager can be injected into custom editors, selectors, and extension UI.
 	private keybindings: KeybindingsManager;
 	private version: string;
@@ -462,13 +467,20 @@ export class InteractiveMode {
 		}, delayMs);
 	}
 
+	private cancelDeferredToolReadiness(): void {
+		if (this.deferredToolReadinessTimer) {
+			clearTimeout(this.deferredToolReadinessTimer);
+			this.deferredToolReadinessTimer = undefined;
+		}
+	}
+
 	private async primeToolReadiness(): Promise<void> {
 		if (this.toolReadinessStarted) {
 			return;
 		}
 		this.toolReadinessStarted = true;
 		try {
-			const [fdPath] = await Promise.all([ensureTool("fd", true), ensureTool("rg", true)]);
+			const fdPath = await ensureTool("fd", true);
 			if (!this.isInitialized) {
 				return;
 			}
@@ -492,7 +504,85 @@ export class InteractiveMode {
 		}
 	}
 
-	private scheduleDeferredExtensionsInit(delayMs = 1000): void {
+	private scheduleDeferredBackgroundStartupTasks(delayMs = 1000): void {
+		if (this.backgroundStartupTasksStarted) {
+			return;
+		}
+		if (this.deferredBackgroundStartupTimer) {
+			clearTimeout(this.deferredBackgroundStartupTimer);
+		}
+		this.deferredBackgroundStartupTimer = setTimeout(() => {
+			this.deferredBackgroundStartupTimer = undefined;
+			void this.runDeferredBackgroundStartupTasks();
+		}, delayMs);
+	}
+
+	private cancelDeferredBackgroundStartupTasks(): void {
+		if (this.deferredBackgroundStartupTimer) {
+			clearTimeout(this.deferredBackgroundStartupTimer);
+			this.deferredBackgroundStartupTimer = undefined;
+		}
+	}
+
+	private async waitForTypingIdle(delayMs = 1000): Promise<void> {
+		while (this.isInitialized) {
+			const remainingMs = this.lastEditorActivityAt + delayMs - Date.now();
+			if (remainingMs <= 0) {
+				return;
+			}
+			await new Promise<void>((resolve) => {
+				setTimeout(resolve, remainingMs);
+			});
+		}
+	}
+
+	private async runDeferredBackgroundStartupTasks(): Promise<void> {
+		if (this.backgroundStartupTasksStarted || !this.isInitialized) {
+			return;
+		}
+		this.backgroundStartupTasksStarted = true;
+
+		await this.waitForTypingIdle();
+		if (!this.isInitialized) {
+			return;
+		}
+		await this.loadDeferredStartupDecorations();
+
+		await this.waitForTypingIdle();
+		if (!this.isInitialized) {
+			return;
+		}
+		await this.updateAvailableProviderCountInBackground();
+
+		await this.waitForTypingIdle();
+		if (!this.isInitialized) {
+			return;
+		}
+		const tmuxWarning = await this.checkTmuxKeyboardSetup();
+		if (tmuxWarning && this.isInitialized) {
+			this.showWarning(tmuxWarning);
+		}
+
+		await this.waitForTypingIdle();
+		if (!this.isInitialized) {
+			return;
+		}
+		const newVersion = await this.checkForNewVersion();
+		if (newVersion && this.isInitialized) {
+			this.showNewVersionNotification(newVersion);
+		}
+
+		await this.waitForTypingIdle();
+		if (!this.isInitialized) {
+			return;
+		}
+		const updates = await this.checkForPackageUpdates();
+		if (updates.length > 0 && this.isInitialized) {
+			this.showPackageUpdateNotification(updates);
+		}
+	}
+
+	private scheduleDeferredExtensionsInit(delayMs = 300): void {
 		if (this.deferredExtensionsInitPromise && !this.deferredExtensionsInitResolve) {
 			return;
 		}
@@ -590,8 +680,7 @@ export class InteractiveMode {
 
 		this.scheduleDeferredExtensionsInit();
 		this.scheduleDeferredToolReadiness();
-		void this.loadDeferredStartupDecorations();
-		void this.updateAvailableProviderCountInBackground();
+		this.scheduleDeferredBackgroundStartupTasks();
 	}
 
 	/**
@@ -613,27 +702,6 @@ export class InteractiveMode {
 	 */
 	async run(): Promise<void> {
 		await this.init();
-
-		// Start version check asynchronously
-		this.checkForNewVersion().then((newVersion) => {
-			if (newVersion) {
-				this.showNewVersionNotification(newVersion);
-			}
-		});
-
-		// Start package update check asynchronously
-		this.checkForPackageUpdates().then((updates) => {
-			if (updates.length > 0) {
-				this.showPackageUpdateNotification(updates);
-			}
-		});
-
-		// Check tmux keyboard setup asynchronously
-		this.checkTmuxKeyboardSetup().then((warning) => {
-			if (warning) {
-				this.showWarning(warning);
-			}
-		});
 
 		// Show startup warnings
 		const { migratedProviders, modelFallbackMessage, initialMessage, initialImages, initialMessages } = this.options;
@@ -1187,109 +1255,123 @@ export class InteractiveMode {
 	 * Initialize the extension system with TUI-based UI context.
 	 */
 	private async initExtensions(): Promise<void> {
-		if (!this.isInitialized) {
+		if (!this.isInitialized || this.extensionsInitialized) {
+			return;
+		}
+		if (this.extensionsInitInFlight) {
+			await this.extensionsInitInFlight;
 			return;
 		}
 
-		const uiContext = this.createExtensionUIContext();
-		await this.session.bindExtensions({
-			uiContext,
-			commandContextActions: {
-				waitForIdle: () => this.session.agent.waitForIdle(),
-				newSession: async (options) => {
-					if (this.loadingAnimation) {
-						this.loadingAnimation.stop();
-						this.loadingAnimation = undefined;
-					}
-					this.statusContainer.clear();
+		this.extensionsInitInFlight = (async () => {
+			const uiContext = this.createExtensionUIContext();
+			await this.session.bindExtensions({
+				uiContext,
+				commandContextActions: {
+					waitForIdle: () => this.session.agent.waitForIdle(),
+					newSession: async (options) => {
+						if (this.loadingAnimation) {
+							this.loadingAnimation.stop();
+							this.loadingAnimation = undefined;
+						}
+						this.statusContainer.clear();
 
-					// Delegate to AgentSession (handles setup + agent state sync)
-					const success = await this.session.newSession(options);
-					if (!success) {
-						return { cancelled: true };
-					}
+						// Delegate to AgentSession (handles setup + agent state sync)
+						const success = await this.session.newSession(options);
+						if (!success) {
+							return { cancelled: true };
+						}
 
-					// Clear UI state
-					this.chatContainer.clear();
-					this.pendingMessagesContainer.clear();
-					this.compactionQueuedMessages = [];
-					this.streamingComponent = undefined;
-					this.streamingMessage = undefined;
-					this.pendingTools.clear();
+						// Clear UI state
+						this.chatContainer.clear();
+						this.pendingMessagesContainer.clear();
+						this.compactionQueuedMessages = [];
+						this.streamingComponent = undefined;
+						this.streamingMessage = undefined;
+						this.pendingTools.clear();
 
-					// Render any messages added via setup, or show empty session
-					this.renderInitialMessages();
-					this.ui.requestRender();
+						// Render any messages added via setup, or show empty session
+						this.renderInitialMessages();
+						this.ui.requestRender();
 
-					return { cancelled: false };
+						return { cancelled: false };
+					},
+					fork: async (entryId) => {
+						const result = await this.session.fork(entryId);
+						if (result.cancelled) {
+							return { cancelled: true };
+						}
+
+						this.chatContainer.clear();
+						this.renderInitialMessages();
+						this.editor.setText(result.selectedText);
+						this.showStatus("Forked to new session");
+
+						return { cancelled: false };
+					},
+					navigateTree: async (targetId, options) => {
+						const result = await this.session.navigateTree(targetId, {
+							summarize: options?.summarize,
+							customInstructions: options?.customInstructions,
+							replaceInstructions: options?.replaceInstructions,
+							label: options?.label,
+						});
+						if (result.cancelled) {
+							return { cancelled: true };
+						}
+
+						this.chatContainer.clear();
+						this.renderInitialMessages();
+						if (result.editorText && !this.editor.getText().trim()) {
+							this.editor.setText(result.editorText);
+						}
+						this.showStatus("Navigated to selected point");
+
+						return { cancelled: false };
+					},
+					switchSession: async (sessionPath) => {
+						await this.handleResumeSession(sessionPath);
+						return { cancelled: false };
+					},
+					reload: async () => {
+						await this.handleReloadCommand();
+					},
 				},
-				fork: async (entryId) => {
-					const result = await this.session.fork(entryId);
-					if (result.cancelled) {
-						return { cancelled: true };
+				shutdownHandler: () => {
+					this.shutdownRequested = true;
+					if (!this.session.isStreaming) {
+						void this.shutdown();
 					}
-
-					this.chatContainer.clear();
-					this.renderInitialMessages();
-					this.editor.setText(result.selectedText);
-					this.showStatus("Forked to new session");
-
-					return { cancelled: false };
 				},
-				navigateTree: async (targetId, options) => {
-					const result = await this.session.navigateTree(targetId, {
-						summarize: options?.summarize,
-						customInstructions: options?.customInstructions,
-						replaceInstructions: options?.replaceInstructions,
-						label: options?.label,
-					});
-					if (result.cancelled) {
-						return { cancelled: true };
-					}
-
-					this.chatContainer.clear();
-					this.renderInitialMessages();
-					if (result.editorText && !this.editor.getText().trim()) {
-						this.editor.setText(result.editorText);
-					}
-					this.showStatus("Navigated to selected point");
-
-					return { cancelled: false };
+				onError: (error) => {
+					this.showExtensionError(error.extensionPath, error.error, error.stack);
 				},
-				switchSession: async (sessionPath) => {
-					await this.handleResumeSession(sessionPath);
-					return { cancelled: false };
-				},
-				reload: async () => {
-					await this.handleReloadCommand();
-				},
-			},
-			shutdownHandler: () => {
-				this.shutdownRequested = true;
-				if (!this.session.isStreaming) {
-					void this.shutdown();
-				}
-			},
-			onError: (error) => {
-				this.showExtensionError(error.extensionPath, error.error, error.stack);
-			},
-		});
+			});
 
-		if (!this.isInitialized) {
-			return;
+			if (!this.isInitialized) {
+				return;
+			}
+
+			setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
+			this.setupAutocomplete(this.fdPath);
+
+			const extensionRunner = this.session.extensionRunner;
+			if (!extensionRunner) {
+				this.showLoadedResources({ extensionPaths: [], force: false });
+				this.extensionsInitialized = true;
+				return;
+			}
+
+			this.setupExtensionShortcuts(extensionRunner);
+			this.showLoadedResources({ extensionPaths: extensionRunner.getExtensionPaths(), force: false });
+			this.extensionsInitialized = true;
+		})();
+
+		try {
+			await this.extensionsInitInFlight;
+		} finally {
+			this.extensionsInitInFlight = undefined;
 		}
-
-		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
-		this.setupAutocomplete(this.fdPath);
-
-		const extensionRunner = this.session.extensionRunner;
-		if (!extensionRunner) {
-			this.showLoadedResources({ extensionPaths: [], force: false });
-			return;
-		}
-
-		this.setupExtensionShortcuts(extensionRunner);
-		this.showLoadedResources({ extensionPaths: extensionRunner.getExtensionPaths(), force: false });
 	}
 
 	/**
@@ -2030,13 +2112,20 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.session.resume", () => this.showSessionSelector());
 
 		this.defaultEditor.onChange = (text: string) => {
+			this.lastEditorActivityAt = Date.now();
 			const wasBashMode = this.isBashMode;
 			this.isBashMode = text.trimStart().startsWith("!");
 			if (wasBashMode !== this.isBashMode) {
 				this.updateEditorBorderColor();
 			}
 			this.scheduleDeferredExtensionsInit();
+			if (text.length > 0) {
+				this.cancelDeferredToolReadiness();
+				this.cancelDeferredBackgroundStartupTasks();
+				return;
+			}
 			this.scheduleDeferredToolReadiness();
+			this.scheduleDeferredBackgroundStartupTasks();
 		};
 
 		// Handle clipboard image paste (triggered on Ctrl+V)
@@ -4680,6 +4769,10 @@ export class InteractiveMode {
 		if (this.deferredToolReadinessTimer) {
 			clearTimeout(this.deferredToolReadinessTimer);
 			this.deferredToolReadinessTimer = undefined;
+		}
+		if (this.deferredBackgroundStartupTimer) {
+			clearTimeout(this.deferredBackgroundStartupTimer);
+			this.deferredBackgroundStartupTimer = undefined;
 		}
 		if (this.loadingAnimation) {
 			this.loadingAnimation.stop();
