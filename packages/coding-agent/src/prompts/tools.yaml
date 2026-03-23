@@ -173,7 +173,7 @@ glob: |
 list_threads: |
   List past conversation threads. Returns thread IDs, relative dates, message counts, workspace paths, AI-generated titles (when available), and listing preview text. Supports keyword search (message content) and workspace filtering (case-insensitive substring match).
 
-  **Defaults to current working directory** if workspace is not specified. Use longer unique segments to avoid false matches (e.g., "work/mu-mono" instead of "mu-mono").
+  **Defaults to current working directory** if workspace is not specified. Use `global` or `all` to search across every workspace under `~/.mu/agent/sessions`. Otherwise, use longer unique segments to avoid false matches (e.g., "work/mu-mono" instead of "mu-mono").
 
   **Search syntax:**
   - Space-separated terms use AND logic: `auth login` matches threads with both "auth" AND "login"

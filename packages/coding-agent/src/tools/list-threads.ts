@@ -69,11 +69,23 @@ const listThreadsSchema = Type.Object({
 	workspace: Type.Optional(
 		Type.String({
 			description:
-				"Filter threads by workspace path (case-insensitive substring match). Defaults to current working directory if not provided.",
+				"Filter threads by workspace path (case-insensitive substring match). Defaults to current working directory if not provided. Use `global` or `all` to search across all session workspaces.",
 		}),
 	),
 	limit: Type.Optional(Type.Integer({ minimum: 1, description: "Max threads to return (default: 25)" })),
 });
+
+function normalizeWorkspaceFilter(workspace: string | undefined): string | null {
+	const trimmed = workspace?.trim();
+	if (!trimmed) return process.cwd();
+
+	const lowered = trimmed.toLowerCase();
+	if (lowered === "global" || lowered === "all") {
+		return null;
+	}
+
+	return trimmed;
+}
 
 function getRelativeDate(date: Date): string {
 	const diffMs = Date.now() - date.getTime();
@@ -105,9 +117,7 @@ export const listThreadsTool: AgentTool<typeof listThreadsSchema> = {
 		{ search, workspace, limit }: { search?: string; workspace?: string; limit?: number },
 	) => {
 		const index = new SessionIndex(getSessionsRoot());
-
-		// Use current workspace if not provided
-		const effectiveWorkspace = workspace?.trim() || process.cwd();
+		const effectiveWorkspace = normalizeWorkspaceFilter(workspace);
 		const max = limit || 25;
 
 		try {

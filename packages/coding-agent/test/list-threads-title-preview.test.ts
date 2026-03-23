@@ -61,6 +61,40 @@ function buildSessionFileLines(input: {
 	return lines.join("\n") + "\n";
 }
 
+async function writeSession(input: {
+	configDir: string;
+	workspaceDir: string;
+	sessionId: string;
+	firstUserText: string;
+	title?: string;
+	preview?: string;
+	fileName?: string;
+}): Promise<void> {
+	const sessionsRoot = join(input.configDir, "sessions");
+	const sessionDir = join(sessionsRoot, toSafeWorkspaceDirName(input.workspaceDir));
+	await mkdir(sessionDir, { recursive: true });
+
+	const sessionFile = join(sessionDir, input.fileName ?? `2026-01-01T00-00-00-000Z_${input.sessionId}.jsonl`);
+	await writeFile(
+		sessionFile,
+		buildSessionFileLines({
+			sessionId: input.sessionId,
+			cwd: input.workspaceDir,
+			firstUserText: input.firstUserText,
+			title: input.title,
+			preview: input.preview,
+		}),
+		"utf8",
+	);
+}
+
+async function listThreads(args: { workspace?: string; search?: string; limit?: number }) {
+	const res = await listThreadsTool.execute("toolcall", args);
+	const firstBlock = res.content[0];
+	if (!firstBlock || firstBlock.type !== "text") throw new Error("Expected text tool result");
+	return JSON.parse(firstBlock.text) as Array<Record<string, unknown>>;
+}
+
 describe("list_threads: title + preview", () => {
 	it("returns persisted title and preview when present", async () => {
 		const configDir = await mkdtemp(join(tmpdir(), "mu-list-threads-config-"));
@@ -170,5 +204,65 @@ describe("list_threads: title + preview", () => {
 		expect(entry).toBeTruthy();
 		expect(entry?.title).toBe("Large Session Title");
 		expect(entry?.preview).toBe("Large Session Preview");
+	});
+
+	it("lists threads across all workspaces when workspace is global or all", async () => {
+		const configDir = await mkdtemp(join(tmpdir(), "mu-list-threads-config-"));
+		process.env.MU_CODING_AGENT_DIR = configDir;
+
+		const workspaceA = await mkdtemp(join(tmpdir(), "mu-list-threads-workspace-a-"));
+		const workspaceB = await mkdtemp(join(tmpdir(), "mu-list-threads-workspace-b-"));
+
+		await writeSession({
+			configDir,
+			workspaceDir: workspaceA,
+			sessionId: "global-a",
+			firstUserText: "auth question",
+			fileName: "2026-01-01T00-00-00-000Z_global-a.jsonl",
+		});
+		await writeSession({
+			configDir,
+			workspaceDir: workspaceB,
+			sessionId: "global-b",
+			firstUserText: "billing question",
+			fileName: "2026-01-01T00-00-01-000Z_global-b.jsonl",
+		});
+
+		const globalPayload = await listThreads({ workspace: "global", limit: 10 });
+		const allPayload = await listThreads({ workspace: "all", limit: 10 });
+
+		expect(globalPayload.map((entry) => entry.id)).toEqual(["global-b", "global-a"]);
+		expect(allPayload.map((entry) => entry.id)).toEqual(["global-b", "global-a"]);
+	});
+
+	it("searches across all workspaces in global mode and preserves default current-workspace behavior", async () => {
+		const configDir = await mkdtemp(join(tmpdir(), "mu-list-threads-config-"));
+		process.env.MU_CODING_AGENT_DIR = configDir;
+
+		const currentWorkspace = process.cwd();
+		const otherWorkspace = await mkdtemp(join(tmpdir(), "mu-list-threads-workspace-other-"));
+
+		await writeSession({
+			configDir,
+			workspaceDir: currentWorkspace,
+			sessionId: "current-workspace",
+			firstUserText: "auth login issue",
+			fileName: "2026-01-01T00-00-00-000Z_current-workspace.jsonl",
+		});
+		await writeSession({
+			configDir,
+			workspaceDir: otherWorkspace,
+			sessionId: "other-workspace",
+			firstUserText: "billing invoice issue",
+			fileName: "2026-01-01T00-00-01-000Z_other-workspace.jsonl",
+		});
+
+		const defaultPayload = await listThreads({ limit: 10 });
+		const globalSearchPayload = await listThreads({ workspace: "global", search: "billing", limit: 10 });
+		const substringPayload = await listThreads({ workspace: "invoice", limit: 10 });
+
+		expect(defaultPayload.map((entry) => entry.id)).toEqual(["current-workspace"]);
+		expect(globalSearchPayload.map((entry) => entry.id)).toEqual(["other-workspace"]);
+		expect(substringPayload).toEqual([]);
 	});
 });
