@@ -288,4 +288,25 @@ describe("SettingsManager", () => {
 			expect(savedSettings.theme).toBe("light");
 		});
 	});
+
+	describe("getSessionDir", () => {
+		it("should return undefined when not set", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getSessionDir()).toBeUndefined();
+		});
+
+		it("should return global sessionDir", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ sessionDir: "/tmp/sessions" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getSessionDir()).toBe("/tmp/sessions");
+		});
+
+		it("should return project sessionDir, overriding global", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ sessionDir: "/global/sessions" }));
+			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ sessionDir: "./sessions" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getSessionDir()).toBe("./sessions");
+		});
+	});
 });

@@ -439,16 +439,15 @@ async function createSessionManager(
 	parsed: Args,
 	cwd: string,
 	extensions: LoadExtensionsResult,
+	settingsManager: SettingsManager,
 ): Promise<SessionManager | undefined> {
 	if (parsed.noSession) {
 		return SessionManager.inMemory();
 	}
 
-	// CLI flag takes precedence, otherwise ask extensions for custom session directory
-	let effectiveSessionDir = parsed.sessionDir;
-	if (!effectiveSessionDir) {
-		effectiveSessionDir = await callSessionDirectoryHook(extensions, cwd);
-	}
+	// Priority: CLI flag > settings.json > extension hook
+	const effectiveSessionDir =
+		parsed.sessionDir ?? settingsManager.getSessionDir() ?? (await callSessionDirectoryHook(extensions, cwd));
 
 	if (parsed.fork) {
 		const resolved = await resolveSessionPath(parsed.fork, cwd, effectiveSessionDir);
@@ -779,12 +778,15 @@ export async function main(args: string[]) {
 	}
 
 	// Create session manager based on CLI flags
-	let sessionManager = await createSessionManager(parsed, cwd, extensionsResult);
+	let sessionManager = await createSessionManager(parsed, cwd, extensionsResult, settingsManager);
 
 	// Handle --resume: show session picker
 	if (parsed.resume) {
 		// Compute effective session dir for resume (same logic as createSessionManager)
-		const effectiveSessionDir = parsed.sessionDir || (await callSessionDirectoryHook(extensionsResult, cwd));
+		const effectiveSessionDir =
+			parsed.sessionDir ??
+			settingsManager.getSessionDir() ??
+			(await callSessionDirectoryHook(extensionsResult, cwd));
 
 		const selectedPath = await selectSession(
 			(onProgress) => SessionManager.list(cwd, effectiveSessionDir, onProgress),

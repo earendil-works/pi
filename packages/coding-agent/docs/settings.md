@@ -127,6 +127,18 @@ When a provider requests a retry delay longer than `maxDelayMs` (e.g., Google's 
 
 `npmCommand` is used for all npm package-manager operations, including `npm root -g`, installs, uninstalls, and `npm install` inside git packages. Use argv-style entries exactly as the process should be launched.
 
+### Sessions
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `sessionDir` | string | - | Directory where session files are stored. Accepts absolute or relative paths. |
+
+```json
+{ "sessionDir": ".pi/sessions" }
+```
+
+When multiple sources specify a session directory, `--session-dir` CLI flag takes precedence, then `sessionDir` in settings.json, then extension hooks.
+
 ### Model Cycling
 
 | Setting | Type | Default | Description |
