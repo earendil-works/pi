@@ -257,7 +257,57 @@ export function convertResponsesMessages<TApi extends Api>(
 		msgIndex++;
 	}
 
-	return messages;
+	// Collapse consecutive user messages that result from model-fallback retries.
+	// When error-assistant entries are dropped (empty content at line ~210), the
+	// user messages from each failed attempt become adjacent. Keep only the last
+	// in each consecutive run so the model sees each prompt exactly once.
+	return collapseConsecutiveUserMessages(messages);
+}
+
+/**
+ * When an agent runner retries the same prompt across fallback model candidates,
+ * each attempt writes a user message to the session. The intervening error-assistant
+ * entries are dropped during conversion (empty content → `output.length === 0 → continue`),
+ * leaving N consecutive identical user messages. Deduplicate by removing consecutive
+ * user messages with identical text content, keeping the last occurrence.
+ *
+ * Distinct consecutive user messages (e.g. user sends two different messages before
+ * the model responds) are preserved.
+ *
+ * See: openclaw/openclaw#31101, openclaw/openclaw#46005
+ */
+function collapseConsecutiveUserMessages(messages: ResponseInput): ResponseInput {
+	if (messages.length <= 1) return messages;
+	const out: ResponseInput = [];
+	for (const item of messages) {
+		const prev = out[out.length - 1];
+		if (
+			prev &&
+			"role" in prev &&
+			prev.role === "user" &&
+			"role" in item &&
+			item.role === "user" &&
+			userContentFingerprint(prev) === userContentFingerprint(item)
+		) {
+			// Identical content — deduplicate (keep the later one)
+			out[out.length - 1] = item;
+			continue;
+		}
+		out.push(item);
+	}
+	return out;
+}
+
+/** Extract a comparable fingerprint from a user message's content. */
+function userContentFingerprint(item: ResponseInput[number]): string {
+	if (!("content" in item)) return "";
+	const content = (item as { content?: unknown }).content;
+	if (typeof content === "string") return content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.filter((c: { type?: string }) => c.type === "input_text")
+		.map((c: { text?: string }) => c.text ?? "")
+		.join("\n");
 }
 
 // =============================================================================
