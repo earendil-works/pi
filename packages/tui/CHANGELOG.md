@@ -6,6 +6,11 @@
 
 - `PI_TUI_WRITE_LOG` now accepts a directory path, creating a unique log file (`tui-<timestamp>-<pid>.log`) per instance for easier debugging of multiple pi sessions
 
+### Fixed
+
+- Fixed blockquote text color breaking after inline links (and other inline elements) due to missing style restoration prefix
+
+
 ## [0.62.0] - 2026-03-23
 
 ### Fixed
