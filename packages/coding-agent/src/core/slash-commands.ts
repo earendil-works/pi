@@ -15,6 +15,8 @@ export interface BuiltinSlashCommand {
 	description: string;
 }
 
+import { APP_NAME } from "../config.js";
+
 export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "settings", description: "Open settings menu" },
 	{ name: "model", description: "Select model (opens selector UI)" },
@@ -35,5 +37,5 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "compact", description: "Manually compact the session context" },
 	{ name: "resume", description: "Resume a different session" },
 	{ name: "reload", description: "Reload keybindings, extensions, skills, prompts, and themes" },
-	{ name: "quit", description: "Quit pi" },
+	{ name: "quit", description: `Quit ${APP_NAME}` },
 ];
