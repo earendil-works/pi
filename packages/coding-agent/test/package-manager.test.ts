@@ -1444,4 +1444,122 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			expect(options?.signal).toBeDefined();
 		});
 	});
+
+	describe("project overrides for global resources", () => {
+		it("should disable global auto-discovered skills via project !pattern", async () => {
+			const skillsDir = join(agentDir, "skills");
+			mkdirSync(join(skillsDir, "brave-search"), { recursive: true });
+			mkdirSync(join(skillsDir, "github"), { recursive: true });
+			writeFileSync(
+				join(skillsDir, "brave-search", "SKILL.md"),
+				"---\nname: brave-search\ndescription: Search\n---\nContent",
+			);
+			writeFileSync(join(skillsDir, "github", "SKILL.md"), "---\nname: github\ndescription: GitHub\n---\nContent");
+
+			settingsManager.setProjectSkillPaths(["!brave-search"]);
+
+			const result = await packageManager.resolve();
+			expect(result.skills.some((r) => isDisabled(r, "brave-search", "includes"))).toBe(true);
+			expect(result.skills.some((r) => isEnabled(r, "github", "includes"))).toBe(true);
+		});
+
+		it("should enable only specific global skills via project allowlist (!* + +name)", async () => {
+			const skillsDir = join(agentDir, "skills");
+			mkdirSync(join(skillsDir, "brave-search"), { recursive: true });
+			mkdirSync(join(skillsDir, "github"), { recursive: true });
+			mkdirSync(join(skillsDir, "playwright"), { recursive: true });
+			writeFileSync(
+				join(skillsDir, "brave-search", "SKILL.md"),
+				"---\nname: brave-search\ndescription: Search\n---\nContent",
+			);
+			writeFileSync(join(skillsDir, "github", "SKILL.md"), "---\nname: github\ndescription: GitHub\n---\nContent");
+			writeFileSync(
+				join(skillsDir, "playwright", "SKILL.md"),
+				"---\nname: playwright\ndescription: Browser\n---\nContent",
+			);
+
+			settingsManager.setProjectSkillPaths(["!*", "+brave-search"]);
+
+			const result = await packageManager.resolve();
+			expect(result.skills.some((r) => isEnabled(r, "brave-search", "includes"))).toBe(true);
+			expect(result.skills.some((r) => isDisabled(r, "github", "includes"))).toBe(true);
+			expect(result.skills.some((r) => isDisabled(r, "playwright", "includes"))).toBe(true);
+		});
+
+		it("should not affect project-scoped resources with project overrides", async () => {
+			const globalSkillsDir = join(agentDir, "skills");
+			mkdirSync(join(globalSkillsDir, "global-skill"), { recursive: true });
+			writeFileSync(
+				join(globalSkillsDir, "global-skill", "SKILL.md"),
+				"---\nname: global-skill\ndescription: Global\n---\nContent",
+			);
+
+			const projectSkillsDir = join(tempDir, ".pi", "skills");
+			mkdirSync(join(projectSkillsDir, "project-skill"), { recursive: true });
+			writeFileSync(
+				join(projectSkillsDir, "project-skill", "SKILL.md"),
+				"---\nname: project-skill\ndescription: Project\n---\nContent",
+			);
+
+			settingsManager.setProjectSkillPaths(["!*", "+project-skill"]);
+
+			const result = await packageManager.resolve();
+			// Project skill should remain enabled (project overrides don't affect project-scoped resources)
+			expect(result.skills.some((r) => isEnabled(r, "project-skill", "includes"))).toBe(true);
+			// Global skill should be disabled
+			expect(result.skills.some((r) => isDisabled(r, "global-skill", "includes"))).toBe(true);
+		});
+
+		it("should disable global settings-defined skills via project !pattern", async () => {
+			const skillsDir = join(agentDir, "custom-skills");
+			mkdirSync(join(skillsDir, "custom-a"), { recursive: true });
+			mkdirSync(join(skillsDir, "custom-b"), { recursive: true });
+			writeFileSync(join(skillsDir, "custom-a", "SKILL.md"), "---\nname: custom-a\ndescription: A\n---\nContent");
+			writeFileSync(join(skillsDir, "custom-b", "SKILL.md"), "---\nname: custom-b\ndescription: B\n---\nContent");
+
+			settingsManager.setSkillPaths(["custom-skills"]);
+			settingsManager.setProjectSkillPaths(["!custom-a"]);
+
+			const result = await packageManager.resolve();
+			expect(result.skills.some((r) => isDisabled(r, "custom-a", "includes"))).toBe(true);
+			expect(result.skills.some((r) => isEnabled(r, "custom-b", "includes"))).toBe(true);
+		});
+
+		it("should force-exclude global skills via project -path", async () => {
+			const skillsDir = join(agentDir, "skills");
+			mkdirSync(join(skillsDir, "target-skill"), { recursive: true });
+			writeFileSync(
+				join(skillsDir, "target-skill", "SKILL.md"),
+				"---\nname: target-skill\ndescription: Target\n---\nContent",
+			);
+
+			settingsManager.setProjectSkillPaths(["-target-skill"]);
+
+			const result = await packageManager.resolve();
+			expect(result.skills.some((r) => isDisabled(r, "target-skill", "includes"))).toBe(true);
+		});
+
+		it("should force-enable a globally disabled skill via project +path", async () => {
+			const skillsDir = join(agentDir, "skills");
+			mkdirSync(join(skillsDir, "disabled-skill"), { recursive: true });
+			mkdirSync(join(skillsDir, "other-skill"), { recursive: true });
+			writeFileSync(
+				join(skillsDir, "disabled-skill", "SKILL.md"),
+				"---\nname: disabled-skill\ndescription: Disabled\n---\nContent",
+			);
+			writeFileSync(
+				join(skillsDir, "other-skill", "SKILL.md"),
+				"---\nname: other-skill\ndescription: Other\n---\nContent",
+			);
+
+			// Globally disable the skill
+			settingsManager.setSkillPaths(["!disabled-skill"]);
+			// Project re-enables it
+			settingsManager.setProjectSkillPaths(["+disabled-skill"]);
+
+			const result = await packageManager.resolve();
+			expect(result.skills.some((r) => isEnabled(r, "disabled-skill", "includes"))).toBe(true);
+			expect(result.skills.some((r) => isEnabled(r, "other-skill", "includes"))).toBe(true);
+		});
+	});
 });

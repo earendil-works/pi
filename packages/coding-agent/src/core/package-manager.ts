@@ -565,6 +565,7 @@ function matchesAnyExactPattern(filePath: string, patterns: string[], baseDir: s
 	const isSkillFile = name === "SKILL.md";
 	const parentDir = isSkillFile ? dirname(filePath) : undefined;
 	const parentRel = isSkillFile ? toPosixPath(relative(baseDir, parentDir!)) : undefined;
+	const parentName = isSkillFile ? basename(parentDir!) : undefined;
 	const parentDirPosix = isSkillFile ? toPosixPath(parentDir!) : undefined;
 
 	return patterns.some((pattern) => {
@@ -573,7 +574,7 @@ function matchesAnyExactPattern(filePath: string, patterns: string[], baseDir: s
 			return true;
 		}
 		if (!isSkillFile) return false;
-		return normalized === parentRel || normalized === parentDirPosix;
+		return normalized === parentRel || normalized === parentName || normalized === parentDirPosix;
 	});
 }
 
@@ -581,13 +582,12 @@ function getOverridePatterns(entries: string[]): string[] {
 	return entries.filter((pattern) => pattern.startsWith("!") || pattern.startsWith("+") || pattern.startsWith("-"));
 }
 
-function isEnabledByOverrides(filePath: string, patterns: string[], baseDir: string): boolean {
-	const overrides = getOverridePatterns(patterns);
-	const excludes = overrides.filter((pattern) => pattern.startsWith("!")).map((pattern) => pattern.slice(1));
-	const forceIncludes = overrides.filter((pattern) => pattern.startsWith("+")).map((pattern) => pattern.slice(1));
-	const forceExcludes = overrides.filter((pattern) => pattern.startsWith("-")).map((pattern) => pattern.slice(1));
+function applyOverrideState(filePath: string, overrides: string[], baseDir: string, currentEnabled: boolean): boolean {
+	const excludes = overrides.filter((p) => p.startsWith("!")).map((p) => p.slice(1));
+	const forceIncludes = overrides.filter((p) => p.startsWith("+")).map((p) => p.slice(1));
+	const forceExcludes = overrides.filter((p) => p.startsWith("-")).map((p) => p.slice(1));
 
-	let enabled = true;
+	let enabled = currentEnabled;
 	if (excludes.length > 0 && matchesAnyPattern(filePath, excludes, baseDir)) {
 		enabled = false;
 	}
@@ -598,6 +598,11 @@ function isEnabledByOverrides(filePath: string, patterns: string[], baseDir: str
 		enabled = false;
 	}
 	return enabled;
+}
+
+function isEnabledByOverrides(filePath: string, patterns: string[], baseDir: string): boolean {
+	const overrides = getOverridePatterns(patterns);
+	return applyOverrideState(filePath, overrides, baseDir, true);
 }
 
 /**
@@ -800,6 +805,7 @@ export class DefaultPackageManager implements PackageManager {
 		}
 
 		this.addAutoDiscoveredResources(accumulator, globalSettings, projectSettings, globalBaseDir, projectBaseDir);
+		this.applyProjectOverrides(accumulator, projectSettings, projectBaseDir);
 
 		return this.toResolvedPaths(accumulator);
 	}
@@ -1963,6 +1969,32 @@ export class DefaultPackageManager implements PackageManager {
 			userOverrides.themes,
 			globalBaseDir,
 		);
+	}
+
+	/**
+	 * Apply project-level override patterns to non-project resources.
+	 * Allows project settings to disable/enable global skills, extensions, etc.
+	 * Patterns are applied on top of the current enabled state:
+	 * - `!pattern` disables matching resources
+	 * - `+path` force-enables matching resources (even if globally disabled)
+	 * - `-path` force-disables matching resources
+	 */
+	private applyProjectOverrides(
+		accumulator: ResourceAccumulator,
+		projectSettings: ReturnType<SettingsManager["getProjectSettings"]>,
+		projectBaseDir: string,
+	): void {
+		for (const resourceType of RESOURCE_TYPES) {
+			const projectEntries = (projectSettings[resourceType] ?? []) as string[];
+			const overridePatterns = getOverridePatterns(projectEntries);
+			if (overridePatterns.length === 0) continue;
+
+			const target = this.getTargetMap(accumulator, resourceType);
+			for (const [path, entry] of target) {
+				if (entry.metadata.scope === "project") continue;
+				entry.enabled = applyOverrideState(path, overridePatterns, projectBaseDir, entry.enabled);
+			}
+		}
 	}
 
 	private collectFilesFromPaths(paths: string[], resourceType: ResourceType): string[] {

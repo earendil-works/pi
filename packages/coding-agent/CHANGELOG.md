@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Project-level overrides for global resources. Project `.pi/settings.json` can now disable/enable global skills, extensions, prompts, and themes using `!pattern`, `+name`, and `-name` override patterns.
+
 ## [0.62.0] - 2026-03-23
 
 ### New Features
