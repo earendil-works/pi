@@ -1829,23 +1829,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "grok-4.20-beta-latest-non-reasoning": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "grok-2": {
 			id: string;
 			name: string;
@@ -2135,6 +2118,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "grok-4.20-0309-reasoning": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "grok-2-latest": {
 			id: string;
 			name: string;
@@ -2186,14 +2186,14 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "grok-3-fast": {
+		readonly "grok-4.20-0309-non-reasoning": {
 			id: string;
 			name: string;
 			api: "openai-completions";
 			provider: string;
 			baseUrl: string;
 			reasoning: false;
-			input: "text"[];
+			input: ("image" | "text")[];
 			cost: {
 				input: number;
 				output: number;
@@ -2203,14 +2203,14 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "grok-4.20-beta-latest-reasoning": {
+		readonly "grok-3-fast": {
 			id: string;
 			name: string;
 			api: "openai-completions";
 			provider: string;
 			baseUrl: string;
-			reasoning: true;
-			input: ("image" | "text")[];
+			reasoning: false;
+			input: "text"[];
 			cost: {
 				input: number;
 				output: number;
