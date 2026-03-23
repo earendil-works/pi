@@ -272,7 +272,7 @@ For providers with partial OpenAI compatibility, use the `compat` field.
 | `requiresThinkingAsText` | Convert thinking blocks to plain text |
 | `thinkingFormat` | Use `reasoning_effort`, `zai`, `qwen`, or `qwen-chat-template` thinking parameters |
 | `supportsStrictMode` | Include the `strict` field in tool definitions |
-| `openRouterRouting` | OpenRouter routing config passed to OpenRouter for model/provider selection |
+| `openRouterRouting` | OpenRouter provider routing preferences. This object is sent as-is in the `provider` field of the [OpenRouter API request](https://openrouter.ai/docs/guides/routing/provider-selection). |
 | `vercelGatewayRouting` | Vercel AI Gateway routing config for provider selection (`only`, `order`) |
 
 `qwen` uses top-level `enable_thinking`. Use `qwen-chat-template` for local Qwen-compatible servers that require `chat_template_kwargs.enable_thinking`.
@@ -292,8 +292,32 @@ Example:
           "name": "OpenRouter Claude 3.5 Sonnet",
           "compat": {
             "openRouterRouting": {
-              "order": ["anthropic"],
-              "fallbacks": ["openai"]
+              "allow_fallbacks": true,
+              "require_parameters": false,
+              "data_collection": "deny",
+              "zdr": true,
+              "enforce_distillable_text": false,
+              "order": ["anthropic", "amazon-bedrock", "google-vertex"],
+              "only": ["anthropic", "amazon-bedrock"],
+              "ignore": ["gmicloud", "friendli"],
+              "quantizations": ["fp16", "bf16"],
+              "sort": {
+                "by": "price",
+                "partition": "model"
+              },
+              "max_price": {
+                "prompt": 10,
+                "completion": 20
+              },
+              "preferred_min_throughput": {
+                "p50": 100,
+                "p90": 50
+              },
+              "preferred_max_latency": {
+                "p50": 1,
+                "p90": 3,
+                "p99": 5
+              }
             }
           }
         }
