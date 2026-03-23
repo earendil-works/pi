@@ -55,7 +55,7 @@ function resolvePromptInput(input: string | undefined, description: string): str
 }
 
 function loadContextFileFromDir(dir: string): Array<{ path: string; content: string }> {
-	const candidates = ["SOUL.md", "AGENTS.md", "CLAUDE.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"];
+	const candidates = ["SOUL.md", "IDENTITY.md", "AGENTS.md", "CLAUDE.md", "USER.md", "TOOLS.md", "HEARTBEAT.md"];
 	const results: Array<{ path: string; content: string }> = [];
 	for (const filename of candidates) {
 		const filePath = join(dir, filename);
