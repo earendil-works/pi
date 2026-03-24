@@ -1,7 +1,7 @@
 import { icon } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Select, type SelectOption } from "@mariozechner/mini-lit/dist/Select.js";
-import type { Model } from "@mariozechner/pi-ai";
+import { type Model, supportsXhigh } from "@mariozechner/pi-ai";
 import { html, LitElement } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { createRef, ref } from "lit/directives/ref.js";
@@ -37,7 +37,7 @@ export class MessageEditor extends LitElement {
 	@property() onSend?: (input: string, attachments: Attachment[]) => void;
 	@property() onAbort?: () => void;
 	@property() onModelSelect?: () => void;
-	@property() onThinkingChange?: (level: "off" | "minimal" | "low" | "medium" | "high") => void;
+	@property() onThinkingChange?: (level: ThinkingLevel) => void;
 	@property() onFilesChange?: (files: Attachment[]) => void;
 	@property() attachments: Attachment[] = [];
 	@property() maxFiles = 10;
@@ -236,6 +236,17 @@ export class MessageEditor extends LitElement {
 		// Check if current model supports thinking/reasoning
 		const model = this.currentModel;
 		const supportsThinking = model?.reasoning === true; // Models with reasoning:true support thinking
+		const thinkingOptions: SelectOption[] = [
+			{ value: "off", label: i18n("Off"), icon: icon(Brain, "sm") },
+			{ value: "minimal", label: i18n("Minimal"), icon: icon(Brain, "sm") },
+			{ value: "low", label: i18n("Low"), icon: icon(Brain, "sm") },
+			{ value: "medium", label: i18n("Medium"), icon: icon(Brain, "sm") },
+			{ value: "high", label: i18n("High"), icon: icon(Brain, "sm") },
+		];
+
+		if (model && supportsXhigh(model)) {
+			thinkingOptions.push({ value: "xhigh", label: i18n("XHigh"), icon: icon(Brain, "sm") });
+		}
 
 		return html`
 			<div
@@ -322,26 +333,20 @@ export class MessageEditor extends LitElement {
 						${
 							supportsThinking && this.showThinkingSelector
 								? html`
-									${Select({
-										value: this.thinkingLevel,
-										placeholder: i18n("Off"),
-										options: [
-											{ value: "off", label: i18n("Off"), icon: icon(Brain, "sm") },
-											{ value: "minimal", label: i18n("Minimal"), icon: icon(Brain, "sm") },
-											{ value: "low", label: i18n("Low"), icon: icon(Brain, "sm") },
-											{ value: "medium", label: i18n("Medium"), icon: icon(Brain, "sm") },
-											{ value: "high", label: i18n("High"), icon: icon(Brain, "sm") },
-										] as SelectOption[],
-										onChange: (value: string) => {
-											const level = value as "off" | "minimal" | "low" | "medium" | "high";
-											this.thinkingLevel = level;
-											this.onThinkingChange?.(level);
-										},
-										width: "80px",
-										size: "sm",
-										variant: "ghost",
-										fitContent: true,
-									})}
+								${Select({
+									value: this.thinkingLevel,
+									placeholder: i18n("Off"),
+									options: thinkingOptions,
+									onChange: (value: string) => {
+										const level = value as ThinkingLevel;
+										this.thinkingLevel = level;
+										this.onThinkingChange?.(level);
+									},
+									width: "80px",
+									size: "sm",
+									variant: "ghost",
+									fitContent: true,
+								})}
 								`
 								: ""
 						}

@@ -148,6 +148,7 @@ declare module "@mariozechner/mini-lit" {
 		Low: string;
 		Medium: string;
 		High: string;
+		XHigh: string;
 		"Storage Permission Required": string;
 		"This app needs persistent storage to save your conversations": string;
 		"Why is this needed?": string;
@@ -360,6 +361,7 @@ export const translations = {
 		Low: "Low",
 		Medium: "Medium",
 		High: "High",
+		XHigh: "XHigh",
 		"Storage Permission Required": "Storage Permission Required",
 		"This app needs persistent storage to save your conversations":
 			"This app needs persistent storage to save your conversations",
@@ -579,6 +581,7 @@ export const translations = {
 		Low: "Niedrig",
 		Medium: "Mittel",
 		High: "Hoch",
+		XHigh: "Extrem hoch",
 		"Storage Permission Required": "Speicherberechtigung erforderlich",
 		"This app needs persistent storage to save your conversations":
 			"Diese App benötigt dauerhaften Speicher, um Ihre Konversationen zu speichern",
