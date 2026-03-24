@@ -381,6 +381,7 @@ export function findCutPoint(
 	startIndex: number,
 	endIndex: number,
 	keepRecentTokens: number,
+	scaleFactor = 1,
 ): CutPointResult {
 	const cutPoints = findValidCutPoints(entries, startIndex, endIndex);
 
@@ -396,8 +397,8 @@ export function findCutPoint(
 		const entry = entries[i];
 		if (entry.type !== "message") continue;
 
-		// Estimate this message's size
-		const messageTokens = estimateTokens(entry.message);
+		// Estimate this message's size; scale to match API usage when provided
+		const messageTokens = Math.ceil(estimateTokens(entry.message) * scaleFactor);
 		accumulatedTokens += messageTokens;
 
 		// Check if we've exceeded the budget
@@ -625,9 +626,20 @@ export function prepareCompaction(
 		const msg = getMessageFromEntry(pathEntries[i]);
 		if (msg) usageMessages.push(msg);
 	}
-	const tokensBefore = estimateContextTokens(usageMessages).tokens;
+	const { tokens: tokensBefore } = estimateContextTokens(usageMessages);
 
-	const cutPoint = findCutPoint(pathEntries, boundaryStart, boundaryEnd, settings.keepRecentTokens);
+	// Align findCutPoint accumulation with tokensBefore (API usage) to avoid
+	// cutIndex=0 when local estimates undercount (common for CJK-heavy sessions).
+	// Scale factor converts estimate sum to usage scale.
+	let totalEstimate = 0;
+	for (let i = boundaryStart; i < boundaryEnd; i++) {
+		const entry = pathEntries[i];
+		if (entry.type === "message") {
+			totalEstimate += estimateTokens(entry.message);
+		}
+	}
+	const scaleFactor = totalEstimate > 0 && tokensBefore > 0 ? tokensBefore / totalEstimate : 1;
+	const cutPoint = findCutPoint(pathEntries, boundaryStart, boundaryEnd, settings.keepRecentTokens, scaleFactor);
 
 	// Get UUID of first kept entry
 	const firstKeptEntry = pathEntries[cutPoint.firstKeptEntryIndex];
