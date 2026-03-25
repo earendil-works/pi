@@ -52,7 +52,7 @@ async function testTokensOnAbort<TApi extends Api>(llm: Model<TApi>, options: St
 
 	// OpenAI providers, OpenAI Codex, Gemini CLI, zai, Amazon Bedrock, and the GPT-OSS model on Antigravity only send usage in the final chunk,
 	// so when aborted they have no token stats. Anthropic and Google send usage information early in the stream.
-	// MiniMax reports input tokens but not output tokens when aborted.
+	// MiniMax and Kimi report input tokens but not output tokens differently on aborted requests.
 	if (
 		llm.api === "openai-completions" ||
 		llm.api === "mistral-conversations" ||
@@ -68,7 +68,11 @@ async function testTokensOnAbort<TApi extends Api>(llm: Model<TApi>, options: St
 		expect(msg.usage.input).toBe(0);
 		expect(msg.usage.output).toBe(0);
 	} else if (llm.provider === "minimax") {
-		// MiniMax reports input tokens early but output tokens only in final chunk
+		// MiniMax M2.7 does not report token usage for aborted requests.
+		expect(msg.usage.input).toBe(0);
+		expect(msg.usage.output).toBe(0);
+	} else if (llm.provider === "kimi-coding") {
+		// Kimi reports input tokens early but output tokens only in the final chunk.
 		expect(msg.usage.input).toBeGreaterThan(0);
 		expect(msg.usage.output).toBe(0);
 	} else {
@@ -106,10 +110,10 @@ describe("Token Statistics on Abort", () => {
 	});
 
 	describe.skipIf(!process.env.OPENAI_API_KEY)("OpenAI Responses Provider", () => {
-		const llm = getModel("openai", "gpt-5-mini");
+		const llm = getModel("openai", "gpt-5.4-mini");
 
 		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
-			await testTokensOnAbort(llm);
+			await testTokensOnAbort(llm, { reasoningEffort: "low" });
 		});
 	});
 
@@ -124,7 +128,7 @@ describe("Token Statistics on Abort", () => {
 	});
 
 	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic Provider", () => {
-		const llm = getModel("anthropic", "claude-3-5-haiku-20241022");
+		const llm = getModel("anthropic", "claude-sonnet-4-6");
 
 		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
 			await testTokensOnAbort(llm);
@@ -148,7 +152,7 @@ describe("Token Statistics on Abort", () => {
 	});
 
 	describe.skipIf(!process.env.CEREBRAS_API_KEY)("Cerebras Provider", () => {
-		const llm = getModel("cerebras", "gpt-oss-120b");
+		const llm = getModel("cerebras", "qwen-3-235b-a22b-instruct-2507");
 
 		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
 			await testTokensOnAbort(llm);
@@ -180,7 +184,7 @@ describe("Token Statistics on Abort", () => {
 	});
 
 	describe.skipIf(!process.env.MINIMAX_API_KEY)("MiniMax Provider", () => {
-		const llm = getModel("minimax", "MiniMax-M2.1");
+		const llm = getModel("minimax", "MiniMax-M2.7");
 
 		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
 			await testTokensOnAbort(llm);
@@ -188,7 +192,7 @@ describe("Token Statistics on Abort", () => {
 	});
 
 	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider", () => {
-		const llm = getModel("kimi-coding", "kimi-k2-thinking");
+		const llm = getModel("kimi-coding", "k2p5");
 
 		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
 			await testTokensOnAbort(llm);
@@ -208,7 +212,7 @@ describe("Token Statistics on Abort", () => {
 	// =========================================================================
 
 	describe("Anthropic OAuth Provider", () => {
-		const llm = getModel("anthropic", "claude-3-5-haiku-20241022");
+		const llm = getModel("anthropic", "claude-sonnet-4-6");
 
 		it.skipIf(!anthropicOAuthToken)(
 			"should include token stats when aborted mid-stream",
@@ -261,10 +265,10 @@ describe("Token Statistics on Abort", () => {
 		);
 
 		it.skipIf(!antigravityToken)(
-			"claude-sonnet-4-5 - should include token stats when aborted mid-stream",
+			"claude-sonnet-4-6 - should include token stats when aborted mid-stream",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("google-antigravity", "claude-sonnet-4-5");
+				const llm = getModel("google-antigravity", "claude-sonnet-4-6");
 				await testTokensOnAbort(llm, { apiKey: antigravityToken });
 			},
 		);

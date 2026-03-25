@@ -7,6 +7,12 @@ const ENABLED = process.env.PI_TIMING === "1";
 const timings: Array<{ label: string; ms: number }> = [];
 let lastTime = Date.now();
 
+export function resetTimings(): void {
+	if (!ENABLED) return;
+	timings.length = 0;
+	lastTime = Date.now();
+}
+
 export function time(label: string): void {
 	if (!ENABLED) return;
 	const now = Date.now();

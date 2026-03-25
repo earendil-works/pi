@@ -44,6 +44,7 @@
 		"@mariozechner/pi-ai": "^0.62.0",
 		"@mariozechner/pi-tui": "^0.62.0",
 		"@silvia-odwyer/photon-node": "^0.3.4",
+		"ajv": "^8.17.1",
 		"chalk": "^5.5.0",
 		"cli-highlight": "^2.1.11",
 		"diff": "^8.0.2",

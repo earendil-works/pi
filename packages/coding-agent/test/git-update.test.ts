@@ -27,6 +27,12 @@ function git(args: string[], cwd: string): string {
 	return result.stdout.trim();
 }
 
+function initGitRepo(repoDir: string): void {
+	git(["init", "--initial-branch=main"], repoDir);
+	git(["config", "--local", "user.email", "test@test.com"], repoDir);
+	git(["config", "--local", "user.name", "Test"], repoDir);
+}
+
 // Helper to create a commit with a file
 function createCommit(repoDir: string, filename: string, content: string, message: string): string {
 	writeFileSync(join(repoDir, filename), content);
@@ -91,9 +97,7 @@ describe("DefaultPackageManager git update", () => {
 	function setupRemoteAndInstall(sourceOverride?: string): void {
 		// Create "remote" repository
 		mkdirSync(remoteDir, { recursive: true });
-		git(["init"], remoteDir);
-		git(["config", "--local", "user.email", "test@test.com"], remoteDir);
-		git(["config", "--local", "user.name", "Test"], remoteDir);
+		initGitRepo(remoteDir);
 		createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
 
 		// Clone to installed directory (simulating what install() does)
@@ -109,9 +113,7 @@ describe("DefaultPackageManager git update", () => {
 	describe("normal updates (no force-push)", () => {
 		it("should skip reset, clean, and install when already up to date", async () => {
 			mkdirSync(remoteDir, { recursive: true });
-			git(["init"], remoteDir);
-			git(["config", "--local", "user.email", "test@test.com"], remoteDir);
-			git(["config", "--local", "user.name", "Test"], remoteDir);
+			initGitRepo(remoteDir);
 			writeFileSync(join(remoteDir, "package.json"), JSON.stringify({ name: "test-extension", version: "1.0.0" }));
 			createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
 
@@ -283,9 +285,7 @@ describe("DefaultPackageManager git update", () => {
 		it("should not update pinned git sources (with @ref)", async () => {
 			// Create remote repo first to get the initial commit
 			mkdirSync(remoteDir, { recursive: true });
-			git(["init"], remoteDir);
-			git(["config", "--local", "user.email", "test@test.com"], remoteDir);
-			git(["config", "--local", "user.name", "Test"], remoteDir);
+			initGitRepo(remoteDir);
 			const initialCommit = createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
 
 			// Install with pinned ref from the start - full clone to ensure commit is available

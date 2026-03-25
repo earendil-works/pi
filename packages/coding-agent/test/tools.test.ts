@@ -158,7 +158,7 @@ describe("Coding Agent Tools", () => {
 
 		it("should detect image MIME type from file magic (not extension)", async () => {
 			const png1x1Base64 =
-				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+X2Z0AAAAASUVORK5CYII=";
+				"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYGD4DwABBAEAX+XDSwAAAABJRU5ErkJggg==";
 			const pngBuffer = Buffer.from(png1x1Base64, "base64");
 
 			const testFile = join(testDir, "image.txt");

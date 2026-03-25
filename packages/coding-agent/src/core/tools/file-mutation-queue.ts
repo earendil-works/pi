@@ -1,12 +1,12 @@
-import { realpath } from "node:fs/promises";
+import { realpathSync } from "node:fs";
 import { resolve } from "node:path";
 
 const fileMutationQueues = new Map<string, Promise<void>>();
 
-async function getMutationQueueKey(filePath: string): Promise<string> {
+function getMutationQueueKey(filePath: string): string {
 	const resolvedPath = resolve(filePath);
 	try {
-		return await realpath(resolvedPath);
+		return realpathSync.native(resolvedPath);
 	} catch {
 		return resolvedPath;
 	}
@@ -17,7 +17,7 @@ async function getMutationQueueKey(filePath: string): Promise<string> {
  * Operations for different files still run in parallel.
  */
 export async function withFileMutationQueue<T>(filePath: string, fn: () => Promise<T>): Promise<T> {
-	const key = await getMutationQueueKey(filePath);
+	const key = getMutationQueueKey(filePath);
 	const currentQueue = fileMutationQueues.get(key) ?? Promise.resolve();
 
 	let releaseNext!: () => void;

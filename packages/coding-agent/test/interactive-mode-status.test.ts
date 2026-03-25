@@ -136,7 +136,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 						diagnostics: options.skillDiagnostics ?? [],
 					}),
 					getPrompts: () => ({ prompts: [], diagnostics: [] }),
-					getExtensions: () => ({ errors: [] }),
+					getExtensions: () => ({ extensions: [], errors: [], runtime: {} }),
 					getThemes: () => ({ themes: [], diagnostics: [] }),
 				},
 			},
@@ -145,6 +145,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 			formatScopeGroups: () => "resource-list",
 			getShortPath: (p: string) => p,
 			formatDiagnostics: () => "diagnostics",
+			getBuiltInCommandConflictDiagnostics: () => [],
 		};
 
 		return fakeThis;
@@ -157,7 +158,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 		});
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
-			extensionPaths: ["/tmp/ext/index.ts"],
+			extensions: [{ path: "/tmp/ext/index.ts" }],
 			force: false,
 			showDiagnosticsWhenQuiet: true,
 		});

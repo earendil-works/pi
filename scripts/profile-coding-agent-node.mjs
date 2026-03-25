@@ -37,6 +37,7 @@ Options:
   --isolated-agent-dir   Use a fresh temporary agent dir instead of the normal one
   --no-offline           Do not force PI_OFFLINE=1 / PI_SKIP_VERSION_CHECK=1
   --skip-build           Reuse the current dist/cli.js without rebuilding first (Node only)
+  --cpu-profile          Write CPU profiles for benchmark runs
   --help                 Show this help
 
 Notes:
@@ -81,6 +82,7 @@ function parseArgs(argv) {
 		runtime: "auto",
 		agentDir: undefined,
 		isolatedAgentDir: false,
+		cpuProfile: false,
 	};
 
 	for (let index = 0; index < argv.length; index++) {
@@ -103,6 +105,11 @@ function parseArgs(argv) {
 
 		if (arg === "--skip-build") {
 			options.build = false;
+			continue;
+		}
+
+		if (arg === "--cpu-profile") {
+			options.cpuProfile = true;
 			continue;
 		}
 
@@ -208,6 +215,56 @@ function summarize(values) {
 	};
 }
 
+function parseStartupTimings(stderr) {
+	const lines = stderr.split(/\r?\n/);
+	const timings = new Map();
+	let inBlock = false;
+
+	for (const line of lines) {
+		if (line.includes("--- Startup Timings ---")) {
+			inBlock = true;
+			continue;
+		}
+		if (!inBlock) {
+			continue;
+		}
+		if (line.includes("------------------------")) {
+			break;
+		}
+		const match = line.match(/^\s+([^:]+):\s+(\d+)ms$/);
+		if (!match) {
+			continue;
+		}
+		timings.set(match[1], Number.parseInt(match[2], 10));
+	}
+
+	return timings;
+}
+
+function summarizeTimingMaps(runs) {
+	const valuesByLabel = new Map();
+	for (const run of runs) {
+		for (const [label, value] of run.timings.entries()) {
+			const values = valuesByLabel.get(label);
+			if (values) {
+				values.push(value);
+			} else {
+				valuesByLabel.set(label, [value]);
+			}
+		}
+	}
+
+	const summaries = new Map();
+	for (const [label, values] of valuesByLabel.entries()) {
+		summaries.set(label, summarize(values));
+	}
+	return summaries;
+}
+
+function toMetricName(label) {
+	return `${label.replaceAll(/[^a-zA-Z0-9]+/g, "_").replaceAll(/^_+|_+$/g, "")}_ms`;
+}
+
 async function waitForExit(child, errorPrefix) {
 	return await new Promise((resolve, reject) => {
 		child.once("error", reject);
@@ -222,14 +279,29 @@ async function waitForExit(child, errorPrefix) {
 }
 
 async function runBuild() {
-	process.stdout.write("Building packages/coding-agent...\n");
+	process.stdout.write("Building packages/tui, packages/ai, packages/agent, and packages/coding-agent...\n");
 	const startedAt = performance.now();
-	const child = spawn("npm", ["run", "build"], {
-		cwd: packageDir,
-		env: process.env,
-		stdio: ["ignore", "pipe", "pipe"],
-		shell: process.platform === "win32",
-	});
+	const child = spawn(
+		"npm",
+		[
+			"run",
+			"build",
+			"--workspace",
+			"packages/tui",
+			"--workspace",
+			"packages/ai",
+			"--workspace",
+			"packages/agent",
+			"--workspace",
+			"packages/coding-agent",
+		],
+		{
+			cwd: repoRoot,
+			env: process.env,
+			stdio: ["ignore", "pipe", "pipe"],
+			shell: process.platform === "win32",
+		},
+	);
 
 	let stdout = "";
 	let stderr = "";
@@ -256,34 +328,32 @@ async function runBuild() {
 	process.stdout.write(`Build completed in ${formatMs(performance.now() - startedAt)}\n`);
 }
 
-function getRuntimeCommand(runtime, mode, profileDir, profileName) {
+function getRuntimeCommand(runtime, mode, profileDir, profileName, cpuProfile) {
 	const benchmarkArgs = ["--no-session"];
 	if (mode === "rpc") {
 		benchmarkArgs.push("--mode", "rpc");
 	}
 
 	if (runtime === "bun") {
+		const args = [];
+		if (cpuProfile) {
+			args.push("--cpu-prof", `--cpu-prof-dir=${profileDir}`, `--cpu-prof-name=${profileName}`);
+		}
+		args.push(srcCliPath, ...benchmarkArgs);
 		return {
 			executable: "bun",
-			args: [
-				"--cpu-prof",
-				`--cpu-prof-dir=${profileDir}`,
-				`--cpu-prof-name=${profileName}`,
-				srcCliPath,
-				...benchmarkArgs,
-			],
+			args,
 		};
 	}
 
+	const args = [];
+	if (cpuProfile) {
+		args.push("--cpu-prof", `--cpu-prof-dir=${profileDir}`, `--cpu-prof-name=${profileName}`);
+	}
+	args.push(distCliPath, ...benchmarkArgs);
 	return {
 		executable: process.execPath,
-		args: [
-			"--cpu-prof",
-			`--cpu-prof-dir=${profileDir}`,
-			`--cpu-prof-name=${profileName}`,
-			distCliPath,
-			...benchmarkArgs,
-		],
+		args,
 	};
 }
 
@@ -314,7 +384,7 @@ async function runTuiBenchmarkRun({ runtime, runIndex, measuredIndex, options, p
 		mkdirSync(isolatedAgentDir, { recursive: true });
 	}
 
-	const command = getRuntimeCommand(runtime, "tui", profileDir, profileName);
+	const command = getRuntimeCommand(runtime, "tui", profileDir, profileName, options.cpuProfile);
 	const child = spawn(command.executable, command.args, {
 		cwd: packageDir,
 		env: createBenchmarkEnv(options, isolatedAgentDir),
@@ -337,12 +407,12 @@ async function runTuiBenchmarkRun({ runtime, runIndex, measuredIndex, options, p
 			throw new Error(stderr.trim() || `Benchmark child exited with code ${exitCode}`);
 		}
 
-		const profilePath = join(profileDir, profileName);
-		if (!existsSync(profilePath)) {
+		const profilePath = options.cpuProfile ? join(profileDir, profileName) : undefined;
+		if (profilePath && !existsSync(profilePath)) {
 			throw new Error(`CPU profile was not written: ${profilePath}`);
 		}
 
-		return { elapsedMs, profilePath };
+		return { elapsedMs, profilePath, timings: parseStartupTimings(stderr) };
 	} finally {
 		if (tempRoot) {
 			rmSync(tempRoot, { recursive: true, force: true });
@@ -373,7 +443,7 @@ async function runRpcBenchmarkRun({ runtime, runIndex, measuredIndex, options, p
 		mkdirSync(isolatedAgentDir, { recursive: true });
 	}
 
-	const command = getRuntimeCommand(runtime, "rpc", profileDir, profileName);
+	const command = getRuntimeCommand(runtime, "rpc", profileDir, profileName, options.cpuProfile);
 	const child = spawn(command.executable, command.args, {
 		cwd: packageDir,
 		env: createBenchmarkEnv(options, isolatedAgentDir),
@@ -439,12 +509,12 @@ async function runRpcBenchmarkRun({ runtime, runIndex, measuredIndex, options, p
 			throw new Error(stderr.trim() || `Benchmark child exited with code ${exitCode}`);
 		}
 
-		const profilePath = join(profileDir, profileName);
-		if (!existsSync(profilePath)) {
+		const profilePath = options.cpuProfile ? join(profileDir, profileName) : undefined;
+		if (profilePath && !existsSync(profilePath)) {
 			throw new Error(`CPU profile was not written: ${profilePath}`);
 		}
 
-		return { elapsedMs: readyElapsedMs, profilePath };
+		return { elapsedMs: readyElapsedMs, profilePath, timings: parseStartupTimings(stderr) };
 	} finally {
 		if (tempRoot) {
 			rmSync(tempRoot, { recursive: true, force: true });
@@ -521,14 +591,24 @@ async function main() {
 	}
 
 	const elapsedSummary = summarize(measuredRuns.map((run) => run.elapsedMs));
+	const timingSummaries = summarizeTimingMaps(measuredRuns);
 	const maxElapsedRun = measuredRuns.reduce((slowest, run) => (run.elapsedMs > slowest.elapsedMs ? run : slowest));
 	if (measuredRuns.length === 1) {
 		process.stdout.write("\nResult\n");
 		process.stdout.write(`  runtime:          ${runtime}\n`);
 		process.stdout.write(`  mode:             ${options.mode}\n`);
 		process.stdout.write(`  elapsed:          ${formatMs(measuredRuns[0].elapsedMs)}\n`);
-		process.stdout.write(`  selected profile: ${toDisplayPath(maxElapsedRun.profilePath)}\n`);
-		process.stdout.write(`  profiles dir:     ${toDisplayPath(profileDir)}\n`);
+		for (const [label, summary] of timingSummaries.entries()) {
+			process.stdout.write(`  ${label}: ${formatMs(summary.median)}\n`);
+		}
+		if (options.cpuProfile && maxElapsedRun.profilePath) {
+			process.stdout.write(`  selected profile: ${toDisplayPath(maxElapsedRun.profilePath)}\n`);
+			process.stdout.write(`  profiles dir:     ${toDisplayPath(profileDir)}\n`);
+		}
+		process.stdout.write(`METRIC startup_time_ms=${measuredRuns[0].elapsedMs.toFixed(1)}\n`);
+		for (const [label, summary] of timingSummaries.entries()) {
+			process.stdout.write(`METRIC ${toMetricName(label)}=${summary.median.toFixed(1)}\n`);
+		}
 		return;
 	}
 
@@ -539,8 +619,17 @@ async function main() {
 	process.stdout.write(`  elapsed median:   ${formatMs(elapsedSummary.median)}\n`);
 	process.stdout.write(`  elapsed avg:      ${formatMs(elapsedSummary.avg)}\n`);
 	process.stdout.write(`  elapsed max:      ${formatMs(elapsedSummary.max)}\n`);
-	process.stdout.write(`  selected profile: ${toDisplayPath(maxElapsedRun.profilePath)}\n`);
-	process.stdout.write(`  profiles dir:     ${toDisplayPath(profileDir)}\n`);
+	for (const [label, summary] of timingSummaries.entries()) {
+		process.stdout.write(`  ${label} median: ${formatMs(summary.median)}\n`);
+	}
+	if (options.cpuProfile && maxElapsedRun.profilePath) {
+		process.stdout.write(`  selected profile: ${toDisplayPath(maxElapsedRun.profilePath)}\n`);
+		process.stdout.write(`  profiles dir:     ${toDisplayPath(profileDir)}\n`);
+	}
+	process.stdout.write(`METRIC startup_time_ms=${elapsedSummary.median.toFixed(1)}\n`);
+	for (const [label, summary] of timingSummaries.entries()) {
+		process.stdout.write(`METRIC ${toMetricName(label)}=${summary.median.toFixed(1)}\n`);
+	}
 }
 
 main().catch((error) => {

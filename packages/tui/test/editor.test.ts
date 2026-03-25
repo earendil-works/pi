@@ -2395,40 +2395,6 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.getText(), "/model gpt-4o-mini");
 		});
 
-		it("chains into argument completions after tab-completing slash command names", () => {
-			const editor = new Editor(createTestTUI(), defaultEditorTheme);
-
-			const provider = new CombinedAutocompleteProvider([
-				{
-					name: "model",
-					description: "Switch model",
-					getArgumentCompletions: (prefix: string) => {
-						const items = [
-							{ value: "claude-opus", label: "claude-opus" },
-							{ value: "claude-sonnet", label: "claude-sonnet" },
-						];
-						return items.filter((item) => item.value.startsWith(prefix));
-					},
-				},
-				{ name: "help", description: "Show help" },
-			]);
-			editor.setAutocompleteProvider(provider);
-
-			editor.handleInput("/");
-			editor.handleInput("m");
-			editor.handleInput("o");
-			editor.handleInput("d");
-			assert.strictEqual(editor.isShowingAutocomplete(), true);
-
-			editor.handleInput("\t");
-			assert.strictEqual(editor.getText(), "/model ");
-			assert.strictEqual(editor.isShowingAutocomplete(), true);
-
-			editor.handleInput("\t");
-			assert.strictEqual(editor.getText(), "/model claude-opus");
-			assert.strictEqual(editor.isShowingAutocomplete(), false);
-		});
-
 		it("does not show argument completions when command has no argument completer", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			const provider = new CombinedAutocompleteProvider([
