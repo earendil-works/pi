@@ -1820,6 +1820,12 @@ export class AgentSession {
 	 * Internal: Run auto-compaction with events.
 	 */
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<void> {
+		// Guard against concurrent executions that could corrupt shared abort controller state
+		if (this.isCompacting) {
+			this._emit({ type: "compaction_end", reason, result: undefined, aborted: true, willRetry: false });
+			return;
+		}
+
 		const settings = this.settingsManager.getCompactionSettings();
 
 		this._emit({ type: "compaction_start", reason });
