@@ -105,6 +105,18 @@ describe("skills", () => {
 			expect(diagnostics).toHaveLength(0);
 		});
 
+		it("should ignore root markdown files and only load nested SKILL.md files", () => {
+			const { skills, diagnostics } = loadSkillsFromDir({
+				dir: join(fixturesDir, "strict-root-ignore"),
+				source: "test",
+			});
+
+			expect(skills).toHaveLength(1);
+			expect(skills[0].name).toBe("real-skill");
+			expect(skills[0].description).toBe("A real skill nested below ignored root docs.");
+			expect(diagnostics).toHaveLength(0);
+		});
+
 		it("should prefer a directory's root SKILL.md over nested SKILL.md files", () => {
 			const { skills, diagnostics } = loadSkillsFromDir({
 				dir: join(fixturesDir, "root-skill-preferred"),
@@ -356,6 +368,18 @@ describe("skills", () => {
 				skillPaths: [join(fixturesDir, "valid-skill")],
 			});
 			expect(skills).toHaveLength(1);
+			expect(skills[0].sourceInfo.scope).toBe("temporary");
+			expect(diagnostics).toHaveLength(0);
+		});
+
+		it("should load an explicit markdown file path", () => {
+			const { skills, diagnostics } = loadSkills({
+				agentDir: emptyAgentDir,
+				cwd: emptyCwd,
+				skillPaths: [join(fixturesDir, "explicit-file", "custom.md")],
+			});
+			expect(skills).toHaveLength(1);
+			expect(skills[0].name).toBe("explicit-file");
 			expect(skills[0].sourceInfo.scope).toBe("temporary");
 			expect(diagnostics).toHaveLength(0);
 		});
