@@ -1032,9 +1032,19 @@ export class InteractiveMode {
 		}
 
 		if (showListing) {
+			this.chatContainer.addChild(new Spacer(1));
+
+			const systemPromptFiles = this.session.resourceLoader.getLoadedSystemPromptFiles?.() ?? [];
+			if (systemPromptFiles.length > 0) {
+				const systemList = systemPromptFiles
+					.map((file) => theme.fg("dim", `  ${this.formatDisplayPath(file)}`))
+					.join("\n");
+				this.chatContainer.addChild(new Text(`${sectionHeader("System")}\n${systemList}`, 0, 0));
+				this.chatContainer.addChild(new Spacer(1));
+			}
+
 			const contextFiles = this.session.resourceLoader.getAgentsFiles().agentsFiles;
 			if (contextFiles.length > 0) {
-				this.chatContainer.addChild(new Spacer(1));
 				const contextList = contextFiles
 					.map((f) => theme.fg("dim", `  ${this.formatDisplayPath(f.path)}`))
 					.join("\n");
