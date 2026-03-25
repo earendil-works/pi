@@ -39,10 +39,10 @@ describe("DefaultResourceLoader", () => {
 		});
 
 		it("should discover skills from agentDir", async () => {
-			const skillsDir = join(agentDir, "skills");
-			mkdirSync(skillsDir, { recursive: true });
+			const skillDir = join(agentDir, "skills", "test-skill");
+			mkdirSync(skillDir, { recursive: true });
 			writeFileSync(
-				join(skillsDir, "test-skill.md"),
+				join(skillDir, "SKILL.md"),
 				`---
 name: test-skill
 description: A test skill
@@ -55,6 +55,25 @@ Skill content here.`,
 
 			const { skills } = loader.getSkills();
 			expect(skills.some((s) => s.name === "test-skill")).toBe(true);
+		});
+
+		it("should ignore root markdown files in skill directories", async () => {
+			const skillsDir = join(agentDir, "skills");
+			mkdirSync(skillsDir, { recursive: true });
+			writeFileSync(
+				join(skillsDir, "stray-file.md"),
+				`---
+name: stray-file
+description: Should not be discovered
+---
+Content`,
+			);
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			const { skills } = loader.getSkills();
+			expect(skills.some((s) => s.name === "stray-file")).toBe(false);
 		});
 
 		it("should ignore extra markdown files in auto-discovered skill dirs", async () => {
@@ -368,10 +387,10 @@ Extra prompt content`,
 
 	describe("noSkills option", () => {
 		it("should skip skill discovery when noSkills is true", async () => {
-			const skillsDir = join(agentDir, "skills");
-			mkdirSync(skillsDir, { recursive: true });
+			const skillDir = join(agentDir, "skills", "test-skill");
+			mkdirSync(skillDir, { recursive: true });
 			writeFileSync(
-				join(skillsDir, "test-skill.md"),
+				join(skillDir, "SKILL.md"),
 				`---
 name: test-skill
 description: A test skill
@@ -387,10 +406,10 @@ Content`,
 		});
 
 		it("should still load additional skill paths when noSkills is true", async () => {
-			const customSkillDir = join(tempDir, "custom-skills");
+			const customSkillDir = join(tempDir, "custom-skills", "custom");
 			mkdirSync(customSkillDir, { recursive: true });
 			writeFileSync(
-				join(customSkillDir, "custom.md"),
+				join(customSkillDir, "SKILL.md"),
 				`---
 name: custom
 description: Custom skill
@@ -402,7 +421,7 @@ Content`,
 				cwd,
 				agentDir,
 				noSkills: true,
-				additionalSkillPaths: [customSkillDir],
+				additionalSkillPaths: [join(tempDir, "custom-skills")],
 			});
 			await loader.reload();
 

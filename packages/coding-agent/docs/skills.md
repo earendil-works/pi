@@ -34,8 +34,8 @@ Pi loads skills from:
 - CLI: `--skill <path>` (repeatable, additive even with `--no-skills`)
 
 Discovery rules:
-- Direct `.md` files in the skills directory root
-- Recursive `SKILL.md` files under subdirectories
+- Only directories containing `SKILL.md` are discovered (recursively)
+- Arbitrary `.md` files at the skills directory root are ignored
 
 Disable discovery with `--no-skills` (explicit `--skill` paths still load).
 

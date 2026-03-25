@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Skill directory scanning now only discovers directories containing `SKILL.md`. Arbitrary `.md` files at the skills directory root are no longer auto-discovered. Explicit `--skill <path>` loading of individual markdown files still works.
+
 ### Fixed
 
 - Added missing `ajv` direct dependency; previously relied on transitive install via `@mariozechner/pi-ai` which broke standalone installs ([#2252](https://github.com/badlogic/pi-mono/issues/2252))

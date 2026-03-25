@@ -166,18 +166,17 @@ function createSkillSourceInfo(filePath: string, baseDir: string, source: string
  *
  * Discovery rules:
  * - if a directory contains SKILL.md, treat it as a skill root and do not recurse further
- * - otherwise, load direct .md children in the root
  * - recurse into subdirectories to find SKILL.md
+ * - arbitrary root markdown files are NOT auto-discovered
  */
 export function loadSkillsFromDir(options: LoadSkillsFromDirOptions): LoadSkillsResult {
 	const { dir, source } = options;
-	return loadSkillsFromDirInternal(dir, source, true);
+	return loadSkillsFromDirInternal(dir, source);
 }
 
 function loadSkillsFromDirInternal(
 	dir: string,
 	source: string,
-	includeRootFiles: boolean,
 	ignoreMatcher?: IgnoreMatcher,
 	rootDir?: string,
 ): LoadSkillsResult {
@@ -238,40 +237,27 @@ function loadSkillsFromDirInternal(
 
 			// For symlinks, check if they point to a directory and follow them
 			let isDirectory = entry.isDirectory();
-			let isFile = entry.isFile();
 			if (entry.isSymbolicLink()) {
 				try {
-					const stats = statSync(fullPath);
-					isDirectory = stats.isDirectory();
-					isFile = stats.isFile();
+					isDirectory = statSync(fullPath).isDirectory();
 				} catch {
 					// Broken symlink, skip it
 					continue;
 				}
 			}
 
+			if (!isDirectory) {
+				continue;
+			}
+
 			const relPath = toPosixPath(relative(root, fullPath));
-			const ignorePath = isDirectory ? `${relPath}/` : relPath;
-			if (ig.ignores(ignorePath)) {
+			if (ig.ignores(`${relPath}/`)) {
 				continue;
 			}
 
-			if (isDirectory) {
-				const subResult = loadSkillsFromDirInternal(fullPath, source, false, ig, root);
-				skills.push(...subResult.skills);
-				diagnostics.push(...subResult.diagnostics);
-				continue;
-			}
-
-			if (!isFile || !includeRootFiles || !entry.name.endsWith(".md")) {
-				continue;
-			}
-
-			const result = loadSkillFromFile(fullPath, source);
-			if (result.skill) {
-				skills.push(result.skill);
-			}
-			diagnostics.push(...result.diagnostics);
+			const subResult = loadSkillsFromDirInternal(fullPath, source, ig, root);
+			skills.push(...subResult.skills);
+			diagnostics.push(...subResult.diagnostics);
 		}
 	} catch {}
 
@@ -449,8 +435,8 @@ export function loadSkills(options: LoadSkillsOptions = {}): LoadSkillsResult {
 	}
 
 	if (includeDefaults) {
-		addSkills(loadSkillsFromDirInternal(join(resolvedAgentDir, "skills"), "user", true));
-		addSkills(loadSkillsFromDirInternal(resolve(cwd, CONFIG_DIR_NAME, "skills"), "project", true));
+		addSkills(loadSkillsFromDirInternal(join(resolvedAgentDir, "skills"), "user"));
+		addSkills(loadSkillsFromDirInternal(resolve(cwd, CONFIG_DIR_NAME, "skills"), "project"));
 	}
 
 	const userSkillsDir = join(resolvedAgentDir, "skills");
@@ -484,7 +470,7 @@ export function loadSkills(options: LoadSkillsOptions = {}): LoadSkillsResult {
 			const stats = statSync(resolvedPath);
 			const source = getSource(resolvedPath);
 			if (stats.isDirectory()) {
-				addSkills(loadSkillsFromDirInternal(resolvedPath, source, true));
+				addSkills(loadSkillsFromDirInternal(resolvedPath, source));
 			} else if (stats.isFile() && resolvedPath.endsWith(".md")) {
 				const result = loadSkillFromFile(resolvedPath, source);
 				if (result.skill) {

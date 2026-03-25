@@ -249,12 +249,7 @@ function collectFiles(
 	return files;
 }
 
-function collectSkillEntries(
-	dir: string,
-	includeRootFiles = true,
-	ignoreMatcher?: IgnoreMatcher,
-	rootDir?: string,
-): string[] {
+function collectSkillEntries(dir: string, ignoreMatcher?: IgnoreMatcher, rootDir?: string): string[] {
 	const entries: string[] = [];
 	if (!existsSync(dir)) return entries;
 
@@ -264,37 +259,50 @@ function collectSkillEntries(
 
 	try {
 		const dirEntries = readdirSync(dir, { withFileTypes: true });
+
+		// Check if this directory itself contains SKILL.md
+		for (const entry of dirEntries) {
+			if (entry.name === "SKILL.md") {
+				const fullPath = join(dir, entry.name);
+				let isFile = entry.isFile();
+				if (entry.isSymbolicLink()) {
+					try {
+						isFile = statSync(fullPath).isFile();
+					} catch {
+						break;
+					}
+				}
+				const relPath = toPosixPath(relative(root, fullPath));
+				if (isFile && !ig.ignores(relPath)) {
+					entries.push(fullPath);
+					return entries;
+				}
+				break;
+			}
+		}
+
+		// Recurse into subdirectories
 		for (const entry of dirEntries) {
 			if (entry.name.startsWith(".")) continue;
 			if (entry.name === "node_modules") continue;
 
 			const fullPath = join(dir, entry.name);
 			let isDir = entry.isDirectory();
-			let isFile = entry.isFile();
 
 			if (entry.isSymbolicLink()) {
 				try {
-					const stats = statSync(fullPath);
-					isDir = stats.isDirectory();
-					isFile = stats.isFile();
+					isDir = statSync(fullPath).isDirectory();
 				} catch {
 					continue;
 				}
 			}
 
-			const relPath = toPosixPath(relative(root, fullPath));
-			const ignorePath = isDir ? `${relPath}/` : relPath;
-			if (ig.ignores(ignorePath)) continue;
+			if (!isDir) continue;
 
-			if (isDir) {
-				entries.push(...collectSkillEntries(fullPath, false, ig, root));
-			} else if (isFile) {
-				const isRootMd = includeRootFiles && entry.name.endsWith(".md");
-				const isSkillMd = !includeRootFiles && entry.name === "SKILL.md";
-				if (isRootMd || isSkillMd) {
-					entries.push(fullPath);
-				}
-			}
+			const relPath = toPosixPath(relative(root, fullPath));
+			if (ig.ignores(`${relPath}/`)) continue;
+
+			entries.push(...collectSkillEntries(fullPath, ig, root));
 		}
 	} catch {
 		// Ignore errors
@@ -303,8 +311,8 @@ function collectSkillEntries(
 	return entries;
 }
 
-function collectAutoSkillEntries(dir: string, includeRootFiles = true): string[] {
-	return collectSkillEntries(dir, includeRootFiles);
+function collectAutoSkillEntries(dir: string): string[] {
+	return collectSkillEntries(dir);
 }
 
 function findGitRepoRoot(startDir: string): string | null {
