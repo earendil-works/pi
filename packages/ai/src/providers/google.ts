@@ -211,7 +211,7 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 
 				if (chunk.usageMetadata) {
 					output.usage = {
-						input: chunk.usageMetadata.promptTokenCount || 0,
+						input: (chunk.usageMetadata.promptTokenCount || 0) - (chunk.usageMetadata.cachedContentTokenCount || 0),
 						output:
 							(chunk.usageMetadata.candidatesTokenCount || 0) + (chunk.usageMetadata.thoughtsTokenCount || 0),
 						cacheRead: chunk.usageMetadata.cachedContentTokenCount || 0,
