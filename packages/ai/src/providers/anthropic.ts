@@ -383,7 +383,13 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 								partial: output,
 							});
 						} else if (block.type === "toolCall") {
-							block.arguments = parseStreamingJson(block.partialJson);
+							// Only parse partialJson when it was actually accumulated via
+							// input_json_delta. When partialJson is empty, content_block_start
+							// already set block.arguments correctly (Kimi's non-incremental path).
+							// parseStreamingJson("") returns {} which would overwrite valid args.
+							if (block.partialJson) {
+								block.arguments = parseStreamingJson(block.partialJson);
+							}
 							delete (block as any).partialJson;
 							stream.push({
 								type: "toolcall_end",
