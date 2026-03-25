@@ -229,6 +229,7 @@ pi starts (CLI only)
   │
   ├─► session_directory (CLI startup only, no ctx)
   └─► session_start
+      └─► resources_discover (startup; can add skills/prompts/themes)
       │
       ▼
 user sends prompt ─────────────────────────────────────────┐
@@ -315,6 +316,40 @@ pi.on("session_start", async (_event, ctx) => {
   ctx.ui.notify(`Session: ${ctx.sessionManager.getSessionFile() ?? "ephemeral"}`, "info");
 });
 ```
+
+#### resources_discover
+
+Fired after `session_start` to let extensions provide additional resource paths.
+
+This event fires:
+- On startup with `event.reason === "startup"`
+- On `/reload` with `event.reason === "reload"`
+
+Handlers can return additional paths for:
+- `skillPaths`
+- `promptPaths`
+- `themePaths`
+
+A common pattern is mapping `.claude/skills` to `skillPaths` and `.claude/commands/*.md` to `promptPaths`.
+
+```typescript
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const baseDir = dirname(fileURLToPath(import.meta.url));
+
+pi.on("resources_discover", (event) => {
+  // event.cwd - current working directory
+  // event.reason - "startup" | "reload"
+  return {
+    skillPaths: [join(baseDir, "SKILL.md")],
+    promptPaths: [join(baseDir, "dynamic.md")],
+    themePaths: [join(baseDir, "dynamic.json")],
+  };
+});
+```
+
+See [dynamic-resources example](../examples/extensions/dynamic-resources/index.ts) and [claude-local-resources example](../examples/extensions/claude-local-resources/index.ts).
 
 #### session_before_switch / session_switch
 

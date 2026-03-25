@@ -10,6 +10,10 @@
 - Fixed `pi update` for git packages to fetch only the tracked target branch with `--no-tags`, reducing unrelated branch and tag noise while preserving force-push-safe updates ([#2548](https://github.com/badlogic/pi-mono/issues/2548))
 - Fixed print and JSON modes to emit `session_shutdown` before exit, so extensions can release long-lived resources and non-interactive runs terminate cleanly ([#2576](https://github.com/badlogic/pi-mono/issues/2576))
 
+### Changed
+
+- Documented the `resources_discover` extension event in `docs/extensions.md`, including lifecycle timing, reload behavior, and return path fields for dynamic skills, prompts, and themes ([#2597](https://github.com/badlogic/pi-mono/pull/2597) by [@aliou](https://github.com/aliou))
+
 ## [0.62.0] - 2026-03-23
 
 ### New Features
