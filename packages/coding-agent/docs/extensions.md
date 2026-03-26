@@ -1022,12 +1022,25 @@ pi.sendUserMessage([
 // During streaming - must specify delivery mode
 pi.sendUserMessage("Focus on error handling", { deliverAs: "steer" });
 pi.sendUserMessage("And then summarize", { deliverAs: "followUp" });
+
+// Opt in to normal TUI slash-command / template / skill expansion
+// (example assumes /review is available in the current session)
+pi.sendUserMessage("/review focus on error handling", { expandPromptTemplates: true });
 ```
 
 **Options:**
 - `deliverAs` - Required when agent is streaming:
   - `"steer"` - Queues the message for delivery after the current assistant turn finishes executing its tool calls
   - `"followUp"` - Waits for agent to finish all tools
+- `expandPromptTemplates` - Whether to expand slash commands, skill commands, and prompt templates. Default: `false`.
+  - `false` preserves literal injected text and avoids accidentally triggering local commands from extensions
+  - `true` makes injected input behave like normal TUI-entered slash-aware input
+
+Important behavior when `expandPromptTemplates: true`:
+- Prompt templates and skill commands expand into normal text, so `deliverAs` queueing still applies to the expanded text.
+- Extension commands execute immediately with normal command semantics, even while the agent is streaming.
+- `deliverAs` does **not** defer extension command execution. If a command must wait until the agent is idle, make the command handler do `await ctx.waitForIdle()` itself before taking action.
+- Built-in interactive commands (such as `/model` or `/settings`) are not executed via `sendUserMessage()` / `prompt()`.
 
 When not streaming, the message is sent immediately and triggers a new turn. When streaming without `deliverAs`, throws an error.
 
