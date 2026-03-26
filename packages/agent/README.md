@@ -364,8 +364,8 @@ const readFileTool: AgentTool = {
     onUpdate?.({ content: [{ type: "text", text: "Reading..." }], details: {} });
 
     return {
-      content: [{ type: "text", text: content }],
-      details: { path: params.path, size: content.length },
+      content: [{ type: "text", text: content }], // Content will be sent to LLM
+      details: { path: params.path, size: content.length }, // Details will not be sent to LLM, it's for debug or log only
     };
   },
 };
