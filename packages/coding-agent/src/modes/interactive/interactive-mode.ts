@@ -2242,6 +2242,11 @@ export class InteractiveMode {
 				this.ui.requestRender();
 				break;
 
+			case "queue_update":
+				this.updatePendingMessagesDisplay();
+				this.ui.requestRender();
+				break;
+
 			case "message_start":
 				if (event.message.role === "custom") {
 					this.addMessageToChat(event.message);

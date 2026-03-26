@@ -1022,12 +1022,18 @@ pi.sendUserMessage([
 // During streaming - must specify delivery mode
 pi.sendUserMessage("Focus on error handling", { deliverAs: "steer" });
 pi.sendUserMessage("And then summarize", { deliverAs: "followUp" });
+
+// Opt in to normal TUI slash-command / template / skill expansion
+pi.sendUserMessage("/reload-runtime", { expandPromptTemplates: true });
 ```
 
 **Options:**
 - `deliverAs` - Required when agent is streaming:
   - `"steer"` - Queues the message for delivery after the current assistant turn finishes executing its tool calls
   - `"followUp"` - Waits for agent to finish all tools
+- `expandPromptTemplates` - Whether to expand slash commands, skill commands, and prompt templates. Default: `false`.
+  - `false` preserves literal injected text and avoids accidentally triggering local commands from extensions
+  - `true` makes injected input behave like normal TUI-entered input
 
 When not streaming, the message is sent immediately and triggers a new turn. When streaming without `deliverAs`, throws an error.
 
