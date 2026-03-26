@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added reconnectable Unix-socket RPC mode via `--rpc-socket <path>`, keeping pi alive across client disconnects while accepting one connected RPC client at a time.
+
 ### Fixed
 
 - Fixed interactive input fields backed by the TUI `Input` component to scroll by visual column width for wide Unicode text (CJK, fullwidth characters), preventing rendered line overflow and TUI crashes in places like search and filter inputs ([#1982](https://github.com/badlogic/pi-mono/issues/1982))

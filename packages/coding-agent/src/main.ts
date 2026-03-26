@@ -691,6 +691,11 @@ export async function main(args: string[]) {
 		process.exit(0);
 	}
 
+	if (parsed.rpcSocket && parsed.mode !== "rpc") {
+		console.error(chalk.red("Error: --rpc-socket requires --mode rpc"));
+		process.exit(1);
+	}
+
 	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {
 		console.error(chalk.red("Error: @file arguments are not supported in RPC mode"));
 		process.exit(1);
@@ -783,7 +788,7 @@ export async function main(args: string[]) {
 	}
 
 	if (mode === "rpc") {
-		await runRpcMode(session);
+		await runRpcMode(session, { socketPath: parsed.rpcSocket });
 	} else if (isInteractive) {
 		if (scopedModels.length > 0 && (parsed.verbose || !settingsManager.getQuietStartup())) {
 			const modelList = scopedModels

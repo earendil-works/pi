@@ -10,19 +10,36 @@ RPC mode enables headless operation of the coding agent via a JSON protocol over
 pi --mode rpc [options]
 ```
 
+Unix socket server mode:
+
+```bash
+pi --mode rpc --rpc-socket /tmp/pi.sock [options]
+```
+
 Common options:
 - `--provider <name>`: Set the LLM provider (anthropic, openai, google, etc.)
 - `--model <pattern>`: Model pattern or ID (supports `provider/id` and optional `:<thinking>`)
 - `--no-session`: Disable session persistence
 - `--session-dir <path>`: Custom session storage directory
+- `--rpc-socket <path>`: Listen on a Unix socket instead of stdio, keeping pi alive across client disconnects
 
 ## Protocol Overview
 
-- **Commands**: JSON objects sent to stdin, one per line
+- **Commands**: JSON objects sent over stdin or the RPC socket, one per line
 - **Responses**: JSON objects with `type: "response"` indicating command success/failure
-- **Events**: Agent events streamed to stdout as JSON lines
+- **Events**: Agent events streamed back over stdout or the RPC socket as JSON lines
 
 All commands support an optional `id` field for request/response correlation. If provided, the corresponding response will include the same `id`.
+
+### Socket mode
+
+With `--rpc-socket <path>`, pi listens on a Unix socket instead of stdio. The protocol is still strict JSONL; only the transport changes.
+
+Socket mode is designed for reconnectable embeddings:
+- pi stays alive when the client disconnects
+- a new client can reconnect later and continue using the same session
+- only one client can be connected at a time; additional concurrent connections are rejected immediately
+- events are not replayed while no client is connected, so reconnecting clients should resync with `get_state`, `get_messages`, or both
 
 ### Framing
 

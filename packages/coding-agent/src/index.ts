@@ -271,6 +271,7 @@ export {
 	InteractiveMode,
 	type InteractiveModeOptions,
 	type PrintModeOptions,
+	type RpcModeOptions,
 	runPrintMode,
 	runRpcMode,
 } from "./modes/index.js";

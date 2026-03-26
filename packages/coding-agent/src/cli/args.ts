@@ -21,6 +21,7 @@ export interface Args {
 	help?: boolean;
 	version?: boolean;
 	mode?: Mode;
+	rpcSocket?: string;
 	noSession?: boolean;
 	session?: string;
 	sessionDir?: string;
@@ -71,6 +72,8 @@ export function parseArgs(args: string[], extensionFlags?: Map<string, { type: "
 			if (mode === "text" || mode === "json" || mode === "rpc") {
 				result.mode = mode;
 			}
+		} else if (arg === "--rpc-socket" && i + 1 < args.length) {
+			result.rpcSocket = args[++i];
 		} else if (arg === "--continue" || arg === "-c") {
 			result.continue = true;
 		} else if (arg === "--resume" || arg === "-r") {
@@ -197,6 +200,7 @@ ${chalk.bold("Options:")}
   --system-prompt <text>         System prompt (default: coding assistant prompt)
   --append-system-prompt <text>  Append text or file contents to the system prompt
   --mode <mode>                  Output mode: text (default), json, or rpc
+  --rpc-socket <path>            Listen on a Unix socket in RPC mode and keep pi alive across disconnects
   --print, -p                    Non-interactive mode: process prompt and exit
   --continue, -c                 Continue previous session
   --resume, -r                   Select a session to resume

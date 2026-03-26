@@ -28,6 +28,7 @@ import type {
 	RpcSessionState,
 	RpcSlashCommand,
 } from "./rpc-types.js";
+import { createRpcSocketServer } from "./socket-server.js";
 
 // Re-export types for consumers
 export type {
@@ -38,13 +39,30 @@ export type {
 	RpcSessionState,
 } from "./rpc-types.js";
 
+export interface RpcModeOptions {
+	/**
+	 * Listen on a Unix socket instead of stdio. Socket mode keeps the process alive
+	 * across client disconnects and accepts one client connection at a time.
+	 */
+	socketPath?: string;
+}
+
 /**
  * Run in RPC mode.
  * Listens for JSON commands on stdin, outputs events and responses on stdout.
  */
-export async function runRpcMode(session: AgentSession): Promise<never> {
+export async function runRpcMode(session: AgentSession, options: RpcModeOptions = {}): Promise<never> {
+	let detachStdioInput = () => {};
+	let closeTransport = async () => {
+		detachStdioInput();
+		process.stdin.pause();
+	};
+	let writeLine = (line: string) => {
+		process.stdout.write(line);
+	};
+
 	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
-		process.stdout.write(serializeJsonLine(obj));
+		writeLine(serializeJsonLine(obj));
 	};
 
 	const success = <T extends RpcCommand["type"]>(
@@ -65,11 +83,36 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 	// Pending extension UI requests waiting for response
 	const pendingExtensionRequests = new Map<
 		string,
-		{ resolve: (value: any) => void; reject: (error: Error) => void }
+		{ resolve: (value: RpcExtensionUIResponse) => void; reject: (error: Error) => void }
 	>();
+
+	const rejectPendingExtensionRequests = (message: string) => {
+		for (const [id, pending] of pendingExtensionRequests) {
+			pendingExtensionRequests.delete(id);
+			pending.reject(new Error(message));
+		}
+	};
 
 	// Shutdown request flag
 	let shutdownRequested = false;
+
+	if (options.socketPath) {
+		const socketServer = await createRpcSocketServer({
+			socketPath: options.socketPath,
+			onLine: (line) => {
+				void handleInputLine(line);
+			},
+			onClientDisconnected: () => {
+				rejectPendingExtensionRequests("RPC client disconnected");
+			},
+		});
+		closeTransport = async () => {
+			await socketServer.close();
+		};
+		writeLine = (line: string) => {
+			socketServer.send(line);
+		};
+	}
 
 	/** Helper for dialog methods with signal/timeout support */
 	function createDialogPromise<T>(
@@ -587,19 +630,20 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 	 * Check if shutdown was requested and perform shutdown if so.
 	 * Called after handling each command when waiting for the next command.
 	 */
-	let detachInput = () => {};
-
-	async function checkShutdownRequested(): Promise<void> {
-		if (!shutdownRequested) return;
-
+	async function shutdown(): Promise<void> {
 		const currentRunner = session.extensionRunner;
 		if (currentRunner?.hasHandlers("session_shutdown")) {
 			await currentRunner.emit({ type: "session_shutdown" });
 		}
 
-		detachInput();
-		process.stdin.pause();
+		rejectPendingExtensionRequests("RPC mode shutting down");
+		await closeTransport();
 		process.exit(0);
+	}
+
+	async function checkShutdownRequested(): Promise<void> {
+		if (!shutdownRequested) return;
+		await shutdown();
 	}
 
 	const handleInputLine = async (line: string) => {
@@ -624,14 +668,17 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 
 			// Check for deferred shutdown request (idle between commands)
 			await checkShutdownRequested();
-		} catch (e: any) {
-			output(error(undefined, "parse", `Failed to parse command: ${e.message}`));
+		} catch (errorValue: unknown) {
+			const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
+			output(error(undefined, "parse", `Failed to parse command: ${message}`));
 		}
 	};
 
-	detachInput = attachJsonlLineReader(process.stdin, (line) => {
-		void handleInputLine(line);
-	});
+	if (!options.socketPath) {
+		detachStdioInput = attachJsonlLineReader(process.stdin, (line) => {
+			void handleInputLine(line);
+		});
+	}
 
 	// Keep process alive forever
 	return new Promise(() => {});

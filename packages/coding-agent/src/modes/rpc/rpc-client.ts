@@ -5,6 +5,7 @@
  */
 
 import { type ChildProcess, spawn } from "node:child_process";
+import { createConnection, type Socket } from "node:net";
 import type { AgentEvent, AgentMessage, ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { ImageContent } from "@mariozechner/pi-ai";
 import type { SessionStats } from "../../core/agent-session.js";
@@ -36,6 +37,11 @@ export interface RpcClientOptions {
 	model?: string;
 	/** Additional CLI arguments */
 	args?: string[];
+	/**
+	 * Connect to an already-running RPC socket instead of spawning a process.
+	 * When set, cliPath/cwd/env/provider/model/args are ignored.
+	 */
+	socketPath?: string;
 }
 
 export interface ModelInfo {
@@ -53,6 +59,7 @@ export type RpcEventListener = (event: AgentEvent) => void;
 
 export class RpcClient {
 	private process: ChildProcess | null = null;
+	private socket: Socket | null = null;
 	private stopReadingStdout: (() => void) | null = null;
 	private eventListeners: RpcEventListener[] = [];
 	private pendingRequests: Map<string, { resolve: (response: RpcResponse) => void; reject: (error: Error) => void }> =
@@ -63,11 +70,40 @@ export class RpcClient {
 	constructor(private options: RpcClientOptions = {}) {}
 
 	/**
-	 * Start the RPC agent process.
+	 * Start the RPC agent process or connect to an existing RPC socket.
 	 */
 	async start(): Promise<void> {
-		if (this.process) {
+		if (this.process || this.socket) {
 			throw new Error("Client already started");
+		}
+
+		const socketPath = this.options.socketPath;
+		if (socketPath) {
+			const socket = await new Promise<Socket>((resolve, reject) => {
+				const conn = createConnection(socketPath);
+				const onError = (error: Error) => {
+					conn.off("connect", onConnect);
+					reject(error);
+				};
+				const onConnect = () => {
+					conn.off("error", onError);
+					resolve(conn);
+				};
+				conn.once("error", onError);
+				conn.once("connect", onConnect);
+			});
+
+			this.socket = socket;
+			socket.on("error", (error) => {
+				this.stderr += `${error.message}\n`;
+			});
+			socket.on("close", () => {
+				this.handleTransportClosed("RPC socket closed");
+			});
+			this.stopReadingStdout = attachJsonlLineReader(socket, (line) => {
+				this.handleLine(line);
+			});
+			return;
 		}
 
 		const cliPath = this.options.cliPath ?? "dist/cli.js";
@@ -93,6 +129,9 @@ export class RpcClient {
 		this.process.stderr?.on("data", (data) => {
 			this.stderr += data.toString();
 		});
+		this.process.on("exit", () => {
+			this.handleTransportClosed("RPC process exited");
+		});
 
 		// Set up strict JSONL reader for stdout.
 		this.stopReadingStdout = attachJsonlLineReader(this.process.stdout!, (line) => {
@@ -108,29 +147,48 @@ export class RpcClient {
 	}
 
 	/**
-	 * Stop the RPC agent process.
+	 * Stop the RPC agent process or disconnect from the RPC socket.
 	 */
 	async stop(): Promise<void> {
-		if (!this.process) return;
-
 		this.stopReadingStdout?.();
 		this.stopReadingStdout = null;
-		this.process.kill("SIGTERM");
+
+		if (this.socket) {
+			const socket = this.socket;
+			this.socket = null;
+			await new Promise<void>((resolve) => {
+				const timeout = setTimeout(() => {
+					socket.destroy();
+					resolve();
+				}, 1000);
+				socket.once("close", () => {
+					clearTimeout(timeout);
+					resolve();
+				});
+				socket.end();
+			});
+			this.pendingRequests.clear();
+			return;
+		}
+
+		if (!this.process) return;
+		const processRef = this.process;
+		this.process = null;
+		processRef.kill("SIGTERM");
 
 		// Wait for process to exit
 		await new Promise<void>((resolve) => {
 			const timeout = setTimeout(() => {
-				this.process?.kill("SIGKILL");
+				processRef.kill("SIGKILL");
 				resolve();
 			}, 1000);
 
-			this.process?.on("exit", () => {
+			processRef.once("exit", () => {
 				clearTimeout(timeout);
 				resolve();
 			});
 		});
 
-		this.process = null;
 		this.pendingRequests.clear();
 	}
 
@@ -440,6 +498,18 @@ export class RpcClient {
 	// Internal
 	// =========================================================================
 
+	private handleTransportClosed(message: string): void {
+		this.stopReadingStdout?.();
+		this.stopReadingStdout = null;
+		this.process = null;
+		this.socket = null;
+
+		for (const [id, pending] of this.pendingRequests) {
+			this.pendingRequests.delete(id);
+			pending.reject(new Error(`${message}. Stderr: ${this.stderr}`));
+		}
+	}
+
 	private handleLine(line: string): void {
 		try {
 			const data = JSON.parse(line);
@@ -462,7 +532,8 @@ export class RpcClient {
 	}
 
 	private async send(command: RpcCommandBody): Promise<RpcResponse> {
-		if (!this.process?.stdin) {
+		const input = this.socket ?? this.process?.stdin;
+		if (!input) {
 			throw new Error("Client not started");
 		}
 
@@ -488,7 +559,7 @@ export class RpcClient {
 				},
 			});
 
-			this.process!.stdin!.write(serializeJsonLine(fullCommand));
+			input.write(serializeJsonLine(fullCommand));
 		});
 	}
 
