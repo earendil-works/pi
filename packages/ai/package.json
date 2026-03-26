@@ -51,8 +51,8 @@
 			"import": "./dist/oauth.js"
 		},
 		"./bedrock-provider": {
-			"types": "./dist/bedrock-provider.d.ts",
-			"import": "./dist/bedrock-provider.js"
+			"types": "./bedrock-provider.d.ts",
+			"import": "./bedrock-provider.js"
 		}
 	},
 	"bin": {
@@ -60,6 +60,8 @@
 	},
 	"files": [
 		"dist",
+		"bedrock-provider.js",
+		"bedrock-provider.d.ts",
 		"README.md"
 	],
 	"scripts": {
