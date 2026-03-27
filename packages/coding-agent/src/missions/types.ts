@@ -23,11 +23,22 @@ export interface MissionTask {
 	notes: string;
 }
 
+export interface MissionMilestone {
+	id: string;
+	title: string;
+	goal: string;
+	taskIds: string[];
+	gateTaskId: string;
+	verification: string[];
+	notes: string;
+}
+
 export interface MissionDefinition {
 	mode: MissionMode;
 	dir: string;
 	specPath: string;
 	tasksPath?: string;
+	milestonesPath?: string;
 	experimentsPath?: string;
 	progressPath: string;
 	runbookPath: string;
@@ -42,6 +53,7 @@ export interface MissionDefinition {
 	convergeAfter?: number;
 	convergenceKind?: MissionConvergenceKind;
 	tasks: MissionTask[];
+	milestones: MissionMilestone[];
 	allTasksDone: boolean;
 	runnableTasks: MissionTask[];
 }

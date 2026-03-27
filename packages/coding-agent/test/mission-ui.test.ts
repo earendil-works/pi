@@ -10,11 +10,13 @@ function makeMission(overrides?: Partial<MissionDefinition>): MissionDefinition 
 		dir: "/tmp/example-mission",
 		specPath: "/tmp/example-mission/SPEC.md",
 		tasksPath: "/tmp/example-mission/TASKS.json",
+		milestonesPath: undefined,
 		progressPath: "/tmp/example-mission/PROGRESS.md",
 		runbookPath: "/tmp/example-mission/RUNBOOK.md",
 		specText: "# Spec",
 		progressText: "# Progress",
 		runbookText: "# Runbook",
+		milestones: [],
 		tasks: [
 			{ id: "done-task", title: "Already done", status: "done", validation: [], notes: "" },
 			{ id: "feature", title: "Implement feature", status: "todo", validation: [], notes: "" },

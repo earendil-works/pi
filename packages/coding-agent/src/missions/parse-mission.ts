@@ -5,6 +5,7 @@ import type {
 	MissionConvergenceKind,
 	MissionDefinition,
 	MissionMetricDirection,
+	MissionMilestone,
 	MissionMode,
 	MissionTask,
 	MissionTaskStatus,
@@ -128,10 +129,65 @@ function parseMissionTask(value: unknown, index: number): MissionTask {
 	};
 }
 
+function parseMissionMilestone(value: unknown, index: number): MissionMilestone {
+	if (!asRecord(value)) {
+		throw new Error(`Mission milestone at index ${index} must be an object`);
+	}
+
+	const id = value.id;
+	const title = value.title;
+	const goal = value.goal;
+	const taskIds = value.taskIds;
+	const gateTaskId = value.gateTaskId;
+	const verification = value.verification;
+	const notes = value.notes;
+
+	if (typeof id !== "string" || id.trim().length === 0) {
+		throw new Error(`Mission milestone at index ${index} must have a non-empty string id`);
+	}
+	if (typeof title !== "string" || title.trim().length === 0) {
+		throw new Error(`Mission milestone "${id}" must have a non-empty string title`);
+	}
+	if (typeof goal !== "string" || goal.trim().length === 0) {
+		throw new Error(`Mission milestone "${id}" must have a non-empty string goal`);
+	}
+	if (
+		!Array.isArray(taskIds) ||
+		taskIds.length === 0 ||
+		taskIds.some((item) => typeof item !== "string" || item.length === 0)
+	) {
+		throw new Error(`Mission milestone "${id}" must have a non-empty string[] taskIds field`);
+	}
+	if (typeof gateTaskId !== "string" || gateTaskId.trim().length === 0) {
+		throw new Error(`Mission milestone "${id}" must have a non-empty string gateTaskId`);
+	}
+	if (
+		!Array.isArray(verification) ||
+		verification.length === 0 ||
+		verification.some((item) => typeof item !== "string")
+	) {
+		throw new Error(`Mission milestone "${id}" must have a non-empty string[] verification field`);
+	}
+	if (typeof notes !== "string") {
+		throw new Error(`Mission milestone "${id}" must have a string notes field`);
+	}
+
+	return {
+		id,
+		title,
+		goal,
+		taskIds,
+		gateTaskId,
+		verification,
+		notes,
+	};
+}
+
 export function parseMissionDefinition(missionDir: string): MissionDefinition {
 	const dir = resolve(missionDir);
 	const specPath = join(dir, "SPEC.md");
 	const tasksPath = join(dir, "TASKS.json");
+	const milestonesPath = join(dir, "MILESTONES.json");
 	const experimentsPath = join(dir, "EXPERIMENTS.jsonl");
 	const progressPath = join(dir, "PROGRESS.md");
 	const runbookPath = join(dir, "RUNBOOK.md");
@@ -173,6 +229,54 @@ export function parseMissionDefinition(missionDir: string): MissionDefinition {
 		}
 	}
 
+	let milestones: MissionMilestone[] = [];
+	if (existsSync(milestonesPath)) {
+		const milestonesText = readRequiredFile(milestonesPath, "MILESTONES.json");
+
+		let parsed: unknown;
+		try {
+			parsed = JSON.parse(milestonesText);
+		} catch (error: unknown) {
+			const message = error instanceof Error ? error.message : String(error);
+			throw new Error(`Mission MILESTONES.json is not valid JSON: ${message}`);
+		}
+
+		if (!asRecord(parsed) || !Array.isArray(parsed.milestones)) {
+			throw new Error("Mission MILESTONES.json must contain a top-level milestones array");
+		}
+
+		milestones = parsed.milestones.map((milestone, index) => parseMissionMilestone(milestone, index));
+		const seenIds = new Set<string>();
+		const seenGateTaskIds = new Set<string>();
+		const taskIds = new Set(tasks.map((task) => task.id));
+
+		for (const milestone of milestones) {
+			if (seenIds.has(milestone.id)) {
+				throw new Error(`Mission MILESTONES.json contains duplicate milestone id: ${milestone.id}`);
+			}
+			seenIds.add(milestone.id);
+
+			for (const taskId of milestone.taskIds) {
+				if (!taskIds.has(taskId)) {
+					throw new Error(
+						`Mission milestone "${milestone.id}" references taskIds entry missing from TASKS.json: ${taskId}`,
+					);
+				}
+			}
+
+			if (!milestone.taskIds.includes(milestone.gateTaskId)) {
+				throw new Error(
+					`Mission milestone "${milestone.id}" gateTaskId must also appear in taskIds: ${milestone.gateTaskId}`,
+				);
+			}
+
+			if (seenGateTaskIds.has(milestone.gateTaskId)) {
+				throw new Error(`Mission MILESTONES.json reuses gateTaskId across milestones: ${milestone.gateTaskId}`);
+			}
+			seenGateTaskIds.add(milestone.gateTaskId);
+		}
+	}
+
 	const allTasksDone = specFrontmatter.mode === "build" && tasks.every((task) => task.status === "done");
 	const runnableTasks = tasks.filter((task) => task.status === "todo" || task.status === "in_progress");
 
@@ -181,6 +285,7 @@ export function parseMissionDefinition(missionDir: string): MissionDefinition {
 		dir,
 		specPath,
 		tasksPath: existsSync(tasksPath) ? tasksPath : undefined,
+		milestonesPath: existsSync(milestonesPath) ? milestonesPath : undefined,
 		experimentsPath: experimentsText !== undefined ? experimentsPath : undefined,
 		progressPath,
 		runbookPath,
@@ -195,6 +300,7 @@ export function parseMissionDefinition(missionDir: string): MissionDefinition {
 		convergeAfter: specFrontmatter.convergeAfter,
 		convergenceKind: specFrontmatter.convergenceKind,
 		tasks,
+		milestones,
 		allTasksDone,
 		runnableTasks,
 	};

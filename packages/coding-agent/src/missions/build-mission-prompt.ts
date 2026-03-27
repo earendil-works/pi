@@ -35,17 +35,37 @@ export function buildMissionIterationPrompt(mission: MissionDefinition): string 
 	}
 
 	const taskSummary = mission.tasks.map((task) => `- [${task.status}] ${task.id}: ${task.title}`).join("\n");
+	const milestonesSummary =
+		mission.milestones.length > 0
+			? mission.milestones
+					.map(
+						(milestone) =>
+							`- ${milestone.id}: ${milestone.title}\n  goal: ${milestone.goal}\n  gate task: ${milestone.gateTaskId}\n  verification:\n${milestone.verification.map((step) => `    - ${step}`).join("\n")}`,
+					)
+					.join("\n")
+			: undefined;
 
 	return [
 		`Mission directory: ${mission.dir}`,
 		"",
-		"Treat SPEC.md, TASKS.json, PROGRESS.md, and RUNBOOK.md as the source of truth.",
+		mission.milestones.length > 0
+			? "Treat SPEC.md, TASKS.json, MILESTONES.json, PROGRESS.md, and RUNBOOK.md as the source of truth."
+			: "Treat SPEC.md, TASKS.json, PROGRESS.md, and RUNBOOK.md as the source of truth.",
 		"Work exactly one task at a time.",
 		"Keep the change only if validation passes; otherwise discard it or mark the task blocked with the exact reason.",
 		"Stop when all task statuses in TASKS.json are done, or when a task is marked blocked.",
+		mission.milestones.length > 0
+			? "Acceptance gate tasks are real tasks. Do not mark a gate task done until its milestone verification is green."
+			: undefined,
 		"",
 		"Current tasks:",
 		taskSummary,
+		mission.milestones.length > 0 ? "" : undefined,
+		mission.milestones.length > 0 ? "MILESTONES.json" : undefined,
+		mission.milestones.length > 0 ? JSON.stringify({ milestones: mission.milestones }, null, 2) : undefined,
+		mission.milestones.length > 0 ? "" : undefined,
+		mission.milestones.length > 0 ? "Milestone summary:" : undefined,
+		milestonesSummary,
 		"",
 		"SPEC.md",
 		mission.specText.trim(),
@@ -58,5 +78,7 @@ export function buildMissionIterationPrompt(mission: MissionDefinition): string 
 		"",
 		"RUNBOOK.md",
 		mission.runbookText.trim(),
-	].join("\n");
+	]
+		.filter((line): line is string => line !== undefined)
+		.join("\n");
 }
