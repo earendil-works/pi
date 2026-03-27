@@ -1,7 +1,5 @@
 import type { Api, Model } from "@kennyfrc/mu-ai";
 
-import type { MorphCompactionMode } from "./morph-compaction-mode.js";
-
 const MORPH_TARGET_CONTEXT_FRACTION = 0.4;
 const MORPH_MIN_COMPRESSION_RATIO = 0.3;
 const MORPH_MAX_COMPRESSION_RATIO = 0.7;
@@ -21,7 +19,7 @@ export type MorphCompressionDecision =
 	  };
 
 export type MorphCompactionStrategy =
-	| { kind: "morph-compact"; effectiveMode: MorphCompactionMode; compressionRatio: number }
+	| { kind: "morph-compact"; compressionRatio: number }
 	| { kind: "cannot-compact"; reason: string };
 
 function clamp(value: number, min: number, max: number): number {
@@ -61,18 +59,11 @@ export function selectMorphCompressionRatio(args: {
 
 export function selectCompactionStrategy(args: {
 	model: Model<Api>;
-	morphMode: MorphCompactionMode;
 	hasMorphApiKey: boolean;
-	requiresNativeReplay: boolean;
 	estimatedHistoryTokens: number;
 	contextWindow: number;
 }): MorphCompactionStrategy {
-	if (args.requiresNativeReplay) {
-		return {
-			kind: "cannot-compact",
-			reason: `${args.model.provider}/${args.model.id} requires native replay preservation, so Morph-only compaction must fail`,
-		};
-	}
+	void args.model;
 
 	const ratioDecision = selectMorphCompressionRatio({
 		estimatedHistoryTokens: args.estimatedHistoryTokens,
@@ -85,26 +76,15 @@ export function selectCompactionStrategy(args: {
 		};
 	}
 
-	if (args.morphMode === "off") {
-		return {
-			kind: "cannot-compact",
-			reason: "Morph compaction is disabled",
-		};
-	}
-
 	if (!args.hasMorphApiKey) {
 		return {
 			kind: "cannot-compact",
-			reason:
-				args.morphMode === "on"
-					? "Morph compaction was forced on but MORPH_API_KEY is missing"
-					: "Morph compaction is unavailable because MORPH_API_KEY is missing",
+			reason: "Morph compaction is required but MORPH_API_KEY is missing",
 		};
 	}
 
 	return {
 		kind: "morph-compact",
-		effectiveMode: args.morphMode,
 		compressionRatio: ratioDecision.compressionRatio,
 	};
 }

@@ -1,8 +1,6 @@
 import { type Api, getModel, type Model } from "@kennyfrc/mu-ai";
 import { describe, expect, it } from "vitest";
 
-type MorphCompactionMode = "on" | "off" | "auto";
-
 type MorphCompressionDecision =
 	| {
 			kind: "cannot-compact";
@@ -18,7 +16,7 @@ type MorphCompressionDecision =
 	  };
 
 type MorphCompactionStrategy =
-	| { kind: "morph-compact"; effectiveMode: MorphCompactionMode; compressionRatio: number }
+	| { kind: "morph-compact"; compressionRatio: number }
 	| { kind: "cannot-compact"; reason: string };
 
 type MorphCompactionStrategyModule = {
@@ -28,9 +26,7 @@ type MorphCompactionStrategyModule = {
 	}): MorphCompressionDecision;
 	selectCompactionStrategy(args: {
 		model: Model<Api>;
-		morphMode: MorphCompactionMode;
 		hasMorphApiKey: boolean;
-		requiresNativeReplay: boolean;
 		estimatedHistoryTokens: number;
 		contextWindow: number;
 	}): MorphCompactionStrategy;
@@ -95,73 +91,39 @@ describe("selectCompactionStrategy", () => {
 	const anthropicModel = requireModel("anthropic", "claude-sonnet-4-5");
 	const openaiModel = requireModel("openai", "gpt-4o-mini");
 
-	it("fails when Morph is disabled on a visible-history-safe path", async () => {
+	it("uses Morph whenever the API key is available", async () => {
 		const mod = await loadMorphCompactionStrategyModule();
 		expect(
 			mod.selectCompactionStrategy({
 				model: anthropicModel,
-				morphMode: "off",
 				hasMorphApiKey: true,
-				requiresNativeReplay: false,
 				estimatedHistoryTokens: 100_000,
 				contextWindow: 100_000,
 			}),
-		).toMatchObject({ kind: "cannot-compact" });
+		).toEqual({ kind: "morph-compact", compressionRatio: 0.4 });
 	});
 
-	it("uses Morph when forced on and the API key is available", async () => {
+	it("fails when Morph is required but the key is absent", async () => {
 		const mod = await loadMorphCompactionStrategyModule();
 		expect(
 			mod.selectCompactionStrategy({
 				model: anthropicModel,
-				morphMode: "on",
-				hasMorphApiKey: true,
-				requiresNativeReplay: false,
-				estimatedHistoryTokens: 100_000,
-				contextWindow: 100_000,
-			}),
-		).toEqual({ kind: "morph-compact", effectiveMode: "on", compressionRatio: 0.4 });
-	});
-
-	it("uses Morph in auto mode when the key is present and native replay is not required", async () => {
-		const mod = await loadMorphCompactionStrategyModule();
-		expect(
-			mod.selectCompactionStrategy({
-				model: anthropicModel,
-				morphMode: "auto",
-				hasMorphApiKey: true,
-				requiresNativeReplay: false,
-				estimatedHistoryTokens: 100_000,
-				contextWindow: 100_000,
-			}),
-		).toEqual({ kind: "morph-compact", effectiveMode: "auto", compressionRatio: 0.4 });
-	});
-
-	it("fails when auto mode cannot use Morph because the key is absent", async () => {
-		const mod = await loadMorphCompactionStrategyModule();
-		expect(
-			mod.selectCompactionStrategy({
-				model: anthropicModel,
-				morphMode: "auto",
 				hasMorphApiKey: false,
-				requiresNativeReplay: false,
 				estimatedHistoryTokens: 100_000,
 				contextWindow: 100_000,
 			}),
-		).toMatchObject({ kind: "cannot-compact" });
+		).toEqual({ kind: "cannot-compact", reason: "Morph compaction is required but MORPH_API_KEY is missing" });
 	});
 
-	it("fails when the current path requires opaque native replay preservation", async () => {
+	it("still uses Morph even when the current history previously contained native replay state", async () => {
 		const mod = await loadMorphCompactionStrategyModule();
 		expect(
 			mod.selectCompactionStrategy({
 				model: openaiModel,
-				morphMode: "auto",
 				hasMorphApiKey: true,
-				requiresNativeReplay: true,
 				estimatedHistoryTokens: 100_000,
 				contextWindow: 100_000,
 			}),
-		).toMatchObject({ kind: "cannot-compact" });
+		).toEqual({ kind: "morph-compact", compressionRatio: 0.4 });
 	});
 });

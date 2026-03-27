@@ -6,7 +6,6 @@ import { buildCompactionNotification, TuiRenderer } from "../src/tui/tui-rendere
 type BuildSummaryCompactionDetails = (
 	this: {
 		agent: { state: { model: unknown; messages: Message[] } };
-		morphCompactionMode: "auto" | "on" | "off";
 		showWarning(message: string): void;
 		buildHandoffSummaryDetails(goal: string, signal: AbortSignal): Promise<HandoffDetails>;
 	},
@@ -66,7 +65,6 @@ describe("Morph compaction notification metadata", () => {
 							],
 						},
 					},
-					morphCompactionMode: "auto",
 					showWarning: () => {},
 					buildHandoffSummaryDetails: async () => ({
 						handoffType: "explicit",
@@ -83,7 +81,7 @@ describe("Morph compaction notification metadata", () => {
 
 			expect(details.compactionApplicationMode).toBe("goal-plus-replacement-history");
 			expect(details.compactionNotificationLabel).toBe("Morph compaction");
-			expect(details.compactionBackendLabel).toMatch(/^Morph compaction \(auto, ratio /);
+			expect(details.compactionBackendLabel).toMatch(/^Morph compaction \(forced, ratio /);
 		} finally {
 			globalThis.fetch = originalFetch;
 		}

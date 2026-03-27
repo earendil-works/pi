@@ -74,7 +74,6 @@ import {
 import { parseMissionDefinition } from "../missions/parse-mission.js";
 import { findModel, getApiKeyForModel, getAvailableModels, invalidateOAuthCache } from "../model-config.js";
 import { executeExplicitCompactionStrategy } from "../morph-compaction-explicit.js";
-import type { MorphCompactionMode } from "../morph-compaction-mode.js";
 import { WorkspaceNoteStore } from "../notes/workspace-note-store.js";
 import { playNotificationSound, sendNotification } from "../notification.js";
 import {
@@ -254,7 +253,6 @@ export class TuiRenderer {
 	private extensionManager: ExtensionManager;
 	private extensionLoader: ExtensionLoader;
 	private autoHandoffMode: AutoHandoffMode;
-	private morphCompactionMode: MorphCompactionMode;
 
 	// Slash command autocomplete state
 	private builtInSlashCommands: SlashCommand[] = [];
@@ -416,7 +414,6 @@ export class TuiRenderer {
 		this.extensionManager = extensionManager;
 		this.extensionLoader = extensionLoader;
 		this.autoHandoffMode = settingsManager.getAutoHandoffMode();
-		this.morphCompactionMode = settingsManager.getMorphCompactionMode();
 		this.usageFooterMode = settingsManager.getUsageFooterMode();
 		this.hasExplicitUsageFooterPreference = settingsManager.hasUsageFooterModePreference();
 
@@ -4634,18 +4631,6 @@ export class TuiRenderer {
 		}
 	}
 
-	private buildMissionCompactionDetails(goal: string): HandoffDetails & { parentSessionId: string | null } {
-		const tracking = extractHandoffFileTracking(this.agent.state.messages);
-		return {
-			handoffType: "explicit",
-			goal,
-			formattedMessage: "",
-			parentSessionId: this.sessionManager.getSessionId(),
-			fileTokens: 0,
-			keyFiles: Array.from(new Set([...tracking.readFiles, ...tracking.modifiedFiles])),
-		};
-	}
-
 	private resolveHandoffLlmModel(model: Model<Api>): Model<Api> {
 		if (model.provider !== "openai-codex") return model;
 		const found = findModel("openai-codex", "gpt-5.3-codex-spark");
@@ -4764,7 +4749,6 @@ export class TuiRenderer {
 			model: model as Model<Api>,
 			messages,
 			goal,
-			morphMode: this.morphCompactionMode,
 			morphApiKey: process.env.MORPH_API_KEY,
 			keyFiles: tracking.modifiedFiles,
 			signal,
@@ -4777,7 +4761,7 @@ export class TuiRenderer {
 			throw new Error(`Compaction failed: ${execution.strategy.reason}`);
 		}
 
-		const compactionBackendLabel = `Morph compaction (${execution.strategy.effectiveMode}, ratio ${execution.strategy.compressionRatio})`;
+		const compactionBackendLabel = `Morph compaction (forced, ratio ${execution.strategy.compressionRatio})`;
 		const compactionApplicationMode = "goal-plus-replacement-history";
 		const compactionNotificationLabel = "Morph compaction";
 
@@ -5672,7 +5656,11 @@ export class TuiRenderer {
 					}
 					const iteration = this.missionUiState ? this.missionUiState.iteration + 1 : 1;
 					const compactionGoal = `Continue mission ${currentMissionName}`;
-					await this.applyCompactionCheckpoint(this.buildMissionCompactionDetails(compactionGoal));
+					const compactionDetails = await this.buildSummaryCompactionDetails(compactionGoal, signal);
+					await this.applyCompactionCheckpoint({
+						...compactionDetails,
+						parentSessionId: this.sessionManager.getSessionId(),
+					});
 					if (signal.aborted && this.pendingMissionIterationMessages.length === 0) {
 						return;
 					}

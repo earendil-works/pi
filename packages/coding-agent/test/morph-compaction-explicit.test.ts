@@ -91,7 +91,6 @@ describe("executeExplicitCompactionStrategy", () => {
 			model: smallContextAnthropicModel,
 			messages: visibleMessages,
 			goal: "Fix the login page tests",
-			morphMode: "auto",
 			morphApiKey: "test-morph-key",
 			keyFiles: ["src/login.ts"],
 			localSummaryFallback,
@@ -118,14 +117,13 @@ describe("executeExplicitCompactionStrategy", () => {
 				model: smallContextAnthropicModel,
 				messages: visibleMessages,
 				goal: "Fix the login page tests",
-				morphMode: "auto",
 				morphApiKey: "",
 				keyFiles: [],
 				localSummaryFallback,
 				nativeReplayCompact,
 				fetchImpl,
 			}),
-		).rejects.toThrow("MORPH_API_KEY");
+		).rejects.toThrow("Morph compaction is required but MORPH_API_KEY is missing");
 
 		expect(fetchImpl).not.toHaveBeenCalled();
 		expect(nativeReplayCompact).not.toHaveBeenCalled();
@@ -160,7 +158,6 @@ describe("executeExplicitCompactionStrategy", () => {
 			model: openaiModel,
 			messages: visibleMessages,
 			goal: "Fix the login page tests",
-			morphMode: "auto",
 			morphApiKey: "test-morph-key",
 			keyFiles: ["src/login.ts"],
 			localSummaryFallback,
@@ -189,7 +186,6 @@ describe("executeExplicitCompactionStrategy", () => {
 				model: smallContextAnthropicModel,
 				messages: visibleMessages,
 				goal: "Fix the login page tests",
-				morphMode: "on",
 				morphApiKey: "test-morph-key",
 				keyFiles: [],
 				localSummaryFallback,
@@ -202,39 +198,43 @@ describe("executeExplicitCompactionStrategy", () => {
 		expect(localSummaryFallback).not.toHaveBeenCalled();
 	});
 
-	it("fails when native compact replay items already exist in history", async () => {
+	it("still uses Morph when native compact replay items already exist in history", async () => {
 		const details = buildLocalFallbackDetails();
 		const localSummaryFallback = vi.fn(async () => details);
 		const nativeReplayCompact = vi.fn(async () => ({ details, usedFallback: false }));
-		const fetchImpl: typeof fetch = vi.fn();
+		const fetchImpl: typeof fetch = vi.fn(
+			async () =>
+				new Response(JSON.stringify({ output: "Morph-compacted visible history with opaque item present" }), {
+					status: 200,
+					headers: { "content-type": "application/json" },
+				}),
+		);
 
-		await expect(
-			executeExplicitCompactionStrategy({
-				model: smallContextAnthropicModel,
-				messages: [
-					...visibleMessages,
-					{
-						role: "user",
-						content: [],
-						timestamp: 3,
-						__muCompactResponseItem: {
-							type: "compaction",
-							encrypted_content: "opaque-blob",
-						},
-					} as Message,
-				],
-				goal: "Fix the login page tests",
-				morphMode: "on",
-				morphApiKey: "test-morph-key",
-				keyFiles: [],
-				localSummaryFallback,
-				nativeReplayCompact,
-				fetchImpl,
-			}),
-		).rejects.toThrow("native replay");
+		const execution = await executeExplicitCompactionStrategy({
+			model: smallContextAnthropicModel,
+			messages: [
+				...visibleMessages,
+				{
+					role: "user",
+					content: [],
+					timestamp: 3,
+					__muCompactResponseItem: {
+						type: "compaction",
+						encrypted_content: "opaque-blob",
+					},
+				} as Message,
+			],
+			goal: "Fix the login page tests",
+			morphApiKey: "test-morph-key",
+			keyFiles: [],
+			localSummaryFallback,
+			nativeReplayCompact,
+			fetchImpl,
+		});
 
-		expect(fetchImpl).not.toHaveBeenCalled();
+		expect(fetchImpl).toHaveBeenCalledOnce();
 		expect(localSummaryFallback).not.toHaveBeenCalled();
 		expect(nativeReplayCompact).not.toHaveBeenCalled();
+		expect(execution.strategy).toEqual({ kind: "morph-compact", compressionRatio: 0.3 });
 	});
 });

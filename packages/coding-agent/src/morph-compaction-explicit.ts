@@ -1,11 +1,6 @@
 import type { Api, AssistantMessage, Message, Model } from "@kennyfrc/mu-ai";
 
-import type { MorphCompactionMode } from "./morph-compaction-mode.js";
-import {
-	containsNativeCompactReplay,
-	normalizeMorphCompactionQuery,
-	projectMessagesToMorphTranscript,
-} from "./morph-compaction-projector.js";
+import { normalizeMorphCompactionQuery, projectMessagesToMorphTranscript } from "./morph-compaction-projector.js";
 import { type MorphCompactionStrategy, selectCompactionStrategy } from "./morph-compaction-strategy.js";
 import { estimateTokens, type HandoffDetails } from "./tools/handoff.js";
 
@@ -150,7 +145,6 @@ export async function executeExplicitCompactionStrategy(args: {
 	model: Model<Api>;
 	messages: Message[];
 	goal: string;
-	morphMode: MorphCompactionMode;
 	morphApiKey?: string | null;
 	keyFiles: string[];
 	signal?: AbortSignal;
@@ -160,14 +154,13 @@ export async function executeExplicitCompactionStrategy(args: {
 }): Promise<ExplicitCompactionExecution> {
 	const transcript = projectMessagesToMorphTranscript(args.messages);
 	const estimatedHistoryTokens = estimateTokens(transcript);
-	const requiresNativeReplay = containsNativeCompactReplay(args.messages);
 	const morphApiKey = args.morphApiKey?.trim() || "";
+	void args.localSummaryFallback;
+	void args.nativeReplayCompact;
 
 	const strategy = selectCompactionStrategy({
 		model: args.model,
-		morphMode: args.morphMode,
 		hasMorphApiKey: morphApiKey.length > 0,
-		requiresNativeReplay,
 		estimatedHistoryTokens,
 		contextWindow: args.model.contextWindow,
 	});
