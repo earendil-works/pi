@@ -1625,7 +1625,15 @@ export class AgentSession {
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
 		this._disconnectFromAgent();
-		await this.abort();
+		const hasPendingToolCalls = this.agent.state.pendingToolCalls.size > 0;
+		if (hasPendingToolCalls) {
+			this.abortRetry();
+			// Avoid waiting for idle when compact() is called from a running tool.
+			// The run loop is blocked on that tool, so waitForIdle() would deadlock.
+			this.agent.abort();
+		} else {
+			await this.abort();
+		}
 		this._compactionAbortController = new AbortController();
 
 		try {
