@@ -17,6 +17,7 @@ interface BackgroundJobDisplaySnapshot {
 	pid: number;
 	status: "running" | "exited" | "killed" | "failed";
 	recentOutput: string;
+	command: string;
 }
 
 /**
@@ -66,6 +67,7 @@ function readBackgroundJobSnapshot(details: unknown): BackgroundJobDisplaySnapsh
 		pid: backgroundJob.pid,
 		status: backgroundJob.status,
 		recentOutput: typeof backgroundJob.recentOutput === "string" ? backgroundJob.recentOutput : "",
+		command: typeof backgroundJob.command === "string" ? backgroundJob.command : "",
 	};
 }
 
@@ -537,9 +539,27 @@ export class ToolExecutionComponent extends Container {
 		// Format based on tool type
 		if (this.toolName === "bash") {
 			const command = typeof args.command === "string" ? args.command : "";
-			const commandDisplay = command ? highlightShellCommand(command) : theme.fg("toolOutput", "...");
-			text = theme.fg("toolTitle", theme.bold("$")) + " " + commandDisplay;
 			const backgroundJob = readBackgroundJobSnapshot(this.result?.details);
+			const jobId = typeof args.job === "string" ? args.job : "";
+			const action = typeof args.action === "string" ? args.action : "";
+			const isBackgroundControlCall =
+				!command && jobId && (action === "wait" || action === "status" || action === "kill");
+
+			if (isBackgroundControlCall) {
+				text =
+					theme.fg("toolTitle", theme.bold("bash")) +
+					" " +
+					theme.fg("syntaxFunction", action) +
+					" " +
+					theme.fg("syntaxVariable", jobId);
+				const originalCommand = backgroundJob?.command.trim();
+				if (originalCommand) {
+					text += "\n" + theme.fg("muted", "original: ") + highlightShellCommand(originalCommand);
+				}
+			} else {
+				const commandDisplay = command ? highlightShellCommand(command) : theme.fg("toolOutput", "...");
+				text = theme.fg("toolTitle", theme.bold("$")) + " " + commandDisplay;
+			}
 
 			// Use final result if available, otherwise show streaming partial output
 			let output = "";

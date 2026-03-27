@@ -237,10 +237,47 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 		});
 
 		const text = renderText(component, 100);
+		expect(text).toContain("$ git status --short && bun run build:minify");
 		expect(text).toContain("Background job still running: riec59cc");
 		expect(text).toContain("Wait for completion before concluding success.");
 		expect(text).toContain('{"job":"riec59cc","action":"wait","timeout":30}');
 		expect(text).toContain('{"job":"riec59cc","action":"status"}');
 		expect(text).toContain("Recent output:");
+	});
+
+	it("renders semantic headers for bash background job control actions", () => {
+		const component = new ToolExecutionComponent("bash", {
+			job: "9n92fzeb",
+			action: "wait",
+			timeout: 30,
+		});
+
+		component.updateResult({
+			content: [
+				{
+					type: "text",
+					text: "Background job 9n92fzeb is still running.",
+				},
+			],
+			isError: false,
+			details: {
+				backgroundJob: {
+					id: "9n92fzeb",
+					pid: 74793,
+					command: "python -m mlbb.cli guide seed-all --execute > /tmp/mlbb_seed_all.log 2>&1",
+					reason: "explicit_background",
+					startedAt: Date.now(),
+					status: "running",
+					recentOutput: "started",
+					recentStdout: "started",
+					recentStderr: "",
+				},
+			},
+		});
+
+		const text = renderText(component, 120);
+		expect(text).toContain("bash wait 9n92fzeb");
+		expect(text).toContain("original: python -m mlbb.cli guide seed-all --execute > /tmp/mlbb_seed_all.log 2>&1");
+		expect(text).not.toContain("$ ...");
 	});
 });
