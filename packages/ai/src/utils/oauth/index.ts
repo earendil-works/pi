@@ -39,12 +39,21 @@ import { geminiCliOAuthProvider } from "./google-gemini-cli.js";
 import { openaiCodexOAuthProvider } from "./openai-codex.js";
 import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.js";
 
+function normalizeOAuthProvider(provider: OAuthProviderInterface): OAuthProviderInterface {
+	const authFlow = provider.authFlow ?? (provider.usesCallbackServer ? "callback" : "device");
+
+	return {
+		...provider,
+		authFlow,
+	};
+}
+
 const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
-	anthropicOAuthProvider,
-	githubCopilotOAuthProvider,
-	geminiCliOAuthProvider,
-	antigravityOAuthProvider,
-	openaiCodexOAuthProvider,
+	normalizeOAuthProvider(anthropicOAuthProvider),
+	normalizeOAuthProvider(githubCopilotOAuthProvider),
+	normalizeOAuthProvider(geminiCliOAuthProvider),
+	normalizeOAuthProvider(antigravityOAuthProvider),
+	normalizeOAuthProvider(openaiCodexOAuthProvider),
 ];
 
 const oauthProviderRegistry = new Map<string, OAuthProviderInterface>(
@@ -62,7 +71,7 @@ export function getOAuthProvider(id: OAuthProviderId): OAuthProviderInterface | 
  * Register a custom OAuth provider
  */
 export function registerOAuthProvider(provider: OAuthProviderInterface): void {
-	oauthProviderRegistry.set(provider.id, provider);
+	oauthProviderRegistry.set(provider.id, normalizeOAuthProvider(provider));
 }
 
 /**

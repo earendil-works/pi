@@ -1,9 +1,28 @@
 import { getOAuthProviders } from "@mariozechner/pi-ai/oauth";
-import { Container, type Focusable, getKeybindings, Input, Spacer, Text, type TUI } from "@mariozechner/pi-tui";
+import {
+	Container,
+	type Focusable,
+	getKeybindings,
+	Input,
+	type SelectItem,
+	SelectList,
+	type SelectListTheme,
+	Spacer,
+	Text,
+	type TUI,
+} from "@mariozechner/pi-tui";
 import { exec } from "child_process";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { keyHint } from "./keybinding-hints.js";
+
+const loginSelectListTheme: SelectListTheme = {
+	selectedPrefix: (text) => theme.fg("accent", text),
+	selectedText: (text) => theme.fg("accent", text),
+	description: (text) => theme.fg("dim", text),
+	scrollInfo: (text) => theme.fg("dim", text),
+	noMatch: (text) => theme.fg("dim", text),
+};
 
 /**
  * Login dialog component - replaces editor during OAuth login flow
@@ -15,6 +34,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 	private abortController = new AbortController();
 	private inputResolver?: (value: string) => void;
 	private inputRejecter?: (error: Error) => void;
+	private selectList?: SelectList;
 
 	// Focusable implementation - propagate to input for IME cursor positioning
 	private _focused = false;
@@ -147,6 +167,50 @@ export class LoginDialogComponent extends Container implements Focusable {
 	}
 
 	/**
+	 * Show options for arrow-key navigation selection (e.g., headless vs browser auth)
+	 */
+	showOptions<T extends string>(
+		message: string,
+		options: { label: string; value: T; description?: string }[],
+	): Promise<T> {
+		this.contentContainer.addChild(new Spacer(1));
+		this.contentContainer.addChild(new Text(theme.fg("text", message), 1, 0));
+
+		// Create SelectList for arrow navigation
+		const items: SelectItem[] = options.map((opt) => ({
+			value: opt.value,
+			label: opt.label,
+			description: opt.description,
+		}));
+
+		this.selectList = new SelectList(items, 5, loginSelectListTheme);
+
+		// Add a simple rendering wrapper for SelectList
+		this.contentContainer.addChild({
+			render: (width: number) => this.selectList!.render(width),
+			invalidate: () => {},
+		});
+		this.contentContainer.addChild(
+			new Text(
+				`(${keyHint("tui.select.up", "↑↓ navigate,")} ${keyHint("tui.select.confirm", "select")}, ${keyHint("tui.select.cancel", "cancel")})`,
+				1,
+				0,
+			),
+		);
+
+		this.tui.requestRender();
+
+		return new Promise((resolve, reject) => {
+			this.selectList!.onSelect = (item) => {
+				resolve(item.value as T);
+			};
+			this.selectList!.onCancel = () => {
+				reject(new Error("Login cancelled"));
+			};
+		});
+	}
+
+	/**
 	 * Show waiting message (for polling flows like GitHub Copilot)
 	 */
 	showWaiting(message: string): void {
@@ -172,7 +236,10 @@ export class LoginDialogComponent extends Container implements Focusable {
 			return;
 		}
 
-		// Pass to input
-		this.input.handleInput(data);
+		if (this.selectList) {
+			this.selectList.handleInput(data);
+		} else {
+			this.input.handleInput(data);
+		}
 	}
 }
