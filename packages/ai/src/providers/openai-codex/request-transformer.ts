@@ -154,7 +154,7 @@ export async function transformRequestBody(
 	}
 
 	const modelId = body.model.includes("/") ? body.model.split("/").pop()! : body.model;
-	const defaultVerbosity = modelId.includes("codex") ? "medium" : "high";
+	const defaultVerbosity = modelId.includes("codex") ? "low" : "high";
 
 	body.text = {
 		...body.text,
