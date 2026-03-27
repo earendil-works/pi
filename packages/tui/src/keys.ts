@@ -1307,6 +1307,12 @@ export function decodeKittyPrintable(data: string): string | undefined {
 	// Drop control characters or invalid codepoints.
 	if (!Number.isFinite(effectiveCodepoint) || effectiveCodepoint < 32) return undefined;
 
+	// Reject Kitty functional key codepoints.
+	// Kitty uses Unicode Private Use Area (U+E000-U+F8FF, 57344-63743) for
+	// functional keys like Caps Lock, F1-F12, etc. These should not be
+	// treated as printable characters.
+	if (effectiveCodepoint >= 57344 && effectiveCodepoint <= 63743) return undefined;
+
 	try {
 		return String.fromCodePoint(effectiveCodepoint);
 	} catch {

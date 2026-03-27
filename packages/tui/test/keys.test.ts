@@ -4,7 +4,7 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { matchesKey, parseKey, setKittyProtocolActive } from "../src/keys.js";
+import { decodeKittyPrintable, matchesKey, parseKey, setKittyProtocolActive } from "../src/keys.js";
 
 function withEnv(name: string, value: string | undefined, fn: () => void): void {
 	const previous = process.env[name];
@@ -473,6 +473,38 @@ describe("parseKey", () => {
 
 		it("should parse double bracket pageUp", () => {
 			assert.strictEqual(parseKey("\x1b[[5~"), "pageUp");
+		});
+	});
+});
+
+describe("decodeKittyPrintable", () => {
+	describe("Kitty functional key handling", () => {
+		it("should reject Caps Lock key (codepoint 57358)", () => {
+			setKittyProtocolActive(true);
+			// Kitty uses Private Use Area (U+E000-U+F8FF) for functional keys
+			// Caps Lock = codepoint 57358 (U+E00E)
+			assert.strictEqual(decodeKittyPrintable("\x1b[57358u"), undefined);
+			setKittyProtocolActive(false);
+		});
+
+		it("should reject other Kitty functional keys in PUA range", () => {
+			setKittyProtocolActive(true);
+			// Test boundaries and middle of PUA range
+			assert.strictEqual(decodeKittyPrintable("\x1b[57344u"), undefined); // U+E000 (start of PUA)
+			assert.strictEqual(decodeKittyPrintable("\x1b[60000u"), undefined); // Middle of PUA
+			assert.strictEqual(decodeKittyPrintable("\x1b[63743u"), undefined); // U+F8FF (end of PUA)
+			setKittyProtocolActive(false);
+		});
+
+		it("should accept regular characters outside PUA range", () => {
+			setKittyProtocolActive(true);
+			// Regular ASCII
+			assert.strictEqual(decodeKittyPrintable("\x1b[97u"), "a");
+			assert.strictEqual(decodeKittyPrintable("\x1b[65u"), "A");
+			// Unicode characters outside PUA
+			assert.strictEqual(decodeKittyPrintable("\x1b[200u"), "È"); // U+00C8
+			assert.strictEqual(decodeKittyPrintable("\x1b[1234u"), "Ӓ"); // U+04D2
+			setKittyProtocolActive(false);
 		});
 	});
 });

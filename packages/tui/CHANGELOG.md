@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Caps Lock key (configured as input method toggle) inserting special characters by rejecting Kitty functional key codepoints in the Private Use Area (U+E000-U+F8FF) in `decodeKittyPrintable()`
+
 ## [0.63.1] - 2026-03-27
 
 ## [0.63.0] - 2026-03-27
