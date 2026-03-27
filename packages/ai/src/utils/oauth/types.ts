@@ -34,6 +34,7 @@ export interface OAuthLoginCallbacks {
 export interface OAuthProviderInterface {
 	readonly id: OAuthProviderId;
 	readonly name: string;
+	readonly authFlow?: "device" | "callback" | "mixed";
 
 	/** Run the login flow, return credentials to persist */
 	login(callbacks: OAuthLoginCallbacks): Promise<OAuthCredentials>;

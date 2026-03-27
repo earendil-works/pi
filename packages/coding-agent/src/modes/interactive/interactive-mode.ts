@@ -128,6 +128,11 @@ type CompactionQueuedMessage = {
 	mode: "steer" | "followUp";
 };
 
+export function normalizeOpenAICodexAuthFlowSelection(value: string): "device" | "callback" {
+	const normalized = value.trim().toLowerCase();
+	return normalized === "browser" || normalized === "callback" ? "callback" : "device";
+}
+
 /**
  * Options for InteractiveMode initialization.
  */
@@ -3922,8 +3927,8 @@ export class InteractiveMode {
 		const providerInfo = this.session.modelRegistry.authStorage.getOAuthProviders().find((p) => p.id === providerId);
 		const providerName = providerInfo?.name || providerId;
 
-		// Providers that use callback servers (can paste redirect URL)
-		const usesCallbackServer = providerInfo?.usesCallbackServer ?? false;
+		const authFlow = providerInfo?.authFlow ?? (providerInfo?.usesCallbackServer ? "callback" : "device");
+		let selectedAuthFlow: "device" | "callback" | undefined = authFlow === "mixed" ? undefined : authFlow;
 
 		// Create login dialog component
 		const dialog = new LoginDialogComponent(this.ui, providerId, (_success, _message) => {
@@ -3957,7 +3962,9 @@ export class InteractiveMode {
 				onAuth: (info: { url: string; instructions?: string }) => {
 					dialog.showAuth(info.url, info.instructions);
 
-					if (usesCallbackServer) {
+					const resolvedAuthFlow = authFlow === "mixed" ? selectedAuthFlow : authFlow;
+
+					if (resolvedAuthFlow === "callback") {
 						// Show input for manual paste, racing with callback
 						dialog
 							.showManualInput("Paste redirect URL below, or complete login in browser:")
@@ -3981,6 +3988,26 @@ export class InteractiveMode {
 				},
 
 				onPrompt: async (prompt: { message: string; placeholder?: string }) => {
+					if (authFlow === "mixed" && prompt.message === "Login method for ChatGPT/Codex (headless/browser)") {
+						// Use arrow-key navigation for auth flow selection
+						const response = await dialog.showOptions<"headless" | "browser">(
+							"Select login method for ChatGPT/Codex:",
+							[
+								{
+									label: "Headless",
+									value: "headless",
+									description: "Device code flow - enter code in browser",
+								},
+								{
+									label: "Browser",
+									value: "browser",
+									description: "OAuth callback - automatic browser login",
+								},
+							],
+						);
+						selectedAuthFlow = normalizeOpenAICodexAuthFlowSelection(response);
+						return response;
+					}
 					return dialog.showPrompt(prompt.message, prompt.placeholder);
 				},
 
