@@ -588,6 +588,16 @@ export async function runRpcMode(session: AgentSession): Promise<never> {
 	let detachInput = () => {};
 
 	async function shutdown(): Promise<never> {
+		// Wait for any in-flight prompt to complete before exiting.
+		// Without this, stdin EOF races with prompt execution — the process
+		// exits before the LLM call completes (0 tokens, silent failure).
+		// See: https://github.com/badlogic/pi-mono/issues/2645
+		try {
+			await session.agent.waitForIdle();
+		} catch {
+			// Best-effort: proceed with shutdown even if waitForIdle rejects
+		}
+
 		const currentRunner = session.extensionRunner;
 		if (currentRunner?.hasHandlers("session_shutdown")) {
 			await currentRunner.emit({ type: "session_shutdown" });
