@@ -1289,7 +1289,7 @@ export class TuiRenderer {
 						};
 
 						// 1) Exact match (one-at-a-time / steer message that wasn't combined)
-						const queuedIndex = this.queuedMessages.findIndex((m) => m.sent === rawMessageText);
+						const queuedIndex = this.queuedMessages.findIndex((m) => m.raw === rawMessageText);
 						if (queuedIndex !== -1) {
 							removeQueuedAtIndices([queuedIndex]);
 						} else {
