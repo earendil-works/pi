@@ -10,8 +10,12 @@ export interface ToolExecutionOptions {
 }
 
 export class ToolExecutionComponent extends Container {
-	private contentBox: Box;
+	private callBox: Box;
+	private resultBox: Box;
 	private contentText: Text;
+	private resultBoxAttached = false;
+	private resultBgFn?: (text: string) => string;
+	private contentBgFn?: (text: string) => string;
 	private callRendererComponent?: Component;
 	private resultRendererComponent?: Component;
 	private rendererState: any = {};
@@ -58,13 +62,14 @@ export class ToolExecutionComponent extends Container {
 
 		this.addChild(new Spacer(1));
 
-		// Always create both. contentBox is used for tools with renderer-based call/result composition.
+		// Always create both. callBox/resultBox are used for tools with renderer-based call/result composition.
 		// contentText is reserved for generic fallback rendering when no tool definition exists.
-		this.contentBox = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
+		this.callBox = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
+		this.resultBox = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
 		this.contentText = new Text("", 1, 1, (text: string) => theme.bg("toolPendingBg", text));
 
 		if (this.hasRendererDefinition()) {
-			this.addChild(this.contentBox);
+			this.addChild(this.callBox);
 		} else {
 			this.addChild(this.contentText);
 		}
@@ -204,9 +209,22 @@ export class ToolExecutionComponent extends Container {
 		return super.render(width);
 	}
 
+	private setBoxContent(box: Box, component: Component | undefined): void {
+		if (!component) {
+			box.clear();
+			return;
+		}
+		if (box.children.length === 1 && box.children[0] === component) {
+			return;
+		}
+		box.clear();
+		box.addChild(component);
+	}
+
 	private updateDisplay(): void {
-		const bgFn = this.isPartial
-			? (text: string) => theme.bg("toolPendingBg", text)
+		const pendingBgFn = (text: string) => theme.bg("toolPendingBg", text);
+		const resultBgFn = this.isPartial
+			? pendingBgFn
 			: this.result?.isError
 				? (text: string) => theme.bg("toolErrorBg", text)
 				: (text: string) => theme.bg("toolSuccessBg", text);
@@ -214,57 +232,65 @@ export class ToolExecutionComponent extends Container {
 		let hasContent = false;
 		this.hideComponent = false;
 		if (this.hasRendererDefinition()) {
-			this.contentBox.setBgFn(bgFn);
-			this.contentBox.clear();
+			this.callBox.setBgFn(pendingBgFn);
 
 			const callRenderer = this.getCallRenderer();
+			let callComponent: Component | undefined;
 			if (!callRenderer) {
-				this.contentBox.addChild(this.createCallFallback());
-				hasContent = true;
+				callComponent = this.createCallFallback();
 			} else {
 				try {
-					const component = callRenderer(this.args, theme, this.getRenderContext(this.callRendererComponent));
-					this.callRendererComponent = component;
-					this.contentBox.addChild(component);
-					hasContent = true;
+					callComponent = callRenderer(this.args, theme, this.getRenderContext(this.callRendererComponent));
+					this.callRendererComponent = callComponent;
 				} catch {
 					this.callRendererComponent = undefined;
-					this.contentBox.addChild(this.createCallFallback());
-					hasContent = true;
+					callComponent = this.createCallFallback();
 				}
+			}
+
+			if (callComponent) {
+				this.setBoxContent(this.callBox, callComponent);
+				hasContent = true;
 			}
 
 			if (this.result) {
 				const resultRenderer = this.getResultRenderer();
+				let resultComponent: Component | undefined;
 				if (!resultRenderer) {
-					const component = this.createResultFallback();
-					if (component) {
-						this.contentBox.addChild(component);
-						hasContent = true;
-					}
+					resultComponent = this.createResultFallback();
 				} else {
 					try {
-						const component = resultRenderer(
+						resultComponent = resultRenderer(
 							{ content: this.result.content as any, details: this.result.details },
 							{ expanded: this.expanded, isPartial: this.isPartial },
 							theme,
 							this.getRenderContext(this.resultRendererComponent),
 						);
-						this.resultRendererComponent = component;
-						this.contentBox.addChild(component);
-						hasContent = true;
+						this.resultRendererComponent = resultComponent;
 					} catch {
 						this.resultRendererComponent = undefined;
-						const component = this.createResultFallback();
-						if (component) {
-							this.contentBox.addChild(component);
-							hasContent = true;
-						}
+						resultComponent = this.createResultFallback();
 					}
+				}
+
+				if (resultComponent) {
+					if (!this.resultBgFn) {
+						this.resultBgFn = resultBgFn;
+					}
+					this.resultBox.setBgFn(this.resultBgFn);
+					this.setBoxContent(this.resultBox, resultComponent);
+					if (!this.resultBoxAttached) {
+						this.addChild(this.resultBox);
+						this.resultBoxAttached = true;
+					}
+					hasContent = true;
 				}
 			}
 		} else {
-			this.contentText.setCustomBgFn(bgFn);
+			if (!this.contentBgFn) {
+				this.contentBgFn = resultBgFn;
+			}
+			this.contentText.setCustomBgFn(this.contentBgFn);
 			this.contentText.setText(this.formatToolExecution());
 			hasContent = true;
 		}

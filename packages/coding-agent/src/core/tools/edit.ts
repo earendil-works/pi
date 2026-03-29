@@ -122,28 +122,6 @@ function getRenderablePreviewInput(args: RenderableEditArgs | undefined): { path
 	return null;
 }
 
-function formatEditCall(
-	args: RenderableEditArgs | undefined,
-	state: EditRenderState,
-	theme: typeof import("../../modes/interactive/theme/theme.js").theme,
-): string {
-	const invalidArg = invalidArgText(theme);
-	const rawPath = str(args?.file_path ?? args?.path);
-	const path = rawPath !== null ? shortenPath(rawPath) : null;
-	const pathDisplay = path === null ? invalidArg : path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
-	let text = `${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}`;
-
-	if (state.preview) {
-		if ("error" in state.preview) {
-			text += `\n\n${theme.fg("error", state.preview.error)}`;
-		} else if (state.preview.diff) {
-			text += `\n\n${renderDiff(state.preview.diff, { filePath: rawPath ?? undefined })}`;
-		}
-	}
-
-	return text;
-}
-
 function formatEditResult(
 	args: RenderableEditArgs | undefined,
 	state: EditRenderState,
@@ -322,17 +300,40 @@ export function createEditToolDefinition(
 					}
 				}
 			}
-			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatEditCall(args, context.state, theme));
-			return text;
+
+			const container = (context.lastComponent as Container | undefined) ?? new Container();
+			let header = container.children[0] as Text | undefined;
+			let diffText = container.children[1] as Text | undefined;
+			if (!header) {
+				header = new Text("", 0, 0);
+				container.addChild(header);
+			}
+			if (!diffText) {
+				diffText = new Text("", 0, 0);
+				container.addChild(diffText);
+			}
+
+			const invalidArg = invalidArgText(theme);
+			const renderArgs = args as RenderableEditArgs | undefined;
+			const rawPath = str(renderArgs?.file_path ?? renderArgs?.path);
+			const path = rawPath !== null ? shortenPath(rawPath) : null;
+			const pathDisplay = path === null ? invalidArg : path ? theme.fg("accent", path) : theme.fg("toolOutput", "...");
+			header.setText(`${theme.fg("toolTitle", theme.bold("edit"))} ${pathDisplay}`);
+
+			let diffOutput = "";
+			if (context.state.preview) {
+				if ("error" in context.state.preview) {
+					diffOutput = `\n\n${theme.fg("error", context.state.preview.error)}`;
+				} else if (context.state.preview.diff) {
+					diffOutput = `\n\n${renderDiff(context.state.preview.diff, { filePath: rawPath ?? undefined })}`;
+				}
+			}
+			diffText.setText(diffOutput);
+
+			return container;
 		},
 		renderResult(result, _options, theme, context) {
-			const output = formatEditResult(context.args, context.state, result as any, theme, context.isError);
-			if (!output) {
-				const component = (context.lastComponent as Container | undefined) ?? new Container();
-				component.clear();
-				return component;
-			}
+			const output = formatEditResult(context.args, context.state, result as any, theme, context.isError) ?? "";
 			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
 			text.setText(output);
 			return text;
