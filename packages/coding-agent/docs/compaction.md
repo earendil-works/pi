@@ -39,8 +39,8 @@ You can also trigger manually with `/compact [instructions]`, where optional ins
 ### How It Works
 
 1. **Find cut point**: Walk backwards from newest message, accumulating token estimates until `keepRecentTokens` (default 20k, configurable in `~/.pi/agent/settings.json` or `<project-dir>/.pi/settings.json`) is reached
-2. **Extract messages**: Collect messages from previous compaction (or start) up to cut point
-3. **Generate summary**: Call LLM to summarize with structured format
+2. **Extract messages**: Collect messages from the previous kept boundary (or session start) up to the cut point
+3. **Generate summary**: Call LLM to summarize with structured format, passing the previous summary as iterative context when present
 4. **Append entry**: Save `CompactionEntry` with summary and `firstKeptEntryId`
 5. **Reload**: Session reloads, using summary + messages from `firstKeptEntryId` onwards
 
@@ -75,6 +75,8 @@ What the LLM sees:
        ↑         ↑      └─────────────────┬────────────────┘
     prompt   from cmp          messages from firstKeptEntryId
 ```
+
+On repeated compactions, the summarized span starts at the previous compaction's kept boundary (`firstKeptEntryId`), not at the compaction entry itself, falling back to the entry after the previous compaction if that kept entry cannot be found in the path. This preserves messages that survived the earlier compaction by including them in the next summarization pass as well. Pi also recalculates `tokensBefore` from the rebuilt session context before writing the new `CompactionEntry`, so the token count reflects the actual pre-compaction context being replaced.
 
 ### Split Turns
 
