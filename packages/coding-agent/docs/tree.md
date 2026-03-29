@@ -35,6 +35,8 @@ Sessions are stored as trees where each entry has an `id` and `parentId`. The "l
 | ↑/↓ | Navigate (depth-first order) |
 | ←/→ | Page up/down |
 | Ctrl+←/Ctrl+→ or Alt+←/Alt+→ | Fold/unfold and jump between branch segments |
+| Shift+L | Set or clear a label on the selected node |
+| Shift+T | Toggle label timestamps |
 | Enter | Select node |
 | Escape/Ctrl+C | Cancel |
 | Ctrl+U | Toggle: user messages only |
@@ -49,6 +51,7 @@ Sessions are stored as trees where each entry has an `id` and `parentId`. The "l
 - Height: half terminal height
 - Current leaf marked with `← active`
 - Labels shown inline: `[label-name]`
+- `Shift+T` shows the latest label-change timestamp next to labeled nodes
 - Foldable branch starts show `⊟` in the connector. Folded branches show `⊞`
 - Active path marker `•` appears after the fold indicator when applicable
 - Search and filter changes reset all folds

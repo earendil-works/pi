@@ -32,6 +32,8 @@ export interface AppKeybindings {
 	"app.session.resume": true;
 	"app.tree.foldOrUp": true;
 	"app.tree.unfoldOrDown": true;
+	"app.tree.editLabel": true;
+	"app.tree.toggleLabelTimestamp": true;
 	"app.session.togglePath": true;
 	"app.session.toggleSort": true;
 	"app.session.rename": true;
@@ -100,6 +102,14 @@ export const KEYBINDINGS = {
 	"app.tree.unfoldOrDown": {
 		defaultKeys: ["ctrl+right", "alt+right"],
 		description: "Unfold tree branch or move down",
+	},
+	"app.tree.editLabel": {
+		defaultKeys: "shift+l",
+		description: "Edit tree label",
+	},
+	"app.tree.toggleLabelTimestamp": {
+		defaultKeys: "shift+t",
+		description: "Toggle tree label timestamps",
 	},
 	"app.session.togglePath": {
 		defaultKeys: "ctrl+p",
@@ -176,6 +186,8 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	resume: "app.session.resume",
 	treeFoldOrUp: "app.tree.foldOrUp",
 	treeUnfoldOrDown: "app.tree.unfoldOrDown",
+	treeEditLabel: "app.tree.editLabel",
+	treeToggleLabelTimestamp: "app.tree.toggleLabelTimestamp",
 	toggleSessionPath: "app.session.togglePath",
 	toggleSessionSort: "app.session.toggleSort",
 	renameSession: "app.session.rename",

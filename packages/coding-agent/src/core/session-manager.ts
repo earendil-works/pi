@@ -154,6 +154,8 @@ export interface SessionTreeNode {
 	children: SessionTreeNode[];
 	/** Resolved label for this entry, if any */
 	label?: string;
+	/** Timestamp of the latest label change for this entry, if any */
+	labelTimestamp?: string;
 }
 
 export interface SessionContext {
@@ -669,6 +671,7 @@ export class SessionManager {
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
 	private labelsById: Map<string, string> = new Map();
+	private labelTimestampsById: Map<string, string> = new Map();
 	private leafId: string | null = null;
 
 	private constructor(cwd: string, sessionDir: string, sessionFile: string | undefined, persist: boolean) {
@@ -746,6 +749,7 @@ export class SessionManager {
 	private _buildIndex(): void {
 		this.byId.clear();
 		this.labelsById.clear();
+		this.labelTimestampsById.clear();
 		this.leafId = null;
 		for (const entry of this.fileEntries) {
 			if (entry.type === "session") continue;
@@ -754,8 +758,10 @@ export class SessionManager {
 			if (entry.type === "label") {
 				if (entry.label) {
 					this.labelsById.set(entry.targetId, entry.label);
+					this.labelTimestampsById.set(entry.targetId, entry.timestamp);
 				} else {
 					this.labelsById.delete(entry.targetId);
+					this.labelTimestampsById.delete(entry.targetId);
 				}
 			}
 		}
@@ -1007,8 +1013,10 @@ export class SessionManager {
 		this._appendEntry(entry);
 		if (label) {
 			this.labelsById.set(targetId, label);
+			this.labelTimestampsById.set(targetId, entry.timestamp);
 		} else {
 			this.labelsById.delete(targetId);
+			this.labelTimestampsById.delete(targetId);
 		}
 		return entry.id;
 	}
@@ -1067,7 +1075,8 @@ export class SessionManager {
 		// Create nodes with resolved labels
 		for (const entry of entries) {
 			const label = this.labelsById.get(entry.id);
-			nodeMap.set(entry.id, { entry, children: [], label });
+			const labelTimestamp = this.labelTimestampsById.get(entry.id);
+			nodeMap.set(entry.id, { entry, children: [], label, labelTimestamp });
 		}
 
 		// Build tree
@@ -1179,10 +1188,10 @@ export class SessionManager {
 
 		// Collect labels for entries in the path
 		const pathEntryIds = new Set(pathWithoutLabels.map((e) => e.id));
-		const labelsToWrite: Array<{ targetId: string; label: string }> = [];
+		const labelsToWrite: Array<{ targetId: string; label: string; timestamp: string }> = [];
 		for (const [targetId, label] of this.labelsById) {
 			if (pathEntryIds.has(targetId)) {
-				labelsToWrite.push({ targetId, label });
+				labelsToWrite.push({ targetId, label, timestamp: this.labelTimestampsById.get(targetId)! });
 			}
 		}
 
@@ -1191,12 +1200,12 @@ export class SessionManager {
 			const lastEntryId = pathWithoutLabels[pathWithoutLabels.length - 1]?.id || null;
 			let parentId = lastEntryId;
 			const labelEntries: LabelEntry[] = [];
-			for (const { targetId, label } of labelsToWrite) {
+			for (const { targetId, label, timestamp: labelTimestamp } of labelsToWrite) {
 				const labelEntry: LabelEntry = {
 					type: "label",
 					id: generateId(new Set(pathEntryIds)),
 					parentId,
-					timestamp: new Date().toISOString(),
+					timestamp: labelTimestamp,
 					targetId,
 					label,
 				};
@@ -1229,12 +1238,12 @@ export class SessionManager {
 		// In-memory mode: replace current session with the path + labels
 		const labelEntries: LabelEntry[] = [];
 		let parentId = pathWithoutLabels[pathWithoutLabels.length - 1]?.id || null;
-		for (const { targetId, label } of labelsToWrite) {
+		for (const { targetId, label, timestamp: labelTimestamp } of labelsToWrite) {
 			const labelEntry: LabelEntry = {
 				type: "label",
 				id: generateId(new Set([...pathEntryIds, ...labelEntries.map((e) => e.id)])),
 				parentId,
-				timestamp: new Date().toISOString(),
+				timestamp: labelTimestamp,
 				targetId,
 				label,
 			};
