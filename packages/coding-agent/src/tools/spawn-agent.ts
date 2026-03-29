@@ -17,8 +17,14 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+const missionStartupSchema = Type.Object({
+	type: Type.Literal("mission"),
+	missionPath: Type.String({ description: "Path to the mission directory the child should run." }),
+});
+
 const spawnAgentSchema = Type.Object({
-	message: Type.String({ description: "Task for the spawned agent." }),
+	message: Type.Optional(Type.String({ description: "Task for the spawned agent." })),
+	startup: Type.Optional(missionStartupSchema),
 	model: Type.Optional(Type.String({ description: "Exact model override in provider/modelId form." })),
 	reasoning: Type.Optional(
 		StringEnum(["inherit", "off", "minimal", "low", "medium", "high", "xhigh"] as const, {
@@ -26,6 +32,11 @@ const spawnAgentSchema = Type.Object({
 		}),
 	),
 });
+
+interface SpawnAgentMissionStartup {
+	type: "mission";
+	missionPath: string;
+}
 
 export interface SpawnAgentDetails {
 	sessionId: string;
@@ -42,13 +53,30 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentDetail
 	execute: async (
 		_toolCallId: string,
 		args: {
-			message: string;
+			message?: string;
+			startup?: SpawnAgentMissionStartup;
 			model?: string;
 			reasoning?: SpawnAgentReasoning;
 		},
 		signal?: AbortSignal,
 		onProgress?: (chunk: string) => void,
 	) => {
+		if (!args.message?.trim() && !args.startup) {
+			return {
+				content: [{ type: "text" as const, text: "Error: Provide either message or startup." }],
+				details: undefined,
+				isError: true,
+			};
+		}
+
+		if (args.startup?.type === "mission" && args.startup.missionPath.trim().length === 0) {
+			return {
+				content: [{ type: "text" as const, text: "Error: startup.missionPath must be a non-empty string." }],
+				details: undefined,
+				isError: true,
+			};
+		}
+
 		const parentModel = getCurrentModel();
 		if (!parentModel) {
 			return {
@@ -64,7 +92,7 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentDetail
 			resolved = resolveSpawnAgentRequest({
 				parentModel,
 				parentThinkingLevel,
-				message: args.message,
+				message: args.message ?? "",
 				model: args.model,
 				reasoning: args.reasoning,
 			});
@@ -174,7 +202,13 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentDetail
 						provider: String(event.provider),
 						modelId: String(event.modelId),
 					};
-					child.stdin.write(JSON.stringify({ type: "prompt", message: resolved.message }) + "\n");
+					if (args.startup?.type === "mission") {
+						child.stdin.write(
+							JSON.stringify({ type: "mission_run", missionPath: args.startup.missionPath }) + "\n",
+						);
+					} else {
+						child.stdin.write(JSON.stringify({ type: "prompt", message: resolved.message }) + "\n");
+					}
 					resolveOnce({
 						sessionId: sessionMeta.sessionId,
 						sessionFile: sessionMeta.sessionFile,

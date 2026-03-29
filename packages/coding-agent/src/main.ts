@@ -1,5 +1,5 @@
 import { Agent, type Attachment, ProviderTransport, type ThinkingLevel } from "@kennyfrc/mu-agent-core";
-import type { AgentTool, Api, KnownProvider, Model } from "@kennyfrc/mu-ai";
+import type { AgentTool, Api, AssistantMessage, KnownProvider, Model } from "@kennyfrc/mu-ai";
 import { supportsXhigh } from "@kennyfrc/mu-ai";
 import { ProcessTerminal, TUI } from "@kennyfrc/mu-tui";
 import type { TSchema } from "@sinclair/typebox";
@@ -13,6 +13,7 @@ import { exportFromFile } from "./export-html.js";
 import { ExtensionLoader } from "./extensions/loader.js";
 import { ExtensionManager } from "./extensions/manager.js";
 import { ensureIdentityEnv } from "./identity-env.js";
+import { type MissionLoopResult, runMissionLoop } from "./missions/mission-runner.js";
 import { findModel, getApiKeyForModel, getAvailableModels } from "./model-config.js";
 import { buildSystemPrompt as buildSystemPromptFromYaml } from "./prompts/index.js";
 import { setCurrentModel, setCurrentThinkingLevel } from "./runtime-state.js";
@@ -48,6 +49,7 @@ const defaultModelPerProvider: Record<KnownProvider, string> = {
 	zai: "glm-4.6",
 	mistral: "devstral-medium-2507",
 	synthetic: "hf:deepseek-ai/DeepSeek-V3-0324",
+	fireworks: "accounts/fireworks/routers/kimi-k2p5-turbo",
 };
 
 type Mode = "text" | "json" | "rpc";
@@ -782,6 +784,83 @@ async function runSingleShotMode(
 	}
 }
 
+function getRpcMissionIterationRuntimeError(agent: Agent): string | undefined {
+	const runtimeError = agent.state.error?.trim();
+	if (runtimeError) {
+		return runtimeError;
+	}
+
+	for (let index = agent.state.messages.length - 1; index >= 0; index -= 1) {
+		const message = agent.state.messages[index];
+		if (message.role !== "assistant") {
+			continue;
+		}
+		if (message.stopReason === "error") {
+			return message.errorMessage?.trim() || "Assistant run ended with an error";
+		}
+		break;
+	}
+
+	return undefined;
+}
+
+function buildRpcMissionResultText(missionName: string, result: MissionLoopResult): string {
+	if (result.status === "done") {
+		return `Mission ${missionName} done after ${result.iterations} iteration${result.iterations === 1 ? "" : "s"}.`;
+	}
+	if (result.status === "converged") {
+		return `Mission ${missionName} converged after ${result.iterations} iteration${result.iterations === 1 ? "" : "s"}. ${result.reason}`;
+	}
+	if (result.status === "blocked") {
+		return `Mission ${missionName} blocked after ${result.iterations} iteration${result.iterations === 1 ? "" : "s"}. ${result.reason}`;
+	}
+	return `Mission ${missionName} stopped after ${result.iterations} iteration${result.iterations === 1 ? "" : "s"}.`;
+}
+
+function buildRpcMissionAssistantMessage(
+	model: Model<Api>,
+	text: string,
+	stopReason: "stop" | "error",
+): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason,
+		timestamp: Date.now(),
+		...(stopReason === "error" ? { errorMessage: text } : {}),
+	};
+}
+
+async function runRpcMissionCommand(
+	agent: Agent,
+	missionPath: string,
+	signal?: AbortSignal,
+): Promise<MissionLoopResult> {
+	return runMissionLoop({
+		missionDir: missionPath,
+		signal,
+		executeIteration: async ({ prompt }) => {
+			await agent.prompt(prompt);
+			await agent.waitForIdle();
+			const runtimeError = getRpcMissionIterationRuntimeError(agent);
+			if (runtimeError) {
+				throw new Error(`Mission iteration failed: ${runtimeError}`);
+			}
+		},
+	});
+}
+
 async function runRpcMode(agent: Agent, sessionManager: SessionManager): Promise<void> {
 	// Keep runtime state updated with current model for tools (e.g., read_thread RAG)
 	if (agent.state.model) {
@@ -834,15 +913,51 @@ async function runRpcMode(agent: Agent, sessionManager: SessionManager): Promise
 		output: process.stdout,
 		terminal: false,
 	});
+	let missionAbortController: AbortController | null = null;
 
 	rl.on("line", async (line: string) => {
 		try {
-			const input = JSON.parse(line);
+			const input = JSON.parse(line) as {
+				type?: unknown;
+				message?: unknown;
+				attachments?: Attachment[];
+				missionPath?: unknown;
+			};
 
 			// Handle different RPC commands
-			if (input.type === "prompt" && input.message) {
+			if (input.type === "prompt" && typeof input.message === "string") {
 				await agent.prompt(input.message, input.attachments);
+			} else if (input.type === "mission_run" && typeof input.missionPath === "string") {
+				if (!agent.state.model) {
+					throw new Error("No model selected for mission_run");
+				}
+				missionAbortController = new AbortController();
+				const resolvedMissionPath = resolve(input.missionPath);
+				const missionName = resolvedMissionPath.split(/[/\\]/).pop() || resolvedMissionPath;
+				console.log(JSON.stringify({ type: "mission_run_start", missionPath: resolvedMissionPath }));
+				try {
+					const result = await runRpcMissionCommand(agent, resolvedMissionPath, missionAbortController.signal);
+					const text = buildRpcMissionResultText(missionName, result);
+					sessionManager.saveMessage(buildRpcMissionAssistantMessage(agent.state.model, text, "stop"));
+					console.log(JSON.stringify({ type: "mission_run_end", missionPath: resolvedMissionPath, ...result }));
+					process.exit(0);
+				} catch (error: unknown) {
+					const message = error instanceof Error ? error.message : String(error);
+					sessionManager.saveMessage(buildRpcMissionAssistantMessage(agent.state.model, message, "error"));
+					console.log(
+						JSON.stringify({
+							type: "mission_run_end",
+							missionPath: resolvedMissionPath,
+							status: "error",
+							error: message,
+						}),
+					);
+					process.exit(1);
+				} finally {
+					missionAbortController = null;
+				}
 			} else if (input.type === "abort") {
+				missionAbortController?.abort();
 				agent.abort();
 			}
 		} catch (error: any) {
