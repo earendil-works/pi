@@ -14,6 +14,7 @@ export const DEFAULT_TOOL_NAMES: ToolName[] = [
 	"spawn_agent",
 	"wait_agent",
 	"compact",
+	"todo_write",
 ];
 
 export const GPT_DEFAULT_TOOL_NAMES: ToolName[] = [
@@ -25,6 +26,7 @@ export const GPT_DEFAULT_TOOL_NAMES: ToolName[] = [
 	"spawn_agent",
 	"wait_agent",
 	"compact",
+	"todo_write",
 ];
 
 export interface ToolSelection {

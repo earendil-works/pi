@@ -41,6 +41,7 @@ describe("GPT tools", () => {
 			"spawn_agent",
 			"wait_agent",
 			"compact",
+			"todo_write",
 		]);
 		expect(selection.tools.map((t) => t.name)).toEqual(selection.toolNames);
 	});
@@ -52,7 +53,7 @@ describe("GPT tools", () => {
 		expect(selection.toolNames).toContain("bash");
 		expect(selection.toolNames).toContain("edit");
 		expect(selection.toolNames).toContain("write");
-		expect(selection.toolNames).not.toContain("todo_write");
+		expect(selection.toolNames).toContain("todo_write");
 		expect(selection.toolNames).not.toContain("exec_command");
 	});
 });
