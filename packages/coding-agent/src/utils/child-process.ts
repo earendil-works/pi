@@ -12,6 +12,7 @@ const EXIT_STDIO_GRACE_MS = 100;
  */
 export function waitForChildProcess(child: ChildProcess): Promise<number | null> {
 	return new Promise((resolve, reject) => {
+		const useExitGraceTimer = process.platform === "win32";
 		let settled = false;
 		let exited = false;
 		let exitCode: number | null = null;
@@ -31,12 +32,14 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
 			child.stderr?.removeListener("end", onStderrEnd);
 		};
 
-		const finalize = (code: number | null) => {
+		const finalize = (code: number | null, forceDestroy = false) => {
 			if (settled) return;
 			settled = true;
 			cleanup();
-			child.stdout?.destroy();
-			child.stderr?.destroy();
+			if (forceDestroy) {
+				child.stdout?.destroy();
+				child.stderr?.destroy();
+			}
 			resolve(code);
 		};
 
@@ -68,8 +71,8 @@ export function waitForChildProcess(child: ChildProcess): Promise<number | null>
 			exited = true;
 			exitCode = code;
 			maybeFinalizeAfterExit();
-			if (!settled) {
-				postExitTimer = setTimeout(() => finalize(code), EXIT_STDIO_GRACE_MS);
+			if (!settled && useExitGraceTimer) {
+				postExitTimer = setTimeout(() => finalize(code, true), EXIT_STDIO_GRACE_MS);
 			}
 		};
 
