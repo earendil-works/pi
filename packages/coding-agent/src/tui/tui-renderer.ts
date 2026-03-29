@@ -5514,7 +5514,10 @@ export class TuiRenderer {
 		}
 
 		return {
-			after: this.missionConvergeAfterOverride ?? mission.convergeAfter ?? 3,
+			after:
+				this.missionConvergeAfterOverride === undefined
+					? (mission.convergeAfter ?? 3)
+					: this.missionConvergeAfterOverride,
 			kind: this.missionConvergenceKindOverride ?? mission.convergenceKind ?? "non-keep",
 		};
 	}
@@ -5596,6 +5599,8 @@ export class TuiRenderer {
 		this.missionRunAbortController = missionRunAbortController;
 		this.missionStopAfterIteration = false;
 		this.missionIterationLimit = null;
+		// FIX: Capture convergence policy BEFORE resetting overrides
+		const convergencePolicy = this.getActiveMissionConvergencePolicy();
 		this.missionConvergeAfterOverride = undefined;
 		this.missionConvergenceKindOverride = undefined;
 		const { signal } = missionRunAbortController;
@@ -5636,7 +5641,7 @@ export class TuiRenderer {
 			const result = await runMissionLoop({
 				missionDir,
 				signal,
-				convergencePolicy: this.getActiveMissionConvergencePolicy() ?? undefined,
+				convergencePolicy: convergencePolicy ?? undefined,
 				shouldContinue: () => {
 					if (this.pendingMissionIterationMessages.length > 0) {
 						return true;
