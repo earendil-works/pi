@@ -2,7 +2,7 @@ import type { Api, Model } from "@kennyfrc/mu-ai";
 
 const MORPH_TARGET_CONTEXT_FRACTION = 0.4;
 const MORPH_MIN_COMPRESSION_RATIO = 0.3;
-const MORPH_MAX_COMPRESSION_RATIO = 0.7;
+const MORPH_MAX_COMPRESSION_RATIO = 0.5;
 
 export type MorphCompressionDecision =
 	| {
