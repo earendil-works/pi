@@ -201,7 +201,8 @@ spawn_agent: |
   - If you spawn multiple children and need all of them, prefer waiting on them in parallel with one `wait_agent` call over the full set of ids.
 
   Parameters:
-  - message: Task for the spawned agent (required)
+  - message: Task for the spawned agent (optional when startup is provided)
+  - startup: Optional startup directive for the child. Supports `{ type: "mission", missionPath: "..." }` so the child starts by running a mission instead of waiting for a freeform prompt.
   - model: Optional exact model override in `provider/modelId` form
   - reasoning: Optional reasoning level override: `inherit`, `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`
 
@@ -218,9 +219,28 @@ wait_agent: |
 todo_write: |
   Create and manage a structured task list for multi-step work.
 
-  States: pending, in_progress, completed, cancelled.
-  Priority: high, medium (default), low.
-  Replaces the full list each call.
+  **Usage Notes:**
+  - Every time you call this tool, you MUST provide the COMPLETE updated task list.
+  - The tool replaces the entire list each call; any omitted todos are deleted.
+
+  **Status Values:**
+  - `pending` - Not started yet
+  - `in_progress` - Currently working on this
+  - `completed` - Done
+  - `blocked` - Waiting on external input or blocked
+
+  **Priority:** high, medium (default), low
+
+  **Best Practices:**
+  - Keep exactly ONE [in_progress] item at any time (one task actively being worked)
+  - Only mark a todo as [completed] after it is FULLY done and verified
+  - If there are ANY [pending] items, you MUST have exactly ONE [in_progress] item
+  - Update the list IMMEDIATELY after finishing each item
+  - If errors/blockers remain, keep it [in_progress] and add a new todo describing the blocker
+  - When uncertain, err on the side of using this tool
+
+  **Format:** [status] [priority] task content
+  Example: `[pending] [high] Update database schema`
 
 compact: |
   Compact the current thread into a smaller in-thread checkpoint using summary compaction.

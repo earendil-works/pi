@@ -25,7 +25,7 @@ type TodoAction =
 	| "release"
 	| "mark_in_progress"
 	| "mark_done"
-	| "mark_cancelled"
+	| "mark_blocked"
 	| "append_note"
 	| "copy_path"
 	| "copy_text"
@@ -166,7 +166,7 @@ export class TodoOverlayComponent extends Container {
 				(t.frontmatter.status === "open" || t.frontmatter.status === "in_progress") &&
 				!t.frontmatter.assigned_to_session,
 		);
-		const closed = filtered.filter((t) => t.frontmatter.status === "done" || t.frontmatter.status === "cancelled");
+		const closed = filtered.filter((t) => t.frontmatter.status === "done" || t.frontmatter.status === "blocked");
 
 		const rows: TodoDisplayRow[] = [];
 		if (assignedToMe.length > 0) {
@@ -178,7 +178,7 @@ export class TodoOverlayComponent extends Container {
 			for (const t of openUnassigned) rows.push({ kind: "todo", todo: t });
 		}
 		if (closed.length > 0) {
-			rows.push({ kind: "header", label: "Done / cancelled" });
+			rows.push({ kind: "header", label: "Done / blocked" });
 			for (const t of closed) rows.push({ kind: "todo", todo: t });
 		}
 
@@ -261,7 +261,7 @@ export class TodoOverlayComponent extends Container {
 		const actions: TodoAction[] = ["view"];
 		if (!hasAssignment || !assignedToMe) actions.push("claim");
 		if (hasAssignment) actions.push("release");
-		actions.push("mark_in_progress", "mark_done", "mark_cancelled", "append_note", "copy_path", "copy_text", "back");
+		actions.push("mark_in_progress", "mark_done", "mark_blocked", "append_note", "copy_path", "copy_text", "back");
 		return actions;
 	}
 
@@ -306,8 +306,8 @@ export class TodoOverlayComponent extends Container {
 				return "mark in_progress";
 			case "mark_done":
 				return "mark done";
-			case "mark_cancelled":
-				return "mark cancelled";
+			case "mark_blocked":
+				return "mark blocked";
 			case "append_note":
 				return "append note";
 			case "copy_path":
@@ -349,8 +349,8 @@ export class TodoOverlayComponent extends Container {
 					await this.store.update(todo.frontmatter.id, { status: "done", who: this.who });
 					break;
 				}
-				case "mark_cancelled": {
-					await this.store.update(todo.frontmatter.id, { status: "cancelled", who: this.who });
+				case "mark_blocked": {
+					await this.store.update(todo.frontmatter.id, { status: "blocked", who: this.who });
 					break;
 				}
 				case "append_note": {

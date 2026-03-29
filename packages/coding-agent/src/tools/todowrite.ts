@@ -5,8 +5,8 @@ import { getToolDescription } from "../prompts/index.js";
 
 // Use StringEnum instead of Type.Union([Type.Literal(...)]) for Google API compatibility.
 // Google's API doesn't support anyOf/const patterns - only enum arrays.
-const TodoStatus = StringEnum(["pending", "in_progress", "completed", "cancelled"] as const, {
-	description: "Current status of the task: pending, in_progress, completed, cancelled",
+const TodoStatus = StringEnum(["pending", "in_progress", "completed", "blocked"] as const, {
+	description: "Current status of the task: pending, in_progress, completed, blocked",
 });
 
 const TodoPriority = StringEnum(["high", "medium", "low"] as const, {
@@ -20,7 +20,7 @@ const TodoItemInput = Type.Object({
 	priority: Type.Optional(TodoPriority),
 });
 
-type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
+type TodoStatus = "pending" | "in_progress" | "completed" | "blocked";
 type TodoPriority = "high" | "medium" | "low";
 
 export interface TodoItem {
@@ -59,7 +59,7 @@ interface MuDisplayV1 {
 
 export interface TodoWriteToolDetails {
 	todos: TodoItem[];
-	summary: { total: number; pending: number; inProgress: number; completed: number; cancelled: number };
+	summary: { total: number; pending: number; inProgress: number; completed: number; blocked: number };
 	mu_display: MuDisplayV1;
 }
 
@@ -86,10 +86,10 @@ export function formatTodosForHandoff(): string | null {
 
 	const active = todos.filter((t) => t.status === "pending" || t.status === "in_progress");
 	const completedCount = todos.filter((t) => t.status === "completed").length;
-	const cancelledCount = todos.filter((t) => t.status === "cancelled").length;
+	const blockedCount = todos.filter((t) => t.status === "blocked").length;
 
 	// Nothing to report if no active items and no history
-	if (active.length === 0 && completedCount === 0 && cancelledCount === 0) return null;
+	if (active.length === 0 && completedCount === 0 && blockedCount === 0) return null;
 
 	const lines: string[] = ["## Active Tasks", ""];
 
@@ -103,10 +103,10 @@ export function formatTodosForHandoff(): string | null {
 		}
 	}
 
-	// Summary line for completed/cancelled
+	// Summary line for completed/blocked
 	const summaryParts: string[] = [];
 	if (completedCount > 0) summaryParts.push(`${completedCount} completed`);
-	if (cancelledCount > 0) summaryParts.push(`${cancelledCount} cancelled`);
+	if (blockedCount > 0) summaryParts.push(`${blockedCount} blocked`);
 	if (summaryParts.length > 0) {
 		lines.push("");
 		lines.push(`*${summaryParts.join(", ")}*`);
@@ -152,20 +152,7 @@ function formatTodos(items: TodoItem[]): string {
 		return "No todos";
 	}
 
-	const statusIcon: Record<TodoStatus, string> = {
-		pending: "○",
-		in_progress: "◐",
-		completed: "●",
-		cancelled: "✗",
-	};
-
-	const priorityLabel: Record<TodoPriority, string> = {
-		high: "[H]",
-		medium: "[M]",
-		low: "[L]",
-	};
-
-	return items.map((t) => `${statusIcon[t.status]} ${priorityLabel[t.priority]} ${t.content}`).join("\n");
+	return items.map((t) => `[${t.status}] [${t.priority}] ${t.content}`).join("\n");
 }
 
 const todowriteSchema = Type.Object({
@@ -198,7 +185,7 @@ export const todowriteTool: AgentTool<typeof todowriteSchema, TodoWriteToolDetai
 		const pending = todos.filter((t) => t.status === "pending").length;
 		const inProgress = todos.filter((t) => t.status === "in_progress").length;
 		const completed = todos.filter((t) => t.status === "completed").length;
-		const cancelled = todos.filter((t) => t.status === "cancelled").length;
+		const blocked = todos.filter((t) => t.status === "blocked").length;
 		const total = todos.length;
 
 		let text = formatTodos(todos);
@@ -213,14 +200,14 @@ export const todowriteTool: AgentTool<typeof todowriteSchema, TodoWriteToolDetai
 			`${inProgress} in_progress`,
 			`${pending} pending`,
 			`${completed} completed`,
-			`${cancelled} cancelled`,
+			`${blocked} blocked`,
 		].join(" · ");
 
 		return {
 			content: [{ type: "text", text }],
 			details: {
 				todos: todos,
-				summary: { total, pending, inProgress, completed, cancelled },
+				summary: { total, pending, inProgress, completed, blocked },
 				mu_display: {
 					version: 1,
 					call: {

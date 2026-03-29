@@ -1,6 +1,6 @@
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
-export type TodoStatus = "open" | "in_progress" | "done" | "cancelled";
+export type TodoStatus = "open" | "in_progress" | "done" | "blocked";
 
 export interface TodoFrontmatter {
 	/** File-stable identifier. Used as the filename: <id>.md */
@@ -105,7 +105,7 @@ export function coerceTodoFrontmatter(value: unknown): TodoFrontmatter {
 	if (!id.trim()) throw new Error("Invalid todo file: missing id");
 	if (!title.trim()) throw new Error("Invalid todo file: missing title");
 	if (!list.trim()) throw new Error("Invalid todo file: missing list");
-	if (status !== "open" && status !== "in_progress" && status !== "done" && status !== "cancelled") {
+	if (status !== "open" && status !== "in_progress" && status !== "done" && status !== "blocked") {
 		throw new Error(`Invalid todo file: invalid status: ${String(v.status)}`);
 	}
 	if (!created_at.trim()) throw new Error("Invalid todo file: missing created_at");

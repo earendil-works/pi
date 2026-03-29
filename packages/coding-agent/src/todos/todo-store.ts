@@ -27,7 +27,7 @@ export interface TodoListFilters {
 	status?: TodoStatus | TodoStatus[];
 	tags?: string[];
 	assignment?: "any" | "unassigned" | "assigned" | "mine";
-	/** If true, include done/cancelled. Default false. */
+	/** If true, include done/blocked. Default false. */
 	includeClosed?: boolean;
 }
 
@@ -148,7 +148,7 @@ export class TodoStore {
 			// By default hide closed
 			if (
 				!filters?.includeClosed &&
-				(record.frontmatter.status === "done" || record.frontmatter.status === "cancelled")
+				(record.frontmatter.status === "done" || record.frontmatter.status === "blocked")
 			) {
 				continue;
 			}
@@ -194,7 +194,7 @@ export class TodoStore {
 			open: 0,
 			in_progress: 1,
 			done: 2,
-			cancelled: 3,
+			blocked: 3,
 		};
 		const r = statusRank[a.status] - statusRank[b.status];
 		if (r !== 0) return r;
@@ -273,7 +273,7 @@ export class TodoStore {
 				updated_at: this.isoNow(),
 			};
 
-			if (next.status === "done" || next.status === "cancelled") {
+			if (next.status === "done" || next.status === "blocked") {
 				delete next.assigned_to_session;
 				delete next.assigned_to_run;
 			}

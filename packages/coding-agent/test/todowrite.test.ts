@@ -155,9 +155,9 @@ describe("todowrite tool", () => {
 		const textContent = result.content[0];
 		expect(textContent.type).toBe("text");
 		if (textContent.type === "text") {
-			expect(textContent.text).toContain("○ [M] Pending task");
-			expect(textContent.text).toContain("◐ [M] In progress task");
-			expect(textContent.text).toContain("● [M] Completed task");
+			expect(textContent.text).toContain("[pending] [medium] Pending task");
+			expect(textContent.text).toContain("[in_progress] [medium] In progress task");
+			expect(textContent.text).toContain("[completed] [medium] Completed task");
 			// Should NOT contain IDs or JSON
 			expect(textContent.text).not.toMatch(/todo_\\d+/);
 			expect(textContent.text).not.toContain("{");
@@ -172,7 +172,7 @@ describe("todowrite tool", () => {
 					{ content: "Pending 1", status: "pending" },
 					{ content: "Pending 2", status: "pending" },
 					{ content: "Done", status: "completed" },
-					{ content: "Cancelled", status: "cancelled" },
+					{ content: "Blocked", status: "blocked" },
 				],
 			},
 			undefined,
@@ -184,7 +184,7 @@ describe("todowrite tool", () => {
 			pending: 2,
 			inProgress: 0,
 			completed: 1,
-			cancelled: 1,
+			blocked: 1,
 		});
 	});
 
@@ -196,6 +196,7 @@ describe("todowrite tool", () => {
 					{ content: "Pending 1", status: "pending" },
 					{ content: "In progress", status: "in_progress" },
 					{ content: "Done", status: "completed" },
+					{ content: "Blocked", status: "blocked" },
 				],
 			},
 			undefined,
@@ -218,6 +219,7 @@ describe("todowrite tool", () => {
 		expect(details?.mu_display?.summary?.text).toContain("1 in_progress");
 		expect(details?.mu_display?.summary?.text).toContain("1 pending");
 		expect(details?.mu_display?.summary?.text).toContain("1 completed");
+		expect(details?.mu_display?.summary?.text).toContain("1 blocked");
 		expect(details?.mu_display?.output?.collapse?.maxVisualLines).toBe(5);
 	});
 
@@ -275,14 +277,14 @@ describe("formatTodosForHandoff", () => {
 		expect(result).not.toContain("Add tests (pending)");
 	});
 
-	it("excludes completed and cancelled items from checklist but shows summary", async () => {
+	it("excludes completed and blocked items from checklist but shows summary", async () => {
 		await todowriteTool.execute(
 			"call-1",
 			{
 				todos: [
 					{ content: "Active task", status: "pending" },
 					{ content: "Done task", status: "completed" },
-					{ content: "Dropped task", status: "cancelled" },
+					{ content: "Blocked task", status: "blocked" },
 				],
 			},
 			undefined,
@@ -293,18 +295,18 @@ describe("formatTodosForHandoff", () => {
 		expect(result).not.toBeNull();
 		expect(result).toContain("- [ ] [medium] Active task");
 		expect(result).not.toContain("Done task");
-		expect(result).not.toContain("Dropped task");
-		expect(result).toContain("*1 completed, 1 cancelled*");
+		expect(result).not.toContain("Blocked task");
+		expect(result).toContain("*1 completed, 1 blocked*");
 	});
 
-	it("shows 'no active tasks' message when only completed/cancelled exist", async () => {
+	it("shows 'no active tasks' message when only completed/blocked exist", async () => {
 		await todowriteTool.execute(
 			"call-1",
 			{
 				todos: [
 					{ content: "Done 1", status: "completed" },
 					{ content: "Done 2", status: "completed" },
-					{ content: "Cancelled 1", status: "cancelled" },
+					{ content: "Blocked 1", status: "blocked" },
 				],
 			},
 			undefined,
@@ -314,10 +316,10 @@ describe("formatTodosForHandoff", () => {
 		const result = formatTodosForHandoff();
 		expect(result).not.toBeNull();
 		expect(result).toContain("*No active tasks remaining.*");
-		expect(result).toContain("*2 completed, 1 cancelled*");
+		expect(result).toContain("*2 completed, 1 blocked*");
 	});
 
-	it("omits summary line when no completed/cancelled items", async () => {
+	it("omits summary line when no completed/blocked items", async () => {
 		await todowriteTool.execute(
 			"call-1",
 			{
@@ -331,7 +333,7 @@ describe("formatTodosForHandoff", () => {
 		expect(result).not.toBeNull();
 		expect(result).toContain("- [ ] [medium] Only pending");
 		expect(result).not.toContain("completed");
-		expect(result).not.toContain("cancelled");
+		expect(result).not.toContain("blocked");
 	});
 
 	it("handles only completed count in summary", async () => {
@@ -352,13 +354,13 @@ describe("formatTodosForHandoff", () => {
 		expect(result).not.toContain("cancelled");
 	});
 
-	it("handles only cancelled count in summary", async () => {
+	it("handles only blocked count in summary", async () => {
 		await todowriteTool.execute(
 			"call-1",
 			{
 				todos: [
 					{ content: "Active", status: "pending" },
-					{ content: "Dropped", status: "cancelled" },
+					{ content: "Blocked", status: "blocked" },
 				],
 			},
 			undefined,
@@ -366,7 +368,7 @@ describe("formatTodosForHandoff", () => {
 		);
 
 		const result = formatTodosForHandoff();
-		expect(result).toContain("*1 cancelled*");
+		expect(result).toContain("*1 blocked*");
 		expect(result).not.toContain("completed");
 	});
 });

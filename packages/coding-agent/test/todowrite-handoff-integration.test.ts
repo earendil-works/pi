@@ -124,7 +124,7 @@ describe("todowrite-handoff integration", () => {
 						{ content: "Active", status: "pending" },
 						{ content: "Working", status: "in_progress" },
 						{ content: "Done", status: "completed" },
-						{ content: "Dropped", status: "cancelled" },
+						{ content: "Dropped", status: "blocked" },
 					],
 				},
 				undefined,
@@ -137,11 +137,11 @@ describe("todowrite-handoff integration", () => {
 			expect(handoff).toContain("- [ ] [medium] Active");
 			expect(handoff).toContain("- [ ] [medium] Working (in_progress)");
 
-			// Completed/cancelled NOT in checklist but in summary
+			// Completed/blocked NOT in checklist but in summary
 			expect(handoff).not.toMatch(/- \[.\] .*Done/);
-			expect(handoff).not.toMatch(/- \[.\] .*Dropped/);
+			expect(handoff).not.toMatch(/- \[.\] .*Blocked/);
 			expect(handoff).toContain("1 completed");
-			expect(handoff).toContain("1 cancelled");
+			expect(handoff).toContain("1 blocked");
 		});
 	});
 
