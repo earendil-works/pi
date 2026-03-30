@@ -2832,51 +2832,169 @@ export class InteractiveMode {
 			this.updateEditorBorderColor();
 		}
 
+		const groupComponentsWithResults = new Set<ToolGroupComponent>();
+		const pendingToolErrors = new Map<string, string>();
+
 		for (const message of sessionContext.messages) {
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
 				this.addMessageToChat(message);
-				// Render tool call components
+
+				const isAbortedOrError = message.stopReason === "aborted" || message.stopReason === "error";
+				let replayActiveGroup: {
+					component: ToolGroupComponent;
+					definition: ToolGroupDefinition;
+					pendingMembers: Array<{ id: string; name: string; args: unknown }>;
+				} | null = null;
+
+				const flushReplayGroup = () => {
+					if (replayActiveGroup && replayActiveGroup.pendingMembers.length > 0) {
+						const group = replayActiveGroup;
+						group.component.batchUpdate(() => {
+							for (const member of group.pendingMembers) {
+								group.component.addMember(member.id, member.name, member.args);
+								group.component.setMemberArgsComplete(member.id);
+								group.component.markMemberExecutionStarted(member.id);
+							}
+						});
+						group.pendingMembers = [];
+					}
+				};
+
+				const closeReplayGroup = () => {
+					if (replayActiveGroup) {
+						flushReplayGroup();
+						replayActiveGroup.component.close();
+						replayActiveGroup = null;
+					}
+				};
+
+				let errorMessage: string | undefined;
+				if (isAbortedOrError) {
+					if (message.stopReason === "aborted") {
+						const retryAttempt = this.session.retryAttempt;
+						errorMessage =
+							retryAttempt > 0
+								? `Aborted after ${retryAttempt} retry attempt${retryAttempt > 1 ? "s" : ""}`
+								: "Operation aborted";
+					} else {
+						errorMessage = message.errorMessage || "Error";
+					}
+				}
+
 				for (const content of message.content) {
 					if (content.type === "toolCall") {
-						const component = new ToolExecutionComponent(
-							content.name,
-							content.id,
-							content.arguments,
-							{ showImages: this.settingsManager.getShowImages() },
-							this.getRegisteredToolDefinition(content.name),
-							this.ui,
-						);
-						component.setExpanded(this.toolOutputExpanded);
-						this.chatContainer.addChild(component);
+						const groupDef = this.findMatchingGroupDefinition(content.name, content.arguments);
 
-						if (message.stopReason === "aborted" || message.stopReason === "error") {
-							let errorMessage: string;
-							if (message.stopReason === "aborted") {
-								const retryAttempt = this.session.retryAttempt;
-								errorMessage =
-									retryAttempt > 0
-										? `Aborted after ${retryAttempt} retry attempt${retryAttempt > 1 ? "s" : ""}`
-										: "Operation aborted";
+						if (groupDef) {
+							if (replayActiveGroup && replayActiveGroup.definition === groupDef) {
+								replayActiveGroup.pendingMembers.push({
+									id: content.id,
+									name: content.name,
+									args: content.arguments,
+								});
+								this.pendingTools.set(content.id, replayActiveGroup.component);
 							} else {
-								errorMessage = message.errorMessage || "Error";
+								closeReplayGroup();
+								const groupComponent = new ToolGroupComponent(this.ui, groupDef, {
+									showImages: this.settingsManager.getShowImages(),
+								});
+								groupComponent.setExpanded(this.toolOutputExpanded);
+								this.chatContainer.addChild(groupComponent);
+								replayActiveGroup = {
+									component: groupComponent,
+									definition: groupDef,
+									pendingMembers: [{ id: content.id, name: content.name, args: content.arguments }],
+								};
+								this.pendingTools.set(content.id, groupComponent);
 							}
-							component.updateResult({ content: [{ type: "text", text: errorMessage }], isError: true });
 						} else {
+							closeReplayGroup();
+							const component = new ToolExecutionComponent(
+								content.name,
+								content.id,
+								content.arguments,
+								{ showImages: this.settingsManager.getShowImages() },
+								this.getRegisteredToolDefinition(content.name),
+								this.ui,
+							);
+							component.setExpanded(this.toolOutputExpanded);
+							this.chatContainer.addChild(component);
 							this.pendingTools.set(content.id, component);
+						}
+
+						if (errorMessage) {
+							pendingToolErrors.set(content.id, errorMessage);
+						}
+					} else {
+						const isTextWithContent = content.type === "text" && (content as { text?: string }).text?.trim();
+						const isThinking = content.type === "thinking";
+						if (isTextWithContent || isThinking) {
+							closeReplayGroup();
 						}
 					}
 				}
+
+				closeReplayGroup();
 			} else if (message.role === "toolResult") {
-				// Match tool results to pending tool components
-				const component = this.pendingTools.get(message.toolCallId) as ToolExecutionComponent | undefined;
+				const component = this.pendingTools.get(message.toolCallId);
 				if (component) {
-					component.updateResult(message);
+					if (component instanceof ToolGroupComponent) {
+						component.populateMemberResult(message.toolCallId, message);
+						groupComponentsWithResults.add(component);
+					} else {
+						(component as ToolExecutionComponent).updateResult(message);
+					}
 					this.pendingTools.delete(message.toolCallId);
+					pendingToolErrors.delete(message.toolCallId);
 				}
 			} else {
 				// All other messages use standard rendering
 				this.addMessageToChat(message, options);
+			}
+		}
+
+		// Inject error results into remaining pendingTools entries (tool calls from aborted/error
+		// messages that had no matching toolResult). Preserves actual results for completed calls.
+		const errorInjectedGroups = new Set<ToolGroupComponent>();
+		if (this.pendingTools.size > 0) {
+			const groupUpdates = new Map<ToolGroupComponent, string[]>();
+			for (const [toolCallId, component] of this.pendingTools.entries()) {
+				if (component instanceof ToolGroupComponent) {
+					let ids = groupUpdates.get(component);
+					if (!ids) {
+						ids = [];
+						groupUpdates.set(component, ids);
+					}
+					ids.push(toolCallId);
+				} else {
+					const errorMsg = pendingToolErrors.get(toolCallId) || "Operation aborted";
+					(component as ToolExecutionComponent).updateResult({
+						content: [{ type: "text", text: errorMsg }],
+						isError: true,
+					});
+				}
+			}
+			for (const [groupComponent, toolCallIds] of groupUpdates) {
+				groupComponent.batchUpdate(() => {
+					for (const toolCallId of toolCallIds) {
+						const errorMsg = pendingToolErrors.get(toolCallId) || "Operation aborted";
+						groupComponent.updateMemberResult(
+							toolCallId,
+							{ content: [{ type: "text", text: errorMsg }], isError: true },
+							false,
+						);
+					}
+				});
+				errorInjectedGroups.add(groupComponent);
+			}
+		}
+
+		// Trigger a single render for each ToolGroupComponent that received results via populateMemberResult,
+		// skipping any that were already rendered during error injection above
+		for (const groupComponent of groupComponentsWithResults) {
+			if (!errorInjectedGroups.has(groupComponent)) {
+				groupComponent.batchUpdate(() => {});
 			}
 		}
 
