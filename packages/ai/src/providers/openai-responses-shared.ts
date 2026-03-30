@@ -169,8 +169,23 @@ export function convertResponsesMessages<TApi extends Api>(
 			for (const block of msg.content) {
 				if (block.type === "thinking") {
 					if (block.thinkingSignature) {
-						const reasoningItem = JSON.parse(block.thinkingSignature) as ResponseReasoningItem;
-						output.push(reasoningItem);
+						// The Responses API requires replayed reasoning items to be
+						// followed by their paired assistant message item. A tool call
+						// does not satisfy that requirement. Only replay reasoning when
+						// the next non-thinking block is text, which becomes a message.
+						const blockIdx = msg.content.indexOf(block);
+						let nextNonThinkingType: string | null = null;
+						for (let k = blockIdx + 1; k < msg.content.length; k++) {
+							const next = msg.content[k];
+							if (next && next.type !== "thinking") {
+								nextNonThinkingType = next.type;
+								break;
+							}
+						}
+						if (nextNonThinkingType === "text") {
+							const reasoningItem = JSON.parse(block.thinkingSignature) as ResponseReasoningItem;
+							output.push(reasoningItem);
+						}
 					}
 				} else if (block.type === "text") {
 					const textBlock = block as TextContent;
