@@ -26,6 +26,7 @@ export { SkillInvocationMessageComponent } from "./skill-invocation-message.js";
 export { ThemeSelectorComponent } from "./theme-selector.js";
 export { ThinkingSelectorComponent } from "./thinking-selector.js";
 export { ToolExecutionComponent, type ToolExecutionOptions } from "./tool-execution.js";
+export { ToolGroupComponent } from "./tool-group.js";
 export { TreeSelectorComponent } from "./tree-selector.js";
 export { UserMessageComponent } from "./user-message.js";
 export { UserMessageSelectorComponent } from "./user-message-selector.js";
