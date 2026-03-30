@@ -3354,6 +3354,14 @@ export class TuiRenderer {
 
 	private async runAskUserDialog(request: AskUserRequest): Promise<AskUserResult> {
 		this.pauseWorkingStatusForOverlay();
+		if (this.settingsManager.getNotificationSound() !== "none") {
+			playNotificationSound();
+		}
+		if (this.settingsManager.getNotificationBanner() !== "none") {
+			const title = this.footer.getTitle();
+			const notificationTitle = title ? `Mu - ${title}` : "Mu";
+			sendNotification(notificationTitle, "Input needed: ask_user");
+		}
 		return new Promise((resolve, reject) => {
 			const finish = <T>(settle: () => T): T => {
 				this.clearDialogOverlay();
