@@ -43,6 +43,26 @@ describe("buildSystemPrompt", () => {
 		expect(prompt).toContain("- fetch: Fetch a URL.");
 	});
 
+	it("should reinforce ask_user usage for ambiguous specification and validation details when ask_user is available", async () => {
+		const prompt = await buildSystemPrompt({
+			includeFileTree: false,
+			tools: [
+				{
+					name: "ask_user",
+					description: "Ask the user focused clarification questions. Always keep questions concise and concrete.",
+				},
+			],
+		});
+
+		expect(prompt).toContain("- ask_user: Ask the user focused clarification questions.");
+		expect(prompt).toContain(
+			"When specification, problem-discovery, or validation-contract details are materially ambiguous, use ask_user before you finalize the response.",
+		);
+		expect(prompt).toContain(
+			"Every ask_user question set must leave room for a manual free-text answer from the user.",
+		);
+	});
+
 	it("should work with custom prompt", async () => {
 		const prompt = await buildSystemPrompt({
 			customPrompt: "You are a test assistant.",

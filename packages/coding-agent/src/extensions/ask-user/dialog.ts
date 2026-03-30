@@ -128,13 +128,11 @@ export class AskUserDialogComponent extends Container {
 			label: option,
 		}));
 
-		if (question.allowCustom !== false) {
-			items.push({
-				value: CUSTOM_VALUE,
-				label: "Custom answer…",
-				description: "Type your own answer",
-			});
-		}
+		items.push({
+			value: CUSTOM_VALUE,
+			label: "Custom answer…",
+			description: "Type your own answer",
+		});
 
 		const selectList = new SelectList(items, Math.min(Math.max(items.length, 1), 6), getSelectListTheme(), 40);
 		selectList.onSelect = (item) => {

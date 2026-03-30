@@ -91,7 +91,7 @@ function buildContextPayload(): string | null {
 	}
 
 	blocks.push(
-		"If problem-discovery, validation, or specification details are still unclear, prefer ask_user before guessing. Validation-contract clarification is the primary use case.",
+		"If problem-discovery, validation, or specification details are still unclear, use ask_user before finalizing the response. Validation-contract clarification is the primary use case. Always leave room for a manual free-text answer from the user.",
 	);
 	blocks.push("</ask_user_context>");
 	return blocks.join("\n");
@@ -203,7 +203,7 @@ export default function askUserExtension(api: ExtensionApi): void {
 		name: "ask_user",
 		label: "ask_user",
 		description:
-			"Ask the user focused clarification questions. Use primarily to lock down the validation contract (what to verify and via which surface). You may also use it during problem discovery or for missing specification details. Always keep questions concise and concrete.",
+			"Ask the user focused clarification questions. Use this before finalizing a response when validation-contract, specification, or problem-discovery details are materially ambiguous. Use primarily to lock down what to verify and via which surface. Always keep questions concise and concrete, and always leave room for a manual free-text answer from the user.",
 		parameters: askUserSchema,
 		getResourceKey: () => `ask_user:${process.env.MU_SESSION_ID ?? "global"}`,
 		execute: async (_toolCallId, params: Static<typeof askUserSchema>) => {

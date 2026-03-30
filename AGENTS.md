@@ -62,3 +62,19 @@ npm link  # If you want to test locally
 - Do NOT use inline imports ala `await import("./theme/theme.js");`
 - Read `~/agent-tools/browser-tools/README.md` if you need to run an interact with a browser
 - Use GitHub CLI to interact with GitHub issues and pull requests
+
+---
+
+## Workflow Guidance
+
+### Problem Discovery & ask_user
+
+When investigating code, fixing bugs, or implementing features:
+
+1. **Exhaust read-only checks first** - explore files, grep patterns, run tests
+2. **Use `ask_user` for structured clarification** - prefer the `ask_user` tool when:
+   - Validation contract details are unclear (what to test and how)
+   - Problem discovery hits ambiguity after investigation
+   - Specification details need user lock-in
+
+The `ask_user` tool stores answers durably in `devdocs/scopes/` and prevents repeated clarification loops. Default to it for validation contract capture before guessing.

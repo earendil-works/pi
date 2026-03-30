@@ -58,4 +58,34 @@ describe("AskUserDialogComponent", () => {
 		expect(resolved.answers[1]?.answer).toBe("dashboard visible");
 		expect(component.render(80).join("\n")).toContain("Lock down verification");
 	});
+
+	it("always offers a custom answer path even when allowCustom is false", () => {
+		initTheme("dark");
+		const component = new AskUserDialogComponent({
+			request: {
+				mode: "specification",
+				objective: "Lock down missing details",
+				questions: [
+					{
+						id: "boundary",
+						topic: "Boundary",
+						prompt: "Where should this live?",
+						options: ["Prompt only"],
+						allowCustom: false,
+					},
+				],
+			},
+			onSubmit: () => {
+				throw new Error("dialog should not submit");
+			},
+			onCancel: () => {
+				throw new Error("dialog should not cancel");
+			},
+		});
+
+		typeText(component, "ask-user-trigger-gate");
+		component.handleInput("\r");
+
+		expect(component.render(80).join("\n")).toContain("Custom answer…");
+	});
 });

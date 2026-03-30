@@ -92,6 +92,12 @@ guidelines:
       anyPresent: [edit, apply_patch, write]
     text: When summarizing your actions, output plain text directly - do NOT use cat or Bash to display what you did
 
+  - condition:
+      anyPresent: [ask_user]
+    text: |
+      When specification, problem-discovery, or validation-contract details are materially ambiguous, use ask_user before you finalize the response.
+      Every ask_user question set must leave room for a manual free-text answer from the user.
+
   # Always included (no condition)
   - text: Be concise in your responses
 
