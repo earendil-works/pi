@@ -66,7 +66,7 @@ function createFakeThis(groupDefs: ToolGroupDefinition[] = []) {
 	const fakeThis = {
 		isInitialized: true,
 		pendingTools: new Map<string, ToolExecutionComponent | ToolGroupComponent>(),
-		activeGroup: null as { component: ToolGroupComponent; definition: ToolGroupDefinition } | null,
+		openGroup: null as { component: ToolGroupComponent; definition: ToolGroupDefinition } | null,
 		lastProcessedContentIndex: 0,
 		toolOutputExpanded: false,
 		ui: tui,

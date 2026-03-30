@@ -50,6 +50,16 @@ const clearPendingToolsAndGroup = Reflect.get(InteractiveMode.prototype, "clearP
 	this: any,
 ) => void;
 
+const closeOpenGroup = Reflect.get(InteractiveMode.prototype, "closeOpenGroup") as (this: any) => void;
+
+const resetStreamingContentIndex = Reflect.get(InteractiveMode.prototype, "resetStreamingContentIndex") as (
+	this: any,
+) => void;
+
+const resetStreamingToolTracking = Reflect.get(InteractiveMode.prototype, "resetStreamingToolTracking") as (
+	this: any,
+) => void;
+
 const getRegisteredToolDefinition = Reflect.get(InteractiveMode.prototype, "getRegisteredToolDefinition") as (
 	this: any,
 	toolName: string,
@@ -62,7 +72,7 @@ function createFakeThis(groupDefs: ToolGroupDefinition[] = []) {
 	const fakeThis = {
 		isInitialized: true,
 		pendingTools: new Map<string, ToolExecutionComponent | ToolGroupComponent>(),
-		activeGroup: null as { component: ToolGroupComponent; definition: ToolGroupDefinition } | null,
+		openGroup: null as { component: ToolGroupComponent; definition: ToolGroupDefinition } | null,
 		lastProcessedContentIndex: 0,
 		toolOutputExpanded: false,
 		ui: tui,
@@ -170,7 +180,7 @@ describe("InteractiveMode - Streaming Tool Groups", () => {
 		const toolComponents = chatChildren.filter((c) => c instanceof ToolExecutionComponent);
 		expect(groupComponents).toHaveLength(1);
 		expect(toolComponents).toHaveLength(1);
-		expect(fakeThis.activeGroup).toBeNull();
+		expect(fakeThis.openGroup).toBeNull();
 	});
 
 	it("single matching call produces a group with 1 member", async () => {
@@ -259,7 +269,7 @@ describe("InteractiveMode - Streaming Tool Groups", () => {
 
 		await handleEvent.call(fakeThis, makeToolExecutionStartEvent("tc1", "read", { path: "a.ts" }));
 
-		expect(fakeThis.activeGroup).not.toBeNull();
+		expect(fakeThis.openGroup).not.toBeNull();
 		const groupComponents = chatChildren.filter((c) => c instanceof ToolGroupComponent);
 		expect(groupComponents).toHaveLength(1);
 		expect(fakeThis.pendingTools.get("tc1")).toBe(groupComponents[0]);
@@ -476,12 +486,165 @@ describe("InteractiveMode - Streaming Tool Groups", () => {
 			makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: {} }]),
 		);
 
-		expect(fakeThis.activeGroup).not.toBeNull();
+		expect(fakeThis.openGroup).not.toBeNull();
 
 		await handleEvent.call(fakeThis, makeToolExecutionStartEvent("tc2", "bash", {}));
 
-		expect(fakeThis.activeGroup).toBeNull();
+		expect(fakeThis.openGroup).toBeNull();
 		const toolComponents = chatChildren.filter((c) => c instanceof ToolExecutionComponent);
 		expect(toolComponents).toHaveLength(1);
+	});
+
+	describe("openGroup / resetStreamingToolTracking decomposition regressions", () => {
+		it("message-scoped groups close at message_end boundaries", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read");
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			expect(fakeThis.openGroup).not.toBeNull();
+			const group = fakeThis.openGroup!.component;
+			expect(group.isClosed).toBe(false);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"end_turn",
+				),
+			);
+
+			expect(fakeThis.openGroup).toBeNull();
+			expect(group.isClosed).toBe(true);
+		});
+
+		it("clearPendingToolsAndGroup unconditionally closes any open group", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read");
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			expect(fakeThis.openGroup).not.toBeNull();
+			const group = fakeThis.openGroup!.component;
+
+			clearPendingToolsAndGroup.call(fakeThis);
+
+			expect(fakeThis.openGroup).toBeNull();
+			expect(group.isClosed).toBe(true);
+			expect(fakeThis.pendingTools.size).toBe(0);
+		});
+
+		it("closeOpenGroup is idempotent (no-op when null)", () => {
+			const { fakeThis } = createFakeThis([]);
+			expect(fakeThis.openGroup).toBeNull();
+			closeOpenGroup.call(fakeThis);
+			expect(fakeThis.openGroup).toBeNull();
+		});
+
+		it("resetStreamingToolTracking closes group and resets content index", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read");
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			fakeThis.lastProcessedContentIndex = 5;
+			expect(fakeThis.openGroup).not.toBeNull();
+
+			resetStreamingToolTracking.call(fakeThis);
+
+			expect(fakeThis.openGroup).toBeNull();
+			expect(fakeThis.lastProcessedContentIndex).toBe(0);
+		});
+
+		it("resetStreamingContentIndex only resets content index, not group", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read");
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			fakeThis.lastProcessedContentIndex = 5;
+			const groupBefore = fakeThis.openGroup;
+
+			resetStreamingContentIndex.call(fakeThis);
+
+			expect(fakeThis.openGroup).toBe(groupBefore);
+			expect(fakeThis.lastProcessedContentIndex).toBe(0);
+		});
+
+		it("closeOpenGroup closes component and nulls reference in sync", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read");
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			const group = fakeThis.openGroup!.component;
+			expect(group.isClosed).toBe(false);
+
+			closeOpenGroup.call(fakeThis);
+
+			expect(fakeThis.openGroup).toBeNull();
+			expect(group.isClosed).toBe(true);
+		});
+
+		it("clearPendingToolsAndGroup does not double-close via resetStreamingToolTracking", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read");
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			const group = fakeThis.openGroup!.component;
+			const closeSpy = vi.spyOn(group, "close");
+
+			clearPendingToolsAndGroup.call(fakeThis);
+
+			expect(closeSpy).toHaveBeenCalledTimes(1);
+		});
+
+		it("message_end abort path closes group via clearPendingToolsAndGroup", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read");
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			const group = fakeThis.openGroup!.component;
+
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "aborted",
+			};
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"aborted",
+				),
+			);
+
+			expect(fakeThis.openGroup).toBeNull();
+			expect(group.isClosed).toBe(true);
+		});
 	});
 });

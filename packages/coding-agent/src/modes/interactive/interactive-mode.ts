@@ -193,8 +193,8 @@ export class InteractiveMode {
 	// Tool execution tracking: toolCallId -> component
 	private pendingTools = new Map<string, ToolExecutionComponent | ToolGroupComponent>();
 
-	// Active tool group state for streaming grouping
-	private activeGroup: { component: ToolGroupComponent; definition: ToolGroupDefinition } | null = null;
+	// Open tool group state for streaming grouping
+	private openGroup: { component: ToolGroupComponent; definition: ToolGroupDefinition } | null = null;
 	private lastProcessedContentIndex = 0;
 
 	// Tool output expansion state
@@ -1294,15 +1294,25 @@ export class InteractiveMode {
 		return undefined;
 	}
 
-	private closeActiveGroup(): void {
-		if (!this.activeGroup) return;
-		this.activeGroup.component.close();
-		this.activeGroup = null;
+	private closeOpenGroup(): void {
+		if (!this.openGroup) return;
+		const scope = this.openGroup.definition.lifecycle?.scope ?? "message";
+		if (scope === "toolRun") {
+			this.openGroup.component.close();
+			this.openGroup = null;
+		} else {
+			this.openGroup.component.close();
+			this.openGroup = null;
+		}
+	}
+
+	private resetStreamingContentIndex(): void {
+		this.lastProcessedContentIndex = 0;
 	}
 
 	private resetStreamingToolTracking(): void {
-		this.closeActiveGroup();
-		this.lastProcessedContentIndex = 0;
+		this.closeOpenGroup();
+		this.resetStreamingContentIndex();
 	}
 
 	private isGroupBoundary(block: AssistantContentBlock): boolean {
@@ -1331,12 +1341,12 @@ export class InteractiveMode {
 		args: unknown,
 		definition: ToolGroupDefinition,
 	): ToolGroupComponent {
-		if (this.activeGroup?.definition === definition) {
-			this.activeGroup.component.addMember(toolCallId, toolName, args);
-			return this.activeGroup.component;
+		if (this.openGroup?.definition === definition) {
+			this.openGroup.component.addMember(toolCallId, toolName, args);
+			return this.openGroup.component;
 		}
 
-		this.closeActiveGroup();
+		this.closeOpenGroup();
 
 		const groupComponent = new ToolGroupComponent(this.ui, definition, {
 			showImages: this.settingsManager.getShowImages(),
@@ -1344,7 +1354,7 @@ export class InteractiveMode {
 		groupComponent.setExpanded(this.toolOutputExpanded);
 		groupComponent.addMember(toolCallId, toolName, args);
 		this.chatContainer.addChild(groupComponent);
-		this.activeGroup = { component: groupComponent, definition };
+		this.openGroup = { component: groupComponent, definition };
 		return groupComponent;
 	}
 
@@ -1356,7 +1366,7 @@ export class InteractiveMode {
 
 		const groupDefinition = this.findMatchingGroupDefinition(toolName, args);
 		if (!groupDefinition) {
-			this.closeActiveGroup();
+			this.closeOpenGroup();
 		}
 		const component = groupDefinition
 			? this.createOrExtendGroup(toolName, toolCallId, args, groupDefinition)
@@ -1462,7 +1472,7 @@ export class InteractiveMode {
 		}
 
 		if (this.isGroupBoundary(block)) {
-			this.closeActiveGroup();
+			this.closeOpenGroup();
 		}
 	}
 
