@@ -45,6 +45,7 @@ import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
 import { parseCompactSlashCommand } from "../compact-command.js";
 import { buildCompactionCheckpointText, buildCompactionContinuationPrompt } from "../compaction-checkpoint.js";
+import { readToolProjectionV1 } from "../display/projection.js";
 import { exportSessionToHtml } from "../export-html.js";
 import { AskUserDialogComponent } from "../extensions/ask-user/dialog.js";
 import { setAskUserInteractionHandler } from "../extensions/ask-user/interaction.js";
@@ -1616,17 +1617,40 @@ export class TuiRenderer {
 					this.ui.requestRender();
 				}
 
-				// Update inline overlay for todo_write
-				if (event.toolName === "todo_write" && typeof event.result !== "string") {
-					this.updateInlineToolOverlay(
-						"todo_write",
-						{},
-						{
+				if (typeof event.result !== "string") {
+					const projection = readToolProjectionV1(event.result.details);
+					if (projection?.intent?.preferredSurface === "inline") {
+						this.updateInlineToolOverlay(
+							event.toolName,
+							{},
+							{
+								content: event.result.content,
+								details: event.result.details,
+								isError: event.isError,
+							},
+						);
+					} else if (projection?.intent?.preferredSurface === "dialog") {
+						const dialog = new InlineToolOverlayComponent(event.toolName, {});
+						dialog.updateResult({
 							content: event.result.content,
 							details: event.result.details,
 							isError: event.isError,
-						},
-					);
+						});
+						this.showDialogOverlay(projection.state?.title ?? event.toolName, dialog, dialog, {
+							marginX: 8,
+							marginBottom: 6,
+						});
+					} else if (event.toolName === "todo_write") {
+						this.updateInlineToolOverlay(
+							"todo_write",
+							{},
+							{
+								content: event.result.content,
+								details: event.result.details,
+								isError: event.isError,
+							},
+						);
+					}
 				}
 
 				this.pendingLatencyStartTime = Date.now();
@@ -3412,6 +3436,9 @@ export class TuiRenderer {
 				minWidth: 64,
 				maxWidth: 92,
 				marginX: 4,
+				onCancel: () => {
+					finish(() => reject(new Error("ask_user cancelled")));
+				},
 			});
 			this.ui.requestRender();
 		});
@@ -3428,6 +3455,7 @@ export class TuiRenderer {
 			marginX?: number;
 			marginTop?: number;
 			marginBottom?: number;
+			onCancel?: () => void;
 		} = {},
 	): void {
 		if (this.transcriptCopyToastTimer) {
@@ -3440,7 +3468,7 @@ export class TuiRenderer {
 			title,
 			body,
 			focusTarget,
-			onCancel: () => this.clearDialogOverlay(),
+			onCancel: options.onCancel ?? (() => this.clearDialogOverlay()),
 			panelWidth: options.width,
 			minPanelWidth: options.minWidth,
 			maxPanelWidth: options.maxWidth,

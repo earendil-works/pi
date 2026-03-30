@@ -101,9 +101,9 @@ function toTrimmedString(value: unknown): string {
 	return value.trim();
 }
 
-type MuDisplayV1Severity = "ok" | "warning" | "error" | "info";
+type ToolProjectionV1Severity = "ok" | "warning" | "error" | "info";
 
-interface MuDisplayV1 {
+interface ToolProjectionV1 {
 	version: 1;
 	call?: {
 		style: "argv";
@@ -114,7 +114,7 @@ interface MuDisplayV1 {
 	};
 	summary?: {
 		text: string;
-		severity?: MuDisplayV1Severity;
+		severity?: ToolProjectionV1Severity;
 	};
 	output?: {
 		collapse?: {
@@ -170,7 +170,7 @@ export interface WebSearchDetails {
 	args: string[];
 	stdout: string;
 	stderr: string;
-	mu_display?: MuDisplayV1;
+	projection?: ToolProjectionV1;
 }
 
 export function createWebSearchTool(params?: {
@@ -223,7 +223,7 @@ export function createWebSearchTool(params?: {
 					args: cliArgs,
 					stdout: res.stdout,
 					stderr: res.stderr,
-					mu_display: {
+					projection: {
 						version: 1,
 						call: {
 							style: "argv",
@@ -282,7 +282,7 @@ export interface FetchDetails {
 	stdout: string;
 	stderr: string;
 	nextStart?: number;
-	mu_display?: MuDisplayV1;
+	projection?: ToolProjectionV1;
 }
 
 function parseNextStart(stderr: string): number | undefined {
@@ -364,7 +364,7 @@ export function createFetchTool(params?: {
 					stdout: res.stdout,
 					stderr: res.stderr,
 					nextStart,
-					mu_display: {
+					projection: {
 						version: 1,
 						call: {
 							style: "argv",

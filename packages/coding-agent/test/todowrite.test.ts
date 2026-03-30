@@ -188,7 +188,7 @@ describe("todowrite tool", () => {
 		});
 	});
 
-	it("returns mu_display metadata for concise TUI rendering", async () => {
+	it("returns projection metadata for concise TUI rendering", async () => {
 		const result = await todowriteTool.execute(
 			"call-1",
 			{
@@ -205,22 +205,25 @@ describe("todowrite tool", () => {
 
 		const details = result.details as
 			| {
-					mu_display?: {
+					projection?: {
 						version?: number;
 						call?: { text?: string };
 						summary?: { text?: string };
 						output?: { collapse?: { maxVisualLines?: number } };
+						state?: { title?: string; items?: string[] };
 					};
 			  }
 			| undefined;
 
-		expect(details?.mu_display?.version).toBe(1);
-		expect(details?.mu_display?.call?.text).toContain("todo_write");
-		expect(details?.mu_display?.summary?.text).toContain("1 in_progress");
-		expect(details?.mu_display?.summary?.text).toContain("1 pending");
-		expect(details?.mu_display?.summary?.text).toContain("1 completed");
-		expect(details?.mu_display?.summary?.text).toContain("1 blocked");
-		expect(details?.mu_display?.output?.collapse?.maxVisualLines).toBe(5);
+		expect(details?.projection?.version).toBe(1);
+		expect(details?.projection?.call?.text).toContain("todo_write");
+		expect(details?.projection?.summary?.text).toContain("1 in_progress");
+		expect(details?.projection?.summary?.text).toContain("1 pending");
+		expect(details?.projection?.summary?.text).toContain("1 completed");
+		expect(details?.projection?.summary?.text).toContain("1 blocked");
+		expect(details?.projection?.output?.collapse?.maxVisualLines).toBe(5);
+		expect(details?.projection?.state?.title).toBe("Todo List");
+		expect(details?.projection?.state?.items?.some((item) => item.includes("Pending 1"))).toBe(true);
 	});
 
 	it("does not embed system_reminder in the tool result content", async () => {

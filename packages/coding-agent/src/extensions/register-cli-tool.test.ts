@@ -32,7 +32,7 @@ describe("ExtensionApi.registerCliTool", () => {
 			ok: boolean;
 			records: unknown[];
 			stderr: string;
-			mu_display?: {
+			projection?: {
 				version: number;
 				call?: { text?: string };
 			};
@@ -42,8 +42,8 @@ describe("ExtensionApi.registerCliTool", () => {
 		expect(details.records.length).toBeGreaterThanOrEqual(2);
 		expect(details.stderr).toContain("[fixture] starting");
 
-		expect(details.mu_display?.version).toBe(1);
-		expect(details.mu_display?.call?.text).toContain("jsonl-cli.mjs");
+		expect(details.projection?.version).toBe(1);
+		expect(details.projection?.call?.text).toContain("jsonl-cli.mjs");
 
 		const progressText = progress.join("");
 		expect(progressText).toContain("[fixture] starting");
@@ -73,12 +73,12 @@ describe("ExtensionApi.registerCliTool", () => {
 		const details = res.details as unknown as {
 			mode?: string;
 			jsonlParseErrorCount?: number;
-			mu_display?: { summary?: { text?: string; severity?: string } };
+			projection?: { summary?: { text?: string; severity?: string } };
 		};
 		expect(details.mode).toBe("raw");
 		expect(details.jsonlParseErrorCount).toBeGreaterThan(0);
-		expect(details.mu_display?.summary?.severity).toBe("warning");
-		expect(details.mu_display?.summary?.text).toContain("non-jsonl output");
+		expect(details.projection?.summary?.severity).toBe("warning");
+		expect(details.projection?.summary?.text).toContain("non-jsonl output");
 	});
 	it("shows stderr when the CLI exits non-zero with no JSONL output", async () => {
 		const mgr = new ExtensionManager({ builtInTools: {} });
@@ -151,10 +151,10 @@ describe("ExtensionApi.registerCliTool", () => {
 
 		const details = res.details as unknown as {
 			jsonlUnsupported?: boolean;
-			mu_display?: { summary?: { text?: string } };
+			projection?: { summary?: { text?: string } };
 		};
 		expect(details.jsonlUnsupported).toBe(true);
-		expect(details.mu_display?.summary?.text).toContain("jsonl unsupported");
+		expect(details.projection?.summary?.text).toContain("jsonl unsupported");
 	});
 
 	it("does not force --jsonl when argv requests help", async () => {
@@ -177,9 +177,9 @@ describe("ExtensionApi.registerCliTool", () => {
 		expect(text).toContain("fixture help");
 
 		const details = res.details as unknown as {
-			mu_display?: { version?: number; call?: { argv?: unknown } };
+			projection?: { version?: number; call?: { argv?: unknown } };
 		};
-		expect(details.mu_display?.version).toBe(1);
-		expect(Array.isArray(details.mu_display?.call?.argv)).toBe(true);
+		expect(details.projection?.version).toBe(1);
+		expect(Array.isArray(details.projection?.call?.argv)).toBe(true);
 	});
 });

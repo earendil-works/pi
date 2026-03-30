@@ -20,9 +20,9 @@ export interface RunJsonlCliCommandResult {
 	stderr: string;
 }
 
-export type MuDisplayV1Severity = "ok" | "warning" | "error" | "info";
+export type ToolProjectionV1Severity = "ok" | "warning" | "error" | "info";
 
-export interface MuDisplayV1 {
+export interface ToolProjectionV1 {
 	version: 1;
 	call?: {
 		style: "argv";
@@ -33,7 +33,7 @@ export interface MuDisplayV1 {
 	};
 	summary?: {
 		text: string;
-		severity?: MuDisplayV1Severity;
+		severity?: ToolProjectionV1Severity;
 	};
 	output?: {
 		collapse?: {
@@ -250,7 +250,7 @@ function formatSummaryFromResultSummary(summary: unknown): string | undefined {
 	return undefined;
 }
 
-export function buildMuDisplayV1ForCliResult(args: {
+export function buildToolProjectionV1ForCliResult(args: {
 	toolName: string;
 	command: string;
 	displayArgv: string[];
@@ -259,7 +259,7 @@ export function buildMuDisplayV1ForCliResult(args: {
 	ok: boolean;
 	records: unknown[];
 	stderr: string;
-}): MuDisplayV1 {
+}): ToolProjectionV1 {
 	const callText = formatCommandLineForDisplay(args.command, args.displayArgv);
 
 	const resultRec = lastResultRecord(args.records);
@@ -267,7 +267,7 @@ export function buildMuDisplayV1ForCliResult(args: {
 	const base = `${args.ok ? "ok" : "error"} · exit=${args.exitCode}`;
 	const summaryText = summaryTextFromResult ? `${base} · ${summaryTextFromResult}` : base;
 
-	const sections: MuDisplayV1["sections"] = [];
+	const sections: ToolProjectionV1["sections"] = [];
 	if (args.stderr.trim()) {
 		sections.push({
 			title: "stderr",
@@ -315,7 +315,7 @@ export function hasJsonlOutputOrResultRecords(records: unknown[]): boolean {
 	return false;
 }
 
-export function buildMuDisplayV1ForCliRawOutput(args: {
+export function buildToolProjectionV1ForCliRawOutput(args: {
 	toolName: string;
 	command: string;
 	displayArgv: string[];
@@ -325,7 +325,7 @@ export function buildMuDisplayV1ForCliRawOutput(args: {
 	stderr: string;
 	jsonlParseErrorCount: number;
 	reason: CliRawOutputReason;
-}): MuDisplayV1 {
+}): ToolProjectionV1 {
 	const callText = formatCommandLineForDisplay(args.command, args.displayArgv);
 	const base = `${args.ok ? "ok" : "error"} · exit=${args.exitCode}`;
 	const summaryText =
@@ -335,7 +335,7 @@ export function buildMuDisplayV1ForCliRawOutput(args: {
 				? `${base} · non-jsonl output`
 				: base;
 
-	const sections: MuDisplayV1["sections"] = [];
+	const sections: ToolProjectionV1["sections"] = [];
 	if (args.stderr.trim()) {
 		sections.push({
 			title: "stderr",

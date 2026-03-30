@@ -7,10 +7,10 @@ function renderText(component: ToolExecutionComponent, width: number): string {
 	return stripAnsi(component.render(width).join("\n"));
 }
 
-describe("ToolExecutionComponent mu_display rendering", () => {
+describe("ToolExecutionComponent projection rendering", () => {
 	initTheme("dark");
 
-	it("renders mu_display.call.text instead of dumping JSON args", () => {
+	it("renders projection.call.text instead of dumping JSON args", () => {
 		const component = new ToolExecutionComponent("fetch", {
 			argv: ["https://example.com", "--max-length", "200"],
 		});
@@ -19,7 +19,7 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 			content: [{ type: "text", text: "hello" }],
 			isError: false,
 			details: {
-				mu_display: {
+				projection: {
 					version: 1,
 					call: {
 						style: "argv",
@@ -40,7 +40,7 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 		expect(text).not.toContain('"argv"');
 	});
 
-	it("renders mu_display.call.tokens with theme-aware syntax colors", () => {
+	it("renders projection.call.tokens with theme-aware syntax colors", () => {
 		const component = new ToolExecutionComponent("read", {
 			path: "/tmp/example.ts",
 		});
@@ -49,7 +49,7 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 			content: [{ type: "text", text: "ok" }],
 			isError: false,
 			details: {
-				mu_display: {
+				projection: {
 					version: 1,
 					call: {
 						style: "argv",
@@ -75,7 +75,7 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 		expect(rendered).toContain(theme.getFgAnsi("syntaxNumber"));
 	});
 
-	it("collapses long output using mu_display.output.collapse", () => {
+	it("collapses long output using projection.output.collapse", () => {
 		const component = new ToolExecutionComponent("web_search", {
 			argv: ["hello"],
 		});
@@ -86,7 +86,7 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 			content: [{ type: "text", text: longText }],
 			isError: false,
 			details: {
-				mu_display: {
+				projection: {
 					version: 1,
 					call: { style: "argv", text: "websearch query hello", command: "websearch", argv: ["query", "hello"] },
 					output: { collapse: { maxVisualLines: 5, expandHint: "ctrl+o to expand" } },
@@ -103,7 +103,7 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 		expect(text).toContain("ctrl+o to expand");
 	});
 
-	it("renders a CLI-like call line for fetch args before mu_display is available", () => {
+	it("renders a CLI-like call line for fetch args before projection is available", () => {
 		const component = new ToolExecutionComponent("fetch", {
 			url: "https://example.com",
 			browser: true,
@@ -115,7 +115,7 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 		expect(text).not.toContain('"url"');
 	});
 
-	it("renders a CLI-like call line for web_search args before mu_display is available", () => {
+	it("renders a CLI-like call line for web_search args before projection is available", () => {
 		const component = new ToolExecutionComponent("web_search", {
 			searchTerm: "hello",
 			country: "US",
@@ -127,7 +127,7 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 		expect(text).not.toContain('"searchTerm"');
 	});
 
-	it("renders final tool output for web_search even without mu_display", () => {
+	it("renders final tool output for web_search even without projection", () => {
 		const component = new ToolExecutionComponent("web_search", {
 			searchTerm: "hello",
 		});
@@ -155,7 +155,7 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 		expect(text).toContain("downloading...");
 	});
 
-	it("prefers mu_display rendering for todo tool when metadata is present", () => {
+	it("prefers projection rendering for todo tool when metadata is present", () => {
 		const component = new ToolExecutionComponent("todo", {
 			action: "list",
 		});
@@ -164,7 +164,7 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 			content: [{ type: "text", text: "No todos" }],
 			isError: false,
 			details: {
-				mu_display: {
+				projection: {
 					version: 1,
 					call: {
 						style: "argv",
@@ -195,7 +195,7 @@ describe("ToolExecutionComponent mu_display rendering", () => {
 			],
 			isError: false,
 			details: {
-				mu_display: {
+				projection: {
 					version: 1,
 					call: { style: "argv", argv: ["set", "--items", "1"] },
 				},

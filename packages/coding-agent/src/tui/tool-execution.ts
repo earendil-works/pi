@@ -1,12 +1,12 @@
 import { Container, Spacer, Text } from "@kennyfrc/mu-tui";
 import stripAnsi from "strip-ansi";
 import {
-	deriveBuiltinMuDisplayV1,
-	type MuDisplayV1,
-	type MuDisplayV1CallToken,
-	readMuDisplayV1,
+	deriveBuiltinToolProjectionV1,
+	readToolProjectionV1,
 	shortenPathForDisplay,
-} from "../display/mu-display.js";
+	type ToolProjectionV1,
+	type ToolProjectionV1CallToken,
+} from "../display/projection.js";
 import { theme } from "../theme/theme.js";
 import { type ApplyPatchParseResult, parseApplyPatchInput } from "../tools/apply-patch/parse.js";
 import { stripSystemReminderTagsForDisplay } from "../utils/system-reminder.js";
@@ -318,7 +318,7 @@ function deriveWebToolCallText(toolName: string, args: Record<string, unknown>):
 	return null;
 }
 
-function renderMuDisplayToken(token: MuDisplayV1CallToken): string {
+function renderProjectionToken(token: ToolProjectionV1CallToken): string {
 	switch (token.tone) {
 		case "string":
 			return theme.fg("syntaxString", token.text);
@@ -339,9 +339,9 @@ function renderMuDisplayToken(token: MuDisplayV1CallToken): string {
 	}
 }
 
-function renderMuDisplayCallText(call: NonNullable<MuDisplayV1["call"]>): string {
+function renderProjectionCallText(call: NonNullable<ToolProjectionV1["call"]>): string {
 	if (Array.isArray(call.tokens) && call.tokens.length > 0) {
-		return call.tokens.map(renderMuDisplayToken).join("");
+		return call.tokens.map(renderProjectionToken).join("");
 	}
 	const argv = Array.isArray(call.argv) ? call.argv.filter((v): v is string => typeof v === "string") : [];
 	const callText = argv.length > 0 ? formatArgvForDisplay(argv) : (call.text ?? "");
@@ -534,7 +534,8 @@ export class ToolExecutionComponent extends Container {
 			stdin?: unknown;
 		};
 		const args = (isRecord(this.args) ? this.args : {}) as ToolArgs;
-		const effectiveMuDisplay = readMuDisplayV1(this.result?.details) ?? deriveBuiltinMuDisplayV1(this.toolName, args);
+		const effectiveProjection =
+			readToolProjectionV1(this.result?.details) ?? deriveBuiltinToolProjectionV1(this.toolName, args);
 
 		// Format based on tool type
 		if (this.toolName === "bash") {
@@ -699,8 +700,8 @@ export class ToolExecutionComponent extends Container {
 			text =
 				theme.fg("toolTitle", theme.bold("read")) +
 				" " +
-				(effectiveMuDisplay?.call
-					? renderMuDisplayCallText(effectiveMuDisplay.call)
+				(effectiveProjection?.call
+					? renderProjectionCallText(effectiveProjection.call)
 					: highlightPathForDisplay(path));
 
 			if (this.result) {
@@ -730,8 +731,8 @@ export class ToolExecutionComponent extends Container {
 			text =
 				theme.fg("toolTitle", theme.bold("write")) +
 				" " +
-				(effectiveMuDisplay?.call
-					? renderMuDisplayCallText(effectiveMuDisplay.call)
+				(effectiveProjection?.call
+					? renderProjectionCallText(effectiveProjection.call)
 					: path
 						? highlightPathForDisplay(path)
 						: theme.fg("toolOutput", "..."));
@@ -784,8 +785,8 @@ export class ToolExecutionComponent extends Container {
 			text =
 				theme.fg("toolTitle", theme.bold("edit")) +
 				" " +
-				(effectiveMuDisplay?.call
-					? renderMuDisplayCallText(effectiveMuDisplay.call)
+				(effectiveProjection?.call
+					? renderProjectionCallText(effectiveProjection.call)
 					: path
 						? highlightPathForDisplay(path)
 						: theme.fg("toolOutput", "..."));
@@ -915,15 +916,15 @@ export class ToolExecutionComponent extends Container {
 				text =
 					theme.fg("toolTitle", theme.bold("glob")) +
 					" " +
-					(effectiveMuDisplay?.call
-						? renderMuDisplayCallText(effectiveMuDisplay.call)
+					(effectiveProjection?.call
+						? renderProjectionCallText(effectiveProjection.call)
 						: highlightPathForDisplay(path));
 			} else {
 				text =
 					theme.fg("toolTitle", theme.bold("glob")) +
 					" " +
-					(effectiveMuDisplay?.call
-						? renderMuDisplayCallText(effectiveMuDisplay.call)
+					(effectiveProjection?.call
+						? renderProjectionCallText(effectiveProjection.call)
 						: highlightPatternForDisplay(pattern));
 			}
 
@@ -954,8 +955,8 @@ export class ToolExecutionComponent extends Container {
 			text =
 				theme.fg("toolTitle", theme.bold("grep")) +
 				" " +
-				(effectiveMuDisplay?.call
-					? renderMuDisplayCallText(effectiveMuDisplay.call)
+				(effectiveProjection?.call
+					? renderProjectionCallText(effectiveProjection.call)
 					: highlightPatternForDisplay(pattern, { open: "/", close: "/" }) +
 						theme.fg("toolOutput", " in ") +
 						highlightPathForDisplay(path));
@@ -978,59 +979,75 @@ export class ToolExecutionComponent extends Container {
 					}
 				}
 			}
-		} else if (effectiveMuDisplay && readMuDisplayV1(this.result?.details)) {
-			const muDisplay = effectiveMuDisplay;
+		} else if (effectiveProjection && readToolProjectionV1(this.result?.details)) {
+			const projection = effectiveProjection;
 
-			const cwdSuffix = muDisplay.call?.cwd?.trim()
-				? theme.fg("muted", ` (in ${shortenPathForDisplay(muDisplay.call.cwd.trim())})`)
-				: "";
+			if (projection.transcript?.mode === "derive" && projection.state) {
+				text = theme.fg("toolTitle", theme.bold(this.toolName));
+				if (projection.state.title?.trim()) {
+					text += "\n" + theme.bold(theme.fg("accent", projection.state.title.trim()));
+				}
+				if (projection.state.summary?.trim()) {
+					text += "\n" + theme.fg("muted", projection.state.summary.trim());
+				}
+				const items = Array.isArray(projection.state.items)
+					? projection.state.items.filter(
+							(line): line is string => typeof line === "string" && line.trim().length > 0,
+						)
+					: [];
+				if (items.length > 0) {
+					text += "\n\n" + items.map((line) => theme.fg("toolOutput", line)).join("\n");
+				}
+			} else {
+				const cwdSuffix = projection.call?.cwd?.trim()
+					? theme.fg("muted", ` (in ${shortenPathForDisplay(projection.call.cwd.trim())})`)
+					: "";
 
-			text =
-				theme.fg("toolTitle", theme.bold(this.toolName)) +
-				" " +
-				(muDisplay.call ? renderMuDisplayCallText(muDisplay.call) : theme.fg("toolOutput", "...")) +
-				cwdSuffix;
+				text =
+					theme.fg("toolTitle", theme.bold(this.toolName)) +
+					" " +
+					(projection.call ? renderProjectionCallText(projection.call) : theme.fg("toolOutput", "...")) +
+					cwdSuffix;
 
-			if (muDisplay.summary?.text?.trim()) {
-				text += "\n" + theme.fg("muted", muDisplay.summary.text.trim());
-			}
+				if (projection.summary?.text?.trim()) {
+					text += "\n" + theme.fg("muted", projection.summary.text.trim());
+				}
 
-			// Output: prefer final result, otherwise streaming partial output.
-			let output = "";
-			if (this.result) {
-				output = this.getTextOutput().trim();
-			} else if (this.partialOutput) {
-				output = stripAnsi(this.partialOutput).trim();
-			}
+				let output = "";
+				if (this.result) {
+					output = this.getTextOutput().trim();
+				} else if (this.partialOutput) {
+					output = stripAnsi(this.partialOutput).trim();
+				}
 
-			if (output) {
-				const contentWidth = Math.max(1, width - 2); // contentText has paddingX=1
-				const styledOutput = output
-					.split("\n")
-					.map((line: string) => theme.fg("toolOutput", line))
-					.join("\n");
+				if (output) {
+					const contentWidth = Math.max(1, width - 2);
+					const styledOutput = output
+						.split("\n")
+						.map((line: string) => theme.fg("toolOutput", line))
+						.join("\n");
+					const maxVisualLines = projection.output?.collapse?.maxVisualLines ?? 5;
+					const expandHint = projection.output?.collapse?.expandHint ?? "ctrl+o to expand";
 
-				const maxVisualLines = muDisplay.output?.collapse?.maxVisualLines ?? 5;
-				const expandHint = muDisplay.output?.collapse?.expandHint ?? "ctrl+o to expand";
-
-				if (this.expanded) {
-					text += "\n\n" + styledOutput;
-				} else {
-					const result = truncateToVisualLines(styledOutput, maxVisualLines, contentWidth, 0);
-					text += "\n\n";
-					if (result.skippedCount > 0) {
-						const hint = `... (${result.skippedCount} earlier lines · ${expandHint})`;
-						const hintLine = new Text(theme.fg("muted", hint), 0, 0).render(contentWidth)[0] ?? "";
-						text += hintLine + "\n";
+					if (this.expanded) {
+						text += "\n\n" + styledOutput;
+					} else {
+						const result = truncateToVisualLines(styledOutput, maxVisualLines, contentWidth, 0);
+						text += "\n\n";
+						if (result.skippedCount > 0) {
+							const hint = `... (${result.skippedCount} earlier lines · ${expandHint})`;
+							const hintLine = new Text(theme.fg("muted", hint), 0, 0).render(contentWidth)[0] ?? "";
+							text += hintLine + "\n";
+						}
+						text += result.visualLines.join("\n");
 					}
-					text += result.visualLines.join("\n");
 				}
 			}
 		} else if (this.toolName === "todo") {
 			const action = typeof args.action === "string" ? args.action : "";
 			text = theme.fg("toolTitle", theme.bold("todo"));
-			if (effectiveMuDisplay?.call) {
-				text += " " + renderMuDisplayCallText(effectiveMuDisplay.call);
+			if (effectiveProjection?.call) {
+				text += " " + renderProjectionCallText(effectiveProjection.call);
 			} else if (action) {
 				text += theme.fg("dim", ` (${action})`);
 			}
@@ -1056,8 +1073,8 @@ export class ToolExecutionComponent extends Container {
 			if (hasArgv || this.partialOutput || callText) {
 				text =
 					theme.fg("toolTitle", theme.bold(this.toolName)) +
-					(effectiveMuDisplay?.call
-						? " " + renderMuDisplayCallText(effectiveMuDisplay.call)
+					(effectiveProjection?.call
+						? " " + renderProjectionCallText(effectiveProjection.call)
 						: hasArgv || callText
 							? " " + theme.fg("accent", hasArgv ? formatArgvForDisplay(argv) : (callText ?? ""))
 							: "");

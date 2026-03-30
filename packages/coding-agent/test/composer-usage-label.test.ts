@@ -1,6 +1,8 @@
 import { getModel } from "@kennyfrc/mu-ai";
 import stripAnsi from "strip-ansi";
 import { describe, expect, it } from "vitest";
+import { saveOAuthCredentials } from "../../ai/src/utils/oauth/index.js";
+import { invalidateOAuthCache } from "../src/model-config.js";
 import { initTheme, theme } from "../src/theme/theme.js";
 import { formatComposerUsageLabel } from "../src/tui/composer-usage-label.js";
 import type { UsageLimitsSnapshot } from "../src/usage-footer.js";
@@ -16,6 +18,14 @@ describe("formatComposerUsageLabel", () => {
 	initTheme("dark");
 
 	it("omits dollars for codex subscription models and shows context/quota summary", () => {
+		saveOAuthCredentials("openai-codex", {
+			type: "oauth",
+			refresh: "refresh-token",
+			access: "access-token",
+			expires: Date.now() + 60_000,
+		});
+		invalidateOAuthCache();
+
 		const label = formatComposerUsageLabel({
 			model: getModel("openai-codex", "gpt-5.1"),
 			totalCost: 0,

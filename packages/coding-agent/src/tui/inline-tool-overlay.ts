@@ -1,6 +1,6 @@
 import { Container, visibleWidth } from "@kennyfrc/mu-tui";
 import stripAnsi from "strip-ansi";
-import { readMuDisplayV1 } from "../display/mu-display.js";
+import { readToolProjectionV1 } from "../display/projection.js";
 import { theme } from "../theme/theme.js";
 
 // Maximum lines to show when collapsed
@@ -89,6 +89,21 @@ export class InlineToolOverlayComponent extends Container {
 
 	private rebuild(): void {
 		this.clear();
+	}
+
+	private getProjectionState(): { title?: string; summary?: string; items: string[]; maxLines?: number } | null {
+		const projection = readToolProjectionV1(this.result?.details);
+		if (!projection?.state) return null;
+		return {
+			title: projection.state.title,
+			summary: projection.state.summary,
+			items: Array.isArray(projection.state.items)
+				? projection.state.items.filter(
+						(item): item is string => typeof item === "string" && item.trim().length > 0,
+					)
+				: [],
+			maxLines: projection.output?.collapse?.maxVisualLines,
+		};
 	}
 
 	private getTextOutput(): string {
@@ -211,7 +226,36 @@ export class InlineToolOverlayComponent extends Container {
 	override render(width: number): string[] {
 		if (this.dismissed || this.hidden) return [];
 
-		const muDisplay = readMuDisplayV1(this.result?.details) ?? null;
+		const projectionState = this.getProjectionState();
+		if (projectionState) {
+			const panelWidth = Math.max(20, width);
+			const innerWidth = Math.max(1, panelWidth - 4);
+			const border = (text: string) => theme.fg("borderMuted", text);
+			const bg = (text: string) => theme.bg("toolPendingBg", text);
+			const title = theme.bold(theme.fg("accent", projectionState.title?.trim() || "Projection"));
+			const titleFill = Math.max(0, panelWidth - 4 - visibleWidth(title));
+			const topLine = bg(`${border("╭─")} ${title}${border("─".repeat(titleFill))}${border("╮")}`);
+
+			const maxLines = this.expanded
+				? projectionState.items.length
+				: (projectionState.maxLines ?? DEFAULT_MAX_LINES);
+			const visibleLines = projectionState.items.slice(0, maxLines);
+			const hiddenCount = Math.max(0, projectionState.items.length - visibleLines.length);
+			const hint = hiddenCount > 0 ? `+${hiddenCount} more · ctrl+t to hide` : "ctrl+t to hide";
+
+			const bodyLines = [
+				projectionState.summary ? theme.fg("muted", projectionState.summary) : "",
+				...visibleLines.map((line) => theme.fg("toolOutput", line)),
+				theme.fg("muted", hint),
+			]
+				.filter((line) => visibleWidth(line) > 0)
+				.map((line) => bg(`${border("│")} ${padStyled(line, innerWidth)} ${border("│")}`));
+
+			const bottomLine = bg(`${border("╰")}${border("─".repeat(panelWidth - 2))}${border("╯")}`);
+			return [topLine, ...bodyLines, bottomLine];
+		}
+
+		const projection = readToolProjectionV1(this.result?.details) ?? null;
 		const lines = this.getDisplayLines();
 		if (lines.length === 0) return [];
 
@@ -223,10 +267,10 @@ export class InlineToolOverlayComponent extends Container {
 		const titleFill = Math.max(0, panelWidth - 4 - visibleWidth(title));
 		const topLine = bg(`${border("╭─")} ${title}${border("─".repeat(titleFill))}${border("╮")}`);
 
-		const summaryText = muDisplay?.summary?.text ? theme.fg("muted", muDisplay.summary.text) : "";
+		const summaryText = projection?.summary?.text ? theme.fg("muted", projection.summary.text) : "";
 		const maxLines = this.expanded
 			? lines.length
-			: (muDisplay?.output?.collapse?.maxVisualLines ?? DEFAULT_MAX_LINES);
+			: (projection?.output?.collapse?.maxVisualLines ?? DEFAULT_MAX_LINES);
 		const visibleLines = lines.slice(0, maxLines);
 		const hiddenCount = Math.max(0, lines.length - visibleLines.length);
 		const hint = hiddenCount > 0 ? `+${hiddenCount} more · ctrl+t to hide` : "ctrl+t to hide";

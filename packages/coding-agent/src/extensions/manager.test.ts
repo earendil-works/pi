@@ -19,7 +19,7 @@ function muDisplayForTest(argv: string[]): { version: 1; call: { style: "argv"; 
 	};
 }
 
-function makeTool(name: string): AgentTool<typeof mockToolSchema, { name: string; mu_display: unknown }> {
+function makeTool(name: string): AgentTool<typeof mockToolSchema, { name: string; projection: unknown }> {
 	return {
 		label: name,
 		name,
@@ -27,7 +27,7 @@ function makeTool(name: string): AgentTool<typeof mockToolSchema, { name: string
 		parameters: mockToolSchema,
 		execute: async () => ({
 			content: [{ type: "text", text: name }],
-			details: { name, mu_display: muDisplayForTest([name]) },
+			details: { name, projection: muDisplayForTest([name]) },
 		}),
 	};
 }
@@ -57,24 +57,24 @@ describe("ExtensionManager", () => {
 		const mgr = new ExtensionManager({ builtInTools: { bash: eraseAgentTool(builtInBash) } });
 
 		const extraSchema = Type.Object({});
-		const extBash: AgentTool<typeof extraSchema, { v: string; mu_display: unknown }> = {
+		const extBash: AgentTool<typeof extraSchema, { v: string; projection: unknown }> = {
 			label: "ext-bash",
 			name: "bash",
 			description: "ext bash",
 			parameters: extraSchema,
 			execute: async () => ({
 				content: [{ type: "text", text: "ext" }],
-				details: { v: "ext", mu_display: muDisplayForTest(["bash", "ext"]) },
+				details: { v: "ext", projection: muDisplayForTest(["bash", "ext"]) },
 			}),
 		};
-		const extTool: AgentTool<typeof extraSchema, { ok: true; mu_display: unknown }> = {
+		const extTool: AgentTool<typeof extraSchema, { ok: true; projection: unknown }> = {
 			label: "extra",
 			name: "extra",
 			description: "extra",
 			parameters: extraSchema,
 			execute: async () => ({
 				content: [{ type: "text", text: "extra" }],
-				details: { ok: true, mu_display: muDisplayForTest(["extra"]) },
+				details: { ok: true, projection: muDisplayForTest(["extra"]) },
 			}),
 		};
 
@@ -96,7 +96,7 @@ describe("ExtensionManager", () => {
 		expect(text).toContain("ext");
 	});
 
-	it("throws a strict error when an extension tool result is missing mu_display", async () => {
+	it("throws a strict error when an extension tool result is missing projection", async () => {
 		const mgr = new ExtensionManager({ builtInTools: toolMap(["bash"]) });
 
 		const schema = Type.Object({});
@@ -119,7 +119,7 @@ describe("ExtensionManager", () => {
 		const bad = tools.find((t) => t.name === "bad");
 		expect(bad).toBeTruthy();
 
-		await expect(bad!.execute("tc_1", {})).rejects.toThrow(/mu_display/);
+		await expect(bad!.execute("tc_1", {})).rejects.toThrow(/projection/);
 	});
 
 	it("adds extension tools to GPT-* model defaults", async () => {

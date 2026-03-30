@@ -1,6 +1,7 @@
 import type { AgentTool } from "@kennyfrc/mu-ai";
 import { StringEnum } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
+import type { ToolProjectionV1 } from "../display/projection.js";
 import { getToolDescription } from "../prompts/index.js";
 
 // Use StringEnum instead of Type.Union([Type.Literal(...)]) for Google API compatibility.
@@ -37,30 +38,10 @@ interface TodoItemInput {
 	priority?: TodoPriority;
 }
 
-interface MuDisplayV1 {
-	version: 1;
-	call: {
-		style: "argv";
-		text: string;
-		command: "todo_write";
-		argv: string[];
-	};
-	summary: {
-		text: string;
-		severity: "info";
-	};
-	output: {
-		collapse: {
-			maxVisualLines: number;
-			expandHint: string;
-		};
-	};
-}
-
 export interface TodoWriteToolDetails {
 	todos: TodoItem[];
 	summary: { total: number; pending: number; inProgress: number; completed: number; blocked: number };
-	mu_display: MuDisplayV1;
+	projection: ToolProjectionV1;
 }
 
 export interface TodoSummary {
@@ -224,8 +205,12 @@ export const todowriteTool: AgentTool<typeof todowriteSchema, TodoWriteToolDetai
 			details: {
 				todos: todos,
 				summary,
-				mu_display: {
+				projection: {
 					version: 1,
+					kind: "tool_panel",
+					intent: {
+						preferredSurface: "inline",
+					},
 					call: {
 						style: "argv",
 						text: `todo_write set --items ${total}`,
@@ -241,6 +226,13 @@ export const todowriteTool: AgentTool<typeof todowriteSchema, TodoWriteToolDetai
 							maxVisualLines: 5,
 							expandHint: "ctrl+o to expand",
 						},
+					},
+					state: {
+						title: "Todo List",
+						summary: summaryText,
+						items: todos
+							.filter((todo) => todo.status !== "completed")
+							.map((todo) => `[${todo.status}] [${todo.priority}] ${todo.content}`),
 					},
 				},
 			},

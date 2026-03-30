@@ -3,8 +3,8 @@ import { type Static, type TSchema, Type } from "@sinclair/typebox";
 import { registerRuntimeProvider, unregisterRuntimeProvidersBySourceId } from "../model-config.js";
 import type { SessionManager } from "../session-manager.js";
 import {
-	buildMuDisplayV1ForCliRawOutput,
-	buildMuDisplayV1ForCliResult,
+	buildToolProjectionV1ForCliRawOutput,
+	buildToolProjectionV1ForCliResult,
 	countJsonlParseErrors,
 	deriveContentFromJsonlRecords,
 	deriveOkFromJsonlRecords,
@@ -31,47 +31,47 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
-function assertHasMuDisplayV1(toolName: string, details: unknown): void {
+function assertHasToolProjectionV1(toolName: string, details: unknown): void {
 	if (!isRecord(details)) {
 		throw new Error(
-			`Extension tool "${toolName}" must return toolResult.details.mu_display (version 1). Received: ${typeof details}`,
+			`Extension tool "${toolName}" must return toolResult.details.projection (version 1). Received: ${typeof details}`,
 		);
 	}
 
-	const muDisplay = details.mu_display;
+	const muDisplay = details.projection;
 	if (!isRecord(muDisplay) || muDisplay.version !== 1) {
 		throw new Error(
-			`Extension tool "${toolName}" must return toolResult.details.mu_display.version === 1. ` +
-				`Tip: if this wraps a CLI, prefer api.registerCliTool(...) which auto-generates mu_display.`,
+			`Extension tool "${toolName}" must return toolResult.details.projection.version === 1. ` +
+				`Tip: if this wraps a CLI, prefer api.registerCliTool(...) which auto-generates projection.`,
 		);
 	}
 
 	const call = muDisplay.call;
 	if (!isRecord(call) || call.style !== "argv") {
-		throw new Error(`Extension tool "${toolName}" must return toolResult.details.mu_display.call.style === "argv".`);
+		throw new Error(`Extension tool "${toolName}" must return toolResult.details.projection.call.style === "argv".`);
 	}
 
 	// We require argv so the TUI can render consistent "toolName + argv" lines without
 	// duplicating underlying implementation commands (e.g. websearch/webfetch).
 	const argv = call.argv;
 	if (!Array.isArray(argv) || !argv.every((v) => typeof v === "string")) {
-		throw new Error(`Extension tool "${toolName}" must return toolResult.details.mu_display.call.argv as string[].`);
+		throw new Error(`Extension tool "${toolName}" must return toolResult.details.projection.call.argv as string[].`);
 	}
 
 	const text = call.text;
 	if (typeof text !== "string" || !text.trim()) {
 		throw new Error(
-			`Extension tool "${toolName}" must return toolResult.details.mu_display.call.text as a non-empty string.`,
+			`Extension tool "${toolName}" must return toolResult.details.projection.call.text as a non-empty string.`,
 		);
 	}
 }
 
-function wrapExtensionToolWithStrictMuDisplay(tool: ErasedAgentTool): ErasedAgentTool {
+function wrapExtensionToolWithStrictProjection(tool: ErasedAgentTool): ErasedAgentTool {
 	return {
 		...tool,
 		execute: async (toolCallId, params, signal, onProgress) => {
 			const res = await tool.execute(toolCallId, params, signal, onProgress);
-			assertHasMuDisplayV1(tool.name, (res as { details?: unknown }).details);
+			assertHasToolProjectionV1(tool.name, (res as { details?: unknown }).details);
 			return res;
 		},
 	};
@@ -129,8 +129,8 @@ export class ExtensionManager {
 		const api: ExtensionApi = {
 			registerTool: (tool, options?: ToolRegistrationOptions) => {
 				// Enforce a strict display contract for extension tools.
-				// Without mu_display, the TUI would otherwise guess and often render confusing headers.
-				this.tools.registerTool(wrapExtensionToolWithStrictMuDisplay(tool), {
+				// Without projection, the TUI would otherwise guess and often render confusing headers.
+				this.tools.registerTool(wrapExtensionToolWithStrictProjection(tool), {
 					sourceId,
 					priority: options?.priority,
 				});
@@ -184,7 +184,7 @@ export class ExtensionManager {
 
 						if (!useJsonl) {
 							const ok = res.exitCode === 0;
-							const mu_display = {
+							const projection = {
 								version: 1 as const,
 								call: {
 									style: "argv" as const,
@@ -210,7 +210,7 @@ export class ExtensionManager {
 									stdout: res.stdout,
 									stderr: res.stderr,
 									mode: "help",
-									mu_display,
+									projection,
 								},
 							};
 						}
@@ -235,7 +235,7 @@ export class ExtensionManager {
 							});
 
 							const ok = retry.exitCode === 0;
-							const mu_display = buildMuDisplayV1ForCliRawOutput({
+							const projection = buildToolProjectionV1ForCliRawOutput({
 								toolName: spec.name,
 								command: spec.command,
 								displayArgv,
@@ -258,7 +258,7 @@ export class ExtensionManager {
 									stderr: retry.stderr,
 									mode: "raw",
 									jsonlUnsupported: true,
-									mu_display,
+									projection,
 								},
 							};
 						}
@@ -271,7 +271,7 @@ export class ExtensionManager {
 						// to avoid spamming the transcript/session with per-line JSON parse errors.
 						if (!hasOutputOrResult && jsonlParseErrorCount > 0) {
 							const ok = res.exitCode === 0;
-							const mu_display = buildMuDisplayV1ForCliRawOutput({
+							const projection = buildToolProjectionV1ForCliRawOutput({
 								toolName: spec.name,
 								command: spec.command,
 								displayArgv,
@@ -294,7 +294,7 @@ export class ExtensionManager {
 									stderr: res.stderr,
 									mode: "raw",
 									jsonlParseErrorCount,
-									mu_display,
+									projection,
 								},
 							};
 						}
@@ -303,7 +303,7 @@ export class ExtensionManager {
 						if (!hasOutputOrResult && jsonlParseErrorCount === 0 && records.length === 0 && res.exitCode !== 0) {
 							const ok = false;
 							const text = res.stderr.trim() ? res.stderr : `Command failed with exit code ${res.exitCode}`;
-							const mu_display = buildMuDisplayV1ForCliRawOutput({
+							const projection = buildToolProjectionV1ForCliRawOutput({
 								toolName: spec.name,
 								command: spec.command,
 								displayArgv,
@@ -325,7 +325,7 @@ export class ExtensionManager {
 									stdout: res.stdout,
 									stderr: res.stderr,
 									mode: "stderr",
-									mu_display,
+									projection,
 								},
 							};
 						}
@@ -334,7 +334,7 @@ export class ExtensionManager {
 						const okFromRecords = deriveOkFromJsonlRecords(records);
 						const ok = okFromRecords ?? res.exitCode === 0;
 
-						const mu_display = buildMuDisplayV1ForCliResult({
+						const projection = buildToolProjectionV1ForCliResult({
 							toolName: spec.name,
 							command: spec.command,
 							displayArgv,
@@ -355,13 +355,13 @@ export class ExtensionManager {
 								stdout: res.stdout,
 								stderr: res.stderr,
 								records,
-								mu_display,
+								projection,
 							},
 						};
 					},
 				};
 
-				this.tools.registerTool(wrapExtensionToolWithStrictMuDisplay(tool), {
+				this.tools.registerTool(wrapExtensionToolWithStrictProjection(tool), {
 					sourceId,
 					priority: options?.priority,
 				});

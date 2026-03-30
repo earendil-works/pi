@@ -21,7 +21,7 @@ describe("InlineToolOverlayComponent integration", () => {
 			details: {
 				todos: [{ id: "todo_1", content: "Read README", status: "in_progress", priority: "high" }],
 				summary: { total: 1, pending: 0, inProgress: 1, completed: 0, blocked: 0 },
-				mu_display: {
+				projection: {
 					version: 1,
 					call: {
 						style: "argv" as const,
@@ -63,7 +63,7 @@ describe("InlineToolOverlayComponent integration", () => {
 			details: {
 				todos: [],
 				summary: { total: 0, pending: 0, inProgress: 0, completed: 0, blocked: 0 },
-				mu_display: {
+				projection: {
 					version: 1,
 					call: { style: "argv" as const, text: "todo_write", command: "todo_write", argv: [] },
 					summary: { text: "No todos", severity: "info" as const },
@@ -90,7 +90,7 @@ describe("InlineToolOverlayComponent integration", () => {
 			details: {
 				todos: [],
 				summary: { total: 0, pending: 0, inProgress: 0, completed: 0, blocked: 0 },
-				mu_display: {
+				projection: {
 					version: 1,
 					call: { style: "argv" as const, text: "todo_write", command: "todo_write", argv: [] },
 					summary: { text: "Still dismissed", severity: "info" as const },
@@ -112,7 +112,7 @@ describe("InlineToolOverlayComponent integration", () => {
 			details: {
 				todos: [],
 				summary: { total: 0, pending: 0, inProgress: 0, completed: 0, blocked: 0 },
-				mu_display: {
+				projection: {
 					version: 1,
 					call: { style: "argv" as const, text: "todo_write", command: "todo_write", argv: [] },
 					summary: { text: "Summary", severity: "info" as const },
@@ -153,7 +153,7 @@ describe("InlineToolOverlayComponent integration", () => {
 			details: {
 				todos: [{ id: "todo_1", content: "Task 1", status: "pending", priority: "medium" }],
 				summary: { total: 1, pending: 1, inProgress: 0, completed: 0, blocked: 0 },
-				mu_display: {
+				projection: {
 					version: 1,
 					call: { style: "argv" as const, text: "todo_write", command: "todo_write", argv: [] },
 					summary: { text: "Summary", severity: "info" as const },
@@ -188,7 +188,7 @@ describe("InlineToolOverlayComponent integration", () => {
 					{ id: "todo_3", content: "Waiting task", status: "blocked", priority: "medium" },
 				],
 				summary: { total: 3, pending: 0, inProgress: 1, completed: 1, blocked: 1 },
-				mu_display: {
+				projection: {
 					version: 1,
 					call: { style: "argv" as const, text: "todo_write", command: "todo_write", argv: [] },
 					summary: { text: "1 in_progress · 0 pending · 1 completed · 1 blocked", severity: "info" as const },
@@ -213,7 +213,7 @@ describe("InlineToolOverlayComponent integration", () => {
 			details: {
 				todos: [{ id: "todo_1", content: "Done task", status: "completed", priority: "medium" }],
 				summary: { total: 1, pending: 0, inProgress: 0, completed: 1, blocked: 0 },
-				mu_display: {
+				projection: {
 					version: 1,
 					call: { style: "argv" as const, text: "todo_write", command: "todo_write", argv: [] },
 					summary: { text: "0 in_progress · 0 pending · 1 completed · 0 blocked", severity: "info" as const },

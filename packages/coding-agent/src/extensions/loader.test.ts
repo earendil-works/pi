@@ -145,7 +145,7 @@ export default function (mu) {
       return {
         content: [{ type: "text", text: "external" }],
         details: {
-          mu_display: {
+          projection: {
             version: 1,
             call: { style: "argv", text: "ask_user external", command: "ask_user", argv: ["external"] },
             summary: { text: "ok", severity: "ok" },
@@ -170,7 +170,7 @@ export default function (mu) {
 					execute: async () => ({
 						content: [{ type: "text", text: "built-in" }],
 						details: {
-							mu_display: {
+							projection: {
 								version: 1 as const,
 								call: {
 									style: "argv" as const,

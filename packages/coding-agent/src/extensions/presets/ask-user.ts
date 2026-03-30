@@ -181,7 +181,7 @@ export default function askUserExtension(api: ExtensionApi): void {
 			answers: AskUserAnswer[];
 			validationContract: ReturnType<typeof loadScopeState>["validationContract"];
 			specClarifications: ReturnType<typeof loadScopeState>["specClarifications"];
-			mu_display: {
+			projection: {
 				version: 1;
 				call: {
 					style: "argv";
@@ -271,7 +271,7 @@ export default function askUserExtension(api: ExtensionApi): void {
 					answers: promptResult.answers,
 					validationContract,
 					specClarifications,
-					mu_display: {
+					projection: {
 						version: 1 as const,
 						call: {
 							style: "argv" as const,
