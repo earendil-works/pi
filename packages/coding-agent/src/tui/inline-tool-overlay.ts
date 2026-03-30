@@ -1,4 +1,4 @@
-import { Container, Text } from "@kennyfrc/mu-tui";
+import { Container, visibleWidth } from "@kennyfrc/mu-tui";
 import stripAnsi from "strip-ansi";
 import { type MuDisplayV1, readMuDisplayV1 } from "../display/mu-display.js";
 import { theme } from "../theme/theme.js";
@@ -6,6 +6,23 @@ import { truncateToVisualLines } from "./visual-truncate.js";
 
 // Maximum lines to show when collapsed
 const DEFAULT_MAX_LINES = 3;
+
+interface TodoOverlayItem {
+	content: string;
+	status: "pending" | "in_progress" | "blocked";
+	priority?: "high" | "medium" | "low";
+}
+
+interface TodoOverlayLine {
+	kind: "todo" | "text";
+	text: string;
+	status?: "pending" | "in_progress" | "blocked";
+	priority?: "high" | "medium" | "low";
+}
+
+function padStyled(text: string, width: number): string {
+	return text + " ".repeat(Math.max(0, width - visibleWidth(text)));
+}
 
 /**
  * Component that renders a tool call in a compact inline format
@@ -60,56 +77,6 @@ export class InlineToolOverlayComponent extends Container {
 
 	private rebuild(): void {
 		this.clear();
-		if (this.dismissed) return;
-
-		const muDisplay = readMuDisplayV1(this.result?.details) ?? null;
-
-		// Add tool call line
-		const callText = this.formatCallLine(muDisplay);
-		this.addChild(new Text(callText, 0, 0));
-
-		// Add summary line if available (inline, same line as tool name if possible)
-		// Actually keep separate for readability
-		if (muDisplay?.summary?.text) {
-			this.addChild(new Text(theme.fg("muted", muDisplay.summary.text), 0, 0));
-		}
-
-		// Add output preview if available
-		const output = this.getTextOutput();
-		if (output) {
-			const maxLines = this.expanded ? Infinity : (muDisplay?.output?.collapse?.maxVisualLines ?? DEFAULT_MAX_LINES);
-
-			if (maxLines < Infinity && !this.expanded) {
-				// Collapsed view with truncation
-				const styledOutput = output
-					.split("\n")
-					.map((line) => theme.fg("toolOutput", line))
-					.join("\n");
-
-				const result = truncateToVisualLines(
-					styledOutput,
-					maxLines,
-					76, // approximate width accounting for padding
-					0,
-				);
-
-				// Show lines first, then hint
-				for (const line of result.visualLines.slice(0, maxLines)) {
-					this.addChild(new Text(line, 0, 0));
-				}
-
-				if (result.skippedCount > 0) {
-					const hint = muDisplay?.output?.collapse?.expandHint ?? "ctrl+o to expand";
-					this.addChild(new Text(theme.fg("muted", `... (${result.skippedCount} more lines · ${hint})`), 0, 0));
-				}
-			} else {
-				// Expanded view - limit to reasonable height even when expanded
-				const lines = output.split("\n").slice(0, 15);
-				for (const line of lines) {
-					this.addChild(new Text(theme.fg("toolOutput", line), 0, 0));
-				}
-			}
-		}
 	}
 
 	private formatCallLine(muDisplay: MuDisplayV1 | null): string {
@@ -145,6 +112,82 @@ export class InlineToolOverlayComponent extends Container {
 		return output.trim();
 	}
 
+	private getDisplayItems(): TodoOverlayItem[] {
+		const details = this.result?.details;
+		if (details && typeof details === "object") {
+			const todos = (details as { todos?: unknown }).todos;
+			if (Array.isArray(todos)) {
+				return todos
+					.filter((todo): todo is { content: string; status: string; priority?: "high" | "medium" | "low" } => {
+						return (
+							!!todo &&
+							typeof todo === "object" &&
+							typeof todo.content === "string" &&
+							typeof todo.status === "string"
+						);
+					})
+					.filter(
+						(todo) => todo.status === "pending" || todo.status === "in_progress" || todo.status === "blocked",
+					)
+					.map((todo) => ({
+						content: todo.content,
+						status: todo.status as "pending" | "in_progress" | "blocked",
+						priority: todo.priority,
+					}));
+			}
+		}
+
+		return this.getTextOutput()
+			.split("\n")
+			.map((line) => line.trim())
+			.filter(Boolean)
+			.flatMap<TodoOverlayItem>((line) => {
+				const inProgressMatch = line.match(/^\[in_progress\]\s+(.*)$/);
+				if (inProgressMatch) return [{ content: inProgressMatch[1]!, status: "in_progress" }];
+				const pendingMatch = line.match(/^\[pending\]\s+(.*)$/);
+				if (pendingMatch) return [{ content: pendingMatch[1]!, status: "pending" }];
+				const blockedMatch = line.match(/^\[blocked\]\s+(.*)$/);
+				if (blockedMatch) return [{ content: blockedMatch[1]!, status: "blocked" }];
+				return [];
+			});
+	}
+
+	private getDisplayLines(): TodoOverlayLine[] {
+		const items = this.getDisplayItems();
+		if (items.length > 0) {
+			return items.map((item) => ({
+				kind: "todo",
+				text: item.content,
+				status: item.status,
+				priority: item.priority,
+			}));
+		}
+
+		return this.getTextOutput()
+			.split("\n")
+			.map((line) => line.trim())
+			.filter(Boolean)
+			.map((line) => ({ kind: "text" as const, text: line }));
+	}
+
+	private formatTodoLine(item: TodoOverlayLine): string {
+		const status = item.status ?? "pending";
+		const statusGlyph =
+			status === "in_progress"
+				? theme.fg("accent", "▶")
+				: status === "blocked"
+					? theme.fg("warning", "◆")
+					: theme.fg("muted", "○");
+		const priorityLabel =
+			item.priority === "high"
+				? theme.fg("warning", "[H]")
+				: item.priority === "low"
+					? theme.fg("muted", "[L]")
+					: theme.fg("accent", "[M]");
+		const contentColor = status === "in_progress" ? "accent" : status === "blocked" ? "warning" : "toolOutput";
+		return `${statusGlyph} ${priorityLabel} ${theme.fg(contentColor, item.text)}`;
+	}
+
 	private shouldAutoDismiss(details: unknown): boolean {
 		if (!details || typeof details !== "object") return false;
 		const summary = (details as { summary?: unknown }).summary;
@@ -170,6 +213,38 @@ export class InlineToolOverlayComponent extends Container {
 
 	override render(width: number): string[] {
 		if (this.dismissed) return [];
-		return super.render(width);
+
+		const muDisplay = readMuDisplayV1(this.result?.details) ?? null;
+		const lines = this.getDisplayLines();
+		if (lines.length === 0) return [];
+
+		const panelWidth = Math.max(20, width);
+		const innerWidth = Math.max(1, panelWidth - 4);
+		const border = (text: string) => theme.fg("borderMuted", text);
+		const bg = (text: string) => theme.bg("toolPendingBg", text);
+		const title = theme.bold(theme.fg("accent", "Todo List"));
+		const titleFill = Math.max(0, panelWidth - 4 - visibleWidth(title));
+		const topLine = bg(`${border("╭─")} ${title}${border("─".repeat(titleFill))}${border("╮")}`);
+
+		const summaryText = muDisplay?.summary?.text ? theme.fg("muted", muDisplay.summary.text) : "";
+		const maxLines = this.expanded
+			? lines.length
+			: (muDisplay?.output?.collapse?.maxVisualLines ?? DEFAULT_MAX_LINES);
+		const visibleLines = lines.slice(0, maxLines);
+		const hiddenCount = Math.max(0, lines.length - visibleLines.length);
+		const hint = hiddenCount > 0 ? `+${hiddenCount} more · esc to dismiss` : "esc to dismiss";
+
+		const bodyLines = [
+			summaryText,
+			...visibleLines.map((line) =>
+				line.kind === "todo" ? this.formatTodoLine(line) : theme.fg("toolOutput", line.text),
+			),
+			theme.fg("muted", hint),
+		]
+			.filter((line) => visibleWidth(line) > 0)
+			.map((line) => bg(`${border("│")} ${padStyled(line, innerWidth)} ${border("│")}`));
+
+		const bottomLine = bg(`${border("╰")}${border("─".repeat(panelWidth - 2))}${border("╯")}`);
+		return [topLine, ...bodyLines, bottomLine];
 	}
 }

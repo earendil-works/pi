@@ -44,13 +44,16 @@ describe("InlineToolOverlayComponent", () => {
 		const lines = component.render(80);
 		const text = lines.join("\n");
 
-		// Should show the tool name and summary
-		expect(text).toContain("todo_write");
+		// Should show a bordered todo card with title and summary
+		expect(text).toContain("Todo List");
+		expect(text).toContain("╭");
+		expect(text).toContain("╰");
 		expect(text).toContain("in_progress");
 		expect(text).toContain("pending");
+		expect(text).toContain("Read README");
 
-		// Should be compact (limited height)
-		expect(lines.length).toBeLessThanOrEqual(5);
+		// Should stay compact enough to not consume the chat area
+		expect(lines.length).toBeLessThanOrEqual(8);
 	});
 
 	it("should handle collapsed state by default", () => {
@@ -77,7 +80,7 @@ describe("InlineToolOverlayComponent", () => {
 		const lines = component.render(80);
 
 		// Should be collapsed (limited lines)
-		expect(lines.length).toBeLessThanOrEqual(6);
+		expect(lines.length).toBeLessThanOrEqual(7);
 	});
 
 	it("should expand when expand() is called", () => {
@@ -103,7 +106,7 @@ describe("InlineToolOverlayComponent", () => {
 
 		// Initially collapsed
 		const collapsedLines = component.render(80);
-		expect(collapsedLines.length).toBeLessThanOrEqual(6);
+		expect(collapsedLines.length).toBeLessThanOrEqual(7);
 
 		// Expand
 		component.setExpanded(true);
@@ -150,7 +153,35 @@ describe("InlineToolOverlayComponent", () => {
 		const lines = component.render(80);
 		const text = lines.join("\n");
 
-		// Should show expansion hint
+		// Should show dismissal hint in the footer area
 		expect(text).toContain("esc to dismiss");
+	});
+
+	it("renders todo items with prettier status markers", () => {
+		const component = new InlineToolOverlayComponent("todo_write", {});
+
+		component.updateResult({
+			content: [{ type: "text", text: "[in_progress] Ship it\n[pending] Write docs\n[blocked] Waiting on API" }],
+			isError: false,
+			details: {
+				todos: [
+					{ id: "todo_1", content: "Ship it", status: "in_progress", priority: "high" },
+					{ id: "todo_2", content: "Write docs", status: "pending", priority: "medium" },
+					{ id: "todo_3", content: "Waiting on API", status: "blocked", priority: "low" },
+				],
+				summary: { total: 3, pending: 1, inProgress: 1, completed: 0, blocked: 1 },
+				mu_display: {
+					version: 1,
+					call: { style: "argv", text: "todo_write", command: "todo_write", argv: [] },
+					summary: { text: "1 in_progress · 1 pending · 0 completed · 1 blocked", severity: "info" },
+					output: { collapse: { maxVisualLines: 3, expandHint: "esc to dismiss" } },
+				},
+			} as TodoWriteToolDetails,
+		});
+
+		const text = component.render(80).join("\n");
+		expect(text).toContain("▶");
+		expect(text).toContain("○");
+		expect(text).toContain("◆");
 	});
 });

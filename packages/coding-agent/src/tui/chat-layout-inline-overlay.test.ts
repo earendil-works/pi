@@ -55,6 +55,63 @@ describe("ChatLayoutComponent inline overlay", () => {
 		expect(composerIndex).toBeGreaterThan(overlayIndex);
 	});
 
+	it("reduces chat depth when inline overlay is present instead of covering chat content", () => {
+		const originalRows = process.stdout.rows;
+		Object.defineProperty(process.stdout, "rows", {
+			value: 12,
+			configurable: true,
+		});
+
+		const chatContent = new Container();
+		for (let i = 1; i <= 80; i++) {
+			chatContent.addChild(new Text(`Chat line ${i}`, 0, 0));
+		}
+
+		const inlineOverlay = new Container();
+		inlineOverlay.addChild(new Text("Todo overlay header", 0, 0));
+		inlineOverlay.addChild(new Text("Todo overlay body", 0, 0));
+
+		const composerContent = new Container();
+		composerContent.addChild(new Text("Composer", 0, 0));
+
+		const footer = new Container();
+		footer.addChild(new Text("Footer", 0, 0));
+
+		const withOverlay = new ChatLayoutComponent({
+			chatContent,
+			composerContent,
+			inputTarget: composerContent,
+			footer,
+			getComposerLabel: () => "Input",
+			getComposerBorderColor: () => (text: string) => text,
+			updateComposerViewport: () => {},
+			inlineOverlayContent: inlineOverlay,
+		});
+
+		const withoutOverlay = new ChatLayoutComponent({
+			chatContent,
+			composerContent,
+			inputTarget: composerContent,
+			footer,
+			getComposerLabel: () => "Input",
+			getComposerBorderColor: () => (text: string) => text,
+			updateComposerViewport: () => {},
+		});
+
+		const withOverlayText = withOverlay.render(80).join("\n");
+		const withoutOverlayText = withoutOverlay.render(80).join("\n");
+
+		// When overlay is present, fewer chat lines fit in the viewport.
+		const withOverlayChatLineCount = (withOverlayText.match(/Chat line /g) ?? []).length;
+		const withoutOverlayChatLineCount = (withoutOverlayText.match(/Chat line /g) ?? []).length;
+		expect(withOverlayChatLineCount).toBeLessThan(withoutOverlayChatLineCount);
+
+		Object.defineProperty(process.stdout, "rows", {
+			value: originalRows,
+			configurable: true,
+		});
+	});
+
 	it("should work without inline overlay (backward compatibility)", () => {
 		const chatContent = new Container();
 		chatContent.addChild(new Text("Chat content", 0, 0));

@@ -48,7 +48,7 @@ describe("InlineToolOverlayComponent integration", () => {
 		const lines = component.render(80);
 		const text = lines.join("\n");
 
-		expect(text).toContain("todo_write");
+		expect(text).toContain("Todo List");
 		expect(text).toContain("in_progress");
 		// Hint shows when content is truncated
 		expect(text).toContain("esc to dismiss");
