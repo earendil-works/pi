@@ -36,6 +36,29 @@ function createAssistantMessage(text: string): AssistantMessage {
 	};
 }
 
+function createAssistantMessageForModel(
+	text: string,
+	model: { api: AssistantMessage["api"]; provider: AssistantMessage["provider"]; id: string },
+): AssistantMessage {
+	return {
+		role: "assistant",
+		content: [{ type: "text", text }],
+		api: model.api,
+		provider: model.provider,
+		model: model.id,
+		usage: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		},
+		stopReason: "stop",
+		timestamp: Date.now(),
+	};
+}
+
 function createDeferred(): {
 	promise: Promise<void>;
 	resolve: () => void;
@@ -433,6 +456,82 @@ describe("Agent", () => {
 		const recentMessages = agent.state.messages.slice(-4);
 		expect(recentMessages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
 		expect(responseCount).toBe(2);
+	});
+
+	it("uses the latest model and reasoning for the next request after a mid-run switch", async () => {
+		const initialModel = getModel("openai", "gpt-4o-mini");
+		const switchedModel = getModel("google", "gemini-2.5-flash");
+		const firstRequestStarted = createDeferred();
+		const finishFirstRequest = createDeferred();
+		const requests: Array<{ provider: string; model: string; reasoning: string | undefined }> = [];
+		let requestCount = 0;
+
+		const agent = new Agent({
+			initialState: {
+				model: initialModel,
+				thinkingLevel: "high",
+			},
+			streamFn: (model, _context, options) => {
+				requestCount++;
+				requests.push({
+					provider: model.provider,
+					model: model.id,
+					reasoning: options?.reasoning,
+				});
+				const stream = new MockAssistantStream();
+
+				if (requestCount === 1) {
+					firstRequestStarted.resolve();
+					queueMicrotask(() => {
+						stream.push({ type: "start", partial: createAssistantMessageForModel("", model) });
+						void finishFirstRequest.promise.then(() => {
+							stream.push({
+								type: "done",
+								reason: "stop",
+								message: createAssistantMessageForModel("first", model),
+							});
+						});
+					});
+				} else {
+					queueMicrotask(() => {
+						stream.push({
+							type: "done",
+							reason: "stop",
+							message: createAssistantMessageForModel("second", model),
+						});
+					});
+				}
+
+				return stream;
+			},
+		});
+
+		const promptPromise = agent.prompt("hello");
+		await firstRequestStarted.promise;
+
+		agent.state.model = switchedModel;
+		agent.state.thinkingLevel = "medium";
+		agent.steer({
+			role: "user",
+			content: [{ type: "text", text: "queued while streaming" }],
+			timestamp: Date.now(),
+		});
+
+		finishFirstRequest.resolve();
+		await promptPromise;
+
+		expect(requests).toEqual([
+			{
+				provider: initialModel.provider,
+				model: initialModel.id,
+				reasoning: "high",
+			},
+			{
+				provider: switchedModel.provider,
+				model: switchedModel.id,
+				reasoning: "medium",
+			},
+		]);
 	});
 
 	it("forwards sessionId to streamFn options", async () => {

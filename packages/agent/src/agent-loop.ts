@@ -259,14 +259,17 @@ async function streamAssistantResponse(
 	};
 
 	const streamFunction = streamFn || streamSimple;
+	const requestModel = config.model;
+	const requestReasoning = config.reasoning;
 
 	// Resolve API key (important for expiring tokens)
 	const resolvedApiKey =
-		(config.getApiKey ? await config.getApiKey(config.model.provider) : undefined) || config.apiKey;
+		(config.getApiKey ? await config.getApiKey(requestModel.provider) : undefined) || config.apiKey;
 
-	const response = await streamFunction(config.model, llmContext, {
+	const response = await streamFunction(requestModel, llmContext, {
 		...config,
 		apiKey: resolvedApiKey,
+		reasoning: requestReasoning,
 		signal,
 	});
 
