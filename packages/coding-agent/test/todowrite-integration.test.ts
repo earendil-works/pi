@@ -22,7 +22,7 @@ describe("todo_write integration", () => {
 		it("getToolDescription returns todo_write description without throwing", () => {
 			const desc = getToolDescription("todo_write");
 			expect(desc).toContain("structured");
-			expect(desc).toContain("Replaces the full list");
+			expect(desc).toContain("replaces the entire list");
 		});
 
 		it("buildSystemPrompt includes todo_write in tools list", async () => {

@@ -18,7 +18,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const missionStartupSchema = Type.Object({
-	type: Type.Literal("mission"),
+	type: StringEnum(["mission"] as const, { description: "Startup mode for the child agent." }),
 	missionPath: Type.String({ description: "Path to the mission directory the child should run." }),
 });
 

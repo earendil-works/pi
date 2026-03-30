@@ -94,8 +94,9 @@ describe("explicit compaction transition", () => {
 		const promptCalls = prompt.mock.calls as unknown[][];
 		const continuationPrompt = promptCalls[0]?.[0];
 		expect(typeof continuationPrompt).toBe("string");
-		expect(continuationPrompt).toContain("Continue the task from the compacted checkpoint.");
-		expect(continuationPrompt).toContain("Goal: Fix the login page tests");
+		expect(continuationPrompt).toContain("**CHECKPOINT**");
+		expect(continuationPrompt).toContain("**Goal**");
+		expect(continuationPrompt).toContain("Fix the login page tests");
 		expect(continuationPrompt).toContain("Parent thread ID: thread-123");
 		expect(continuationPrompt).toContain("Use `read_thread` if you need more detail from the parent thread.");
 	});

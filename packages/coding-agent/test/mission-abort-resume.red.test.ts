@@ -18,6 +18,31 @@ type MissionRuntimeRenderer = {
 	onInputCallback?: (text: string) => void;
 };
 
+function stubMissionCompaction(renderer: MissionRuntimeRenderer): void {
+	(
+		renderer as MissionRuntimeRenderer & {
+			buildSummaryCompactionDetails: (
+				goal: string,
+				signal: AbortSignal,
+			) => Promise<{
+				handoffType: "explicit";
+				goal: string;
+				formattedMessage: string;
+				parentSessionId: string;
+				fileTokens: number;
+				keyFiles: string[];
+			}>;
+		}
+	).buildSummaryCompactionDetails = async (goal: string) => ({
+		handoffType: "explicit",
+		goal,
+		formattedMessage: `# Handoff\n${goal}`,
+		parentSessionId: "",
+		fileTokens: 0,
+		keyFiles: [],
+	});
+}
+
 function makeTodoMissionDir(): { dir: string; cleanup: () => void } {
 	const dir = mkdtempSync(join(tmpdir(), "mu-mission-abort-resume-red-"));
 	writeFileSync(join(dir, "SPEC.md"), "# Goal\nShip /mission-run\n");
@@ -148,6 +173,7 @@ describe("mission abort resume semantics (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		const warnings: string[] = [];
 		renderer.showWarning = (message: string) => {
@@ -265,6 +291,7 @@ describe("mission abort resume semantics (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		const warnings: string[] = [];
 		renderer.showWarning = (message: string) => {

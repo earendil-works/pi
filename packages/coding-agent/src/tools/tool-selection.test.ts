@@ -16,6 +16,7 @@ describe("resolveToolSelection", () => {
 			"spawn_agent",
 			"wait_agent",
 			"compact",
+			"todo_write",
 		]);
 		expect(selection.replacedWithApplyPatch).toBe(true);
 	});
@@ -45,6 +46,7 @@ describe("resolveToolSelection", () => {
 			"spawn_agent",
 			"wait_agent",
 			"compact",
+			"todo_write",
 		]);
 	});
 });

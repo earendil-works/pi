@@ -769,6 +769,50 @@ async function generateModels() {
 	];
 	allModels.push(...syntheticModels);
 
+	// Fireworks models
+	// Docs: https://docs.fireworks.ai/guides/openai-compatibility
+	// Uses OpenAI-compatible API at https://api.fireworks.ai/inference/v1
+	// Fireworks uses boolean reasoning_effort (true/false) instead of string levels
+	const fireworksModels: Model<"openai-completions">[] = [
+		{
+			id: "accounts/fireworks/routers/kimi-k2p5-turbo",
+			name: "Kimi K2.5 Turbo Router (Fireworks)",
+			api: "openai-completions",
+			provider: "fireworks",
+			baseUrl: "https://api.fireworks.ai/inference/v1",
+			reasoning: true,
+			reasoningFormat: "reasoning_content",
+			input: ["text", "image"],
+			cost: {
+				input: 0.35,
+				output: 2.2,
+				cacheRead: 0.175,
+				cacheWrite: 0,
+			},
+			contextWindow: 262144,
+			maxTokens: 32768,
+		},
+		{
+			id: "accounts/fireworks/models/kimi-k2p5",
+			name: "Kimi K2.5 (Fireworks)",
+			api: "openai-completions",
+			provider: "fireworks",
+			baseUrl: "https://api.fireworks.ai/inference/v1",
+			reasoning: true,
+			reasoningFormat: "reasoning_content",
+			input: ["text", "image"],
+			cost: {
+				input: 0.6,
+				output: 3.0,
+				cacheRead: 0.1,
+				cacheWrite: 0,
+			},
+			contextWindow: 262144,
+			maxTokens: 32768,
+		},
+	];
+	allModels.push(...fireworksModels);
+
 	// Group by provider and deduplicate by model ID
 	const providers: Record<string, Record<string, Model<any>>> = {};
 	for (const model of allModels) {

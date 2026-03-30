@@ -6,12 +6,22 @@ import type {
 	MissionDefinition,
 	MissionMetricDirection,
 	MissionMilestone,
+	MissionMilestoneVerification,
+	MissionMilestoneVerificationKind,
 	MissionMode,
 	MissionTask,
 	MissionTaskStatus,
 } from "./types.js";
 
 const TASK_STATUSES: MissionTaskStatus[] = ["todo", "in_progress", "done", "blocked", "discarded"];
+const MILESTONE_VERIFICATION_KINDS: MissionMilestoneVerificationKind[] = [
+	"command",
+	"xtui",
+	"cdp",
+	"log",
+	"assertion",
+	"diff",
+];
 function asRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
@@ -129,6 +139,49 @@ function parseMissionTask(value: unknown, index: number): MissionTask {
 	};
 }
 
+function parseMissionMilestoneVerification(
+	milestoneId: string,
+	value: unknown,
+	index: number,
+): MissionMilestoneVerification {
+	if (!asRecord(value)) {
+		throw new Error(`Mission milestone "${milestoneId}" verification entry at index ${index} must be an object`);
+	}
+
+	const id = value.id;
+	const kind = value.kind;
+	const command = value.command;
+	const expectValue = value.expect;
+
+	if (typeof id !== "string" || id.trim().length === 0) {
+		throw new Error(
+			`Mission milestone "${milestoneId}" verification entry at index ${index} must have a non-empty string id`,
+		);
+	}
+	if (typeof kind !== "string" || !MILESTONE_VERIFICATION_KINDS.includes(kind as MissionMilestoneVerificationKind)) {
+		throw new Error(
+			`Mission milestone "${milestoneId}" verification entry "${String(id)}" has invalid kind "${String(kind)}". Expected one of: ${MILESTONE_VERIFICATION_KINDS.join(", ")}`,
+		);
+	}
+	if (typeof command !== "string" || command.trim().length === 0) {
+		throw new Error(
+			`Mission milestone "${milestoneId}" verification entry "${id}" must have a non-empty string command`,
+		);
+	}
+	if (typeof expectValue !== "string" || expectValue.trim().length === 0) {
+		throw new Error(
+			`Mission milestone "${milestoneId}" verification entry "${id}" must have a non-empty string expect`,
+		);
+	}
+
+	return {
+		id,
+		kind: kind as MissionMilestoneVerificationKind,
+		command,
+		expect: expectValue,
+	};
+}
+
 function parseMissionMilestone(value: unknown, index: number): MissionMilestone {
 	if (!asRecord(value)) {
 		throw new Error(`Mission milestone at index ${index} must be an object`);
@@ -161,15 +214,22 @@ function parseMissionMilestone(value: unknown, index: number): MissionMilestone 
 	if (typeof gateTaskId !== "string" || gateTaskId.trim().length === 0) {
 		throw new Error(`Mission milestone "${id}" must have a non-empty string gateTaskId`);
 	}
-	if (
-		!Array.isArray(verification) ||
-		verification.length === 0 ||
-		verification.some((item) => typeof item !== "string")
-	) {
-		throw new Error(`Mission milestone "${id}" must have a non-empty string[] verification field`);
+	if (!Array.isArray(verification) || verification.length === 0 || verification.some((item) => !asRecord(item))) {
+		throw new Error(`Mission milestone "${id}" must have a non-empty verification object[] field`);
 	}
 	if (typeof notes !== "string") {
 		throw new Error(`Mission milestone "${id}" must have a string notes field`);
+	}
+
+	const parsedVerification = verification.map((entry, verificationIndex) =>
+		parseMissionMilestoneVerification(id, entry, verificationIndex),
+	);
+	const seenVerificationIds = new Set<string>();
+	for (const entry of parsedVerification) {
+		if (seenVerificationIds.has(entry.id)) {
+			throw new Error(`Mission milestone "${id}" contains duplicate verification id: ${entry.id}`);
+		}
+		seenVerificationIds.add(entry.id);
 	}
 
 	return {
@@ -178,7 +238,7 @@ function parseMissionMilestone(value: unknown, index: number): MissionMilestone 
 		goal,
 		taskIds,
 		gateTaskId,
-		verification,
+		verification: parsedVerification,
 		notes,
 	};
 }

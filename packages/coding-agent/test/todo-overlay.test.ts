@@ -32,7 +32,7 @@ describe("TodoOverlayComponent", () => {
 		const lines = overlay.render(80).join("\n");
 		expect(lines).toContain("Assigned to me");
 		expect(lines).toContain("Open / unassigned");
-		expect(lines).toContain("Done / cancelled");
+		expect(lines).toContain("Done / blocked");
 		expect(lines).toContain("Assigned");
 		expect(lines).toContain("Open");
 		expect(lines).toContain("Done");
@@ -72,7 +72,7 @@ describe("TodoOverlayComponent", () => {
 		overlay.showList();
 
 		const lines = overlay.render(80).join("\n");
-		expect(lines).toContain("Done / cancelled");
+		expect(lines).toContain("Done / blocked");
 		expect(lines.match(/Done assigned/g)?.length ?? 0).toBe(1);
 	});
 });

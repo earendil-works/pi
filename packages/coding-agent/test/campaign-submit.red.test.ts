@@ -17,6 +17,31 @@ type CampaignRenderer = {
 	handleEditorTextSubmission(text: string, kind: "by-end" | "next"): Promise<void>;
 };
 
+function stubMissionCompaction(renderer: CampaignRenderer): void {
+	(
+		renderer as CampaignRenderer & {
+			buildSummaryCompactionDetails: (
+				goal: string,
+				signal: AbortSignal,
+			) => Promise<{
+				handoffType: "explicit";
+				goal: string;
+				formattedMessage: string;
+				parentSessionId: string;
+				fileTokens: number;
+				keyFiles: string[];
+			}>;
+		}
+	).buildSummaryCompactionDetails = async (goal: string) => ({
+		handoffType: "explicit",
+		goal,
+		formattedMessage: `# Handoff\n${goal}`,
+		parentSessionId: "",
+		fileTokens: 0,
+		keyFiles: [],
+	});
+}
+
 function makeBuildMissionDir(prefix: string): { dir: string; cleanup: () => void } {
 	const dir = mkdtempSync(join(tmpdir(), prefix));
 	writeFileSync(join(dir, "SPEC.md"), "# Goal\nShip /mission-run\n");
@@ -134,6 +159,7 @@ describe("/campaign-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		const errors: string[] = [];
 		const warnings: string[] = [];

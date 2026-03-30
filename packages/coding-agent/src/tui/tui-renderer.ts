@@ -46,6 +46,9 @@ import { copyToClipboard } from "../clipboard.js";
 import { parseCompactSlashCommand } from "../compact-command.js";
 import { buildCompactionCheckpointText, buildCompactionContinuationPrompt } from "../compaction-checkpoint.js";
 import { exportSessionToHtml } from "../export-html.js";
+import { AskUserDialogComponent } from "../extensions/ask-user/dialog.js";
+import { setAskUserInteractionHandler } from "../extensions/ask-user/interaction.js";
+import type { AskUserRequest, AskUserResult } from "../extensions/ask-user/types.js";
 import type { ExtensionLoader } from "../extensions/loader.js";
 import type { ExtensionManager } from "../extensions/manager.js";
 import type { ExtensionCommandContext, ExtensionCommandPrintColor } from "../extensions/types.js";
@@ -427,6 +430,7 @@ export class TuiRenderer {
 		this.toolSelector = toolSelector;
 		this.systemPromptBuilder = systemPromptBuilder;
 		this.ui = new TUI(new ProcessTerminal());
+		setAskUserInteractionHandler((request) => this.runAskUserDialog(request));
 		// These containers accumulate lots of stable history. Use a caching container so
 		// we don't walk and concatenate unchanged child outputs on every streaming frame.
 		this.chatContainer = new RenderCacheContainer();
@@ -3304,6 +3308,29 @@ export class TuiRenderer {
 	private hideOAuthAccountSelector(): void {
 		this.clearDialogOverlay();
 		this.oauthAccountSelector = null;
+	}
+
+	private async runAskUserDialog(request: AskUserRequest): Promise<AskUserResult> {
+		return new Promise((resolve, reject) => {
+			const dialog = new AskUserDialogComponent({
+				request,
+				onSubmit: (result) => {
+					this.clearDialogOverlay();
+					resolve(result);
+				},
+				onCancel: () => {
+					this.clearDialogOverlay();
+					reject(new Error("ask_user cancelled"));
+				},
+			});
+
+			this.showDialogOverlay("Ask user", dialog, dialog, {
+				minWidth: 64,
+				maxWidth: 92,
+				marginX: 4,
+			});
+			this.ui.requestRender();
+		});
 	}
 
 	private showDialogOverlay(

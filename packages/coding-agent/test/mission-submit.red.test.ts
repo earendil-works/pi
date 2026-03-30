@@ -24,6 +24,31 @@ type MissionRuntimeRenderer = MissionRenderer & {
 	onInputCallback?: (text: string) => void;
 };
 
+function stubMissionCompaction(renderer: MissionRenderer): void {
+	(
+		renderer as MissionRenderer & {
+			buildSummaryCompactionDetails: (
+				goal: string,
+				signal: AbortSignal,
+			) => Promise<{
+				handoffType: "explicit";
+				goal: string;
+				formattedMessage: string;
+				parentSessionId: string;
+				fileTokens: number;
+				keyFiles: string[];
+			}>;
+		}
+	).buildSummaryCompactionDetails = async (goal: string) => ({
+		handoffType: "explicit",
+		goal,
+		formattedMessage: `# Handoff\n${goal}`,
+		parentSessionId: "",
+		fileTokens: 0,
+		keyFiles: [],
+	});
+}
+
 function extractTextContent(value: unknown): string {
 	if (typeof value === "string") {
 		return value;
@@ -186,6 +211,7 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		const errors: string[] = [];
 		const warnings: string[] = [];
@@ -252,6 +278,7 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		const errors: string[] = [];
 		const warnings: string[] = [];
@@ -316,6 +343,7 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		const warnings: string[] = [];
 		const originalShowWarning = renderer.showWarning.bind(renderer);
@@ -371,6 +399,7 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		await renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
 		expect(stripAnsi(renderer.getComposerMetaLabel())).toContain(`mission ${dir.split("/").at(-1)}`);
@@ -420,6 +449,7 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		await renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
 		expect(stripAnsi(renderer.getComposerMetaLabel())).toContain(`mission ${dir.split("/").at(-1)}`);
@@ -509,17 +539,9 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
-		const errors: string[] = [];
-		const originalShowError = renderer.showError.bind(renderer);
-		renderer.showError = (message: string) => {
-			errors.push(message);
-			originalShowError(message);
-		};
-
-		await renderer.handleEditorTextSubmission(`/mission-run @${missionName}`, "by-end");
-
-		expect(errors).toContain(
+		await expect(renderer.handleEditorTextSubmission(`/mission-run @${missionName}`, "by-end")).rejects.toThrow(
 			`Mission is missing required file: SPEC.md (${resolve(process.cwd(), missionName, "SPEC.md")})`,
 		);
 		expect(stripAnsi(renderer.getComposerMetaLabel())).not.toContain(`mission ${missionName}`);
@@ -532,6 +554,16 @@ describe("/mission-run submission (red)", () => {
 
 		const { dir, cleanup } = makeTodoMissionDir();
 		cleanups.push(cleanup);
+
+		const previousOpenAiKey = process.env.OPENAI_API_KEY;
+		process.env.OPENAI_API_KEY = "test-openai-key";
+		cleanups.push(() => {
+			if (previousOpenAiKey === undefined) {
+				delete process.env.OPENAI_API_KEY;
+			} else {
+				process.env.OPENAI_API_KEY = previousOpenAiKey;
+			}
+		});
 
 		const syntheticNoKeyModel: Model<"openai-completions"> = {
 			id: "mission-no-key",
@@ -580,6 +612,7 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		const errors: string[] = [];
 		const originalShowError = renderer.showError.bind(renderer);
@@ -671,6 +704,7 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		const warnings: string[] = [];
 		const originalShowWarning = renderer.showWarning.bind(renderer);
@@ -777,6 +811,7 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		const submissionPromise = renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
 
@@ -882,6 +917,7 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		const warnings: string[] = [];
 		renderer.showWarning = (message: string) => {
@@ -958,6 +994,7 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		const errors: string[] = [];
 		renderer.showError = (message: string) => {
@@ -1031,6 +1068,7 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		const errors: string[] = [];
 		renderer.showError = (message: string) => {
@@ -1122,6 +1160,7 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		const warnings: string[] = [];
 		renderer.showWarning = (message: string) => {
@@ -1220,6 +1259,7 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		const fallbackSubmissions: string[] = [];
 		renderer.onInputCallback = (text: string) => {
@@ -1318,6 +1358,7 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		const fallbackSubmissions: string[] = [];
 		renderer.onInputCallback = (text: string) => {
@@ -1410,6 +1451,7 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		const warnings: string[] = [];
 		renderer.showWarning = (message: string) => {
@@ -1513,6 +1555,7 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.init();
 		cleanups.push(() => renderer.stop());
+		stubMissionCompaction(renderer);
 
 		await renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
 

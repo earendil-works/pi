@@ -1,7 +1,7 @@
 import { getModel } from "@kennyfrc/mu-ai";
 import stripAnsi from "strip-ansi";
 import { describe, expect, it } from "vitest";
-import { initTheme } from "../src/theme/theme.js";
+import { initTheme, theme } from "../src/theme/theme.js";
 import { formatComposerUsageLabel } from "../src/tui/composer-usage-label.js";
 import type { UsageLimitsSnapshot } from "../src/usage-footer.js";
 import { getEffectiveUsageFooterMode } from "../src/usage-footer.js";
@@ -64,7 +64,7 @@ describe("formatComposerUsageLabel", () => {
 			contextWindow: 272000,
 		});
 
-		expect(label).toContain("\x1b[38;2;147;146;147m • ");
+		expect(label).toContain(theme.fg("muted", " • "));
 	});
 
 	it("auto-shows Anthropic usage chips when usage exists and no explicit preference is set", () => {
@@ -84,7 +84,7 @@ describe("formatComposerUsageLabel", () => {
 			contextWindow: 200000,
 		});
 
-		expect(stripAnsi(label)).toBe("(sub) 10% of 200k • 5h 75% • weekly 15%");
+		expect(stripAnsi(label)).toBe("$0.000 (api) 10% of 200k • 5h 75% • weekly 15%");
 	});
 
 	it("respects an explicit hidden preference for Anthropic", () => {
@@ -104,6 +104,6 @@ describe("formatComposerUsageLabel", () => {
 			contextWindow: 200000,
 		});
 
-		expect(stripAnsi(label)).toBe("(sub) 10% of 200k");
+		expect(stripAnsi(label)).toBe("$0.000 (api) 10% of 200k");
 	});
 });

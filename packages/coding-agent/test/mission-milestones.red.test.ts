@@ -12,7 +12,12 @@ interface ParsedMilestone {
 	goal: string;
 	taskIds: string[];
 	gateTaskId: string;
-	verification: string[];
+	verification: Array<{
+		id: string;
+		kind: "command" | "xtui" | "cdp" | "log" | "assertion" | "diff";
+		command: string;
+		expect: string;
+	}>;
 	notes: string;
 }
 
@@ -95,8 +100,18 @@ describe("mission milestones contract (red)", () => {
 							taskIds: ["runner-red-test", "runner-implementation", "runner-acceptance-gate"],
 							gateTaskId: "runner-acceptance-gate",
 							verification: [
-								"npm test -w @kennyfrc/mu-coding-agent -- mission-reset-runner.red.test.ts",
-								"xtui: run /mission-reset <fixture> then /mission-resume <fixture>",
+								{
+									id: "runner-test-green",
+									kind: "command",
+									command: "npm test -w @kennyfrc/mu-coding-agent -- mission-reset-runner.red.test.ts",
+									expect: "exit 0",
+								},
+								{
+									id: "runner-xtui-flow",
+									kind: "xtui",
+									command: "run /mission-reset <fixture> then /mission-resume <fixture>",
+									expect: "mission executes again",
+								},
 							],
 							notes: "Gate closes the milestone.",
 						},
@@ -117,12 +132,44 @@ describe("mission milestones contract (red)", () => {
 				taskIds: ["runner-red-test", "runner-implementation", "runner-acceptance-gate"],
 				gateTaskId: "runner-acceptance-gate",
 				verification: [
-					"npm test -w @kennyfrc/mu-coding-agent -- mission-reset-runner.red.test.ts",
-					"xtui: run /mission-reset <fixture> then /mission-resume <fixture>",
+					{
+						id: "runner-test-green",
+						kind: "command",
+						command: "npm test -w @kennyfrc/mu-coding-agent -- mission-reset-runner.red.test.ts",
+						expect: "exit 0",
+					},
+					{
+						id: "runner-xtui-flow",
+						kind: "xtui",
+						command: "run /mission-reset <fixture> then /mission-resume <fixture>",
+						expect: "mission executes again",
+					},
 				],
 				notes: "Gate closes the milestone.",
 			},
 		]);
+	});
+
+	it("rejects a milestone whose verification entries are legacy strings instead of structured records", () => {
+		const { dir, cleanup } = makeMissionDir();
+		cleanups.push(cleanup);
+		writeBuildMissionFiles(dir, {
+			milestonesJson: JSON.stringify({
+				milestones: [
+					{
+						id: "runner-reset",
+						title: "Runner honors reset barrier",
+						goal: "A reset optimize mission can resume again.",
+						taskIds: ["runner-red-test", "runner-implementation"],
+						gateTaskId: "runner-acceptance-gate",
+						verification: ["npm test -w @kennyfrc/mu-coding-agent -- mission-reset-runner.red.test.ts"],
+						notes: "Legacy string verification should be rejected.",
+					},
+				],
+			}),
+		});
+
+		expect(() => parseMissionDefinition(dir)).toThrow(/verification|object|id|kind|command|expect/i);
 	});
 
 	it("rejects a milestone whose gateTaskId is not part of that milestone's taskIds", () => {
@@ -137,7 +184,14 @@ describe("mission milestones contract (red)", () => {
 						goal: "A reset optimize mission can resume again.",
 						taskIds: ["runner-red-test", "runner-implementation"],
 						gateTaskId: "runner-acceptance-gate",
-						verification: ["npm test -w @kennyfrc/mu-coding-agent -- mission-reset-runner.red.test.ts"],
+						verification: [
+							{
+								id: "runner-test-green",
+								kind: "command",
+								command: "npm test -w @kennyfrc/mu-coding-agent -- mission-reset-runner.red.test.ts",
+								expect: "exit 0",
+							},
+						],
 						notes: "Invalid gate membership.",
 					},
 				],
@@ -159,7 +213,14 @@ describe("mission milestones contract (red)", () => {
 						goal: "A reset optimize mission can resume again.",
 						taskIds: ["runner-red-test", "runner-missing", "runner-acceptance-gate"],
 						gateTaskId: "runner-acceptance-gate",
-						verification: ["npm test -w @kennyfrc/mu-coding-agent -- mission-reset-runner.red.test.ts"],
+						verification: [
+							{
+								id: "runner-test-green",
+								kind: "command",
+								command: "npm test -w @kennyfrc/mu-coding-agent -- mission-reset-runner.red.test.ts",
+								expect: "exit 0",
+							},
+						],
 						notes: "Invalid missing task reference.",
 					},
 				],
@@ -181,7 +242,14 @@ describe("mission milestones contract (red)", () => {
 						goal: "A reset optimize mission can resume again.",
 						taskIds: ["runner-red-test", "runner-implementation", "runner-acceptance-gate"],
 						gateTaskId: "runner-acceptance-gate",
-						verification: ["npm test -w @kennyfrc/mu-coding-agent -- mission-reset-runner.red.test.ts"],
+						verification: [
+							{
+								id: "runner-test-green",
+								kind: "command",
+								command: "npm test -w @kennyfrc/mu-coding-agent -- mission-reset-runner.red.test.ts",
+								expect: "exit 0",
+							},
+						],
 						notes: "Acceptance gate closes the milestone.",
 					},
 				],
@@ -195,5 +263,7 @@ describe("mission milestones contract (red)", () => {
 		expect(prompt).toMatch(/milestone/i);
 		expect(prompt).toMatch(/acceptance gate|gate task/i);
 		expect(prompt).toContain("runner-reset");
+		expect(prompt).toContain("runner-test-green");
+		expect(prompt).toContain("exit 0");
 	});
 });

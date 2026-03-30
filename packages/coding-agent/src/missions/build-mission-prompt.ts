@@ -40,7 +40,7 @@ export function buildMissionIterationPrompt(mission: MissionDefinition): string 
 			? mission.milestones
 					.map(
 						(milestone) =>
-							`- ${milestone.id}: ${milestone.title}\n  goal: ${milestone.goal}\n  gate task: ${milestone.gateTaskId}\n  verification:\n${milestone.verification.map((step) => `    - ${step}`).join("\n")}`,
+							`- ${milestone.id}: ${milestone.title}\n  goal: ${milestone.goal}\n  gate task: ${milestone.gateTaskId}\n  verification:\n${milestone.verification.map((step) => `    - ${step.id} [${step.kind}]\n      command: ${step.command}\n      expect: ${step.expect}`).join("\n")}`,
 					)
 					.join("\n")
 			: undefined;

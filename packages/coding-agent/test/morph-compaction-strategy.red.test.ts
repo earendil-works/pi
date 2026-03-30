@@ -52,7 +52,7 @@ describe("selectMorphCompressionRatio", () => {
 			kind: "compact",
 			targetTokens: 40_000,
 			estimatedHistoryTokens: 39_500,
-			compressionRatio: 0.7,
+			compressionRatio: 0.5,
 		});
 	});
 
@@ -62,7 +62,7 @@ describe("selectMorphCompressionRatio", () => {
 			kind: "compact",
 			targetTokens: 40_000,
 			estimatedHistoryTokens: 55_000,
-			compressionRatio: 0.7,
+			compressionRatio: 0.5,
 		});
 	});
 

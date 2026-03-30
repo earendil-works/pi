@@ -92,7 +92,8 @@ export type KnownProvider =
 	| "openrouter"
 	| "zai"
 	| "mistral"
-	| "synthetic";
+	| "synthetic"
+	| "fireworks";
 export type Provider = KnownProvider | string;
 
 export type ReasoningEffort = "minimal" | "low" | "medium" | "high" | "xhigh";

@@ -23,13 +23,22 @@ export interface MissionTask {
 	notes: string;
 }
 
+export type MissionMilestoneVerificationKind = "command" | "xtui" | "cdp" | "log" | "assertion" | "diff";
+
+export interface MissionMilestoneVerification {
+	id: string;
+	kind: MissionMilestoneVerificationKind;
+	command: string;
+	expect: string;
+}
+
 export interface MissionMilestone {
 	id: string;
 	title: string;
 	goal: string;
 	taskIds: string[];
 	gateTaskId: string;
-	verification: string[];
+	verification: MissionMilestoneVerification[];
 	notes: string;
 }
 
