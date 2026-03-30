@@ -420,6 +420,41 @@ describe("ExtensionRunner", () => {
 		});
 	});
 
+	describe("before_provider_request", () => {
+		it("passes the request model snapshot separately from ctx.model", async () => {
+			const extCode = `
+				export default function(pi) {
+					pi.on("before_provider_request", (event, ctx) => {
+						return {
+							requestModel: event.model ? event.model.provider + "/" + event.model.id : null,
+							contextModel: ctx.model ? ctx.model.provider + "/" + ctx.model.id : null,
+						};
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "provider-request.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			const liveModel = modelRegistry.find("openai-codex", "gpt-5.4");
+			const requestModel = modelRegistry.find("anthropic", "claude-opus-4-6");
+			expect(liveModel).toBeDefined();
+			expect(requestModel).toBeDefined();
+
+			runner.bindCore(extensionActions, {
+				...extensionContextActions,
+				getModel: () => liveModel,
+			});
+
+			const payload = await runner.emitBeforeProviderRequest({ ok: true }, requestModel!);
+			expect(payload).toEqual({
+				requestModel: "anthropic/claude-opus-4-6",
+				contextModel: "openai-codex/gpt-5.4",
+			});
+		});
+	});
+
 	describe("error handling", () => {
 		it("calls error listeners when handler throws", async () => {
 			const extCode = `

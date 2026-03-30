@@ -273,7 +273,7 @@ export interface ExtensionContext {
 	sessionManager: ReadonlySessionManager;
 	/** Model registry for API key resolution */
 	modelRegistry: ModelRegistry;
-	/** Current model (may be undefined) */
+	/** Current live selected model (may be undefined). For request-scoped hooks like before_provider_request, use event.model for the actual request model snapshot. */
 	model: Model<any> | undefined;
 	/** Whether the agent is idle (not streaming) */
 	isIdle(): boolean;
@@ -542,6 +542,8 @@ export interface ContextEvent {
 export interface BeforeProviderRequestEvent {
 	type: "before_provider_request";
 	payload: unknown;
+	/** Model snapshot for the specific request being prepared. May differ from ctx.model if the user switched models during an active run. */
+	model: Model<any>;
 }
 
 /** Fired after user submits prompt but before agent loop. */

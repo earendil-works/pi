@@ -304,12 +304,12 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				headers: auth.headers || options?.headers ? { ...auth.headers, ...options?.headers } : undefined,
 			});
 		},
-		onPayload: async (payload, _model) => {
+		onPayload: async (payload, model) => {
 			const runner = extensionRunnerRef.current;
 			if (!runner?.hasHandlers("before_provider_request")) {
 				return payload;
 			}
-			return runner.emitBeforeProviderRequest(payload);
+			return runner.emitBeforeProviderRequest(payload, model);
 		},
 		sessionId: sessionManager.getSessionId(),
 		transformContext: async (messages) => {
