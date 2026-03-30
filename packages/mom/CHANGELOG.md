@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added trusted extension loading with strict trusted-root mode, Slack-aware hook bridging, and native `MOM_MODEL=provider:model` startup resolution
+
+### Changed
+
+- Changed mom to read workspace settings from `.pi/settings.json`, ignore workspace extension authorities in strict mode, and post channel mention replies in the triggering Slack thread
+
 ## [0.64.0] - 2026-03-29
 
 ## [0.63.2] - 2026-03-29

@@ -17,6 +17,7 @@ A Slack bot powered by an LLM that can execute bash commands, read/write files, 
 
 - [Artifacts Server](docs/artifacts-server.md) - Share HTML/JS visualizations publicly with live reload
 - [Events System](docs/events.md) - Schedule reminders and periodic tasks
+- [Extensions and Trust Model](docs/extensions.md) - Trusted roots, strict mode, and Slack hook behavior
 - [Sandbox Guide](docs/sandbox.md) - Docker vs host mode security
 - [Slack Bot Setup](docs/slack-bot-minimal-guide.md) - Minimal Slack integration guide
 
@@ -62,9 +63,17 @@ npm install @mariozechner/pi-mom
 # Set environment variables
 export MOM_SLACK_APP_TOKEN=xapp-...
 export MOM_SLACK_BOT_TOKEN=xoxb-...
-# Option 1: Anthropic API key
-export ANTHROPIC_API_KEY=sk-ant-...
-# Option 2: use /login command in pi agent, then copy/link auth.json to ~/.pi/mom/
+
+# Select a startup model/provider
+export MOM_MODEL=openai:gpt-5.4-mini
+
+# Set the matching provider credential
+export OPENAI_API_KEY=sk-...
+
+# Optional: enable strict trusted-extension mode
+export MOM_TRUSTED_EXTENSION_ROOT=/absolute/path/outside/your-workspace
+
+# Or use /login in pi, then copy/link auth.json to ~/.pi/mom/
 
 # Create Docker sandbox (recommended)
 docker run -d \
@@ -95,24 +104,41 @@ Options:
 |----------|-------------|
 | `MOM_SLACK_APP_TOKEN` | Slack app-level token (xapp-...) |
 | `MOM_SLACK_BOT_TOKEN` | Slack bot token (xoxb-...) |
-| `ANTHROPIC_API_KEY` | (Optional) Anthropic API key |
+| `MOM_MODEL` | Optional startup model in `provider:model` form |
+| Provider API key env vars | Optional provider credentials such as `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` |
+| `MOM_TRUSTED_EXTENSION_ROOT` | Optional absolute trusted extension root outside the workspace; enables strict mode |
 
 ## Authentication
 
-Mom needs credentials for Anthropic API. The options to set it are:
+Mom resolves credentials from the selected model's provider. If `MOM_MODEL=openai:gpt-5.4-mini`, mom looks up OpenAI credentials. If the startup model is Anthropic, mom looks up Anthropic credentials.
+
+You can provide credentials in two ways:
 
 1. **Environment Variable**
 ```bash
+export OPENAI_API_KEY=sk-...
+# or
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-2. **OAuth Login via coding agent command** (Recommended for Claude Pro/Max)
-
+2. **OAuth Login via coding agent command**
 - run interactive coding agent session: `npx @mariozechner/pi-coding-agent`
 - enter `/login` command
-  - choose "Anthropic" provider
-  - follow instructions in the browser
+- choose the provider you want mom to use
+- follow instructions in the browser
 - link `auth.json` to mom: `ln -s ~/.pi/agent/auth.json ~/.pi/mom/auth.json`
+
+## Extensions and model selection
+
+Workspace settings live at `<workspace>/.pi/settings.json`.
+- `MOM_MODEL=provider:model` selects the startup model without changing workspace defaults
+- `mom` resolves provider credentials from the selected model
+- channel mention replies are posted in the same Slack thread as the user's message
+- set `MOM_TRUSTED_EXTENSION_ROOT=/absolute/path/outside/workspace` to load extensions only from that trusted root
+- in strict mode, workspace `extensions` and `packages` entries do not affect extension loading
+- without strict mode, `mom` loads extensions from `workspace/.pi/settings.json` `extensions` and `workspace/.pi/extensions`
+
+See [docs/extensions.md](docs/extensions.md) for extension discovery, trust settings, and Slack bridge behavior.
 
 ## How Mom Works
 
@@ -182,8 +208,9 @@ You provide mom with a **data directory** (e.g., `./data`) as her workspace. Whi
 
 ```
 ./data/                         # Your host directory
+  ├── .pi/
+  │   └── settings.json         # Workspace settings (model defaults, hideThinkingBlock, extensions)
   ├── MEMORY.md                 # Global memory (shared across channels)
-  ├── settings.json             # Global settings (compaction, retry, etc.)
   ├── skills/                   # Global custom CLI tools mom creates
   ├── C123ABC/                  # Each Slack channel gets a directory
   │   ├── MEMORY.md             # Channel-specific memory

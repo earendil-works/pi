@@ -13,6 +13,7 @@ export interface SlackEvent {
 	type: "mention" | "dm";
 	channel: string;
 	ts: string;
+	threadTs?: string;
 	user: string;
 	text: string;
 	files?: Array<{ name?: string; url_private_download?: string; url_private?: string }>;
@@ -51,12 +52,15 @@ export interface SlackContext {
 		userName?: string;
 		channel: string;
 		ts: string;
+		threadTs?: string;
 		attachments: Array<{ local: string }>;
 	};
 	channelName?: string;
+	isEvent?: boolean;
 	channels: ChannelInfo[];
 	users: UserInfo[];
 	respond: (text: string, shouldLog?: boolean) => Promise<void>;
+	publishFinal: (text: string, shouldLog?: boolean) => Promise<void>;
 	replaceMessage: (text: string) => Promise<void>;
 	respondInThread: (text: string) => Promise<void>;
 	setTyping: (isTyping: boolean) => Promise<void>;
@@ -277,6 +281,7 @@ export class SlackBot {
 				channel: string;
 				user: string;
 				ts: string;
+				thread_ts?: string;
 				files?: Array<{ name: string; url_private_download?: string; url_private?: string }>;
 			};
 
@@ -290,6 +295,7 @@ export class SlackBot {
 				type: "mention",
 				channel: e.channel,
 				ts: e.ts,
+				threadTs: e.thread_ts,
 				user: e.user,
 				text: e.text.replace(/<@[A-Z0-9]+>/gi, "").trim(),
 				files: e.files,
@@ -336,6 +342,7 @@ export class SlackBot {
 				channel: string;
 				user?: string;
 				ts: string;
+				thread_ts?: string;
 				channel_type?: string;
 				subtype?: string;
 				bot_id?: string;
@@ -369,6 +376,7 @@ export class SlackBot {
 				type: isDM ? "dm" : "mention",
 				channel: e.channel,
 				ts: e.ts,
+				threadTs: e.thread_ts,
 				user: e.user,
 				text: (e.text || "").replace(/<@[A-Z0-9]+>/gi, "").trim(),
 				files: e.files,
