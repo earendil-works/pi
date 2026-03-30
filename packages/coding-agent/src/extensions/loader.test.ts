@@ -6,6 +6,7 @@ import { type TSchema, Type } from "@sinclair/typebox";
 import { describe, expect, it } from "vitest";
 import { ExtensionLoader } from "./loader.js";
 import { ExtensionManager } from "./manager.js";
+import type { ExtensionFactory } from "./types.js";
 import { eraseAgentTool } from "./types.js";
 
 function makeBuiltIn(): Record<string, AgentTool<TSchema, unknown>> {
@@ -121,5 +122,94 @@ export default function (mu) {
 		const tools = mgr.getToolsForSelection(["bash"]);
 		const webSearch = tools.find((t) => t.name === "web_search");
 		expect(webSearch?.label).toBe("web_search-ts");
+	});
+
+	it("loads built-in extensions after discovered files so built-ins win duplicate tool names", async () => {
+		const projectDir = await mkdtemp(join(tmpdir(), "mu-ext-project-built-ins-"));
+		const extDir = join(projectDir, ".mu", "extensions");
+		await mkdir(extDir, { recursive: true });
+
+		const extPath = join(extDir, "ask-user.ts");
+		await writeFile(
+			extPath,
+			`
+import { Type } from "@sinclair/typebox";
+
+export default function (mu) {
+  mu.registerTool({
+    label: "ask_user_external",
+    name: "ask_user",
+    description: "external ask_user",
+    parameters: Type.Object({}),
+    async execute() {
+      return {
+        content: [{ type: "text", text: "external" }],
+        details: {
+          mu_display: {
+            version: 1,
+            call: { style: "argv", text: "ask_user external", command: "ask_user", argv: ["external"] },
+            summary: { text: "ok", severity: "ok" },
+            output: { collapse: { maxVisualLines: 4, expandHint: "ctrl+o to expand" }, format: "markdown" }
+          }
+        }
+      };
+    }
+  }, { priority: 150 });
+}
+`,
+			"utf8",
+		);
+
+		const builtInFactory: ExtensionFactory = (mu) => {
+			mu.registerTool(
+				eraseAgentTool({
+					label: "ask_user_builtin",
+					name: "ask_user",
+					description: "built-in ask_user",
+					parameters: Type.Object({}),
+					execute: async () => ({
+						content: [{ type: "text", text: "built-in" }],
+						details: {
+							mu_display: {
+								version: 1 as const,
+								call: {
+									style: "argv" as const,
+									text: "ask_user builtin",
+									command: "ask_user",
+									argv: ["builtin"],
+								},
+								summary: { text: "ok", severity: "ok" as const },
+								output: {
+									collapse: { maxVisualLines: 4, expandHint: "ctrl+o to expand" },
+									format: "markdown" as const,
+								},
+							},
+						},
+					}),
+				}),
+				{ priority: 150 },
+			);
+		};
+
+		const mgr = new ExtensionManager({ builtInTools: makeBuiltIn() });
+		const loader = new ExtensionLoader(mgr, {
+			projectDir,
+			configDir: join(projectDir, "_config"),
+			builtInExtensions: [{ sourceId: "built-in:ask-user", factory: builtInFactory }],
+		});
+
+		const res = await loader.loadAll();
+		expect(res.map((entry) => entry.ok)).toEqual([true, true]);
+
+		let tools = mgr.getToolsForSelection(["bash"]);
+		let askUser = tools.find((tool) => tool.name === "ask_user");
+		expect(askUser?.label).toBe("ask_user_builtin");
+
+		const reload = await loader.reloadAll();
+		expect(reload.map((entry) => entry.ok)).toEqual([true, true]);
+
+		tools = mgr.getToolsForSelection(["bash"]);
+		askUser = tools.find((tool) => tool.name === "ask_user");
+		expect(askUser?.label).toBe("ask_user_builtin");
 	});
 });

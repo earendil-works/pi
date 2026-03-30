@@ -391,6 +391,8 @@ export class TuiRenderer {
 	private pendingLatencyStartTime: number | null = null;
 	private accumulatedLatencyMs = 0;
 	private latencyGapCount = 0;
+	private workingStatusPausedAt: number | null = null;
+	private shouldResumeWorkingStatusTimer = false;
 	private ignoreNextAgentEndForAutoHandoffAbort = false;
 	private ignoreNextAgentEndForExplicitCompactionAbort = false;
 	private suppressNextAbortedAssistantStatusForExplicitCompaction = false;
@@ -1139,6 +1141,46 @@ export class TuiRenderer {
 		this.pendingLatencyStartTime = null;
 		this.accumulatedLatencyMs = 0;
 		this.latencyGapCount = 0;
+		this.workingStatusPausedAt = null;
+		this.shouldResumeWorkingStatusTimer = false;
+	}
+
+	private pauseWorkingStatusForOverlay(now: number = Date.now()): void {
+		if (this.workingStatusPausedAt !== null) {
+			return;
+		}
+		this.workingStatusPausedAt = now;
+		this.shouldResumeWorkingStatusTimer = this.timerIntervalId !== null;
+		if (this.timerIntervalId) {
+			clearInterval(this.timerIntervalId);
+			this.timerIntervalId = null;
+		}
+	}
+
+	private resumeWorkingStatusAfterOverlay(now: number = Date.now()): void {
+		if (this.workingStatusPausedAt === null) {
+			return;
+		}
+
+		const pausedDuration = Math.max(0, now - this.workingStatusPausedAt);
+		this.workingStatusPausedAt = null;
+
+		if (this.workingStartTime !== null) {
+			this.workingStartTime += pausedDuration;
+		}
+		if (this.agentStartTime !== null) {
+			this.agentStartTime += pausedDuration;
+		}
+		if (this.pendingLatencyStartTime !== null) {
+			this.pendingLatencyStartTime += pausedDuration;
+		}
+
+		const shouldRestartTimer = this.shouldResumeWorkingStatusTimer;
+		this.shouldResumeWorkingStatusTimer = false;
+		this.updateWorkingStatusMessage();
+		if (shouldRestartTimer) {
+			this.startWorkingStatusTimer();
+		}
 	}
 
 	private beginMissionRunWorkingStatus(): void {
@@ -3311,16 +3353,21 @@ export class TuiRenderer {
 	}
 
 	private async runAskUserDialog(request: AskUserRequest): Promise<AskUserResult> {
+		this.pauseWorkingStatusForOverlay();
 		return new Promise((resolve, reject) => {
+			const finish = <T>(settle: () => T): T => {
+				this.clearDialogOverlay();
+				this.resumeWorkingStatusAfterOverlay();
+				return settle();
+			};
+
 			const dialog = new AskUserDialogComponent({
 				request,
 				onSubmit: (result) => {
-					this.clearDialogOverlay();
-					resolve(result);
+					finish(() => resolve(result));
 				},
 				onCancel: () => {
-					this.clearDialogOverlay();
-					reject(new Error("ask_user cancelled"));
+					finish(() => reject(new Error("ask_user cancelled")));
 				},
 			});
 

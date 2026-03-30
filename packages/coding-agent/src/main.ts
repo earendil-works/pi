@@ -10,6 +10,7 @@ import { dirname, extname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 
 import { exportFromFile } from "./export-html.js";
+import { builtInExtensions } from "./extensions/built-ins.js";
 import { ExtensionLoader } from "./extensions/loader.js";
 import { ExtensionManager } from "./extensions/manager.js";
 import { ensureIdentityEnv } from "./identity-env.js";
@@ -1273,7 +1274,7 @@ export async function main(args: string[]) {
 		log: extensionLog,
 		sessionManager,
 	});
-	const extensionLoader = new ExtensionLoader(extensionManager, { log: extensionLog });
+	const extensionLoader = new ExtensionLoader(extensionManager, { log: extensionLog, builtInExtensions });
 	await extensionLoader.loadAll();
 
 	const baseToolNames = parsed.tools;

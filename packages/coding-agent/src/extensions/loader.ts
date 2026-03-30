@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { extname, join, resolve } from "node:path";
 import { createJiti } from "jiti";
+import type { BuiltInExtensionRegistration } from "./built-ins.js";
 import type { ExtensionManager } from "./manager.js";
 import type { ExtensionFactory } from "./types.js";
 
@@ -14,6 +15,8 @@ export interface ExtensionLoaderOptions {
 	configDir?: string;
 	/** Additional discovery directories */
 	extraDirs?: string[];
+	/** Built-in extensions loaded in-process after discovered files */
+	builtInExtensions?: BuiltInExtensionRegistration[];
 	log?: (message: string, err?: unknown) => void;
 }
 
@@ -84,6 +87,7 @@ export class ExtensionLoader {
 	private projectDir: string;
 	private configDir: string;
 	private extraDirs: string[];
+	private builtInExtensions: BuiltInExtensionRegistration[];
 	private log: (message: string, err?: unknown) => void;
 	private jiti: ReturnType<typeof createJiti>;
 
@@ -92,6 +96,7 @@ export class ExtensionLoader {
 		this.projectDir = resolve(opts.projectDir ?? process.cwd());
 		this.configDir = resolve(opts.configDir ?? getDefaultConfigDir());
 		this.extraDirs = (opts.extraDirs ?? []).map((d) => resolve(d));
+		this.builtInExtensions = opts.builtInExtensions ?? [];
 		this.log = opts.log ?? (() => {});
 
 		this.jiti = createJiti(import.meta.url, {
@@ -170,6 +175,17 @@ export class ExtensionLoader {
 				const msg = err instanceof Error ? err.message : String(err);
 				results.push({ path: absPath, sourceId, ok: false, error: msg });
 				this.log(`Failed to load extension: ${absPath}`, err);
+			}
+		}
+
+		for (const builtIn of this.builtInExtensions) {
+			try {
+				await this.manager.loadExtension(builtIn.factory, builtIn.sourceId);
+				results.push({ path: builtIn.sourceId, sourceId: builtIn.sourceId, ok: true });
+			} catch (err) {
+				const msg = err instanceof Error ? err.message : String(err);
+				results.push({ path: builtIn.sourceId, sourceId: builtIn.sourceId, ok: false, error: msg });
+				this.log(`Failed to load built-in extension: ${builtIn.sourceId}`, err);
 			}
 		}
 
