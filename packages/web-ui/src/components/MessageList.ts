@@ -11,7 +11,7 @@ import { renderMessage } from "./message-renderer-registry.js";
 export class MessageList extends LitElement {
 	@property({ type: Array }) messages: AgentMessage[] = [];
 	@property({ type: Array }) tools: AgentTool[] = [];
-	@property({ type: Object }) pendingToolCalls?: Set<string>;
+	@property({ type: Object }) pendingToolCalls?: ReadonlySet<string>;
 	@property({ type: Boolean }) isStreaming: boolean = false;
 	@property({ attribute: false }) onCostClick?: () => void;
 

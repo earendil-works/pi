@@ -248,6 +248,36 @@ describe("TreeSelectorComponent", () => {
 		});
 	});
 
+	describe("label timestamps", () => {
+		test("toggles label timestamps for labeled nodes", () => {
+			const entries = [userMessage("user-1", null, "hello"), assistantMessage("asst-1", "user-1", "hi")];
+			const tree = buildTree(entries);
+			const labelDate = new Date(2026, 2, 28, 14, 32, 0);
+			tree[0]!.label = "checkpoint";
+			tree[0]!.labelTimestamp = labelDate.toISOString();
+
+			const selector = new TreeSelectorComponent(
+				tree,
+				"asst-1",
+				24,
+				() => {},
+				() => {},
+			);
+
+			const list = selector.getTreeList();
+			let render = list.render(200).join("\n");
+			expect(render).toContain("[checkpoint]");
+			expect(render).not.toContain("3/28 14:32");
+			expect(render).not.toContain("[+label time]");
+
+			selector.handleInput("T");
+
+			render = list.render(200).join("\n");
+			expect(render).toContain("3/28 14:32");
+			expect(render).toContain("[+label time]");
+		});
+	});
+
 	describe("empty filter preservation", () => {
 		test("preserves selection when switching to empty labeled filter and back", () => {
 			// Tree with no labels

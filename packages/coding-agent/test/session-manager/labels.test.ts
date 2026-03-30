@@ -43,9 +43,15 @@ describe("SessionManager labels", () => {
 
 		session.appendLabelChange(msgId, "first");
 		session.appendLabelChange(msgId, "second");
-		session.appendLabelChange(msgId, "third");
+		const lastLabelId = session.appendLabelChange(msgId, "third");
 
 		expect(session.getLabel(msgId)).toBe("third");
+
+		const entries = session.getEntries();
+		const lastLabelEntry = entries.find((e) => e.id === lastLabelId) as LabelEntry;
+		const tree = session.getTree();
+		const msgNode = tree.find((n) => n.entry.id === msgId);
+		expect(msgNode?.labelTimestamp).toBe(lastLabelEntry.timestamp);
 	});
 
 	it("labels are included in tree nodes", () => {
@@ -70,18 +76,23 @@ describe("SessionManager labels", () => {
 			timestamp: 2,
 		});
 
-		session.appendLabelChange(msg1Id, "start");
-		session.appendLabelChange(msg2Id, "response");
+		const msg1LabelId = session.appendLabelChange(msg1Id, "start");
+		const msg2LabelId = session.appendLabelChange(msg2Id, "response");
 
+		const entries = session.getEntries();
+		const msg1LabelEntry = entries.find((e) => e.id === msg1LabelId) as LabelEntry;
+		const msg2LabelEntry = entries.find((e) => e.id === msg2LabelId) as LabelEntry;
 		const tree = session.getTree();
 
 		// Find the message nodes (skip label entries)
 		const msg1Node = tree.find((n) => n.entry.id === msg1Id);
 		expect(msg1Node?.label).toBe("start");
+		expect(msg1Node?.labelTimestamp).toBe(msg1LabelEntry.timestamp);
 
 		// msg2 is a child of msg1
 		const msg2Node = msg1Node?.children.find((n) => n.entry.id === msg2Id);
 		expect(msg2Node?.label).toBe("response");
+		expect(msg2Node?.labelTimestamp).toBe(msg2LabelEntry.timestamp);
 	});
 
 	it("labels are preserved in createBranchedSession", () => {
@@ -106,8 +117,11 @@ describe("SessionManager labels", () => {
 			timestamp: 2,
 		});
 
-		session.appendLabelChange(msg1Id, "important");
-		session.appendLabelChange(msg2Id, "also-important");
+		const msg1LabelId = session.appendLabelChange(msg1Id, "important");
+		const msg2LabelId = session.appendLabelChange(msg2Id, "also-important");
+		const originalEntries = session.getEntries();
+		const msg1LabelEntry = originalEntries.find((e) => e.id === msg1LabelId) as LabelEntry;
+		const msg2LabelEntry = originalEntries.find((e) => e.id === msg2LabelId) as LabelEntry;
 
 		// Branch from msg2 (in-memory mode returns null, but updates internal state)
 		session.createBranchedSession(msg2Id);
@@ -120,6 +134,12 @@ describe("SessionManager labels", () => {
 		const entries = session.getEntries();
 		const labelEntries = entries.filter((e) => e.type === "label") as LabelEntry[];
 		expect(labelEntries).toHaveLength(2);
+
+		const tree = session.getTree();
+		const msg1Node = tree.find((n) => n.entry.id === msg1Id);
+		const msg2Node = msg1Node?.children.find((n) => n.entry.id === msg2Id);
+		expect(msg1Node?.labelTimestamp).toBe(msg1LabelEntry.timestamp);
+		expect(msg2Node?.labelTimestamp).toBe(msg2LabelEntry.timestamp);
 	});
 
 	it("labels not on path are not preserved in createBranchedSession", () => {

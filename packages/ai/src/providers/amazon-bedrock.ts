@@ -1,6 +1,7 @@
 import {
 	BedrockRuntimeClient,
 	type BedrockRuntimeClientConfig,
+	BedrockRuntimeServiceException,
 	StopReason as BedrockStopReason,
 	type Tool as BedrockTool,
 	CachePointType,
@@ -185,15 +186,15 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				} else if (item.metadata) {
 					handleMetadata(item.metadata, model, output);
 				} else if (item.internalServerException) {
-					throw new Error(`Internal server error: ${item.internalServerException.message}`);
+					throw item.internalServerException;
 				} else if (item.modelStreamErrorException) {
-					throw new Error(`Model stream error: ${item.modelStreamErrorException.message}`);
+					throw item.modelStreamErrorException;
 				} else if (item.validationException) {
-					throw new Error(`Validation error: ${item.validationException.message}`);
+					throw item.validationException;
 				} else if (item.throttlingException) {
-					throw new Error(`Throttling error: ${item.throttlingException.message}`);
+					throw item.throttlingException;
 				} else if (item.serviceUnavailableException) {
-					throw new Error(`Service unavailable: ${item.serviceUnavailableException.message}`);
+					throw item.serviceUnavailableException;
 				}
 			}
 
@@ -213,7 +214,7 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				delete (block as Block).partialJson;
 			}
 			output.stopReason = options.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			output.errorMessage = formatBedrockError(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -221,6 +222,36 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 
 	return stream;
 };
+
+/**
+ * Human-readable prefixes for Bedrock SDK exception names.
+ * The downstream retry logic in agent-session matches patterns like
+ * `server.?error` and `service.?unavailable`, so we preserve the legacy
+ * prefix format rather than using the raw SDK exception name.
+ */
+const BEDROCK_ERROR_PREFIXES: Record<string, string> = {
+	InternalServerException: "Internal server error",
+	ModelStreamErrorException: "Model stream error",
+	ValidationException: "Validation error",
+	ThrottlingException: "Throttling error",
+	ServiceUnavailableException: "Service unavailable",
+};
+
+/**
+ * Format a Bedrock error with a human-readable prefix.
+ * AWS SDK exceptions (both from `client.send()` and from stream event items)
+ * extend BedrockRuntimeServiceException. We map the `.name` to a stable
+ * human-readable prefix so downstream consumers (retry logic, context-overflow
+ * detection) can distinguish error categories via simple string matching.
+ */
+function formatBedrockError(error: unknown): string {
+	const message = error instanceof Error ? error.message : JSON.stringify(error);
+	if (error instanceof BedrockRuntimeServiceException) {
+		const prefix = BEDROCK_ERROR_PREFIXES[error.name] ?? error.name;
+		return `${prefix}: ${message}`;
+	}
+	return message;
+}
 
 export const streamSimpleBedrock: StreamFunction<"bedrock-converse-stream", SimpleStreamOptions> = (
 	model: Model<"bedrock-converse-stream">,

@@ -171,10 +171,15 @@ const state = session.agent.state;
 // state.model: Model - current model
 // state.thinkingLevel: ThinkingLevel - current thinking level
 // state.systemPrompt: string - system prompt
-// state.tools: Tool[] - available tools
+// state.tools: AgentTool[] - available tools
+// state.streamingMessage?: AgentMessage - current partial assistant message
+// state.errorMessage?: string - latest assistant error
 
-// Replace messages (useful for branching, restoration)
-session.agent.replaceMessages(messages);
+// Replace messages (useful for branching or restoration)
+session.agent.state.messages = messages; // copies the top-level array
+
+// Replace tools
+session.agent.state.tools = tools; // copies the top-level array
 
 // Wait for agent to finish processing
 await session.agent.waitForIdle();

@@ -1,3 +1,4 @@
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import {
 	ARTIFACTS_RUNTIME_PROVIDER_DESCRIPTION_RO,
 	ARTIFACTS_RUNTIME_PROVIDER_DESCRIPTION_RW,
@@ -13,7 +14,7 @@ interface ArtifactsPanelLike {
 }
 
 interface AgentLike {
-	appendMessage(message: any): void;
+	state: { messages: AgentMessage[] };
 }
 
 /**
@@ -171,7 +172,7 @@ export class ArtifactsRuntimeProvider implements SandboxRuntimeProvider {
 							filename,
 							content,
 						});
-						this.agent?.appendMessage({
+						this.agent?.state.messages.push({
 							role: "artifact",
 							action,
 							filename,
@@ -192,7 +193,7 @@ export class ArtifactsRuntimeProvider implements SandboxRuntimeProvider {
 							command: "delete",
 							filename,
 						});
-						this.agent?.appendMessage({
+						this.agent?.state.messages.push({
 							role: "artifact",
 							action: "delete",
 							filename,
