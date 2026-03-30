@@ -374,39 +374,35 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
-		// Process zAi models (zai, zai-coding-plan, zhipuai-coding-plan all map to zai provider)
-		for (const zaiVariant of ["zai", "zai-coding-plan", "zhipuai-coding-plan"]) {
-			if (data[zaiVariant]?.models) {
-				for (const [modelId, model] of Object.entries(data[zaiVariant].models)) {
-					const m = model as ModelsDevModel;
-					if (m.tool_call !== true) continue;
+		// Process zAi models
+		if (data["zai-coding-plan"]?.models) {
+			for (const [modelId, model] of Object.entries(data["zai-coding-plan"].models)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
 
-					if (models.some((existing) => existing.provider === "zai" && existing.id === modelId)) continue;
+				const supportsImage = m.modalities?.input?.includes("image");
 
-					const supportsImage = m.modalities?.input?.includes("image");
-
-					models.push({
-						id: modelId,
-						name: m.name || modelId,
-						api: "openai-completions",
-						provider: "zai",
-						baseUrl: "https://api.z.ai/api/coding/paas/v4",
-						reasoning: m.reasoning === true,
-						input: supportsImage ? ["text", "image"] : ["text"],
-						cost: {
-							input: m.cost?.input || 0,
-							output: m.cost?.output || 0,
-							cacheRead: m.cost?.cache_read || 0,
-							cacheWrite: m.cost?.cache_write || 0,
-						},
-						compat: {
-							supportsDeveloperRole: false,
-							thinkingFormat: "zai",
-						},
-						contextWindow: m.limit?.context || 4096,
-						maxTokens: m.limit?.output || 4096,
-					});
-				}
+				models.push({
+					id: modelId,
+					name: m.name || modelId,
+					api: "openai-completions",
+					provider: "zai",
+					baseUrl: "https://api.z.ai/api/coding/paas/v4",
+					reasoning: m.reasoning === true,
+					input: supportsImage ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					compat: {
+						supportsDeveloperRole: false,
+						thinkingFormat: "zai",
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
+				});
 			}
 		}
 
@@ -717,15 +713,7 @@ async function generateModels() {
 			candidate.cost.output = 1.9;
 			candidate.cost.cacheRead = 0.119;
 		}
-		// models.dev has 200k context and 0 pricing; official Z.AI docs- 204800 context
-		// and GLM-5 pricing (1.0 input, 3.2 output, 0.2 cacheRead).
-		if (candidate.provider === "zai" && candidate.id === "glm-5.1") {
-			candidate.contextWindow = 204800;
-			candidate.maxTokens = 131072;
-			candidate.cost.input = 1.0;
-			candidate.cost.output = 3.2;
-			candidate.cost.cacheRead = 0.2;
-		}
+
 	}
 
 
