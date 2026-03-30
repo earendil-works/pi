@@ -46,6 +46,96 @@ interface AiGatewayModel {
 	};
 }
 
+type ModelLimitOverride = {
+	contextWindow: number;
+	maxTokens: number;
+};
+
+const LIMITS_8192_8192: ModelLimitOverride = { contextWindow: 8192, maxTokens: 8192 };
+const LIMITS_128K_4096: ModelLimitOverride = { contextWindow: 128000, maxTokens: 4096 };
+const LIMITS_128K_16384: ModelLimitOverride = { contextWindow: 128000, maxTokens: 16384 };
+const LIMITS_128K_32000: ModelLimitOverride = { contextWindow: 128000, maxTokens: 32000 };
+const LIMITS_200K_100K: ModelLimitOverride = { contextWindow: 200000, maxTokens: 100000 };
+const LIMITS_400K_128K: ModelLimitOverride = { contextWindow: 400000, maxTokens: 128000 };
+const LIMITS_1050K_128K: ModelLimitOverride = { contextWindow: 1050000, maxTokens: 128000 };
+const LIMITS_1047576_32768: ModelLimitOverride = { contextWindow: 1047576, maxTokens: 32768 };
+
+const OPENAI_MODEL_LIMIT_OVERRIDES: Record<string, ModelLimitOverride> = {
+	"codex-mini-latest": LIMITS_200K_100K,
+	"gpt-4": LIMITS_8192_8192,
+	"gpt-4-turbo": LIMITS_128K_4096,
+	"gpt-4.1": LIMITS_1047576_32768,
+	"gpt-4.1-mini": LIMITS_1047576_32768,
+	"gpt-4.1-nano": LIMITS_1047576_32768,
+	"gpt-4o": LIMITS_128K_16384,
+	"gpt-4o-2024-05-13": LIMITS_128K_4096,
+	"gpt-4o-2024-08-06": LIMITS_128K_16384,
+	"gpt-4o-2024-11-20": LIMITS_128K_16384,
+	"gpt-4o-mini": LIMITS_128K_16384,
+	"gpt-5": LIMITS_400K_128K,
+	"gpt-5-chat-latest": LIMITS_128K_16384,
+	"gpt-5-codex": LIMITS_400K_128K,
+	"gpt-5-mini": LIMITS_400K_128K,
+	"gpt-5-nano": LIMITS_400K_128K,
+	"gpt-5.1": LIMITS_400K_128K,
+	"gpt-5.1-chat-latest": LIMITS_128K_16384,
+	"gpt-5.1-codex": LIMITS_400K_128K,
+	"gpt-5.1-codex-max": LIMITS_400K_128K,
+	"gpt-5.1-codex-mini": LIMITS_400K_128K,
+	"gpt-5.2": LIMITS_400K_128K,
+	"gpt-5.2-chat-latest": LIMITS_128K_16384,
+	"gpt-5.2-codex": LIMITS_400K_128K,
+	"gpt-5.2-pro": LIMITS_400K_128K,
+	"gpt-5.3-codex": LIMITS_400K_128K,
+	"gpt-5.4": LIMITS_1050K_128K,
+	"gpt-5.4-mini": LIMITS_400K_128K,
+	"gpt-5.4-nano": LIMITS_400K_128K,
+	"gpt-5.4-pro": LIMITS_1050K_128K,
+	o1: LIMITS_200K_100K,
+	"o1-pro": LIMITS_200K_100K,
+	o3: LIMITS_200K_100K,
+	"o3-deep-research": LIMITS_200K_100K,
+	"o3-mini": LIMITS_200K_100K,
+	"o3-pro": LIMITS_200K_100K,
+	"o4-mini": LIMITS_200K_100K,
+	"o4-mini-deep-research": LIMITS_200K_100K,
+};
+
+const OPENAI_CODEX_MODEL_LIMIT_OVERRIDES: Record<string, ModelLimitOverride> = {
+	"gpt-5.1": OPENAI_MODEL_LIMIT_OVERRIDES["gpt-5.1"],
+	"gpt-5.1-codex-max": OPENAI_MODEL_LIMIT_OVERRIDES["gpt-5.1-codex-max"],
+	"gpt-5.1-codex-mini": OPENAI_MODEL_LIMIT_OVERRIDES["gpt-5.1-codex-mini"],
+	"gpt-5.2": OPENAI_MODEL_LIMIT_OVERRIDES["gpt-5.2"],
+	"gpt-5.2-codex": OPENAI_MODEL_LIMIT_OVERRIDES["gpt-5.2-codex"],
+	"gpt-5.3-codex": OPENAI_MODEL_LIMIT_OVERRIDES["gpt-5.3-codex"],
+	"gpt-5.4": OPENAI_MODEL_LIMIT_OVERRIDES["gpt-5.4"],
+	"gpt-5.4-mini": OPENAI_MODEL_LIMIT_OVERRIDES["gpt-5.4-mini"],
+	"gpt-5.3-codex-spark": LIMITS_128K_32000,
+};
+
+function applyModelLimitOverrides(
+	models: Model<any>[],
+	provider: string,
+	overrides: Record<string, ModelLimitOverride>,
+) {
+	for (const candidate of models) {
+		if (candidate.provider !== provider) continue;
+		const override = overrides[candidate.id];
+		if (!override) continue;
+		candidate.contextWindow = override.contextWindow;
+		candidate.maxTokens = override.maxTokens;
+	}
+}
+
+function removeProviderModels(models: Model<any>[], provider: string, modelIds: Set<string>) {
+	for (let i = models.length - 1; i >= 0; i--) {
+		const candidate = models[i];
+		if (candidate.provider === provider && modelIds.has(candidate.id)) {
+			models.splice(i, 1);
+		}
+	}
+}
+
 const COPILOT_STATIC_HEADERS = {
 	"User-Agent": "GitHubCopilotChat/0.35.0",
 	"Editor-Version": "vscode/1.107.0",
@@ -696,10 +786,6 @@ async function generateModels() {
 			candidate.contextWindow = 272000;
 			candidate.maxTokens = 128000;
 		}
-		if (candidate.provider === "openai" && candidate.id === "gpt-5.4") {
-			candidate.contextWindow = 272000;
-			candidate.maxTokens = 128000;
-		}
 		// Keep selected OpenRouter model metadata stable until upstream settles.
 		if (candidate.provider === "openrouter" && candidate.id === "moonshotai/kimi-k2.5") {
 			candidate.cost.input = 0.41;
@@ -860,25 +946,6 @@ async function generateModels() {
 		});
 	}
 
-	if (!allModels.some(m => m.provider === "openai" && m.id === "gpt-5.3-codex-spark")) {
-		allModels.push({
-			id: "gpt-5.3-codex-spark",
-			name: "GPT-5.3 Codex Spark",
-			api: "openai-responses",
-			baseUrl: "https://api.openai.com/v1",
-			provider: "openai",
-			reasoning: true,
-			input: ["text"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
-			contextWindow: 128000,
-			maxTokens: 16384,
-		});
-	}
 
 	// Add missing GitHub Copilot GPT-5.3 models until models.dev includes them.
 	const copilotBaseModel = allModels.find(
@@ -909,7 +976,7 @@ async function generateModels() {
 				cacheRead: 0.25,
 				cacheWrite: 0,
 			},
-			contextWindow: 272000,
+			contextWindow: 1050000,
 			maxTokens: 128000,
 		});
 	}
@@ -938,10 +1005,10 @@ async function generateModels() {
 
 	// OpenAI Codex (ChatGPT OAuth) models
 	// NOTE: These are not fetched from models.dev; we keep a small, explicit list to avoid aliases.
-	// Context window is based on observed server limits (400s above ~272k), not marketing numbers.
+	// Context window/output-token metadata is normalized below via curated provider overrides.
 	const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
-	const CODEX_CONTEXT = 272000;
-	const CODEX_MAX_TOKENS = 128000;
+	const CODEX_DEFAULT_CONTEXT = 400000;
+	const CODEX_DEFAULT_MAX_TOKENS = 128000;
 	const codexModels: Model<"openai-codex-responses">[] = [
 		{
 			id: "gpt-5.1",
@@ -952,8 +1019,8 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 },
-			contextWindow: CODEX_CONTEXT,
-			maxTokens: CODEX_MAX_TOKENS,
+			contextWindow: CODEX_DEFAULT_CONTEXT,
+			maxTokens: CODEX_DEFAULT_MAX_TOKENS,
 		},
 		{
 			id: "gpt-5.1-codex-max",
@@ -964,8 +1031,8 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 },
-			contextWindow: CODEX_CONTEXT,
-			maxTokens: CODEX_MAX_TOKENS,
+			contextWindow: CODEX_DEFAULT_CONTEXT,
+			maxTokens: CODEX_DEFAULT_MAX_TOKENS,
 		},
 		{
 			id: "gpt-5.1-codex-mini",
@@ -976,8 +1043,8 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: { input: 0.25, output: 2, cacheRead: 0.025, cacheWrite: 0 },
-			contextWindow: CODEX_CONTEXT,
-			maxTokens: CODEX_MAX_TOKENS,
+			contextWindow: CODEX_DEFAULT_CONTEXT,
+			maxTokens: CODEX_DEFAULT_MAX_TOKENS,
 		},
 		{
 			id: "gpt-5.2",
@@ -988,8 +1055,8 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: { input: 1.75, output: 14, cacheRead: 0.175, cacheWrite: 0 },
-			contextWindow: CODEX_CONTEXT,
-			maxTokens: CODEX_MAX_TOKENS,
+			contextWindow: CODEX_DEFAULT_CONTEXT,
+			maxTokens: CODEX_DEFAULT_MAX_TOKENS,
 		},
 		{
 			id: "gpt-5.2-codex",
@@ -1000,8 +1067,8 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: { input: 1.75, output: 14, cacheRead: 0.175, cacheWrite: 0 },
-			contextWindow: CODEX_CONTEXT,
-			maxTokens: CODEX_MAX_TOKENS,
+			contextWindow: CODEX_DEFAULT_CONTEXT,
+			maxTokens: CODEX_DEFAULT_MAX_TOKENS,
 		},
 		{
 			id: "gpt-5.3-codex",
@@ -1012,8 +1079,8 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: { input: 1.75, output: 14, cacheRead: 0.175, cacheWrite: 0 },
-			contextWindow: CODEX_CONTEXT,
-			maxTokens: CODEX_MAX_TOKENS,
+			contextWindow: CODEX_DEFAULT_CONTEXT,
+			maxTokens: CODEX_DEFAULT_MAX_TOKENS,
 		},
 		{
 			id: "gpt-5.4",
@@ -1024,8 +1091,8 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: { input: 2.5, output: 15, cacheRead: 0.25, cacheWrite: 0 },
-			contextWindow: CODEX_CONTEXT,
-			maxTokens: CODEX_MAX_TOKENS,
+			contextWindow: 1050000,
+			maxTokens: CODEX_DEFAULT_MAX_TOKENS,
 		},
 		{
 			id: "gpt-5.4-mini",
@@ -1036,8 +1103,8 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: { input: 0.75, output: 4.5, cacheRead: 0.075, cacheWrite: 0 },
-			contextWindow: CODEX_CONTEXT,
-			maxTokens: CODEX_MAX_TOKENS,
+			contextWindow: CODEX_DEFAULT_CONTEXT,
+			maxTokens: CODEX_DEFAULT_MAX_TOKENS,
 		},
 		{
 			id: "gpt-5.3-codex-spark",
@@ -1049,7 +1116,7 @@ async function generateModels() {
 			input: ["text"],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 128000,
-			maxTokens: CODEX_MAX_TOKENS,
+			maxTokens: 32000,
 		},
 	];
 	allModels.push(...codexModels);
@@ -1490,6 +1557,10 @@ async function generateModels() {
 			allModels.push(model);
 		}
 	}
+
+	removeProviderModels(allModels, "openai", new Set(["gpt-5.3-codex-spark"]));
+	applyModelLimitOverrides(allModels, "openai", OPENAI_MODEL_LIMIT_OVERRIDES);
+	applyModelLimitOverrides(allModels, "openai-codex", OPENAI_CODEX_MODEL_LIMIT_OVERRIDES);
 
 	const azureOpenAiModels: Model<Api>[] = allModels
 		.filter((model) => model.provider === "openai" && model.api === "openai-responses")
