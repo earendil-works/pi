@@ -223,7 +223,7 @@ describe("todowrite tool", () => {
 		expect(details?.mu_display?.output?.collapse?.maxVisualLines).toBe(5);
 	});
 
-	it("keeps system_reminder in tool result content for model-side continuation", async () => {
+	it("does not embed system_reminder in the tool result content", async () => {
 		const result = await todowriteTool.execute(
 			"call-1",
 			{
@@ -239,7 +239,7 @@ describe("todowrite tool", () => {
 		const textContent = result.content[0];
 		expect(textContent.type).toBe("text");
 		if (textContent.type === "text") {
-			expect(textContent.text).toContain("<system_reminder");
+			expect(textContent.text).not.toContain("<system_reminder");
 		}
 	});
 });

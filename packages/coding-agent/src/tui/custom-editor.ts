@@ -4,6 +4,7 @@ import { Editor } from "@kennyfrc/mu-tui";
 export class CustomEditor extends Editor {
 	public onEscape?: () => void;
 	public onCtrlC?: () => void;
+	public onCtrlT?: () => void;
 	public onTab?: () => void;
 	public onShiftTab?: () => void;
 	public onCtrlP?: () => void;
@@ -34,6 +35,16 @@ export class CustomEditor extends Editor {
 	 * keys to allow parent's SelectList navigation when menu is open.
 	 */
 	handleInput(data: string): void {
+		if (this.onCtrlT && data !== "\x14" && data.includes("\x14")) {
+			const parts = data.split("\x14");
+			for (let i = 0; i < parts.length; i++) {
+				const part = parts[i] ?? "";
+				if (part) this.handleInput(part);
+				if (i < parts.length - 1) this.onCtrlT();
+			}
+			return;
+		}
+
 		// Ctrl+O can arrive in different encodings depending on terminal protocol.
 		// Handle both the ASCII control character (\x0f) and Kitty CSI-u (ESC [ 111 ; 5 u).
 		// Also handle the case where terminals batch multiple events into a single chunk.
@@ -154,6 +165,10 @@ export class CustomEditor extends Editor {
 		}
 		if (data === "\x03" && this.onCtrlC) {
 			this.onCtrlC();
+			return;
+		}
+		if (data === "\x14" && this.onCtrlT) {
+			this.onCtrlT();
 			return;
 		}
 

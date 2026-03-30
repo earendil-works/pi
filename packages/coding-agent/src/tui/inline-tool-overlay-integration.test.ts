@@ -36,7 +36,7 @@ describe("InlineToolOverlayComponent integration", () => {
 					output: {
 						collapse: {
 							maxVisualLines: 1,
-							expandHint: "esc to dismiss",
+							expandHint: "ctrl+t to hide",
 						},
 					},
 				},
@@ -51,7 +51,7 @@ describe("InlineToolOverlayComponent integration", () => {
 		expect(text).toContain("Todo List");
 		expect(text).toContain("in_progress");
 		// Hint shows when content is truncated
-		expect(text).toContain("esc to dismiss");
+		expect(text).toContain("ctrl+t to hide");
 	});
 
 	it("should be dismissible and stay dismissed", () => {
@@ -67,7 +67,7 @@ describe("InlineToolOverlayComponent integration", () => {
 					version: 1,
 					call: { style: "argv" as const, text: "todo_write", command: "todo_write", argv: [] },
 					summary: { text: "No todos", severity: "info" as const },
-					output: { collapse: { maxVisualLines: 3, expandHint: "esc to dismiss" } },
+					output: { collapse: { maxVisualLines: 3, expandHint: "ctrl+t to hide" } },
 				},
 			} as TodoWriteToolDetails,
 		});
@@ -94,7 +94,7 @@ describe("InlineToolOverlayComponent integration", () => {
 					version: 1,
 					call: { style: "argv" as const, text: "todo_write", command: "todo_write", argv: [] },
 					summary: { text: "Still dismissed", severity: "info" as const },
-					output: { collapse: { maxVisualLines: 3, expandHint: "esc to dismiss" } },
+					output: { collapse: { maxVisualLines: 3, expandHint: "ctrl+t to hide" } },
 				},
 			} as TodoWriteToolDetails,
 		});
@@ -116,7 +116,7 @@ describe("InlineToolOverlayComponent integration", () => {
 					version: 1,
 					call: { style: "argv" as const, text: "todo_write", command: "todo_write", argv: [] },
 					summary: { text: "Summary", severity: "info" as const },
-					output: { collapse: { maxVisualLines: 2, expandHint: "esc to dismiss" } },
+					output: { collapse: { maxVisualLines: 2, expandHint: "ctrl+t to hide" } },
 				},
 			} as TodoWriteToolDetails,
 		});
@@ -157,7 +157,7 @@ describe("InlineToolOverlayComponent integration", () => {
 					version: 1,
 					call: { style: "argv" as const, text: "todo_write", command: "todo_write", argv: [] },
 					summary: { text: "Summary", severity: "info" as const },
-					output: { collapse: { maxVisualLines: 5, expandHint: "esc to dismiss" } },
+					output: { collapse: { maxVisualLines: 5, expandHint: "ctrl+t to hide" } },
 				},
 			} as TodoWriteToolDetails,
 		});
@@ -192,7 +192,7 @@ describe("InlineToolOverlayComponent integration", () => {
 					version: 1,
 					call: { style: "argv" as const, text: "todo_write", command: "todo_write", argv: [] },
 					summary: { text: "1 in_progress · 0 pending · 1 completed · 1 blocked", severity: "info" as const },
-					output: { collapse: { maxVisualLines: 5, expandHint: "esc to dismiss" } },
+					output: { collapse: { maxVisualLines: 5, expandHint: "ctrl+t to hide" } },
 				},
 			} as TodoWriteToolDetails,
 		});
@@ -217,7 +217,7 @@ describe("InlineToolOverlayComponent integration", () => {
 					version: 1,
 					call: { style: "argv" as const, text: "todo_write", command: "todo_write", argv: [] },
 					summary: { text: "0 in_progress · 0 pending · 1 completed · 0 blocked", severity: "info" as const },
-					output: { collapse: { maxVisualLines: 5, expandHint: "esc to dismiss" } },
+					output: { collapse: { maxVisualLines: 5, expandHint: "ctrl+t to hide" } },
 				},
 			} as TodoWriteToolDetails,
 		});

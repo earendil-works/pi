@@ -1,8 +1,7 @@
 import { Container, visibleWidth } from "@kennyfrc/mu-tui";
 import stripAnsi from "strip-ansi";
-import { type MuDisplayV1, readMuDisplayV1 } from "../display/mu-display.js";
+import { readMuDisplayV1 } from "../display/mu-display.js";
 import { theme } from "../theme/theme.js";
-import { truncateToVisualLines } from "./visual-truncate.js";
 
 // Maximum lines to show when collapsed
 const DEFAULT_MAX_LINES = 3;
@@ -29,8 +28,8 @@ function padStyled(text: string, width: number): string {
  * for display above the composer (not in scrollable chat history).
  */
 export class InlineToolOverlayComponent extends Container {
-	private toolName: string;
 	private expanded = false;
+	private hidden = false;
 	private dismissed = false;
 	private result?: {
 		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
@@ -40,7 +39,7 @@ export class InlineToolOverlayComponent extends Container {
 
 	constructor(toolName: string, args: unknown) {
 		super();
-		this.toolName = toolName;
+		void toolName;
 		void args;
 	}
 
@@ -50,6 +49,7 @@ export class InlineToolOverlayComponent extends Container {
 		details?: unknown;
 	}): void {
 		this.result = result;
+		this.hidden = false;
 		if (this.shouldAutoDismiss(result.details)) {
 			this.dismiss();
 			return;
@@ -75,23 +75,20 @@ export class InlineToolOverlayComponent extends Container {
 		return this.expanded;
 	}
 
-	private rebuild(): void {
-		this.clear();
+	setHidden(hidden: boolean): void {
+		this.hidden = hidden;
 	}
 
-	private formatCallLine(muDisplay: MuDisplayV1 | null): string {
-		const toolNameStyled = theme.fg("toolTitle", theme.bold(this.toolName));
+	toggleHidden(): void {
+		this.hidden = !this.hidden;
+	}
 
-		if (muDisplay?.call?.text) {
-			return `${toolNameStyled} ${theme.fg("accent", muDisplay.call.text)}`;
-		}
+	isHidden(): boolean {
+		return this.hidden;
+	}
 
-		if (muDisplay?.call?.argv && muDisplay.call.argv.length > 0) {
-			const argvText = muDisplay.call.argv.join(" ");
-			return `${toolNameStyled} ${theme.fg("accent", argvText)}`;
-		}
-
-		return toolNameStyled;
+	private rebuild(): void {
+		this.clear();
 	}
 
 	private getTextOutput(): string {
@@ -212,7 +209,7 @@ export class InlineToolOverlayComponent extends Container {
 	}
 
 	override render(width: number): string[] {
-		if (this.dismissed) return [];
+		if (this.dismissed || this.hidden) return [];
 
 		const muDisplay = readMuDisplayV1(this.result?.details) ?? null;
 		const lines = this.getDisplayLines();
@@ -232,7 +229,7 @@ export class InlineToolOverlayComponent extends Container {
 			: (muDisplay?.output?.collapse?.maxVisualLines ?? DEFAULT_MAX_LINES);
 		const visibleLines = lines.slice(0, maxLines);
 		const hiddenCount = Math.max(0, lines.length - visibleLines.length);
-		const hint = hiddenCount > 0 ? `+${hiddenCount} more · esc to dismiss` : "esc to dismiss";
+		const hint = hiddenCount > 0 ? `+${hiddenCount} more · ctrl+t to hide` : "ctrl+t to hide";
 
 		const bodyLines = [
 			summaryText,

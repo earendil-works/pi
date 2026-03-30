@@ -63,6 +63,14 @@ export interface TodoWriteToolDetails {
 	mu_display: MuDisplayV1;
 }
 
+export interface TodoSummary {
+	total: number;
+	pending: number;
+	inProgress: number;
+	completed: number;
+	blocked: number;
+}
+
 // Module-level state: one agent per process, so this acts as session state
 let todos: TodoItem[] = [];
 let nextId = 1;
@@ -74,6 +82,23 @@ export function resetTodosForTest(): void {
 
 export function getTodos(): readonly TodoItem[] {
 	return todos;
+}
+
+export function getTodoSummary(items: readonly TodoItem[] = todos): TodoSummary {
+	return {
+		total: items.length,
+		pending: items.filter((t) => t.status === "pending").length,
+		inProgress: items.filter((t) => t.status === "in_progress").length,
+		completed: items.filter((t) => t.status === "completed").length,
+		blocked: items.filter((t) => t.status === "blocked").length,
+	};
+}
+
+export function buildTodoContinuationReminder(summary: Pick<TodoSummary, "pending" | "inProgress">): string | null {
+	if (summary.pending <= 0 && summary.inProgress <= 0) {
+		return null;
+	}
+	return `\n\n<system_reminder pending="${summary.pending}" in_progress="${summary.inProgress}">Continue now. Execute the remaining todo items using available tools. Prefer the in_progress item first, otherwise take the next pending item. Keep going until there are no pending/in_progress items left, or you are blocked (then ask the user for what you need). Update the todo list with todo_write as you make progress.</system_reminder>`;
 }
 
 /**
@@ -182,19 +207,10 @@ export const todowriteTool: AgentTool<typeof todowriteSchema, TodoWriteToolDetai
 
 		todos = normalized;
 
-		const pending = todos.filter((t) => t.status === "pending").length;
-		const inProgress = todos.filter((t) => t.status === "in_progress").length;
-		const completed = todos.filter((t) => t.status === "completed").length;
-		const blocked = todos.filter((t) => t.status === "blocked").length;
-		const total = todos.length;
+		const summary = getTodoSummary(todos);
+		const { pending, inProgress, completed, blocked, total } = summary;
 
-		let text = formatTodos(todos);
-
-		// If there is active work left, add an out-of-band reminder for the model.
-		// The TUI hides this tag, but the model still receives it via the tool result.
-		if (pending > 0 || inProgress > 0) {
-			text += `\n\n<system_reminder pending="${pending}" in_progress="${inProgress}">Continue now. Execute the remaining todo items using available tools. Prefer the in_progress item first, otherwise take the next pending item. Keep going until there are no pending/in_progress items left, or you are blocked (then ask the user for what you need). Update the todo list with todo_write as you make progress.</system_reminder>`;
-		}
+		const text = formatTodos(todos);
 
 		const summaryText = [
 			`${inProgress} in_progress`,
@@ -207,7 +223,7 @@ export const todowriteTool: AgentTool<typeof todowriteSchema, TodoWriteToolDetai
 			content: [{ type: "text", text }],
 			details: {
 				todos: todos,
-				summary: { total, pending, inProgress, completed, blocked },
+				summary,
 				mu_display: {
 					version: 1,
 					call: {

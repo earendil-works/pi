@@ -34,7 +34,7 @@ describe("InlineToolOverlayComponent", () => {
 					output: {
 						collapse: {
 							maxVisualLines: 3,
-							expandHint: "esc to dismiss",
+							expandHint: "ctrl+t to hide",
 						},
 					},
 				},
@@ -71,7 +71,7 @@ describe("InlineToolOverlayComponent", () => {
 					call: { style: "argv", text: "todo_write", command: "todo_write", argv: [] },
 					summary: { text: "No todos", severity: "info" },
 					output: {
-						collapse: { maxVisualLines: 3, expandHint: "esc to dismiss" },
+						collapse: { maxVisualLines: 3, expandHint: "ctrl+t to hide" },
 					},
 				},
 			} as TodoWriteToolDetails,
@@ -98,7 +98,7 @@ describe("InlineToolOverlayComponent", () => {
 					call: { style: "argv", text: "todo_write", command: "todo_write", argv: [] },
 					summary: { text: "No todos", severity: "info" },
 					output: {
-						collapse: { maxVisualLines: 3, expandHint: "esc to dismiss" },
+						collapse: { maxVisualLines: 3, expandHint: "ctrl+t to hide" },
 					},
 				},
 			} as TodoWriteToolDetails,
@@ -144,7 +144,7 @@ describe("InlineToolOverlayComponent", () => {
 					call: { style: "argv", text: "todo_write", command: "todo_write", argv: [] },
 					summary: { text: "Summary here", severity: "info" },
 					output: {
-						collapse: { maxVisualLines: 2, expandHint: "esc to dismiss" },
+						collapse: { maxVisualLines: 2, expandHint: "ctrl+t to hide" },
 					},
 				},
 			} as TodoWriteToolDetails,
@@ -153,8 +153,35 @@ describe("InlineToolOverlayComponent", () => {
 		const lines = component.render(80);
 		const text = lines.join("\n");
 
-		// Should show dismissal hint in the footer area
-		expect(text).toContain("esc to dismiss");
+		// Should show toggle hint in the footer area
+		expect(text).toContain("ctrl+t to hide");
+	});
+
+	it("supports hiding and showing without losing content", () => {
+		const component = new InlineToolOverlayComponent("todo_write", {});
+
+		component.updateResult({
+			content: [{ type: "text", text: "[pending] Task 1" }],
+			isError: false,
+			details: {
+				todos: [{ id: "todo_1", content: "Task 1", status: "pending", priority: "medium" }],
+				summary: { total: 1, pending: 1, inProgress: 0, completed: 0, blocked: 0 },
+				mu_display: {
+					version: 1,
+					call: { style: "argv", text: "todo_write", command: "todo_write", argv: [] },
+					summary: { text: "0 in_progress · 1 pending · 0 completed · 0 blocked", severity: "info" },
+					output: { collapse: { maxVisualLines: 3, expandHint: "ctrl+t to hide" } },
+				},
+			} as TodoWriteToolDetails,
+		});
+
+		expect(component.render(80).length).toBeGreaterThan(0);
+		component.toggleHidden();
+		expect(component.isHidden()).toBe(true);
+		expect(component.render(80)).toHaveLength(0);
+		component.toggleHidden();
+		expect(component.isHidden()).toBe(false);
+		expect(component.render(80).join("\n")).toContain("Task 1");
 	});
 
 	it("renders todo items with prettier status markers", () => {
@@ -174,7 +201,7 @@ describe("InlineToolOverlayComponent", () => {
 					version: 1,
 					call: { style: "argv", text: "todo_write", command: "todo_write", argv: [] },
 					summary: { text: "1 in_progress · 1 pending · 0 completed · 1 blocked", severity: "info" },
-					output: { collapse: { maxVisualLines: 3, expandHint: "esc to dismiss" } },
+					output: { collapse: { maxVisualLines: 3, expandHint: "ctrl+t to hide" } },
 				},
 			} as TodoWriteToolDetails,
 		});

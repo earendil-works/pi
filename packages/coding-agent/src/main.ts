@@ -22,6 +22,7 @@ import { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
 import { createSpawnedAgentsReminderPreprocessor } from "./spawned-agents.js";
 import { initThemeWithGhostty } from "./theme/theme.js";
+import { createTodoReminderPreprocessor } from "./todo-reminder.js";
 import { allTools, type ToolName } from "./tools/index.js";
 import { resolveToolSelection, type ToolSelection } from "./tools/tool-selection.js";
 import { ensureTool } from "./tools-manager.js";
@@ -1307,7 +1308,7 @@ export async function main(args: string[]) {
 		queueMode: settingsManager.getQueueMode(),
 		messagePreprocessor: createSpawnedAgentsReminderPreprocessor(
 			sessionManager,
-			extensionManager.getMessagePreprocessor(),
+			createTodoReminderPreprocessor(extensionManager.getMessagePreprocessor()),
 		),
 		toolResultTransformer: extensionManager.composeToolResultTransformer(),
 		transport: new ProviderTransport({

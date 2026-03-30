@@ -935,6 +935,14 @@ export class TuiRenderer {
 			this.handleCtrlC();
 		};
 
+		this.editor.onCtrlT = () => {
+			if (!this.inlineToolOverlay || this.inlineToolOverlay.isDismissed()) {
+				return;
+			}
+			this.inlineToolOverlay.toggleHidden();
+			this.ui.requestRender();
+		};
+
 		this.editor.onTab = () => {
 			// Tab queues regular message (by-end) when streaming
 			const text = this.editor.getExpandedText().trim();
@@ -3479,15 +3487,6 @@ export class TuiRenderer {
 	}
 
 	private interceptComposerInput(data: string): string {
-		// Escape dismisses inline tool overlay
-		if (data === "\x1b" && this.inlineToolOverlay && !this.inlineToolOverlay.isDismissed()) {
-			this.inlineToolOverlay.dismiss();
-			this.inlineToolOverlay = null;
-			this.inlineToolOverlayContainer.clear();
-			this.ui.requestRender();
-			return "";
-		}
-
 		if (this.slashCommandOverlay) {
 			this.slashCommandOverlay.handleInput(data);
 			this.ui.requestRender();
