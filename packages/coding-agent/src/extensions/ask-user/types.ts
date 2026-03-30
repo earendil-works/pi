@@ -1,6 +1,6 @@
-export type AskUserMode = "validation_contract" | "specification";
+export type AskUserMode = "validation_contract" | "specification" | "clarify";
 
-export type AskUserQuestionField = "surface" | "commandOrAction" | "expect" | "notes";
+export type AskUserQuestionField = string;
 
 export type AskUserAnswerSource = "option" | "custom";
 

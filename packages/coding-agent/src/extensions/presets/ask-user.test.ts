@@ -114,4 +114,75 @@ describe("ask-user preset extension", () => {
 		expect(injected).toBeDefined();
 		expect(promptAskUserMock).toHaveBeenCalledTimes(1);
 	});
+
+	it("accepts clarify mode with arbitrary field keys without rejecting the tool call", async () => {
+		const cwd = mkdtempSync(join(tmpdir(), "mu-ask-user-clarify-"));
+		tempDirs.push(cwd);
+		process.chdir(cwd);
+		process.env.MU_SESSION_ID = "session-789";
+
+		promptAskUserMock.mockResolvedValue({
+			scopeName: "dad-nursing-home-crisis",
+			sanitizedScopeName: "dad-nursing-home-crisis",
+			answers: [
+				{
+					questionId: "doctor_contacted",
+					topic: "medical clearance",
+					prompt: "Has anyone spoken to the doctor?",
+					answer: "No, not yet",
+					source: "option",
+					field: "doctor_contacted",
+				},
+			],
+			files: [],
+			summary: "1. medical clearance: No, not yet",
+		});
+
+		type RegisteredTool = Parameters<ExtensionApi["registerTool"]>[0];
+		let registeredTool: RegisteredTool | undefined;
+
+		askUserExtension({
+			registerTool: (tool) => {
+				registeredTool = tool;
+			},
+			registerCliTool: () => {},
+			registerProvider: () => {},
+			context: () => {},
+			registerCommand: () => {},
+			input: () => {},
+			beforeToolCall: () => {},
+			afterToolResult: () => {},
+			appendSessionEntry: () => {},
+			appendSessionMessage: () => {},
+		});
+
+		expect(registeredTool).toBeDefined();
+
+		const toolResult = await registeredTool!.execute("call_2", {
+			mode: "clarify",
+			objective: "Determine immediate safety status",
+			scopeName: "Dad nursing home crisis",
+			questions: [
+				{
+					id: "doctor_contacted",
+					prompt: "Has anyone spoken to the doctor?",
+					topic: "medical clearance",
+					options: ["No, not yet", "Yes"],
+					field: "doctor_contacted",
+				},
+			],
+		});
+		const details = toolResult.details as {
+			scopeName: string;
+			specClarifications: { items: Array<{ id: string; answer: string }> } | undefined;
+		};
+
+		expect(details.scopeName).toBe("dad-nursing-home-crisis");
+		expect(details.specClarifications?.items.map((item) => ({ id: item.id, answer: item.answer }))).toEqual([
+			{
+				id: "doctor_contacted",
+				answer: "No, not yet",
+			},
+		]);
+	});
 });

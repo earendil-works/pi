@@ -20,19 +20,12 @@ const QUESTION_SCHEMA = Type.Object({
 	topic: Type.String({ minLength: 1 }),
 	options: Type.Array(Type.String(), { default: [] }),
 	allowCustom: Type.Optional(Type.Boolean()),
-	field: Type.Optional(
-		Type.Union([
-			Type.Literal("surface"),
-			Type.Literal("commandOrAction"),
-			Type.Literal("expect"),
-			Type.Literal("notes"),
-		]),
-	),
+	field: Type.Optional(Type.String({ minLength: 1 })),
 	entryId: Type.Optional(Type.String({ minLength: 1 })),
 });
 
 const askUserSchema = Type.Object({
-	mode: Type.Union([Type.Literal("validation_contract"), Type.Literal("specification")]),
+	mode: Type.Union([Type.Literal("validation_contract"), Type.Literal("specification"), Type.Literal("clarify")]),
 	objective: Type.String({ minLength: 1 }),
 	scopeName: Type.Optional(Type.String({ minLength: 1 })),
 	notes: Type.Optional(Type.String()),
@@ -158,6 +151,27 @@ function buildToolContent(args: {
 	return lines.join("\n");
 }
 
+function shouldMergeValidationContract(request: AskUserRequest, answers: AskUserAnswer[]): boolean {
+	if (request.mode === "validation_contract") {
+		return true;
+	}
+	if ((request.suggestedEntries?.length ?? 0) > 0) {
+		return true;
+	}
+	return answers.some(
+		(answer) =>
+			answer.entryId !== undefined &&
+			(answer.field === "surface" ||
+				answer.field === "commandOrAction" ||
+				answer.field === "expect" ||
+				answer.field === "notes"),
+	);
+}
+
+function shouldMergeSpecClarifications(request: AskUserRequest): boolean {
+	return request.mode === "specification" || request.mode === "clarify";
+}
+
 export default function askUserExtension(api: ExtensionApi): void {
 	const askUserTool: AgentTool<
 		typeof askUserSchema,
@@ -211,24 +225,22 @@ export default function askUserExtension(api: ExtensionApi): void {
 			const scopeName = sanitizeScopeName(promptResult.scopeName);
 			const existingState = loadScopeState({ sessionId, scopeName });
 
-			const validationContract =
-				request.mode === "validation_contract"
-					? mergeValidationContract({
-							existing: existingState.validationContract,
-							scopeName,
-							request,
-							answers: promptResult.answers,
-						})
-					: existingState.validationContract;
-			const specClarifications =
-				request.mode === "specification"
-					? mergeSpecClarifications({
-							existing: existingState.specClarifications,
-							scopeName,
-							request,
-							answers: promptResult.answers,
-						})
-					: existingState.specClarifications;
+			const validationContract = shouldMergeValidationContract(request, promptResult.answers)
+				? mergeValidationContract({
+						existing: existingState.validationContract,
+						scopeName,
+						request,
+						answers: promptResult.answers,
+					})
+				: existingState.validationContract;
+			const specClarifications = shouldMergeSpecClarifications(request)
+				? mergeSpecClarifications({
+						existing: existingState.specClarifications,
+						scopeName,
+						request,
+						answers: promptResult.answers,
+					})
+				: existingState.specClarifications;
 
 			const files = persistScopeDocuments({
 				scopeName,

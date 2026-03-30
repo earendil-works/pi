@@ -10,6 +10,8 @@ import type {
 	ValidationContractEntry,
 } from "./types.js";
 
+const VALIDATION_CONTRACT_FIELDS = new Set(["surface", "commandOrAction", "expect", "notes"]);
+
 interface ScopePaths {
 	rootDir: string;
 	scopeDir: string;
@@ -114,12 +116,7 @@ function parseAskUserAnswer(value: unknown): AskUserAnswer | null {
 		source: value.source,
 	};
 
-	if (
-		value.field === "surface" ||
-		value.field === "commandOrAction" ||
-		value.field === "expect" ||
-		value.field === "notes"
-	) {
+	if (typeof value.field === "string" && value.field.trim()) {
 		answer.field = value.field;
 	}
 	if (typeof value.entryId === "string" && value.entryId.trim()) {
@@ -237,7 +234,7 @@ function mergeValidationEntries(args: {
 	}
 
 	for (const answer of args.answers) {
-		if (!answer.field || !answer.entryId) continue;
+		if (!answer.field || !answer.entryId || !VALIDATION_CONTRACT_FIELDS.has(answer.field)) continue;
 		const current = byId.get(answer.entryId) ?? { id: answer.entryId };
 		if (answer.field === "surface") current.surface = answer.answer;
 		if (answer.field === "commandOrAction") current.commandOrAction = answer.answer;
