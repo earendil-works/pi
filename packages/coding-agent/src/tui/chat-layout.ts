@@ -52,6 +52,7 @@ interface ChatLayoutOptions {
 	chatContent: Component;
 	composerContent: Component;
 	inputTarget: Component;
+	inlineOverlayContent?: Component;
 	interceptInput?: (data: string) => string;
 	onTranscriptSelectionCopy?: (text: string) => void;
 	footer: Component;
@@ -118,6 +119,7 @@ export class ChatLayoutComponent implements Component {
 	private readonly chatContent: Component;
 	private readonly composerContent: Component;
 	private readonly inputTarget: Component;
+	private readonly inlineOverlayContent?: Component;
 	private readonly interceptInput?: (data: string) => string;
 	private readonly onTranscriptSelectionCopy?: (text: string) => void;
 	private readonly footer: Component;
@@ -140,6 +142,7 @@ export class ChatLayoutComponent implements Component {
 		this.chatContent = options.chatContent;
 		this.composerContent = options.composerContent;
 		this.inputTarget = options.inputTarget;
+		this.inlineOverlayContent = options.inlineOverlayContent;
 		this.interceptInput = options.interceptInput;
 		this.onTranscriptSelectionCopy = options.onTranscriptSelectionCopy;
 		this.footer = options.footer;
@@ -151,6 +154,7 @@ export class ChatLayoutComponent implements Component {
 
 	invalidate(): void {
 		this.chatContent.invalidate?.();
+		this.inlineOverlayContent?.invalidate?.();
 		this.composerContent.invalidate?.();
 	}
 
@@ -217,9 +221,17 @@ export class ChatLayoutComponent implements Component {
 		const footerRows = this.footer.render(width).length;
 		const composerLines = this.renderComposer(width, terminalRows);
 		const composerGap = 1;
-		const chatHeight = Math.max(1, terminalRows - footerRows - composerLines.length - composerGap);
+
+		// Render inline overlay if present
+		const inlineOverlayLines = this.inlineOverlayContent ? this.inlineOverlayContent.render(width) : [];
+
+		const chatHeight = Math.max(
+			1,
+			terminalRows - footerRows - composerLines.length - composerGap - inlineOverlayLines.length,
+		);
 		const chatLines = this.renderChat(width, chatHeight);
-		return [...chatLines, ...Array(composerGap).fill(""), ...composerLines];
+
+		return [...chatLines, ...inlineOverlayLines, ...Array(composerGap).fill(""), ...composerLines];
 	}
 
 	private renderChat(width: number, height: number): string[] {

@@ -138,6 +138,7 @@ import { CustomEditor } from "./custom-editor.js";
 import { DialogOverlayComponent } from "./dialog-overlay.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { FooterComponent } from "./footer.js";
+import { InlineToolOverlayComponent } from "./inline-tool-overlay.js";
 import { LabeledBorder } from "./labeled-border.js";
 import { ModelSelectorComponent } from "./model-selector.js";
 import { OAuthAccountSelectorComponent } from "./oauth-account-selector.js";
@@ -240,6 +241,7 @@ export class TuiRenderer {
 	private chatContainer: Container;
 	private pendingMessagesContainer: Container;
 	private statusContainer: Container;
+	private inlineToolOverlayContainer: Container;
 	private editor: CustomEditor;
 	private editorContainer: Container; // Container to swap between editor and selector
 	private footer: FooterComponent;
@@ -318,6 +320,9 @@ export class TuiRenderer {
 	// /todos overlay
 	private todoOverlay: TodoOverlayComponent | null = null;
 	private noteOverlay: WorkspaceNoteOverlayComponent | null = null;
+
+	// Inline tool overlay (for todo_write)
+	private inlineToolOverlay: InlineToolOverlayComponent | null = null;
 
 	// Model selector
 	private modelSelector: ModelSelectorComponent | null = null;
@@ -438,6 +443,7 @@ export class TuiRenderer {
 		this.chatContainer = new RenderCacheContainer();
 		this.pendingMessagesContainer = new RenderCacheContainer();
 		this.statusContainer = new RenderCacheContainer();
+		this.inlineToolOverlayContainer = new Container(); // Container for inline todo_write overlay
 		this.editor = new CustomEditor(getEditorTheme());
 		this.editor.showTopBorder = false;
 		this.editor.showBottomBorder = false;
@@ -454,6 +460,7 @@ export class TuiRenderer {
 				this.statusContainer,
 			),
 			composerContent: this.editorContainer,
+			inlineOverlayContent: this.inlineToolOverlayContainer,
 			inputTarget: this.editor,
 			interceptInput: (data) => this.interceptComposerInput(data),
 			onTranscriptSelectionCopy: (text) => this.handleTranscriptSelectionCopy(text),
@@ -1600,6 +1607,20 @@ export class TuiRenderer {
 					this.pendingTools.delete(event.toolCallId);
 					this.ui.requestRender();
 				}
+
+				// Update inline overlay for todo_write
+				if (event.toolName === "todo_write" && typeof event.result !== "string") {
+					this.updateInlineToolOverlay(
+						"todo_write",
+						{},
+						{
+							content: event.result.content,
+							details: event.result.details,
+							isError: event.isError,
+						},
+					);
+				}
+
 				this.pendingLatencyStartTime = Date.now();
 
 				// Detect explicit compact tool completion - end the current run immediately
@@ -3431,7 +3452,42 @@ export class TuiRenderer {
 		this.ui.setFocus(this.chatLayout);
 	}
 
+	private updateInlineToolOverlay(
+		toolName: string,
+		args: unknown,
+		result: {
+			content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+			isError: boolean;
+			details?: unknown;
+		},
+	): void {
+		// Clear existing overlay if dismissed
+		if (this.inlineToolOverlay?.isDismissed()) {
+			this.inlineToolOverlay = null;
+			this.inlineToolOverlayContainer.clear();
+		}
+
+		// Create or update the inline overlay
+		if (!this.inlineToolOverlay) {
+			this.inlineToolOverlay = new InlineToolOverlayComponent(toolName, args);
+			this.inlineToolOverlayContainer.clear();
+			this.inlineToolOverlayContainer.addChild(this.inlineToolOverlay);
+		}
+
+		this.inlineToolOverlay.updateResult(result);
+		this.ui.requestRender();
+	}
+
 	private interceptComposerInput(data: string): string {
+		// Escape dismisses inline tool overlay
+		if (data === "\x1b" && this.inlineToolOverlay && !this.inlineToolOverlay.isDismissed()) {
+			this.inlineToolOverlay.dismiss();
+			this.inlineToolOverlay = null;
+			this.inlineToolOverlayContainer.clear();
+			this.ui.requestRender();
+			return "";
+		}
+
 		if (this.slashCommandOverlay) {
 			this.slashCommandOverlay.handleInput(data);
 			this.ui.requestRender();

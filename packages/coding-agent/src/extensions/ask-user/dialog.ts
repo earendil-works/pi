@@ -207,8 +207,25 @@ export class AskUserDialogComponent extends Container {
 	}
 
 	handleInput(data: string): void {
-		if (data === "\x03" || data === "\x1b") {
+		// Escape cancels the dialog
+		if (data === "\x1b") {
 			this.onCancelCallback();
+			return;
+		}
+
+		// Ctrl+C clears the current input field (does NOT cancel)
+		if (data === "\x03") {
+			if (this.stage === "scope") {
+				this.scopeInput.setValue("");
+				this.scopePreview = "";
+				this.errorMessage = null;
+				this.rebuild();
+			} else if (this.stage === "custom") {
+				this.customInput.setValue("");
+				this.errorMessage = null;
+				this.rebuild();
+			}
+			// In "choice" stage, SelectList handles its own input
 			return;
 		}
 
