@@ -93,6 +93,7 @@ function createFakeThis(groupDefs: ToolGroupDefinition[] = []) {
 		getRegisteredToolDefinition,
 		addMessageToChat: vi.fn(),
 	};
+	Object.setPrototypeOf(fakeThis, InteractiveMode.prototype);
 
 	return { fakeThis, tui, chatChildren };
 }

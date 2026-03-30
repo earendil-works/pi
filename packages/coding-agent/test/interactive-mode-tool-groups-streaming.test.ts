@@ -91,6 +91,7 @@ function createFakeThis(groupDefs: ToolGroupDefinition[] = []) {
 		clearPendingToolsAndGroup,
 		getRegisteredToolDefinition,
 	};
+	Object.setPrototypeOf(fakeThis, InteractiveMode.prototype);
 
 	return { fakeThis, tui, chatChildren };
 }
