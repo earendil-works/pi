@@ -703,9 +703,10 @@ export class ModelRegistry {
 
 		if (config.streamSimple) {
 			const streamSimple = config.streamSimple;
+			// Register with provider:api key to avoid overriding built-in providers
 			registerApiProvider(
 				{
-					api: config.api!,
+					api: `${providerName}:${config.api!}` as Api,
 					stream: (model, context, options) => streamSimple(model, context, options as SimpleStreamOptions),
 					streamSimple,
 				},

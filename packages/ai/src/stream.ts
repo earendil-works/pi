@@ -22,12 +22,20 @@ function resolveApiProvider(api: Api) {
 	return provider;
 }
 
+function resolveApiProviderForModel<TApi extends Api>(model: Model<TApi>) {
+	// Try provider-specific first (e.g., "nvidia-nim:openai-completions")
+	const providerSpecific = getApiProvider(`${model.provider}:${model.api}` as Api);
+	if (providerSpecific) return providerSpecific;
+	// Fallback to api-only
+	return resolveApiProvider(model.api);
+}
+
 export function stream<TApi extends Api>(
 	model: Model<TApi>,
 	context: Context,
 	options?: ProviderStreamOptions,
 ): AssistantMessageEventStream {
-	const provider = resolveApiProvider(model.api);
+	const provider = resolveApiProviderForModel(model);
 	return provider.stream(model, context, options as StreamOptions);
 }
 
@@ -45,7 +53,7 @@ export function streamSimple<TApi extends Api>(
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
-	const provider = resolveApiProvider(model.api);
+	const provider = resolveApiProviderForModel(model);
 	return provider.streamSimple(model, context, options);
 }
 
