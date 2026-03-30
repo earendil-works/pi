@@ -371,6 +371,11 @@ export class Agent {
 		this._state.messages = [];
 	}
 
+	/** The current abort signal, or undefined when the agent is not streaming. */
+	get signal(): AbortSignal | undefined {
+		return this.abortController?.signal;
+	}
+
 	abort() {
 		this.abortController?.abort();
 	}

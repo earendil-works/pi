@@ -70,7 +70,7 @@ export interface FuzzyMatchResult {
 	contentForReplacement: string;
 }
 
-export interface ReplaceEdit {
+export interface Edit {
 	oldText: string;
 	newText: string;
 }
@@ -192,7 +192,7 @@ function getNoChangeError(path: string, totalEdits: number): Error {
  */
 export function applyEditsToNormalizedContent(
 	normalizedContent: string,
-	edits: ReplaceEdit[],
+	edits: Edit[],
 	path: string,
 ): AppliedEditsResult {
 	const normalizedEdits = edits.map((edit) => ({
@@ -403,7 +403,7 @@ export interface EditDiffError {
  */
 export async function computeEditsDiff(
 	path: string,
-	edits: ReplaceEdit[],
+	edits: Edit[],
 	cwd: string,
 ): Promise<EditDiffResult | EditDiffError> {
 	const absolutePath = resolveToCwd(path, cwd);

@@ -325,6 +325,40 @@ const FUNCTIONAL_CODEPOINTS = {
 	end: -15,
 } as const;
 
+const KITTY_FUNCTIONAL_KEY_EQUIVALENTS = new Map<number, number>([
+	[57399, 48], // KP_0 -> 0
+	[57400, 49], // KP_1 -> 1
+	[57401, 50], // KP_2 -> 2
+	[57402, 51], // KP_3 -> 3
+	[57403, 52], // KP_4 -> 4
+	[57404, 53], // KP_5 -> 5
+	[57405, 54], // KP_6 -> 6
+	[57406, 55], // KP_7 -> 7
+	[57407, 56], // KP_8 -> 8
+	[57408, 57], // KP_9 -> 9
+	[57409, 46], // KP_DECIMAL -> .
+	[57410, 47], // KP_DIVIDE -> /
+	[57411, 42], // KP_MULTIPLY -> *
+	[57412, 45], // KP_SUBTRACT -> -
+	[57413, 43], // KP_ADD -> +
+	[57415, 61], // KP_EQUAL -> =
+	[57416, 44], // KP_SEPARATOR -> ,
+	[57417, ARROW_CODEPOINTS.left],
+	[57418, ARROW_CODEPOINTS.right],
+	[57419, ARROW_CODEPOINTS.up],
+	[57420, ARROW_CODEPOINTS.down],
+	[57421, FUNCTIONAL_CODEPOINTS.pageUp],
+	[57422, FUNCTIONAL_CODEPOINTS.pageDown],
+	[57423, FUNCTIONAL_CODEPOINTS.home],
+	[57424, FUNCTIONAL_CODEPOINTS.end],
+	[57425, FUNCTIONAL_CODEPOINTS.insert],
+	[57426, FUNCTIONAL_CODEPOINTS.delete],
+]);
+
+function normalizeKittyFunctionalCodepoint(codepoint: number): number {
+	return KITTY_FUNCTIONAL_KEY_EQUIVALENTS.get(codepoint) ?? codepoint;
+}
+
 const LEGACY_KEY_SEQUENCES = {
 	up: ["\x1b[A", "\x1bOA"],
 	down: ["\x1b[B", "\x1bOB"],
@@ -619,8 +653,11 @@ function matchesKittySequence(data: string, expectedCodepoint: number, expectedM
 	// Check if modifiers match
 	if (actualMod !== expectedMod) return false;
 
-	// Primary match: codepoint matches directly
-	if (parsed.codepoint === expectedCodepoint) return true;
+	const normalizedCodepoint = normalizeKittyFunctionalCodepoint(parsed.codepoint);
+	const normalizedExpectedCodepoint = normalizeKittyFunctionalCodepoint(expectedCodepoint);
+
+	// Primary match: codepoint matches directly after normalizing functional keys
+	if (normalizedCodepoint === normalizedExpectedCodepoint) return true;
 
 	// Alternate match: use base layout key for non-Latin keyboard layouts.
 	// This allows Ctrl+С (Cyrillic) to match Ctrl+c (Latin) when terminal reports
@@ -635,7 +672,7 @@ function matchesKittySequence(data: string, expectedCodepoint: number, expectedM
 	// (letter remapping) and Ctrl+/ could falsely match Ctrl+[ (symbol remapping)
 	// if the base layout key were always considered.
 	if (parsed.baseLayoutKey !== undefined && parsed.baseLayoutKey === expectedCodepoint) {
-		const cp = parsed.codepoint;
+		const cp = normalizedCodepoint;
 		const isLatinLetter = cp >= 97 && cp <= 122; // a-z
 		const isKnownSymbol = SYMBOL_KEYS.has(String.fromCharCode(cp));
 		if (!isLatinLetter && !isKnownSymbol) return true;
@@ -1148,15 +1185,18 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
  * @returns Key identifier string (e.g., "ctrl+c") or undefined
  */
 function formatParsedKey(codepoint: number, modifier: number, baseLayoutKey?: number): string | undefined {
+	const normalizedCodepoint = normalizeKittyFunctionalCodepoint(codepoint);
+
 	// Use base layout key only when codepoint is not a recognized Latin
 	// letter (a-z), digit (0-9), or symbol (/, -, [, ;, etc.). For those,
 	// the codepoint is authoritative regardless of physical key position.
 	// This prevents remapped layouts (Dvorak, Colemak, xremap, etc.) from
 	// reporting the wrong key name based on the QWERTY physical position.
-	const isLatinLetter = codepoint >= 97 && codepoint <= 122; // a-z
-	const isDigit = codepoint >= 48 && codepoint <= 57; // 0-9
-	const isKnownSymbol = SYMBOL_KEYS.has(String.fromCharCode(codepoint));
-	const effectiveCodepoint = isLatinLetter || isDigit || isKnownSymbol ? codepoint : (baseLayoutKey ?? codepoint);
+	const isLatinLetter = normalizedCodepoint >= 97 && normalizedCodepoint <= 122; // a-z
+	const isDigit = normalizedCodepoint >= 48 && normalizedCodepoint <= 57; // 0-9
+	const isKnownSymbol = SYMBOL_KEYS.has(String.fromCharCode(normalizedCodepoint));
+	const effectiveCodepoint =
+		isLatinLetter || isDigit || isKnownSymbol ? normalizedCodepoint : (baseLayoutKey ?? normalizedCodepoint);
 
 	let keyName: string | undefined;
 	if (effectiveCodepoint === CODEPOINTS.escape) keyName = "escape";
@@ -1304,6 +1344,7 @@ export function decodeKittyPrintable(data: string): string | undefined {
 	if (modifier & MODIFIERS.shift && typeof shiftedKey === "number") {
 		effectiveCodepoint = shiftedKey;
 	}
+	effectiveCodepoint = normalizeKittyFunctionalCodepoint(effectiveCodepoint);
 	// Drop control characters or invalid codepoints.
 	if (!Number.isFinite(effectiveCodepoint) || effectiveCodepoint < 32) return undefined;
 

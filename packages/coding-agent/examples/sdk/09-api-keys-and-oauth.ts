@@ -9,7 +9,7 @@ import { AuthStorage, createAgentSession, ModelRegistry, SessionManager } from "
 // Default: AuthStorage uses ~/.pi/agent/auth.json
 // ModelRegistry loads built-in + custom models from ~/.pi/agent/models.json
 const authStorage = AuthStorage.create();
-const modelRegistry = new ModelRegistry(authStorage);
+const modelRegistry = ModelRegistry.create(authStorage);
 
 await createAgentSession({
 	sessionManager: SessionManager.inMemory(),
@@ -20,7 +20,7 @@ console.log("Session with default auth storage and model registry");
 
 // Custom auth storage location
 const customAuthStorage = AuthStorage.create("/tmp/my-app/auth.json");
-const customModelRegistry = new ModelRegistry(customAuthStorage, "/tmp/my-app/models.json");
+const customModelRegistry = ModelRegistry.create(customAuthStorage, "/tmp/my-app/models.json");
 
 await createAgentSession({
 	sessionManager: SessionManager.inMemory(),
@@ -39,7 +39,7 @@ await createAgentSession({
 console.log("Session with runtime API key override");
 
 // No models.json - only built-in models
-const simpleRegistry = new ModelRegistry(authStorage); // null = no models.json
+const simpleRegistry = ModelRegistry.inMemory(authStorage);
 await createAgentSession({
 	sessionManager: SessionManager.inMemory(),
 	authStorage,

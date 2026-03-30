@@ -223,8 +223,6 @@ export class TUI extends Container {
 	private renderRequested = false;
 	private cursorRow = 0; // Logical cursor row (end of rendered content)
 	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
-	private inputBuffer = ""; // Buffer for parsing terminal responses
-	private cellSizeQueryPending = false;
 	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
 	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1"; // Clear empty rows when content shrinks (default: off)
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
@@ -439,7 +437,6 @@ export class TUI extends Container {
 		}
 		// Query terminal for cell size in pixels: CSI 16 t
 		// Response format: CSI 6 ; height ; width t
-		this.cellSizeQueryPending = true;
 		this.terminal.write("\x1b[16t");
 	}
 
@@ -497,12 +494,9 @@ export class TUI extends Container {
 			data = current;
 		}
 
-		// If we're waiting for cell size response, buffer input and parse
-		if (this.cellSizeQueryPending) {
-			this.inputBuffer += data;
-			const filtered = this.parseCellSizeResponse();
-			if (filtered.length === 0) return;
-			data = filtered;
+		// Consume terminal cell size responses without blocking unrelated input.
+		if (this.consumeCellSizeResponse(data)) {
+			return;
 		}
 
 		// Global debug key handler (Shift+Ctrl+D)
@@ -537,46 +531,24 @@ export class TUI extends Container {
 		}
 	}
 
-	private parseCellSizeResponse(): string {
+	private consumeCellSizeResponse(data: string): boolean {
 		// Response format: ESC [ 6 ; height ; width t
-		// Match the response pattern
-		const responsePattern = /\x1b\[6;(\d+);(\d+)t/;
-		const match = this.inputBuffer.match(responsePattern);
-
-		if (match) {
-			const heightPx = parseInt(match[1], 10);
-			const widthPx = parseInt(match[2], 10);
-
-			if (heightPx > 0 && widthPx > 0) {
-				setCellDimensions({ widthPx, heightPx });
-				// Invalidate all components so images re-render with correct dimensions
-				this.invalidate();
-				this.requestRender();
-			}
-
-			// Remove the response from buffer
-			this.inputBuffer = this.inputBuffer.replace(responsePattern, "");
-			this.cellSizeQueryPending = false;
+		const match = data.match(/^\x1b\[6;(\d+);(\d+)t$/);
+		if (!match) {
+			return false;
 		}
 
-		// Check if we have a partial cell size response starting (wait for more data)
-		// Patterns that could be incomplete cell size response: \x1b, \x1b[, \x1b[6, \x1b[6;...(no t yet)
-		const partialCellSizePattern = /\x1b(\[6?;?[\d;]*)?$/;
-		if (partialCellSizePattern.test(this.inputBuffer)) {
-			// Check if it's actually a complete different escape sequence (ends with a letter)
-			// Cell size response ends with 't', Kitty keyboard ends with 'u', arrows end with A-D, etc.
-			const lastChar = this.inputBuffer[this.inputBuffer.length - 1];
-			if (!/[a-zA-Z~]/.test(lastChar)) {
-				// Doesn't end with a terminator, might be incomplete - wait for more
-				return "";
-			}
+		const heightPx = parseInt(match[1], 10);
+		const widthPx = parseInt(match[2], 10);
+		if (heightPx <= 0 || widthPx <= 0) {
+			return true;
 		}
 
-		// No cell size response found, return buffered data as user input
-		const result = this.inputBuffer;
-		this.inputBuffer = "";
-		this.cellSizeQueryPending = false; // Give up waiting
-		return result;
+		setCellDimensions({ widthPx, heightPx });
+		// Invalidate all components so images re-render with correct dimensions.
+		this.invalidate();
+		this.requestRender();
+		return true;
 	}
 
 	/**
