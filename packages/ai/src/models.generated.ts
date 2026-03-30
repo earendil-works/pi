@@ -6753,9 +6753,9 @@ export const MODELS = {
 			contextWindow: 131072,
 			maxTokens: 16384,
 		} satisfies Model<"openai-completions">,
-		"openai/gpt-4o-mini": {
-			id: "openai/gpt-4o-mini",
-			name: "OpenAI: GPT-4o-mini",
+		"openai/gpt-4o-mini-2024-07-18": {
+			id: "openai/gpt-4o-mini-2024-07-18",
+			name: "OpenAI: GPT-4o-mini (2024-07-18)",
 			api: "openai-completions",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
@@ -6770,9 +6770,9 @@ export const MODELS = {
 			contextWindow: 128000,
 			maxTokens: 16384,
 		} satisfies Model<"openai-completions">,
-		"openai/gpt-4o-mini-2024-07-18": {
-			id: "openai/gpt-4o-mini-2024-07-18",
-			name: "OpenAI: GPT-4o-mini (2024-07-18)",
+		"openai/gpt-4o-mini": {
+			id: "openai/gpt-4o-mini",
+			name: "OpenAI: GPT-4o-mini",
 			api: "openai-completions",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
@@ -6803,6 +6803,23 @@ export const MODELS = {
 			},
 			contextWindow: 8192,
 			maxTokens: 8192,
+		} satisfies Model<"openai-completions">,
+		"openai/gpt-4o-2024-05-13": {
+			id: "openai/gpt-4o-2024-05-13",
+			name: "OpenAI: GPT-4o (2024-05-13)",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: false,
+			input: ["text", "image"],
+			cost: {
+				input: 5,
+				output: 15,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 128000,
+			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
 		"openai/gpt-4o": {
 			id: "openai/gpt-4o",
@@ -6837,23 +6854,6 @@ export const MODELS = {
 			},
 			contextWindow: 128000,
 			maxTokens: 64000,
-		} satisfies Model<"openai-completions">,
-		"openai/gpt-4o-2024-05-13": {
-			id: "openai/gpt-4o-2024-05-13",
-			name: "OpenAI: GPT-4o (2024-05-13)",
-			api: "openai-completions",
-			provider: "openrouter",
-			baseUrl: "https://openrouter.ai/api/v1",
-			reasoning: false,
-			input: ["text", "image"],
-			cost: {
-				input: 5,
-				output: 15,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
-			contextWindow: 128000,
-			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
 		"meta-llama/llama-3-8b-instruct": {
 			id: "meta-llama/llama-3-8b-instruct",
@@ -7042,9 +7042,9 @@ export const MODELS = {
 			contextWindow: 16385,
 			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
-		"openai/gpt-4": {
-			id: "openai/gpt-4",
-			name: "OpenAI: GPT-4",
+		"openai/gpt-4-0314": {
+			id: "openai/gpt-4-0314",
+			name: "OpenAI: GPT-4 (older v0314)",
 			api: "openai-completions",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
@@ -7059,9 +7059,9 @@ export const MODELS = {
 			contextWindow: 8191,
 			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
-		"openai/gpt-4-0314": {
-			id: "openai/gpt-4-0314",
-			name: "OpenAI: GPT-4 (older v0314)",
+		"openai/gpt-4": {
+			id: "openai/gpt-4",
+			name: "OpenAI: GPT-4",
 			api: "openai-completions",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
