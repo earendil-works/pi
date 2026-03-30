@@ -26,11 +26,16 @@ class FakeTerminal implements Terminal {
 	setTitle(_title: string): void {}
 }
 
-function createGroupDef(name: string, matchFn: (toolName: string) => boolean): ToolGroupDefinition {
+function createGroupDef(
+	name: string,
+	matchFn: (toolName: string) => boolean,
+	lifecycle?: ToolGroupDefinition["lifecycle"],
+): ToolGroupDefinition {
 	return {
 		name,
 		match: (toolName) => matchFn(toolName),
 		render: (members) => new Text(`${name}: ${members.length} members`, 0, 0),
+		...(lifecycle !== undefined ? { lifecycle } : {}),
 	};
 }
 
@@ -68,6 +73,7 @@ function createFakeThis(groupDefs: ToolGroupDefinition[] = []) {
 		pendingTools: new Map<string, ToolExecutionComponent | ToolGroupComponent>(),
 		openGroup: null as { component: ToolGroupComponent; definition: ToolGroupDefinition } | null,
 		lastProcessedContentIndex: 0,
+		emptyTextBlockIndices: new Set<number>(),
 		toolOutputExpanded: false,
 		ui: tui,
 		footer: { invalidate: vi.fn() },
@@ -503,5 +509,372 @@ describe("InteractiveMode - Session Replay with Tool Groups", () => {
 
 		const groupComponents = chatChildren.filter((c) => c instanceof ToolGroupComponent);
 		expect(groupComponents).toHaveLength(2);
+	});
+
+	describe("toolRun lifecycle - replay", () => {
+		it("groups cross-message matching tool calls into one toolRun group", () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis, chatChildren } = createFakeThis([readGroup]);
+
+			renderSessionContext.call(fakeThis, {
+				messages: [
+					{
+						role: "assistant",
+						content: [
+							{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } },
+							{ type: "toolCall", id: "tc2", name: "read", arguments: { path: "b.ts" } },
+						],
+						stopReason: "toolUse",
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc1",
+						content: [{ type: "text", text: "a content" }],
+						isError: false,
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc2",
+						content: [{ type: "text", text: "b content" }],
+						isError: false,
+					},
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", id: "tc3", name: "read", arguments: { path: "c.ts" } }],
+						stopReason: "toolUse",
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc3",
+						content: [{ type: "text", text: "c content" }],
+						isError: false,
+					},
+				],
+			});
+
+			const groupComponents = chatChildren.filter((c) => c instanceof ToolGroupComponent);
+			expect(groupComponents).toHaveLength(1);
+			expect(fakeThis.pendingTools.size).toBe(0);
+		});
+
+		it("closes toolRun group on final assistant output with non-toolUse stop reason", () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis, chatChildren } = createFakeThis([readGroup]);
+
+			renderSessionContext.call(fakeThis, {
+				messages: [
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+						stopReason: "toolUse",
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc1",
+						content: [{ type: "text", text: "a" }],
+						isError: false,
+					},
+					{
+						role: "assistant",
+						content: [{ type: "text", text: "Here is the analysis:" }],
+						stopReason: "end_turn",
+					},
+				],
+			});
+
+			const groupComponents = chatChildren.filter((c) => c instanceof ToolGroupComponent);
+			expect(groupComponents).toHaveLength(1);
+			expect(groupComponents[0].isClosed).toBe(true);
+		});
+
+		it("toolResult messages between assistant messages do not close toolRun group", () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis, chatChildren } = createFakeThis([readGroup]);
+
+			renderSessionContext.call(fakeThis, {
+				messages: [
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+						stopReason: "toolUse",
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc1",
+						content: [{ type: "text", text: "a" }],
+						isError: false,
+					},
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", id: "tc2", name: "read", arguments: { path: "b.ts" } }],
+						stopReason: "toolUse",
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc2",
+						content: [{ type: "text", text: "b" }],
+						isError: false,
+					},
+				],
+			});
+
+			const groupComponents = chatChildren.filter((c) => c instanceof ToolGroupComponent);
+			expect(groupComponents).toHaveLength(1);
+		});
+
+		it("aborted toolRun continuation preserves completed results and injects errors for unresolved", () => {
+			const renderSpy = vi.fn((members) => new Text(`${members.length} members`, 0, 0));
+			const readGroup: ToolGroupDefinition = {
+				name: "read-group",
+				match: (toolName) => toolName === "read",
+				render: renderSpy,
+				lifecycle: { scope: "toolRun" },
+			};
+			const { fakeThis, chatChildren } = createFakeThis([readGroup]);
+
+			renderSessionContext.call(fakeThis, {
+				messages: [
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+						stopReason: "toolUse",
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc1",
+						content: [{ type: "text", text: "a content" }],
+						isError: false,
+					},
+					{
+						role: "assistant",
+						content: [
+							{ type: "toolCall", id: "tc2", name: "read", arguments: { path: "b.ts" } },
+							{ type: "toolCall", id: "tc3", name: "read", arguments: { path: "c.ts" } },
+						],
+						stopReason: "aborted",
+					},
+				],
+			});
+
+			const groupComponents = chatChildren.filter((c) => c instanceof ToolGroupComponent);
+			expect(groupComponents).toHaveLength(1);
+
+			const lastCall = renderSpy.mock.calls[renderSpy.mock.calls.length - 1];
+			const members = lastCall[0];
+			expect(members).toHaveLength(3);
+
+			const tc1 = members.find((m: any) => m.toolCallId === "tc1");
+			expect(tc1.result.isError).toBe(false);
+			expect(tc1.result.content[0].text).toBe("a content");
+
+			const tc2 = members.find((m: any) => m.toolCallId === "tc2");
+			expect(tc2.result.isError).toBe(true);
+
+			const tc3 = members.find((m: any) => m.toolCallId === "tc3");
+			expect(tc3.result.isError).toBe(true);
+		});
+
+		it("text/thinking before tool calls in continuation message closes toolRun group", () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis, chatChildren } = createFakeThis([readGroup]);
+
+			renderSessionContext.call(fakeThis, {
+				messages: [
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+						stopReason: "toolUse",
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc1",
+						content: [{ type: "text", text: "a" }],
+						isError: false,
+					},
+					{
+						role: "assistant",
+						content: [
+							{ type: "text", text: "Let me read more:" },
+							{ type: "toolCall", id: "tc2", name: "read", arguments: { path: "b.ts" } },
+						],
+						stopReason: "toolUse",
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc2",
+						content: [{ type: "text", text: "b" }],
+						isError: false,
+					},
+				],
+			});
+
+			const groupComponents = chatChildren.filter((c) => c instanceof ToolGroupComponent);
+			expect(groupComponents).toHaveLength(2);
+		});
+
+		it("non-matching tool call in continuation message closes toolRun group", () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis, chatChildren } = createFakeThis([readGroup]);
+
+			renderSessionContext.call(fakeThis, {
+				messages: [
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+						stopReason: "toolUse",
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc1",
+						content: [{ type: "text", text: "a" }],
+						isError: false,
+					},
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", id: "tc2", name: "bash", arguments: { command: "ls" } }],
+						stopReason: "toolUse",
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc2",
+						content: [{ type: "text", text: "ls output" }],
+						isError: false,
+					},
+				],
+			});
+
+			const groupComponents = chatChildren.filter((c) => c instanceof ToolGroupComponent);
+			expect(groupComponents).toHaveLength(1);
+			const individualComponents = chatChildren.filter((c) => c instanceof ToolExecutionComponent);
+			expect(individualComponents).toHaveLength(1);
+		});
+
+		it("missing stopReason closes toolRun group (graceful degradation)", () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis, chatChildren } = createFakeThis([readGroup]);
+
+			renderSessionContext.call(fakeThis, {
+				messages: [
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+						// No stopReason
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc1",
+						content: [{ type: "text", text: "a" }],
+						isError: false,
+					},
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", id: "tc2", name: "read", arguments: { path: "b.ts" } }],
+						stopReason: "toolUse",
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc2",
+						content: [{ type: "text", text: "b" }],
+						isError: false,
+					},
+				],
+			});
+
+			const groupComponents = chatChildren.filter((c) => c instanceof ToolGroupComponent);
+			expect(groupComponents).toHaveLength(2);
+		});
+
+		it("final message in session closes open toolRun group", () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis, chatChildren } = createFakeThis([readGroup]);
+
+			renderSessionContext.call(fakeThis, {
+				messages: [
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+						stopReason: "toolUse",
+					},
+				],
+			});
+
+			const groupComponents = chatChildren.filter((c) => c instanceof ToolGroupComponent);
+			expect(groupComponents).toHaveLength(1);
+			expect(groupComponents[0].isClosed).toBe(true);
+		});
+
+		it("user message between assistant messages closes toolRun group", () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis, chatChildren } = createFakeThis([readGroup]);
+
+			renderSessionContext.call(fakeThis, {
+				messages: [
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+						stopReason: "toolUse",
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc1",
+						content: [{ type: "text", text: "a" }],
+						isError: false,
+					},
+					{
+						role: "user",
+						content: [{ type: "text", text: "stop" }],
+					},
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", id: "tc2", name: "read", arguments: { path: "b.ts" } }],
+						stopReason: "toolUse",
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc2",
+						content: [{ type: "text", text: "b" }],
+						isError: false,
+					},
+				],
+			});
+
+			const groupComponents = chatChildren.filter((c) => c instanceof ToolGroupComponent);
+			expect(groupComponents).toHaveLength(2);
+		});
+
+		it("message-scoped groups do not span across messages in replay", () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read");
+			const { fakeThis, chatChildren } = createFakeThis([readGroup]);
+
+			renderSessionContext.call(fakeThis, {
+				messages: [
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+						stopReason: "toolUse",
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc1",
+						content: [{ type: "text", text: "a" }],
+						isError: false,
+					},
+					{
+						role: "assistant",
+						content: [{ type: "toolCall", id: "tc2", name: "read", arguments: { path: "b.ts" } }],
+						stopReason: "toolUse",
+					},
+					{
+						role: "toolResult",
+						toolCallId: "tc2",
+						content: [{ type: "text", text: "b" }],
+						isError: false,
+					},
+				],
+			});
+
+			const groupComponents = chatChildren.filter((c) => c instanceof ToolGroupComponent);
+			expect(groupComponents).toHaveLength(2);
+		});
 	});
 });

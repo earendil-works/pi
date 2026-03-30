@@ -196,6 +196,7 @@ export class InteractiveMode {
 	// Open tool group state for streaming grouping
 	private openGroup: { component: ToolGroupComponent; definition: ToolGroupDefinition } | null = null;
 	private lastProcessedContentIndex = 0;
+	private emptyTextBlockIndices = new Set<number>();
 
 	// Tool output expansion state
 	private toolOutputExpanded = false;
@@ -1296,18 +1297,13 @@ export class InteractiveMode {
 
 	private closeOpenGroup(): void {
 		if (!this.openGroup) return;
-		const scope = this.openGroup.definition.lifecycle?.scope ?? "message";
-		if (scope === "toolRun") {
-			this.openGroup.component.close();
-			this.openGroup = null;
-		} else {
-			this.openGroup.component.close();
-			this.openGroup = null;
-		}
+		this.openGroup.component.close();
+		this.openGroup = null;
 	}
 
 	private resetStreamingContentIndex(): void {
 		this.lastProcessedContentIndex = 0;
+		this.emptyTextBlockIndices.clear();
 	}
 
 	private resetStreamingToolTracking(): void {
@@ -1362,6 +1358,23 @@ export class InteractiveMode {
 		const existingComponent = this.pendingTools.get(toolCallId);
 		if (existingComponent) {
 			return existingComponent;
+		}
+
+		if (this.openGroup && (this.openGroup.definition.lifecycle?.scope ?? "message") === "toolRun") {
+			let matches = false;
+			try {
+				matches = this.openGroup.definition.match(toolName, args);
+			} catch (error) {
+				console.warn(`Tool group '${this.openGroup.definition.name}' match() threw during continuation:`, error);
+				this.closeOpenGroup();
+			}
+
+			if (matches) {
+				this.openGroup.component.addMember(toolCallId, toolName, args);
+				this.pendingTools.set(toolCallId, this.openGroup.component);
+				return this.openGroup.component;
+			}
+			this.closeOpenGroup();
 		}
 
 		const groupDefinition = this.findMatchingGroupDefinition(toolName, args);
@@ -1455,13 +1468,22 @@ export class InteractiveMode {
 		});
 	}
 
-	private refreshProcessedStreamingBlock(block: AssistantContentBlock): void {
+	private refreshProcessedStreamingBlock(block: AssistantContentBlock, index: number): void {
 		if (block.type === "toolCall") {
 			this.updatePendingToolArgs(block.id, block.arguments);
+		} else if (
+			this.openGroup &&
+			(this.openGroup.definition.lifecycle?.scope ?? "message") === "toolRun" &&
+			block.type === "text" &&
+			this.emptyTextBlockIndices.has(index) &&
+			block.text?.trim()
+		) {
+			this.emptyTextBlockIndices.delete(index);
+			this.closeOpenGroup();
 		}
 	}
 
-	private processNewStreamingBlock(block: AssistantContentBlock): void {
+	private processNewStreamingBlock(block: AssistantContentBlock, index: number): void {
 		if (block.type === "toolCall") {
 			if (this.pendingTools.has(block.id)) {
 				this.updatePendingToolArgs(block.id, block.arguments);
@@ -1469,6 +1491,10 @@ export class InteractiveMode {
 				this.ensurePendingToolComponent(block.name, block.id, block.arguments);
 			}
 			return;
+		}
+
+		if (block.type === "text" && !block.text?.trim()) {
+			this.emptyTextBlockIndices.add(index);
 		}
 
 		if (this.isGroupBoundary(block)) {
@@ -1479,10 +1505,10 @@ export class InteractiveMode {
 	private processStreamingContent(content: AssistantContent): void {
 		const processedCount = Math.min(this.lastProcessedContentIndex, content.length);
 		for (let i = 0; i < processedCount; i++) {
-			this.refreshProcessedStreamingBlock(content[i]);
+			this.refreshProcessedStreamingBlock(content[i], i);
 		}
 		for (let i = processedCount; i < content.length; i++) {
-			this.processNewStreamingBlock(content[i]);
+			this.processNewStreamingBlock(content[i], i);
 		}
 		this.lastProcessedContentIndex = content.length;
 	}
@@ -2501,7 +2527,13 @@ export class InteractiveMode {
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
-					this.resetStreamingToolTracking();
+					this.resetStreamingContentIndex();
+					if (this.openGroup) {
+						const openScope = this.openGroup.definition.lifecycle?.scope ?? "message";
+						if (openScope === "message") {
+							this.closeOpenGroup();
+						}
+					}
 					this.streamingComponent = new AssistantMessageComponent(
 						undefined,
 						this.hideThinkingBlock,
@@ -2552,8 +2584,14 @@ export class InteractiveMode {
 					} else {
 						// Args are now complete - trigger diff computation for edit tools
 						this.finalizePendingToolArgs();
+
+						const openScope = this.openGroup?.definition.lifecycle?.scope ?? "message";
+						if (this.streamingMessage.stopReason === "toolUse" && openScope === "toolRun") {
+							this.resetStreamingContentIndex();
+						} else {
+							this.resetStreamingToolTracking();
+						}
 					}
-					this.resetStreamingToolTracking();
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 					this.footer.invalidate();
@@ -2854,39 +2892,40 @@ export class InteractiveMode {
 		const groupComponentsWithResults = new Set<ToolGroupComponent>();
 		const pendingToolErrors = new Map<string, string>();
 
+		let replayActiveGroup: {
+			component: ToolGroupComponent;
+			definition: ToolGroupDefinition;
+			pendingMembers: Array<{ id: string; name: string; args: unknown }>;
+		} | null = null;
+
+		const flushReplayGroup = () => {
+			if (replayActiveGroup && replayActiveGroup.pendingMembers.length > 0) {
+				const group = replayActiveGroup;
+				group.component.batchUpdate(() => {
+					for (const member of group.pendingMembers) {
+						group.component.addMember(member.id, member.name, member.args);
+						group.component.setMemberArgsComplete(member.id);
+						group.component.markMemberExecutionStarted(member.id);
+					}
+				});
+				group.pendingMembers = [];
+			}
+		};
+
+		const closeReplayGroup = () => {
+			if (replayActiveGroup) {
+				flushReplayGroup();
+				replayActiveGroup.component.close();
+				replayActiveGroup = null;
+			}
+		};
+
 		for (const message of sessionContext.messages) {
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
 				this.addMessageToChat(message);
 
 				const isAbortedOrError = message.stopReason === "aborted" || message.stopReason === "error";
-				let replayActiveGroup: {
-					component: ToolGroupComponent;
-					definition: ToolGroupDefinition;
-					pendingMembers: Array<{ id: string; name: string; args: unknown }>;
-				} | null = null;
-
-				const flushReplayGroup = () => {
-					if (replayActiveGroup && replayActiveGroup.pendingMembers.length > 0) {
-						const group = replayActiveGroup;
-						group.component.batchUpdate(() => {
-							for (const member of group.pendingMembers) {
-								group.component.addMember(member.id, member.name, member.args);
-								group.component.setMemberArgsComplete(member.id);
-								group.component.markMemberExecutionStarted(member.id);
-							}
-						});
-						group.pendingMembers = [];
-					}
-				};
-
-				const closeReplayGroup = () => {
-					if (replayActiveGroup) {
-						flushReplayGroup();
-						replayActiveGroup.component.close();
-						replayActiveGroup = null;
-					}
-				};
 
 				let errorMessage: string | undefined;
 				if (isAbortedOrError) {
@@ -2903,6 +2942,35 @@ export class InteractiveMode {
 
 				for (const content of message.content) {
 					if (content.type === "toolCall") {
+						if (replayActiveGroup) {
+							const replayScope = replayActiveGroup.definition.lifecycle?.scope ?? "message";
+							if (replayScope === "toolRun") {
+								let matches = false;
+								try {
+									matches = replayActiveGroup.definition.match(content.name, content.arguments);
+								} catch (error) {
+									console.warn(
+										`Tool group '${replayActiveGroup.definition.name}' match() threw during replay continuation:`,
+										error,
+									);
+									closeReplayGroup();
+								}
+								if (matches) {
+									replayActiveGroup.pendingMembers.push({
+										id: content.id,
+										name: content.name,
+										args: content.arguments,
+									});
+									this.pendingTools.set(content.id, replayActiveGroup.component);
+									if (errorMessage) {
+										pendingToolErrors.set(content.id, errorMessage);
+									}
+									continue;
+								}
+								closeReplayGroup();
+							}
+						}
+
 						const groupDef = this.findMatchingGroupDefinition(content.name, content.arguments);
 
 						if (groupDef) {
@@ -2954,7 +3022,14 @@ export class InteractiveMode {
 					}
 				}
 
-				closeReplayGroup();
+				if (replayActiveGroup) {
+					const replayScope = replayActiveGroup.definition.lifecycle?.scope ?? "message";
+					if (replayScope === "toolRun" && message.stopReason === "toolUse") {
+						flushReplayGroup();
+					} else {
+						closeReplayGroup();
+					}
+				}
 			} else if (message.role === "toolResult") {
 				const component = this.pendingTools.get(message.toolCallId);
 				if (component) {
@@ -2968,10 +3043,12 @@ export class InteractiveMode {
 					pendingToolErrors.delete(message.toolCallId);
 				}
 			} else {
-				// All other messages use standard rendering
+				closeReplayGroup();
 				this.addMessageToChat(message, options);
 			}
 		}
+
+		closeReplayGroup();
 
 		// Inject error results into remaining pendingTools entries (tool calls from aborted/error
 		// messages that had no matching toolResult). Preserves actual results for completed calls.

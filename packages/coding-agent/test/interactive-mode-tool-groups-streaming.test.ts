@@ -26,11 +26,16 @@ class FakeTerminal implements Terminal {
 	setTitle(_title: string): void {}
 }
 
-function createGroupDef(name: string, matchFn: (toolName: string) => boolean): ToolGroupDefinition {
+function createGroupDef(
+	name: string,
+	matchFn: (toolName: string) => boolean,
+	lifecycle?: ToolGroupDefinition["lifecycle"],
+): ToolGroupDefinition {
 	return {
 		name,
 		match: (toolName) => matchFn(toolName),
 		render: (members) => new Text(`${members.length} members`, 0, 0),
+		...(lifecycle !== undefined ? { lifecycle } : {}),
 	};
 }
 
@@ -74,6 +79,7 @@ function createFakeThis(groupDefs: ToolGroupDefinition[] = []) {
 		pendingTools: new Map<string, ToolExecutionComponent | ToolGroupComponent>(),
 		openGroup: null as { component: ToolGroupComponent; definition: ToolGroupDefinition } | null,
 		lastProcessedContentIndex: 0,
+		emptyTextBlockIndices: new Set<number>(),
 		toolOutputExpanded: false,
 		ui: tui,
 		footer: { invalidate: vi.fn() },
@@ -85,7 +91,10 @@ function createFakeThis(groupDefs: ToolGroupDefinition[] = []) {
 		},
 		settingsManager: {
 			getShowImages: () => true,
+			getCodeBlockIndent: () => 0,
 		},
+		hideThinkingBlock: false,
+		hiddenThinkingLabel: undefined,
 		session: {
 			extensionRunner: {
 				getRegisteredToolGroupDefinitions: () => groupDefs,
@@ -125,6 +134,16 @@ function makeToolExecutionStartEvent(toolCallId: string, toolName: string, args:
 	};
 }
 
+function makeMessageStartEvent(role: string = "assistant") {
+	return {
+		type: "message_start" as const,
+		message: {
+			role,
+			content: [],
+		},
+	};
+}
+
 function makeMessageEndEvent(contentBlocks: any[], stopReason: string = "end_turn", errorMessage?: string) {
 	return {
 		type: "message_end" as const,
@@ -134,6 +153,16 @@ function makeMessageEndEvent(contentBlocks: any[], stopReason: string = "end_tur
 			stopReason,
 			errorMessage,
 		},
+	};
+}
+
+function makeToolExecutionEndEvent(toolCallId: string, toolName: string, result: any, isError = false) {
+	return {
+		type: "tool_execution_end" as const,
+		toolCallId,
+		toolName,
+		result,
+		isError,
 	};
 }
 
@@ -645,6 +674,762 @@ describe("InteractiveMode - Streaming Tool Groups", () => {
 
 			expect(fakeThis.openGroup).toBeNull();
 			expect(group.isClosed).toBe(true);
+		});
+	});
+
+	describe("toolRun lifecycle - live state machine", () => {
+		it("toolRun group stays open after message_end with stopReason=toolUse", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			const group = fakeThis.openGroup!.component;
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse",
+			};
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"toolUse",
+				),
+			);
+
+			expect(fakeThis.openGroup).not.toBeNull();
+			expect(group.isClosed).toBe(false);
+		});
+
+		it("toolRun group spans multiple assistant messages with matching tool calls", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis, chatChildren } = createFakeThis([readGroup]);
+
+			// First assistant message
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"toolUse",
+				),
+			);
+
+			const firstGroup = fakeThis.openGroup!.component;
+
+			// Simulate tool execution and result (between messages)
+			await handleEvent.call(
+				fakeThis,
+				makeToolExecutionEndEvent("tc1", "read", { content: [{ type: "text", text: "content" }] }),
+			);
+
+			// Second assistant message
+			await handleEvent.call(fakeThis, makeMessageStartEvent("assistant"));
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc2", name: "read", arguments: { path: "b.ts" } }]),
+			);
+
+			expect(fakeThis.openGroup).not.toBeNull();
+			expect(fakeThis.openGroup!.component).toBe(firstGroup);
+			expect(fakeThis.pendingTools.get("tc2")).toBe(firstGroup);
+
+			const groupComponents = chatChildren.filter((c) => c instanceof ToolGroupComponent);
+			expect(groupComponents).toHaveLength(1);
+		});
+
+		it("toolRun group continues after all current members complete", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"toolUse",
+				),
+			);
+
+			// Complete the tool
+			await handleEvent.call(
+				fakeThis,
+				makeToolExecutionEndEvent("tc1", "read", { content: [{ type: "text", text: "done" }] }),
+			);
+
+			expect(fakeThis.pendingTools.has("tc1")).toBe(false);
+			expect(fakeThis.openGroup).not.toBeNull();
+		});
+
+		it("tool_execution_end deleting from pendingTools does not affect openGroup", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([
+					{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } },
+					{ type: "toolCall", id: "tc2", name: "read", arguments: { path: "b.ts" } },
+				]),
+			);
+
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [
+					{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } },
+					{ type: "toolCall", id: "tc2", name: "read", arguments: { path: "b.ts" } },
+				],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[
+						{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } },
+						{ type: "toolCall", id: "tc2", name: "read", arguments: { path: "b.ts" } },
+					],
+					"toolUse",
+				),
+			);
+
+			const groupRef = fakeThis.openGroup;
+
+			await handleEvent.call(
+				fakeThis,
+				makeToolExecutionEndEvent("tc1", "read", { content: [{ type: "text", text: "done" }] }),
+			);
+			await handleEvent.call(
+				fakeThis,
+				makeToolExecutionEndEvent("tc2", "read", { content: [{ type: "text", text: "done" }] }),
+			);
+
+			expect(fakeThis.pendingTools.size).toBe(0);
+			expect(fakeThis.openGroup).toBe(groupRef);
+		});
+
+		it("toolRun group closes on non-matching tool call via ensurePendingToolComponent", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis, chatChildren } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"toolUse",
+				),
+			);
+
+			const group = fakeThis.openGroup!.component;
+
+			// Next message has non-matching tool
+			await handleEvent.call(fakeThis, makeMessageStartEvent("assistant"));
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc2", name: "bash", arguments: { command: "ls" } }]),
+			);
+
+			expect(fakeThis.openGroup).toBeNull();
+			expect(group.isClosed).toBe(true);
+			const toolComponents = chatChildren.filter((c) => c instanceof ToolExecutionComponent);
+			expect(toolComponents).toHaveLength(1);
+		});
+
+		it("toolRun group closes on meaningful text in continuation message", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"toolUse",
+				),
+			);
+
+			const group = fakeThis.openGroup!.component;
+
+			await handleEvent.call(fakeThis, makeMessageStartEvent("assistant"));
+			await handleEvent.call(fakeThis, makeMessageUpdateEvent([{ type: "text", text: "Analysis:" }]));
+
+			expect(fakeThis.openGroup).toBeNull();
+			expect(group.isClosed).toBe(true);
+		});
+
+		it("toolRun group closes on thinking block in continuation message", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"toolUse",
+				),
+			);
+
+			const group = fakeThis.openGroup!.component;
+
+			await handleEvent.call(fakeThis, makeMessageStartEvent("assistant"));
+			await handleEvent.call(fakeThis, makeMessageUpdateEvent([{ type: "thinking", thinking: "" }]));
+
+			expect(fakeThis.openGroup).toBeNull();
+			expect(group.isClosed).toBe(true);
+		});
+
+		it("toolRun group closes on terminal stop reason (end_turn)", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "end_turn",
+			};
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"end_turn",
+				),
+			);
+
+			expect(fakeThis.openGroup).toBeNull();
+		});
+
+		it("clearPendingToolsAndGroup unconditionally closes a toolRun group", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"toolUse",
+				),
+			);
+
+			expect(fakeThis.openGroup).not.toBeNull();
+			const group = fakeThis.openGroup!.component;
+
+			clearPendingToolsAndGroup.call(fakeThis);
+
+			expect(fakeThis.openGroup).toBeNull();
+			expect(group.isClosed).toBe(true);
+			expect(fakeThis.pendingTools.size).toBe(0);
+		});
+
+		it("abort/error closes toolRun group and injects errors", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			const group = fakeThis.openGroup!.component;
+			const updateSpy = vi.spyOn(group, "updateMemberResult");
+
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "aborted",
+			};
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"aborted",
+				),
+			);
+
+			expect(fakeThis.openGroup).toBeNull();
+			expect(group.isClosed).toBe(true);
+			expect(updateSpy).toHaveBeenCalled();
+		});
+
+		it("tool_execution_start for matching tool appends to open toolRun group before message_update", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis, chatChildren } = createFakeThis([readGroup]);
+
+			// First message
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"toolUse",
+				),
+			);
+
+			const groupComp = fakeThis.openGroup!.component;
+
+			// tool_execution_start arrives before message_update for tc2
+			await handleEvent.call(fakeThis, makeMessageStartEvent("assistant"));
+			await handleEvent.call(fakeThis, makeToolExecutionStartEvent("tc2", "read", { path: "b.ts" }));
+
+			expect(fakeThis.pendingTools.get("tc2")).toBe(groupComp);
+
+			// Later message_update reconciles
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc2", name: "read", arguments: { path: "b.ts" } }]),
+			);
+
+			expect(fakeThis.pendingTools.get("tc2")).toBe(groupComp);
+			const groupComponents = chatChildren.filter((c) => c instanceof ToolGroupComponent);
+			expect(groupComponents).toHaveLength(1);
+		});
+
+		it("tool_execution_start for non-matching tool closes open toolRun group", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"toolUse",
+				),
+			);
+
+			const group = fakeThis.openGroup!.component;
+
+			await handleEvent.call(fakeThis, makeMessageStartEvent("assistant"));
+			await handleEvent.call(fakeThis, makeToolExecutionStartEvent("tc2", "bash", { command: "ls" }));
+
+			expect(fakeThis.openGroup).toBeNull();
+			expect(group.isClosed).toBe(true);
+		});
+
+		it("content-array ordering: matching tool call before text joins group then text closes it", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			// First message
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"toolUse",
+				),
+			);
+
+			const firstGroup = fakeThis.openGroup!.component;
+
+			// Second message: tool call then text
+			await handleEvent.call(fakeThis, makeMessageStartEvent("assistant"));
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([
+					{ type: "toolCall", id: "tc2", name: "read", arguments: { path: "b.ts" } },
+					{ type: "text", text: "Here's what I found:" },
+				]),
+			);
+
+			// tc2 should have been appended to the first group, then text closed it
+			expect(fakeThis.pendingTools.get("tc2")).toBe(firstGroup);
+			expect(fakeThis.openGroup).toBeNull();
+			expect(firstGroup.isClosed).toBe(true);
+		});
+
+		it("match() throwing during continuation closes toolRun group and falls through", async () => {
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+			let throwOnNext = false;
+			const readGroup: ToolGroupDefinition = {
+				name: "read-group",
+				match: (toolName) => {
+					if (throwOnNext) throw new Error("match exploded");
+					return toolName === "read";
+				},
+				render: (members) => new Text(`${members.length} members`, 0, 0),
+				lifecycle: { scope: "toolRun" },
+			};
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"toolUse",
+				),
+			);
+
+			const group = fakeThis.openGroup!.component;
+			throwOnNext = true;
+
+			await handleEvent.call(fakeThis, makeMessageStartEvent("assistant"));
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc2", name: "read", arguments: { path: "b.ts" } }]),
+			);
+
+			expect(group.isClosed).toBe(true);
+			expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("read-group"), expect.any(Error));
+			warnSpy.mockRestore();
+		});
+
+		it("message-scoped groups still close at message_end after scope-aware branching (regression)", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read");
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse",
+			};
+
+			const group = fakeThis.openGroup!.component;
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"toolUse",
+				),
+			);
+
+			expect(fakeThis.openGroup).toBeNull();
+			expect(group.isClosed).toBe(true);
+		});
+
+		it("higher-priority definition does not steal ownership from open toolRun group during continuation", async () => {
+			const highPriorityGroup = createGroupDef("high-group", (t) => t === "read" || t === "write", {
+				scope: "message",
+			});
+			const readRunGroup = createGroupDef("read-run-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis } = createFakeThis([highPriorityGroup, readRunGroup]);
+
+			// First message: read starts - highPriorityGroup wins the priority search
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			// The priority search found highPriorityGroup first. Close and set up a toolRun group manually.
+			// Actually, let's test the real priority bypass: reorder so readRunGroup is first.
+			const { fakeThis: ft2, chatChildren: cc2 } = createFakeThis([readRunGroup, highPriorityGroup]);
+
+			await handleEvent.call(
+				ft2,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			ft2.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				ft2,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"toolUse",
+				),
+			);
+
+			const groupComp = ft2.openGroup!.component;
+
+			// Second message: another read. The open toolRun group's match() should be checked first,
+			// bypassing the priority search that would have found highPriorityGroup.
+			await handleEvent.call(ft2, makeMessageStartEvent("assistant"));
+			await handleEvent.call(
+				ft2,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc2", name: "read", arguments: { path: "b.ts" } }]),
+			);
+
+			expect(ft2.pendingTools.get("tc2")).toBe(groupComp);
+			const groupComponents = cc2.filter((c) => c instanceof ToolGroupComponent);
+			expect(groupComponents).toHaveLength(1);
+		});
+
+		it("toolRun group closes on empty-to-non-whitespace text streaming update", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			// First message with tool call and initially empty text
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([
+					{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } },
+					{ type: "text", text: "" },
+				]),
+			);
+
+			expect(fakeThis.openGroup).not.toBeNull();
+			const group = fakeThis.openGroup!.component;
+
+			// Streaming update where text gets content
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([
+					{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } },
+					{ type: "text", text: "Now I have content" },
+				]),
+			);
+
+			expect(fakeThis.openGroup).toBeNull();
+			expect(group.isClosed).toBe(true);
+		});
+
+		it("different toolRun group definition closes current and starts new", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const grepGroup = createGroupDef("grep-group", (t) => t === "grep", { scope: "toolRun" });
+			const { fakeThis, chatChildren } = createFakeThis([readGroup, grepGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"toolUse",
+				),
+			);
+
+			const firstGroup = fakeThis.openGroup!.component;
+
+			await handleEvent.call(fakeThis, makeMessageStartEvent("assistant"));
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc2", name: "grep", arguments: { pattern: "foo" } }]),
+			);
+
+			expect(firstGroup.isClosed).toBe(true);
+			expect(fakeThis.openGroup).not.toBeNull();
+			expect(fakeThis.openGroup!.definition).toBe(grepGroup);
+			const groupComponents = chatChildren.filter((c) => c instanceof ToolGroupComponent);
+			expect(groupComponents).toHaveLength(2);
+		});
+
+		it("cross-scope transition: message-scoped group does not survive, toolRun group does", async () => {
+			const msgGroup = createGroupDef("msg-group", (t) => t === "read");
+			const runGroup = createGroupDef("run-group", (t) => t === "grep", { scope: "toolRun" });
+			const { fakeThis } = createFakeThis([msgGroup, runGroup]);
+
+			// Message-scoped group
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: {} }]),
+			);
+
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: {} }],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: {} }], "toolUse"),
+			);
+
+			expect(fakeThis.openGroup).toBeNull();
+
+			// New message with toolRun group
+			await handleEvent.call(fakeThis, makeMessageStartEvent("assistant"));
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc2", name: "grep", arguments: {} }]),
+			);
+
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc2", name: "grep", arguments: {} }],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent([{ type: "toolCall", id: "tc2", name: "grep", arguments: {} }], "toolUse"),
+			);
+
+			expect(fakeThis.openGroup).not.toBeNull();
+			expect(fakeThis.openGroup!.definition).toBe(runGroup);
+		});
+
+		it("args finalization on message_end when toolRun group stays open", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			const group = fakeThis.openGroup!.component;
+			const setArgsSpy = vi.spyOn(group, "setMemberArgsComplete");
+
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"toolUse",
+				),
+			);
+
+			expect(setArgsSpy).toHaveBeenCalledWith("tc1");
+			expect(fakeThis.openGroup).not.toBeNull();
+		});
+
+		it("later matching tool call starts a new group after meaningful text closes old one", async () => {
+			const readGroup = createGroupDef("read-group", (t) => t === "read", { scope: "toolRun" });
+			const { fakeThis, chatChildren } = createFakeThis([readGroup]);
+
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }]),
+			);
+
+			fakeThis.streamingMessage = {
+				role: "assistant",
+				content: [{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+				stopReason: "toolUse",
+			};
+			await handleEvent.call(
+				fakeThis,
+				makeMessageEndEvent(
+					[{ type: "toolCall", id: "tc1", name: "read", arguments: { path: "a.ts" } }],
+					"toolUse",
+				),
+			);
+
+			const firstGroup = fakeThis.openGroup!.component;
+
+			// Second message has text then tool call
+			await handleEvent.call(fakeThis, makeMessageStartEvent("assistant"));
+			await handleEvent.call(
+				fakeThis,
+				makeMessageUpdateEvent([
+					{ type: "text", text: "Let me explain:" },
+					{ type: "toolCall", id: "tc2", name: "read", arguments: { path: "b.ts" } },
+				]),
+			);
+
+			expect(firstGroup.isClosed).toBe(true);
+			expect(fakeThis.pendingTools.get("tc2")).not.toBe(firstGroup);
+			const groupComponents = chatChildren.filter((c) => c instanceof ToolGroupComponent);
+			expect(groupComponents).toHaveLength(2);
 		});
 	});
 });
