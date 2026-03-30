@@ -64,7 +64,7 @@ export class DialogOverlayComponent implements Component {
 	}
 
 	handleInput(data: string): void {
-		if (data === "\x03" && this.onCancel) {
+		if (data === "\x1b" && this.onCancel) {
 			this.onCancel();
 			return;
 		}

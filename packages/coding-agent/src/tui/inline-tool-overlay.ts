@@ -1,4 +1,4 @@
-import { Container, Spacer, Text } from "@kennyfrc/mu-tui";
+import { Container, Text } from "@kennyfrc/mu-tui";
 import stripAnsi from "strip-ansi";
 import { type MuDisplayV1, readMuDisplayV1 } from "../display/mu-display.js";
 import { theme } from "../theme/theme.js";
@@ -13,7 +13,6 @@ const DEFAULT_MAX_LINES = 3;
  */
 export class InlineToolOverlayComponent extends Container {
 	private toolName: string;
-	private args: unknown;
 	private expanded = false;
 	private dismissed = false;
 	private result?: {
@@ -25,7 +24,7 @@ export class InlineToolOverlayComponent extends Container {
 	constructor(toolName: string, args: unknown) {
 		super();
 		this.toolName = toolName;
-		this.args = args;
+		void args;
 	}
 
 	updateResult(result: {
@@ -34,6 +33,10 @@ export class InlineToolOverlayComponent extends Container {
 		details?: unknown;
 	}): void {
 		this.result = result;
+		if (this.shouldAutoDismiss(result.details)) {
+			this.dismiss();
+			return;
+		}
 		this.rebuild();
 	}
 
@@ -133,7 +136,36 @@ export class InlineToolOverlayComponent extends Container {
 		// Strip system_reminder tags
 		output = output.replace(/<system_reminder[^>]*>[\s\S]*?<\/system_reminder>/g, "");
 
+		// Hide completed todo lines in the inline overlay.
+		output = output
+			.split("\n")
+			.filter((line) => !line.trim().startsWith("[completed]"))
+			.join("\n");
+
 		return output.trim();
+	}
+
+	private shouldAutoDismiss(details: unknown): boolean {
+		if (!details || typeof details !== "object") return false;
+		const summary = (details as { summary?: unknown }).summary;
+		if (!summary || typeof summary !== "object") return false;
+
+		const pending =
+			typeof (summary as { pending?: unknown }).pending === "number" ? (summary as { pending: number }).pending : 0;
+		const inProgress =
+			typeof (summary as { inProgress?: unknown }).inProgress === "number"
+				? (summary as { inProgress: number }).inProgress
+				: 0;
+		const blocked =
+			typeof (summary as { blocked?: unknown }).blocked === "number" ? (summary as { blocked: number }).blocked : 0;
+		const total =
+			typeof (summary as { total?: unknown }).total === "number" ? (summary as { total: number }).total : 0;
+		const completed =
+			typeof (summary as { completed?: unknown }).completed === "number"
+				? (summary as { completed: number }).completed
+				: 0;
+
+		return total > 0 && completed > 0 && pending === 0 && inProgress === 0 && blocked === 0;
 	}
 
 	override render(width: number): string[] {

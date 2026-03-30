@@ -1,5 +1,4 @@
-import { Container } from "@kennyfrc/mu-tui";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
 import { initTheme } from "../theme/theme.js";
 import type { TodoWriteToolDetails } from "../tools/todowrite.js";
 import { InlineToolOverlayComponent } from "./inline-tool-overlay.js";
@@ -36,7 +35,7 @@ describe("InlineToolOverlayComponent integration", () => {
 					},
 					output: {
 						collapse: {
-							maxVisualLines: 2,
+							maxVisualLines: 1,
 							expandHint: "esc to dismiss",
 						},
 					},
@@ -169,5 +168,61 @@ describe("InlineToolOverlayComponent integration", () => {
 		expect(text).toContain("Task 1");
 		expect(text).not.toContain("system_reminder");
 		expect(text).not.toContain("Continue now");
+	});
+
+	it("does not show completed todo lines in the inline overlay", () => {
+		const component = new InlineToolOverlayComponent("todo_write", {});
+
+		component.updateResult({
+			content: [
+				{
+					type: "text" as const,
+					text: "[in_progress] Active task\n[completed] Finished task\n[blocked] Waiting task",
+				},
+			],
+			isError: false,
+			details: {
+				todos: [
+					{ id: "todo_1", content: "Active task", status: "in_progress", priority: "medium" },
+					{ id: "todo_2", content: "Finished task", status: "completed", priority: "medium" },
+					{ id: "todo_3", content: "Waiting task", status: "blocked", priority: "medium" },
+				],
+				summary: { total: 3, pending: 0, inProgress: 1, completed: 1, blocked: 1 },
+				mu_display: {
+					version: 1,
+					call: { style: "argv" as const, text: "todo_write", command: "todo_write", argv: [] },
+					summary: { text: "1 in_progress · 0 pending · 1 completed · 1 blocked", severity: "info" as const },
+					output: { collapse: { maxVisualLines: 5, expandHint: "esc to dismiss" } },
+				},
+			} as TodoWriteToolDetails,
+		});
+
+		const text = component.render(80).join("\n");
+		expect(text).toContain("Active task");
+		expect(text).toContain("Waiting task");
+		expect(text).not.toContain("Finished task");
+		expect(text).not.toContain("[completed]");
+	});
+
+	it("auto-dismisses when every todo is completed", () => {
+		const component = new InlineToolOverlayComponent("todo_write", {});
+
+		component.updateResult({
+			content: [{ type: "text" as const, text: "[completed] Done task" }],
+			isError: false,
+			details: {
+				todos: [{ id: "todo_1", content: "Done task", status: "completed", priority: "medium" }],
+				summary: { total: 1, pending: 0, inProgress: 0, completed: 1, blocked: 0 },
+				mu_display: {
+					version: 1,
+					call: { style: "argv" as const, text: "todo_write", command: "todo_write", argv: [] },
+					summary: { text: "0 in_progress · 0 pending · 1 completed · 0 blocked", severity: "info" as const },
+					output: { collapse: { maxVisualLines: 5, expandHint: "esc to dismiss" } },
+				},
+			} as TodoWriteToolDetails,
+		});
+
+		expect(component.isDismissed()).toBe(true);
+		expect(component.render(80)).toHaveLength(0);
 	});
 });
