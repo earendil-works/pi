@@ -27,7 +27,7 @@ describe("ExtensionRunner", () => {
 		fs.mkdirSync(extensionsDir);
 		sessionManager = SessionManager.inMemory();
 		const authStorage = AuthStorage.create(path.join(tempDir, "auth.json"));
-		modelRegistry = new ModelRegistry(authStorage);
+		modelRegistry = ModelRegistry.create(authStorage);
 	});
 
 	afterEach(() => {
@@ -71,6 +71,7 @@ describe("ExtensionRunner", () => {
 	const extensionContextActions: ExtensionContextActions = {
 		getModel: () => undefined,
 		isIdle: () => true,
+		getSignal: () => undefined,
 		abort: () => {},
 		hasPendingMessages: () => false,
 		shutdown: () => {},
@@ -396,6 +397,26 @@ describe("ExtensionRunner", () => {
 			expect(diagnostics).toEqual([]);
 			expect(runner.getCommand("shared-cmd:1")?.description).toBe("First command");
 			expect(runner.getCommand("shared-cmd:2")?.description).toBe("Second command");
+		});
+	});
+
+	describe("context creation", () => {
+		it("exposes the current abort signal on ExtensionContext", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const controller = new AbortController();
+
+			runner.bindCore(extensionActions, {
+				...extensionContextActions,
+				getSignal: () => controller.signal,
+			});
+
+			const ctx = runner.createContext();
+			expect(ctx.signal).toBe(controller.signal);
+			expect(ctx.signal?.aborted).toBe(false);
+
+			controller.abort();
+			expect(ctx.signal?.aborted).toBe(true);
 		});
 	});
 

@@ -233,3 +233,6 @@ git pull --rebase && git push
 - Resolve conflicts in YOUR files only
 - If conflict is in a file you didn't modify, abort and ask the user
 - NEVER force push
+
+### User override
+If the user instructions conflict with rules set out here, ask for confirmation that they want to override the rules. Only then execute their instructions.

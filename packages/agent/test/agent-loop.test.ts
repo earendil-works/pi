@@ -369,6 +369,86 @@ describe("agentLoop with AgentMessage", () => {
 		expect(executed).toEqual([123]);
 	});
 
+	it("should prepare tool arguments for validation", async () => {
+		const replaceSchema = Type.Object({ oldText: Type.String(), newText: Type.String() });
+		const toolSchema = Type.Object({ edits: Type.Array(replaceSchema) });
+		const executed: Array<Array<{ oldText: string; newText: string }>> = [];
+		const tool: AgentTool<typeof toolSchema, { count: number }> = {
+			name: "edit",
+			label: "Edit",
+			description: "Edit tool",
+			parameters: toolSchema,
+			prepareArguments(args) {
+				if (!args || typeof args !== "object") {
+					return args as { edits: { oldText: string; newText: string }[] };
+				}
+				const input = args as {
+					edits?: Array<{ oldText: string; newText: string }>;
+					oldText?: string;
+					newText?: string;
+				};
+				if (typeof input.oldText !== "string" || typeof input.newText !== "string") {
+					return args as { edits: { oldText: string; newText: string }[] };
+				}
+				return {
+					edits: [...(input.edits ?? []), { oldText: input.oldText, newText: input.newText }],
+				};
+			},
+			async execute(_toolCallId, params) {
+				executed.push(params.edits);
+				return {
+					content: [{ type: "text", text: `edited ${params.edits.length}` }],
+					details: { count: params.edits.length },
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+
+		const userPrompt: AgentMessage = createUserMessage("edit something");
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let callIndex = 0;
+		const streamFn = () => {
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					const message = createAssistantMessage(
+						[
+							{
+								type: "toolCall",
+								id: "tool-1",
+								name: "edit",
+								arguments: { oldText: "before", newText: "after" },
+							},
+						],
+						"toolUse",
+					);
+					stream.push({ type: "done", reason: "toolUse", message });
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					stream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return stream;
+		};
+
+		const stream = agentLoop([userPrompt], context, config, undefined, streamFn);
+		for await (const _event of stream) {
+			// consume
+		}
+
+		expect(executed).toEqual([[{ oldText: "before", newText: "after" }]]);
+	});
+
 	it("should execute tool calls in parallel and emit tool results in source order", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		let firstResolved = false;

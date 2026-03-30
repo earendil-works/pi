@@ -37,7 +37,7 @@ function createSession({
 		sessionManager,
 		settingsManager,
 		cwd: process.cwd(),
-		modelRegistry: new ModelRegistry(authStorage, undefined),
+		modelRegistry: ModelRegistry.inMemory(authStorage),
 		resourceLoader: createTestResourceLoader(),
 		scopedModels,
 	});

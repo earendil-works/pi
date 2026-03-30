@@ -108,8 +108,8 @@ describe("built-in edit and write tools", () => {
 		});
 
 		await Promise.all([
-			editTool.execute("call-1", { path: filePath, oldText: "alpha", newText: "ALPHA" }),
-			editTool.execute("call-2", { path: filePath, oldText: "beta", newText: "BETA" }),
+			editTool.execute("call-1", { path: filePath, edits: [{ oldText: "alpha", newText: "ALPHA" }] }),
+			editTool.execute("call-2", { path: filePath, edits: [{ oldText: "beta", newText: "BETA" }] }),
 		]);
 
 		const content = await readFile(filePath, "utf8");
@@ -147,8 +147,7 @@ describe("built-in edit and write tools", () => {
 
 		const editPromise = editTool.execute("call-1", {
 			path: filePath,
-			oldText: "original",
-			newText: "edited",
+			edits: [{ oldText: "original", newText: "edited" }],
 		});
 		await delay(5);
 		const writePromise = writeTool.execute("call-2", {

@@ -254,7 +254,7 @@ export function createTestSession(options: TestSessionOptions = {}): TestSession
 	}
 
 	const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-	const modelRegistry = new ModelRegistry(authStorage, tempDir);
+	const modelRegistry = ModelRegistry.create(authStorage, tempDir);
 
 	const session = new AgentSession({
 		agent,

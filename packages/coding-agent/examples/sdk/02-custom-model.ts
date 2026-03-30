@@ -9,7 +9,7 @@ import { AuthStorage, createAgentSession, ModelRegistry } from "@mariozechner/pi
 
 // Set up auth storage and model registry
 const authStorage = AuthStorage.create();
-const modelRegistry = new ModelRegistry(authStorage);
+const modelRegistry = ModelRegistry.create(authStorage);
 
 // Option 1: Find a specific built-in model by provider/id
 const opus = getModel("anthropic", "claude-opus-4-5");

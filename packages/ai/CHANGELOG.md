@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [0.64.0] - 2026-03-29
+
+### Added
+
+- Added opt-in faux provider helpers for deterministic tests and scripted demos: `registerFauxProvider()`, `fauxAssistantMessage()`, `fauxText()`, `fauxThinking()`, and `fauxToolCall()`.
+
+## [0.63.2] - 2026-03-29
+
 ## [0.63.1] - 2026-03-27
 
 ### Added

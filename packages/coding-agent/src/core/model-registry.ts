@@ -259,11 +259,19 @@ export class ModelRegistry {
 	private registeredProviders: Map<string, ProviderConfigInput> = new Map();
 	private loadError: string | undefined = undefined;
 
-	constructor(
+	private constructor(
 		readonly authStorage: AuthStorage,
-		private modelsJsonPath: string | undefined = join(getAgentDir(), "models.json"),
+		private modelsJsonPath: string | undefined,
 	) {
 		this.loadModels();
+	}
+
+	static create(authStorage: AuthStorage, modelsJsonPath: string = join(getAgentDir(), "models.json")): ModelRegistry {
+		return new ModelRegistry(authStorage, modelsJsonPath);
+	}
+
+	static inMemory(authStorage: AuthStorage): ModelRegistry {
+		return new ModelRegistry(authStorage, undefined);
 	}
 
 	/**

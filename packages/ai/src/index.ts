@@ -7,6 +7,7 @@ export * from "./models.js";
 export type { BedrockOptions } from "./providers/amazon-bedrock.js";
 export type { AnthropicOptions } from "./providers/anthropic.js";
 export type { AzureOpenAIResponsesOptions } from "./providers/azure-openai-responses.js";
+export * from "./providers/faux.js";
 export type { GoogleOptions } from "./providers/google.js";
 export type { GoogleGeminiCliOptions, GoogleThinkingLevel } from "./providers/google-gemini-cli.js";
 export type { GoogleVertexOptions } from "./providers/google-vertex.js";
