@@ -53,6 +53,7 @@ import type {
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
+	ToolGroupDefinition,
 } from "../../core/extensions/index.js";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.js";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.js";
@@ -92,6 +93,7 @@ import { SessionSelectorComponent } from "./components/session-selector.js";
 import { SettingsSelectorComponent } from "./components/settings-selector.js";
 import { SkillInvocationMessageComponent } from "./components/skill-invocation-message.js";
 import { ToolExecutionComponent } from "./components/tool-execution.js";
+import type { ToolGroupComponent } from "./components/tool-group.js";
 import { TreeSelectorComponent } from "./components/tree-selector.js";
 import { UserMessageComponent } from "./components/user-message.js";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.js";
@@ -180,7 +182,12 @@ export class InteractiveMode {
 	private streamingMessage: AssistantMessage | undefined = undefined;
 
 	// Tool execution tracking: toolCallId -> component
-	private pendingTools = new Map<string, ToolExecutionComponent>();
+	private pendingTools = new Map<string, ToolExecutionComponent | ToolGroupComponent>();
+
+	// Active tool group state for streaming grouping
+	private activeGroup: { component: ToolGroupComponent; definition: ToolGroupDefinition } | null = null;
+	// biome-ignore lint/correctness/noUnusedPrivateClassMembers: used when tool group creation is wired in message_update
+	private lastProcessedContentIndex = 0;
 
 	// Tool output expansion state
 	private toolOutputExpanded = false;
@@ -1186,7 +1193,7 @@ export class InteractiveMode {
 					this.compactionQueuedMessages = [];
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
-					this.pendingTools.clear();
+					this.clearPendingToolsAndGroup();
 
 					// Render any messages added via setup, or show empty session
 					this.renderInitialMessages();
@@ -1264,6 +1271,29 @@ export class InteractiveMode {
 	 */
 	private getRegisteredToolDefinition(toolName: string) {
 		return this.session.getToolDefinition(toolName);
+	}
+
+	// biome-ignore lint/correctness/noUnusedPrivateClassMembers: used when tool group creation is wired in message_update
+	private findMatchingGroupDefinition(toolName: string, args: unknown): ToolGroupDefinition | undefined {
+		const definitions = this.session.extensionRunner?.getRegisteredToolGroupDefinitions();
+		if (!definitions) return undefined;
+		for (const def of definitions) {
+			try {
+				if (def.match(toolName, args)) return def;
+			} catch (error) {
+				console.warn(`Tool group '${def.name}' match() threw:`, error);
+			}
+		}
+		return undefined;
+	}
+
+	private clearPendingToolsAndGroup(): void {
+		if (this.activeGroup) {
+			this.activeGroup.component.close();
+			this.activeGroup = null;
+		}
+		this.lastProcessedContentIndex = 0;
+		this.pendingTools.clear();
 	}
 
 	/**
@@ -2275,6 +2305,11 @@ export class InteractiveMode {
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
+					if (this.activeGroup) {
+						this.activeGroup.component.close();
+						this.activeGroup = null;
+					}
+					this.lastProcessedContentIndex = 0;
 					this.streamingComponent = new AssistantMessageComponent(
 						undefined,
 						this.hideThinkingBlock,
@@ -2310,7 +2345,7 @@ export class InteractiveMode {
 								this.chatContainer.addChild(component);
 								this.pendingTools.set(content.id, component);
 							} else {
-								const component = this.pendingTools.get(content.id);
+								const component = this.pendingTools.get(content.id) as ToolExecutionComponent;
 								if (component) {
 									component.updateArgs(content.arguments);
 								}
@@ -2341,16 +2376,16 @@ export class InteractiveMode {
 							errorMessage = this.streamingMessage.errorMessage || "Error";
 						}
 						for (const [, component] of this.pendingTools.entries()) {
-							component.updateResult({
+							(component as ToolExecutionComponent).updateResult({
 								content: [{ type: "text", text: errorMessage }],
 								isError: true,
 							});
 						}
-						this.pendingTools.clear();
+						this.clearPendingToolsAndGroup();
 					} else {
 						// Args are now complete - trigger diff computation for edit tools
 						for (const [, component] of this.pendingTools.entries()) {
-							component.setArgsComplete();
+							(component as ToolExecutionComponent).setArgsComplete();
 						}
 					}
 					this.streamingComponent = undefined;
@@ -2361,7 +2396,7 @@ export class InteractiveMode {
 				break;
 
 			case "tool_execution_start": {
-				let component = this.pendingTools.get(event.toolCallId);
+				let component = this.pendingTools.get(event.toolCallId) as ToolExecutionComponent | undefined;
 				if (!component) {
 					component = new ToolExecutionComponent(
 						event.toolName,
@@ -2383,7 +2418,7 @@ export class InteractiveMode {
 			}
 
 			case "tool_execution_update": {
-				const component = this.pendingTools.get(event.toolCallId);
+				const component = this.pendingTools.get(event.toolCallId) as ToolExecutionComponent | undefined;
 				if (component) {
 					component.updateResult({ ...event.partialResult, isError: false }, true);
 					this.ui.requestRender();
@@ -2392,7 +2427,7 @@ export class InteractiveMode {
 			}
 
 			case "tool_execution_end": {
-				const component = this.pendingTools.get(event.toolCallId);
+				const component = this.pendingTools.get(event.toolCallId) as ToolExecutionComponent | undefined;
 				if (component) {
 					component.updateResult({ ...event.result, isError: event.isError });
 					this.pendingTools.delete(event.toolCallId);
@@ -2412,7 +2447,7 @@ export class InteractiveMode {
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 				}
-				this.pendingTools.clear();
+				this.clearPendingToolsAndGroup();
 
 				await this.checkShutdownRequested();
 
@@ -2660,7 +2695,7 @@ export class InteractiveMode {
 		sessionContext: SessionContext,
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
-		this.pendingTools.clear();
+		this.clearPendingToolsAndGroup();
 
 		if (options.updateFooter) {
 			this.footer.invalidate();
@@ -2704,7 +2739,7 @@ export class InteractiveMode {
 				}
 			} else if (message.role === "toolResult") {
 				// Match tool results to pending tool components
-				const component = this.pendingTools.get(message.toolCallId);
+				const component = this.pendingTools.get(message.toolCallId) as ToolExecutionComponent | undefined;
 				if (component) {
 					component.updateResult(message);
 					this.pendingTools.delete(message.toolCallId);
@@ -2715,7 +2750,7 @@ export class InteractiveMode {
 			}
 		}
 
-		this.pendingTools.clear();
+		this.clearPendingToolsAndGroup();
 		this.ui.requestRender();
 	}
 
@@ -2746,6 +2781,11 @@ export class InteractiveMode {
 	}
 
 	private rebuildChatFromMessages(): void {
+		if (this.activeGroup) {
+			this.activeGroup.component.close();
+			this.activeGroup = null;
+		}
+		this.lastProcessedContentIndex = 0;
 		this.chatContainer.clear();
 		const context = this.sessionManager.buildSessionContext();
 		this.renderSessionContext(context);
@@ -3804,7 +3844,7 @@ export class InteractiveMode {
 		this.compactionQueuedMessages = [];
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
-		this.pendingTools.clear();
+		this.clearPendingToolsAndGroup();
 
 		// Switch session via AgentSession (emits extension session events)
 		await this.session.switchSession(sessionPath);
@@ -4075,7 +4115,7 @@ export class InteractiveMode {
 			this.compactionQueuedMessages = [];
 			this.streamingComponent = undefined;
 			this.streamingMessage = undefined;
-			this.pendingTools.clear();
+			this.clearPendingToolsAndGroup();
 
 			const success = await this.session.importFromJsonl(inputPath);
 			if (!success) {
@@ -4444,7 +4484,7 @@ export class InteractiveMode {
 		this.compactionQueuedMessages = [];
 		this.streamingComponent = undefined;
 		this.streamingMessage = undefined;
-		this.pendingTools.clear();
+		this.clearPendingToolsAndGroup();
 
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(`${theme.fg("accent", "✓ New session started")}`, 1, 1));
