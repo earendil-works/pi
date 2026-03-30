@@ -495,6 +495,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "gemma-3-27b-it": {
+			id: string;
+			name: string;
+			api: "google-generative-ai";
+			provider: string;
+			baseUrl: string;
+			reasoning: false;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "gemini-2.5-pro-preview-06-05": {
 			id: string;
 			name: string;
@@ -5762,23 +5779,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "qwen/qwen3-4b:free": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "qwen/qwen3-30b-a3b": {
 			id: string;
 			name: string;
@@ -6042,23 +6042,6 @@ export declare const MODELS: {
 			baseUrl: string;
 			reasoning: true;
 			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "mistralai/mistral-small-3.1-24b-instruct:free": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: ("image" | "text")[];
 			cost: {
 				input: number;
 				output: number;
@@ -7476,6 +7459,44 @@ export declare const MODELS: {
 			reasoning: true;
 			reasoningFormat: "reasoning_content";
 			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+	};
+	readonly fireworks: {
+		readonly "accounts/fireworks/routers/kimi-k2p5-turbo": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			reasoningFormat: "reasoning_content";
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "accounts/fireworks/models/kimi-k2p5": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			reasoningFormat: "reasoning_content";
+			input: ("image" | "text")[];
 			cost: {
 				input: number;
 				output: number;
