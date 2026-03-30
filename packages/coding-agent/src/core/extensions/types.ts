@@ -993,6 +993,9 @@ export interface ToolGroupDefinition {
 	name: string;
 	match: (toolName: string, args: unknown) => boolean;
 	render: (members: ToolGroupMember[], theme: Theme, context: ToolGroupRenderContext) => Component | null | undefined;
+	lifecycle?: {
+		scope?: "message" | "toolRun";
+	};
 }
 
 export interface ToolGroupMember {

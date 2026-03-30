@@ -219,6 +219,24 @@ function createExtensionAPI(
 			if (typeof definition.render !== "function") {
 				throw new Error("registerToolGroup: 'render' must be a function");
 			}
+			if (definition.lifecycle !== undefined) {
+				if (
+					typeof definition.lifecycle !== "object" ||
+					definition.lifecycle === null ||
+					Array.isArray(definition.lifecycle)
+				) {
+					throw new Error("registerToolGroup: 'lifecycle' must be an object");
+				}
+				if (
+					definition.lifecycle.scope !== undefined &&
+					definition.lifecycle.scope !== "message" &&
+					definition.lifecycle.scope !== "toolRun"
+				) {
+					throw new Error(
+						`registerToolGroup: 'lifecycle.scope' must be "message" or "toolRun", got "${String(definition.lifecycle.scope)}"`,
+					);
+				}
+			}
 			if (extension.toolGroups.has(definition.name)) {
 				console.warn(
 					`registerToolGroup: group '${definition.name}' is already registered in extension '${extension.path}'. Ignoring duplicate.`,

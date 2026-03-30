@@ -119,6 +119,10 @@ export class ToolGroupComponent extends Container {
 		}
 	}
 
+	get isClosed(): boolean {
+		return this.closed;
+	}
+
 	close(): void {
 		this.closed = true;
 	}
