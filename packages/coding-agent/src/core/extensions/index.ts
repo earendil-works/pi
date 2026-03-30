@@ -140,7 +140,12 @@ export type {
 	ToolExecutionEndEvent,
 	ToolExecutionStartEvent,
 	ToolExecutionUpdateEvent,
+	// Tool Groups
+	ToolGroupDefinition,
+	ToolGroupMember,
+	ToolGroupRenderContext,
 	ToolInfo,
+	ToolRenderContext,
 	ToolRenderResultOptions,
 	ToolResultEvent,
 	ToolResultEventResult,

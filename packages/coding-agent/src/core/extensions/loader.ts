@@ -37,6 +37,7 @@ import type {
 	ProviderConfig,
 	RegisteredCommand,
 	ToolDefinition,
+	ToolGroupDefinition,
 } from "./types.js";
 
 /** Modules available to extensions via virtualModules (for compiled Bun binary) */
@@ -208,6 +209,25 @@ function createExtensionAPI(
 			}
 		},
 
+		registerToolGroup(definition: ToolGroupDefinition): void {
+			if (!definition.name || typeof definition.name !== "string") {
+				throw new Error("registerToolGroup: 'name' must be a non-empty string");
+			}
+			if (typeof definition.match !== "function") {
+				throw new Error("registerToolGroup: 'match' must be a function");
+			}
+			if (typeof definition.render !== "function") {
+				throw new Error("registerToolGroup: 'render' must be a function");
+			}
+			if (extension.toolGroups.has(definition.name)) {
+				console.warn(
+					`registerToolGroup: group '${definition.name}' is already registered in extension '${extension.path}'. Ignoring duplicate.`,
+				);
+				return;
+			}
+			extension.toolGroups.set(definition.name, definition);
+		},
+
 		registerMessageRenderer<T>(customType: string, renderer: MessageRenderer<T>): void {
 			extension.messageRenderers.set(customType, renderer as MessageRenderer);
 		},
@@ -319,6 +339,7 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		sourceInfo: createSyntheticSourceInfo(extensionPath, { source, baseDir }),
 		handlers: new Map(),
 		tools: new Map(),
+		toolGroups: new Map(),
 		messageRenderers: new Map(),
 		commands: new Map(),
 		flags: new Map(),

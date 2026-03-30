@@ -986,6 +986,39 @@ export interface ResolvedCommand extends RegisteredCommand {
 }
 
 // ============================================================================
+// Tool Group Types
+// ============================================================================
+
+export interface ToolGroupDefinition {
+	name: string;
+	match: (toolName: string, args: unknown) => boolean;
+	render: (members: ToolGroupMember[], theme: Theme, context: ToolGroupRenderContext) => Component | null | undefined;
+}
+
+export interface ToolGroupMember {
+	toolCallId: string;
+	toolName: string;
+	args: unknown;
+	argsComplete: boolean;
+	executionStarted: boolean;
+	result?: {
+		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+		details?: unknown;
+		isError: boolean;
+	};
+	isPartial: boolean;
+}
+
+export interface ToolGroupRenderContext {
+	state: Record<string, unknown>;
+	invalidate: () => void;
+	lastComponent: Component | undefined;
+	expanded: boolean;
+	showImages: boolean;
+	cwd: string;
+}
+
+// ============================================================================
 // Extension API
 // ============================================================================
 
@@ -1049,6 +1082,9 @@ export interface ExtensionAPI {
 	registerTool<TParams extends TSchema = TSchema, TDetails = unknown, TState = any>(
 		tool: ToolDefinition<TParams, TDetails, TState>,
 	): void;
+
+	/** Register a tool group definition for grouping consecutive tool calls. */
+	registerToolGroup(definition: ToolGroupDefinition): void;
 
 	// =========================================================================
 	// Command, Shortcut, Flag Registration
@@ -1440,6 +1476,7 @@ export interface Extension {
 	sourceInfo: SourceInfo;
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;
+	toolGroups: Map<string, ToolGroupDefinition>;
 	messageRenderers: Map<string, MessageRenderer>;
 	commands: Map<string, RegisteredCommand>;
 	flags: Map<string, ExtensionFlag>;

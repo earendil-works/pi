@@ -46,6 +46,7 @@ import type {
 	SessionBeforeTreeResult,
 	ToolCallEvent,
 	ToolCallEventResult,
+	ToolGroupDefinition,
 	ToolResultEvent,
 	ToolResultEventResult,
 	UserBashEvent,
@@ -369,6 +370,17 @@ export class ExtensionRunner {
 			}
 		}
 		return undefined;
+	}
+
+	/** Get all registered tool group definitions across extensions, in load order (first match wins). */
+	getRegisteredToolGroupDefinitions(): ToolGroupDefinition[] {
+		const definitions: ToolGroupDefinition[] = [];
+		for (const ext of this.extensions) {
+			for (const def of ext.toolGroups.values()) {
+				definitions.push(def);
+			}
+		}
+		return definitions;
 	}
 
 	getFlags(): Map<string, ExtensionFlag> {
