@@ -4,7 +4,7 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { matchesKey, parseKey, setKittyProtocolActive } from "../src/keys.js";
+import { decodeKittyPrintable, matchesKey, parseKey, setKittyProtocolActive } from "../src/keys.js";
 
 function withEnv(name: string, value: string | undefined, fn: () => void): void {
 	const previous = process.env[name];
@@ -73,6 +73,29 @@ describe("matchesKey", () => {
 			assert.strictEqual(matchesKey("\x1b[49;5u", "ctrl+2"), false);
 			assert.strictEqual(parseKey("\x1b[49u"), "1");
 			assert.strictEqual(parseKey("\x1b[49;5u"), "ctrl+1");
+			setKittyProtocolActive(false);
+		});
+
+		it("should normalize Kitty keypad functional keys to logical digits, symbols, and navigation", () => {
+			setKittyProtocolActive(true);
+			assert.strictEqual(matchesKey("\x1b[57400u", "1"), true);
+			assert.strictEqual(matchesKey("\x1b[57410u", "/"), true);
+			assert.strictEqual(matchesKey("\x1b[57417u", "left"), true);
+			assert.strictEqual(matchesKey("\x1b[57426u", "delete"), true);
+			assert.strictEqual(parseKey("\x1b[57399u"), "0");
+			assert.strictEqual(parseKey("\x1b[57409u"), ".");
+			assert.strictEqual(parseKey("\x1b[57413u"), "+");
+			assert.strictEqual(parseKey("\x1b[57416u"), ",");
+			assert.strictEqual(parseKey("\x1b[57417u"), "left");
+			assert.strictEqual(parseKey("\x1b[57418u"), "right");
+			assert.strictEqual(parseKey("\x1b[57419u"), "up");
+			assert.strictEqual(parseKey("\x1b[57420u"), "down");
+			assert.strictEqual(parseKey("\x1b[57421u"), "pageUp");
+			assert.strictEqual(parseKey("\x1b[57422u"), "pageDown");
+			assert.strictEqual(parseKey("\x1b[57423u"), "home");
+			assert.strictEqual(parseKey("\x1b[57424u"), "end");
+			assert.strictEqual(parseKey("\x1b[57425u"), "insert");
+			assert.strictEqual(parseKey("\x1b[57426u"), "delete");
 			setKittyProtocolActive(false);
 		});
 
@@ -386,6 +409,21 @@ describe("matchesKey", () => {
 			assert.strictEqual(matchesKey("\x1b[2^", "ctrl+insert"), true);
 			assert.strictEqual(matchesKey("\x1b[7$", "shift+home"), true);
 		});
+	});
+});
+
+describe("decodeKittyPrintable", () => {
+	it("should decode Kitty keypad functional keys to printable characters", () => {
+		assert.strictEqual(decodeKittyPrintable("\x1b[57399u"), "0");
+		assert.strictEqual(decodeKittyPrintable("\x1b[57400u"), "1");
+		assert.strictEqual(decodeKittyPrintable("\x1b[57409u"), ".");
+		assert.strictEqual(decodeKittyPrintable("\x1b[57410u"), "/");
+		assert.strictEqual(decodeKittyPrintable("\x1b[57411u"), "*");
+		assert.strictEqual(decodeKittyPrintable("\x1b[57412u"), "-");
+		assert.strictEqual(decodeKittyPrintable("\x1b[57413u"), "+");
+		assert.strictEqual(decodeKittyPrintable("\x1b[57415u"), "=");
+		assert.strictEqual(decodeKittyPrintable("\x1b[57416u"), ",");
+		assert.strictEqual(decodeKittyPrintable("\x1b[57417u"), undefined);
 	});
 });
 

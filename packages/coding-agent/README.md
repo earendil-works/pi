@@ -395,7 +395,7 @@ import { AuthStorage, createAgentSession, ModelRegistry, SessionManager } from "
 const { session } = await createAgentSession({
   sessionManager: SessionManager.inMemory(),
   authStorage: AuthStorage.create(),
-  modelRegistry: new ModelRegistry(authStorage),
+  modelRegistry: ModelRegistry.create(authStorage),
 });
 
 await session.prompt("What files are in the current directory?");

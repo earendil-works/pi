@@ -204,7 +204,7 @@ async function main(): Promise<void> {
 	mkdirSync(dirname(args.sessionPath), { recursive: true });
 
 	const authStorage = AuthStorage.create();
-	const modelRegistry = new ModelRegistry(authStorage);
+	const modelRegistry = ModelRegistry.create(authStorage);
 
 	const model = getModel("openai-codex", "gpt-5.4");
 	if (!model) {

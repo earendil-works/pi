@@ -269,10 +269,13 @@ export interface AgentToolResult<T> {
 // Callback for streaming tool execution updates
 export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T>) => void;
 
-// AgentTool extends Tool but adds the execute function
+// AgentTool extends Tool but adds argument preparation and execution hooks
 export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends Tool<TParameters> {
 	// A human-readable label for the tool to be displayed in UI
 	label: string;
+	// Optional compatibility shim to prepare raw tool call arguments before schema validation.
+	// Must return an object conforming to TParameters.
+	prepareArguments?: (args: unknown) => Static<TParameters>;
 	execute: (
 		toolCallId: string,
 		params: Static<TParameters>,

@@ -99,7 +99,7 @@ describe.skipIf(!API_KEY)("Compaction extensions", () => {
 		const sessionManager = SessionManager.create(tempDir);
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-		const modelRegistry = new ModelRegistry(authStorage);
+		const modelRegistry = ModelRegistry.create(authStorage);
 
 		const runtime = createExtensionRuntime();
 		const resourceLoader = {

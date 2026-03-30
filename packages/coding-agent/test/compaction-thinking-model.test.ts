@@ -81,7 +81,7 @@ describe.skipIf(!HAS_ANTIGRAVITY_AUTH)("Compaction with thinking models (Antigra
 		// settingsManager.applyOverrides({ compaction: { keepRecentTokens: 1 } });
 
 		const authStorage = getRealAuthStorage();
-		const modelRegistry = new ModelRegistry(authStorage);
+		const modelRegistry = ModelRegistry.create(authStorage);
 
 		session = new AgentSession({
 			agent,
@@ -177,7 +177,7 @@ describe.skipIf(!HAS_ANTHROPIC_AUTH)("Compaction with thinking models (Anthropic
 		const settingsManager = SettingsManager.create(tempDir, tempDir);
 
 		const authStorage = getRealAuthStorage();
-		const modelRegistry = new ModelRegistry(authStorage);
+		const modelRegistry = ModelRegistry.create(authStorage);
 
 		session = new AgentSession({
 			agent,

@@ -654,7 +654,7 @@ export async function main(args: string[]) {
 	const settingsManager = SettingsManager.create(cwd, agentDir);
 	reportSettingsErrors(settingsManager, "startup");
 	const authStorage = AuthStorage.create();
-	const modelRegistry = new ModelRegistry(authStorage, getModelsPath());
+	const modelRegistry = ModelRegistry.create(authStorage, getModelsPath());
 
 	const resourceLoader = new DefaultResourceLoader({
 		cwd,

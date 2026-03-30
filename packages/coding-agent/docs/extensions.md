@@ -1008,6 +1008,12 @@ pi.registerTool({
     action: StringEnum(["list", "add"] as const),
     text: Type.Optional(Type.String()),
   }),
+  prepareArguments(args) {
+    // Optional compatibility shim. Runs before schema validation.
+    // Return the current schema shape, for example to fold legacy fields
+    // into the modern parameter object.
+    return args;
+  },
 
   async execute(toolCallId, params, signal, onUpdate, ctx) {
     // Stream progress
@@ -1472,6 +1478,14 @@ pi.registerTool({
     action: StringEnum(["list", "add"] as const),  // Use StringEnum for Google compatibility
     text: Type.Optional(Type.String()),
   }),
+  prepareArguments(args) {
+    if (!args || typeof args !== "object") return args;
+    const input = args as { action?: string; oldAction?: string };
+    if (typeof input.oldAction === "string" && input.action === undefined) {
+      return { ...input, action: input.oldAction };
+    }
+    return args;
+  },
 
   async execute(toolCallId, params, signal, onUpdate, ctx) {
     // Check for cancellation
@@ -1514,6 +1528,53 @@ async execute(toolCallId, params) {
 ```
 
 **Important:** Use `StringEnum` from `@mariozechner/pi-ai` for string enums. `Type.Union`/`Type.Literal` doesn't work with Google's API.
+
+**Argument preparation:** `prepareArguments(args)` is optional. If defined, it runs before schema validation and before `execute()`. Use it to mimic an older accepted input shape when pi resumes an older session whose stored tool call arguments no longer match the current schema. Return the object you want validated against `parameters`. Keep the public schema strict. Do not add deprecated compatibility fields to `parameters` just to keep old resumed sessions working.
+
+Example: an older session may contain an `edit` tool call with top-level `oldText` and `newText`, while the current schema only accepts `edits: [{ oldText, newText }]`.
+
+```typescript
+pi.registerTool({
+  name: "edit",
+  label: "Edit",
+  description: "Edit a single file using exact text replacement",
+  parameters: Type.Object({
+    path: Type.String(),
+    edits: Type.Array(
+      Type.Object({
+        oldText: Type.String(),
+        newText: Type.String(),
+      }),
+    ),
+  }),
+  prepareArguments(args) {
+    if (!args || typeof args !== "object") return args;
+
+    const input = args as {
+      path?: string;
+      edits?: Array<{ oldText: string; newText: string }>;
+      oldText?: unknown;
+      newText?: unknown;
+    };
+
+    if (typeof input.oldText !== "string" || typeof input.newText !== "string") {
+      return args;
+    }
+
+    return {
+      ...input,
+      edits: [...(input.edits ?? []), { oldText: input.oldText, newText: input.newText }],
+    };
+  },
+  async execute(toolCallId, params, signal, onUpdate, ctx) {
+    // params now matches the current schema
+    return {
+      content: [{ type: "text", text: `Applying ${params.edits.length} edit block(s)` }],
+      details: {},
+    };
+  },
+});
+```
 
 ### Overriding Built-in Tools
 

@@ -390,7 +390,7 @@ function createHarnessWithResourceLoader(
 
 	const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
 	authStorage.setRuntimeApiKey(model.provider, "faux-key");
-	const modelRegistry = new ModelRegistry(authStorage, tempDir);
+	const modelRegistry = ModelRegistry.create(authStorage, tempDir);
 
 	const session = new AgentSession({
 		agent,

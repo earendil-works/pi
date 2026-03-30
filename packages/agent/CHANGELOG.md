@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.64.0] - 2026-03-29
+
+### Added
+
+- Added `AgentTool.prepareArguments` hook to prepare raw tool call arguments before schema validation, enabling compatibility shims for resumed sessions with outdated tool schemas
+
 ## [0.63.2] - 2026-03-29
 
 ### Added
