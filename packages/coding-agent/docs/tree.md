@@ -56,7 +56,7 @@ Sessions are stored as trees where each entry has an `id` and `parentId`. The "l
 - Active path marker `•` appears after the fold indicator when applicable
 - Search and filter changes reset all folds
 - Default filter hides `label` and `custom` entries (shown in Ctrl+O mode)
-- Children sorted by timestamp (oldest first)
+- At each branch point, the active subtree is shown first; other sibling branches are sorted by timestamp (oldest first)
 
 ## Selection Behavior
 
