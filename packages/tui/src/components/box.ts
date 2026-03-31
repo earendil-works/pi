@@ -27,6 +27,9 @@ export class Box implements Component {
 	}
 
 	addChild(component: Component): void {
+		if (!component || typeof component.render !== "function") {
+			return;
+		}
 		this.children.push(component);
 		this.invalidateCache();
 	}
@@ -82,9 +85,14 @@ export class Box implements Component {
 		// Render all children
 		const childLines: string[] = [];
 		for (const child of this.children) {
-			const lines = child.render(contentWidth);
-			for (const line of lines) {
-				childLines.push(leftPad + line);
+			try {
+				const lines = child.render(contentWidth);
+				for (const line of lines) {
+					childLines.push(leftPad + line);
+				}
+			} catch {
+				// Skip children that fail to render rather than crashing the entire TUI
+				childLines.push(`${leftPad}[render error]`);
 			}
 		}
 
