@@ -25,7 +25,7 @@ const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
 const REDIRECT_URI = "http://localhost:1455/auth/callback";
-const SCOPE = "openid profile email offline_access";
+const SCOPE = "openid profile email offline_access model.request api.responses.write";
 const JWT_CLAIM_PATH = "https://api.openai.com/auth";
 
 type TokenSuccess = { type: "success"; access: string; refresh: string; expires: number };
@@ -120,6 +120,20 @@ async function exchangeAuthorizationCode(
 	if (!json.access_token || !json.refresh_token || typeof json.expires_in !== "number") {
 		console.error("[openai-codex] token response missing fields:", json);
 		return { type: "failed" };
+	}
+
+	// Validate that the granted token has the API scopes needed for model inference.
+	// Without these, all Responses API calls will fail with 401/500.
+	const REQUIRED_SCOPES = ["model.request", "api.responses.write"];
+	const jwt = decodeJwt(json.access_token);
+	const grantedScopes: string[] = Array.isArray(jwt?.scp) ? jwt.scp : [];
+	const missingScopes = REQUIRED_SCOPES.filter((s) => !grantedScopes.includes(s));
+	if (missingScopes.length > 0) {
+		console.error(
+			`[openai-codex] token is missing required API scopes: ${missingScopes.join(", ")}. ` +
+			`Granted scopes: ${grantedScopes.join(", ") || "(none)"}. ` +
+			`Model API calls will fail. Re-authenticate with 'codex login'.`,
+		);
 	}
 
 	return {
