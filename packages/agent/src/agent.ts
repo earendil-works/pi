@@ -405,15 +405,14 @@ export class Agent {
 	}
 
 	private createLoopConfig(options: { skipInitialSteeringPoll?: boolean } = {}): AgentLoopConfig {
-		const agent = this;
 		let skipInitialSteeringPoll = options.skipInitialSteeringPoll === true;
 		return {
-			get model() {
-				return agent._state.model;
-			},
-			get reasoning() {
-				return agent._state.thinkingLevel === "off" ? undefined : agent._state.thinkingLevel;
-			},
+			model: this._state.model,
+			reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
+			resolveRequestConfig: () => ({
+				model: this._state.model,
+				reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
+			}),
 			sessionId: this.sessionId,
 			onPayload: this.onPayload,
 			transport: this.transport,

@@ -93,8 +93,21 @@ export interface AfterToolCallContext {
 	context: AgentContext;
 }
 
+export interface AgentRequestConfig {
+	model: Model<any>;
+	reasoning: SimpleStreamOptions["reasoning"];
+}
+
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
+	/**
+	 * Resolves the model/reasoning snapshot for a specific provider request.
+	 *
+	 * This is invoked immediately before each model request starts, allowing
+	 * long-lived runs to pick up mid-run model or reasoning changes for future
+	 * turns while keeping the request already in flight stable.
+	 */
+	resolveRequestConfig?: () => AgentRequestConfig;
 
 	/**
 	 * Converts AgentMessage[] to LLM-compatible Message[] before each LLM call.

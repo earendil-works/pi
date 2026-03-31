@@ -259,8 +259,14 @@ async function streamAssistantResponse(
 	};
 
 	const streamFunction = streamFn || streamSimple;
-	const requestModel = config.model;
-	const requestReasoning = config.reasoning;
+	const requestConfig = config.resolveRequestConfig
+		? config.resolveRequestConfig()
+		: {
+				model: config.model,
+				reasoning: config.reasoning,
+			};
+	const requestModel = requestConfig.model;
+	const requestReasoning = requestConfig.reasoning;
 
 	// Resolve API key (important for expiring tokens)
 	const resolvedApiKey =
