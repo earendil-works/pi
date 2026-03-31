@@ -41,6 +41,12 @@ Tools for building AI agents and managing LLM deployments.
 | **[@mariozechner/pi-web-ui](packages/web-ui)** | Web components for AI chat interfaces |
 | **[@mariozechner/pi-pods](packages/pods)** | CLI for managing vLLM deployments on GPU pods |
 
+### Community Packages
+
+| Package | Description |
+|---------|-------------|
+| **[@jongirard/pi-grove](https://github.com/jongirard/pi-grove)** | Plan-aware agent orchestration/observation for Pi |
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.md](AGENTS.md) for project-specific rules (for both humans and agents).
