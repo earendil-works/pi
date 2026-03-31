@@ -333,7 +333,7 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			}
 
 			const argumentSuggestions = command.getArgumentCompletions(argumentText);
-			if (!argumentSuggestions || argumentSuggestions.length === 0) {
+			if (!Array.isArray(argumentSuggestions) || argumentSuggestions.length === 0) {
 				return null;
 			}
 
