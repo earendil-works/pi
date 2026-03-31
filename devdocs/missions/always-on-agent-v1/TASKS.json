@@ -1,0 +1,131 @@
+{
+  "tasks": [
+    {
+      "id": "architecture-approval",
+      "title": "Record the approved always-on architecture before implementation begins",
+      "status": "done",
+      "validation": [
+        "echo 'ARCHITECTURE.md approved by human before implementation starts'"
+      ],
+      "notes": "Approved decisions: separate supervisor, append-only JSONL ledgers, Mu per-run sessions, jobs as the primary object, one global default agent with explicit `set-default`, event wake plus reconciliation tick, provider/model/thinking stored as first-class agent configuration, invocation-time tuple override support for work items, latest-missed-only recurrence, single-overlap queuing, replacement-run recovery, no ask_user tools, and follow-up tuple inheritance."
+    },
+    {
+      "id": "fixtures-and-registry-red-tests",
+      "title": "Establish deterministic harness fixtures and failing tests for agent creation/global-default resolution",
+      "status": "todo",
+      "validation": [
+        "echo 'Red tests fail for missing always-on agent registry/global-default behavior'"
+      ],
+      "notes": "Create temp MU_CODING_AGENT_DIR helpers, temp workspaces, and any fake transport/clock seams needed for deterministic always-on tests. Cover auto-generated ids, provider/model/thinking persistence, first-create global-default behavior, explicit `set-default`, missing-target failures, and CLI-visible output expectations."
+    },
+    {
+      "id": "agent-registry-implementation",
+      "title": "Implement append-only agent registry and global-default resolution",
+      "status": "todo",
+      "validation": [
+        "echo 'Agent registry/global-default tests pass and agents.jsonl derivation is correct'"
+      ],
+      "notes": "Add the new always-on storage/domain module(s), `mu always-on create`, `agents`, `set-default`, and `status` plumbing, append-only global-default facts, and explicit provider/model/thinking configuration storage plus status rendering. Keep derived views explicit and avoid sidecar mutable state."
+    },
+    {
+      "id": "agent-registry-acceptance-gate",
+      "title": "Verify milestone agent-registry-defaults",
+      "status": "todo",
+      "validation": [
+        "Milestone agent-registry-defaults verification passes"
+      ],
+      "notes": "Do not mark done until the milestone verification criteria in MILESTONES.json are green and evidence paths are populated."
+    },
+    {
+      "id": "send-run-red-tests",
+      "title": "Add failing tests for immediate send-to-run lifecycle",
+      "status": "todo",
+      "validation": [
+        "echo 'Red tests fail for missing send-to-run lifecycle, linked session ids, and terminal outcomes'"
+      ],
+      "notes": "Cover work_item creation, supervisor wake on new work, run_started/run_finished facts, linked Mu session/thread id, explicit failure behavior when workspace/model resolution breaks at execution time, red cases for execution-target override precedence, and proof that always-on mode excludes ask_user-like tools."
+    },
+    {
+      "id": "send-run-implementation",
+      "title": "Implement immediate work submission, supervisor wake, and linked Mu run lifecycle",
+      "status": "todo",
+      "validation": [
+        "echo 'Immediate send-to-run tests pass and linked Mu session history is durable'"
+      ],
+      "notes": "Build the supervisor's immediate-work path, per-agent lock ownership, work-item append path, run lifecycle append path, execution-target override precedence, and session linkage. Reuse Mu session semantics instead of inventing a second transcript format. At least one end-to-end validation path should use `openai-codex / gpt-5.4 / medium`."
+    },
+    {
+      "id": "send-run-acceptance-gate",
+      "title": "Verify milestone send-run-lifecycle",
+      "status": "todo",
+      "validation": [
+        "Milestone send-run-lifecycle verification passes"
+      ],
+      "notes": "Do not mark done until the milestone verification criteria in MILESTONES.json are green and raw-ledger assertions agree with visible CLI output."
+    },
+    {
+      "id": "scheduling-red-tests",
+      "title": "Add failing tests for one-off schedules, recurring schedules, reconciliation tick, and occurrence deduplication",
+      "status": "todo",
+      "validation": [
+        "echo 'Red tests fail for missing schedule parsing, due-occurrence derivation, reconciliation tick, and duplicate-occurrence protection'"
+      ],
+      "notes": "Use fake clocks wherever possible. Cover restart/recovery around a due occurrence, timezone handling, and the rule that the model is not used as the primary polling loop when idle."
+    },
+    {
+      "id": "scheduling-implementation",
+      "title": "Implement one-off and recurring schedules plus event wake and reconciliation tick",
+      "status": "todo",
+      "validation": [
+        "echo 'Schedule/tick tests pass and no duplicate occurrence is recorded across reconciliation/restart'"
+      ],
+      "notes": "Implement schedule parsing, due-occurrence derivation, occurrence-key deduplication, event wake on new work append, and periodic reconciliation tick. Keep tick as a wake mechanism, not a durable chat abstraction."
+    },
+    {
+      "id": "scheduling-acceptance-gate",
+      "title": "Verify milestone scheduling-and-reconciliation",
+      "status": "todo",
+      "validation": [
+        "Milestone scheduling-and-reconciliation verification passes"
+      ],
+      "notes": "Do not mark done until the milestone verification criteria in MILESTONES.json are green and restart/recovery evidence shows no duplicate occurrence execution."
+    },
+    {
+      "id": "followup-history-red-tests",
+      "title": "Add failing tests for follow-up lineage, jobs/runs inspection, linked threads, and notifications",
+      "status": "todo",
+      "validation": [
+        "echo 'Red tests fail for missing follow-up lineage, history inspection, thread linkage, and completion/blocker notifications'"
+      ],
+      "notes": "Cover `follow-up <job-id>`, related work/session references, jobs/runs/status projections, thread inspection surfaces, notification behavior for completion/blocker outcomes, and follow-up-specific execution-target overrides when explicitly requested."
+    },
+    {
+      "id": "followup-history-implementation",
+      "title": "Implement follow-up creation, history inspection, thread linkage, and notifications",
+      "status": "todo",
+      "validation": [
+        "echo 'Follow-up/history/thread/notification tests pass and linked Mu sessions remain inspectable'"
+      ],
+      "notes": "Implement follow-up work item creation, lineage projections, jobs/runs/thread inspection surfaces, and completion/blocker notifications. Reuse existing Mu thread/session semantics rather than adding a special transcript subsystem."
+    },
+    {
+      "id": "followup-history-acceptance-gate",
+      "title": "Verify milestone follow-up-history-threads",
+      "status": "todo",
+      "validation": [
+        "Milestone follow-up-history-threads verification passes"
+      ],
+      "notes": "Do not mark done until the milestone verification criteria in MILESTONES.json are green and follow-up lineage is visible in both CLI output and underlying Mu thread history."
+    },
+    {
+      "id": "final-check",
+      "title": "Run full validation and mark the mission complete",
+      "status": "todo",
+      "validation": [
+        "npm run check",
+        "python3 - <<'PY'\nimport json\nfrom pathlib import Path\npath = Path('devdocs/missions/always-on-agent-v1/TASKS.json')\ndata = json.loads(path.read_text())\nassert all(task['status'] == 'done' for task in data['tasks'])\nPY"
+      ],
+      "notes": "Mark this done only after all milestone gate tasks are done, XTUI evidence exists, targeted tests are green, and PROGRESS.md says the mission is complete."
+    }
+  ]
+}

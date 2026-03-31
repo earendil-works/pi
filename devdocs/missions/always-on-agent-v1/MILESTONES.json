@@ -1,0 +1,173 @@
+{
+  "milestones": [
+    {
+      "id": "agent-registry-defaults",
+      "title": "Agent registry and global-default resolution are durable and inspectable",
+      "goal": "A human can create an always-on agent, get an auto-generated id when omitted, persist provider/model/thinking defaults, and reliably resolve one global default agent from append-only facts.",
+      "taskIds": [
+        "architecture-approval",
+        "fixtures-and-registry-red-tests",
+        "agent-registry-implementation",
+        "agent-registry-acceptance-gate"
+      ],
+      "gateTaskId": "agent-registry-acceptance-gate",
+      "verification": [
+        {
+          "id": "m1-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- always-on-agent-registry.red.test.ts always-on-global-default.red.test.ts",
+          "expect": "Targeted registry/global-default tests pass.",
+          "evidence": "devdocs/missions/always-on-agent-v1/evidence/m1-targeted-tests.txt"
+        },
+        {
+          "id": "m1-review",
+          "kind": "review",
+          "command": "Review the always-on agent registry/global-default implementation against SPEC.md and write findings JSON.",
+          "expect": "Review finds the milestone correct or yields actionable blocking findings with file references.",
+          "evidence": "devdocs/missions/always-on-agent-v1/evidence/m1-review.json"
+        },
+        {
+          "id": "m1-cli-surface",
+          "kind": "xtui",
+          "command": "In a temp MU_CODING_AGENT_DIR and temp workspace, run `mu always-on create --workspace <path> --provider openai-codex --model gpt-5.4 --thinking medium`, then create a second agent and use `mu always-on set-default <agent-id>`; verify the generated ids, provider/model/thinking details, and global default designation appear correctly in terminal output.",
+          "expect": "The visible CLI surface shows first-create auto-default behavior and later explicit global default changes correctly.",
+          "evidence": "devdocs/missions/always-on-agent-v1/evidence/m1-xtui.txt"
+        },
+        {
+          "id": "m1-ledger-assertion",
+          "kind": "assertion",
+          "command": "Inspect agents.jsonl in a temp config dir and assert append-only facts resolve to exactly one global default agent at a time.",
+          "expect": "Derived global-default resolution matches the visible CLI output and raw ledger facts.",
+          "evidence": "devdocs/missions/always-on-agent-v1/evidence/m1-ledger-assertion.txt"
+        }
+      ],
+      "notes": "The gate task closes this milestone only after ledger derivation, global-default behavior, CLI output, and review are all green."
+    },
+    {
+      "id": "send-run-lifecycle",
+      "title": "Immediate work submission creates a durable run and linked Mu thread",
+      "goal": "A human can send immediate work to an always-on agent, optionally override the provider/model/thinking tuple for that work item, and observe a durable work item, durable run lifecycle, and linked Mu session/thread.",
+      "taskIds": [
+        "send-run-red-tests",
+        "send-run-implementation",
+        "send-run-acceptance-gate"
+      ],
+      "gateTaskId": "send-run-acceptance-gate",
+      "verification": [
+        {
+          "id": "m2-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- always-on-send-run.red.test.ts always-on-supervisor.red.test.ts always-on-execution-target.red.test.ts always-on-tool-selection.red.test.ts",
+          "expect": "Immediate send/run lifecycle tests pass, including linked session id creation, terminal outcome recording, execution-tuple override precedence, and always-on tool selection that excludes ask_user.",
+          "evidence": "devdocs/missions/always-on-agent-v1/evidence/m2-targeted-tests.txt"
+        },
+        {
+          "id": "m2-review",
+          "kind": "review",
+          "command": "Review immediate send/run orchestration, execution-target override precedence, lock ownership, always-on tool selection, and Mu session linkage against SPEC.md and write findings JSON.",
+          "expect": "Review confirms the send-to-run lifecycle, tuple-override precedence, and no-ask_user tool policy are correct or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/always-on-agent-v1/evidence/m2-review.json"
+        },
+        {
+          "id": "m2-cli-surface",
+          "kind": "xtui",
+          "command": "In a temp MU_CODING_AGENT_DIR and temp workspace, create a default agent using `--provider openai-codex --model gpt-5.4 --thinking low`, run `mu always-on send --provider openai-codex --model gpt-5.4 --thinking medium \"<instruction>\"`, then inspect `mu always-on jobs`, `mu always-on runs <job-id>`, and visible terminal output.",
+          "expect": "The visible CLI surface shows created job/run ids, linked session/thread information, and that the run used the explicit invocation override (`openai-codex / gpt-5.4 / medium`) rather than the stored default thinking level.",
+          "evidence": "devdocs/missions/always-on-agent-v1/evidence/m2-xtui.txt"
+        },
+        {
+          "id": "m2-run-ledger-assertion",
+          "kind": "assertion",
+          "command": "Inspect work-items.jsonl, runs.jsonl, and the linked Mu session file for the run; assert that work item override fields, run lifecycle, effective provider/model/thinking tuple, session id, and terminal outcome all agree.",
+          "expect": "Raw ledgers and Mu session history agree on the executed run and its effective execution tuple.",
+          "evidence": "devdocs/missions/always-on-agent-v1/evidence/m2-run-ledger-assertion.txt"
+        }
+      ],
+      "notes": "The gate task closes this milestone only after immediate send-to-run behavior is proven through tests, raw-ledger assertions, and visible CLI output."
+    },
+    {
+      "id": "scheduling-and-reconciliation",
+      "title": "Scheduled work runs with latest-missed, single-overlap, and restart-replacement semantics",
+      "goal": "One-off and recurring schedules produce due runs with latest-missed-only catch-up, exactly one queued overlap occurrence, and replacement-run recovery after crash while the supervisor uses event wake plus periodic reconciliation tick instead of model polling.",
+      "taskIds": [
+        "scheduling-red-tests",
+        "scheduling-implementation",
+        "scheduling-acceptance-gate"
+      ],
+      "gateTaskId": "scheduling-acceptance-gate",
+      "verification": [
+        {
+          "id": "m3-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- always-on-schedule.red.test.ts always-on-reconciliation-tick.red.test.ts always-on-restart-recovery.red.test.ts",
+          "expect": "Schedule parsing, latest-missed derivation, single-overlap queuing, reconciliation tick, replacement-run recovery, and occurrence deduplication tests pass.",
+          "evidence": "devdocs/missions/always-on-agent-v1/evidence/m3-targeted-tests.txt"
+        },
+        {
+          "id": "m3-review",
+          "kind": "review",
+          "command": "Review scheduling, latest-missed policy, overlap policy, occurrence-key derivation, reconciliation tick behavior, and restart handling against SPEC.md and write findings JSON.",
+          "expect": "Review confirms no duplicate occurrence execution, correct backlog/overlap policy, and no incorrect model polling, or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/always-on-agent-v1/evidence/m3-review.json"
+        },
+        {
+          "id": "m3-cli-surface",
+          "kind": "xtui",
+          "command": "In a temp MU_CODING_AGENT_DIR and temp workspace, schedule one one-off job and one recurring job, observe terminal output and status/jobs output before and after due time, and verify only the latest missed occurrence is run and the same occurrence is not shown twice after reconciliation.",
+          "expect": "The visible CLI surface shows due work running at the expected times with latest-missed-only and no duplicate occurrence reporting.",
+          "evidence": "devdocs/missions/always-on-agent-v1/evidence/m3-xtui.txt"
+        },
+        {
+          "id": "m3-restart-assertion",
+          "kind": "assertion",
+          "command": "Simulate a crash after `run_started` and before `run_finished`, restart the supervisor, and assert from runs.jsonl that the interrupted run is marked abandoned/errored, a replacement run is created, and the occurrence key still appears exactly once for the successful occurrence.",
+          "expect": "Restart and reconciliation preserve accepted work, create a replacement run, and avoid duplicating the same scheduled occurrence.",
+          "evidence": "devdocs/missions/always-on-agent-v1/evidence/m3-restart-assertion.txt"
+        }
+      ],
+      "notes": "The gate task closes this milestone only after schedule/tick correctness is proven under fake-clock and restart conditions, not just ad-hoc manual timing."
+    },
+    {
+      "id": "follow-up-history-threads",
+      "title": "Follow-ups, history inspection, and thread linkage remain correct and inspectable",
+      "goal": "A human can follow up on a past job, inherit the prior effective execution tuple by default, inspect jobs/runs/thread lineage, and rely on linked Mu session/thread semantics plus completion/blocker notifications.",
+      "taskIds": [
+        "followup-history-red-tests",
+        "followup-history-implementation",
+        "followup-history-acceptance-gate"
+      ],
+      "gateTaskId": "followup-history-acceptance-gate",
+      "verification": [
+        {
+          "id": "m4-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- always-on-followup-history.red.test.ts always-on-notifications.red.test.ts always-on-followup-tuple-inheritance.red.test.ts",
+          "expect": "Follow-up lineage, tuple inheritance, jobs/runs inspection, linked thread references, and notification tests pass.",
+          "evidence": "devdocs/missions/always-on-agent-v1/evidence/m4-targeted-tests.txt"
+        },
+        {
+          "id": "m4-review",
+          "kind": "review",
+          "command": "Review follow-up creation, tuple inheritance, lineage projection, run/thread inspection, and notification behavior against SPEC.md and write findings JSON.",
+          "expect": "Review confirms the milestone is functionally correct, including tuple inheritance defaults, or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/always-on-agent-v1/evidence/m4-review.json"
+        },
+        {
+          "id": "m4-cli-surface",
+          "kind": "xtui",
+          "command": "In a temp MU_CODING_AGENT_DIR and temp workspace, create work with a non-default execution tuple, run a follow-up via `mu always-on follow-up <job-id> \"...\"` without restating the tuple, then inspect `jobs`, `runs <job-id>`, `status`, and the thread inspection surface.",
+          "expect": "The visible CLI surface shows follow-up lineage, inherited effective tuple, linked prior job/run references, and thread/session ids clearly.",
+          "evidence": "devdocs/missions/always-on-agent-v1/evidence/m4-xtui.txt"
+        },
+        {
+          "id": "m4-thread-assertion",
+          "kind": "assertion",
+          "command": "Use the resulting run session ids with existing Mu thread inspection semantics and assert that the linked history remains readable and correctly associated with the originating jobs.",
+          "expect": "Jobs, runs, and Mu thread/session history remain linked and inspectable without special-case transcript formats.",
+          "evidence": "devdocs/missions/always-on-agent-v1/evidence/m4-thread-assertion.txt"
+        }
+      ],
+      "notes": "The gate task closes this milestone only after follow-up lineage, notifications, and thread inspection are all proven through tests and visible CLI evidence."
+    }
+  ]
+}

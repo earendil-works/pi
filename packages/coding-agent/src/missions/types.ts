@@ -23,7 +23,15 @@ export interface MissionTask {
 	notes: string;
 }
 
-export type MissionMilestoneVerificationKind = "command" | "xtui" | "cdp" | "log" | "assertion" | "diff";
+export type MissionMilestoneVerificationKind =
+	| "command"
+	| "review"
+	| "xtui"
+	| "cdp"
+	| "curl"
+	| "log"
+	| "assertion"
+	| "diff";
 
 export interface MissionMilestoneVerification {
 	id: string;

@@ -14,7 +14,7 @@ interface ParsedMilestone {
 	gateTaskId: string;
 	verification: Array<{
 		id: string;
-		kind: "command" | "xtui" | "cdp" | "log" | "assertion" | "diff";
+		kind: "command" | "review" | "xtui" | "cdp" | "curl" | "log" | "assertion" | "diff";
 		command: string;
 		expect: string;
 	}>;
@@ -146,6 +146,60 @@ describe("mission milestones contract (red)", () => {
 					},
 				],
 				notes: "Gate closes the milestone.",
+			},
+		]);
+	});
+
+	it("accepts review and curl verification kinds so mission parser stays in sync with the validator contract", () => {
+		const { dir, cleanup } = makeMissionDir();
+		cleanups.push(cleanup);
+		writeBuildMissionFiles(dir, {
+			milestonesJson: JSON.stringify(
+				{
+					milestones: [
+						{
+							id: "runner-reset",
+							title: "Runner honors reset barrier",
+							goal: "A reset optimize mission can resume without immediately halting on stale convergence.",
+							taskIds: ["runner-red-test", "runner-implementation", "runner-acceptance-gate"],
+							gateTaskId: "runner-acceptance-gate",
+							verification: [
+								{
+									id: "runner-review",
+									kind: "review",
+									command: "Review the implementation and write findings.",
+									expect: "Review output is written.",
+								},
+								{
+									id: "runner-curl",
+									kind: "curl",
+									command: "curl -s http://127.0.0.1:3000/healthz",
+									expect: "HTTP health endpoint responds successfully.",
+								},
+							],
+							notes: "Gate closes the milestone.",
+						},
+					],
+				},
+				null,
+				2,
+			),
+		});
+
+		const mission = parseMissionDefinition(dir) as unknown as { milestones?: ParsedMilestone[] };
+
+		expect(mission.milestones?.[0]?.verification).toEqual([
+			{
+				id: "runner-review",
+				kind: "review",
+				command: "Review the implementation and write findings.",
+				expect: "Review output is written.",
+			},
+			{
+				id: "runner-curl",
+				kind: "curl",
+				command: "curl -s http://127.0.0.1:3000/healthz",
+				expect: "HTTP health endpoint responds successfully.",
 			},
 		]);
 	});

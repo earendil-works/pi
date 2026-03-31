@@ -16,8 +16,10 @@ import type {
 const TASK_STATUSES: MissionTaskStatus[] = ["todo", "in_progress", "done", "blocked", "discarded"];
 const MILESTONE_VERIFICATION_KINDS: MissionMilestoneVerificationKind[] = [
 	"command",
+	"review",
 	"xtui",
 	"cdp",
+	"curl",
 	"log",
 	"assertion",
 	"diff",
