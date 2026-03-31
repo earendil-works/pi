@@ -6,7 +6,7 @@ import { property, state } from "lit/decorators.js";
 export class StreamingMessageContainer extends LitElement {
 	@property({ type: Array }) tools: AgentTool[] = [];
 	@property({ type: Boolean }) isStreaming = false;
-	@property({ type: Object }) pendingToolCalls?: Set<string>;
+	@property({ type: Object }) pendingToolCalls?: ReadonlySet<string>;
 	@property({ type: Object }) toolResultsById?: Map<string, ToolResultMessage>;
 	@property({ attribute: false }) onCostClick?: () => void;
 

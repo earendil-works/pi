@@ -3319,7 +3319,7 @@ export class InteractiveMode {
 					},
 					onTransportChange: (transport) => {
 						this.settingsManager.setTransport(transport);
-						this.session.agent.setTransport(transport);
+						this.session.agent.transport = transport;
 					},
 					onThinkingLevelChange: (level) => {
 						this.session.setThinkingLevel(level);

@@ -85,7 +85,7 @@ export class UserMessage extends LitElement {
 export class AssistantMessage extends LitElement {
 	@property({ type: Object }) message!: AssistantMessageType;
 	@property({ type: Array }) tools?: AgentTool<any>[];
-	@property({ type: Object }) pendingToolCalls?: Set<string>;
+	@property({ type: Object }) pendingToolCalls?: ReadonlySet<string>;
 	@property({ type: Boolean }) hideToolCalls = false;
 	@property({ type: Object }) toolResultsById?: Map<string, ToolResultMessageType>;
 	@property({ type: Boolean }) isStreaming: boolean = false;

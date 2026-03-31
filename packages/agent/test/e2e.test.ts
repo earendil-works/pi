@@ -1,13 +1,41 @@
-import type { AssistantMessage, Model, ToolResultMessage, UserMessage } from "@mariozechner/pi-ai";
-import { getModel } from "@mariozechner/pi-ai";
-import { describe, expect, it } from "vitest";
-import { Agent } from "../src/index.js";
-import { hasBedrockCredentials } from "./bedrock-utils.js";
+import {
+	type AssistantMessage,
+	type FauxProviderRegistration,
+	fauxAssistantMessage,
+	fauxText,
+	fauxThinking,
+	fauxToolCall,
+	type Model,
+	registerFauxProvider,
+	type ToolResultMessage,
+	type UserMessage,
+} from "@mariozechner/pi-ai";
+import { afterEach, describe, expect, it } from "vitest";
+import { Agent, type AgentEvent } from "../src/index.js";
 import { calculateTool } from "./utils/calculate.js";
 
-delete process.env.ANTHROPIC_OAUTH_TOKEN;
+const registrations: FauxProviderRegistration[] = [];
 
-async function basicPrompt(model: Model<any>) {
+function createFauxRegistration(options: Parameters<typeof registerFauxProvider>[0] = {}): FauxProviderRegistration {
+	const registration = registerFauxProvider(options);
+	registrations.push(registration);
+	return registration;
+}
+
+function getTextContent(message: AssistantMessage | ToolResultMessage): string {
+	return message.content
+		.filter((block) => block.type === "text")
+		.map((block) => block.text)
+		.join("\n");
+}
+
+afterEach(() => {
+	while (registrations.length > 0) {
+		registrations.pop()?.unregister();
+	}
+});
+
+async function basicPrompt(model: Model<string>) {
 	const agent = new Agent({
 		initialState: {
 			systemPrompt: "You are a helpful assistant. Keep your responses concise.",
@@ -26,15 +54,10 @@ async function basicPrompt(model: Model<any>) {
 
 	const assistantMessage = agent.state.messages[1];
 	if (assistantMessage.role !== "assistant") throw new Error("Expected assistant message");
-	expect(assistantMessage.content.length).toBeGreaterThan(0);
-
-	const textContent = assistantMessage.content.find((c) => c.type === "text");
-	expect(textContent).toBeDefined();
-	if (textContent?.type !== "text") throw new Error("Expected text content");
-	expect(textContent.text).toContain("4");
+	expect(getTextContent(assistantMessage)).toContain("4");
 }
 
-async function toolExecution(model: Model<any>) {
+async function toolExecution(model: Model<string>) {
 	const agent = new Agent({
 		initialState: {
 			systemPrompt: "You are a helpful assistant. Always use the calculator tool for math.",
@@ -44,52 +67,49 @@ async function toolExecution(model: Model<any>) {
 		},
 	});
 
+	const pendingToolCallsDuringEvents: Array<{ type: AgentEvent["type"]; ids: string[] }> = [];
+	agent.subscribe((event) => {
+		if (event.type === "tool_execution_start" || event.type === "tool_execution_end") {
+			pendingToolCallsDuringEvents.push({
+				type: event.type,
+				ids: [...agent.state.pendingToolCalls],
+			});
+		}
+	});
+
 	await agent.prompt("Calculate 123 * 456 using the calculator tool.");
 
 	expect(agent.state.isStreaming).toBe(false);
-	expect(agent.state.messages.length).toBeGreaterThanOrEqual(3);
-
-	const toolResultMsg = agent.state.messages.find((m) => m.role === "toolResult");
+	expect(agent.state.messages.length).toBeGreaterThanOrEqual(4);
+	const toolResultMsg = agent.state.messages.find((message) => message.role === "toolResult");
 	expect(toolResultMsg).toBeDefined();
 	if (toolResultMsg?.role !== "toolResult") throw new Error("Expected tool result message");
-	const textContent =
-		toolResultMsg.content
-			?.filter((c) => c.type === "text")
-			.map((c: any) => c.text)
-			.join("\n") || "";
-	expect(textContent).toBeDefined();
-
-	const expectedResult = 123 * 456;
-	expect(textContent).toContain(String(expectedResult));
+	expect(getTextContent(toolResultMsg)).toContain("123 * 456 = 56088");
 
 	const finalMessage = agent.state.messages[agent.state.messages.length - 1];
 	if (finalMessage.role !== "assistant") throw new Error("Expected final assistant message");
-	const finalText = finalMessage.content.find((c) => c.type === "text");
-	expect(finalText).toBeDefined();
-	if (finalText?.type !== "text") throw new Error("Expected text content");
-	// Check for number with or without comma formatting
-	const hasNumber =
-		finalText.text.includes(String(expectedResult)) ||
-		finalText.text.includes("56,088") ||
-		finalText.text.includes("56088");
-	expect(hasNumber).toBe(true);
+	expect(getTextContent(finalMessage)).toContain("56088");
+	expect(agent.state.pendingToolCalls.size).toBe(0);
+	expect(pendingToolCallsDuringEvents).toEqual([
+		{ type: "tool_execution_start", ids: ["calc-1"] },
+		{ type: "tool_execution_end", ids: [] },
+	]);
 }
 
-async function abortExecution(model: Model<any>) {
+async function abortExecution(model: Model<string>) {
 	const agent = new Agent({
 		initialState: {
 			systemPrompt: "You are a helpful assistant.",
 			model,
 			thinkingLevel: "off",
-			tools: [calculateTool],
+			tools: [],
 		},
 	});
 
-	const promptPromise = agent.prompt("Calculate 100 * 200, then 300 * 400, then sum the results.");
-
+	const promptPromise = agent.prompt("Count slowly from 1 to 20.");
 	setTimeout(() => {
 		agent.abort();
-	}, 100);
+	}, 30);
 
 	await promptPromise;
 
@@ -100,11 +120,10 @@ async function abortExecution(model: Model<any>) {
 	if (lastMessage.role !== "assistant") throw new Error("Expected assistant message");
 	expect(lastMessage.stopReason).toBe("aborted");
 	expect(lastMessage.errorMessage).toBeDefined();
-	expect(agent.state.error).toBeDefined();
-	expect(agent.state.error).toBe(lastMessage.errorMessage);
+	expect(agent.state.errorMessage).toBe(lastMessage.errorMessage);
 }
 
-async function stateUpdates(model: Model<any>) {
+async function stateUpdates(model: Model<string>) {
 	const agent = new Agent({
 		initialState: {
 			systemPrompt: "You are a helpful assistant.",
@@ -114,29 +133,29 @@ async function stateUpdates(model: Model<any>) {
 		},
 	});
 
-	const events: Array<string> = [];
-
+	const events: AgentEvent["type"][] = [];
 	agent.subscribe((event) => {
 		events.push(event.type);
 	});
 
 	await agent.prompt("Count from 1 to 5.");
 
-	// Should have received lifecycle events
 	expect(events).toContain("agent_start");
-	expect(events).toContain("agent_end");
+	expect(events).toContain("turn_start");
 	expect(events).toContain("message_start");
+	expect(events).toContain("message_update");
 	expect(events).toContain("message_end");
-	// May have message_update events during streaming
-	const hasMessageUpdates = events.some((e) => e === "message_update");
-	expect(hasMessageUpdates).toBe(true);
+	expect(events).toContain("turn_end");
+	expect(events).toContain("agent_end");
+	expect(events.indexOf("agent_start")).toBeLessThan(events.indexOf("message_start"));
+	expect(events.indexOf("message_start")).toBeLessThan(events.indexOf("message_end"));
+	expect(events.indexOf("message_end")).toBeLessThan(events.lastIndexOf("agent_end"));
 
-	// Check final state
 	expect(agent.state.isStreaming).toBe(false);
-	expect(agent.state.messages.length).toBe(2); // User message + assistant response
+	expect(agent.state.messages.length).toBe(2);
 }
 
-async function multiTurnConversation(model: Model<any>) {
+async function multiTurnConversation(model: Model<string>) {
 	const agent = new Agent({
 		initialState: {
 			systemPrompt: "You are a helpful assistant.",
@@ -154,232 +173,120 @@ async function multiTurnConversation(model: Model<any>) {
 
 	const lastMessage = agent.state.messages[3];
 	if (lastMessage.role !== "assistant") throw new Error("Expected assistant message");
-	const lastText = lastMessage.content.find((c) => c.type === "text");
-	if (lastText?.type !== "text") throw new Error("Expected text content");
-	expect(lastText.text.toLowerCase()).toContain("alice");
+	expect(getTextContent(lastMessage).toLowerCase()).toContain("alice");
 }
 
-describe("Agent E2E Tests", () => {
-	describe.skipIf(!process.env.GEMINI_API_KEY)("Google Provider (gemini-2.5-flash)", () => {
-		const model = getModel("google", "gemini-2.5-flash");
-
-		it("should handle basic text prompt", async () => {
-			await basicPrompt(model);
-		});
-
-		it("should execute tools correctly", async () => {
-			await toolExecution(model);
-		});
-
-		it("should handle abort during execution", async () => {
-			await abortExecution(model);
-		});
-
-		it("should emit state updates during streaming", async () => {
-			await stateUpdates(model);
-		});
-
-		it("should maintain context across multiple turns", async () => {
-			await multiTurnConversation(model);
-		});
+describe("Agent integration with faux provider", () => {
+	it("handles a basic text prompt", async () => {
+		const faux = createFauxRegistration();
+		faux.setResponses([fauxAssistantMessage("4")]);
+		await basicPrompt(faux.getModel());
 	});
 
-	describe.skipIf(!process.env.OPENAI_API_KEY)("OpenAI Provider (gpt-4o-mini)", () => {
-		const model = getModel("openai", "gpt-4o-mini");
-
-		it("should handle basic text prompt", async () => {
-			await basicPrompt(model);
-		});
-
-		it("should execute tools correctly", async () => {
-			await toolExecution(model);
-		});
-
-		it("should handle abort during execution", async () => {
-			await abortExecution(model);
-		});
-
-		it("should emit state updates during streaming", async () => {
-			await stateUpdates(model);
-		});
-
-		it("should maintain context across multiple turns", async () => {
-			await multiTurnConversation(model);
-		});
+	it("executes tools and tracks pending tool calls", async () => {
+		const faux = createFauxRegistration();
+		faux.setResponses([
+			fauxAssistantMessage(
+				[
+					fauxText("Let me calculate that."),
+					fauxToolCall("calculate", { expression: "123 * 456" }, { id: "calc-1" }),
+				],
+				{ stopReason: "toolUse" },
+			),
+			fauxAssistantMessage("The result is 56088."),
+		]);
+		await toolExecution(faux.getModel());
 	});
 
-	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic Provider (claude-haiku-4-5)", () => {
-		const model = getModel("anthropic", "claude-haiku-4-5");
-
-		it("should handle basic text prompt", async () => {
-			await basicPrompt(model);
+	it("handles abort during streaming", async () => {
+		const faux = createFauxRegistration({
+			tokensPerSecond: 20,
+			tokenSize: { min: 2, max: 2 },
 		});
-
-		it("should execute tools correctly", async () => {
-			await toolExecution(model);
-		});
-
-		it("should handle abort during execution", async () => {
-			await abortExecution(model);
-		});
-
-		it("should emit state updates during streaming", async () => {
-			await stateUpdates(model);
-		});
-
-		it("should maintain context across multiple turns", async () => {
-			await multiTurnConversation(model);
-		});
+		faux.setResponses([
+			fauxAssistantMessage(
+				"one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen",
+			),
+		]);
+		await abortExecution(faux.getModel());
 	});
 
-	describe.skipIf(!process.env.XAI_API_KEY)("xAI Provider (grok-3)", () => {
-		const model = getModel("xai", "grok-3");
-
-		it("should handle basic text prompt", async () => {
-			await basicPrompt(model);
-		});
-
-		it("should execute tools correctly", async () => {
-			await toolExecution(model);
-		});
-
-		it("should handle abort during execution", async () => {
-			await abortExecution(model);
-		});
-
-		it("should emit state updates during streaming", async () => {
-			await stateUpdates(model);
-		});
-
-		it("should maintain context across multiple turns", async () => {
-			await multiTurnConversation(model);
-		});
+	it("emits lifecycle updates while streaming", async () => {
+		const faux = createFauxRegistration({ tokenSize: { min: 1, max: 1 } });
+		faux.setResponses([fauxAssistantMessage("1 2 3 4 5")]);
+		await stateUpdates(faux.getModel());
 	});
 
-	describe.skipIf(!process.env.GROQ_API_KEY)("Groq Provider (openai/gpt-oss-20b)", () => {
-		const model = getModel("groq", "openai/gpt-oss-20b");
-
-		it("should handle basic text prompt", async () => {
-			await basicPrompt(model);
-		});
-
-		it("should execute tools correctly", async () => {
-			await toolExecution(model);
-		});
-
-		it("should handle abort during execution", async () => {
-			await abortExecution(model);
-		});
-
-		it("should emit state updates during streaming", async () => {
-			await stateUpdates(model);
-		});
-
-		it("should maintain context across multiple turns", async () => {
-			await multiTurnConversation(model);
-		});
+	it("maintains context across multiple turns", async () => {
+		const faux = createFauxRegistration();
+		faux.setResponses([
+			fauxAssistantMessage("Nice to meet you, Alice."),
+			(context) => {
+				const hasAlice = context.messages.some((message) => {
+					if (message.role !== "user") return false;
+					if (typeof message.content === "string") return message.content.includes("Alice");
+					return message.content.some((block) => block.type === "text" && block.text.includes("Alice"));
+				});
+				return fauxAssistantMessage(hasAlice ? "Your name is Alice." : "I do not know your name.");
+			},
+		]);
+		await multiTurnConversation(faux.getModel());
 	});
 
-	/*describe.skipIf(!process.env.CEREBRAS_API_KEY)("Cerebras Provider (gpt-oss-120b)", () => {
-		const model = getModel("cerebras", "gpt-oss-120b");
+	it("preserves thinking content blocks", async () => {
+		const faux = createFauxRegistration({ models: [{ id: "faux-reasoning", reasoning: true }] });
+		faux.setResponses([fauxAssistantMessage([fauxThinking("step by step"), fauxText("4")])]);
 
-		it("should handle basic text prompt", async () => {
-			await basicPrompt(model);
+		const agent = new Agent({
+			initialState: {
+				systemPrompt: "You are a helpful assistant.",
+				model: faux.getModel(),
+				thinkingLevel: "low",
+				tools: [],
+			},
 		});
 
-		it("should execute tools correctly", async () => {
-			await toolExecution(model);
-		});
+		await agent.prompt("What is 2+2?");
 
-		it("should handle abort during execution", async () => {
-			await abortExecution(model);
-		});
-
-		it("should emit state updates during streaming", async () => {
-			await stateUpdates(model);
-		});
-
-		it("should maintain context across multiple turns", async () => {
-			await multiTurnConversation(model);
-		});
-	});*/
-
-	describe.skipIf(!process.env.ZAI_API_KEY)("zAI Provider (glm-4.5-air)", () => {
-		const model = getModel("zai", "glm-4.5-air");
-
-		it("should handle basic text prompt", async () => {
-			await basicPrompt(model);
-		});
-
-		it("should execute tools correctly", async () => {
-			await toolExecution(model);
-		});
-
-		it("should handle abort during execution", async () => {
-			await abortExecution(model);
-		});
-
-		it("should emit state updates during streaming", async () => {
-			await stateUpdates(model);
-		});
-
-		it("should maintain context across multiple turns", async () => {
-			await multiTurnConversation(model);
-		});
-	});
-
-	describe.skipIf(!hasBedrockCredentials())("Amazon Bedrock Provider (claude-sonnet-4-5)", () => {
-		const model = getModel("amazon-bedrock", "global.anthropic.claude-sonnet-4-5-20250929-v1:0");
-
-		it("should handle basic text prompt", async () => {
-			await basicPrompt(model);
-		});
-
-		it("should execute tools correctly", async () => {
-			await toolExecution(model);
-		});
-
-		it("should handle abort during execution", async () => {
-			await abortExecution(model);
-		});
-
-		it("should emit state updates during streaming", async () => {
-			await stateUpdates(model);
-		});
-
-		it("should maintain context across multiple turns", async () => {
-			await multiTurnConversation(model);
-		});
+		const assistantMessage = agent.state.messages[1];
+		if (assistantMessage?.role !== "assistant") throw new Error("Expected assistant message");
+		expect(assistantMessage.content).toEqual([
+			{ type: "thinking", thinking: "step by step" },
+			{ type: "text", text: "4" },
+		]);
 	});
 });
 
-describe("Agent.continue()", () => {
+describe("Agent.continue() with faux provider", () => {
 	describe("validation", () => {
-		it("should throw when no messages in context", async () => {
+		it("throws when no messages in context", async () => {
+			const faux = createFauxRegistration();
 			const agent = new Agent({
 				initialState: {
 					systemPrompt: "Test",
-					model: getModel("openai", "gpt-5.4"),
+					model: faux.getModel(),
 				},
 			});
 
 			await expect(agent.continue()).rejects.toThrow("No messages to continue from");
 		});
 
-		it("should throw when last message is assistant", async () => {
+		it("throws when last message is assistant", async () => {
+			const faux = createFauxRegistration();
+			const model = faux.getModel();
 			const agent = new Agent({
 				initialState: {
 					systemPrompt: "Test",
-					model: getModel("openai", "gpt-5.4"),
+					model,
 				},
 			});
 
 			const assistantMessage: AssistantMessage = {
 				role: "assistant",
 				content: [{ type: "text", text: "Hello" }],
-				api: "openai-responses",
-				provider: "openai",
-				model: "gpt-5.4",
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
 				usage: {
 					input: 0,
 					output: 0,
@@ -391,34 +298,32 @@ describe("Agent.continue()", () => {
 				stopReason: "stop",
 				timestamp: Date.now(),
 			};
-			agent.replaceMessages([assistantMessage]);
+			agent.state.messages = [assistantMessage];
 
 			await expect(agent.continue()).rejects.toThrow("Cannot continue from message role: assistant");
 		});
 	});
 
-	describe.skipIf(!process.env.OPENAI_API_KEY)("continue from user message", () => {
-		const model = getModel("openai", "gpt-5.4");
-
-		it("should continue and get response when last message is user", async () => {
+	describe("continue from user message", () => {
+		it("continues and gets a response when last message is user", async () => {
+			const faux = createFauxRegistration();
+			faux.setResponses([fauxAssistantMessage("HELLO WORLD")]);
 			const agent = new Agent({
 				initialState: {
 					systemPrompt: "You are a helpful assistant. Follow instructions exactly.",
-					model,
+					model: faux.getModel(),
 					thinkingLevel: "off",
 					tools: [],
 				},
 			});
 
-			// Manually add a user message without calling prompt()
 			const userMessage: UserMessage = {
 				role: "user",
 				content: [{ type: "text", text: "Say exactly: HELLO WORLD" }],
 				timestamp: Date.now(),
 			};
-			agent.replaceMessages([userMessage]);
+			agent.state.messages = [userMessage];
 
-			// Continue from the user message
 			await agent.continue();
 
 			expect(agent.state.isStreaming).toBe(false);
@@ -426,19 +331,17 @@ describe("Agent.continue()", () => {
 			expect(agent.state.messages[0].role).toBe("user");
 			expect(agent.state.messages[1].role).toBe("assistant");
 
-			const assistantMsg = agent.state.messages[1] as AssistantMessage;
-			const textContent = assistantMsg.content.find((c) => c.type === "text");
-			expect(textContent).toBeDefined();
-			if (textContent?.type === "text") {
-				expect(textContent.text.toUpperCase()).toContain("HELLO WORLD");
-			}
+			const assistantMsg = agent.state.messages[1];
+			if (assistantMsg.role !== "assistant") throw new Error("Expected assistant message");
+			expect(getTextContent(assistantMsg).toUpperCase()).toContain("HELLO WORLD");
 		});
 	});
 
-	describe.skipIf(!process.env.OPENAI_API_KEY)("continue from tool result", () => {
-		const model = getModel("openai", "gpt-5.4");
-
-		it("should continue and process tool results", async () => {
+	describe("continue from tool result", () => {
+		it("continues and processes tool results", async () => {
+			const faux = createFauxRegistration();
+			const model = faux.getModel();
+			faux.setResponses([fauxAssistantMessage("The answer is 8.")]);
 			const agent = new Agent({
 				initialState: {
 					systemPrompt:
@@ -449,7 +352,6 @@ describe("Agent.continue()", () => {
 				},
 			});
 
-			// Set up a conversation state as if tool was just executed
 			const userMessage: UserMessage = {
 				role: "user",
 				content: [{ type: "text", text: "What is 5 + 3?" }],
@@ -462,9 +364,9 @@ describe("Agent.continue()", () => {
 					{ type: "text", text: "Let me calculate that." },
 					{ type: "toolCall", id: "calc-1", name: "calculate", arguments: { expression: "5 + 3" } },
 				],
-				api: "anthropic-messages",
-				provider: "anthropic",
-				model: "claude-haiku-4-5",
+				api: model.api,
+				provider: model.provider,
+				model: model.id,
 				usage: {
 					input: 0,
 					output: 0,
@@ -486,26 +388,17 @@ describe("Agent.continue()", () => {
 				timestamp: Date.now(),
 			};
 
-			agent.replaceMessages([userMessage, assistantMessage, toolResult]);
+			agent.state.messages = [userMessage, assistantMessage, toolResult];
 
-			// Continue from the tool result
 			await agent.continue();
 
 			expect(agent.state.isStreaming).toBe(false);
-			// Should have added an assistant response
 			expect(agent.state.messages.length).toBeGreaterThanOrEqual(4);
 
 			const lastMessage = agent.state.messages[agent.state.messages.length - 1];
 			expect(lastMessage.role).toBe("assistant");
-
-			if (lastMessage.role === "assistant") {
-				const textContent = lastMessage.content
-					.filter((c) => c.type === "text")
-					.map((c) => (c as { type: "text"; text: string }).text)
-					.join(" ");
-				// Should mention 8 in the response
-				expect(textContent).toMatch(/8/);
-			}
+			if (lastMessage.role !== "assistant") throw new Error("Expected assistant message");
+			expect(getTextContent(lastMessage)).toContain("8");
 		});
 	});
 });

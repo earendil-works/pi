@@ -19,7 +19,7 @@ import type { AssistantMessage } from "../types.js";
  * - GitHub Copilot: "prompt token count of X exceeds the limit of Y"
  * - MiniMax: "invalid params, context window exceeds limit"
  * - Kimi For Coding: "Your request exceeded model token limit: X (requested: Y)"
- * - Cerebras: Returns "400/413 status code (no body)" - handled separately below
+ * - Cerebras: "400/413 status code (no body)"
  * - Mistral: "Prompt contains X tokens ... too large for model with Y maximum context length"
  * - z.ai: Does NOT error, accepts overflow silently - handled via usage.input > contextWindow
  * - Ollama: Some deployments truncate silently, others return errors like "prompt too long; exceeded max context length by X tokens"
@@ -43,6 +43,22 @@ const OVERFLOW_PATTERNS = [
 	/context[_ ]length[_ ]exceeded/i, // Generic fallback
 	/too many tokens/i, // Generic fallback
 	/token limit exceeded/i, // Generic fallback
+	/^4(?:00|13)\s*(?:status code)?\s*\(no body\)/i, // Cerebras: 400/413 with no body
+];
+
+/**
+ * Patterns that indicate non-overflow errors (e.g. rate limiting, server errors).
+ * Error messages matching any of these are excluded from overflow detection
+ * even if they also match an OVERFLOW_PATTERN.
+ *
+ * Example: Bedrock formats throttling errors as "ThrottlingException: Too many tokens,
+ * please wait before trying again." which would match the /too many tokens/i overflow
+ * pattern without this exclusion.
+ */
+const NON_OVERFLOW_PATTERNS = [
+	/^(Throttling error|Service unavailable):/i, // AWS Bedrock non-overflow errors (human-readable prefixes from formatBedrockError)
+	/rate limit/i, // Generic rate limiting
+	/too many requests/i, // Generic HTTP 429 style
 ];
 
 /**
@@ -94,14 +110,9 @@ const OVERFLOW_PATTERNS = [
 export function isContextOverflow(message: AssistantMessage, contextWindow?: number): boolean {
 	// Case 1: Check error message patterns
 	if (message.stopReason === "error" && message.errorMessage) {
-		// Check known patterns
-		if (OVERFLOW_PATTERNS.some((p) => p.test(message.errorMessage!))) {
-			return true;
-		}
-
-		// Cerebras returns 400/413 with no body for context overflow
-		// Note: 429 is rate limiting (requests/tokens per time), NOT context overflow
-		if (/^4(00|13)\s*(status code)?\s*\(no body\)/i.test(message.errorMessage)) {
+		// Skip messages matching known non-overflow patterns (e.g. throttling / rate-limit)
+		const isNonOverflow = NON_OVERFLOW_PATTERNS.some((p) => p.test(message.errorMessage!));
+		if (!isNonOverflow && OVERFLOW_PATTERNS.some((p) => p.test(message.errorMessage!))) {
 			return true;
 		}
 	}

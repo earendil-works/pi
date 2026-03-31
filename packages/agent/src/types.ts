@@ -245,37 +245,59 @@ export interface CustomAgentMessages {
 export type AgentMessage = Message | CustomAgentMessages[keyof CustomAgentMessages];
 
 /**
- * Agent state containing all configuration and conversation data.
+ * Public agent state.
+ *
+ * `tools` and `messages` use accessor properties so implementations can copy
+ * assigned arrays before storing them.
  */
 export interface AgentState {
+	/** System prompt sent with each model request. */
 	systemPrompt: string;
+	/** Active model used for future turns. */
 	model: Model<any>;
+	/** Requested reasoning level for future turns. */
 	thinkingLevel: ThinkingLevel;
-	tools: AgentTool<any>[];
-	messages: AgentMessage[]; // Can include attachments + custom message types
-	isStreaming: boolean;
-	streamMessage: AgentMessage | null;
-	pendingToolCalls: Set<string>;
-	error?: string;
+	/** Available tools. Assigning a new array copies the top-level array. */
+	set tools(tools: AgentTool<any>[]);
+	get tools(): AgentTool<any>[];
+	/** Conversation transcript. Assigning a new array copies the top-level array. */
+	set messages(messages: AgentMessage[]);
+	get messages(): AgentMessage[];
+	/**
+	 * True while the agent is processing a prompt or continuation.
+	 *
+	 * This remains true until awaited `agent_end` listeners settle.
+	 */
+	readonly isStreaming: boolean;
+	/** Partial assistant message for the current streamed response, if any. */
+	readonly streamingMessage?: AgentMessage;
+	/** Tool call ids currently executing. */
+	readonly pendingToolCalls: ReadonlySet<string>;
+	/** Error message from the most recent failed or aborted assistant turn, if any. */
+	readonly errorMessage?: string;
 }
 
+/** Final or partial result produced by a tool. */
 export interface AgentToolResult<T> {
-	// Content blocks supporting text and images
+	/** Text or image content returned to the model. */
 	content: (TextContent | ImageContent)[];
-	// Details to be displayed in a UI or logged
+	/** Arbitrary structured details for logs or UI rendering. */
 	details: T;
 }
 
-// Callback for streaming tool execution updates
+/** Callback used by tools to stream partial execution updates. */
 export type AgentToolUpdateCallback<T = any> = (partialResult: AgentToolResult<T>) => void;
 
-// AgentTool extends Tool but adds argument preparation and execution hooks
+/** Tool definition used by the agent runtime. */
 export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any> extends Tool<TParameters> {
-	// A human-readable label for the tool to be displayed in UI
+	/** Human-readable label for UI display. */
 	label: string;
-	// Optional compatibility shim to prepare raw tool call arguments before schema validation.
-	// Must return an object conforming to TParameters.
+	/**
+	 * Optional compatibility shim for raw tool-call arguments before schema validation.
+	 * Must return an object that matches `TParameters`.
+	 */
 	prepareArguments?: (args: unknown) => Static<TParameters>;
+	/** Execute the tool call. Throw on failure instead of encoding errors in `content`. */
 	execute: (
 		toolCallId: string,
 		params: Static<TParameters>,
@@ -284,16 +306,22 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 	) => Promise<AgentToolResult<TDetails>>;
 }
 
-// AgentContext is like Context but uses AgentTool
+/** Context snapshot passed into the low-level agent loop. */
 export interface AgentContext {
+	/** System prompt included with the request. */
 	systemPrompt: string;
+	/** Transcript visible to the model. */
 	messages: AgentMessage[];
+	/** Tools available for this run. */
 	tools?: AgentTool<any>[];
 }
 
 /**
  * Events emitted by the Agent for UI updates.
- * These events provide fine-grained lifecycle information for messages, turns, and tool executions.
+ *
+ * `agent_end` is the last event emitted for a run, but awaited `Agent.subscribe()`
+ * listeners for that event are still part of run settlement. The agent becomes
+ * idle only after those listeners finish.
  */
 export type AgentEvent =
 	// Agent lifecycle

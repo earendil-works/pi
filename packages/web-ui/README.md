@@ -202,10 +202,10 @@ await agent.prompt({ role: 'user-with-attachments', content: 'Check this', attac
 
 // Control
 agent.abort();
-agent.setModel(newModel);
-agent.setThinkingLevel('medium');
-agent.setTools([...]);
-agent.queueMessage(customMessage);
+agent.state.model = newModel;
+agent.state.thinkingLevel = 'medium';
+agent.state.tools = [...];
+agent.followUp(customMessage);
 ```
 
 ## Message Types
@@ -312,7 +312,7 @@ replTool.runtimeProvidersFactory = () => [
   new ArtifactsRuntimeProvider(artifactsPanel, agent, true), // read-write
 ];
 
-agent.setTools([replTool]);
+agent.state.tools = [replTool];
 ```
 
 ### Extract Document
@@ -325,7 +325,7 @@ import { createExtractDocumentTool } from '@mariozechner/pi-web-ui';
 const extractTool = createExtractDocumentTool();
 extractTool.corsProxyUrl = 'https://corsproxy.io/?';
 
-agent.setTools([extractTool]);
+agent.state.tools = [extractTool];
 ```
 
 ### Artifacts Tool
@@ -337,7 +337,7 @@ const artifactsPanel = new ArtifactsPanel();
 artifactsPanel.agent = agent;
 
 // The tool is available as artifactsPanel.tool
-agent.setTools([artifactsPanel.tool]);
+agent.state.tools = [artifactsPanel.tool];
 ```
 
 ### Custom Tool Renderers
@@ -551,7 +551,7 @@ const success = await ApiKeyPromptDialog.prompt('anthropic');
 import { ModelSelector } from '@mariozechner/pi-web-ui';
 
 ModelSelector.open(currentModel, (selectedModel) => {
-  agent.setModel(selectedModel);
+  agent.state.model = selectedModel;
 });
 ```
 

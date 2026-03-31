@@ -446,7 +446,7 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 	// Load existing messages
 	const loadedSession = sessionManager.buildSessionContext();
 	if (loadedSession.messages.length > 0) {
-		agent.replaceMessages(loadedSession.messages);
+		agent.state.messages = loadedSession.messages;
 		log.logInfo(`[${channelId}] Loaded ${loadedSession.messages.length} messages from context.jsonl`);
 	}
 
@@ -656,7 +656,7 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 			// This picks up any messages synced above
 			const reloadedSession = sessionManager.buildSessionContext();
 			if (reloadedSession.messages.length > 0) {
-				agent.replaceMessages(reloadedSession.messages);
+				agent.state.messages = reloadedSession.messages;
 				log.logInfo(`[${channelId}] Reloaded ${reloadedSession.messages.length} messages from context`);
 			}
 
@@ -672,7 +672,7 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 				ctx.users,
 				skills,
 			);
-			session.agent.setSystemPrompt(systemPrompt);
+			session.agent.state.systemPrompt = systemPrompt;
 
 			// Set up file upload function
 			setUploadFunction(async (filePath: string, title?: string) => {

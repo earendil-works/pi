@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added label timestamps to the session tree with a `Shift+T` toggle in `/tree`, smart date formatting, and timestamp preservation through branching ([#2691](https://github.com/badlogic/pi-mono/pull/2691) by [@w-winter](https://github.com/w-winter))
+
 ## [0.64.0] - 2026-03-29
 
 ### New Features
