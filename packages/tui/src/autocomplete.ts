@@ -332,8 +332,9 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 				return null;
 			}
 
-			const argumentSuggestions = command.getArgumentCompletions(argumentText);
-			if (!argumentSuggestions || argumentSuggestions.length === 0) {
+			const rawSuggestions = command.getArgumentCompletions(argumentText);
+			const argumentSuggestions = rawSuggestions instanceof Promise ? await rawSuggestions : rawSuggestions;
+			if (!Array.isArray(argumentSuggestions) || argumentSuggestions.length === 0) {
 				return null;
 			}
 
