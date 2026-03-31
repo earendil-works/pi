@@ -19,43 +19,46 @@ function replaceTabs(text: string): string {
 }
 
 /**
+ * Split changed segments into edge whitespace and the substantive content so
+ * alignment padding is not highlighted together with changed identifiers.
+ */
+function splitEdgeWhitespace(value: string): { leadingWhitespace: string; core: string; trailingWhitespace: string } {
+	const leadingWhitespace = value.match(/^(\s*)/)?.[1] || "";
+	const trailingWhitespace = value.match(/(\s*)$/)?.[1] || "";
+	const start = leadingWhitespace.length;
+	const end = value.length - trailingWhitespace.length;
+	return {
+		leadingWhitespace,
+		core: value.slice(start, end < start ? start : end),
+		trailingWhitespace,
+	};
+}
+
+function renderChangedSegment(value: string): string {
+	if (!value) return "";
+	const { leadingWhitespace, core, trailingWhitespace } = splitEdgeWhitespace(value);
+	if (!core) {
+		return theme.inverse(value);
+	}
+	return `${leadingWhitespace}${theme.inverse(core)}${trailingWhitespace}`;
+}
+
+/**
  * Compute word-level diff and render with inverse on changed parts.
- * Uses diffWords which groups whitespace with adjacent words for cleaner highlighting.
- * Strips leading whitespace from inverse to avoid highlighting indentation.
+ * Uses diffWordsWithSpace so whitespace-only changes stay visible, while edge
+ * whitespace is still kept outside the inverse highlight.
  */
 function renderIntraLineDiff(oldContent: string, newContent: string): { removedLine: string; addedLine: string } {
-	const wordDiff = Diff.diffWords(oldContent, newContent);
+	const wordDiff = Diff.diffWordsWithSpace(oldContent, newContent);
 
 	let removedLine = "";
 	let addedLine = "";
-	let isFirstRemoved = true;
-	let isFirstAdded = true;
 
 	for (const part of wordDiff) {
 		if (part.removed) {
-			let value = part.value;
-			// Strip leading whitespace from the first removed part
-			if (isFirstRemoved) {
-				const leadingWs = value.match(/^(\s*)/)?.[1] || "";
-				value = value.slice(leadingWs.length);
-				removedLine += leadingWs;
-				isFirstRemoved = false;
-			}
-			if (value) {
-				removedLine += theme.inverse(value);
-			}
+			removedLine += renderChangedSegment(part.value);
 		} else if (part.added) {
-			let value = part.value;
-			// Strip leading whitespace from the first added part
-			if (isFirstAdded) {
-				const leadingWs = value.match(/^(\s*)/)?.[1] || "";
-				value = value.slice(leadingWs.length);
-				addedLine += leadingWs;
-				isFirstAdded = false;
-			}
-			if (value) {
-				addedLine += theme.inverse(value);
-			}
+			addedLine += renderChangedSegment(part.value);
 		} else {
 			removedLine += part.value;
 			addedLine += part.value;
