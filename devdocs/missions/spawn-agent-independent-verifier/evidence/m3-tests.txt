@@ -1,0 +1,15 @@
+
+> @kennyfrc/mu-coding-agent@0.24.147 test
+> vitest --run spawn-agent-verifier-prompts.red.test.ts spawn-agent-verifier-reporting.test.ts
+
+
+ RUN  v3.2.4 /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+
+ ✓ test/spawn-agent-verifier-reporting.test.ts (2 tests) 7ms
+ ✓ test/spawn-agent-verifier-prompts.red.test.ts (3 tests) 15ms
+
+ Test Files  2 passed (2)
+      Tests  5 passed (5)
+   Start at  15:38:05
+   Duration  751ms (transform 331ms, setup 950ms, collect 104ms, tests 22ms, environment 0ms, prepare 107ms)
+

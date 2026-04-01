@@ -1,0 +1,9 @@
+STATUS: PASS
+Findings:
+- Milestone 3’s required gate evidence now exists: `devdocs/missions/spawn-agent-independent-verifier/TASKS.json:75`, `:76`, and `:77` require `m3-tests.txt`, `m3-review.json`, and `m3-verifier.txt`, and all three are present in the workspace, including `devdocs/missions/spawn-agent-independent-verifier/evidence/m3-verifier.txt:1`.
+- The milestone-3 goal is satisfied on the prompt/policy surfaces: `packages/coding-agent/src/prompts/tools.yaml:202`-`:206` documents verifier follow-up, mission-default verification, `verificationChecks`, `missionPath`→`SPEC.md`, and parent-controlled accept/retry/abort; `packages/coding-agent/src/prompts/system.yaml:32` makes verifier support visible in the short tool list; `~/.mu/agent/AGENTS.md:129` matches the spec’s independent read-only worker-first/verifier-second policy.
+- The reporting/operability surface is aligned with that contract: `packages/coding-agent/src/spawned-agents.ts:312`-`:326` renders composite worker/verifier status plus `verification PASS|FAIL` and issues, matching the milestone requirement for legible spawned-agent reporting.
+- The recorded verification evidence is green: `devdocs/missions/spawn-agent-independent-verifier/evidence/m3-tests.txt:2`-`:14` shows both targeted suites passed; `devdocs/missions/spawn-agent-independent-verifier/evidence/m3-review.json` is `PASS`; `devdocs/missions/spawn-agent-independent-verifier/evidence/m3-xtui.txt:1`-`:9` is `PASS` and confirms the visible CLI surface advertises `verify`, `verificationChecks`, mission `SPEC.md`, and parent decision authority.
+- Based on the source-of-truth gate contract and current evidence state, `prompt-policy-acceptance-gate` can now be marked done.
+Blocking issues:
+- none

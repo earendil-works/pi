@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "scopeName": "verifier-implementation-final-ambiguities",
+  "createdAt": "2026-04-01T04:42:39.278Z",
+  "updatedAt": "2026-04-01T04:50:01.967Z",
+  "objectiveHistory": [
+    "Resolve remaining implementation ambiguities",
+    "Get explicit human approval for the independent-verifier architecture before implementation begins"
+  ],
+  "items": [
+    {
+      "id": "spec_discovery",
+      "topic": "Spec Discovery",
+      "question": "How does the verifier locate the correct SPEC.md to check against?",
+      "answer": "Parent passes missionPath, verifier reads SPEC.md from there",
+      "source": "option",
+      "updatedAt": "2026-04-01T04:42:39.278Z"
+    },
+    {
+      "id": "verifier_prompt",
+      "topic": "Verifier Prompt Design",
+      "question": "How is the verifier agent instructed to perform verification?",
+      "answer": "Dedicated verifier prompt. you can look at ~/fun/veda/veda-ts for an example",
+      "source": "custom",
+      "updatedAt": "2026-04-01T04:42:39.278Z"
+    },
+    {
+      "id": "report_structure_detail",
+      "topic": "Report Structure",
+      "question": "What is the exact structure of the verification report?",
+      "answer": "Simple: PASS/FAIL + list of issues",
+      "source": "option",
+      "updatedAt": "2026-04-01T04:42:39.278Z"
+    },
+    {
+      "id": "failure_action",
+      "topic": "Failure Action",
+      "question": "What specific action occurs when verifier finds issues?",
+      "answer": "Return report to parent, parent decides to retry/accept/abort",
+      "source": "option",
+      "updatedAt": "2026-04-01T04:42:39.278Z"
+    },
+    {
+      "id": "verify_flag_default",
+      "topic": "Verification Default",
+      "question": "What is the default value for the verify flag?",
+      "answer": "Default true for missions (opt-out)",
+      "source": "option",
+      "updatedAt": "2026-04-01T04:42:39.278Z"
+    },
+    {
+      "id": "approve_boundaries",
+      "topic": "Boundaries",
+      "question": "Do you approve the proposed boundaries: `spawn_agent` owns verify inputs + worker→verifier orchestration, `spawned-agents.ts` owns reminders/reporting, prompt files own contract text, and `~/.mu/agent/AGENTS.md` owns durable policy?",
+      "answer": "Approve as proposed",
+      "source": "option",
+      "updatedAt": "2026-04-01T04:50:01.967Z"
+    },
+    {
+      "id": "approve_abstractions",
+      "topic": "Abstractions",
+      "question": "Do you approve the v1 abstractions: optional `verify`, optional `verificationChecks`, mission `SPEC.md` discovery from `missionPath`, and a simple verification report of `PASS|FAIL` plus issues?",
+      "answer": "Approve as proposed",
+      "source": "option",
+      "updatedAt": "2026-04-01T04:50:01.967Z"
+    },
+    {
+      "id": "approve_tradeoffs",
+      "topic": "Tradeoffs",
+      "question": "Do you approve the v1 tradeoffs: same model as worker by default, sequential verification, read-only verifier, and parent decides retry/accept/abort after the report?",
+      "answer": "Approve as proposed",
+      "source": "option",
+      "updatedAt": "2026-04-01T04:50:01.967Z"
+    },
+    {
+      "id": "approve_priorities",
+      "topic": "What matters",
+      "question": "Do you approve these priorities: verifier independence, correctness + spec adherence, parent control, prompt/policy/runtime consistency, and mission-level verifier gates?",
+      "answer": "Approve as proposed",
+      "source": "option",
+      "updatedAt": "2026-04-01T04:50:01.967Z"
+    }
+  ],
+  "notes": [
+    "Following up on spec discovery, prompt design, and exact failure handling",
+    "Recommended action: approve the v1 independent-verifier architecture so I can proceed to red tests. Why: the mission source of truth requires human approval before implementation, and the current proposal is already constrained to same-model, sequential worker→verifier flow with parent-controlled PASS/FAIL reporting."
+  ]
+}

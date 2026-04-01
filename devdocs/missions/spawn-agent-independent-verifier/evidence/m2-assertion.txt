@@ -1,0 +1,9 @@
+worker-session-id=b0c7dc0b-1d46-4d30-aa47-5a6825226096
+worker-session-file=/var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-spawn-agent-verifier-assert-8ArTfx/sessions/--Users-kennyfrc-Documents-code-work-pi-mono-kenn-dev--/2026-04-01T05-59-17-539Z_b0c7dc0b-1d46-4d30-aa47-5a6825226096.jsonl
+worker-status=completed
+verifier-session-id=a2e9faa0-b8be-4cd7-96fe-98c3fa4c1d39
+verifier-session-file=/var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-spawn-agent-verifier-assert-8ArTfx/sessions/--Users-kennyfrc-Documents-code-work-pi-mono-kenn-dev--/2026-04-01T05-59-18-099Z_a2e9faa0-b8be-4cd7-96fe-98c3fa4c1d39.jsonl
+verifier-status=completed
+verification-status=PASS
+verification-issues=[]
+assertion=worker/verifier isolation preserved and composite PASS report returned

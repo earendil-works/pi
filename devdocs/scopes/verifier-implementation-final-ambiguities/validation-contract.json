@@ -1,0 +1,62 @@
+{
+  "version": 1,
+  "scopeName": "verifier-implementation-final-ambiguities",
+  "createdAt": "2026-04-01T04:50:01.967Z",
+  "updatedAt": "2026-04-01T04:50:01.967Z",
+  "objectiveHistory": [
+    "Get explicit human approval for the independent-verifier architecture before implementation begins"
+  ],
+  "entries": [
+    {
+      "id": "approve_v1_architecture",
+      "surface": "Mission architecture approval",
+      "commandOrAction": "Approve the current v1 design and proceed to red tests",
+      "expect": "`architecture-approval` can be marked done and I can start `red-verifier-contract-tests` next",
+      "notes": "Fastest path if the current scope and tradeoffs look right"
+    },
+    {
+      "id": "request_edits",
+      "surface": "Mission architecture approval",
+      "commandOrAction": "Approve with specific edits to boundaries/abstractions/tradeoffs/priorities",
+      "expect": "I update the mission docs first, revalidate, then continue",
+      "notes": "Best if you want to tighten the design before any tests are written"
+    }
+  ],
+  "answers": [
+    {
+      "questionId": "approve_boundaries",
+      "topic": "Boundaries",
+      "prompt": "Do you approve the proposed boundaries: `spawn_agent` owns verify inputs + worker→verifier orchestration, `spawned-agents.ts` owns reminders/reporting, prompt files own contract text, and `~/.mu/agent/AGENTS.md` owns durable policy?",
+      "answer": "Approve as proposed",
+      "source": "option",
+      "field": "boundaries"
+    },
+    {
+      "questionId": "approve_abstractions",
+      "topic": "Abstractions",
+      "prompt": "Do you approve the v1 abstractions: optional `verify`, optional `verificationChecks`, mission `SPEC.md` discovery from `missionPath`, and a simple verification report of `PASS|FAIL` plus issues?",
+      "answer": "Approve as proposed",
+      "source": "option",
+      "field": "abstractions"
+    },
+    {
+      "questionId": "approve_tradeoffs",
+      "topic": "Tradeoffs",
+      "prompt": "Do you approve the v1 tradeoffs: same model as worker by default, sequential verification, read-only verifier, and parent decides retry/accept/abort after the report?",
+      "answer": "Approve as proposed",
+      "source": "option",
+      "field": "tradeoffs"
+    },
+    {
+      "questionId": "approve_priorities",
+      "topic": "What matters",
+      "prompt": "Do you approve these priorities: verifier independence, correctness + spec adherence, parent control, prompt/policy/runtime consistency, and mission-level verifier gates?",
+      "answer": "Approve as proposed",
+      "source": "option",
+      "field": "priorities"
+    }
+  ],
+  "notes": [
+    "Recommended action: approve the v1 independent-verifier architecture so I can proceed to red tests. Why: the mission source of truth requires human approval before implementation, and the current proposal is already constrained to same-model, sequential worker→verifier flow with parent-controlled PASS/FAIL reporting."
+  ]
+}

@@ -1,0 +1,8 @@
+STATUS: PASS
+Surface: XTUI snapshot of `bash /tmp/m2-xtui-runtime.sh` saved at `devdocs/missions/spawn-agent-independent-verifier/evidence/m2-xtui-raw.json`.
+Observed: exitCode=0, contains_worker=True, contains_verifier=True, contains_verification_pass=True.
+Visible text:
+- worker=aa68cb0d-2c33-4c71-a191-7219e6595cdf
+- verifier=c665b644-7d97-43c4-a188-12628ac70f12
+- verification=PASS
+Interpretation: the real CLI surface makes the worker/verifier result legible and shows a parent-visible PASS summary instead of hiding verification behind invisible state.

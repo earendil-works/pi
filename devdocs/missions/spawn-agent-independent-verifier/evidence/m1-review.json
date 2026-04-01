@@ -1,0 +1,22 @@
+{
+  "status": "PASS",
+  "summary": "ARCHITECTURE.md and SPEC.md match the approved v1 independent-verifier design and the milestone-1 red harness goals.",
+  "findings": [],
+  "checked": [
+    {
+      "file": "devdocs/missions/spawn-agent-independent-verifier/ARCHITECTURE.md:5",
+      "result": "PASS",
+      "note": "V1 scope is the approved same-model, sequential worker\u2192verifier design with parent-controlled PASS/FAIL reporting."
+    },
+    {
+      "file": "devdocs/missions/spawn-agent-independent-verifier/SPEC.md:27",
+      "result": "PASS",
+      "note": "What Must be True matches the clarified decisions: optional general verification, default-on for missions, missionPath\u2192SPEC.md discovery, and parent-controlled retry/accept/abort."
+    },
+    {
+      "file": "devdocs/missions/spawn-agent-independent-verifier/SPEC.md:123",
+      "result": "PASS",
+      "note": "Red checks are executable and now backed by the contract and prompt red suites."
+    }
+  ]
+}

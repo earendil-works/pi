@@ -1,0 +1,4 @@
+STATUS: PASS
+Surface: XTUI snapshot of `node --import tsx packages/coding-agent/src/cli.ts --help` saved at `devdocs/missions/spawn-agent-independent-verifier/evidence/m1-xtui-raw.json`.
+Observed: contains_spawn_agent=False, contains_verifier_word=False, contains_verify_word=False, contains_verificationChecks=False.
+Interpretation: the current visible CLI/help surface does not yet expose verifier-specific spawn-agent behavior, which matches the intended pre-implementation red baseline rather than an accidental partial feature.

@@ -1,0 +1,7 @@
+STATUS: PASS
+Findings:
+- `devdocs/missions/spawn-agent-independent-verifier/ARCHITECTURE.md:5` and `devdocs/missions/spawn-agent-independent-verifier/SPEC.md:7` match the approved v1 design captured in `devdocs/scopes/verifier-implementation-final-ambiguities/spec-clarifications.json:54`, `:62`, `:70`, `:78`: separate independent verifier, sequential worker→verifier flow, same-model default, `PASS|FAIL` + issues, and parent-controlled decision-making.
+- The milestone-1 contract is coherent: `devdocs/missions/spawn-agent-independent-verifier/MILESTONES.json:6` aligns with the architecture/spec, `devdocs/missions/spawn-agent-independent-verifier/TASKS.json:31` wires the correct gate task, and the harness validator returned `ok: true`.
+- The red harness exists and fails for the expected pre-implementation gaps: tests are present at `packages/coding-agent/test/spawn-agent-verifier-contract.red.test.ts:79` and `packages/coding-agent/test/spawn-agent-verifier-prompts.red.test.ts:43`, and `devdocs/missions/spawn-agent-independent-verifier/evidence/m1-red-tests.txt:25`, `:37`, `:56`, `:78`, `:108`, `:127` shows the expected missing verifier behavior around `verify`/`verificationChecks`, mission-default verification, composite worker+verifier details, `PASS|FAIL` report shape, prompt discoverability, and spawned-agent reporting.
+Blocking issues:
+- none

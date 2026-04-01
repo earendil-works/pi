@@ -1,0 +1,9 @@
+STATUS: PASS
+Surface: XTUI snapshot of `bash /tmp/m3-xtui-surface.sh` saved at `devdocs/missions/spawn-agent-independent-verifier/evidence/m3-xtui-raw.json`.
+Observed: exitCode=0, contains_verify=True, contains_verificationChecks=True, contains_missionSpec=True, contains_parent=True.
+Visible text:
+- verify=Mission startups enable an independent verifier automatically; disable it only by passing verify:false when spawning.
+- verificationChecks=Provide a string array so the verifier scores each requested checklist item and returns PASS|FAIL plus issues.
+- missionSpec=When startup includes missionPath, validate with mission-validator first, then the verifier can read that mission’s SPEC.md.
+- parent=Even with worker+verifier children, the parent agent remains responsible for reviewing their output and deciding accept/retry/abort.
+Interpretation: the real CLI surface reflects the verifier-aware spawn_agent contract consistently with the updated prompt/policy text.

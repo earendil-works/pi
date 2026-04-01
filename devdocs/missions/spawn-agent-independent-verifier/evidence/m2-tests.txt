@@ -1,0 +1,21 @@
+
+> @kennyfrc/mu-coding-agent@0.24.146 test
+> vitest --run spawn-agent-verifier-contract.red.test.ts spawn-agent-verifier-runtime.test.ts
+
+
+ RUN  v3.2.4 /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+
+ ✓ test/spawn-agent-verifier-contract.red.test.ts (3 tests) 2451ms
+   ✓ spawn_agent verifier contract (red) > mission startup defaults verification on and returns composite worker plus verifier details  1251ms
+   ✓ spawn_agent verifier contract (red) > explicit verify plus verificationChecks returns the simple PASS/FAIL report shape promised by the spec  1197ms
+ ✓ test/spawn-agent-verifier-runtime.test.ts (4 tests) 4101ms
+   ✓ spawn_agent verifier runtime > mission startup defaults verification on and returns a completed PASS composite result  1254ms
+   ✓ spawn_agent verifier runtime > mission verification can be explicitly opted out  550ms
+   ✓ spawn_agent verifier runtime > verifier session is created only after the worker has already completed  1184ms
+   ✓ spawn_agent verifier runtime > verification reports FAIL with concrete issues when the worker mission is broken  1113ms
+
+ Test Files  2 passed (2)
+      Tests  7 passed (7)
+   Start at  13:58:51
+   Duration  4.87s (transform 324ms, setup 938ms, collect 164ms, tests 6.55s, environment 0ms, prepare 95ms)
+

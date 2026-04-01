@@ -1,0 +1,130 @@
+{
+  "milestones": [
+    {
+      "id": "contract-and-red-harness",
+      "title": "The verifier contract is specified, approved, and proven red",
+      "goal": "A human-approved mission harness exists, the worker/verifier contract is explicit, and targeted red tests fail for the expected missing verifier behavior.",
+      "taskIds": [
+        "architecture-approval",
+        "red-verifier-contract-tests",
+        "red-prompt-policy-tests",
+        "contract-red-acceptance-gate"
+      ],
+      "gateTaskId": "contract-red-acceptance-gate",
+      "verification": [
+        {
+          "id": "m1-targeted-red-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- spawn-agent-verifier-contract.red.test.ts spawn-agent-verifier-prompts.red.test.ts",
+          "expect": "Targeted verifier contract/prompt suites fail for the expected missing verification behavior before implementation.",
+          "evidence": "devdocs/missions/spawn-agent-independent-verifier/evidence/m1-red-tests.txt"
+        },
+        {
+          "id": "m1-review",
+          "kind": "review",
+          "command": "Review ARCHITECTURE.md and SPEC.md against the requested independent-verifier design and write findings.",
+          "expect": "The review confirms the mission boundaries and verifier contract are correct or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/spawn-agent-independent-verifier/evidence/m1-review.json"
+        },
+        {
+          "id": "m1-independent-verifier",
+          "kind": "review",
+          "command": "Spawn an independent verifier agent to review the mission harness, red-test plan, and spec adherence; save its PASS/FAIL findings.",
+          "expect": "The spawned verifier confirms the mission harness is coherent or returns actionable issues before implementation continues.",
+          "evidence": "devdocs/missions/spawn-agent-independent-verifier/evidence/m1-verifier.txt"
+        },
+        {
+          "id": "m1-xtui-red-surface",
+          "kind": "xtui",
+          "command": "Launch the real CLI in a temp workspace and inspect the current visible surface for spawned-agent behavior; confirm there is not yet a user-visible verifier flow and record that the red state matches the intended pre-implementation baseline.",
+          "expect": "The visible surface confirms the verifier flow is not yet implemented, matching the red-test baseline rather than hiding an accidental partial feature.",
+          "evidence": "devdocs/missions/spawn-agent-independent-verifier/evidence/m1-xtui.txt"
+        }
+      ],
+      "notes": "Do not begin implementation until architecture approval is explicit and the red harness is real, not imagined."
+    },
+    {
+      "id": "worker-verifier-runtime",
+      "title": "spawn_agent can run a worker followed by an independent verifier",
+      "goal": "When verification is requested, the parent can spawn a worker, wait for its result, spawn an independent verifier, and receive a simple PASS/FAIL report with issues.",
+      "taskIds": [
+        "verifier-runtime-implementation",
+        "verifier-runtime-acceptance-gate"
+      ],
+      "gateTaskId": "verifier-runtime-acceptance-gate",
+      "verification": [
+        {
+          "id": "m2-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- spawn-agent-verifier-contract.red.test.ts spawn-agent-verifier-runtime.test.ts",
+          "expect": "Targeted contract/runtime tests pass for verification defaults, sequential orchestration, and PASS/FAIL report shape.",
+          "evidence": "devdocs/missions/spawn-agent-independent-verifier/evidence/m2-tests.txt"
+        },
+        {
+          "id": "m2-assertion",
+          "kind": "assertion",
+          "command": "Inspect spawned child session details and assert the worker and verifier have distinct session ids and the parent retains the worker result plus verifier report.",
+          "expect": "Worker/verifier isolation and parent-visible composite result are both proven.",
+          "evidence": "devdocs/missions/spawn-agent-independent-verifier/evidence/m2-assertion.txt"
+        },
+        {
+          "id": "m2-independent-verifier",
+          "kind": "review",
+          "command": "Spawn an independent verifier agent to check the implementation against SPEC.md, runtime tests, and the milestone goal; save its PASS/FAIL findings.",
+          "expect": "The verifier confirms correctness and spec adherence or reports blocking issues before the gate closes.",
+          "evidence": "devdocs/missions/spawn-agent-independent-verifier/evidence/m2-verifier.txt"
+        },
+        {
+          "id": "m2-xtui-runtime",
+          "kind": "xtui",
+          "command": "In a temp workspace, launch the real CLI and exercise a spawned worker with verification enabled; assert the visible output shows separate worker/verifier progress or results and that the parent receives a verifier PASS/FAIL summary.",
+          "expect": "The visible surface makes the worker/verifier sequence legible rather than hiding verification behind invisible state.",
+          "evidence": "devdocs/missions/spawn-agent-independent-verifier/evidence/m2-xtui.txt"
+        }
+      ],
+      "notes": "The runtime milestone is not green until both the automated checks and the independent verifier agree the slice is correct."
+    },
+    {
+      "id": "prompt-policy-and-operability",
+      "title": "Prompt, policy, and spawned-agent reporting surfaces are aligned with the verifier flow",
+      "goal": "The tool descriptions, short system prompt, spawned-agent reminders/reporting, and `~/.mu/agent/AGENTS.md` all describe and support the verifier flow without drift.",
+      "taskIds": [
+        "prompt-policy-implementation",
+        "prompt-policy-acceptance-gate",
+        "final-check"
+      ],
+      "gateTaskId": "prompt-policy-acceptance-gate",
+      "verification": [
+        {
+          "id": "m3-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- spawn-agent-verifier-prompts.red.test.ts spawn-agent-verifier-reporting.test.ts",
+          "expect": "Prompt/policy/reporting tests pass for tool descriptions, short system descriptions, and spawned-agent reporting surfaces.",
+          "evidence": "devdocs/missions/spawn-agent-independent-verifier/evidence/m3-tests.txt"
+        },
+        {
+          "id": "m3-review",
+          "kind": "review",
+          "command": "Review the final prompt and policy surfaces against SPEC.md and write findings.",
+          "expect": "The review confirms prompt/policy/runtime alignment or reports actionable blocking findings with file references.",
+          "evidence": "devdocs/missions/spawn-agent-independent-verifier/evidence/m3-review.json"
+        },
+        {
+          "id": "m3-independent-verifier",
+          "kind": "review",
+          "command": "Spawn an independent verifier agent to check prompt, policy, and operability alignment against SPEC.md and milestone evidence; save its PASS/FAIL findings.",
+          "expect": "The verifier confirms the final slice is correct and legible to parent agents, or returns issues that must be fixed before closeout.",
+          "evidence": "devdocs/missions/spawn-agent-independent-verifier/evidence/m3-verifier.txt"
+        },
+        {
+          "id": "m3-xtui-surface",
+          "kind": "xtui",
+          "command": "Launch the real CLI in a controlled workspace and inspect the human-visible tool/report surfaces after implementation; verify that spawned-agent verification behavior is described consistently in the user-facing prompt/help/report flow.",
+          "expect": "The visible surface agrees with the prompt and policy text, with no drift between runtime behavior and what the user/parent agent is told.",
+          "evidence": "devdocs/missions/spawn-agent-independent-verifier/evidence/m3-xtui.txt"
+        }
+      ],
+      "notes": "This milestone aligns human-facing contract text with runtime behavior and closes the mission only after final validation is green."
+    }
+  ]
+}

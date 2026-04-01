@@ -1,0 +1,91 @@
+{
+  "tasks": [
+    {
+      "id": "architecture-approval",
+      "title": "Get human approval on the independent-verifier architecture",
+      "status": "done",
+      "validation": [
+        "echo 'ARCHITECTURE.md approved by human before implementation starts'"
+      ],
+      "notes": "Approved by the user via ask_user scope `verifier-implementation-final-ambiguities`: boundaries, abstractions, tradeoffs, and priorities all approved as proposed."
+    },
+    {
+      "id": "red-verifier-contract-tests",
+      "title": "Add failing tests for spawn_agent verification inputs, defaults, and report shape",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing verify inputs, mission defaults, and PASS/FAIL report shape before implementation'"
+      ],
+      "notes": "Implemented in `packages/coding-agent/test/spawn-agent-verifier-contract.red.test.ts`. Confirmed red with `npm test -w @kennyfrc/mu-coding-agent -- spawn-agent-verifier-contract.red.test.ts`; evidence saved at `devdocs/missions/spawn-agent-independent-verifier/evidence/m1-red-tests.txt`."
+    },
+    {
+      "id": "red-prompt-policy-tests",
+      "title": "Add failing tests for prompt text, spec discovery, and spawned-agent reporting",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing prompt/policy text and spawned-agent verifier reporting before implementation'"
+      ],
+      "notes": "Implemented in `packages/coding-agent/test/spawn-agent-verifier-prompts.red.test.ts`. Confirmed red with `npm test -w @kennyfrc/mu-coding-agent -- spawn-agent-verifier-prompts.red.test.ts`; combined milestone red evidence saved at `devdocs/missions/spawn-agent-independent-verifier/evidence/m1-red-tests.txt`."
+    },
+    {
+      "id": "contract-red-acceptance-gate",
+      "title": "Close milestone 1 only after red harness and independent verifier review are recorded",
+      "status": "done",
+      "validation": [
+        "test -f devdocs/missions/spawn-agent-independent-verifier/evidence/m1-red-tests.txt",
+        "test -f devdocs/missions/spawn-agent-independent-verifier/evidence/m1-review.json",
+        "test -f devdocs/missions/spawn-agent-independent-verifier/evidence/m1-verifier.txt"
+      ],
+      "notes": "Milestone 1 is green: red-test evidence at `evidence/m1-red-tests.txt`, direct review at `evidence/m1-review.json`, independent verifier review at `evidence/m1-verifier.txt`, and XTUI red-surface confirmation at `evidence/m1-xtui.txt`."
+    },
+    {
+      "id": "verifier-runtime-implementation",
+      "title": "Implement sequential worker → verifier orchestration in spawn_agent",
+      "status": "done",
+      "validation": [
+        "echo 'Runtime tests pass for worker/verifier sequencing and composite result visibility'"
+      ],
+      "notes": "Implemented in `packages/coding-agent/src/tools/spawn-agent.ts`, `packages/coding-agent/src/main.ts`, `packages/coding-agent/src/spawn-agent-verification.ts`, and `packages/coding-agent/src/spawned-agents.ts`. Added runtime coverage in `packages/coding-agent/test/spawn-agent-verifier-runtime.test.ts`; automated evidence is recorded at `evidence/m2-tests.txt` and `evidence/m2-assertion.txt`."
+    },
+    {
+      "id": "verifier-runtime-acceptance-gate",
+      "title": "Close milestone 2 only after runtime checks and independent verifier review are green",
+      "status": "done",
+      "validation": [
+        "test -f devdocs/missions/spawn-agent-independent-verifier/evidence/m2-tests.txt",
+        "test -f devdocs/missions/spawn-agent-independent-verifier/evidence/m2-assertion.txt",
+        "test -f devdocs/missions/spawn-agent-independent-verifier/evidence/m2-verifier.txt"
+      ],
+      "notes": "Milestone 2 is green: targeted runtime evidence is saved at `evidence/m2-tests.txt`, worker/verifier isolation evidence is saved at `evidence/m2-assertion.txt`, independent verifier PASS findings are saved at `evidence/m2-verifier.txt`, and XTUI runtime surface evidence is saved at `evidence/m2-xtui.txt` / `evidence/m2-xtui-raw.json`."
+    },
+    {
+      "id": "prompt-policy-implementation",
+      "title": "Update tool descriptions, policy docs, and spawned-agent reporting for verifier support",
+      "status": "done",
+      "validation": [
+        "echo 'Prompt, policy, and reporting tests pass for verifier-aware surfaces'"
+      ],
+      "notes": "Updated `packages/coding-agent/src/prompts/tools.yaml`, `packages/coding-agent/src/prompts/system.yaml`, `packages/coding-agent/src/spawned-agents.ts`, and `~/.mu/agent/AGENTS.md` to describe verifier-aware spawn-agent behavior. Verified with `npm test -w @kennyfrc/mu-coding-agent -- spawn-agent-verifier-prompts.red.test.ts`."
+    },
+    {
+      "id": "prompt-policy-acceptance-gate",
+      "title": "Close milestone 3 only after prompt/policy alignment and independent verifier review are green",
+      "status": "done",
+      "validation": [
+        "test -f devdocs/missions/spawn-agent-independent-verifier/evidence/m3-tests.txt",
+        "test -f devdocs/missions/spawn-agent-independent-verifier/evidence/m3-review.json",
+        "test -f devdocs/missions/spawn-agent-independent-verifier/evidence/m3-verifier.txt"
+      ],
+      "notes": "Milestone 3 is green: targeted prompt/reporting evidence is saved at `evidence/m3-tests.txt`, direct review PASS findings are saved at `evidence/m3-review.json`, independent verifier PASS findings are saved at `evidence/m3-verifier.txt`, and XTUI surface evidence is saved at `evidence/m3-xtui.txt` / `evidence/m3-xtui-raw.json`."
+    },
+    {
+      "id": "final-check",
+      "title": "Run npm run check and mark the mission complete",
+      "status": "done",
+      "validation": [
+        "npm run check"
+      ],
+      "notes": "Ran `npm run check` after milestone 3 closed. The repo check passed; remaining output is the existing non-blocking biome info about `packages/ai/src/providers/openai-completions.*` useless switch cases."
+    }
+  ]
+}

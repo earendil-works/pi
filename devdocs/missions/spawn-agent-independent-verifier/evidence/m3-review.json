@@ -1,0 +1,32 @@
+{
+  "status": "PASS",
+  "summary": "Prompt, policy, and spawned-agent reporting surfaces now describe verifier-aware spawn_agent behavior consistently with the runtime slice.",
+  "findings": [],
+  "checked": [
+    {
+      "file": "packages/coding-agent/src/prompts/tools.yaml:195",
+      "result": "PASS",
+      "note": "The full spawn_agent tool description now documents independent verifier follow-up, mission-default verification, verificationChecks, missionPath-to-SPEC.md discovery, PASS|FAIL report shape, and parent-controlled retry/accept/abort behavior."
+    },
+    {
+      "file": "packages/coding-agent/src/prompts/system.yaml:32",
+      "result": "PASS",
+      "note": "The short available-tools description makes verifier support discoverable in the system prompt instead of describing spawn_agent as plain delegation only."
+    },
+    {
+      "file": "packages/coding-agent/src/spawned-agents.ts:312",
+      "result": "PASS",
+      "note": "Spawned-agent reports render composite worker/verifier results with verification status/issues, matching the runtime composite details instead of dropping verifier-aware information."
+    },
+    {
+      "file": "/Users/kennyfrc/.mu/agent/AGENTS.md:129",
+      "result": "PASS",
+      "note": "Global policy now states that spawn_agent verification is an independent read-only worker-first/verifier-second review and keeps the parent responsible for accept/retry/abort decisions."
+    },
+    {
+      "file": "devdocs/missions/spawn-agent-independent-verifier/evidence/m3-tests.txt",
+      "result": "PASS",
+      "note": "Targeted prompt/reporting suites pass for the verifier-aware tool description, short system description, and reporting surfaces."
+    }
+  ]
+}

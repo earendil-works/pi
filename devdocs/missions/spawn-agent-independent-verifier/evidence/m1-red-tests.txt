@@ -1,0 +1,160 @@
+
+> @kennyfrc/mu-coding-agent@0.24.146 test
+> vitest --run spawn-agent-verifier-contract.red.test.ts spawn-agent-verifier-prompts.red.test.ts
+
+
+ RUN  v3.2.4 /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+
+ ❯ test/spawn-agent-verifier-prompts.red.test.ts (3 tests | 3 failed) 20ms
+   × spawn_agent verifier prompt and reporting contract (red) > full spawn_agent tool description teaches independent verifier flow, verificationChecks, and SPEC discovery from missionPath 10ms
+     → expected 'Spawn a child mu agent to handle a bo…' to match /independent verifier|independent ver…/i
+   × spawn_agent verifier prompt and reporting contract (red) > short system prompt description makes verifier support discoverable in the available-tools list 5ms
+     → expected 'Delegate a bounded task to a spawned …' to match /verify|verification|verifier/i
+   × spawn_agent verifier prompt and reporting contract (red) > spawned-agent reporting can render composite worker plus verifier results instead of dropping verifier-aware details 5ms
+     → expected 'Spawned Agents\n\nNo spawned child ag…' to contain 'worker-session-id'
+ ❯ test/spawn-agent-verifier-contract.red.test.ts (3 tests | 3 failed) 1003ms
+   × spawn_agent verifier contract (red) > registers verifier-facing inputs for verify and verificationChecks 5ms
+     → expected { message: { …(2), …(2) }, …(3) } to have property "verify"
+   × spawn_agent verifier contract (red) > mission startup defaults verification on and returns composite worker plus verifier details 503ms
+     → expected undefined to be truthy
+   × spawn_agent verifier contract (red) > explicit verify plus verificationChecks returns the simple PASS/FAIL report shape promised by the spec 495ms
+     → expected undefined to deeply equal ObjectContaining{…}
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/spawn-agent-verifier-contract.red.test.ts > spawn_agent verifier contract (red) > registers verifier-facing inputs for verify and verificationChecks
+AssertionError: expected { message: { …(2), …(2) }, …(3) } to have property "verify"
+ ❯ test/spawn-agent-verifier-contract.red.test.ts:87:22
+     85| 
+     86|   const properties = (spawnAgentTool.parameters as { properties?: Reco…
+     87|   expect(properties).toHaveProperty("verify");
+       |                      ^
+     88|   expect(properties).toHaveProperty("verificationChecks");
+     89| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  test/spawn-agent-verifier-contract.red.test.ts > spawn_agent verifier contract (red) > mission startup defaults verification on and returns composite worker plus verifier details
+AssertionError: expected undefined to be truthy
+
+[32m- Expected:[39m 
+true
+
+[31m+ Received:[39m 
+undefined
+
+ ❯ test/spawn-agent-verifier-contract.red.test.ts:118:46
+    116| 
+    117|    expect(result.isError).not.toBe(true);
+    118|    expect(result.details?.worker?.sessionId).toBeTruthy();
+       |                                              ^
+    119|    expect(result.details?.worker?.sessionFile).toBeTruthy();
+    120|    expect(result.details?.verificationReport?.status).toMatch(/PASS|FA…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  test/spawn-agent-verifier-contract.red.test.ts > spawn_agent verifier contract (red) > explicit verify plus verificationChecks returns the simple PASS/FAIL report shape promised by the spec
+AssertionError: expected undefined to deeply equal ObjectContaining{…}
+
+[32m- Expected:[39m 
+ObjectContaining {
+  "issues": Any<Array>,
+  "status": StringMatching /PASS|FAIL/,
+}
+
+[31m+ Received:[39m 
+undefined
+
+ ❯ test/spawn-agent-verifier-contract.red.test.ts:153:47
+    151| 
+    152|    expect(result.isError).not.toBe(true);
+    153|    expect(result.details?.verificationReport).toEqual(
+       |                                               ^
+    154|     expect.objectContaining({
+    155|      status: expect.stringMatching(/PASS|FAIL/),
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  test/spawn-agent-verifier-prompts.red.test.ts > spawn_agent verifier prompt and reporting contract (red) > full spawn_agent tool description teaches independent verifier flow, verificationChecks, and SPEC discovery from missionPath
+AssertionError: expected 'Spawn a child mu agent to handle a bo…' to match /independent verifier|independent ver…/i
+
+[32m- Expected:[39m 
+/independent verifier|independent verification/i
+
+[31m+ Received:[39m 
+"Spawn a child mu agent to handle a bounded task and return a child session handle immediately.
+
+Important:
+- Do NOT use `spawn_agent` unless the user explicitly asks you to delegate, parallelize, or use a spawned/sub agent.
+- After spawning the child you should usually call `wait_agent` to collect its final response before relying on its work.
+- If you spawn multiple children and need all of them, prefer waiting on them in parallel with one `wait_agent` call over the full set of ids.
+
+Parameters:
+- message: Task for the spawned agent (optional when startup is provided)
+- startup: Optional startup directive for the child. Supports `{ type: \"mission\", missionPath: \"...\" }` so the child starts by running a mission instead of waiting for a freeform prompt.
+- model: Optional exact model override in `provider/modelId` form
+- reasoning: Optional reasoning level override: `inherit`, `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`"
+
+ ❯ test/spawn-agent-verifier-prompts.red.test.ts:46:23
+     44|   const description = getToolDescription("spawn_agent");
+     45| 
+     46|   expect(description).toMatch(/independent verifier|independent verifi…
+       |                       ^
+     47|   expect(description).toMatch(/verify/i);
+     48|   expect(description).toMatch(/verificationChecks/i);
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+ FAIL  test/spawn-agent-verifier-prompts.red.test.ts > spawn_agent verifier prompt and reporting contract (red) > short system prompt description makes verifier support discoverable in the available-tools list
+AssertionError: expected 'Delegate a bounded task to a spawned …' to match /verify|verification|verifier/i
+
+[32m- Expected:[39m 
+/verify|verification|verifier/i
+
+[31m+ Received:[39m 
+"Delegate a bounded task to a spawned child agent only when the user explicitly asks for delegation"
+
+ ❯ test/spawn-agent-verifier-prompts.red.test.ts:57:36
+     55|  test("short system prompt description makes verifier support discover…
+     56|   const descriptions = getToolDescriptions();
+     57|   expect(descriptions.spawn_agent).toMatch(/verify|verification|verifi…
+       |                                    ^
+     58|  });
+     59| 
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/6]⎯
+
+ FAIL  test/spawn-agent-verifier-prompts.red.test.ts > spawn_agent verifier prompt and reporting contract (red) > spawned-agent reporting can render composite worker plus verifier results instead of dropping verifier-aware details
+AssertionError: expected 'Spawned Agents\n\nNo spawned child ag…' to contain 'worker-session-id'
+
+[32m- Expected[39m
+[31m+ Received[39m
+
+[32m- [7mworker-[27msession[7m-id[27m[39m
+[31m+ Spawned Agents[39m
+[31m+[39m
+[31m+ [7mNo spawned child agents in this [27msession[7m.[27m[39m
+
+ ❯ test/spawn-agent-verifier-prompts.red.test.ts:89:18
+     87| 
+     88|   const report = formatSpawnedAgentsReport(parent.getSessionFile());
+     89|   expect(report).toContain("worker-session-id");
+       |                  ^
+     90|   expect(report).toContain("verifier-session-id");
+     91|   expect(report).toContain("FAIL");
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[6/6]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  6 failed (6)
+   Start at  12:53:53
+   Duration  1.73s (transform 311ms, setup 926ms, collect 133ms, tests 1.02s, environment 0ms, prepare 113ms)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+npm error workspace @kennyfrc/mu-coding-agent@0.24.146
+npm error location /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+npm error command failed
+npm error command sh -c vitest --run spawn-agent-verifier-contract.red.test.ts spawn-agent-verifier-prompts.red.test.ts
