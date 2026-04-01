@@ -20,6 +20,11 @@ import { buildSystemPrompt as buildSystemPromptFromYaml } from "./prompts/index.
 import { setCurrentModel, setCurrentThinkingLevel } from "./runtime-state.js";
 import { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
+import {
+	formatSpawnAgentVerificationReport,
+	runDeterministicSpawnAgentVerification,
+	type SpawnAgentVerificationRunRequest,
+} from "./spawn-agent-verification.js";
 import { createSpawnedAgentsReminderPreprocessor } from "./spawned-agents.js";
 import { initThemeWithGhostty } from "./theme/theme.js";
 import { createTodoReminderPreprocessor } from "./todo-reminder.js";
@@ -929,6 +934,9 @@ async function runRpcMode(agent: Agent, sessionManager: SessionManager): Promise
 				message?: unknown;
 				attachments?: Attachment[];
 				missionPath?: unknown;
+				workerSessionId?: unknown;
+				workerSessionFile?: unknown;
+				verificationChecks?: unknown;
 			};
 
 			// Handle different RPC commands
@@ -962,6 +970,44 @@ async function runRpcMode(agent: Agent, sessionManager: SessionManager): Promise
 					process.exit(1);
 				} finally {
 					missionAbortController = null;
+				}
+			} else if (
+				input.type === "verification_run" &&
+				typeof input.workerSessionId === "string" &&
+				typeof input.workerSessionFile === "string"
+			) {
+				if (!agent.state.model) {
+					throw new Error("No model selected for verification_run");
+				}
+
+				const verificationChecks = Array.isArray(input.verificationChecks)
+					? input.verificationChecks.filter((value): value is string => typeof value === "string")
+					: undefined;
+
+				const request: SpawnAgentVerificationRunRequest = {
+					workerSessionId: input.workerSessionId,
+					workerSessionFile: input.workerSessionFile,
+					missionPath: typeof input.missionPath === "string" ? input.missionPath : undefined,
+					verificationChecks,
+				};
+
+				try {
+					const report = runDeterministicSpawnAgentVerification(request);
+					const text = formatSpawnAgentVerificationReport(report);
+					sessionManager.saveMessage(buildRpcMissionAssistantMessage(agent.state.model, text, "stop"));
+					console.log(JSON.stringify({ type: "verification_run_end", ...report }));
+					process.exit(0);
+				} catch (error: unknown) {
+					const message = error instanceof Error ? error.message : String(error);
+					sessionManager.saveMessage(buildRpcMissionAssistantMessage(agent.state.model, message, "error"));
+					console.log(
+						JSON.stringify({
+							type: "verification_run_end",
+							status: "error",
+							error: message,
+						}),
+					);
+					process.exit(1);
 				}
 			} else if (input.type === "abort") {
 				missionAbortController?.abort();

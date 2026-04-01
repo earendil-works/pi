@@ -3,17 +3,22 @@ import type { AssistantMessage, Message } from "@kennyfrc/mu-ai";
 import { SessionManager } from "./session-manager.js";
 import { loadThreadMessagesFromSessionFile } from "./tools/read-thread-session.js";
 
-export type SpawnedAgentStatus = "running" | "completed" | "error" | "aborted" | "not_found";
+export type SpawnedAgentStatus = "running" | "completed" | "error" | "aborted" | "not_found" | "timed_out";
+
+type SpawnedAgentRole = "child" | "worker" | "verifier";
 
 export interface SpawnedAgentSummary {
 	sessionId: string;
 	sessionFile: string;
 	effectiveModel: string;
 	effectiveReasoning: string;
+	role: SpawnedAgentRole;
 	waited: boolean;
 	status: SpawnedAgentStatus;
 	stopReason?: string;
 	text?: string;
+	verificationStatus?: "PASS" | "FAIL";
+	verificationIssues?: string[];
 }
 
 interface SpawnAgentDetailsLike {
@@ -30,6 +35,25 @@ interface WaitAgentResultLike {
 	text?: string;
 }
 
+interface SpawnAgentTerminalResultLike {
+	status: SpawnedAgentStatus;
+	stopReason?: string;
+	text?: string;
+}
+
+interface SpawnAgentVerificationReportLike {
+	status: "PASS" | "FAIL";
+	issues: string[];
+}
+
+interface SpawnAgentCompositeDetailsLike {
+	worker?: SpawnAgentDetailsLike;
+	workerResult?: SpawnAgentTerminalResultLike;
+	verifier?: SpawnAgentDetailsLike;
+	verifierResult?: SpawnAgentTerminalResultLike;
+	verificationReport?: SpawnAgentVerificationReportLike;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
@@ -39,6 +63,17 @@ function isToolResultMessage(message: Message): message is Message & { toolName:
 		message.role === "toolResult" &&
 		isRecord(message) &&
 		typeof (message as { toolName?: unknown }).toolName === "string"
+	);
+}
+
+function isSpawnedAgentStatus(value: unknown): value is SpawnedAgentStatus {
+	return (
+		value === "running" ||
+		value === "completed" ||
+		value === "error" ||
+		value === "aborted" ||
+		value === "not_found" ||
+		value === "timed_out"
 	);
 }
 
@@ -71,6 +106,43 @@ function readWaitAgentResults(details: unknown): WaitAgentResultLike[] {
 		});
 	}
 	return results;
+}
+
+function readSpawnAgentTerminalResult(details: unknown): SpawnAgentTerminalResultLike | null {
+	if (!isRecord(details)) return null;
+	if (!isSpawnedAgentStatus(details.status)) return null;
+	return {
+		status: details.status,
+		stopReason: typeof details.stopReason === "string" ? details.stopReason : undefined,
+		text: typeof details.text === "string" ? details.text : undefined,
+	};
+}
+
+function readSpawnAgentVerificationReport(details: unknown): SpawnAgentVerificationReportLike | null {
+	if (!isRecord(details)) return null;
+	if (details.status !== "PASS" && details.status !== "FAIL") return null;
+	if (!Array.isArray(details.issues) || details.issues.some((issue) => typeof issue !== "string")) return null;
+	return {
+		status: details.status,
+		issues: details.issues,
+	};
+}
+
+function readSpawnAgentCompositeDetails(details: unknown): SpawnAgentCompositeDetailsLike | null {
+	if (!isRecord(details)) return null;
+	const worker = readSpawnAgentDetails(details.worker);
+	const verifier = readSpawnAgentDetails(details.verifier);
+	const workerResult = readSpawnAgentTerminalResult(details.workerResult);
+	const verifierResult = readSpawnAgentTerminalResult(details.verifierResult);
+	const verificationReport = readSpawnAgentVerificationReport(details.verificationReport);
+	if (!worker && !verifier) return null;
+	return {
+		worker: worker ?? undefined,
+		workerResult: workerResult ?? undefined,
+		verifier: verifier ?? undefined,
+		verifierResult: verifierResult ?? undefined,
+		verificationReport: verificationReport ?? undefined,
+	};
 }
 
 function getFinalAssistantMessage(sessionPath: string): AssistantMessage | null {
@@ -118,6 +190,46 @@ function resolveSessionPath(sessionId: string, preferredPath: string): string {
 	return manager.findSessionByUuidGlobal(sessionId) ?? preferredPath;
 }
 
+function buildSpawnedAgentSummary(
+	details: SpawnAgentDetailsLike,
+	role: SpawnedAgentRole,
+	waitedBySessionId: Map<string, WaitAgentResultLike>,
+	terminalResult?: SpawnAgentTerminalResultLike,
+	verificationReport?: SpawnAgentVerificationReportLike,
+): SpawnedAgentSummary {
+	const waited = waitedBySessionId.get(details.sessionId);
+	const sessionPath = resolveSessionPath(details.sessionId, details.sessionFile);
+	const derived = deriveStatus(sessionPath);
+	if (terminalResult) {
+		return {
+			sessionId: details.sessionId,
+			sessionFile: sessionPath,
+			effectiveModel: details.effectiveModel,
+			effectiveReasoning: details.effectiveReasoning,
+			role,
+			waited: true,
+			status: terminalResult.status,
+			stopReason: terminalResult.stopReason,
+			text: terminalResult.text,
+			verificationStatus: verificationReport?.status,
+			verificationIssues: verificationReport?.issues,
+		};
+	}
+	return {
+		sessionId: details.sessionId,
+		sessionFile: sessionPath,
+		effectiveModel: details.effectiveModel,
+		effectiveReasoning: details.effectiveReasoning,
+		role,
+		waited: Boolean(waited),
+		status: waited ? (waited.status === "completed" ? "completed" : derived.status) : derived.status,
+		stopReason: waited?.stopReason ?? derived.stopReason,
+		text: waited?.text ?? derived.text,
+		verificationStatus: verificationReport?.status,
+		verificationIssues: verificationReport?.issues,
+	};
+}
+
 export function resolveSpawnedAgentSessionPath(sessionId: string, preferredPath?: string): string | null {
 	const candidate = resolveSessionPath(sessionId, preferredPath ?? "");
 	return candidate && existsSync(candidate) ? candidate : null;
@@ -160,21 +272,29 @@ export function collectSpawnedAgentsFromParentSession(parentSessionFile: string)
 	for (const message of messages) {
 		if (!isToolResultMessage(message)) continue;
 		if (message.toolName !== "spawn_agent") continue;
+		const composite = readSpawnAgentCompositeDetails(message.details);
+		if (composite) {
+			if (composite.worker) {
+				summaries.push(
+					buildSpawnedAgentSummary(composite.worker, "worker", waitedBySessionId, composite.workerResult),
+				);
+			}
+			if (composite.verifier) {
+				summaries.push(
+					buildSpawnedAgentSummary(
+						composite.verifier,
+						"verifier",
+						waitedBySessionId,
+						composite.verifierResult,
+						composite.verificationReport,
+					),
+				);
+			}
+			continue;
+		}
 		const details = readSpawnAgentDetails(message.details);
 		if (!details) continue;
-		const waited = waitedBySessionId.get(details.sessionId);
-		const sessionPath = resolveSessionPath(details.sessionId, details.sessionFile);
-		const derived = deriveStatus(sessionPath);
-		summaries.push({
-			sessionId: details.sessionId,
-			sessionFile: sessionPath,
-			effectiveModel: details.effectiveModel,
-			effectiveReasoning: details.effectiveReasoning,
-			waited: Boolean(waited),
-			status: waited ? (waited.status === "completed" ? "completed" : derived.status) : derived.status,
-			stopReason: waited?.stopReason ?? derived.stopReason,
-			text: waited?.text ?? derived.text,
-		});
+		summaries.push(buildSpawnedAgentSummary(details, "child", waitedBySessionId));
 	}
 
 	return summaries;
@@ -196,9 +316,15 @@ export function formatSpawnedAgentsReport(parentSessionFile: string): string {
 	}
 	const lines = ["Spawned Agents", ""];
 	for (const summary of summaries) {
-		lines.push(`${summary.sessionId} ${summary.status} ${summary.waited ? "waited" : "unwaited"}`);
+		const rolePrefix = summary.role === "child" ? "" : `${summary.role} `;
+		lines.push(`${rolePrefix}${summary.sessionId} ${summary.status} ${summary.waited ? "waited" : "unwaited"}`);
 		lines.push(`${summary.effectiveModel} • ${summary.effectiveReasoning}`);
-		if (summary.text) {
+		if (summary.verificationStatus) {
+			lines.push(`verification ${summary.verificationStatus}`);
+			for (const issue of summary.verificationIssues ?? []) {
+				lines.push(`- ${issue}`);
+			}
+		} else if (summary.text) {
 			lines.push(summary.text);
 		}
 		lines.push("");
