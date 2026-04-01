@@ -8,7 +8,7 @@ import { existsSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
 import { dirname, extname, join, resolve } from "path";
 import { fileURLToPath } from "url";
-
+import { runAlwaysOnCommand } from "./always-on/cli.js";
 import { exportFromFile } from "./export-html.js";
 import { builtInExtensions } from "./extensions/built-ins.js";
 import { ExtensionLoader } from "./extensions/loader.js";
@@ -326,6 +326,11 @@ ${chalk.bold("Options:")}
 ${chalk.bold("Examples:")}
   # Interactive mode
   mu
+
+  # Always-on agent registry
+  mu always-on create --workspace . --provider openai-codex --model gpt-5.4 --thinking medium
+  mu always-on agents
+  mu always-on status
 
   # Interactive mode with initial prompt
   mu "List all .ts files in src/"
@@ -973,6 +978,17 @@ async function runRpcMode(agent: Agent, sessionManager: SessionManager): Promise
 }
 
 export async function main(args: string[]) {
+	if (args[0] === "always-on") {
+		try {
+			await runAlwaysOnCommand(args.slice(1));
+			return;
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			console.error(chalk.red(message));
+			process.exit(1);
+		}
+	}
+
 	const parsed = parseArgs(args);
 
 	if (parsed.version) {
