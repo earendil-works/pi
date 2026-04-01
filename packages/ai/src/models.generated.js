@@ -3497,11 +3497,11 @@ export const MODELS = {
 			cost: {
 				input: 0.12,
 				output: 1,
-				cacheRead: 0.09999999999999999,
+				cacheRead: 0.06,
 				cacheWrite: 0,
 			},
 			contextWindow: 196608,
-			maxTokens: 196608,
+			maxTokens: 65536,
 		},
 		"z-ai/glm-5": {
 			id: "z-ai/glm-5",
