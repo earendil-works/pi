@@ -195,6 +195,7 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 		prompt_cache_key: cacheRetention === "none" ? undefined : options?.sessionId,
 		prompt_cache_retention: getPromptCacheRetention(model.baseUrl, cacheRetention),
 		store: false,
+		...(options?.previousResponseId ? { previous_response_id: options.previousResponseId } : {}),
 	};
 
 	if (options?.maxTokens) {

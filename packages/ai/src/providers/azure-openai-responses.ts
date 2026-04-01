@@ -218,6 +218,7 @@ function buildParams(
 		input: messages,
 		stream: true,
 		prompt_cache_key: options?.sessionId,
+		...(options?.previousResponseId ? { previous_response_id: options.previousResponseId } : {}),
 	};
 
 	if (options?.maxTokens) {

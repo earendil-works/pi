@@ -75,6 +75,7 @@ interface RequestBody {
 	text?: { verbosity?: string };
 	include?: string[];
 	prompt_cache_key?: string;
+	previous_response_id?: string;
 	[key: string]: unknown;
 }
 
@@ -313,6 +314,7 @@ function buildRequestBody(
 		prompt_cache_key: options?.sessionId,
 		tool_choice: "auto",
 		parallel_tool_calls: true,
+		...(options?.previousResponseId ? { previous_response_id: options.previousResponseId } : {}),
 	};
 
 	if (options?.temperature !== undefined) {

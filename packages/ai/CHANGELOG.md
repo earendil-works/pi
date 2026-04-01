@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `previousResponseId` to `StreamOptions` and wired it as `previous_response_id` in the OpenAI Responses, Azure OpenAI Responses, and OpenAI Codex Responses providers. When set, OpenAI reuses cached reasoning tokens from the prior turn, improving model intelligence (especially across tool-call round-trips), reducing token cost, and improving latency via higher cache utilisation.
+
 ## [0.58.4] - 2026-03-16
 
 ## [0.58.3] - 2026-03-15
