@@ -36,11 +36,25 @@ const XHIGH_MODELS = new Set([
 	"gpt-5.3-codex-spark",
 	"gpt-5.4",
 ]);
+
 /**
  * Check if a model supports xhigh thinking level.
- * Currently only certain OpenAI models support this.
+ * Includes OpenAI GPT-5.x models and Anthropic Opus 4.6 / Sonnet 4.6.
  */
 export function supportsXhigh(model) {
-	return XHIGH_MODELS.has(model.id);
+	// OpenAI models that support xhigh
+	if (XHIGH_MODELS.has(model.id)) {
+		return true;
+	}
+	// Anthropic models with adaptive thinking support xhigh (maps to max effort)
+	if (model.provider === "anthropic") {
+		return (
+			model.id.includes("opus-4-6") ||
+			model.id.includes("opus-4.6") ||
+			model.id.includes("sonnet-4-6") ||
+			model.id.includes("sonnet-4.6")
+		);
+	}
+	return false;
 }
 //# sourceMappingURL=models.js.map
