@@ -322,7 +322,12 @@ function mapReasoningToAnthropicEffort(reasoning: ReasoningEffort, modelId: stri
 		case "high":
 			return "high";
 		case "xhigh":
-			return modelId.includes("opus-4-6") || modelId.includes("opus-4.6") ? "max" : "high";
+			return modelId.includes("opus-4-6") ||
+				modelId.includes("opus-4.6") ||
+				modelId.includes("sonnet-4-6") ||
+				modelId.includes("sonnet-4.6")
+				? "max"
+				: "high";
 	}
 }
 

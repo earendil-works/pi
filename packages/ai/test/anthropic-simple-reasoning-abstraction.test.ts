@@ -130,11 +130,11 @@ describe("anthropic simple reasoning abstraction", () => {
 		expect(captured.body).not.toHaveProperty("thinking.budget_tokens");
 	});
 
-	it("maps xhigh to adaptive high effort for Claude Sonnet 4.6", async () => {
+	it("maps xhigh to adaptive max effort for Claude Sonnet 4.6", async () => {
 		const captured = await captureAnthropicRequest(getAnthropicModel("claude-sonnet-4-6"), "xhigh");
 
 		expect(captured.body.thinking).toEqual({ type: "adaptive" });
-		expect(captured.body.output_config).toEqual({ effort: "high" });
+		expect(captured.body.output_config).toEqual({ effort: "max" });
 		expect(captured.body).not.toHaveProperty("thinking.budget_tokens");
 	});
 
