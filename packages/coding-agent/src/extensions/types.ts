@@ -1,3 +1,4 @@
+import type { ThinkingLevel } from "@kennyfrc/mu-agent-core";
 import type { AgentTool, Message, ToolResultMessage } from "@kennyfrc/mu-ai";
 import type { AutocompleteItem } from "@kennyfrc/mu-tui";
 import type { TSchema } from "@sinclair/typebox";
@@ -102,6 +103,8 @@ export interface ExtensionCommandContext {
 	send(text: string, options?: { kind?: ExtensionCommandQueueKind }): Promise<void>;
 	/** Print a line into the chat transcript. */
 	print(text: string, options?: { color?: ExtensionCommandPrintColor }): void;
+	/** Switch the active model before continuing command execution. */
+	setModel(selection: { provider: string; model: string; reasoningLevel?: ThinkingLevel }): Promise<void>;
 }
 
 export interface ExtensionCommand {

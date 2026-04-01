@@ -95,6 +95,12 @@ import { PromptHistoryManager } from "../prompt-history-manager.js";
 import { getAutoHandoffGoalPrompt, getHandoffNudgeReminder } from "../prompts/index.js";
 import type { SessionManager } from "../session-manager.js";
 import type { SettingsManager } from "../settings-manager.js";
+import {
+	applySlashCommandModelSelection,
+	type FileSlashCommand,
+	loadSlashCommands,
+	resolveSlashCommandInput,
+} from "../slash-commands.js";
 import { formatSpawnedAgentsReport } from "../spawned-agents.js";
 import {
 	consumeJsonlChunk,
@@ -798,7 +804,43 @@ export class TuiRenderer {
 				}),
 			);
 
-		return [...this.builtInSlashCommands, ...extensionCommands];
+		const reservedNames = new Set([...builtInNames, ...extensionCommands.map((command) => command.name)]);
+		const fileCommands = loadSlashCommands()
+			.filter((command) => !reservedNames.has(command.name))
+			.map(
+				(command): SlashCommand => ({
+					name: command.name,
+					description: command.description,
+				}),
+			);
+
+		return [...this.builtInSlashCommands, ...extensionCommands, ...fileCommands];
+	}
+
+	private async applyFileSlashCommandModelSelection(command: FileSlashCommand): Promise<void> {
+		const result = await applySlashCommandModelSelection({
+			command,
+			agent: this.agent,
+			sessionManager: this.sessionManager,
+			settingsManager: this.settingsManager,
+			onModelChanged: async (model) => {
+				if (model.provider === "anthropic") {
+					void this.refreshAnthropicUsageLimits({ clearBeforeFetch: true });
+				}
+				this.rebuildBuiltInSlashCommands();
+				this.refreshAutocompleteProvider();
+				await this.updateToolsForModel(model);
+			},
+			onThinkingLevelChanged: () => {
+				this.updateEditorBorderColor();
+			},
+		});
+
+		if (result.applied && result.message) {
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(theme.fg("dim", result.message), 1, 0));
+			this.ui.requestRender();
+		}
 	}
 
 	async init(): Promise<void> {
@@ -3962,6 +4004,17 @@ export class TuiRenderer {
 			return;
 		}
 
+		const resolvedFileSlashCommand = resolveSlashCommandInput(rawText, loadSlashCommands());
+		if (resolvedFileSlashCommand) {
+			await this.applyFileSlashCommandModelSelection(resolvedFileSlashCommand.command);
+			rawText = resolvedFileSlashCommand.expandedText.trim();
+			if (!rawText) {
+				this.editor.setText("");
+				this.ui.requestRender();
+				return;
+			}
+		}
+
 		// Note: /steer command removed - Enter now automatically steers when streaming
 		const sentText = autoFenceHtmlInMarkdown(rawText);
 
@@ -4066,6 +4119,19 @@ export class TuiRenderer {
 			},
 			print: (text, options) => {
 				this.printExtensionCommandMessage(text, options?.color ?? "dim");
+			},
+			setModel: async (selection) => {
+				await this.applyFileSlashCommandModelSelection({
+					name: `<extension:${selection.provider}/${selection.model}>`,
+					description: "",
+					content: "",
+					source: "(extension)",
+					modelOverride: {
+						provider: selection.provider,
+						modelId: selection.model,
+						reasoningLevel: selection.reasoningLevel,
+					},
+				});
 			},
 		};
 	}

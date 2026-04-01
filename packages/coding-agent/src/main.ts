@@ -20,6 +20,7 @@ import { buildSystemPrompt as buildSystemPromptFromYaml } from "./prompts/index.
 import { setCurrentModel, setCurrentThinkingLevel } from "./runtime-state.js";
 import { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
+import { applySlashCommandModelSelection, loadSlashCommands, resolveSlashCommandInput } from "./slash-commands.js";
 import {
 	formatSpawnAgentVerificationReport,
 	runDeterministicSpawnAgentVerification,
@@ -674,6 +675,29 @@ async function runInteractiveMode(
 	initialAttachments?: Attachment[],
 	fdPath: string | null = null,
 ): Promise<void> {
+	const processSlashCommandMessage = async (
+		text: string,
+		attachments?: Attachment[],
+	): Promise<{ text: string; attachments?: Attachment[] } | null> => {
+		const resolved = resolveSlashCommandInput(text, loadSlashCommands());
+		if (!resolved) {
+			return { text, attachments };
+		}
+
+		await applySlashCommandModelSelection({
+			command: resolved.command,
+			agent,
+			sessionManager,
+			settingsManager,
+		});
+
+		const expanded = resolved.expandedText.trim();
+		if (!expanded && !attachments?.length) {
+			return null;
+		}
+		return { text: expanded, attachments };
+	};
+
 	const renderer = new TuiRenderer(
 		agent,
 		sessionManager,
@@ -715,7 +739,10 @@ async function runInteractiveMode(
 	// Process initial message with attachments if provided (from @file args)
 	if (initialMessage) {
 		try {
-			await agent.prompt(initialMessage, initialAttachments);
+			const resolvedMessage = await processSlashCommandMessage(initialMessage, initialAttachments);
+			if (resolvedMessage) {
+				await agent.prompt(resolvedMessage.text, resolvedMessage.attachments);
+			}
 		} catch (error: unknown) {
 			const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 			renderer.showError(errorMessage);
@@ -725,7 +752,10 @@ async function runInteractiveMode(
 	// Process remaining initial messages if provided (from CLI args)
 	for (const message of initialMessages) {
 		try {
-			await agent.prompt(message);
+			const resolvedMessage = await processSlashCommandMessage(message);
+			if (resolvedMessage) {
+				await agent.prompt(resolvedMessage.text, resolvedMessage.attachments);
+			}
 		} catch (error: unknown) {
 			const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 			renderer.showError(errorMessage);
@@ -749,12 +779,36 @@ async function runInteractiveMode(
 
 async function runSingleShotMode(
 	agent: Agent,
-	_sessionManager: SessionManager,
+	sessionManager: SessionManager,
+	settingsManager: SettingsManager,
 	messages: string[],
 	mode: "text" | "json",
 	initialMessage?: string,
 	initialAttachments?: Attachment[],
 ): Promise<void> {
+	const processSlashCommandMessage = async (
+		text: string,
+		attachments?: Attachment[],
+	): Promise<{ text: string; attachments?: Attachment[] } | null> => {
+		const resolved = resolveSlashCommandInput(text, loadSlashCommands());
+		if (!resolved) {
+			return { text, attachments };
+		}
+
+		await applySlashCommandModelSelection({
+			command: resolved.command,
+			agent,
+			sessionManager,
+			settingsManager,
+		});
+
+		const expanded = resolved.expandedText.trim();
+		if (!expanded && !attachments?.length) {
+			return null;
+		}
+		return { text: expanded, attachments };
+	};
+
 	// Keep runtime state updated with current model for tools (e.g., read_thread RAG)
 	if (agent.state.model) {
 		setCurrentModel(agent.state.model);
@@ -775,12 +829,18 @@ async function runSingleShotMode(
 
 	// Send initial message with attachments if provided
 	if (initialMessage) {
-		await agent.prompt(initialMessage, initialAttachments);
+		const resolvedMessage = await processSlashCommandMessage(initialMessage, initialAttachments);
+		if (resolvedMessage) {
+			await agent.prompt(resolvedMessage.text, resolvedMessage.attachments);
+		}
 	}
 
 	// Send remaining messages
 	for (const message of messages) {
-		await agent.prompt(message);
+		const resolvedMessage = await processSlashCommandMessage(message);
+		if (resolvedMessage) {
+			await agent.prompt(resolvedMessage.text, resolvedMessage.attachments);
+		}
 	}
 
 	// In text mode, only output the final assistant message
@@ -1505,6 +1565,14 @@ export async function main(args: string[]) {
 		);
 	} else {
 		// Non-interactive mode (--print flag or --mode flag)
-		await runSingleShotMode(agent, sessionManager, parsed.messages, mode, initialMessage, initialAttachments);
+		await runSingleShotMode(
+			agent,
+			sessionManager,
+			settingsManager,
+			parsed.messages,
+			mode,
+			initialMessage,
+			initialAttachments,
+		);
 	}
 }
