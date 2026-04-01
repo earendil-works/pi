@@ -103,13 +103,7 @@ export interface StreamOptions {
 	 * For example, Anthropic uses `user_id` for abuse tracking and rate limiting.
 	 */
 	metadata?: Record<string, unknown>;
-	/**
-	 * Optional ID of the previous response from the OpenAI Responses API.
-	 * When set, OpenAI carries forward cached reasoning tokens from the prior turn,
-	 * which improves intelligence (especially with tool calls), reduces cost, and
-	 * lowers latency via higher cache utilisation. Pass the `responseId` from the
-	 * previous `AssistantMessage` here. Ignored by providers that do not support it.
-	 */
+	/** OpenAI Responses API: ID of the prior response. Carries reasoning tokens forward for better intelligence, cost, and latency. Ignored by other providers. */
 	previousResponseId?: string;
 }
 
