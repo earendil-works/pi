@@ -199,12 +199,19 @@ spawn_agent: |
   - Do NOT use `spawn_agent` unless the user explicitly asks you to delegate, parallelize, or use a spawned/sub agent.
   - After spawning the child you should usually call `wait_agent` to collect its final response before relying on its work.
   - If you spawn multiple children and need all of them, prefer waiting on them in parallel with one `wait_agent` call over the full set of ids.
+  - `spawn_agent` can optionally run an independent verifier after the worker completes.
+  - Mission startups default to verification enabled unless `verify: false` is passed explicitly.
+  - The verifier is a separate child session, checks correctness plus spec adherence, and returns a simple `PASS|FAIL` report with `issues`.
+  - When startup uses `missionPath`, the verifier can inspect `SPEC.md` from that mission path.
+  - The parent remains the decision-maker after verifier findings and can retry, accept, or abort.
 
   Parameters:
   - message: Task for the spawned agent (optional when startup is provided)
   - startup: Optional startup directive for the child. Supports `{ type: "mission", missionPath: "..." }` so the child starts by running a mission instead of waiting for a freeform prompt.
   - model: Optional exact model override in `provider/modelId` form
   - reasoning: Optional reasoning level override: `inherit`, `off`, `minimal`, `low`, `medium`, `high`, or `xhigh`
+  - verify: Optional boolean to request independent verification (`true` by default for mission startups)
+  - verificationChecks: Optional string[] checklist for the verifier to apply to the worker result
 
 wait_agent: |
   Wait for one or more spawned child agents to finish and return their final assistant responses.
