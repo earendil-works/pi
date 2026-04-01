@@ -2940,6 +2940,40 @@ export declare const MODELS: {
 		};
 	};
 	readonly openrouter: {
+		readonly "x-ai/grok-4.20": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "qwen/qwen3.6-plus-preview:free": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "kwaipilot/kat-coder-pro-v2": {
 			id: string;
 			name: string;
@@ -3084,23 +3118,6 @@ export declare const MODELS: {
 			baseUrl: string;
 			reasoning: true;
 			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "x-ai/grok-4.20-beta": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
-			input: ("image" | "text")[];
 			cost: {
 				input: number;
 				output: number;
@@ -3644,6 +3661,40 @@ export declare const MODELS: {
 			provider: string;
 			baseUrl: string;
 			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "openai/gpt-audio": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: false;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "openai/gpt-audio-mini": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: false;
 			input: "text"[];
 			cost: {
 				input: number;
@@ -4257,23 +4308,6 @@ export declare const MODELS: {
 			baseUrl: string;
 			reasoning: true;
 			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "kwaipilot/kat-coder-pro": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
 			cost: {
 				input: number;
 				output: number;
