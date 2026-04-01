@@ -661,6 +661,13 @@ async function listSessionsFromDir(
  * Use buildSessionContext() to get the resolved message list for the LLM, which
  * handles compaction summaries and follows the path from root to current leaf.
  */
+/**
+ * Default cap for the in-memory fileEntries array. Entries beyond this limit
+ * are pruned from the front (oldest first, header always preserved).
+ * The on-disk JSONL transcript is append-only and retains full history.
+ */
+export const DEFAULT_MAX_FILE_ENTRIES = 1000;
+
 export class SessionManager {
 	private sessionId: string = "";
 	private sessionFile: string | undefined;
@@ -673,11 +680,13 @@ export class SessionManager {
 	private labelsById: Map<string, string> = new Map();
 	private labelTimestampsById: Map<string, string> = new Map();
 	private leafId: string | null = null;
+	private maxFileEntries: number;
 
-	private constructor(cwd: string, sessionDir: string, sessionFile: string | undefined, persist: boolean) {
+	private constructor(cwd: string, sessionDir: string, sessionFile: string | undefined, persist: boolean, maxFileEntries?: number) {
 		this.cwd = cwd;
 		this.sessionDir = sessionDir;
 		this.persist = persist;
+		this.maxFileEntries = maxFileEntries ?? DEFAULT_MAX_FILE_ENTRIES;
 		if (persist && sessionDir && !existsSync(sessionDir)) {
 			mkdirSync(sessionDir, { recursive: true });
 		}
@@ -714,6 +723,7 @@ export class SessionManager {
 			}
 
 			this._buildIndex();
+			this._pruneIfNeeded();
 			this.flushed = true;
 		} else {
 			const explicitPath = this.sessionFile;
@@ -818,6 +828,47 @@ export class SessionManager {
 		this.byId.set(entry.id, entry);
 		this.leafId = entry.id;
 		this._persist(entry);
+		this._pruneIfNeeded();
+	}
+
+	/**
+	 * Cap the in-memory fileEntries array. Removes oldest entries (after the
+	 * header at index 0) when length exceeds maxFileEntries. Also evicts
+	 * pruned entries from byId, labelsById, and labelTimestampsById.
+	 *
+	 * The on-disk JSONL transcript is append-only, so full history is
+	 * preserved on disk even after in-memory pruning.
+	 */
+	private _pruneIfNeeded(): void {
+		// +1 for the header at index 0
+		const limit = this.maxFileEntries + 1;
+		if (this.fileEntries.length <= limit) return;
+
+		const excess = this.fileEntries.length - limit;
+		// Remove entries after the header (index 1) through index `excess`
+		const pruned = this.fileEntries.splice(1, excess);
+
+		for (const entry of pruned) {
+			if (entry.type === "session") continue;
+			this.byId.delete(entry.id);
+			this.labelsById.delete(entry.id);
+			this.labelTimestampsById.delete(entry.id);
+			if (entry.type === "label") {
+				// Only remove the label mapping if it hasn't been superseded
+				// by a newer label entry that's still in the kept set
+				const currentLabel = this.labelsById.get(entry.targetId);
+				if (currentLabel === entry.label) {
+					// Check if there's a newer label entry for this target
+					const hasNewerLabel = this.fileEntries.some(
+						(e) => e.type !== "session" && e.type === "label" && e.targetId === entry.targetId,
+					);
+					if (!hasNewerLabel) {
+						this.labelsById.delete(entry.targetId);
+						this.labelTimestampsById.delete(entry.targetId);
+					}
+				}
+			}
+		}
 	}
 
 	/** Append a message as child of current leaf, then advance leaf. Returns entry id.
@@ -1260,44 +1311,47 @@ export class SessionManager {
 	 * Create a new session.
 	 * @param cwd Working directory (stored in session header)
 	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
+	 * @param maxFileEntries Optional cap on in-memory entries. Defaults to DEFAULT_MAX_FILE_ENTRIES.
 	 */
-	static create(cwd: string, sessionDir?: string): SessionManager {
+	static create(cwd: string, sessionDir?: string, maxFileEntries?: number): SessionManager {
 		const dir = sessionDir ?? getDefaultSessionDir(cwd);
-		return new SessionManager(cwd, dir, undefined, true);
+		return new SessionManager(cwd, dir, undefined, true, maxFileEntries);
 	}
 
 	/**
 	 * Open a specific session file.
 	 * @param path Path to session file
 	 * @param sessionDir Optional session directory for /new or /branch. If omitted, derives from file's parent.
+	 * @param maxFileEntries Optional cap on in-memory entries. Defaults to DEFAULT_MAX_FILE_ENTRIES.
 	 */
-	static open(path: string, sessionDir?: string): SessionManager {
+	static open(path: string, sessionDir?: string, maxFileEntries?: number): SessionManager {
 		// Extract cwd from session header if possible, otherwise use process.cwd()
 		const entries = loadEntriesFromFile(path);
 		const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
 		const cwd = header?.cwd ?? process.cwd();
 		// If no sessionDir provided, derive from file's parent directory
 		const dir = sessionDir ?? resolve(path, "..");
-		return new SessionManager(cwd, dir, path, true);
+		return new SessionManager(cwd, dir, path, true, maxFileEntries);
 	}
 
 	/**
 	 * Continue the most recent session, or create new if none.
 	 * @param cwd Working directory
 	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
+	 * @param maxFileEntries Optional cap on in-memory entries. Defaults to DEFAULT_MAX_FILE_ENTRIES.
 	 */
-	static continueRecent(cwd: string, sessionDir?: string): SessionManager {
+	static continueRecent(cwd: string, sessionDir?: string, maxFileEntries?: number): SessionManager {
 		const dir = sessionDir ?? getDefaultSessionDir(cwd);
 		const mostRecent = findMostRecentSession(dir);
 		if (mostRecent) {
-			return new SessionManager(cwd, dir, mostRecent, true);
+			return new SessionManager(cwd, dir, mostRecent, true, maxFileEntries);
 		}
-		return new SessionManager(cwd, dir, undefined, true);
+		return new SessionManager(cwd, dir, undefined, true, maxFileEntries);
 	}
 
 	/** Create an in-memory session (no file persistence) */
-	static inMemory(cwd: string = process.cwd()): SessionManager {
-		return new SessionManager(cwd, "", undefined, false);
+	static inMemory(cwd: string = process.cwd(), maxFileEntries?: number): SessionManager {
+		return new SessionManager(cwd, "", undefined, false, maxFileEntries);
 	}
 
 	/**
@@ -1306,8 +1360,9 @@ export class SessionManager {
 	 * @param sourcePath Path to the source session file
 	 * @param targetCwd Target working directory (where the new session will be stored)
 	 * @param sessionDir Optional session directory. If omitted, uses default for targetCwd.
+	 * @param maxFileEntries Optional cap on in-memory entries. Defaults to DEFAULT_MAX_FILE_ENTRIES.
 	 */
-	static forkFrom(sourcePath: string, targetCwd: string, sessionDir?: string): SessionManager {
+	static forkFrom(sourcePath: string, targetCwd: string, sessionDir?: string, maxFileEntries?: number): SessionManager {
 		const sourceEntries = loadEntriesFromFile(sourcePath);
 		if (sourceEntries.length === 0) {
 			throw new Error(`Cannot fork: source session file is empty or invalid: ${sourcePath}`);
@@ -1347,7 +1402,7 @@ export class SessionManager {
 			}
 		}
 
-		return new SessionManager(targetCwd, dir, newSessionFile, true);
+		return new SessionManager(targetCwd, dir, newSessionFile, true, maxFileEntries);
 	}
 
 	/**
