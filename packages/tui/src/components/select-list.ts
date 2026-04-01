@@ -1,4 +1,5 @@
 import type { Component } from "../tui.js";
+import { truncateTextWithAnsi } from "../utils.js";
 
 export interface SelectItem {
 	value: string;
@@ -134,7 +135,7 @@ export class SelectList implements Component {
 				}
 			}
 
-			lines.push(line);
+			lines.push(truncateTextWithAnsi(line, width));
 		}
 
 		// Add scroll indicators if needed
@@ -143,7 +144,7 @@ export class SelectList implements Component {
 			// Truncate if too long for terminal
 			const maxWidth = width - 2;
 			const truncated = scrollText.substring(0, maxWidth);
-			lines.push(this.theme.scrollInfo(truncated));
+			lines.push(truncateTextWithAnsi(this.theme.scrollInfo(truncated), width));
 		}
 
 		return lines;

@@ -236,6 +236,81 @@ export function wrapTextWithAnsi(text: string, width: number): string[] {
 	return result.length > 0 ? result : [""];
 }
 
+function splitVisibleSegments(text: string): Array<{ type: "ansi" | "grapheme"; value: string }> {
+	const segments: Array<{ type: "ansi" | "grapheme"; value: string }> = [];
+	let i = 0;
+
+	while (i < text.length) {
+		const ansiResult = extractAnsiCode(text, i);
+		if (ansiResult) {
+			segments.push({ type: "ansi", value: ansiResult.code });
+			i += ansiResult.length;
+			continue;
+		}
+
+		let end = i;
+		while (end < text.length) {
+			const nextAnsi = extractAnsiCode(text, end);
+			if (nextAnsi) break;
+			end++;
+		}
+
+		const textPortion = text.slice(i, end);
+		for (const seg of segmenter.segment(textPortion)) {
+			segments.push({ type: "grapheme", value: seg.segment });
+		}
+		i = end;
+	}
+
+	return segments;
+}
+
+/**
+ * Clamp text to a maximum visible width while preserving ANSI styling and grapheme boundaries.
+ * If truncation occurs, styles are reset before the optional ellipsis is appended.
+ */
+export function truncateTextWithAnsi(text: string, width: number, ellipsis = ""): string {
+	if (width <= 0 || !text) {
+		return "";
+	}
+
+	if (visibleWidth(text) <= width) {
+		return text;
+	}
+
+	const ellipsisWidth = Math.min(width, visibleWidth(ellipsis));
+	const targetWidth = Math.max(0, width - ellipsisWidth);
+	const tracker = new AnsiCodeTracker();
+	let result = "";
+	let currentWidth = 0;
+
+	for (const seg of splitVisibleSegments(text)) {
+		if (seg.type === "ansi") {
+			result += seg.value;
+			tracker.process(seg.value);
+			continue;
+		}
+
+		const graphemeWidth = visibleWidth(seg.value);
+		if (currentWidth + graphemeWidth > targetWidth) {
+			break;
+		}
+
+		result += seg.value;
+		currentWidth += graphemeWidth;
+	}
+
+	if (!ellipsis) {
+		return closeActiveAnsi(result, tracker);
+	}
+
+	if (!result) {
+		return truncateTextWithAnsi(ellipsis, width);
+	}
+
+	return closeActiveAnsi(result, tracker) + ellipsis;
+}
+
 function wrapSingleLine(line: string, width: number): string[] {
 	if (!line) {
 		return [""];

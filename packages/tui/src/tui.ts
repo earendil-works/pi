@@ -3,7 +3,7 @@
  */
 
 import type { Terminal } from "./terminal.js";
-import { visibleWidth } from "./utils.js";
+import { truncateTextWithAnsi, visibleWidth } from "./utils.js";
 
 export type { Terminal };
 
@@ -611,7 +611,7 @@ export class TUI extends Container {
 		const height = this.terminal.rows;
 
 		// Render all components to get new lines
-		const newLines = this.render(width);
+		const newLines = this.render(width).map((line) => truncateTextWithAnsi(line, width));
 
 		// Width changed - need full re-render
 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
@@ -767,9 +767,6 @@ export class TUI extends Container {
 				buffer += "\r\n";
 			}
 			buffer += "\x1b[2K"; // Clear current line
-			if (visibleWidth(newLines[i]) > width) {
-				throw new Error(`Rendered line ${i} exceeds terminal width\n\n${newLines[i]}`);
-			}
 			buffer += newLines[i] + "\x1b[0m";
 		}
 

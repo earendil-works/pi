@@ -1,6 +1,6 @@
 import { DEFAULT_CURSOR_STYLE, renderCursorCell } from "../cursor.js";
 import type { Component } from "../tui.js";
-import { visibleWidth } from "../utils.js";
+import { truncateTextWithAnsi, visibleWidth } from "../utils.js";
 
 /**
  * Input component - single-line text input with horizontal scrolling
@@ -242,7 +242,7 @@ export class Input implements Component {
 		// Calculate visual width
 		const visualLength = visibleWidth(textWithCursor);
 		const padding = " ".repeat(Math.max(0, availableWidth - visualLength));
-		const line = prompt + textWithCursor + padding;
+		const line = truncateTextWithAnsi(prompt + textWithCursor + padding, width);
 
 		return [line];
 	}

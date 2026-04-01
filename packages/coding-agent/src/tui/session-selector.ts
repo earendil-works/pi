@@ -1,4 +1,4 @@
-import { type Component, Container, Input, Spacer, Text } from "@kennyfrc/mu-tui";
+import { type Component, Container, Input, Spacer, Text, visibleWidth } from "@kennyfrc/mu-tui";
 import type { SessionManager } from "../session-manager.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
@@ -11,6 +11,23 @@ interface SessionItem {
 	messageCount: number;
 	firstMessage: string;
 	allMessagesText: string;
+}
+
+const segmenter = new Intl.Segmenter();
+
+function truncateLineToWidth(text: string, width: number): string {
+	if (width <= 0 || !text) return "";
+	if (visibleWidth(text) <= width) return text;
+
+	let result = "";
+	let currentWidth = 0;
+	for (const { segment } of segmenter.segment(text)) {
+		const segWidth = visibleWidth(segment);
+		if (currentWidth + segWidth > width) break;
+		result += segment;
+		currentWidth += segWidth;
+	}
+	return result;
 }
 
 /**
@@ -111,13 +128,16 @@ class SessionList implements Component {
 			const cursor = isSelected ? theme.fg("accent", "› ") : "  ";
 			const maxMsgWidth = width - 2; // Account for cursor
 			const truncatedMsg = normalizedMessage.substring(0, maxMsgWidth);
-			const messageLine = cursor + (isSelected ? theme.bold(truncatedMsg) : truncatedMsg);
+			const messageLine = truncateLineToWidth(
+				cursor + (isSelected ? theme.bold(truncatedMsg) : truncatedMsg),
+				width,
+			);
 
 			// Second line: metadata (dimmed)
 			const modified = formatDate(session.modified);
 			const msgCount = `${session.messageCount} message${session.messageCount !== 1 ? "s" : ""}`;
 			const metadata = `  ${modified} · ${msgCount}`;
-			const metadataLine = theme.fg("dim", metadata);
+			const metadataLine = truncateLineToWidth(theme.fg("dim", metadata), width);
 
 			lines.push(messageLine);
 			lines.push(metadataLine);
@@ -126,7 +146,10 @@ class SessionList implements Component {
 
 		// Add scroll indicator if needed
 		if (startIndex > 0 || endIndex < this.filteredSessions.length) {
-			const scrollInfo = theme.fg("muted", `  (${this.selectedIndex + 1}/${this.filteredSessions.length})`);
+			const scrollInfo = truncateLineToWidth(
+				theme.fg("muted", `  (${this.selectedIndex + 1}/${this.filteredSessions.length})`),
+				width,
+			);
 			lines.push(scrollInfo);
 		}
 
