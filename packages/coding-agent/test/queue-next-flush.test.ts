@@ -48,6 +48,7 @@ describe("queue next flush", () => {
 			{
 				listCommands: () => [],
 				getCommand: () => undefined,
+				getIndicators: () => [],
 				applyInputHooks: async (text: string) => ({ handled: false, text }),
 				composeToolResultTransformer: <T>(base: T) => base,
 			} as never,
