@@ -107,8 +107,6 @@ type RenderableEditArgs = {
 	path?: string;
 	file_path?: string;
 	edits?: Edit[];
-	oldText?: string;
-	newText?: string;
 };
 
 function formatEditCall(
