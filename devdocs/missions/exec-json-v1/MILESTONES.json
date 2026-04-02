@@ -1,0 +1,130 @@
+{
+  "milestones": [
+    {
+      "id": "exec-cli-surface",
+      "title": "Dedicated mu exec CLI surface exists and becomes the canonical headless path",
+      "goal": "A human can discover and use `mu exec` and `mu exec --json` as the canonical non-interactive surface, with legacy raw JSON paths no longer required for the mission target.",
+      "taskIds": [
+        "red-cli-surface",
+        "implement-cli-surface",
+        "acceptance-cli-surface"
+      ],
+      "gateTaskId": "acceptance-cli-surface",
+      "verification": [
+        {
+          "id": "m1-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- exec-cli-surface.red.test.ts",
+          "expect": "Targeted CLI-surface tests prove `mu exec` behavior and help text.",
+          "evidence": "devdocs/missions/exec-json-v1/evidence/m1-targeted-tests.txt"
+        },
+        {
+          "id": "m1-review",
+          "kind": "review",
+          "command": "Review the `mu exec` CLI parsing/routing changes against SPEC.md and write findings JSON.",
+          "expect": "Review confirms the dedicated exec boundary is correct or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/exec-json-v1/evidence/m1-review.json"
+        },
+        {
+          "id": "m1-xtui-surface",
+          "kind": "xtui",
+          "command": "Run the real CLI help and canonical exec surface in a temp workspace, then assert the terminal output documents `mu exec` and that the command path is discoverable and usable.",
+          "expect": "The visible CLI surface clearly exposes `mu exec` and `mu exec --json`.",
+          "evidence": "devdocs/missions/exec-json-v1/evidence/m1-xtui.txt"
+        },
+        {
+          "id": "m1-assertion",
+          "kind": "assertion",
+          "command": "Assert from the CLI parser and command routing tests that `mu exec` resolves to the new exec path and not to legacy `--print`/`--mode json` behavior.",
+          "expect": "Parser and routing assertions prove the new command boundary is canonical for this mission.",
+          "evidence": "devdocs/missions/exec-json-v1/evidence/m1-assertion.txt"
+        }
+      ],
+      "notes": "This milestone closes only after the dedicated exec boundary is real, discoverable, and verified through targeted tests, review, and terminal surface evidence."
+    },
+    {
+      "id": "exec-json-schema-and-adapter",
+      "title": "Public exec JSON schema and event adapter normalize Mu runtime events into a stable contract",
+      "goal": "Mu internal runtime events are translated into a public JSONL contract with stable dotted event names and typed item payloads, without leaking raw internal event names.",
+      "taskIds": [
+        "red-schema-and-adapter",
+        "implement-schema-and-adapter",
+        "acceptance-schema-and-adapter"
+      ],
+      "gateTaskId": "acceptance-schema-and-adapter",
+      "verification": [
+        {
+          "id": "m2-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- exec-json-adapter.red.test.ts exec-json-schema.test.ts",
+          "expect": "Targeted adapter/schema tests pass and prove normalized public event names and payload shapes.",
+          "evidence": "devdocs/missions/exec-json-v1/evidence/m2-targeted-tests.txt"
+        },
+        {
+          "id": "m2-review",
+          "kind": "review",
+          "command": "Review the public exec schema and event adapter against SPEC.md and write findings JSON.",
+          "expect": "Review confirms the public contract is stable and not leaking raw runtime events, or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/exec-json-v1/evidence/m2-review.json"
+        },
+        {
+          "id": "m2-xtui-surface",
+          "kind": "xtui",
+          "command": "Run `mu exec --json` against a deterministic prompt/tool fixture and inspect the emitted JSONL stream from the real CLI.",
+          "expect": "The visible CLI surface emits stable dotted event names and machine-readable item payloads only.",
+          "evidence": "devdocs/missions/exec-json-v1/evidence/m2-xtui.txt"
+        },
+        {
+          "id": "m2-diff-assertion",
+          "kind": "diff",
+          "command": "Compare captured JSONL output against a golden fixture and assert that no raw names like `turn_start` or `tool_execution_start` appear.",
+          "expect": "Golden diff and assertions confirm normalization to the public exec schema.",
+          "evidence": "devdocs/missions/exec-json-v1/evidence/m2-diff.txt"
+        }
+      ],
+      "notes": "This milestone closes only after the adapter and schema are proven by tests, review, CLI evidence, and golden-diff assertions."
+    },
+    {
+      "id": "exec-json-exhaustive-contract",
+      "title": "Exec JSON contract covers command execution, file changes, todo lists, generic tool calls, and failure semantics exhaustively",
+      "goal": "The machine contract is exhaustive for major execution activity and preserves stdout/stderr discipline, terminal state semantics, and parser-friendly JSONL behavior.",
+      "taskIds": [
+        "red-exhaustive-coverage",
+        "implement-exhaustive-coverage",
+        "acceptance-exhaustive-coverage"
+      ],
+      "gateTaskId": "acceptance-exhaustive-coverage",
+      "verification": [
+        {
+          "id": "m3-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- exec-json-command-items.red.test.ts exec-json-file-change.red.test.ts exec-json-todo-list.red.test.ts exec-json-failure.red.test.ts",
+          "expect": "Targeted tests pass for exhaustive item coverage, stdout/stderr discipline, and terminal failure behavior.",
+          "evidence": "devdocs/missions/exec-json-v1/evidence/m3-targeted-tests.txt"
+        },
+        {
+          "id": "m3-review",
+          "kind": "review",
+          "command": "Review exhaustive item mapping, stdout/stderr discipline, and terminal semantics against SPEC.md and write findings JSON.",
+          "expect": "Review confirms coverage is exhaustive and parser-safe, or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/exec-json-v1/evidence/m3-review.json"
+        },
+        {
+          "id": "m3-xtui-surface",
+          "kind": "xtui",
+          "command": "Spawn the real CLI in a temp workspace, run `mu exec --json` through scenarios that trigger command execution, file changes, todo updates, and failure, then inspect `stdout`, `stderr`, and exit code.",
+          "expect": "The visible CLI behavior shows JSONL-only stdout, diagnostic stderr, correct exit codes, and exhaustive public item coverage.",
+          "evidence": "devdocs/missions/exec-json-v1/evidence/m3-xtui.txt"
+        },
+        {
+          "id": "m3-assertion",
+          "kind": "assertion",
+          "command": "Assert every stdout line parses as JSON, each turn has exactly one terminal event, and command/file/todo/failure scenarios all produce the expected public item shapes.",
+          "expect": "Assertions prove the public machine contract is exhaustive and terminal-state safe.",
+          "evidence": "devdocs/missions/exec-json-v1/evidence/m3-assertion.txt"
+        }
+      ],
+      "notes": "This milestone closes only after exhaustive public contract coverage is proven via tests, review, terminal surface checks, and JSON parsing assertions."
+    }
+  ]
+}

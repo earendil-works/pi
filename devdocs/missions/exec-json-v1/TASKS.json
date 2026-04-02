@@ -1,0 +1,85 @@
+{
+  "tasks": [
+    {
+      "id": "red-cli-surface",
+      "title": "Add failing tests for the dedicated mu exec CLI surface",
+      "status": "done",
+      "validation": [
+        "echo 'Red CLI-surface tests prove mu exec is missing or incomplete before implementation'"
+      ],
+      "notes": "Cover help text, command parsing, and canonical routing into a dedicated exec path."
+    },
+    {
+      "id": "implement-cli-surface",
+      "title": "Implement the dedicated mu exec command surface",
+      "status": "done",
+      "validation": [
+        "echo 'mu exec exists and targeted CLI-surface tests pass'"
+      ],
+      "notes": "Keep the command boundary explicit and avoid coupling the public contract to legacy flags."
+    },
+    {
+      "id": "acceptance-cli-surface",
+      "title": "Close the CLI surface milestone once the new command boundary is verified",
+      "status": "done",
+      "validation": [
+        "echo 'CLI-surface milestone evidence confirms mu exec is the canonical headless path for this mission'"
+      ],
+      "notes": "Do this only after tests, review, and terminal surface verification are all green."
+    },
+    {
+      "id": "red-schema-and-adapter",
+      "title": "Add failing tests for the public exec JSON schema and normalization adapter",
+      "status": "done",
+      "validation": [
+        "echo 'Red adapter/schema tests prove current output leaks raw internal event shapes'"
+      ],
+      "notes": "Use deterministic fake runtime events and assert the required dotted public event names."
+    },
+    {
+      "id": "implement-schema-and-adapter",
+      "title": "Implement the public exec event schema and runtime event adapter",
+      "status": "done",
+      "validation": [
+        "echo 'Adapter/schema tests pass with normalized public event names and stable item payloads'"
+      ],
+      "notes": "Keep the public contract in a dedicated module and do not expose raw runtime event names."
+    },
+    {
+      "id": "acceptance-schema-and-adapter",
+      "title": "Close the schema/adapter milestone once the public contract is verified",
+      "status": "done",
+      "validation": [
+        "echo 'Schema/adapter milestone evidence confirms a stable public JSONL contract'"
+      ],
+      "notes": "Do this only after tests, review, CLI JSONL capture, and golden diff assertions are all green."
+    },
+    {
+      "id": "red-exhaustive-coverage",
+      "title": "Add failing tests for exhaustive public contract coverage and failure semantics",
+      "status": "done",
+      "validation": [
+        "echo 'Red exhaustive-coverage tests prove missing command/file/todo/failure coverage before implementation'"
+      ],
+      "notes": "Cover command execution, file changes, todo updates, generic tool calls, stdout/stderr discipline, and terminal failures."
+    },
+    {
+      "id": "implement-exhaustive-coverage",
+      "title": "Implement exhaustive public item coverage and stdout/stderr discipline",
+      "status": "done",
+      "validation": [
+        "echo 'Exhaustive coverage tests pass for command, file-change, todo-list, generic tool, and failure semantics'"
+      ],
+      "notes": "Prefer explicit item shapes and terminal invariants over clever implicit behavior."
+    },
+    {
+      "id": "acceptance-exhaustive-coverage",
+      "title": "Close the mission once exhaustive contract verification and repo checks are green",
+      "status": "done",
+      "validation": [
+        "echo 'Mission evidence and repo checks confirm the exhaustive public exec contract is complete'"
+      ],
+      "notes": "Only do this after all milestone verifications are green and `npm run check` passes."
+    }
+  ]
+}

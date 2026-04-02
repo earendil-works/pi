@@ -1,0 +1,9 @@
+XTUI verification: PASS
+
+1. `npx tsx packages/coding-agent/src/cli.ts --help`
+   - matched text: `mu exec`
+   - result: top-level CLI help exposes the dedicated exec surface.
+
+2. `npx tsx packages/coding-agent/src/cli.ts exec --help`
+   - matched text: `mu exec [options] <prompt>`
+   - result: dedicated exec help shows exec-specific usage instead of generic `mu [options] [@files...] [messages...]` usage.

@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"d848000f-39f5-43c0-aba2-da1aa75e62ba"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"call_1","type":"file_change","paths":["acceptance-note.txt"],"change_kind":"apply_patch","status":"in_progress"}}
+{"type":"item.completed","item":{"id":"call_1","type":"file_change","paths":["acceptance-note.txt"],"change_kind":"apply_patch","status":"completed"}}
+{"type":"item.completed","item":{"id":"assistant_1","type":"agent_message","text":"file change complete"}}
+{"type":"turn.completed"}

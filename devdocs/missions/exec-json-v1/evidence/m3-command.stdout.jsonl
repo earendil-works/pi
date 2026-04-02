@@ -1,0 +1,7 @@
+{"type":"thread.started","thread_id":"233d1487-5459-40e9-b84d-bb6ec7c4a68b"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"call_1","type":"command_execution","command":"printf 'hi\\n'","status":"in_progress"}}
+{"type":"item.updated","item":{"id":"call_1","type":"command_execution","command":"printf 'hi\\n'","status":"in_progress","output":"hi\n"}}
+{"type":"item.completed","item":{"id":"call_1","type":"command_execution","command":"printf 'hi\\n'","status":"completed","output":"hi\n","exit_code":0}}
+{"type":"item.completed","item":{"id":"assistant_1","type":"agent_message","text":"command complete"}}
+{"type":"turn.completed"}

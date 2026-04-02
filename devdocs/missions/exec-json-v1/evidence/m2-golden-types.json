@@ -1,0 +1,9 @@
+{
+  "eventTypes": [
+    "thread.started",
+    "turn.started",
+    "item.completed",
+    "turn.completed"
+  ],
+  "assistantText": "fixture hello"
+}

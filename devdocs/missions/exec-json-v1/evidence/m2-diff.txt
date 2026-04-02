@@ -1,0 +1,7 @@
+Diff/assertion verification: PASS
+
+Captured event types: ["thread.started","turn.started","item.completed","turn.completed"]
+Golden event types: ["thread.started","turn.started","item.completed","turn.completed"]
+Assistant payload text: fixture hello
+Confirmed absent raw internal names: turn_start, tool_execution_start, tool_execution_progress, tool_execution_end, message_end
+stdout parsed as valid JSONL only

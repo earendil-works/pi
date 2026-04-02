@@ -1,0 +1,6 @@
+XTUI verification: PASS
+
+Command: HOME=/tmp/mu-exec-fixture-home-5odaj6 npx tsx packages/coding-agent/src/cli.ts exec --json --provider fixture --model fixture-model "say hello"
+Observed dotted public event names on screen: thread.started, turn.started, item.completed, turn.completed
+Observed assistant item payload text: fixture hello
+Observed no human-oriented prose mixed into stdout during the captured event stream

@@ -1,0 +1,6 @@
+{"type":"thread.started","thread_id":"7b154d9b-777c-4948-a7eb-fe1292a528be"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"call_1","type":"todo_list","status":"in_progress","summary":{"total":2,"pending":1,"in_progress":1,"completed":0,"blocked":0},"items":[{"id":"todo_1","content":"Finish acceptance coverage","status":"in_progress","priority":"high"},{"id":"todo_2","content":"Run npm run check","status":"pending","priority":"high"}]}}
+{"type":"item.completed","item":{"id":"call_1","type":"todo_list","status":"completed","summary":{"total":2,"pending":1,"in_progress":1,"completed":0,"blocked":0},"items":[{"id":"todo_1","content":"Finish acceptance coverage","status":"in_progress","priority":"high"},{"id":"todo_2","content":"Run npm run check","status":"pending","priority":"high"}]}}
+{"type":"item.completed","item":{"id":"assistant_1","type":"agent_message","text":"todo update complete"}}
+{"type":"turn.completed"}

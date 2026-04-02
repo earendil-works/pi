@@ -1,0 +1,72 @@
+# Progress
+
+## Status
+- complete
+
+## Next Smallest Step
+- mission complete
+
+## Notes
+- User-approved architecture direction: hard migrate to `mu exec`, keep a dedicated adapter abstraction, be exhaustive, and prioritize stable machine contract first.
+- Specification analysis already verified that current Mu runtime events use raw internal names and therefore need normalization before becoming a public machine contract.
+- The mission target is the dedicated `mu exec` surface, not legacy `--print` / `--mode json` compatibility work.
+- Verification must include both targeted automated tests and a real CLI surface check.
+- Red test added at `packages/coding-agent/test/exec-cli-surface.red.test.ts`.
+- Confirmed red via `npm test -w @kennyfrc/mu-coding-agent -- exec-cli-surface.red.test.ts`.
+- Failure is expected: top-level help does not mention `mu exec`, and `mu exec --help` still shows generic `mu` usage instead of dedicated exec usage.
+- Implemented a dedicated `exec` CLI boundary in `packages/coding-agent/src/main.ts` with dedicated help, `--json` mapping, and canonical non-interactive routing.
+- Confirmed green via `npm test -w @kennyfrc/mu-coding-agent -- exec-cli-surface.red.test.ts`.
+- Milestone-1 acceptance artifacts written:
+  - `devdocs/missions/exec-json-v1/evidence/m1-review.json`
+  - `devdocs/missions/exec-json-v1/evidence/m1-xtui.txt`
+  - `devdocs/missions/exec-json-v1/evidence/m1-assertion.txt`
+- XTUI verified both top-level help and `mu exec --help` expose the dedicated exec surface.
+- Assertion verification confirmed `mu exec "..."` routes into canonical non-interactive execution by failing fast with the non-interactive `No models available.` error when no model is configured.
+- Red schema/adapter tests added:
+  - `packages/coding-agent/test/exec-json-schema.test.ts`
+  - `packages/coding-agent/test/exec-json-adapter.red.test.ts`
+- Confirmed red via `npm test -w @kennyfrc/mu-coding-agent -- exec-json-adapter.red.test.ts exec-json-schema.test.ts`.
+- Failure is expected: `packages/coding-agent/src/exec/exec-events.ts` and `packages/coding-agent/src/exec/jsonl-event-processor.ts` do not exist yet.
+- Implemented the public exec schema in `packages/coding-agent/src/exec/exec-events.ts`.
+- Implemented the runtime normalization adapter in `packages/coding-agent/src/exec/jsonl-event-processor.ts`.
+- Wired `mu exec --json` to emit normalized public exec events through the adapter in `packages/coding-agent/src/main.ts`.
+- Confirmed green via `npm test -w @kennyfrc/mu-coding-agent -- exec-json-adapter.red.test.ts exec-json-schema.test.ts`.
+- Milestone-2 acceptance artifacts written:
+  - `devdocs/missions/exec-json-v1/evidence/m2-review.json`
+  - `devdocs/missions/exec-json-v1/evidence/m2-xtui.txt`
+  - `devdocs/missions/exec-json-v1/evidence/m2-diff.txt`
+  - `devdocs/missions/exec-json-v1/evidence/m2-golden-types.json`
+  - `devdocs/missions/exec-json-v1/evidence/m2-cli-output.jsonl`
+- XTUI verified the real `mu exec --json` surface emits dotted public event names from a deterministic local fixture run.
+- Diff/assertion verification confirmed the captured JSONL event sequence is `thread.started` → `turn.started` → `item.completed` → `turn.completed`, with assistant payload text `fixture hello` and no raw internal event names like `turn_start` or `tool_execution_start` present in stdout.
+- Red exhaustive-coverage tests added:
+  - `packages/coding-agent/test/exec-json-command-items.red.test.ts`
+  - `packages/coding-agent/test/exec-json-file-change.red.test.ts`
+  - `packages/coding-agent/test/exec-json-todo-list.red.test.ts`
+  - `packages/coding-agent/test/exec-json-failure.red.test.ts`
+- Confirmed red via `npm test -w @kennyfrc/mu-coding-agent -- exec-json-command-items.red.test.ts exec-json-file-change.red.test.ts exec-json-todo-list.red.test.ts exec-json-failure.red.test.ts`.
+- Failures are expected and define the next implementation slice:
+  - command execution lacks normalized `exit_code`
+  - `apply_patch` is still emitted as generic `tool_call` instead of `file_change`
+  - `todo_write` is still emitted as generic `tool_call` instead of `todo_list`
+  - fatal assistant errors emit `turn.failed` but not the public top-level `error` event
+- Implemented exhaustive public item coverage in `packages/coding-agent/src/exec/exec-events.ts` and `packages/coding-agent/src/exec/jsonl-event-processor.ts`.
+- Command execution now exposes normalized `exit_code`.
+- `apply_patch`/`write`/`edit` are normalized as `file_change` items.
+- `todo_write` is normalized as a `todo_list` item with normalized summary fields.
+- Fatal assistant errors now emit both public `error` and `turn.failed` events.
+- Confirmed green via `npm test -w @kennyfrc/mu-coding-agent -- exec-json-command-items.red.test.ts exec-json-file-change.red.test.ts exec-json-todo-list.red.test.ts exec-json-failure.red.test.ts`.
+- Milestone-3 acceptance artifacts written:
+  - `devdocs/missions/exec-json-v1/evidence/m3-targeted-tests.txt`
+  - `devdocs/missions/exec-json-v1/evidence/m3-review.json`
+  - `devdocs/missions/exec-json-v1/evidence/m3-xtui.txt`
+  - `devdocs/missions/exec-json-v1/evidence/m3-assertion.txt`
+  - `devdocs/missions/exec-json-v1/evidence/m3-xtui-snap.json`
+  - scenario captures under `devdocs/missions/exec-json-v1/evidence/m3-*.stdout.jsonl`, `m3-*.stderr.txt`, and `m3-*.exitcode.txt`
+- Real CLI acceptance scenarios confirmed:
+  - command execution emits `command_execution` start/update/completed with `exit_code: 0`
+  - file changes emit `file_change` items and create `acceptance-note.txt` in a temp workspace
+  - todo updates emit `todo_list` items with normalized summary fields
+  - fatal failures emit top-level `error` plus `turn.failed` and exit non-zero
+- `mu exec --json` now emits one public turn per exec prompt execution, even when internal continuation turns occur.
+- Repo verification is green via `npm run check`.

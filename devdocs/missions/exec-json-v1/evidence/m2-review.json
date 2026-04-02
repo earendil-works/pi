@@ -1,0 +1,35 @@
+{
+  "status": "pass",
+  "summary": "The public exec schema and adapter establish a stable dotted-name contract for `mu exec --json` and avoid leaking raw Mu runtime event names on the exec path.",
+  "findings": [],
+  "checked": [
+    {
+      "path": "packages/coding-agent/src/exec/exec-events.ts:1",
+      "note": "The public schema is defined in a dedicated module with dotted top-level event names and explicit item variants instead of exposing raw internal runtime events."
+    },
+    {
+      "path": "packages/coding-agent/src/exec/exec-events.ts:100",
+      "note": "`isExecEvent` accepts only the public contract and rejects unrecognized/raw event names, which matches the milestone goal of a stable machine boundary."
+    },
+    {
+      "path": "packages/coding-agent/src/exec/jsonl-event-processor.ts:89",
+      "note": "The adapter is explicit: it consumes internal `AgentEvent`s and emits normalized public exec events with dotted names."
+    },
+    {
+      "path": "packages/coding-agent/src/exec/jsonl-event-processor.ts:108",
+      "note": "Tool execution start/progress/end is normalized into `item.started`, `item.updated`, and `item.completed` rather than exposing raw `tool_execution_*` event names."
+    },
+    {
+      "path": "packages/coding-agent/src/exec/jsonl-event-processor.ts:134",
+      "note": "Assistant messages are surfaced as `agent_message` items and turn terminal state is emitted as `turn.completed` or `turn.failed`."
+    },
+    {
+      "path": "packages/coding-agent/src/main.ts:845",
+      "note": "`runSingleShotMode` now routes `mu exec --json` through the public processor while leaving legacy non-exec JSON mode on the raw internal stream."
+    },
+    {
+      "path": "packages/coding-agent/src/main.ts:1161",
+      "note": "The dedicated `exec` subcommand remains the canonical boundary for the public contract."
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+XTUI verification: PASS
+
+Command: bash /tmp/mu_exec_m3_xtui.sh
+XTUI snapshot artifact: /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/devdocs/missions/exec-json-v1/evidence/m3-xtui-snap.json
+Observed visible scenario markers and JSONL output on the terminal surface.
+Visible capture excerpt included:
+=== command exit=0 ===
+{"type":"thread.started","thread_id":"b311868e-56f7-41f9-bb6e-58264948e5f4"}
+{"type":"turn.started"}
+{"type":"item.started","item":{"id":"call_1","type":"command_execution","command
+":"printf 'hi\\n'","status":"in_progress"}}
+{"type":"item.updated","item":{"id":"call_1","type":"command_execution","command
+":"printf 'hi\\n'","status":"in_progress","output":"hi\n"}}
+{"type":"item.completed","item":{"id":"call_1","type":"command_execution","comma
+nd":"printf 'hi\\n'","status":"completed","output":"hi\n","exit_code":0}}
+{"type":"item.completed","item":{"id":"assistant_1","type":"agent_message","text
+
+Real CLI scenario exit codes: command=0, file_change=0, todo=0, failure=1
+Visible machine output included dotted public events only and showed command_execution, file_change, todo_list, error, and turn.failed shapes.

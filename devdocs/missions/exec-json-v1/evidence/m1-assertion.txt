@@ -1,0 +1,5 @@
+Assertion verification: PASS
+Command: npx tsx packages/coding-agent/src/cli.ts exec "hello from exec"
+Exit: 1
+Observed stderr contains: No models available.
+Observed stdout: empty

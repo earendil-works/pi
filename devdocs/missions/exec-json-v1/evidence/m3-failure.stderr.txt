@@ -1,0 +1,5 @@
+Error: 500 fixture failure
+    at runSingleShotMode (/Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent/src/main.ts:924:9)
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+    at async main (/Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent/src/main.ts:1659:3)
+    at async main (/Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent/src/main.ts:1174:3)

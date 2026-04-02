@@ -1,0 +1,15 @@
+Assertion verification: PASS
+
+workspace=/tmp/mu-exec-acceptance-workspace-s697ra
+command_types=["thread.started","turn.started","item.started","item.updated","item.completed","item.completed","turn.completed"]
+file_change_types=["thread.started","turn.started","item.started","item.completed","item.completed","turn.completed"]
+todo_types=["thread.started","turn.started","item.started","item.completed","item.completed","turn.completed"]
+failure_types=["thread.started","turn.started","error","turn.failed"]
+exit_codes={"command":"0","file_change":"0","todo":"0","failure":"1"}
+Assertions:
+- every stdout line parsed as JSON across command, file_change, todo, and failure scenarios
+- command scenario emitted item.started/item.updated/item.completed with command_execution and exit_code=0
+- file_change scenario emitted file_change item and left acceptance-note.txt in the temp workspace
+- todo scenario emitted todo_list item with normalized summary fields
+- failure scenario emitted top-level error plus turn.failed and exited non-zero
+- no raw internal event names appeared in the public JSONL outputs

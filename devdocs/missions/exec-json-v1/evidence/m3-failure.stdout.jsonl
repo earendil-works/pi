@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"af732a9c-3384-4f3e-9605-3d21fb1acbdc"}
+{"type":"turn.started"}
+{"type":"error","error":"500 fixture failure"}
+{"type":"turn.failed","error":"500 fixture failure"}

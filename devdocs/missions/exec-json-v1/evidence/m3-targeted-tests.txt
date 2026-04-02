@@ -1,0 +1,5 @@
+Targeted tests: PASS
+
+Command: npm test -w @kennyfrc/mu-coding-agent -- exec-json-command-items.red.test.ts exec-json-file-change.red.test.ts exec-json-todo-list.red.test.ts exec-json-failure.red.test.ts
+Result: 4 files passed, 4 tests passed
+Coverage proven: command_execution exit_code, file_change items, todo_list items, fatal error + turn.failed contract

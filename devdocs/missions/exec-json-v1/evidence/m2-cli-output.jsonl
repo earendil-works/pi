@@ -1,0 +1,4 @@
+{"type":"thread.started","thread_id":"3d13b6f5-6bef-49ba-af01-a71949a6b34d"}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"assistant_1","type":"agent_message","text":"fixture hello"}}
+{"type":"turn.completed"}

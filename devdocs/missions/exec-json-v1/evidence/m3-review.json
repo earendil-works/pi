@@ -1,0 +1,35 @@
+{
+  "status": "pass",
+  "summary": "The exhaustive exec contract now covers command execution, file changes, todo lists, and fatal failure semantics on the real `mu exec --json` surface, while keeping one public turn per exec prompt.",
+  "findings": [],
+  "checked": [
+    {
+      "path": "packages/coding-agent/src/exec/exec-events.ts:30",
+      "note": "The public schema now includes explicit command_execution exit_code plus dedicated file_change and todo_list item variants."
+    },
+    {
+      "path": "packages/coding-agent/src/exec/jsonl-event-processor.ts:111",
+      "note": "Tool starts are normalized into command_execution, file_change, todo_list, or generic tool_call items instead of leaking raw tool event names."
+    },
+    {
+      "path": "packages/coding-agent/src/exec/jsonl-event-processor.ts:180",
+      "note": "Tool completions normalize exit_code, todo summaries, and file-change completion state into explicit public item payloads."
+    },
+    {
+      "path": "packages/coding-agent/src/exec/jsonl-event-processor.ts:215",
+      "note": "The processor keeps one public turn per exec prompt and emits top-level error + turn.failed on fatal assistant errors."
+    },
+    {
+      "path": "packages/coding-agent/src/main.ts:845",
+      "note": "`mu exec --json` runs through the public processor and now throws on exec-path runtime failures so exit codes are machine-meaningful."
+    },
+    {
+      "path": "packages/coding-agent/src/tools/bash.ts:831",
+      "note": "Foreground bash success results now preserve exitCode in tool details, enabling normalized command_execution exit_code on the real CLI path."
+    },
+    {
+      "path": "packages/coding-agent/src/cli.ts:20",
+      "note": "The exec CLI path exits cleanly after completion, making real CLI exit-code verification possible."
+    }
+  ]
+}

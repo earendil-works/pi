@@ -1,0 +1,27 @@
+{
+  "status": "pass",
+  "summary": "The dedicated mu exec CLI boundary is implemented and matches the milestone-1 surface requirements.",
+  "findings": [],
+  "checked": [
+    {
+      "path": "packages/coding-agent/src/main.ts:91",
+      "note": "Exec arguments are normalized into the existing non-interactive path, with --json mapped to machine mode and implicit --print for canonical headless execution."
+    },
+    {
+      "path": "packages/coding-agent/src/main.ts:337",
+      "note": "Top-level help now documents the dedicated mu exec surface and includes mu exec --json examples."
+    },
+    {
+      "path": "packages/coding-agent/src/main.ts:441",
+      "note": "A dedicated exec help surface exists with mu exec specific usage and options."
+    },
+    {
+      "path": "packages/coding-agent/src/main.ts:1146",
+      "note": "The main entrypoint recognizes the exec subcommand before generic argument parsing and routes it through the dedicated exec boundary."
+    },
+    {
+      "path": "packages/coding-agent/test/exec-cli-surface.red.test.ts:14",
+      "note": "Targeted tests prove top-level help and mu exec --help now expose the dedicated CLI surface."
+    }
+  ]
+}
