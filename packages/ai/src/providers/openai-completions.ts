@@ -154,11 +154,8 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 				}
 
 				if (choice.delta) {
-					if (
-						choice.delta.content !== null &&
-						choice.delta.content !== undefined &&
-						choice.delta.content.length > 0
-					) {
+					const content = typeof choice.delta.content === "string" ? choice.delta.content : "";
+					if (content.length > 0) {
 						if (!currentBlock || currentBlock.type !== "text") {
 							finishCurrentBlock(currentBlock);
 							currentBlock = { type: "text", text: "" };
@@ -171,7 +168,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 							stream.push({
 								type: "text_delta",
 								contentIndex: blockIndex(),
-								delta: choice.delta.content,
+								delta: content,
 								partial: output,
 							});
 						}
@@ -184,11 +181,8 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 					const reasoningFields = ["reasoning_content", "reasoning", "reasoning_text"];
 					let foundReasoningField: string | null = null;
 					for (const field of reasoningFields) {
-						if (
-							(choice.delta as any)[field] !== null &&
-							(choice.delta as any)[field] !== undefined &&
-							(choice.delta as any)[field].length > 0
-						) {
+						const value = (choice.delta as any)[field];
+						if (typeof value === "string" && value.length > 0) {
 							if (!foundReasoningField) {
 								foundReasoningField = field;
 								break;
@@ -196,7 +190,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 						}
 					}
 
-					if (foundReasoningField) {
+					if (foundReasoningField && content.length > 0) {
 						if (!currentBlock || currentBlock.type !== "thinking") {
 							finishCurrentBlock(currentBlock);
 							currentBlock = {
