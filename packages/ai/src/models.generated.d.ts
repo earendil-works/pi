@@ -6697,7 +6697,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "cohere/command-r-08-2024": {
+		readonly "cohere/command-r-plus-08-2024": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6714,7 +6714,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "cohere/command-r-plus-08-2024": {
+		readonly "cohere/command-r-08-2024": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -7003,7 +7003,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-3.5-turbo-0613": {
+		readonly "openai/gpt-4-turbo-preview": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -7020,7 +7020,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4-turbo-preview": {
+		readonly "openai/gpt-3.5-turbo-0613": {
 			id: string;
 			name: string;
 			api: "openai-completions";
