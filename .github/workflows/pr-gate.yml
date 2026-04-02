@@ -1,8 +1,11 @@
 name: PR Gate
 
+# Disabled for hackathon
+# on:
+#   pull_request_target:
+#     types: [opened]
 on:
-  pull_request_target:
-    types: [opened]
+  workflow_dispatch:
 
 jobs:
   check-contributor:
