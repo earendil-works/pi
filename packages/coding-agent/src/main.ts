@@ -873,6 +873,7 @@ export async function main(args: string[]) {
 	const runtime = await createAgentSessionRuntime(runtimeBootstrap, {
 		cwd: sessionManager?.getCwd() ?? cwd,
 		sessionManager,
+		resourceLoader,
 	});
 	if (process.cwd() !== runtime.cwd) {
 		process.chdir(runtime.cwd);

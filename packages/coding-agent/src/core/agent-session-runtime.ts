@@ -55,6 +55,11 @@ export interface CreateAgentSessionRuntimeOptions {
 	sessionManager?: SessionManager;
 	/** Optional session_start metadata to emit when the runtime binds extensions. */
 	sessionStartEvent?: SessionStartEvent;
+	/**
+	 * Optional preloaded resource loader to use directly for this runtime.
+	 * When provided, createAgentSessionRuntime will not call reload() again.
+	 */
+	resourceLoader?: ResourceLoader;
 }
 
 type AgentSessionRuntime = CreateAgentSessionResult & {
@@ -86,15 +91,18 @@ export async function createAgentSessionRuntime(
 	const settingsManager = SettingsManager.create(cwd, agentDir);
 	const modelRegistry = ModelRegistry.create(authStorage, join(agentDir, "models.json"));
 	const resourceLoader =
-		typeof bootstrap.resourceLoader === "function"
+		options.resourceLoader ??
+		(typeof bootstrap.resourceLoader === "function"
 			? await bootstrap.resourceLoader(cwd, agentDir)
 			: new DefaultResourceLoader({
 					...(bootstrap.resourceLoader ?? {}),
 					cwd,
 					agentDir,
 					settingsManager,
-				});
-	await resourceLoader.reload();
+				}));
+	if (!options.resourceLoader) {
+		await resourceLoader.reload();
+	}
 
 	const extensionsResult = resourceLoader.getExtensions();
 	for (const { name, config } of extensionsResult.runtime.pendingProviderRegistrations) {
