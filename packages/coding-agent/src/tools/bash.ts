@@ -830,7 +830,7 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 
 					resolve({
 						content: [{ type: "text", text: result || "(no output)" }],
-						details: undefined,
+						details: { exitCode: code ?? 0 },
 					});
 				});
 			});
