@@ -17,7 +17,15 @@ process.emit = (event, ...args) => {
 
 import { main } from "./main.js";
 
-main(process.argv.slice(2)).catch((err) => {
-	console.error(err);
-	process.exit(1);
-});
+const cliArgs = process.argv.slice(2);
+
+main(cliArgs)
+	.then(() => {
+		if (cliArgs[0] === "exec") {
+			process.exit(0);
+		}
+	})
+	.catch((err) => {
+		console.error(err);
+		process.exit(1);
+	});

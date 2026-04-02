@@ -9,6 +9,7 @@ import { homedir } from "os";
 import { dirname, extname, join, resolve } from "path";
 import { fileURLToPath } from "url";
 import { runAlwaysOnCommand } from "./always-on/cli.js";
+import { createExecJsonEventProcessor } from "./exec/jsonl-event-processor.js";
 import { exportFromFile } from "./export-html.js";
 import { builtInExtensions } from "./extensions/built-ins.js";
 import { ExtensionLoader } from "./extensions/loader.js";
@@ -80,8 +81,37 @@ interface Args {
 	tools?: ToolName[];
 	print?: boolean;
 	export?: string;
+	execMode?: boolean;
 	messages: string[];
 	fileArgs: string[];
+}
+
+function hasFlag(args: string[], ...flags: string[]): boolean {
+	return args.some((arg) => flags.includes(arg));
+}
+
+function mapExecArgsToLegacyArgs(args: string[]): string[] {
+	const mapped: string[] = [];
+	let sawModeFlag = false;
+	mapped.push("--exec-mode");
+
+	for (const arg of args) {
+		if (arg === "--json") {
+			mapped.push("--mode", "json");
+			sawModeFlag = true;
+			continue;
+		}
+		if (arg === "--mode") {
+			sawModeFlag = true;
+		}
+		mapped.push(arg);
+	}
+
+	if (!hasFlag(mapped, "--print", "-p") && !sawModeFlag) {
+		mapped.unshift("--print");
+	}
+
+	return mapped;
 }
 
 function parseArgs(args: string[]): Args {
@@ -97,6 +127,10 @@ function parseArgs(args: string[]): Args {
 			result.help = true;
 		} else if (arg === "--version" || arg === "-v") {
 			result.version = true;
+		} else if (arg === "--exec-mode") {
+			result.execMode = true;
+		} else if (arg === "--json") {
+			result.mode = "json";
 		} else if (arg === "--mode" && i + 1 < args.length) {
 			const mode = args[++i];
 			if (mode === "text" || mode === "json" || mode === "rpc") {
@@ -310,6 +344,7 @@ function printHelp() {
 
 ${chalk.bold("Usage:")}
   mu [options] [@files...] [messages...]
+  mu exec [options] <prompt>
 
 ${chalk.bold("Options:")}
   --provider <name>       Provider name (default: google)
@@ -332,6 +367,10 @@ ${chalk.bold("Options:")}
 ${chalk.bold("Examples:")}
   # Interactive mode
   mu
+
+  # Canonical non-interactive exec mode
+  mu exec "List all .ts files in src/"
+  mu exec --json "List all .ts files in src/"
 
   # Always-on agent registry
   mu always-on create --workspace . --provider openai-codex --model gpt-5.4 --thinking medium
@@ -401,6 +440,32 @@ ${chalk.bold("Environment Variables:")}
 	  grep         - Search file contents (off by default)
 	  glob         - Find files by glob pattern or list directory contents (off by default)
 	  exec_command - Execute shell commands (Codex-style)
+`);
+}
+
+function printExecHelp() {
+	console.log(`${chalk.bold("mu exec")} - Canonical non-interactive execution mode
+
+${chalk.bold("Usage:")}
+  mu exec [options] <prompt>
+
+${chalk.bold("Options:")}
+  --json                  Emit machine-readable JSON output
+  --provider <name>       Provider name
+  --model <id>            Model ID
+  --api-key <key>         API key override
+  --system-prompt <text>  System prompt override
+  --session <path>        Use specific session file
+  --no-session            Don't save session (ephemeral)
+  --models <patterns>     Comma-separated model patterns
+  --tools <tools>         Comma-separated list of tools to enable
+  --thinking <level>      Set thinking level: off, minimal, low, medium, high
+  --help, -h              Show this help
+
+${chalk.bold("Examples:")}
+  mu exec "Explain this repository"
+  mu exec --json "Summarize the latest changes"
+  mu exec --provider openai-codex --model gpt-5.3-codex "Review this file"
 `);
 }
 
@@ -783,6 +848,8 @@ async function runSingleShotMode(
 	settingsManager: SettingsManager,
 	messages: string[],
 	mode: "text" | "json",
+	publicExecJson = false,
+	failOnError = false,
 	initialMessage?: string,
 	initialAttachments?: Attachment[],
 ): Promise<void> {
@@ -816,6 +883,10 @@ async function runSingleShotMode(
 	}
 
 	// Subscribe to track model changes during execution
+	const execJsonProcessor =
+		publicExecJson && mode === "json"
+			? createExecJsonEventProcessor({ threadId: sessionManager.getSessionId() })
+			: null;
 	agent.subscribe((event) => {
 		if (event.type === "turn_start" && agent.state.model) {
 			setCurrentModel(agent.state.model);
@@ -823,7 +894,13 @@ async function runSingleShotMode(
 		}
 		// In JSON mode, also output events
 		if (mode === "json") {
-			console.log(JSON.stringify(event));
+			if (execJsonProcessor) {
+				for (const publicEvent of execJsonProcessor.consume(event)) {
+					console.log(JSON.stringify(publicEvent));
+				}
+			} else {
+				console.log(JSON.stringify(event));
+			}
 		}
 	});
 
@@ -841,6 +918,10 @@ async function runSingleShotMode(
 		if (resolvedMessage) {
 			await agent.prompt(resolvedMessage.text, resolvedMessage.attachments);
 		}
+	}
+
+	if (failOnError && agent.state.error) {
+		throw new Error(agent.state.error);
 	}
 
 	// In text mode, only output the final assistant message
@@ -1084,6 +1165,16 @@ async function runRpcMode(agent: Agent, sessionManager: SessionManager): Promise
 }
 
 export async function main(args: string[]) {
+	if (args[0] === "exec") {
+		const execArgs = args.slice(1);
+		if (hasFlag(execArgs, "--help", "-h")) {
+			printExecHelp();
+			return;
+		}
+		await main(mapExecArgsToLegacyArgs(execArgs));
+		return;
+	}
+
 	if (args[0] === "always-on") {
 		try {
 			await runAlwaysOnCommand(args.slice(1));
@@ -1571,6 +1662,8 @@ export async function main(args: string[]) {
 			settingsManager,
 			parsed.messages,
 			mode,
+			parsed.execMode === true,
+			parsed.execMode === true,
 			initialMessage,
 			initialAttachments,
 		);
