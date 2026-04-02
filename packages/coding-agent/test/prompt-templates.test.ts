@@ -8,8 +8,11 @@
  * - Edge cases and integration between parsing and substitution
  */
 
-import { describe, expect, test } from "vitest";
-import { parseCommandArgs, substituteArgs } from "../src/core/prompt-templates.js";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { afterAll, describe, expect, test } from "vitest";
+import { loadPromptTemplates, parseCommandArgs, substituteArgs } from "../src/core/prompt-templates.js";
 
 // ============================================================================
 // substituteArgs
@@ -377,5 +380,64 @@ describe("parseCommandArgs + substituteArgs integration", () => {
 		const template1 = "Implement: $@";
 		const template2 = "Implement: $ARGUMENTS";
 		expect(substituteArgs(template1, args)).toBe(substituteArgs(template2, args));
+	});
+});
+
+// ============================================================================
+// loadPromptTemplates - argument-hint frontmatter
+// ============================================================================
+
+describe("loadPromptTemplates - argument-hint", () => {
+	const testDir = join(tmpdir(), `pi-test-prompts-${Date.now()}`);
+
+	function writeTemplate(name: string, content: string) {
+		mkdirSync(testDir, { recursive: true });
+		writeFileSync(join(testDir, `${name}.md`), content);
+	}
+
+	test("should parse argument-hint from frontmatter", () => {
+		writeTemplate(
+			"review",
+			`---
+description: Code review
+argument-hint: "[file | #PR | PR-URL]"
+---
+Review the code for $1`,
+		);
+
+		const templates = loadPromptTemplates({
+			promptPaths: [testDir],
+			includeDefaults: false,
+		});
+
+		const review = templates.find((t) => t.name === "review");
+		expect(review).toBeDefined();
+		expect(review!.argumentHint).toBe("[file | #PR | PR-URL]");
+		expect(review!.description).toBe("Code review");
+	});
+
+	test("should leave argumentHint undefined when not specified", () => {
+		writeTemplate(
+			"ship",
+			`---
+description: Ship current work
+---
+Ship it`,
+		);
+
+		const templates = loadPromptTemplates({
+			promptPaths: [testDir],
+			includeDefaults: false,
+		});
+
+		const ship = templates.find((t) => t.name === "ship");
+		expect(ship).toBeDefined();
+		expect(ship!.argumentHint).toBeUndefined();
+	});
+
+	afterAll(() => {
+		try {
+			rmSync(testDir, { recursive: true, force: true });
+		} catch {}
 	});
 });

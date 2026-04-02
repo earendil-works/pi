@@ -11,6 +11,7 @@ import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.js";
 export interface PromptTemplate {
 	name: string;
 	description: string;
+	argumentHint?: string;
 	content: string;
 	sourceInfo: SourceInfo;
 	filePath: string; // Absolute path to the template file
@@ -121,6 +122,7 @@ function loadTemplateFromFile(filePath: string, sourceInfo: SourceInfo): PromptT
 		return {
 			name,
 			description,
+			...(frontmatter["argument-hint"] && { argumentHint: frontmatter["argument-hint"] }),
 			content: body,
 			sourceInfo,
 			filePath,
