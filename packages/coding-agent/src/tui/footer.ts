@@ -306,6 +306,13 @@ export class FooterComponent implements Component {
 
 		return indicators
 			.map((ind) => {
+				// Match spec/discover indicator colors to border colors
+				if (ind.label.includes("SPEC") || ind.label.includes("spec")) {
+					return theme.fg("specMode", ind.label);
+				}
+				if (ind.label.includes("DISCOVER") || ind.label.includes("discover")) {
+					return theme.fg("discoverMode", ind.label);
+				}
 				const color = (ind.color as ThemeColor) || "accent";
 				return theme.fg(color, ind.label);
 			})
