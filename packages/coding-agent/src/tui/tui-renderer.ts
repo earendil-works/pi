@@ -3713,18 +3713,22 @@ export class TuiRenderer {
 		let rawText = text.trim();
 		if (!rawText) return;
 
-		// Extensions: input hooks (transform or handled)
-		const extensionInput = await this.extensionManager.applyInputHooks(rawText);
-		if (extensionInput.handled) {
-			this.editor.setText("");
-			this.ui.requestRender();
-			return;
-		}
-		rawText = extensionInput.text.trim();
-		if (!rawText) {
-			this.editor.setText("");
-			this.ui.requestRender();
-			return;
+		const willQueueSubmission = this.agent.state.isStreaming;
+
+		if (!willQueueSubmission) {
+			// Extensions: input hooks (transform or handled)
+			const extensionInput = await this.extensionManager.applyInputHooks(rawText);
+			if (extensionInput.handled) {
+				this.editor.setText("");
+				this.ui.requestRender();
+				return;
+			}
+			rawText = extensionInput.text.trim();
+			if (!rawText) {
+				this.editor.setText("");
+				this.ui.requestRender();
+				return;
+			}
 		}
 
 		// Check for /thinking command
