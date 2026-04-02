@@ -5905,16 +5905,26 @@ export class TuiRenderer {
 						shouldInjectResumeText && resumeText !== undefined
 							? `${prompt}\n\nUser resume note:\n${resumeText}`
 							: prompt;
+					let iterationErrorMessage: string | undefined;
 
 					while (currentPrompt) {
-						await this.agent.prompt(currentPrompt);
-						shouldInjectResumeText = false;
-						resumeText = undefined;
-						await this.agent.waitForIdle();
-						await this.waitForPendingMissionCompactTransition();
-						const missionRuntimeError = this.getMissionIterationRuntimeError();
-						if (missionRuntimeError) {
-							throw new Error(`Mission iteration failed: ${missionRuntimeError}`);
+						try {
+							await this.agent.prompt(currentPrompt);
+							shouldInjectResumeText = false;
+							resumeText = undefined;
+							await this.agent.waitForIdle();
+							await this.waitForPendingMissionCompactTransition();
+							const missionRuntimeError = this.getMissionIterationRuntimeError();
+							if (missionRuntimeError) {
+								iterationErrorMessage = `Mission iteration failed: ${missionRuntimeError}`;
+								break;
+							}
+						} catch (error: unknown) {
+							iterationErrorMessage =
+								error instanceof Error
+									? `Mission iteration failed: ${error.message}`
+									: `Mission iteration failed: ${String(error)}`;
+							break;
 						}
 
 						const nextPrompt = this.drainPendingMissionIterationPrompt();
@@ -5928,6 +5938,9 @@ export class TuiRenderer {
 						}
 
 						currentPrompt = null;
+					}
+					if (iterationErrorMessage) {
+						this.showError(iterationErrorMessage);
 					}
 					const refreshedMission = parseMissionDefinition(missionDir);
 					this.setMissionUiState(
@@ -5974,7 +5987,7 @@ export class TuiRenderer {
 			if (missionName) {
 				try {
 					const currentMission = parseMissionDefinition(missionDir);
-					this.setMissionUiState(missionName, this.missionUiState?.iteration ?? 0, "blocked", currentMission);
+					this.setMissionUiState(missionName, this.missionUiState?.iteration ?? 0, "stopped", currentMission);
 				} catch {
 					// Ignore parse failures while surfacing the original mission error.
 				}

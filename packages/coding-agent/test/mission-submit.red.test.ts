@@ -937,7 +937,7 @@ describe("/mission-run submission (red)", () => {
 		expect(footerLabel).toContain("0/1 done");
 	});
 
-	it("fails hard after the first unrecoverable build-mission iteration error instead of looping until max iterations", async () => {
+	it("keeps the mission running after a build-mission iteration error and succeeds on a later iteration", async () => {
 		initTheme("dark");
 		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
 		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
@@ -962,7 +962,19 @@ describe("/mission-run submission (red)", () => {
 					yield undefined as never;
 				}
 				runCalls += 1;
-				throw new Error("429 Too Many Requests: synthetic unrecoverable failure");
+				if (runCalls === 1) {
+					throw new Error("429 Too Many Requests: synthetic transient failure");
+				}
+				writeFileSync(
+					join(dir, "TASKS.json"),
+					JSON.stringify(
+						{
+							tasks: [{ id: "baseline", title: "Still todo", status: "done", validation: [], notes: "" }],
+						},
+						null,
+						2,
+					),
+				);
 			},
 		};
 
@@ -1003,21 +1015,37 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
 
-		expect(runCalls).toBe(1);
+		expect(runCalls).toBe(2);
 		expect(errors.join("\n")).toMatch(/mission iteration failed/i);
 		expect(errors.join("\n")).toMatch(/429 Too Many Requests/i);
+		expect(stripAnsi(renderer.getComposerMetaLabel())).toContain("done");
 		const footerLabel = stripAnsi(renderer.getComposerMetaLabel());
 		expect(footerLabel).toContain(`mission ${dir.split("/").at(-1)}`);
-		expect(footerLabel).toContain("blocked");
+		expect(footerLabel).toContain("done");
 	});
 
-	it("fails hard after the first unrecoverable optimize-mission iteration error instead of retrying forever", async () => {
+	it("keeps the mission running after an optimize-mission iteration error and succeeds on a later iteration", async () => {
 		initTheme("dark");
 		const configDir = mkdtempSync(join(tmpdir(), "mu-mission-submit-config-"));
 		cleanups.push(() => rmSync(configDir, { recursive: true, force: true }));
 
 		const { dir, cleanup } = makeOptimizeMissionDir();
 		cleanups.push(cleanup);
+		writeFileSync(
+			join(dir, "SPEC.md"),
+			[
+				"---",
+				"mode: optimize",
+				"metric: duration_seconds",
+				"direction: lower",
+				"converge_after: 1",
+				"convergence_kind: non-keep",
+				"---",
+				"",
+				"# Goal",
+				"Optimize the benchmark.",
+			].join("\n"),
+		);
 
 		const previousOpenAiKey = process.env.OPENAI_API_KEY;
 		process.env.OPENAI_API_KEY = "test-openai-key";
@@ -1036,7 +1064,10 @@ describe("/mission-run submission (red)", () => {
 					yield undefined as never;
 				}
 				runCalls += 1;
-				throw new Error("429 Too Many Requests: synthetic unrecoverable failure");
+				if (runCalls === 1) {
+					throw new Error("429 Too Many Requests: synthetic transient failure");
+				}
+				writeFileSync(join(dir, "EXPERIMENTS.jsonl"), '{"run":2,"status":"discard"}\n');
 			},
 		};
 
@@ -1077,12 +1108,12 @@ describe("/mission-run submission (red)", () => {
 
 		await renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
 
-		expect(runCalls).toBe(1);
+		expect(runCalls).toBe(2);
 		expect(errors.join("\n")).toMatch(/mission iteration failed/i);
 		expect(errors.join("\n")).toMatch(/429 Too Many Requests/i);
 		const footerLabel = stripAnsi(renderer.getComposerMetaLabel());
 		expect(footerLabel).toContain(`mission ${dir.split("/").at(-1)}`);
-		expect(footerLabel).toContain("blocked");
+		expect(footerLabel).toContain("converged");
 	});
 
 	it("halts after the current iteration when /mission-halt is submitted during a running mission", async () => {
