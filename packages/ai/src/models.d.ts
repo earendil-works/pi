@@ -33,7 +33,7 @@ export declare function getModels(provider: Provider): Model<Api>[];
 export declare function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage): Usage["cost"];
 /**
  * Check if a model supports xhigh thinking level.
- * Currently only certain OpenAI models support this.
+ * Includes OpenAI GPT-5.x models and Anthropic Opus 4.6 / Sonnet 4.6.
  */
 export declare function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean;
 //# sourceMappingURL=models.d.ts.map

@@ -36,7 +36,6 @@ const XHIGH_MODELS = new Set([
 	"gpt-5.3-codex-spark",
 	"gpt-5.4",
 ]);
-
 /**
  * Check if a model supports xhigh thinking level.
  * Includes OpenAI GPT-5.x models and Anthropic Opus 4.6 / Sonnet 4.6.
