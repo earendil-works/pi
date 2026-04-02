@@ -154,10 +154,29 @@ export class SlackBot {
 		const auth = await this.webClient.auth.test();
 		this.botUserId = auth.user_id as string;
 
-		await Promise.all([this.fetchUsers(), this.fetchChannels()]);
+		try {
+			await this.fetchUsers();
+		} catch (err) {
+			log.logWarning(`Failed to fetch users (missing scope?): ${err instanceof Error ? err.message : String(err)}`);
+		}
+
+		try {
+			await this.fetchChannels();
+		} catch (err) {
+			log.logWarning(
+				`Failed to fetch channels (missing scope?): ${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
+
 		log.logInfo(`Loaded ${this.channels.size} channels, ${this.users.size} users`);
 
-		await this.backfillAllChannels();
+		try {
+			await this.backfillAllChannels();
+		} catch (err) {
+			log.logWarning(
+				`Failed to backfill channels (missing scope?): ${err instanceof Error ? err.message : String(err)}`,
+			);
+		}
 
 		this.setupEventHandlers();
 		await this.socketClient.start();
