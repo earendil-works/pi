@@ -2298,10 +2298,40 @@ export class TuiRenderer {
 			this.ui.requestRender();
 			return;
 		}
+
+		// Check for spec/discover mode from extension indicators
+		const mode = this.getActiveModeFromIndicators();
+		if (mode) {
+			this.editor.borderColor = theme.getModeBorderColor(mode);
+			const cursorAccent = theme.getModeCursorAccentAnsi(mode);
+			if (cursorAccent) {
+				this.editor.cursorAccentAnsi = cursorAccent;
+			}
+			this.ui.requestRender();
+			return;
+		}
+
 		const level = this.agent.state.thinkingLevel || "off";
 		this.editor.borderColor = theme.getThinkingBorderColor(level);
 		this.editor.cursorAccentAnsi = theme.getThinkingCursorAccentAnsi(level);
 		this.ui.requestRender();
+	}
+
+	/**
+	 * Check extension indicators for active spec/discover mode.
+	 * Returns "spec", "discover", or null if no mode is active.
+	 */
+	private getActiveModeFromIndicators(): "spec" | "discover" | null {
+		const indicators = this.extensionManager.getIndicators();
+		for (const indicator of indicators) {
+			if (indicator.label.includes("SPEC") || indicator.label.includes("spec")) {
+				return "spec";
+			}
+			if (indicator.label.includes("DISCOVER") || indicator.label.includes("discover")) {
+				return "discover";
+			}
+		}
+		return null;
 	}
 
 	private toggleThinkingLevel(): void {

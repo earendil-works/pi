@@ -23,7 +23,9 @@
 		"budgetGreen": "#5a8a5a",
 		"budgetYellow": "#9a8a40",
 		"budgetOrange": "#9a6a30",
-		"budgetRed": "#8a4a4a"
+		"budgetRed": "#8a4a4a",
+		"specMode": "#5f8787",
+		"discoverMode": "#5f87af"
 	},
 	"colors": {
 		"accent": "accent",
@@ -75,6 +77,8 @@
 		"budgetGreen": "budgetGreen",
 		"budgetYellow": "budgetYellow",
 		"budgetOrange": "budgetOrange",
-		"budgetRed": "budgetRed"
+		"budgetRed": "budgetRed",
+		"specMode": "specMode",
+		"discoverMode": "discoverMode"
 	}
 }

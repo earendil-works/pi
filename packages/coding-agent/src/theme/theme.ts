@@ -83,7 +83,9 @@ const ThemeJsonSchema = Type.Object({
 		thinkingMedium: ColorValueSchema,
 		thinkingHigh: ColorValueSchema,
 		thinkingXhigh: ColorValueSchema,
-		// Context Budget Indicators (4 colors)
+		// Mode colors (override thinking level)
+		specMode: ColorValueSchema,
+		discoverMode: ColorValueSchema,
 		budgetGreen: ColorValueSchema,
 		budgetYellow: ColorValueSchema,
 		budgetOrange: ColorValueSchema,
@@ -141,7 +143,9 @@ export type ThemeColor =
 	| "budgetGreen"
 	| "budgetYellow"
 	| "budgetOrange"
-	| "budgetRed";
+	| "budgetRed"
+	| "specMode"
+	| "discoverMode";
 
 export type ThemeBg = "userMessageBg" | "toolPendingBg" | "toolSuccessBg" | "toolErrorBg";
 
@@ -369,6 +373,27 @@ export class Theme {
 			fgAnsi: this.getFgAnsiFromThemeBg("toolPendingBg"),
 			bgAnsi: this.getBgAnsiFromThemeColor(color),
 		};
+	}
+
+	/**
+	 * Get border color for spec/discover mode.
+	 * These colors override the thinking level colors when active.
+	 */
+	getModeBorderColor(mode: "spec" | "discover" | null): (str: string) => string {
+		if (!mode) return (str: string) => str;
+		const color = mode === "spec" ? "specMode" : "discoverMode";
+		return (str: string) => this.fg(color, str);
+	}
+
+	getModeBorderThemeColor(mode: "spec" | "discover" | null): ThemeColor | null {
+		if (!mode) return null;
+		return mode === "spec" ? "specMode" : "discoverMode";
+	}
+
+	getModeCursorAccentAnsi(mode: "spec" | "discover" | null): CursorAccentAnsi | null {
+		const color = this.getModeBorderThemeColor(mode);
+		if (!color) return null;
+		return this.getCursorAccentAnsiForThemeColor(color);
 	}
 }
 
