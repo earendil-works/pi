@@ -19,8 +19,8 @@
  * sanitizeSurrogates(`Text ${unpaired} here`) // => "Text  here"
  */
 export function sanitizeSurrogates(text) {
-    // Replace unpaired high surrogates (0xD800-0xDBFF not followed by low surrogate)
-    // Replace unpaired low surrogates (0xDC00-0xDFFF not preceded by high surrogate)
-    return text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
+	// Replace unpaired high surrogates (0xD800-0xDBFF not followed by low surrogate)
+	// Replace unpaired low surrogates (0xDC00-0xDFFF not preceded by high surrogate)
+	return text.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, "");
 }
 //# sourceMappingURL=sanitize-unicode.js.map

@@ -7,7 +7,7 @@
  * Uses Web Crypto API for cross-platform compatibility.
  */
 export declare function generatePKCE(): Promise<{
-    verifier: string;
-    challenge: string;
+	verifier: string;
+	challenge: string;
 }>;
 //# sourceMappingURL=pkce.d.ts.map
