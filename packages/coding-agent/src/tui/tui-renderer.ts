@@ -4134,6 +4134,9 @@ export class TuiRenderer {
 
 		try {
 			await command.execute(argString, ctx);
+			// Update editor border color after extension command executes
+			// to reflect any spec/discover mode changes from extension indicators
+			this.updateEditorBorderColor();
 		} catch (err: unknown) {
 			const msg = err instanceof Error ? err.message : String(err);
 			this.showError(`Extension command /${command.name} failed: ${msg}`);

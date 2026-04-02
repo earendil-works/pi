@@ -4,8 +4,8 @@
  */
 import { type OAuthCredentials } from "./storage.js";
 export interface AntigravityCredentials extends OAuthCredentials {
-	projectId: string;
-	email?: string;
+    projectId: string;
+    email?: string;
 }
 /**
  * Refresh Antigravity token
@@ -17,8 +17,8 @@ export declare function refreshAntigravityToken(refreshToken: string, projectId:
  * @param onAuth - Callback with URL and optional instructions
  * @param onProgress - Optional progress callback
  */
-export declare function loginAntigravity(
-	onAuth: (info: { url: string; instructions?: string }) => void,
-	onProgress?: (message: string) => void,
-): Promise<AntigravityCredentials>;
+export declare function loginAntigravity(onAuth: (info: {
+    url: string;
+    instructions?: string;
+}) => void, onProgress?: (message: string) => void): Promise<AntigravityCredentials>;
 //# sourceMappingURL=google-antigravity.d.ts.map
