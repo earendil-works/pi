@@ -81,6 +81,12 @@ describe("ask-user preset extension", () => {
 				sessionEntries.push(data);
 			},
 			appendSessionMessage: () => {},
+			getExtensionState: () => undefined,
+			setExtensionState: () => {},
+			registerExtensionIndicator: () => {},
+			updateExtensionIndicator: () => {},
+			removeExtensionIndicator: () => {},
+			spawnAgent: async () => ({ result: "", exitCode: 0 }),
 		});
 
 		expect(registeredTool).toBeDefined();
@@ -154,6 +160,12 @@ describe("ask-user preset extension", () => {
 			afterToolResult: () => {},
 			appendSessionEntry: () => {},
 			appendSessionMessage: () => {},
+			getExtensionState: () => undefined,
+			setExtensionState: () => {},
+			registerExtensionIndicator: () => {},
+			updateExtensionIndicator: () => {},
+			removeExtensionIndicator: () => {},
+			spawnAgent: async () => ({ result: "", exitCode: 0 }),
 		});
 
 		expect(registeredTool).toBeDefined();

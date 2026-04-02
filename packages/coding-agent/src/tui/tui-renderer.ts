@@ -456,7 +456,7 @@ export class TuiRenderer {
 		this.editor.showBottomBorder = false;
 		this.editorContainer = new Container(); // Container to hold editor or selector
 		this.editorContainer.addChild(this.editor); // Start with editor
-		this.footer = new FooterComponent(agent.state);
+		this.footer = new FooterComponent(agent.state, extensionManager);
 		this.footer.setShowModelStatus(false);
 		this.topChrome = new Container();
 		this.chatLayout = new ChatLayoutComponent({

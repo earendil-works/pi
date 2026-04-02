@@ -148,6 +148,46 @@ export interface ExtensionApi {
 		message: unknown,
 		options?: { display?: ExtensionSessionMessageDisplay },
 	): void;
+
+	/** Get per-extension state value (persists across reloads). */
+	getExtensionState<T>(key: string): T | undefined;
+
+	/** Set per-extension state value (persists across reloads). */
+	setExtensionState<T>(key: string, value: T): void;
+
+	/** Register a footer indicator badge. */
+	registerExtensionIndicator(options: {
+		id: string;
+		label: string;
+		color: "accent" | "warning" | "muted" | "error" | "success";
+		priority?: number;
+	}): void;
+
+	/** Update a registered footer indicator. */
+	updateExtensionIndicator(
+		id: string,
+		options: Partial<{
+			label: string;
+			color: "accent" | "warning" | "muted" | "error" | "success";
+			priority: number;
+		}>,
+	): void;
+
+	/** Remove a footer indicator. */
+	removeExtensionIndicator(id: string): void;
+
+	/**
+	 * Spawn a child agent using the built-in `spawn_agent` tool.
+	 * This is a convenience API for extensions that want verifier/worker agents.
+	 */
+	spawnAgent(params: {
+		message?: string;
+		startup?: { type: "mission"; missionPath: string };
+		model?: string;
+		reasoning?: "inherit" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+		verify?: boolean;
+		verificationChecks?: string[];
+	}): Promise<{ result: string; exitCode: number; details?: unknown }>;
 }
 
 export type ExtensionFactory = (api: ExtensionApi) => void | Promise<void>;

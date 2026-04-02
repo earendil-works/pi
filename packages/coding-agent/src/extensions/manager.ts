@@ -1,3 +1,5 @@
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { AgentTool, Message, ToolResultMessage } from "@kennyfrc/mu-ai";
 import { type Static, type TSchema, Type } from "@sinclair/typebox";
 import { registerRuntimeProvider, unregisterRuntimeProvidersBySourceId } from "../model-config.js";
@@ -29,6 +31,15 @@ import { composeToolResultTransformer, wrapToolWithExtensions } from "./wrapper.
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
+}
+
+function getToolExitCode(details: unknown): number {
+	if (!isRecord(details)) return 1;
+	const exitCode = details.exitCode;
+	if (typeof exitCode === "number") return exitCode;
+	const ok = details.ok;
+	if (typeof ok === "boolean") return ok ? 0 : 1;
+	return 1;
 }
 
 function assertHasToolProjectionV1(toolName: string, details: unknown): void {
@@ -103,13 +114,18 @@ export class ExtensionManager {
 	private tools = new ToolRegistry();
 	private commands = new CommandRegistry();
 	private loadedSourceIds = new Set<string>();
+	private builtInTools: Record<string, ErasedAgentTool>;
 	private builtInToolNames: Set<string>;
 	private builtInSourceId: string;
 	private builtInPriority: number;
 	private log: (message: string, err?: unknown) => void;
 	private sessionManager?: SessionManager;
+	private extensionState = new Map<string, Map<string, unknown>>();
+	private extensionStateDir?: string;
+	private indicators = new Map<string, { label: string; color: string; priority: number; sourceId: string }>();
 
 	constructor(opts: ExtensionManagerOptions) {
+		this.builtInTools = opts.builtInTools;
 		this.builtInToolNames = new Set(Object.keys(opts.builtInTools));
 		this.builtInSourceId = opts.builtInSourceId ?? "built-in";
 		this.builtInPriority = opts.builtInPriority ?? 100;
@@ -120,6 +136,90 @@ export class ExtensionManager {
 		for (const tool of Object.values(opts.builtInTools)) {
 			this.tools.registerTool(tool, { sourceId: this.builtInSourceId, priority: this.builtInPriority });
 		}
+	}
+
+	/** Set the directory for persisting extension state. */
+	setExtensionStateDir(dir: string): void {
+		this.extensionStateDir = dir;
+	}
+
+	/** Load persisted state for an extension. */
+	private async loadExtensionState(sourceId: string): Promise<Map<string, unknown>> {
+		const extName = this.extractExtensionName(sourceId);
+
+		if (this.extensionState.has(extName)) {
+			return this.extensionState.get(extName)!;
+		}
+
+		const state = new Map<string, unknown>();
+		this.extensionState.set(extName, state);
+
+		if (this.extensionStateDir) {
+			try {
+				const statePath = join(this.extensionStateDir, extName, "state.json");
+				const content = await readFile(statePath, "utf8");
+				const data = JSON.parse(content) as Record<string, unknown>;
+				for (const [key, value] of Object.entries(data)) {
+					state.set(key, value);
+				}
+			} catch {
+				// State file doesn't exist or is corrupted - start with empty state
+			}
+		}
+
+		return state;
+	}
+
+	/** Persist extension state to disk. */
+	private async saveExtensionState(sourceId: string): Promise<void> {
+		if (!this.extensionStateDir) return;
+
+		const state = this.extensionState.get(sourceId);
+		if (!state) return;
+
+		try {
+			const extDir = join(this.extensionStateDir, sourceId);
+			await mkdir(extDir, { recursive: true });
+			const statePath = join(extDir, "state.json");
+			const data = Object.fromEntries(state.entries());
+			await writeFile(statePath, JSON.stringify(data, null, 2), "utf8");
+		} catch (err) {
+			this.log(`Failed to save extension state for ${sourceId}`, err);
+		}
+	}
+
+	/** Get a state value for an extension. */
+	getExtensionState<T>(sourceId: string, key: string): T | undefined {
+		const extName = this.extractExtensionName(sourceId);
+		const state = this.extensionState.get(extName);
+		return state?.get(key) as T | undefined;
+	}
+
+	/** Set a state value for an extension. */
+	async setExtensionState<T>(sourceId: string, key: string, value: T): Promise<void> {
+		const extName = this.extractExtensionName(sourceId);
+		let state = this.extensionState.get(extName);
+		if (!state) {
+			state = new Map<string, unknown>();
+			this.extensionState.set(extName, state);
+		}
+		state.set(key, value);
+		await this.saveExtensionState(extName);
+	}
+
+	/** Extract extension name from sourceId (full path). */
+	private extractExtensionName(sourceId: string): string {
+		// sourceId is the full path to the extension file
+		// Extract the directory name which is the extension name
+		const parts = sourceId.split("/");
+		// Find the index of "extensions" in the path
+		const extIndex = parts.indexOf("extensions");
+		if (extIndex >= 0 && extIndex < parts.length - 1) {
+			return parts[extIndex + 1]!;
+		}
+		// Fallback: use filename without extension
+		const filename = parts[parts.length - 1] ?? sourceId;
+		return filename.replace(/\.(ts|js|mts|mjs|cts|cjs)$/, "");
 	}
 
 	/** Load an in-process extension factory (Phase 1 style). */
@@ -390,7 +490,28 @@ export class ExtensionManager {
 			appendSessionMessage: (customType, message, options) => {
 				this.sessionManager?.appendCustomMessage(customType, message, options);
 			},
+			getExtensionState: <T>(key: string): T | undefined => {
+				return this.getExtensionState<T>(sourceId, key);
+			},
+			setExtensionState: <T>(key: string, value: T): void => {
+				void this.setExtensionState<T>(sourceId, key, value);
+			},
+			registerExtensionIndicator: (options) => {
+				this.registerExtensionIndicator(sourceId, options);
+			},
+			updateExtensionIndicator: (id, options) => {
+				this.updateExtensionIndicator(id, options);
+			},
+			removeExtensionIndicator: (id) => {
+				this.removeExtensionIndicator(id);
+			},
+			spawnAgent: async (params) => {
+				return this.spawnAgent(params);
+			},
 		};
+
+		// Load persisted state for this extension before running the factory
+		await this.loadExtensionState(sourceId);
 
 		try {
 			await factory(api);
@@ -404,6 +525,7 @@ export class ExtensionManager {
 		this.runner.unregisterBySourceId(sourceId);
 		this.tools.unregisterBySourceId(sourceId);
 		this.commands.unregisterBySourceId(sourceId);
+		this.removeIndicatorsBySourceId(sourceId);
 		unregisterRuntimeProvidersBySourceId(sourceId);
 	}
 
@@ -458,5 +580,107 @@ export class ExtensionManager {
 		return async (messages: Message[], abortSignal?: AbortSignal) => {
 			return this.runner.applyContext(messages, abortSignal);
 		};
+	}
+
+	/** Register a footer indicator. */
+	registerExtensionIndicator(
+		sourceId: string,
+		options: {
+			id: string;
+			label: string;
+			color: "accent" | "warning" | "muted" | "error" | "success";
+			priority?: number;
+		},
+	): void {
+		this.indicators.set(options.id, {
+			label: options.label,
+			color: options.color,
+			priority: options.priority ?? 0,
+			sourceId,
+		});
+	}
+
+	/** Update a footer indicator. */
+	updateExtensionIndicator(
+		id: string,
+		options: Partial<{
+			label: string;
+			color: "accent" | "warning" | "muted" | "error" | "success";
+			priority: number;
+		}>,
+	): void {
+		const indicator = this.indicators.get(id);
+		if (indicator) {
+			if (options.label !== undefined) indicator.label = options.label;
+			if (options.color !== undefined) indicator.color = options.color;
+			if (options.priority !== undefined) indicator.priority = options.priority;
+		}
+	}
+
+	/** Remove a footer indicator. */
+	removeExtensionIndicator(id: string): void {
+		this.indicators.delete(id);
+	}
+
+	/** Get all registered indicators, sorted by priority (highest first). */
+	getIndicators(): Array<{ id: string; label: string; color: string; priority: number }> {
+		return Array.from(this.indicators.entries())
+			.map(([id, data]) => ({ id, ...data }))
+			.sort((a, b) => b.priority - a.priority);
+	}
+
+	/** Remove all indicators for a source. */
+	removeIndicatorsBySourceId(sourceId: string): void {
+		for (const [id, indicator] of this.indicators) {
+			if (indicator.sourceId === sourceId) {
+				this.indicators.delete(id);
+			}
+		}
+	}
+
+	private async executeBuiltInTool(
+		toolName: string,
+		params: Record<string, unknown>,
+	): Promise<{ result: string; exitCode: number; details?: unknown }> {
+		const tool = this.builtInTools[toolName];
+		if (!tool) {
+			throw new Error(`Tool "${toolName}" not found. Available tools: ${Object.keys(this.builtInTools).join(", ")}`);
+		}
+
+		// Generate a unique tool call ID
+		const toolCallId = `ext-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+
+		try {
+			const result = await tool.execute(toolCallId, params, undefined, () => {});
+
+			// Extract result content and details
+			const content = Array.isArray(result.content)
+				? result.content
+						.map((c: { type?: string; text?: string }) => (c.type === "text" ? (c.text ?? "") : ""))
+						.join("")
+				: String(result.content);
+
+			const details = (result as { details?: unknown }).details;
+			const exitCode = getToolExitCode(details);
+
+			return {
+				result: content,
+				exitCode,
+				details,
+			};
+		} catch (err) {
+			throw new Error(`Tool "${toolName}" execution failed: ${err instanceof Error ? err.message : String(err)}`);
+		}
+	}
+
+	async spawnAgent(params: {
+		message?: string;
+		startup?: { type: "mission"; missionPath: string };
+		model?: string;
+		reasoning?: "inherit" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+		verify?: boolean;
+		verificationChecks?: string[];
+	}): Promise<{ result: string; exitCode: number; details?: unknown }> {
+		return this.executeBuiltInTool("spawn_agent", params);
 	}
 }

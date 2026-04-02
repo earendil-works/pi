@@ -156,6 +156,10 @@ export class ExtensionLoader {
 	}
 
 	async loadAll(): Promise<ExtensionLoadResult[]> {
+		// Set up extension state directory before loading
+		const stateDir = join(this.configDir, EXTENSIONS_DIRNAME);
+		this.manager.setExtensionStateDir(stateDir);
+
 		const files = await this.discoverExtensionFiles();
 		const results: ExtensionLoadResult[] = [];
 

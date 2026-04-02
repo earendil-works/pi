@@ -3,8 +3,9 @@ import { supportsXhigh } from "@kennyfrc/mu-ai";
 import { type Component, visibleWidth } from "@kennyfrc/mu-tui";
 import { existsSync, type FSWatcher, readFileSync, watch } from "fs";
 import { dirname, join } from "path";
+import type { ExtensionManager } from "../extensions/manager.js";
 import { supportsFastMode } from "../fast-mode.js";
-import { theme } from "../theme/theme.js";
+import { type ThemeColor, theme } from "../theme/theme.js";
 
 interface FooterTransientStatus {
 	indicator: string;
@@ -199,9 +200,11 @@ export class FooterComponent implements Component {
 	private title: string | null = null;
 	private showModelStatus = true;
 	private transientStatus: FooterTransientStatus | null = null;
+	private extensionManager: ExtensionManager | null = null;
 
-	constructor(state: AgentState) {
+	constructor(state: AgentState, extensionManager?: ExtensionManager) {
 		this.state = state;
+		this.extensionManager = extensionManager ?? null;
 	}
 
 	/**
@@ -292,6 +295,24 @@ export class FooterComponent implements Component {
 	}
 
 	/**
+	 * Get extension indicators from ExtensionManager.
+	 * Returns formatted string of indicators or empty string if none.
+	 */
+	private getExtensionIndicators(): string {
+		if (!this.extensionManager) return "";
+
+		const indicators = this.extensionManager.getIndicators();
+		if (indicators.length === 0) return "";
+
+		return indicators
+			.map((ind) => {
+				const color = (ind.color as ThemeColor) || "accent";
+				return theme.fg(color, ind.label);
+			})
+			.join(" ");
+	}
+
+	/**
 	 * Get current git branch by reading .git/HEAD directly.
 	 * Returns null if not in a git repo, branch name otherwise.
 	 */
@@ -340,7 +361,10 @@ export class FooterComponent implements Component {
 
 		pwd = truncatePlainTextMiddle(pwd, Math.max(1, width));
 
-		const rightSide = this.showModelStatus ? formatModelStatusLabel(this.state) : "";
+		// Get extension indicators
+		const extensionIndicators = this.getExtensionIndicators();
+		const modelStatus = this.showModelStatus ? formatModelStatusLabel(this.state) : "";
+		const rightSide = extensionIndicators ? `${extensionIndicators} ${modelStatus}`.trim() : modelStatus;
 
 		let titleLine = "";
 		const secondaryLine = renderSplitLine({
