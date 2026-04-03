@@ -18,7 +18,6 @@ interface RendererHarness {
 	runAskUserDialog(request: {
 		mode: "clarify";
 		objective: string;
-		scopeName: string;
 		questions: [
 			{
 				id: string;
@@ -27,7 +26,7 @@ interface RendererHarness {
 				options: string[];
 			},
 		];
-	}): Promise<{ scopeName: string; answers: Array<{ answer: string }> }>;
+	}): Promise<{ answers: Array<{ answer: string }> }>;
 	activeDialogOverlay: { handleInput(data: string): void } | null;
 }
 
@@ -74,15 +73,12 @@ function readWorkingSnapshot(renderer: RendererHarness): WorkingSnapshot {
 	};
 }
 
-function submitDialog(renderer: RendererHarness, scopeName: string): void {
+function submitDialog(renderer: RendererHarness): void {
 	const overlay = renderer.activeDialogOverlay;
 	if (!overlay) {
 		throw new Error("expected active ask-user dialog overlay");
 	}
-	for (const char of scopeName) {
-		overlay.handleInput(char);
-	}
-	overlay.handleInput("\r");
+	// Select first option
 	overlay.handleInput("\r");
 }
 
@@ -122,7 +118,6 @@ describe("ask-user dialog working status freeze", () => {
 		const dialogPromise = renderer.runAskUserDialog({
 			mode: "clarify",
 			objective: "Lock down missing validation details",
-			scopeName: "",
 			questions: [
 				{
 					id: "surface",
@@ -139,9 +134,8 @@ describe("ask-user dialog working status freeze", () => {
 
 		expect(stillPaused).toEqual(paused);
 
-		submitDialog(renderer, "login flow");
+		submitDialog(renderer);
 		await expect(dialogPromise).resolves.toMatchObject({
-			scopeName: "login-flow",
 			answers: [{ answer: "xtui" }],
 		});
 
@@ -162,7 +156,6 @@ describe("ask-user dialog working status freeze", () => {
 		const dialogPromise = renderer.runAskUserDialog({
 			mode: "clarify",
 			objective: "Lock down missing validation details",
-			scopeName: "",
 			questions: [
 				{
 					id: "surface",

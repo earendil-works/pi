@@ -1,7 +1,6 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Message } from "@kennyfrc/mu-ai";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AskUserResult } from "../ask-user/types.js";
 import type { ExtensionApi } from "../types.js";
@@ -35,15 +34,13 @@ describe("ask-user preset extension", () => {
 		}
 	});
 
-	it("registers ask_user and persists scope context for later prompts", async () => {
+	it("registers ask_user and returns answers", async () => {
 		const cwd = mkdtempSync(join(tmpdir(), "mu-ask-user-preset-"));
 		tempDirs.push(cwd);
 		process.chdir(cwd);
 		process.env.MU_SESSION_ID = "session-456";
 
 		promptAskUserMock.mockResolvedValue({
-			scopeName: "login-flow",
-			sanitizedScopeName: "login-flow",
 			answers: [
 				{
 					questionId: "surface",
@@ -55,14 +52,11 @@ describe("ask-user preset extension", () => {
 					entryId: "login-flow",
 				},
 			],
-			files: [],
 			summary: "1. Surface: cdp",
 		});
 
 		type RegisteredTool = Parameters<ExtensionApi["registerTool"]>[0];
 		let registeredTool: RegisteredTool | undefined;
-		let contextHook: ((messages: Message[]) => Message[]) | undefined;
-		const sessionEntries: unknown[] = [];
 
 		askUserExtension({
 			registerTool: (tool) => {
@@ -70,16 +64,12 @@ describe("ask-user preset extension", () => {
 			},
 			registerCliTool: () => {},
 			registerProvider: () => {},
-			context: (hook) => {
-				contextHook = hook as typeof contextHook;
-			},
+			context: () => {},
 			registerCommand: () => {},
 			input: () => {},
 			beforeToolCall: () => {},
 			afterToolResult: () => {},
-			appendSessionEntry: (_customType, data) => {
-				sessionEntries.push(data);
-			},
+			appendSessionEntry: () => {},
 			appendSessionMessage: () => {},
 			getExtensionState: () => undefined,
 			setExtensionState: () => {},
@@ -90,7 +80,6 @@ describe("ask-user preset extension", () => {
 		});
 
 		expect(registeredTool).toBeDefined();
-		expect(contextHook).toBeDefined();
 
 		const toolResult = await registeredTool!.execute("call_1", {
 			mode: "validation_contract",
@@ -104,20 +93,10 @@ describe("ask-user preset extension", () => {
 				},
 			],
 		});
-		const details = toolResult.details as { scopeName: string };
+		const details = toolResult.details as { answers: Array<{ answer: string }> };
 
-		expect(details.scopeName).toBe("login-flow");
-		expect(sessionEntries).toHaveLength(1);
-
-		const contextMessages = contextHook!([{ role: "user", content: "Implement the fix", timestamp: Date.now() }]);
-		const injected = contextMessages.find(
-			(message) =>
-				message.role === "user" &&
-				typeof message.content === "string" &&
-				message.content.includes("Validation entries:"),
-		);
-
-		expect(injected).toBeDefined();
+		expect(details.answers).toHaveLength(1);
+		expect(details.answers[0]?.answer).toBe("cdp");
 		expect(promptAskUserMock).toHaveBeenCalledTimes(1);
 	});
 
@@ -128,8 +107,6 @@ describe("ask-user preset extension", () => {
 		process.env.MU_SESSION_ID = "session-789";
 
 		promptAskUserMock.mockResolvedValue({
-			scopeName: "dad-nursing-home-crisis",
-			sanitizedScopeName: "dad-nursing-home-crisis",
 			answers: [
 				{
 					questionId: "doctor_contacted",
@@ -140,7 +117,6 @@ describe("ask-user preset extension", () => {
 					field: "doctor_contacted",
 				},
 			],
-			files: [],
 			summary: "1. medical clearance: No, not yet",
 		});
 
@@ -173,7 +149,6 @@ describe("ask-user preset extension", () => {
 		const toolResult = await registeredTool!.execute("call_2", {
 			mode: "clarify",
 			objective: "Determine immediate safety status",
-			scopeName: "Dad nursing home crisis",
 			questions: [
 				{
 					id: "doctor_contacted",
@@ -184,17 +159,9 @@ describe("ask-user preset extension", () => {
 				},
 			],
 		});
-		const details = toolResult.details as {
-			scopeName: string;
-			specClarifications: { items: Array<{ id: string; answer: string }> } | undefined;
-		};
+		const details = toolResult.details as { answers: Array<{ answer: string }> };
 
-		expect(details.scopeName).toBe("dad-nursing-home-crisis");
-		expect(details.specClarifications?.items.map((item) => ({ id: item.id, answer: item.answer }))).toEqual([
-			{
-				id: "doctor_contacted",
-				answer: "No, not yet",
-			},
-		]);
+		expect(details.answers).toHaveLength(1);
+		expect(details.answers[0]?.answer).toBe("No, not yet");
 	});
 });

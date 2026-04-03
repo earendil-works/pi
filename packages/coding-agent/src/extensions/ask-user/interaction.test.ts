@@ -24,7 +24,6 @@ describe("ask-user interaction", () => {
 			promptAskUser({
 				mode: "clarify",
 				objective: "Lock down missing validation details",
-				scopeName: "login-flow",
 				questions: [
 					{
 						id: "surface",
@@ -42,8 +41,6 @@ describe("ask-user interaction", () => {
 
 	it("uses the installed interaction handler when available", async () => {
 		setAskUserInteractionHandler(async () => ({
-			scopeName: "login-flow",
-			sanitizedScopeName: "login-flow",
 			answers: [
 				{
 					questionId: "surface",
@@ -53,7 +50,6 @@ describe("ask-user interaction", () => {
 					source: "option",
 				},
 			],
-			files: [],
 			summary: "1. Surface: xtui",
 		}));
 
@@ -61,7 +57,6 @@ describe("ask-user interaction", () => {
 			promptAskUser({
 				mode: "clarify",
 				objective: "Lock down missing validation details",
-				scopeName: "login-flow",
 				questions: [
 					{
 						id: "surface",
@@ -72,7 +67,6 @@ describe("ask-user interaction", () => {
 				],
 			}),
 		).resolves.toMatchObject({
-			scopeName: "login-flow",
 			answers: [{ answer: "xtui" }],
 		});
 	});

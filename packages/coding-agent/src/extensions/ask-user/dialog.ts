@@ -1,6 +1,5 @@
 import { Container, Input, type SelectItem, SelectList, Spacer, Text } from "@kennyfrc/mu-tui";
 import { getSelectListTheme, theme } from "../../theme/theme.js";
-import { sanitizeScopeName } from "./storage.js";
 import type { AskUserAnswer, AskUserAnswerSource, AskUserRequest, AskUserResult } from "./types.js";
 
 interface AskUserDialogComponentOptions {
@@ -9,7 +8,7 @@ interface AskUserDialogComponentOptions {
 	onCancel: () => void;
 }
 
-type DialogStage = "scope" | "choice" | "custom";
+type DialogStage = "choice" | "custom";
 
 const CUSTOM_VALUE = "__custom__";
 
@@ -20,14 +19,11 @@ function buildSummary(answers: AskUserAnswer[]): string {
 
 export class AskUserDialogComponent extends Container {
 	private readonly request: AskUserRequest;
-	private readonly scopeInput = new Input();
 	private readonly customInput = new Input();
 	private readonly onSubmitCallback: (result: AskUserResult) => void;
 	private readonly onCancelCallback: () => void;
 
-	private stage: DialogStage = "scope";
-	private scopeName = "";
-	private scopePreview = "";
+	private stage: DialogStage = "choice";
 	private questionIndex = 0;
 	private currentSelectList: SelectList | null = null;
 	private answers: AskUserAnswer[] = [];
@@ -39,10 +35,8 @@ export class AskUserDialogComponent extends Container {
 		this.onSubmitCallback = options.onSubmit;
 		this.onCancelCallback = options.onCancel;
 
-		this.scopeInput.setValue(options.request.scopeName ?? "");
-		this.scopePreview = this.scopeInput.getValue().trim();
-		this.scopeInput.onSubmit = () => this.commitScope();
 		this.customInput.onSubmit = () => this.commitCustomAnswer();
+		this.stage = this.request.questions[0]?.options.length ? "choice" : "custom";
 		this.rebuild();
 	}
 
@@ -68,28 +62,6 @@ export class AskUserDialogComponent extends Container {
 			this.addChild(new Text(theme.fg("warning", this.errorMessage), 0, 0));
 			this.addChild(new Spacer(1));
 		}
-
-		if (this.stage === "scope") {
-			this.addChild(new Text("Scope name", 0, 0));
-			this.addChild(
-				new Text(
-					theme.fg(
-						"muted",
-						this.scopePreview.trim()
-							? `Stored under devdocs/scopes/${this.scopePreview.trim()}`
-							: "Choose the durable subfolder name for this clarification scope.",
-					),
-					0,
-					0,
-				),
-			);
-			this.addChild(new Spacer(1));
-			this.addChild(this.scopeInput);
-			return;
-		}
-
-		this.addChild(new Text(theme.fg("accent", `Scope: ${this.scopeName}`), 0, 0));
-		this.addChild(new Spacer(1));
 
 		const question = this.request.questions[this.questionIndex];
 		if (!question) {
@@ -149,21 +121,6 @@ export class AskUserDialogComponent extends Container {
 		return selectList;
 	}
 
-	private commitScope(): void {
-		const rawScopeName = this.scopeInput.getValue().trim();
-		this.scopePreview = rawScopeName;
-		try {
-			this.scopeName = sanitizeScopeName(rawScopeName);
-			this.errorMessage = null;
-			this.questionIndex = 0;
-			this.stage = this.request.questions[0]?.options.length ? "choice" : "custom";
-			this.rebuild();
-		} catch (error: unknown) {
-			this.errorMessage = error instanceof Error ? error.message : String(error);
-			this.rebuild();
-		}
-	}
-
 	private commitCustomAnswer(): void {
 		const value = this.customInput.getValue().trim();
 		if (!value) {
@@ -192,10 +149,7 @@ export class AskUserDialogComponent extends Container {
 		this.questionIndex++;
 		if (this.questionIndex >= this.request.questions.length) {
 			this.onSubmitCallback({
-				scopeName: this.scopeName,
-				sanitizedScopeName: this.scopeName,
 				answers: this.answers,
-				files: [],
 				summary: buildSummary(this.answers),
 			});
 			return;
@@ -215,24 +169,12 @@ export class AskUserDialogComponent extends Container {
 
 		// Ctrl+C clears the current input field (does NOT cancel)
 		if (data === "\x03") {
-			if (this.stage === "scope") {
-				this.scopeInput.setValue("");
-				this.scopePreview = "";
-				this.errorMessage = null;
-				this.rebuild();
-			} else if (this.stage === "custom") {
+			if (this.stage === "custom") {
 				this.customInput.setValue("");
 				this.errorMessage = null;
 				this.rebuild();
 			}
 			// In "choice" stage, SelectList handles its own input
-			return;
-		}
-
-		if (this.stage === "scope") {
-			this.scopeInput.handleInput(data);
-			this.scopePreview = this.scopeInput.getValue().trim();
-			this.errorMessage = null;
 			return;
 		}
 

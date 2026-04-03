@@ -10,42 +10,6 @@ function typeText(component: AskUserDialogComponent, text: string): void {
 }
 
 describe("AskUserDialogComponent Ctrl+C behavior", () => {
-	it("should NOT cancel dialog on Ctrl+C - should clear scope input instead", () => {
-		initTheme("dark");
-		let cancelCalled = false;
-		const component = new AskUserDialogComponent({
-			request: {
-				mode: "validation_contract",
-				objective: "Test Ctrl+C behavior",
-				questions: [
-					{
-						id: "q1",
-						topic: "Test",
-						prompt: "Test question?",
-						options: [],
-					},
-				],
-			},
-			onSubmit: () => {},
-			onCancel: () => {
-				cancelCalled = true;
-			},
-		});
-
-		// Type some text in scope input
-		typeText(component, "some scope text");
-
-		// Press Ctrl+C
-		component.handleInput("\x03");
-
-		// Should NOT have cancelled
-		expect(cancelCalled).toBe(false);
-
-		// Dialog should still show scope stage
-		const rendered = component.render(80).join("\n");
-		expect(rendered).toContain("Scope name");
-	});
-
 	it("should NOT cancel dialog on Ctrl+C - should clear custom input instead", () => {
 		initTheme("dark");
 		let cancelCalled = false;
@@ -67,10 +31,6 @@ describe("AskUserDialogComponent Ctrl+C behavior", () => {
 				cancelCalled = true;
 			},
 		});
-
-		// First enter scope
-		typeText(component, "my-scope");
-		component.handleInput("\r");
 
 		// Now in custom stage, type some text
 		typeText(component, "partial answer");
@@ -139,21 +99,16 @@ describe("AskUserDialogComponent Ctrl+C behavior", () => {
 		// Type, clear with Ctrl+C, then type new text
 		typeText(component, "wrong text");
 		component.handleInput("\x03"); // Clear
-		typeText(component, "correct-scope");
-		component.handleInput("\r"); // Submit scope
-
-		// Answer the question
 		typeText(component, "my answer");
 		component.handleInput("\r");
 
 		expect(result).not.toBeNull();
-		expect(result!.scopeName).toBe("correct-scope");
 		expect(result!.answers[0]?.answer).toBe("my answer");
 	});
 });
 
 describe("AskUserDialogComponent", () => {
-	it("collects a scope, an option answer, and a custom answer", () => {
+	it("collects an option answer and a custom answer", () => {
 		initTheme("dark");
 		let result: AskUserResult | null = null;
 		const component = new AskUserDialogComponent({
@@ -187,15 +142,14 @@ describe("AskUserDialogComponent", () => {
 			},
 		});
 
-		typeText(component, "login flow");
+		// First question has options, select first option (cdp)
 		component.handleInput("\r");
-		component.handleInput("\r");
+		// Second question has no options, type custom answer
 		typeText(component, "dashboard visible");
 		component.handleInput("\r");
 
 		expect(result).not.toBeNull();
 		const resolved = result as unknown as AskUserResult;
-		expect(resolved.scopeName).toBe("login-flow");
 		expect(resolved.answers).toHaveLength(2);
 		expect(resolved.answers[0]?.answer).toBe("cdp");
 		expect(resolved.answers[1]?.answer).toBe("dashboard visible");
@@ -225,9 +179,6 @@ describe("AskUserDialogComponent", () => {
 				throw new Error("dialog should not cancel");
 			},
 		});
-
-		typeText(component, "ask-user-trigger-gate");
-		component.handleInput("\r");
 
 		expect(component.render(80).join("\n")).toContain("Custom answer…");
 	});

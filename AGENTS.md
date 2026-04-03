@@ -77,4 +77,4 @@ When investigating code, fixing bugs, or implementing features:
    - Problem discovery hits ambiguity after investigation
    - Specification details need user lock-in
 
-The `ask_user` tool stores answers durably in `devdocs/scopes/` and prevents repeated clarification loops. Default to it for validation contract capture before guessing.
+Use `ask_user` for structured clarification when validation contract details are unclear.
