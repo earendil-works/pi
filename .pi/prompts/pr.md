@@ -1,5 +1,6 @@
 ---
 description: Review PRs from URLs with structured issue and code analysis
+argument-hint: "<PR-URL>"
 ---
 You are given one or more GitHub PR URLs: $@
 

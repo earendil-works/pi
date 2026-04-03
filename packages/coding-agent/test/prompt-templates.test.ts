@@ -395,14 +395,14 @@ describe("loadPromptTemplates - argument-hint", () => {
 		writeFileSync(join(testDir, `${name}.md`), content);
 	}
 
-	test("should parse argument-hint from frontmatter", () => {
+	test("should parse required argument-hint from frontmatter", () => {
 		writeTemplate(
-			"review",
+			"pr",
 			`---
-description: Code review
-argument-hint: "[file | #PR | PR-URL]"
+description: Review PRs from URLs with structured issue and code analysis
+argument-hint: "<PR-URL>"
 ---
-Review the code for $1`,
+You are given one or more GitHub PR URLs: $@`,
 		);
 
 		const templates = loadPromptTemplates({
@@ -410,19 +410,40 @@ Review the code for $1`,
 			includeDefaults: false,
 		});
 
-		const review = templates.find((t) => t.name === "review");
-		expect(review).toBeDefined();
-		expect(review!.argumentHint).toBe("[file | #PR | PR-URL]");
-		expect(review!.description).toBe("Code review");
+		const pr = templates.find((t) => t.name === "pr");
+		expect(pr).toBeDefined();
+		expect(pr!.argumentHint).toBe("<PR-URL>");
+		expect(pr!.description).toBe("Review PRs from URLs with structured issue and code analysis");
+	});
+
+	test("should parse optional argument-hint from frontmatter", () => {
+		writeTemplate(
+			"wr",
+			`---
+description: Finish the current task end-to-end with changelog, commit, and push
+argument-hint: "[instructions]"
+---
+Wrap it. Additional instructions: $ARGUMENTS`,
+		);
+
+		const templates = loadPromptTemplates({
+			promptPaths: [testDir],
+			includeDefaults: false,
+		});
+
+		const wr = templates.find((t) => t.name === "wr");
+		expect(wr).toBeDefined();
+		expect(wr!.argumentHint).toBe("[instructions]");
+		expect(wr!.description).toBe("Finish the current task end-to-end with changelog, commit, and push");
 	});
 
 	test("should leave argumentHint undefined when not specified", () => {
 		writeTemplate(
-			"ship",
+			"cl",
 			`---
-description: Ship current work
+description: Audit changelog entries before release
 ---
-Ship it`,
+Audit changelog entries for all commits since the last release.`,
 		);
 
 		const templates = loadPromptTemplates({
@@ -430,9 +451,49 @@ Ship it`,
 			includeDefaults: false,
 		});
 
-		const ship = templates.find((t) => t.name === "ship");
-		expect(ship).toBeDefined();
-		expect(ship!.argumentHint).toBeUndefined();
+		const cl = templates.find((t) => t.name === "cl");
+		expect(cl).toBeDefined();
+		expect(cl!.argumentHint).toBeUndefined();
+	});
+
+	test("should ignore empty argument-hint", () => {
+		writeTemplate(
+			"empty-hint",
+			`---
+description: A command with empty hint
+argument-hint: ""
+---
+Do something`,
+		);
+
+		const templates = loadPromptTemplates({
+			promptPaths: [testDir],
+			includeDefaults: false,
+		});
+
+		const tmpl = templates.find((t) => t.name === "empty-hint");
+		expect(tmpl).toBeDefined();
+		expect(tmpl!.argumentHint).toBeUndefined();
+	});
+
+	test("should preserve argument-hint with special characters", () => {
+		writeTemplate(
+			"is",
+			`---
+description: Analyze GitHub issues (bugs or feature requests)
+argument-hint: "<issue>"
+---
+Analyze GitHub issue(s): $ARGUMENTS`,
+		);
+
+		const templates = loadPromptTemplates({
+			promptPaths: [testDir],
+			includeDefaults: false,
+		});
+
+		const is = templates.find((t) => t.name === "is");
+		expect(is).toBeDefined();
+		expect(is!.argumentHint).toBe("<issue>");
 	});
 
 	afterAll(() => {
