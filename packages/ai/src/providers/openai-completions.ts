@@ -734,12 +734,13 @@ function parseChunkUsage(
 	rawUsage: {
 		prompt_tokens?: number;
 		completion_tokens?: number;
-		prompt_tokens_details?: { cached_tokens?: number };
+		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
 		completion_tokens_details?: { reasoning_tokens?: number };
 	},
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
 	const cachedTokens = rawUsage.prompt_tokens_details?.cached_tokens || 0;
+	const cacheWriteTokens = rawUsage.prompt_tokens_details?.cache_write_tokens || 0;
 	const reasoningTokens = rawUsage.completion_tokens_details?.reasoning_tokens || 0;
 	// OpenAI includes cached tokens in prompt_tokens, so subtract to get non-cached input
 	const input = (rawUsage.prompt_tokens || 0) - cachedTokens;
@@ -750,8 +751,8 @@ function parseChunkUsage(
 		input,
 		output: outputTokens,
 		cacheRead: cachedTokens,
-		cacheWrite: 0,
-		totalTokens: input + outputTokens + cachedTokens,
+		cacheWrite: cacheWriteTokens,
+		totalTokens: input + outputTokens + cachedTokens + cacheWriteTokens,
 		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 	};
 	calculateCost(model, usage);

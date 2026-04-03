@@ -6,6 +6,7 @@
 
 - Fixed Anthropic context overflow detection to recognize HTTP 413 `request_too_large` errors, so callers can trigger compaction and retry instead of getting stuck on repeated oversized-image requests ([#2734](https://github.com/badlogic/pi-mono/issues/2734))
 - Fixed OpenAI Responses tool-call streaming to emit a `toolcall_delta` when function call arguments arrive only in `response.function_call_arguments.done`, and to emit only the missing suffix when `.done` extends earlier streamed arguments ([#2745](https://github.com/badlogic/pi-mono/issues/2745))
+- Fixed OpenAI-compatible streaming usage parsing to preserve `prompt_tokens_details.cache_write_tokens` as `usage.cacheWrite` instead of dropping cache write token counts from streamed responses.
 
 ## [0.64.0] - 2026-03-29
 
