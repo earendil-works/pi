@@ -67,7 +67,7 @@ export default function askUserExtension(api: ExtensionApi): void {
 		name: "ask_user",
 		label: "ask_user",
 		description:
-			"Ask the user focused clarification questions. Use this before finalizing a response when validation-contract, specification, or problem-discovery details are materially ambiguous. Use primarily to lock down what to verify and via which surface. Always keep questions concise and concrete, and always leave room for a manual free-text answer from the user.",
+			"Ask the user focused clarification questions. Use this before finalizing a response when validation-contract, specification, or problem-discovery details are materially ambiguous. Valid `mode` values are exactly `validation_contract`, `specification`, and `clarify` — never invent other mode strings. Use `specification` for architecture, design, planning, boundaries, abstractions, and tradeoff lock-in. Use `validation_contract` for deciding what to verify, how to verify it, and on which surface. Use `clarify` for other missing facts that materially affect correctness. Keep questions concise and concrete, prefer 1-4 questions, and always leave room for a manual free-text answer from the user. Each question should have a short stable `id`, a short `topic`, and optional `options`; set `allowCustom: true` whenever the user may need to type their own answer.",
 		parameters: askUserSchema,
 		getResourceKey: () => `ask_user:${process.env.MU_SESSION_ID ?? "global"}`,
 		execute: async (_toolCallId, params: Static<typeof askUserSchema>) => {

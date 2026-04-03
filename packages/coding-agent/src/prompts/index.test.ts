@@ -59,6 +59,12 @@ describe("buildSystemPrompt", () => {
 			"When specification, problem-discovery, or validation-contract details are materially ambiguous, use ask_user before you finalize the response.",
 		);
 		expect(prompt).toContain(
+			"Valid ask_user modes are exactly `validation_contract`, `specification`, and `clarify` — do not invent other mode strings.",
+		);
+		expect(prompt).toContain(
+			"Use `specification` for architecture/design/planning approvals and `validation_contract` for locking down what to verify and via which surface.",
+		);
+		expect(prompt).toContain(
 			"Every ask_user question set must leave room for a manual free-text answer from the user.",
 		);
 	});
