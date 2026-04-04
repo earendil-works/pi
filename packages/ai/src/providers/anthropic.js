@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { calculateCost } from "../models.js";
+import { planPromptCachePolicy } from "../prompt-cache-policy.js";
 import { getEnvApiKey } from "../stream.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
@@ -395,9 +396,11 @@ function createClient(model, apiKey, interleavedThinking) {
 	return { client, isOAuthToken: false };
 }
 function buildParams(model, context, isOAuthToken, options) {
+	const plan = planPromptCachePolicy({ model, context });
+	const normalizedContext = plan.context;
 	const params = {
 		model: model.id,
-		messages: convertMessages(context.messages, model),
+		messages: convertMessages(normalizedContext.messages, model),
 		max_tokens: options?.maxTokens || (model.maxTokens / 3) | 0,
 		stream: true,
 	};
@@ -411,21 +414,21 @@ function buildParams(model, context, isOAuthToken, options) {
 				},
 			},
 		];
-		if (context.systemPrompt) {
+		if (normalizedContext.systemPrompt) {
 			params.system.push({
 				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
+				text: sanitizeSurrogates(normalizedContext.systemPrompt),
 				cache_control: {
 					type: "ephemeral",
 				},
 			});
 		}
-	} else if (context.systemPrompt) {
+	} else if (normalizedContext.systemPrompt) {
 		// Add cache control to system prompt for non-OAuth tokens
 		params.system = [
 			{
 				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
+				text: sanitizeSurrogates(normalizedContext.systemPrompt),
 				cache_control: {
 					type: "ephemeral",
 				},
@@ -435,8 +438,8 @@ function buildParams(model, context, isOAuthToken, options) {
 	if (options?.temperature !== undefined) {
 		params.temperature = options.temperature;
 	}
-	if (context.tools) {
-		params.tools = convertTools(context.tools);
+	if (normalizedContext.tools) {
+		params.tools = convertTools(normalizedContext.tools);
 	}
 	if (options?.thinkingEnabled && model.reasoning) {
 		if (supportsAdaptiveThinking(model.id)) {

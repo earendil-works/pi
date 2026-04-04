@@ -2,6 +2,7 @@ import os from "node:os";
 import { getMuCompactResponseItem } from "../compact-history.js";
 import { MU_STATIC_INSTRUCTIONS } from "../constants.js";
 import { calculateCost } from "../models.js";
+import { planPromptCachePolicy } from "../prompt-cache-policy.js";
 import { getEnvApiKey } from "../stream.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
@@ -428,8 +429,10 @@ export const streamOpenAICodexResponses = (model, context, options) => {
 // Request Building
 // ============================================================================
 function buildRequestBody(model, context, options) {
-	const systemPrompt = buildSystemPrompt(context.systemPrompt, context.tools);
-	const messages = convertMessages(model, context);
+	const plan = planPromptCachePolicy({ model, context, sessionId: options?.sessionId });
+	const normalizedContext = plan.context;
+	const systemPrompt = buildSystemPrompt(normalizedContext.systemPrompt, normalizedContext.tools);
+	const messages = convertMessages(model, normalizedContext);
 	// Prepend developer messages
 	const developerMessages = systemPrompt.developerMessages.map((text) => ({
 		type: "message",
@@ -444,7 +447,7 @@ function buildRequestBody(model, context, options) {
 		input: [...developerMessages, ...messages],
 		text: { verbosity: options?.textVerbosity || "low" },
 		include: ["reasoning.encrypted_content"],
-		prompt_cache_key: options?.sessionId,
+		prompt_cache_key: plan.provider.cacheKey,
 		tool_choice: "auto",
 		parallel_tool_calls: options?.parallelToolCalls ?? false,
 	};
@@ -454,8 +457,8 @@ function buildRequestBody(model, context, options) {
 	if (options?.temperature !== undefined) {
 		body.temperature = options.temperature;
 	}
-	if (context.tools) {
-		body.tools = context.tools.map((tool) => ({
+	if (normalizedContext.tools) {
+		body.tools = normalizedContext.tools.map((tool) => ({
 			type: "function",
 			name: tool.name,
 			description: tool.description,
