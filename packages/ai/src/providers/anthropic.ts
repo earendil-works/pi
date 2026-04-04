@@ -5,6 +5,7 @@ import type {
 	MessageParam,
 } from "@anthropic-ai/sdk/resources/messages.js";
 import { calculateCost } from "../models.js";
+import { planPromptCachePolicy } from "../prompt-cache-policy.js";
 import { getEnvApiKey } from "../stream.js";
 import type {
 	Api,
@@ -504,9 +505,11 @@ function buildParams(
 	isOAuthToken: boolean,
 	options?: AnthropicOptions,
 ): MessageCreateParamsStreaming {
+	const plan = planPromptCachePolicy({ model, context });
+	const normalizedContext = plan.context;
 	const params: MessageCreateParamsStreaming & { output_config?: { effort: AnthropicEffort } } = {
 		model: model.id,
-		messages: convertMessages(context.messages, model),
+		messages: convertMessages(normalizedContext.messages, model),
 		max_tokens: options?.maxTokens || (model.maxTokens / 3) | 0,
 		stream: true,
 	};
@@ -521,21 +524,21 @@ function buildParams(
 				},
 			},
 		];
-		if (context.systemPrompt) {
+		if (normalizedContext.systemPrompt) {
 			params.system.push({
 				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
+				text: sanitizeSurrogates(normalizedContext.systemPrompt),
 				cache_control: {
 					type: "ephemeral",
 				},
 			});
 		}
-	} else if (context.systemPrompt) {
+	} else if (normalizedContext.systemPrompt) {
 		// Add cache control to system prompt for non-OAuth tokens
 		params.system = [
 			{
 				type: "text",
-				text: sanitizeSurrogates(context.systemPrompt),
+				text: sanitizeSurrogates(normalizedContext.systemPrompt),
 				cache_control: {
 					type: "ephemeral",
 				},
@@ -547,8 +550,8 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	if (context.tools) {
-		params.tools = convertTools(context.tools);
+	if (normalizedContext.tools) {
+		params.tools = convertTools(normalizedContext.tools);
 	}
 
 	if (options?.thinkingEnabled && model.reasoning) {

@@ -36,6 +36,18 @@ function createModel(): Model<"openai-codex-responses"> {
 function createContext(): Context {
 	return {
 		messages: [{ role: "user", content: "hello", timestamp: Date.now() }],
+		tools: [
+			{
+				name: "zeta_tool",
+				description: "z desc",
+				parameters: { type: "object", properties: { value: { type: "string" } }, required: ["value"] },
+			},
+			{
+				name: "alpha_tool",
+				description: "a desc",
+				parameters: { type: "object", properties: { value: { type: "string" } }, required: ["value"] },
+			},
+		],
 	};
 }
 
@@ -105,6 +117,7 @@ describe("openai-codex request shape parity", () => {
 		expect(body.tool_choice).toBe("auto");
 		expect(body.parallel_tool_calls).toBe(true);
 		expect(body.prompt_cache_key).toBe(sessionId);
+		expect((body.tools as Array<{ name: string }>).map((tool) => tool.name)).toEqual(["alpha_tool", "zeta_tool"]);
 	});
 
 	it("sends service_tier=priority when fast mode is enabled", async () => {

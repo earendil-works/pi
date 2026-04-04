@@ -2,6 +2,7 @@ export * from "./agent/index.js";
 export * from "./compact-history.js";
 export * from "./constants.js";
 export * from "./models.js";
+export * from "./prompt-cache-policy.js";
 export * from "./providers/anthropic.js";
 export * from "./providers/google.js";
 export * from "./providers/google-gemini-cli.js";
