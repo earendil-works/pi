@@ -78,6 +78,7 @@ describe("ExtensionRunner", () => {
 		getContextUsage: () => undefined,
 		compact: () => {},
 		getSystemPrompt: () => "",
+		reload: async () => {},
 	};
 
 	describe("shortcut conflicts", () => {
@@ -401,6 +402,21 @@ describe("ExtensionRunner", () => {
 	});
 
 	describe("context creation", () => {
+		it("exposes reload on ExtensionContext", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const reload = vi.fn(async () => {});
+
+			runner.bindCore(extensionActions, {
+				...extensionContextActions,
+				reload,
+			});
+
+			const ctx = runner.createContext();
+			await ctx.reload();
+			expect(reload).toHaveBeenCalledTimes(1);
+		});
+
 		it("exposes the current abort signal on ExtensionContext", async () => {
 			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);

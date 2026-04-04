@@ -291,6 +291,8 @@ export interface ExtensionContext {
 	compact(options?: CompactOptions): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
+	/** Request a runtime reload. Available in all contexts; modes may defer execution until safe. */
+	reload(): Promise<void>;
 }
 
 /**
@@ -1390,6 +1392,7 @@ export interface ExtensionContextActions {
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;
 	getSystemPrompt: () => string;
+	reload: () => Promise<void>;
 }
 
 /**

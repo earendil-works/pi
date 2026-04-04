@@ -274,6 +274,7 @@ export class ExtensionRunner {
 		this.getContextUsageFn = contextActions.getContextUsage;
 		this.compactFn = contextActions.compact;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
+		this.reloadHandler = contextActions.reload;
 
 		// Flush provider registrations queued during extension loading
 		for (const { name, config, extensionPath } of this.runtime.pendingProviderRegistrations) {
@@ -551,6 +552,7 @@ export class ExtensionRunner {
 			getContextUsage: () => this.getContextUsageFn(),
 			compact: (options) => this.compactFn(options),
 			getSystemPrompt: () => this.getSystemPromptFn(),
+			reload: () => this.reloadHandler(),
 		};
 	}
 

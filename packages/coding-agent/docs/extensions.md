@@ -956,6 +956,9 @@ pi.registerCommand("switch", {
 
 Run the same reload flow as `/reload`.
 
+`ctx.reload()` is now available in both `ExtensionContext` and `ExtensionCommandContext`.
+Modes may defer the actual reload until the runtime becomes idle if the request arrives while streaming or compacting.
+
 ```typescript
 pi.registerCommand("reload-runtime", {
   description: "Reload extensions, skills, prompts, and themes",
@@ -976,7 +979,7 @@ Important behavior:
 
 For predictable behavior, treat reload as terminal for that handler (`await ctx.reload(); return;`).
 
-Tools run with `ExtensionContext`, so they cannot call `ctx.reload()` directly. Use a command as the reload entrypoint, then expose a tool that queues that command as a follow-up user message.
+Because tools now also receive `ExtensionContext`, they can call `ctx.reload()` directly when needed. If the mode cannot reload immediately, the request may be deferred until the session becomes idle.
 
 Example tool the LLM can call to trigger reload:
 

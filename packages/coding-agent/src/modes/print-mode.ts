@@ -33,6 +33,24 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 	let exitCode = 0;
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
+	let pendingExtensionReload = false;
+	let extensionReloadInProgress = false;
+
+	const requestExtensionReload = async (): Promise<void> => {
+		if (extensionReloadInProgress) {
+			return;
+		}
+		if (session.isStreaming || session.isCompacting) {
+			pendingExtensionReload = true;
+			return;
+		}
+		extensionReloadInProgress = true;
+		try {
+			await session.reload();
+		} finally {
+			extensionReloadInProgress = false;
+		}
+	};
 
 	const rebindSession = async (): Promise<void> => {
 		session = runtimeHost.session;
@@ -70,7 +88,7 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 					return result;
 				},
 				reload: async () => {
-					await session.reload();
+					await requestExtensionReload();
 				},
 			},
 			onError: (err) => {
@@ -79,9 +97,13 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		});
 
 		unsubscribe?.();
-		unsubscribe = session.subscribe((event) => {
+		unsubscribe = session.subscribe(async (event) => {
 			if (mode === "json") {
 				writeRawStdout(`${JSON.stringify(event)}\n`);
+			}
+			if (pendingExtensionReload && !extensionReloadInProgress && !session.isStreaming && !session.isCompacting) {
+				pendingExtensionReload = false;
+				await requestExtensionReload();
 			}
 		});
 	};

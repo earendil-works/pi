@@ -218,6 +218,8 @@ export class InteractiveMode {
 
 	// Shutdown state
 	private shutdownRequested = false;
+	private pendingExtensionReload = false;
+	private extensionReloadInProgress = false;
 
 	// Extension UI state
 	private extensionSelector: ExtensionSelectorComponent | undefined = undefined;
@@ -1228,7 +1230,7 @@ export class InteractiveMode {
 					return { cancelled: false };
 				},
 				reload: async () => {
-					await this.handleReloadCommand();
+					await this.requestExtensionReload();
 				},
 			},
 			shutdownHandler: () => {
@@ -1344,6 +1346,7 @@ export class InteractiveMode {
 				})();
 			},
 			getSystemPrompt: () => this.session.systemPrompt,
+			reload: () => this.requestExtensionReload(),
 		});
 
 		// Set up the extension shortcut handler on the default editor
@@ -2567,6 +2570,8 @@ export class InteractiveMode {
 				break;
 			}
 		}
+
+		await this.maybeRunPendingExtensionReload();
 	}
 
 	/** Extract text content from a user message */
@@ -3987,6 +3992,29 @@ export class InteractiveMode {
 	// Command handlers
 	// =========================================================================
 
+	private async requestExtensionReload(): Promise<void> {
+		if (this.extensionReloadInProgress) {
+			return;
+		}
+		if (this.session.isStreaming || this.session.isCompacting) {
+			this.pendingExtensionReload = true;
+			this.showStatus("Reload scheduled for when the session becomes idle");
+			return;
+		}
+		await this.performReload();
+	}
+
+	private async maybeRunPendingExtensionReload(): Promise<void> {
+		if (!this.pendingExtensionReload || this.extensionReloadInProgress) {
+			return;
+		}
+		if (this.session.isStreaming || this.session.isCompacting) {
+			return;
+		}
+		this.pendingExtensionReload = false;
+		await this.performReload();
+	}
+
 	private async handleReloadCommand(): Promise<void> {
 		if (this.session.isStreaming) {
 			this.showWarning("Wait for the current response to finish before reloading.");
@@ -3996,7 +4024,11 @@ export class InteractiveMode {
 			this.showWarning("Wait for compaction to finish before reloading.");
 			return;
 		}
+		await this.performReload();
+	}
 
+	private async performReload(): Promise<void> {
+		this.extensionReloadInProgress = true;
 		this.resetExtensionUI();
 
 		const loader = new BorderedLoader(
@@ -4060,6 +4092,8 @@ export class InteractiveMode {
 		} catch (error) {
 			dismissLoader(previousEditor as Component);
 			this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);
+		} finally {
+			this.extensionReloadInProgress = false;
 		}
 	}
 

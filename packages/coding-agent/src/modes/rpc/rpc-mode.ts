@@ -75,6 +75,8 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 	// Shutdown request flag
 	let shutdownRequested = false;
+	let pendingExtensionReload = false;
+	let extensionReloadInProgress = false;
 
 	/** Helper for dialog methods with signal/timeout support */
 	function createDialogPromise<T>(
@@ -282,6 +284,29 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		},
 	});
 
+	const requestExtensionReload = async (): Promise<void> => {
+		if (extensionReloadInProgress) {
+			return;
+		}
+		if (session.isStreaming || session.isCompacting) {
+			pendingExtensionReload = true;
+			output({
+				type: "extension_ui_request",
+				id: crypto.randomUUID(),
+				method: "notify",
+				message: "Reload scheduled for when the session becomes idle",
+				notifyType: "info",
+			} as RpcExtensionUIRequest);
+			return;
+		}
+		extensionReloadInProgress = true;
+		try {
+			await session.reload();
+		} finally {
+			extensionReloadInProgress = false;
+		}
+	};
+
 	const rebindSession = async (): Promise<void> => {
 		session = runtimeHost.session;
 		await session.bindExtensions({
@@ -319,7 +344,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					return result;
 				},
 				reload: async () => {
-					await session.reload();
+					await requestExtensionReload();
 				},
 			},
 			shutdownHandler: () => {
@@ -331,8 +356,12 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		});
 
 		unsubscribe?.();
-		unsubscribe = session.subscribe((event) => {
+		unsubscribe = session.subscribe(async (event) => {
 			output(event);
+			if (pendingExtensionReload && !extensionReloadInProgress && !session.isStreaming && !session.isCompacting) {
+				pendingExtensionReload = false;
+				await requestExtensionReload();
+			}
 		});
 	};
 

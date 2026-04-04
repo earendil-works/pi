@@ -2195,6 +2195,12 @@ export class AgentSession {
 					})();
 				},
 				getSystemPrompt: () => this.systemPrompt,
+				reload: async () => {
+					if (!this._extensionCommandContextActions) {
+						throw new Error("Reload is not available in this mode");
+					}
+					await this._extensionCommandContextActions.reload();
+				},
 			},
 			{
 				registerProvider: (name, config) => {
