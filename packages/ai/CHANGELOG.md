@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Fireworks as a built-in provider with Kimi K2.5 Turbo model (OpenAI-compatible API)
+
 ## [0.65.0] - 2026-04-03
 
 ### Added

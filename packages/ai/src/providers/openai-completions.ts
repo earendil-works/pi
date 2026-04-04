@@ -802,6 +802,8 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 		baseUrl.includes("api.x.ai") ||
 		baseUrl.includes("chutes.ai") ||
 		baseUrl.includes("deepseek.com") ||
+		provider === "fireworks" ||
+		baseUrl.includes("fireworks.ai") ||
 		isZai ||
 		provider === "opencode" ||
 		baseUrl.includes("opencode.ai");

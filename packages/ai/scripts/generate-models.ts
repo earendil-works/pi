@@ -1493,6 +1493,27 @@ async function generateModels() {
 		}
 	}
 
+	// Fireworks (OpenAI-compatible API)
+	if (!allModels.some(m => m.provider === "fireworks" && m.id === "accounts/fireworks/routers/kimi-k2p5-turbo")) {
+		allModels.push({
+			id: "accounts/fireworks/routers/kimi-k2p5-turbo",
+			name: "Kimi K2.5 Turbo",
+			api: "openai-completions",
+			provider: "fireworks",
+			baseUrl: "https://api.fireworks.ai/inference/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0.99, output: 4.94, cacheRead: 0.16, cacheWrite: 0 },
+			compat: {
+				supportsDeveloperRole: false,
+				supportsReasoningEffort: false,
+				supportsStore: false,
+			},
+			contextWindow: 262144,
+			maxTokens: 262144,
+		});
+	}
+
 	const azureOpenAiModels: Model<Api>[] = allModels
 		.filter((model) => model.provider === "openai" && model.api === "openai-responses")
 		.map((model) => ({

@@ -66,6 +66,7 @@ Unified LLM API with automatic model discovery, provider configuration, token an
 - **Amazon Bedrock**
 - **OpenCode Zen**
 - **OpenCode Go**
+- **Fireworks**
 - **Kimi For Coding** (Moonshot AI, uses Anthropic-compatible API)
 - **Any OpenAI-compatible API**: Ollama, vLLM, LM Studio, etc.
 
@@ -1023,6 +1024,7 @@ In Node.js environments, you can set environment variables to avoid passing API 
 | Groq | `GROQ_API_KEY` |
 | Cerebras | `CEREBRAS_API_KEY` |
 | xAI | `XAI_API_KEY` |
+| Fireworks | `FIREWORKS_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
 | zAI | `ZAI_API_KEY` |

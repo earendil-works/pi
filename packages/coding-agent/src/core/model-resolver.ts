@@ -31,6 +31,7 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	mistral: "devstral-medium-latest",
 	minimax: "MiniMax-M2.7",
 	"minimax-cn": "MiniMax-M2.7",
+	fireworks: "accounts/fireworks/routers/kimi-k2p5-turbo",
 	huggingface: "moonshotai/Kimi-K2.5",
 	opencode: "claude-opus-4-6",
 	"opencode-go": "kimi-k2.5",
