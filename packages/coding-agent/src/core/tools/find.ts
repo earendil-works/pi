@@ -9,6 +9,7 @@ import { keyHint } from "../../modes/interactive/components/keybinding-hints.js"
 import { ensureTool } from "../../utils/tools-manager.js";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.js";
 import { resolveToCwd } from "./path-utils.js";
+import { PROJECT_IGNORE_FILE_NAMES } from "./project-tree.js";
 import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.js";
 import { wrapToolDefinition } from "./tool-definition-wrapper.js";
 import { DEFAULT_MAX_BYTES, formatSize, type TruncationResult, truncateHead } from "./truncate.js";
@@ -117,7 +118,7 @@ export function createFindToolDefinition(
 	return {
 		name: "find",
 		label: "find",
-		description: `Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore. Output is truncated to ${DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
+		description: `Search for files by glob pattern. Returns matching file paths relative to the search directory. Respects .gitignore, .ignore, .fdignore, and .piignore. Output is truncated to ${DEFAULT_LIMIT} results or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first).`,
 		promptSnippet: "Find files by glob pattern (respects .gitignore)",
 		parameters: findSchema,
 		async execute(
@@ -205,22 +206,33 @@ export function createFindToolDefinition(
 							"--max-results",
 							String(effectiveLimit),
 						];
-						// Include .gitignore files from the search tree.
-						const gitignoreFiles = new Set<string>();
-						const rootGitignore = path.join(searchPath, ".gitignore");
-						if (existsSync(rootGitignore)) gitignoreFiles.add(rootGitignore);
-						try {
-							const nestedGitignores = globSync("**/.gitignore", {
-								cwd: searchPath,
-								dot: true,
-								absolute: true,
-								ignore: ["**/node_modules/**", "**/.git/**"],
-							});
-							for (const file of nestedGitignores) gitignoreFiles.add(file);
-						} catch {
-							// ignore
+
+						const ignoreFiles = new Set<string>();
+						for (const ignoreFileName of PROJECT_IGNORE_FILE_NAMES) {
+							const rootIgnoreFile = path.join(searchPath, ignoreFileName);
+							if (existsSync(rootIgnoreFile)) {
+								ignoreFiles.add(rootIgnoreFile);
+							}
+
+							try {
+								const nestedIgnoreFiles = globSync(`**/${ignoreFileName}`, {
+									cwd: searchPath,
+									dot: true,
+									absolute: true,
+									ignore: ["**/node_modules/**", "**/.git/**"],
+								});
+								for (const file of nestedIgnoreFiles) {
+									ignoreFiles.add(file);
+								}
+							} catch {
+								// Ignore glob errors
+							}
 						}
-						for (const gitignorePath of gitignoreFiles) args.push("--ignore-file", gitignorePath);
+
+						for (const ignoreFilePath of ignoreFiles) {
+							args.push("--ignore-file", ignoreFilePath);
+						}
+
 						args.push(pattern, searchPath);
 
 						const result = spawnSync(fdPath, args, { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 });

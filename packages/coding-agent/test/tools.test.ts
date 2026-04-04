@@ -9,6 +9,8 @@ import { findTool } from "../src/core/tools/find.js";
 import { grepTool } from "../src/core/tools/grep.js";
 import { lsTool } from "../src/core/tools/ls.js";
 import { readTool } from "../src/core/tools/read.js";
+import { createReadSubtreeTool } from "../src/core/tools/read-subtree.js";
+import { createTreeTool } from "../src/core/tools/tree.js";
 import { writeTool } from "../src/core/tools/write.js";
 import * as shellModule from "../src/utils/shell.js";
 
@@ -569,6 +571,42 @@ describe("Coding Agent Tools", () => {
 
 			expect(output).toContain(".hidden-file");
 			expect(output).toContain(".hidden-dir/");
+		});
+	});
+
+	describe("tree tool", () => {
+		it("should respect .piignore entries", async () => {
+			writeFileSync(join(testDir, ".piignore"), "ignored.ts\n");
+			writeFileSync(join(testDir, "visible.ts"), "export const visible = true;\n");
+			writeFileSync(join(testDir, "ignored.ts"), "export const ignored = true;\n");
+
+			const treeTool = createTreeTool(testDir);
+			const result = await treeTool.execute("test-tree-1", { path: ".", depth: 2 });
+			const output = getTextOutput(result);
+
+			expect(output).toContain("visible.ts");
+			expect(output).not.toContain("ignored.ts");
+		});
+	});
+
+	describe("read_subtree tool", () => {
+		it("should return subtree previews and skip ignored files", async () => {
+			writeFileSync(join(testDir, ".piignore"), "src/ignored.ts\n");
+			mkdirSync(join(testDir, "src"), { recursive: true });
+			writeFileSync(join(testDir, "src", "kept.ts"), "export const kept = 1;\n");
+			writeFileSync(join(testDir, "src", "ignored.ts"), "export const ignored = 1;\n");
+
+			const readSubtreeTool = createReadSubtreeTool(testDir);
+			const result = await readSubtreeTool.execute("test-subtree-1", {
+				path: "src",
+				depth: 2,
+				maxFiles: 5,
+			});
+			const output = getTextOutput(result);
+
+			expect(output).toContain("src/kept.ts");
+			expect(output).toContain("export const kept = 1;");
+			expect(output).not.toContain("ignored.ts");
 		});
 	});
 });

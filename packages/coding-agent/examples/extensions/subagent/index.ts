@@ -16,6 +16,7 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { Message } from "@mariozechner/pi-ai";
 import { StringEnum } from "@mariozechner/pi-ai";
@@ -23,6 +24,19 @@ import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@mar
 import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
+import {
+	closeSurface,
+	createSurface,
+	exitStatusVar,
+	isMuxAvailable,
+	muxSetupHint,
+	pollForExit,
+	renameCurrentTab,
+	renameWorkspace,
+	sendCommand,
+	shellEscape,
+} from "./cmux.js";
+import { findLastAssistantMessage, getEntryCount, getNewEntries } from "./session.js";
 
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
@@ -160,6 +174,25 @@ interface SubagentDetails {
 	results: SingleResult[];
 }
 
+interface SetTabTitleDetails {
+	title: string;
+	muxUpdated: boolean;
+	error?: string;
+}
+
+interface ResumeSessionDetails {
+	name: string;
+	sessionPath: string;
+	startTime?: number;
+	exitCode?: number;
+	elapsed?: number;
+	sessionEntries?: number;
+	sessionBytes?: number;
+	error?: string;
+}
+
+const SUBAGENT_DONE_EXTENSION_PATH = fileURLToPath(new URL("./subagent-done.ts", import.meta.url));
+
 function getFinalOutput(messages: Message[]): string {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
@@ -170,6 +203,83 @@ function getFinalOutput(messages: Message[]): string {
 		}
 	}
 	return "";
+}
+
+function formatElapsed(totalSeconds: number): string {
+	if (totalSeconds < 60) return `${totalSeconds}s`;
+	const minutes = Math.floor(totalSeconds / 60);
+	const seconds = totalSeconds % 60;
+	if (minutes < 60) return `${minutes}m ${seconds}s`;
+	const hours = Math.floor(minutes / 60);
+	return `${hours}h ${minutes % 60}m`;
+}
+
+function formatBytes(bytes: number): string {
+	if (bytes < 1024) return `${bytes}B`;
+	const kilobytes = bytes / 1024;
+	if (kilobytes < 1024) return `${kilobytes.toFixed(1)}KB`;
+	return `${(kilobytes / 1024).toFixed(1)}MB`;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function getRecordString(record: Record<string, unknown> | undefined, key: string): string | undefined {
+	if (!record) return undefined;
+	const value = record[key];
+	return typeof value === "string" ? value : undefined;
+}
+
+function getRecordNumber(record: Record<string, unknown> | undefined, key: string): number | undefined {
+	if (!record) return undefined;
+	const value = record[key];
+	return typeof value === "number" ? value : undefined;
+}
+
+function resolveInputPath(cwd: string, value: string): string {
+	if (value === "~") {
+		return os.homedir();
+	}
+	if (value.startsWith("~/")) {
+		return path.join(os.homedir(), value.slice(2));
+	}
+	return path.isAbsolute(value) ? value : path.resolve(cwd, value);
+}
+
+function stripSessionFooter(text: string): string {
+	return text.replace(/\n\nSession: .+\nResume: .+$/, "").replace(/\n\nSession: .+$/, "");
+}
+
+function buildPaneCommand(parts: string[], prompt: string | undefined, includeSentinel: boolean): string {
+	const commandParts = [...parts];
+	if (prompt) {
+		commandParts.push(shellEscape(prompt));
+	}
+	const command = commandParts.join(" ");
+	if (!includeSentinel) {
+		return command;
+	}
+	return `${command}; echo '__SUBAGENT_DONE_'${exitStatusVar()}'__'`;
+}
+
+function buildIteratePrompt(task: string): string {
+	const trimmedTask = task.trim();
+	const taskSection = trimmedTask
+		? trimmedTask
+		: "Continue from the inherited context and help the user with the next concrete step.";
+	return [
+		"You are in an interactive fork of the current session.",
+		"The user will continue working with you directly in this pane.",
+		"Start from the inherited context and stay focused on the task below.",
+		"",
+		"Task:",
+		taskSection,
+	].join("\n");
+}
+
+function textContent(text: string): { type: "text"; text: string } {
+	return { type: "text", text };
 }
 
 type DisplayItem = { type: "text"; text: string } | { type: "toolCall"; name: string; args: Record<string, any> };
@@ -427,6 +537,26 @@ const SubagentParams = Type.Object({
 	),
 	cwd: Type.Optional(Type.String({ description: "Working directory for the agent process (single mode)" })),
 });
+
+const SetTabTitleParams = Type.Object({
+	title: Type.String({ description: "New terminal title to show for the current session or phase." }),
+});
+
+const ResumeSessionParams = Type.Object({
+	sessionPath: Type.String({ description: "Path to the session .jsonl file to resume." }),
+	name: Type.Optional(Type.String({ description: "Display name for the spawned pane. Default: Resume." })),
+	message: Type.Optional(
+		Type.String({ description: "Optional follow-up instruction to send after resuming the session." }),
+	),
+});
+
+function muxUnavailableResult(feature: string) {
+	return {
+		content: [textContent(`${feature} requires cmux, tmux, or zellij. ${muxSetupHint()}`)],
+		details: {},
+		isError: true,
+	};
+}
 
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
@@ -982,6 +1112,240 @@ export default function (pi: ExtensionAPI) {
 
 			const text = result.content[0];
 			return new Text(text?.type === "text" ? text.text : "(no output)", 0, 0);
+		},
+	});
+
+	pi.registerTool({
+		name: "set_tab_title",
+		label: "Set Tab Title",
+		description:
+			"Update the current terminal title. When running inside cmux, tmux, or zellij, also update the pane/tab title for better visibility during multi-step work.",
+		parameters: SetTabTitleParams,
+		async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
+			ctx.ui.setTitle(params.title);
+
+			let muxUpdated = false;
+			let errorMessage: string | undefined;
+			if (isMuxAvailable()) {
+				try {
+					renameCurrentTab(params.title);
+					renameWorkspace(params.title);
+					muxUpdated = true;
+				} catch (error) {
+					errorMessage = error instanceof Error ? error.message : String(error);
+				}
+			}
+
+			const details: SetTabTitleDetails = {
+				title: params.title,
+				muxUpdated,
+				error: errorMessage,
+			};
+
+			const suffix = errorMessage ? ` (mux update failed: ${errorMessage})` : muxUpdated ? " (mux updated)" : "";
+			return {
+				content: [{ type: "text", text: `Title set to: ${params.title}${suffix}` }],
+				details,
+			};
+		},
+	});
+
+	pi.registerTool({
+		name: "subagent_resume",
+		label: "Resume Subagent",
+		description:
+			"Resume a previous session in a new terminal pane, wait for it to finish, then return the new summary and session path.",
+		parameters: ResumeSessionParams,
+		renderCall(args, theme) {
+			const name = args.name?.trim() || "Resume";
+			return new Text(`${theme.fg("toolTitle", theme.bold("resume "))}${theme.fg("accent", name)}`, 0, 0);
+		},
+		renderResult(result, { expanded, isPartial }, theme) {
+			const details = isRecord(result.details) ? result.details : undefined;
+			const name = getRecordString(details, "name") ?? "Resume";
+			const sessionPath = getRecordString(details, "sessionPath");
+
+			if (isPartial) {
+				const startTime = getRecordNumber(details, "startTime");
+				const elapsed = startTime ? formatElapsed(Math.floor((Date.now() - startTime) / 1000)) : "running";
+				const sessionEntries = getRecordNumber(details, "sessionEntries");
+				const sessionBytes = getRecordNumber(details, "sessionBytes");
+				const progressParts = [elapsed];
+				if (sessionEntries !== undefined && sessionBytes !== undefined) {
+					progressParts.push(`${sessionEntries} entries`, formatBytes(sessionBytes));
+				}
+				return new Text(
+					`${theme.fg("warning", "⏳")} ${theme.fg("toolTitle", theme.bold(name))}\n${theme.fg("dim", progressParts.join(" · "))}`,
+					0,
+					0,
+				);
+			}
+
+			const exitCode = getRecordNumber(details, "exitCode") ?? 0;
+			const elapsed = getRecordNumber(details, "elapsed");
+			const summaryText =
+				result.content[0]?.type === "text" ? stripSessionFooter(result.content[0].text) : "(no output)";
+
+			let text =
+				(exitCode === 0 ? theme.fg("success", "✓") : theme.fg("error", "✗")) +
+				" " +
+				theme.fg("toolTitle", theme.bold(name));
+			if (elapsed !== undefined) {
+				text += theme.fg("dim", ` (${formatElapsed(elapsed)})`);
+			}
+			if (summaryText) {
+				const preview = expanded || summaryText.length <= 160 ? summaryText : `${summaryText.slice(0, 160)}...`;
+				text += `\n${theme.fg("toolOutput", preview)}`;
+			}
+			if (sessionPath) {
+				text += `\n${theme.fg("dim", `Session: ${sessionPath}`)}`;
+			}
+			return new Text(text, 0, 0);
+		},
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+			if (!isMuxAvailable()) {
+				return muxUnavailableResult("subagent_resume");
+			}
+
+			const sessionPath = resolveInputPath(ctx.cwd, params.sessionPath);
+			if (!fs.existsSync(sessionPath)) {
+				return {
+					content: [{ type: "text", text: `Session file not found: ${sessionPath}` }],
+					details: { name: params.name?.trim() || "Resume", sessionPath, error: "session not found" },
+					isError: true,
+				};
+			}
+
+			const name = params.name?.trim() || "Resume";
+			const startTime = Date.now();
+			const entryCountBefore = getEntryCount(sessionPath);
+			const effectiveSignal = signal ?? new AbortController().signal;
+			let surface: string | null = null;
+
+			try {
+				surface = createSurface(name);
+				await new Promise<void>((resolve) => setTimeout(resolve, 300));
+
+				const command = buildPaneCommand(
+					["pi", "--session", shellEscape(sessionPath), "-e", shellEscape(SUBAGENT_DONE_EXTENSION_PATH)],
+					params.message?.trim() || undefined,
+					true,
+				);
+				sendCommand(surface, command);
+
+				const exitCode = await pollForExit(surface, effectiveSignal, {
+					interval: 3000,
+					onTick: () => {
+						let sessionEntries: number | undefined;
+						let sessionBytes: number | undefined;
+						try {
+							sessionEntries = getEntryCount(sessionPath);
+							sessionBytes = fs.statSync(sessionPath).size;
+						} catch {
+							// Ignore transient read errors while the child writes.
+						}
+						const details: ResumeSessionDetails = {
+							name,
+							sessionPath,
+							startTime,
+							sessionEntries,
+							sessionBytes,
+						};
+						onUpdate?.({
+							content: [
+								{ type: "text", text: `${formatElapsed(Math.floor((Date.now() - startTime) / 1000))} elapsed` },
+							],
+							details,
+						});
+					},
+				});
+
+				const elapsed = Math.floor((Date.now() - startTime) / 1000);
+				const newEntries = getNewEntries(sessionPath, entryCountBefore);
+				const summary =
+					findLastAssistantMessage(newEntries) ??
+					(exitCode !== 0
+						? `Resumed session exited with code ${exitCode}`
+						: "Resumed session exited without new output");
+
+				closeSurface(surface);
+				surface = null;
+
+				const details: ResumeSessionDetails = {
+					name,
+					sessionPath,
+					exitCode,
+					elapsed,
+				};
+
+				return {
+					content: [
+						{ type: "text", text: `${summary}\n\nSession: ${sessionPath}\nResume: pi --session ${sessionPath}` },
+					],
+					details,
+					isError: exitCode !== 0,
+				};
+			} catch (error) {
+				if (surface) {
+					try {
+						closeSurface(surface);
+					} catch {
+						// Ignore cleanup failures.
+					}
+				}
+
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				return {
+					content: [
+						{ type: "text", text: signal?.aborted ? "Resume cancelled." : `Resume error: ${errorMessage}` },
+					],
+					details: { name, sessionPath, error: signal?.aborted ? "cancelled" : errorMessage },
+					isError: true,
+				};
+			}
+		},
+	});
+
+	pi.registerCommand("iterate", {
+		description: "Open an interactive fork of the current session in a new terminal pane.",
+		handler: async (args, ctx) => {
+			if (!isMuxAvailable()) {
+				ctx.ui.notify(`Iterate needs cmux, tmux, or zellij. ${muxSetupHint()}`, "warning");
+				return;
+			}
+
+			const sessionFile = ctx.sessionManager.getSessionFile();
+			if (!sessionFile || !fs.existsSync(sessionFile)) {
+				ctx.ui.notify(
+					"Iterate needs a persisted session file. Continue the current session once, then retry.",
+					"warning",
+				);
+				return;
+			}
+
+			const prompt = buildIteratePrompt(args);
+			const commandParts = [
+				"pi",
+				"--session-dir",
+				shellEscape(path.dirname(sessionFile)),
+				"--fork",
+				shellEscape(sessionFile),
+				"-e",
+				shellEscape(SUBAGENT_DONE_EXTENSION_PATH),
+			];
+			if (ctx.model) {
+				commandParts.push("--model", shellEscape(`${ctx.model.provider}/${ctx.model.id}`));
+			}
+
+			try {
+				const surface = createSurface("Iterate");
+				await new Promise<void>((resolve) => setTimeout(resolve, 300));
+				sendCommand(surface, buildPaneCommand(commandParts, prompt, false));
+				ctx.ui.notify('Opened "Iterate" in a new pane. Work there and exit when done.', "info");
+			} catch (error) {
+				const errorMessage = error instanceof Error ? error.message : String(error);
+				ctx.ui.notify(`Failed to start iterate session: ${errorMessage}`, "error");
+			}
 		},
 	});
 }

@@ -10,6 +10,7 @@ src/
   modes/
     interactive/    # TUI mode — components, theme, input handling
     pipe/           # Non-interactive JSON mode (--mode json)
+    rpc/            # Headless JSON stdin/stdout protocol (--mode rpc)
   utils/            # Diff rendering, file watchers, helpers
 examples/
   extensions/       # Example extensions (subagent, plan-mode, auto-commit, etc.)
@@ -28,6 +29,7 @@ docs/               # Internal docs (extension API, architecture)
 | Session branching | `src/core/session-manager.ts` |
 | TUI components | `src/modes/interactive/components/` |
 | Pipe/JSON mode | `src/modes/pipe/` |
+| RPC/headless mode | `src/modes/rpc/` |
 
 ## Anti-Patterns
 - NEVER use inline imports (see root AGENTS.md)

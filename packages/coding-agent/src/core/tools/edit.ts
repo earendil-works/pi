@@ -16,6 +16,7 @@ import {
 } from "./edit-diff.js";
 import { withFileMutationQueue } from "./file-mutation-queue.js";
 import { resolveToCwd } from "./path-utils.js";
+import { invalidateProjectTreeCache } from "./project-tree.js";
 import { invalidArgText, shortenPath, str } from "./render-utils.js";
 import { wrapToolDefinition } from "./tool-definition-wrapper.js";
 
@@ -181,15 +182,12 @@ export function createEditToolDefinition(
 						content: Array<{ type: "text"; text: string }>;
 						details: EditToolDetails | undefined;
 					}>((resolve, reject) => {
-						// Check if already aborted.
 						if (signal?.aborted) {
 							reject(new Error("Operation aborted"));
 							return;
 						}
 
 						let aborted = false;
-
-						// Set up abort handler.
 						const onAbort = () => {
 							aborted = true;
 							reject(new Error("Operation aborted"));
@@ -199,10 +197,8 @@ export function createEditToolDefinition(
 							signal.addEventListener("abort", onAbort, { once: true });
 						}
 
-						// Perform the edit operation.
 						void (async () => {
 							try {
-								// Check if file exists.
 								try {
 									await ops.access(absolutePath);
 								} catch {
@@ -213,21 +209,17 @@ export function createEditToolDefinition(
 									return;
 								}
 
-								// Check if aborted before reading.
 								if (aborted) {
 									return;
 								}
 
-								// Read the file.
 								const buffer = await ops.readFile(absolutePath);
 								const rawContent = buffer.toString("utf-8");
 
-								// Check if aborted after reading.
 								if (aborted) {
 									return;
 								}
 
-								// Strip BOM before matching. The model will not include an invisible BOM in oldText.
 								const { bom, text: content } = stripBom(rawContent);
 								const originalEnding = detectLineEnding(content);
 								const normalizedContent = normalizeToLF(content);
@@ -237,20 +229,18 @@ export function createEditToolDefinition(
 									path,
 								);
 
-								// Check if aborted before writing.
 								if (aborted) {
 									return;
 								}
 
 								const finalContent = bom + restoreLineEndings(newContent, originalEnding);
 								await ops.writeFile(absolutePath, finalContent);
+								invalidateProjectTreeCache(cwd);
 
-								// Check if aborted after writing.
 								if (aborted) {
 									return;
 								}
 
-								// Clean up abort handler.
 								if (signal) {
 									signal.removeEventListener("abort", onAbort);
 								}
@@ -266,7 +256,6 @@ export function createEditToolDefinition(
 									details: { diff: diffResult.diff, firstChangedLine: diffResult.firstChangedLine },
 								});
 							} catch (error: unknown) {
-								// Clean up abort handler.
 								if (signal) {
 									signal.removeEventListener("abort", onAbort);
 								}

@@ -40,12 +40,14 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 | `antigravity-image-gen.ts` | Generate images via Google Antigravity with optional save-to-disk modes |
 | `ssh.ts` | Delegate all tools to a remote machine via SSH using pluggable operations |
 | `subagent/` | Delegate tasks to specialized subagents with isolated context windows |
+| `max-edit/` | Best-of-N edit pack that generates proposal-only candidates, auto-selects one, and applies the chosen patch |
 
 ### Commands & UI
 
 | Extension | Description |
 |-----------|-------------|
 | `preset.ts` | Named presets for model, thinking level, tools, and instructions via `--preset` flag and `/preset` command |
+| `profile-switcher/` | Named profiles for switching the main model, scoped models, agent frontmatter, and fallback targets via `--profile` and `/profile`, including mixed GPT/Claude specialist packs |
 | `plan-mode/` | Claude Code-style plan mode for read-only exploration with `/plan` command and step tracking |
 | `tools.ts` | Interactive `/tools` command to enable/disable tools with session persistence |
 | `handoff.ts` | Transfer context to a new focused session via `/handoff <goal>` |
@@ -204,3 +206,10 @@ pi.on("session_start", async (_event, ctx) => {
   }
 });
 ```
+
+## Notable Multi-File Examples
+
+- `subagent/` shows a larger extension with tools, commands, shared helpers, and session-state handling.
+- `plan-mode/` shows a full workflow-oriented extension with prompts, UI widgets, and session-phase persistence.
+- `profile-switcher/` shows a local-config extension that rewrites user agent files, updates settings, and coordinates multiple runtime files safely. It is a good fit for setups like `openai` and `anthropic` packs where the main model changes together with specialist agent routing.
+- `max-edit/` shows how to build a proposal-only subprocess workflow with automatic candidate selection and delayed apply.

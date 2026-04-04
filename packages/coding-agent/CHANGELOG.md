@@ -6,6 +6,23 @@
 
 - Added support for multiple `--append-system-prompt` flags, each value is appended to the system prompt separated by double newlines ([#3169](https://github.com/badlogic/pi-mono/pull/3169) by [@aliou](https://github.com/aliou))
 - Added interactive keybinding support for Kitty `super`-modified shortcuts such as `super+k`, `super+enter`, and `ctrl+super+k` ([#3111](https://github.com/badlogic/pi-mono/pull/3111) by [@sudosubin](https://github.com/sudosubin))
+- Added pane-oriented subagent helpers to the example `subagent` extension, including `/iterate`, `subagent_resume`, `set_tab_title`, and shared multiplexer/session utilities.
+- Added a `profile-switcher` example extension that can switch named model profiles, update the main model, and rewrite agent `model:` / `fallback-model:` frontmatter in `~/.pi/agent/agents`.
+- Added built-in `tree` and `read_subtree` discovery tools with ignore-aware project tree caching, `.piignore` support, and tree-first prompt guidance.
+- Added a `max-edit` example extension that runs proposal-only best-of-N edit candidates, auto-selects a winner, and applies the chosen patch.
+- Added a manual eval harness with curated `discovery`, `plan-mode`, and `max-edit` scenario suites under `test/manual-evals/`.
+
+### Changed
+
+- Changed the example plan-mode execution prompt to advertise the dedicated `backend` specialist for API, auth, validation, persistence, and queue work.
+- Changed interactive extension widgets to support per-widget unlimited text lines so plan todo widgets can render the full step list without `... (widget truncated)`.
+- Changed the default built-in tool set to include `tree` and `read_subtree`, and updated the default system prompt to inject a compact project tree summary when discovery tools are active.
+
+### Fixed
+
+- Fixed plan-mode todo extraction so long step labels are no longer shortened with `...`, and resumed execution sessions now rebuild todo labels from saved plan text.
+
+## [0.67.1] - 2026-04-13
 
 ## [0.67.1] - 2026-04-13
 

@@ -1,3 +1,40 @@
+# pi-mono — AI Coding Agent Monorepo
+Read /Users/besi/Code/pi-mono/README-Before-Update.md
+Remote Repo : https://github.com/aeitroc/pi-mono
+Readme : https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent#readme
+Documentation : https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent/docs
+
+npm workspaces monorepo for `pi`, an AI coding agent CLI. TypeScript, ESM, Biome, tsgo.
+
+## Packages
+```
+packages/
+  ai/             # Unified LLM API — foundation, no internal deps
+  agent/          # Core agent abstraction — state machine, tool dispatch
+  coding-agent/   # The `pi` CLI binary — tools, extensions, TUI, sessions
+  tui/            # Terminal UI library — differential rendering, no internal deps
+  web-ui/         # Lit Web Components for AI chat — Tailwind v4
+  mom/            # Slack bot — delegates to pi agent
+  pods/           # GPU pod manager CLI — vLLM deployments
+```
+
+Dependency flow: `tui` + `ai` (standalone) -> `agent` -> `coding-agent` -> `mom`/`web-ui`
+
+## Where to Look
+| Task | Start here |
+|------|-----------|
+| Add LLM provider | `packages/ai/` (see root checklist below) |
+| Agent loop/tools | `packages/agent/` + `packages/coding-agent/src/core/` |
+| TUI rendering | `packages/tui/` |
+| CLI flags/entry | `packages/coding-agent/src/cli/` |
+| Extension system | `packages/coding-agent/src/core/extensions/` |
+| Web chat UI | `packages/web-ui/` |
+| Slack bot | `packages/mom/` |
+| GPU pods | `packages/pods/` |
+| CI/release | `.github/workflows/` + `scripts/` |
+
+---
+
 # Development Rules
 
 ## First Message

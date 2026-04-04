@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed tool-argument validation to repair leading-dot key typos such as `".pattern"` when the schema expects `pattern`, preventing malformed model tool calls from failing immediately on otherwise valid requests.
+
 ## [0.67.1] - 2026-04-13
 
 ## [0.67.0] - 2026-04-13

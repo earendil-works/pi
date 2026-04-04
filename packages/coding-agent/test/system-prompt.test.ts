@@ -1,7 +1,23 @@
-import { describe, expect, test } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { buildSystemPrompt } from "../src/core/system-prompt.js";
 
 describe("buildSystemPrompt", () => {
+	let tempDir: string;
+
+	beforeEach(() => {
+		tempDir = mkdtempSync(join(tmpdir(), "pi-system-prompt-"));
+		writeFileSync(join(tempDir, "alpha.ts"), "export const alpha = 1;\n");
+		writeFileSync(join(tempDir, ".piignore"), "ignored.ts\n");
+		writeFileSync(join(tempDir, "ignored.ts"), "export const ignored = true;\n");
+	});
+
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
 	describe("empty tools", () => {
 		test("shows (none) for empty tools list", () => {
 			const prompt = buildSystemPrompt({
@@ -27,12 +43,7 @@ describe("buildSystemPrompt", () => {
 	describe("default tools", () => {
 		test("includes all default tools when snippets are provided", () => {
 			const prompt = buildSystemPrompt({
-				toolSnippets: {
-					read: "Read file contents",
-					bash: "Execute bash commands",
-					edit: "Make surgical edits",
-					write: "Create or overwrite files",
-				},
+				cwd: tempDir,
 				contextFiles: [],
 				skills: [],
 			});
@@ -41,6 +52,20 @@ describe("buildSystemPrompt", () => {
 			expect(prompt).toContain("- bash:");
 			expect(prompt).toContain("- edit:");
 			expect(prompt).toContain("- write:");
+			expect(prompt).toContain("- tree:");
+			expect(prompt).toContain("- read_subtree:");
+		});
+
+		test("includes a compact project tree summary when tree is active", () => {
+			const prompt = buildSystemPrompt({
+				cwd: tempDir,
+				contextFiles: [],
+				skills: [],
+			});
+
+			expect(prompt).toContain("Project tree:");
+			expect(prompt).toContain("alpha.ts");
+			expect(prompt).not.toContain("ignored.ts");
 		});
 	});
 

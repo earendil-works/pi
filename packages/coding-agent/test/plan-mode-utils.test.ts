@@ -6,6 +6,7 @@ import {
 	extractWavePlan,
 	formatEscalationContext,
 	formatSiblingContext,
+	getPlanningWriteRestriction,
 	isSafeCommand,
 	isWithinPiDir,
 	markCompletedSteps,
@@ -178,11 +179,10 @@ describe("cleanStepText", () => {
 		expect(cleanStepText("update config")).toBe("Config");
 	});
 
-	it("truncates long text", () => {
+	it("preserves long text", () => {
 		const longText = "This is a very long step description that exceeds the maximum allowed length for display";
 		const result = cleanStepText(longText);
-		expect(result.length).toBe(50);
-		expect(result.endsWith("...")).toBe(true);
+		expect(result).toBe("This is a very long step description that exceeds the maximum allowed length for display");
 	});
 
 	it("normalizes whitespace", () => {
@@ -251,6 +251,18 @@ Plan:
 		const items = extractTodoItems(message);
 		expect(items).toHaveLength(1);
 		expect(items[0].step).toBe(2); // preserves original plan step number
+	});
+
+	it("preserves full step text for long items", () => {
+		const message = `Plan:
+1. Wire candidate page state into the recruitment candidate hub and preserve the full label in the todo widget`;
+
+		const items = extractTodoItems(message);
+		expect(items).toHaveLength(1);
+		expect(items[0].text).toBe(
+			"Wire candidate page state into the recruitment candidate hub and preserve the full label in the todo widget",
+		);
+		expect(items[0].text).not.toContain("...");
 	});
 });
 
@@ -373,6 +385,27 @@ describe("isWithinPiDir", () => {
 	});
 });
 
+describe("getPlanningWriteRestriction", () => {
+	it("allows markdown files under .pi/", () => {
+		expect(getPlanningWriteRestriction(".pi/plans/test.md", "/project")).toBeNull();
+	});
+
+	it("allows .machine.ts files under .pi/machines/", () => {
+		expect(getPlanningWriteRestriction(".pi/machines/foo.machine.ts", "/project")).toBeNull();
+	});
+
+	it("blocks .machine.js files with a tla-precheck-specific explanation", () => {
+		const result = getPlanningWriteRestriction(".pi/machines/foo.machine.js", "/project");
+		expect(result).toContain('".machine.js"');
+		expect(result).toContain("tla-precheck subagent");
+	});
+
+	it("blocks non-markdown planning files outside the machine spec allowlist", () => {
+		const result = getPlanningWriteRestriction(".pi/machines/foo.txt", "/project");
+		expect(result).toContain("only .md files or .pi/machines/*.machine.ts files are allowed");
+	});
+});
+
 describe("extractWavePlan", () => {
 	it("extracts plan with explicit wave headers", () => {
 		const plan = `# Build Dashboard
@@ -435,6 +468,22 @@ Plan:
 		const result = extractWavePlan(plan);
 		expect(result).not.toBeNull();
 		expect(result!.todoItems).toHaveLength(3);
+	});
+
+	it("keeps long todo labels intact in TODO-section plans", () => {
+		const plan = `# Recruitment
+
+## TODOs
+
+- [ ] 1. Wire candidate page state into the recruitment candidate hub and preserve the full label in the todo widget
+  **Blocked By**: None
+`;
+		const result = extractWavePlan(plan);
+		expect(result).not.toBeNull();
+		expect(result!.todoItems[0].text).toBe(
+			"Wire candidate page state into the recruitment candidate hub and preserve the full label in the todo widget",
+		);
+		expect(result!.todoItems[0].text).not.toContain("...");
 	});
 
 	it("returns null for empty/unparseable text", () => {

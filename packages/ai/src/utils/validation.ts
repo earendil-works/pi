@@ -70,8 +70,9 @@ export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 	// Compile the schema.
 	const validate = ajv.compile(tool.parameters);
 
-	// Clone arguments so AJV can safely mutate for type coercion
-	const args = structuredClone(toolCall.arguments);
+	// Clone and normalize arguments so AJV can safely mutate for type coercion.
+	// Some models occasionally emit keys like ".pattern" instead of "pattern".
+	const args = normalizeArgumentsForSchema(structuredClone(toolCall.arguments), tool.parameters);
 
 	// Validate the arguments (AJV mutates args in-place for type coercion)
 	if (validate(args)) {
@@ -90,4 +91,48 @@ export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 	const errorMessage = `Validation failed for tool "${toolCall.name}":\n${errors}\n\nReceived arguments:\n${JSON.stringify(toolCall.arguments, null, 2)}`;
 
 	throw new Error(errorMessage);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function hasOwn(record: Record<string, unknown>, key: string): boolean {
+	return Object.hasOwn(record, key);
+}
+
+function normalizeArgumentsForSchema(value: unknown, schema: unknown): unknown {
+	if (Array.isArray(value)) {
+		const itemSchema = isRecord(schema) ? schema.items : undefined;
+		return value.map((entry) => normalizeArgumentsForSchema(entry, itemSchema));
+	}
+
+	if (!isRecord(value)) {
+		return value;
+	}
+
+	const schemaProperties =
+		isRecord(schema) && isRecord(schema.properties) ? (schema.properties as Record<string, unknown>) : {};
+	const additionalProperties =
+		isRecord(schema) && isRecord(schema.additionalProperties) ? schema.additionalProperties : undefined;
+
+	const normalized: Record<string, unknown> = {};
+
+	for (const [rawKey, rawEntry] of Object.entries(value)) {
+		let nextKey = rawKey;
+		if (rawKey.startsWith(".")) {
+			const candidateKey = rawKey.slice(1);
+			if (candidateKey && hasOwn(schemaProperties, candidateKey)) {
+				if (hasOwn(value, candidateKey) || hasOwn(normalized, candidateKey)) {
+					continue;
+				}
+				nextKey = candidateKey;
+			}
+		}
+
+		const childSchema = hasOwn(schemaProperties, nextKey) ? schemaProperties[nextKey] : additionalProperties;
+		normalized[nextKey] = normalizeArgumentsForSchema(rawEntry, childSchema);
+	}
+
+	return normalized;
 }

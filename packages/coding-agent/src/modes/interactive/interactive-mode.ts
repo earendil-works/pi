@@ -1456,10 +1456,12 @@ export class InteractiveMode {
 		if (Array.isArray(content)) {
 			// Wrap string array in a Container with Text components
 			const container = new Container();
-			for (const line of content.slice(0, InteractiveMode.MAX_WIDGET_LINES)) {
+			const maxLines = options?.maxLines === undefined ? InteractiveMode.MAX_WIDGET_LINES : options.maxLines;
+			const visibleLines = maxLines === null ? content : content.slice(0, Math.max(0, maxLines));
+			for (const line of visibleLines) {
 				container.addChild(new Text(line, 1, 0));
 			}
-			if (content.length > InteractiveMode.MAX_WIDGET_LINES) {
+			if (maxLines !== null && content.length > maxLines) {
 				container.addChild(new Text(theme.fg("muted", "... (widget truncated)"), 1, 0));
 			}
 			component = container;

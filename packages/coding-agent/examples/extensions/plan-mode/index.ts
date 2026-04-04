@@ -44,8 +44,8 @@ import {
 	formatEscalationContext,
 	formatSiblingContext,
 	generateVerificationChecks,
+	getPlanningWriteRestriction,
 	isSafeCommand,
-	isWithinPiDir,
 	markCompletedSteps,
 	type PlanFileMeta,
 	selectRecentPlanFiles,
@@ -166,7 +166,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				const completed = state.todoItems.filter((t) => t.completed).length;
 				lines.push(ctx.ui.theme.fg("muted", `  ${completed}/${state.todoItems.length} complete`));
 			}
-			ctx.ui.setWidget("plan-todos", lines);
+			ctx.ui.setWidget("plan-todos", lines, { maxLines: null });
 		} else {
 			ctx.ui.setWidget("plan-todos", undefined);
 		}
@@ -240,6 +240,51 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return selectRecentPlanFiles(readPlanFiles(cwd), promptStartMs, [state.planPath, promptPlanPath]);
 	}
 
+	function rehydrateTodoItemsFromSavedPlan(cwd?: string): boolean {
+		const completedSteps = new Set(state.todoItems.filter((item) => item.completed).map((item) => item.step));
+		const candidateTexts: string[] = [];
+
+		if (state.planText?.trim()) {
+			candidateTexts.push(state.planText);
+		}
+
+		const candidatePaths = new Set<string>();
+		if (state.planPath) {
+			candidatePaths.add(state.planPath);
+		}
+		if (cwd) {
+			for (const planPath of getPlanCandidatePaths(cwd)) {
+				candidatePaths.add(planPath);
+			}
+		}
+
+		for (const planPath of candidatePaths) {
+			try {
+				const fileText = readFileSync(planPath, "utf-8");
+				if (fileText.trim()) {
+					candidateTexts.push(fileText);
+					state.planPath = planPath;
+				}
+			} catch {
+				/* ignore unreadable plan files */
+			}
+		}
+
+		for (const planText of candidateTexts) {
+			const wavePlan = extractWavePlan(planText);
+			if (!wavePlan || wavePlan.todoItems.length === 0) continue;
+			state.planText = planText;
+			state.todoItems = wavePlan.todoItems.map((item) => ({
+				...item,
+				completed: completedSteps.has(item.step),
+			}));
+			state.waves = wavePlan.waves;
+			return true;
+		}
+
+		return false;
+	}
+
 	// --- Execution ---
 
 	/** Get current wave's uncompleted steps */
@@ -249,6 +294,19 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		return wave.steps
 			.map((stepNum) => state.todoItems.find((t) => t.step === stepNum))
 			.filter((t): t is TodoItem => t !== undefined && !t.completed);
+	}
+
+	function sendExecutionMessage(content: string, triggerTurn = true): void {
+		// Keep execution control prompts out of chat. The sticky widget is the
+		// single visible todo surface during execution.
+		pi.sendMessage(
+			{
+				customType: "plan-mode-execute",
+				content,
+				display: false,
+			},
+			{ triggerTurn },
+		);
 	}
 
 	/** Dispatch the next wave (or next step within current wave) */
@@ -284,14 +342,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			const step = remaining[0];
 			const siblingContext = formatSiblingContext(step, allWaveSteps);
 			_log(`DISPATCH_STEP: wave ${wave.wave}, step ${step.step}`);
-			pi.sendMessage(
-				{
-					customType: "plan-mode-execute",
-					content: executionPrompt(step, wave, allRemaining, siblingContext),
-					display: true,
-				},
-				{ triggerTurn: true },
-			);
+			sendExecutionMessage(executionPrompt(step, wave, allRemaining, siblingContext));
 		} else {
 			// Multiple steps — instruct agent to use subagent parallel mode with sibling annotations
 			const stepList = remaining
@@ -305,10 +356,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 				})
 				.join("\n");
 			_log(`DISPATCH_WAVE: wave ${wave.wave}, ${remaining.length} parallel steps`);
-			pi.sendMessage(
-				{
-					customType: "plan-mode-execute",
-					content: `[EXECUTING PLAN — Wave ${wave.wave} — ${remaining.length} parallel tasks]
+			sendExecutionMessage(`[EXECUTING PLAN — Wave ${wave.wave} — ${remaining.length} parallel tasks]
 
 Execute these tasks in parallel using the subagent tool (parallel mode):
 
@@ -319,11 +367,7 @@ ${ORCHESTRATOR_AWARENESS}
 After all parallel tasks complete, report which steps are done with [DONE:N] markers.
 
 Remaining steps (${allRemaining.length}):
-${allRemaining.map((t) => `${t.step}. ${t.text}`).join("\n")}`,
-					display: true,
-				},
-				{ triggerTurn: true },
-			);
+${allRemaining.map((t) => `${t.step}. ${t.text}`).join("\n")}`);
 		}
 		updateStatus(ctx);
 	}
@@ -421,14 +465,7 @@ ${allRemaining.map((t) => `${t.step}. ${t.text}`).join("\n")}`,
 			dispatchNextWave(ctx);
 		} else {
 			_log("EXECUTE_START: no todoItems extracted, dispatching generic execute");
-			pi.sendMessage(
-				{
-					customType: "plan-mode-execute",
-					content: "Execute the plan you just created.",
-					display: true,
-				},
-				{ triggerTurn: true },
-			);
+			sendExecutionMessage("Execute the plan you just created.");
 		}
 	}
 
@@ -494,20 +531,11 @@ ${allRemaining.map((t) => `${t.step}. ${t.text}`).join("\n")}`,
 		// Allow markdown docs anywhere under .pi/, plus machine specs under .pi/machines/.
 		if (inPlanning && (event.toolName === "write" || event.toolName === "edit")) {
 			const filePath = (event.input as { path?: string }).path || "";
-			const normalizedPath = filePath.replace(/\\/g, "/");
-			const isMarkdownPath = normalizedPath.endsWith(".md");
-			const isMachinePath = /(^|\/)\.pi\/machines\/.+\.machine\.ts$/.test(normalizedPath);
-
-			if (!isWithinPiDir(filePath, process.cwd())) {
+			const restriction = getPlanningWriteRestriction(filePath, process.cwd());
+			if (restriction) {
 				return {
 					block: true,
-					reason: `Planning phase: writes restricted to .md files in .pi/ and .machine.ts files in .pi/machines/. Path "${filePath}" is outside .pi/.`,
-				};
-			}
-			if (!isMarkdownPath && !isMachinePath) {
-				return {
-					block: true,
-					reason: `Planning phase: only .md files or .pi/machines/*.machine.ts files are allowed. Path "${filePath}" is not an allowed planning file.`,
+					reason: restriction,
 				};
 			}
 		}
@@ -696,14 +724,7 @@ ${allRemaining.map((t) => `${t.step}. ${t.text}`).join("\n")}`,
 				state.stepRetryCount++;
 				state.stepToolCalls = [];
 				const errorDetail = lastMsg ? getTextContent(lastMsg) : "Verification failed";
-				pi.sendMessage(
-					{
-						customType: "plan-mode-execute",
-						content: formatEscalationContext(step, state.stepRetryCount, MAX_RETRIES, errorDetail),
-						display: true,
-					},
-					{ triggerTurn: true },
-				);
+				sendExecutionMessage(formatEscalationContext(step, state.stepRetryCount, MAX_RETRIES, errorDetail));
 				return;
 			}
 
@@ -717,17 +738,12 @@ ${allRemaining.map((t) => `${t.step}. ${t.text}`).join("\n")}`,
 				if (choice === "Retry once more") {
 					state.stepRetryCount = 0;
 					state.stepToolCalls = [];
-					pi.sendMessage(
-						{
-							customType: "plan-mode-execute",
-							content: executionPrompt(
-								step,
-								null,
-								state.todoItems.filter((t) => !t.completed),
-							),
-							display: true,
-						},
-						{ triggerTurn: true },
+					sendExecutionMessage(
+						executionPrompt(
+							step,
+							null,
+							state.todoItems.filter((t) => !t.completed),
+						),
 					);
 					return;
 				}
@@ -763,14 +779,7 @@ ${allRemaining.map((t) => `${t.step}. ${t.text}`).join("\n")}`,
 			if (!audit.pass && state.stepRetryCount < MAX_RETRIES) {
 				state.stepRetryCount++;
 				state.stepToolCalls = [];
-				pi.sendMessage(
-					{
-						customType: "plan-mode-execute",
-						content: formatEscalationContext(step, state.stepRetryCount, MAX_RETRIES, audit.reason),
-						display: true,
-					},
-					{ triggerTurn: true },
-				);
+				sendExecutionMessage(formatEscalationContext(step, state.stepRetryCount, MAX_RETRIES, audit.reason));
 				return;
 			}
 
@@ -798,18 +807,13 @@ ${allRemaining.map((t) => `${t.step}. ${t.text}`).join("\n")}`,
 			if (failures.length > 0 && state.stepRetryCount < MAX_RETRIES) {
 				state.stepRetryCount++;
 				state.stepToolCalls = [];
-				pi.sendMessage(
-					{
-						customType: "plan-mode-execute",
-						content: formatEscalationContext(
-							step,
-							state.stepRetryCount,
-							MAX_RETRIES,
-							failures.map((f) => `- ${f}`).join("\n"),
-						),
-						display: true,
-					},
-					{ triggerTurn: true },
+				sendExecutionMessage(
+					formatEscalationContext(
+						step,
+						state.stepRetryCount,
+						MAX_RETRIES,
+						failures.map((f) => `- ${f}`).join("\n"),
+					),
 				);
 				return;
 			}
@@ -839,17 +843,12 @@ ${allRemaining.map((t) => `${t.step}. ${t.text}`).join("\n")}`,
 				if (choice === "Retry once more") {
 					state.stepRetryCount = 0;
 					state.stepToolCalls = [];
-					pi.sendMessage(
-						{
-							customType: "plan-mode-execute",
-							content: executionPrompt(
-								step,
-								null,
-								state.todoItems.filter((t) => !t.completed),
-							),
-							display: true,
-						},
-						{ triggerTurn: true },
+					sendExecutionMessage(
+						executionPrompt(
+							step,
+							null,
+							state.todoItems.filter((t) => !t.completed),
+						),
 					);
 					return;
 				}
@@ -1139,6 +1138,10 @@ ${allRemaining.map((t) => `${t.step}. ${t.text}`).join("\n")}`,
 
 		if (startInPlanMode) {
 			state.phase = "interview";
+		}
+
+		if (state.phase === "execution" && state.todoItems.length > 0) {
+			rehydrateTodoItemsFromSavedPlan(ctx.cwd);
 		}
 
 		// On resume: re-scan messages to rebuild completion state

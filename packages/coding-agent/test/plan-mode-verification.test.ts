@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bugTriagePrompt, executionPrompt } from "../examples/extensions/plan-mode/prompts.js";
+import { bugTriagePrompt, executionPrompt, planGenerationPrompt } from "../examples/extensions/plan-mode/prompts.js";
 import {
 	auditToolCalls,
 	extractFilePaths,
@@ -211,6 +211,12 @@ describe("executionPrompt", () => {
 		const withEmptyArg = executionPrompt(step, wave, remaining, "");
 		expect(withoutArg).toBe(withEmptyArg);
 	});
+
+	it("includes backend routing guidance in agent delegation", () => {
+		const result = executionPrompt(step, wave, remaining);
+		expect(result).toContain("| backend |");
+		expect(result).toContain("API routes");
+	});
 });
 
 describe("bugTriagePrompt", () => {
@@ -229,5 +235,20 @@ describe("bugTriagePrompt", () => {
 	it("references the debug agent methodology", () => {
 		const result = bugTriagePrompt("something is broken");
 		expect(result).toContain("5-7 hypotheses");
+	});
+});
+
+describe("planGenerationPrompt", () => {
+	it("delegates state machine verification to the tla-precheck subagent", () => {
+		const result = planGenerationPrompt(null);
+		expect(result).toContain("tla-precheck");
+		expect(result).toContain("Use the subagent tool");
+		expect(result).toContain("check .pi/machines/<name>.machine.ts");
+	});
+
+	it("explicitly forbids .machine.js generation during planning", () => {
+		const result = planGenerationPrompt(null);
+		expect(result).toContain("Do NOT write or build `.machine.js` during planning.");
+		expect(result).toContain("execution-only");
 	});
 });

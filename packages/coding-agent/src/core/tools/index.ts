@@ -63,6 +63,18 @@ export {
 	readToolDefinition,
 } from "./read.js";
 export {
+	createReadSubtreeTool,
+	type ReadSubtreeToolDetails,
+	type ReadSubtreeToolInput,
+	readSubtreeTool,
+} from "./read-subtree.js";
+export {
+	createTreeTool,
+	type TreeToolDetails,
+	type TreeToolInput,
+	treeTool,
+} from "./tree.js";
+export {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
 	formatSize,
@@ -102,19 +114,25 @@ import {
 	readTool,
 	readToolDefinition,
 } from "./read.js";
+import { createReadSubtreeTool, readSubtreeTool } from "./read-subtree.js";
+import { createTreeTool, treeTool } from "./tree.js";
 import { createWriteTool, createWriteToolDefinition, writeTool, writeToolDefinition } from "./write.js";
 
 export type Tool = AgentTool<any>;
 export type ToolDef = ToolDefinition<any, any>;
 
-export const codingTools: Tool[] = [readTool, bashTool, editTool, writeTool];
-export const readOnlyTools: Tool[] = [readTool, grepTool, findTool, lsTool];
+export const DEFAULT_ACTIVE_TOOL_NAMES = ["read", "bash", "edit", "write", "tree", "read_subtree"] as const;
+
+export const codingTools: Tool[] = [readTool, bashTool, editTool, writeTool, treeTool, readSubtreeTool];
+export const readOnlyTools: Tool[] = [readTool, grepTool, findTool, lsTool, treeTool, readSubtreeTool];
 
 export const allTools = {
 	read: readTool,
 	bash: bashTool,
 	edit: editTool,
 	write: writeTool,
+	tree: treeTool,
+	read_subtree: readSubtreeTool,
 	grep: grepTool,
 	find: findTool,
 	ls: lsTool,
@@ -128,6 +146,8 @@ export const allToolDefinitions = {
 	grep: grepToolDefinition,
 	find: findToolDefinition,
 	ls: lsToolDefinition,
+	tree: createTreeTool(process.cwd()),
+	read_subtree: createReadSubtreeTool(process.cwd()),
 };
 
 export type ToolName = keyof typeof allTools;
@@ -143,6 +163,8 @@ export function createCodingToolDefinitions(cwd: string, options?: ToolsOptions)
 		createBashToolDefinition(cwd, options?.bash),
 		createEditToolDefinition(cwd),
 		createWriteToolDefinition(cwd),
+		createTreeTool(cwd) as unknown as ToolDef,
+		createReadSubtreeTool(cwd) as unknown as ToolDef,
 	];
 }
 
@@ -152,6 +174,8 @@ export function createReadOnlyToolDefinitions(cwd: string, options?: ToolsOption
 		createGrepToolDefinition(cwd),
 		createFindToolDefinition(cwd),
 		createLsToolDefinition(cwd),
+		createTreeTool(cwd) as unknown as ToolDef,
+		createReadSubtreeTool(cwd) as unknown as ToolDef,
 	];
 }
 
@@ -161,6 +185,8 @@ export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): R
 		bash: createBashToolDefinition(cwd, options?.bash),
 		edit: createEditToolDefinition(cwd),
 		write: createWriteToolDefinition(cwd),
+		tree: createTreeTool(cwd) as unknown as ToolDef,
+		read_subtree: createReadSubtreeTool(cwd) as unknown as ToolDef,
 		grep: createGrepToolDefinition(cwd),
 		find: createFindToolDefinition(cwd),
 		ls: createLsToolDefinition(cwd),
@@ -173,11 +199,20 @@ export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 		createBashTool(cwd, options?.bash),
 		createEditTool(cwd),
 		createWriteTool(cwd),
+		createTreeTool(cwd),
+		createReadSubtreeTool(cwd),
 	];
 }
 
 export function createReadOnlyTools(cwd: string, options?: ToolsOptions): Tool[] {
-	return [createReadTool(cwd, options?.read), createGrepTool(cwd), createFindTool(cwd), createLsTool(cwd)];
+	return [
+		createReadTool(cwd, options?.read),
+		createGrepTool(cwd),
+		createFindTool(cwd),
+		createLsTool(cwd),
+		createTreeTool(cwd),
+		createReadSubtreeTool(cwd),
+	];
 }
 
 export function createAllTools(cwd: string, options?: ToolsOptions): Record<ToolName, Tool> {
@@ -186,6 +221,8 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		bash: createBashTool(cwd, options?.bash),
 		edit: createEditTool(cwd),
 		write: createWriteTool(cwd),
+		tree: createTreeTool(cwd),
+		read_subtree: createReadSubtreeTool(cwd),
 		grep: createGrepTool(cwd),
 		find: createFindTool(cwd),
 		ls: createLsTool(cwd),

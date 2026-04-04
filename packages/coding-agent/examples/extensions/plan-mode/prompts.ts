@@ -273,12 +273,13 @@ You MUST evaluate whether the plan involves stateful workflows. Check each:
 
 **If YES** (any match above):
 1. Write \`.pi/machines/<name>.machine.ts\` using the TLA PreCheck DSL — model states, transitions, guards, invariants
-2. Run: \`npx tla-precheck check .pi/machines/<name>.machine.ts\`
-3. If check fails: fix the machine design and re-run until all invariants pass
+2. Use the subagent tool to run the **tla-precheck** agent with: \`check .pi/machines/<name>.machine.ts\`
+3. If check fails: fix the \`.machine.ts\` design and re-run the tla-precheck subagent until all invariants pass
 4. Record the TLC proof results (states explored, invariants verified) — include in the plan
 
 The machine file is a planning artifact in \`.pi/machines/\`.
 During execution, \`tla-precheck build\` will generate the runtime adapter into the user's source tree.
+Do NOT write or build \`.machine.js\` during planning. Any generated adapter is execution-only.
 
 **If NO**: Document in the plan: "State Machine Assessment: No stateful workflows identified — skipped."
 
@@ -521,6 +522,7 @@ You have access to specialized agents via the subagent tool. DELEGATE to them in
 | Agent | Delegate When |
 |-------|--------------|
 | explore | Finding files, tracing imports, mapping dependencies, understanding patterns |
+| backend | API routes, services, repositories, auth/authz, validation, databases, queues, stateful server logic |
 | frontend | React/Next.js/Lit component work, accessibility, performance |
 | devops | CI/CD, Docker, deployment, infrastructure |
 | sentinel | Security audits of changes |
@@ -531,6 +533,7 @@ You have access to specialized agents via the subagent tool. DELEGATE to them in
 
 ### When to Delegate vs Do It Yourself
 - **Delegate**: Research tasks, specialized reviews, running test suites, security audits
+- **Delegate**: Backend contract, route, validation, auth, persistence, or queue work to \`backend\`
 - **Do it yourself**: Simple file edits, config changes, straightforward code writes
 
 ### Delegation Rules

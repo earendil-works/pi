@@ -135,9 +135,6 @@ export function cleanStepText(text: string): string {
 	if (cleaned.length > 0) {
 		cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
 	}
-	if (cleaned.length > 50) {
-		cleaned = `${cleaned.slice(0, 47)}...`;
-	}
 	return cleaned;
 }
 
@@ -581,6 +578,26 @@ export function isWithinPiDir(filePath: string, cwd: string): boolean {
 	const resolved = resolve(cwd, filePath);
 	const piDir = resolve(cwd, ".pi");
 	return resolved.startsWith(`${piDir}/`) || resolved === piDir;
+}
+
+export function getPlanningWriteRestriction(filePath: string, cwd: string): string | null {
+	const normalizedPath = filePath.replace(/\\/g, "/");
+	const isMarkdownPath = normalizedPath.endsWith(".md");
+	const isMachinePath = /(^|\/)\.pi\/machines\/.+\.machine\.ts$/.test(normalizedPath);
+
+	if (!isWithinPiDir(filePath, cwd)) {
+		return `Planning phase: writes restricted to .md files in .pi/ and .machine.ts files in .pi/machines/. Path "${filePath}" is outside .pi/.`;
+	}
+
+	if (/(^|\/)\.pi\/machines\/.+\.machine\.js$/.test(normalizedPath)) {
+		return `Planning phase: ".machine.js" is an execution artifact, not a planning artifact. Write only ".pi/machines/*.machine.ts" during planning, and delegate verification to the tla-precheck subagent.`;
+	}
+
+	if (!isMarkdownPath && !isMachinePath) {
+		return `Planning phase: only .md files or .pi/machines/*.machine.ts files are allowed. Path "${filePath}" is not an allowed planning file.`;
+	}
+
+	return null;
 }
 
 // --- Wave plan extraction ---

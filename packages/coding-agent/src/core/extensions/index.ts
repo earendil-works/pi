@@ -96,6 +96,8 @@ export type {
 	// Provider Registration
 	ProviderConfig,
 	ProviderModelConfig,
+	ReadSubtreeToolCallEvent,
+	ReadSubtreeToolResultEvent,
 	ReadToolCallEvent,
 	ReadToolResultEvent,
 	// Commands
@@ -140,6 +142,8 @@ export type {
 	ToolResultEvent,
 	ToolResultEventResult,
 	TreePreparation,
+	TreeToolCallEvent,
+	TreeToolResultEvent,
 	TurnEndEvent,
 	TurnStartEvent,
 	// Events - User Bash
@@ -157,8 +161,10 @@ export {
 	isFindToolResult,
 	isGrepToolResult,
 	isLsToolResult,
+	isReadSubtreeToolResult,
 	isReadToolResult,
 	isToolCallEventType,
+	isTreeToolResult,
 	isWriteToolResult,
 } from "./types.js";
 export { wrapRegisteredTool, wrapRegisteredTools } from "./wrapper.js";

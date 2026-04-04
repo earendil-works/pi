@@ -92,7 +92,7 @@ pi
 /login  # Then select provider
 ```
 
-Then just talk to pi. By default, pi gives the model four tools: `read`, `write`, `edit`, and `bash`. The model uses these to fulfill your requests. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [pi packages](#pi-packages).
+Then just talk to pi. By default, pi gives the model six tools: `read`, `write`, `edit`, `bash`, `tree`, and `read_subtree`. The model uses these to fulfill your requests, with `tree` and `read_subtree` helping it shortlist relevant files before broad reads. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [pi packages](#pi-packages).
 
 **Platform notes:** [Windows](docs/windows.md) | [Termux (Android)](docs/termux.md) | [tmux](docs/tmux.md) | [Terminal setup](docs/terminal-setup.md) | [Shell aliases](docs/shell-aliases.md)
 
@@ -337,6 +337,7 @@ export default function (pi: ExtensionAPI) {
 **What's possible:**
 - Custom tools (or replace built-in tools entirely)
 - Sub-agents and plan mode
+- Named model profiles that switch the main session model and subagent model pack together
 - Custom compaction and summarization
 - Permission gates and path protection
 - Custom editors and UI components
@@ -348,7 +349,11 @@ export default function (pi: ExtensionAPI) {
 - Games while waiting (yes, Doom runs)
 - ...anything you can dream up
 
-Place in `~/.pi/agent/extensions/`, `.pi/extensions/`, or a [pi package](#pi-packages) to share with others. See [docs/extensions.md](docs/extensions.md) and [examples/extensions/](examples/extensions/).
+For example, the `examples/extensions/profile-switcher/` extension can define named packs like `openai` and `anthropic` in `~/.pi/agent/profiles.json`. A profile can switch the main session model, Ctrl+P scoped models, agent `model:` / `fallback-model:` frontmatter, and fallback targets in one move. That makes it practical to keep a GPT-heavy pack and a Claude-heavy pack without editing every agent file by hand.
+
+The `examples/extensions/max-edit/` extension shows an optional best-of-N edit flow. It runs proposal-only candidate agents, auto-selects the strongest patch, and applies only the winning edit.
+
+Place in `~/.pi/agent/extensions/`, `.pi/extensions/`, or a [pi package](#pi-packages) to share with others. See [docs/extensions.md](docs/extensions.md) and [examples/extensions/](examples/extensions/). For named model packs, see the `profile-switcher/` example extension. For best-of-N candidate selection, see `max-edit/`.
 
 ### Themes
 
@@ -518,10 +523,10 @@ cat README.md | pi -p "Summarize this text"
 
 | Option | Description |
 |--------|-------------|
-| `--tools <list>` | Enable specific built-in tools (default: `read,bash,edit,write`) |
+| `--tools <list>` | Enable specific built-in tools (default: `read,bash,edit,write,tree,read_subtree`) |
 | `--no-tools` | Disable all built-in tools (extension tools still work) |
 
-Available built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`
+Available built-in tools: `read`, `bash`, `edit`, `write`, `tree`, `read_subtree`, `grep`, `find`, `ls`
 
 ### Resource Options
 

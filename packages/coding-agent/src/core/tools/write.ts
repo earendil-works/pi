@@ -8,6 +8,7 @@ import { getLanguageFromPath, highlightCode } from "../../modes/interactive/them
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.js";
 import { withFileMutationQueue } from "./file-mutation-queue.js";
 import { resolveToCwd } from "./path-utils.js";
+import { invalidateProjectTreeCache } from "./project-tree.js";
 import { invalidArgText, normalizeDisplayText, replaceTabs, shortenPath, str } from "./render-utils.js";
 import { wrapToolDefinition } from "./tool-definition-wrapper.js";
 
@@ -215,19 +216,16 @@ export function createWriteToolDefinition(
 								reject(new Error("Operation aborted"));
 							};
 							signal?.addEventListener("abort", onAbort, { once: true });
-							(async () => {
+							void (async () => {
 								try {
-									// Create parent directories if needed.
 									await ops.mkdir(dir);
 									if (aborted) return;
-									// Write the file contents.
 									await ops.writeFile(absolutePath, content);
+									invalidateProjectTreeCache(cwd);
 									if (aborted) return;
 									signal?.removeEventListener("abort", onAbort);
 									resolve({
-										content: [
-											{ type: "text", text: `Successfully wrote ${content.length} bytes to ${path}` },
-										],
+										content: [{ type: "text", text: `Successfully wrote ${content.length} bytes to ${path}` }],
 										details: undefined,
 									});
 								} catch (error: any) {
