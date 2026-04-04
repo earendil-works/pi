@@ -325,6 +325,29 @@ describe("ExtensionRunner", () => {
 			expect(tools).toHaveLength(1);
 			expect(tools[0]?.definition.description).toBe("first");
 		});
+
+		it("omits tools unregistered during extension load", async () => {
+			const extCode = `
+				import { Type } from "@sinclair/typebox";
+				export default function(pi) {
+					pi.registerTool({
+						name: "temp_tool",
+						label: "temp_tool",
+						description: "temporary",
+						parameters: Type.Object({}),
+						execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }),
+					});
+					pi.unregisterTool("temp_tool");
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "temp-tool.ts"), extCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const tools = runner.getAllRegisteredTools();
+
+			expect(tools).toHaveLength(0);
+		});
 	});
 
 	describe("command collection", () => {
@@ -397,6 +420,26 @@ describe("ExtensionRunner", () => {
 			expect(diagnostics).toEqual([]);
 			expect(runner.getCommand("shared-cmd:1")?.description).toBe("First command");
 			expect(runner.getCommand("shared-cmd:2")?.description).toBe("Second command");
+		});
+
+		it("omits commands unregistered during extension load", async () => {
+			const cmdCode = `
+				export default function(pi) {
+					pi.registerCommand("temp-cmd", {
+						description: "temporary",
+						handler: async () => {},
+					});
+					pi.unregisterCommand("temp-cmd");
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "cmd-temp.ts"), cmdCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const commands = runner.getRegisteredCommands();
+
+			expect(commands).toHaveLength(0);
+			expect(runner.getCommand("temp-cmd")).toBeUndefined();
 		});
 	});
 

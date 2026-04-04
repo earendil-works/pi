@@ -1034,12 +1034,18 @@ export interface ExtensionAPI {
 		tool: ToolDefinition<TParams, TDetails, TState>,
 	): void;
 
+	/** Unregister a previously registered tool by name. */
+	unregisterTool(name: string): void;
+
 	// =========================================================================
 	// Command, Shortcut, Flag Registration
 	// =========================================================================
 
 	/** Register a custom command. */
 	registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void;
+
+	/** Unregister a previously registered custom command by name. */
+	unregisterCommand(name: string): void;
 
 	/** Register a keyboard shortcut. */
 	registerShortcut(

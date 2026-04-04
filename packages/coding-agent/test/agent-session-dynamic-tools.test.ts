@@ -179,4 +179,112 @@ describe("AgentSession dynamic tool registration", () => {
 
 		session.dispose();
 	});
+
+	it("removes tools from the active registry when unregistered at runtime", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_start", () => {
+						pi.registerTool({
+							name: "dynamic_tool",
+							label: "Dynamic Tool",
+							description: "Tool registered from session_start",
+							promptSnippet: "Run dynamic test behavior",
+							promptGuidelines: ["Use dynamic_tool when the user asks for dynamic behavior tests."],
+							parameters: Type.Object({}),
+							execute: async () => ({
+								content: [{ type: "text", text: "ok" }],
+								details: {},
+							}),
+						});
+					});
+					pi.registerCommand("drop-dynamic", {
+						description: "Remove the dynamic tool",
+						handler: async () => {
+							pi.unregisterTool("dynamic_tool");
+						},
+					});
+				},
+			],
+		});
+		await resourceLoader.reload();
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+
+		await session.bindExtensions({});
+		expect(session.getAllTools().map((tool) => tool.name)).toContain("dynamic_tool");
+		expect(session.getActiveToolNames()).toContain("dynamic_tool");
+		expect(session.systemPrompt).toContain("dynamic_tool");
+
+		await session.prompt("/drop-dynamic");
+
+		expect(session.getAllTools().map((tool) => tool.name)).not.toContain("dynamic_tool");
+		expect(session.getActiveToolNames()).not.toContain("dynamic_tool");
+		expect(session.systemPrompt).not.toContain("- dynamic_tool: Run dynamic test behavior");
+		expect(session.systemPrompt).not.toContain("Use dynamic_tool when the user asks for dynamic behavior tests.");
+
+		session.dispose();
+	});
+
+	it("removes commands when unregistered at runtime", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+		const commandRuns: string[] = [];
+
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			extensionFactories: [
+				(pi) => {
+					pi.registerCommand("target-cmd", {
+						description: "Target command",
+						handler: async () => {
+							commandRuns.push("target");
+						},
+					});
+					pi.registerCommand("remove-target-cmd", {
+						description: "Remove target command",
+						handler: async () => {
+							pi.unregisterCommand("target-cmd");
+						},
+					});
+				},
+			],
+		});
+		await resourceLoader.reload();
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+
+		await session.bindExtensions({});
+		expect(session.extensionRunner?.getCommand("target-cmd")).toBeDefined();
+
+		await session.prompt("/remove-target-cmd");
+
+		expect(session.extensionRunner?.getCommand("target-cmd")).toBeUndefined();
+		expect(session.extensionRunner?.getRegisteredCommands().map((command) => command.invocationName)).not.toContain("target-cmd");
+		expect(commandRuns).toEqual([]);
+
+		session.dispose();
+	});
 });

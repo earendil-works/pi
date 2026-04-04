@@ -1020,6 +1020,8 @@ Register a custom tool callable by the LLM. See [Custom Tools](#custom-tools) fo
 
 `pi.registerTool()` works both during extension load and after startup. You can call it inside `session_start`, command handlers, or other event handlers. New tools are refreshed immediately in the same session, so they appear in `pi.getAllTools()` and are callable by the LLM without `/reload`.
 
+Use `pi.unregisterTool(name)` to remove a previously registered tool from the current extension. The tool registry refreshes immediately in the same session.
+
 Use `pi.setActiveTools()` to enable or disable tools (including dynamically added tools) at runtime.
 
 Use `promptSnippet` to opt a custom tool into a one-line entry in `Available tools`, and `promptGuidelines` to append tool-specific bullets to the default `Guidelines` section when the tool is active.
@@ -1062,6 +1064,16 @@ pi.registerTool({
   renderResult(result, options, theme, context) { ... },
 });
 ```
+
+### pi.unregisterTool(name)
+
+Unregister a previously registered tool by name.
+
+```typescript
+pi.unregisterTool("my_tool");
+```
+
+If the tool is currently active, pi refreshes the runtime registry immediately so it disappears from `pi.getAllTools()` and from the active tool set.
 
 ### pi.sendMessage(message, options?)
 
@@ -1201,6 +1213,16 @@ pi.registerCommand("deploy", {
   },
 });
 ```
+
+### pi.unregisterCommand(name)
+
+Unregister a previously registered custom command by name.
+
+```typescript
+pi.unregisterCommand("stats");
+```
+
+Command lookups are resolved dynamically, so the command disappears immediately from `pi.getCommands()` and from slash-command resolution.
 
 ### pi.getCommands()
 

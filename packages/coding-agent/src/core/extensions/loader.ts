@@ -180,12 +180,22 @@ function createExtensionAPI(
 			runtime.refreshTools();
 		},
 
+		unregisterTool(name: string): void {
+			if (extension.tools.delete(name)) {
+				runtime.refreshTools();
+			}
+		},
+
 		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {
 			extension.commands.set(name, {
 				name,
 				sourceInfo: extension.sourceInfo,
 				...options,
 			});
+		},
+
+		unregisterCommand(name: string): void {
+			extension.commands.delete(name);
 		},
 
 		registerShortcut(
