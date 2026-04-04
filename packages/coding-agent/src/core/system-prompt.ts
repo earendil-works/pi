@@ -39,7 +39,13 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions = {}): strin
 	const resolvedCwd = cwd ?? process.cwd();
 	const promptCwd = resolvedCwd.replace(/\\/g, "/");
 
-	const date = new Date().toISOString().slice(0, 10);
+	// Format current date in local OS timezone as YYYY-MM-DD to preserve prompt caching.
+	// We avoid using toISOString() directly as it returns UTC, which causes "yesterday/tomorrow" hallucinations for users in other timezones.
+	const now = new Date();
+	const year = now.getFullYear();
+	const month = String(now.getMonth() + 1).padStart(2, "0");
+	const day = String(now.getDate()).padStart(2, "0");
+	const date = `${year}-${month}-${day}`;
 
 	const appendSection = appendSystemPrompt ? `\n\n${appendSystemPrompt}` : "";
 
