@@ -91,6 +91,7 @@ import { OAuthSelectorComponent } from "./components/oauth-selector.js";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.js";
 import { SessionSelectorComponent } from "./components/session-selector.js";
 import { SettingsSelectorComponent } from "./components/settings-selector.js";
+import { SidePanelManager } from "./components/side-panel-manager.js";
 import { SkillInvocationMessageComponent } from "./components/skill-invocation-message.js";
 import { ToolExecutionComponent } from "./components/tool-execution.js";
 import { TreeSelectorComponent } from "./components/tree-selector.js";
@@ -236,6 +237,7 @@ export class InteractiveMode {
 
 	// Header container that holds the built-in or custom header
 	private headerContainer: Container;
+	private sidePanelManager: SidePanelManager;
 
 	// Built-in header (logo + keybinding hints + changelog)
 	private builtInHeader: Component | undefined = undefined;
@@ -285,6 +287,7 @@ export class InteractiveMode {
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
+		this.sidePanelManager = new SidePanelManager(this.ui, theme);
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
@@ -1456,6 +1459,8 @@ export class InteractiveMode {
 		this.setExtensionHeader(undefined);
 		this.clearExtensionWidgets();
 		this.footerDataProvider.clearExtensionStatuses();
+		this.footerDataProvider.clearFooterSegments();
+		this.sidePanelManager.clear();
 		this.footer.invalidate();
 		this.setCustomEditorComponent(undefined);
 		this.defaultEditor.onExtensionShortcut = undefined;
@@ -1573,6 +1578,42 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	private registerExtensionFooterSegment(
+		key: string,
+		options: import("../../core/extensions/types.js").ExtensionFooterSegmentOptions,
+	): void {
+		const invalidate = () => {
+			this.footer.invalidate();
+			this.ui.requestRender();
+		};
+		const dispose = options.subscribe ? options.subscribe(invalidate) || undefined : undefined;
+		this.footerDataProvider.registerFooterSegment({
+			key,
+			priority: options.priority ?? 0,
+			render: (width) => options.render(width, theme, this.footerDataProvider),
+			dispose,
+		});
+		this.footer.invalidate();
+		this.ui.requestRender();
+	}
+
+	private unregisterExtensionFooterSegment(key: string): void {
+		this.footerDataProvider.unregisterFooterSegment(key);
+		this.footer.invalidate();
+		this.ui.requestRender();
+	}
+
+	private setExtensionSidePanel(
+		content:
+			| string[]
+			| ((tui: TUI, thm: Theme) => Component & { dispose?(): void })
+			| undefined,
+		options?: import("../../core/extensions/types.js").ExtensionSidePanelOptions,
+	): void {
+		this.sidePanelManager.set(content, options);
+		this.ui.requestRender();
+	}
+
 	private addExtensionTerminalInputListener(
 		handler: (data: string) => { consume?: boolean; data?: string } | undefined,
 	): () => void {
@@ -1619,7 +1660,10 @@ export class InteractiveMode {
 			setHiddenThinkingLabel: (label) => this.setHiddenThinkingLabel(label),
 			setWidget: (key, content, options) => this.setExtensionWidget(key, content, options),
 			setFooter: (factory) => this.setExtensionFooter(factory),
+			registerFooterSegment: (key, options) => this.registerExtensionFooterSegment(key, options),
+			unregisterFooterSegment: (key) => this.unregisterExtensionFooterSegment(key),
 			setHeader: (factory) => this.setExtensionHeader(factory),
+			setSidePanel: (content, options) => this.setExtensionSidePanel(content, options),
 			setTitle: (title) => this.ui.terminal.setTitle(title),
 			custom: (factory, options) => this.showExtensionCustom(factory, options),
 			pasteToEditor: (text) => this.editor.handleInput(`\x1b[200~${text}\x1b[201~`),
@@ -4636,6 +4680,7 @@ export class InteractiveMode {
 			this.loadingAnimation = undefined;
 		}
 		this.clearExtensionTerminalInputListeners();
+		this.sidePanelManager.dispose();
 		this.footer.dispose();
 		this.footerDataProvider.dispose();
 		if (this.unsubscribe) {

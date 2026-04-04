@@ -83,11 +83,19 @@ function resolveBranchWithGitAsync(repoDir: string): Promise<string | null> {
  * Provides git branch and extension statuses - data not otherwise accessible to extensions.
  * Token stats, model info available via ctx.sessionManager and ctx.model.
  */
+export interface FooterSegmentRegistration {
+	key: string;
+	priority: number;
+	render: (width: number) => string | string[] | undefined;
+	dispose?: () => void;
+}
+
 export class FooterDataProvider {
 	private cwd: string;
 	private static readonly WATCH_DEBOUNCE_MS = 500;
 
 	private extensionStatuses = new Map<string, string>();
+	private footerSegments = new Map<string, FooterSegmentRegistration>();
 	private cachedBranch: string | null | undefined = undefined;
 	private gitPaths: GitPaths | null | undefined = undefined;
 	private headWatcher: FSWatcher | null = null;
@@ -143,6 +151,33 @@ export class FooterDataProvider {
 	/** Number of unique providers with available models (for footer display) */
 	getAvailableProviderCount(): number {
 		return this.availableProviderCount;
+	}
+
+	/** Footer segments registered by extensions. */
+	getFooterSegments(): readonly FooterSegmentRegistration[] {
+		return Array.from(this.footerSegments.values()).sort((a, b) => a.priority - b.priority || a.key.localeCompare(b.key));
+	}
+
+	/** Internal: register or replace a footer segment. */
+	registerFooterSegment(segment: FooterSegmentRegistration): void {
+		const existing = this.footerSegments.get(segment.key);
+		existing?.dispose?.();
+		this.footerSegments.set(segment.key, segment);
+	}
+
+	/** Internal: remove a footer segment. */
+	unregisterFooterSegment(key: string): void {
+		const existing = this.footerSegments.get(key);
+		existing?.dispose?.();
+		this.footerSegments.delete(key);
+	}
+
+	/** Internal: clear footer segments. */
+	clearFooterSegments(): void {
+		for (const segment of this.footerSegments.values()) {
+			segment.dispose?.();
+		}
+		this.footerSegments.clear();
 	}
 
 	/** Internal: update available provider count */
@@ -206,6 +241,7 @@ export class FooterDataProvider {
 			this.reftableTablesListPath = null;
 		}
 		this.branchChangeCallbacks.clear();
+		this.clearFooterSegments();
 	}
 
 	private notifyBranchChange(): void {
@@ -335,5 +371,5 @@ export class FooterDataProvider {
 /** Read-only view for extensions - excludes setExtensionStatus, setAvailableProviderCount and dispose */
 export type ReadonlyFooterDataProvider = Pick<
 	FooterDataProvider,
-	"getGitBranch" | "getExtensionStatuses" | "getAvailableProviderCount" | "onBranchChange"
+	"getGitBranch" | "getExtensionStatuses" | "getAvailableProviderCount" | "getFooterSegments" | "onBranchChange"
 >;

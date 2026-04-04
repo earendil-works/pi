@@ -1973,6 +1973,29 @@ ctx.ui.setFooter((tui, theme) => ({
 }));
 ctx.ui.setFooter(undefined);  // Restore built-in footer
 
+// Footer segments (preferred when you want to compose with the built-in footer)
+ctx.ui.registerFooterSegment("my-segment", {
+  priority: 10,
+  render: (width, theme, footerData) => theme.fg("accent", "Segment text"),
+  subscribe: (invalidate) => {
+    const timer = setInterval(invalidate, 1000);
+    return () => clearInterval(timer);
+  },
+});
+ctx.ui.unregisterFooterSegment("my-segment");
+
+// Persistent right-hand side panel (interactive mode only)
+ctx.ui.setSidePanel((tui, theme) => ({
+  width: 32,
+  render(_width) { return [theme.fg("accent", "Side panel"), theme.fg("dim", "status")]; },
+  invalidate() {},
+}), {
+  anchor: "right-center",
+  minWidth: 24,
+  visibleMinWidth: 100,
+});
+ctx.ui.setSidePanel(undefined);  // Clear side panel
+
 // Terminal title
 ctx.ui.setTitle("pi - my-project");
 

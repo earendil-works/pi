@@ -192,8 +192,20 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			// Custom footer not supported in RPC mode - requires TUI access
 		},
 
+		registerFooterSegment(_key: string, _options: unknown): void {
+			// Footer segments not supported in RPC mode - requires TUI access
+		},
+
+		unregisterFooterSegment(_key: string): void {
+			// Footer segments not supported in RPC mode - requires TUI access
+		},
+
 		setHeader(_factory: unknown): void {
 			// Custom header not supported in RPC mode - requires TUI access
+		},
+
+		setSidePanel(_content: unknown, _options?: unknown): void {
+			// Side panel not supported in RPC mode - requires TUI access
 		},
 
 		setTitle(title: string): void {

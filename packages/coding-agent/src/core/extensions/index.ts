@@ -61,7 +61,9 @@ export type {
 	ExtensionEvent,
 	ExtensionFactory,
 	ExtensionFlag,
+	ExtensionFooterSegmentOptions,
 	ExtensionHandler,
+	ExtensionSidePanelOptions,
 	// Runtime
 	ExtensionRuntime,
 	ExtensionShortcut,

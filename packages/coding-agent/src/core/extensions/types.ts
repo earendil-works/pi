@@ -98,6 +98,34 @@ export interface ExtensionWidgetOptions {
 	placement?: WidgetPlacement;
 }
 
+export interface ExtensionFooterSegmentOptions {
+	/** Lower priority renders earlier. Default: 0 */
+	priority?: number;
+	/** Render one or more footer lines. */
+	render(width: number, theme: Theme, footerData: ReadonlyFooterDataProvider): string | string[] | undefined;
+	/** Optional subscription hook for pushing footer invalidation. */
+	subscribe?(invalidate: () => void): (() => void) | void;
+}
+
+export interface ExtensionSidePanelOptions {
+	/** Width in columns or percentage string. Default: component width or 28%. */
+	width?: OverlayOptions["width"];
+	/** Minimum width in columns. Default: 24. */
+	minWidth?: number;
+	/** Maximum height in rows or percentage string. Default: 75%. */
+	maxHeight?: OverlayOptions["maxHeight"];
+	/** Right-side anchor for the side panel. Default: right-center. */
+	anchor?: "top-right" | "right-center" | "bottom-right";
+	/** Margin from terminal edges. Default: 1. */
+	margin?: OverlayOptions["margin"];
+	/** Horizontal offset from the anchor. */
+	offsetX?: number;
+	/** Vertical offset from the anchor. */
+	offsetY?: number;
+	/** Hide the side panel when terminal width is below this threshold. */
+	visibleMinWidth?: number;
+}
+
 /** Raw terminal input listener for extensions. */
 export type TerminalInputHandler = (data: string) => { consume?: boolean; data?: string } | undefined;
 
@@ -150,8 +178,23 @@ export interface ExtensionUIContext {
 			| undefined,
 	): void;
 
+	/** Register a footer segment rendered inside the built-in footer. */
+	registerFooterSegment(key: string, options: ExtensionFooterSegmentOptions): void;
+
+	/** Unregister a previously registered footer segment. */
+	unregisterFooterSegment(key: string): void;
+
 	/** Set a custom header component (shown at startup, above chat), or undefined to restore the built-in header. */
 	setHeader(factory: ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined): void;
+
+	/** Set a persistent right-hand side panel overlay, or undefined to clear it. */
+	setSidePanel(
+		content:
+			| string[]
+			| ((tui: TUI, theme: Theme) => Component & { dispose?(): void })
+			| undefined,
+		options?: ExtensionSidePanelOptions,
+	): void;
 
 	/** Set the terminal window/tab title. */
 	setTitle(title: string): void;

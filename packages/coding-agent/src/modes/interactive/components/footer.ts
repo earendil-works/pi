@@ -215,6 +215,14 @@ export class FooterComponent implements Component {
 			lines.push(truncateToWidth(statusLine, width, theme.fg("dim", "...")));
 		}
 
+		for (const segment of this.footerData.getFooterSegments()) {
+			const rendered = segment.render(width);
+			if (!rendered) continue;
+			for (const line of Array.isArray(rendered) ? rendered : [rendered]) {
+				lines.push(truncateToWidth(line, width, theme.fg("dim", "...")));
+			}
+		}
+
 		return lines;
 	}
 }
