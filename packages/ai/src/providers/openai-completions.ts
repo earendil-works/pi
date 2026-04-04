@@ -340,6 +340,18 @@ function createClient(
 	}
 
 	const headers = { ...model.headers };
+
+	if (model.provider === "opencode" || model.provider === "opencode-go") {
+		const randomId = () => Math.random().toString(36).substring(2, 28);
+		Object.assign(headers, {
+			"User-Agent": "opencode/latest/1.3.15/cli",
+			"x-opencode-client": "cli",
+			"x-opencode-session": randomId(),
+			"x-opencode-project": randomId(),
+			"x-opencode-request": randomId(),
+		});
+	}
+
 	if (model.provider === "github-copilot") {
 		const hasImages = hasCopilotVisionInput(context.messages);
 		const copilotHeaders = buildCopilotDynamicHeaders({
