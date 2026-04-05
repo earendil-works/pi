@@ -35,6 +35,7 @@ import { runMigrations, showDeprecationWarnings } from "./migrations.js";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.js";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.js";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.js";
+import { isLocalPath } from "./utils/paths.js";
 
 /**
  * Read all content from piped stdin.
@@ -371,7 +372,7 @@ function buildSessionOptions(
 }
 
 function resolveCliPaths(cwd: string, paths: string[] | undefined): string[] | undefined {
-	return paths?.map((value) => resolve(cwd, value));
+	return paths?.map((value) => (isLocalPath(value) ? resolve(cwd, value) : value));
 }
 
 export async function main(args: string[]) {

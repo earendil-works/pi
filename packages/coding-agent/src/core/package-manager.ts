@@ -7,6 +7,7 @@ import ignore from "ignore";
 import { minimatch } from "minimatch";
 import { CONFIG_DIR_NAME } from "../config.js";
 import { type GitSource, parseGitUrl } from "../utils/git.js";
+import { isLocalPath } from "../utils/paths.js";
 import { isStdoutTakenOver } from "./output-guard.js";
 import type { PackageSource, SettingsManager } from "./settings-manager.js";
 
@@ -1258,15 +1259,7 @@ export class DefaultPackageManager implements PackageManager {
 			};
 		}
 
-		const trimmed = source.trim();
-		const isWindowsAbsolutePath = /^[A-Za-z]:[\\/]|^\\\\/.test(trimmed);
-		const isLocalPathLike =
-			trimmed.startsWith(".") ||
-			trimmed.startsWith("/") ||
-			trimmed === "~" ||
-			trimmed.startsWith("~/") ||
-			isWindowsAbsolutePath;
-		if (isLocalPathLike) {
+		if (isLocalPath(source)) {
 			return { type: "local", path: source };
 		}
 
