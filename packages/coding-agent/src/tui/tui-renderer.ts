@@ -67,6 +67,7 @@ import {
 	buildHandoffSummaryUserText,
 	HANDOFF_SUMMARY_SYSTEM_PROMPT,
 } from "../handoff-summary.js";
+import { getArtifactMemoryProjectionPath, type WorkspaceProjection } from "../memory/projection.js";
 import { appendMissionResumeResetEvent } from "../missions/mission-reset.js";
 import { runMissionLoop } from "../missions/mission-runner.js";
 import {
@@ -922,6 +923,19 @@ export class TuiRenderer {
 			this.topChrome.addChild(new Markdown(this.changelogMarkdown.trim(), 1, 0, getMarkdownTheme()));
 			this.topChrome.addChild(new Spacer(1));
 			this.topChrome.addChild(new DynamicBorder());
+		}
+
+		// Add workspace memory projection if available
+		const projectionPath = getArtifactMemoryProjectionPath(process.cwd());
+		if (fs.existsSync(projectionPath)) {
+			try {
+				const projection: WorkspaceProjection = JSON.parse(fs.readFileSync(projectionPath, "utf-8"));
+				if (projection.entries.length > 0) {
+					this.showWorkspaceMemoryProjection(projection.startupSummary);
+				}
+			} catch {
+				// Silently skip if projection is corrupted
+			}
 		}
 
 		this.ui.addChild(this.chatLayout);
