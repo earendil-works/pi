@@ -164,6 +164,38 @@ apply_patch: |
 write: |
   Write content to a file. Creates the file if it doesn't exist, overwrites if it does. Automatically creates parent directories.
 
+memory_store: |
+  Store an explicit durable memory entry in the append-only artifact memory store.
+
+  Use this when the user explicitly asks to save, store, or remember something durable.
+
+  Scope semantics:
+  - omit `scope` to store in the current workspace
+  - use `scope: "workspace"` with optional `workspaceRef` to target a specific workspace
+  - use `scope: "global"` to store a global memory entry not tied to one workspace
+
+  Note: writes are backgrounded. Queue the write and continue; the agent does not need to wait for completion.
+
+memory_search: |
+  Search the artifact memory store for relevant entries.
+
+  Use this instead of rediscovering memory layout with generic file tools when you need stored memory.
+
+  Scope semantics:
+  - omit `scope` for the default behavior: search all entries, ranked current-workspace first, then global/other matches by text strength
+  - use `scope: "workspace"` with optional `workspaceRef` to restrict results to a specific workspace
+  - use `scope: "global"` to search only global memory entries
+
+memory_read: |
+  Read one stored artifact memory entry by id.
+
+  Use this after `memory_search` when you need the full stored entry details.
+
+  Scope semantics:
+  - omit `scope` to read by id regardless of scope
+  - use `scope: "workspace"` with optional `workspaceRef` to require the entry to belong to that workspace
+  - use `scope: "global"` to require the entry to be a global memory entry
+
 grep: |
   Search file contents for a pattern. Returns matching lines with file paths and line numbers. Respects .gitignore by default. Set `includeIgnored: true` to search gitignored files.
 

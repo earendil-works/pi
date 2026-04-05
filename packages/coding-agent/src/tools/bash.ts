@@ -1,11 +1,12 @@
 import { type AgentTool, StringEnum } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
-import { spawn } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import { createWriteStream, existsSync, unlink, type WriteStream } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
 import { getToolDescription } from "../prompts/index.js";
+import { findRepoRoot } from "../utils/find-repo-root.js";
 
 const MAX_OUTPUT_BYTES = 32 * 1024; // 32KB
 const MAX_LOG_FILE_BYTES = 100 * 1024 * 1024; // 100MB - prevent disk exhaustion
@@ -385,6 +386,44 @@ function buildBashEnv(): NodeJS.ProcessEnv {
 	return env;
 }
 
+function readGitStatusByPath(cwd: string): Map<string, string> {
+	const repoRoot = findRepoRoot(cwd);
+	if (!repoRoot) {
+		return new Map();
+	}
+
+	try {
+		const raw = execFileSync("git", ["status", "--porcelain=v1", "-uall"], {
+			cwd: repoRoot,
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+		});
+		const statusByPath = new Map<string, string>();
+		for (const line of raw.split("\n")) {
+			if (line.trim().length === 0) {
+				continue;
+			}
+			const status = line.slice(0, 2);
+			const rawPath = line.slice(3).trim();
+			const normalizedPath = rawPath.includes(" -> ") ? (rawPath.split(" -> ").at(-1)?.trim() ?? rawPath) : rawPath;
+			statusByPath.set(join(repoRoot, normalizedPath), status);
+		}
+		return statusByPath;
+	} catch {
+		return new Map();
+	}
+}
+
+function deriveGitArtifacts(before: Map<string, string>, after: Map<string, string>): string[] {
+	const changed: string[] = [];
+	for (const [path, status] of after.entries()) {
+		if (before.get(path) !== status) {
+			changed.push(path);
+		}
+	}
+	return changed.sort((left, right) => left.localeCompare(right));
+}
+
 /**
  * Kill a process and all its children
  */
@@ -499,6 +538,7 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 		}
 
 		return new Promise((resolve, _reject) => {
+			const gitStatusBefore = readGitStatusByPath(process.cwd());
 			const { shell, args } = getShellConfig();
 			const child = spawn(shell, [...args, command], {
 				detached: true,
@@ -810,6 +850,8 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 				let result = output;
 
 				finalizeLogStream(() => {
+					const artifacts =
+						code === 0 ? deriveGitArtifacts(gitStatusBefore, readGitStatusByPath(process.cwd())) : [];
 					settled = true;
 					// Show truncation notice only if we actually dropped bytes
 					if (didTruncate) {
@@ -830,7 +872,7 @@ export const bashTool: AgentTool<typeof bashSchema> = {
 
 					resolve({
 						content: [{ type: "text", text: result || "(no output)" }],
-						details: { exitCode: code ?? 0 },
+						details: artifacts.length > 0 ? { exitCode: code ?? 0, artifacts } : { exitCode: code ?? 0 },
 					});
 				});
 			});

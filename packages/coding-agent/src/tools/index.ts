@@ -8,6 +8,7 @@ export { globTool } from "./glob.js";
 export { grepTool } from "./grep.js";
 export { compactTool, handoffTool } from "./handoff.js";
 export { listThreadsTool } from "./list-threads.js";
+export { memoryReadTool, memorySearchTool, memoryStoreTool } from "./memory-tools.js";
 export { readTool } from "./read.js";
 export { readImageTool } from "./read-image.js";
 export { readThreadTool } from "./read-thread.js";
@@ -24,6 +25,7 @@ import { globTool } from "./glob.js";
 import { grepTool } from "./grep.js";
 import { compactTool } from "./handoff.js";
 import { listThreadsTool } from "./list-threads.js";
+import { memoryReadTool, memorySearchTool, memoryStoreTool } from "./memory-tools.js";
 import { readTool } from "./read.js";
 import { readImageTool } from "./read-image.js";
 import { readThreadTool } from "./read-thread.js";
@@ -38,6 +40,9 @@ export const codingTools = [
 	bashTool,
 	editTool,
 	writeTool,
+	memorySearchTool,
+	memoryReadTool,
+	memoryStoreTool,
 	listThreadsTool,
 	readThreadTool,
 	readImageTool,
@@ -55,6 +60,9 @@ export const allTools = {
 	write: writeTool,
 	grep: grepTool,
 	glob: globTool,
+	memory_store: memoryStoreTool,
+	memory_search: memorySearchTool,
+	memory_read: memoryReadTool,
 	list_threads: listThreadsTool,
 	read_thread: readThreadTool,
 	read_image: readImageTool,

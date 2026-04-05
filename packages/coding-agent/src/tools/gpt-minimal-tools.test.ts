@@ -35,6 +35,9 @@ describe("GPT tools", () => {
 		expect(selection.toolNames).toEqual([
 			"bash",
 			"apply_patch",
+			"memory_search",
+			"memory_read",
+			"memory_store",
 			"list_threads",
 			"read_thread",
 			"read_image",
