@@ -1,6 +1,6 @@
 {
 	"name": "@kennyfrc/mu-tui",
-	"version": "0.24.165",
+	"version": "0.24.166",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"type": "module",
 	"main": "dist/index.js",
