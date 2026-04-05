@@ -4,7 +4,7 @@
 import type { Model } from "./types.js";
 
 export const MODELS = {
-	anthropic: {
+	"anthropic": {
 		"claude-opus-4-5-20251101": {
 			id: "claude-opus-4-5-20251101",
 			name: "Claude Opus 4.5",
@@ -380,7 +380,7 @@ export const MODELS = {
 			maxTokens: 8192,
 		} satisfies Model<"anthropic-messages">,
 	},
-	google: {
+	"google": {
 		"gemini-2.5-flash-lite": {
 			id: "gemini-2.5-flash-lite",
 			name: "Gemini 2.5 Flash Lite",
@@ -841,7 +841,7 @@ export const MODELS = {
 			maxTokens: 8192,
 		} satisfies Model<"google-generative-ai">,
 	},
-	openai: {
+	"openai": {
 		"gpt-5.2-codex": {
 			id: "gpt-5.2-codex",
 			name: "GPT-5.2 Codex",
@@ -1165,7 +1165,7 @@ export const MODELS = {
 			contextWindow: 1050000,
 			maxTokens: 128000,
 		} satisfies Model<"openai-responses">,
-		o1: {
+		"o1": {
 			id: "o1",
 			name: "o1",
 			api: "openai-responses",
@@ -1199,7 +1199,7 @@ export const MODELS = {
 			contextWindow: 200000,
 			maxTokens: 100000,
 		} satisfies Model<"openai-responses">,
-		o3: {
+		"o3": {
 			id: "o3",
 			name: "o3",
 			api: "openai-responses",
@@ -1540,7 +1540,7 @@ export const MODELS = {
 			maxTokens: 16384,
 		} satisfies Model<"openai-responses">,
 	},
-	groq: {
+	"groq": {
 		"llama3-70b-8192": {
 			id: "llama3-70b-8192",
 			name: "Llama 3 70B",
@@ -1848,7 +1848,7 @@ export const MODELS = {
 			maxTokens: 16384,
 		} satisfies Model<"openai-completions">,
 	},
-	cerebras: {
+	"cerebras": {
 		"gpt-oss-120b": {
 			id: "gpt-oss-120b",
 			name: "GPT OSS 120B",
@@ -1918,7 +1918,7 @@ export const MODELS = {
 			maxTokens: 32000,
 		} satisfies Model<"openai-completions">,
 	},
-	xai: {
+	"xai": {
 		"grok-2-vision-1212": {
 			id: "grok-2-vision-1212",
 			name: "Grok 2 Vision (1212)",
@@ -2328,7 +2328,7 @@ export const MODELS = {
 			maxTokens: 30000,
 		} satisfies Model<"openai-completions">,
 	},
-	zai: {
+	"zai": {
 		"glm-4.7-flash": {
 			id: "glm-4.7-flash",
 			name: "GLM-4.7-Flash",
@@ -2534,7 +2534,7 @@ export const MODELS = {
 			maxTokens: 131072,
 		} satisfies Model<"anthropic-messages">,
 	},
-	mistral: {
+	"mistral": {
 		"devstral-small-2505": {
 			id: "devstral-small-2505",
 			name: "Devstral Small 2505",
@@ -2978,7 +2978,7 @@ export const MODELS = {
 			maxTokens: 262144,
 		} satisfies Model<"openai-completions">,
 	},
-	openrouter: {
+	"openrouter": {
 		"google/gemma-4-26b-a4b-it": {
 			id: "google/gemma-4-26b-a4b-it",
 			name: "Google: Gemma 4 26B A4B ",
@@ -7196,7 +7196,7 @@ export const MODELS = {
 			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
 	},
-	moonshot: {
+	"moonshot": {
 		"kimi-k2.5": {
 			id: "kimi-k2.5",
 			name: "Kimi K2.5 (Moonshot)",
@@ -7215,14 +7215,14 @@ export const MODELS = {
 			contextWindow: 262144,
 			maxTokens: 32768,
 			extraBody: {
-				thinking: {
-					type: "enabled",
-				},
-				temperature: 1,
-				top_p: 0.95,
-				n: 1,
-				presence_penalty: 0,
-				frequency_penalty: 0,
+			  "thinking": {
+			    "type": "enabled"
+			  },
+			  "temperature": 1,
+			  "top_p": 0.95,
+			  "n": 1,
+			  "presence_penalty": 0,
+			  "frequency_penalty": 0
 			},
 		} satisfies Model<"openai-completions">,
 	},
@@ -7572,7 +7572,7 @@ export const MODELS = {
 			maxTokens: 128000,
 		} satisfies Model<"openai-codex-responses">,
 	},
-	synthetic: {
+	"synthetic": {
 		"hf:deepseek-ai/DeepSeek-V3-0324": {
 			id: "hf:deepseek-ai/DeepSeek-V3-0324",
 			name: "DeepSeek V3 0324 (Synthetic)",
@@ -7610,7 +7610,7 @@ export const MODELS = {
 			maxTokens: 8192,
 		} satisfies Model<"openai-completions">,
 	},
-	fireworks: {
+	"fireworks": {
 		"accounts/fireworks/routers/kimi-k2p5-turbo": {
 			id: "accounts/fireworks/routers/kimi-k2p5-turbo",
 			name: "Kimi K2.5 Turbo Router (Fireworks)",

@@ -13,28 +13,17 @@ export declare function getGitHubCopilotBaseUrl(token?: string, enterpriseDomain
 /**
  * Refresh GitHub Copilot token
  */
-export declare function refreshGitHubCopilotToken(
-	refreshToken: string,
-	enterpriseDomain?: string,
-): Promise<OAuthCredentials>;
+export declare function refreshGitHubCopilotToken(refreshToken: string, enterpriseDomain?: string): Promise<OAuthCredentials>;
 /**
  * Enable a model for the user's GitHub Copilot account.
  * This is required for some models (like Claude, Grok) before they can be used.
  */
-export declare function enableGitHubCopilotModel(
-	token: string,
-	modelId: string,
-	enterpriseDomain?: string,
-): Promise<boolean>;
+export declare function enableGitHubCopilotModel(token: string, modelId: string, enterpriseDomain?: string): Promise<boolean>;
 /**
  * Enable all known GitHub Copilot models that may require policy acceptance.
  * Called after successful login to ensure all models are available.
  */
-export declare function enableAllGitHubCopilotModels(
-	token: string,
-	enterpriseDomain?: string,
-	onProgress?: (model: string, success: boolean) => void,
-): Promise<void>;
+export declare function enableAllGitHubCopilotModels(token: string, enterpriseDomain?: string, onProgress?: (model: string, success: boolean) => void): Promise<void>;
 /**
  * Login with GitHub Copilot OAuth (device code flow)
  *
@@ -43,8 +32,12 @@ export declare function enableAllGitHubCopilotModels(
  * @param options.onProgress - Optional progress callback
  */
 export declare function loginGitHubCopilot(options: {
-	onAuth: (url: string, instructions?: string) => void;
-	onPrompt: (prompt: { message: string; placeholder?: string; allowEmpty?: boolean }) => Promise<string>;
-	onProgress?: (message: string) => void;
+    onAuth: (url: string, instructions?: string) => void;
+    onPrompt: (prompt: {
+        message: string;
+        placeholder?: string;
+        allowEmpty?: boolean;
+    }) => Promise<string>;
+    onProgress?: (message: string) => void;
 }): Promise<OAuthCredentials>;
 //# sourceMappingURL=github-copilot.d.ts.map

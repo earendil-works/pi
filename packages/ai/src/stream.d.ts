@@ -1,13 +1,4 @@
-import type {
-	Api,
-	AssistantMessage,
-	AssistantMessageEventStream,
-	Context,
-	KnownProvider,
-	Model,
-	OptionsForApi,
-	SimpleStreamOptions,
-} from "./types.js";
+import type { Api, AssistantMessage, AssistantMessageEventStream, Context, KnownProvider, Model, OptionsForApi, SimpleStreamOptions } from "./types.js";
 export declare function setApiKey(provider: KnownProvider, key: string): void;
 export declare function setApiKey(provider: string, key: string): void;
 /**
@@ -29,24 +20,8 @@ export declare function getEnvApiKey(provider: string): string | undefined;
  */
 export declare function resolveApiKey(provider: KnownProvider): Promise<string | undefined>;
 export declare function resolveApiKey(provider: string): Promise<string | undefined>;
-export declare function stream<TApi extends Api>(
-	model: Model<TApi>,
-	context: Context,
-	options?: OptionsForApi<TApi>,
-): AssistantMessageEventStream;
-export declare function complete<TApi extends Api>(
-	model: Model<TApi>,
-	context: Context,
-	options?: OptionsForApi<TApi>,
-): Promise<AssistantMessage>;
-export declare function streamSimple<TApi extends Api>(
-	model: Model<TApi>,
-	context: Context,
-	options?: SimpleStreamOptions,
-): AssistantMessageEventStream;
-export declare function completeSimple<TApi extends Api>(
-	model: Model<TApi>,
-	context: Context,
-	options?: SimpleStreamOptions,
-): Promise<AssistantMessage>;
+export declare function stream<TApi extends Api>(model: Model<TApi>, context: Context, options?: OptionsForApi<TApi>): AssistantMessageEventStream;
+export declare function complete<TApi extends Api>(model: Model<TApi>, context: Context, options?: OptionsForApi<TApi>): Promise<AssistantMessage>;
+export declare function streamSimple<TApi extends Api>(model: Model<TApi>, context: Context, options?: SimpleStreamOptions): AssistantMessageEventStream;
+export declare function completeSimple<TApi extends Api>(model: Model<TApi>, context: Context, options?: SimpleStreamOptions): Promise<AssistantMessage>;
 //# sourceMappingURL=stream.d.ts.map
