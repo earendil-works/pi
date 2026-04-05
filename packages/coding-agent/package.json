@@ -1,6 +1,6 @@
 {
 	"name": "@kennyfrc/mu-coding-agent",
-	"version": "0.24.172",
+	"version": "0.24.173",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"bin": {
