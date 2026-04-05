@@ -2636,6 +2636,35 @@ export class InteractiveMode {
 					const component = new CustomMessageComponent(message, renderer, this.getMarkdownThemeWithSettings());
 					component.setExpanded(this.toolOutputExpanded);
 					this.chatContainer.addChild(component);
+				} else {
+					const details = message.details;
+					const requestId =
+						typeof details === "object" && details !== null && "requestId" in details
+							? (details as { requestId?: unknown }).requestId
+							: undefined;
+
+					if (typeof requestId === "string" && requestId.length > 0) {
+						for (let i = this.chatContainer.children.length - 1; i >= 0; i--) {
+							const child = this.chatContainer.children[i];
+							if (
+								child instanceof CustomMessageComponent &&
+								child.getCustomType() === message.customType &&
+								child.getRequestId() === requestId
+							) {
+								child.updateMessage(message);
+								break;
+							}
+						}
+						break;
+					}
+
+					for (let i = this.chatContainer.children.length - 1; i >= 0; i--) {
+						const child = this.chatContainer.children[i];
+						if (child instanceof CustomMessageComponent && child.getCustomType() === message.customType) {
+							child.updateMessage(message);
+							break;
+						}
+					}
 				}
 				break;
 			}

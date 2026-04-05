@@ -9,6 +9,7 @@
 ### Fixed
 
 - Fixed bash output truncation by line count to always persist full output to a temp file, preventing data loss when output exceeds 2000 lines but stays under the byte threshold ([#2852](https://github.com/badlogic/pi-mono/issues/2852))
+- Interactive custom messages now update existing visible cards when extensions send hidden follow-up updates, so placeholder cards no longer stay stale in the TUI ([#2843](https://github.com/badlogic/pi-mono/issues/2843))
 - RpcClient now forwards subprocess stderr to parent process in real-time ([#2805](https://github.com/badlogic/pi-mono/issues/2805))
 - Theme file watcher now handles async `fs.watch` error events instead of crashing the process ([#2791](https://github.com/badlogic/pi-mono/issues/2791))
 - Fixed stored session cwd handling so resuming or importing a session whose original working directory no longer exists now prompts interactive users to continue in the current cwd, while non-interactive modes fail with a clear error.

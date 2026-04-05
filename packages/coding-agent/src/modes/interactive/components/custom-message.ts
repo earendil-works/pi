@@ -42,6 +42,24 @@ export class CustomMessageComponent extends Container {
 		}
 	}
 
+	getCustomType(): string {
+		return this.message.customType;
+	}
+
+	getRequestId(): string | undefined {
+		const details = this.message.details;
+		if (typeof details !== "object" || details === null || !("requestId" in details)) {
+			return undefined;
+		}
+		const requestId = (details as { requestId?: unknown }).requestId;
+		return typeof requestId === "string" && requestId.length > 0 ? requestId : undefined;
+	}
+
+	updateMessage(message: CustomMessage<unknown>): void {
+		this.message = message;
+		this.invalidate();
+	}
+
 	override invalidate(): void {
 		super.invalidate();
 		this.rebuild();
@@ -66,7 +84,7 @@ export class CustomMessageComponent extends Container {
 					return;
 				}
 			} catch {
-				// Fall through to default rendering
+				// Broken extension renderers fall back to the built-in custom-message UI.
 			}
 		}
 

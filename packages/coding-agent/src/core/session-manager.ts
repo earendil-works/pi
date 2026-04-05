@@ -122,7 +122,7 @@ export interface SessionInfoEntry extends SessionEntryBase {
  * Use details for extension-specific metadata (not sent to LLM).
  *
  * display controls TUI rendering:
- * - false: hidden entirely
+ * - false: not rendered as a new chat entry; can be used to update an existing visible custom message
  * - true: rendered with distinct styling (different from user messages)
  */
 export interface CustomMessageEntry<T = unknown> extends SessionEntryBase {
@@ -933,7 +933,7 @@ export class SessionManager {
 	 * Append a custom message entry (for extensions) that participates in LLM context.
 	 * @param customType Extension identifier for filtering on reload
 	 * @param content Message content (string or TextContent/ImageContent array)
-	 * @param display Whether to show in TUI (true = styled display, false = hidden)
+	 * @param display Whether to render as a new TUI entry (true = styled display, false = hidden entry/update-only)
 	 * @param details Optional extension-specific metadata (not sent to LLM)
 	 * @returns Entry id
 	 */
