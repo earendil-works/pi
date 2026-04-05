@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [0.65.1] - 2026-04-05
+
+### Added
+
+- Runtime configuration via environment variables (`src/config.ts`): LLM provider/model, Slack verbosity preset `MOM_SLACK_QUIET`, reply-in-user-thread, tracked threads for follow-ups without @mention, optional reactions and thread status messages, voice transcription (Groq/OpenAI).
+- `docs/configuration.md`, `docs/FORK_AND_REMOTES.md`, `docs/UPSTREAM.md` for fork/sync workflow.
+- `npm run check` in this package (TypeScript noEmit).
+- CI workflow `mom-package-ci.yml` to build the `mom` dependency chain.
+
 ## [0.65.0] - 2026-04-03
 
 ## [0.64.0] - 2026-03-29

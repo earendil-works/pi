@@ -13,9 +13,17 @@ export interface SlackEvent {
 	type: "mention" | "dm";
 	channel: string;
 	ts: string;
+	/** Parent thread ts when the message is in a thread (Slack thread_ts) */
+	threadTs?: string;
 	user: string;
 	text: string;
-	files?: Array<{ name?: string; url_private_download?: string; url_private?: string }>;
+	files?: Array<{
+		name?: string;
+		title?: string;
+		mimetype?: string;
+		url_private_download?: string;
+		url_private?: string;
+	}>;
 	/** Processed attachments with local paths (populated after logUserMessage) */
 	attachments?: Attachment[];
 }
@@ -83,6 +91,11 @@ export interface MomHandler {
 	 * Called when user says "stop" while mom is running
 	 */
 	handleStop(channelId: string, slack: SlackBot): Promise<void>;
+
+	/**
+	 * When MOM_TRACK_THREADS is enabled: true if channel thread root is tracked (follow-ups without @mention).
+	 */
+	isTrackedThread?(channelId: string, threadTs: string): boolean;
 }
 
 // ============================================================================
@@ -213,6 +226,22 @@ export class SlackBot {
 		});
 	}
 
+	async addReaction(channel: string, ts: string, emoji: string): Promise<void> {
+		try {
+			await this.webClient.reactions.add({ channel, timestamp: ts, name: emoji });
+		} catch (err) {
+			log.logWarning("addReaction error", err instanceof Error ? err.message : String(err));
+		}
+	}
+
+	async removeReaction(channel: string, ts: string, emoji: string): Promise<void> {
+		try {
+			await this.webClient.reactions.remove({ channel, timestamp: ts, name: emoji });
+		} catch (err) {
+			log.logWarning("removeReaction error", err instanceof Error ? err.message : String(err));
+		}
+	}
+
 	/**
 	 * Log a message to log.jsonl (SYNC)
 	 * This is the ONLY place messages are written to log.jsonl
@@ -277,7 +306,14 @@ export class SlackBot {
 				channel: string;
 				user: string;
 				ts: string;
-				files?: Array<{ name: string; url_private_download?: string; url_private?: string }>;
+				thread_ts?: string;
+				files?: Array<{
+					name?: string;
+					title?: string;
+					mimetype?: string;
+					url_private_download?: string;
+					url_private?: string;
+				}>;
 			};
 
 			// Skip DMs (handled by message event)
@@ -290,6 +326,7 @@ export class SlackBot {
 				type: "mention",
 				channel: e.channel,
 				ts: e.ts,
+				threadTs: e.thread_ts,
 				user: e.user,
 				text: e.text.replace(/<@[A-Z0-9]+>/gi, "").trim(),
 				files: e.files,
@@ -336,10 +373,17 @@ export class SlackBot {
 				channel: string;
 				user?: string;
 				ts: string;
+				thread_ts?: string;
 				channel_type?: string;
 				subtype?: string;
 				bot_id?: string;
-				files?: Array<{ name: string; url_private_download?: string; url_private?: string }>;
+				files?: Array<{
+					name?: string;
+					title?: string;
+					mimetype?: string;
+					url_private_download?: string;
+					url_private?: string;
+				}>;
 			};
 
 			// Skip bot messages, edits, etc.
@@ -369,6 +413,7 @@ export class SlackBot {
 				type: isDM ? "dm" : "mention",
 				channel: e.channel,
 				ts: e.ts,
+				threadTs: e.thread_ts,
 				user: e.user,
 				text: (e.text || "").replace(/<@[A-Z0-9]+>/gi, "").trim(),
 				files: e.files,
@@ -385,8 +430,14 @@ export class SlackBot {
 				return;
 			}
 
-			// Only trigger handler for DMs
-			if (isDM) {
+			const isTrackedReply =
+				!isDM &&
+				!isBotMention &&
+				!!e.thread_ts &&
+				(this.handler.isTrackedThread?.(e.channel, e.thread_ts) ?? false);
+
+			// Trigger handler for DMs or replies in tracked threads (no @mention)
+			if (isDM || isTrackedReply) {
 				// Check for stop command - execute immediately, don't queue!
 				if (slackEvent.text.toLowerCase().trim() === "stop") {
 					if (this.handler.isRunning(e.channel)) {
@@ -399,7 +450,10 @@ export class SlackBot {
 				}
 
 				if (this.handler.isRunning(e.channel)) {
-					this.postMessage(e.channel, "_Already working. Say `stop` to cancel._");
+					this.postMessage(
+						e.channel,
+						isDM ? "_Already working. Say `stop` to cancel._" : "_Already working. Say `@mom stop` to cancel._",
+					);
 				} else {
 					this.getQueue(e.channel).enqueue(() => this.handler.handleEvent(slackEvent, this));
 				}

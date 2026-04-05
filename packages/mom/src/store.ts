@@ -77,7 +77,13 @@ export class ChannelStore {
 	 */
 	processAttachments(
 		channelId: string,
-		files: Array<{ name?: string; url_private_download?: string; url_private?: string }>,
+		files: Array<{
+			name?: string;
+			title?: string;
+			mimetype?: string;
+			url_private_download?: string;
+			url_private?: string;
+		}>,
 		timestamp: string,
 	): Attachment[] {
 		const attachments: Attachment[] = [];
@@ -85,16 +91,19 @@ export class ChannelStore {
 		for (const file of files) {
 			const url = file.url_private_download || file.url_private;
 			if (!url) continue;
-			if (!file.name) {
-				log.logWarning("Attachment missing name, skipping", url);
-				continue;
-			}
+			const displayName = file.name || file.title;
+			const fallback = file.mimetype?.startsWith("audio/")
+				? "audio"
+				: file.mimetype?.startsWith("video/")
+					? "video"
+					: "attachment";
+			const originalName = displayName || fallback;
 
-			const filename = this.generateLocalFilename(file.name, timestamp);
+			const filename = this.generateLocalFilename(originalName, timestamp);
 			const localPath = `${channelId}/attachments/${filename}`;
 
 			attachments.push({
-				original: file.name,
+				original: originalName,
 				local: localPath,
 			});
 

@@ -1,13 +1,17 @@
 #!/usr/bin/env node
 
+import { existsSync } from "fs";
 import { join, resolve } from "path";
 import { type AgentRunner, getOrCreateRunner } from "./agent.js";
+import { getMomConfig, initMomConfig } from "./config.js";
 import { downloadChannel } from "./download.js";
 import { createEventsWatcher } from "./events.js";
 import * as log from "./log.js";
 import { parseSandboxArg, type SandboxConfig, validateSandbox } from "./sandbox.js";
 import { type MomHandler, type SlackBot, SlackBot as SlackBotClass, type SlackEvent } from "./slack.js";
 import { ChannelStore } from "./store.js";
+import { TrackedThreadsManager } from "./tracked-threads.js";
+import { isProbablyAudioFile, transcribeAudio, updateLoggedMessageText } from "./voice.js";
 
 // ============================================================================
 // Config
@@ -78,6 +82,11 @@ if (!MOM_SLACK_APP_TOKEN || !MOM_SLACK_BOT_TOKEN) {
 
 await validateSandbox(sandbox);
 
+initMomConfig();
+const momConfig = getMomConfig();
+const trackedThreads = momConfig.trackThreads ? new TrackedThreadsManager(workingDir) : null;
+trackedThreads?.load();
+
 // ============================================================================
 // State (per channel)
 // ============================================================================
@@ -117,12 +126,22 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 	let accumulatedText = "";
 	let isWorking = true;
 	const workingIndicator = " ...";
+	let lastDisplayText = "";
 	let updatePromise = Promise.resolve();
 
 	const user = slack.getUser(event.user);
+	const cfg = getMomConfig();
+	const threadRoot = !isEvent && cfg.slackReplyInUserThread ? (event.threadTs ?? event.ts) : null;
 
 	// Extract event filename for status message
 	const eventFilename = isEvent ? event.text.match(/^\[EVENT:([^:]+):/)?.[1] : undefined;
+
+	async function postMainOrThread(text: string): Promise<string> {
+		if (threadRoot) {
+			return slack.postInThread(event.channel, threadRoot, text);
+		}
+		return slack.postMessage(event.channel, text);
+	}
 
 	return {
 		message: {
@@ -154,11 +173,16 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 
 					const displayText = isWorking ? accumulatedText + workingIndicator : accumulatedText;
 
+					if (displayText === lastDisplayText) {
+						return;
+					}
+
 					if (messageTs) {
 						await slack.updateMessage(event.channel, messageTs, displayText);
 					} else {
-						messageTs = await slack.postMessage(event.channel, displayText);
+						messageTs = await postMainOrThread(displayText);
 					}
+					lastDisplayText = displayText;
 
 					if (shouldLog && messageTs) {
 						slack.logBotResponse(event.channel, text, messageTs);
@@ -184,11 +208,16 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 
 					const displayText = isWorking ? accumulatedText + workingIndicator : accumulatedText;
 
+					if (displayText === lastDisplayText) {
+						return;
+					}
+
 					if (messageTs) {
 						await slack.updateMessage(event.channel, messageTs, displayText);
 					} else {
-						messageTs = await slack.postMessage(event.channel, displayText);
+						messageTs = await postMainOrThread(displayText);
 					}
+					lastDisplayText = displayText;
 				} catch (err) {
 					log.logWarning("Slack replaceMessage error", err instanceof Error ? err.message : String(err));
 				}
@@ -223,7 +252,9 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 					try {
 						if (!messageTs) {
 							accumulatedText = eventFilename ? `_Starting event: ${eventFilename}_` : "_Thinking_";
-							messageTs = await slack.postMessage(event.channel, accumulatedText + workingIndicator);
+							const displayText = accumulatedText + workingIndicator;
+							messageTs = await postMainOrThread(displayText);
+							lastDisplayText = displayText;
 						}
 					} catch (err) {
 						log.logWarning("Slack setTyping error", err instanceof Error ? err.message : String(err));
@@ -243,7 +274,10 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 					isWorking = working;
 					if (messageTs) {
 						const displayText = isWorking ? accumulatedText + workingIndicator : accumulatedText;
-						await slack.updateMessage(event.channel, messageTs, displayText);
+						if (displayText !== lastDisplayText) {
+							await slack.updateMessage(event.channel, messageTs, displayText);
+							lastDisplayText = displayText;
+						}
 					}
 				} catch (err) {
 					log.logWarning("Slack setWorking error", err instanceof Error ? err.message : String(err));
@@ -267,11 +301,48 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 				if (messageTs) {
 					await slack.deleteMessage(event.channel, messageTs);
 					messageTs = null;
+					lastDisplayText = "";
 				}
 			});
 			await updatePromise;
 		},
 	};
+}
+
+async function maybeTranscribeVoiceAttachments(event: SlackEvent, channelDir: string): Promise<void> {
+	const files = event.files;
+	if (!files?.length) return;
+
+	const audioFiles = files.filter(isProbablyAudioFile);
+	if (audioFiles.length === 0) return;
+
+	log.logInfo(`[${event.channel}] Found ${audioFiles.length} audio file(s), transcribing...`);
+	const transcriptions: string[] = [];
+
+	for (const audioFile of audioFiles) {
+		const tsMs = Math.floor(parseFloat(event.ts) * 1000);
+		const sanitized = (audioFile.name || audioFile.title || "audio").replace(/[^a-zA-Z0-9._-]/g, "_");
+		const filename = `${tsMs}_${sanitized}`;
+		const audioPath = join(channelDir, "attachments", filename);
+
+		let attempts = 0;
+		while (!existsSync(audioPath) && attempts < 20) {
+			await new Promise((r) => setTimeout(r, 500));
+			attempts++;
+		}
+
+		if (existsSync(audioPath)) {
+			const t = await transcribeAudio(audioPath, audioFile.name || audioFile.title || "audio");
+			transcriptions.push(t);
+		} else {
+			transcriptions.push(`[Voice message: ${audioFile.name || "audio"}] (file not downloaded yet)`);
+		}
+	}
+
+	const transcriptionText = transcriptions.join("\n\n");
+	const newText = event.text ? `${event.text}\n\n${transcriptionText}` : transcriptionText;
+	updateLoggedMessageText(channelDir, event.ts, newText);
+	event.text = newText;
 }
 
 // ============================================================================
@@ -282,6 +353,10 @@ const handler: MomHandler = {
 	isRunning(channelId: string): boolean {
 		const state = channelStates.get(channelId);
 		return state?.running ?? false;
+	},
+
+	isTrackedThread(channelId: string, threadTs: string): boolean {
+		return trackedThreads?.isTracked(channelId, threadTs) ?? false;
 	},
 
 	async handleStop(channelId: string, slack: SlackBot): Promise<void> {
@@ -298,6 +373,8 @@ const handler: MomHandler = {
 
 	async handleEvent(event: SlackEvent, slack: SlackBot, isEvent?: boolean): Promise<void> {
 		const state = getState(event.channel);
+		const cfg = getMomConfig();
+		const channelDir = join(workingDir, event.channel);
 
 		// Start run
 		state.running = true;
@@ -305,7 +382,32 @@ const handler: MomHandler = {
 
 		log.logInfo(`[${event.channel}] Starting run: ${event.text.substring(0, 50)}`);
 
+		let threadStatusTs: string | null = null;
+		let stopped = false;
+
 		try {
+			if (!isEvent && cfg.voiceTranscription) {
+				await maybeTranscribeVoiceAttachments(event, channelDir);
+			}
+
+			if (!isEvent && trackedThreads) {
+				const root = event.threadTs ?? event.ts;
+				trackedThreads.track(event.channel, root);
+			}
+
+			if (!isEvent && cfg.slackStatusReactions) {
+				await slack.addReaction(event.channel, event.ts, "hourglass_flowing_sand");
+			}
+
+			if (!isEvent && cfg.slackStatusThreadMessage) {
+				try {
+					const parentTs = event.threadTs ?? event.ts;
+					threadStatusTs = await slack.postInThread(event.channel, parentTs, "_On it! :hourglass_flowing_sand:_");
+				} catch (err) {
+					log.logWarning("Failed to post thread status", err instanceof Error ? err.message : String(err));
+				}
+			}
+
 			// Create context adapter
 			const ctx = createSlackContext(event, slack, state, isEvent);
 
@@ -316,6 +418,7 @@ const handler: MomHandler = {
 			await ctx.setWorking(false);
 
 			if (result.stopReason === "aborted" && state.stopRequested) {
+				stopped = true;
 				if (state.stopMessageTs) {
 					await slack.updateMessage(event.channel, state.stopMessageTs, "_Stopped_");
 					state.stopMessageTs = undefined;
@@ -326,6 +429,23 @@ const handler: MomHandler = {
 		} catch (err) {
 			log.logWarning(`[${event.channel}] Run error`, err instanceof Error ? err.message : String(err));
 		} finally {
+			if (!isEvent) {
+				if (cfg.slackStatusReactions) {
+					await slack.removeReaction(event.channel, event.ts, "hourglass_flowing_sand");
+					await slack.addReaction(event.channel, event.ts, stopped ? "x" : "white_check_mark");
+				}
+				if (threadStatusTs && cfg.slackStatusThreadMessage) {
+					try {
+						await slack.updateMessage(
+							event.channel,
+							threadStatusTs,
+							stopped ? "_Stopped :x:_" : "_Done :white_check_mark:_",
+						);
+					} catch (err) {
+						log.logWarning("Failed to update thread status", err instanceof Error ? err.message : String(err));
+					}
+				}
+			}
 			state.running = false;
 		}
 	},

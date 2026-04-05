@@ -1,5 +1,5 @@
 import { Agent, type AgentEvent } from "@mariozechner/pi-agent-core";
-import { getModel, type ImageContent } from "@mariozechner/pi-ai";
+import { getModel, type ImageContent, type KnownProvider } from "@mariozechner/pi-ai";
 import {
 	AgentSession,
 	AuthStorage,
@@ -16,15 +16,13 @@ import { existsSync, readFileSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
+import { getMomConfig } from "./config.js";
 import { createMomSettingsManager, syncLogToSessionManager } from "./context.js";
 import * as log from "./log.js";
 import { createExecutor, type SandboxConfig } from "./sandbox.js";
 import type { ChannelInfo, SlackContext, UserInfo } from "./slack.js";
 import type { ChannelStore } from "./store.js";
 import { createMomTools, setUploadFunction } from "./tools/index.js";
-
-// Hardcoded model for now - TODO: make configurable (issue #63)
-const model = getModel("anthropic", "claude-sonnet-4-5");
 
 export interface PendingMessage {
 	userName: string;
@@ -42,12 +40,19 @@ export interface AgentRunner {
 	abort(): void;
 }
 
-async function getAnthropicApiKey(authStorage: AuthStorage): Promise<string> {
-	const key = await authStorage.getApiKey("anthropic");
+async function resolveLlmApiKey(authStorage: AuthStorage, provider: string): Promise<string> {
+	const key = await authStorage.getApiKey(provider);
 	if (!key) {
+		if (provider === "github-copilot") {
+			throw new Error(
+				"No API key found for github-copilot.\n\n" +
+					"Use /login to authenticate with GitHub Copilot and link to auth.json from " +
+					join(homedir(), ".pi", "mom", "auth.json"),
+			);
+		}
 		throw new Error(
-			"No API key found for anthropic.\n\n" +
-				"Set an API key environment variable, or use /login with Anthropic and link to auth.json from " +
+			`No API key found for ${provider}.\n\n` +
+				"Set an API key environment variable, or use /login and link to auth.json from " +
 				join(homedir(), ".pi", "mom", "auth.json"),
 		);
 	}
@@ -167,7 +172,7 @@ function buildSystemPrompt(
 - Bash working directory: ${process.cwd()}
 - Be careful with system modifications`;
 
-	return `You are mom, a Slack bot assistant. Be concise. No emojis.
+	return `You are mom, a Slack bot assistant. Be concise. You may use Unicode emoji or Slack-style names like :smile: when it improves clarity or tone.
 
 ## Context
 - For current date/time, use: date
@@ -409,6 +414,9 @@ export function getOrCreateRunner(sandboxConfig: SandboxConfig, channelId: strin
  * Sets up the session and subscribes to events once.
  */
 function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDir: string): AgentRunner {
+	const cfg = getMomConfig();
+	const model = getModel(cfg.llmProvider as KnownProvider, cfg.llmModelId as never);
+
 	const executor = createExecutor(sandboxConfig);
 	const workspacePath = executor.getWorkspacePath(channelDir.replace(`/${channelId}`, ""));
 
@@ -440,7 +448,7 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 			tools,
 		},
 		convertToLlm,
-		getApiKey: async () => getAnthropicApiKey(authStorage),
+		getApiKey: async () => resolveLlmApiKey(authStorage, cfg.llmProvider),
 	});
 
 	// Load existing messages
@@ -514,7 +522,9 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 			});
 
 			log.logToolStart(logCtx, agentEvent.toolName, label, agentEvent.args as Record<string, unknown>);
-			queue.enqueue(() => ctx.respond(`_→ ${label}_`, false), "tool label");
+			if (cfg.slackPostToolStartLabel) {
+				queue.enqueue(() => ctx.respond(`_→ ${label}_`, false), "tool label");
+			}
 		} else if (event.type === "tool_execution_end") {
 			const agentEvent = event as AgentEvent & { type: "tool_execution_end" };
 			const resultStr = extractToolResultText(agentEvent.result);
@@ -541,9 +551,11 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 			if (argsFormatted) threadMessage += `\`\`\`\n${argsFormatted}\n\`\`\`\n`;
 			threadMessage += `*Result:*\n\`\`\`\n${resultStr}\n\`\`\``;
 
-			queue.enqueueMessage(threadMessage, "thread", "tool result thread", false);
+			if (cfg.slackPostToolResultToThread) {
+				queue.enqueueMessage(threadMessage, "thread", "tool result thread", false);
+			}
 
-			if (agentEvent.isError) {
+			if (agentEvent.isError && cfg.slackPostToolErrorToChannel) {
 				queue.enqueue(() => ctx.respond(`_Error: ${truncate(resultStr, 200)}_`, false), "tool error");
 			}
 		} else if (event.type === "message_start") {
@@ -590,19 +602,25 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 
 				for (const thinking of thinkingParts) {
 					log.logThinking(logCtx, thinking);
-					queue.enqueueMessage(`_${thinking}_`, "main", "thinking main");
-					queue.enqueueMessage(`_${thinking}_`, "thread", "thinking thread", false);
+					if (cfg.slackPostThinkingToSlack) {
+						queue.enqueueMessage(`_${thinking}_`, "main", "thinking main");
+						queue.enqueueMessage(`_${thinking}_`, "thread", "thinking thread", false);
+					}
 				}
 
 				if (text.trim()) {
 					log.logResponse(logCtx, text);
 					queue.enqueueMessage(text, "main", "response main");
-					queue.enqueueMessage(text, "thread", "response thread", false);
+					if (cfg.slackMirrorAssistantToThread) {
+						queue.enqueueMessage(text, "thread", "response thread", false);
+					}
 				}
 			}
 		} else if (event.type === "compaction_start") {
 			log.logInfo(`Compaction started (reason: ${event.reason})`);
-			queue.enqueue(() => ctx.respond("_Compacting context..._", false), "compaction start");
+			if (cfg.slackPostCompactionNotice) {
+				queue.enqueue(() => ctx.respond("_Compacting context..._", false), "compaction start");
+			}
 		} else if (event.type === "compaction_end") {
 			if (event.result) {
 				log.logInfo(`Compaction complete: ${event.result.tokensBefore} tokens compacted`);
@@ -612,10 +630,12 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 		} else if (event.type === "auto_retry_start") {
 			const retryEvent = event as any;
 			log.logWarning(`Retrying (${retryEvent.attempt}/${retryEvent.maxAttempts})`, retryEvent.errorMessage);
-			queue.enqueue(
-				() => ctx.respond(`_Retrying (${retryEvent.attempt}/${retryEvent.maxAttempts})..._`, false),
-				"retry",
-			);
+			if (cfg.slackPostRetryNotice) {
+				queue.enqueue(
+					() => ctx.respond(`_Retrying (${retryEvent.attempt}/${retryEvent.maxAttempts})..._`, false),
+					"retry",
+				);
+			}
 		}
 	});
 
@@ -700,6 +720,7 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 
 			// Create queue for this run
 			let queueChain = Promise.resolve();
+			const lastQueuedByTarget = new Map<string, string>();
 			runState.queue = {
 				enqueue(fn: () => Promise<void>, errorContext: string): void {
 					queueChain = queueChain.then(async () => {
@@ -717,6 +738,13 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 					});
 				},
 				enqueueMessage(text: string, target: "main" | "thread", errorContext: string, doLog = true): void {
+					if (cfg.slackDedupeMessages) {
+						const dedupeKey = `${target}:${text}`;
+						if (lastQueuedByTarget.get(target) === dedupeKey) {
+							return;
+						}
+						lastQueuedByTarget.set(target, dedupeKey);
+					}
 					const parts = splitForSlack(text);
 					for (const part of parts) {
 						this.enqueue(
@@ -842,8 +870,10 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 				const contextWindow = model.contextWindow || 200000;
 
 				const summary = log.logUsageSummary(runState.logCtx!, runState.totalUsage, contextTokens, contextWindow);
-				runState.queue.enqueue(() => ctx.respondInThread(summary), "usage summary");
-				await queueChain;
+				if (cfg.slackPostUsageSummaryToThread) {
+					runState.queue.enqueue(() => ctx.respondInThread(summary), "usage summary");
+					await queueChain;
+				}
 			}
 
 			// Clear run state

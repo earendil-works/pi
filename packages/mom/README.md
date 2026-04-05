@@ -15,6 +15,9 @@ A Slack bot powered by an LLM that can execute bash commands, read/write files, 
 
 ## Documentation
 
+- [Runtime configuration (env vars)](docs/configuration.md) - LLM provider, quiet Slack preset, threads, reactions, voice
+- [Fork and Git remotes](docs/FORK_AND_REMOTES.md) - Working with upstream vs your fork
+- [Upstream sync](docs/UPSTREAM.md) - Regular merges and version alignment
 - [Artifacts Server](docs/artifacts-server.md) - Share HTML/JS visualizations publicly with live reload
 - [Events System](docs/events.md) - Schedule reminders and periodic tasks
 - [Sandbox Guide](docs/sandbox.md) - Docker vs host mode security
@@ -44,6 +47,7 @@ npm install @mariozechner/pi-mom
    - `im:read`
    - `im:write`
    - `users:read`
+   - `reactions:write` (optional — for `MOM_SLACK_STATUS_REACTIONS`)
 5. **Subscribe to Bot Events** (Event Subscriptions):
    - `app_mention`
    - `message.channels`
