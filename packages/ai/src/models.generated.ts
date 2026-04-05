@@ -6668,23 +6668,6 @@ export const MODELS = {
 			contextWindow: 200000,
 			maxTokens: 8192,
 		} satisfies Model<"openai-completions">,
-		"anthropic/claude-3.5-sonnet": {
-			id: "anthropic/claude-3.5-sonnet",
-			name: "Anthropic: Claude 3.5 Sonnet",
-			api: "openai-completions",
-			provider: "openrouter",
-			baseUrl: "https://openrouter.ai/api/v1",
-			reasoning: false,
-			input: ["text", "image"],
-			cost: {
-				input: 6,
-				output: 30,
-				cacheRead: 0.6,
-				cacheWrite: 7.5,
-			},
-			contextWindow: 200000,
-			maxTokens: 8192,
-		} satisfies Model<"openai-completions">,
 		"qwen/qwen-2.5-7b-instruct": {
 			id: "qwen/qwen-2.5-7b-instruct",
 			name: "Qwen: Qwen2.5 7B Instruct",
