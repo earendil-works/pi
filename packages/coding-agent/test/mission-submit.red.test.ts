@@ -24,6 +24,16 @@ type MissionRuntimeRenderer = MissionRenderer & {
 	onInputCallback?: (text: string) => void;
 };
 
+function createExtensionManagerStub() {
+	return {
+		listCommands: () => [],
+		getCommand: () => undefined,
+		getIndicators: () => [],
+		applyInputHooks: async (text: string) => ({ handled: false, text }),
+		composeToolResultTransformer: <T>(base: T) => base,
+	};
+}
+
 function stubMissionCompaction(renderer: MissionRenderer): void {
 	(
 		renderer as MissionRenderer & {
@@ -199,12 +209,7 @@ describe("/mission-run submission (red)", () => {
 				reset: () => {},
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRenderer;
@@ -266,12 +271,7 @@ describe("/mission-run submission (red)", () => {
 				reset: () => {},
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRenderer;
@@ -331,12 +331,7 @@ describe("/mission-run submission (red)", () => {
 				reset: () => {},
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRenderer;
@@ -387,12 +382,7 @@ describe("/mission-run submission (red)", () => {
 				reset: () => {},
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRenderer;
@@ -437,12 +427,7 @@ describe("/mission-run submission (red)", () => {
 				getSessionId: () => "mission-submit-red",
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRenderer;
@@ -527,12 +512,7 @@ describe("/mission-run submission (red)", () => {
 				getSessionId: () => "mission-submit-red",
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRenderer;
@@ -600,12 +580,7 @@ describe("/mission-run submission (red)", () => {
 				getSessionId: () => "mission-submit-red",
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRenderer;
@@ -692,12 +667,7 @@ describe("/mission-run submission (red)", () => {
 				getSessionId: () => "mission-submit-red",
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRenderer;
@@ -716,8 +686,8 @@ describe("/mission-run submission (red)", () => {
 		await renderer.handleEditorTextSubmission(`/mission-run ${dir}`, "by-end");
 
 		expect(runCalls).toBe(1);
-		expect(prePromptHistorySnapshots[0]).toContain("Use this compacted checkpoint as the active context");
-		expect(prePromptHistorySnapshots[0]).toContain("Continue mission");
+		expect(prePromptHistorySnapshots[0]).not.toContain("Use this compacted checkpoint as the active context");
+		expect(prePromptHistorySnapshots[0]).not.toContain("Continue mission");
 		expect(prePromptHistorySnapshots[0]).not.toContain("at iteration");
 		expect(runningLabels[0]).toContain(`mission ${dir.split("/").at(-1)}`);
 		expect(runningLabels[0]).toContain("iter 1");
@@ -799,12 +769,7 @@ describe("/mission-run submission (red)", () => {
 				getSessionId: () => "mission-submit-red",
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRenderer;
@@ -905,12 +870,7 @@ describe("/mission-run submission (red)", () => {
 				getSessionId: () => "mission-submit-red",
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRenderer;
@@ -994,12 +954,7 @@ describe("/mission-run submission (red)", () => {
 				getSessionId: () => "mission-submit-red",
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRenderer;
@@ -1087,12 +1042,7 @@ describe("/mission-run submission (red)", () => {
 				getSessionId: () => "mission-submit-red",
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRenderer;
@@ -1179,12 +1129,7 @@ describe("/mission-run submission (red)", () => {
 				getSessionId: () => "mission-submit-red",
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRenderer;
@@ -1278,12 +1223,7 @@ describe("/mission-run submission (red)", () => {
 				getSessionId: () => "mission-submit-red",
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRuntimeRenderer;
@@ -1377,12 +1317,7 @@ describe("/mission-run submission (red)", () => {
 				getSessionId: () => "mission-submit-red",
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRuntimeRenderer;
@@ -1470,12 +1405,7 @@ describe("/mission-run submission (red)", () => {
 				getSessionId: () => "mission-submit-red",
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRenderer;
@@ -1574,12 +1504,7 @@ describe("/mission-run submission (red)", () => {
 				getSessionId: () => "mission-submit-red",
 			} as never,
 			new SettingsManager(configDir),
-			{
-				listCommands: () => [],
-				getCommand: () => undefined,
-				applyInputHooks: async (text: string) => ({ handled: false, text }),
-				composeToolResultTransformer: <T>(base: T) => base,
-			} as never,
+			createExtensionManagerStub() as never,
 			{} as never,
 			"0.0.0",
 		) as unknown as MissionRenderer;
@@ -1592,11 +1517,12 @@ describe("/mission-run submission (red)", () => {
 
 		expect(runCalls).toBe(2);
 		expect(prePromptHistorySnapshots).toHaveLength(2);
-		for (const snapshot of prePromptHistorySnapshots) {
-			expect(snapshot).toContain("Use this compacted checkpoint as the active context");
-			expect(snapshot).toContain("Continue mission");
-			expect(snapshot).not.toContain("at iteration");
-		}
+		expect(prePromptHistorySnapshots[0]).not.toContain("Use this compacted checkpoint as the active context");
+		expect(prePromptHistorySnapshots[0]).not.toContain("Continue mission");
+		expect(prePromptHistorySnapshots[0]).not.toContain("at iteration");
+		expect(prePromptHistorySnapshots[1]).toContain("Use this compacted checkpoint as the active context");
+		expect(prePromptHistorySnapshots[1]).toContain("Continue mission");
+		expect(prePromptHistorySnapshots[1]).not.toContain("at iteration");
 
 		const footerLabel = stripAnsi(renderer.getComposerMetaLabel());
 		expect(footerLabel).toContain("iter 2");
