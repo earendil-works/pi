@@ -578,7 +578,7 @@ export async function main(args: string[]) {
 	let stdinContent: string | undefined;
 	if (appMode !== "rpc") {
 		stdinContent = await readPipedStdin();
-		if (stdinContent !== undefined) {
+		if (stdinContent !== undefined && appMode === "interactive") {
 			appMode = "print";
 		}
 	}
