@@ -67,7 +67,11 @@ import {
 	buildHandoffSummaryUserText,
 	HANDOFF_SUMMARY_SYSTEM_PROMPT,
 } from "../handoff-summary.js";
-import { getArtifactMemoryProjectionPath, type WorkspaceProjection } from "../memory/projection.js";
+import {
+	ArtifactMemoryProjector,
+	getArtifactMemoryProjectionPath,
+	type WorkspaceProjection,
+} from "../memory/projection.js";
 import { appendMissionResumeResetEvent } from "../missions/mission-reset.js";
 import { runMissionLoop } from "../missions/mission-runner.js";
 import {
@@ -927,15 +931,28 @@ export class TuiRenderer {
 
 		// Add workspace memory projection if available
 		const projectionPath = getArtifactMemoryProjectionPath(process.cwd());
+		let projection: WorkspaceProjection | null = null;
+
 		if (fs.existsSync(projectionPath)) {
 			try {
-				const projection: WorkspaceProjection = JSON.parse(fs.readFileSync(projectionPath, "utf-8"));
-				if (projection.entries.length > 0) {
-					this.showWorkspaceMemoryProjection(projection.startupSummary);
-				}
+				projection = JSON.parse(fs.readFileSync(projectionPath, "utf-8"));
 			} catch {
-				// Silently skip if projection is corrupted
+				// Corrupted, will rebuild below
 			}
+		}
+
+		// Build projection if missing or empty
+		if (!projection || projection.entries.length === 0) {
+			try {
+				const projector = new ArtifactMemoryProjector();
+				projection = await projector.buildWorkspaceProjection(process.cwd());
+			} catch {
+				// Silently skip if can't build
+			}
+		}
+
+		if (projection && projection.entries.length > 0) {
+			this.showWorkspaceMemoryProjection(projection.startupSummary);
 		}
 
 		this.ui.addChild(this.chatLayout);

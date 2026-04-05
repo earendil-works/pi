@@ -23,7 +23,28 @@ function summarizeEntries(entries: ArtifactMemoryEntry[]): string {
 		return "No stored memory for this workspace.";
 	}
 
-	return entries.map((entry) => `- [${entry.kind}] ${entry.summary}`).join("\n");
+	// Deduplicate similar entries and truncate long summaries
+	const seen = new Set<string>();
+	const uniqueEntries: ArtifactMemoryEntry[] = [];
+
+	for (const entry of entries) {
+		// Normalize: single line, truncate for dedup key
+		const normalized = entry.summary.replace(/\n/g, " ").slice(0, 50);
+		const key = `${entry.kind}:${normalized}`;
+		if (!seen.has(key)) {
+			seen.add(key);
+			uniqueEntries.push(entry);
+		}
+	}
+
+	return uniqueEntries
+		.map((entry) => {
+			// Single line, truncate to 80 chars
+			const singleLine = entry.summary.replace(/\n/g, " ");
+			const truncated = singleLine.length > 80 ? singleLine.slice(0, 77) + "..." : singleLine;
+			return `- [${entry.kind}] ${truncated}`;
+		})
+		.join("\n");
 }
 
 export function getArtifactMemoryProjectionPath(workspaceRef: string, baseDir?: string): string {
