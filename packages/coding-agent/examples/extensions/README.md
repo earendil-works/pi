@@ -87,6 +87,7 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 | `pirate.ts` | Demonstrates `systemPromptAppend` to dynamically modify system prompt |
 | `claude-rules.ts` | Scans `.claude/rules/` folder and lists rules in system prompt |
 | `custom-compaction.ts` | Custom compaction that summarizes entire conversation |
+| `morph-compaction.ts` | Routes compaction through Morph's compaction API for fast context compression |
 | `trigger-compact.ts` | Triggers compaction when context usage exceeds 100k tokens and adds `/trigger-compact` command |
 
 ### System Integration
