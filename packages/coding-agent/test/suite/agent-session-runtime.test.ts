@@ -31,7 +31,7 @@ describe("AgentSessionRuntime characterization", () => {
 		process.chdir(tmpdir());
 	});
 
-	async function createRuntimeHost(
+	async function createRuntimeForTest(
 		extensionFactory: ExtensionFactory,
 		options?: { cwd?: string; bootstrapModel?: boolean; bootstrapThinkingLevel?: boolean },
 	) {
@@ -98,27 +98,27 @@ describe("AgentSessionRuntime characterization", () => {
 				diagnostics: services.diagnostics,
 			};
 		};
-		const runtimeHost = await createAgentSessionRuntime(createRuntime, {
+		const runtime = await createAgentSessionRuntime(createRuntime, {
 			cwd: tempDir,
 			agentDir: tempDir,
 			sessionManager: SessionManager.create(tempDir),
 		});
-		await runtimeHost.session.bindExtensions({});
+		await runtime.session.bindExtensions({});
 
 		cleanups.push(async () => {
-			await runtimeHost.dispose();
+			await runtime.dispose();
 			faux.unregister();
 			if (existsSync(tempDir)) {
 				rmSync(tempDir, { recursive: true, force: true });
 			}
 		});
 
-		return { runtimeHost, faux, tempDir };
+		return { runtime, faux, tempDir };
 	}
 
 	it("emits session_before_switch and session_start for new and resume flows", async () => {
 		const events: RecordedSessionEvent[] = [];
-		const { runtimeHost } = await createRuntimeHost((pi: ExtensionAPI) => {
+		const { runtime } = await createRuntimeForTest((pi: ExtensionAPI) => {
 			pi.on("session_before_switch", (event) => {
 				events.push(event);
 			});
@@ -130,26 +130,26 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(events).toEqual([{ type: "session_start", reason: "startup" }]);
 		events.length = 0;
 
-		await runtimeHost.session.prompt("hello");
-		const originalSessionFile = runtimeHost.session.sessionFile;
-		const originalSession = runtimeHost.session;
+		await runtime.session.prompt("hello");
+		const originalSessionFile = runtime.session.sessionFile;
+		const originalSession = runtime.session;
 
-		const newSessionResult = await runtimeHost.newSession();
+		const newSessionResult = await runtime.newSession();
 		expect(newSessionResult.cancelled).toBe(false);
-		await runtimeHost.session.bindExtensions({});
-		expect(runtimeHost.session).not.toBe(originalSession);
-		expect(runtimeHost.session.messages).toEqual([]);
+		await runtime.session.bindExtensions({});
+		expect(runtime.session).not.toBe(originalSession);
+		expect(runtime.session.messages).toEqual([]);
 		expect(events).toEqual([
 			{ type: "session_before_switch", reason: "new", targetSessionFile: undefined },
 			{ type: "session_start", reason: "new", previousSessionFile: originalSessionFile },
 		]);
 
 		events.length = 0;
-		const secondSessionFile = runtimeHost.session.sessionFile;
+		const secondSessionFile = runtime.session.sessionFile;
 
-		const switchResult = await runtimeHost.switchSession(originalSessionFile!);
+		const switchResult = await runtime.switchSession(originalSessionFile!);
 		expect(switchResult.cancelled).toBe(false);
-		await runtimeHost.session.bindExtensions({});
+		await runtime.session.bindExtensions({});
 		expect(events).toEqual([
 			{ type: "session_before_switch", reason: "resume", targetSessionFile: originalSessionFile },
 			{ type: "session_start", reason: "resume", previousSessionFile: secondSessionFile },
@@ -159,7 +159,7 @@ describe("AgentSessionRuntime characterization", () => {
 	it("honors session_before_switch cancellation for new and resume", async () => {
 		const events: RecordedSessionEvent[] = [];
 		let cancelReason: "new" | "resume" | undefined;
-		const { runtimeHost } = await createRuntimeHost((pi: ExtensionAPI) => {
+		const { runtime } = await createRuntimeForTest((pi: ExtensionAPI) => {
 			pi.on("session_before_switch", (event) => {
 				events.push(event);
 				if (event.reason === cancelReason) {
@@ -171,13 +171,13 @@ describe("AgentSessionRuntime characterization", () => {
 			});
 		});
 
-		await runtimeHost.session.prompt("hello");
-		const originalSessionFile = runtimeHost.session.sessionFile;
+		await runtime.session.prompt("hello");
+		const originalSessionFile = runtime.session.sessionFile;
 
 		cancelReason = "new";
-		const newResult = await runtimeHost.newSession();
+		const newResult = await runtime.newSession();
 		expect(newResult.cancelled).toBe(true);
-		expect(runtimeHost.session.sessionFile).toBe(originalSessionFile);
+		expect(runtime.session.sessionFile).toBe(originalSessionFile);
 
 		events.length = 0;
 		const otherDir = join(tmpdir(), `pi-runtime-other-${Date.now()}-${Math.random().toString(36).slice(2)}`);
@@ -186,15 +186,15 @@ describe("AgentSessionRuntime characterization", () => {
 		otherSession.appendMessage({ role: "user", content: [{ type: "text", text: "other" }], timestamp: Date.now() });
 		const otherSessionFile = otherSession.getSessionFile();
 		cancelReason = "resume";
-		const resumeResult = await runtimeHost.switchSession(otherSessionFile!);
+		const resumeResult = await runtime.switchSession(otherSessionFile!);
 		expect(resumeResult.cancelled).toBe(true);
-		expect(runtimeHost.session.sessionFile).toBe(originalSessionFile);
+		expect(runtime.session.sessionFile).toBe(originalSessionFile);
 	});
 
 	it("emits session_before_fork and session_start and honors cancellation", async () => {
 		const events: RecordedSessionEvent[] = [];
 		let cancelNextFork = false;
-		const { runtimeHost } = await createRuntimeHost((pi: ExtensionAPI) => {
+		const { runtime } = await createRuntimeForTest((pi: ExtensionAPI) => {
 			pi.on("session_before_fork", (event) => {
 				events.push(event);
 				if (cancelNextFork) {
@@ -208,14 +208,14 @@ describe("AgentSessionRuntime characterization", () => {
 		});
 
 		events.length = 0;
-		await runtimeHost.session.prompt("hello");
-		const userMessage = runtimeHost.session.getUserMessagesForForking()[0]!;
-		const previousSessionFile = runtimeHost.session.sessionFile;
+		await runtime.session.prompt("hello");
+		const userMessage = runtime.session.getUserMessagesForForking()[0]!;
+		const previousSessionFile = runtime.session.sessionFile;
 
-		const successResult = await runtimeHost.fork(userMessage.entryId);
+		const successResult = await runtime.fork(userMessage.entryId);
 		expect(successResult.cancelled).toBe(false);
 		expect(successResult.selectedText).toBe("hello");
-		await runtimeHost.session.bindExtensions({});
+		await runtime.session.bindExtensions({});
 		expect(events).toEqual([
 			{ type: "session_before_fork", entryId: userMessage.entryId },
 			{ type: "session_start", reason: "fork", previousSessionFile },
@@ -223,14 +223,14 @@ describe("AgentSessionRuntime characterization", () => {
 
 		events.length = 0;
 		cancelNextFork = true;
-		const cancelResult = await runtimeHost.fork(userMessage.entryId);
+		const cancelResult = await runtime.fork(userMessage.entryId);
 		expect(cancelResult).toEqual({ cancelled: true });
 		expect(events).toEqual([{ type: "session_before_fork", entryId: userMessage.entryId }]);
 	});
 
 	it("throws when forking with an invalid entry id", async () => {
-		const { runtimeHost } = await createRuntimeHost(() => {});
-		await expect(runtimeHost.fork("missing-entry")).rejects.toThrow("Invalid entry ID for forking");
+		const { runtime } = await createRuntimeForTest(() => {});
+		await expect(runtime.fork("missing-entry")).rejects.toThrow("Invalid entry ID for forking");
 	});
 
 	it("updates process.cwd() on cross-cwd session replacement", async () => {
@@ -238,7 +238,7 @@ describe("AgentSessionRuntime characterization", () => {
 		const secondDir = join(tmpdir(), `pi-runtime-cwd-b-${Date.now()}-${Math.random().toString(36).slice(2)}`);
 		mkdirSync(firstDir, { recursive: true });
 		mkdirSync(secondDir, { recursive: true });
-		const { runtimeHost, faux, tempDir } = await createRuntimeHost(() => {}, { cwd: firstDir });
+		const { runtime, faux, tempDir } = await createRuntimeForTest(() => {}, { cwd: firstDir });
 		const otherAuthStorage = AuthStorage.inMemory();
 		otherAuthStorage.setRuntimeApiKey(faux.getModel().provider, "faux-key");
 		const otherRuntimeOptions = {
@@ -299,14 +299,14 @@ describe("AgentSessionRuntime characterization", () => {
 		await otherRuntime.session.prompt("other");
 		const otherSessionFile = otherRuntime.session.sessionFile!;
 
-		await runtimeHost.switchSession(otherSessionFile);
+		await runtime.switchSession(otherSessionFile);
 
 		expect(realpathSync(process.cwd())).toBe(realpathSync(secondDir));
-		expect(realpathSync(runtimeHost.session.sessionManager.getCwd())).toBe(realpathSync(secondDir));
+		expect(realpathSync(runtime.session.sessionManager.getCwd())).toBe(realpathSync(secondDir));
 	});
 
 	it("restores model and thinking state from the destination session", async () => {
-		const { runtimeHost, faux, tempDir } = await createRuntimeHost(() => {}, {
+		const { runtime, faux, tempDir } = await createRuntimeForTest(() => {}, {
 			bootstrapModel: false,
 			bootstrapThinkingLevel: false,
 		});
@@ -374,9 +374,9 @@ describe("AgentSessionRuntime characterization", () => {
 		await otherRuntime.session.prompt("hello");
 		const targetSessionFile = otherRuntime.session.sessionFile!;
 
-		await runtimeHost.switchSession(targetSessionFile);
+		await runtime.switchSession(targetSessionFile);
 
-		expect(runtimeHost.session.model?.id).toBe("faux-2");
-		expect(runtimeHost.session.thinkingLevel).toBe("off");
+		expect(runtime.session.model?.id).toBe("faux-2");
+		expect(runtime.session.thinkingLevel).toBe("off");
 	});
 });

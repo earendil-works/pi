@@ -13,7 +13,7 @@ const mockState = vi.hoisted(() => ({
 				usage?: {
 					prompt_tokens: number;
 					completion_tokens: number;
-					prompt_tokens_details: { cached_tokens: number };
+					prompt_tokens_details: { cached_tokens: number; cache_write_tokens?: number };
 					completion_tokens_details: { reasoning_tokens: number };
 				};
 		  }>
@@ -428,6 +428,91 @@ describe("openai-completions tool_choice", () => {
 		expect(response.responseId).toBe("chatcmpl-test");
 		expect(response.usage.totalTokens).toBe(4);
 		expect(response.content).toEqual([{ type: "text", text: "OK" }]);
+	});
+
+	it("preserves prompt_tokens_details.cache_write_tokens from chunk usage", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-cache-write",
+				choices: [{ delta: { content: "OK" }, finish_reason: null }],
+			},
+			{
+				id: "chatcmpl-cache-write",
+				choices: [{ delta: {}, finish_reason: "stop" }],
+				usage: {
+					prompt_tokens: 100,
+					completion_tokens: 5,
+					prompt_tokens_details: { cached_tokens: 50, cache_write_tokens: 30 },
+					completion_tokens_details: { reasoning_tokens: 0 },
+				},
+			},
+		];
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const response = await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Reply with exactly OK",
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect(response.usage.input).toBe(50);
+		expect(response.usage.cacheRead).toBe(20);
+		expect(response.usage.cacheWrite).toBe(30);
+		expect(response.usage.totalTokens).toBe(105);
+	});
+
+	it("preserves prompt_tokens_details.cache_write_tokens from choice usage fallback", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-cache-write-choice",
+				choices: [{ delta: { content: "OK" }, finish_reason: null }],
+			},
+			{
+				id: "chatcmpl-cache-write-choice",
+				choices: [
+					{
+						delta: {},
+						finish_reason: "stop",
+						usage: {
+							prompt_tokens: 100,
+							completion_tokens: 5,
+							prompt_tokens_details: { cached_tokens: 50, cache_write_tokens: 30 },
+							completion_tokens_details: { reasoning_tokens: 0 },
+						},
+					},
+				],
+			},
+		];
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const response = await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Reply with exactly OK",
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect(response.usage.input).toBe(50);
+		expect(response.usage.cacheRead).toBe(20);
+		expect(response.usage.cacheWrite).toBe(30);
+		expect(response.usage.totalTokens).toBe(105);
 	});
 
 	it("uses OpenRouter reasoning object instead of reasoning_effort", async () => {
