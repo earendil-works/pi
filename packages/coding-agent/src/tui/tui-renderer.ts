@@ -2636,6 +2636,15 @@ export class TuiRenderer {
 		this.ui.requestRender();
 	}
 
+	showWorkspaceMemoryProjection(projectionText: string): void {
+		this.topChrome.addChild(new DynamicBorder());
+		this.topChrome.addChild(
+			new Text(theme.bold(theme.fg("accent", "Workspace memory projection")) + "\n" + projectionText, 1, 0),
+		);
+		this.topChrome.addChild(new DynamicBorder());
+		this.ui.requestRender();
+	}
+
 	private showThinkingSelector(): void {
 		const xhighSupported = this.agent.state.model ? supportsXhigh(this.agent.state.model) : false;
 
@@ -5218,6 +5227,14 @@ export class TuiRenderer {
 		this.clearMissionUiState();
 	}
 
+	private shouldCompactBeforeMissionIteration(iteration: number): boolean {
+		if (iteration > 1) {
+			return true;
+		}
+
+		return this.agent.state.messages.length > 0;
+	}
+
 	private resolveExplicitPath(targetRef: string, label: string): string {
 		const trimmed = targetRef.trim();
 		if (!trimmed) {
@@ -5928,12 +5945,14 @@ export class TuiRenderer {
 						return;
 					}
 					const iteration = this.missionUiState ? this.missionUiState.iteration + 1 : 1;
-					const compactionGoal = `Continue mission ${currentMissionName}`;
-					const compactionDetails = await this.buildSummaryCompactionDetails(compactionGoal, signal);
-					await this.applyCompactionCheckpoint({
-						...compactionDetails,
-						parentSessionId: this.sessionManager.getSessionId(),
-					});
+					if (this.shouldCompactBeforeMissionIteration(iteration)) {
+						const compactionGoal = `Continue mission ${currentMissionName}`;
+						const compactionDetails = await this.buildSummaryCompactionDetails(compactionGoal, signal);
+						await this.applyCompactionCheckpoint({
+							...compactionDetails,
+							parentSessionId: this.sessionManager.getSessionId(),
+						});
+					}
 					if (signal.aborted && this.pendingMissionIterationMessages.length === 0) {
 						return;
 					}
