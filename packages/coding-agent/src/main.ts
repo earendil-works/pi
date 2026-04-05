@@ -15,6 +15,7 @@ import { builtInExtensions } from "./extensions/built-ins.js";
 import { ExtensionLoader } from "./extensions/loader.js";
 import { ExtensionManager } from "./extensions/manager.js";
 import { ensureIdentityEnv } from "./identity-env.js";
+import { getArtifactMemoryProjectionPath, type WorkspaceProjection } from "./memory/projection.js";
 import { type MissionLoopResult, runMissionLoop } from "./missions/mission-runner.js";
 import { findModel, getApiKeyForModel, getAvailableModels } from "./model-config.js";
 import { buildSystemPrompt as buildSystemPromptFromYaml } from "./prompts/index.js";
@@ -514,9 +515,37 @@ function loadContextFileFromDir(dir: string): { path: string; content: string } 
 }
 
 /**
+ * Load workspace memory projection from ~/.mu/wiki/projections/
+ * Returns null if no projection exists for this workspace
+ */
+function loadWorkspaceMemoryProjection(): { path: string; content: string } | null {
+	const cwd = process.cwd();
+	const projectionPath = getArtifactMemoryProjectionPath(cwd);
+	if (!existsSync(projectionPath)) {
+		return null;
+	}
+	try {
+		const projection: WorkspaceProjection = JSON.parse(readFileSync(projectionPath, "utf-8"));
+		const formattedContent = `# Workspace Memory Projection
+
+**Workspace:** ${projection.workspaceRef}
+
+${projection.startupSummary}`;
+		return {
+			path: projectionPath,
+			content: formattedContent,
+		};
+	} catch (error) {
+		// Silently fail if projection is corrupted
+		return null;
+	}
+}
+
+/**
  * Load all project context files in order:
  * 1. Global: ~/.mu/agent/AGENTS.md or CLAUDE.md
  * 2. Parent directories (top-most first) down to cwd
+ * 3. Workspace memory projection (derived from ~/.mu/wiki/)
  * Each returns {path, content} for separate messages
  */
 function loadProjectContextFiles(): ContextFile[] {
@@ -555,6 +584,12 @@ function loadProjectContextFiles(): ContextFile[] {
 
 	// Add ancestor files in order (top-most → cwd)
 	contextFiles.push(...ancestorContextFiles);
+
+	// 3. Load workspace memory projection (lowest priority, acts as memory context)
+	const memoryProjection = loadWorkspaceMemoryProjection();
+	if (memoryProjection) {
+		contextFiles.push({ ...memoryProjection, scope: "project" });
+	}
 
 	return contextFiles;
 }
