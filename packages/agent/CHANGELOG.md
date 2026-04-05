@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.65.0] - 2026-04-03
+
 ### Breaking Changes
 
 - `AgentState` has been reshaped:

@@ -359,7 +359,8 @@ export class SettingsManager {
 		return structuredClone(this.projectSettings);
 	}
 
-	reload(): void {
+	async reload(): Promise<void> {
+		await this.writeQueue;
 		const globalLoad = SettingsManager.tryLoadFromStorage(this.storage, "global");
 		if (!globalLoad.error) {
 			this.globalSettings = globalLoad.settings;

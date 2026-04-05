@@ -9,6 +9,11 @@ const MARKER_START = "<!-- OSS_WEEKEND_START -->";
 const MARKER_END = "<!-- OSS_WEEKEND_END -->";
 const DISCORD_URL = "https://discord.com/invite/3cU7Bz4UPx";
 
+function normalizeReason(reason) {
+  const trimmedReason = reason.trim();
+  return trimmedReason ? trimmedReason : null;
+}
+
 function parseArgs(argv) {
   const options = {};
 
@@ -69,9 +74,10 @@ function parseDateInput(value) {
   return new Date(Date.UTC(Number(year), Number(month) - 1, Number(day), 12, 0, 0));
 }
 
-function buildBanner(now, endDate) {
+function buildBanner(now, endDate, reason) {
   const startDate = formatLongDate(now);
   const reopenDate = formatLongDate(endDate);
+  const normalizedReason = normalizeReason(reason ?? "");
 
   return [
     MARKER_START,
@@ -79,7 +85,8 @@ function buildBanner(now, endDate) {
     "",
     `**Issue tracker reopens ${reopenDate}.**`,
     "",
-    `OSS weekend runs ${startDate} through ${reopenDate}. New issues are auto-closed during this time. For support, join [Discord](${DISCORD_URL}).`,
+    `OSS weekend runs ${startDate} through ${reopenDate}. New issues and PRs from unapproved contributors are auto-closed during this time. Approved contributors can still open issues and PRs if something is genuinely urgent, but please keep that to pressing matters only. For support, join [Discord](${DISCORD_URL}).`,
+    ...(normalizedReason ? ["", `> _Current focus: ${normalizedReason}_`] : []),
     MARKER_END,
     "",
     "---",
@@ -88,8 +95,8 @@ function buildBanner(now, endDate) {
   ].join("\n");
 }
 
-function upsertBanner(readme, now, endDate) {
-  const banner = buildBanner(now, endDate);
+function upsertBanner(readme, now, endDate, reason) {
+  const banner = buildBanner(now, endDate, reason);
   const bannerPattern = new RegExp(
     `${escapeRegExp(MARKER_START)}[\\s\\S]*?${escapeRegExp(MARKER_END)}\\n\\n---\\n\\n?`,
     "m",
@@ -121,7 +128,9 @@ function parseReadmePaths(cliOptions) {
     .filter(Boolean);
 }
 
-function buildState(now, endDateInput, endDate) {
+function buildState(now, endDateInput, endDate, reason) {
+  const normalizedReason = normalizeReason(reason ?? "");
+
   return JSON.stringify(
     {
       active: true,
@@ -130,6 +139,7 @@ function buildState(now, endDateInput, endDate) {
       startsAtText: formatLongDate(now),
       reopensOn: endDateInput,
       reopensOnText: formatLongDate(endDate),
+      reason: normalizedReason,
       discordUrl: DISCORD_URL,
     },
     null,
@@ -229,6 +239,7 @@ function printUsage() {
       "  --end-date=YYYY-MM-DD Required for --mode=close.",
       "  --readme=PATHS        Optional comma-separated README paths. Defaults to README.md,packages/coding-agent/README.md.",
       "  --state=PATH          Optional state file path. Defaults to .github/oss-weekend.json.",
+      "  --reason=TEXT         Optional reason shown in the README banner and weekend auto-close comments.",
       "  --git                 Stage only the OSS weekend files, commit, and push after updating them.",
       "  --dry-run             Preview without editing files or running git operations.",
       "  --now=ISO             Optional current timestamp override for testing.",
@@ -257,6 +268,7 @@ async function main() {
   const readmePaths = parseReadmePaths(cliOptions);
   const statePath = getOption("state", cliOptions, "OSS_WEEKEND_STATE_PATH", DEFAULT_STATE_PATH);
   const endDateInput = getOption("end-date", cliOptions, "OSS_WEEKEND_END_DATE", "");
+  const reason = normalizeReason(getOption("reason", cliOptions, "OSS_WEEKEND_REASON", ""));
 
   const now = nowInput ? new Date(nowInput) : new Date();
   if (Number.isNaN(now.getTime())) {
@@ -272,7 +284,7 @@ async function main() {
 
   for (const readmePath of readmePaths) {
     const currentReadme = await readFile(readmePath, "utf8");
-    const nextReadme = mode === "close" ? upsertBanner(currentReadme, now, endDate) : removeBanner(currentReadme);
+    const nextReadme = mode === "close" ? upsertBanner(currentReadme, now, endDate, reason) : removeBanner(currentReadme);
     const changed = nextReadme !== currentReadme;
 
     if (changed && !dryRun) {
@@ -283,7 +295,7 @@ async function main() {
   }
 
   const currentState = await readOptionalFile(statePath);
-  const nextState = mode === "close" ? buildState(now, endDateInput, endDate) : null;
+  const nextState = mode === "close" ? buildState(now, endDateInput, endDate, reason) : null;
   const stateChanged = mode === "close" ? currentState !== nextState : currentState !== null;
 
   if (!dryRun) {
@@ -317,6 +329,7 @@ async function main() {
     git_commands: gitResult ? gitResult.commands.join(" && ") : "",
     end_date: endDate ? endDateInput : "",
     end_date_text: endDate ? formatLongDate(endDate) : "",
+    reason: reason ?? "",
     now_utc: now.toISOString(),
     now_berlin: new Intl.DateTimeFormat("sv-SE", {
       timeZone: TIME_ZONE,

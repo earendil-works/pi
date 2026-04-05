@@ -37,6 +37,7 @@ See [examples/extensions/](../examples/extensions/) for working implementations.
   - [Extension Styles](#extension-styles)
 - [Events](#events)
   - [Lifecycle Overview](#lifecycle-overview)
+  - [Resource Events](#resource-events)
   - [Session Events](#session-events)
   - [Agent Events](#agent-events)
   - [Tool Events](#tool-events)
@@ -225,10 +226,10 @@ Run `npm install` in the extension directory, then imports from `node_modules/` 
 ### Lifecycle Overview
 
 ```
-pi starts (CLI only)
+pi starts
   │
-  ├─► session_directory (CLI startup only, no ctx)
-  └─► session_start
+  ├─► session_start { reason: "startup" }
+  └─► resources_discover { reason: "startup" }
       │
       ▼
 user sends prompt ─────────────────────────────────────────┐
@@ -261,11 +262,15 @@ user sends another prompt ◄─────────────────
 
 /new (new session) or /resume (switch session)
   ├─► session_before_switch (can cancel)
-  └─► session_switch
+  ├─► session_shutdown
+  ├─► session_start { reason: "new" | "resume", previousSessionFile? }
+  └─► resources_discover { reason: "startup" }
 
 /fork
   ├─► session_before_fork (can cancel)
-  └─► session_fork
+  ├─► session_shutdown
+  ├─► session_start { reason: "fork", previousSessionFile }
+  └─► resources_discover { reason: "startup" }
 
 /compact or auto-compaction
   ├─► session_before_compact (can cancel or customize)
@@ -282,44 +287,44 @@ exit (Ctrl+C, Ctrl+D)
   └─► session_shutdown
 ```
 
-### Session Events
+### Resource Events
 
-See [session.md](session.md) for session storage internals and the SessionManager API.
+#### resources_discover
 
-#### session_directory
-
-Fired by the `pi` CLI during startup session resolution, before the initial session manager is created.
-
-This event is:
-- CLI-only. It is not emitted in SDK mode.
-- Startup-only. It is not emitted for later interactive `/new` or `/resume` actions.
-- Lower priority than `--session-dir` and `sessionDir` in `settings.json`.
-- Special-cased to receive no `ctx` argument.
-
-If multiple extensions return `sessionDir`, the last one wins.
-Combined precedence is: `--session-dir` CLI flag, then `sessionDir` in settings, then extension `session_directory` hooks.
+Fired after `session_start` so extensions can contribute additional skill, prompt, and theme paths.
+The startup path uses `reason: "startup"`. Reload uses `reason: "reload"`.
 
 ```typescript
-pi.on("session_directory", async (event) => {
+pi.on("resources_discover", async (event, _ctx) => {
+  // event.cwd - current working directory
+  // event.reason - "startup" | "reload"
   return {
-    sessionDir: `/tmp/pi-sessions/${encodeURIComponent(event.cwd)}`,
+    skillPaths: ["/path/to/skills"],
+    promptPaths: ["/path/to/prompts"],
+    themePaths: ["/path/to/themes"],
   };
 });
 ```
 
+### Session Events
+
+See [session.md](session.md) for session storage internals and the SessionManager API.
+
 #### session_start
 
-Fired on initial session load.
+Fired when a session is started, loaded, or reloaded.
 
 ```typescript
-pi.on("session_start", async (_event, ctx) => {
+pi.on("session_start", async (event, ctx) => {
+  // event.reason - "startup" | "reload" | "new" | "resume" | "fork"
+  // event.previousSessionFile - present for "new", "resume", and "fork"
   ctx.ui.notify(`Session: ${ctx.sessionManager.getSessionFile() ?? "ephemeral"}`, "info");
 });
 ```
 
-#### session_before_switch / session_switch
+#### session_before_switch
 
-Fired when starting a new session (`/new`) or switching sessions (`/resume`).
+Fired before starting a new session (`/new`) or switching sessions (`/resume`).
 
 ```typescript
 pi.on("session_before_switch", async (event, ctx) => {
@@ -331,14 +336,12 @@ pi.on("session_before_switch", async (event, ctx) => {
     if (!ok) return { cancel: true };
   }
 });
-
-pi.on("session_switch", async (event, ctx) => {
-  // event.reason - "new" or "resume"
-  // event.previousSessionFile - session we came from
-});
 ```
 
-#### session_before_fork / session_fork
+After a successful switch or new-session action, pi emits `session_shutdown` for the old extension instance, reloads and rebinds extensions for the new session, then emits `session_start` with `reason: "new" | "resume"` and `previousSessionFile`.
+Do cleanup work in `session_shutdown`, then reestablish any in-memory state in `session_start`.
+
+#### session_before_fork
 
 Fired when forking via `/fork`.
 
@@ -349,11 +352,10 @@ pi.on("session_before_fork", async (event, ctx) => {
   // OR
   return { skipConversationRestore: true }; // Fork but don't rewind messages
 });
-
-pi.on("session_fork", async (event, ctx) => {
-  // event.previousSessionFile - previous session file
-});
 ```
+
+After a successful fork, pi emits `session_shutdown` for the old extension instance, reloads and rebinds extensions for the new session, then emits `session_start` with `reason: "fork"` and `previousSessionFile`.
+Do cleanup work in `session_shutdown`, then reestablish any in-memory state in `session_start`.
 
 #### session_before_compact / session_compact
 
@@ -735,9 +737,7 @@ Transforms chain across handlers. See [input-transform.ts](../examples/extension
 
 ## ExtensionContext
 
-All handlers except `session_directory` receive `ctx: ExtensionContext`.
-
-`session_directory` is a CLI startup hook and receives only the event.
+All handlers receive `ctx: ExtensionContext`.
 
 ### ctx.ui
 
@@ -920,6 +920,38 @@ Options:
 - `replaceInstructions`: If true, `customInstructions` replaces the default prompt instead of being appended
 - `label`: Label to attach to the branch summary entry (or target entry if not summarizing)
 
+### ctx.switchSession(sessionPath)
+
+Switch to a different session file:
+
+```typescript
+const result = await ctx.switchSession("/path/to/session.jsonl");
+if (result.cancelled) {
+  // An extension cancelled the switch via session_before_switch
+}
+```
+
+To discover available sessions, use the static `SessionManager.list()` or `SessionManager.listAll()` methods:
+
+```typescript
+import { SessionManager } from "@mariozechner/pi-coding-agent";
+
+pi.registerCommand("switch", {
+  description: "Switch to another session",
+  handler: async (args, ctx) => {
+    const sessions = await SessionManager.list(ctx.cwd);
+    if (sessions.length === 0) return;
+    const choice = await ctx.ui.select(
+      "Pick session:",
+      sessions.map(s => s.file),
+    );
+    if (choice) {
+      await ctx.switchSession(choice);
+    }
+  },
+});
+```
+
 ### ctx.reload()
 
 Run the same reload flow as `/reload`.
@@ -936,7 +968,7 @@ pi.registerCommand("reload-runtime", {
 
 Important behavior:
 - `await ctx.reload()` emits `session_shutdown` for the current extension runtime
-- It then reloads resources and emits `session_start` (and `resources_discover` with reason `"reload"`) for the new runtime
+- It then reloads resources and emits `session_start` with `reason: "reload"` and `resources_discover` with reason `"reload"`
 - The currently running command handler still continues in the old call frame
 - Code after `await ctx.reload()` still runs from the pre-reload version
 - Code after `await ctx.reload()` must not assume old in-memory extension state is still valid
@@ -2187,7 +2219,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | **Compaction & Sessions** |||
 | `custom-compaction.ts` | Custom compaction summary | `on("session_before_compact")` |
 | `trigger-compact.ts` | Trigger compaction manually | `compact()` |
-| `git-checkpoint.ts` | Git stash on turns | `on("turn_end")`, `on("session_fork")`, `exec` |
+| `git-checkpoint.ts` | Git stash on turns | `on("turn_start")`, `on("session_before_fork")`, `exec` |
 | `auto-commit-on-exit.ts` | Commit on shutdown | `on("session_shutdown")`, `exec` |
 | **UI Components** |||
 | `status-line.ts` | Footer status indicator | `setStatus`, session events |

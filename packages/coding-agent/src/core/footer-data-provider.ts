@@ -1,5 +1,5 @@
 import { type ExecFileException, execFile, spawnSync } from "child_process";
-import { existsSync, type FSWatcher, readFileSync, statSync, watch } from "fs";
+import { existsSync, type FSWatcher, readFileSync, statSync, unwatchFile, watch, watchFile } from "fs";
 import { dirname, join, resolve } from "path";
 
 type GitPaths = {
@@ -12,8 +12,8 @@ type GitPaths = {
  * Find git metadata paths by walking up from cwd.
  * Handles both regular git repos (.git is a directory) and worktrees (.git is a file).
  */
-function findGitPaths(): GitPaths | null {
-	let dir = process.cwd();
+function findGitPaths(cwd: string): GitPaths | null {
+	let dir = cwd;
 	while (true) {
 		const gitPath = join(dir, ".git");
 		if (existsSync(gitPath)) {
@@ -84,6 +84,7 @@ function resolveBranchWithGitAsync(repoDir: string): Promise<string | null> {
  * Token stats, model info available via ctx.sessionManager and ctx.model.
  */
 export class FooterDataProvider {
+	private cwd: string;
 	private static readonly WATCH_DEBOUNCE_MS = 500;
 
 	private extensionStatuses = new Map<string, string>();
@@ -91,6 +92,8 @@ export class FooterDataProvider {
 	private gitPaths: GitPaths | null | undefined = undefined;
 	private headWatcher: FSWatcher | null = null;
 	private reftableWatcher: FSWatcher | null = null;
+	private reftableTablesListWatcher: FSWatcher | null = null;
+	private reftableTablesListPath: string | null = null;
 	private branchChangeCallbacks = new Set<() => void>();
 	private availableProviderCount = 0;
 	private refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -98,8 +101,9 @@ export class FooterDataProvider {
 	private refreshPending = false;
 	private disposed = false;
 
-	constructor() {
-		this.gitPaths = findGitPaths();
+	constructor(cwd: string = process.cwd()) {
+		this.cwd = cwd;
+		this.gitPaths = findGitPaths(cwd);
 		this.setupGitWatcher();
 	}
 
@@ -146,6 +150,38 @@ export class FooterDataProvider {
 		this.availableProviderCount = count;
 	}
 
+	setCwd(cwd: string): void {
+		if (this.cwd === cwd) {
+			return;
+		}
+
+		this.cwd = cwd;
+		if (this.refreshTimer) {
+			clearTimeout(this.refreshTimer);
+			this.refreshTimer = null;
+		}
+		if (this.headWatcher) {
+			this.headWatcher.close();
+			this.headWatcher = null;
+		}
+		if (this.reftableWatcher) {
+			this.reftableWatcher.close();
+			this.reftableWatcher = null;
+		}
+		if (this.reftableTablesListWatcher) {
+			this.reftableTablesListWatcher.close();
+			this.reftableTablesListWatcher = null;
+		}
+		if (this.reftableTablesListPath) {
+			unwatchFile(this.reftableTablesListPath);
+			this.reftableTablesListPath = null;
+		}
+		this.cachedBranch = undefined;
+		this.gitPaths = findGitPaths(cwd);
+		this.setupGitWatcher();
+		this.notifyBranchChange();
+	}
+
 	/** Internal: cleanup */
 	dispose(): void {
 		this.disposed = true;
@@ -161,6 +197,14 @@ export class FooterDataProvider {
 			this.reftableWatcher.close();
 			this.reftableWatcher = null;
 		}
+		if (this.reftableTablesListWatcher) {
+			this.reftableTablesListWatcher.close();
+			this.reftableTablesListWatcher = null;
+		}
+		if (this.reftableTablesListPath) {
+			unwatchFile(this.reftableTablesListPath);
+			this.reftableTablesListPath = null;
+		}
 		this.branchChangeCallbacks.clear();
 	}
 
@@ -169,9 +213,10 @@ export class FooterDataProvider {
 	}
 
 	private scheduleRefresh(): void {
-		if (this.disposed) return;
-		if (this.refreshTimer) {
-			clearTimeout(this.refreshTimer);
+		if (this.disposed || this.refreshTimer) return;
+		if (this.refreshInFlight) {
+			this.refreshPending = true;
+			return;
 		}
 		this.refreshTimer = setTimeout(() => {
 			this.refreshTimer = null;
@@ -261,6 +306,27 @@ export class FooterDataProvider {
 				});
 			} catch {
 				// Silently fail if we can't watch
+			}
+
+			const tablesListPath = join(reftableDir, "tables.list");
+			if (existsSync(tablesListPath)) {
+				this.reftableTablesListPath = tablesListPath;
+				try {
+					this.reftableTablesListWatcher = watch(tablesListPath, () => {
+						this.scheduleRefresh();
+					});
+				} catch {
+					// Silently fail if we can't watch
+				}
+				watchFile(tablesListPath, { interval: 250 }, (current, previous) => {
+					if (
+						current.mtimeMs !== previous.mtimeMs ||
+						current.ctimeMs !== previous.ctimeMs ||
+						current.size !== previous.size
+					) {
+						this.scheduleRefresh();
+					}
+				});
 			}
 		}
 	}

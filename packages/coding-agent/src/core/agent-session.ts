@@ -13,7 +13,7 @@
  * Modes use this class and add their own I/O layer on top.
  */
 
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import type {
 	Agent,
@@ -29,7 +29,7 @@ import { getDocsPath } from "../config.js";
 import { theme } from "../modes/interactive/theme/theme.js";
 import { stripFrontmatter } from "../utils/frontmatter.js";
 import { sleep } from "../utils/sleep.js";
-import { type BashResult, executeBash as executeBashCommand, executeBashWithOperations } from "./bash-executor.js";
+import { type BashResult, executeBashWithOperations } from "./bash-executor.js";
 import {
 	type CompactionResult,
 	calculateContextTokens,
@@ -54,9 +54,8 @@ import {
 	type MessageStartEvent,
 	type MessageUpdateEvent,
 	type SessionBeforeCompactResult,
-	type SessionBeforeForkResult,
-	type SessionBeforeSwitchResult,
 	type SessionBeforeTreeResult,
+	type SessionStartEvent,
 	type ShutdownHandler,
 	type ToolDefinition,
 	type ToolExecutionEndEvent,
@@ -78,7 +77,7 @@ import type { SettingsManager } from "./settings-manager.js";
 import type { SlashCommandInfo } from "./slash-commands.js";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.js";
 import { buildSystemPrompt } from "./system-prompt.js";
-import type { BashOperations } from "./tools/bash.js";
+import { type BashOperations, createLocalBashOperations } from "./tools/bash.js";
 import { createAllToolDefinitions } from "./tools/index.js";
 import { createToolDefinitionFromAgentTool, wrapToolDefinition } from "./tools/tool-definition-wrapper.js";
 
@@ -160,6 +159,8 @@ export interface AgentSessionConfig {
 	baseToolsOverride?: Record<string, AgentTool>;
 	/** Mutable ref used by Agent to access the current ExtensionRunner */
 	extensionRunnerRef?: { current?: ExtensionRunner };
+	/** Session start event metadata emitted when extensions bind to this runtime. */
+	sessionStartEvent?: SessionStartEvent;
 }
 
 export interface ExtensionBindings {
@@ -276,6 +277,7 @@ export class AgentSession {
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
 	private _baseToolsOverride?: Record<string, AgentTool>;
+	private _sessionStartEvent: SessionStartEvent;
 	private _extensionUIContext?: ExtensionUIContext;
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
 	private _extensionShutdownHandler?: ShutdownHandler;
@@ -306,6 +308,7 @@ export class AgentSession {
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._baseToolsOverride = config.baseToolsOverride;
+		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
@@ -1346,66 +1349,6 @@ export class AgentSession {
 		await this.agent.waitForIdle();
 	}
 
-	/**
-	 * Start a new session, optionally with initial messages and parent tracking.
-	 * Clears all messages and starts a new session.
-	 * Listeners are preserved and will continue receiving events.
-	 * @param options.parentSession - Optional parent session path for tracking
-	 * @param options.setup - Optional callback to initialize session (e.g., append messages)
-	 * @returns true if completed, false if cancelled by extension
-	 */
-	async newSession(options?: {
-		parentSession?: string;
-		setup?: (sessionManager: SessionManager) => Promise<void>;
-	}): Promise<boolean> {
-		const previousSessionFile = this.sessionFile;
-
-		// Emit session_before_switch event with reason "new" (can be cancelled)
-		if (this._extensionRunner?.hasHandlers("session_before_switch")) {
-			const result = (await this._extensionRunner.emit({
-				type: "session_before_switch",
-				reason: "new",
-			})) as SessionBeforeSwitchResult | undefined;
-
-			if (result?.cancel) {
-				return false;
-			}
-		}
-
-		this._disconnectFromAgent();
-		await this.abort();
-		this.agent.reset();
-		this.sessionManager.newSession({ parentSession: options?.parentSession });
-		this.agent.sessionId = this.sessionManager.getSessionId();
-		this._steeringMessages = [];
-		this._followUpMessages = [];
-		this._pendingNextTurnMessages = [];
-
-		this.sessionManager.appendThinkingLevelChange(this.thinkingLevel);
-
-		// Run setup callback if provided (e.g., to append initial messages)
-		if (options?.setup) {
-			await options.setup(this.sessionManager);
-			// Sync agent state with session manager after setup
-			const sessionContext = this.sessionManager.buildSessionContext();
-			this.agent.state.messages = sessionContext.messages;
-		}
-
-		this._reconnectToAgent();
-
-		// Emit session_switch event with reason "new" to extensions
-		if (this._extensionRunner) {
-			await this._extensionRunner.emit({
-				type: "session_switch",
-				reason: "new",
-				previousSessionFile,
-			});
-		}
-
-		// Emit session event to custom tools
-		return true;
-	}
-
 	// =========================================================================
 	// Model Management
 	// =========================================================================
@@ -1460,12 +1403,8 @@ export class AgentSession {
 		return this._cycleAvailableModel(direction);
 	}
 
-	private _getScopedModelsWithAuth(): Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }> {
-		return this._scopedModels.filter((scoped) => this._modelRegistry.hasConfiguredAuth(scoped.model));
-	}
-
 	private async _cycleScopedModel(direction: "forward" | "backward"): Promise<ModelCycleResult | undefined> {
-		const scopedModels = this._getScopedModelsWithAuth();
+		const scopedModels = this._scopedModels.filter((scoped) => this._modelRegistry.hasConfiguredAuth(scoped.model));
 		if (scopedModels.length <= 1) return undefined;
 
 		const currentModel = this.model;
@@ -2081,8 +2020,8 @@ export class AgentSession {
 
 		if (this._extensionRunner) {
 			this._applyExtensionBindings(this._extensionRunner);
-			await this._extensionRunner.emit({ type: "session_start" });
-			await this.extendResourcesFromExtensions("startup");
+			await this._extensionRunner.emit(this._sessionStartEvent);
+			await this.extendResourcesFromExtensions(this._sessionStartEvent.reason === "reload" ? "reload" : "startup");
 		}
 	}
 
@@ -2411,7 +2350,7 @@ export class AgentSession {
 	async reload(): Promise<void> {
 		const previousFlagValues = this._extensionRunner?.getFlagValues();
 		await this._extensionRunner?.emit({ type: "session_shutdown" });
-		this.settingsManager.reload();
+		await this.settingsManager.reload();
 		resetApiProviders();
 		await this._resourceLoader.reload();
 		this._buildRuntime({
@@ -2426,7 +2365,7 @@ export class AgentSession {
 			this._extensionShutdownHandler ||
 			this._extensionErrorListener;
 		if (this._extensionRunner && hasBindings) {
-			await this._extensionRunner.emit({ type: "session_start" });
+			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
 			await this.extendResourcesFromExtensions("reload");
 		}
 	}
@@ -2596,15 +2535,15 @@ export class AgentSession {
 		const resolvedCommand = prefix ? `${prefix}\n${command}` : command;
 
 		try {
-			const result = options?.operations
-				? await executeBashWithOperations(resolvedCommand, process.cwd(), options.operations, {
-						onChunk,
-						signal: this._bashAbortController.signal,
-					})
-				: await executeBashCommand(resolvedCommand, {
-						onChunk,
-						signal: this._bashAbortController.signal,
-					});
+			const result = await executeBashWithOperations(
+				resolvedCommand,
+				this.sessionManager.getCwd(),
+				options?.operations ?? createLocalBashOperations(),
+				{
+					onChunk,
+					signal: this._bashAbortController.signal,
+				},
+			);
 
 			this.recordBashResult(command, result, options);
 			return result;
@@ -2683,154 +2622,10 @@ export class AgentSession {
 	// =========================================================================
 
 	/**
-	 * Switch to a different session file.
-	 * Aborts current operation, loads messages, restores model/thinking.
-	 * Listeners are preserved and will continue receiving events.
-	 * @returns true if switch completed, false if cancelled by extension
-	 */
-	async switchSession(sessionPath: string): Promise<boolean> {
-		const previousSessionFile = this.sessionManager.getSessionFile();
-
-		// Emit session_before_switch event (can be cancelled)
-		if (this._extensionRunner?.hasHandlers("session_before_switch")) {
-			const result = (await this._extensionRunner.emit({
-				type: "session_before_switch",
-				reason: "resume",
-				targetSessionFile: sessionPath,
-			})) as SessionBeforeSwitchResult | undefined;
-
-			if (result?.cancel) {
-				return false;
-			}
-		}
-
-		this._disconnectFromAgent();
-		await this.abort();
-		this._steeringMessages = [];
-		this._followUpMessages = [];
-		this._pendingNextTurnMessages = [];
-
-		// Set new session
-		this.sessionManager.setSessionFile(sessionPath);
-		this.agent.sessionId = this.sessionManager.getSessionId();
-
-		// Reload messages
-		const sessionContext = this.sessionManager.buildSessionContext();
-
-		// Emit session_switch event to extensions
-		if (this._extensionRunner) {
-			await this._extensionRunner.emit({
-				type: "session_switch",
-				reason: "resume",
-				previousSessionFile,
-			});
-		}
-
-		// Emit session event to custom tools
-
-		this.agent.state.messages = sessionContext.messages;
-
-		// Restore model if saved
-		if (sessionContext.model) {
-			const previousModel = this.model;
-			const availableModels = await this._modelRegistry.getAvailable();
-			const match = availableModels.find(
-				(m) => m.provider === sessionContext.model!.provider && m.id === sessionContext.model!.modelId,
-			);
-			if (match) {
-				this.agent.state.model = match;
-				await this._emitModelSelect(match, previousModel, "restore");
-			}
-		}
-
-		const hasThinkingEntry = this.sessionManager.getBranch().some((entry) => entry.type === "thinking_level_change");
-		const defaultThinkingLevel = this.settingsManager.getDefaultThinkingLevel() ?? DEFAULT_THINKING_LEVEL;
-
-		if (hasThinkingEntry) {
-			// Restore thinking level if saved (setThinkingLevel clamps to model capabilities)
-			this.setThinkingLevel(sessionContext.thinkingLevel as ThinkingLevel);
-		} else {
-			const availableLevels = this.getAvailableThinkingLevels();
-			const effectiveLevel = availableLevels.includes(defaultThinkingLevel)
-				? defaultThinkingLevel
-				: this._clampThinkingLevel(defaultThinkingLevel, availableLevels);
-			this.agent.state.thinkingLevel = effectiveLevel;
-			this.sessionManager.appendThinkingLevelChange(effectiveLevel);
-		}
-
-		this._reconnectToAgent();
-		return true;
-	}
-
-	/**
 	 * Set a display name for the current session.
 	 */
 	setSessionName(name: string): void {
 		this.sessionManager.appendSessionInfo(name);
-	}
-
-	/**
-	 * Create a fork from a specific entry.
-	 * Emits before_fork/fork session events to extensions.
-	 *
-	 * @param entryId ID of the entry to fork from
-	 * @returns Object with:
-	 *   - selectedText: The text of the selected user message (for editor pre-fill)
-	 *   - cancelled: True if an extension cancelled the fork
-	 */
-	async fork(entryId: string): Promise<{ selectedText: string; cancelled: boolean }> {
-		const previousSessionFile = this.sessionFile;
-		const selectedEntry = this.sessionManager.getEntry(entryId);
-
-		if (!selectedEntry || selectedEntry.type !== "message" || selectedEntry.message.role !== "user") {
-			throw new Error("Invalid entry ID for forking");
-		}
-
-		const selectedText = this._extractUserMessageText(selectedEntry.message.content);
-
-		let skipConversationRestore = false;
-
-		// Emit session_before_fork event (can be cancelled)
-		if (this._extensionRunner?.hasHandlers("session_before_fork")) {
-			const result = (await this._extensionRunner.emit({
-				type: "session_before_fork",
-				entryId,
-			})) as SessionBeforeForkResult | undefined;
-
-			if (result?.cancel) {
-				return { selectedText, cancelled: true };
-			}
-			skipConversationRestore = result?.skipConversationRestore ?? false;
-		}
-
-		// Clear pending messages (bound to old session state)
-		this._pendingNextTurnMessages = [];
-
-		if (!selectedEntry.parentId) {
-			this.sessionManager.newSession({ parentSession: previousSessionFile });
-		} else {
-			this.sessionManager.createBranchedSession(selectedEntry.parentId);
-		}
-		this.agent.sessionId = this.sessionManager.getSessionId();
-
-		// Reload messages from entries (works for both file and in-memory mode)
-		const sessionContext = this.sessionManager.buildSessionContext();
-
-		// Emit session_fork event to extensions (after fork completes)
-		if (this._extensionRunner) {
-			await this._extensionRunner.emit({
-				type: "session_fork",
-				previousSessionFile,
-			});
-		}
-
-		// Emit session event to custom tools (with reason "fork")
-
-		if (!skipConversationRestore) {
-			this.agent.state.messages = sessionContext.messages;
-		}
-
-		return { selectedText, cancelled: false };
 	}
 
 	// =========================================================================
@@ -3165,6 +2960,7 @@ export class AgentSession {
 		const toolRenderer: ToolHtmlRenderer = createToolHtmlRenderer({
 			getToolDefinition: (name) => this.getToolDefinition(name),
 			theme,
+			cwd: this.sessionManager.getCwd(),
 		});
 
 		return await exportSessionToHtml(this.sessionManager, this.state, {
@@ -3208,32 +3004,6 @@ export class AgentSession {
 
 		writeFileSync(filePath, `${lines.join("\n")}\n`);
 		return filePath;
-	}
-
-	/**
-	 * Import a JSONL session file.
-	 * Copies the file into the session directory and switches to it (like /resume).
-	 * @param inputPath Path to the JSONL file to import.
-	 * @returns true if the session was switched successfully.
-	 */
-	async importFromJsonl(inputPath: string): Promise<boolean> {
-		const resolved = resolve(inputPath);
-		if (!existsSync(resolved)) {
-			throw new Error(`File not found: ${resolved}`);
-		}
-
-		// Copy into the session directory so we don't modify the original
-		const sessionDir = this.sessionManager.getSessionDir();
-		if (!existsSync(sessionDir)) {
-			mkdirSync(sessionDir, { recursive: true });
-		}
-		const destPath = join(sessionDir, basename(resolved));
-		// Avoid overwriting if source and destination are the same file
-		if (resolve(destPath) !== resolved) {
-			copyFileSync(resolved, destPath);
-		}
-
-		return this.switchSession(destPath);
 	}
 
 	// =========================================================================

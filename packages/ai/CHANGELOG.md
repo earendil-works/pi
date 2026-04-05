@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed OpenAI-compatible completions streaming usage to preserve `prompt_tokens_details.cache_write_tokens` and normalize OpenRouter `cached_tokens` to previous-request cache hits only, preventing cache read/write double counting in `usage` and cost calculation ([#2802](https://github.com/badlogic/pi-mono/issues/2802))
+
+## [0.65.0] - 2026-04-03
+
+### Added
+
+- Added tool streaming support for newer Z.ai models ([#2732](https://github.com/badlogic/pi-mono/pull/2732) by [@kaofelix](https://github.com/kaofelix))
+
+### Fixed
+
+- Fixed Anthropic context overflow detection to recognize HTTP 413 `request_too_large` errors, so callers can trigger compaction and retry instead of getting stuck on repeated oversized-image requests ([#2734](https://github.com/badlogic/pi-mono/issues/2734))
+- Fixed OpenAI Responses tool-call streaming to emit a `toolcall_delta` when function call arguments arrive only in `response.function_call_arguments.done`, and to emit only the missing suffix when `.done` extends earlier streamed arguments ([#2745](https://github.com/badlogic/pi-mono/issues/2745))
+- Fixed Bedrock throttling errors being misidentified as context overflow, causing unnecessary compaction instead of retry ([#2699](https://github.com/badlogic/pi-mono/pull/2699) by [@xu0o0](https://github.com/xu0o0))
+
 ## [0.64.0] - 2026-03-29
 
 ### Added

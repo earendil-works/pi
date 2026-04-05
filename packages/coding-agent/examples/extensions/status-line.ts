@@ -29,12 +29,4 @@ export default function (pi: ExtensionAPI) {
 		const text = theme.fg("dim", ` Turn ${turnCount} complete`);
 		ctx.ui.setStatus("status-demo", check + text);
 	});
-
-	pi.on("session_switch", async (event, ctx) => {
-		if (event.reason === "new") {
-			turnCount = 0;
-			const theme = ctx.ui.theme;
-			ctx.ui.setStatus("status-demo", theme.fg("dim", "Ready"));
-		}
-	});
 }

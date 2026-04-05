@@ -13,7 +13,7 @@ Sessions are stored as trees where each entry has an `id` and `parentId`. The "l
 | View | Flat list of user messages | Full tree structure |
 | Action | Extracts path to **new session file** | Changes leaf in **same session** |
 | Summary | Never | Optional (user prompted) |
-| Events | `session_before_fork` / `session_fork` | `session_before_tree` / `session_tree` |
+| Events | `session_before_fork` / `session_start` (`reason: "fork"`) | `session_before_tree` / `session_tree` |
 
 ## Tree UI
 

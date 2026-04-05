@@ -2,7 +2,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { KeybindingsManager, migrateKeybindingsConfigFile } from "../src/core/keybindings.js";
+import { ENV_AGENT_DIR } from "../src/config.js";
+import { KeybindingsManager } from "../src/core/keybindings.js";
+import { runMigrations } from "../src/migrations.js";
 
 describe("keybindings migration", () => {
 	const tempDirs: string[] = [];
@@ -25,8 +27,14 @@ describe("keybindings migration", () => {
 			cursorUp: ["up", "ctrl+p"],
 			expandTools: "ctrl+x",
 		});
-
-		expect(migrateKeybindingsConfigFile(agentDir)).toBe(true);
+		const previousAgentDir = process.env[ENV_AGENT_DIR];
+		process.env[ENV_AGENT_DIR] = agentDir;
+		runMigrations(agentDir);
+		if (previousAgentDir === undefined) {
+			delete process.env[ENV_AGENT_DIR];
+		} else {
+			process.env[ENV_AGENT_DIR] = previousAgentDir;
+		}
 
 		const migrated = JSON.parse(fs.readFileSync(path.join(agentDir, "keybindings.json"), "utf-8")) as Record<
 			string,
@@ -43,8 +51,14 @@ describe("keybindings migration", () => {
 			expandTools: "ctrl+x",
 			"app.tools.expand": "ctrl+y",
 		});
-
-		expect(migrateKeybindingsConfigFile(agentDir)).toBe(true);
+		const previousAgentDir = process.env[ENV_AGENT_DIR];
+		process.env[ENV_AGENT_DIR] = agentDir;
+		runMigrations(agentDir);
+		if (previousAgentDir === undefined) {
+			delete process.env[ENV_AGENT_DIR];
+		} else {
+			process.env[ENV_AGENT_DIR] = previousAgentDir;
+		}
 
 		const migrated = JSON.parse(fs.readFileSync(path.join(agentDir, "keybindings.json"), "utf-8")) as Record<
 			string,

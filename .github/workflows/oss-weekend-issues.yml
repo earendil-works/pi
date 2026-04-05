@@ -57,6 +57,13 @@ jobs:
               return;
             }
 
+            const approvedContent = await getTextFile('.github/APPROVED_CONTRIBUTORS');
+            const approvedList = approvedContent
+              .split('\n')
+              .map(line => line.trim().toLowerCase())
+              .filter(line => line && !line.startsWith('#'));
+            const isApprovedContributor = approvedList.includes(issueAuthor.toLowerCase());
+
             let weekendState;
             try {
               weekendState = JSON.parse(await getTextFile('.github/oss-weekend.json'));
@@ -73,12 +80,19 @@ jobs:
               return;
             }
 
+            if (isApprovedContributor) {
+              console.log(`${issueAuthor} is in the approved contributors list`);
+              return;
+            }
+
             const reopenDate = weekendState.reopensOnText || weekendState.reopensOn || 'after the weekend';
             const discordUrl = weekendState.discordUrl || 'https://discord.com/invite/3cU7Bz4UPx';
+            const reason = typeof weekendState.reason === 'string' && weekendState.reason.trim() ? weekendState.reason.trim() : null;
             const message = [
               `Hi @${issueAuthor}, thanks for opening an issue.`,
               '',
-              `OSS weekend is active until ${reopenDate}, so new issues are being auto-closed for now.`,
+              `OSS weekend is active until ${reopenDate}, so new issues from unapproved contributors are being auto-closed for now.`,
+              ...(reason ? ['', `Current focus: ${reason}`] : []),
               '',
               `Please reopen or submit this issue again after ${reopenDate}. For support, join [Discord](${discordUrl}).`,
             ].join('\n');

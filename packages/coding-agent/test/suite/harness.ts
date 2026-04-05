@@ -5,12 +5,14 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
 import { Agent } from "@mariozechner/pi-agent-core";
 import type { FauxModelDefinition, FauxProviderRegistration, FauxResponseStep, Model } from "@mariozechner/pi-ai";
 import { registerFauxProvider } from "@mariozechner/pi-ai";
 import { AgentSession, type AgentSessionEvent } from "../../src/core/agent-session.js";
 import { AuthStorage } from "../../src/core/auth-storage.js";
+import type { ExtensionRunner } from "../../src/core/extensions/index.js";
+import { convertToLlm } from "../../src/core/messages.js";
 import { ModelRegistry } from "../../src/core/model-registry.js";
 import { SessionManager } from "../../src/core/session-manager.js";
 import type { Settings } from "../../src/core/settings-manager.js";
@@ -22,6 +24,37 @@ import {
 	createTestResourceLoader,
 } from "../utilities.js";
 
+type MessageTextPart = { type: "text"; text: string };
+
+export function getMessageText(message: unknown): string {
+	if (!message || typeof message !== "object" || !("content" in message)) {
+		return "";
+	}
+	const content = (message as { content?: string | Array<{ type: string; text?: string }> }).content;
+	if (content === undefined) {
+		return "";
+	}
+	if (typeof content === "string") {
+		return content;
+	}
+	return content
+		.filter((part): part is MessageTextPart => part.type === "text")
+		.map((part) => part.text)
+		.join("\n");
+}
+
+export function getUserTexts(harness: Harness): string[] {
+	return harness.session.messages
+		.filter((message) => message.role === "user")
+		.map((message) => getMessageText(message));
+}
+
+export function getAssistantTexts(harness: Harness): string[] {
+	return harness.session.messages
+		.filter((message) => message.role === "assistant")
+		.map((message) => getMessageText(message));
+}
+
 export interface HarnessOptions {
 	models?: FauxModelDefinition[];
 	settings?: Partial<Settings>;
@@ -29,12 +62,14 @@ export interface HarnessOptions {
 	tools?: AgentTool[];
 	resourceLoader?: ResourceLoader;
 	extensionFactories?: Array<ExtensionFactory | CreateTestExtensionsResultInput>;
+	withConfiguredAuth?: boolean;
 }
 
 export interface Harness {
 	session: AgentSession;
 	sessionManager: SessionManager;
 	settingsManager: SettingsManager;
+	authStorage: AuthStorage;
 	faux: FauxProviderRegistration;
 	models: [Model<string>, ...Model<string>[]];
 	getModel(): Model<string>;
@@ -62,37 +97,56 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 	fauxProvider.setResponses([]);
 	const model = fauxProvider.getModel();
 	const toolMap = options.tools ? Object.fromEntries(options.tools.map((tool) => [tool.name, tool])) : undefined;
-
-	const agent = new Agent({
-		getApiKey: () => "faux-key",
-		initialState: {
-			model,
-			systemPrompt: options.systemPrompt ?? "You are a test assistant.",
-			tools: [],
-		},
-	});
+	const withConfiguredAuth = options.withConfiguredAuth ?? true;
+	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 
 	const sessionManager = SessionManager.inMemory();
 	const settingsManager = SettingsManager.inMemory(options.settings);
 
 	const authStorage = AuthStorage.inMemory();
-	authStorage.setRuntimeApiKey(model.provider, "faux-key");
+	if (withConfiguredAuth) {
+		authStorage.setRuntimeApiKey(model.provider, "faux-key");
+	}
 	const modelRegistry = ModelRegistry.inMemory(authStorage);
-	modelRegistry.registerProvider(model.provider, {
-		baseUrl: model.baseUrl,
-		apiKey: "faux-key",
-		api: fauxProvider.api,
-		models: fauxProvider.models.map((registeredModel) => ({
-			id: registeredModel.id,
-			name: registeredModel.name,
-			api: registeredModel.api,
-			reasoning: registeredModel.reasoning,
-			input: registeredModel.input,
-			cost: registeredModel.cost,
-			contextWindow: registeredModel.contextWindow,
-			maxTokens: registeredModel.maxTokens,
-			baseUrl: registeredModel.baseUrl,
-		})),
+	if (withConfiguredAuth) {
+		modelRegistry.registerProvider(model.provider, {
+			baseUrl: model.baseUrl,
+			apiKey: "faux-key",
+			api: fauxProvider.api,
+			models: fauxProvider.models.map((registeredModel) => ({
+				id: registeredModel.id,
+				name: registeredModel.name,
+				api: registeredModel.api,
+				reasoning: registeredModel.reasoning,
+				input: registeredModel.input,
+				cost: registeredModel.cost,
+				contextWindow: registeredModel.contextWindow,
+				maxTokens: registeredModel.maxTokens,
+				baseUrl: registeredModel.baseUrl,
+			})),
+		});
+	}
+
+	const agent = new Agent({
+		getApiKey: () => (withConfiguredAuth ? "faux-key" : undefined),
+		initialState: {
+			model,
+			systemPrompt: options.systemPrompt ?? "You are a test assistant.",
+			tools: [],
+		},
+		convertToLlm,
+		onPayload: async (payload) => {
+			const runner = extensionRunnerRef.current;
+			if (!runner?.hasHandlers("before_provider_request")) {
+				return payload;
+			}
+			return runner.emitBeforeProviderRequest(payload);
+		},
+		transformContext: async (messages: AgentMessage[]) => {
+			const runner = extensionRunnerRef.current;
+			if (!runner) return messages;
+			return runner.emitContext(messages);
+		},
 	});
 	const extensionsResult = options.extensionFactories
 		? await createTestExtensionsResult(options.extensionFactories, tempDir)
@@ -108,6 +162,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		modelRegistry,
 		resourceLoader,
 		baseToolsOverride: toolMap,
+		extensionRunnerRef,
 	});
 
 	const events: AgentSessionEvent[] = [];
@@ -119,6 +174,7 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		session,
 		sessionManager,
 		settingsManager,
+		authStorage,
 		faux: fauxProvider,
 		models: fauxProvider.models,
 		getModel: fauxProvider.getModel,

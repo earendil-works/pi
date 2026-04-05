@@ -671,15 +671,21 @@ describe("Context overflow error handling", () => {
 	});
 
 	// =============================================================================
-	// llama.cpp server (local) - Skip if not running
+	// llama.cpp server (local) - Skip if not running or not exposing /v1/completions
 	// =============================================================================
 
 	let llamaCppRunning = false;
-	try {
-		execSync("curl -s --max-time 1 http://localhost:8081/health > /dev/null", { stdio: "ignore" });
-		llamaCppRunning = true;
-	} catch {
-		llamaCppRunning = false;
+	if (!process.env.PI_NO_LOCAL_LLM) {
+		try {
+			execSync("curl -s --max-time 1 http://localhost:8081/health > /dev/null", { stdio: "ignore" });
+			const probeStatus = execSync(
+				'curl -s --max-time 1 -o /dev/null -w \'%{http_code}\' -X POST http://localhost:8081/v1/completions -H \'content-type: application/json\' -d \'{"model":"local-model","prompt":"ping","max_tokens":1}\'',
+				{ encoding: "utf8" },
+			).trim();
+			llamaCppRunning = probeStatus !== "404" && probeStatus !== "405" && probeStatus !== "000";
+		} catch {
+			llamaCppRunning = false;
+		}
 	}
 
 	describe.skipIf(!llamaCppRunning)("llama.cpp (local)", () => {

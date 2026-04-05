@@ -55,6 +55,7 @@ const COPILOT_STATIC_HEADERS = {
 
 const AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1";
 const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
+const ZAI_TOOL_STREAM_UNSUPPORTED_MODELS = new Set(["glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v"]);
 
 async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 	try {
@@ -379,7 +380,6 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data["zai-coding-plan"].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
-
 				const supportsImage = m.modalities?.input?.includes("image");
 
 				models.push({
@@ -399,6 +399,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					compat: {
 						supportsDeveloperRole: false,
 						thinkingFormat: "zai",
+						...(!ZAI_TOOL_STREAM_UNSUPPORTED_MODELS.has(modelId) ? { zaiToolStream: true } : {}),
 					},
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,

@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -442,6 +442,47 @@ describe("Coding Agent Tools", () => {
 
 			expect(result.exitCode).toBe(0);
 			expect(result.output).toBe("red\n");
+		});
+
+		it("should persist full output when truncation happens by line count only", async () => {
+			const bash = createBashTool(testDir);
+			const result = await bash.execute("test-call-line-truncation", { command: "seq 3000" });
+			const output = getTextOutput(result);
+			const fullOutputPath = result.details?.fullOutputPath;
+
+			expect(result.details?.truncation?.truncated).toBe(true);
+			expect(result.details?.truncation?.truncatedBy).toBe("lines");
+			expect(fullOutputPath).toBeDefined();
+			expect(output).toMatch(/\[Showing lines \d+-\d+ of \d+\. Full output: /);
+			expect(output).not.toContain("Full output: undefined");
+
+			for (let i = 0; i < 20 && (!fullOutputPath || !existsSync(fullOutputPath)); i++) {
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+
+			expect(fullOutputPath).toBeDefined();
+			expect(existsSync(fullOutputPath!)).toBe(true);
+			const fullOutput = readFileSync(fullOutputPath!, "utf-8");
+			expect(fullOutput).toContain("1\n2\n3");
+			expect(fullOutput).toContain("2998\n2999\n3000");
+		});
+
+		it("executeBash should persist full output when truncation happens by line count only", async () => {
+			const result = await executeBash("seq 3000");
+			const fullOutputPath = result.fullOutputPath;
+
+			expect(result.truncated).toBe(true);
+			expect(fullOutputPath).toBeDefined();
+
+			for (let i = 0; i < 20 && (!fullOutputPath || !existsSync(fullOutputPath)); i++) {
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+
+			expect(fullOutputPath).toBeDefined();
+			expect(existsSync(fullOutputPath!)).toBe(true);
+			const fullOutput = readFileSync(fullOutputPath!, "utf-8");
+			expect(fullOutput).toContain("1\n2\n3");
+			expect(fullOutput).toContain("2998\n2999\n3000");
 		});
 	});
 

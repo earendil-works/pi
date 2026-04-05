@@ -20,6 +20,16 @@ function getCellItalic(terminal: VirtualTerminal, row: number, col: number): num
 	return cell.isItalic();
 }
 
+function getCellUnderline(terminal: VirtualTerminal, row: number, col: number): number {
+	const xterm = (terminal as unknown as { xterm: XtermTerminalType }).xterm;
+	const buffer = xterm.buffer.active;
+	const line = buffer.getLine(buffer.viewportY + row);
+	assert.ok(line, `Missing buffer line at row ${row}`);
+	const cell = line.getCell(col);
+	assert.ok(cell, `Missing cell at row ${row} col ${col}`);
+	return cell.isUnderline();
+}
+
 describe("Markdown component", () => {
 	describe("Nested lists", () => {
 		it("should render simple nested list", () => {
@@ -1014,6 +1024,26 @@ bar`,
 			assert.ok(precedingChunk.includes("\x1b[1m"), `Should re-apply bold for h1: ${precedingChunk}`);
 			assert.ok(precedingChunk.includes("\x1b[36m"), `Should re-apply cyan for h1: ${precedingChunk}`);
 			assert.ok(precedingChunk.includes("\x1b[4m"), `Should re-apply underline for h1: ${precedingChunk}`);
+		});
+
+		it("should not leak h1 underline into padding when inline code is the last token", async () => {
+			const markdown = new Markdown("# Important distinction from `open()`", 0, 0, defaultMarkdownTheme);
+			const terminal = new VirtualTerminal(80, 4);
+			const tui = new TUI(terminal);
+			tui.addChild(markdown);
+			tui.start();
+			await terminal.flush();
+
+			const renderedLine = markdown.render(80)[0];
+			assert.ok(renderedLine, "Should render heading line");
+			const contentWidth = renderedLine.replace(/\x1b\[[0-9;]*m/g, "").trimEnd().length;
+			assert.ok(contentWidth > 0, "Should have visible heading content");
+
+			for (let col = contentWidth; col < 80; col++) {
+				assert.strictEqual(getCellUnderline(terminal, 0, col), 0, `Expected no underline in padding at col ${col}`);
+			}
+
+			tui.stop();
 		});
 
 		it("should preserve heading styling after bold text", () => {

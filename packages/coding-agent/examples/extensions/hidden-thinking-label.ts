@@ -33,10 +33,6 @@ export default function (pi: ExtensionAPI) {
 		applyLabel(ctx);
 	});
 
-	pi.on("session_switch", async (_event, ctx) => {
-		applyLabel(ctx);
-	});
-
 	pi.registerCommand("thinking-label", {
 		description: "Set the hidden thinking label. Use without args to reset.",
 		handler: async (args, ctx) => {

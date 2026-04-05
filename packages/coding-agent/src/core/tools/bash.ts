@@ -292,14 +292,18 @@ export function createBashToolDefinition(
 				let chunksBytes = 0;
 				const maxChunksBytes = DEFAULT_MAX_BYTES * 2;
 
+				const ensureTempFile = () => {
+					if (tempFilePath) return;
+					tempFilePath = getTempFilePath();
+					tempFileStream = createWriteStream(tempFilePath);
+					for (const chunk of chunks) tempFileStream.write(chunk);
+				};
+
 				const handleData = (data: Buffer) => {
 					totalBytes += data.length;
 					// Start writing to a temp file once output exceeds the in-memory threshold.
-					if (totalBytes > DEFAULT_MAX_BYTES && !tempFilePath) {
-						tempFilePath = getTempFilePath();
-						tempFileStream = createWriteStream(tempFilePath);
-						// Write all buffered chunks to the file.
-						for (const chunk of chunks) tempFileStream.write(chunk);
+					if (totalBytes > DEFAULT_MAX_BYTES) {
+						ensureTempFile();
 					}
 					// Write to temp file if we have one.
 					if (tempFileStream) tempFileStream.write(data);
@@ -316,6 +320,9 @@ export function createBashToolDefinition(
 						const fullBuffer = Buffer.concat(chunks);
 						const fullText = fullBuffer.toString("utf-8");
 						const truncation = truncateTail(fullText);
+						if (truncation.truncated) {
+							ensureTempFile();
+						}
 						onUpdate({
 							content: [{ type: "text", text: truncation.content || "" }],
 							details: {
@@ -333,13 +340,16 @@ export function createBashToolDefinition(
 					env: spawnContext.env,
 				})
 					.then(({ exitCode }) => {
-						// Close temp file stream before building the final result.
-						if (tempFileStream) tempFileStream.end();
 						// Combine the rolling buffer chunks.
 						const fullBuffer = Buffer.concat(chunks);
 						const fullOutput = fullBuffer.toString("utf-8");
 						// Apply tail truncation for the final display payload.
 						const truncation = truncateTail(fullOutput);
+						if (truncation.truncated) {
+							ensureTempFile();
+						}
+						// Close temp file stream before building the final result.
+						if (tempFileStream) tempFileStream.end();
 						let outputText = truncation.content || "(no output)";
 						let details: BashToolDetails | undefined;
 						if (truncation.truncated) {

@@ -1,9 +1,11 @@
 <!-- OSS_WEEKEND_START -->
 # 🏖️ OSS Weekend
 
-**Issue tracker reopens Monday, April 6, 2026.**
+**Issue tracker reopens Monday, April 13, 2026.**
 
-OSS weekend runs Friday, March 27, 2026 through Monday, April 6, 2026. New issues are auto-closed during this time. For support, join [Discord](https://discord.com/invite/3cU7Bz4UPx).
+OSS weekend runs Thursday, April 2, 2026 through Monday, April 13, 2026. New issues and PRs from unapproved contributors are auto-closed during this time. Approved contributors can still open issues and PRs if something is genuinely urgent, but please keep that to pressing matters only. For support, join [Discord](https://discord.com/invite/3cU7Bz4UPx).
+
+> _Current focus: at the moment i'm deep in refactoring internals, and need to focus._
 <!-- OSS_WEEKEND_END -->
 
 ---
@@ -167,7 +169,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/reload` | Reload keybindings, extensions, skills, prompts, and context files (themes hot-reload automatically) |
 | `/hotkeys` | Show all keyboard shortcuts |
 | `/changelog` | Display version history |
-| `/quit`, `/exit` | Quit pi |
+| `/quit` | Quit pi |
 
 ### Keyboard Shortcuts
 
@@ -392,14 +394,18 @@ See [docs/packages.md](docs/packages.md).
 ```typescript
 import { AuthStorage, createAgentSession, ModelRegistry, SessionManager } from "@mariozechner/pi-coding-agent";
 
+const authStorage = AuthStorage.create();
+const modelRegistry = ModelRegistry.create(authStorage);
 const { session } = await createAgentSession({
   sessionManager: SessionManager.inMemory(),
-  authStorage: AuthStorage.create(),
-  modelRegistry: ModelRegistry.create(authStorage),
+  authStorage,
+  modelRegistry,
 });
 
 await session.prompt("What files are in the current directory?");
 ```
+
+For advanced multi-session runtime replacement, use `createAgentSessionRuntime()` and `AgentSessionRuntime`.
 
 See [docs/sdk.md](docs/sdk.md) and [examples/sdk/](examples/sdk/).
 

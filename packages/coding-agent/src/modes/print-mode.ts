@@ -7,7 +7,7 @@
  */
 
 import type { AssistantMessage, ImageContent } from "@mariozechner/pi-ai";
-import type { AgentSession } from "../core/agent-session.js";
+import type { AgentSessionRuntime } from "../core/agent-session-runtime.js";
 import { flushRawStdout, writeRawStdout } from "../core/output-guard.js";
 
 /**
@@ -28,44 +28,46 @@ export interface PrintModeOptions {
  * Run in print (single-shot) mode.
  * Sends prompts to the agent and outputs the result.
  */
-export async function runPrintMode(session: AgentSession, options: PrintModeOptions): Promise<number> {
+export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: PrintModeOptions): Promise<number> {
 	const { mode, messages = [], initialMessage, initialImages } = options;
 	let exitCode = 0;
+	let session = runtimeHost.session;
+	let unsubscribe: (() => void) | undefined;
 
-	try {
-		if (mode === "json") {
-			const header = session.sessionManager.getHeader();
-			if (header) {
-				writeRawStdout(`${JSON.stringify(header)}\n`);
-			}
-		}
-		// Set up extensions for print mode (no UI)
+	const rebindSession = async (): Promise<void> => {
+		session = runtimeHost.session;
 		await session.bindExtensions({
 			commandContextActions: {
 				waitForIdle: () => session.agent.waitForIdle(),
-				newSession: async (options) => {
-					const success = await session.newSession({ parentSession: options?.parentSession });
-					if (success && options?.setup) {
-						await options.setup(session.sessionManager);
+				newSession: async (newSessionOptions) => {
+					const result = await runtimeHost.newSession(newSessionOptions);
+					if (!result.cancelled) {
+						await rebindSession();
 					}
-					return { cancelled: !success };
+					return result;
 				},
 				fork: async (entryId) => {
-					const result = await session.fork(entryId);
+					const result = await runtimeHost.fork(entryId);
+					if (!result.cancelled) {
+						await rebindSession();
+					}
 					return { cancelled: result.cancelled };
 				},
-				navigateTree: async (targetId, options) => {
+				navigateTree: async (targetId, navigateOptions) => {
 					const result = await session.navigateTree(targetId, {
-						summarize: options?.summarize,
-						customInstructions: options?.customInstructions,
-						replaceInstructions: options?.replaceInstructions,
-						label: options?.label,
+						summarize: navigateOptions?.summarize,
+						customInstructions: navigateOptions?.customInstructions,
+						replaceInstructions: navigateOptions?.replaceInstructions,
+						label: navigateOptions?.label,
 					});
 					return { cancelled: result.cancelled };
 				},
 				switchSession: async (sessionPath) => {
-					const success = await session.switchSession(sessionPath);
-					return { cancelled: !success };
+					const result = await runtimeHost.switchSession(sessionPath);
+					if (!result.cancelled) {
+						await rebindSession();
+					}
+					return result;
 				},
 				reload: async () => {
 					await session.reload();
@@ -76,38 +78,42 @@ export async function runPrintMode(session: AgentSession, options: PrintModeOpti
 			},
 		});
 
-		// Always subscribe to enable session persistence via _handleAgentEvent
-		session.subscribe((event) => {
-			// In JSON mode, output all events
+		unsubscribe?.();
+		unsubscribe = session.subscribe((event) => {
 			if (mode === "json") {
 				writeRawStdout(`${JSON.stringify(event)}\n`);
 			}
 		});
+	};
 
-		// Send initial message with attachments
+	try {
+		if (mode === "json") {
+			const header = session.sessionManager.getHeader();
+			if (header) {
+				writeRawStdout(`${JSON.stringify(header)}\n`);
+			}
+		}
+
+		await rebindSession();
+
 		if (initialMessage) {
 			await session.prompt(initialMessage, { images: initialImages });
 		}
 
-		// Send remaining messages
 		for (const message of messages) {
 			await session.prompt(message);
 		}
 
-		// In text mode, output final response
 		if (mode === "text") {
 			const state = session.state;
 			const lastMessage = state.messages[state.messages.length - 1];
 
 			if (lastMessage?.role === "assistant") {
 				const assistantMsg = lastMessage as AssistantMessage;
-
-				// Check for error/aborted
 				if (assistantMsg.stopReason === "error" || assistantMsg.stopReason === "aborted") {
 					console.error(assistantMsg.errorMessage || `Request ${assistantMsg.stopReason}`);
 					exitCode = 1;
 				} else {
-					// Output text content
 					for (const content of assistantMsg.content) {
 						if (content.type === "text") {
 							writeRawStdout(`${content.text}\n`);
@@ -118,14 +124,12 @@ export async function runPrintMode(session: AgentSession, options: PrintModeOpti
 		}
 
 		return exitCode;
+	} catch (error: unknown) {
+		console.error(error instanceof Error ? error.message : String(error));
+		return 1;
 	} finally {
-		const extensionRunner = session.extensionRunner;
-		if (extensionRunner?.hasHandlers("session_shutdown")) {
-			await extensionRunner.emit({ type: "session_shutdown" });
-		}
-
-		// Ensure stdout is fully flushed before returning
-		// This prevents race conditions where the process exits before all output is written
+		unsubscribe?.();
+		await runtimeHost.dispose();
 		await flushRawStdout();
 	}
 }

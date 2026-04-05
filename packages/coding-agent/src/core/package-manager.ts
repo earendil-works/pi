@@ -7,6 +7,7 @@ import ignore from "ignore";
 import { minimatch } from "minimatch";
 import { CONFIG_DIR_NAME } from "../config.js";
 import { type GitSource, parseGitUrl } from "../utils/git.js";
+import { isLocalPath } from "../utils/paths.js";
 import { isStdoutTakenOver } from "./output-guard.js";
 import type { PackageSource, SettingsManager } from "./settings-manager.js";
 
@@ -57,11 +58,21 @@ export interface PackageUpdate {
 	scope: Exclude<SourceScope, "temporary">;
 }
 
+export interface ConfiguredPackage {
+	source: string;
+	scope: "user" | "project";
+	filtered: boolean;
+	installedPath?: string;
+}
+
 export interface PackageManager {
 	resolve(onMissing?: (source: string) => Promise<MissingSourceAction>): Promise<ResolvedPaths>;
 	install(source: string, options?: { local?: boolean }): Promise<void>;
+	installAndPersist(source: string, options?: { local?: boolean }): Promise<void>;
 	remove(source: string, options?: { local?: boolean }): Promise<void>;
+	removeAndPersist(source: string, options?: { local?: boolean }): Promise<boolean>;
 	update(source?: string): Promise<void>;
+	listConfiguredPackages(): ConfiguredPackage[];
 	resolveExtensionSources(
 		sources: string[],
 		options?: { local?: boolean; temporary?: boolean },
@@ -106,6 +117,24 @@ interface ResourceAccumulator {
 	skills: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	prompts: Map<string, { metadata: PathMetadata; enabled: boolean }>;
 	themes: Map<string, { metadata: PathMetadata; enabled: boolean }>;
+}
+
+/**
+ * Compute a numeric precedence rank for a resource based on its metadata.
+ * Lower rank = higher precedence. Used to sort resolved resources so that
+ * name-collision resolution ("first wins") produces the correct outcome.
+ *
+ * Precedence (highest to lowest):
+ *   0  project + settings entry (source: "local", scope: "project")
+ *   1  project + auto-discovered (source: "auto", scope: "project")
+ *   2  user + settings entry (source: "local", scope: "user")
+ *   3  user + auto-discovered (source: "auto", scope: "user")
+ *   4  package resource (origin: "package")
+ */
+function resourcePrecedenceRank(m: PathMetadata): number {
+	if (m.origin === "package") return 4;
+	const scopeBase = m.scope === "project" ? 0 : 2;
+	return scopeBase + (m.source === "local" ? 0 : 1);
 }
 
 interface PackageFilter {
@@ -837,6 +866,34 @@ export class DefaultPackageManager implements PackageManager {
 		return this.toResolvedPaths(accumulator);
 	}
 
+	listConfiguredPackages(): ConfiguredPackage[] {
+		const globalSettings = this.settingsManager.getGlobalSettings();
+		const projectSettings = this.settingsManager.getProjectSettings();
+		const configuredPackages: ConfiguredPackage[] = [];
+
+		for (const pkg of globalSettings.packages ?? []) {
+			const source = typeof pkg === "string" ? pkg : pkg.source;
+			configuredPackages.push({
+				source,
+				scope: "user",
+				filtered: typeof pkg === "object",
+				installedPath: this.getInstalledPath(source, "user"),
+			});
+		}
+
+		for (const pkg of projectSettings.packages ?? []) {
+			const source = typeof pkg === "string" ? pkg : pkg.source;
+			configuredPackages.push({
+				source,
+				scope: "project",
+				filtered: typeof pkg === "object",
+				installedPath: this.getInstalledPath(source, "project"),
+			});
+		}
+
+		return configuredPackages;
+	}
+
 	async install(source: string, options?: { local?: boolean }): Promise<void> {
 		const parsed = this.parseSource(source);
 		const scope: SourceScope = options?.local ? "project" : "user";
@@ -860,6 +917,11 @@ export class DefaultPackageManager implements PackageManager {
 		});
 	}
 
+	async installAndPersist(source: string, options?: { local?: boolean }): Promise<void> {
+		await this.install(source, options);
+		this.addSourceToSettings(source, options);
+	}
+
 	async remove(source: string, options?: { local?: boolean }): Promise<void> {
 		const parsed = this.parseSource(source);
 		const scope: SourceScope = options?.local ? "project" : "user";
@@ -877,6 +939,11 @@ export class DefaultPackageManager implements PackageManager {
 			}
 			throw new Error(`Unsupported remove source: ${source}`);
 		});
+	}
+
+	async removeAndPersist(source: string, options?: { local?: boolean }): Promise<boolean> {
+		await this.remove(source, options);
+		return this.removeSourceFromSettings(source, options);
 	}
 
 	async update(source?: string): Promise<void> {
@@ -1192,15 +1259,7 @@ export class DefaultPackageManager implements PackageManager {
 			};
 		}
 
-		const trimmed = source.trim();
-		const isWindowsAbsolutePath = /^[A-Za-z]:[\\/]|^\\\\/.test(trimmed);
-		const isLocalPathLike =
-			trimmed.startsWith(".") ||
-			trimmed.startsWith("/") ||
-			trimmed === "~" ||
-			trimmed.startsWith("~/") ||
-			isWindowsAbsolutePath;
-		if (isLocalPathLike) {
+		if (isLocalPath(source)) {
 			return { type: "local", path: source };
 		}
 
@@ -2098,11 +2157,13 @@ export class DefaultPackageManager implements PackageManager {
 
 	private toResolvedPaths(accumulator: ResourceAccumulator): ResolvedPaths {
 		const toResolved = (entries: Map<string, { metadata: PathMetadata; enabled: boolean }>): ResolvedResource[] => {
-			return Array.from(entries.entries()).map(([path, { metadata, enabled }]) => ({
+			const resolved = Array.from(entries.entries()).map(([path, { metadata, enabled }]) => ({
 				path,
 				enabled,
 				metadata,
 			}));
+			resolved.sort((a, b) => resourcePrecedenceRank(a.metadata) - resourcePrecedenceRank(b.metadata));
+			return resolved;
 		};
 
 		return {

@@ -798,6 +798,14 @@ function startThemeWatcher(): void {
 			}
 			scheduleReload();
 		});
+		themeWatcher.on("error", () => {
+			try {
+				themeWatcher?.close();
+			} catch {
+				/* ignore */
+			}
+			themeWatcher = undefined;
+		});
 	} catch (_error) {
 		// Ignore errors starting watcher
 	}
@@ -915,16 +923,12 @@ export function getThemeExportColors(themeName?: string): {
 		if (!exportSection) return {};
 
 		const vars = themeJson.vars ?? {};
-		const resolve = (value: string | number | undefined): string | undefined => {
+		const resolve = (value: ColorValue | undefined): string | undefined => {
 			if (value === undefined) return undefined;
-			if (typeof value === "number") return ansi256ToHex(value);
-			if (value.startsWith("$")) {
-				const resolved = vars[value];
-				if (resolved === undefined) return undefined;
-				if (typeof resolved === "number") return ansi256ToHex(resolved);
-				return resolved;
-			}
-			return value;
+			const resolved = resolveVarRefs(value, vars);
+			if (typeof resolved === "number") return ansi256ToHex(resolved);
+			if (resolved === "") return undefined;
+			return resolved;
 		};
 
 		return {

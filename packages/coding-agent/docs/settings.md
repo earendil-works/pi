@@ -137,7 +137,7 @@ When a provider requests a retry delay longer than `maxDelayMs` (e.g., Google's 
 { "sessionDir": ".pi/sessions" }
 ```
 
-When multiple sources specify a session directory, `--session-dir` CLI flag takes precedence, then `sessionDir` in settings.json, then extension hooks.
+When multiple sources specify a session directory, `--session-dir` CLI flag takes precedence over `sessionDir` in settings.json.
 
 ### Model Cycling
 

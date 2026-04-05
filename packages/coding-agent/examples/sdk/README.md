@@ -1,6 +1,8 @@
 # SDK Examples
 
-Programmatic usage of pi-coding-agent via `createAgentSession()`.
+Programmatic usage of pi-coding-agent via `createAgentSession()` and `createAgentSessionRuntime()`.
+
+The runtime example shows how to build a recreate function that closes over process-global fixed inputs and recreates cwd-bound services and sessions as the active session cwd changes.
 
 ## Examples
 
@@ -18,6 +20,7 @@ Programmatic usage of pi-coding-agent via `createAgentSession()`.
 | `10-settings.ts` | Override compaction, retry, terminal settings |
 | `11-sessions.ts` | In-memory, persistent, continue, list sessions |
 | `12-full-control.ts` | Replace everything, no discovery |
+| `13-session-runtime.ts` | Manage runtime-backed session replacement |
 
 ## Running
 

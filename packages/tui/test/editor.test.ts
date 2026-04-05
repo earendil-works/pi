@@ -2458,6 +2458,48 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.getText(), "/model gpt-4o-mini");
 		});
 
+		it("awaits async slash command argument completions", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const provider = new CombinedAutocompleteProvider([
+				{
+					name: "load-skills",
+					description: "Load skills",
+					getArgumentCompletions: async (prefix) =>
+						prefix.startsWith("s") ? [{ value: "skill-a", label: "skill-a" }] : null,
+				},
+			]);
+			editor.setAutocompleteProvider(provider);
+			editor.setText("/load-skills ");
+
+			editor.handleInput("s");
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), true);
+
+			editor.handleInput("\t");
+			assert.strictEqual(editor.getText(), "/load-skills skill-a");
+			assert.strictEqual(editor.isShowingAutocomplete(), false);
+		});
+
+		it("ignores invalid slash command argument completion results", async () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			const provider = new CombinedAutocompleteProvider([
+				{
+					name: "load-skills",
+					description: "Load skills",
+					getArgumentCompletions: (() => "not-an-array") as unknown as (
+						argumentPrefix: string,
+					) => Promise<{ value: string; label: string }[] | null>,
+				},
+			]);
+			editor.setAutocompleteProvider(provider);
+			editor.setText("/load-skills ");
+
+			editor.handleInput("s");
+			await flushAutocomplete();
+			assert.strictEqual(editor.isShowingAutocomplete(), false);
+			assert.strictEqual(editor.getText(), "/load-skills s");
+		});
+
 		it("does not show argument completions when command has no argument completer", async () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			const provider = new CombinedAutocompleteProvider([

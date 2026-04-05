@@ -13,7 +13,7 @@
  * - notify() - after each dialog completes
  * - setStatus() - on turn_start/turn_end
  * - setWidget() - on session_start
- * - setTitle() - on session_start and session_switch
+ * - setTitle() - on session_start
  * - setEditorText() - via /rpc-prefill command
  */
 
@@ -24,15 +24,9 @@ export default function (pi: ExtensionAPI) {
 
 	// -- setTitle, setWidget, setStatus on session lifecycle --
 
-	pi.on("session_start", async (_event, ctx) => {
-		ctx.ui.setTitle("pi RPC Demo");
+	pi.on("session_start", async (event, ctx) => {
+		ctx.ui.setTitle(event.reason === "new" ? "pi RPC Demo (new session)" : "pi RPC Demo");
 		ctx.ui.setWidget("rpc-demo", ["--- RPC Extension UI Demo ---", "Loaded and ready."]);
-		ctx.ui.setStatus("rpc-demo", `Turns: ${turnCount}`);
-	});
-
-	pi.on("session_switch", async (_event, ctx) => {
-		turnCount = 0;
-		ctx.ui.setTitle("pi RPC Demo (new session)");
 		ctx.ui.setStatus("rpc-demo", `Turns: ${turnCount}`);
 	});
 

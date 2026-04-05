@@ -9,6 +9,7 @@ import type { AssistantMessage } from "../types.js";
  * Provider-specific patterns (with example error messages):
  *
  * - Anthropic: "prompt is too long: 213462 tokens > 200000 maximum"
+ * - Anthropic: "413 {\"error\":{\"type\":\"request_too_large\",\"message\":\"Request exceeds the maximum size\"}}"
  * - OpenAI: "Your input exceeds the context window of this model"
  * - Google: "The input token count (1196265) exceeds the maximum number of tokens allowed (1048575)"
  * - xAI: "This model's maximum prompt length is 131072 but the request contains 537812 tokens"
@@ -25,7 +26,8 @@ import type { AssistantMessage } from "../types.js";
  * - Ollama: Some deployments truncate silently, others return errors like "prompt too long; exceeded max context length by X tokens"
  */
 const OVERFLOW_PATTERNS = [
-	/prompt is too long/i, // Anthropic
+	/prompt is too long/i, // Anthropic token overflow
+	/request_too_large/i, // Anthropic request byte-size overflow (HTTP 413)
 	/input is too long for requested model/i, // Amazon Bedrock
 	/exceeds the context window/i, // OpenAI (Completions & Responses API)
 	/input token count.*exceeds the maximum/i, // Google (Gemini)
@@ -73,7 +75,7 @@ const NON_OVERFLOW_PATTERNS = [
  * ## Reliability by Provider
  *
  * **Reliable detection (returns error with detectable message):**
- * - Anthropic: "prompt is too long: X tokens > Y maximum"
+ * - Anthropic: "prompt is too long: X tokens > Y maximum" or "request_too_large"
  * - OpenAI (Completions & Responses): "exceeds the context window"
  * - Google Gemini: "input token count exceeds the maximum"
  * - xAI (Grok): "maximum prompt length is X but request contains Y"

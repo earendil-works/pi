@@ -16,6 +16,8 @@ export interface ToolHtmlRendererDeps {
 	getToolDefinition: (name: string) => ToolDefinition | undefined;
 	/** Theme for styling */
 	theme: Theme;
+	/** Working directory for render context */
+	cwd: string;
 	/** Terminal width for rendering (default: 100) */
 	width?: number;
 }
@@ -40,7 +42,7 @@ export interface ToolHtmlRenderer {
  * methods, converting the resulting TUI Component output (ANSI) to HTML.
  */
 export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRenderer {
-	const { getToolDefinition, theme, width = 100 } = deps;
+	const { getToolDefinition, theme, cwd, width = 100 } = deps;
 
 	const renderedCallComponents = new Map<string, Component>();
 	const renderedResultComponents = new Map<string, Component>();
@@ -69,7 +71,7 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 			invalidate: () => {},
 			lastComponent,
 			state: getState(toolCallId),
-			cwd: process.cwd(),
+			cwd,
 			executionStarted: true,
 			argsComplete: true,
 			isPartial,

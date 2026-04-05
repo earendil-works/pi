@@ -11,6 +11,20 @@ export {
 	type PromptOptions,
 	type SessionStats,
 } from "./agent-session.js";
+export {
+	AgentSessionRuntime,
+	type CreateAgentSessionRuntimeFactory,
+	type CreateAgentSessionRuntimeResult,
+	createAgentSessionRuntime,
+} from "./agent-session-runtime.js";
+export {
+	type AgentSessionRuntimeDiagnostic,
+	type AgentSessionServices,
+	type CreateAgentSessionFromServicesOptions,
+	type CreateAgentSessionServicesOptions,
+	createAgentSessionFromServices,
+	createAgentSessionServices,
+} from "./agent-session-services.js";
 export { type BashExecutorOptions, type BashResult, executeBash, executeBashWithOperations } from "./bash-executor.js";
 export type { CompactionResult } from "./compaction/index.js";
 export { createEventBus, type EventBus, type EventBusController } from "./event-bus.js";
@@ -22,6 +36,7 @@ export {
 	type AgentToolUpdateCallback,
 	type BeforeAgentStartEvent,
 	type ContextEvent,
+	defineTool,
 	discoverAndLoadExtensions,
 	type ExecOptions,
 	type ExecResult,
@@ -45,10 +60,8 @@ export {
 	type SessionBeforeSwitchEvent,
 	type SessionBeforeTreeEvent,
 	type SessionCompactEvent,
-	type SessionForkEvent,
 	type SessionShutdownEvent,
 	type SessionStartEvent,
-	type SessionSwitchEvent,
 	type SessionTreeEvent,
 	type ToolCallEvent,
 	type ToolCallEventResult,

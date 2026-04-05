@@ -408,8 +408,21 @@ export async function processResponsesStream<TApi extends Api>(
 			}
 		} else if (event.type === "response.function_call_arguments.done") {
 			if (currentItem?.type === "function_call" && currentBlock?.type === "toolCall") {
+				const previousPartialJson = currentBlock.partialJson;
 				currentBlock.partialJson = event.arguments;
 				currentBlock.arguments = parseStreamingJson(currentBlock.partialJson);
+
+				if (event.arguments.startsWith(previousPartialJson)) {
+					const delta = event.arguments.slice(previousPartialJson.length);
+					if (delta.length > 0) {
+						stream.push({
+							type: "toolcall_delta",
+							contentIndex: blockIndex(),
+							delta,
+							partial: output,
+						});
+					}
+				}
 			}
 		} else if (event.type === "response.output_item.done") {
 			const item = event.item;

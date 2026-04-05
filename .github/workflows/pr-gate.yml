@@ -81,34 +81,6 @@ jobs:
               .filter(line => line && !line.startsWith('#'));
             const isApprovedContributor = approvedList.includes(prAuthor.toLowerCase());
 
-            let weekendState = null;
-            try {
-              weekendState = JSON.parse(await getTextFile('.github/oss-weekend.json'));
-            } catch (error) {
-              if (!(error && typeof error === 'object' && 'status' in error && error.status === 404)) {
-                throw error;
-              }
-            }
-
-            if (weekendState?.active && isApprovedContributor) {
-              console.log(`${prAuthor} is approved, but OSS weekend is active`);
-
-              const reopenDate = weekendState.reopensOnText || weekendState.reopensOn || 'after the weekend';
-              const discordUrl = weekendState.discordUrl || 'https://discord.com/invite/3cU7Bz4UPx';
-              const message = [
-                `Hi @${prAuthor}, thanks for the PR.`,
-                '',
-                `OSS weekend is active until ${reopenDate}, so external PRs are being paused for now.`,
-                '',
-                'You are already on the approved contributors list, so you can resubmit this PR after the weekend without reapproval.',
-                '',
-                `This PR will be closed automatically. For support, join [Discord](${discordUrl}).`,
-              ].join('\n');
-
-              await closePullRequest(message);
-              return;
-            }
-
             if (isApprovedContributor) {
               console.log(`${prAuthor} is in the approved contributors list`);
               return;

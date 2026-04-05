@@ -2141,7 +2141,7 @@ export class Editor implements Component, Focusable {
 
 		this.autocompleteAbort = undefined;
 
-		if (!suggestions || suggestions.items.length === 0) {
+		if (!suggestions || !Array.isArray(suggestions.items) || suggestions.items.length === 0) {
 			this.cancelAutocomplete();
 			this.tui.requestRender();
 			return;

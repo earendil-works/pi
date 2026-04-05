@@ -60,8 +60,8 @@ emcc -O2 \
     -s FORCE_FILESYSTEM=1 \
     -s EXIT_RUNTIME=0 \
     -s NO_EXIT_RUNTIME=1 \
-    -DDOOMGENERIC_RESX=$RESX \
-    -DDOOMGENERIC_RESY=$RESY \
+    -DDOOMGENERIC_RESX="$RESX" \
+    -DDOOMGENERIC_RESY="$RESY" \
     -I. \
     am_map.c \
     d_event.c \

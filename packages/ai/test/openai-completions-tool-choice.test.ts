@@ -13,7 +13,7 @@ const mockState = vi.hoisted(() => ({
 				usage?: {
 					prompt_tokens: number;
 					completion_tokens: number;
-					prompt_tokens_details: { cached_tokens: number };
+					prompt_tokens_details: { cached_tokens: number; cache_write_tokens?: number };
 					completion_tokens_details: { reasoning_tokens: number };
 				};
 		  }>
@@ -200,6 +200,159 @@ describe("openai-completions tool_choice", () => {
 		expect(params.reasoning_effort).toBe("medium");
 	});
 
+	it("enables tool_stream for supported z.ai models with tools", async () => {
+		const model = getModel("zai", "glm-5")!;
+		const tools: Tool[] = [
+			{
+				name: "ping",
+				description: "Ping tool",
+				parameters: Type.Object({
+					ok: Type.Boolean(),
+				}),
+			},
+		];
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Call ping with ok=true",
+						timestamp: Date.now(),
+					},
+				],
+				tools,
+			},
+			{
+				apiKey: "test",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as { tool_stream?: boolean };
+		expect(params.tool_stream).toBe(true);
+	});
+
+	it("stores z.ai tool_stream support in model compat metadata", () => {
+		expect(getModel("zai", "glm-5")?.compat?.zaiToolStream).toBe(true);
+		expect(getModel("zai", "glm-4.7")?.compat?.zaiToolStream).toBe(true);
+		expect(getModel("zai", "glm-4.7-flash")?.compat?.zaiToolStream).toBe(true);
+		expect(getModel("zai", "glm-4.6v")?.compat?.zaiToolStream).toBe(true);
+		expect(getModel("zai", "glm-4.5-air")?.compat?.zaiToolStream).toBeUndefined();
+	});
+
+	it("omits tool_stream for unsupported z.ai models", async () => {
+		const model = getModel("zai", "glm-4.5-air")!;
+		const tools: Tool[] = [
+			{
+				name: "ping",
+				description: "Ping tool",
+				parameters: Type.Object({
+					ok: Type.Boolean(),
+				}),
+			},
+		];
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Call ping with ok=true",
+						timestamp: Date.now(),
+					},
+				],
+				tools,
+			},
+			{
+				apiKey: "test",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as { tool_stream?: boolean };
+		expect(params.tool_stream).toBeUndefined();
+	});
+
+	it("respects explicit z.ai tool_stream compat override", async () => {
+		const baseModel = getModel("zai", "glm-4.5-air")!;
+		const model = {
+			...baseModel,
+			compat: {
+				...baseModel.compat,
+				zaiToolStream: true,
+			},
+		} as const;
+		const tools: Tool[] = [
+			{
+				name: "ping",
+				description: "Ping tool",
+				parameters: Type.Object({
+					ok: Type.Boolean(),
+				}),
+			},
+		];
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Call ping with ok=true",
+						timestamp: Date.now(),
+					},
+				],
+				tools,
+			},
+			{
+				apiKey: "test",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as { tool_stream?: boolean };
+		expect(params.tool_stream).toBe(true);
+	});
+
+	it("omits tool_stream when no tools are provided", async () => {
+		const model = getModel("zai", "glm-5")!;
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Hi",
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{
+				apiKey: "test",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as { tool_stream?: boolean };
+		expect(params.tool_stream).toBeUndefined();
+	});
+
 	it("maps non-standard provider finish_reason values to stopReason error", async () => {
 		mockState.chunks = [
 			{
@@ -275,6 +428,91 @@ describe("openai-completions tool_choice", () => {
 		expect(response.responseId).toBe("chatcmpl-test");
 		expect(response.usage.totalTokens).toBe(4);
 		expect(response.content).toEqual([{ type: "text", text: "OK" }]);
+	});
+
+	it("preserves prompt_tokens_details.cache_write_tokens from chunk usage", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-cache-write",
+				choices: [{ delta: { content: "OK" }, finish_reason: null }],
+			},
+			{
+				id: "chatcmpl-cache-write",
+				choices: [{ delta: {}, finish_reason: "stop" }],
+				usage: {
+					prompt_tokens: 100,
+					completion_tokens: 5,
+					prompt_tokens_details: { cached_tokens: 50, cache_write_tokens: 30 },
+					completion_tokens_details: { reasoning_tokens: 0 },
+				},
+			},
+		];
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const response = await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Reply with exactly OK",
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect(response.usage.input).toBe(50);
+		expect(response.usage.cacheRead).toBe(20);
+		expect(response.usage.cacheWrite).toBe(30);
+		expect(response.usage.totalTokens).toBe(105);
+	});
+
+	it("preserves prompt_tokens_details.cache_write_tokens from choice usage fallback", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-cache-write-choice",
+				choices: [{ delta: { content: "OK" }, finish_reason: null }],
+			},
+			{
+				id: "chatcmpl-cache-write-choice",
+				choices: [
+					{
+						delta: {},
+						finish_reason: "stop",
+						usage: {
+							prompt_tokens: 100,
+							completion_tokens: 5,
+							prompt_tokens_details: { cached_tokens: 50, cache_write_tokens: 30 },
+							completion_tokens_details: { reasoning_tokens: 0 },
+						},
+					},
+				],
+			},
+		];
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const response = await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Reply with exactly OK",
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect(response.usage.input).toBe(50);
+		expect(response.usage.cacheRead).toBe(20);
+		expect(response.usage.cacheWrite).toBe(30);
+		expect(response.usage.totalTokens).toBe(105);
 	});
 
 	it("uses OpenRouter reasoning object instead of reasoning_effort", async () => {
