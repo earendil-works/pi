@@ -1,5 +1,6 @@
 import type {
 	AssistantMessage as AssistantMessageType,
+	FileContent,
 	ImageContent,
 	TextContent,
 	ToolCall,
@@ -17,7 +18,7 @@ import type { AgentTool } from "@mariozechner/pi-agent-core";
 
 export type UserMessageWithAttachments = {
 	role: "user-with-attachments";
-	content: string | (TextContent | ImageContent)[];
+	content: string | (TextContent | ImageContent | FileContent)[];
 	timestamp: number;
 	attachments?: Attachment[];
 };
@@ -56,7 +57,8 @@ export class UserMessage extends LitElement {
 		const content =
 			typeof this.message.content === "string"
 				? this.message.content
-				: this.message.content.find((c) => c.type === "text")?.text || "";
+				: this.message.content.find((contentBlock): contentBlock is TextContent => contentBlock.type === "text")
+						?.text || "";
 
 		return html`
 			<div class="flex justify-start mx-4">
@@ -357,7 +359,7 @@ export function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
 		.map((m): Message | null => {
 			// Convert user-with-attachments to user message with content blocks
 			if (isUserMessageWithAttachments(m)) {
-				const textContent: (TextContent | ImageContent)[] =
+				const textContent: (TextContent | ImageContent | FileContent)[] =
 					typeof m.content === "string" ? [{ type: "text", text: m.content }] : [...m.content];
 
 				if (m.attachments) {
