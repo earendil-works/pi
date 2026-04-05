@@ -6,6 +6,11 @@
 
 - Added Fireworks as a built-in provider with Kimi K2.5 Turbo model (OpenAI-compatible API)
 
+### Changed
+
+- Updated Kimi K2.5 Turbo pricing ($0.60 input / $0.10 cached / $3.00 output per 1M tokens) and added image input support
+- Removed Gemma 4 26B and Gemma 4 31B models from Google provider
+
 ## [0.65.0] - 2026-04-03
 
 ### Added
