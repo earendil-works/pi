@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Deduplicate `app_mention` vs `message` for the same Slack message (`channel:ts` claim) so @mentions do not run the agent twice.
+
+### Changed
+
+- Default Slack tool threads are compact: `read` omits file body (one line); other tools truncate long results. Set `MOM_SLACK_FULL_TOOL_RESULTS=1` for the previous verbose dumps.
+
 ## [0.65.1] - 2026-04-05
 
 ### Added

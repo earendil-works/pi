@@ -2,6 +2,7 @@ import { Cron } from "croner";
 import { existsSync, type FSWatcher, mkdirSync, readdirSync, statSync, unlinkSync, watch } from "fs";
 import { readFile } from "fs/promises";
 import { join } from "path";
+import { MOM_EVENTS_SESSION_ROOT } from "./conversation.js";
 import * as log from "./log.js";
 import type { SlackBot, SlackEvent } from "./slack.js";
 
@@ -339,6 +340,7 @@ export class EventsWatcher {
 			user: "EVENT",
 			text: message,
 			ts: Date.now().toString(),
+			threadTs: MOM_EVENTS_SESSION_ROOT,
 		};
 
 		// Enqueue for processing

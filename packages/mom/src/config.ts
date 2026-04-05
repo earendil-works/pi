@@ -20,6 +20,10 @@ export interface MomRuntimeConfig {
 	slackDedupeMessages: boolean;
 	slackPostCompactionNotice: boolean;
 	slackPostRetryNotice: boolean;
+	/** If false: read tool omits file body in Slack; other tools truncate long results */
+	slackFullToolThreadDump: boolean;
+	/** 0 = unlimited parallel conversations per Slack channel */
+	maxConversationsPerChannel: number;
 }
 
 let cached: MomRuntimeConfig | null = null;
@@ -28,6 +32,12 @@ function parseBool(v: string | undefined, defaultVal: boolean): boolean {
 	if (v === undefined || v === "") return defaultVal;
 	const s = v.toLowerCase();
 	return s === "1" || s === "true" || s === "yes";
+}
+
+function parseNonNegInt(v: string | undefined, defaultVal: number): number {
+	if (v === undefined || v === "") return defaultVal;
+	const n = parseInt(v, 10);
+	return Number.isFinite(n) && n >= 0 ? n : defaultVal;
 }
 
 export function buildMomConfig(): MomRuntimeConfig {
@@ -49,6 +59,8 @@ export function buildMomConfig(): MomRuntimeConfig {
 		slackDedupeMessages: quiet ? true : parseBool(process.env.MOM_SLACK_DEDUPE_MESSAGES, false),
 		slackPostCompactionNotice: quiet ? false : parseBool(process.env.MOM_SLACK_POST_COMPACTION_NOTICE, true),
 		slackPostRetryNotice: quiet ? false : parseBool(process.env.MOM_SLACK_POST_RETRY_NOTICE, true),
+		slackFullToolThreadDump: parseBool(process.env.MOM_SLACK_FULL_TOOL_RESULTS, false),
+		maxConversationsPerChannel: parseNonNegInt(process.env.MOM_MAX_CONVERSATIONS, 0),
 	};
 }
 

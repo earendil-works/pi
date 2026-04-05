@@ -4,6 +4,7 @@ import { existsSync } from "fs";
 import { join, resolve } from "path";
 import { type AgentRunner, getOrCreateRunner } from "./agent.js";
 import { getMomConfig, initMomConfig } from "./config.js";
+import { getConversationKey, getSessionThreadRoot } from "./conversation.js";
 import { downloadChannel } from "./download.js";
 import { createEventsWatcher } from "./events.js";
 import * as log from "./log.js";
@@ -88,10 +89,10 @@ const trackedThreads = momConfig.trackThreads ? new TrackedThreadsManager(workin
 trackedThreads?.load();
 
 // ============================================================================
-// State (per channel)
+// State (per Slack conversation = channel + thread root)
 // ============================================================================
 
-interface ChannelState {
+interface ConversationState {
 	running: boolean;
 	runner: AgentRunner;
 	store: ChannelStore;
@@ -99,19 +100,33 @@ interface ChannelState {
 	stopMessageTs?: string;
 }
 
-const channelStates = new Map<string, ChannelState>();
+const conversationStates = new Map<string, ConversationState>();
+const channelStores = new Map<string, ChannelStore>();
 
-function getState(channelId: string): ChannelState {
-	let state = channelStates.get(channelId);
+function getChannelStore(channelId: string): ChannelStore {
+	let store = channelStores.get(channelId);
+	if (!store) {
+		store = new ChannelStore({ workingDir, botToken: MOM_SLACK_BOT_TOKEN! });
+		channelStores.set(channelId, store);
+	}
+	return store;
+}
+
+function getConversationState(
+	conversationKey: string,
+	channelId: string,
+	sessionThreadRoot: string,
+): ConversationState {
+	let state = conversationStates.get(conversationKey);
 	if (!state) {
 		const channelDir = join(workingDir, channelId);
 		state = {
 			running: false,
-			runner: getOrCreateRunner(sandbox, channelId, channelDir),
-			store: new ChannelStore({ workingDir, botToken: MOM_SLACK_BOT_TOKEN! }),
+			runner: getOrCreateRunner(sandbox, channelId, channelDir, sessionThreadRoot),
+			store: getChannelStore(channelId),
 			stopRequested: false,
 		};
-		channelStates.set(channelId, state);
+		conversationStates.set(conversationKey, state);
 	}
 	return state;
 }
@@ -120,7 +135,13 @@ function getState(channelId: string): ChannelState {
 // Create SlackContext adapter
 // ============================================================================
 
-function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelState, isEvent?: boolean) {
+function createSlackContext(
+	event: SlackEvent,
+	slack: SlackBot,
+	state: ConversationState,
+	threadRootForLog: string,
+	isEvent?: boolean,
+) {
 	let messageTs: string | null = null;
 	const threadMessageTs: string[] = [];
 	let accumulatedText = "";
@@ -185,7 +206,7 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 					lastDisplayText = displayText;
 
 					if (shouldLog && messageTs) {
-						slack.logBotResponse(event.channel, text, messageTs);
+						slack.logBotResponse(event.channel, text, messageTs, threadRootForLog);
 					}
 				} catch (err) {
 					log.logWarning("Slack respond error", err instanceof Error ? err.message : String(err));
@@ -350,29 +371,52 @@ async function maybeTranscribeVoiceAttachments(event: SlackEvent, channelDir: st
 // ============================================================================
 
 const handler: MomHandler = {
-	isRunning(channelId: string): boolean {
-		const state = channelStates.get(channelId);
+	isRunning(conversationKey: string): boolean {
+		const state = conversationStates.get(conversationKey);
 		return state?.running ?? false;
+	},
+
+	countRunningConversationsInChannel(channelId: string): number {
+		const prefix = `${channelId}:`;
+		let n = 0;
+		for (const [key, state] of conversationStates) {
+			if (key.startsWith(prefix) && state.running) {
+				n++;
+			}
+		}
+		return n;
 	},
 
 	isTrackedThread(channelId: string, threadTs: string): boolean {
 		return trackedThreads?.isTracked(channelId, threadTs) ?? false;
 	},
 
-	async handleStop(channelId: string, slack: SlackBot): Promise<void> {
-		const state = channelStates.get(channelId);
+	async handleStop(
+		conversationKey: string,
+		slack: SlackBot,
+		replyTarget: { channel: string; threadTs?: string },
+	): Promise<void> {
+		const state = conversationStates.get(conversationKey);
 		if (state?.running) {
 			state.stopRequested = true;
 			state.runner.abort();
-			const ts = await slack.postMessage(channelId, "_Stopping..._");
-			state.stopMessageTs = ts; // Save for updating later
+			const ts = replyTarget.threadTs
+				? await slack.postInThread(replyTarget.channel, replyTarget.threadTs, "_Stopping..._")
+				: await slack.postMessage(replyTarget.channel, "_Stopping..._");
+			state.stopMessageTs = ts;
 		} else {
-			await slack.postMessage(channelId, "_Nothing running_");
+			if (replyTarget.threadTs) {
+				await slack.postInThread(replyTarget.channel, replyTarget.threadTs, "_Nothing running_");
+			} else {
+				await slack.postMessage(replyTarget.channel, "_Nothing running_");
+			}
 		}
 	},
 
 	async handleEvent(event: SlackEvent, slack: SlackBot, isEvent?: boolean): Promise<void> {
-		const state = getState(event.channel);
+		const sessionThreadRoot = getSessionThreadRoot(event);
+		const conversationKey = getConversationKey(event.channel, sessionThreadRoot);
+		const state = getConversationState(conversationKey, event.channel, sessionThreadRoot);
 		const cfg = getMomConfig();
 		const channelDir = join(workingDir, event.channel);
 
@@ -409,7 +453,7 @@ const handler: MomHandler = {
 			}
 
 			// Create context adapter
-			const ctx = createSlackContext(event, slack, state, isEvent);
+			const ctx = createSlackContext(event, slack, state, sessionThreadRoot, isEvent);
 
 			// Run the agent
 			await ctx.setTyping(true);
@@ -423,7 +467,12 @@ const handler: MomHandler = {
 					await slack.updateMessage(event.channel, state.stopMessageTs, "_Stopped_");
 					state.stopMessageTs = undefined;
 				} else {
-					await slack.postMessage(event.channel, "_Stopped_");
+					const parentTs = event.threadTs;
+					if (parentTs) {
+						await slack.postInThread(event.channel, parentTs, "_Stopped_");
+					} else {
+						await slack.postMessage(event.channel, "_Stopped_");
+					}
 				}
 			}
 		} catch (err) {

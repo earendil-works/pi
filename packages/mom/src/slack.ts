@@ -2,8 +2,15 @@ import { SocketModeClient } from "@slack/socket-mode";
 import { WebClient } from "@slack/web-api";
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import { basename, join } from "path";
+import { getMomConfig } from "./config.js";
+import { getConversationKey, getSessionThreadRoot, MOM_EVENTS_SESSION_ROOT } from "./conversation.js";
 import * as log from "./log.js";
 import type { Attachment, ChannelStore } from "./store.js";
+
+function textMentionsBot(text: string | undefined, botUserId: string | null): boolean {
+	if (!botUserId || !text) return false;
+	return text.includes(`<@${botUserId}>`) || text.includes(`<@${botUserId}|`);
+}
 
 // ============================================================================
 // Types
@@ -75,22 +82,28 @@ export interface SlackContext {
 
 export interface MomHandler {
 	/**
-	 * Check if channel is currently running (SYNC)
+	 * True if this Slack conversation (channel + thread root) has an active agent run.
 	 */
-	isRunning(channelId: string): boolean;
+	isRunning(conversationKey: string): boolean;
+
+	/**
+	 * Number of conversations in this Slack channel with an active run (parallel cap).
+	 */
+	countRunningConversationsInChannel(channelId: string): number;
 
 	/**
 	 * Handle an event that triggers mom (ASYNC)
-	 * Called only when isRunning() returned false for user messages.
-	 * Events always queue and pass isEvent=true.
 	 */
 	handleEvent(event: SlackEvent, slack: SlackBot, isEvent?: boolean): Promise<void>;
 
 	/**
-	 * Handle stop command (ASYNC)
-	 * Called when user says "stop" while mom is running
+	 * Abort the run for this conversation; post status to the user's thread when possible.
 	 */
-	handleStop(channelId: string, slack: SlackBot): Promise<void>;
+	handleStop(
+		conversationKey: string,
+		slack: SlackBot,
+		replyTarget: { channel: string; threadTs?: string },
+	): Promise<void>;
 
 	/**
 	 * When MOM_TRACK_THREADS is enabled: true if channel thread root is tracked (follow-ups without @mention).
@@ -99,7 +112,7 @@ export interface MomHandler {
 }
 
 // ============================================================================
-// Per-channel queue for sequential processing
+// Per-conversation queue (Slack channel + thread root) for sequential processing
 // ============================================================================
 
 type QueuedWork = () => Promise<void>;
@@ -143,6 +156,10 @@ export class SlackBot {
 	private store: ChannelStore;
 	private botUserId: string | null = null;
 	private startupTs: string | null = null; // Messages older than this are just logged, not processed
+
+	/** app_mention + message can both fire for one user post; first handler to claim wins */
+	private slackUserMessageClaimTimes = new Map<string, number>();
+	private readonly slackUserMessageClaimTtlMs = 120_000;
 
 	private users = new Map<string, SlackUser>();
 	private channels = new Map<string, SlackChannel>();
@@ -255,7 +272,7 @@ export class SlackBot {
 	/**
 	 * Log a bot response to log.jsonl
 	 */
-	logBotResponse(channel: string, text: string, ts: string): void {
+	logBotResponse(channel: string, text: string, ts: string, threadRoot: string): void {
 		this.logToFile(channel, {
 			date: new Date().toISOString(),
 			ts,
@@ -263,6 +280,7 @@ export class SlackBot {
 			text,
 			attachments: [],
 			isBot: true,
+			threadRoot,
 		});
 	}
 
@@ -275,7 +293,8 @@ export class SlackBot {
 	 * Returns true if enqueued, false if queue is full (max 5).
 	 */
 	enqueueEvent(event: SlackEvent): boolean {
-		const queue = this.getQueue(event.channel);
+		const conversationKey = getConversationKey(event.channel, MOM_EVENTS_SESSION_ROOT);
+		const queue = this.getQueue(conversationKey);
 		if (queue.size() >= 5) {
 			log.logWarning(`Event queue full for ${event.channel}, discarding: ${event.text.substring(0, 50)}`);
 			return false;
@@ -289,13 +308,45 @@ export class SlackBot {
 	// Private - Event Handlers
 	// ==========================================================================
 
-	private getQueue(channelId: string): ChannelQueue {
-		let queue = this.queues.get(channelId);
+	private getQueue(conversationKey: string): ChannelQueue {
+		let queue = this.queues.get(conversationKey);
 		if (!queue) {
 			queue = new ChannelQueue();
-			this.queues.set(channelId, queue);
+			this.queues.set(conversationKey, queue);
 		}
 		return queue;
+	}
+
+	/** Returns false if this channel+ts was already claimed (duplicate Slack event). */
+	private tryClaimUserMessageForAgent(channel: string, ts: string): boolean {
+		const key = `${channel}:${ts}`;
+		const now = Date.now();
+		for (const [k, t] of this.slackUserMessageClaimTimes) {
+			if (now - t > this.slackUserMessageClaimTtlMs) {
+				this.slackUserMessageClaimTimes.delete(k);
+			}
+		}
+		if (this.slackUserMessageClaimTimes.has(key)) {
+			log.logInfo(`Deduped duplicate Slack event for ${key}`);
+			return false;
+		}
+		this.slackUserMessageClaimTimes.set(key, now);
+		return true;
+	}
+
+	private async replyInContext(channel: string, threadTs: string | undefined, text: string): Promise<void> {
+		if (threadTs) {
+			await this.postInThread(channel, threadTs, text);
+		} else {
+			await this.postMessage(channel, text);
+		}
+	}
+
+	private shouldEnqueueUserWork(channelId: string, conversationKey: string): boolean {
+		const max = getMomConfig().maxConversationsPerChannel;
+		if (max <= 0) return true;
+		if (this.handler.isRunning(conversationKey)) return true;
+		return this.handler.countRunningConversationsInChannel(channelId) < max;
 	}
 
 	private setupEventHandlers(): void {
@@ -345,23 +396,39 @@ export class SlackBot {
 				return;
 			}
 
+			const conversationKey = getConversationKey(e.channel, getSessionThreadRoot(slackEvent));
+			const replyThreadTs = e.thread_ts;
+
 			// Check for stop command - execute immediately, don't queue!
 			if (slackEvent.text.toLowerCase().trim() === "stop") {
-				if (this.handler.isRunning(e.channel)) {
-					this.handler.handleStop(e.channel, this); // Don't await, don't queue
+				if (this.handler.isRunning(conversationKey)) {
+					void this.handler.handleStop(conversationKey, this, {
+						channel: e.channel,
+						threadTs: replyThreadTs,
+					});
 				} else {
-					this.postMessage(e.channel, "_Nothing running_");
+					void this.replyInContext(e.channel, replyThreadTs, "_Nothing running_");
 				}
 				ack();
 				return;
 			}
 
-			// SYNC: Check if busy
-			if (this.handler.isRunning(e.channel)) {
-				this.postMessage(e.channel, "_Already working. Say `@mom stop` to cancel._");
-			} else {
-				this.getQueue(e.channel).enqueue(() => this.handler.handleEvent(slackEvent, this));
+			if (!this.shouldEnqueueUserWork(e.channel, conversationKey)) {
+				void this.replyInContext(
+					e.channel,
+					replyThreadTs,
+					`_Too many parallel conversations in this channel (limit). Wait for one to finish or say \`stop\` in its thread._`,
+				);
+				ack();
+				return;
 			}
+
+			if (!this.tryClaimUserMessageForAgent(e.channel, e.ts)) {
+				ack();
+				return;
+			}
+
+			this.getQueue(conversationKey).enqueue(() => this.handler.handleEvent(slackEvent, this));
 
 			ack();
 		});
@@ -400,8 +467,8 @@ export class SlackBot {
 				return;
 			}
 
-			const isDM = e.channel_type === "im";
-			const isBotMention = e.text?.includes(`<@${this.botUserId}>`);
+			const isDM = e.channel_type === "im" || e.channel.startsWith("D");
+			const isBotMention = textMentionsBot(e.text, this.botUserId);
 
 			// Skip channel @mentions - already handled by app_mention event
 			if (!isDM && isBotMention) {
@@ -438,25 +505,41 @@ export class SlackBot {
 
 			// Trigger handler for DMs or replies in tracked threads (no @mention)
 			if (isDM || isTrackedReply) {
+				const conversationKey = getConversationKey(e.channel, getSessionThreadRoot(slackEvent));
+				const replyThreadTs = e.thread_ts;
+
 				// Check for stop command - execute immediately, don't queue!
 				if (slackEvent.text.toLowerCase().trim() === "stop") {
-					if (this.handler.isRunning(e.channel)) {
-						this.handler.handleStop(e.channel, this); // Don't await, don't queue
+					if (this.handler.isRunning(conversationKey)) {
+						void this.handler.handleStop(conversationKey, this, {
+							channel: e.channel,
+							threadTs: replyThreadTs,
+						});
 					} else {
-						this.postMessage(e.channel, "_Nothing running_");
+						void this.replyInContext(e.channel, replyThreadTs, "_Nothing running_");
 					}
 					ack();
 					return;
 				}
 
-				if (this.handler.isRunning(e.channel)) {
-					this.postMessage(
+				if (!this.shouldEnqueueUserWork(e.channel, conversationKey)) {
+					void this.replyInContext(
 						e.channel,
-						isDM ? "_Already working. Say `stop` to cancel._" : "_Already working. Say `@mom stop` to cancel._",
+						replyThreadTs,
+						isDM
+							? "_Too many parallel conversations (limit). Wait or say `stop` in a thread._"
+							: "_Too many parallel conversations in this channel (limit). Wait or say `stop` in a thread._",
 					);
-				} else {
-					this.getQueue(e.channel).enqueue(() => this.handler.handleEvent(slackEvent, this));
+					ack();
+					return;
 				}
+
+				if (!this.tryClaimUserMessageForAgent(e.channel, e.ts)) {
+					ack();
+					return;
+				}
+
+				this.getQueue(conversationKey).enqueue(() => this.handler.handleEvent(slackEvent, this));
 			}
 
 			ack();
@@ -469,6 +552,7 @@ export class SlackBot {
 	 */
 	private logUserMessage(event: SlackEvent): Attachment[] {
 		const user = this.users.get(event.user);
+		const threadRoot = getSessionThreadRoot(event);
 		// Process attachments - queues downloads in background
 		const attachments = event.files ? this.store.processAttachments(event.channel, event.files, event.ts) : [];
 		this.logToFile(event.channel, {
@@ -480,6 +564,7 @@ export class SlackBot {
 			text: event.text,
 			attachments,
 			isBot: false,
+			threadRoot,
 		});
 		return attachments;
 	}
@@ -518,6 +603,7 @@ export class SlackBot {
 			bot_id?: string;
 			text?: string;
 			ts?: string;
+			thread_ts?: string;
 			subtype?: string;
 			files?: Array<{ name: string }>;
 		};
@@ -564,6 +650,7 @@ export class SlackBot {
 			const text = (msg.text || "").replace(/<@[A-Z0-9]+>/gi, "").trim();
 			// Process attachments - queues downloads in background
 			const attachments = msg.files ? this.store.processAttachments(channelId, msg.files, msg.ts!) : [];
+			const threadRoot = msg.thread_ts ?? msg.ts!;
 
 			this.logToFile(channelId, {
 				date: new Date(parseFloat(msg.ts!) * 1000).toISOString(),
@@ -574,6 +661,7 @@ export class SlackBot {
 				text,
 				attachments,
 				isBot: isMomMessage,
+				threadRoot,
 			});
 		}
 

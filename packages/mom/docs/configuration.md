@@ -32,6 +32,7 @@ Auth: `~/.pi/mom/auth.json` (via `/login` in the pi tooling) or provider env key
 |----------|---------|-------------|
 | `MOM_SLACK_POST_TOOL_LABELS` | `1` | Post `_→ label_` on tool start. |
 | `MOM_SLACK_POST_TOOL_RESULTS` | `1` | Post tool args/result blocks in thread. |
+| `MOM_SLACK_FULL_TOOL_RESULTS` | off | If `1`: post full tool output (legacy verbose). If off: `read` posts a one-line summary only; other tools truncate long results. |
 | `MOM_SLACK_POST_TOOL_ERRORS_TO_CHANNEL` | `1` | Post short tool error to the main bot message area. |
 | `MOM_SLACK_POST_THINKING` | `1` | Mirror thinking to Slack. |
 | `MOM_SLACK_MIRROR_ASSISTANT_TO_THREAD` | `1` | Duplicate assistant streaming text to thread. |

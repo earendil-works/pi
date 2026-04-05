@@ -12,12 +12,13 @@ import {
 	SessionManager,
 	type Skill,
 } from "@mariozechner/pi-coding-agent";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 import { getMomConfig } from "./config.js";
 import { createMomSettingsManager, syncLogToSessionManager } from "./context.js";
+import { runnerCacheKey, sanitizeSessionDirSegment } from "./conversation.js";
 import * as log from "./log.js";
 import { createExecutor, type SandboxConfig } from "./sandbox.js";
 import type { ChannelInfo, SlackContext, UserInfo } from "./slack.js";
@@ -200,6 +201,8 @@ ${workspacePath}/
 └── ${channelId}/                # This channel
     ├── MEMORY.md                # Channel-specific memory
     ├── log.jsonl                # Message history (no tool results)
+    ├── .mom-sessions/           # LLM session files (one subfolder per Slack thread)
+    │   └── <thread-id>/         # context.jsonl + last_prompt for that conversation
     ├── attachments/             # User-shared files
     ├── scratch/                 # Your working directory
     └── skills/                  # Channel-specific tools
@@ -393,32 +396,45 @@ function formatToolArgsForSlack(_toolName: string, args: Record<string, unknown>
 	return lines.join("\n");
 }
 
-// Cache runners per channel
+// Cache runners per Slack conversation (channel + thread root)
 const channelRunners = new Map<string, AgentRunner>();
 
 /**
- * Get or create an AgentRunner for a channel.
- * Runners are cached - one per channel, persistent across messages.
+ * Get or create an AgentRunner for a Slack conversation (channel + thread/session root).
  */
-export function getOrCreateRunner(sandboxConfig: SandboxConfig, channelId: string, channelDir: string): AgentRunner {
-	const existing = channelRunners.get(channelId);
+export function getOrCreateRunner(
+	sandboxConfig: SandboxConfig,
+	channelId: string,
+	channelDir: string,
+	sessionThreadRoot: string,
+): AgentRunner {
+	const key = runnerCacheKey(channelId, sessionThreadRoot);
+	const existing = channelRunners.get(key);
 	if (existing) return existing;
 
-	const runner = createRunner(sandboxConfig, channelId, channelDir);
-	channelRunners.set(channelId, runner);
+	const runner = createRunner(sandboxConfig, channelId, channelDir, sessionThreadRoot);
+	channelRunners.set(key, runner);
 	return runner;
 }
 
 /**
- * Create a new AgentRunner for a channel.
+ * Create a new AgentRunner for a conversation.
  * Sets up the session and subscribes to events once.
  */
-function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDir: string): AgentRunner {
+function createRunner(
+	sandboxConfig: SandboxConfig,
+	channelId: string,
+	channelDir: string,
+	sessionThreadRoot: string,
+): AgentRunner {
 	const cfg = getMomConfig();
 	const model = getModel(cfg.llmProvider as KnownProvider, cfg.llmModelId as never);
 
 	const executor = createExecutor(sandboxConfig);
 	const workspacePath = executor.getWorkspacePath(channelDir.replace(`/${channelId}`, ""));
+
+	const sessionDir = join(channelDir, ".mom-sessions", sanitizeSessionDirSegment(sessionThreadRoot));
+	mkdirSync(sessionDir, { recursive: true });
 
 	// Create tools
 	const tools = createMomTools(executor);
@@ -428,9 +444,8 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 	const skills = loadMomSkills(channelDir, workspacePath);
 	const systemPrompt = buildSystemPrompt(workspacePath, channelId, memory, sandboxConfig, [], [], skills);
 
-	// Create session manager and settings manager
-	// Use a fixed context.jsonl file per channel (not timestamped like coding-agent)
-	const contextFile = join(channelDir, "context.jsonl");
+	// Create session manager and settings manager — context.jsonl per Slack thread / conversation
+	const contextFile = join(sessionDir, "context.jsonl");
 	const sessionManager = SessionManager.open(contextFile, channelDir);
 	const settingsManager = createMomSettingsManager(join(channelDir, ".."));
 
@@ -545,11 +560,26 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 				? formatToolArgsForSlack(agentEvent.toolName, pending.args as Record<string, unknown>)
 				: "(args not found)";
 			const duration = (durationMs / 1000).toFixed(1);
-			let threadMessage = `*${agentEvent.isError ? "✗" : "✓"} ${agentEvent.toolName}*`;
-			if (label) threadMessage += `: ${label}`;
-			threadMessage += ` (${duration}s)\n`;
-			if (argsFormatted) threadMessage += `\`\`\`\n${argsFormatted}\n\`\`\`\n`;
-			threadMessage += `*Result:*\n\`\`\`\n${resultStr}\n\`\`\``;
+			const maxResultChars = 1800;
+			let threadMessage: string;
+			if (cfg.slackFullToolThreadDump) {
+				threadMessage = `*${agentEvent.isError ? "✗" : "✓"} ${agentEvent.toolName}*`;
+				if (label) threadMessage += `: ${label}`;
+				threadMessage += ` (${duration}s)\n`;
+				if (argsFormatted) threadMessage += `\`\`\`\n${argsFormatted}\n\`\`\`\n`;
+				threadMessage += `*Result:*\n\`\`\`\n${resultStr}\n\`\`\``;
+			} else if (agentEvent.toolName === "read" && !agentEvent.isError) {
+				const pathHint = argsFormatted.replace(/\n/g, " ").trim() || "file";
+				threadMessage = `_✓ read_ \`${pathHint}\` _(${duration}s)_`;
+			} else {
+				const shortResult =
+					resultStr.length > maxResultChars ? `${resultStr.slice(0, maxResultChars)}\n\n_(truncated)_` : resultStr;
+				threadMessage = `*${agentEvent.isError ? "✗" : "✓"} ${agentEvent.toolName}*`;
+				if (label) threadMessage += `: ${label}`;
+				threadMessage += ` (${duration}s)`;
+				if (argsFormatted) threadMessage += `\n\`\`\`${argsFormatted}\`\`\``;
+				threadMessage += `\n\`\`\`\n${shortResult}\n\`\`\``;
+			}
 
 			if (cfg.slackPostToolResultToThread) {
 				queue.enqueueMessage(threadMessage, "thread", "tool result thread", false);
@@ -667,7 +697,7 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 
 			// Sync messages from log.jsonl that arrived while we were offline or busy
 			// Exclude the current message (it will be added via prompt())
-			const syncedCount = syncLogToSessionManager(sessionManager, channelDir, ctx.message.ts);
+			const syncedCount = syncLogToSessionManager(sessionManager, channelDir, ctx.message.ts, sessionThreadRoot);
 			if (syncedCount > 0) {
 				log.logInfo(`[${channelId}] Synced ${syncedCount} messages from log.jsonl`);
 			}
@@ -803,7 +833,7 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 				newUserMessage: userMessage,
 				imageAttachmentCount: imageAttachments.length,
 			};
-			await writeFile(join(channelDir, "last_prompt.jsonl"), JSON.stringify(debugContext, null, 2));
+			await writeFile(join(sessionDir, "last_prompt.jsonl"), JSON.stringify(debugContext, null, 2));
 
 			await session.prompt(userMessage, imageAttachments.length > 0 ? { images: imageAttachments } : undefined);
 
