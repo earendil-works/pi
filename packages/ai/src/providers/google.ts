@@ -462,6 +462,16 @@ function getGoogleBudget(
 		return budgets[effort];
 	}
 
+	if (model.id.includes("2.5-flash-lite")) {
+		const budgets: Record<ClampedThinkingLevel, number> = {
+			minimal: 512,
+			low: 2048,
+			medium: 8192,
+			high: 24576,
+		};
+		return budgets[effort];
+	}
+
 	if (model.id.includes("2.5-flash")) {
 		const budgets: Record<ClampedThinkingLevel, number> = {
 			minimal: 128,
