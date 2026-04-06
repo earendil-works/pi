@@ -259,3 +259,8 @@ export function getSessionsDir(): string {
 export function getDebugLogPath(): string {
 	return join(getAgentDir(), `${APP_NAME}-debug.log`);
 }
+
+/** Get path to Factory settings (~/.factory/settings.json) */
+export function getFactorySettingsPath(): string {
+	return join(homedir(), ".factory", "settings.json");
+}

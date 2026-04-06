@@ -22,7 +22,7 @@ import { type Static, Type } from "@sinclair/typebox";
 import AjvModule from "ajv";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";
-import { getAgentDir } from "../config.js";
+import { getAgentDir, getFactorySettingsPath } from "../config.js";
 import type { AuthStorage } from "./auth-storage.js";
 import {
 	clearConfigValueCache,
@@ -290,6 +290,7 @@ export class ModelRegistry {
 	private models: Model<Api>[] = [];
 	private providerRequestConfigs: Map<string, ProviderRequestConfig> = new Map();
 	private modelRequestHeaders: Map<string, Record<string, string>> = new Map();
+	private modelApiKeys: Map<string, string> = new Map();
 	private registeredProviders: Map<string, ProviderConfigInput> = new Map();
 	private loadError: string | undefined = undefined;
 
@@ -314,6 +315,7 @@ export class ModelRegistry {
 	refresh(): void {
 		this.providerRequestConfigs.clear();
 		this.modelRequestHeaders.clear();
+		this.modelApiKeys.clear();
 		this.loadError = undefined;
 
 		// Ensure dynamic API/OAuth registrations are rebuilt from current provider state.
@@ -348,8 +350,14 @@ export class ModelRegistry {
 			// Keep built-in models even if custom models failed to load
 		}
 
+		// Load models from Factory settings (~/.factory/settings.json)
+		const { models: factoryModels, error: factoryError } = this.loadFactoryModels();
+		if (factoryError) {
+			this.loadError = this.loadError ? `${this.loadError}\n\n${factoryError}` : factoryError;
+		}
+
 		const builtInModels = this.loadBuiltInModels(overrides, modelOverrides);
-		let combined = this.mergeCustomModels(builtInModels, customModels);
+		let combined = this.mergeCustomModels(builtInModels, [...customModels, ...factoryModels]);
 
 		// Let OAuth providers modify their models (e.g., update baseUrl)
 		for (const oauthProvider of this.authStorage.getOAuthProviders()) {
@@ -460,6 +468,80 @@ export class ModelRegistry {
 				`Failed to load models.json: ${error instanceof Error ? error.message : error}\n\nFile: ${modelsJsonPath}`,
 			);
 		}
+	}
+
+	private loadFactoryModels(): CustomModelsResult {
+		const factorySettingsPath = getFactorySettingsPath();
+		if (!existsSync(factorySettingsPath)) {
+			return emptyCustomModelsResult();
+		}
+
+		try {
+			const content = readFileSync(factorySettingsPath, "utf-8");
+			const settings = JSON.parse(content);
+			const customModels = settings.customModels;
+
+			if (!Array.isArray(customModels) || customModels.length === 0) {
+				return emptyCustomModelsResult();
+			}
+
+			const models: Model<Api>[] = [];
+			const defaultCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+
+			for (const fm of customModels) {
+				if (!fm.model || !fm.baseUrl || !fm.provider) continue;
+
+				const api = this.mapFactoryProviderToApi(fm.provider);
+				// model.id must be the actual API model name (sent in requests)
+				const apiModelName = fm.model as string;
+
+				models.push({
+					id: apiModelName,
+					name: (fm.displayName ?? apiModelName) as string,
+					api,
+					provider: "factory",
+					baseUrl: fm.baseUrl as string,
+					reasoning: false,
+					input: fm.noImageSupport ? (["text"] as const) : (["text", "image"] as ("text" | "image")[]),
+					cost: defaultCost,
+					contextWindow: 1000000,
+					maxTokens: (fm.maxOutputTokens as number) ?? 16384,
+					headers: undefined,
+					compat: this.mapFactoryExtraArgs(fm.extraArgs, fm.provider),
+				} as Model<Api>);
+
+				if (fm.apiKey) {
+					this.modelApiKeys.set(this.getModelRequestKey("factory", apiModelName), fm.apiKey as string);
+				}
+			}
+
+			return { models, overrides: new Map(), modelOverrides: new Map(), error: undefined };
+		} catch (error) {
+			return emptyCustomModelsResult(
+				`Failed to load Factory settings: ${error instanceof Error ? error.message : error}\n\nFile: ${factorySettingsPath}`,
+			);
+		}
+	}
+
+	private mapFactoryProviderToApi(provider: string): Api {
+		switch (provider) {
+			case "anthropic":
+				return "anthropic-messages";
+			default:
+				return "openai-completions";
+		}
+	}
+
+	private mapFactoryExtraArgs(
+		extraArgs: Record<string, unknown> | undefined,
+		provider: string,
+	): Model<Api>["compat"] | undefined {
+		if (!extraArgs || provider !== "openai") return undefined;
+		const reasoning = extraArgs.reasoning as { effort?: string } | undefined;
+		if (!reasoning?.effort) return undefined;
+		return {
+			supportsReasoningEffort: true,
+		} as OpenAICompletionsCompat;
 	}
 
 	private validateConfig(config: ModelsConfig): void {
@@ -593,7 +675,8 @@ export class ModelRegistry {
 	hasConfiguredAuth(model: Model<Api>): boolean {
 		return (
 			this.authStorage.hasAuth(model.provider) ||
-			this.providerRequestConfigs.get(model.provider)?.apiKey !== undefined
+			this.providerRequestConfigs.get(model.provider)?.apiKey !== undefined ||
+			this.modelApiKeys.has(this.getModelRequestKey(model.provider, model.id))
 		);
 	}
 
@@ -635,9 +718,11 @@ export class ModelRegistry {
 	async getApiKeyAndHeaders(model: Model<Api>): Promise<ResolvedRequestAuth> {
 		try {
 			const providerConfig = this.providerRequestConfigs.get(model.provider);
+			const modelApiKey = this.modelApiKeys.get(this.getModelRequestKey(model.provider, model.id));
 			const apiKeyFromAuthStorage = await this.authStorage.getApiKey(model.provider, { includeFallback: false });
 			const apiKey =
 				apiKeyFromAuthStorage ??
+				modelApiKey ??
 				(providerConfig?.apiKey
 					? resolveConfigValueOrThrow(providerConfig.apiKey, `API key for provider "${model.provider}"`)
 					: undefined);

@@ -559,6 +559,26 @@ function muxUnavailableResult(feature: string) {
 }
 
 export default function (pi: ExtensionAPI) {
+	// Inject available agents into system prompt so the LLM knows what's available
+	pi.on("before_agent_start", (event) => {
+		const discovery = discoverAgents(process.cwd(), "user");
+		if (discovery.agents.length === 0) return {};
+
+		const agentList = discovery.agents
+			.map((a) => `- **${a.name}**: ${a.description}${a.model ? ` [${a.model}]` : ""}`)
+			.join("\n");
+
+		const section = [
+			"\n\n## Available Subagents",
+			"Use the `subagent` tool to delegate tasks to these specialized agents:",
+			agentList,
+			'\nUse `{ "agent": "<name>", "task": "<description>" }` for single mode,',
+			'`{ "tasks": [...] }` for parallel, or `{ "chain": [...] }` for sequential.',
+		].join("\n");
+
+		return { systemPrompt: event.systemPrompt + section };
+	});
+
 	pi.registerTool({
 		name: "subagent",
 		label: "Subagent",
