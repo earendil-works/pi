@@ -11,15 +11,13 @@ export declare function convertMessages<T extends GoogleApiType>(model: Model<T>
 /**
  * Convert tools to Gemini function declarations format.
  */
-export declare function convertTools(tools: Tool[]):
-	| {
-			functionDeclarations: {
-				name: string;
-				description?: string;
-				parameters: Schema;
-			}[];
-	  }[]
-	| undefined;
+export declare function convertTools(tools: Tool[]): {
+    functionDeclarations: {
+        name: string;
+        description?: string;
+        parameters: Schema;
+    }[];
+}[] | undefined;
 /**
  * Map tool choice string to Gemini FunctionCallingConfigMode.
  */
@@ -32,4 +30,5 @@ export declare function mapStopReason(reason: FinishReason): StopReason;
  * Map string finish reason to our StopReason (for raw API responses).
  */
 export declare function mapStopReasonString(reason: string): StopReason;
+export {};
 //# sourceMappingURL=google-shared.d.ts.map

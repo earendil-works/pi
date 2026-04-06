@@ -8,10 +8,7 @@ import { type OAuthCredentials } from "./storage.js";
  * @param onAuthUrl - Callback to handle the authorization URL (e.g., open browser)
  * @param onPromptCode - Callback to prompt user for the authorization code
  */
-export declare function loginAnthropic(
-	onAuthUrl: (url: string) => void,
-	onPromptCode: () => Promise<string>,
-): Promise<void>;
+export declare function loginAnthropic(onAuthUrl: (url: string) => void, onPromptCode: () => Promise<string>): Promise<void>;
 /**
  * Refresh Anthropic OAuth token
  */

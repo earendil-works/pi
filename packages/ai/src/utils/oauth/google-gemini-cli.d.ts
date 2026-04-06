@@ -4,8 +4,8 @@
  */
 import { type OAuthCredentials } from "./storage.js";
 export interface GoogleCloudCredentials extends OAuthCredentials {
-	projectId: string;
-	email?: string;
+    projectId: string;
+    email?: string;
 }
 /**
  * Refresh Google Cloud Code Assist token
@@ -17,8 +17,8 @@ export declare function refreshGoogleCloudToken(refreshToken: string, projectId:
  * @param onAuth - Callback with URL and optional instructions
  * @param onProgress - Optional progress callback
  */
-export declare function loginGeminiCli(
-	onAuth: (info: { url: string; instructions?: string }) => void,
-	onProgress?: (message: string) => void,
-): Promise<GoogleCloudCredentials>;
+export declare function loginGeminiCli(onAuth: (info: {
+    url: string;
+    instructions?: string;
+}) => void, onProgress?: (message: string) => void): Promise<GoogleCloudCredentials>;
 //# sourceMappingURL=google-gemini-cli.d.ts.map
