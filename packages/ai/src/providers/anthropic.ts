@@ -507,6 +507,8 @@ function buildParams(
 ): MessageCreateParamsStreaming {
 	const plan = planPromptCachePolicy({ model, context });
 	const normalizedContext = plan.context;
+	const systemLayer = plan.layers.find((layer) => layer.id === "system");
+	const contextLayer = plan.layers.find((layer) => layer.id === "context");
 	const params: MessageCreateParamsStreaming & { output_config?: { effort: AnthropicEffort } } = {
 		model: model.id,
 		messages: convertMessages(normalizedContext.messages, model),
@@ -524,10 +526,19 @@ function buildParams(
 				},
 			},
 		];
-		if (normalizedContext.systemPrompt) {
+		if (systemLayer?.content) {
 			params.system.push({
 				type: "text",
-				text: sanitizeSurrogates(normalizedContext.systemPrompt),
+				text: sanitizeSurrogates(systemLayer.content),
+				cache_control: {
+					type: "ephemeral",
+				},
+			});
+		}
+		if (contextLayer?.content) {
+			params.system.push({
+				type: "text",
+				text: sanitizeSurrogates(contextLayer.content),
 				cache_control: {
 					type: "ephemeral",
 				},
@@ -535,15 +546,25 @@ function buildParams(
 		}
 	} else if (normalizedContext.systemPrompt) {
 		// Add cache control to system prompt for non-OAuth tokens
-		params.system = [
-			{
+		params.system = [];
+		if (systemLayer?.content) {
+			params.system.push({
 				type: "text",
-				text: sanitizeSurrogates(normalizedContext.systemPrompt),
+				text: sanitizeSurrogates(systemLayer.content),
 				cache_control: {
 					type: "ephemeral",
 				},
-			},
-		];
+			});
+		}
+		if (contextLayer?.content) {
+			params.system.push({
+				type: "text",
+				text: sanitizeSurrogates(contextLayer.content),
+				cache_control: {
+					type: "ephemeral",
+				},
+			});
+		}
 	}
 
 	if (options?.temperature !== undefined) {
@@ -580,6 +601,15 @@ function buildParams(
 	}
 
 	return params;
+}
+
+export function projectAnthropicRequest(
+	model: Model<"anthropic-messages">,
+	context: Context,
+	options?: AnthropicOptions,
+	isOAuthToken: boolean = false,
+): MessageCreateParamsStreaming {
+	return buildParams(model, context, isOAuthToken, options);
 }
 
 // Sanitize tool call IDs to match Anthropic's required pattern: ^[a-zA-Z0-9_-]+$

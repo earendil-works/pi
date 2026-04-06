@@ -192,16 +192,20 @@ export interface ToolPromptEntry {
 	description?: string;
 }
 
-export async function buildSystemPrompt(options: {
+export interface SystemPromptSections {
+	systemInstructions: string;
+	contextFiles: string;
+	metadata: string;
+}
+
+export async function buildSystemPromptSections(options: {
 	customPrompt?: string;
-	/** Tools available to the assistant (built-ins + extensions). */
 	tools?: ToolPromptEntry[];
 	contextFiles?: ContextFile[];
 	includeFileTree?: boolean;
-}): Promise<string> {
+}): Promise<SystemPromptSections> {
 	const { customPrompt, tools, contextFiles = [], includeFileTree = true } = options;
 
-	// Generate file tree if enabled
 	let fileTreeSection = "";
 	if (includeFileTree) {
 		const fileTree = await generateFileTree({ cwd: process.cwd(), limit: 200 });
@@ -210,21 +214,17 @@ export async function buildSystemPrompt(options: {
 		}
 	}
 
-	// If custom prompt provided, use it with context appended
+	const contextBlock = formatContextFiles(contextFiles);
+	const metadata = `<metadata>\nCurrent working directory: ${process.cwd()}${fileTreeSection}\n</metadata>`;
+
 	if (customPrompt) {
-		let prompt = `<system_instructions>\n${customPrompt}\n</system_instructions>`;
-		const contextBlock = formatContextFiles(contextFiles);
-
-		if (contextBlock) {
-			prompt += `\n\n${contextBlock}`;
-		}
-
-		prompt += `\n\n<metadata>\nCurrent working directory: ${process.cwd()}${fileTreeSection}\n</metadata>`;
-
-		return prompt;
+		return {
+			systemInstructions: `<system_instructions>\n${customPrompt}\n</system_instructions>`,
+			contextFiles: contextBlock,
+			metadata,
+		};
 	}
 
-	// Build from template
 	const config = loadSystemPromptConfig();
 	const promptTools: ToolPromptEntry[] =
 		tools && tools.length > 0
@@ -241,33 +241,37 @@ export async function buildSystemPrompt(options: {
 				];
 
 	const toolNames = promptTools.map((t) => t.name);
-
-	// Build tools list (short)
 	const toolsList = promptTools
 		.map((t) => `- ${t.name}: ${getShortToolDescription(t.name, t.description)}`)
 		.join("\n");
-
-	// Build guidelines (based on enabled tool names)
 	const guidelinesText = buildGuidelines(toolNames)
 		.map((g) => `- ${g}`)
 		.join("\n");
+	const contextFilesSection = contextBlock ? `\n\n${contextBlock}` : "";
 
-	// Build context files section
-	let contextFilesSection = "";
-	const contextBlock = formatContextFiles(contextFiles);
-	if (contextBlock) {
-		contextFilesSection = `\n\n${contextBlock}`;
-	}
+	return {
+		systemInstructions: config.systemPrompt
+			.replace("{{TOOLS_LIST}}", toolsList)
+			.replace("{{GUIDELINES}}", guidelinesText)
+			.replace("{{CONTEXT_FILES}}", contextFilesSection)
+			.replace("{{FILE_TREE}}", fileTreeSection)
+			.replace("{{CWD}}", process.cwd()),
+		contextFiles: "",
+		metadata,
+	};
+}
 
-	// Replace placeholders in template
-	const prompt = config.systemPrompt
-		.replace("{{TOOLS_LIST}}", toolsList)
-		.replace("{{GUIDELINES}}", guidelinesText)
-		.replace("{{CONTEXT_FILES}}", contextFilesSection)
-		.replace("{{FILE_TREE}}", fileTreeSection)
-		.replace("{{CWD}}", process.cwd());
-
-	return prompt;
+export async function buildSystemPrompt(options: {
+	customPrompt?: string;
+	/** Tools available to the assistant (built-ins + extensions). */
+	tools?: ToolPromptEntry[];
+	contextFiles?: ContextFile[];
+	includeFileTree?: boolean;
+}): Promise<string> {
+	const sections = await buildSystemPromptSections(options);
+	return [sections.systemInstructions, sections.contextFiles, sections.metadata]
+		.filter((section) => section.length > 0)
+		.join("\n\n");
 }
 
 /**

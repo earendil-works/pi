@@ -42,7 +42,19 @@ function createAnthropicModel(baseUrl: string): Model<"anthropic-messages"> {
 
 function createContext(): Context {
 	return {
-		systemPrompt: "System A",
+		systemPrompt: [
+			"<system_instructions>",
+			"You are the coding agent.",
+			"</system_instructions>",
+			"",
+			'<user_instructions source="/tmp/AGENTS.md">',
+			"Keep answers short.",
+			"</user_instructions>",
+			"",
+			"<metadata>",
+			"Current working directory: /tmp/project",
+			"</metadata>",
+		].join("\n"),
 		messages: [{ role: "user", content: "hello", timestamp: 1 }],
 		tools: [
 			{
@@ -119,9 +131,18 @@ async function captureAnthropicRequest(): Promise<CapturedRequest> {
 }
 
 describe("anthropic prompt-cache policy integration", () => {
-	it("sorts tools alphabetically before serializing the request body", async () => {
+	it("sorts tools alphabetically and splits stable system instructions from volatile context", async () => {
 		const captured = await captureAnthropicRequest();
 		const tools = captured.tools;
+		const system = captured.system as Array<{ text: string; cache_control?: { type: string } }>;
+
+		expect(Array.isArray(system)).toBe(true);
+		expect(system[0]?.text).toContain("<system_instructions>");
+		expect(system[0]?.text).not.toContain("<user_instructions");
+		expect(system[0]?.cache_control).toEqual({ type: "ephemeral" });
+		expect(system[1]?.text).toContain("<user_instructions");
+		expect(system[1]?.text).toContain("<metadata>");
+		expect(system[1]?.cache_control).toEqual({ type: "ephemeral" });
 		expect(Array.isArray(tools)).toBe(true);
 		expect((tools as Array<{ name: string }>).map((tool) => tool.name)).toEqual(["alpha_tool", "zeta_tool"]);
 	});

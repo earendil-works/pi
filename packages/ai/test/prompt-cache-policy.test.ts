@@ -52,6 +52,40 @@ function createContext(): Context {
 	};
 }
 
+function createStructuredContext(): Context {
+	return {
+		systemPrompt: [
+			"<system_instructions>",
+			"You are the coding agent.",
+			"</system_instructions>",
+			"",
+			'<user_instructions source="/Users/test/.mu/agent/AGENTS.md">',
+			"Keep answers short.",
+			"</user_instructions>",
+			"",
+			"<metadata>",
+			"Current working directory: /tmp/project",
+			"</metadata>",
+		].join("\n"),
+		messages: [
+			{ role: "user", content: [{ type: "text", text: "First turn" }], timestamp: 1 },
+			{ role: "user", content: [{ type: "text", text: "Second turn" }], timestamp: 2 },
+		],
+		tools: [
+			{
+				name: "zeta_tool",
+				description: "z desc",
+				parameters: Type.Object({ value: Type.String() }),
+			},
+			{
+				name: "alpha_tool",
+				description: "a desc",
+				parameters: Type.Object({ value: Type.String() }),
+			},
+		],
+	};
+}
+
 describe("planPromptCachePolicy", () => {
 	it("sorts tools deterministically for Anthropic request shaping", () => {
 		const plan = planPromptCachePolicy({ model: createAnthropicModel(), context: createContext() });
@@ -80,5 +114,36 @@ describe("planPromptCachePolicy", () => {
 		expect(originalOrder).toEqual(["zeta_tool", "alpha_tool"]);
 		expect(context.tools?.map((tool) => tool.name)).toEqual(["zeta_tool", "alpha_tool"]);
 		expect(plan.context.tools?.map((tool) => tool.name)).toEqual(["alpha_tool", "zeta_tool"]);
+	});
+
+	it("builds a provider-neutral cache plan with stable and volatile layers in deterministic order", () => {
+		const plan = planPromptCachePolicy({ model: createAnthropicModel(), context: createStructuredContext() });
+
+		expect(plan.layers.map((layer) => layer.id)).toEqual(["system", "tools", "context", "history"]);
+		expect(plan.layers.map((layer) => layer.stability)).toEqual(["stable", "stable", "volatile", "volatile"]);
+		expect(plan.layers[0]?.content).toContain("<system_instructions>");
+		expect(plan.layers[0]?.content).not.toContain("<user_instructions");
+		expect(plan.layers[1]?.content).toContain("alpha_tool");
+		expect(plan.layers[1]?.content).toContain("zeta_tool");
+		expect(plan.layers[2]?.content).toContain("<user_instructions");
+		expect(plan.layers[2]?.content).toContain("<metadata>");
+		expect(plan.layers[3]?.content).toContain("First turn");
+		expect(plan.stablePrefixFingerprint.length).toBeGreaterThan(0);
+	});
+
+	it("keeps the stable prefix fingerprint unchanged when only volatile prompt context changes", () => {
+		const baseContext = createStructuredContext();
+		const changedContext: Context = {
+			...baseContext,
+			systemPrompt: baseContext.systemPrompt?.replace("/tmp/project", "/tmp/other-project"),
+			messages: [{ role: "user", content: [{ type: "text", text: "A newer turn" }], timestamp: 3 }],
+		};
+
+		const before = planPromptCachePolicy({ model: createAnthropicModel(), context: baseContext });
+		const after = planPromptCachePolicy({ model: createAnthropicModel(), context: changedContext });
+
+		expect(before.stablePrefixFingerprint).toBe(after.stablePrefixFingerprint);
+		expect(before.layers[2]?.fingerprint).not.toBe(after.layers[2]?.fingerprint);
+		expect(before.layers[3]?.fingerprint).not.toBe(after.layers[3]?.fingerprint);
 	});
 });

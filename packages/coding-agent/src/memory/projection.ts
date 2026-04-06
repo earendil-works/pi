@@ -11,42 +11,102 @@ import {
 export interface WorkspaceProjection {
 	workspaceRef: string;
 	entries: ArtifactMemoryEntry[];
+	startupItems: WorkspaceProjectionItem[];
 	startupSummary: string;
+}
+
+export interface WorkspaceProjectionItem {
+	id: string;
+	kind: string;
+	label: string;
+	timestamp: string;
 }
 
 function getWorkspaceProjectionKey(workspaceRef: string): string {
 	return createHash("sha256").update(normalizeArtifactMemoryWorkspaceRef(workspaceRef)).digest("hex").slice(0, 12);
 }
 
+function normalizeWhitespace(value: string): string {
+	return value.replace(/\s+/g, " ").trim();
+}
+
+function truncateLabel(value: string, maxLength = 60): string {
+	return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
+}
+
+function toTitleCase(value: string): string {
+	return value.length === 0 ? value : `${value[0].toUpperCase()}${value.slice(1)}`;
+}
+
+function buildProjectionLabel(entry: ArtifactMemoryEntry): string {
+	const summary = entry.summary.trim();
+	const singleLine = normalizeWhitespace(summary.replace(/\n/g, " "));
+
+	const fileWriteMatch = summary.match(/Successfully wrote\s+\d+\s+bytes to\s+(.+)/i);
+	if (fileWriteMatch) {
+		const normalizedPath = normalizeWhitespace(fileWriteMatch[1]);
+		const fileName = normalizedPath.split(/[\\/]/).pop() ?? normalizedPath;
+		return truncateLabel(`Wrote ${fileName}`);
+	}
+
+	const nameMatch = summary.match(/Name:\s*([^\n]+)/i);
+	if (nameMatch) {
+		return truncateLabel(nameMatch[1].trim());
+	}
+
+	const prefixMatch = summary.match(/^([^:\n]{4,80}):/);
+	if (prefixMatch) {
+		return truncateLabel(prefixMatch[1].trim());
+	}
+
+	return truncateLabel(singleLine);
+}
+
+function buildStartupItems(entries: ArtifactMemoryEntry[]): WorkspaceProjectionItem[] {
+	const seen = new Set<string>();
+	const items: WorkspaceProjectionItem[] = [];
+
+	for (const entry of entries) {
+		const label = buildProjectionLabel(entry);
+		const key = `${entry.kind}:${label.toLowerCase()}`;
+		if (seen.has(key)) {
+			continue;
+		}
+		seen.add(key);
+		items.push({
+			id: entry.id,
+			kind: entry.kind,
+			label,
+			timestamp: entry.timestamp,
+		});
+	}
+
+	return items;
+}
+
 function summarizeEntries(entries: ArtifactMemoryEntry[]): string {
-	if (entries.length === 0) {
+	const items = buildStartupItems(entries);
+	if (items.length === 0) {
 		return "No stored memory for this workspace.";
 	}
 
-	// Deduplicate similar entries and truncate long summaries
-	const seen = new Set<string>();
-	const uniqueEntries: ArtifactMemoryEntry[] = [];
-
-	for (const entry of entries) {
-		// Normalize: single line, truncate for dedup key
-		const normalized = entry.summary.replace(/\n/g, " ").slice(0, 50);
-		const key = `${entry.kind}:${normalized}`;
-		if (!seen.has(key)) {
-			seen.add(key);
-			uniqueEntries.push(entry);
-		}
+	const grouped = new Map<string, WorkspaceProjectionItem[]>();
+	for (const item of items) {
+		const bucket = grouped.get(item.kind) ?? [];
+		bucket.push(item);
+		grouped.set(item.kind, bucket);
 	}
 
-	return uniqueEntries
-		.map((entry) => {
-			// Single line, truncate to 80 chars
-			const singleLine = entry.summary.replace(/\n/g, " ");
-			const truncated = singleLine.length > 80 ? singleLine.slice(0, 77) + "..." : singleLine;
-			return `- [${entry.kind}] ${truncated}`;
+	return Array.from(grouped.entries())
+		.map(([kind, kindItems]) => {
+			const lines = [toTitleCase(kind)];
+			for (const item of kindItems) {
+				lines.push(`- ${item.label}`);
+			}
+			return lines.join("\n");
 		})
-		.join("\n");
+		.join("\n\n");
 }
-
 export function getArtifactMemoryProjectionPath(workspaceRef: string, baseDir?: string): string {
 	return join(getArtifactMemoryRoot(baseDir), "projections", `${getWorkspaceProjectionKey(workspaceRef)}.json`);
 }
@@ -66,6 +126,7 @@ export class ArtifactMemoryProjector {
 		const projection: WorkspaceProjection = {
 			workspaceRef: resolvedWorkspaceRef,
 			entries,
+			startupItems: buildStartupItems(entries),
 			startupSummary: summarizeEntries(entries),
 		};
 

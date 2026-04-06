@@ -9,6 +9,7 @@ import type {
 	ChatCompletionToolMessageParam,
 } from "openai/resources/chat/completions.js";
 import { calculateCost } from "../models.js";
+import { type PromptCacheLayer, planPromptCachePolicy } from "../prompt-cache-policy.js";
 import type {
 	AssistantMessage,
 	Context,
@@ -604,7 +605,9 @@ function createClient(model: Model<"openai-completions">, apiKey?: string) {
 
 function buildParams(model: Model<"openai-completions">, context: Context, options?: OpenAICompletionsOptions) {
 	const compat = getCompat(model);
-	const messages = convertMessages(model, context, compat);
+	const plan = planPromptCachePolicy({ model, context });
+	const normalizedContext = plan.context;
+	const messages = convertMessages(model, normalizedContext, compat, plan.layers);
 
 	const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
 		model: model.id,
@@ -640,9 +643,9 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 		params.temperature = options.temperature;
 	}
 
-	if (context.tools) {
-		params.tools = convertTools(context.tools);
-	} else if (hasToolHistory(context.messages)) {
+	if (normalizedContext.tools) {
+		params.tools = convertTools(normalizedContext.tools);
+	} else if (hasToolHistory(normalizedContext.messages)) {
 		// Anthropic (via LiteLLM/proxy) requires tools param when conversation has tool_calls/tool_results
 		params.tools = [];
 	}
@@ -693,16 +696,38 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 	return params;
 }
 
+export function projectOpenAICompletionsRequest(
+	model: Model<"openai-completions">,
+	context: Context,
+	options?: OpenAICompletionsOptions,
+): OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming {
+	return buildParams(model, context, options);
+}
+
 function convertMessages(
 	model: Model<"openai-completions">,
 	context: Context,
 	compat: Required<OpenAICompat>,
+	layers: PromptCacheLayer[],
 ): ChatCompletionMessageParam[] {
 	const params: ChatCompletionMessageParam[] = [];
 
 	const transformedMessages = transformMessages(context.messages, model);
 
-	if (context.systemPrompt) {
+	const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;
+	const promptRole = useDeveloperRole ? "developer" : "system";
+	const systemLayer = layers.find((layer) => layer.id === "system");
+	const contextLayer = layers.find((layer) => layer.id === "context");
+
+	if (systemLayer?.content) {
+		params.push({ role: promptRole, content: sanitizeSurrogates(systemLayer.content) });
+	}
+
+	if (contextLayer?.content) {
+		params.push({ role: promptRole, content: sanitizeSurrogates(contextLayer.content) });
+	}
+
+	if (params.length === 0 && context.systemPrompt) {
 		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;
 		const role = useDeveloperRole ? "developer" : "system";
 		params.push({ role: role, content: sanitizeSurrogates(context.systemPrompt) });
@@ -903,8 +928,6 @@ function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"]): Sto
 		case "function_call":
 		case "tool_calls":
 			return "toolUse";
-		case "content_filter":
-		case "network_error":
 		default:
 			return "error";
 	}
