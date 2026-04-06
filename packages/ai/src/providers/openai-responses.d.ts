@@ -1,4 +1,5 @@
-import type { StreamFunction, StreamOptions } from "../types.js";
+import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
+import type { Context, Model, StreamFunction, StreamOptions } from "../types.js";
 export type OpenAIResponsesToolChoice =
 	| "auto"
 	| "none"
@@ -16,4 +17,9 @@ export interface OpenAIResponsesOptions extends StreamOptions {
  * Generate function for OpenAI Responses API
  */
 export declare const streamOpenAIResponses: StreamFunction<"openai-responses">;
+export declare function projectOpenAIResponsesRequest(
+	model: Model<"openai-responses">,
+	context: Context,
+	options?: OpenAIResponsesOptions,
+): ResponseCreateParamsStreaming;
 //# sourceMappingURL=openai-responses.d.ts.map

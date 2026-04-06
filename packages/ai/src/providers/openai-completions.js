@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import { calculateCost } from "../models.js";
+import { planPromptCachePolicy } from "../prompt-cache-policy.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
@@ -497,7 +498,9 @@ function createClient(model, apiKey) {
 }
 function buildParams(model, context, options) {
 	const compat = getCompat(model);
-	const messages = convertMessages(model, context, compat);
+	const plan = planPromptCachePolicy({ model, context });
+	const normalizedContext = plan.context;
+	const messages = convertMessages(model, normalizedContext, compat, plan.layers);
 	const params = {
 		model: model.id,
 		messages,
@@ -526,9 +529,9 @@ function buildParams(model, context, options) {
 	if (options?.temperature !== undefined) {
 		params.temperature = options.temperature;
 	}
-	if (context.tools) {
-		params.tools = convertTools(context.tools);
-	} else if (hasToolHistory(context.messages)) {
+	if (normalizedContext.tools) {
+		params.tools = convertTools(normalizedContext.tools);
+	} else if (hasToolHistory(normalizedContext.messages)) {
 		// Anthropic (via LiteLLM/proxy) requires tools param when conversation has tool_calls/tool_results
 		params.tools = [];
 	}
@@ -573,10 +576,23 @@ function buildParams(model, context, options) {
 	}
 	return params;
 }
-function convertMessages(model, context, compat) {
+export function projectOpenAICompletionsRequest(model, context, options) {
+	return buildParams(model, context, options);
+}
+function convertMessages(model, context, compat, layers) {
 	const params = [];
 	const transformedMessages = transformMessages(context.messages, model);
-	if (context.systemPrompt) {
+	const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;
+	const promptRole = useDeveloperRole ? "developer" : "system";
+	const systemLayer = layers.find((layer) => layer.id === "system");
+	const contextLayer = layers.find((layer) => layer.id === "context");
+	if (systemLayer?.content) {
+		params.push({ role: promptRole, content: sanitizeSurrogates(systemLayer.content) });
+	}
+	if (contextLayer?.content) {
+		params.push({ role: promptRole, content: sanitizeSurrogates(contextLayer.content) });
+	}
+	if (params.length === 0 && context.systemPrompt) {
 		const useDeveloperRole = model.reasoning && compat.supportsDeveloperRole;
 		const role = useDeveloperRole ? "developer" : "system";
 		params.push({ role: role, content: sanitizeSurrogates(context.systemPrompt) });
@@ -757,8 +773,6 @@ function mapStopReason(reason) {
 		case "function_call":
 		case "tool_calls":
 			return "toolUse";
-		case "content_filter":
-		case "network_error":
 		default:
 			return "error";
 	}

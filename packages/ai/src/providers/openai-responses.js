@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { getMuCompactResponseItem } from "../compact-history.js";
 import { calculateCost } from "../models.js";
+import { planPromptCachePolicy } from "../prompt-cache-policy.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { getExponentialBackoff, sleep } from "../utils/retry.js";
@@ -673,7 +674,9 @@ function createClient(model, apiKey, maxRetries = 0) {
 	});
 }
 function buildParams(model, context, options) {
-	const messages = convertMessages(model, context);
+	const plan = planPromptCachePolicy({ model, context });
+	const normalizedContext = plan.context;
+	const messages = convertMessages(model, normalizedContext, plan.layers);
 	const params = {
 		model: model.id,
 		input: messages,
@@ -689,8 +692,8 @@ function buildParams(model, context, options) {
 	if (options?.temperature !== undefined) {
 		params.temperature = options?.temperature;
 	}
-	if (context.tools) {
-		params.tools = convertTools(context.tools);
+	if (normalizedContext.tools) {
+		params.tools = convertTools(normalizedContext.tools);
 	}
 	if (options?.toolChoice) {
 		params.tool_choice = options.toolChoice;
@@ -724,14 +727,32 @@ function buildParams(model, context, options) {
 	}
 	return params;
 }
+export function projectOpenAIResponsesRequest(model, context, options) {
+	return buildParams(model, context, options);
+}
 function shouldReplayAssistantMessage(msg) {
 	return msg.stopReason !== "error" && msg.stopReason !== "aborted";
 }
-function convertMessages(model, context) {
+function convertMessages(model, context, layers = []) {
 	const messages = [];
 	const replayableToolCallIds = new Set();
 	const transformedMessages = transformMessages(context.messages, model);
-	if (context.systemPrompt) {
+	const promptRole = model.reasoning && model.baseUrl.includes("api.openai.com") ? "developer" : "system";
+	const systemLayer = layers.find((layer) => layer.id === "system");
+	const contextLayer = layers.find((layer) => layer.id === "context");
+	if (systemLayer?.content) {
+		messages.push({
+			role: promptRole,
+			content: sanitizeSurrogates(systemLayer.content),
+		});
+	}
+	if (contextLayer?.content) {
+		messages.push({
+			role: promptRole,
+			content: sanitizeSurrogates(contextLayer.content),
+		});
+	}
+	if (messages.length === 0 && context.systemPrompt) {
 		// Default to "system" role - only native OpenAI reasoning models use "developer"
 		let role = "system";
 		if (model.reasoning && model.baseUrl.includes("api.openai.com")) {

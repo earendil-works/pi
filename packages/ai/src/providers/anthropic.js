@@ -398,6 +398,8 @@ function createClient(model, apiKey, interleavedThinking) {
 function buildParams(model, context, isOAuthToken, options) {
 	const plan = planPromptCachePolicy({ model, context });
 	const normalizedContext = plan.context;
+	const systemLayer = plan.layers.find((layer) => layer.id === "system");
+	const contextLayer = plan.layers.find((layer) => layer.id === "context");
 	const params = {
 		model: model.id,
 		messages: convertMessages(normalizedContext.messages, model),
@@ -414,10 +416,19 @@ function buildParams(model, context, isOAuthToken, options) {
 				},
 			},
 		];
-		if (normalizedContext.systemPrompt) {
+		if (systemLayer?.content) {
 			params.system.push({
 				type: "text",
-				text: sanitizeSurrogates(normalizedContext.systemPrompt),
+				text: sanitizeSurrogates(systemLayer.content),
+				cache_control: {
+					type: "ephemeral",
+				},
+			});
+		}
+		if (contextLayer?.content) {
+			params.system.push({
+				type: "text",
+				text: sanitizeSurrogates(contextLayer.content),
 				cache_control: {
 					type: "ephemeral",
 				},
@@ -425,15 +436,25 @@ function buildParams(model, context, isOAuthToken, options) {
 		}
 	} else if (normalizedContext.systemPrompt) {
 		// Add cache control to system prompt for non-OAuth tokens
-		params.system = [
-			{
+		params.system = [];
+		if (systemLayer?.content) {
+			params.system.push({
 				type: "text",
-				text: sanitizeSurrogates(normalizedContext.systemPrompt),
+				text: sanitizeSurrogates(systemLayer.content),
 				cache_control: {
 					type: "ephemeral",
 				},
-			},
-		];
+			});
+		}
+		if (contextLayer?.content) {
+			params.system.push({
+				type: "text",
+				text: sanitizeSurrogates(contextLayer.content),
+				cache_control: {
+					type: "ephemeral",
+				},
+			});
+		}
 	}
 	if (options?.temperature !== undefined) {
 		params.temperature = options.temperature;
@@ -465,6 +486,9 @@ function buildParams(model, context, isOAuthToken, options) {
 		}
 	}
 	return params;
+}
+export function projectAnthropicRequest(model, context, options, isOAuthToken = false) {
+	return buildParams(model, context, isOAuthToken, options);
 }
 // Sanitize tool call IDs to match Anthropic's required pattern: ^[a-zA-Z0-9_-]+$
 function sanitizeToolCallId(id) {

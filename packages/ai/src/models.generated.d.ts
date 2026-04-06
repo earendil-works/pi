@@ -580,7 +580,24 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "gemma-4-26b": {
+		readonly "gemma-4-26b-it": {
+			id: string;
+			name: string;
+			api: "google-generative-ai";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "gemma-4-31b-it": {
 			id: string;
 			name: string;
 			api: "google-generative-ai";
@@ -802,23 +819,6 @@ export declare const MODELS: {
 			maxTokens: number;
 		};
 		readonly "gemini-live-2.5-flash": {
-			id: string;
-			name: string;
-			api: "google-generative-ai";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "gemma-4-31b": {
 			id: string;
 			name: string;
 			api: "google-generative-ai";
