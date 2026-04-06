@@ -1,0 +1,45 @@
+
+> @kennyfrc/mu-coding-agent@0.24.173 test
+> vitest --run prompt-cache-replay.red.test.ts
+
+
+ RUN  v3.2.4 /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+
+ ❯ test/prompt-cache-replay.red.test.ts (2 tests | 2 failed) 6ms
+   × prompt cache replay red harness > projects adjacent turns from a session-manager JSONL transcript into all target provider payloads 5ms
+     → Cannot find module '../src/prompt-cache-replay.js' imported from '/Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent/test/prompt-cache-replay.red.test.ts'
+   × prompt cache replay red harness > discovers real replay session roots under the user's Mu home and supports both legacy and current layouts 1ms
+     → Cannot find module '../src/prompt-cache-replay.js' imported from '/Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent/test/prompt-cache-replay.red.test.ts'
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  test/prompt-cache-replay.red.test.ts > prompt cache replay red harness > projects adjacent turns from a session-manager JSONL transcript into all target provider payloads
+ FAIL  test/prompt-cache-replay.red.test.ts > prompt cache replay red harness > discovers real replay session roots under the user's Mu home and supports both legacy and current layouts
+Error: Cannot find module '../src/prompt-cache-replay.js' imported from '/Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent/test/prompt-cache-replay.red.test.ts'
+ ❯ loadPromptCacheReplayModule test/prompt-cache-replay.red.test.ts:36:10
+     34| 
+     35| async function loadPromptCacheReplayModule(): Promise<PromptCacheRepla…
+     36|  return (await import("../src/prompt-cache-replay.js")) as PromptCache…
+       |          ^
+     37| }
+     38| 
+ ❯ test/prompt-cache-replay.red.test.ts:51:15
+
+Caused by: Error: Failed to load url ../src/prompt-cache-replay.js (resolved id: ../src/prompt-cache-replay.js) in /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent/test/prompt-cache-replay.red.test.ts. Does the file exist?
+ ❯ loadAndTransform ../../node_modules/vite/dist/node/chunks/config.js:22653:33
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  12:53:22
+   Duration  724ms (transform 296ms, setup 475ms, collect 5ms, tests 6ms, environment 0ms, prepare 70ms)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+npm error workspace @kennyfrc/mu-coding-agent@0.24.173
+npm error location /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+npm error command failed
+npm error command sh -c vitest --run prompt-cache-replay.red.test.ts

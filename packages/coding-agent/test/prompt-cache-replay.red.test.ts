@@ -20,6 +20,7 @@ type PromptCacheReplayReport = {
 	messageCount: number;
 	projections: PromptCacheReplayProjection[];
 	warnings: string[];
+	turns: Record<ReplayProviderApi, PromptCacheReplayProjection[]>;
 };
 
 type PromptCacheReplayModule = {
@@ -67,6 +68,29 @@ describe("prompt cache replay red harness", () => {
 		expect(report.projections.every((projection) => projection.stablePrefixHash.length > 0)).toBe(true);
 		expect(report.projections.every((projection) => projection.turnIndex >= 1)).toBe(true);
 		expect(report.projections.every((projection) => projection.longestCommonPrefixBytes >= 0)).toBe(true);
+
+		const openAICompletionsPayload = report.turns["openai-completions"][0]?.payload as {
+			messages?: Array<{ role: string; content: string | unknown[] | null }>;
+			tools?: Array<{ function?: { name?: string } }>;
+		};
+		expect(["system", "developer"]).toContain(openAICompletionsPayload.messages?.[0]?.role);
+		expect(String(openAICompletionsPayload.messages?.[0]?.content ?? "")).toContain("<system_instructions>");
+		expect(openAICompletionsPayload.tools?.length).toBeGreaterThan(0);
+
+		const openAIResponsesPayload = report.turns["openai-responses"][0]?.payload as {
+			input?: Array<{ role: string; content: string | unknown[] }>;
+			tools?: Array<{ name?: string }>;
+		};
+		expect(["system", "developer"]).toContain(openAIResponsesPayload.input?.[0]?.role);
+		expect(String(openAIResponsesPayload.input?.[0]?.content ?? "")).toContain("<system_instructions>");
+		expect(openAIResponsesPayload.tools?.length).toBeGreaterThan(0);
+
+		const anthropicPayload = report.turns["anthropic-messages"][0]?.payload as {
+			system?: Array<{ text: string }>;
+			tools?: Array<{ name?: string }>;
+		};
+		expect(anthropicPayload.system?.[0]?.text).toContain("<system_instructions>");
+		expect(anthropicPayload.tools?.length).toBeGreaterThan(0);
 	});
 
 	it("discovers real replay session roots under the user's Mu home and supports both legacy and current layouts", async () => {

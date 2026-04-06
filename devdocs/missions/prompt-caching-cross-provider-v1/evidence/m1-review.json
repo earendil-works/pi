@@ -1,0 +1,14 @@
+{
+  "status": "pass",
+  "summary": "Replay verification now rebuilds full prompt-shaped contexts from real sessions, including system prompt sections, project context files, and deterministic tool selections before provider projection.",
+  "findings": [],
+  "checkedFiles": [
+    "packages/ai/src/prompt-cache-policy.ts",
+    "packages/ai/src/providers/openai-completions.ts",
+    "packages/ai/src/providers/openai-responses.ts",
+    "packages/ai/src/providers/anthropic.ts",
+    "packages/coding-agent/src/project-context.ts",
+    "packages/coding-agent/src/prompts/index.ts",
+    "packages/coding-agent/src/prompt-cache-replay.ts"
+  ]
+}

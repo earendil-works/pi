@@ -1,0 +1,66 @@
+{
+  "milestones": [
+    {
+      "id": "cache-plan-and-projections",
+      "title": "Shared cache plan improves real-session payload stability across providers",
+      "goal": "A provider-neutral cache plan is implemented and consumed by openai-completions, openai-responses, and anthropic, with replay-based evidence from real sessions showing stronger stable-prefix preservation and provider-specific payload correctness.",
+      "taskIds": [
+        "architecture-approval",
+        "replay-harness-red-tests",
+        "cache-plan-abstraction",
+        "openai-completions-projection",
+        "openai-responses-projection",
+        "anthropic-projection",
+        "prompt-assembly-audit",
+        "replay-evidence-and-diagnostics",
+        "milestone-core-gate"
+      ],
+      "gateTaskId": "milestone-core-gate",
+      "verification": [
+        {
+          "id": "m1-targeted-tests",
+          "kind": "command",
+          "command": "npm test -- prompt-cache-policy cache-plan openai-completions openai-responses anthropic",
+          "expect": "Targeted prompt-cache and provider-projection tests pass.",
+          "evidence": "devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-targeted-tests.txt"
+        },
+        {
+          "id": "m1-replay-openai-completions",
+          "kind": "assertion",
+          "command": "Run a /tmp replay script over one or more real session files from ~/.mu/sessions, project adjacent turns into openai-completions payloads via imported modules, and assert stable-prefix metrics are captured and regressions are explained.",
+          "expect": "Replay output for openai-completions includes stable-prefix hashes, tool-layer hashes, and adjacent-turn diff metrics.",
+          "evidence": "devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-replay-openai-completions.txt"
+        },
+        {
+          "id": "m1-replay-openai-responses",
+          "kind": "assertion",
+          "command": "Run a /tmp replay script over one or more real session files from ~/.mu/sessions, project adjacent turns into openai-responses payloads via imported modules, and assert stable-prefix metrics are captured and regressions are explained.",
+          "expect": "Replay output for openai-responses includes stable-prefix hashes, tool-layer hashes, and adjacent-turn diff metrics.",
+          "evidence": "devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-replay-openai-responses.txt"
+        },
+        {
+          "id": "m1-replay-anthropic",
+          "kind": "assertion",
+          "command": "Run a /tmp replay script over one or more real session files from ~/.mu/sessions, project adjacent turns into anthropic payloads via imported modules, and assert stable-prefix metrics plus cache_control placement are captured and explained.",
+          "expect": "Replay output for anthropic includes stable-prefix hashes, adjacent-turn diff metrics, and cache_control placement evidence consistent with the shared cache plan.",
+          "evidence": "devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-replay-anthropic.txt"
+        },
+        {
+          "id": "m1-review",
+          "kind": "review",
+          "command": "Review the cache-plan abstraction and all three provider projections against SPEC.md and ARCHITECTURE.md, with emphasis on shared semantics, deterministic ordering, and additive Anthropic-specific optimization. Write findings JSON.",
+          "expect": "Review finds the milestone correct or reports actionable blocking findings with file references.",
+          "evidence": "devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-review.json"
+        },
+        {
+          "id": "m1-curl-surface",
+          "kind": "command",
+          "command": "Use a real non-interactive `mu --mode json` or equivalent provider request path plus `curl` or captured request logging to verify that provider-bound payloads emitted from a replayed real session reflect the shared cache-plan layer ordering on the actual request surface.",
+          "expect": "A real request-surface check shows the projected payload structure reaching the provider/client boundary in the intended layer order.",
+          "evidence": "devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-curl-surface.txt"
+        }
+      ],
+      "notes": "The milestone closes only when the shared abstraction is implemented, the three primary providers consume it, and replay evidence from real sessions demonstrates the intended behavior."
+    }
+  ]
+}

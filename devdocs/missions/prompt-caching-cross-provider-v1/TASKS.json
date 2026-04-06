@@ -1,0 +1,95 @@
+{
+  "tasks": [
+    {
+      "id": "architecture-approval",
+      "title": "Record approved cross-provider prompt-caching architecture",
+      "status": "done",
+      "validation": [
+        "rg -n 'broader boundaries|cache-plan abstraction|cross-provider-first|cache hit-rate / lower cost' devdocs/missions/prompt-caching-cross-provider-v1/ARCHITECTURE.md"
+      ],
+      "notes": "User approved broader boundaries, prompt-layer/cache-plan abstraction, cross-provider-first tradeoff, and cache hit-rate / lower cost as the main priority."
+    },
+    {
+      "id": "replay-harness-red-tests",
+      "title": "Create failing replay-based verification for real-session payload projection",
+      "status": "done",
+      "validation": [
+        "test -f devdocs/missions/prompt-caching-cross-provider-v1/evidence/replay-harness-red-tests.txt && rg -n 'Cannot find module .*/prompt-cache-replay\\.js' devdocs/missions/prompt-caching-cross-provider-v1/evidence/replay-harness-red-tests.txt"
+      ],
+      "notes": "Added `packages/coding-agent/test/prompt-cache-replay.red.test.ts` plus a session-manager JSONL fixture. Confirmed red with `npm test -w @kennyfrc/mu-coding-agent -- prompt-cache-replay.red.test.ts`, failing because `packages/coding-agent/src/prompt-cache-replay.js` does not exist yet. Output captured in `devdocs/missions/prompt-caching-cross-provider-v1/evidence/replay-harness-red-tests.txt`."
+    },
+    {
+      "id": "cache-plan-abstraction",
+      "title": "Implement provider-neutral cache-plan abstraction in packages/ai",
+      "status": "done",
+      "validation": [
+        "npm test -w @kennyfrc/mu-ai -- prompt-cache-policy.test.ts"
+      ],
+      "notes": "Expanded `packages/ai/src/prompt-cache-policy.{ts,js,d.ts}` to expose provider-neutral cache layers plus a stable-prefix fingerprint, while preserving deterministic tool sorting and provider cache key behavior. Verified with `npm test -w @kennyfrc/mu-ai -- prompt-cache-policy.test.ts`."
+    },
+    {
+      "id": "openai-completions-projection",
+      "title": "Project cache plan into openai-completions payloads",
+      "status": "done",
+      "validation": [
+        "npm test -w @kennyfrc/mu-ai -- openai-completions-prompt-cache-policy.test.ts prompt-cache-policy.test.ts"
+      ],
+      "notes": "`packages/ai/src/providers/openai-completions.ts` now consumes `planPromptCachePolicy()` so stable system instructions and volatile prompt context become separate leading messages while sorted tools flow into the request body. Verified with `npm test -w @kennyfrc/mu-ai -- openai-completions-prompt-cache-policy.test.ts prompt-cache-policy.test.ts`."
+    },
+    {
+      "id": "openai-responses-projection",
+      "title": "Project cache plan into openai-responses payloads",
+      "status": "done",
+      "validation": [
+        "npm test -w @kennyfrc/mu-ai -- openai-responses-prompt-cache-policy.test.ts prompt-cache-policy.test.ts openai-completions-prompt-cache-policy.test.ts"
+      ],
+      "notes": "`packages/ai/src/providers/openai-responses.ts` now consumes `planPromptCachePolicy()` so stable system instructions and volatile prompt context become separate leading input entries while sorted tools flow into the request body. Verified with `npm test -w @kennyfrc/mu-ai -- openai-responses-prompt-cache-policy.test.ts prompt-cache-policy.test.ts openai-completions-prompt-cache-policy.test.ts`."
+    },
+    {
+      "id": "anthropic-projection",
+      "title": "Project cache plan into anthropic payloads with additive cache_control optimization",
+      "status": "done",
+      "validation": [
+        "npm test -w @kennyfrc/mu-ai -- anthropic-prompt-cache-policy.red.test.ts prompt-cache-policy.test.ts openai-completions-prompt-cache-policy.test.ts openai-responses-prompt-cache-policy.test.ts"
+      ],
+      "notes": "`packages/ai/src/providers/anthropic.ts` now projects shared cache-plan `system` and `context` layers into separate `system` blocks, each with additive `cache_control`, while preserving sorted tools and history behavior. Verified with `npm test -w @kennyfrc/mu-ai -- anthropic-prompt-cache-policy.red.test.ts prompt-cache-policy.test.ts openai-completions-prompt-cache-policy.test.ts openai-responses-prompt-cache-policy.test.ts`."
+    },
+    {
+      "id": "prompt-assembly-audit",
+      "title": "Audit and fix prompt-assembly or replay normalization paths that break stable prefixes",
+      "status": "done",
+      "validation": [
+        "npm test -w @kennyfrc/mu-coding-agent -- system-prompt-sections.test.ts prompts/index.test.ts"
+      ],
+      "notes": "Audited prompt assembly and normalized it into explicit `systemInstructions`, `contextFiles`, and `metadata` sections in `packages/coding-agent/src/prompts/index.ts`, preserving stable-first ordering. Replay normalization in `packages/agent/src/agent.ts` remained append-only enough for now; no code change there. Verified with `npm test -w @kennyfrc/mu-coding-agent -- system-prompt-sections.test.ts todowrite-integration.test.ts`."
+    },
+    {
+      "id": "replay-evidence-and-diagnostics",
+      "title": "Capture replay evidence and payload diagnostics from real sessions",
+      "status": "done",
+      "validation": [
+        "test -f devdocs/missions/prompt-caching-cross-provider-v1/evidence/replay-report.json && test -f devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-replay-openai-completions.txt && test -f devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-replay-openai-responses.txt && test -f devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-replay-anthropic.txt && rg -n 'firstPayloadPreview: .*system_instructions' devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-replay-openai-completions.txt devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-replay-openai-responses.txt devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-replay-anthropic.txt"
+      ],
+      "notes": "Rebuilt `packages/coding-agent/src/prompt-cache-replay.ts` to reconstruct full prompt-shaped contexts from real sessions using session cwd, project context files, built system prompt sections, and deterministic tool selection. Regenerated replay evidence with full prompt prefixes under `devdocs/missions/prompt-caching-cross-provider-v1/evidence/`."
+    },
+    {
+      "id": "milestone-core-gate",
+      "title": "Verify milestone cache-plan-and-projections",
+      "status": "done",
+      "validation": [
+        "test -f devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-targeted-tests.txt && test -f devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-replay-openai-completions.txt && test -f devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-replay-openai-responses.txt && test -f devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-replay-anthropic.txt && test -f devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-review.json && test -f devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-curl-surface.txt"
+      ],
+      "notes": "Milestone evidence is now green against the corrected replay implementation: targeted tests pass, replay artifacts show full prompt-shaped prefixes, `m1-review.json` records a passing review, and `m1-curl-surface.txt` captures actual provider-bound requests from replayed real-session contexts against local provider-compatible servers."
+    },
+    {
+      "id": "final-check",
+      "title": "Run full validation and mark mission complete",
+      "status": "done",
+      "validation": [
+        "npm run check",
+        "python3 - <<'PY'\nimport json\nfrom pathlib import Path\npath = Path('devdocs/missions/prompt-caching-cross-provider-v1/TASKS.json')\ndata = json.loads(path.read_text())\nassert all(task['status'] == 'done' for task in data['tasks'])\nPY"
+      ],
+      "notes": "`npm run check` passes at the repo root (with two pre-existing lint warnings in unrelated spec-mode tests), the milestone gate is green, and all mission task statuses are now `done`."
+    }
+  ]
+}

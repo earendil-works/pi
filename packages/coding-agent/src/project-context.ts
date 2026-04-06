@@ -1,0 +1,86 @@
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join, resolve } from "node:path";
+import { getArtifactMemoryProjectionPath, type WorkspaceProjection } from "./memory/projection.js";
+
+export type ContextFile = { path: string; content: string; scope: "user" | "project" };
+
+/**
+ * Look for AGENTS.md or CLAUDE.md in a directory (prefers AGENTS.md).
+ */
+export function loadContextFileFromDir(dir: string): { path: string; content: string } | null {
+	const candidates = ["AGENTS.md", "CLAUDE.md"];
+	for (const filename of candidates) {
+		const filePath = join(dir, filename);
+		if (!existsSync(filePath)) continue;
+		try {
+			return {
+				path: filePath,
+				content: readFileSync(filePath, "utf-8"),
+			};
+		} catch {}
+	}
+	return null;
+}
+
+export function loadWorkspaceMemoryProjection(cwd: string): { path: string; content: string } | null {
+	const projectionPath = getArtifactMemoryProjectionPath(cwd);
+	if (!existsSync(projectionPath)) {
+		return null;
+	}
+	try {
+		const projection: WorkspaceProjection = JSON.parse(readFileSync(projectionPath, "utf-8")) as WorkspaceProjection;
+		const formattedContent = `# Workspace Memory Projection
+
+**Workspace:** ${projection.workspaceRef}
+
+${projection.startupSummary}`;
+		return {
+			path: projectionPath,
+			content: formattedContent,
+		};
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Load all project context files in order:
+ * 1. Global: ~/.mu/agent/AGENTS.md or CLAUDE.md
+ * 2. Parent directories (top-most first) down to cwd
+ * 3. Workspace memory projection (derived from ~/.mu/wiki/)
+ */
+export function loadProjectContextFiles(cwd: string = process.cwd()): ContextFile[] {
+	const contextFiles: ContextFile[] = [];
+
+	const homeDir = homedir();
+	const globalContextDir = resolve(process.env.MU_CODING_AGENT_DIR || join(homeDir, ".mu/agent/"));
+	const globalContext = loadContextFileFromDir(globalContextDir);
+	if (globalContext) {
+		contextFiles.push({ ...globalContext, scope: "user" });
+	}
+
+	const ancestorContextFiles: ContextFile[] = [];
+	let currentDir = resolve(cwd);
+	const root = resolve("/");
+
+	while (true) {
+		const contextFile = loadContextFileFromDir(currentDir);
+		if (contextFile) {
+			ancestorContextFiles.unshift({ ...contextFile, scope: "project" });
+		}
+		if (currentDir === root) break;
+		const parentDir = resolve(currentDir, "..");
+		if (parentDir === currentDir) break;
+		currentDir = parentDir;
+	}
+
+	contextFiles.push(...ancestorContextFiles);
+
+	const memoryProjection = loadWorkspaceMemoryProjection(resolve(cwd));
+	if (memoryProjection) {
+		contextFiles.push({ ...memoryProjection, scope: "project" });
+	}
+
+	return contextFiles;
+}

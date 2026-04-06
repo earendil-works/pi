@@ -1,9 +1,14 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
-import type { Context, Message, Model } from "@kennyfrc/mu-ai";
+import { join, resolve } from "node:path";
+import type { AgentTool, Api, Context, Message, Model } from "@kennyfrc/mu-ai";
+import type { TSchema } from "@sinclair/typebox";
+import { findModel } from "./model-config.js";
+import { loadProjectContextFiles } from "./project-context.js";
+import { buildSystemPrompt } from "./prompts/index.js";
 import { loadThreadMessagesFromSessionFile } from "./tools/read-thread-session.js";
+import { resolveToolSelection } from "./tools/tool-selection.js";
 
 export type ReplayProviderApi = "openai-completions" | "openai-responses" | "anthropic-messages";
 
@@ -16,7 +21,7 @@ export type PromptCacheReplayProjection = {
 	payload: unknown;
 };
 
-export type PromptCacheReplayReport = {
+type PromptCacheReplayReport = {
 	sessionPath: string;
 	messageCount: number;
 	projections: PromptCacheReplayProjection[];
@@ -53,6 +58,13 @@ type AnthropicProviderModule = {
 	projectAnthropicRequest(model: Model<"anthropic-messages">, context: Context): unknown;
 };
 
+export type ReplaySessionMetadata = {
+	cwd: string;
+	provider: string | null;
+	modelId: string | null;
+	thinkingLevel: string | null;
+};
+
 function hashText(text: string): string {
 	return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
@@ -79,6 +91,41 @@ function collectReplayWindows(messages: Message[]): Message[][] {
 		windows.push([...messages]);
 	}
 	return windows;
+}
+
+export function loadReplaySessionMetadata(sessionPath: string): ReplaySessionMetadata {
+	const raw = readFileSync(sessionPath, "utf8");
+	const lines = raw.trim().length === 0 ? [] : raw.trim().split("\n");
+	let cwd = process.cwd();
+	let provider: string | null = null;
+	let modelId: string | null = null;
+	let thinkingLevel: string | null = null;
+
+	for (const line of lines) {
+		try {
+			const entry = JSON.parse(line) as Record<string, unknown>;
+			if (entry.type === "session") {
+				if (typeof entry.cwd === "string" && entry.cwd.trim()) cwd = resolve(entry.cwd);
+				if (typeof entry.provider === "string" && entry.provider.trim()) provider = entry.provider;
+				if (typeof entry.modelId === "string" && entry.modelId.trim()) modelId = entry.modelId;
+				if (typeof entry.thinkingLevel === "string" && entry.thinkingLevel.trim())
+					thinkingLevel = entry.thinkingLevel;
+			}
+			if (entry.type === "model_change") {
+				if (typeof entry.provider === "string" && entry.provider.trim()) provider = entry.provider;
+				if (typeof entry.modelId === "string" && entry.modelId.trim()) modelId = entry.modelId;
+			}
+			if (
+				entry.type === "thinking_level_change" &&
+				typeof entry.thinkingLevel === "string" &&
+				entry.thinkingLevel.trim()
+			) {
+				thinkingLevel = entry.thinkingLevel;
+			}
+		} catch {}
+	}
+
+	return { cwd, provider, modelId, thinkingLevel };
 }
 
 function createReplayModel<TApi extends ReplayProviderApi>(api: TApi): Model<TApi> {
@@ -124,29 +171,73 @@ function createReplayModel<TApi extends ReplayProviderApi>(api: TApi): Model<TAp
 	} as Model<TApi>;
 }
 
+function resolveReplayModel<TApi extends ReplayProviderApi>(api: TApi, meta: ReplaySessionMetadata): Model<TApi> {
+	const fallback = createReplayModel(api);
+	if (!meta.provider || !meta.modelId) {
+		return fallback;
+	}
+	const targetProvider = api === "anthropic-messages" ? "anthropic" : "openai";
+	if (meta.provider !== targetProvider) {
+		return fallback;
+	}
+	const found = findModel(meta.provider, meta.modelId);
+	if (!found.model || found.model.api !== api) {
+		return fallback;
+	}
+	return found.model as Model<TApi>;
+}
+
+export async function buildReplayContext(args: {
+	api: ReplayProviderApi;
+	sessionPath: string;
+	meta: ReplaySessionMetadata;
+	messages: Message[];
+}): Promise<{ model: Model<ReplayProviderApi>; context: Context }> {
+	const model = resolveReplayModel(args.api, args.meta);
+	const toolSelection = resolveToolSelection(undefined, model as Model<Api>);
+	const tools = toolSelection.tools as Array<AgentTool<TSchema, unknown>>;
+	const systemPrompt = await buildSystemPrompt({
+		tools: tools.map((tool) => ({ name: tool.name, description: tool.description })),
+		contextFiles: loadProjectContextFiles(args.meta.cwd),
+		cwd: args.meta.cwd,
+	});
+	return {
+		model,
+		context: {
+			systemPrompt,
+			messages: args.messages,
+			tools,
+		},
+	};
+}
+
 async function loadPromptCachePolicyModule(): Promise<PromptCachePolicyModule> {
 	return (await import(
 		new URL("../../ai/src/prompt-cache-policy.js", import.meta.url).href
 	)) as PromptCachePolicyModule;
 }
 
-async function projectProviderPayload(api: ReplayProviderApi, context: Context): Promise<unknown> {
+async function projectProviderPayload(
+	api: ReplayProviderApi,
+	model: Model<ReplayProviderApi>,
+	context: Context,
+): Promise<unknown> {
 	if (api === "openai-completions") {
 		const mod = (await import(
 			new URL("../../ai/src/providers/openai-completions.ts", import.meta.url).href
 		)) as OpenAICompletionsProviderModule;
-		return mod.projectOpenAICompletionsRequest(createReplayModel(api), context);
+		return mod.projectOpenAICompletionsRequest(model as Model<"openai-completions">, context);
 	}
 	if (api === "openai-responses") {
 		const mod = (await import(
 			new URL("../../ai/src/providers/openai-responses.ts", import.meta.url).href
 		)) as OpenAIResponsesProviderModule;
-		return mod.projectOpenAIResponsesRequest(createReplayModel(api), context);
+		return mod.projectOpenAIResponsesRequest(model as Model<"openai-responses">, context);
 	}
 	const mod = (await import(
 		new URL("../../ai/src/providers/anthropic.ts", import.meta.url).href
 	)) as AnthropicProviderModule;
-	return mod.projectAnthropicRequest(createReplayModel(api), context);
+	return mod.projectAnthropicRequest(model as Model<"anthropic-messages">, context);
 }
 
 export function resolveDefaultReplaySessionRoots(): string[] {
@@ -182,6 +273,7 @@ export async function buildPromptCacheReplayReport(args: {
 	messages?: Message[];
 }): Promise<PromptCacheReplayReport> {
 	const messages = args.messages ?? loadThreadMessagesFromSessionFile(args.sessionPath).messages;
+	const meta = loadReplaySessionMetadata(args.sessionPath);
 	const windows = collectReplayWindows(messages);
 	const warnings: string[] = [];
 	const turns: Record<ReplayProviderApi, PromptCacheReplayProjection[]> = {
@@ -196,12 +288,17 @@ export async function buildPromptCacheReplayReport(args: {
 		let previousPayload = "";
 		for (let index = 0; index < windows.length; index += 1) {
 			const window = windows[index] ?? [];
-			const context: Context = { messages: window };
-			const plan = promptCachePolicy.planPromptCachePolicy({
-				model: createReplayModel(api),
-				context,
+			const replay = await buildReplayContext({
+				api,
+				sessionPath: args.sessionPath,
+				meta,
+				messages: window,
 			});
-			const payload = await projectProviderPayload(api, plan.context);
+			const plan = promptCachePolicy.planPromptCachePolicy({
+				model: replay.model,
+				context: replay.context,
+			});
+			const payload = await projectProviderPayload(api, replay.model, plan.context);
 			const serializedPayload = JSON.stringify(payload);
 			const toolLayerHash = plan.layers.find((layer) => layer.id === "tools")?.fingerprint ?? null;
 			const projection: PromptCacheReplayProjection = {

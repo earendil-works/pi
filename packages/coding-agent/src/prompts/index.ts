@@ -2,6 +2,7 @@ import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { parse } from "yaml";
+import type { ContextFile } from "../project-context.js";
 import { findRepoRoot } from "../utils/find-repo-root.js";
 import { generateFileTree } from "./file-tree.js";
 
@@ -31,8 +32,6 @@ interface SystemPromptConfig {
 	toolDescriptions: Record<string, string>;
 	guidelines: Guideline[];
 }
-
-type ContextFile = { path: string; content: string; scope: "user" | "project" };
 
 // Cache for loaded configs
 let systemPromptConfig: SystemPromptConfig | null = null;
@@ -203,19 +202,20 @@ export async function buildSystemPromptSections(options: {
 	tools?: ToolPromptEntry[];
 	contextFiles?: ContextFile[];
 	includeFileTree?: boolean;
+	cwd?: string;
 }): Promise<SystemPromptSections> {
-	const { customPrompt, tools, contextFiles = [], includeFileTree = true } = options;
+	const { customPrompt, tools, contextFiles = [], includeFileTree = true, cwd = process.cwd() } = options;
 
 	let fileTreeSection = "";
 	if (includeFileTree) {
-		const fileTree = await generateFileTree({ cwd: process.cwd(), limit: 200 });
+		const fileTree = await generateFileTree({ cwd, limit: 200 });
 		if (fileTree) {
 			fileTreeSection = `\nProject files:\n${fileTree}`;
 		}
 	}
 
 	const contextBlock = formatContextFiles(contextFiles);
-	const metadata = `<metadata>\nCurrent working directory: ${process.cwd()}${fileTreeSection}\n</metadata>`;
+	const metadata = `<metadata>\nCurrent working directory: ${cwd}${fileTreeSection}\n</metadata>`;
 
 	if (customPrompt) {
 		return {
@@ -253,10 +253,10 @@ export async function buildSystemPromptSections(options: {
 		systemInstructions: config.systemPrompt
 			.replace("{{TOOLS_LIST}}", toolsList)
 			.replace("{{GUIDELINES}}", guidelinesText)
-			.replace("{{CONTEXT_FILES}}", contextFilesSection)
+			.replace("{{CONTEXT_FILES}}", "")
 			.replace("{{FILE_TREE}}", fileTreeSection)
-			.replace("{{CWD}}", process.cwd()),
-		contextFiles: "",
+			.replace("{{CWD}}", cwd),
+		contextFiles: contextBlock,
 		metadata,
 	};
 }
@@ -267,6 +267,7 @@ export async function buildSystemPrompt(options: {
 	tools?: ToolPromptEntry[];
 	contextFiles?: ContextFile[];
 	includeFileTree?: boolean;
+	cwd?: string;
 }): Promise<string> {
 	const sections = await buildSystemPromptSections(options);
 	return [sections.systemInstructions, sections.contextFiles, sections.metadata]

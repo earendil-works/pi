@@ -1,0 +1,17 @@
+sessionPath: /Users/kennyfrc/.mu/agent/sessions/--Users-kennyfrc-Documents-code-work-pi-mono-kenn-dev--/2026-04-06T04-23-17-829Z_a20d4eea-f7df-4b90-b425-b281e55129b1.jsonl
+cwd: /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev
+rawCapture: /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-curl-surface-openai-completions.json
+rawCapture: /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-curl-surface-openai-responses.json
+rawCapture: /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/devdocs/missions/prompt-caching-cross-provider-v1/evidence/m1-curl-surface-anthropic.json
+
+openai-completions path: /v1/chat/completions
+openai-completions leadingRoles: system, system, user
+
+openai-responses path: /v1/responses
+openai-responses leadingRoles: system, system, user
+
+anthropic path: /v1/messages
+anthropic systemBlockCount: 2
+anthropic systemCacheControls: [{"type":"ephemeral"},{"type":"ephemeral"}]
+anthropic systemBlock0: {"type":"text","text":"<system_instructions>\nYou are a general assistant that lives in the terminal, aligned with whoever is using you. You represent their interests, respect their preferences, and adapt to their working style.\n\nAvailable tools:\n- read: Read file contents\n- bash: Execute bash commands (ls, rg, fd, sg, etc.)\n- edit: Edit files with flexible matching (exact, unescape, whitespace-tolerant)\n- write: Create or overwrite files\n- memory_search: Search the artifact memory store for relevant entries.\n- memory_read: Read one stored artifact memory entry by id.\n- memory_store: Store an explicit durable memory entry in the append-only artifact memory store.\n- list_threads: List past conversation threads with search\n- read_thread: Read a specific thread's conversation history\n- read_image: Analyze images and extract information\n- spawn_agent: Delegate a bounded task to a spawned child agent, with optional verifier follow-up, only when the user explicitly asks for delegation\n- wait_agent: Wait for spawned child agents and collect their final responses\n- compact: Compact the current thread context into a smaller checkpoint\n- todo_write: Create and manage a struct
+anthropic systemBlock1: {"type":"text","text":"<metadata>\nCurrent working directory: /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev\n\nProject files:\n.husky/\n\tpre-commit\ndevdocs/\n\tcompaction-inspection/\n\t\tartifact.json\n\t\tcontinuation-prompt.txt\n\t\tREADME.md\n\t\trequest-preview.json\n\t\tsystem-prompt.txt\n\tmissions/\n\t\talways-on-agent-v1/\n\t\t\tARCHITECTURE.md\n\t\t\tMILESTONES.json\n\t\t\tPROGRESS.md\n\t\t\tRUNBOOK.md\n\t\t\tSPEC.md\n\t\t\tTASKS.json\n\t\texec-json-v1/\n\t\t\tevidence/\n\t\t\t\t[27 truncated]\n\t\t\tARCHITECTURE.md\n\t\t\t[5 truncated]\n\t\tmission-reset-control-event/\n\t\t\t[6 truncated]\n\t\tspawn-agent-independent-verifier/\n\t\t\t[7 truncated]\n\tpatterns/\n\t\tcode-state-separation.md\n\t\tpi-mono-extension-patterns.md\n\t\tpi-mono-practical-example.md\n\t\tprimitive-concepts.md\n\t\tprimitives-reference.md\n\t\ttui-streaming-performance.md\n\tpins/\n\t\t20260120-2230-model-sorting.md\n\t\t20260120-2245-manager-context.md\n\t\t20260121-0049-mknb2d.md\n\t\t20260121-0852-helloworld.md\n\t\t20260122-1016-grep.md\n\t\t20260122-1024-version-bump.md\n\t\t20260122-1028-purr.md\n\t\t20260122-1525-queue.md\n\t\t20260122-2100-model-cache.md\n\t\t20260122-2102-glob-t

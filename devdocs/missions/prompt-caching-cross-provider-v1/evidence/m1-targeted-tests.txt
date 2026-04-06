@@ -1,0 +1,35 @@
+
+> @kennyfrc/mu-ai@0.24.176 test
+> vitest --run prompt-cache-policy.test.ts openai-completions-prompt-cache-policy.test.ts openai-responses-prompt-cache-policy.test.ts anthropic-prompt-cache-policy.red.test.ts
+
+
+ RUN  v3.2.4 /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/ai
+
+ ✓ test/prompt-cache-policy.test.ts (5 tests) 11ms
+ ✓ test/openai-completions-prompt-cache-policy.test.ts (1 test) 11ms
+ ✓ test/openai-responses-prompt-cache-policy.test.ts (1 test) 13ms
+ ✓ test/anthropic-prompt-cache-policy.red.test.ts (1 test) 32ms
+
+ Test Files  4 passed (4)
+      Tests  8 passed (8)
+   Start at  13:39:55
+   Duration  674ms (transform 354ms, setup 0ms, collect 980ms, tests 67ms, environment 0ms, prepare 434ms)
+
+
+> @kennyfrc/mu-coding-agent@0.24.176 test
+> vitest --run prompt-cache-replay.red.test.ts system-prompt-sections.test.ts prompts/index.test.ts
+
+
+ RUN  v3.2.4 /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+
+ ✓ test/system-prompt-sections.test.ts (2 tests) 3ms
+ ✓ src/prompts/index.test.ts (7 tests) 78ms
+ ✓ test/prompt-cache-replay.red.test.ts (2 tests) 1061ms
+   ✓ prompt cache replay red harness > projects adjacent turns from a session-manager JSONL transcript into all target provider payloads  602ms
+   ✓ prompt cache replay red harness > discovers real replay session roots under the user's Mu home and supports both legacy and current layouts  458ms
+
+ Test Files  3 passed (3)
+      Tests  11 passed (11)
+   Start at  13:39:56
+   Duration  1.90s (transform 615ms, setup 1.72s, collect 108ms, tests 1.14s, environment 0ms, prepare 236ms)
+

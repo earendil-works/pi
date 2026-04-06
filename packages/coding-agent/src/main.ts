@@ -15,9 +15,9 @@ import { builtInExtensions } from "./extensions/built-ins.js";
 import { ExtensionLoader } from "./extensions/loader.js";
 import { ExtensionManager } from "./extensions/manager.js";
 import { ensureIdentityEnv } from "./identity-env.js";
-import { getArtifactMemoryProjectionPath, type WorkspaceProjection } from "./memory/projection.js";
 import { type MissionLoopResult, runMissionLoop } from "./missions/mission-runner.js";
 import { findModel, getApiKeyForModel, getAvailableModels } from "./model-config.js";
+import { loadProjectContextFiles } from "./project-context.js";
 import { buildSystemPrompt as buildSystemPromptFromYaml } from "./prompts/index.js";
 import { setCurrentModel, setCurrentThinkingLevel } from "./runtime-state.js";
 import { SessionManager } from "./session-manager.js";
@@ -489,109 +489,6 @@ async function buildSystemPrompt(customPrompt?: string, tools?: Array<AgentTool<
 		tools: tools?.map((t) => ({ name: t.name, description: t.description })),
 		contextFiles,
 	});
-}
-
-type ContextFile = { path: string; content: string; scope: "user" | "project" };
-
-/**
- * Look for AGENTS.md or CLAUDE.md in a directory (prefers AGENTS.md)
- */
-function loadContextFileFromDir(dir: string): { path: string; content: string } | null {
-	const candidates = ["AGENTS.md", "CLAUDE.md"];
-	for (const filename of candidates) {
-		const filePath = join(dir, filename);
-		if (existsSync(filePath)) {
-			try {
-				return {
-					path: filePath,
-					content: readFileSync(filePath, "utf-8"),
-				};
-			} catch (error) {
-				console.error(chalk.yellow(`Warning: Could not read ${filePath}: ${error}`));
-			}
-		}
-	}
-	return null;
-}
-
-/**
- * Load workspace memory projection from ~/.mu/wiki/projections/
- * Returns null if no projection exists for this workspace
- */
-function loadWorkspaceMemoryProjection(): { path: string; content: string } | null {
-	const cwd = process.cwd();
-	const projectionPath = getArtifactMemoryProjectionPath(cwd);
-	if (!existsSync(projectionPath)) {
-		return null;
-	}
-	try {
-		const projection: WorkspaceProjection = JSON.parse(readFileSync(projectionPath, "utf-8"));
-		const formattedContent = `# Workspace Memory Projection
-
-**Workspace:** ${projection.workspaceRef}
-
-${projection.startupSummary}`;
-		return {
-			path: projectionPath,
-			content: formattedContent,
-		};
-	} catch (error) {
-		// Silently fail if projection is corrupted
-		return null;
-	}
-}
-
-/**
- * Load all project context files in order:
- * 1. Global: ~/.mu/agent/AGENTS.md or CLAUDE.md
- * 2. Parent directories (top-most first) down to cwd
- * 3. Workspace memory projection (derived from ~/.mu/wiki/)
- * Each returns {path, content} for separate messages
- */
-function loadProjectContextFiles(): ContextFile[] {
-	const contextFiles: ContextFile[] = [];
-
-	// 1. Load global context from ~/.mu/agent/
-	const homeDir = homedir();
-	const globalContextDir = resolve(process.env.MU_CODING_AGENT_DIR || join(homeDir, ".mu/agent/"));
-	const globalContext = loadContextFileFromDir(globalContextDir);
-	if (globalContext) {
-		contextFiles.push({ ...globalContext, scope: "user" });
-	}
-
-	// 2. Walk up from cwd to root, collecting all context files
-	const cwd = process.cwd();
-	const ancestorContextFiles: ContextFile[] = [];
-
-	let currentDir = cwd;
-	const root = resolve("/");
-
-	while (true) {
-		const contextFile = loadContextFileFromDir(currentDir);
-		if (contextFile) {
-			// Add to beginning so we get top-most parent first
-			ancestorContextFiles.unshift({ ...contextFile, scope: "project" });
-		}
-
-		// Stop if we've reached root
-		if (currentDir === root) break;
-
-		// Move up one directory
-		const parentDir = resolve(currentDir, "..");
-		if (parentDir === currentDir) break; // Safety check
-		currentDir = parentDir;
-	}
-
-	// Add ancestor files in order (top-most → cwd)
-	contextFiles.push(...ancestorContextFiles);
-
-	// 3. Load workspace memory projection (lowest priority, acts as memory context)
-	const memoryProjection = loadWorkspaceMemoryProjection();
-	if (memoryProjection) {
-		contextFiles.push({ ...memoryProjection, scope: "project" });
-	}
-
-	return contextFiles;
 }
 
 async function checkForNewVersion(currentVersion: string): Promise<string | null> {
