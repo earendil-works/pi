@@ -60,26 +60,44 @@ function getAliases(): Record<string, string> {
 	if (_aliases) return _aliases;
 
 	const __dirname = path.dirname(fileURLToPath(import.meta.url));
-	const packageIndex = path.resolve(__dirname, "../..", "index.js");
+	const packageIndexJs = path.resolve(__dirname, "../..", "index.js");
+	const packageIndexTs = path.resolve(__dirname, "../..", "index.ts");
+	const packageIndex = fs.existsSync(packageIndexTs) ? packageIndexTs : packageIndexJs;
 
 	const typeboxEntry = require.resolve("@sinclair/typebox");
-	const typeboxRoot = typeboxEntry.replace(/[\\/]build[\\/]cjs[\\/]index\.js$/, "");
+	const typeboxRoot = typeboxEntry.replace(/[/\\]build[/\\]cjs[/\\]index\.js$/i, "");
 
 	const packagesRoot = path.resolve(__dirname, "../../../../");
-	const resolveWorkspaceOrImport = (workspaceRelativePath: string, specifier: string): string => {
-		const workspacePath = path.join(packagesRoot, workspaceRelativePath);
-		if (fs.existsSync(workspacePath)) {
-			return workspacePath;
+	const resolveWorkspaceOrImport = (
+		workspaceSrcRelativePath: string,
+		workspaceDistRelativePath: string,
+		specifier: string,
+	): string => {
+		const workspaceSrcPath = path.join(packagesRoot, workspaceSrcRelativePath);
+		if (fs.existsSync(workspaceSrcPath)) {
+			return workspaceSrcPath;
+		}
+		const workspaceDistPath = path.join(packagesRoot, workspaceDistRelativePath);
+		if (fs.existsSync(workspaceDistPath)) {
+			return workspaceDistPath;
 		}
 		return fileURLToPath(import.meta.resolve(specifier));
 	};
 
 	_aliases = {
 		"@mariozechner/pi-coding-agent": packageIndex,
-		"@mariozechner/pi-agent-core": resolveWorkspaceOrImport("agent/dist/index.js", "@mariozechner/pi-agent-core"),
-		"@mariozechner/pi-tui": resolveWorkspaceOrImport("tui/dist/index.js", "@mariozechner/pi-tui"),
-		"@mariozechner/pi-ai": resolveWorkspaceOrImport("ai/dist/index.js", "@mariozechner/pi-ai"),
-		"@mariozechner/pi-ai/oauth": resolveWorkspaceOrImport("ai/dist/oauth.js", "@mariozechner/pi-ai/oauth"),
+		"@mariozechner/pi-agent-core": resolveWorkspaceOrImport(
+			"agent/src/index.ts",
+			"agent/dist/index.js",
+			"@mariozechner/pi-agent-core",
+		),
+		"@mariozechner/pi-tui": resolveWorkspaceOrImport("tui/src/index.ts", "tui/dist/index.js", "@mariozechner/pi-tui"),
+		"@mariozechner/pi-ai": resolveWorkspaceOrImport("ai/src/index.ts", "ai/dist/index.js", "@mariozechner/pi-ai"),
+		"@mariozechner/pi-ai/oauth": resolveWorkspaceOrImport(
+			"ai/src/oauth.ts",
+			"ai/dist/oauth.js",
+			"@mariozechner/pi-ai/oauth",
+		),
 		"@sinclair/typebox": typeboxRoot,
 	};
 
