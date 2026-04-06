@@ -25,6 +25,7 @@ import type {
 } from "@mariozechner/pi-agent-core";
 import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@mariozechner/pi-ai";
 import { isContextOverflow, modelsAreEqual, resetApiProviders, supportsXhigh } from "@mariozechner/pi-ai";
+import type { FocusState } from "@mariozechner/pi-tui";
 import { getDocsPath } from "../config.js";
 import { theme } from "../modes/interactive/theme/theme.js";
 import { stripFrontmatter } from "../utils/frontmatter.js";
@@ -161,6 +162,8 @@ export interface AgentSessionConfig {
 	extensionRunnerRef?: { current?: ExtensionRunner };
 	/** Session start event metadata emitted when extensions bind to this runtime. */
 	sessionStartEvent?: SessionStartEvent;
+	/** Callback to get terminal focus state. Defaults to () => 'unknown' if not provided. */
+	getFocusState?: () => FocusState;
 }
 
 export interface ExtensionBindings {
@@ -278,6 +281,7 @@ export class AgentSession {
 	private _initialActiveToolNames?: string[];
 	private _baseToolsOverride?: Record<string, AgentTool>;
 	private _sessionStartEvent: SessionStartEvent;
+	private _getFocusState: () => FocusState;
 	private _extensionUIContext?: ExtensionUIContext;
 	private _extensionCommandContextActions?: ExtensionCommandContextActions;
 	private _extensionShutdownHandler?: ShutdownHandler;
@@ -309,6 +313,7 @@ export class AgentSession {
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
+		this._getFocusState = config.getFocusState ?? (() => 'unknown' as const);
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
@@ -1516,6 +1521,14 @@ export class AgentSession {
 	}
 
 	/**
+	 * Set the callback for getting terminal focus state.
+	 * Called by InteractiveMode after the TUI is initialized.
+	 */
+	setFocusStateCallback(callback: () => FocusState): void {
+		this._getFocusState = callback;
+	}
+
+	/**
 	 * Check if current model supports thinking/reasoning.
 	 */
 	supportsThinking(): boolean {
@@ -2172,6 +2185,7 @@ export class AgentSession {
 				},
 				getThinkingLevel: () => this.thinkingLevel,
 				setThinkingLevel: (level) => this.setThinkingLevel(level),
+				getFocusState: () => this._getFocusState(),
 			},
 			{
 				getModel: () => this.model,

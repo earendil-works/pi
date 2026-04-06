@@ -14,6 +14,7 @@ import type {
 	AgentToolUpdateCallback,
 	ThinkingLevel,
 } from "@mariozechner/pi-agent-core";
+import type { FocusState } from "@mariozechner/pi-tui";
 import type {
 	Api,
 	AssistantMessageEvent,
@@ -1206,6 +1207,14 @@ export interface ExtensionAPI {
 	 */
 	unregisterProvider(name: string): void;
 
+	/**
+	 * Get the current terminal focus state.
+	 * - 'focused': terminal supports focus reporting and is currently focused
+	 * - 'unfocused': terminal supports focus reporting and is currently unfocused
+	 * - 'unknown': terminal does not support focus reporting
+	 */
+	getFocusState(): FocusState;
+
 	/** Shared event bus for extension communication. */
 	events: EventBus;
 }
@@ -1335,6 +1344,8 @@ export type GetThinkingLevelHandler = () => ThinkingLevel;
 
 export type SetThinkingLevelHandler = (level: ThinkingLevel) => void;
 
+export type GetFocusStateHandler = () => FocusState;
+
 export type SetLabelHandler = (entryId: string, label: string | undefined) => void;
 
 /**
@@ -1374,6 +1385,7 @@ export interface ExtensionActions {
 	setModel: SetModelHandler;
 	getThinkingLevel: GetThinkingLevelHandler;
 	setThinkingLevel: SetThinkingLevelHandler;
+	getFocusState: GetFocusStateHandler;
 }
 
 /**

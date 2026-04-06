@@ -138,6 +138,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		setModel: () => Promise.reject(new Error("Extension runtime not initialized")),
 		getThinkingLevel: notInitialized,
 		setThinkingLevel: notInitialized,
+		getFocusState: notInitialized,
 		flagValues: new Map(),
 		pendingProviderRegistrations: [],
 		// Pre-bind: queue registrations so bindCore() can flush them once the
@@ -273,6 +274,10 @@ function createExtensionAPI(
 
 		setThinkingLevel(level) {
 			runtime.setThinkingLevel(level);
+		},
+
+		getFocusState() {
+			return runtime.getFocusState();
 		},
 
 		registerProvider(name: string, config: ProviderConfig) {
