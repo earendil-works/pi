@@ -49,7 +49,15 @@ function notify(title: string, body: string): void {
 }
 
 export default function (pi: ExtensionAPI) {
+	// Notify when agent finishes
 	pi.on("agent_end", async () => {
 		notify("Pi", "Ready for input");
+	});
+
+	// Listen for UI prompts from other extensions
+	pi.events.on("ui_prompt", (data) => {
+		const event = data as { type: string; title?: string; message?: string };
+		const body = event.message ?? event.title ?? "Input required";
+		notify("Pi", body);
 	});
 }

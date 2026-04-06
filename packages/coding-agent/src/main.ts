@@ -28,6 +28,7 @@ import { KeybindingsManager } from "./core/keybindings.js";
 import type { ModelRegistry } from "./core/model-registry.js";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.js";
+import { createEventBus } from "./core/event-bus.js";
 import type { CreateAgentSessionOptions } from "./core/sdk.js";
 import {
 	formatMissingSessionCwdPrompt,
@@ -513,6 +514,7 @@ export async function main(args: string[]) {
 	const resolvedPromptTemplatePaths = resolveCliPaths(cwd, parsed.promptTemplates);
 	const resolvedThemePaths = resolveCliPaths(cwd, parsed.themes);
 	const authStorage = AuthStorage.create();
+	const eventBus = createEventBus();
 	const createRuntime: CreateAgentSessionRuntimeFactory = async ({
 		cwd,
 		agentDir,
@@ -535,6 +537,7 @@ export async function main(args: string[]) {
 				noThemes: parsed.noThemes,
 				systemPrompt: parsed.systemPrompt,
 				appendSystemPrompt: parsed.appendSystemPrompt,
+				eventBus,
 			},
 		});
 		const { settingsManager, modelRegistry, resourceLoader } = services;
@@ -693,6 +696,7 @@ export async function main(args: string[]) {
 			initialImages,
 			initialMessages: parsed.messages,
 			verbose: parsed.verbose,
+			eventBus,
 		});
 		if (startupBenchmark) {
 			await interactiveMode.init();
