@@ -330,6 +330,11 @@ export class AgentSession {
 		apiKey: string;
 		headers?: Record<string, string>;
 	}> {
+		// Bedrock uses AWS SDK signing (SigV4), not API keys.
+		// The provider adapter handles auth at the HTTP layer.
+		if (model.provider === "amazon-bedrock") {
+			return { apiKey: undefined as any, headers: {} };
+		}
 		const result = await this._modelRegistry.getApiKeyAndHeaders(model);
 		if (!result.ok) {
 			throw new Error(result.error);

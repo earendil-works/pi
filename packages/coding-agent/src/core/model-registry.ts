@@ -535,6 +535,12 @@ export class ModelRegistry {
 	 * Get API key for a model.
 	 */
 	hasConfiguredAuth(model: Model<Api>): boolean {
+		// Bedrock uses AWS SDK signing (SigV4) — credentials are resolved at
+		// request time via the default credential chain (env vars, IMDS, etc.).
+		// There is no API key to pre-check.
+		if (model.provider === "amazon-bedrock") {
+			return true;
+		}
 		return (
 			this.authStorage.hasAuth(model.provider) ||
 			this.providerRequestConfigs.get(model.provider)?.apiKey !== undefined
