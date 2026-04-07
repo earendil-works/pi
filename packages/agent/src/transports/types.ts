@@ -24,6 +24,11 @@ export interface AgentRunConfig {
 	 * Use this to inject additional content (e.g., context usage warnings) into tool results.
 	 */
 	toolResultTransformer?: (toolResult: ToolResultMessage) => ToolResultMessage;
+	/**
+	 * Callback for context overflow recovery.
+	 * Called when stopReason === "length" and last message was a tool result.
+	 */
+	onContextOverflow?: AgentLoopConfig["onContextOverflow"];
 }
 
 /**

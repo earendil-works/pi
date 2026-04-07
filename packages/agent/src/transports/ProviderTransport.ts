@@ -62,6 +62,7 @@ export class ProviderTransport implements AgentTransport {
 			preprocessor: cfg.preprocessor,
 			interrupt: cfg.interrupt,
 			toolResultTransformer: cfg.toolResultTransformer,
+			onContextOverflow: cfg.onContextOverflow,
 		};
 
 		// Yield events from agentLoop

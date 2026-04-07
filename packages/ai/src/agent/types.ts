@@ -48,6 +48,19 @@ export interface AgentContext {
 	tools?: AgentTool<any>[];
 }
 
+// Context overflow recovery callback parameters
+export interface OnContextOverflowParams {
+	messages: Message[];
+	lastToolResult: ToolResultMessage;
+	errorMessage: string;
+}
+
+// Context overflow recovery callback result
+export interface OnContextOverflowResult {
+	shouldRetry: boolean;
+	compactedMessages: Message[];
+}
+
 // Event types
 export type AgentEvent =
 	// Emitted when the agent starts. An agent can emit multiple turns
@@ -101,4 +114,10 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 * Use this to inject additional content (e.g., context usage warnings) into tool results.
 	 */
 	toolResultTransformer?: (toolResult: ToolResultMessage) => ToolResultMessage;
+	/**
+	 * Callback for context overflow recovery.
+	 * Called when stopReason === "length" AND the error indicates a context overflow
+	 * AND the last message in the context is a tool result.
+	 */
+	onContextOverflow?: (params: OnContextOverflowParams) => Promise<OnContextOverflowResult>;
 }

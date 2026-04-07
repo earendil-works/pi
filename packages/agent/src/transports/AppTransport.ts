@@ -401,6 +401,7 @@ export class AppTransport implements AgentTransport {
 			preprocessor: cfg.preprocessor,
 			interrupt: cfg.interrupt,
 			toolResultTransformer: cfg.toolResultTransformer,
+			onContextOverflow: cfg.onContextOverflow,
 		};
 
 		// Yield events from the upstream agentLoop iterator

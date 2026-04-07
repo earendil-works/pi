@@ -4,6 +4,18 @@ import { EventStream } from "../utils/event-stream.js";
 import { validateToolArguments } from "../utils/validation.js";
 import type { AgentContext, AgentEvent, AgentLoopConfig, AgentTool, AgentToolResult } from "./types.js";
 
+// Helper function to detect context overflow errors
+function isContextOverflow(errorMessage: string | undefined): boolean {
+	if (!errorMessage) return false;
+	const lower = errorMessage.toLowerCase();
+	return (
+		lower.includes("context_length") ||
+		lower.includes("context length") ||
+		lower.includes("max context") ||
+		lower.includes("token limit")
+	);
+}
+
 // Strip thinking blocks from assistant messages at agent_end.
 // Within a turn, thinking is needed for <think> tags in prompts.
 // After a run completes, thinking should not be sent back in future turns.
@@ -87,8 +99,44 @@ export function agentLoop(
 			const message = await streamAssistantResponse(currentContext, config, signal, stream, streamFn);
 			newMessages.push(message);
 
-			if (message.stopReason === "error" || message.stopReason === "aborted" || message.stopReason === "length") {
-				// Stop the loop on error, abort, or context-length exceeded
+			// Check for context overflow recovery opportunity
+			if (message.stopReason === "length" && isContextOverflow(message.errorMessage)) {
+				// The assistant message was already pushed to context.messages inside streamAssistantResponse.
+				// Check the message BEFORE the failed assistant (second-to-last).
+				const messagesLength = currentContext.messages.length;
+				const lastMsgBeforeAssistant = messagesLength >= 2 ? currentContext.messages[messagesLength - 2] : null;
+
+				if (lastMsgBeforeAssistant?.role === "toolResult" && config.onContextOverflow) {
+					// Remove the failed assistant message from context
+					currentContext.messages.pop();
+					newMessages.pop();
+
+					const recovery = await config.onContextOverflow({
+						messages: currentContext.messages,
+						lastToolResult: lastMsgBeforeAssistant,
+						errorMessage: message.errorMessage ?? "",
+					});
+
+					if (recovery.shouldRetry && recovery.compactedMessages.length > 0) {
+						// Replace messages with compacted version and retry
+						currentContext.messages = [...recovery.compactedMessages];
+						// Reset newMessages to track only the retry attempt
+						newMessages.length = 0;
+						newMessages.push(...recovery.compactedMessages);
+						continue; // Retry with compacted context
+					}
+				}
+
+				// Original behavior: stop on overflow if no recovery or recovery failed
+				stream.push({ type: "turn_end", message, toolResults: [] });
+				const cleanedMessages = stripThinkingFromMessages(newMessages);
+				stream.push({ type: "agent_end", messages: cleanedMessages });
+				stream.end(cleanedMessages);
+				return;
+			}
+
+			if (message.stopReason === "error" || message.stopReason === "aborted") {
+				// Stop the loop on error or abort
 				stream.push({ type: "turn_end", message, toolResults: [] });
 				const cleanedMessages = stripThinkingFromMessages(newMessages);
 				stream.push({ type: "agent_end", messages: cleanedMessages });

@@ -207,6 +207,8 @@ export interface AgentOptions {
 	messagePreprocessor?: (messages: Message[], abortSignal?: AbortSignal) => Message[] | Promise<Message[]>;
 	// Transform tool result messages after they're created (e.g., to inject context usage warnings)
 	toolResultTransformer?: (toolResult: ToolResultMessage) => ToolResultMessage;
+	// Callback for context overflow recovery
+	onContextOverflow?: AgentRunConfig["onContextOverflow"];
 	// Queue mode for regular queued messages: "all" = send all queued-by-end messages at once, "one-at-a-time" = one per turn
 	queueMode?: "all" | "one-at-a-time";
 }
@@ -230,6 +232,7 @@ export class Agent {
 	private messageTransformer: (messages: AppMessage[]) => Message[] | Promise<Message[]>;
 	private messagePreprocessor?: (messages: Message[], abortSignal?: AbortSignal) => Message[] | Promise<Message[]>;
 	private toolResultTransformer?: (toolResult: ToolResultMessage) => ToolResultMessage;
+	private onContextOverflow?: AgentRunConfig["onContextOverflow"];
 	private messageQueue: AgentQueuedMessage[] = [];
 	private queueMode: "all" | "one-at-a-time";
 	private runningPrompt?: Promise<void>;
@@ -243,6 +246,7 @@ export class Agent {
 		this.messageTransformer = opts.messageTransformer || defaultMessageTransformer;
 		this.messagePreprocessor = opts.messagePreprocessor;
 		this.toolResultTransformer = opts.toolResultTransformer;
+		this.onContextOverflow = opts.onContextOverflow;
 		this.queueMode = opts.queueMode || "one-at-a-time";
 	}
 
@@ -262,6 +266,10 @@ export class Agent {
 
 	setToolResultTransformer(fn: ((toolResult: ToolResultMessage) => ToolResultMessage) | undefined) {
 		this.toolResultTransformer = fn;
+	}
+
+	setOnContextOverflow(fn: AgentRunConfig["onContextOverflow"] | undefined) {
+		this.onContextOverflow = fn;
 	}
 
 	setMessagePreprocessor(
@@ -464,6 +472,7 @@ export class Agent {
 				return injected.length > 0 ? injected : undefined;
 			},
 			toolResultTransformer: this.toolResultTransformer,
+			onContextOverflow: this.onContextOverflow,
 		};
 
 		// Track all messages generated in this prompt

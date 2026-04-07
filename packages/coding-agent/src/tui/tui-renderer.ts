@@ -47,6 +47,7 @@ import { getChangelogPath, parseChangelog } from "../changelog.js";
 import { copyToClipboard } from "../clipboard.js";
 import { parseCompactSlashCommand } from "../compact-command.js";
 import { buildCompactionCheckpointText, buildCompactionContinuationPrompt } from "../compaction-checkpoint.js";
+import { handleContextOverflow } from "../context-overflow-recovery.js";
 import { readToolProjectionV1 } from "../display/projection.js";
 import { exportSessionToHtml } from "../export-html.js";
 import { AskUserDialogComponent } from "../extensions/ask-user/dialog.js";
@@ -438,6 +439,37 @@ export class TuiRenderer {
 
 		// Set up tool result transformer for handoff nudge injection
 		this.updateToolResultTransformer();
+
+		// Set up context overflow recovery callback
+		this.agent.setOnContextOverflow(async (params) => {
+			this.showStatus("Compacting context after overflow...");
+			try {
+				const model = this.agent.state.model;
+				if (!model) {
+					this.showError("No model selected for context overflow recovery");
+					return { shouldRetry: false, compactedMessages: [] };
+				}
+
+				const result = await handleContextOverflow(params, {
+					model,
+					morphApiKey: process.env.MORPH_API_KEY ?? null,
+				});
+
+				if (result.shouldRetry) {
+					this.clearStatus();
+					this.showMessage("Context compacted successfully. Retrying...");
+					return result;
+				}
+
+				this.showError("Context overflow recovery failed");
+				return result;
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				this.showError(`Compaction error: ${message}`);
+				return { shouldRetry: false, compactedMessages: [] };
+			}
+		});
+
 		this.version = version;
 		this.promptHistory = new PromptHistoryManager();
 		this.newVersion = newVersion;
@@ -2596,6 +2628,26 @@ export class TuiRenderer {
 		// Show error message in the chat
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(theme.fg("error", `Error: ${errorMessage}`), 1, 0));
+		this.ui.requestRender();
+	}
+
+	showStatus(message: string): void {
+		// Show status message in the status container
+		this.statusContainer.clear();
+		this.statusContainer.addChild(new Text(theme.fg("dim", message), 1, 0));
+		this.ui.requestRender();
+	}
+
+	clearStatus(): void {
+		// Clear the status container
+		this.statusContainer.clear();
+		this.ui.requestRender();
+	}
+
+	showMessage(message: string): void {
+		// Show info message in the chat
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(new Text(theme.fg("dim", message), 1, 0));
 		this.ui.requestRender();
 	}
 
