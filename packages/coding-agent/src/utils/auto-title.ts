@@ -1,6 +1,7 @@
 import type { AgentState } from "@kennyfrc/mu-agent-core";
-import { type Api, completeSimple, type Message, type Model } from "@kennyfrc/mu-ai";
-import { findModel, getApiKeyForModel } from "../model-config.js";
+import { completeSimple, type Message } from "@kennyfrc/mu-ai";
+import { getThreadDerivationModel } from "./thread-derivation-model.js";
+import { createXmlTagExtractor } from "./xml-tag-extractor.js";
 
 export interface ThreadListingMeta {
 	title: string;
@@ -14,12 +15,9 @@ export function stripUserMessageTimePrefix(text: string): string {
 }
 
 export function parseThreadListingMetaXml(responseText: string): ThreadListingMeta | null {
-	const titleMatch = responseText.match(/<title>([\s\S]*?)<\/title>/i);
-	const previewMatch = responseText.match(/<preview>([\s\S]*?)<\/preview>/i);
-	if (!titleMatch || !previewMatch) return null;
-
-	const title = titleMatch[1].trim();
-	const preview = previewMatch[1].trim();
+	const extractor = createXmlTagExtractor(["title", "preview"]);
+	extractor.push(responseText);
+	const { title, preview } = extractor.end();
 	if (!title || !preview) return null;
 
 	return { title, preview };
@@ -39,22 +37,6 @@ function extractTextFromMessageContent(content: unknown): string {
 		if (typeof text === "string") texts.push(text);
 	}
 	return texts.join(" ");
-}
-
-function selectThreadMetaModel(currentModel: Model<Api>): Model<Api> {
-	if (currentModel.provider === "anthropic") {
-		const haiku45 = findModel("anthropic", "claude-haiku-4-5");
-		const haiku35 = findModel("anthropic", "claude-3-5-haiku-latest");
-		if (haiku45.model) return haiku45.model;
-		if (haiku35.model) return haiku35.model;
-	}
-
-	if (currentModel.provider === "openai-codex") {
-		const spark = findModel("openai-codex", "gpt-5.3-codex-spark");
-		if (spark.model) return spark.model;
-	}
-
-	return currentModel;
 }
 
 /**
@@ -85,9 +67,10 @@ export async function generateThreadListingMeta(state: AgentState): Promise<Thre
 		} as Message;
 	});
 
-	const metaModel = selectThreadMetaModel(currentModel);
-	const apiKey = await getApiKeyForModel(metaModel);
-	if (!apiKey) return null;
+	const resolution = await getThreadDerivationModel(currentModel);
+	if (!resolution) return null;
+	const metaModel = resolution.model;
+	const apiKey = resolution.apiKey;
 
 	const systemPrompt = `You are a title/preview generator.
 
@@ -118,8 +101,8 @@ PROTOCOL: You MUST respond with ONLY this XML format, nothing else:
 	try {
 		const options =
 			metaModel.provider === "openai-codex"
-				? ({ apiKey, maxTokens: 150, reasoning: "xhigh" } as const)
-				: ({ apiKey, maxTokens: 150 } as const);
+				? ({ apiKey, maxTokens: 32768, reasoning: "xhigh" } as const)
+				: ({ apiKey, maxTokens: 32768, reasoning: "medium" } as const);
 
 		const result = await completeSimple(
 			metaModel,

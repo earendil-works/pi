@@ -1,9 +1,10 @@
 import { type AgentTool, completeSimple, type Message } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
-import { findModel, getApiKeyForModel } from "../model-config.js";
 import { getToolDescription } from "../prompts/index.js";
 import { getCurrentModel } from "../runtime-state.js";
 import { SessionManager } from "../session-manager.js";
+import { getThreadDerivationModel } from "../utils/thread-derivation-model.js";
+import { createXmlTagExtractor } from "../utils/xml-tag-extractor.js";
 import { selectReadThreadChunks } from "./read-thread-chunk-selection.js";
 import { formatMessagesForReadThreadDerivation } from "./read-thread-derivation-transcript.js";
 import { loadThreadMessagesFromSessionFile, loadThreadMessagesTailFromSessionFile } from "./read-thread-session.js";
@@ -206,89 +207,15 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 		};
 
 		const currentModel = getCurrentModel();
-		let extractionModel = currentModel;
-
-		if (currentModel?.provider === "anthropic") {
-			const found = findModel("anthropic", "claude-sonnet-4-5");
-			if (found?.model) extractionModel = found.model;
-		}
-
-		// For the OpenAI Codex provider, always use the lightweight Spark model for read_thread extraction.
-		// This keeps extraction fast and avoids any tool-use behaviors.
-		if (currentModel?.provider === "openai-codex") {
-			const found = findModel("openai-codex", "gpt-5.3-codex-spark");
-			if (found?.model) extractionModel = found.model;
-		}
+		const extractionResolution = await getThreadDerivationModel(currentModel);
+		const extractionModel = extractionResolution?.model;
 
 		if (!extractionModel) {
 			if (shouldUseTailDefault) {
-				return buildTranscriptRawFallback("No active model available for extraction. Returning tail transcript.");
-			}
-
-			const rawResult = mgr.getThreadContent(id, {
-				maxMessages: limit,
-				startIndex: windowStartIndex,
-				detailed: true,
-				globalSearch: true,
-			});
-			if (!rawResult) {
-				return {
-					content: [{ type: "text" as const, text: "Thread not found." }],
-					details: undefined,
-					isError: true,
-				};
-			}
-			const rawText = wrapContent(
-				rawResult.content,
-				id,
-				rawResult.totalMessages,
-				rawResult.returnedMessages,
-				windowStartIndex,
-				"No active model available for extraction. Returning raw content.",
-			);
-			return { content: [{ type: "text", text: rawText }], details: undefined };
-		}
-
-		let apiKey: string | undefined;
-		try {
-			apiKey = await getApiKeyForModel(extractionModel);
-		} catch (error: unknown) {
-			if (shouldUseTailDefault) {
-				const message = error instanceof Error ? error.message : String(error);
 				return buildTranscriptRawFallback(
-					`Extraction credentials unavailable: ${message}. Returning tail transcript.`,
-				);
-			}
-
-			const message = error instanceof Error ? error.message : String(error);
-			const rawResult = mgr.getThreadContent(id, {
-				maxMessages: limit,
-				startIndex: windowStartIndex,
-				detailed: true,
-				globalSearch: true,
-			});
-			if (!rawResult) {
-				return {
-					content: [{ type: "text" as const, text: "Thread not found." }],
-					details: undefined,
-					isError: true,
-				};
-			}
-			const rawText = wrapContent(
-				rawResult.content,
-				id,
-				rawResult.totalMessages,
-				rawResult.returnedMessages,
-				windowStartIndex,
-				`Extraction credentials unavailable: ${message}. Returning raw content.`,
-			);
-			return { content: [{ type: "text", text: rawText }], details: undefined };
-		}
-
-		if (!apiKey) {
-			if (shouldUseTailDefault) {
-				return buildTranscriptRawFallback(
-					`No API key or OAuth token available for ${extractionModel.provider}. Returning tail transcript.`,
+					currentModel
+						? "Extraction credentials unavailable: unable to resolve preferred extraction model. Returning tail transcript."
+						: "No active model available for extraction. Returning tail transcript.",
 				);
 			}
 
@@ -311,10 +238,13 @@ export const readThreadTool: AgentTool<typeof readThreadSchema> = {
 				rawResult.totalMessages,
 				rawResult.returnedMessages,
 				windowStartIndex,
-				`No API key or OAuth token available for ${extractionModel.provider}. Returning raw content.`,
+				currentModel
+					? "Extraction credentials unavailable: unable to resolve preferred extraction model. Returning raw content."
+					: "No active model available for extraction. Returning raw content.",
 			);
 			return { content: [{ type: "text", text: rawText }], details: undefined };
 		}
+		const apiKey = extractionResolution.apiKey;
 
 		try {
 			if (onProgress) {
@@ -348,7 +278,9 @@ You MUST respond with ONLY this XML format:
 						},
 					],
 				},
-				extractionModel.provider === "openai-codex" ? { apiKey, signal, reasoning: "xhigh" } : { apiKey, signal },
+				extractionModel.provider === "openai-codex"
+					? { apiKey, signal, maxTokens: 32768, reasoning: "xhigh" }
+					: { apiKey, signal, maxTokens: 32768, reasoning: "medium" },
 			);
 
 			const rawText = extraction.content
@@ -357,10 +289,10 @@ You MUST respond with ONLY this XML format:
 				.join("");
 
 			let extractedText = rawText;
-			const match = rawText.match(/<analysis>([\s\S]*?)<\/analysis>/i);
-			if (match) {
-				extractedText = match[1].trim();
-			}
+			const extractor = createXmlTagExtractor(["analysis"]);
+			extractor.push(rawText);
+			const { analysis } = extractor.end();
+			if (analysis) extractedText = analysis;
 
 			return {
 				content: [
