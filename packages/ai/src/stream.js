@@ -113,27 +113,27 @@ function mapOptionsForApi(model, options, apiKey) {
 	const clampReasoning = (effort) => (effort === "xhigh" ? "high" : effort);
 	switch (model.api) {
 		case "anthropic-messages": {
-			// Explicitly disable thinking when reasoning is not specified
-			if (!options?.reasoning) {
-				return { ...base, thinkingEnabled: false };
-			}
+			// Always enable thinking for Anthropic models with max effort by default
+			// Map reasoning levels when provided, default to max when not specified
+			const effort = mapReasoningToAnthropicEffort(options?.reasoning, model.id);
 			if (supportsAdaptiveAnthropicThinking(model.id)) {
 				return {
 					...base,
 					thinkingEnabled: true,
-					effort: mapReasoningToAnthropicEffort(options.reasoning, model.id),
+					effort,
 				};
 			}
 			const anthropicBudgets = {
 				minimal: 1024,
 				low: 2048,
-				medium: 8192,
-				high: 16384,
+				medium: 15999,
+				high: 31999,
+				max: 63999,
 			};
 			return {
 				...base,
 				thinkingEnabled: true,
-				thinkingBudgetTokens: anthropicBudgets[clampReasoning(options.reasoning)],
+				thinkingBudgetTokens: anthropicBudgets[effort],
 			};
 		}
 		case "openai-completions":
@@ -206,6 +206,9 @@ function supportsAdaptiveAnthropicThinking(modelId) {
 	);
 }
 function mapReasoningToAnthropicEffort(reasoning, modelId) {
+	if (reasoning === undefined) {
+		return "max";
+	}
 	switch (reasoning) {
 		case "minimal":
 		case "low":
