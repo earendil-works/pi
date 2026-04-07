@@ -240,12 +240,68 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 }
 
 /**
+ * Sanitize a JSON Schema for OpenAPI 3.03 compatibility.
+ *
+ * Cloud Code Assist's `parameters` field expects OpenAPI 3.03 Schema, which doesn't
+ * support JSON Schema constructs like `anyOf`, `oneOf`, or `const`. This function
+ * recursively transforms:
+ * - `anyOf` arrays containing `const` values → `enum` array (e.g., TypeBox unions of literals)
+ * - Standalone `const` → single-value `enum`
+ */
+function sanitizeSchemaForOpenApi(schema: Record<string, unknown>): Record<string, unknown> {
+	if (typeof schema !== "object" || schema === null) {
+		return schema;
+	}
+
+	const result: Record<string, unknown> = {};
+
+	for (const [key, value] of Object.entries(schema)) {
+		if (key === "anyOf" && Array.isArray(value)) {
+			const constValues = value
+				.filter(
+					(item): item is Record<string, unknown> => typeof item === "object" && item !== null && "const" in item,
+				)
+				.map((item) => item.const);
+
+			if (constValues.length === value.length && constValues.length > 0) {
+				result.type = "string";
+				result.enum = constValues;
+				continue;
+			}
+		}
+
+		if (key === "const") {
+			result.type = "string";
+			result.enum = [value];
+			continue;
+		}
+
+		if (Array.isArray(value)) {
+			result[key] = value.map((item) =>
+				typeof item === "object" && item !== null
+					? sanitizeSchemaForOpenApi(item as Record<string, unknown>)
+					: item,
+			);
+		} else if (typeof value === "object" && value !== null) {
+			result[key] = sanitizeSchemaForOpenApi(value as Record<string, unknown>);
+		} else {
+			result[key] = value;
+		}
+	}
+
+	return result;
+}
+
+/**
  * Convert tools to Gemini function declarations format.
  *
  * By default uses `parametersJsonSchema` which supports full JSON Schema (including
  * anyOf, oneOf, const, etc.). Set `useParameters` to true to use the legacy `parameters`
  * field instead (OpenAPI 3.03 Schema). This is needed for Cloud Code Assist with Claude
  * models, where the API translates `parameters` into Anthropic's `input_schema`.
+ *
+ * When `useParameters` is true, schemas are sanitized to convert JSON Schema constructs
+ * (anyOf, const) to OpenAPI 3.03-compatible equivalents (enum).
  */
 export function convertTools(
 	tools: Tool[],
@@ -257,7 +313,9 @@ export function convertTools(
 			functionDeclarations: tools.map((tool) => ({
 				name: tool.name,
 				description: tool.description,
-				...(useParameters ? { parameters: tool.parameters } : { parametersJsonSchema: tool.parameters }),
+				...(useParameters
+					? { parameters: sanitizeSchemaForOpenApi(tool.parameters as Record<string, unknown>) }
+					: { parametersJsonSchema: tool.parameters }),
 			})),
 		},
 	];
