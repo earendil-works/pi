@@ -38,16 +38,6 @@ function getArtifactMemoryRoot(baseDir) {
   return baseDir ? path.resolve(baseDir, '.mu', 'wiki') : path.resolve(path.join(os.homedir(), '.mu', 'wiki'));
 }
 
-function getProjectionPath(root, workspaceRef) {
-  const key = crypto.createHash('sha256').update(workspaceRef).digest('hex').slice(0, 12);
-  return path.join(root, 'projections', key + '.json');
-}
-
-function summarizeEntries(entries) {
-  if (entries.length === 0) return 'No stored memory for this workspace.';
-  return entries.map((entry) => '- [' + entry.kind + '] ' + entry.summary).join('\n');
-}
-
 const payload = JSON.parse(Buffer.from(process.argv[1], 'base64url').toString('utf8'));
 const root = getArtifactMemoryRoot(payload.baseDir);
 const workspaceRef = normalizeWorkspaceRef(payload.workspaceRef);
@@ -68,20 +58,6 @@ for (const entry of payload.entries) {
   };
   fs.appendFileSync(ledgerPath, JSON.stringify(stored) + '\n', 'utf8');
 }
-
-const raw = fs.existsSync(ledgerPath) ? fs.readFileSync(ledgerPath, 'utf8').trim() : '';
-const entries = raw.length === 0
-  ? []
-  : raw.split('\n').map((line) => JSON.parse(line)).filter((entry) => entry.workspaceRef === workspaceRef);
-
-const projection = {
-  workspaceRef,
-  entries,
-  startupSummary: summarizeEntries(entries),
-};
-const projectionPath = getProjectionPath(root, workspaceRef);
-fs.mkdirSync(path.dirname(projectionPath), { recursive: true });
-fs.writeFileSync(projectionPath, JSON.stringify(projection, null, 2) + '\n', 'utf8');
 `;
 
 export function enqueueArtifactMemoryWrite(

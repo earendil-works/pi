@@ -16,7 +16,7 @@ import { agentLoop, getModel } from "@kennyfrc/mu-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { AgentRunConfig, AgentTransport } from "../../agent/src/transports/types.js";
 import { AssistantMessageEventStream } from "../../ai/src/utils/event-stream.js";
-import { getArtifactMemoryProjectionPath } from "../src/memory/projection.js";
+import { ArtifactMemoryProjector, getArtifactMemoryProjectionPath } from "../src/memory/projection.js";
 import { installArtifactMemoryRuntime } from "../src/memory/runtime.js";
 import { normalizeArtifactMemoryWorkspaceRef, readArtifactMemoryEntries } from "../src/memory/store.js";
 import { applyPatchTool } from "../src/tools/apply-patch.js";
@@ -234,6 +234,10 @@ describe("artifact memory runtime", () => {
 		expect(entries.flatMap((entry) => entry.artifacts ?? [])).toContain(normalizedArtifactPath);
 		expect(entries.flatMap((entry) => entry.artifacts ?? [])).toContain(normalizedBashArtifactPath);
 		expect(entries.flatMap((entry) => entry.artifacts ?? [])).not.toContain("printf 'noop'");
+
+		// Projection is no longer written by background writer; build it explicitly
+		const projector = new ArtifactMemoryProjector({ baseDir: memoryBaseDir });
+		await projector.buildWorkspaceProjection(workspaceDir);
 
 		const projectionPath = getArtifactMemoryProjectionPath(workspaceDir, memoryBaseDir);
 		expect(existsSync(projectionPath)).toBe(true);
