@@ -40,16 +40,21 @@ describe("spawn_agent verifier prompt and reporting contract (red)", () => {
 		rmSync(configDir, { recursive: true, force: true });
 	});
 
-	test("full spawn_agent tool description teaches independent verifier flow, verificationChecks, and SPEC discovery from missionPath", () => {
+	test("full spawn_agent tool description teaches validation-contract verification and spec-file startup context", () => {
 		const description = getToolDescription("spawn_agent");
 
-		expect(description).toMatch(/independent verifier|independent verification/i);
-		expect(description).toMatch(/verify/i);
+		expect(description).toMatch(/verifier/i);
 		expect(description).toMatch(/verificationChecks/i);
-		expect(description).toMatch(/SPEC\.md/i);
+		expect(description).toMatch(/validation contract/i);
+		expect(description).toMatch(/spec context|specPath/i);
 		expect(description).toMatch(/missionPath|mission path|mission-path/i);
-		expect(description).toMatch(/PASS\|FAIL|PASS \/ FAIL/i);
+		expect(description).toMatch(/specPath|spec path|spec-file|spec file/i);
+		expect(description).toMatch(/fireworks\/accounts\/fireworks\/routers\/kimi-k2p5-turbo/i);
+		expect(description).toMatch(/PASS|FAIL/i);
 		expect(description).toMatch(/parent decides|retry|accept|abort/i);
+		// New strict contract assertions
+		expect(description).toMatch(/ALWAYS required|REQUIRED/i);
+		expect(description).toMatch(/SERIALIZES by default/i);
 	});
 
 	test("short system prompt description makes verifier support discoverable in the available-tools list", () => {

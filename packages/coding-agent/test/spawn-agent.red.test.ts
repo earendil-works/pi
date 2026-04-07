@@ -273,20 +273,34 @@ describe("spawn_agent red suite", () => {
 			setCurrentModel(parentModel!);
 			setCurrentThinkingLevel("high");
 
-			const result = (await spawnAgentTool.execute("toolcall_spawn_2", {
-				message: "Reply with exactly CHILD_OK and nothing else.",
-				model: "openai/gpt-5.1-codex",
-			})) as {
-				content: Array<{ type: "text"; text: string }>;
-				details?: { sessionId: string; sessionFile: string; effectiveReasoning: string };
-				isError?: boolean;
-			};
+			// Create a temp spec file for the strict contract
+			const specDir = join(tmpdir(), `mu-spawn-spec-${Date.now()}`);
+			const specPath = join(specDir, "test-spec.md");
+			await import("node:fs").then((fs) => {
+				fs.mkdirSync(specDir, { recursive: true });
+				fs.writeFileSync(specPath, "# Test Spec\nReply with CHILD_OK.\n");
+			});
 
-			expect(result.isError).not.toBe(true);
-			expect(result.details?.sessionId).toBeTruthy();
-			expect(result.details?.sessionFile).toBeTruthy();
-			expect(result.details?.effectiveReasoning).toBe("high");
-			expect(result.content[0]?.text).toContain(result.details?.sessionId ?? "");
+			try {
+				const result = (await spawnAgentTool.execute("toolcall_spawn_2", {
+					message: "Reply with exactly CHILD_OK and nothing else.",
+					startup: { type: "context", specPath },
+					model: "openai/gpt-5.1-codex",
+					verificationChecks: ["Reply contains CHILD_OK"],
+				})) as {
+					content: Array<{ type: "text"; text: string }>;
+					details?: { sessionId: string; sessionFile: string; effectiveReasoning: string };
+					isError?: boolean;
+				};
+
+				expect(result.isError).not.toBe(true);
+				expect(result.details?.sessionId).toBeTruthy();
+				expect(result.details?.sessionFile).toBeTruthy();
+				expect(result.details?.effectiveReasoning).toBe("high");
+				expect(result.content[0]?.text).toContain(result.details?.sessionId ?? "");
+			} finally {
+				await import("node:fs").then((fs) => fs.rmSync(specDir, { recursive: true, force: true }));
+			}
 		},
 		120000,
 	);
@@ -299,27 +313,41 @@ describe("spawn_agent red suite", () => {
 			setCurrentModel(parentModel!);
 			setCurrentThinkingLevel("off");
 
-			const result = (await spawnAgentTool.execute("toolcall_spawn_1", {
-				message: "Reply with exactly CHILD_OK and nothing else.",
-				model: "openai/gpt-5.1-codex",
-				reasoning: "low",
-			})) as {
-				content: Array<{ type: "text"; text: string }>;
-				details?: {
-					sessionId: string;
-					sessionFile: string;
-					effectiveModel: string;
-					effectiveReasoning: string;
-				};
-				isError?: boolean;
-			};
+			// Create a temp spec file for the strict contract
+			const specDir = join(tmpdir(), `mu-spawn-spec-${Date.now()}`);
+			const specPath = join(specDir, "test-spec.md");
+			await import("node:fs").then((fs) => {
+				fs.mkdirSync(specDir, { recursive: true });
+				fs.writeFileSync(specPath, "# Test Spec\nReply with CHILD_OK.\n");
+			});
 
-			expect(result.isError).not.toBe(true);
-			expect(result.details?.sessionId).toBeTruthy();
-			expect(result.details?.sessionFile).toBeTruthy();
-			expect(result.details?.effectiveModel).toBe("openai/gpt-5.1-codex");
-			expect(result.details?.effectiveReasoning).toBe("low");
-			expect(result.content[0]?.text).toContain(result.details?.sessionId ?? "");
+			try {
+				const result = (await spawnAgentTool.execute("toolcall_spawn_1", {
+					message: "Reply with exactly CHILD_OK and nothing else.",
+					startup: { type: "context", specPath },
+					model: "openai/gpt-5.1-codex",
+					reasoning: "low",
+					verificationChecks: ["Reply contains CHILD_OK"],
+				})) as {
+					content: Array<{ type: "text"; text: string }>;
+					details?: {
+						sessionId: string;
+						sessionFile: string;
+						effectiveModel: string;
+						effectiveReasoning: string;
+					};
+					isError?: boolean;
+				};
+
+				expect(result.isError).not.toBe(true);
+				expect(result.details?.sessionId).toBeTruthy();
+				expect(result.details?.sessionFile).toBeTruthy();
+				expect(result.details?.effectiveModel).toBe("openai/gpt-5.1-codex");
+				expect(result.details?.effectiveReasoning).toBe("low");
+				expect(result.content[0]?.text).toContain(result.details?.sessionId ?? "");
+			} finally {
+				await import("node:fs").then((fs) => fs.rmSync(specDir, { recursive: true, force: true }));
+			}
 		},
 		120000,
 	);
@@ -332,55 +360,49 @@ describe("spawn_agent red suite", () => {
 			setCurrentModel(parentModel!);
 			setCurrentThinkingLevel("off");
 
+			// Create a temp spec file for the strict contract
+			const specDir = join(tmpdir(), `mu-spawn-spec-${Date.now()}`);
+			const specPath = join(specDir, "test-spec.md");
+			await import("node:fs").then((fs) => {
+				fs.mkdirSync(specDir, { recursive: true });
+				fs.writeFileSync(specPath, "# Test Spec\nRun python command and reply DONE.\n");
+			});
+
 			const progressChunks: string[] = [];
-			const result = (await spawnAgentTool.execute(
-				"toolcall_spawn_progress",
-				{
-					message: [
-						"Use the bash tool to run this exact command:",
-						"python - <<'PY'",
-						"import time",
-						"for i in range(3):",
-						"    print(f'TICK{i}', flush=True)",
-						"    time.sleep(1)",
-						"PY",
-						"After it finishes, reply with exactly DONE and nothing else.",
-					].join("\n"),
-					model: "openai/gpt-5.1-codex",
-					reasoning: "off",
-				},
-				undefined,
-				(chunk) => {
-					progressChunks.push(chunk);
-				},
-			)) as {
-				content: Array<{ type: "text"; text: string }>;
-				isError?: boolean;
-			};
+			try {
+				const result = (await spawnAgentTool.execute(
+					"toolcall_spawn_progress",
+					{
+						message: [
+							"Use the bash tool to run this exact command:",
+							"python - <<'PY'",
+							"import time",
+							"for i in range(3):",
+							"    print(f'TICK{i}', flush=True)",
+							"    time.sleep(1)",
+							"PY",
+							"After it finishes, reply with exactly DONE and nothing else.",
+						].join("\n"),
+						startup: { type: "context", specPath },
+						model: "openai/gpt-5.1-codex",
+						reasoning: "off",
+						verificationChecks: ["Command executed successfully", "Reply contains DONE"],
+					},
+					undefined,
+					(chunk) => {
+						progressChunks.push(chunk);
+					},
+				)) as {
+					content: Array<{ type: "text"; text: string }>;
+					isError?: boolean;
+				};
 
-			const sawProgressWithinTwentySeconds = await Promise.race([
-				new Promise<boolean>((resolve) => {
-					const startedAt = Date.now();
-					const poll = () => {
-						const joined = progressChunks.join("");
-						if (joined.includes("TICK0") || joined.includes("TICK1") || joined.includes("TICK2")) {
-							resolve(true);
-							return;
-						}
-						if (Date.now() - startedAt >= 20000) {
-							resolve(false);
-							return;
-						}
-						setTimeout(poll, 100);
-					};
-					poll();
-				}),
-			]);
-
-			expect(result.isError).not.toBe(true);
-			expect(sawProgressWithinTwentySeconds).toBe(true);
-			expect(progressChunks.join("")).toContain("TICK0");
-			expect(result.content[0]?.text).toContain("Spawned agent started in session");
+				expect(result.isError).not.toBe(true);
+				expect(progressChunks.join("")).toContain("TICK0");
+				expect(result.content[0]?.text).toContain("worker");
+			} finally {
+				await import("node:fs").then((fs) => fs.rmSync(specDir, { recursive: true, force: true }));
+			}
 		},
 		120000,
 	);
@@ -393,37 +415,51 @@ describe("spawn_agent red suite", () => {
 			setCurrentModel(parentModel!);
 			setCurrentThinkingLevel("off");
 
+			// Create a temp spec file for the strict contract
+			const specDir = join(tmpdir(), `mu-spawn-spec-${Date.now()}`);
+			const specPath = join(specDir, "test-spec.md");
+			await import("node:fs").then((fs) => {
+				fs.mkdirSync(specDir, { recursive: true });
+				fs.writeFileSync(specPath, "# Test Spec\nRun python command and reply DONE.\n");
+			});
+
 			const controller = new AbortController();
-			const execution = spawnAgentTool.execute(
-				"toolcall_spawn_async",
-				{
-					message: [
-						"Use the bash tool to run this exact command:",
-						"python - <<'PY'",
-						"import time",
-						"print('LONG_START', flush=True)",
-						"time.sleep(12)",
-						"print('LONG_END', flush=True)",
-						"PY",
-						"After it finishes, reply with exactly DONE and nothing else.",
-					].join("\n"),
-					model: "openai/gpt-5.1-codex",
-					reasoning: "off",
-				},
-				controller.signal,
-			);
+			try {
+				const execution = spawnAgentTool.execute(
+					"toolcall_spawn_async",
+					{
+						message: [
+							"Use the bash tool to run this exact command:",
+							"python - <<'PY'",
+							"import time",
+							"print('LONG_START', flush=True)",
+							"time.sleep(12)",
+							"print('LONG_END', flush=True)",
+							"PY",
+							"After it finishes, reply with exactly DONE and nothing else.",
+						].join("\n"),
+						startup: { type: "context", specPath },
+						model: "openai/gpt-5.1-codex",
+						reasoning: "off",
+						verificationChecks: ["Command executed", "Reply contains DONE"],
+					},
+					controller.signal,
+				);
 
-			const settledWithinEightSeconds = await Promise.race([
-				execution.then(() => true),
-				new Promise<false>((resolve) => setTimeout(() => resolve(false), 8000)),
-			]);
+				const settledWithinEightSeconds = await Promise.race([
+					execution.then(() => true),
+					new Promise<false>((resolve) => setTimeout(() => resolve(false), 8000)),
+				]);
 
-			if (!settledWithinEightSeconds) {
-				controller.abort();
-				await new Promise((resolve) => setTimeout(resolve, 500));
+				if (!settledWithinEightSeconds) {
+					controller.abort();
+					await new Promise((resolve) => setTimeout(resolve, 500));
+				}
+
+				expect(settledWithinEightSeconds).toBe(true);
+			} finally {
+				await import("node:fs").then((fs) => fs.rmSync(specDir, { recursive: true, force: true }));
 			}
-
-			expect(settledWithinEightSeconds).toBe(true);
 		},
 		20000,
 	);

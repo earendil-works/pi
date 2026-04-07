@@ -91,6 +91,8 @@ describe("spawn_agent mission startup contract (red)", () => {
 		expect(startup).toBeDefined();
 		expect(JSON.stringify(startup)).toMatch(/mission/i);
 		expect(JSON.stringify(startup)).toMatch(/missionPath|mission path|mission-path/i);
+		expect(JSON.stringify(startup)).toMatch(/context/i);
+		expect(JSON.stringify(startup)).toMatch(/specPath|spec path|spec-path/i);
 	});
 
 	test("tool description teaches mission startup mode in addition to freeform task delegation", () => {
@@ -99,9 +101,10 @@ describe("spawn_agent mission startup contract (red)", () => {
 		expect(description).toMatch(/startup/i);
 		expect(description).toMatch(/mission/i);
 		expect(description).toMatch(/missionPath|mission path|mission-path/i);
+		expect(description).toMatch(/specPath|spec path|spec-path/i);
 	});
 
-	test("allows startup-only mission spawning and the child completes a done mission without a freeform prompt", async () => {
+	test("allows startup-only mission spawning with required verificationChecks", async () => {
 		const missionDir = mkdtempSync(join(tmpdir(), "mu-spawn-agent-mission-done-"));
 		try {
 			writeDoneBuildMission(missionDir);
@@ -111,19 +114,24 @@ describe("spawn_agent mission startup contract (red)", () => {
 					type: "mission",
 					missionPath: missionDir,
 				},
+				verificationChecks: ["Mission completes successfully", "SPEC.md is readable"],
 			} as never)) as {
 				content: Array<{ type: "text"; text: string }>;
-				details?: { sessionId: string; sessionFile: string };
+				details?: {
+					worker?: { sessionId: string; sessionFile: string };
+					verificationReport?: { status: string };
+				};
 				isError?: boolean;
 			};
 
 			expect(result.isError).not.toBe(true);
-			expect(result.details?.sessionId).toBeTruthy();
-			expect(result.details?.sessionFile).toBeTruthy();
+			expect(result.details?.worker?.sessionId).toBeTruthy();
+			expect(result.details?.worker?.sessionFile).toBeTruthy();
+			expect(result.details?.verificationReport?.status).toMatch(/PASS|FAIL/);
 
 			const inspected = await waitForChildTerminalState(
-				result.details?.sessionId ?? "",
-				result.details?.sessionFile ?? "",
+				result.details?.worker?.sessionId ?? "",
+				result.details?.worker?.sessionFile ?? "",
 				5_000,
 			);
 

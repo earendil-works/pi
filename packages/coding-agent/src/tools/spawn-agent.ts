@@ -33,32 +33,52 @@ const RPC_TERMINAL_TIMEOUT_MS = 5 * 60 * 1000;
 const missionStartupSchema = Type.Object({
 	type: StringEnum(["mission"] as const, { description: "Startup mode for the child agent." }),
 	missionPath: Type.String({ description: "Path to the mission directory the child should run." }),
+	specPath: Type.Optional(
+		Type.String({
+			description: "Optional spec file path to override the default mission SPEC.md.",
+		}),
+	),
 });
 
+const contextStartupSchema = Type.Object({
+	type: StringEnum(["context"] as const, { description: "Startup mode for the child agent." }),
+	specPath: Type.String({
+		description: "Required spec file path for validation context. The verifier will check against this spec.",
+	}),
+});
+
+const spawnAgentStartupSchema = Type.Union([missionStartupSchema, contextStartupSchema]);
+
 const spawnAgentSchema = Type.Object({
-	message: Type.Optional(Type.String({ description: "Task for the spawned agent." })),
-	startup: Type.Optional(missionStartupSchema),
-	model: Type.Optional(Type.String({ description: "Exact model override in provider/modelId form." })),
+	message: Type.Optional(Type.String({ description: "Task for the spawned agent (optional when startup provided)." })),
+	startup: Type.Optional(spawnAgentStartupSchema),
+	model: Type.Optional(
+		Type.String({
+			description:
+				"Exact model override in provider/modelId form, e.g., fireworks/accounts/fireworks/routers/kimi-k2p5-turbo",
+		}),
+	),
 	reasoning: Type.Optional(
 		StringEnum(["inherit", "off", "minimal", "low", "medium", "high", "xhigh"] as const, {
 			description: "Reasoning level override.",
 		}),
 	),
-	verify: Type.Optional(
-		Type.Boolean({
-			description: "Whether to run a separate verifier after the worker completes. Defaults to true for missions.",
-		}),
-	),
-	verificationChecks: Type.Optional(
-		Type.Array(Type.String({ description: "A caller-provided verification checklist item." }), {
-			description: "Caller-provided checklist items for the verifier.",
-		}),
-	),
+	verificationChecks: Type.Array(Type.String({ description: "A validation contract checklist item." }), {
+		minItems: 1,
+		description:
+			"Required validation contract - the verifier will check worker output against these criteria. Minimum 1 check required.",
+	}),
 });
 
 interface SpawnAgentMissionStartup {
 	type: "mission";
 	missionPath: string;
+	specPath?: string;
+}
+
+interface SpawnAgentContextStartup {
+	type: "context";
+	specPath: string;
 }
 
 interface SpawnAgentRpcPromptInput {
@@ -76,6 +96,8 @@ interface SpawnAgentRpcVerificationInput extends SpawnAgentVerificationRunReques
 }
 
 type SpawnAgentRpcInput = SpawnAgentRpcPromptInput | SpawnAgentRpcMissionInput | SpawnAgentRpcVerificationInput;
+
+type SpawnAgentStartup = SpawnAgentMissionStartup | SpawnAgentContextStartup;
 
 interface SpawnedRpcChildHandle {
 	details: SpawnAgentDetails;
@@ -293,9 +315,23 @@ function buildVerifierRequest(
 	return {
 		workerSessionId: worker.sessionId,
 		workerSessionFile: worker.sessionFile,
-		missionPath: args.startup?.missionPath,
+		missionPath: args.startup?.type === "mission" ? args.startup.missionPath : undefined,
+		specPath:
+			args.startup?.type === "context"
+				? args.startup.specPath
+				: args.startup?.type === "mission"
+					? args.startup.specPath
+					: undefined,
 		verificationChecks: args.verificationChecks,
 	};
+}
+
+function buildPromptMessage(message: string, startup: SpawnAgentStartup | undefined): string {
+	if (startup?.type !== "context") {
+		return message;
+	}
+
+	return `${message.trim()}\n\nStartup context:\n- Before doing the task, read the spec file at ${startup.specPath}.\n- Treat that spec file as authoritative context for the delegated work.`;
 }
 
 function normalizeVerificationReport(
@@ -315,11 +351,10 @@ function normalizeVerificationReport(
 
 interface SpawnAgentExecuteArgs {
 	message?: string;
-	startup?: SpawnAgentMissionStartup;
+	startup?: SpawnAgentStartup;
 	model?: string;
 	reasoning?: SpawnAgentReasoning;
-	verify?: boolean;
-	verificationChecks?: string[];
+	verificationChecks: string[];
 }
 
 export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentExecuteDetails> = {
@@ -333,9 +368,29 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentExecut
 		signal?: AbortSignal,
 		onProgress?: (chunk: string) => void,
 	) => {
-		if (!args.message?.trim() && !args.startup) {
+		// Strict contract: startup with spec context is ALWAYS required
+		if (!args.startup) {
 			return {
-				content: [{ type: "text" as const, text: "Error: Provide either message or startup." }],
+				content: [
+					{
+						type: "text" as const,
+						text: "Error: startup is required. Pass either { type: 'mission', missionPath: '...' } or { type: 'context', specPath: '...' } to provide spec context.",
+					},
+				],
+				details: undefined,
+				isError: true,
+			};
+		}
+
+		// Strict contract: validation contract (verificationChecks) is ALWAYS required
+		if (!args.verificationChecks || args.verificationChecks.length === 0) {
+			return {
+				content: [
+					{
+						type: "text" as const,
+						text: "Error: verificationChecks is required. Pass at least one validation contract check. Verification is mandatory.",
+					},
+				],
 				details: undefined,
 				isError: true,
 			};
@@ -344,6 +399,22 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentExecut
 		if (args.startup?.type === "mission" && args.startup.missionPath.trim().length === 0) {
 			return {
 				content: [{ type: "text" as const, text: "Error: startup.missionPath must be a non-empty string." }],
+				details: undefined,
+				isError: true,
+			};
+		}
+
+		if (args.startup?.type === "context" && args.startup.specPath.trim().length === 0) {
+			return {
+				content: [{ type: "text" as const, text: "Error: startup.specPath must be a non-empty string." }],
+				details: undefined,
+				isError: true,
+			};
+		}
+
+		if (args.startup?.type === "context" && !args.message?.trim()) {
+			return {
+				content: [{ type: "text" as const, text: 'Error: startup.type "context" requires a non-empty message.' }],
 				details: undefined,
 				isError: true,
 			};
@@ -364,7 +435,7 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentExecut
 			resolved = resolveSpawnAgentRequest({
 				parentModel,
 				parentThinkingLevel,
-				message: args.message ?? "",
+				message: buildPromptMessage(args.message ?? "", args.startup),
 				model: args.model,
 				reasoning: args.reasoning,
 			});
@@ -376,7 +447,7 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentExecut
 			};
 		}
 
-		const verifyEnabled = args.verify ?? Boolean(args.startup?.type === "mission");
+		// Strict contract: verification is ALWAYS enabled
 		const workerRpcInput: SpawnAgentRpcInput =
 			args.startup?.type === "mission"
 				? { type: "mission_run", missionPath: args.startup.missionPath }
@@ -389,19 +460,7 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentExecut
 			onProgress,
 		});
 
-		if (!verifyEnabled) {
-			workerHandle.cleanup();
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text: `Spawned agent started in session ${workerHandle.details.sessionId}. Inspect ${workerHandle.details.sessionFile} for transcript output.`,
-					},
-				],
-				details: workerHandle.details,
-			};
-		}
-
+		// Strict contract: verification is ALWAYS enabled - no early return
 		const workerResult = await workerHandle.waitForTerminalState();
 		workerHandle.cleanup();
 

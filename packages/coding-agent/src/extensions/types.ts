@@ -182,7 +182,7 @@ export interface ExtensionApi {
 	 */
 	spawnAgent(params: {
 		message?: string;
-		startup?: { type: "mission"; missionPath: string };
+		startup?: { type: "mission"; missionPath: string; specPath?: string } | { type: "context"; specPath: string };
 		model?: string;
 		reasoning?: "inherit" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 		verify?: boolean;

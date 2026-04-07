@@ -37,6 +37,10 @@ function writeMissionWithoutSpec(dir: string): void {
 	);
 }
 
+function writeStandaloneSpec(specPath: string): void {
+	writeFileSync(specPath, "# Delegated spec\nUse the attached spec path as startup context.\n");
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
@@ -115,7 +119,29 @@ describe("spawn_agent verifier runtime", () => {
 		rmSync(configDir, { recursive: true, force: true });
 	});
 
-	test("mission startup defaults verification on and returns a completed PASS composite result", async () => {
+	test("mission startup defaults verification on and returns an error when verificationChecks are missing", async () => {
+		const missionDir = mkdtempSync(join(tmpdir(), "mu-spawn-agent-verifier-missing-checks-"));
+		try {
+			writeDoneBuildMission(missionDir);
+
+			const result = (await spawnAgentTool.execute("toolcall_spawn_mission_verify_runtime_missing_checks", {
+				startup: {
+					type: "mission",
+					missionPath: missionDir,
+				},
+			} as never)) as {
+				content?: Array<{ type: "text"; text: string }>;
+				isError?: boolean;
+			};
+
+			expect(result.isError).toBe(true);
+			expect(result.content?.[0]?.text).toMatch(/verificationChecks/i);
+		} finally {
+			rmSync(missionDir, { recursive: true, force: true });
+		}
+	});
+
+	test("mission startup defaults verification on and returns a completed PASS composite result when verificationChecks are provided", async () => {
 		const missionDir = mkdtempSync(join(tmpdir(), "mu-spawn-agent-verifier-pass-"));
 		try {
 			writeDoneBuildMission(missionDir);
@@ -125,6 +151,10 @@ describe("spawn_agent verifier runtime", () => {
 					type: "mission",
 					missionPath: missionDir,
 				},
+				verificationChecks: [
+					"Confirm the mission result matches SPEC.md",
+					"Return PASS or FAIL with concrete issues",
+				],
 			} as never)) as {
 				details?: {
 					worker?: { sessionId?: string; sessionFile?: string };
@@ -149,36 +179,6 @@ describe("spawn_agent verifier runtime", () => {
 		}
 	});
 
-	test("mission verification can be explicitly opted out", async () => {
-		const missionDir = mkdtempSync(join(tmpdir(), "mu-spawn-agent-verifier-optout-"));
-		try {
-			writeDoneBuildMission(missionDir);
-
-			const result = (await spawnAgentTool.execute("toolcall_spawn_mission_verify_optout", {
-				startup: {
-					type: "mission",
-					missionPath: missionDir,
-				},
-				verify: false,
-			} as never)) as {
-				details?: {
-					sessionId?: string;
-					sessionFile?: string;
-					worker?: unknown;
-					verificationReport?: unknown;
-				};
-				isError?: boolean;
-			};
-
-			expect(result.isError).not.toBe(true);
-			expect(result.details?.sessionId).toBeTruthy();
-			expect(result.details?.worker).toBeUndefined();
-			expect(result.details?.verificationReport).toBeUndefined();
-		} finally {
-			rmSync(missionDir, { recursive: true, force: true });
-		}
-	});
-
 	test("verifier session is created only after the worker has already completed", async () => {
 		const missionDir = mkdtempSync(join(tmpdir(), "mu-spawn-agent-verifier-sequence-"));
 		try {
@@ -189,6 +189,10 @@ describe("spawn_agent verifier runtime", () => {
 					type: "mission",
 					missionPath: missionDir,
 				},
+				verificationChecks: [
+					"Confirm worker completes before verifier starts",
+					"Return PASS or FAIL with concrete issues",
+				],
 			} as never)) as {
 				details?: {
 					worker?: { sessionFile?: string };
@@ -241,6 +245,36 @@ describe("spawn_agent verifier runtime", () => {
 			);
 		} finally {
 			rmSync(missionDir, { recursive: true, force: true });
+		}
+	});
+
+	test("context startup passes specPath into verification for non-mission work", async () => {
+		const specDir = mkdtempSync(join(tmpdir(), "mu-spawn-agent-context-spec-"));
+		const specPath = join(specDir, "DELEGATED-SPEC.md");
+		try {
+			writeStandaloneSpec(specPath);
+
+			const result = (await spawnAgentTool.execute("toolcall_spawn_context_verify_pass", {
+				message: "Say delegated task ready.",
+				startup: {
+					type: "context",
+					specPath,
+				},
+				verify: true,
+				verificationChecks: ["Read the spec file from specPath", "Return PASS or FAIL with concrete issues"],
+			} as never)) as {
+				details?: {
+					workerResult?: { status?: string; text?: string };
+					verificationReport?: { status?: string; issues?: string[] };
+				};
+				isError?: boolean;
+			};
+
+			expect(result.isError).not.toBe(true);
+			expect(result.details?.workerResult?.status).toBe("completed");
+			expect(result.details?.verificationReport).toEqual({ status: "PASS", issues: [] });
+		} finally {
+			rmSync(specDir, { recursive: true, force: true });
 		}
 	});
 });

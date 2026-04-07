@@ -1007,6 +1007,7 @@ async function runRpcMode(agent: Agent, sessionManager: SessionManager): Promise
 				message?: unknown;
 				attachments?: Attachment[];
 				missionPath?: unknown;
+				specPath?: unknown;
 				workerSessionId?: unknown;
 				workerSessionFile?: unknown;
 				verificationChecks?: unknown;
@@ -1061,6 +1062,7 @@ async function runRpcMode(agent: Agent, sessionManager: SessionManager): Promise
 					workerSessionId: input.workerSessionId,
 					workerSessionFile: input.workerSessionFile,
 					missionPath: typeof input.missionPath === "string" ? input.missionPath : undefined,
+					specPath: typeof input.specPath === "string" ? input.specPath : undefined,
 					verificationChecks,
 				};
 

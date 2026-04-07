@@ -76,7 +76,7 @@ describe("spawn_agent verifier contract (red)", () => {
 		rmSync(configDir, { recursive: true, force: true });
 	});
 
-	test("registers verifier-facing inputs for verify and verificationChecks", () => {
+	test("registers verifier-facing input for verificationChecks (verify is always true, not optional)", () => {
 		expect(TypeGuard.IsObject(spawnAgentTool.parameters)).toBe(true);
 
 		if (!TypeGuard.IsObject(spawnAgentTool.parameters)) {
@@ -84,17 +84,41 @@ describe("spawn_agent verifier contract (red)", () => {
 		}
 
 		const properties = (spawnAgentTool.parameters as { properties?: Record<string, unknown> }).properties ?? {};
-		expect(properties).toHaveProperty("verify");
+		// verify option removed - verification is always enabled
+		expect(properties).not.toHaveProperty("verify");
 		expect(properties).toHaveProperty("verificationChecks");
 
-		const verifySchema = JSON.stringify(properties.verify);
 		const verificationChecksSchema = JSON.stringify(properties.verificationChecks);
-		expect(verifySchema).toMatch(/boolean/i);
 		expect(verificationChecksSchema).toMatch(/array/i);
 		expect(verificationChecksSchema).toMatch(/string/i);
+		// verificationChecks is now required (minItems: 1)
+		expect(verificationChecksSchema).toMatch(/minItems/i);
 	});
 
-	test("mission startup defaults verification on and returns composite worker plus verifier details", async () => {
+	test("mission startup now requires verificationChecks because the validation contract is mandatory when verification is on", async () => {
+		const missionDir = mkdtempSync(join(tmpdir(), "mu-spawn-agent-verifier-mission-required-checks-red-"));
+		try {
+			writeDoneBuildMission(missionDir);
+
+			const result = (await spawnAgentTool.execute("toolcall_spawn_mission_verify_default_missing_checks", {
+				startup: {
+					type: "mission",
+					missionPath: missionDir,
+				},
+			} as never)) as {
+				content: Array<{ type: "text"; text: string }>;
+				isError?: boolean;
+			};
+
+			expect(result.isError).toBe(true);
+			expect(result.content[0]?.text).toMatch(/verificationChecks/i);
+			expect(result.content[0]?.text).toMatch(/validation contract/i);
+		} finally {
+			rmSync(missionDir, { recursive: true, force: true });
+		}
+	});
+
+	test("mission startup returns composite worker plus verifier details when verificationChecks are provided", async () => {
 		const missionDir = mkdtempSync(join(tmpdir(), "mu-spawn-agent-verifier-mission-red-"));
 		try {
 			writeDoneBuildMission(missionDir);
@@ -104,6 +128,10 @@ describe("spawn_agent verifier contract (red)", () => {
 					type: "mission",
 					missionPath: missionDir,
 				},
+				verificationChecks: [
+					"Confirm the mission result matches SPEC.md",
+					"Return PASS or FAIL with concrete issues",
+				],
 			} as never)) as {
 				content: Array<{ type: "text"; text: string }>;
 				details?: {
@@ -128,6 +156,19 @@ describe("spawn_agent verifier contract (red)", () => {
 		} finally {
 			rmSync(missionDir, { recursive: true, force: true });
 		}
+	});
+
+	test("context startup schema is discoverable for non-mission spec-file startup", () => {
+		expect(TypeGuard.IsObject(spawnAgentTool.parameters)).toBe(true);
+
+		if (!TypeGuard.IsObject(spawnAgentTool.parameters)) {
+			return;
+		}
+
+		const properties = (spawnAgentTool.parameters as { properties?: Record<string, unknown> }).properties ?? {};
+		const startupSchema = JSON.stringify(properties.startup);
+		expect(startupSchema).toMatch(/context/i);
+		expect(startupSchema).toMatch(/specPath|spec path|spec-path/i);
 	});
 
 	test("explicit verify plus verificationChecks returns the simple PASS/FAIL report shape promised by the spec", async () => {
