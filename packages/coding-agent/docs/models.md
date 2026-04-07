@@ -90,6 +90,33 @@ Override defaults when you need specific values:
 
 The file reloads each time you open `/model`. Edit during session; no restart needed.
 
+## Google AI Studio Example
+
+Use `google-generative-ai` with a `baseUrl` to add models from Google AI Studio, including custom Gemma 4 entries:
+
+```json
+{
+  "providers": {
+    "my-google": {
+      "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
+      "api": "google-generative-ai",
+      "apiKey": "GEMINI_API_KEY",
+      "models": [
+        {
+          "id": "gemma-4-31b-it",
+          "name": "Gemma 4 31B",
+          "input": ["text", "image"],
+          "contextWindow": 262144,
+          "reasoning": true
+        }
+      ]
+    }
+  }
+}
+```
+
+The `baseUrl` is required when adding custom models to the `google-generative-ai` API type.
+
 ## Supported APIs
 
 | API | Description |
