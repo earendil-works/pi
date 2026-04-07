@@ -74,9 +74,20 @@ describe("skills", () => {
 			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("exceeds 64 characters"))).toBe(true);
 		});
 
-		it("should warn and skip skill when description is missing", () => {
+		it("should infer description from body when description is missing", () => {
 			const { skills, diagnostics } = loadSkillsFromDir({
 				dir: join(fixturesDir, "missing-description"),
+				source: "test",
+			});
+
+			expect(skills).toHaveLength(1);
+			expect(skills[0].description).toBe("This skill has no description field.");
+			expect(diagnostics).toHaveLength(0);
+		});
+
+		it("should still skip skill when no description can be inferred", () => {
+			const { skills, diagnostics } = loadSkillsFromDir({
+				dir: join(fixturesDir, "empty-description"),
 				source: "test",
 			});
 
@@ -117,25 +128,28 @@ describe("skills", () => {
 			expect(diagnostics).toHaveLength(0);
 		});
 
-		it("should skip files without frontmatter", () => {
+		it("should infer description for files without frontmatter", () => {
 			const { skills, diagnostics } = loadSkillsFromDir({
 				dir: join(fixturesDir, "no-frontmatter"),
 				source: "test",
 			});
 
-			// no-frontmatter has no description, so it should be skipped
-			expect(skills).toHaveLength(0);
-			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("description is required"))).toBe(true);
+			expect(skills).toHaveLength(1);
+			expect(skills[0].name).toBe("no-frontmatter");
+			expect(skills[0].description).toBe("This skill has no YAML frontmatter at all.");
+			expect(diagnostics).toHaveLength(0);
 		});
 
-		it("should warn and skip skill when YAML frontmatter is invalid", () => {
+		it("should tolerate malformed skill frontmatter when key-value pairs are still recoverable", () => {
 			const { skills, diagnostics } = loadSkillsFromDir({
 				dir: join(fixturesDir, "invalid-yaml"),
 				source: "test",
 			});
 
-			expect(skills).toHaveLength(0);
-			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("at line"))).toBe(true);
+			expect(skills).toHaveLength(1);
+			expect(skills[0].name).toBe("invalid-yaml");
+			expect(skills[0].description).toBe("[unclosed bracket");
+			expect(diagnostics).toHaveLength(0);
 		});
 
 		it("should preserve multiline descriptions from YAML", () => {
@@ -160,16 +174,25 @@ describe("skills", () => {
 			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("consecutive hyphens"))).toBe(true);
 		});
 
+		it("should load standalone markdown skills using the file name as fallback name", () => {
+			const { skills, diagnostics } = loadSkillsFromDir({
+				dir: join(fixturesDir, "standalone-md"),
+				source: "test",
+			});
+
+			expect(skills).toHaveLength(1);
+			expect(skills[0].name).toBe("brain-dump");
+			expect(skills[0].description).toBe("Route unstructured personal notes to the right place.");
+			expect(diagnostics).toHaveLength(0);
+		});
+
 		it("should load all skills from fixture directory", () => {
 			const { skills } = loadSkillsFromDir({
 				dir: fixturesDir,
 				source: "test",
 			});
 
-			// Should load all skills that have descriptions (even with warnings)
-			// valid-skill, name-mismatch, invalid-name-chars, long-name, unknown-field, nested/child-skill, consecutive-hyphens
-			// NOT: missing-description, no-frontmatter (both missing descriptions)
-			expect(skills.length).toBeGreaterThanOrEqual(6);
+			expect(skills.length).toBeGreaterThanOrEqual(9);
 		});
 
 		it("should return empty for non-existent directory", () => {
@@ -183,9 +206,6 @@ describe("skills", () => {
 		});
 
 		it("should use parent directory name when name not in frontmatter", () => {
-			// The no-frontmatter fixture has no name in frontmatter, so it should use "no-frontmatter"
-			// But it also has no description, so it won't load
-			// Let's test with a valid skill that relies on directory name
 			const { skills } = loadSkillsFromDir({
 				dir: join(fixturesDir, "valid-skill"),
 				source: "test",
@@ -204,7 +224,6 @@ describe("skills", () => {
 			expect(skills).toHaveLength(1);
 			expect(skills[0].name).toBe("disable-model-invocation");
 			expect(skills[0].disableModelInvocation).toBe(true);
-			// Should not warn about unknown field
 			expect(diagnostics.some((d: ResourceDiagnostic) => d.message.includes("unknown frontmatter field"))).toBe(
 				false,
 			);
@@ -388,7 +407,6 @@ describe("skills", () => {
 
 	describe("collision handling", () => {
 		it("should detect name collisions and keep first skill", () => {
-			// Load from first directory
 			const first = loadSkillsFromDir({
 				dir: join(collisionFixturesDir, "first"),
 				source: "first",
@@ -399,7 +417,6 @@ describe("skills", () => {
 				source: "second",
 			});
 
-			// Simulate the collision behavior from loadSkills()
 			const skillMap = new Map<string, Skill>();
 			const collisionWarnings: Array<{ skillPath: string; message: string }> = [];
 

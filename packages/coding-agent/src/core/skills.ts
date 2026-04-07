@@ -130,6 +130,97 @@ function validateDescription(description: string | undefined): string[] {
 	return errors;
 }
 
+function stripQuotes(value: string): string {
+	const trimmed = value.trim();
+	if ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith("'") && trimmed.endsWith("'"))) {
+		return trimmed.slice(1, -1);
+	}
+	return trimmed;
+}
+
+function parseFallbackSkillFrontmatter(rawContent: string): { frontmatter: SkillFrontmatter; body: string } {
+	const normalized = rawContent.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	if (!normalized.startsWith("---")) {
+		return { frontmatter: {}, body: normalized };
+	}
+	const endIndex = normalized.indexOf("\n---", 3);
+	if (endIndex === -1) {
+		return { frontmatter: {}, body: normalized };
+	}
+	const yamlString = normalized.slice(4, endIndex);
+	const body = normalized.slice(endIndex + 4).trim();
+	const frontmatter: SkillFrontmatter = {};
+	const lines = yamlString.split("\n");
+
+	for (let index = 0; index < lines.length; index++) {
+		const line = lines[index];
+		const match = /^(?<key>[A-Za-z0-9_-]+):\s*(?<value>.*)$/.exec(line);
+		if (!match?.groups) {
+			continue;
+		}
+		const key = match.groups.key;
+		const value = match.groups.value ?? "";
+		if (value === "|" || value === ">") {
+			const block: string[] = [];
+			index += 1;
+			while (index < lines.length) {
+				const next = lines[index];
+				if (/^\s+/.test(next) || next === "") {
+					block.push(next.replace(/^\s{1,2}/, ""));
+					index += 1;
+					continue;
+				}
+				index -= 1;
+				break;
+			}
+			frontmatter[key] = block.join("\n").trim();
+			continue;
+		}
+		frontmatter[key] = stripQuotes(value);
+	}
+
+	return { frontmatter, body };
+}
+
+function inferDescriptionFromBody(body: string): string {
+	const normalized = body.replace(/\r\n/g, "\n").trim();
+	if (!normalized) {
+		return "";
+	}
+
+	const lines = normalized.split("\n");
+	let startIndex = 0;
+
+	if (lines[0]?.startsWith("#")) {
+		startIndex = 1;
+		while (startIndex < lines.length && !lines[startIndex].trim()) {
+			startIndex += 1;
+		}
+	}
+
+	const paragraph: string[] = [];
+	for (let index = startIndex; index < lines.length; index++) {
+		const line = lines[index].trim();
+		if (!line) {
+			if (paragraph.length > 0) break;
+			continue;
+		}
+		if (line.startsWith("#")) {
+			continue;
+		}
+		paragraph.push(line);
+		if (paragraph.join(" ").length >= MAX_DESCRIPTION_LENGTH) {
+			break;
+		}
+	}
+
+	return paragraph.join(" ").slice(0, MAX_DESCRIPTION_LENGTH).trim();
+}
+
+function getExpectedSkillName(filePath: string): string {
+	return basename(filePath) === "SKILL.md" ? basename(dirname(filePath)) : basename(filePath, ".md");
+}
+
 export interface LoadSkillsFromDirOptions {
 	/** Directory to scan for skills */
 	dir: string;
@@ -286,34 +377,42 @@ function loadSkillFromFile(
 
 	try {
 		const rawContent = readFileSync(filePath, "utf-8");
-		const { frontmatter } = parseFrontmatter<SkillFrontmatter>(rawContent);
+		let parsed: { frontmatter: SkillFrontmatter; body: string };
+		try {
+			parsed = parseFrontmatter<SkillFrontmatter>(rawContent);
+		} catch {
+			parsed = parseFallbackSkillFrontmatter(rawContent);
+		}
+
+		const { frontmatter, body } = parsed;
 		const skillDir = dirname(filePath);
-		const parentDirName = basename(skillDir);
+		const expectedName = getExpectedSkillName(filePath);
+		const description = frontmatter.description || inferDescriptionFromBody(body);
 
 		// Validate description
-		const descErrors = validateDescription(frontmatter.description);
+		const descErrors = validateDescription(description);
 		for (const error of descErrors) {
 			diagnostics.push({ type: "warning", message: error, path: filePath });
 		}
 
-		// Use name from frontmatter, or fall back to parent directory name
-		const name = frontmatter.name || parentDirName;
+		// Use name from frontmatter, or fall back to expected skill name
+		const name = frontmatter.name || expectedName;
 
 		// Validate name
-		const nameErrors = validateName(name, parentDirName);
+		const nameErrors = validateName(name, expectedName);
 		for (const error of nameErrors) {
 			diagnostics.push({ type: "warning", message: error, path: filePath });
 		}
 
 		// Still load the skill even with warnings (unless description is completely missing)
-		if (!frontmatter.description || frontmatter.description.trim() === "") {
+		if (!description || description.trim() === "") {
 			return { skill: null, diagnostics };
 		}
 
 		return {
 			skill: {
 				name,
-				description: frontmatter.description,
+				description,
 				filePath,
 				baseDir: skillDir,
 				sourceInfo: createSkillSourceInfo(filePath, skillDir, source),
