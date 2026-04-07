@@ -1,16 +1,17 @@
 /**
  * Auto-handoff policy gating
  *
- * Auto-handoff must be disabled by default and only run when enabled.
+ * Auto-compaction is ON by default for all models.
+ * Users can disable it with /autohandoff off.
  */
 
 import { describe, expect, it } from "vitest";
 
 import {
+	AUTO_COMPACTION_CONTEXT_WINDOW_CAP,
 	AUTO_HANDOFF_EMERGENCY_THRESHOLD,
 	AUTO_HANDOFF_STANDARD_THRESHOLD,
 	getAutoCompactionContextWindow,
-	isTargetedAutoCompactionModel,
 	shouldAutoCompactForModel,
 	shouldEnableHandoffNudge,
 	shouldTriggerEmergencyAutoHandoff,
@@ -18,52 +19,94 @@ import {
 } from "../src/auto-handoff.js";
 
 describe("Auto-handoff policy", () => {
-	it("uses expected threshold", () => {
+	it("uses expected thresholds", () => {
 		expect(AUTO_HANDOFF_EMERGENCY_THRESHOLD).toBe(0.95);
 		expect(AUTO_HANDOFF_STANDARD_THRESHOLD).toBe(0.9);
 	});
 
-	describe("targeted 256k auto-compaction models", () => {
-		it("matches Claude 4.6 and OpenAI GPT models", () => {
-			expect(isTargetedAutoCompactionModel({ provider: "anthropic", id: "claude-sonnet-4-6" } as never)).toBe(true);
-			expect(isTargetedAutoCompactionModel({ provider: "anthropic", id: "claude-opus-4-6" } as never)).toBe(true);
-			expect(isTargetedAutoCompactionModel({ provider: "openai", id: "gpt-5.4" } as never)).toBe(true);
-			expect(isTargetedAutoCompactionModel({ provider: "anthropic", id: "claude-sonnet-4-5" } as never)).toBe(false);
+	it("uses 256k context window cap", () => {
+		expect(AUTO_COMPACTION_CONTEXT_WINDOW_CAP).toBe(256000);
+	});
+
+	describe("shouldAutoCompactForModel", () => {
+		it("returns true when autoHandoffMode is on", () => {
+			expect(shouldAutoCompactForModel({ autoHandoffMode: "on" })).toBe(true);
 		});
 
-		it("forces auto-compaction even when autohandoff mode is off", () => {
-			expect(
-				shouldAutoCompactForModel({
-					autoHandoffMode: "off",
-					model: { provider: "anthropic", id: "claude-sonnet-4-6" } as never,
-				}),
-			).toBe(true);
-			expect(
-				shouldAutoCompactForModel({
-					autoHandoffMode: "off",
-					model: { provider: "anthropic", id: "claude-sonnet-4-5" } as never,
-				}),
-			).toBe(false);
+		it("returns false when autoHandoffMode is off (user disabled)", () => {
+			expect(shouldAutoCompactForModel({ autoHandoffMode: "off" })).toBe(false);
 		});
 
-		it("caps targeted models at a 256k effective context window", () => {
+		it("works for all models - no targeted model concept", () => {
+			// All models should have auto-compaction by default
+			expect(shouldAutoCompactForModel({ autoHandoffMode: "on" })).toBe(true);
+		});
+	});
+
+	describe("getAutoCompactionContextWindow", () => {
+		it("returns 0 for null/undefined model", () => {
+			expect(getAutoCompactionContextWindow(null)).toBe(0);
+			expect(getAutoCompactionContextWindow(undefined)).toBe(0);
+		});
+
+		it("caps models with large context windows at 256k", () => {
 			expect(
 				getAutoCompactionContextWindow({
-					provider: "anthropic",
-					id: "claude-sonnet-4-6",
 					contextWindow: 1_000_000,
 				} as never),
 			).toBe(256000);
 			expect(
-				getAutoCompactionContextWindow({ provider: "openai", id: "gpt-5.4", contextWindow: 400_000 } as never),
+				getAutoCompactionContextWindow({
+					contextWindow: 400_000,
+				} as never),
 			).toBe(256000);
+		});
+
+		it("uses actual context window for models <= 256k", () => {
 			expect(
 				getAutoCompactionContextWindow({
-					provider: "anthropic",
-					id: "claude-sonnet-4-5",
 					contextWindow: 200_000,
 				} as never),
 			).toBe(200000);
+			expect(
+				getAutoCompactionContextWindow({
+					contextWindow: 128_000,
+				} as never),
+			).toBe(128000);
+			expect(
+				getAutoCompactionContextWindow({
+					contextWindow: 64_000,
+				} as never),
+			).toBe(64000);
+		});
+
+		it("works for all providers - no targeted model concept", () => {
+			// Gemini 1M context -> capped at 256k
+			expect(
+				getAutoCompactionContextWindow({
+					provider: "google",
+					id: "gemini-2.0-flash",
+					contextWindow: 1_000_000,
+				} as never),
+			).toBe(256000);
+
+			// Kimi 1M context -> capped at 256k
+			expect(
+				getAutoCompactionContextWindow({
+					provider: "moonshotai",
+					id: "kimi-k2-0905",
+					contextWindow: 1_000_000,
+				} as never),
+			).toBe(256000);
+
+			// DeepSeek 64k context -> uses actual
+			expect(
+				getAutoCompactionContextWindow({
+					provider: "deepseek",
+					id: "deepseek-chat",
+					contextWindow: 64_000,
+				} as never),
+			).toBe(64000);
 		});
 	});
 

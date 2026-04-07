@@ -13,8 +13,8 @@ import {
 } from "../src/auto-handoff.js";
 
 describe("Auto-handoff mode", () => {
-	it("defaults to off", () => {
-		expect(DEFAULT_AUTO_HANDOFF_MODE).toBe("off");
+	it("defaults to on (auto-compaction enabled for all models)", () => {
+		expect(DEFAULT_AUTO_HANDOFF_MODE).toBe("on");
 	});
 });
 

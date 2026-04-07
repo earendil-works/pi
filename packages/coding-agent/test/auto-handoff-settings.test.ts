@@ -10,12 +10,12 @@ import { describe, expect, it } from "vitest";
 import { SettingsManager } from "../src/settings-manager.js";
 
 describe("SettingsManager auto-handoff mode", () => {
-	it("defaults to off when unset", () => {
+	it("defaults to on when unset (auto-compaction enabled for all models)", () => {
 		const baseDir = join(tmpdir(), `mu-settings-test-${Date.now()}`);
 		mkdirSync(baseDir, { recursive: true });
 		try {
 			const settings = new SettingsManager(baseDir);
-			expect(settings.getAutoHandoffMode()).toBe("off");
+			expect(settings.getAutoHandoffMode()).toBe("on");
 		} finally {
 			rmSync(baseDir, { recursive: true, force: true });
 		}

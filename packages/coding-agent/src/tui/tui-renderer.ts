@@ -35,7 +35,9 @@ import {
 	AUTO_HANDOFF_EMERGENCY_THRESHOLD,
 	AUTO_HANDOFF_STANDARD_THRESHOLD,
 	type AutoHandoffMode,
+	applyAutoHandoffCommand,
 	getAutoCompactionContextWindow,
+	parseAutoHandoffSlashCommand,
 	shouldAutoCompactForModel,
 	shouldEnableHandoffNudge,
 	shouldTriggerEmergencyAutoHandoff,
@@ -1545,7 +1547,6 @@ export class TuiRenderer {
 					) {
 						const autoCompactionMode = shouldAutoCompactForModel({
 							autoHandoffMode: this.autoHandoffMode,
-							model: this.agent.state.model as Model<Api>,
 						})
 							? "on"
 							: "off";
@@ -1793,7 +1794,6 @@ export class TuiRenderer {
 
 				const autoCompactionMode = shouldAutoCompactForModel({
 					autoHandoffMode: this.autoHandoffMode,
-					model: this.agent.state.model as Model<Api> | null | undefined,
 				})
 					? "on"
 					: "off";
@@ -3821,6 +3821,47 @@ export class TuiRenderer {
 
 			this.editor.setText("");
 			await this.handleHandoffCommand(parsedCompactCommand.goal);
+			return;
+		}
+
+		// Check for /autohandoff command
+		if (rawText.startsWith("/autohandoff")) {
+			const parsed = parseAutoHandoffSlashCommand(rawText);
+			if (!parsed) {
+				this.showError("Usage: /autohandoff [on|off|toggle|status]");
+				return;
+			}
+
+			this.editor.setText("");
+
+			if (parsed.type === "status") {
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(
+					new Text(theme.fg("dim", `Auto-compaction is ${this.autoHandoffMode.toUpperCase()}`), 1, 0),
+				);
+				this.ui.requestRender();
+			} else {
+				this.autoHandoffMode = applyAutoHandoffCommand(this.autoHandoffMode, parsed);
+				this.settingsManager.setAutoHandoffMode(this.autoHandoffMode);
+				this.updateToolResultTransformer();
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(
+					new Text(
+						theme.fg(
+							this.autoHandoffMode === "on" ? "success" : "warning",
+							`Auto-compaction ${this.autoHandoffMode === "on" ? "enabled" : "disabled"}.`,
+						),
+						1,
+						0,
+					),
+				);
+				if (this.autoHandoffMode === "off") {
+					this.chatContainer.addChild(
+						new Text(theme.fg("dim", "Use /compact --summary <goal> for manual compaction."), 1, 0),
+					);
+				}
+				this.ui.requestRender();
+			}
 			return;
 		}
 

@@ -7,49 +7,45 @@
  * This module centralizes:
  * - the persisted user preference shape
  * - parsing of user-triggered /autohandoff commands
+ *
+ * Auto-compaction is ON by default for ALL models.
+ * Users can disable it with /autohandoff off.
  */
 
 import type { Api, Model } from "@kennyfrc/mu-ai";
 
 export type AutoHandoffMode = "on" | "off";
 
-export const DEFAULT_AUTO_HANDOFF_MODE: AutoHandoffMode = "off";
+export const DEFAULT_AUTO_HANDOFF_MODE: AutoHandoffMode = "on";
 
 /** One-way nudge threshold (ratio) for encouraging handoff. */
 export const HANDOFF_NUDGE_THRESHOLD = 0.8;
 export const AUTO_HANDOFF_STANDARD_THRESHOLD = 0.9;
 
 export const AUTO_HANDOFF_EMERGENCY_THRESHOLD = 0.95;
-export const TARGETED_AUTO_COMPACTION_CONTEXT_WINDOW = 256000;
 
-function normalizeModelId(modelId: string): string {
-	return modelId.includes("/") ? (modelId.split("/").pop() ?? modelId) : modelId;
+/**
+ * Context window cap for auto-compaction threshold calculation.
+ * Models with context windows larger than this are treated as having this
+ * effective context window for threshold purposes.
+ */
+export const AUTO_COMPACTION_CONTEXT_WINDOW_CAP = 256000;
+
+/**
+ * Determines if auto-compaction should be active.
+ * Auto-compaction is ON by default. Only returns false if user explicitly disabled it.
+ */
+export function shouldAutoCompactForModel(params: { autoHandoffMode: AutoHandoffMode }): boolean {
+	return params.autoHandoffMode !== "off";
 }
 
-export function isTargetedAutoCompactionModel(model: Pick<Model<Api>, "provider" | "id"> | null | undefined): boolean {
-	if (!model) return false;
-	const normalized = normalizeModelId(model.id).toLowerCase();
-	if (model.provider === "anthropic") {
-		return normalized === "claude-sonnet-4-6" || normalized === "claude-opus-4-6";
-	}
-
-	return model.provider === "openai" && normalized.startsWith("gpt-");
-}
-
-export function shouldAutoCompactForModel(params: {
-	autoHandoffMode: AutoHandoffMode;
-	model: Pick<Model<Api>, "provider" | "id"> | null | undefined;
-}): boolean {
-	if (params.autoHandoffMode === "on") return true;
-	return isTargetedAutoCompactionModel(params.model);
-}
-
-export function getAutoCompactionContextWindow(
-	model: Pick<Model<Api>, "provider" | "id" | "contextWindow"> | null | undefined,
-): number {
+/**
+ * Returns the effective context window for auto-compaction threshold calculation.
+ * Caps at AUTO_COMPACTION_CONTEXT_WINDOW_CAP (256k) for models with larger context windows.
+ */
+export function getAutoCompactionContextWindow(model: Pick<Model<Api>, "contextWindow"> | null | undefined): number {
 	if (!model) return 0;
-	if (!isTargetedAutoCompactionModel(model)) return model.contextWindow;
-	return Math.min(model.contextWindow, TARGETED_AUTO_COMPACTION_CONTEXT_WINDOW);
+	return Math.min(model.contextWindow, AUTO_COMPACTION_CONTEXT_WINDOW_CAP);
 }
 
 export function isAutoHandoffMode(value: unknown): value is AutoHandoffMode {
