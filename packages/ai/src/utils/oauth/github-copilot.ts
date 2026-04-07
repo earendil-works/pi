@@ -8,7 +8,23 @@ import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderInterface } fr
 
 type CopilotCredentials = OAuthCredentials & {
 	enterpriseUrl?: string;
+	/** Dynamically discovered models from the Copilot /models API */
+	discoveredModels?: SerializedCopilotModel[];
+	/** Timestamp of the last model discovery fetch */
+	discoveredModelsAt?: number;
 };
+
+/** Serializable shape stored on credentials for models discovered from the API */
+interface SerializedCopilotModel {
+	id: string;
+	name: string;
+	api: string;
+	reasoning: boolean;
+	input: ("text" | "image")[];
+	contextWindow: number;
+	maxTokens: number;
+	compat?: Record<string, unknown>;
+}
 
 const decode = (s: string) => atob(s);
 const CLIENT_ID = decode("SXYxLmI1MDdhMDhjODdlY2ZlOTg=");
@@ -272,6 +288,137 @@ export async function refreshGitHubCopilotToken(
 	};
 }
 
+// ============================================================================
+// Dynamic model discovery from the Copilot /models API
+// ============================================================================
+
+/** Shape of a single model entry from GET /models */
+interface CopilotApiModel {
+	id: string;
+	name: string;
+	object: string;
+	vendor: string;
+	preview: boolean;
+	model_picker_enabled?: boolean;
+	supported_endpoints?: string[] | null;
+	capabilities: {
+		object: string;
+		type: string;
+		limits: {
+			max_context_window_tokens?: number | null;
+			max_output_tokens?: number | null;
+			vision?: { supported_media_types?: string[] } | null;
+		};
+		supports: {
+			tool_calls?: boolean | null;
+			vision?: boolean | null;
+			adaptive_thinking?: boolean | null;
+			streaming?: boolean | null;
+			structured_outputs?: boolean | null;
+			reasoning_effort?: string[] | null;
+		};
+	};
+	policy?: {
+		state: string;
+	};
+}
+
+/**
+ * Determine the Pi API type from a Copilot model's supported_endpoints.
+ *
+ * - /v1/messages → anthropic-messages (Claude models)
+ * - /responses   → openai-responses (GPT-5+ / Goldeneye)
+ * - fallback     → openai-completions
+ */
+function inferApiFromEndpoints(endpoints: string[] | null | undefined, modelId: string): string {
+	if (!endpoints || endpoints.length === 0) {
+		// No explicit endpoints — infer from model ID patterns
+		const isClaude4 = /^claude-(haiku|sonnet|opus)-4([.-]|$)/.test(modelId);
+		if (isClaude4) return "anthropic-messages";
+		if (modelId.startsWith("gpt-5")) return "openai-responses";
+		return "openai-completions";
+	}
+
+	if (endpoints.some((e) => e.includes("/v1/messages"))) return "anthropic-messages";
+	if (endpoints.some((e) => e.includes("/responses"))) return "openai-responses";
+	return "openai-completions";
+}
+
+/**
+ * Convert a Copilot API model to the serializable shape we store on credentials.
+ */
+function toCopilotDiscoveredModel(m: CopilotApiModel): SerializedCopilotModel {
+	const api = inferApiFromEndpoints(m.supported_endpoints, m.id);
+	const supports = m.capabilities?.supports;
+	const limits = m.capabilities?.limits;
+
+	// Reasoning: explicit adaptive_thinking flag, or GPT-5+ family pattern
+	const reasoning =
+		supports?.adaptive_thinking === true || /^(gpt-5|goldeneye|claude-(opus|sonnet|haiku)-4\.[5-9])/.test(m.id);
+
+	const input: ("text" | "image")[] = supports?.vision ? ["text", "image"] : ["text"];
+
+	const result: SerializedCopilotModel = {
+		id: m.id,
+		name: m.name || m.id,
+		api,
+		reasoning,
+		input,
+		contextWindow: limits?.max_context_window_tokens || 128000,
+		maxTokens: limits?.max_output_tokens || 16384,
+	};
+
+	// openai-completions models need compat flags
+	if (api === "openai-completions") {
+		result.compat = {
+			supportsStore: false,
+			supportsDeveloperRole: false,
+			supportsReasoningEffort: false,
+		};
+	}
+
+	return result;
+}
+
+/**
+ * Fetch the list of available models from the Copilot /models API.
+ * Only returns models that support tool_calls (i.e. usable for agentic coding).
+ */
+export async function fetchCopilotModels(token: string, enterpriseDomain?: string): Promise<SerializedCopilotModel[]> {
+	const baseUrl = getGitHubCopilotBaseUrl(token, enterpriseDomain);
+	const url = `${baseUrl}/models`;
+
+	try {
+		const response = await fetch(url, {
+			headers: {
+				Accept: "application/json",
+				Authorization: `Bearer ${token}`,
+				...COPILOT_HEADERS,
+			},
+		});
+		if (!response.ok) return [];
+
+		const body = (await response.json()) as { data?: CopilotApiModel[] };
+		if (!body?.data || !Array.isArray(body.data)) return [];
+
+		// Filter: must support tool_calls, deduplicate by id (keep first occurrence)
+		const seen = new Set<string>();
+		const result: SerializedCopilotModel[] = [];
+
+		for (const m of body.data) {
+			if (m.capabilities?.supports?.tool_calls !== true) continue;
+			if (seen.has(m.id)) continue;
+			seen.add(m.id);
+			result.push(toCopilotDiscoveredModel(m));
+		}
+
+		return result;
+	} catch {
+		// Non-fatal: if the API is unreachable, fall back to static models
+		return [];
+	}
+}
+
 /**
  * Enable a model for the user's GitHub Copilot account.
  * This is required for some models (like Claude, Grok) before they can be used.
@@ -306,12 +453,19 @@ async function enableAllGitHubCopilotModels(
 	token: string,
 	enterpriseDomain?: string,
 	onProgress?: (model: string, success: boolean) => void,
+	discoveredModels?: SerializedCopilotModel[],
 ): Promise<void> {
-	const models = getModels("github-copilot");
+	// Merge built-in + discovered model IDs for policy enablement
+	const builtIn = getModels("github-copilot");
+	const allIds = new Set(builtIn.map((m) => m.id));
+	if (discoveredModels) {
+		for (const m of discoveredModels) allIds.add(m.id);
+	}
+
 	await Promise.all(
-		models.map(async (model) => {
-			const success = await enableGitHubCopilotModel(token, model.id, enterpriseDomain);
-			onProgress?.(model.id, success);
+		Array.from(allIds).map(async (id) => {
+			const success = await enableGitHubCopilotModel(token, id, enterpriseDomain);
+			onProgress?.(id, success);
 		}),
 	);
 }
@@ -359,9 +513,14 @@ export async function loginGitHubCopilot(options: {
 	);
 	const credentials = await refreshGitHubCopilotToken(githubAccessToken, enterpriseDomain ?? undefined);
 
-	// Enable all models after successful login
+	// Discover available models from the API and enable them
+	options.onProgress?.("Discovering models...");
+	const discovered = await fetchCopilotModels(credentials.access, enterpriseDomain ?? undefined);
+	(credentials as CopilotCredentials).discoveredModels = discovered;
+	(credentials as CopilotCredentials).discoveredModelsAt = Date.now();
+
 	options.onProgress?.("Enabling models...");
-	await enableAllGitHubCopilotModels(credentials.access, enterpriseDomain ?? undefined);
+	await enableAllGitHubCopilotModels(credentials.access, enterpriseDomain ?? undefined, undefined, discovered);
 	return credentials;
 }
 
@@ -380,7 +539,28 @@ export const githubCopilotOAuthProvider: OAuthProviderInterface = {
 
 	async refreshToken(credentials: OAuthCredentials): Promise<OAuthCredentials> {
 		const creds = credentials as CopilotCredentials;
-		return refreshGitHubCopilotToken(creds.refresh, creds.enterpriseUrl);
+		const refreshed = await refreshGitHubCopilotToken(creds.refresh, creds.enterpriseUrl);
+
+		// Re-discover models if the last discovery is stale (>1 hour) or missing
+		const DISCOVERY_TTL_MS = 60 * 60 * 1000; // 1 hour
+		const lastDiscovery = creds.discoveredModelsAt ?? 0;
+		if (Date.now() - lastDiscovery > DISCOVERY_TTL_MS) {
+			const discovered = await fetchCopilotModels(refreshed.access, creds.enterpriseUrl);
+			if (discovered.length > 0) {
+				(refreshed as CopilotCredentials).discoveredModels = discovered;
+				(refreshed as CopilotCredentials).discoveredModelsAt = Date.now();
+			} else {
+				// Keep previous discovery if the new fetch failed
+				(refreshed as CopilotCredentials).discoveredModels = creds.discoveredModels;
+				(refreshed as CopilotCredentials).discoveredModelsAt = creds.discoveredModelsAt;
+			}
+		} else {
+			// Carry forward existing discovery
+			(refreshed as CopilotCredentials).discoveredModels = creds.discoveredModels;
+			(refreshed as CopilotCredentials).discoveredModelsAt = creds.discoveredModelsAt;
+		}
+
+		return refreshed;
 	},
 
 	getApiKey(credentials: OAuthCredentials): string {
@@ -391,6 +571,49 @@ export const githubCopilotOAuthProvider: OAuthProviderInterface = {
 		const creds = credentials as CopilotCredentials;
 		const domain = creds.enterpriseUrl ? (normalizeDomain(creds.enterpriseUrl) ?? undefined) : undefined;
 		const baseUrl = getGitHubCopilotBaseUrl(creds.access, domain);
-		return models.map((m) => (m.provider === "github-copilot" ? { ...m, baseUrl } : m));
+
+		// Update baseUrl on existing copilot models
+		let result = models.map((m) => (m.provider === "github-copilot" ? { ...m, baseUrl } : m));
+
+		// Merge dynamically discovered models
+		const discovered = creds.discoveredModels;
+		if (discovered && discovered.length > 0) {
+			const existingIds = new Set(result.filter((m) => m.provider === "github-copilot").map((m) => m.id));
+
+			for (const dm of discovered) {
+				if (existingIds.has(dm.id)) {
+					// Update existing model with fresh capabilities from the API
+					result = result.map((m) => {
+						if (m.provider !== "github-copilot" || m.id !== dm.id) return m;
+						return {
+							...m,
+							name: dm.name,
+							contextWindow: dm.contextWindow,
+							maxTokens: dm.maxTokens,
+							input: dm.input,
+							reasoning: dm.reasoning,
+						};
+					});
+				} else {
+					// Add newly discovered model
+					result.push({
+						id: dm.id,
+						name: dm.name,
+						api: dm.api as Api,
+						provider: "github-copilot",
+						baseUrl,
+						reasoning: dm.reasoning,
+						input: dm.input,
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+						contextWindow: dm.contextWindow,
+						maxTokens: dm.maxTokens,
+						headers: { ...COPILOT_HEADERS },
+						...(dm.compat ? { compat: dm.compat } : {}),
+					} as Model<Api>);
+				}
+			}
+		}
+
+		return result;
 	},
 };

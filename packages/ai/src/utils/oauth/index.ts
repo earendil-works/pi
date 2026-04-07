@@ -13,6 +13,7 @@
 export { anthropicOAuthProvider, loginAnthropic, refreshAnthropicToken } from "./anthropic.js";
 // GitHub Copilot
 export {
+	fetchCopilotModels,
 	getGitHubCopilotBaseUrl,
 	githubCopilotOAuthProvider,
 	loginGitHubCopilot,
