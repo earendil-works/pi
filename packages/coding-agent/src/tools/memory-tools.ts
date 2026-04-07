@@ -10,12 +10,13 @@ const memoryScopeSchema = Type.Union([Type.Literal("workspace"), Type.Literal("g
 
 const memoryStoreSchema = Type.Object({
 	kind: Type.String({ minLength: 1 }),
-	summary: Type.String({ minLength: 1 }),
+	summary: Type.String(),
 	scope: Type.Optional(memoryScopeSchema),
 	workspaceRef: Type.Optional(Type.String({ minLength: 1 })),
 	artifacts: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 	sourceRefs: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
 	supersedes: Type.Optional(Type.String({ minLength: 1 })),
+	delete: Type.Optional(Type.String({ minLength: 1 })),
 });
 
 const memorySearchSchema = Type.Object({
@@ -79,6 +80,19 @@ export const memoryStoreTool: AgentTool<
 			scope: args.scope,
 			workspaceRef: args.workspaceRef,
 		});
+
+		// Determine event type and targetId
+		let event: "create" | "update" | "delete" = "create";
+		let targetId: string | undefined;
+
+		if (args.delete) {
+			event = "delete";
+			targetId = args.delete;
+		} else if (args.supersedes) {
+			event = "update";
+			targetId = args.supersedes;
+		}
+
 		const receipt = enqueueArtifactMemoryWrite({
 			workspaceRef,
 			entries: [
@@ -88,6 +102,8 @@ export const memoryStoreTool: AgentTool<
 					artifacts: args.artifacts,
 					sourceRefs: args.sourceRefs,
 					supersedes: args.supersedes,
+					event,
+					targetId,
 					workspaceRef,
 				},
 			],

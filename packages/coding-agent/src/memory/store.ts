@@ -10,11 +10,15 @@ export interface ArtifactMemoryEntryInput {
 	artifacts?: string[];
 	sourceRefs?: string[];
 	supersedes?: string;
+	event?: "create" | "update" | "delete";
+	targetId?: string;
 }
 
 export interface ArtifactMemoryEntry extends ArtifactMemoryEntryInput {
 	id: string;
 	timestamp: string;
+	event?: "create" | "update" | "delete";
+	targetId?: string;
 }
 
 export const ARTIFACT_MEMORY_GLOBAL_SCOPE = "__mu_global__";
@@ -46,8 +50,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function requireString(value: unknown, field: string, lineNumber: number): string {
-	if (typeof value !== "string" || value.trim().length === 0) {
-		throw new Error(`Invalid artifact memory entry on line ${lineNumber}: ${field} must be a non-empty string`);
+	if (typeof value !== "string") {
+		throw new Error(`Invalid artifact memory entry on line ${lineNumber}: ${field} must be a string`);
 	}
 	return value;
 }
@@ -74,7 +78,23 @@ function parseOptionalString(value: unknown, field: string, lineNumber: number):
 	return value;
 }
 
-function parseArtifactMemoryEntry(line: string, lineNumber: number): ArtifactMemoryEntry {
+function parseOptionalEvent(
+	value: unknown,
+	field: string,
+	lineNumber: number,
+): "create" | "update" | "delete" | undefined {
+	if (value === undefined) {
+		return undefined;
+	}
+	if (value !== "create" && value !== "update" && value !== "delete") {
+		throw new Error(
+			`Invalid artifact memory entry on line ${lineNumber}: ${field} must be "create", "update", or "delete" when present`,
+		);
+	}
+	return value;
+}
+
+export function parseArtifactMemoryEntry(line: string, lineNumber: number): ArtifactMemoryEntry {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(line);
@@ -96,6 +116,8 @@ function parseArtifactMemoryEntry(line: string, lineNumber: number): ArtifactMem
 		artifacts: parseOptionalStringArray(parsed.artifacts, "artifacts", lineNumber),
 		sourceRefs: parseOptionalStringArray(parsed.sourceRefs, "sourceRefs", lineNumber),
 		supersedes: parseOptionalString(parsed.supersedes, "supersedes", lineNumber),
+		event: parseOptionalEvent(parsed.event, "event", lineNumber),
+		targetId: parseOptionalString(parsed.targetId, "targetId", lineNumber),
 	};
 }
 

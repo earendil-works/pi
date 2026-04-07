@@ -8,11 +8,19 @@ import {
 	readArtifactMemoryEntries,
 } from "./store.js";
 
+export interface WorkspaceProjectionMeta {
+	totalEntries: number;
+	activeEntries: number;
+	deletedCount: number;
+	supersededCount: number;
+}
+
 export interface WorkspaceProjection {
 	workspaceRef: string;
 	entries: ArtifactMemoryEntry[];
 	startupItems: WorkspaceProjectionItem[];
 	startupSummary: string;
+	meta: WorkspaceProjectionMeta;
 }
 
 export interface WorkspaceProjectionItem {
@@ -107,6 +115,39 @@ function summarizeEntries(entries: ArtifactMemoryEntry[]): string {
 		})
 		.join("\n\n");
 }
+
+export interface FilterActiveEntriesResult {
+	activeEntries: ArtifactMemoryEntry[];
+	meta: WorkspaceProjectionMeta;
+}
+
+export function filterActiveEntries(entries: ArtifactMemoryEntry[]): FilterActiveEntriesResult {
+	const deletedOrSuperseded = new Set<string>();
+	for (const entry of entries) {
+		const event = entry.event ?? "create";
+		if ((event === "update" || event === "delete") && entry.targetId && entry.targetId !== entry.id) {
+			deletedOrSuperseded.add(entry.targetId);
+		}
+	}
+
+	const activeEntries = entries.filter((entry) => {
+		const event = entry.event ?? "create";
+		if (event === "delete") return false;
+		if (deletedOrSuperseded.has(entry.id)) return false;
+		return true;
+	});
+
+	const deletedCount = entries.filter((e) => e.event === "delete").length;
+
+	const meta: WorkspaceProjectionMeta = {
+		totalEntries: entries.length,
+		activeEntries: activeEntries.length,
+		deletedCount,
+		supersededCount: deletedOrSuperseded.size,
+	};
+
+	return { activeEntries, meta };
+}
 export function getArtifactMemoryProjectionPath(workspaceRef: string, baseDir?: string): string {
 	return join(getArtifactMemoryRoot(baseDir), "projections", `${getWorkspaceProjectionKey(workspaceRef)}.json`);
 }
@@ -123,11 +164,13 @@ export class ArtifactMemoryProjector {
 		const entries = readArtifactMemoryEntries(this.baseDir).filter(
 			(entry) => entry.workspaceRef === resolvedWorkspaceRef,
 		);
+		const { activeEntries, meta } = filterActiveEntries(entries);
 		const projection: WorkspaceProjection = {
 			workspaceRef: resolvedWorkspaceRef,
-			entries,
-			startupItems: buildStartupItems(entries),
-			startupSummary: summarizeEntries(entries),
+			entries: activeEntries,
+			startupItems: buildStartupItems(activeEntries),
+			startupSummary: summarizeEntries(activeEntries),
+			meta,
 		};
 
 		const projectionPath = getArtifactMemoryProjectionPath(resolvedWorkspaceRef, this.baseDir);

@@ -174,6 +174,10 @@ memory_store: |
   - use `scope: "workspace"` with optional `workspaceRef` to target a specific workspace
   - use `scope: "global"` to store a global memory entry not tied to one workspace
 
+  Update semantics:
+  - use `supersedes: "<entryId>"` to update an existing entry (creates an "update" event)
+  - use `delete: "<entryId>"` to mark an entry as deleted (creates a "delete" event)
+
   Note: writes are backgrounded. Queue the write and continue; the agent does not need to wait for completion.
 
 memory_search: |

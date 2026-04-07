@@ -58,12 +58,13 @@ for (const entry of payload.entries) {
   const stored = {
     id: 'mem-' + crypto.randomUUID(),
     timestamp: new Date().toISOString(),
+    event: entry.event ?? 'create',
     kind: entry.kind,
     summary: entry.summary,
     workspaceRef,
     artifacts: entry.artifacts,
     sourceRefs: entry.sourceRefs,
-    supersedes: entry.supersedes,
+    targetId: entry.targetId,
   };
   fs.appendFileSync(ledgerPath, JSON.stringify(stored) + '\n', 'utf8');
 }

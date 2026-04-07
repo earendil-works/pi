@@ -35,7 +35,13 @@ function resolveSearchMode(scope?: ArtifactMemoryScope): ArtifactMemorySearchMod
 }
 
 function scoreEntry(entry: ArtifactMemoryEntry, tokens: string[]): number {
-	const haystack = [entry.kind, entry.summary, ...(entry.artifacts ?? []), ...(entry.sourceRefs ?? [])]
+	const haystack = [
+		entry.kind,
+		entry.summary,
+		entry.targetId ?? "",
+		...(entry.artifacts ?? []),
+		...(entry.sourceRefs ?? []),
+	]
 		.join("\n")
 		.toLowerCase();
 
