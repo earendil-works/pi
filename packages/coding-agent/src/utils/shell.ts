@@ -141,35 +141,39 @@ export function getShellEnv(): NodeJS.ProcessEnv {
  * - Characters with undefined code points
  */
 export function sanitizeBinaryOutput(str: string): string {
-	// Use Array.from to properly iterate over code points (not code units)
-	// This handles surrogate pairs correctly and catches edge cases where
-	// codePointAt() might return undefined
-	return Array.from(str)
-		.filter((char) => {
-			// Filter out characters that cause string-width to crash
-			// This includes:
-			// - Unicode format characters
-			// - Lone surrogates (already filtered by Array.from)
-			// - Control chars except \t \n \r
-			// - Characters with undefined code points
+	let sanitized = "";
 
-			const code = char.codePointAt(0);
+	for (const char of str) {
+		// Filter out characters that cause string-width to crash
+		// This includes:
+		// - Unicode format characters
+		// - Lone surrogates
+		// - Control chars except \t \n \r
+		// - Characters with undefined code points
+		const code = char.codePointAt(0);
 
-			// Skip if code point is undefined (edge case with invalid strings)
-			if (code === undefined) return false;
+		// Skip if code point is undefined (edge case with invalid strings)
+		if (code === undefined) continue;
 
-			// Allow tab, newline, carriage return
-			if (code === 0x09 || code === 0x0a || code === 0x0d) return true;
+		// Allow tab, newline, carriage return
+		if (code === 0x09 || code === 0x0a || code === 0x0d) {
+			sanitized += char;
+			continue;
+		}
 
-			// Filter out control characters (0x00-0x1F, except 0x09, 0x0a, 0x0x0d)
-			if (code <= 0x1f) return false;
+		// Filter out control characters (0x00-0x1F, except 0x09, 0x0a, 0x0x0d)
+		if (code <= 0x1f) continue;
 
-			// Filter out Unicode format characters
-			if (code >= 0xfff9 && code <= 0xfffb) return false;
+		// Filter out lone surrogate code units
+		if (code >= 0xd800 && code <= 0xdfff) continue;
 
-			return true;
-		})
-		.join("");
+		// Filter out Unicode format characters
+		if (code >= 0xfff9 && code <= 0xfffb) continue;
+
+		sanitized += char;
+	}
+
+	return sanitized;
 }
 
 /**

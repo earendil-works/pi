@@ -20,7 +20,8 @@ const PREVIEW_LINES = 20;
 
 export class BashExecutionComponent extends Container {
 	private command: string;
-	private outputLines: string[] = [];
+	private outputText = "";
+	private readonly maxBufferedBytes = DEFAULT_MAX_BYTES * 2;
 	private status: "running" | "complete" | "cancelled" | "error" = "running";
 	private exitCode: number | undefined = undefined;
 	private loader: Loader;
@@ -82,14 +83,13 @@ export class BashExecutionComponent extends Container {
 		// Note: binary data is already sanitized in tui-renderer.ts executeBashCommand
 		const clean = stripAnsi(chunk).replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
-		// Append to output lines
-		const newLines = clean.split("\n");
-		if (this.outputLines.length > 0 && newLines.length > 0) {
-			// Append first chunk to last line (incomplete line continuation)
-			this.outputLines[this.outputLines.length - 1] += newLines[0];
-			this.outputLines.push(...newLines.slice(1));
-		} else {
-			this.outputLines.push(...newLines);
+		this.outputText += clean;
+		const bufferTruncation = truncateTail(this.outputText, {
+			maxLines: Number.MAX_SAFE_INTEGER,
+			maxBytes: this.maxBufferedBytes,
+		});
+		if (bufferTruncation.truncated) {
+			this.outputText = bufferTruncation.content;
 		}
 
 		this.updateDisplay();
@@ -118,7 +118,7 @@ export class BashExecutionComponent extends Container {
 
 	private updateDisplay(): void {
 		// Apply truncation for LLM context limits (same limits as bash tool)
-		const fullOutput = this.outputLines.join("\n");
+		const fullOutput = this.outputText;
 		const contextTruncation = truncateTail(fullOutput, {
 			maxLines: DEFAULT_MAX_LINES,
 			maxBytes: DEFAULT_MAX_BYTES,
@@ -206,7 +206,7 @@ export class BashExecutionComponent extends Container {
 	 * Get the raw output for creating BashExecutionMessage.
 	 */
 	getOutput(): string {
-		return this.outputLines.join("\n");
+		return this.outputText;
 	}
 
 	/**
