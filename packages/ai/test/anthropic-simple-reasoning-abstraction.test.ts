@@ -114,12 +114,14 @@ function getAnthropicModel(id: string): Model<"anthropic-messages"> {
 }
 
 describe("anthropic simple reasoning abstraction", () => {
-	it("omits thinking config when simple reasoning is not provided", async () => {
+	it("uses adaptive thinking with max effort when reasoning is not provided", async () => {
 		const captured = await captureAnthropicRequest(getAnthropicModel("claude-sonnet-4-6"));
 
 		expect(captured.method).toBe("POST");
 		expect(captured.url).toBe("/v1/messages");
-		expect(captured.body.thinking).toBeUndefined();
+		expect(captured.body.thinking).toEqual({ type: "adaptive" });
+		expect(captured.body.output_config).toEqual({ effort: "max" });
+		expect(captured.body).not.toHaveProperty("thinking.budget_tokens");
 	});
 
 	it("uses adaptive thinking with medium effort for Claude Sonnet 4.6", async () => {
@@ -146,10 +148,17 @@ describe("anthropic simple reasoning abstraction", () => {
 		expect(captured.body).not.toHaveProperty("thinking.budget_tokens");
 	});
 
-	it("keeps budget-based thinking for older Claude models", async () => {
+	it("uses max budget for older Claude models when reasoning is not provided", async () => {
+		const captured = await captureAnthropicRequest(getAnthropicModel("claude-sonnet-4-0"));
+
+		expect(captured.body.thinking).toEqual({ type: "enabled", budget_tokens: 63999 });
+		expect(captured.body.output_config).toBeUndefined();
+	});
+
+	it("keeps budget-based thinking for older Claude models with reasoning", async () => {
 		const captured = await captureAnthropicRequest(getAnthropicModel("claude-sonnet-4-0"), "medium");
 
-		expect(captured.body.thinking).toEqual({ type: "enabled", budget_tokens: 8192 });
+		expect(captured.body.thinking).toEqual({ type: "enabled", budget_tokens: 15999 });
 		expect(captured.body.output_config).toBeUndefined();
 	});
 });
