@@ -48,7 +48,7 @@ type SaveMode = (typeof SAVE_MODES)[number];
 
 const ANTIGRAVITY_ENDPOINT = "https://daily-cloudcode-pa.sandbox.googleapis.com";
 
-const DEFAULT_ANTIGRAVITY_VERSION = "1.18.3";
+const DEFAULT_ANTIGRAVITY_VERSION = "1.21.9";
 
 const ANTIGRAVITY_HEADERS = {
 	"User-Agent": `antigravity/${process.env.PI_AI_ANTIGRAVITY_VERSION || DEFAULT_ANTIGRAVITY_VERSION} darwin/arm64`,
