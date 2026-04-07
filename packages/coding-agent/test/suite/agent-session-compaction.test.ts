@@ -1,11 +1,62 @@
 import { type AssistantMessage, fauxAssistantMessage, type Model } from "@mariozechner/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { SessionBeforeCompactResult } from "../../src/core/extensions/index.js";
+import type { ExtensionFactory, SessionBeforeCompactEvent } from "../../src/index.js";
 import { createHarness, type Harness } from "./harness.js";
 
 type SessionWithCompactionInternals = {
 	_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<void>;
 	_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<void>;
 };
+
+type DeferredCompaction = {
+	preparation: { firstKeptEntryId: string; tokensBefore: number };
+	resolve: (value: {
+		compaction: {
+			summary: string;
+			firstKeptEntryId: string;
+			tokensBefore: number;
+			details: Record<string, never>;
+		};
+	}) => void;
+};
+
+function createDeferredCompactionFactory(pending: DeferredCompaction[]): ExtensionFactory {
+	return (pi) => {
+		pi.on("session_before_compact", async (event: SessionBeforeCompactEvent) => {
+			return await new Promise<SessionBeforeCompactResult>((resolve) => {
+				pending.push({
+					preparation: {
+						firstKeptEntryId: event.preparation.firstKeptEntryId,
+						tokensBefore: event.preparation.tokensBefore,
+					},
+					resolve: resolve as DeferredCompaction["resolve"],
+				});
+			});
+		});
+	};
+}
+
+async function waitForPendingCompactions(pending: DeferredCompaction[], count: number): Promise<void> {
+	const deadline = Date.now() + 1000;
+	while (pending.length < count) {
+		if (Date.now() > deadline) {
+			throw new Error(`Timed out waiting for ${count} pending compactions`);
+		}
+		await new Promise((resolve) => setTimeout(resolve, 0));
+	}
+}
+
+function resolveDeferredCompaction(deferred: DeferredCompaction, summary: string): void {
+	deferred.resolve({
+		compaction: {
+			summary,
+			firstKeptEntryId: deferred.preparation.firstKeptEntryId,
+			tokensBefore: deferred.preparation.tokensBefore,
+			details: {},
+		},
+	});
+}
 
 function createUsage(totalTokens: number) {
 	return {
@@ -117,6 +168,53 @@ describe("AgentSession compaction characterization", () => {
 		harness.session.abortCompaction();
 
 		await expect(compactPromise).rejects.toThrow("Compaction cancelled");
+	});
+
+	it("keeps overlapping manual compactions isolated to their own abort controllers", async () => {
+		const pending: DeferredCompaction[] = [];
+		const harness = await createHarness({
+			extensionFactories: [createDeferredCompactionFactory(pending)],
+		});
+		harnesses.push(harness);
+
+		await harness.session.prompt("one");
+		await harness.session.prompt("two");
+
+		const firstCompact = harness.session.compact();
+		await waitForPendingCompactions(pending, 1);
+		const secondCompact = harness.session.compact();
+		await waitForPendingCompactions(pending, 2);
+
+		resolveDeferredCompaction(pending[0]!, "manual compact 1");
+		await expect(firstCompact).resolves.toMatchObject({ summary: "manual compact 1" });
+		resolveDeferredCompaction(pending[1]!, "manual compact 2");
+		await expect(secondCompact).resolves.toMatchObject({ summary: "manual compact 2" });
+	});
+
+	it("keeps overlapping auto-compactions isolated to their own abort controllers", async () => {
+		const pending: DeferredCompaction[] = [];
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [createDeferredCompactionFactory(pending)],
+		});
+		harnesses.push(harness);
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+
+		await harness.session.prompt("one");
+		await harness.session.prompt("two");
+
+		const firstCompact = sessionInternals._runAutoCompaction("threshold", false);
+		await waitForPendingCompactions(pending, 1);
+		const secondCompact = sessionInternals._runAutoCompaction("threshold", false);
+		await waitForPendingCompactions(pending, 2);
+
+		resolveDeferredCompaction(pending[0]!, "auto compact 1");
+		await expect(firstCompact).resolves.toBeUndefined();
+		resolveDeferredCompaction(pending[1]!, "auto compact 2");
+		await expect(secondCompact).resolves.toBeUndefined();
+
+		const compactionErrors = harness.eventsOfType("compaction_end").filter((event) => event.errorMessage);
+		expect(compactionErrors).toHaveLength(0);
 	});
 
 	it("resumes after threshold compaction when only agent-level queued messages exist", async () => {
