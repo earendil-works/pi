@@ -38,6 +38,30 @@ const mockModels: Model<"anthropic-messages">[] = [
 // Mock OpenRouter models with colons in IDs
 const mockOpenRouterModels: Model<"anthropic-messages">[] = [
 	{
+		id: "qwen/qwen3.6-plus",
+		name: "Qwen3.6 Plus",
+		api: "anthropic-messages",
+		provider: "openrouter",
+		baseUrl: "https://openrouter.ai/api/v1",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 0.325, output: 1.95, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1000000,
+		maxTokens: 65536,
+	},
+	{
+		id: "qwen/qwen3.6-plus:free",
+		name: "Qwen3.6 Plus (free)",
+		api: "anthropic-messages",
+		provider: "openrouter",
+		baseUrl: "https://openrouter.ai/api/v1",
+		reasoning: true,
+		input: ["text", "image"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 1000000,
+		maxTokens: 65536,
+	},
+	{
 		id: "qwen/qwen3-coder:exacto",
 		name: "Qwen3 Coder Exacto",
 		api: "anthropic-messages",
@@ -128,6 +152,34 @@ describe("parseModelPattern", () => {
 			expect(result.model?.id).toBe("gpt-4o");
 			expect(result.thinkingLevel).toBeUndefined();
 			expect(result.warning).toContain("Invalid thinking level");
+		});
+	});
+
+	describe("colon-variant sort order", () => {
+		test("base model wins over :free when both exist", () => {
+			// "qwen3.6-plus" partial-matches both "qwen/qwen3.6-plus" and "qwen/qwen3.6-plus:free".
+			// The base model must win — not the :free variant.
+			const result = parseModelPattern("qwen3.6-plus", allModels);
+			expect(result.model?.id).toBe("qwen/qwen3.6-plus");
+			expect(result.thinkingLevel).toBeUndefined();
+		});
+
+		test("base model wins over :free with thinking level", () => {
+			const result = parseModelPattern("qwen3.6-plus:high", allModels);
+			expect(result.model?.id).toBe("qwen/qwen3.6-plus");
+			expect(result.thinkingLevel).toBe("high");
+		});
+
+		test("explicit :free suffix selects the free variant", () => {
+			const result = parseModelPattern("qwen/qwen3.6-plus:free", allModels);
+			expect(result.model?.id).toBe("qwen/qwen3.6-plus:free");
+			expect(result.thinkingLevel).toBeUndefined();
+		});
+
+		test("only :free exists — still matches it when no base model is available", () => {
+			const freeOnly = allModels.filter((m) => m.id !== "qwen/qwen3.6-plus");
+			const result = parseModelPattern("qwen3.6-plus", freeOnly);
+			expect(result.model?.id).toBe("qwen/qwen3.6-plus:free");
 		});
 	});
 
@@ -362,7 +414,7 @@ describe("resolveCliModel", () => {
 		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
 
 		const result = resolveCliModel({
-			cliModel: "openrouter/qwen",
+			cliModel: "openrouter/qwen3-coder",
 			modelRegistry: registry,
 		});
 
