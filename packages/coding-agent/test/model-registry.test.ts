@@ -455,6 +455,74 @@ describe("ModelRegistry", () => {
 			expect(anthropicModels.some((m) => m.id.includes("claude"))).toBe(true);
 		});
 
+		test("apiKey can be omitted when provider already has stored credentials", () => {
+			// Simulate the user having logged in via /login (credentials in auth.json)
+			authStorage.set("anthropic", { type: "api_key", key: "sk-stored-key" });
+
+			writeFileSync(
+				modelsJsonPath,
+				JSON.stringify({
+					providers: {
+						anthropic: {
+							baseUrl: "https://proxy.example.com/v1",
+							api: "anthropic-messages",
+							// apiKey intentionally omitted — auth comes from authStorage
+							models: [
+								{
+									id: "claude-custom",
+									name: "Claude Custom",
+									reasoning: false,
+									input: ["text"],
+									cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+									contextWindow: 100000,
+									maxTokens: 8000,
+								},
+							],
+						},
+					},
+				}),
+			);
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			expect(registry.getError()).toBeUndefined();
+			expect(getModelsForProvider(registry, "anthropic").some((m) => m.id === "claude-custom")).toBe(true);
+		});
+
+		test("apiKey missing with no stored credentials produces actionable error", () => {
+			// No stored credentials, no apiKey in models.json
+			writeFileSync(
+				modelsJsonPath,
+				JSON.stringify({
+					providers: {
+						anthropic: {
+							baseUrl: "https://proxy.example.com/v1",
+							api: "anthropic-messages",
+							models: [
+								{
+									id: "claude-custom",
+									name: "Claude Custom",
+									reasoning: false,
+									input: ["text"],
+									cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+									contextWindow: 100000,
+									maxTokens: 8000,
+								},
+							],
+						},
+					},
+				}),
+			);
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const error = registry.getError();
+			expect(error).toBeDefined();
+			// Error must mention apiKey and all actionable alternatives
+			expect(error).toContain("apiKey");
+			expect(error).toContain("!cmd"); // shell command hint
+			expect(error).toContain("/login"); // stored-auth alternative
+			expect(error).toContain("environment variable"); // env var hint
+		});
+
 		test("removing custom models from models.json keeps built-in provider models", () => {
 			writeModelsJson({
 				anthropic: providerConfig("https://proxy.example.com/v1", [{ id: "claude-custom" }]),

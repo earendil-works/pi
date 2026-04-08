@@ -447,8 +447,18 @@ export class ModelRegistry {
 				if (!providerConfig.baseUrl) {
 					throw new Error(`Provider ${providerName}: "baseUrl" is required when defining custom models.`);
 				}
-				if (!providerConfig.apiKey) {
-					throw new Error(`Provider ${providerName}: "apiKey" is required when defining custom models.`);
+				// apiKey can be omitted when the provider is already authenticated via /login
+				// (credentials are stored in auth.json). At request time, getApiKeyAndHeaders()
+				// calls authStorage.getApiKey() first, so stored credentials are used
+				// automatically even if providerConfig.apiKey is absent.
+				const hasStoredAuth = this.authStorage.hasAuth(providerName);
+				if (!providerConfig.apiKey && !hasStoredAuth) {
+					throw new Error(
+						`Provider ${providerName}: "apiKey" is required when defining custom models. ` +
+						`Set it to an environment variable name, a literal key, or a shell command ("!cmd"). ` +
+						`Alternatively, authenticate via /login (if supported) then reload models — ` +
+						`stored credentials are used automatically.`,
+					);
 				}
 			}
 
