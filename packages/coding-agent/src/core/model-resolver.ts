@@ -131,12 +131,24 @@ function tryMatchModel(modelPattern: string, availableModels: Model<Api>[]): Mod
 	const datedVersions = matches.filter((m) => !isAlias(m.id));
 
 	if (aliases.length > 0) {
-		// Prefer alias - if multiple aliases, pick the one that sorts highest
-		aliases.sort((a, b) => b.id.localeCompare(a.id));
+		// Prefer aliases without a colon-variant suffix (e.g. "model" over "model:free").
+		// A longer string beats its own prefix in localeCompare, so without this
+		// "qwen/qwen3.6-plus:free" would silently win over "qwen/qwen3.6-plus".
+		aliases.sort((a, b) => {
+			const aHasSuffix = a.id.includes(":");
+			const bHasSuffix = b.id.includes(":");
+			if (aHasSuffix !== bHasSuffix) return aHasSuffix ? 1 : -1;
+			return b.id.localeCompare(a.id);
+		});
 		return aliases[0];
 	} else {
-		// No alias found, pick latest dated version
-		datedVersions.sort((a, b) => b.id.localeCompare(a.id));
+		// No alias found, pick latest dated version without a colon-variant suffix first.
+		datedVersions.sort((a, b) => {
+			const aHasSuffix = a.id.includes(":");
+			const bHasSuffix = b.id.includes(":");
+			if (aHasSuffix !== bHasSuffix) return aHasSuffix ? 1 : -1;
+			return b.id.localeCompare(a.id);
+		});
 		return datedVersions[0];
 	}
 }
