@@ -179,3 +179,20 @@ The following invariants are verified by tests in `test/runtime-lifecycle-cleanu
 - Built-in extensions are loaded after discovered files so built-ins win on equal priority.
 - Non-colliding extension commands remain available alongside built-ins.
 - Extensions can override built-ins with explicit higher priority if needed.
+
+### Tool Selection Semantics (VAL-CORE-003)
+- Only selected built-ins (or their active same-name overrides) appear in the active tool surface.
+- Unselected built-ins do not leak into the active runtime.
+- Extension-only tools remain additive to selected built-ins.
+- The `getToolsForSelection` method filters the tool surface based on selection.
+
+### Before-Tool Hook Composition (VAL-CORE-004)
+- Before-tool hooks compose in priority order (highest first), then registration order.
+- Earlier patches are visible to later hooks via chained argument updates.
+- A `block` result short-circuits execution and surfaces an explicit failure.
+- Blocked tool calls do not execute the underlying tool.
+
+### After-Tool Result Patching (VAL-CORE-005)
+- After-tool hooks patch results in order before they are appended to the transcript.
+- Each hook receives the transformed result from the previous hook.
+- The `composeToolResultTransformer` function creates a composed transformer for the full chain.
