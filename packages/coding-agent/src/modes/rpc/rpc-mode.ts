@@ -302,6 +302,13 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					}
 					return { cancelled: result.cancelled };
 				},
+				forkCurrent: async () => {
+					const result = await runtimeHost.forkCurrent();
+					if (!result.cancelled) {
+						await rebindSession();
+					}
+					return { cancelled: result.cancelled };
+				},
 				navigateTree: async (targetId, options) => {
 					const result = await session.navigateTree(targetId, {
 						summarize: options?.summarize,
@@ -535,6 +542,14 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					await rebindSession();
 				}
 				return success(id, "fork", { text: result.selectedText, cancelled: result.cancelled });
+			}
+
+			case "clone": {
+				const result = await runtimeHost.forkCurrent();
+				if (!result.cancelled) {
+					await rebindSession();
+				}
+				return success(id, "clone", { cancelled: result.cancelled });
 			}
 
 			case "get_fork_messages": {

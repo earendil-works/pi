@@ -248,6 +248,65 @@ export class AgentSessionRuntime {
 		return { cancelled: false, selectedText };
 	}
 
+	/**
+	 * Fork the current session at the current leaf position ("clone session").
+	 * Unlike fork() which goes back to a user message's parent,
+	 * this creates a new session with the full branch up to and
+	 * including the current leaf, with an empty editor.
+	 */
+	async forkCurrent(): Promise<{ cancelled: boolean }> {
+		const beforeResult = await this.emitBeforeFork("current");
+		if (beforeResult.cancelled) {
+			return { cancelled: true };
+		}
+
+		const previousSessionFile = this.session.sessionFile;
+		if (this.session.sessionManager.isPersisted()) {
+			const currentSessionFile = this.session.sessionFile;
+			if (!currentSessionFile) {
+				throw new Error("Persisted session is missing a session file");
+			}
+			const sessionDir = this.session.sessionManager.getSessionDir();
+			const sourceManager = SessionManager.open(currentSessionFile, sessionDir);
+			const leafId = sourceManager.getLeafId();
+			if (!leafId) {
+				throw new Error("Cannot clone: session has no messages");
+			}
+			const forkedSessionPath = sourceManager.createBranchedSession(leafId);
+			if (!forkedSessionPath) {
+				throw new Error("Failed to create forked session");
+			}
+			const sessionManager = SessionManager.open(forkedSessionPath, sessionDir);
+			await this.teardownCurrent();
+			this.apply(
+				await this.createRuntime({
+					cwd: sessionManager.getCwd(),
+					agentDir: this.services.agentDir,
+					sessionManager,
+					sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
+				}),
+			);
+			return { cancelled: false };
+		}
+
+		const sessionManager = this.session.sessionManager;
+		const leafId = sessionManager.getLeafId();
+		if (!leafId) {
+			throw new Error("Cannot clone: session has no messages");
+		}
+		sessionManager.createBranchedSession(leafId);
+		await this.teardownCurrent();
+		this.apply(
+			await this.createRuntime({
+				cwd: this.cwd,
+				agentDir: this.services.agentDir,
+				sessionManager,
+				sessionStartEvent: { type: "session_start", reason: "fork", previousSessionFile },
+			}),
+		);
+		return { cancelled: false };
+	}
+
 	async importFromJsonl(inputPath: string, cwdOverride?: string): Promise<{ cancelled: boolean }> {
 		const resolvedPath = resolve(inputPath);
 		if (!existsSync(resolvedPath)) {

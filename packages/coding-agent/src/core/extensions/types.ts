@@ -310,6 +310,9 @@ export interface ExtensionCommandContext extends ExtensionContext {
 	/** Fork from a specific entry, creating a new session file. */
 	fork(entryId: string): Promise<{ cancelled: boolean }>;
 
+	/** Clone the current session at the current leaf position into a new session file. */
+	forkCurrent(): Promise<{ cancelled: boolean }>;
+
 	/** Navigate to a different point in the session tree. */
 	navigateTree(
 		targetId: string,
@@ -1403,6 +1406,7 @@ export interface ExtensionCommandContextActions {
 		setup?: (sessionManager: SessionManager) => Promise<void>;
 	}) => Promise<{ cancelled: boolean }>;
 	fork: (entryId: string) => Promise<{ cancelled: boolean }>;
+	forkCurrent: () => Promise<{ cancelled: boolean }>;
 	navigateTree: (
 		targetId: string,
 		options?: { summarize?: boolean; customInstructions?: string; replaceInstructions?: boolean; label?: string },

@@ -53,6 +53,13 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 					}
 					return { cancelled: result.cancelled };
 				},
+				forkCurrent: async () => {
+					const result = await runtimeHost.forkCurrent();
+					if (!result.cancelled) {
+						await rebindSession();
+					}
+					return { cancelled: result.cancelled };
+				},
 				navigateTree: async (targetId, navigateOptions) => {
 					const result = await session.navigateTree(targetId, {
 						summarize: navigateOptions?.summarize,

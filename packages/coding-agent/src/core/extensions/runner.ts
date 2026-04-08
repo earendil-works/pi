@@ -144,6 +144,7 @@ export type NewSessionHandler = (options?: {
 }) => Promise<{ cancelled: boolean }>;
 
 export type ForkHandler = (entryId: string) => Promise<{ cancelled: boolean }>;
+export type ForkCurrentHandler = () => Promise<{ cancelled: boolean }>;
 
 export type NavigateTreeHandler = (
 	targetId: string,
@@ -218,6 +219,7 @@ export class ExtensionRunner {
 	private getSystemPromptFn: () => string = () => "";
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
+	private forkCurrentHandler: ForkCurrentHandler = async () => ({ cancelled: false });
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
 	private reloadHandler: ReloadHandler = async () => {};
@@ -317,6 +319,7 @@ export class ExtensionRunner {
 			this.waitForIdleFn = actions.waitForIdle;
 			this.newSessionHandler = actions.newSession;
 			this.forkHandler = actions.fork;
+			this.forkCurrentHandler = actions.forkCurrent;
 			this.navigateTreeHandler = actions.navigateTree;
 			this.switchSessionHandler = actions.switchSession;
 			this.reloadHandler = actions.reload;
@@ -326,6 +329,7 @@ export class ExtensionRunner {
 		this.waitForIdleFn = async () => {};
 		this.newSessionHandler = async () => ({ cancelled: false });
 		this.forkHandler = async () => ({ cancelled: false });
+		this.forkCurrentHandler = async () => ({ cancelled: false });
 		this.navigateTreeHandler = async () => ({ cancelled: false });
 		this.switchSessionHandler = async () => ({ cancelled: false });
 		this.reloadHandler = async () => {};
@@ -560,6 +564,7 @@ export class ExtensionRunner {
 			waitForIdle: () => this.waitForIdleFn(),
 			newSession: (options) => this.newSessionHandler(options),
 			fork: (entryId) => this.forkHandler(entryId),
+			forkCurrent: () => this.forkCurrentHandler(),
 			navigateTree: (targetId, options) => this.navigateTreeHandler(targetId, options),
 			switchSession: (sessionPath) => this.switchSessionHandler(sessionPath),
 			reload: () => this.reloadHandler(),

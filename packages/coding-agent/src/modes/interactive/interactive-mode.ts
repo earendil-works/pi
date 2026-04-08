@@ -1222,6 +1222,19 @@ export class InteractiveMode {
 						return this.handleFatalRuntimeError("Failed to fork session", error);
 					}
 				},
+				forkCurrent: async () => {
+					try {
+						const result = await this.runtimeHost.forkCurrent();
+						if (!result.cancelled) {
+							await this.handleRuntimeSessionChange();
+							this.renderCurrentSessionState();
+							this.showStatus("Cloned session");
+						}
+						return { cancelled: result.cancelled };
+					} catch (error: unknown) {
+						return this.handleFatalRuntimeError("Failed to clone session", error);
+					}
+				},
 				navigateTree: async (targetId, options) => {
 					const result = await this.session.navigateTree(targetId, {
 						summarize: options?.summarize,
@@ -2179,6 +2192,11 @@ export class InteractiveMode {
 			}
 			if (text === "/fork") {
 				this.showUserMessageSelector();
+				this.editor.setText("");
+				return;
+			}
+			if (text === "/clone") {
+				await this.handleCloneCommand();
 				this.editor.setText("");
 				return;
 			}
@@ -4525,6 +4543,17 @@ export class InteractiveMode {
 		} catch (error: unknown) {
 			await this.handleFatalRuntimeError("Failed to create session", error);
 		}
+	}
+
+	private async handleCloneCommand(): Promise<void> {
+		const result = await this.runtimeHost.forkCurrent();
+		if (result.cancelled) {
+			this.ui.requestRender();
+			return;
+		}
+		await this.handleRuntimeSessionChange();
+		this.renderCurrentSessionState();
+		this.showStatus("Cloned session");
 	}
 
 	private handleDebugCommand(): void {

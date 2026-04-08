@@ -343,6 +343,14 @@ export class RpcClient {
 	}
 
 	/**
+	 * Clone the current session at the current leaf position.
+	 */
+	async clone(): Promise<{ cancelled: boolean }> {
+		const response = await this.send({ type: "clone" });
+		return this.getData(response);
+	}
+
+	/**
 	 * Get messages available for forking.
 	 */
 	async getForkMessages(): Promise<Array<{ entryId: string; text: string }>> {
