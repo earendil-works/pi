@@ -200,9 +200,12 @@ export class Container implements Component {
 	}
 
 	render(width: number): string[] {
-		const lines: string[] = [];
+		let lines: string[] = [];
 		for (const child of this.children) {
-			lines.push(...child.render(width));
+			const childLines = child.render(width);
+			if (childLines.length > 0) {
+				lines = lines.concat(childLines);
+			}
 		}
 		return lines;
 	}
