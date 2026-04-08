@@ -144,3 +144,38 @@ Figma is a pilot integration built on top of the generic MCP layer. Figma-specif
 - Make failure states explicit in slash/status UX.
 - Favor deterministic local harness validation before real Figma validation.
 - Update this document if the chosen MCP config shape, session model, or runtime boundaries materially change.
+
+## Proven Lifecycle Guarantees
+
+The following invariants are verified by tests in `test/runtime-lifecycle-cleanup.test.ts` and related test files:
+
+### Extension Provider Registration (VAL-CORE-001)
+- Loading an extension that registers a provider/model makes it selectable in the runtime.
+- Unloading or reloading that extension removes the injected provider/model without leaving stale runtime entries behind.
+
+### Reload Swaps Registrations (VAL-CORE-002)
+- Reload removes all prior registrations by `sourceId` before re-loading.
+- No duplicate tool, command, or indicator definitions remain after reload.
+- The active surface reflects only the current extension definitions.
+
+### Command Lifecycle (VAL-CORE-006)
+- Extension-defined slash commands are discoverable and executable after load.
+- Commands unregister cleanly on unload by `sourceId`.
+- Prior extension command definitions are revealed again after unload/reload.
+
+### Extension State Persistence (VAL-CORE-007)
+- Per-extension persisted state survives both reload and fresh restart/load.
+- State is stored in `<configDir>/extensions/<extName>/state.json`.
+- Missing or corrupt state files fail open: the extension loads with empty state and no crash.
+
+### Hook and Indicator Cleanup (VAL-CORE-008)
+- After an extension is unloaded or reloaded:
+  - Its old context/input/tool hooks no longer mutate runtime behavior.
+  - Any indicators registered by that old extension are removed from the visible UI.
+- All hook types are cleaned: context, input, beforeToolCall, afterToolResult.
+
+### Built-in Command Precedence (VAL-CORE-009)
+- Built-in slash commands keep their normal routing precedence even when an extension registers a colliding command name.
+- Built-in extensions are loaded after discovered files so built-ins win on equal priority.
+- Non-colliding extension commands remain available alongside built-ins.
+- Extensions can override built-ins with explicit higher priority if needed.
