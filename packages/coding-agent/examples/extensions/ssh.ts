@@ -181,6 +181,9 @@ export default function (pi: ExtensionAPI) {
 		},
 	});
 
+	// Remote context files (AGENTS.md, CLAUDE.md) loaded once per session
+	let remoteContextSection = "";
+
 	pi.on("session_start", async (_event, ctx) => {
 		// Resolve SSH config now that CLI flags are available
 		const arg = pi.getFlag("ssh") as string | undefined;
@@ -196,6 +199,84 @@ export default function (pi: ExtensionAPI) {
 			}
 			ctx.ui.setStatus("ssh", ctx.ui.theme.fg("accent", `SSH: ${resolvedSsh.remote}:${resolvedSsh.remoteCwd}`));
 			ctx.ui.notify(`SSH mode: ${resolvedSsh.remote}:${resolvedSsh.remoteCwd}`, "info");
+
+			// Load remote context files into system prompt, matching pi's
+			// loadProjectContextFiles() logic from resource-loader.ts:
+			//   1. Global: ~/.pi/agent/AGENTS.md (or CLAUDE.md)
+			//   2. Ancestor walk: AGENTS.md (or CLAUDE.md) from / down to cwd
+			//
+			// We do the ancestor walk in a single SSH call for efficiency.
+			const ssh = resolvedSsh;
+			const files: Array<{ label: string; content: string }> = [];
+			const seenPaths = new Set<string>();
+
+			// 1. Load global ~/.pi/agent/AGENTS.md or CLAUDE.md
+			try {
+				const homeDir = (await sshExec(ssh.remote, "echo $HOME")).toString().trim();
+				if (homeDir) {
+					for (const name of ["AGENTS.md", "CLAUDE.md"]) {
+						const filePath = `${homeDir}/.pi/agent/${name}`;
+						try {
+							const content = (await sshExec(ssh.remote, `cat ${JSON.stringify(filePath)}`)).toString().trim();
+							if (content) {
+								files.push({ label: filePath, content });
+								seenPaths.add(filePath);
+								break;
+							}
+						} catch {
+							// not found
+						}
+					}
+				}
+			} catch {
+				// skip
+			}
+
+			// 2. Walk ancestor directories from / down to cwd, loading AGENTS.md or CLAUDE.md.
+			//    Uses a single SSH call that walks from cwd up to /, then reverses for root-to-leaf order.
+			try {
+				const script = `
+					d=${JSON.stringify(ssh.remoteCwd)}
+					while true; do
+						for f in AGENTS.md CLAUDE.md; do
+							p="$d/$f"
+							if [ -r "$p" ]; then
+								echo "$p"
+								break
+							fi
+						done
+						[ "$d" = "/" ] && break
+						d=$(dirname "$d")
+					done
+				`;
+				const output = (await sshExec(ssh.remote, script)).toString().trim();
+				if (output) {
+					// Results come cwd-to-root; reverse for root-to-cwd order (matching pi)
+					const paths = output.split("\n").filter(Boolean).reverse();
+					for (const filePath of paths) {
+						if (seenPaths.has(filePath)) continue;
+						seenPaths.add(filePath);
+						try {
+							const content = (await sshExec(ssh.remote, `cat ${JSON.stringify(filePath)}`)).toString().trim();
+							if (content) {
+								files.push({ label: filePath, content });
+							}
+						} catch {
+							// skip unreadable files
+						}
+					}
+				}
+			} catch {
+				// skip
+			}
+
+			if (files.length > 0) {
+				remoteContextSection = "\n\n# Remote Project Context\n\n";
+				for (const { label, content } of files) {
+					remoteContextSection += `## ${label}\n\n${content}\n\n`;
+				}
+				ctx.ui.notify(`Loaded ${files.length} remote context file(s)`, "info");
+			}
 		}
 	});
 
@@ -206,14 +287,17 @@ export default function (pi: ExtensionAPI) {
 		return { operations: createRemoteBashOps(ssh.remote, ssh.remoteCwd, localCwd) };
 	});
 
-	// Replace local cwd with remote cwd in system prompt
+	// Replace local cwd with remote cwd in system prompt, and inject remote context files
 	pi.on("before_agent_start", async (event) => {
 		const ssh = getSsh();
 		if (ssh) {
-			const modified = event.systemPrompt.replace(
+			let modified = event.systemPrompt.replace(
 				`Current working directory: ${localCwd}`,
 				`Current working directory: ${ssh.remoteCwd} (via SSH: ${ssh.remote})`,
 			);
+			if (remoteContextSection) {
+				modified += remoteContextSection;
+			}
 			return { systemPrompt: modified };
 		}
 	});
