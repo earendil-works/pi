@@ -1,4 +1,4 @@
-import type { AgentTool } from "@kennyfrc/mu-ai";
+import { type AgentTool, StringEnum } from "@kennyfrc/mu-ai";
 import type { Static } from "@sinclair/typebox";
 import { Type } from "@sinclair/typebox";
 import { enqueueArtifactMemoryWrite } from "../memory/background-write.js";
@@ -6,7 +6,7 @@ import { getArtifactMemoryScopeWorkspaceRef, readArtifactMemoryEntry, searchArti
 import { getArtifactMemoryScope } from "../memory/store.js";
 import { getToolDescription } from "../prompts/index.js";
 
-const memoryScopeSchema = Type.Union([Type.Literal("workspace"), Type.Literal("global")]);
+const memoryScopeSchema = StringEnum(["workspace", "global"] as const);
 
 const memoryStoreSchema = Type.Object({
 	kind: Type.String({ minLength: 1 }),

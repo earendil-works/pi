@@ -231,6 +231,8 @@ read_thread: |
 spawn_agent: |
   Spawn a child mu agent to handle a bounded task and return a child session handle immediately.
 
+  After spawning a child, use `wait_agent` to collect results. If you spawn multiple children in parallel, call `wait_agent` once with all the child session ids to collect their results together.
+
   Important:
   - Do NOT use `spawn_agent` unless the user explicitly asks you to delegate, parallelize, or use a spawned/sub agent.
   - spawn_agent SERIALIZES by default - it waits for the child to complete and returns results inline. Use `wait_agent` explicitly only if you spawned multiple children in parallel and need to collect all results.
