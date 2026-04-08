@@ -228,6 +228,65 @@ describe("AgentSession retry", () => {
 		expect(events).toEqual(["start:1", "end:success=true"]);
 	});
 
+	it("retries Alibaba Qwen rate-increased error", async () => {
+		const created = createSession({ failCount: 0 });
+		let callCount = 0;
+		const streamFn = () => {
+			callCount++;
+			const stream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callCount === 1) {
+					const msg = createAssistantMessage("", {
+						stopReason: "error",
+						errorMessage:
+							"Upstream error from Alibaba: Request rate increased too quickly. To ensure system stability, please adjust your client logic to scale requests more smoothly over time.",
+					});
+					stream.push({ type: "start", partial: msg });
+					stream.push({ type: "error", reason: "error", error: msg });
+					return;
+				}
+
+				const msg = createAssistantMessage("Recovered after retry");
+				stream.push({ type: "start", partial: msg });
+				stream.push({ type: "done", reason: "stop", message: msg });
+			});
+			return stream;
+		};
+		created.session.dispose();
+
+		const model = getModel("anthropic", "claude-sonnet-4-5")!;
+		const agent = new Agent({
+			getApiKey: () => "test-key",
+			initialState: { model, systemPrompt: "Test", tools: [] },
+			streamFn,
+		});
+		const sessionManager = SessionManager.inMemory();
+		const settingsManager = SettingsManager.create(tempDir, tempDir);
+		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+		const modelRegistry = ModelRegistry.create(authStorage, tempDir);
+		authStorage.setRuntimeApiKey("anthropic", "test-key");
+		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries: 3, baseDelayMs: 1 } });
+		session = new AgentSession({
+			agent,
+			sessionManager,
+			settingsManager,
+			cwd: tempDir,
+			modelRegistry,
+			resourceLoader: createTestResourceLoader(),
+		});
+
+		const events: string[] = [];
+		session.subscribe((event) => {
+			if (event.type === "auto_retry_start") events.push(`start:${event.attempt}`);
+			if (event.type === "auto_retry_end") events.push(`end:success=${event.success}`);
+		});
+
+		await session.prompt("Test");
+
+		expect(callCount).toBe(2);
+		expect(events).toEqual(["start:1", "end:success=true"]);
+	});
+
 	it("prompt waits for full agent loop when retry produces tool calls", async () => {
 		// Regression: when auto-retry fires and the retry response includes tool_use,
 		// session.prompt() must wait for the entire tool loop to finish before returning.
