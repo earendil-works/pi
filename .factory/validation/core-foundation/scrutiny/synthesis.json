@@ -1,0 +1,48 @@
+{
+  "milestone": "core-foundation",
+  "round": 2,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "npm run test -w @kennyfrc/mu-coding-agent -- --maxWorkers=4",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "npm run check -w @kennyfrc/mu-coding-agent",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "npm run check",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 1,
+    "failed": 1,
+    "failedFeatures": [
+      "core-validator-blockers-outside-mcp"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "core-validator-blockers-outside-mcp",
+      "severity": "blocking",
+      "description": "packages/coding-agent/src/prompts/tools.yaml still gives contradictory spawn_agent guidance by both telling the model to use wait_agent after spawning and saying wait_agent should be used explicitly only for parallel child sessions."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "skills",
+      "suggestion": "Update the core-runtime-worker guidance so a scrutiny rerun for a previously reported validator gap must strengthen coverage or the prompt/contract text for that exact gap instead of relying on a pre-existing loose assertion that merely checks for keywords.",
+      "evidence": "The re-review for core-validator-blockers-outside-mcp found that worker session b3df0e19-6a01-40f9-b44c-b02639ceaac0 declared the feature fixed after removing stale /autohandoff handling, while packages/coding-agent/test/wait-agent.red.test.ts:122-126 still passed despite the contradictory spawn_agent/wait_agent text remaining at packages/coding-agent/src/prompts/tools.yaml:234-238.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": "/Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/.factory/validation/core-foundation/scrutiny/synthesis.json#round-1"
+}

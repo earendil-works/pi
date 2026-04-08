@@ -26,7 +26,8 @@ Use for features that change extension lifecycle, registries, session/runtime cl
    - targeted `vitest` files for the touched area
    - `npm run check -w @kennyfrc/mu-coding-agent`
 6. If the feature changes runtime facts or boundaries, update `.factory/library/architecture.md`, `.factory/library/mcp.md`, or `.factory/library/user-testing.md` before finishing.
-7. In the handoff, be explicit about lifecycle guarantees proven, not just files changed.
+7. When changing surfaced prompt or tool-description text, verify semantic consistency across the full text, not just keyword presence. Do not stop at regex-satisfying phrasing if the surrounding guidance becomes contradictory.
+8. In the handoff, be explicit about lifecycle guarantees proven, not just files changed.
 
 ## Example Handoff
 

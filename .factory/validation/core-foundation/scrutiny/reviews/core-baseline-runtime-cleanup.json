@@ -1,0 +1,15 @@
+{
+  "featureId": "core-baseline-runtime-cleanup",
+  "reviewedAt": "2026-04-08T05:53:22.180896Z",
+  "commitId": "7cfa9cfa",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed the two feature commits (9668ce51 and 7cfa9cfa), the last-session handoff, and the transcript skeleton. The feature now has targeted lifecycle-cleanup coverage plus the missing `getIndicators()` compatibility updates across TUI test fixtures; I did not find a correctness bug in the implementation under the requested review scope.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Pass: the reviewed feature\u2019s runtime-cleanup coverage matches the stated lifecycle guarantees, and the follow-up commit correctly fixes the remaining `getIndicators` test-fixture contract fallout without introducing a correctness issue."
+}

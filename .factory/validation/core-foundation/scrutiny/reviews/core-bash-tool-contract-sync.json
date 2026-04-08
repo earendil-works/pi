@@ -1,0 +1,15 @@
+{
+  "featureId": "core-bash-tool-contract-sync",
+  "reviewedAt": "2026-04-08T00:00:00Z",
+  "commitId": "1910593f52da5485e7dbb488eb54913f1e000bc5",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Pass. The commit only updates the failing bash simple-command test to match the already-implemented runtime contract that successful bash executions surface result.details with an explicit exitCode.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "Reviewed the worker transcript skeleton and commit 1910593f. The change is a narrow test contract sync in packages/coding-agent/test/tools.test.ts, and it correctly matches the existing bash runtime behavior in packages/coding-agent/src/tools/bash.ts that returns { exitCode: 0 } for successful simple commands. No correctness issues found."
+}

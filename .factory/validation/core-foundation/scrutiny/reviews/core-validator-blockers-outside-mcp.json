@@ -1,0 +1,28 @@
+{
+  "featureId": "core-validator-blockers-outside-mcp",
+  "reviewedAt": "2026-04-08T07:28:04.947196Z",
+  "commitId": "340cd0fc",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The rerun commit correctly removes stale /autohandoff TUI handling, but it does not resolve the prior blocking prompt-contract issue: spawn_agent still tells the model both to use wait_agent after spawning and to use wait_agent only for parallel children.",
+    "issues": [
+      {
+        "file": "packages/coding-agent/src/prompts/tools.yaml",
+        "line": 234,
+        "severity": "blocking",
+        "description": "The fix review still leaves contradictory wait guidance in the surfaced spawn_agent description. Line 234 says 'After spawning a child, use `wait_agent` to collect results', but line 238 says spawn_agent serializes by default and `wait_agent` should be used explicitly only when multiple children were spawned in parallel. That is the same blocking inconsistency called out in the prior scrutiny review, so this rerun does not actually address the original failure."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The worker followed the core-runtime-worker flow only partially: the rerun relied on an existing weak wait_agent red test instead of strengthening coverage for the previously reported contradiction, so the feature was declared fixed even though the prompt text still conflicts.",
+      "evidence": "Transcript skeleton for worker session b3df0e19-6a01-40f9-b44c-b02639ceaac0 shows only read-only verification plus the /autohandoff removal commit. packages/coding-agent/test/wait-agent.red.test.ts:122-126 merely asserts the description contains 'wait_agent', an 'after spawning|once .*spawn' phrase, and 'parallel', which still passes with the contradictory text at packages/coding-agent/src/prompts/tools.yaml:234-238."
+    }
+  ],
+  "addressesFailureFrom": "/Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/.factory/validation/core-foundation/scrutiny/reviews/core-validator-blockers-outside-mcp.json",
+  "summary": "Fail: the rerun removed stale /autohandoff TUI handling, but the prior blocking spawn_agent/wait_agent prompt contradiction remains unchanged in tools.yaml, so the original scrutiny failure is not fixed."
+}

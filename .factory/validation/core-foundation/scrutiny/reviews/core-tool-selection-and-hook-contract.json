@@ -1,0 +1,15 @@
+{
+  "featureId": "core-tool-selection-and-hook-contract",
+  "reviewedAt": "2026-04-08T07:20:00Z",
+  "commitId": "3a58ed35",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Reviewed the rerun handoff, prior failed review, transcript skeleton, skill file, and commit 3a58ed35. The fix addresses the prior blocking gap: `packages/coding-agent/src/extensions/wrapper.test.ts:74` now proves patched before-tool args reach the wrapped tool's underlying `execute`, and `packages/coding-agent/src/extensions/wrapper.test.ts:199` proves the composed after-tool transformer integrates with the base runtime transformer that is wired from `packages/coding-agent/src/main.ts:1472` into the agent loop append path used in `packages/ai/src/agent/agent-loop.ts:417-418` before `packages/ai/src/agent/agent-loop.ts:157` appends tool results to context.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "/Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/.factory/validation/core-foundation/scrutiny/reviews/core-tool-selection-and-hook-contract.json",
+  "summary": "Pass: the rerun adds the missing runtime-path proof for patched before-tool args and confirms the composed after-tool transformer is the one passed into the real runtime append path, resolving the prior scrutiny failure."
+}
