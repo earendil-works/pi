@@ -49,6 +49,25 @@ Auth: `~/.pi/mom/auth.json` (via `/login` in the pi tooling) or provider env key
 | `MOM_GROQ_API_KEY` | — | Use Groq Whisper (`whisper-large-v3`). |
 | `MOM_OPENAI_API_KEY` | — | Use OpenAI Whisper if Groq not set. |
 
+## Workspace secrets (`.keys`)
+
+At startup, `mom` loads **`KEY=value`** pairs from **`.keys`** in the working directory, then **`../../.keys`** and **`../.keys`** (monorepo roots), **without** overriding variables already set in the environment. Use this for **`AGENT_MEMORY_MONGODB_URI`** and optional **`MOM_P2P_AGENT_MEMORY_SEARCH_URL`** / **`MOM_P2P_AGENT_MEMORY_SEARCH_CMD`** if the Slack agent should call the same semantic search helper as mom-p2p.
+
+## Agent memory (MongoDB `projects`)
+
+Optional cross-session registry in database **`agent_memory`**, collection **`projects`**. The bot does **not** sync automatically in code: follow the **system prompt** to **`insert` / `update`** via **`bash`** (e.g. `mongosh` or a small script) when you work on an identifiable repo or project directory.
+
+Rules:
+
+- **Never** compute or set **`embedding`** in the shell; a **local worker** should fill it.
+- On every insert or update of text-bearing fields, set **`embedding_stale: true`**.
+- Use **`name`** as the stable business id (unique per project); set **`owner_agent`** to a fixed label (e.g. `pi-mom`).
+- Use **`local_path`** (absolute), **`repo_url`**, **`status`**, **`tech_stack`**, timestamps **`created_at`** / **`updated_at`** (ISO / BSON Date).
+
+Do **not** paste the MongoDB URI into Slack or `MEMORY.md`; keep it in **`.keys`** or systemd `EnvironmentFile`.
+
+**Semantic search (same as mom-p2p):** set **`AGENT_MEMORY_VECTOR_INDEX`**, **`MOM_P2P_QUERY_EMBED_CMD`**, **`EMBEDDING_DIM`** (and optionally **`EMBEDDING_MODEL`**) alongside **`AGENT_MEMORY_MONGODB_URI`**, then use the **`agent-memory-search`** CLI from the **pi-mono-p2p** `packages/mom` build (see that repo’s **`docs/configuration.md`** → *Agent memory*).
+
 ## Example (quiet + thread + tracked threads + Copilot)
 
 ```bash

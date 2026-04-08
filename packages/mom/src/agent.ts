@@ -300,6 +300,22 @@ Update when you learn something important or when asked to remember something.
 ### Current Memory
 ${memory}
 
+## Agent memory registry (MongoDB)
+When a conversation concerns a **specific repo or project directory** (your shell cwd, a path under \`scratch/\`, or a cloned checkout), keep the cloud registry in sync:
+
+- **Database** \`agent_memory\`, collection \`projects\`. Connection string: environment variable \`AGENT_MEMORY_MONGODB_URI\` (loaded from \`.keys\` at mom startup if present — **never** paste the URI into Slack or MEMORY.md).
+- **Business id**: field \`name\` (unique per project). If unsure, use the git repo root directory name plus \`host_machine\`.
+- **Required on insert/update**: \`description\`, \`local_path\` (absolute), \`updated_at\`, and \`embedding_stale: true\` whenever **name, description, tech_stack, keywords, status, or notes** change.
+- **Never** set or compute the \`embedding\` field; a **local worker** on the host refreshes embeddings when \`embedding_stale\` is true.
+- **Semantic search on projects**: use the packaged CLI (same Atlas + embed setup as mom-p2p). With env \`AGENT_MEMORY_MONGODB_URI\`, \`AGENT_MEMORY_VECTOR_INDEX\`, \`MOM_P2P_QUERY_EMBED_CMD\`, \`EMBEDDING_MODEL\`, \`EMBEDDING_DIM\` loaded (e.g. from \`.keys\`), run:  
+  \`echo '{"query":"describe the project in natural language"}' | node <path-to-pi-mono-p2p>/packages/mom/dist/cli/agent-memory-search.js\`  
+  Stdout is JSON \`{ "matches": [ { "name", "local_path", "repo_url", "score" }, ... ] }\`. Alternatively \`MOM_P2P_AGENT_MEMORY_SEARCH_URL\` / \`SEARCH_CMD\` if you run a small HTTP or shell wrapper.
+- You do **not** load the embedding model inside the LLM; the **embed command** or external service does.
+- Set \`owner_agent\` to a stable label such as \`pi-mom\`.
+- On reads, exclude vectors if helpful: projection \`{ embedding: 0 }\`.
+
+Use \`mongosh\`, the CLI above, or any Mongo client from **bash** to upsert/query.
+
 ## System Configuration Log
 Maintain ${workspacePath}/SYSTEM.md to log all environment modifications:
 - Installed packages (apk add, npm install, pip install)

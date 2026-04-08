@@ -13,6 +13,7 @@ import { type MomHandler, type SlackBot, SlackBot as SlackBotClass, type SlackEv
 import { ChannelStore } from "./store.js";
 import { TrackedThreadsManager } from "./tracked-threads.js";
 import { isProbablyAudioFile, transcribeAudio, updateLoggedMessageText } from "./voice.js";
+import { loadWorkspaceDotKeys } from "./workspace-secrets.js";
 
 // ============================================================================
 // Config
@@ -75,6 +76,8 @@ if (!parsedArgs.workingDir) {
 }
 
 const { workingDir, sandbox } = { workingDir: parsedArgs.workingDir, sandbox: parsedArgs.sandbox };
+
+loadWorkspaceDotKeys(workingDir);
 
 if (!MOM_SLACK_APP_TOKEN || !MOM_SLACK_BOT_TOKEN) {
 	console.error("Missing env: MOM_SLACK_APP_TOKEN, MOM_SLACK_BOT_TOKEN");
