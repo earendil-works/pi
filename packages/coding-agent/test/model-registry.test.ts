@@ -784,6 +784,136 @@ describe("ModelRegistry", () => {
 	});
 
 	describe("dynamic provider lifecycle", () => {
+		function kilocodeCustomModel() {
+			return {
+				id: "qwen/qwen3.6-plus",
+				name: "Qwen3.6 Plus",
+				reasoning: true,
+				input: ["text", "image"],
+				cost: { input: 0.325, output: 1.95, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 1000000,
+				maxTokens: 65536,
+			};
+		}
+
+		function kilocodeProviderJson(extraModels: unknown[] = []) {
+			return {
+				baseUrl: "https://api.kilo.ai/api/openrouter",
+				apiKey: "TEST_KEY",
+				api: "openai-completions",
+				models: [kilocodeCustomModel(), ...extraModels],
+			};
+		}
+
+		test("registerProvider full replacement re-merges models.json custom entries", () => {
+			writeRawModelsJson({ kilocode: kilocodeProviderJson() });
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			expect(getModelsForProvider(registry, "kilocode").some((m) => m.id === "qwen/qwen3.6-plus")).toBe(true);
+
+			// Simulate kilocode extension calling registerProvider (full replacement with different models)
+			registry.registerProvider("kilocode", {
+				baseUrl: "https://api.kilo.ai/api/openrouter",
+				apiKey: "TEST_KEY",
+				api: "openai-completions",
+				models: [
+					{
+						id: "anthropic/claude-sonnet-4",
+						name: "Claude Sonnet 4 (Kilo)",
+						reasoning: false,
+						input: ["text", "image"],
+						cost: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
+						contextWindow: 200000,
+						maxTokens: 8192,
+					},
+				],
+			});
+
+			const kilocodeModels = getModelsForProvider(registry, "kilocode");
+			expect(kilocodeModels).toHaveLength(2); // no duplicates
+			expect(kilocodeModels.some((m) => m.id === "anthropic/claude-sonnet-4")).toBe(true);
+			expect(kilocodeModels.some((m) => m.id === "qwen/qwen3.6-plus")).toBe(true);
+		});
+
+		test("models.json custom model wins on id conflict with registerProvider model", () => {
+			writeRawModelsJson({
+				kilocode: {
+					baseUrl: "https://api.kilo.ai/api/openrouter",
+					apiKey: "TEST_KEY",
+					api: "openai-completions",
+					models: [
+						{
+							id: "shared-model",
+							name: "Custom Name from models.json",
+							reasoning: false,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 100000,
+							maxTokens: 8000,
+						},
+					],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			registry.registerProvider("kilocode", {
+				baseUrl: "https://api.kilo.ai/api/openrouter",
+				apiKey: "TEST_KEY",
+				api: "openai-completions",
+				models: [
+					{
+						id: "shared-model",
+						name: "Name from registerProvider",
+						reasoning: false,
+						input: ["text"],
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+						contextWindow: 100000,
+						maxTokens: 8000,
+					},
+				],
+			});
+
+			const model = getModelsForProvider(registry, "kilocode").find((m) => m.id === "shared-model");
+			expect(model).toBeDefined();
+			expect(model?.name).toBe("Custom Name from models.json"); // models.json wins
+		});
+
+		test("re-merge only affects the targeted provider, not others", () => {
+			writeRawModelsJson({
+				kilocode: kilocodeProviderJson(),
+				anthropic: {
+					baseUrl: "https://proxy.example.com/v1",
+					apiKey: "TEST_KEY",
+					api: "anthropic-messages",
+					models: [
+						{
+							id: "claude-custom",
+							name: "Claude Custom",
+							reasoning: false,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 100000,
+							maxTokens: 8000,
+						},
+					],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			expect(getModelsForProvider(registry, "anthropic").some((m) => m.id === "claude-custom")).toBe(true);
+
+			// Replacing kilocode should not disturb anthropic custom models
+			registry.registerProvider("kilocode", {
+				baseUrl: "https://api.kilo.ai/api/openrouter",
+				apiKey: "TEST_KEY",
+				api: "openai-completions",
+				models: [{ id: "some-model", name: "Some", reasoning: false, input: ["text"],
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 100000, maxTokens: 8000 }],
+			});
+
+			expect(getModelsForProvider(registry, "anthropic").some((m) => m.id === "claude-custom")).toBe(true);
+			expect(getModelsForProvider(registry, "kilocode").some((m) => m.id === "qwen/qwen3.6-plus")).toBe(true);
+		});
+
 		test("failed registerProvider does not persist invalid streamSimple config", () => {
 			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
 

@@ -254,6 +254,13 @@ export const clearApiKeyCache = clearConfigValueCache;
  */
 export class ModelRegistry {
 	private models: Model<Api>[] = [];
+	/**
+	 * Custom models loaded from models.json.
+	 * Kept as a separate field so they can be re-merged after registerProvider() full
+	 * replacements — which otherwise wipe all existing models for a provider.
+	 * Updated in loadModels() (constructor and refresh()). Read-only in applyProviderConfig().
+	 */
+	private customModelsFromJson: Model<Api>[] = [];
 	private providerRequestConfigs: Map<string, ProviderRequestConfig> = new Map();
 	private modelRequestHeaders: Map<string, Record<string, string>> = new Map();
 	private registeredProviders: Map<string, ProviderConfigInput> = new Map();
@@ -280,6 +287,7 @@ export class ModelRegistry {
 	refresh(): void {
 		this.providerRequestConfigs.clear();
 		this.modelRequestHeaders.clear();
+		this.customModelsFromJson = [];
 		this.loadError = undefined;
 
 		// Ensure dynamic API/OAuth registrations are rebuilt from current provider state.
@@ -314,6 +322,7 @@ export class ModelRegistry {
 			// Keep built-in models even if custom models failed to load
 		}
 
+		this.customModelsFromJson = customModels;
 		const builtInModels = this.loadBuiltInModels(overrides, modelOverrides);
 		let combined = this.mergeCustomModels(builtInModels, customModels);
 
@@ -748,6 +757,14 @@ export class ModelRegistry {
 					headers: undefined,
 					compat: modelDef.compat,
 				} as Model<Api>);
+			}
+
+			// Re-merge any models.json custom models for this provider that were
+			// wiped by the full replacement above. Custom entries win on id conflicts.
+			// O(n) filter is acceptable for expected scale (dozens of custom models).
+			const customForProvider = this.customModelsFromJson.filter((m) => m.provider === providerName);
+			if (customForProvider.length > 0) {
+				this.models = this.mergeCustomModels(this.models, customForProvider);
 			}
 
 			// Apply OAuth modifyModels if credentials exist (e.g., to update baseUrl)
