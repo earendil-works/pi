@@ -56,6 +56,7 @@ async function makeRenderer(): Promise<{ renderer: RendererHarness; state: Agent
 			getCommand: () => undefined,
 			applyInputHooks: async (text: string) => ({ handled: false, text }),
 			composeToolResultTransformer: <T>(base: T) => base,
+			getIndicators: () => [],
 		} as never,
 		{} as never,
 		"0.0.0",
