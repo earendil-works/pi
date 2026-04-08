@@ -1,0 +1,9 @@
+commands:
+  install: npm install
+  check: npm run check -w @kennyfrc/mu-coding-agent
+  test: npm run test -w @kennyfrc/mu-coding-agent -- --maxWorkers=4
+  test:core: npm run test -w @kennyfrc/mu-coding-agent -- src/extensions/loader.test.ts src/extensions/manager.test.ts src/extensions/runner.test.ts src/extensions/wrapper.test.ts src/extensions/command-registry.test.ts src/extensions/tool-registry.test.ts test/extension-provider-registration.test.ts test/runtime-provider-registry.test.ts --maxWorkers=4
+  test:integration: npm run test -w @kennyfrc/mu-coding-agent -- test/*.test.ts --maxWorkers=4
+  check:root: npm run check
+
+services: {}
