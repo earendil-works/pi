@@ -191,8 +191,10 @@ The following invariants are verified by tests in `test/runtime-lifecycle-cleanu
 - Earlier patches are visible to later hooks via chained argument updates.
 - A `block` result short-circuits execution and surfaces an explicit failure.
 - Blocked tool calls do not execute the underlying tool.
+- **Runtime-path proof:** `wrapToolWithExtensions` forwards patched args to the underlying `tool.execute` call, verified by tests in `src/extensions/wrapper.test.ts` that assert the underlying tool receives the patched arguments.
 
 ### After-Tool Result Patching (VAL-CORE-005)
 - After-tool hooks patch results in order before they are appended to the transcript.
 - Each hook receives the transformed result from the previous hook.
 - The `composeToolResultTransformer` function creates a composed transformer for the full chain.
+- **Runtime-path proof:** `composeToolResultTransformer` is wired through the Agent's `toolResultTransformer` config in `src/main.ts`, which applies transformations before transcript append. Verified by tests in `src/extensions/wrapper.test.ts` that assert chain composition and base transformer integration.
