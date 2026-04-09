@@ -11,7 +11,7 @@
 
 import { readFileSync, readdirSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { spawn } from "child_process";
-import { createInterface } from "readline";
+import { createInterface } from "node:readline";
 import { homedir } from "os";
 import { join, resolve } from "path";
 import { parseSessionEntries, type SessionMessageEntry } from "../packages/coding-agent/src/core/session-manager.js";
