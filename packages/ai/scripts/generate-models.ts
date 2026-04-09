@@ -1324,6 +1324,18 @@ async function generateModels() {
 			maxTokens: 65536,
 		},
 		{
+			id: "gemini-3.1-flash-lite-preview",
+			name: "Gemini 3.1 Flash Lite Preview (Vertex)",
+			api: "google-vertex",
+			provider: "google-vertex",
+			baseUrl: VERTEX_BASE_URL,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0.075, output: 0.3, cacheRead: 0.01875, cacheWrite: 0 },
+			contextWindow: 1048576,
+			maxTokens: 65536,
+		},
+		{
 			id: "gemini-3.1-pro-preview-customtools",
 			name: "Gemini 3.1 Pro Preview Custom Tools (Vertex)",
 			api: "google-vertex",
