@@ -13,6 +13,10 @@ export interface OAuthCredentials {
 	projectId?: string;
 	email?: string;
 	accountId?: string;
+	/** OAuth client_id from DCR or static config */
+	client_id?: string;
+	/** OAuth client_secret from DCR or static config */
+	client_secret?: string;
 }
 export interface OAuthAccountEntry {
 	id: string;
