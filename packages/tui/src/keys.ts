@@ -1130,8 +1130,10 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 		const isDigit = isDigitKey(key);
 
 		if (ctrl && alt && !shift && !_kittyProtocolActive && rawCtrl) {
-			// Legacy: ctrl+alt+key is ESC followed by the control character
-			return data === `\x1b${rawCtrl}`;
+			// Legacy: ctrl+alt+key is ESC followed by the control character.
+			// If that legacy form does not match, continue so CSI-u and
+			// modifyOtherKeys sequences from tmux can still be recognized.
+			if (data === `\x1b${rawCtrl}`) return true;
 		}
 
 		if (alt && !ctrl && !shift && !_kittyProtocolActive && (isLetter || isDigit)) {

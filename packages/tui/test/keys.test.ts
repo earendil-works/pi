@@ -239,6 +239,18 @@ describe("matchesKey", () => {
 			assert.strictEqual(parseKey("\x1b[27;5;49~"), "ctrl+1");
 			assert.strictEqual(parseKey("\x1b[27;2;49~"), "shift+1");
 		});
+
+		it("should match Ctrl+Alt+letter via CSI-u when kitty inactive", () => {
+			setKittyProtocolActive(false);
+			assert.strictEqual(matchesKey("\x1b[104;7u", "ctrl+alt+h"), true);
+			assert.strictEqual(parseKey("\x1b[104;7u"), "ctrl+alt+h");
+		});
+
+		it("should match Ctrl+Alt+letter via xterm modifyOtherKeys", () => {
+			setKittyProtocolActive(false);
+			assert.strictEqual(matchesKey("\x1b[27;7;104~", "ctrl+alt+h"), true);
+			assert.strictEqual(parseKey("\x1b[27;7;104~"), "ctrl+alt+h");
+		});
 	});
 
 	describe("Legacy key matching", () => {
