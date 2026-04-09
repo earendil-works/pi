@@ -5,4 +5,8 @@ describe("builtInExtensions", () => {
 	it("includes the built-in ask_user preset", () => {
 		expect(builtInExtensions.map((entry) => entry.sourceId)).toContain("preset:ask-user");
 	});
+
+	it("includes the built-in mcp preset", () => {
+		expect(builtInExtensions.map((entry) => entry.sourceId)).toContain("preset:mcp");
+	});
 });

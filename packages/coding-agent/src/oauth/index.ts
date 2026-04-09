@@ -4,6 +4,7 @@
  */
 
 import {
+	type OAuthProvider as BaseOAuthProvider,
 	getActiveOAuthAccount,
 	getOAuthApiKey,
 	listOAuthAccounts,
@@ -15,7 +16,6 @@ import {
 	loginOpenAICodex,
 	type OAuthAccountEntry,
 	type OAuthCredentials,
-	type OAuthProvider,
 	type OAuthStorageBackend,
 	refreshToken as refreshTokenFromAi,
 	removeOAuthAccount,
@@ -26,9 +26,11 @@ import {
 	setOAuthStorage,
 } from "@kennyfrc/mu-ai";
 import { loginAnthropic } from "./anthropic.js";
+import { getFigmaOAuthAccessToken, loginFigmaMcp, refreshFigmaMcpToken } from "./figma-mcp.js";
 
 // Re-export types and functions
-export type { OAuthAccountEntry, OAuthCredentials, OAuthProvider, OAuthStorageBackend };
+export type OAuthProvider = BaseOAuthProvider | "figma-mcp";
+export type { OAuthAccountEntry, OAuthCredentials, OAuthStorageBackend };
 export { listOAuthProvidersFromAi as listOAuthProviders };
 export {
 	getActiveOAuthAccount,
@@ -88,6 +90,12 @@ export function getOAuthProviders(): OAuthProviderInfo[] {
 			available: true,
 		},
 		{
+			id: "figma-mcp",
+			name: "Figma MCP",
+			description: "Use Figma's remote MCP server with an approved OAuth client",
+			available: true,
+		},
+		{
 			id: "google-antigravity",
 			name: "Antigravity",
 			description: "Free Gemini 3, Claude, GPT-OSS via Google Cloud",
@@ -136,6 +144,10 @@ export async function login(
 			await loginAntigravity((info) => onAuth({ url: info.url, instructions: info.instructions }), onProgress);
 			break;
 		}
+		case "figma-mcp": {
+			await loginFigmaMcp((info) => onAuth(info), onProgress);
+			break;
+		}
 		default: {
 			const _exhaustive: never = provider;
 			throw new Error(`Unknown OAuth provider: ${_exhaustive}`);
@@ -155,6 +167,13 @@ export async function logout(provider: OAuthProvider): Promise<void> {
  * Delegates to the ai package implementation.
  */
 export async function refreshToken(provider: OAuthProvider): Promise<string> {
+	if (provider === "figma-mcp") {
+		const creds = loadOAuthCredentials("figma-mcp");
+		if (!creds) throw new Error("No OAuth credentials found for figma-mcp");
+		const refreshed = await refreshFigmaMcpToken(creds.refresh);
+		saveOAuthCredentials("figma-mcp", refreshed);
+		return refreshed.access;
+	}
 	return refreshTokenFromAi(provider);
 }
 
@@ -162,5 +181,8 @@ export async function refreshToken(provider: OAuthProvider): Promise<string> {
  * Get OAuth token for provider (auto-refreshes if expired).
  */
 export async function getOAuthToken(provider: OAuthProvider): Promise<string | null> {
+	if (provider === "figma-mcp") {
+		return getFigmaOAuthAccessToken();
+	}
 	return getOAuthApiKey(provider);
 }
