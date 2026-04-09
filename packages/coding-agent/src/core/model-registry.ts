@@ -35,9 +35,43 @@ const Ajv = (AjvModule as any).default || AjvModule;
 const ajv = new Ajv();
 
 // Schema for OpenRouter routing preferences
+const PercentileCutoffsSchema = Type.Object({
+	p50: Type.Optional(Type.Number()),
+	p75: Type.Optional(Type.Number()),
+	p90: Type.Optional(Type.Number()),
+	p99: Type.Optional(Type.Number()),
+});
+
 const OpenRouterRoutingSchema = Type.Object({
-	only: Type.Optional(Type.Array(Type.String())),
+	allow_fallbacks: Type.Optional(Type.Boolean()),
+	require_parameters: Type.Optional(Type.Boolean()),
+	data_collection: Type.Optional(Type.Union([Type.Literal("deny"), Type.Literal("allow")])),
+	zdr: Type.Optional(Type.Boolean()),
+	enforce_distillable_text: Type.Optional(Type.Boolean()),
 	order: Type.Optional(Type.Array(Type.String())),
+	only: Type.Optional(Type.Array(Type.String())),
+	ignore: Type.Optional(Type.Array(Type.String())),
+	quantizations: Type.Optional(Type.Array(Type.String())),
+	sort: Type.Optional(
+		Type.Union([
+			Type.String(),
+			Type.Object({
+				by: Type.Optional(Type.String()),
+				partition: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+			}),
+		]),
+	),
+	max_price: Type.Optional(
+		Type.Object({
+			prompt: Type.Optional(Type.Union([Type.Number(), Type.String()])),
+			completion: Type.Optional(Type.Union([Type.Number(), Type.String()])),
+			image: Type.Optional(Type.Union([Type.Number(), Type.String()])),
+			audio: Type.Optional(Type.Union([Type.Number(), Type.String()])),
+			request: Type.Optional(Type.Union([Type.Number(), Type.String()])),
+		}),
+	),
+	preferred_min_throughput: Type.Optional(Type.Union([Type.Number(), PercentileCutoffsSchema])),
+	preferred_max_latency: Type.Optional(Type.Union([Type.Number(), PercentileCutoffsSchema])),
 });
 
 // Schema for Vercel AI Gateway routing preferences
