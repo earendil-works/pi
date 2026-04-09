@@ -2511,6 +2511,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "glm-5.1": {
+			id: string;
+			name: string;
+			api: "anthropic-messages";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "glm-4.7": {
 			id: string;
 			name: string;
@@ -2974,7 +2991,75 @@ export declare const MODELS: {
 		};
 	};
 	readonly openrouter: {
+		readonly "anthropic/claude-opus-4.6-fast": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "z-ai/glm-5.1": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "google/gemma-4-26b-a4b-it:free": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "google/gemma-4-26b-a4b-it": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "google/gemma-4-31b-it:free": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -3008,7 +3093,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "qwen/qwen3.6-plus:free": {
+		readonly "qwen/qwen3.6-plus": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -3679,23 +3764,6 @@ export declare const MODELS: {
 			baseUrl: string;
 			reasoning: true;
 			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "stepfun/step-3.5-flash:free": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
-			input: "text"[];
 			cost: {
 				input: number;
 				output: number;
@@ -6731,7 +6799,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "cohere/command-r-08-2024": {
+		readonly "cohere/command-r-plus-08-2024": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6748,7 +6816,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "cohere/command-r-plus-08-2024": {
+		readonly "cohere/command-r-08-2024": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6901,6 +6969,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "openai/gpt-4o-2024-05-13": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: false;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "openai/gpt-4o": {
 			id: string;
 			name: string;
@@ -6919,23 +7004,6 @@ export declare const MODELS: {
 			maxTokens: number;
 		};
 		readonly "openai/gpt-4o:extended": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "openai/gpt-4o-2024-05-13": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -7037,7 +7105,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-3.5-turbo-0613": {
+		readonly "openai/gpt-4-turbo-preview": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -7054,7 +7122,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4-turbo-preview": {
+		readonly "openai/gpt-3.5-turbo-0613": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -7156,7 +7224,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-3.5-turbo": {
+		readonly "openai/gpt-4": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -7173,7 +7241,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4": {
+		readonly "openai/gpt-3.5-turbo": {
 			id: string;
 			name: string;
 			api: "openai-completions";
