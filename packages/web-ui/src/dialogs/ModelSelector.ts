@@ -113,6 +113,9 @@ export class ModelSelector extends DialogBase {
 
 		// Add global keyboard handler for the dialog
 		this.addEventListener("keydown", (e: KeyboardEvent) => {
+			// Ignore key events during IME composition (e.g. CJK input)
+			if (e.isComposing || e.key === "Process") return;
+
 			// Get filtered models to know the bounds
 			const filteredModels = this.getFilteredModels();
 
