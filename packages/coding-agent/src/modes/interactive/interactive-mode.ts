@@ -174,6 +174,7 @@ export class InteractiveMode {
 	private onInputCallback?: (text: string) => void;
 	private loadingAnimation: Loader | undefined = undefined;
 	private pendingWorkingMessage: string | undefined = undefined;
+	private workingSpinnerOverride: { frames: string[]; intervalMs?: number } | undefined = undefined;
 	private readonly defaultWorkingMessage = "Working...";
 	private readonly defaultHiddenThinkingLabel = "Thinking...";
 	private hiddenThinkingLabel = this.defaultHiddenThinkingLabel;
@@ -1634,6 +1635,12 @@ export class InteractiveMode {
 					this.pendingWorkingMessage = message;
 				}
 			},
+			setWorkingSpinner: (spinner) => {
+				this.workingSpinnerOverride = spinner;
+				if (this.loadingAnimation) {
+					this.loadingAnimation.setFrames(spinner?.frames, spinner?.intervalMs);
+				}
+			},
 			setHiddenThinkingLabel: (label) => this.setHiddenThinkingLabel(label),
 			setWidget: (key, content, options) => this.setExtensionWidget(key, content, options),
 			setFooter: (factory) => this.setExtensionFooter(factory),
@@ -2324,6 +2331,12 @@ export class InteractiveMode {
 					(text) => theme.fg("muted", text),
 					this.defaultWorkingMessage,
 				);
+				if (this.workingSpinnerOverride !== undefined) {
+					this.loadingAnimation.setFrames(
+						this.workingSpinnerOverride.frames,
+						this.workingSpinnerOverride.intervalMs,
+					);
+				}
 				this.statusContainer.addChild(this.loadingAnimation);
 				// Apply any pending working message queued before loader existed
 				if (this.pendingWorkingMessage !== undefined) {

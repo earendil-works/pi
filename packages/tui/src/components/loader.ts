@@ -5,9 +5,11 @@ import { Text } from "./text.js";
  * Loader component that updates every 80ms with spinning animation
  */
 export class Loader extends Text {
-	private frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+	private defaultFrames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+	private frames = [...this.defaultFrames];
 	private currentFrame = 0;
 	private intervalId: NodeJS.Timeout | null = null;
+	private intervalMs = 80;
 	private ui: TUI | null = null;
 
 	constructor(
@@ -30,7 +32,7 @@ export class Loader extends Text {
 		this.intervalId = setInterval(() => {
 			this.currentFrame = (this.currentFrame + 1) % this.frames.length;
 			this.updateDisplay();
-		}, 80);
+		}, this.intervalMs);
 	}
 
 	stop() {
@@ -43,6 +45,14 @@ export class Loader extends Text {
 	setMessage(message: string) {
 		this.message = message;
 		this.updateDisplay();
+	}
+
+	setFrames(frames?: string[], intervalMs?: number) {
+		this.stop();
+		this.frames = frames && frames.length > 0 ? [...frames] : [...this.defaultFrames];
+		this.intervalMs = intervalMs && intervalMs > 0 ? intervalMs : 80;
+		this.currentFrame = 0;
+		this.start();
 	}
 
 	private updateDisplay() {

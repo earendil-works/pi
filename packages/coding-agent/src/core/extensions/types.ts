@@ -101,6 +101,11 @@ export interface ExtensionWidgetOptions {
 /** Raw terminal input listener for extensions. */
 export type TerminalInputHandler = (data: string) => { consume?: boolean; data?: string } | undefined;
 
+export interface ExtensionWorkingSpinner {
+	frames: string[];
+	intervalMs?: number;
+}
+
 /**
  * UI context for extensions to request interactive UI.
  * Each mode (interactive, RPC, print) provides its own implementation.
@@ -126,6 +131,9 @@ export interface ExtensionUIContext {
 
 	/** Set the working/loading message shown during streaming. Call with no argument to restore default. */
 	setWorkingMessage(message?: string): void;
+
+	/** Set the main working spinner frames/interval shown during streaming. Persists for future turns until reset. Call with no argument to restore default. */
+	setWorkingSpinner(spinner?: ExtensionWorkingSpinner): void;
 
 	/** Set the label shown for hidden thinking blocks. Call with no argument to restore default. */
 	setHiddenThinkingLabel(label?: string): void;

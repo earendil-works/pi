@@ -8,6 +8,7 @@
 ### Added
 
 - Set `PI_CODING_AGENT=true` environment variable at startup so sub-processes can detect they are running inside the coding agent ([#2868](https://github.com/badlogic/pi-mono/issues/2868))
+- Extensions can now override the main working spinner via `ctx.ui.setWorkingSpinner({ frames, intervalMs })`, with `ctx.ui.setWorkingSpinner()` restoring the default braille spinner.
 
 ## [0.66.1] - 2026-04-08
 

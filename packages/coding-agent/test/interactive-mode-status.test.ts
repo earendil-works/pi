@@ -108,6 +108,141 @@ describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 	});
 });
 
+describe("InteractiveMode working spinner override", () => {
+	test("stores working spinner overrides when loader does not exist yet", () => {
+		initTheme("dark");
+
+		const fakeThis: any = {
+			session: { settingsManager: {} },
+			settingsManager: {},
+			ui: { requestRender: vi.fn(), terminal: { setTitle: vi.fn() } },
+			setExtensionStatus: vi.fn(),
+			setHiddenThinkingLabel: vi.fn(),
+			setExtensionWidget: vi.fn(),
+			setExtensionFooter: vi.fn(),
+			setExtensionHeader: vi.fn(),
+			showExtensionSelector: vi.fn(),
+			showExtensionConfirm: vi.fn(),
+			showExtensionInput: vi.fn(),
+			showExtensionNotify: vi.fn(),
+			addExtensionTerminalInputListener: vi.fn(),
+			showExtensionCustom: vi.fn(),
+			editor: {
+				handleInput: vi.fn(),
+				setText: vi.fn(),
+				getText: vi.fn(() => ""),
+				getExpandedText: vi.fn(() => ""),
+			},
+			setCustomEditorComponent: vi.fn(),
+			workingSpinnerOverride: undefined,
+			loadingAnimation: undefined,
+		};
+
+		const uiContext = (InteractiveMode as any).prototype.createExtensionUIContext.call(fakeThis);
+		uiContext.setWorkingSpinner({ frames: ["a", "b"], intervalMs: 120 });
+
+		expect(fakeThis.workingSpinnerOverride).toEqual({ frames: ["a", "b"], intervalMs: 120 });
+	});
+
+	test("applies working spinner override immediately when loader already exists", () => {
+		initTheme("dark");
+
+		const setFrames = vi.fn();
+		const fakeThis: any = {
+			session: { settingsManager: {} },
+			settingsManager: {},
+			ui: { requestRender: vi.fn(), terminal: { setTitle: vi.fn() } },
+			setExtensionStatus: vi.fn(),
+			setHiddenThinkingLabel: vi.fn(),
+			setExtensionWidget: vi.fn(),
+			setExtensionFooter: vi.fn(),
+			setExtensionHeader: vi.fn(),
+			showExtensionSelector: vi.fn(),
+			showExtensionConfirm: vi.fn(),
+			showExtensionInput: vi.fn(),
+			showExtensionNotify: vi.fn(),
+			addExtensionTerminalInputListener: vi.fn(),
+			showExtensionCustom: vi.fn(),
+			editor: {
+				handleInput: vi.fn(),
+				setText: vi.fn(),
+				getText: vi.fn(() => ""),
+				getExpandedText: vi.fn(() => ""),
+			},
+			setCustomEditorComponent: vi.fn(),
+			workingSpinnerOverride: undefined,
+			loadingAnimation: { setFrames },
+		};
+
+		const uiContext = (InteractiveMode as any).prototype.createExtensionUIContext.call(fakeThis);
+		uiContext.setWorkingSpinner({ frames: ["x", "y"], intervalMs: 100 });
+
+		expect(setFrames).toHaveBeenCalledWith(["x", "y"], 100);
+		expect(fakeThis.workingSpinnerOverride).toEqual({ frames: ["x", "y"], intervalMs: 100 });
+	});
+
+	test("clearing working spinner override resets current loader and future turns", () => {
+		initTheme("dark");
+
+		const setFrames = vi.fn();
+		const fakeThis: any = {
+			session: { settingsManager: {} },
+			settingsManager: {},
+			ui: { requestRender: vi.fn(), terminal: { setTitle: vi.fn() } },
+			setExtensionStatus: vi.fn(),
+			setHiddenThinkingLabel: vi.fn(),
+			setExtensionWidget: vi.fn(),
+			setExtensionFooter: vi.fn(),
+			setExtensionHeader: vi.fn(),
+			showExtensionSelector: vi.fn(),
+			showExtensionConfirm: vi.fn(),
+			showExtensionInput: vi.fn(),
+			showExtensionNotify: vi.fn(),
+			addExtensionTerminalInputListener: vi.fn(),
+			showExtensionCustom: vi.fn(),
+			editor: {
+				handleInput: vi.fn(),
+				setText: vi.fn(),
+				getText: vi.fn(() => ""),
+				getExpandedText: vi.fn(() => ""),
+			},
+			setCustomEditorComponent: vi.fn(),
+			workingSpinnerOverride: { frames: ["x"], intervalMs: 100 },
+			loadingAnimation: { setFrames },
+		};
+
+		const uiContext = (InteractiveMode as any).prototype.createExtensionUIContext.call(fakeThis);
+		uiContext.setWorkingSpinner();
+
+		expect(setFrames).toHaveBeenCalledWith(undefined, undefined);
+		expect(fakeThis.workingSpinnerOverride).toBeUndefined();
+	});
+
+	test("agent_start applies configured working spinner override to the main loader", async () => {
+		initTheme("dark");
+
+		const fakeThis: any = {
+			isInitialized: true,
+			footer: { invalidate: vi.fn() },
+			retryEscapeHandler: undefined,
+			retryLoader: undefined,
+			loadingAnimation: undefined,
+			statusContainer: new Container(),
+			ui: { requestRender: vi.fn() },
+			defaultWorkingMessage: "Working...",
+			pendingWorkingMessage: undefined,
+			workingSpinnerOverride: { frames: ["x", "y", "z"], intervalMs: 140 },
+		};
+
+		await (InteractiveMode as any).prototype.handleEvent.call(fakeThis, { type: "agent_start" });
+
+		expect(fakeThis.loadingAnimation).toBeDefined();
+		expect((fakeThis.loadingAnimation as any).frames).toEqual(["x", "y", "z"]);
+		expect((fakeThis.loadingAnimation as any).intervalMs).toBe(140);
+		expect(fakeThis.workingSpinnerOverride).toEqual({ frames: ["x", "y", "z"], intervalMs: 140 });
+	});
+});
+
 describe("InteractiveMode.showLoadedResources", () => {
 	beforeAll(() => {
 		initTheme("dark");

@@ -375,6 +375,8 @@ const loader = new Loader(
 );
 loader.start();
 loader.setMessage("Still loading...");
+loader.setFrames(["◐", "◓", "◑", "◒"], 100);
+loader.setFrames(); // restore default braille spinner
 loader.stop();
 ```
 

@@ -1959,6 +1959,10 @@ ctx.ui.setStatus("my-ext", undefined);  // Clear
 ctx.ui.setWorkingMessage("Thinking deeply...");
 ctx.ui.setWorkingMessage();  // Restore default
 
+// Working spinner (main streaming loader only)
+ctx.ui.setWorkingSpinner({ frames: ["◐", "◓", "◑", "◒"], intervalMs: 100 });
+ctx.ui.setWorkingSpinner();  // Restore default braille spinner
+
 // Widget above editor (default)
 ctx.ui.setWidget("my-widget", ["Line 1", "Line 2"]);
 // Widget below editor
