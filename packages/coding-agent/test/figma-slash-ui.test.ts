@@ -33,6 +33,13 @@ describe("Figma MCP visible status", () => {
 		vi.resetModules();
 	});
 
+	function makeFigmaOAuthMock(getToken: () => Promise<string | null>) {
+		return {
+			getFigmaOAuthAccessToken: getToken,
+			onFigmaOAuthStateChange: () => () => {},
+		};
+	}
+
 	it("shows auth_required when no stored credentials exist", async () => {
 		vi.resetModules();
 		vi.doMock("../src/mcp/config.js", () => ({
@@ -42,9 +49,7 @@ describe("Figma MCP visible status", () => {
 				},
 			}),
 		}));
-		vi.doMock("../src/oauth/figma-mcp.js", () => ({
-			getFigmaOAuthAccessToken: async () => null,
-		}));
+		vi.doMock("../src/oauth/figma-mcp.js", () => makeFigmaOAuthMock(async () => null));
 		vi.doMock("@kennyfrc/mu-ai", () => ({
 			loadOAuthCredentials: () => null,
 		}));
@@ -67,9 +72,7 @@ describe("Figma MCP visible status", () => {
 				},
 			}),
 		}));
-		vi.doMock("../src/oauth/figma-mcp.js", () => ({
-			getFigmaOAuthAccessToken: async () => null,
-		}));
+		vi.doMock("../src/oauth/figma-mcp.js", () => makeFigmaOAuthMock(async () => null));
 		vi.doMock("@kennyfrc/mu-ai", () => ({
 			loadOAuthCredentials: () => ({
 				type: "oauth",
@@ -99,9 +102,7 @@ describe("Figma MCP visible status", () => {
 				},
 			}),
 		}));
-		vi.doMock("../src/oauth/figma-mcp.js", () => ({
-			getFigmaOAuthAccessToken: async () => null,
-		}));
+		vi.doMock("../src/oauth/figma-mcp.js", () => makeFigmaOAuthMock(async () => null));
 		vi.doMock("@kennyfrc/mu-ai", () => ({
 			loadOAuthCredentials: () => null,
 		}));
@@ -129,9 +130,7 @@ describe("Figma MCP visible status", () => {
 				},
 			}),
 		}));
-		vi.doMock("../src/oauth/figma-mcp.js", () => ({
-			getFigmaOAuthAccessToken: async () => null,
-		}));
+		vi.doMock("../src/oauth/figma-mcp.js", () => makeFigmaOAuthMock(async () => null));
 		vi.doMock("@kennyfrc/mu-ai", () => ({
 			loadOAuthCredentials: () => ({
 				type: "oauth",

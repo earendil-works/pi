@@ -5,7 +5,7 @@ import { buildFigmaPilotStatus } from "../../mcp/figma-pilot.js";
 import { createMcpProxyTool } from "../../mcp/proxy-tool.js";
 import { McpServerManager } from "../../mcp/server-manager.js";
 import { buildMcpStatusLabel } from "../../mcp/status.js";
-import { getFigmaOAuthAccessToken } from "../../oauth/figma-mcp.js";
+import { getFigmaOAuthAccessToken, onFigmaOAuthStateChange } from "../../oauth/figma-mcp.js";
 import type { ExtensionFactory } from "../types.js";
 import { eraseAgentTool } from "../types.js";
 
@@ -148,6 +148,37 @@ const mcpExtension: ExtensionFactory = async (mu) => {
 			throw error;
 		}
 	};
+
+	const refreshFigmaAuthStatus = async (): Promise<void> => {
+		const figmaServer = Array.from(serverDefinitions.entries()).find(([serverName, definition]) =>
+			isRealFigmaRemoteServer(serverName, definition),
+		);
+		if (!figmaServer) {
+			await refreshStatus();
+			return;
+		}
+
+		const [serverName] = figmaServer;
+		await manager.close(serverName);
+		discoveredTools.delete(serverName);
+		failedServers.delete(serverName);
+
+		const storedCredentials = loadOAuthCredentials("figma-mcp");
+		if (!storedCredentials) {
+			await refreshStatus();
+			return;
+		}
+
+		try {
+			await ensureConnected(serverName);
+		} catch {
+			await refreshStatus();
+		}
+	};
+
+	onFigmaOAuthStateChange(() => {
+		void refreshFigmaAuthStatus();
+	});
 
 	for (const [serverName] of serverDefinitions) {
 		try {

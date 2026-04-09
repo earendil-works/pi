@@ -179,4 +179,80 @@ describe("live MCP extension preset", () => {
 
 		expect(result?.content).toEqual([{ type: "text", text: "hello from extension" }]);
 	});
+
+	it("refreshes the footer indicator after Figma auth succeeds", async () => {
+		let token: string | null = null;
+		let storedCredentials: { type: "oauth"; access: string; refresh: string; expires: number } | null = null;
+		const authState: { emitChange: null | (() => void) } = { emitChange: null };
+
+		vi.doMock("../src/mcp/config.js", () => ({
+			loadMcpConfig: async () => ({
+				mcpServers: {
+					figma: { url: "https://mcp.figma.com/mcp" },
+				},
+			}),
+		}));
+		vi.doMock("../src/mcp/server-manager.js", () => ({
+			McpServerManager: class {
+				private connection: { status: "connected"; tools: Array<{ name: string }> } | null = null;
+
+				async connect() {
+					this.connection = { status: "connected", tools: [{ name: "echo" }] };
+					return this.connection;
+				}
+
+				async callTool() {
+					return { content: [{ type: "text", text: "ok" }], isError: false };
+				}
+
+				getConnection() {
+					return this.connection;
+				}
+
+				async close() {
+					this.connection = null;
+				}
+			},
+		}));
+		vi.doMock("../src/oauth/figma-mcp.js", () => ({
+			getFigmaOAuthAccessToken: async () => token,
+			onFigmaOAuthStateChange: (listener: () => void) => {
+				authState.emitChange = listener;
+				return () => {};
+			},
+		}));
+		vi.doMock("@kennyfrc/mu-ai", async () => {
+			const actual = await vi.importActual<typeof import("@kennyfrc/mu-ai")>("@kennyfrc/mu-ai");
+			return {
+				...actual,
+				loadOAuthCredentials: () => storedCredentials,
+			};
+		});
+
+		const { default: mcpExtension } = await import("../src/extensions/presets/mcp.js");
+		const manager = new ExtensionManager({ builtInTools: makeBuiltInTools() });
+		await manager.loadExtension(mcpExtension, "preset:mcp");
+
+		expect(manager.getIndicators().find((indicator) => indicator.id === "mcp-status")?.label).toBe(
+			"MCP auth required: figma",
+		);
+
+		storedCredentials = {
+			type: "oauth",
+			access: "fresh-token",
+			refresh: "refresh-token",
+			expires: Date.now() + 60_000,
+		};
+		token = "fresh-token";
+
+		const emitChange = authState.emitChange;
+		if (typeof emitChange === "function") {
+			emitChange();
+		}
+		await vi.waitFor(() => {
+			expect(manager.getIndicators().find((indicator) => indicator.id === "mcp-status")?.label).toBe(
+				"MCP: 1/1 connected",
+			);
+		});
+	});
 });

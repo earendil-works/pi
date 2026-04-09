@@ -12,6 +12,8 @@ const FIGMA_DCR_URL = "https://api.figma.com/v1/oauth/mcp/register";
 const DEFAULT_REDIRECT_URI = "http://127.0.0.1:8788/callback";
 const FIGMA_PROVIDER_ID = "figma-mcp";
 
+const figmaOAuthStateListeners = new Set<() => void>();
+
 type FigmaProtectedResourceMetadata = {
 	resource?: string;
 	authorization_servers?: string[];
@@ -45,6 +47,23 @@ export interface FigmaOAuthClientConfig {
 export interface OAuthAuthInfo {
 	url: string;
 	instructions?: string;
+}
+
+function notifyFigmaOAuthStateChanged(): void {
+	for (const listener of figmaOAuthStateListeners) {
+		listener();
+	}
+}
+
+export function onFigmaOAuthStateChange(listener: () => void): () => void {
+	figmaOAuthStateListeners.add(listener);
+	return () => {
+		figmaOAuthStateListeners.delete(listener);
+	};
+}
+
+export function emitFigmaOAuthStateChange(): void {
+	notifyFigmaOAuthStateChanged();
 }
 
 function createState(): string {
@@ -145,6 +164,7 @@ export async function registerFigmaMcpClient(
 		client_id: data.client_id,
 		client_secret: data.client_secret,
 	});
+	notifyFigmaOAuthStateChanged();
 
 	return { clientId: data.client_id, clientSecret: data.client_secret };
 }
@@ -280,6 +300,7 @@ export async function loginFigmaMcp(
 			credentials.client_secret = clientConfig.clientSecret;
 		}
 		saveOAuthCredentials(FIGMA_PROVIDER_ID, credentials);
+		notifyFigmaOAuthStateChanged();
 	} finally {
 		server.close();
 	}
@@ -346,10 +367,12 @@ export async function getFigmaOAuthAccessToken(config?: McpConfig): Promise<stri
 	try {
 		const refreshed = await refreshFigmaMcpToken(credentials.refresh, config);
 		saveOAuthCredentials(FIGMA_PROVIDER_ID, refreshed);
+		notifyFigmaOAuthStateChanged();
 		return refreshed.access;
 	} catch (error) {
 		// Refresh failed - user needs to re-login
 		console.error("Figma token refresh failed:", error);
+		notifyFigmaOAuthStateChanged();
 		return null;
 	}
 }

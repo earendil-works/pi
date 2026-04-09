@@ -77,7 +77,7 @@ describe("executeExplicitCompactionStrategy", () => {
 			};
 			expect(parsed.query).toBe("Fix the login page tests");
 			expect(parsed.compression_ratio).toBeGreaterThanOrEqual(0.3);
-			expect(parsed.compression_ratio).toBeLessThanOrEqual(0.7);
+			expect(parsed.compression_ratio).toBeLessThanOrEqual(0.35);
 			expect(parsed.input).toContain("User: Fix the login page tests");
 			expect(parsed.input).not.toContain("<user_message_time>");
 
@@ -145,7 +145,7 @@ describe("executeExplicitCompactionStrategy", () => {
 			};
 			expect(parsed.query).toBe("Fix the login page tests");
 			expect(parsed.compression_ratio).toBeGreaterThanOrEqual(0.3);
-			expect(parsed.compression_ratio).toBeLessThanOrEqual(0.7);
+			expect(parsed.compression_ratio).toBeLessThanOrEqual(0.35);
 			expect(parsed.input).toContain("User: Fix the login page tests");
 
 			return new Response(JSON.stringify({ output: "OpenAI Morph-compacted visible history" }), {

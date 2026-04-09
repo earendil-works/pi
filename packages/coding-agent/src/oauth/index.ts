@@ -26,7 +26,12 @@ import {
 	setOAuthStorage,
 } from "@kennyfrc/mu-ai";
 import { loginAnthropic } from "./anthropic.js";
-import { getFigmaOAuthAccessToken, loginFigmaMcp, refreshFigmaMcpToken } from "./figma-mcp.js";
+import {
+	emitFigmaOAuthStateChange,
+	getFigmaOAuthAccessToken,
+	loginFigmaMcp,
+	refreshFigmaMcpToken,
+} from "./figma-mcp.js";
 
 // Re-export types and functions
 export type OAuthProvider = BaseOAuthProvider | "figma-mcp";
@@ -160,6 +165,9 @@ export async function login(
  */
 export async function logout(provider: OAuthProvider): Promise<void> {
 	removeOAuthCredentials(provider);
+	if (provider === "figma-mcp") {
+		emitFigmaOAuthStateChange();
+	}
 }
 
 /**

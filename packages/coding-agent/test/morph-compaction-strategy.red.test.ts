@@ -46,33 +46,33 @@ function requireModel(provider: Parameters<typeof getModel>[0], modelId: string)
 }
 
 describe("selectMorphCompressionRatio", () => {
-	it("still returns a valid Morph ratio when history is already under the 40 percent target", async () => {
+	it("clamps to max ratio when history is under the 40 percent target", async () => {
 		const mod = await loadMorphCompactionStrategyModule();
 		expect(mod.selectMorphCompressionRatio({ estimatedHistoryTokens: 39_500, contextWindow: 100_000 })).toEqual({
 			kind: "compact",
 			targetTokens: 40_000,
 			estimatedHistoryTokens: 39_500,
-			compressionRatio: 0.5,
+			compressionRatio: 0.35,
 		});
 	});
 
-	it("clamps slight overflow to the maximum 0.7 ratio", async () => {
+	it("clamps slight overflow to the maximum 0.35 ratio", async () => {
 		const mod = await loadMorphCompactionStrategyModule();
 		expect(mod.selectMorphCompressionRatio({ estimatedHistoryTokens: 55_000, contextWindow: 100_000 })).toEqual({
 			kind: "compact",
 			targetTokens: 40_000,
 			estimatedHistoryTokens: 55_000,
-			compressionRatio: 0.5,
+			compressionRatio: 0.35,
 		});
 	});
 
-	it("returns a midrange ratio when the target keep fraction lands inside the clamp range", async () => {
+	it("clamps to max ratio when raw ratio exceeds the clamp range", async () => {
 		const mod = await loadMorphCompactionStrategyModule();
 		expect(mod.selectMorphCompressionRatio({ estimatedHistoryTokens: 100_000, contextWindow: 100_000 })).toEqual({
 			kind: "compact",
 			targetTokens: 40_000,
 			estimatedHistoryTokens: 100_000,
-			compressionRatio: 0.4,
+			compressionRatio: 0.35,
 		});
 	});
 
@@ -100,7 +100,7 @@ describe("selectCompactionStrategy", () => {
 				estimatedHistoryTokens: 100_000,
 				contextWindow: 100_000,
 			}),
-		).toEqual({ kind: "morph-compact", compressionRatio: 0.4 });
+		).toEqual({ kind: "morph-compact", compressionRatio: 0.35 });
 	});
 
 	it("fails when Morph is required but the key is absent", async () => {
@@ -124,6 +124,6 @@ describe("selectCompactionStrategy", () => {
 				estimatedHistoryTokens: 100_000,
 				contextWindow: 100_000,
 			}),
-		).toEqual({ kind: "morph-compact", compressionRatio: 0.4 });
+		).toEqual({ kind: "morph-compact", compressionRatio: 0.35 });
 	});
 });
