@@ -169,4 +169,51 @@ describe("workspace memory tui index", () => {
 			renderer.stop();
 		}
 	});
+
+	it("does not crash on legacy projection files without indexItems and rebuilds from entries", async () => {
+		const tempHome = mkdtempSync(join(tmpdir(), "mu-workspace-memory-tui-"));
+		const workspaceRef = join(tempHome, "workspace");
+		const configDir = join(tempHome, "config");
+		tempDirs.push(tempHome);
+		mkdirSync(workspaceRef, { recursive: true });
+		mkdirSync(configDir, { recursive: true });
+		process.env.HOME = tempHome;
+		process.chdir(workspaceRef);
+
+		const projectionPath = getArtifactMemoryProjectionPath(workspaceRef);
+		mkdirSync(join(process.env.HOME ?? "", ".mu", "wiki", "projections"), { recursive: true });
+		writeFileSync(
+			projectionPath,
+			`${JSON.stringify(
+				{
+					workspaceRef,
+					entries: [
+						{
+							id: "mem-legacy-1",
+							kind: "artifact",
+							summary: "Successfully wrote 120 bytes to docs/legacy.md",
+							workspaceRef,
+							artifacts: ["docs/legacy.md"],
+							timestamp: new Date().toISOString(),
+						},
+					],
+					startupItems: [],
+					startupSummary: "Artifact\n- Wrote legacy.md",
+					meta: { totalEntries: 1, activeEntries: 1, deletedCount: 0, supersededCount: 0 },
+				},
+				null,
+				2,
+			)}\n`,
+			"utf8",
+		);
+
+		const renderer = await makeRenderer(configDir);
+		try {
+			const output = stripAnsi(renderer.ui.render(100).join("\n"));
+			expect(output).toContain("Workspace memory projection");
+			expect(output).toContain("Wrote legacy.md — docs/legacy.md");
+		} finally {
+			renderer.stop();
+		}
+	});
 });

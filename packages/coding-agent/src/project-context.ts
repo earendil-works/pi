@@ -1,7 +1,11 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
-import { getArtifactMemoryProjectionPath, type WorkspaceProjection } from "./memory/projection.js";
+import {
+	getArtifactMemoryProjectionPath,
+	normalizeWorkspaceProjection,
+	type WorkspaceProjection,
+} from "./memory/projection.js";
 
 export type ContextFile = { path: string; content: string; scope: "user" | "project" };
 
@@ -50,7 +54,9 @@ export function loadWorkspaceMemoryProjection(cwd: string): { path: string; cont
 		return null;
 	}
 	try {
-		const projection: WorkspaceProjection = JSON.parse(readFileSync(projectionPath, "utf-8")) as WorkspaceProjection;
+		const projection = normalizeWorkspaceProjection(
+			JSON.parse(readFileSync(projectionPath, "utf-8")) as WorkspaceProjection,
+		);
 		return {
 			path: projectionPath,
 			content: formatWorkspaceMemoryProjection(projection),

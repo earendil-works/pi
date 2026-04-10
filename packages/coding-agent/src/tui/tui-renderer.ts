@@ -73,6 +73,7 @@ import {
 import {
 	ArtifactMemoryProjector,
 	getArtifactMemoryProjectionPath,
+	normalizeWorkspaceProjection,
 	type WorkspaceProjection,
 } from "../memory/projection.js";
 import { appendMissionResumeResetEvent } from "../missions/mission-reset.js";
@@ -1012,7 +1013,7 @@ export class TuiRenderer {
 
 		if (fs.existsSync(projectionPath)) {
 			try {
-				projection = JSON.parse(fs.readFileSync(projectionPath, "utf-8"));
+				projection = normalizeWorkspaceProjection(JSON.parse(fs.readFileSync(projectionPath, "utf-8")));
 			} catch {
 				// Corrupted, will rebuild below
 			}

@@ -31,6 +31,10 @@ export interface WorkspaceProjectionIndexItem {
 	paths: string[];
 }
 
+type LegacyWorkspaceProjection = Omit<WorkspaceProjection, "indexItems"> & {
+	indexItems?: WorkspaceProjectionIndexItem[];
+};
+
 export interface WorkspaceProjectionItem {
 	id: string;
 	kind: string;
@@ -109,6 +113,13 @@ function buildIndexItems(entries: ArtifactMemoryEntry[]): WorkspaceProjectionInd
 	}));
 }
 
+export function normalizeWorkspaceProjection(projection: LegacyWorkspaceProjection): WorkspaceProjection {
+	return {
+		...projection,
+		indexItems: Array.isArray(projection.indexItems) ? projection.indexItems : buildIndexItems(projection.entries),
+	};
+}
+
 function summarizeEntries(entries: ArtifactMemoryEntry[]): string {
 	const items = buildStartupItems(entries);
 	if (items.length === 0) {
@@ -182,14 +193,14 @@ export class ArtifactMemoryProjector {
 			(entry) => entry.workspaceRef === resolvedWorkspaceRef,
 		);
 		const { activeEntries, meta } = filterActiveEntries(entries);
-		const projection: WorkspaceProjection = {
+		const projection = normalizeWorkspaceProjection({
 			workspaceRef: resolvedWorkspaceRef,
 			entries: activeEntries,
 			indexItems: buildIndexItems(activeEntries),
 			startupItems: buildStartupItems(activeEntries),
 			startupSummary: summarizeEntries(activeEntries),
 			meta,
-		};
+		});
 
 		const projectionPath = getArtifactMemoryProjectionPath(resolvedWorkspaceRef, this.baseDir);
 		mkdirSync(dirname(projectionPath), { recursive: true });
