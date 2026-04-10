@@ -1,0 +1,46 @@
+task:
+  id: prompt-index-context
+  sequence: 2
+  project_root: /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev
+  project_name: workspace-memory-index
+  objective: Render workspace memory into startup prompt context as an index view instead of summary prose.
+
+  module_boundary:
+    inputs:
+      - Workspace projection file for the current workspace
+      - Prompt context assembly via `loadWorkspaceMemoryProjection` and system prompt context file formatting
+    outputs:
+      - Prompt/project context content that contains index rows with label and path(s)
+      - Tests proving long summary text is not injected into prompt context
+    usage_code: |
+      const projectionContext = loadWorkspaceMemoryProjection(cwd);
+      const sections = await buildSystemPromptSections({ cwd, includeFileTree: false, contextFiles: [projectionContext] });
+      console.log(sections.contextFiles);
+
+  verification:
+    commands:
+      - npx vitest run packages/coding-agent/test/system-prompt-sections.test.ts packages/coding-agent/test/workspace-memory-context-index.test.ts
+    test_cases:
+      - input: projection containing a long summary plus artifact paths
+        expected_output: prompt context contains index rows and does not contain the full summary prose
+      - input: projection with multiple paths
+        expected_output: prompt context shows the path references legibly
+      - input: no workspace memory entries
+        expected_output: prompt context remains absent or minimal per existing behavior, without regressing unrelated context loading
+    pass_criteria: Prompt-focused tests pass and confirm index-only startup context behavior.
+
+  constraints:
+    - Read devdocs/workspace-memory-index/DECISIONS.md and existing project code before starting
+    - Must be consistent with existing code and prior decisions
+    - Write code wherever the project structure dictates
+    - Write verification output to devdocs/workspace-memory-index/tasks/02-prompt-index-context/verification.log
+    - Append decisions to devdocs/workspace-memory-index/DECISIONS.md
+    - No abstractions unless removing duplication
+    - Smallest surface area change
+    - No work beyond what this spec asks for
+
+  blocker_protocol: |
+    If you cannot run verification:
+    (1) state the exact blocker,
+    (2) fall back to cheapest runnable alternative,
+    (3) never skip verification entirely.

@@ -1,0 +1,46 @@
+task:
+  id: projection-index-shape
+  sequence: 1
+  project_root: /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev
+  project_name: workspace-memory-index
+  objective: Add an explicit workspace-memory index projection derived from active ledger entries.
+
+  module_boundary:
+    inputs:
+      - Active artifact memory entries for one workspace
+      - Existing per-entry fields such as kind, summary, artifacts, timestamp, sourceRefs
+    outputs:
+      - Workspace projection containing explicit index-oriented items with short label text and path references
+      - Focused tests proving the projection shape and active-entry behavior
+    usage_code: |
+      const projector = new ArtifactMemoryProjector({ baseDir });
+      const projection = await projector.buildWorkspaceProjection(workspaceRef);
+      console.log(projection.indexItems.map((item) => `${item.label} :: ${item.paths.join(", ")}`));
+
+  verification:
+    commands:
+      - npx vitest run packages/coding-agent/test/artifact-memory-projection.red.test.ts
+    test_cases:
+      - input: create entries with summaries and artifact paths for one workspace
+        expected_output: projection exposes index items with short labels and matching paths
+      - input: superseded or deleted entries
+        expected_output: index excludes inactive entries
+      - input: note-like entry with artifact path
+        expected_output: index item preserves short label without injecting full summary prose into the index field
+    pass_criteria: Existing projection tests pass and include assertions for the new explicit index shape.
+
+  constraints:
+    - Read devdocs/workspace-memory-index/DECISIONS.md and existing project code before starting
+    - Must be consistent with existing code and prior decisions
+    - Write code wherever the project structure dictates
+    - Write verification output to devdocs/workspace-memory-index/tasks/01-projection-index-shape/verification.log
+    - Append decisions to devdocs/workspace-memory-index/DECISIONS.md
+    - No abstractions unless removing duplication
+    - Smallest surface area change
+    - No work beyond what this spec asks for
+
+  blocker_protocol: |
+    If you cannot run verification:
+    (1) state the exact blocker,
+    (2) fall back to cheapest runnable alternative,
+    (3) never skip verification entirely.

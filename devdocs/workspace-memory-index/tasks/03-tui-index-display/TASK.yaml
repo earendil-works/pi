@@ -1,0 +1,43 @@
+task:
+  id: tui-index-display
+  sequence: 3
+  project_root: /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev
+  project_name: workspace-memory-index
+  objective: Render the workspace memory startup chrome in the TUI using the index projection instead of summary prose.
+
+  module_boundary:
+    inputs:
+      - Workspace projection loaded at TUI startup
+      - Existing startup chrome rendering path in `tui-renderer.ts`
+    outputs:
+      - TUI startup text based on index rows with label and path(s)
+      - Focused tests proving startup chrome uses index rendering
+    usage_code: |
+      const projection = await new ArtifactMemoryProjector().buildWorkspaceProjection(process.cwd());
+      renderer.showWorkspaceMemoryProjection(renderWorkspaceMemoryIndex(projection));
+
+  verification:
+    commands:
+      - npx vitest run packages/coding-agent/test/workspace-memory-tui-index.test.ts
+    test_cases:
+      - input: projection with two index items and paths
+        expected_output: startup chrome shows label/path rows, not summary prose
+      - input: empty projection
+        expected_output: existing no-memory behavior is preserved
+    pass_criteria: TUI-focused tests pass and startup chrome uses index rendering.
+
+  constraints:
+    - Read devdocs/workspace-memory-index/DECISIONS.md and existing project code before starting
+    - Must be consistent with existing code and prior decisions
+    - Write code wherever the project structure dictates
+    - Write verification output to devdocs/workspace-memory-index/tasks/03-tui-index-display/verification.log
+    - Append decisions to devdocs/workspace-memory-index/DECISIONS.md
+    - No abstractions unless removing duplication
+    - Smallest surface area change
+    - No work beyond what this spec asks for
+
+  blocker_protocol: |
+    If you cannot run verification:
+    (1) state the exact blocker,
+    (2) fall back to cheapest runnable alternative,
+    (3) never skip verification entirely.

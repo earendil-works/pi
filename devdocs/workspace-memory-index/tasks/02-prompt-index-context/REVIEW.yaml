@@ -1,0 +1,13 @@
+review:
+  verdict: ACCEPT
+  correctness:
+    module_boundary_match: true
+    tests_faithful: true
+    verification_green: true
+    logic_sound: true
+    consistent_with_prior: true
+  completeness:
+    all_requirements_met: true
+    no_scope_creep: true
+  rejection_reason: null
+  fix_needed: null

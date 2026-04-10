@@ -26,6 +26,12 @@ interface WorkspaceProjectionMeta {
 interface WorkspaceProjection {
 	workspaceRef: string;
 	entries: ArtifactMemoryEntry[];
+	indexItems: Array<{
+		id: string;
+		kind: string;
+		label: string;
+		paths: string[];
+	}>;
 	startupSummary: string;
 	meta: WorkspaceProjectionMeta;
 }
@@ -124,8 +130,94 @@ describe("ArtifactMemoryProjector (red)", () => {
 		expect(betaProjection.workspaceRef).toBe("/tmp/workspaces/beta");
 		expect(alphaProjection.entries.map((entry) => entry.summary)).toEqual(["Workspace alpha generated build output"]);
 		expect(betaProjection.entries.map((entry) => entry.summary)).toEqual(["Workspace beta generated build output"]);
+		expect(alphaProjection.indexItems).toEqual([
+			{
+				id: alphaProjection.entries[0]?.id ?? "",
+				kind: "artifact",
+				label: "Workspace alpha generated build output",
+				paths: ["dist/alpha.js"],
+			},
+		]);
+		expect(betaProjection.indexItems).toEqual([
+			{
+				id: betaProjection.entries[0]?.id ?? "",
+				kind: "artifact",
+				label: "Workspace beta generated build output",
+				paths: ["dist/beta.js"],
+			},
+		]);
 		expect(alphaProjection.startupSummary).toContain("Workspace alpha generated build output");
 		expect(betaProjection.startupSummary).not.toContain("Workspace alpha generated build output");
+	});
+
+	it("builds explicit index items from active entries only and keeps labels short", async () => {
+		const { projector, store } = await loadModules();
+		const baseDir = mkdtempSync(join(tmpdir(), "mu-artifact-memory-projection-"));
+		tempDirs.push(baseDir);
+
+		const memoryStore = new store.ArtifactMemoryStore({ baseDir });
+		const original = await memoryStore.appendEntry({
+			kind: "note",
+			summary:
+				"Very long note prose that should not become the full wiki index label because the label should stay short and scan-friendly for startup consumers.",
+			workspaceRef: "/tmp/workspace",
+			artifacts: ["devdocs/notes/original.md"],
+		});
+
+		const fs = await import("node:fs");
+		const ledgerPath = `${baseDir}/.mu/wiki/entries.jsonl`;
+		fs.appendFileSync(
+			ledgerPath,
+			`${JSON.stringify({
+				id: "mem-update-1",
+				timestamp: new Date().toISOString(),
+				event: "update",
+				targetId: original.id,
+				kind: "note",
+				summary:
+					"Name: Projection index shape for task 01\nDetailed prose that should not be injected into the label field of the index item.",
+				workspaceRef: "/tmp/workspace",
+				artifacts: ["devdocs/notes/projection-index.md"],
+			})}\n`,
+		);
+		fs.appendFileSync(
+			ledgerPath,
+			`${JSON.stringify({
+				id: "mem-delete-1",
+				timestamp: new Date().toISOString(),
+				event: "delete",
+				targetId: "mem-update-1",
+				kind: "note",
+				summary: "",
+				workspaceRef: "/tmp/workspace",
+			})}\n`,
+		);
+		fs.appendFileSync(
+			ledgerPath,
+			`${JSON.stringify({
+				id: "mem-note-2",
+				timestamp: new Date().toISOString(),
+				kind: "note",
+				summary:
+					"Name: Workspace memory index\nExtra summary prose that should stay out of the explicit index label field.",
+				workspaceRef: "/tmp/workspace",
+				artifacts: ["devdocs/workspace-memory-index/SPEC.md"],
+			})}\n`,
+		);
+
+		const memoryProjector = new projector.ArtifactMemoryProjector({ baseDir });
+		const projection = await memoryProjector.buildWorkspaceProjection("/tmp/workspace");
+
+		expect(projection.entries.map((entry) => entry.id)).toEqual(["mem-note-2"]);
+		expect(projection.indexItems).toEqual([
+			{
+				id: "mem-note-2",
+				kind: "note",
+				label: "Workspace memory index",
+				paths: ["devdocs/workspace-memory-index/SPEC.md"],
+			},
+		]);
+		expect(projection.indexItems[0]?.label).not.toContain("Extra summary prose");
 	});
 });
 

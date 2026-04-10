@@ -5,6 +5,27 @@ import { getArtifactMemoryProjectionPath, type WorkspaceProjection } from "./mem
 
 export type ContextFile = { path: string; content: string; scope: "user" | "project" };
 
+function formatWorkspaceMemoryProjection(projection: WorkspaceProjection): string {
+	if (projection.indexItems.length === 0) {
+		return `# Workspace Memory Projection
+
+**Workspace:** ${projection.workspaceRef}
+
+No stored memory for this workspace.`;
+	}
+
+	const indexRows = projection.indexItems.map((item) => {
+		const paths = item.paths.length > 0 ? item.paths.map((path) => `\`${path}\``).join(", ") : "(no paths)";
+		return `- ${item.label} — ${paths}`;
+	});
+
+	return `# Workspace Memory Projection
+
+**Workspace:** ${projection.workspaceRef}
+
+${indexRows.join("\n")}`;
+}
+
 /**
  * Look for AGENTS.md or CLAUDE.md in a directory (prefers AGENTS.md).
  */
@@ -30,14 +51,9 @@ export function loadWorkspaceMemoryProjection(cwd: string): { path: string; cont
 	}
 	try {
 		const projection: WorkspaceProjection = JSON.parse(readFileSync(projectionPath, "utf-8")) as WorkspaceProjection;
-		const formattedContent = `# Workspace Memory Projection
-
-**Workspace:** ${projection.workspaceRef}
-
-${projection.startupSummary}`;
 		return {
 			path: projectionPath,
-			content: formattedContent,
+			content: formatWorkspaceMemoryProjection(projection),
 		};
 	} catch {
 		return null;

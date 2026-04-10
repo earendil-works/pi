@@ -18,9 +18,17 @@ export interface WorkspaceProjectionMeta {
 export interface WorkspaceProjection {
 	workspaceRef: string;
 	entries: ArtifactMemoryEntry[];
+	indexItems: WorkspaceProjectionIndexItem[];
 	startupItems: WorkspaceProjectionItem[];
 	startupSummary: string;
 	meta: WorkspaceProjectionMeta;
+}
+
+export interface WorkspaceProjectionIndexItem {
+	id: string;
+	kind: string;
+	label: string;
+	paths: string[];
 }
 
 export interface WorkspaceProjectionItem {
@@ -90,6 +98,15 @@ function buildStartupItems(entries: ArtifactMemoryEntry[]): WorkspaceProjectionI
 	}
 
 	return items;
+}
+
+function buildIndexItems(entries: ArtifactMemoryEntry[]): WorkspaceProjectionIndexItem[] {
+	return entries.map((entry) => ({
+		id: entry.id,
+		kind: entry.kind,
+		label: buildProjectionLabel(entry),
+		paths: [...(entry.artifacts ?? [])],
+	}));
 }
 
 function summarizeEntries(entries: ArtifactMemoryEntry[]): string {
@@ -168,6 +185,7 @@ export class ArtifactMemoryProjector {
 		const projection: WorkspaceProjection = {
 			workspaceRef: resolvedWorkspaceRef,
 			entries: activeEntries,
+			indexItems: buildIndexItems(activeEntries),
 			startupItems: buildStartupItems(activeEntries),
 			startupSummary: summarizeEntries(activeEntries),
 			meta,

@@ -28,9 +28,11 @@ import {
 	TUI,
 	visibleWidth,
 } from "@kennyfrc/mu-tui";
-import type { TSchema } from "@sinclair/typebox";
+import { type TSchema, Type } from "@sinclair/typebox";
 import { exec } from "child_process";
 import { createHash, randomUUID } from "crypto";
+import { executeAlwaysOnRunWithMu } from "../always-on/execute-run.js";
+import { type AlwaysOnService, type AlwaysOnSubmissionSpec, createAlwaysOnService } from "../always-on/service.js";
 import {
 	AUTO_HANDOFF_EMERGENCY_THRESHOLD,
 	AUTO_HANDOFF_STANDARD_THRESHOLD,
@@ -243,10 +245,20 @@ interface SubscriptionWatchState {
 
 const MAX_SUBSCRIPTION_SEEN_KEYS = 2000;
 
+function renderWorkspaceMemoryIndex(projection: WorkspaceProjection): string {
+	return projection.indexItems
+		.map((item) => {
+			const paths = item.paths.length > 0 ? item.paths.join(", ") : "(no paths)";
+			return `${item.label} — ${paths}`;
+		})
+		.join("\n");
+}
+
 /**
  * TUI renderer for the coding agent
  */
 export class TuiRenderer {
+	private composerMode: "chat" | "always-on" = "chat";
 	private ui: TUI;
 	private chatContainer: Container;
 	private pendingMessagesContainer: Container;
@@ -402,6 +414,10 @@ export class TuiRenderer {
 	private transcriptCopyToastVisible = false;
 	private completedEstimatedOutputTokens = 0;
 	private currentAssistantEstimatedOutputTokens = 0;
+	private alwaysOnService?: AlwaysOnService;
+	private selectedAlwaysOnAgentId: string | null = null;
+	private preAlwaysOnTools: Array<AgentTool<TSchema, unknown>> | null = null;
+	private preAlwaysOnSystemPrompt: string | null = null;
 	private pendingLatencyStartTime: number | null = null;
 	private accumulatedLatencyMs = 0;
 	private latencyGapCount = 0;
@@ -710,6 +726,63 @@ export class TuiRenderer {
 			description: "Exit mission control and return plain messages to normal chat",
 		};
 
+		const alwaysOnCommand: SlashCommand = {
+			name: "always-on",
+			description: "Enter always-on mode for always-on job workflows",
+		};
+
+		const alwaysOnExitCommand: SlashCommand = {
+			name: "always-on-exit",
+			description: "Exit always-on mode and return plain messages to normal chat",
+		};
+
+		const alwaysOnAgentCommand: SlashCommand = {
+			name: "always-on-agent",
+			description: "Select or show the current always-on target agent",
+			selectionBehavior: "inject",
+			injectedText: "/always-on-agent ",
+			injectedDiagnostic:
+				"Prepared /always-on-agent draft. Enter an agent id or leave blank to inspect the current selection.",
+		};
+
+		const alwaysOnJobsCommand: SlashCommand = {
+			name: "always-on-jobs",
+			description: "Inspect always-on jobs from the ledger-backed snapshot",
+		};
+
+		const alwaysOnRunsCommand: SlashCommand = {
+			name: "always-on-runs",
+			description: "Inspect always-on runs from the ledger-backed snapshot",
+			selectionBehavior: "inject",
+			injectedText: "/always-on-runs ",
+			injectedDiagnostic: "Prepared /always-on-runs draft. Optionally enter a job id to filter runs.",
+		};
+
+		const alwaysOnThreadCommand: SlashCommand = {
+			name: "always-on-thread",
+			description: "Read the transcript for an always-on run thread",
+			selectionBehavior: "inject",
+			injectedText: "/always-on-thread ",
+			injectedDiagnostic: "Prepared /always-on-thread draft. Enter a run id.",
+		};
+
+		const alwaysOnScheduleCommand: SlashCommand = {
+			name: "always-on-schedule",
+			description: "Create one-off or recurring always-on scheduled work",
+			selectionBehavior: "inject",
+			injectedText: "/always-on-schedule ",
+			injectedDiagnostic:
+				"Prepared /always-on-schedule draft. Use --at <iso> or --cron <expr> [--timezone <tz>] <instruction>.",
+		};
+
+		const alwaysOnFollowUpCommand: SlashCommand = {
+			name: "always-on-follow-up",
+			description: "Create a follow-up always-on job linked to an existing work item",
+			selectionBehavior: "inject",
+			injectedText: "/always-on-follow-up ",
+			injectedDiagnostic: "Prepared /always-on-follow-up draft. Use <job-id> <instruction>.",
+		};
+
 		const campaignRunCommand: SlashCommand = {
 			name: "campaign-run",
 			description: "Run a campaign file that sequences multiple missions",
@@ -741,6 +814,14 @@ export class TuiRenderer {
 		};
 
 		this.builtInSlashCommands = [
+			alwaysOnCommand,
+			alwaysOnAgentCommand,
+			alwaysOnExitCommand,
+			alwaysOnFollowUpCommand,
+			alwaysOnJobsCommand,
+			alwaysOnRunsCommand,
+			alwaysOnScheduleCommand,
+			alwaysOnThreadCommand,
 			branchCommand,
 			changelogCommand,
 			clearCommand,
@@ -947,8 +1028,8 @@ export class TuiRenderer {
 			}
 		}
 
-		if (projection && projection.entries.length > 0) {
-			this.showWorkspaceMemoryProjection(projection.startupSummary);
+		if (projection && projection.indexItems.length > 0) {
+			this.showWorkspaceMemoryProjection(renderWorkspaceMemoryIndex(projection));
 		}
 
 		this.ui.addChild(this.chatLayout);
@@ -2305,6 +2386,13 @@ export class TuiRenderer {
 			return;
 		}
 
+		if (this.composerMode === "always-on") {
+			this.editor.borderColor = (str: string) => theme.fg("accent", str);
+			this.editor.cursorAccentAnsi = theme.getCursorAccentAnsiForThemeColor("accent");
+			this.ui.requestRender();
+			return;
+		}
+
 		// Check for spec/discover mode from extension indicators
 		const mode = this.getActiveModeFromIndicators();
 		if (mode) {
@@ -2340,6 +2428,134 @@ export class TuiRenderer {
 		return null;
 	}
 
+	private buildAlwaysOnModeTools(): Array<AgentTool<TSchema, unknown>> {
+		const snapshotTool: AgentTool<TSchema, { snapshot: ReturnType<AlwaysOnService["readSnapshot"]> }> = {
+			name: "always_on_snapshot",
+			label: "Always-on Snapshot",
+			description: "Read the current always-on agents, jobs, and runs snapshot.",
+			parameters: Type.Object({}),
+			execute: async () => {
+				const snapshot = this.getAlwaysOnService().readSnapshot();
+				return {
+					content: [{ type: "text", text: JSON.stringify(snapshot, null, 2) }],
+					details: { snapshot },
+				};
+			},
+		};
+
+		const submitTool: AgentTool<TSchema, { submission: { workItemId: string; runId?: string } }> = {
+			name: "always_on_submit",
+			label: "Always-on Submit",
+			description: "Create immediate, one-off, recurring, or follow-up always-on work.",
+			parameters: Type.Object({
+				kind: Type.String({ minLength: 1 }),
+				instruction: Type.String({ minLength: 1 }),
+				at: Type.Optional(Type.String()),
+				cron: Type.Optional(Type.String()),
+				timezone: Type.Optional(Type.String()),
+				parentWorkItemId: Type.Optional(Type.String()),
+			}),
+			execute: async (_toolCallId, args) => {
+				const raw = args as {
+					kind: string;
+					instruction: string;
+					at?: string;
+					cron?: string;
+					timezone?: string;
+					parentWorkItemId?: string;
+				};
+				let spec: AlwaysOnSubmissionSpec;
+				if (raw.kind === "immediate") {
+					spec = { kind: "immediate", instruction: raw.instruction };
+				} else if (raw.kind === "once") {
+					if (!raw.at) throw new Error("always_on_submit(kind=once) requires at");
+					spec = { kind: "once", instruction: raw.instruction, at: raw.at };
+				} else if (raw.kind === "recurring") {
+					if (!raw.cron) throw new Error("always_on_submit(kind=recurring) requires cron");
+					spec = { kind: "recurring", instruction: raw.instruction, cron: raw.cron, timezone: raw.timezone };
+				} else if (raw.kind === "follow_up") {
+					if (!raw.parentWorkItemId) throw new Error("always_on_submit(kind=follow_up) requires parentWorkItemId");
+					spec = {
+						kind: "follow_up",
+						instruction: raw.instruction,
+						parentWorkItemId: raw.parentWorkItemId,
+					};
+				} else {
+					throw new Error(`Unsupported always_on_submit kind: ${raw.kind}`);
+				}
+				const submission = await this.getAlwaysOnService().submit(spec);
+				return {
+					content: [{ type: "text", text: JSON.stringify(submission, null, 2) }],
+					details: { submission },
+				};
+			},
+		};
+
+		return [snapshotTool, submitTool];
+	}
+
+	private buildModeAwareTools(baseTools: Array<AgentTool<TSchema, unknown>>): Array<AgentTool<TSchema, unknown>> {
+		if (this.composerMode !== "always-on") {
+			return baseTools;
+		}
+		const existingNames = new Set(baseTools.map((tool) => tool.name));
+		return [...baseTools, ...this.buildAlwaysOnModeTools().filter((tool) => !existingNames.has(tool.name))];
+	}
+
+	private async refreshToolsForCurrentMode(model: Model<any> | null | undefined): Promise<void> {
+		if (!this.toolSelector || !this.systemPromptBuilder) {
+			return;
+		}
+		const selection = this.toolSelector(model);
+		const tools = this.buildModeAwareTools(selection.tools);
+		this.agent.setTools(tools);
+		const systemPrompt = await this.systemPromptBuilder(tools);
+		this.agent.setSystemPrompt(systemPrompt);
+	}
+
+	private getAlwaysOnService(): AlwaysOnService {
+		if (!this.alwaysOnService) {
+			const configDir = process.env.MU_CODING_AGENT_DIR;
+			this.alwaysOnService = createAlwaysOnService({
+				baseDir: configDir,
+				executeRun: (request) => executeAlwaysOnRunWithMu(request, configDir),
+			});
+		}
+		return this.alwaysOnService;
+	}
+
+	private formatAlwaysOnJobs(): string {
+		const snapshot = this.getAlwaysOnService().readSnapshot();
+		const jobs = this.selectedAlwaysOnAgentId
+			? snapshot.workItems.filter((workItem) => workItem.agentId === this.selectedAlwaysOnAgentId)
+			: snapshot.workItems;
+		if (jobs.length === 0) {
+			return "No always-on jobs recorded.";
+		}
+		return [
+			"Always-on jobs:",
+			...jobs.map((job) => `- ${job.workItemId}\n  Agent: ${job.agentId}\n  Instruction: ${job.instruction}`),
+		].join("\n");
+	}
+
+	private formatAlwaysOnRuns(workItemId?: string): string {
+		const snapshot = this.getAlwaysOnService().readSnapshot();
+		const runs = workItemId ? snapshot.runs.filter((run) => run.workItemId === workItemId) : snapshot.runs;
+		if (runs.length === 0) {
+			return workItemId ? `No always-on runs recorded for ${workItemId}.` : "No always-on runs recorded.";
+		}
+		return [
+			"Always-on runs:",
+			...runs.map((run) => `- ${run.runId}\n  Job: ${run.workItemId}\n  Outcome: ${run.outcome ?? "pending"}`),
+		].join("\n");
+	}
+
+	private formatAlwaysOnAgentSelection(): string {
+		const snapshot = this.getAlwaysOnService().readSnapshot();
+		const effectiveAgentId = this.selectedAlwaysOnAgentId ?? snapshot.globalDefaultAgentId;
+		return effectiveAgentId ? `Always-on agent: ${effectiveAgentId}` : "No always-on agent selected.";
+	}
+
 	private toggleThinkingLevel(): void {
 		// Only toggle if model supports thinking
 		if (!this.agent.state.model?.reasoning) {
@@ -2370,13 +2586,7 @@ export class TuiRenderer {
 	}
 
 	private async updateToolsForModel(model: Model<any> | null | undefined): Promise<void> {
-		if (!this.toolSelector || !this.systemPromptBuilder) {
-			return;
-		}
-		const selection = this.toolSelector(model);
-		this.agent.setTools(selection.tools);
-		const systemPrompt = await this.systemPromptBuilder(selection.tools);
-		this.agent.setSystemPrompt(systemPrompt);
+		await this.refreshToolsForCurrentMode(model);
 	}
 
 	private async cycleModel(): Promise<void> {
@@ -3762,6 +3972,138 @@ export class TuiRenderer {
 			return;
 		}
 
+		if (rawText === "/always-on") {
+			this.preAlwaysOnTools = [...this.agent.state.tools];
+			this.preAlwaysOnSystemPrompt = this.agent.state.systemPrompt;
+			this.composerMode = "always-on";
+			await this.refreshToolsForCurrentMode(this.agent.state.model);
+			this.updateEditorBorderColor();
+			this.editor.setText("");
+			return;
+		}
+
+		if (rawText === "/always-on-exit") {
+			this.composerMode = "chat";
+			this.selectedAlwaysOnAgentId = null;
+			if (this.preAlwaysOnTools) {
+				this.agent.setTools(this.preAlwaysOnTools);
+			}
+			if (this.preAlwaysOnSystemPrompt !== null) {
+				this.agent.setSystemPrompt(this.preAlwaysOnSystemPrompt);
+			}
+			this.preAlwaysOnTools = null;
+			this.preAlwaysOnSystemPrompt = null;
+			this.updateEditorBorderColor();
+			this.editor.setText("");
+			return;
+		}
+
+		const alwaysOnAgentMatch = rawText.match(/^\/always-on-agent(?:\s+(\S+))?$/);
+		if (alwaysOnAgentMatch) {
+			this.editor.setText("");
+			if (this.composerMode !== "always-on") {
+				this.showWarning("Enter /always-on first.");
+				return;
+			}
+			const nextAgentId = alwaysOnAgentMatch[1]?.trim();
+			if (nextAgentId) {
+				this.selectedAlwaysOnAgentId = nextAgentId;
+			}
+			this.showMessage(this.formatAlwaysOnAgentSelection());
+			return;
+		}
+
+		if (rawText === "/always-on-jobs") {
+			this.editor.setText("");
+			if (this.composerMode !== "always-on") {
+				this.showWarning("Enter /always-on first.");
+				return;
+			}
+			this.showMessage(this.formatAlwaysOnJobs());
+			return;
+		}
+
+		const alwaysOnRunsMatch = rawText.match(/^\/always-on-runs(?:\s+(\S+))?$/);
+		if (alwaysOnRunsMatch) {
+			this.editor.setText("");
+			if (this.composerMode !== "always-on") {
+				this.showWarning("Enter /always-on first.");
+				return;
+			}
+			this.showMessage(this.formatAlwaysOnRuns(alwaysOnRunsMatch[1]?.trim() || undefined));
+			return;
+		}
+
+		const alwaysOnThreadMatch = rawText.match(/^\/always-on-thread(?:\s+(\S+))?$/);
+		if (alwaysOnThreadMatch) {
+			this.editor.setText("");
+			if (this.composerMode !== "always-on") {
+				this.showWarning("Enter /always-on first.");
+				return;
+			}
+			const runId = alwaysOnThreadMatch[1]?.trim();
+			if (!runId) {
+				this.showError("Usage: /always-on-thread <run-id>");
+				return;
+			}
+			this.showMessage(this.getAlwaysOnService().readThread(runId));
+			return;
+		}
+
+		const alwaysOnScheduleAtMatch = rawText.match(/^\/always-on-schedule\s+--at\s+(\S+)\s+([\s\S]+)$/);
+		if (alwaysOnScheduleAtMatch) {
+			this.editor.setText("");
+			if (this.composerMode !== "always-on") {
+				this.showWarning("Enter /always-on first.");
+				return;
+			}
+			const submission = await this.getAlwaysOnService().submit({
+				kind: "once",
+				at: alwaysOnScheduleAtMatch[1] ?? "",
+				instruction: alwaysOnScheduleAtMatch[2]?.trim() ?? "",
+				agentId: this.selectedAlwaysOnAgentId ?? undefined,
+			});
+			this.showMessage(`Scheduled always-on job ${submission.workItemId}`);
+			return;
+		}
+
+		const alwaysOnScheduleCronMatch = rawText.match(
+			/^\/always-on-schedule\s+--cron\s+(\S+)(?:\s+--timezone\s+(\S+))?\s+([\s\S]+)$/,
+		);
+		if (alwaysOnScheduleCronMatch) {
+			this.editor.setText("");
+			if (this.composerMode !== "always-on") {
+				this.showWarning("Enter /always-on first.");
+				return;
+			}
+			const submission = await this.getAlwaysOnService().submit({
+				kind: "recurring",
+				cron: alwaysOnScheduleCronMatch[1] ?? "",
+				timezone: alwaysOnScheduleCronMatch[2]?.trim() || undefined,
+				instruction: alwaysOnScheduleCronMatch[3]?.trim() ?? "",
+				agentId: this.selectedAlwaysOnAgentId ?? undefined,
+			});
+			this.showMessage(`Scheduled always-on job ${submission.workItemId}`);
+			return;
+		}
+
+		const alwaysOnFollowUpMatch = rawText.match(/^\/always-on-follow-up\s+(\S+)\s+([\s\S]+)$/);
+		if (alwaysOnFollowUpMatch) {
+			this.editor.setText("");
+			if (this.composerMode !== "always-on") {
+				this.showWarning("Enter /always-on first.");
+				return;
+			}
+			const submission = await this.getAlwaysOnService().submit({
+				kind: "follow_up",
+				parentWorkItemId: alwaysOnFollowUpMatch[1] ?? "",
+				instruction: alwaysOnFollowUpMatch[2]?.trim() ?? "",
+				agentId: this.selectedAlwaysOnAgentId ?? undefined,
+			});
+			this.showMessage(`Queued always-on follow-up ${submission.workItemId}`);
+			return;
+		}
+
 		// Check for /model command
 		if (rawText === "/model") {
 			// Show model selector
@@ -4074,6 +4416,19 @@ export class TuiRenderer {
 
 		// Note: /steer command removed - Enter now automatically steers when streaming
 		const sentText = autoFenceHtmlInMarkdown(rawText);
+
+		if (this.composerMode === "always-on") {
+			const submission = await this.getAlwaysOnService().submit({
+				kind: "immediate",
+				instruction: rawText,
+				agentId: this.selectedAlwaysOnAgentId ?? undefined,
+			});
+			this.editor.setText("");
+			this.showMessage(
+				`Queued always-on job ${submission.workItemId}${submission.runId ? ` (run ${submission.runId})` : ""}`,
+			);
+			return;
+		}
 
 		if (this.hasActiveMissionRun()) {
 			this.queueMissionIterationMessage(rawText, sentText, streamingQueueKind);
@@ -5137,10 +5492,10 @@ export class TuiRenderer {
 			contextTokens: this.composerContextTokens,
 			contextWindow: this.composerContextWindow,
 		});
+		const alwaysOnLabel = this.composerMode === "always-on" ? theme.fg("accent", "always-on") : "";
 		const missionLabel = formatMissionMetaLabel(this.missionUiState);
-		if (!usageLabel) return missionLabel;
-		if (!missionLabel) return usageLabel;
-		return `${usageLabel}${theme.fg("muted", " • ")}${missionLabel}`;
+		const labels = [usageLabel, alwaysOnLabel, missionLabel].filter((value): value is string => value.length > 0);
+		return labels.join(theme.fg("muted", " • "));
 	}
 
 	private setMissionUiState(
