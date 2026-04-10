@@ -1063,6 +1063,16 @@ export class AgentSession {
 
 		await this.agent.prompt(messages);
 		await this.waitForRetry();
+
+		// Extensions may queue follow-up messages during agent_end (e.g. commit reminders).
+		// The agent loop has finished, so the internal followUpQueue won't be drained automatically.
+		// Drain it here, mirroring what agent.continue() does for user-initiated follow-ups.
+		if (this.agent.hasQueuedMessages()) {
+			const queued = this._drainExtensionFollowUps();
+			if (queued.length > 0) {
+				await this._sendFollowUp(queued);
+			}
+		}
 	}
 
 	/**
@@ -1200,6 +1210,28 @@ export class AgentSession {
 			content,
 			timestamp: Date.now(),
 		});
+	}
+
+	/** Drain follow-up messages queued by extensions during agent_end. */
+	private _drainExtensionFollowUps(): string[] {
+		const followUps = [...this._followUpMessages];
+		this._followUpMessages = [];
+		this._emitQueueUpdate();
+		this.agent.clearFollowUpQueue();
+		return followUps;
+	}
+
+	/** Send drained follow-up messages as a new prompt, bypassing streaming checks. */
+	private async _sendFollowUp(messages: string[]): Promise<void> {
+		const combined = messages.join("\n\n");
+		const content: TextContent[] = [{ type: "text", text: combined }];
+		const userMessage: AgentMessage = {
+			role: "user",
+			content,
+			timestamp: Date.now(),
+		};
+		await this.agent.prompt(userMessage);
+		await this.waitForRetry();
 	}
 
 	/**
