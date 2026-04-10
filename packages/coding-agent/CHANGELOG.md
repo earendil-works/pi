@@ -5,6 +5,7 @@
 ### Fixed
 
 - Updated `antigravity-image-gen.ts` example extension to use User-Agent version `1.21.9` ([#2901](https://github.com/badlogic/pi-mono/pull/2901) by [@aadishv](https://github.com/aadishv))
+- Fixed newly generated session IDs to use UUIDv7, improving time locality for session-based request routing.
 ### Added
 
 - Set `PI_CODING_AGENT=true` environment variable at startup so sub-processes can detect they are running inside the coding agent ([#2868](https://github.com/badlogic/pi-mono/issues/2868))

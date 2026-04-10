@@ -1,6 +1,6 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ImageContent, Message, TextContent } from "@mariozechner/pi-ai";
-import { randomUUID } from "crypto";
+import { randomBytes, randomUUID } from "crypto";
 import {
 	appendFileSync,
 	closeSync,
@@ -196,6 +196,27 @@ export type ReadonlySessionManager = Pick<
 	| "getTree"
 	| "getSessionName"
 >;
+
+function byteToHex(byte: number): string {
+	return byte.toString(16).padStart(2, "0");
+}
+
+function createSessionId(): string {
+	const timestampHex = BigInt(Date.now()).toString(16).padStart(12, "0").slice(-12);
+	const random = randomBytes(10);
+	const byte = (index: number): number => random[index] ?? 0;
+	const randA = ((byte(0) << 8) | byte(1)) & 0x0fff;
+	const randB0 = (byte(2) & 0x3f) | 0x80;
+	const randB = [randB0, ...Array.from(random.subarray(3, 10))].map(byteToHex).join("");
+
+	return [
+		timestampHex.slice(0, 8),
+		timestampHex.slice(8, 12),
+		`7${randA.toString(16).padStart(3, "0")}`,
+		randB.slice(0, 4),
+		randB.slice(4, 16),
+	].join("-");
+}
 
 /** Generate a unique short ID (8 hex chars, collision-checked) */
 function generateId(byId: { has(id: string): boolean }): string {
@@ -707,7 +728,7 @@ export class SessionManager {
 			}
 
 			const header = this.fileEntries.find((e) => e.type === "session") as SessionHeader | undefined;
-			this.sessionId = header?.id ?? randomUUID();
+			this.sessionId = header?.id ?? createSessionId();
 
 			if (migrateToCurrentVersion(this.fileEntries)) {
 				this._rewriteFile();
@@ -723,7 +744,7 @@ export class SessionManager {
 	}
 
 	newSession(options?: NewSessionOptions): string | undefined {
-		this.sessionId = options?.id ?? randomUUID();
+		this.sessionId = options?.id ?? createSessionId();
 		const timestamp = new Date().toISOString();
 		const header: SessionHeader = {
 			type: "session",
@@ -1172,7 +1193,7 @@ export class SessionManager {
 		// Filter out LabelEntry from path - we'll recreate them from the resolved map
 		const pathWithoutLabels = path.filter((e) => e.type !== "label");
 
-		const newSessionId = randomUUID();
+		const newSessionId = createSessionId();
 		const timestamp = new Date().toISOString();
 		const fileTimestamp = timestamp.replace(/[:.]/g, "-");
 		const newSessionFile = join(this.getSessionDir(), `${fileTimestamp}_${newSessionId}.jsonl`);
@@ -1325,7 +1346,7 @@ export class SessionManager {
 		}
 
 		// Create new session file with new ID but forked content
-		const newSessionId = randomUUID();
+		const newSessionId = createSessionId();
 		const timestamp = new Date().toISOString();
 		const fileTimestamp = timestamp.replace(/[:.]/g, "-");
 		const newSessionFile = join(dir, `${fileTimestamp}_${newSessionId}.jsonl`);
