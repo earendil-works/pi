@@ -137,6 +137,15 @@ export interface StreamOptions {
 	 */
 	maxRetryDelayMs?: number;
 	/**
+	 * Maximum idle time in milliseconds to wait for a streaming chunk before
+	 * aborting. If no data arrives within this window, the stream is terminated
+	 * with a StreamIdleTimeoutError. This guards against silently dropped
+	 * connections where the server stops sending but the TCP socket stays open.
+	 *
+	 * Set to 0 or omit to disable (default). Recommended: 90000 (90 seconds).
+	 */
+	streamIdleTimeoutMs?: number;
+	/**
 	 * Optional metadata to include in API requests.
 	 * Providers extract the fields they understand and ignore the rest.
 	 * For example, Anthropic uses `user_id` for abuse tracking and rate limiting.
