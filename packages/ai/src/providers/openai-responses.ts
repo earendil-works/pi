@@ -88,7 +88,9 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses", OpenAIRes
 		try {
 			// Create OpenAI client
 			const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
-			const client = createClient(model, context, apiKey, options?.headers);
+			const cacheRetention = resolveCacheRetention(options?.cacheRetention);
+			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
+			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId);
 			let params = buildParams(model, context, options);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -151,6 +153,7 @@ function createClient(
 	context: Context,
 	apiKey?: string,
 	optionsHeaders?: Record<string, string>,
+	sessionId?: string,
 ) {
 	if (!apiKey) {
 		if (!process.env.OPENAI_API_KEY) {
@@ -169,6 +172,11 @@ function createClient(
 			hasImages,
 		});
 		Object.assign(headers, copilotHeaders);
+	}
+
+	if (sessionId && model.provider === "openai" && model.baseUrl.includes("api.openai.com")) {
+		headers.session_id = sessionId;
+		headers["x-client-request-id"] = sessionId;
 	}
 
 	// Merge options headers last so they can override defaults
