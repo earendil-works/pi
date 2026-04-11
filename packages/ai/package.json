@@ -1,5 +1,5 @@
 {
-	"name": "@mariozechner/pi-ai",
+	"name": "@tculpepp/pi-ai",
 	"version": "0.66.1",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
@@ -96,11 +96,14 @@
 		"unified",
 		"api"
 	],
-	"author": "Mario Zechner",
+	"author": "Tom Culpepper",
+	"contributors": [
+		{ "name": "Mario Zechner", "url": "https://github.com/badlogic" }
+	],
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/badlogic/pi-mono.git",
+		"url": "git+https://github.com/tculpepp/secure-pi-mono.git",
 		"directory": "packages/ai"
 	},
 	"engines": {

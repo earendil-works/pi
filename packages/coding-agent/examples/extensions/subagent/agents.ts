@@ -4,7 +4,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getAgentDir, parseFrontmatter } from "@mariozechner/pi-coding-agent";
+import { getAgentDir, parseFrontmatter } from "@tculpepp/pi-coding-agent";
 
 export type AgentScope = "user" | "project" | "both";
 

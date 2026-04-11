@@ -23,7 +23,7 @@ A Slack bot powered by an LLM that can execute bash commands, read/write files, 
 ## Installation
 
 ```bash
-npm install @mariozechner/pi-mom
+npm install @tculpepp/pi-mom
 ```
 
 ### Slack App Setup
@@ -108,7 +108,7 @@ export ANTHROPIC_API_KEY=sk-ant-...
 
 2. **OAuth Login via coding agent command** (Recommended for Claude Pro/Max)
 
-- run interactive coding agent session: `npx @mariozechner/pi-coding-agent`
+- run interactive coding agent session: `npx @tculpepp/pi-coding-agent`
 - enter `/login` command
   - choose "Anthropic" provider
   - follow instructions in the browser
@@ -364,7 +364,7 @@ You can write event files directly to `data/events/` on the host machine. This l
 
 ### Updating Mom
 
-Update mom anytime with `npm install -g @mariozechner/pi-mom`. This only updates the Node.js app on your host. Anything mom installed inside the Docker container remains unchanged.
+Update mom anytime with `npm install -g @tculpepp/pi-mom`. This only updates the Node.js app on your host. Anything mom installed inside the Docker container remains unchanged.
 
 ## Message History
 

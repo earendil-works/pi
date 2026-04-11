@@ -32,7 +32,7 @@
 
 ### Added
 
-- Exported `CustomProviderDialog` from `@mariozechner/pi-web-ui` ([#2267](https://github.com/badlogic/pi-mono/issues/2267))
+- Exported `CustomProviderDialog` from `@tculpepp/pi-web-ui` ([#2267](https://github.com/badlogic/pi-mono/issues/2267))
 
 ## [0.58.4] - 2026-03-16
 
@@ -57,7 +57,7 @@
 
 ### Fixed
 
-- Build `@mariozechner/pi-web-ui` with `tsc` instead of `tsgo` so Lit decorator-based state updates rerender correctly.
+- Build `@tculpepp/pi-web-ui` with `tsc` instead of `tsgo` so Lit decorator-based state updates rerender correctly.
 
 ## [0.58.2] - 2026-03-15
 
@@ -269,19 +269,19 @@
 
 ### Breaking Changes
 
-- **Agent class moved to `@mariozechner/pi-agent-core`**: The `Agent` class, `AgentState`, and related types are no longer exported from this package. Import them from `@mariozechner/pi-agent-core` instead.
+- **Agent class moved to `@tculpepp/pi-agent-core`**: The `Agent` class, `AgentState`, and related types are no longer exported from this package. Import them from `@tculpepp/pi-agent-core` instead.
 
 - **Transport abstraction removed**: `ProviderTransport`, `AppTransport`, `AgentTransport` interface, and related types have been removed. The `Agent` class now uses `streamFn` for custom streaming.
 
-- **`AppMessage` renamed to `AgentMessage`**: Now imported from `@mariozechner/pi-agent-core`. Custom message types use declaration merging on `CustomAgentMessages` interface.
+- **`AppMessage` renamed to `AgentMessage`**: Now imported from `@tculpepp/pi-agent-core`. Custom message types use declaration merging on `CustomAgentMessages` interface.
 
 - **`UserMessageWithAttachments` is now a custom message type**: Has `role: "user-with-attachments"` instead of `role: "user"`. Use `isUserMessageWithAttachments()` type guard.
 
-- **`CustomMessages` interface removed**: Use declaration merging on `CustomAgentMessages` from `@mariozechner/pi-agent-core` instead.
+- **`CustomMessages` interface removed**: Use declaration merging on `CustomAgentMessages` from `@tculpepp/pi-agent-core` instead.
 
 - **`agent.appendMessage()` removed**: Use `agent.queueMessage()` instead.
 
-- **Agent event types changed**: `AgentInterface` now handles new event types from `@mariozechner/pi-agent-core`: `message_start`, `message_end`, `message_update`, `turn_start`, `turn_end`, `agent_start`, `agent_end`.
+- **Agent event types changed**: `AgentInterface` now handles new event types from `@tculpepp/pi-agent-core`: `message_start`, `message_end`, `message_update`, `turn_start`, `turn_end`, `agent_start`, `agent_end`.
 
 ### Added
 
@@ -301,7 +301,7 @@
 
 ### Removed
 
-- `Agent` class (moved to `@mariozechner/pi-agent-core`)
+- `Agent` class (moved to `@tculpepp/pi-agent-core`)
 - `ProviderTransport` class
 - `AppTransport` class
 - `AgentTransport` interface
@@ -313,7 +313,7 @@
 
 **Before (0.30.x):**
 ```typescript
-import { Agent, ProviderTransport, type AppMessage } from '@mariozechner/pi-web-ui';
+import { Agent, ProviderTransport, type AppMessage } from '@tculpepp/pi-web-ui';
 
 const agent = new Agent({
   transport: new ProviderTransport(),
@@ -323,8 +323,8 @@ const agent = new Agent({
 
 **After:**
 ```typescript
-import { Agent, type AgentMessage } from '@mariozechner/pi-agent-core';
-import { defaultConvertToLlm } from '@mariozechner/pi-web-ui';
+import { Agent, type AgentMessage } from '@tculpepp/pi-agent-core';
+import { defaultConvertToLlm } from '@tculpepp/pi-web-ui';
 
 const agent = new Agent({
   convertToLlm: (messages: AgentMessage[]) => {
@@ -338,14 +338,14 @@ const agent = new Agent({
 **Custom message types:**
 ```typescript
 // Before: declaration merging on CustomMessages
-declare module "@mariozechner/pi-web-ui" {
+declare module "@tculpepp/pi-web-ui" {
   interface CustomMessages {
     "my-message": MyMessage;
   }
 }
 
 // After: declaration merging on CustomAgentMessages
-declare module "@mariozechner/pi-agent-core" {
+declare module "@tculpepp/pi-agent-core" {
   interface CustomAgentMessages {
     "my-message": MyMessage;
   }

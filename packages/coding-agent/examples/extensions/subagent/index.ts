@@ -16,12 +16,12 @@ import { spawn } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentToolResult } from "@mariozechner/pi-agent-core";
-import type { Message } from "@mariozechner/pi-ai";
-import { StringEnum } from "@mariozechner/pi-ai";
-import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@mariozechner/pi-coding-agent";
-import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
+import type { AgentToolResult } from "@tculpepp/pi-agent-core";
+import type { Message } from "@tculpepp/pi-ai";
+import { StringEnum } from "@tculpepp/pi-ai";
+import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@tculpepp/pi-coding-agent";
+import { Container, Markdown, Spacer, Text } from "@tculpepp/pi-tui";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
 
 const MAX_PARALLEL_TASKS = 8;
@@ -434,8 +434,8 @@ export default function (pi: ExtensionAPI) {
 		description: [
 			"Delegate tasks to specialized subagents with isolated context.",
 			"Modes: single (agent + task), parallel (tasks array), chain (sequential with {previous} placeholder).",
-			'Default agent scope is "user" (from ~/.pi/agent/agents).',
-			'To enable project-local agents in .pi/agents, set agentScope: "both" (or "project").',
+			'Default agent scope is "user" (from ~/.spi/agent/agents).',
+			'To enable project-local agents in .spi/agents, set agentScope: "both" (or "project").',
 		].join(" "),
 		parameters: SubagentParams,
 

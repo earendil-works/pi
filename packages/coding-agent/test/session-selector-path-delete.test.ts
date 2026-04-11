@@ -1,4 +1,4 @@
-import { setKeybindings } from "@mariozechner/pi-tui";
+import { setKeybindings } from "@tculpepp/pi-tui";
 import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.js";
 import type { SessionInfo } from "../src/core/session-manager.js";

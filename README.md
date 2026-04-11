@@ -75,10 +75,10 @@ See [packages/coding-agent/docs/models.md](packages/coding-agent/docs/models.md)
 
 | Package | Description |
 |---------|-------------|
-| **[@mariozechner/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
-| **[@mariozechner/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
-| **[@mariozechner/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
-| **[@mariozechner/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
+| **[@tculpepp/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
+| **[@tculpepp/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
+| **[@tculpepp/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
+| **[@tculpepp/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
 
 ## Development
 
@@ -94,7 +94,7 @@ npm run check        # Lint, format, and type check
 
 ## Upstream
 
-Original project: [badlogic/pi-mono](https://github.com/badlogic/pi-mono)
+Original project: [badlogic/pi-mono](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://github.com/badlogic). All credit for the core agent, TUI, and provider infrastructure belongs to the upstream project. This fork adds closed-network and secure-mode defaults on top.
 
 ## License
 

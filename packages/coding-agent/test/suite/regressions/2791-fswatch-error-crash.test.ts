@@ -51,7 +51,7 @@ describe("issue #2791 fs.watch error event crashes process", () => {
 			`
 import { setTheme, stopThemeWatcher } from "${themeModulePath}";
 
-process.env.PI_CODING_AGENT_DIR = "${agentDir}";
+process.env.SPI_CODING_AGENT_DIR = "${agentDir}";
 
 setTheme("custom-test", true);
 
@@ -90,7 +90,7 @@ process.exit(0);
 			_stdout = execFileSync("npx", ["tsx", scriptPath], {
 				timeout: 10000,
 				encoding: "utf-8",
-				env: { ...process.env, PI_CODING_AGENT_DIR: agentDir },
+				env: { ...process.env, SPI_CODING_AGENT_DIR: agentDir },
 				stdio: ["pipe", "pipe", "pipe"],
 			});
 			exitCode = 0;

@@ -2,7 +2,7 @@
  * Component for displaying bash command execution with streaming output.
  */
 
-import { Container, Loader, Spacer, Text, type TUI } from "@mariozechner/pi-tui";
+import { Container, Loader, Spacer, Text, type TUI } from "@tculpepp/pi-tui";
 import stripAnsi from "strip-ansi";
 import {
 	DEFAULT_MAX_BYTES,

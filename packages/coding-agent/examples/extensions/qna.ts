@@ -7,9 +7,9 @@
  * 3. Loads the result into the editor for user to fill in answers
  */
 
-import { complete, type UserMessage } from "@mariozechner/pi-ai";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { BorderedLoader } from "@mariozechner/pi-coding-agent";
+import { complete, type UserMessage } from "@tculpepp/pi-ai";
+import type { ExtensionAPI } from "@tculpepp/pi-coding-agent";
+import { BorderedLoader } from "@tculpepp/pi-coding-agent";
 
 const SYSTEM_PROMPT = `You are a question extractor. Given text from a conversation, extract any questions that need answering and format them for the user to fill in.
 

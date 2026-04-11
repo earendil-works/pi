@@ -82,7 +82,7 @@ export {
 	writeToolDefinition,
 } from "./write.js";
 
-import type { AgentTool } from "@mariozechner/pi-agent-core";
+import type { AgentTool } from "@tculpepp/pi-agent-core";
 import type { ToolDefinition } from "../extensions/types.js";
 import {
 	type BashToolOptions,

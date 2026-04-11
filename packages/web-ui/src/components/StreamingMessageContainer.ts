@@ -1,5 +1,5 @@
-import type { AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
-import type { ToolResultMessage } from "@mariozechner/pi-ai";
+import type { AgentMessage, AgentTool } from "@tculpepp/pi-agent-core";
+import type { ToolResultMessage } from "@tculpepp/pi-ai";
 import { html, LitElement } from "lit";
 import { property, state } from "lit/decorators.js";
 

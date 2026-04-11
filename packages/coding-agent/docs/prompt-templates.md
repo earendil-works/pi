@@ -8,8 +8,8 @@ Prompt templates are Markdown snippets that expand into full prompts. Type `/nam
 
 Pi loads prompt templates from:
 
-- Global: `~/.pi/agent/prompts/*.md`
-- Project: `.pi/prompts/*.md`
+- Global: `~/.spi/agent/prompts/*.md`
+- Project: `.spi/prompts/*.md`
 - Packages: `prompts/` directories or `pi.prompts` entries in `package.json`
 - Settings: `prompts` array with files or directories
 - CLI: `--prompt-template <path>` (repeatable)

@@ -10,7 +10,7 @@ For each PR URL, do the following in order:
 4. Analyze the PR diff. Read all relevant code files in full with no truncation from the current main branch and compare against the diff. Do not fetch PR file blobs unless a file is missing on main or the diff context is insufficient. Include related code paths that are not in the diff but are required to validate behavior.
 5. Check for a changelog entry in the relevant `packages/*/CHANGELOG.md` files. Report whether an entry exists. If missing, state that a changelog entry is required before merge and that you will add it if the user decides to merge. Follow the changelog format rules in AGENTS.md. Verify:
    - Entry uses correct section (`### Breaking Changes`, `### Added`, `### Fixed`, etc.)
-   - External contributions include PR link and author: `Fixed foo ([#123](https://github.com/badlogic/pi-mono/pull/123) by [@user](https://github.com/user))`
+   - External contributions include PR link and author: `Fixed foo ([#123](https://github.com/tculpepp/secure-pi-mono/pull/123) by [@user](https://github.com/user))`
    - Breaking changes are in `### Breaking Changes`, not just `### Fixed`
 6. Check if packages/coding-agent/README.md, packages/coding-agent/docs/*.md, packages/coding-agent/examples/**/*.md require modification. This is usually the case when existing features have been changed, or new features have been added.
 7. Provide a structured review with these sections:

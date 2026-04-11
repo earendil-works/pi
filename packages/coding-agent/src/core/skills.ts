@@ -376,7 +376,7 @@ function escapeXml(str: string): string {
 export interface LoadSkillsOptions {
 	/** Working directory for project-local skills. Default: process.cwd() */
 	cwd?: string;
-	/** Agent config directory for global skills. Default: ~/.pi/agent */
+	/** Agent config directory for global skills. Default: ~/.spi/agent */
 	agentDir?: string;
 	/** Explicit skill paths (files or directories) */
 	skillPaths?: string[];

@@ -11,7 +11,7 @@ import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
-import { type AssistantMessage, getModel, Type } from "@mariozechner/pi-ai";
+import { type AssistantMessage, getModel, Type } from "@tculpepp/pi-ai";
 import { AuthStorage } from "../src/core/auth-storage.js";
 import { createExtensionRuntime } from "../src/core/extensions/loader.js";
 import type { ToolDefinition } from "../src/core/extensions/types.js";

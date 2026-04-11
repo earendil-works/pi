@@ -46,7 +46,7 @@ function printPackageCommandHelp(command: PackageCommand): void {
 Install a package and add it to settings.
 
 Options:
-  -l, --local    Install project-locally (.pi/settings.json)
+  -l, --local    Install project-locally (.spi/settings.json)
 
 Examples:
   ${APP_NAME} install npm:@foo/bar
@@ -66,7 +66,7 @@ Remove a package and its source from settings.
 Alias: ${APP_NAME} uninstall <source> [-l]
 
 Options:
-  -l, --local    Remove from project settings (.pi/settings.json)
+  -l, --local    Remove from project settings (.spi/settings.json)
 
 Examples:
   ${APP_NAME} remove npm:@foo/bar

@@ -9,7 +9,7 @@
  *   ping                        → "pong" (instant, no LLM)
  *   time                        → current time (instant, no LLM)
  */
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@tculpepp/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
 	pi.on("input", async (event, ctx) => {

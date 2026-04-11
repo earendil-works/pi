@@ -31,13 +31,13 @@ npm workspaces monorepo under `packages/`. All packages share a lockstep version
 
 | Package | npm name | Purpose |
 |---------|----------|---------|
-| `packages/ai/` | `@mariozechner/pi-ai` | Unified LLM API — 20+ providers (OpenAI, Anthropic, Google, Mistral, Bedrock, etc.) |
-| `packages/agent/` | `@mariozechner/pi-agent-core` | Stateful agent with tool execution and event streaming |
-| `packages/coding-agent/` | `@mariozechner/pi-coding-agent` | CLI harness (`read`, `write`, `edit`, `bash` tools) |
-| `packages/tui/` | `@mariozechner/pi-tui` | Terminal UI library with differential rendering |
-| `packages/web-ui/` | `@mariozechner/pi-web-ui` | Web components for AI chat interfaces |
-| `packages/mom/` | `@mariozechner/pi-mom` | Slack bot that builds its own tools |
-| `packages/pods/` | `@mariozechner/pi` | GPU pod manager for vLLM deployments |
+| `packages/ai/` | `@tculpepp/pi-ai` | Unified LLM API — 20+ providers (OpenAI, Anthropic, Google, Mistral, Bedrock, etc.) |
+| `packages/agent/` | `@tculpepp/pi-agent-core` | Stateful agent with tool execution and event streaming |
+| `packages/coding-agent/` | `@tculpepp/pi-coding-agent` | CLI harness (`read`, `write`, `edit`, `bash` tools) |
+| `packages/tui/` | `@tculpepp/pi-tui` | Terminal UI library with differential rendering |
+| `packages/web-ui/` | `@tculpepp/pi-web-ui` | Web components for AI chat interfaces |
+| `packages/mom/` | `@tculpepp/pi-mom` | Slack bot that builds its own tools |
+| `packages/pods/` | `@tculpepp/pi` | GPU pod manager for vLLM deployments |
 
 Dependency hierarchy: `pi-ai` → `pi-agent-core` → `pi-coding-agent` (+ `pi-tui`)
 

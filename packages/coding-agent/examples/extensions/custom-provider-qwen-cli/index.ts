@@ -9,8 +9,8 @@
  *   # Then /login qwen-cli, or set QWEN_CLI_API_KEY=...
  */
 
-import type { OAuthCredentials, OAuthLoginCallbacks } from "@mariozechner/pi-ai";
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { OAuthCredentials, OAuthLoginCallbacks } from "@tculpepp/pi-ai";
+import type { ExtensionAPI } from "@tculpepp/pi-coding-agent";
 
 // =============================================================================
 // Constants

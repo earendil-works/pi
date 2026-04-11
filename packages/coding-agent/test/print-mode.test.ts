@@ -1,4 +1,4 @@
-import type { AssistantMessage, ImageContent } from "@mariozechner/pi-ai";
+import type { AssistantMessage, ImageContent } from "@tculpepp/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runPrintMode } from "../src/modes/print-mode.js";
 

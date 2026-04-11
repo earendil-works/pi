@@ -1,6 +1,6 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import type { ToolResultMessage } from "@mariozechner/pi-ai";
 import { type Static, Type } from "@sinclair/typebox";
+import type { AgentTool } from "@tculpepp/pi-agent-core";
+import type { ToolResultMessage } from "@tculpepp/pi-ai";
 import { html } from "lit";
 import { createRef, ref } from "lit/directives/ref.js";
 import { FileText } from "lucide";

@@ -5,7 +5,7 @@
  * Uses the last assistant message to generate a commit message.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@tculpepp/pi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
 	pi.on("session_shutdown", async (_event, ctx) => {

@@ -98,7 +98,7 @@ import {
   createAgentSessionServices,
   getAgentDir,
   SessionManager,
-} from "@mariozechner/pi-coding-agent";
+} from "@tculpepp/pi-coding-agent";
 
 const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
   const services = await createAgentSessionServices({ cwd });
@@ -161,7 +161,7 @@ await runtime.fork("entry-id");
 ### Fixed
 
 - Fixed extension-queued user messages to refresh the interactive pending-message list so messages submitted while a turn is active are no longer silently dropped ([#2674](https://github.com/badlogic/pi-mono/pull/2674) by [@mrexodia](https://github.com/mrexodia))
-- Fixed monorepo `tsconfig.json` path mappings to resolve `@mariozechner/pi-ai` subpath exports to source files in development checkouts ([#2625](https://github.com/badlogic/pi-mono/pull/2625) by [@ferologics](https://github.com/ferologics))
+- Fixed monorepo `tsconfig.json` path mappings to resolve `@tculpepp/pi-ai` subpath exports to source files in development checkouts ([#2625](https://github.com/badlogic/pi-mono/pull/2625) by [@ferologics](https://github.com/ferologics))
 - Fixed TUI cell size response handling to consume only exact `CSI 6 ; height ; width t` replies, so bare `Escape` is no longer swallowed while waiting for terminal image metadata ([#2661](https://github.com/badlogic/pi-mono/issues/2661))
 - Fixed Kitty keyboard protocol keypad functional keys to normalize to logical digits, symbols, and navigation keys, so numpad input in terminals such as iTerm2 no longer inserts Private Use Area gibberish or gets ignored ([#2650](https://github.com/badlogic/pi-mono/issues/2650))
 
@@ -194,7 +194,7 @@ await runtime.fork("entry-id");
 - Fixed repeated compactions dropping messages that were kept by an earlier compaction by re-summarizing from the previous kept boundary and recalculating `tokensBefore` from the rebuilt session context ([#2608](https://github.com/badlogic/pi-mono/issues/2608))
 - Fixed interactive compaction UI updates so `ctx.compact()` rebuilds the chat through unified compaction events, manual compaction no longer duplicates the summary block, and the `trigger-compact` example only fires when context usage crosses its threshold ([#2617](https://github.com/badlogic/pi-mono/issues/2617))
 - Fixed interactive compaction completion to append a synthetic compaction summary after rebuilding the chat so the latest compaction remains visible at the bottom
-- Fixed skill discovery to stop recursing once a directory contains `SKILL.md`, and to ignore root `*.md` files in `.agents/skills` while keeping root markdown skill files supported in `~/.pi/agent/skills`, `.pi/skills`, and package `skills/` directories ([#2603](https://github.com/badlogic/pi-mono/issues/2603))
+- Fixed skill discovery to stop recursing once a directory contains `SKILL.md`, and to ignore root `*.md` files in `.agents/skills` while keeping root markdown skill files supported in `~/.spi/agent/skills`, `.spi/skills`, and package `skills/` directories ([#2603](https://github.com/badlogic/pi-mono/issues/2603))
 - Fixed edit tool diff rendering for multi-edit operations with large unchanged gaps so distant edits collapse intermediate context instead of dumping the full unchanged middle block
 - Fixed edit tool error rendering to avoid repeating the same exact-match failure in both the preview and result blocks
 - Fixed auto-compaction overflow recovery for Ollama models when the backend returns explicit `prompt too long; exceeded max context length ...` errors instead of silently truncating input ([#2626](https://github.com/badlogic/pi-mono/issues/2626))
@@ -241,7 +241,7 @@ return streamSimple(model, messages, {
 - Fixed file mutation queue ordering so concurrent `edit` and `write` operations targeting the same file stay serialized in request order instead of being reordered during queue-key resolution
 - Fixed `models.json` shell-command auth and headers to resolve at request time instead of being cached into long-lived model state. pi now leaves TTL, caching, and recovery policy to user-provided wrapper commands because arbitrary shell commands need provider-specific strategies ([#1835](https://github.com/badlogic/pi-mono/issues/1835))
 - Fixed Google and Vertex cost calculation to subtract cached prompt tokens from billable input tokens instead of double-counting them when providers report `cachedContentTokenCount` ([#2588](https://github.com/badlogic/pi-mono/pull/2588) by [@sparkleMing](https://github.com/sparkleMing))
-- Added missing `ajv` direct dependency; previously relied on transitive install via `@mariozechner/pi-ai` which broke standalone installs ([#2252](https://github.com/badlogic/pi-mono/issues/2252))
+- Added missing `ajv` direct dependency; previously relied on transitive install via `@tculpepp/pi-ai` which broke standalone installs ([#2252](https://github.com/badlogic/pi-mono/issues/2252))
 - Fixed `/export` HTML backgrounds to honor `theme.export.pageBg`, `cardBg`, and `infoBg` instead of always deriving them from `userMessageBg` ([#2565](https://github.com/badlogic/pi-mono/issues/2565))
 - Fixed interactive bash execution collapsed previews to recompute visual line wrapping at render time, so previews respect the current terminal width after resizes and split-pane width changes ([#2569](https://github.com/badlogic/pi-mono/issues/2569))
 - Fixed RPC `get_session_stats` to expose `contextUsage`, so headless clients can read actual current context-window usage instead of deriving it from token totals ([#2550](https://github.com/badlogic/pi-mono/issues/2550))
@@ -288,7 +288,7 @@ Examples:
 
 ### Changed
 
-- Built-in tools now work like custom tools in extensions. To get built-in tool definitions, import `readToolDefinition` / `createReadToolDefinition()` and the equivalent `bash`, `edit`, `write`, `grep`, `find`, and `ls` exports from `@mariozechner/pi-coding-agent`.
+- Built-in tools now work like custom tools in extensions. To get built-in tool definitions, import `readToolDefinition` / `createReadToolDefinition()` and the equivalent `bash`, `edit`, `write`, `grep`, `find`, and `ls` exports from `@tculpepp/pi-coding-agent`.
 - Cleaned up `buildSystemPrompt()` so built-in tool snippets and tool-local guidelines come from built-in `ToolDefinition` metadata, while cross-tool and global prompt rules stay in system prompt construction.
 - Added structured `sourceInfo` to `pi.getAllTools()` results for built-in, SDK, and extension tools ([#1734](https://github.com/badlogic/pi-mono/issues/1734))
 
@@ -316,7 +316,7 @@ Examples:
 
 ### Added
 
-- Added `ToolCallEventResult` to the `@mariozechner/pi-coding-agent` top-level and core extension exports so extension authors can type explicit `tool_call` handler return values ([#2458](https://github.com/badlogic/pi-mono/issues/2458))
+- Added `ToolCallEventResult` to the `@tculpepp/pi-coding-agent` top-level and core extension exports so extension authors can type explicit `tool_call` handler return values ([#2458](https://github.com/badlogic/pi-mono/issues/2458))
 
 ### Changed
 
@@ -405,7 +405,7 @@ Examples:
 
 ### New Features
 
-- Faster startup by lazy-loading `@mariozechner/pi-ai` provider SDKs on first use instead of import time ([#2297](https://github.com/badlogic/pi-mono/issues/2297))
+- Faster startup by lazy-loading `@tculpepp/pi-ai` provider SDKs on first use instead of import time ([#2297](https://github.com/badlogic/pi-mono/issues/2297))
 - Better provider retry behavior when providers return error messages as responses ([#2264](https://github.com/badlogic/pi-mono/issues/2264))
 - Better terminal integration via OSC 133 command-executed markers ([#2242](https://github.com/badlogic/pi-mono/issues/2242))
 - Better Git footer branch detection for repositories using reftable storage ([#2300](https://github.com/badlogic/pi-mono/issues/2300))
@@ -416,7 +416,7 @@ Examples:
 
 ### Changed
 
-- Lazy-load built-in `@mariozechner/pi-ai` provider modules and root provider wrappers so coding-agent startup no longer eagerly loads provider SDKs before first use ([#2297](https://github.com/badlogic/pi-mono/issues/2297))
+- Lazy-load built-in `@tculpepp/pi-ai` provider modules and root provider wrappers so coding-agent startup no longer eagerly loads provider SDKs before first use ([#2297](https://github.com/badlogic/pi-mono/issues/2297))
 
 ### Fixed
 
@@ -501,7 +501,7 @@ Examples:
 - Fixed EXIF orientation not being applied during image convert and resize, causing JPEG and WebP images from phone cameras to display rotated or mirrored ([#2105](https://github.com/badlogic/pi-mono/pull/2105) by [@melihmucuk](https://github.com/melihmucuk))
 - Fixed the default coding-agent system prompt to include only the current date in ISO format, not the current time, so prompt prefixes stay cacheable across reloads and resumed sessions ([#2131](https://github.com/badlogic/pi-mono/issues/2131))
 - Fixed retry regex to match `server_error` and `internal_error` error types from providers, improving automatic retry coverage ([#2117](https://github.com/badlogic/pi-mono/pull/2117) by [@MadKangYu](https://github.com/MadKangYu))
-- Fixed example extensions to support `PI_CODING_AGENT_DIR` environment variable for custom agent directory paths ([#2009](https://github.com/badlogic/pi-mono/pull/2009) by [@smithbm2316](https://github.com/smithbm2316))
+- Fixed example extensions to support `SPI_CODING_AGENT_DIR` environment variable for custom agent directory paths ([#2009](https://github.com/badlogic/pi-mono/pull/2009) by [@smithbm2316](https://github.com/smithbm2316))
 - Fixed tool result images not being sent in `function_call_output` items for OpenAI Responses API providers, causing image data to be silently dropped in tool results ([#2104](https://github.com/badlogic/pi-mono/issues/2104))
 - Fixed assistant content being sent as structured content blocks instead of plain strings in the `openai-completions` provider, causing errors with some OpenAI-compatible backends ([#2008](https://github.com/badlogic/pi-mono/pull/2008) by [@geraldoaax](https://github.com/geraldoaax))
 - Fixed error details in OpenAI Responses `response.failed` handler to include status code, error code, and message instead of a generic failure ([#1956](https://github.com/badlogic/pi-mono/pull/1956) by [@drewburr](https://github.com/drewburr))
@@ -558,7 +558,7 @@ Examples:
 
 - Fixed RPC mode stdin/stdout framing to use strict LF-delimited JSONL instead of `readline`, so payloads containing `U+2028` or `U+2029` no longer corrupt command or event streams ([#1911](https://github.com/badlogic/pi-mono/issues/1911))
 - Fixed automatic overlay focus restoration in extension UIs to skip non-capturing overlays, and fixed overlay hide behavior to only reassign focus when the hidden overlay had focus ([#1916](https://github.com/badlogic/pi-mono/pull/1916) by [@nicobailon](https://github.com/nicobailon))
-- Fixed `pi config` misclassifying `~/.agents/skills` as project-scoped in non-git directories under `$HOME`, so toggling those skills no longer writes project overrides to `.pi/settings.json` ([#1915](https://github.com/badlogic/pi-mono/issues/1915))
+- Fixed `pi config` misclassifying `~/.agents/skills` as project-scoped in non-git directories under `$HOME`, so toggling those skills no longer writes project overrides to `.spi/settings.json` ([#1915](https://github.com/badlogic/pi-mono/issues/1915))
 
 ## [0.56.3] - 2026-03-06
 
@@ -610,7 +610,7 @@ Examples:
 - Fixed OpenAI Responses replay to omit empty thinking blocks, avoiding invalid no-op reasoning items in follow-up turns.
 - Updated Mistral integration to use the native SDK-backed provider and conversations API, including coding-agent model/provider wiring and Mistral setup documentation ([#1716](https://github.com/badlogic/pi-mono/issues/1716)).
 - Fixed Antigravity reliability: endpoint cascade on 403/404, added autopush sandbox fallback, removed extra fingerprint headers ([#1830](https://github.com/badlogic/pi-mono/issues/1830)).
-- Fixed `@mariozechner/pi-ai/oauth` extension imports in published installs by resolving the subpath directly from built `dist` files instead of package-root wrapper shims ([#1856](https://github.com/badlogic/pi-mono/issues/1856)).
+- Fixed `@tculpepp/pi-ai/oauth` extension imports in published installs by resolving the subpath directly from built `dist` files instead of package-root wrapper shims ([#1856](https://github.com/badlogic/pi-mono/issues/1856)).
 - Fixed Gemini 3 multi-turn tool use losing structured context by using `skip_thought_signature_validator` sentinel for unsigned function calls instead of text fallback ([#1829](https://github.com/badlogic/pi-mono/issues/1829)).
 - Fixed model selector filter not accepting typed characters in VS Code 1.110+ due to missing Kitty CSI-u printable decoding in the `Input` component ([#1857](https://github.com/badlogic/pi-mono/issues/1857))
 - Fixed editor/footer visibility drift during terminal resize by forcing full redraws when terminal width or height changes ([#1844](https://github.com/badlogic/pi-mono/pull/1844) by [@ghoulr](https://github.com/ghoulr)).
@@ -635,7 +635,7 @@ Examples:
 ### Breaking Changes
 
 - Changed scoped model thinking semantics. Scoped entries without an explicit `:<thinking>` suffix now inherit the current session thinking level when selected, instead of applying a startup-captured default.
-- Moved Node OAuth runtime exports off the top-level `@mariozechner/pi-ai` entry. OAuth login and refresh must be imported from `@mariozechner/pi-ai/oauth` ([#1814](https://github.com/badlogic/pi-mono/issues/1814)).
+- Moved Node OAuth runtime exports off the top-level `@tculpepp/pi-ai` entry. OAuth login and refresh must be imported from `@tculpepp/pi-ai/oauth` ([#1814](https://github.com/badlogic/pi-mono/issues/1814)).
 
 ### Added
 
@@ -655,7 +655,7 @@ Examples:
 - Fixed TUI width handling for regional indicator symbols to prevent wrap drift and stale characters during streaming ([#1783](https://github.com/badlogic/pi-mono/issues/1783)).
 - Fixed Kitty CSI-u handling to ignore unsupported modifiers so modifier-only events do not insert printable characters ([#1807](https://github.com/badlogic/pi-mono/issues/1807)).
 - Fixed single-line paste handling to insert text atomically and avoid repeated `@` autocomplete scans on large pastes ([#1812](https://github.com/badlogic/pi-mono/issues/1812)).
-- Fixed extension loading with the new `@mariozechner/pi-ai/oauth` export path by aliasing the oauth subpath in the extension loader and development path mapping ([#1814](https://github.com/badlogic/pi-mono/issues/1814)).
+- Fixed extension loading with the new `@tculpepp/pi-ai/oauth` export path by aliasing the oauth subpath in the extension loader and development path mapping ([#1814](https://github.com/badlogic/pi-mono/issues/1814)).
 - Fixed browser-safe provider loading regressions by preloading the Bedrock provider module in compiled Bun binaries and rebuilding binaries against fresh workspace dependencies ([#1814](https://github.com/badlogic/pi-mono/issues/1814)).
 - Fixed GNU screen terminal detection by downgrading theme output to 256-color mode for `screen*` TERM values ([#1809](https://github.com/badlogic/pi-mono/issues/1809)).
 - Fixed branch summarization queue handling so messages typed while summaries are generated are processed correctly ([#1803](https://github.com/badlogic/pi-mono/issues/1803)).
@@ -666,7 +666,7 @@ Examples:
 - Fixed Groq Qwen3 reasoning effort mapping for OpenAI-compatible models ([#1745](https://github.com/badlogic/pi-mono/issues/1745)).
 - Fixed Bedrock `AWS_PROFILE` region resolution by honoring profile `region` values ([#1800](https://github.com/badlogic/pi-mono/issues/1800)).
 - Fixed Gemini 3.1 thinking-level detection for `google` and `google-vertex` providers ([#1785](https://github.com/badlogic/pi-mono/issues/1785)).
-- Fixed browser bundling compatibility for `@mariozechner/pi-ai` by removing Node-only side effects from default browser import paths ([#1814](https://github.com/badlogic/pi-mono/issues/1814)).
+- Fixed browser bundling compatibility for `@tculpepp/pi-ai` by removing Node-only side effects from default browser import paths ([#1814](https://github.com/badlogic/pi-mono/issues/1814)).
 ## [0.55.4] - 2026-03-02
 
 ### New Features
@@ -718,7 +718,7 @@ Examples:
 
 ### New Features
 
-- Added offline startup mode via `--offline` (or `PI_OFFLINE`) to disable startup network operations, with startup network timeouts to avoid hangs in restricted or offline environments.
+- Added offline startup mode via `--offline` (or `SPI_OFFLINE`) to disable startup network operations, with startup network timeouts to avoid hangs in restricted or offline environments.
 - Added `gemini-3.1-pro-preview` model support to the `google-gemini-cli` provider ([#1599](https://github.com/badlogic/pi-mono/pull/1599) by [@audichuang](https://github.com/audichuang)).
 
 ### Fixed
@@ -735,7 +735,7 @@ Examples:
 
 ### Breaking Changes
 
-- Resource precedence for extensions, skills, prompts, themes, and slash-command name collisions is now project-first (`cwd/.pi`) before user-global (`~/.pi/agent`). If you relied on global resources overriding project resources with the same names, rename or reorder your resources.
+- Resource precedence for extensions, skills, prompts, themes, and slash-command name collisions is now project-first (`cwd/.pi`) before user-global (`~/.spi/agent`). If you relied on global resources overriding project resources with the same names, rename or reorder your resources.
 - Extension registration conflicts no longer unload the entire later extension. All extensions stay loaded, and conflicting command/tool/flag names are resolved by first registration in load order.
 
 ## [0.54.2] - 2026-02-23
@@ -860,7 +860,7 @@ Examples:
 
 ### Fixed
 
-- Fixed extension source parsing so dot-prefixed local paths (for example `.pi/extensions/foo.ts`) are treated as local paths instead of git URLs
+- Fixed extension source parsing so dot-prefixed local paths (for example `.spi/extensions/foo.ts`) are treated as local paths instead of git URLs
 - Fixed fd/rg download failing on Windows due to `unzip` not being available; now uses `tar` for both `.tar.gz` and `.zip` extraction, with proper error reporting ([#1348](https://github.com/badlogic/pi-mono/issues/1348))
 - Fixed RPC mode documentation incorrectly stating `ctx.hasUI` is `false`; it is `true` because dialog and fire-and-forget UI methods work via the RPC sub-protocol. Also documented missing unsupported/degraded methods (`pasteToEditor`, `getAllThemes`, `getTheme`, `setTheme`) ([#1411](https://github.com/badlogic/pi-mono/pull/1411) by [@aliou](https://github.com/aliou))
 - Fixed `rg` not available in bash tool by downloading it at startup alongside `fd` ([#1348](https://github.com/badlogic/pi-mono/issues/1348))
@@ -1123,14 +1123,14 @@ Examples:
 - **Android/Termux support**: Pi now runs on Android via Termux. Install with:
   ```bash
   pkg install nodejs termux-api git
-  npm install -g @mariozechner/pi-coding-agent
-  mkdir -p ~/.pi/agent
-  echo "You are running on Android in Termux." > ~/.pi/agent/AGENTS.md
+  npm install -g @tculpepp/pi-coding-agent
+  mkdir -p ~/.spi/agent
+  echo "You are running on Android in Termux." > ~/.spi/agent/AGENTS.md
   ```
   Clipboard operations fall back gracefully when `termux-api` is unavailable. ([#1164](https://github.com/badlogic/pi-mono/issues/1164))
 - **Bash spawn hook**: Extensions can now intercept and modify bash commands before execution via `pi.setBashSpawnHook()`. Adjust the command string, working directory, or environment variables. See [docs/extensions.md](docs/extensions.md). ([#1160](https://github.com/badlogic/pi-mono/pull/1160) by [@mitsuhiko](https://github.com/mitsuhiko))
 - **Linux ARM64 musl support**: Pi now runs on Alpine Linux ARM64 (linux-arm64-musl) via updated clipboard dependency.
-- **Nix/Guix support**: `PI_PACKAGE_DIR` environment variable overrides the package path for content-addressed package managers where store paths tokenize poorly. See [README.md#environment-variables](README.md#environment-variables). ([#1153](https://github.com/badlogic/pi-mono/pull/1153) by [@odysseus0](https://github.com/odysseus0))
+- **Nix/Guix support**: `SPI_PACKAGE_DIR` environment variable overrides the package path for content-addressed package managers where store paths tokenize poorly. See [README.md#environment-variables](README.md#environment-variables). ([#1153](https://github.com/badlogic/pi-mono/pull/1153) by [@odysseus0](https://github.com/odysseus0))
 - **Named session filter**: `/resume` picker now supports filtering to show only named sessions via Ctrl+N. Configurable via `toggleSessionNamedFilter` keybinding. See [docs/keybindings.md](docs/keybindings.md). ([#1128](https://github.com/badlogic/pi-mono/pull/1128) by [@w-winter](https://github.com/w-winter))
 - **Typed tool call events**: Extension developers can narrow `ToolCallEvent` types using `isToolCallEventType()` for better TypeScript support. See [docs/extensions.md#tool-call-events](docs/extensions.md#tool-call-events). ([#1147](https://github.com/badlogic/pi-mono/pull/1147) by [@giuseppeg](https://github.com/giuseppeg))
 - **Extension UI Protocol**: Full RPC documentation and examples for extension dialogs and notifications, enabling headless clients to support interactive extensions. See [docs/rpc.md#extension-ui-protocol](docs/rpc.md#extension-ui-protocol). ([#1144](https://github.com/badlogic/pi-mono/pull/1144) by [@aliou](https://github.com/aliou))
@@ -1145,7 +1145,7 @@ Examples:
 - Added Extension UI Protocol documentation to RPC docs covering all request/response types for extension dialogs and notifications ([#1144](https://github.com/badlogic/pi-mono/pull/1144) by [@aliou](https://github.com/aliou))
 - Added `rpc-demo.ts` example extension exercising all RPC-supported extension UI methods ([#1144](https://github.com/badlogic/pi-mono/pull/1144) by [@aliou](https://github.com/aliou))
 - Added `rpc-extension-ui.ts` TUI example client demonstrating the extension UI protocol with interactive dialogs ([#1144](https://github.com/badlogic/pi-mono/pull/1144) by [@aliou](https://github.com/aliou))
-- Added `PI_PACKAGE_DIR` environment variable to override package path for content-addressed package managers (Nix, Guix) where store paths tokenize poorly ([#1153](https://github.com/badlogic/pi-mono/pull/1153) by [@odysseus0](https://github.com/odysseus0))
+- Added `SPI_PACKAGE_DIR` environment variable to override package path for content-addressed package managers (Nix, Guix) where store paths tokenize poorly ([#1153](https://github.com/badlogic/pi-mono/pull/1153) by [@odysseus0](https://github.com/odysseus0))
 - `/resume` session picker now supports named-only filter toggle (default Ctrl+N, configurable via `toggleSessionNamedFilter`) to show only named sessions ([#1128](https://github.com/badlogic/pi-mono/pull/1128) by [@w-winter](https://github.com/w-winter))
 
 ### Fixed
@@ -1256,7 +1256,7 @@ Examples:
 ### New Features
 
 - **Hugging Face provider**: Access Hugging Face models via OpenAI-compatible Inference Router. Set `HF_TOKEN` environment variable. See [README.md#hugging-face](README.md#hugging-face).
-- **Extended prompt caching**: `PI_CACHE_RETENTION=long` enables 1-hour caching for Anthropic (vs 5min default) and 24-hour for OpenAI (vs in-memory default). Only applies to direct API calls. See [README.md#prompt-caching](README.md#prompt-caching).
+- **Extended prompt caching**: `SPI_CACHE_RETENTION=long` enables 1-hour caching for Anthropic (vs 5min default) and 24-hour for OpenAI (vs in-memory default). Only applies to direct API calls. See [README.md#prompt-caching](README.md#prompt-caching).
 - **Configurable autocomplete height**: `autocompleteMaxVisible` setting (3-20 items, default 5) controls dropdown size. Adjust via `/settings` or `settings.json`.
 - **Shell-style keybindings**: `alt+b`/`alt+f` for word navigation, `ctrl+d` for delete character forward. See [docs/keybindings.md](docs/keybindings.md).
 - **RPC `get_commands`**: Headless clients can now list available commands programmatically. See [docs/rpc.md](docs/rpc.md).
@@ -1264,7 +1264,7 @@ Examples:
 ### Added
 
 - Added Hugging Face provider support via OpenAI-compatible Inference Router ([#994](https://github.com/badlogic/pi-mono/issues/994))
-- Added `PI_CACHE_RETENTION` environment variable to control cache TTL for Anthropic (5m vs 1h) and OpenAI (in-memory vs 24h). Set to `long` for extended retention. ([#967](https://github.com/badlogic/pi-mono/issues/967))
+- Added `SPI_CACHE_RETENTION` environment variable to control cache TTL for Anthropic (5m vs 1h) and OpenAI (in-memory vs 24h). Set to `long` for extended retention. ([#967](https://github.com/badlogic/pi-mono/issues/967))
 - Added `autocompleteMaxVisible` setting for configurable autocomplete dropdown height (3-20 items, default 5) ([#972](https://github.com/badlogic/pi-mono/pull/972) by [@masonc15](https://github.com/masonc15))
 - Added `/files` command to list all file operations (read, write, edit) in the current session
 - Added shell-style keybindings: `alt+b`/`alt+f` for word navigation, `ctrl+d` for delete character forward (when editor has text) ([#1043](https://github.com/badlogic/pi-mono/issues/1043) by [@jasonish](https://github.com/jasonish))
@@ -1329,7 +1329,7 @@ There are multiple SDK breaking changes since v0.49.3. For the quickest migratio
 - Header values in `models.json` now resolve environment variables (if a header value matches an env var name, the env var value is used). This may change behavior if a literal header value accidentally matches an env var name. ([#909](https://github.com/badlogic/pi-mono/issues/909))
 - External packages (npm/git) are now configured via `packages` array in settings.json instead of `extensions`. Existing npm:/git: entries in `extensions` are auto-migrated. ([#645](https://github.com/badlogic/pi-mono/issues/645))
 - Resource loading now uses `ResourceLoader` only and settings.json uses arrays for extensions, skills, prompts, and themes ([#645](https://github.com/badlogic/pi-mono/issues/645))
-- Removed `discoverAuthStorage` and `discoverModels` from the SDK. `AuthStorage` and `ModelRegistry` now default to `~/.pi/agent` paths unless you pass an `agentDir` ([#645](https://github.com/badlogic/pi-mono/issues/645))
+- Removed `discoverAuthStorage` and `discoverModels` from the SDK. `AuthStorage` and `ModelRegistry` now default to `~/.spi/agent` paths unless you pass an `agentDir` ([#645](https://github.com/badlogic/pi-mono/issues/645))
 
 ### Added
 
@@ -1409,7 +1409,7 @@ There are multiple SDK breaking changes since v0.49.3. For the quickest migratio
 - `markdown.codeBlockIndent` setting to customize code block indentation in rendered output ([#855](https://github.com/badlogic/pi-mono/pull/855) by [@terrorobe](https://github.com/terrorobe))
 - Added `inline-bash.ts` example extension for expanding `!{command}` patterns in prompts ([#881](https://github.com/badlogic/pi-mono/pull/881) by [@scutifer](https://github.com/scutifer))
 - Added `antigravity-image-gen.ts` example extension for AI image generation via Google Antigravity ([#893](https://github.com/badlogic/pi-mono/pull/893) by [@ben-vargas](https://github.com/ben-vargas))
-- Added `PI_SHARE_VIEWER_URL` environment variable for custom share viewer URLs ([#889](https://github.com/badlogic/pi-mono/pull/889) by [@andresaraujo](https://github.com/andresaraujo))
+- Added `SPI_SHARE_VIEWER_URL` environment variable for custom share viewer URLs ([#889](https://github.com/badlogic/pi-mono/pull/889) by [@andresaraujo](https://github.com/andresaraujo))
 - Added Alt+Delete as hotkey for delete word forwards ([#878](https://github.com/badlogic/pi-mono/pull/878) by [@Perlence](https://github.com/Perlence))
 
 ### Changed
@@ -1419,7 +1419,7 @@ There are multiple SDK breaking changes since v0.49.3. For the quickest migratio
 
 ### Fixed
 
-- Fixed error messages showing hardcoded `~/.pi/agent/` paths instead of respecting `PI_CODING_AGENT_DIR` ([#887](https://github.com/badlogic/pi-mono/pull/887) by [@aliou](https://github.com/aliou))
+- Fixed error messages showing hardcoded `~/.spi/agent/` paths instead of respecting `SPI_CODING_AGENT_DIR` ([#887](https://github.com/badlogic/pi-mono/pull/887) by [@aliou](https://github.com/aliou))
 - Fixed `write` tool not displaying errors in the UI when execution fails ([#856](https://github.com/badlogic/pi-mono/issues/856))
 - Fixed HTML export using default theme instead of user's active theme ([#870](https://github.com/badlogic/pi-mono/pull/870) by [@scutifer](https://github.com/scutifer))
 - Show session name in the footer and terminal / tab title ([#876](https://github.com/badlogic/pi-mono/pull/876) by [@scutifer](https://github.com/scutifer))
@@ -1522,7 +1522,7 @@ There are multiple SDK breaking changes since v0.49.3. For the quickest migratio
 - Fixed string numbers in tool arguments not being coerced to numbers during validation ([#786](https://github.com/badlogic/pi-mono/pull/786) by [@dannote](https://github.com/dannote))
 - Fixed `--no-extensions` flag not preventing extension discovery ([#776](https://github.com/badlogic/pi-mono/issues/776))
 - Fixed extension messages rendering twice on startup when `pi.sendMessage({ display: true })` is called during `session_start` ([#765](https://github.com/badlogic/pi-mono/pull/765) by [@dannote](https://github.com/dannote))
-- Fixed `PI_CODING_AGENT_DIR` env var not expanding tilde (`~`) to home directory ([#778](https://github.com/badlogic/pi-mono/pull/778) by [@aliou](https://github.com/aliou))
+- Fixed `SPI_CODING_AGENT_DIR` env var not expanding tilde (`~`) to home directory ([#778](https://github.com/badlogic/pi-mono/pull/778) by [@aliou](https://github.com/aliou))
 - Fixed session picker hint text overflow ([#764](https://github.com/badlogic/pi-mono/issues/764))
 - Fixed Kitty keyboard protocol shifted symbol keys (e.g., `@`, `?`) not working in editor ([#779](https://github.com/badlogic/pi-mono/pull/779) by [@iamd3vil](https://github.com/iamd3vil))
 - Fixed Bedrock tool call IDs causing API errors from invalid characters ([#781](https://github.com/badlogic/pi-mono/pull/781) by [@pjtf93](https://github.com/pjtf93))
@@ -1639,7 +1639,7 @@ There are multiple SDK breaking changes since v0.49.3. For the quickest migratio
 
 ### Fixed
 
-- Extensions now load correctly in compiled Bun binary using `@mariozechner/jiti` fork with `virtualModules` support. Bundled packages (`@sinclair/typebox`, `@mariozechner/pi-tui`, `@mariozechner/pi-ai`, `@mariozechner/pi-coding-agent`) are accessible to extensions without filesystem node_modules.
+- Extensions now load correctly in compiled Bun binary using `@mariozechner/jiti` fork with `virtualModules` support. Bundled packages (`@sinclair/typebox`, `@tculpepp/pi-tui`, `@tculpepp/pi-ai`, `@tculpepp/pi-coding-agent`) are accessible to extensions without filesystem node_modules.
 
 ## [0.45.1] - 2026-01-13
 
@@ -1831,7 +1831,7 @@ There are multiple SDK breaking changes since v0.49.3. For the quickest migratio
 
 - `--no-extensions` flag to disable extension discovery while still allowing explicit `-e` paths ([#524](https://github.com/badlogic/pi-mono/pull/524) by [@cv](https://github.com/cv))
 - SDK: `InteractiveMode`, `runPrintMode()`, `runRpcMode()` exported for building custom run modes. See `docs/sdk.md`.
-- `PI_SKIP_VERSION_CHECK` environment variable to disable new version notifications at startup ([#549](https://github.com/badlogic/pi-mono/pull/549) by [@aos](https://github.com/aos))
+- `SPI_SKIP_VERSION_CHECK` environment variable to disable new version notifications at startup ([#549](https://github.com/badlogic/pi-mono/pull/549) by [@aos](https://github.com/aos))
 - `thinkingBudgets` setting to customize token budgets per thinking level for token-based providers ([#529](https://github.com/badlogic/pi-mono/pull/529) by [@melihmucuk](https://github.com/melihmucuk))
 - Extension UI dialogs (`ctx.ui.select()`, `ctx.ui.confirm()`, `ctx.ui.input()`) now support a `timeout` option with live countdown display ([#522](https://github.com/badlogic/pi-mono/pull/522) by [@nicobailon](https://github.com/nicobailon))
 - Extensions can now provide custom editor components via `ctx.ui.setEditorComponent()`. See `examples/extensions/modal-editor.ts` and `docs/tui.md` Pattern 7.
@@ -1937,7 +1937,7 @@ There are multiple SDK breaking changes since v0.49.3. For the quickest migratio
 ### Fixed
 
 - Messages submitted during compaction are queued and delivered after compaction completes, preserving steering and follow-up behavior. Extension commands execute immediately during compaction. ([#476](https://github.com/badlogic/pi-mono/pull/476) by [@tmustier](https://github.com/tmustier))
-- Managed binaries (`fd`, `rg`) now stored in `~/.pi/agent/bin/` instead of `tools/`, eliminating false deprecation warnings ([#470](https://github.com/badlogic/pi-mono/pull/470) by [@mcinteerj](https://github.com/mcinteerj))
+- Managed binaries (`fd`, `rg`) now stored in `~/.spi/agent/bin/` instead of `tools/`, eliminating false deprecation warnings ([#470](https://github.com/badlogic/pi-mono/pull/470) by [@mcinteerj](https://github.com/mcinteerj))
 - Extensions defined in `settings.json` were not loaded ([#463](https://github.com/badlogic/pi-mono/pull/463) by [@melihmucuk](https://github.com/melihmucuk))
 - OAuth refresh no longer logs users out when multiple pi instances are running ([#466](https://github.com/badlogic/pi-mono/pull/466) by [@Cursivez](https://github.com/Cursivez))
 - Migration warnings now ignore `fd.exe` and `rg.exe` in `tools/` on Windows ([#458](https://github.com/badlogic/pi-mono/pull/458) by [@carlosgtrz](https://github.com/carlosgtrz))
@@ -1966,7 +1966,7 @@ Hooks and custom tools are now unified as **extensions**. Both were TypeScript m
 
 **Automatic migration:**
 
-- `commands/` directories are automatically renamed to `prompts/` on startup (both `~/.pi/agent/commands/` and `.pi/commands/`)
+- `commands/` directories are automatically renamed to `prompts/` on startup (both `~/.spi/agent/commands/` and `.spi/commands/`)
 
 **Manual migration required:**
 
@@ -1978,10 +1978,10 @@ Hooks and custom tools are now unified as **extensions**. Both were TypeScript m
 
 ```
 # Before
-~/.pi/agent/hooks/*.ts       →  ~/.pi/agent/extensions/*.ts
-~/.pi/agent/tools/*.ts       →  ~/.pi/agent/extensions/*.ts
-.pi/hooks/*.ts               →  .pi/extensions/*.ts
-.pi/tools/*.ts               →  .pi/extensions/*.ts
+~/.spi/agent/hooks/*.ts       →  ~/.spi/agent/extensions/*.ts
+~/.spi/agent/tools/*.ts       →  ~/.spi/agent/extensions/*.ts
+.spi/hooks/*.ts               →  .spi/extensions/*.ts
+.spi/tools/*.ts               →  .spi/extensions/*.ts
 ```
 
 **Extension discovery rules** (in `extensions/` directories):
@@ -2020,16 +2020,16 @@ No recursion beyond one level. Complex packages must use the `package.json` mani
 
 ```typescript
 // Before (hook)
-import type { HookAPI, HookContext } from "@mariozechner/pi-coding-agent";
+import type { HookAPI, HookContext } from "@tculpepp/pi-coding-agent";
 export default function (pi: HookAPI) { ... }
 
 // Before (custom tool)
-import type { CustomToolFactory } from "@mariozechner/pi-coding-agent";
+import type { CustomToolFactory } from "@tculpepp/pi-coding-agent";
 const factory: CustomToolFactory = (pi) => ({ name: "my_tool", ... });
 export default factory;
 
 // After (both are now extensions)
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@tculpepp/pi-coding-agent";
 export default function (pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => { ... });
   pi.registerTool({ name: "my_tool", ... });
@@ -2093,8 +2093,8 @@ pi --extension ./safety.ts -e ./todo.ts
 **Directory changes:**
 
 ```
-~/.pi/agent/commands/*.md    →  ~/.pi/agent/prompts/*.md
-.pi/commands/*.md            →  .pi/prompts/*.md
+~/.spi/agent/commands/*.md    →  ~/.spi/agent/prompts/*.md
+.spi/commands/*.md            →  .spi/prompts/*.md
 ```
 
 **SDK type renames:**
@@ -2227,12 +2227,12 @@ pi --extension ./safety.ts -e ./todo.ts
 
 ### Breaking Changes
 
-- **Key detection functions removed from `@mariozechner/pi-tui`**: All `isXxx()` key detection functions (`isEnter()`, `isEscape()`, `isCtrlC()`, etc.) have been removed. Use `matchesKey(data, keyId)` instead (e.g., `matchesKey(data, "enter")`, `matchesKey(data, "ctrl+c")`). This affects hooks and custom tools that use `ctx.ui.custom()` with keyboard input handling. ([#405](https://github.com/badlogic/pi-mono/pull/405))
+- **Key detection functions removed from `@tculpepp/pi-tui`**: All `isXxx()` key detection functions (`isEnter()`, `isEscape()`, `isCtrlC()`, etc.) have been removed. Use `matchesKey(data, keyId)` instead (e.g., `matchesKey(data, "enter")`, `matchesKey(data, "ctrl+c")`). This affects hooks and custom tools that use `ctx.ui.custom()` with keyboard input handling. ([#405](https://github.com/badlogic/pi-mono/pull/405))
 
 ### Added
 
 - Clipboard image paste support via `Ctrl+V`. Images are saved to a temp file and attached to the message. Works on macOS, Windows, and Linux (X11). ([#419](https://github.com/badlogic/pi-mono/issues/419))
-- Configurable keybindings via `~/.pi/agent/keybindings.json`. All keyboard shortcuts (editor navigation, deletion, app actions like model cycling, etc.) can now be customized. Supports multiple bindings per action. ([#405](https://github.com/badlogic/pi-mono/pull/405) by [@hjanuschka](https://github.com/hjanuschka))
+- Configurable keybindings via `~/.spi/agent/keybindings.json`. All keyboard shortcuts (editor navigation, deletion, app actions like model cycling, etc.) can now be customized. Supports multiple bindings per action. ([#405](https://github.com/badlogic/pi-mono/pull/405) by [@hjanuschka](https://github.com/hjanuschka))
 - `/quit` and `/exit` slash commands to gracefully exit the application. Unlike double Ctrl+C, these properly await hook and custom tool cleanup handlers before exiting. ([#426](https://github.com/badlogic/pi-mono/pull/426) by [@ben-vargas](https://github.com/ben-vargas))
 
 ### Fixed
@@ -2436,7 +2436,7 @@ See [docs/custom-tools.md](docs/custom-tools.md) and [examples/custom-tools/](ex
 - `AppMessage` → `AgentMessage`
 - `sessionFile` returns `string | undefined` (was `string | null`)
 - `model` returns `Model | undefined` (was `Model | null`)
-- `Attachment` type removed. Use `ImageContent` from `@mariozechner/pi-ai` instead. Add images directly to message content arrays.
+- `Attachment` type removed. Use `ImageContent` from `@tculpepp/pi-ai` instead. Add images directly to message content arrays.
 
 **AgentSession API:**
 
@@ -2472,10 +2472,10 @@ See [docs/custom-tools.md](docs/custom-tools.md) and [examples/custom-tools/](ex
 import {
   discoverAuthStorage,
   discoverModels,
-} from "@mariozechner/pi-coding-agent";
+} from "@tculpepp/pi-coding-agent";
 
-const authStorage = discoverAuthStorage(); // ~/.pi/agent/auth.json
-const modelRegistry = discoverModels(authStorage); // + ~/.pi/agent/models.json
+const authStorage = discoverAuthStorage(); // ~/.spi/agent/auth.json
+const modelRegistry = discoverModels(authStorage); // + ~/.spi/agent/models.json
 
 // Get all models (built-in + custom)
 const allModels = modelRegistry.getAll();
@@ -2610,25 +2610,25 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
 
 ### Fixed
 
-- **Sessions saved to wrong directory**: In v0.30.0, sessions were being saved to `~/.pi/agent/` instead of `~/.pi/agent/sessions/<encoded-cwd>/`, breaking `--resume` and `/resume`. Misplaced sessions are automatically migrated on startup. ([#320](https://github.com/badlogic/pi-mono/issues/320) by [@aliou](https://github.com/aliou))
+- **Sessions saved to wrong directory**: In v0.30.0, sessions were being saved to `~/.spi/agent/` instead of `~/.spi/agent/sessions/<encoded-cwd>/`, breaking `--resume` and `/resume`. Misplaced sessions are automatically migrated on startup. ([#320](https://github.com/badlogic/pi-mono/issues/320) by [@aliou](https://github.com/aliou))
 - **Custom system prompts missing context**: When using a custom system prompt string, project context files (AGENTS.md), skills, date/time, and working directory were not appended. ([#321](https://github.com/badlogic/pi-mono/issues/321))
 
 ## [0.30.0] - 2025-12-25
 
 ### Breaking Changes
 
-- **SessionManager API**: The second parameter of `create()`, `continueRecent()`, and `list()` changed from `agentDir` to `sessionDir`. When provided, it specifies the session directory directly (no cwd encoding). When omitted, uses default (`~/.pi/agent/sessions/<encoded-cwd>/`). `open()` no longer takes `agentDir`. ([#313](https://github.com/badlogic/pi-mono/pull/313))
+- **SessionManager API**: The second parameter of `create()`, `continueRecent()`, and `list()` changed from `agentDir` to `sessionDir`. When provided, it specifies the session directory directly (no cwd encoding). When omitted, uses default (`~/.spi/agent/sessions/<encoded-cwd>/`). `open()` no longer takes `agentDir`. ([#313](https://github.com/badlogic/pi-mono/pull/313))
 
 ### Added
 
-- **`--session-dir` flag**: Use a custom directory for sessions instead of the default `~/.pi/agent/sessions/<encoded-cwd>/`. Works with `-c` (continue) and `-r` (resume) flags. ([#313](https://github.com/badlogic/pi-mono/pull/313) by [@scutifer](https://github.com/scutifer))
+- **`--session-dir` flag**: Use a custom directory for sessions instead of the default `~/.spi/agent/sessions/<encoded-cwd>/`. Works with `-c` (continue) and `-r` (resume) flags. ([#313](https://github.com/badlogic/pi-mono/pull/313) by [@scutifer](https://github.com/scutifer))
 - **Reverse model cycling and model selector**: Shift+Ctrl+P cycles models backward, Ctrl+L opens model selector (retaining text in editor). ([#315](https://github.com/badlogic/pi-mono/pull/315) by [@mitsuhiko](https://github.com/mitsuhiko))
 
 ## [0.29.1] - 2025-12-25
 
 ### Added
 
-- **Automatic custom system prompt loading**: Pi now auto-loads `SYSTEM.md` files to replace the default system prompt. Project-local `.pi/SYSTEM.md` takes precedence over global `~/.pi/agent/SYSTEM.md`. CLI `--system-prompt` flag overrides both. ([#309](https://github.com/badlogic/pi-mono/issues/309))
+- **Automatic custom system prompt loading**: Pi now auto-loads `SYSTEM.md` files to replace the default system prompt. Project-local `.spi/SYSTEM.md` takes precedence over global `~/.spi/agent/SYSTEM.md`. CLI `--system-prompt` flag overrides both. ([#309](https://github.com/badlogic/pi-mono/issues/309))
 - **Unified `/settings` command**: New settings menu consolidating thinking level, theme, queue mode, auto-compact, show images, hide thinking, and collapse changelog. Replaces individual `/thinking`, `/queue`, `/theme`, `/autocompact`, and `/show-images` commands. ([#310](https://github.com/badlogic/pi-mono/issues/310))
 
 ### Fixed
@@ -2655,7 +2655,7 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
 
 ### Changed
 
-- **Credential storage refactored**: API keys and OAuth tokens are now stored in `~/.pi/agent/auth.json` instead of `oauth.json` and `settings.json`. Existing credentials are automatically migrated on first run. ([#296](https://github.com/badlogic/pi-mono/issues/296))
+- **Credential storage refactored**: API keys and OAuth tokens are now stored in `~/.spi/agent/auth.json` instead of `oauth.json` and `settings.json`. Existing credentials are automatically migrated on first run. ([#296](https://github.com/badlogic/pi-mono/issues/296))
 
 - **SDK API changes** ([#296](https://github.com/badlogic/pi-mono/issues/296)):
 
@@ -2665,7 +2665,7 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
   - `createAgentSession()` now accepts `authStorage` and `modelRegistry` options
   - Removed `configureOAuthStorage()`, `defaultGetApiKey()`, `findModel()`, `discoverAvailableModels()`
   - Removed `getApiKey` callback option (use `AuthStorage.setRuntimeApiKey()` for runtime overrides)
-  - Use `getModel()` from `@mariozechner/pi-ai` for built-in models, `modelRegistry.find()` for custom models + built-in models
+  - Use `getModel()` from `@tculpepp/pi-ai` for built-in models, `modelRegistry.find()` for custom models + built-in models
   - See updated [SDK documentation](docs/sdk.md) and [README](README.md)
 
 - **Settings changes**: Removed `apiKeys` from `settings.json`. Use `auth.json` instead. ([#296](https://github.com/badlogic/pi-mono/issues/296))
@@ -2723,13 +2723,13 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
 
 ### Fixed
 
-- **Symlinked skill directories**: Skills in symlinked directories (e.g., `~/.pi/agent/skills/my-skills -> /path/to/skills`) are now correctly discovered and loaded.
+- **Symlinked skill directories**: Skills in symlinked directories (e.g., `~/.spi/agent/skills/my-skills -> /path/to/skills`) are now correctly discovered and loaded.
 
 ## [0.27.3] - 2025-12-24
 
 ### Added
 
-- **API keys in settings.json**: Store API keys in `~/.pi/agent/settings.json` under the `apiKeys` field (e.g., `{ "apiKeys": { "anthropic": "sk-..." } }`). Settings keys take priority over environment variables. ([#295](https://github.com/badlogic/pi-mono/issues/295))
+- **API keys in settings.json**: Store API keys in `~/.spi/agent/settings.json` under the `apiKeys` field (e.g., `{ "apiKeys": { "anthropic": "sk-..." } }`). Settings keys take priority over environment variables. ([#295](https://github.com/badlogic/pi-mono/issues/295))
 
 ### Fixed
 
@@ -2780,7 +2780,7 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
 
 - **SDK for programmatic usage**: New `createAgentSession()` factory with full control over model, tools, hooks, skills, session persistence, and settings. Philosophy: "omit to discover, provide to override". Includes 12 examples and comprehensive documentation. ([#272](https://github.com/badlogic/pi-mono/issues/272))
 
-- **Project-specific settings**: Settings now load from both `~/.pi/agent/settings.json` (global) and `<cwd>/.pi/settings.json` (project). Project settings override global with deep merge for nested objects. Project settings are read-only (for version control). ([#276](https://github.com/badlogic/pi-mono/pull/276))
+- **Project-specific settings**: Settings now load from both `~/.spi/agent/settings.json` (global) and `<cwd>/.spi/settings.json` (project). Project settings override global with deep merge for nested objects. Project settings are read-only (for version control). ([#276](https://github.com/badlogic/pi-mono/pull/276))
 
 - **SettingsManager static factories**: `SettingsManager.create(cwd?, agentDir?)` for file-based settings, `SettingsManager.inMemory(settings?)` for testing. Added `applyOverrides()` for programmatic overrides.
 
@@ -2870,7 +2870,7 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
 
 ### Added
 
-- **OAuth and model config exports**: Scripts using `AgentSession` directly can now import `getAvailableModels`, `getApiKeyForModel`, `findModel`, `login`, `logout`, and `getOAuthProviders` from `@mariozechner/pi-coding-agent` to reuse OAuth token storage and model resolution. ([#245](https://github.com/badlogic/pi-mono/issues/245))
+- **OAuth and model config exports**: Scripts using `AgentSession` directly can now import `getAvailableModels`, `getApiKeyForModel`, `findModel`, `login`, `logout`, and `getOAuthProviders` from `@tculpepp/pi-coding-agent` to reuse OAuth token storage and model resolution. ([#245](https://github.com/badlogic/pi-mono/issues/245))
 
 - **xhigh thinking level for gpt-5.2 models**: The thinking level selector and shift+tab cycling now show xhigh option for gpt-5.2 and gpt-5.2-codex models (in addition to gpt-5.1-codex-max). ([#236](https://github.com/badlogic/pi-mono/pull/236) by [@theBucky](https://github.com/theBucky))
 
@@ -2884,7 +2884,7 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
 
 - **OpenRouter models with colons in IDs**: Fixed parsing of OpenRouter model IDs that contain colons (e.g., `openrouter:meta-llama/llama-4-scout:free`). ([#242](https://github.com/badlogic/pi-mono/pull/242) by [@aliou](https://github.com/aliou))
 
-- **Global AGENTS.md loaded twice**: Fixed global AGENTS.md being loaded twice when present in both `~/.pi/agent/` and the current directory. ([#239](https://github.com/badlogic/pi-mono/pull/239) by [@aliou](https://github.com/aliou))
+- **Global AGENTS.md loaded twice**: Fixed global AGENTS.md being loaded twice when present in both `~/.spi/agent/` and the current directory. ([#239](https://github.com/badlogic/pi-mono/pull/239) by [@aliou](https://github.com/aliou))
 
 - **Kitty keyboard protocol on Linux**: Fixed keyboard input not working in Ghostty on Linux when Num Lock is enabled. The Kitty protocol includes Caps Lock and Num Lock state in modifier values, which broke key detection. Now correctly masks out lock key bits when matching keyboard shortcuts. ([#243](https://github.com/badlogic/pi-mono/issues/243))
 
@@ -2896,7 +2896,7 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
 
 - **Subagent orchestration example**: Added comprehensive custom tool example for spawning and orchestrating sub-agents with isolated context windows. Includes scout/planner/reviewer/worker agents and workflow commands for multi-agent pipelines. ([#215](https://github.com/badlogic/pi-mono/pull/215) by [@nicobailon](https://github.com/nicobailon))
 
-- **`getMarkdownTheme()` export**: Custom tools can now import `getMarkdownTheme()` from `@mariozechner/pi-coding-agent` to use the same markdown styling as the main UI.
+- **`getMarkdownTheme()` export**: Custom tools can now import `getMarkdownTheme()` from `@tculpepp/pi-coding-agent` to use the same markdown styling as the main UI.
 
 - **`pi.exec()` signal and timeout support**: Custom tools and hooks can now pass `{ signal, timeout }` options to `pi.exec()` for cancellation and timeout handling. The result includes a `killed` flag when the process was terminated.
 
@@ -2922,7 +2922,7 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
 
 ### Breaking Changes
 
-- **Custom tools now require `index.ts` entry point**: Auto-discovered custom tools must be in a subdirectory with an `index.ts` file. The old pattern `~/.pi/agent/tools/mytool.ts` must become `~/.pi/agent/tools/mytool/index.ts`. This allows multi-file tools to import helper modules. Explicit paths via `--tool` or `settings.json` still work with any `.ts` file.
+- **Custom tools now require `index.ts` entry point**: Auto-discovered custom tools must be in a subdirectory with an `index.ts` file. The old pattern `~/.spi/agent/tools/mytool.ts` must become `~/.spi/agent/tools/mytool/index.ts`. This allows multi-file tools to import helper modules. Explicit paths via `--tool` or `settings.json` still work with any `.ts` file.
 
 - **Hook `tool_result` event restructured**: The `ToolResultEvent` now exposes full tool result data instead of just text. ([#233](https://github.com/badlogic/pi-mono/pull/233))
   - Removed: `result: string` field
@@ -2968,7 +2968,7 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
   - `rpc.md`: Added missing `hook_error` event documentation
   - `README.md`: Complete settings table, condensed philosophy section, standardized OAuth docs
 
-- Hooks loader now supports same import aliases as custom tools (`@sinclair/typebox`, `@mariozechner/pi-ai`, `@mariozechner/pi-tui`, `@mariozechner/pi-coding-agent`).
+- Hooks loader now supports same import aliases as custom tools (`@sinclair/typebox`, `@tculpepp/pi-ai`, `@tculpepp/pi-tui`, `@tculpepp/pi-coding-agent`).
 
 ### Breaking Changes
 
@@ -2990,7 +2990,7 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
 
 - Fixed TUI performance regression caused by Box component lacking render caching. Built-in tools now use Text directly (like v0.22.5), and Box has proper caching for custom tool rendering.
 
-- Fixed custom tools failing to load from `~/.pi/agent/tools/` when pi is installed globally. Module imports (`@sinclair/typebox`, `@mariozechner/pi-tui`, `@mariozechner/pi-ai`) are now resolved via aliases.
+- Fixed custom tools failing to load from `~/.spi/agent/tools/` when pi is installed globally. Module imports (`@sinclair/typebox`, `@tculpepp/pi-tui`, `@tculpepp/pi-ai`) are now resolved via aliases.
 
 ## [0.23.0] - 2025-12-17
 
@@ -3030,7 +3030,7 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
 
 - **Tool output display**: When collapsed, tool output now shows the last N lines instead of the first N lines, making streaming output more useful.
 
-- Updated `@mariozechner/pi-ai` with X-Initiator header support for GitHub Copilot, ensuring agent calls are not deducted from quota. ([#200](https://github.com/badlogic/pi-mono/pull/200) by [@kim0](https://github.com/kim0))
+- Updated `@tculpepp/pi-ai` with X-Initiator header support for GitHub Copilot, ensuring agent calls are not deducted from quota. ([#200](https://github.com/badlogic/pi-mono/pull/200) by [@kim0](https://github.com/kim0))
 
 ### Fixed
 
@@ -3042,7 +3042,7 @@ Total color count increased from 46 to 50. See [docs/themes.md](docs/themes.md) 
 
 ### Changed
 
-- Updated `@mariozechner/pi-ai` with interleaved thinking enabled by default for Anthropic Claude 4 models.
+- Updated `@tculpepp/pi-ai` with interleaved thinking enabled by default for Anthropic Claude 4 models.
 
 ## [0.22.1] - 2025-12-15
 
@@ -3050,7 +3050,7 @@ _Dedicated to Peter's shoulder ([@steipete](https://twitter.com/steipete))_
 
 ### Changed
 
-- Updated `@mariozechner/pi-ai` with interleaved thinking support for Anthropic models.
+- Updated `@tculpepp/pi-ai` with interleaved thinking support for Anthropic models.
 
 ## [0.22.0] - 2025-12-15
 
@@ -3086,7 +3086,7 @@ _Dedicated to Peter's shoulder ([@steipete](https://twitter.com/steipete))_
 
 ### Breaking Changes
 
-- **Pi skills now use `SKILL.md` convention**: Pi skills must now be named `SKILL.md` inside a directory, matching Codex CLI format. Previously any `*.md` file was treated as a skill. Migrate by renaming `~/.pi/agent/skills/foo.md` to `~/.pi/agent/skills/foo/SKILL.md`.
+- **Pi skills now use `SKILL.md` convention**: Pi skills must now be named `SKILL.md` inside a directory, matching Codex CLI format. Previously any `*.md` file was treated as a skill. Migrate by renaming `~/.spi/agent/skills/foo.md` to `~/.spi/agent/skills/foo/SKILL.md`.
 
 ### Added
 
@@ -3102,7 +3102,7 @@ _Dedicated to Peter's shoulder ([@steipete](https://twitter.com/steipete))_
 
 ### Added
 
-- **Skills system**: Auto-discover and load instruction files on-demand. Supports Claude Code (`~/.claude/skills/*/SKILL.md`), Codex CLI (`~/.codex/skills/`), and Pi-native formats (`~/.pi/agent/skills/`, `.pi/skills/`). Skills are listed in system prompt with descriptions, agent loads them via read tool when needed. Supports `{baseDir}` placeholder. Disable with `--no-skills` or `skills.enabled: false` in settings. ([#169](https://github.com/badlogic/pi-mono/issues/169))
+- **Skills system**: Auto-discover and load instruction files on-demand. Supports Claude Code (`~/.claude/skills/*/SKILL.md`), Codex CLI (`~/.codex/skills/`), and Pi-native formats (`~/.spi/agent/skills/`, `.spi/skills/`). Skills are listed in system prompt with descriptions, agent loads them via read tool when needed. Supports `{baseDir}` placeholder. Disable with `--no-skills` or `skills.enabled: false` in settings. ([#169](https://github.com/badlogic/pi-mono/issues/169))
 
 - **Version flag**: Added `--version` / `-v` flag to display the current version and exit. ([#170](https://github.com/badlogic/pi-mono/pull/170))
 
@@ -3136,7 +3136,7 @@ _Dedicated to Peter's shoulder ([@steipete](https://twitter.com/steipete))_
 
 ### Added
 
-- **Hooks system**: TypeScript modules that extend agent behavior by subscribing to lifecycle events. Hooks can intercept tool calls, prompt for confirmation, modify results, and inject messages from external sources. Auto-discovered from `~/.pi/agent/hooks/*.ts` and `.pi/hooks/*.ts`. Thanks to [@nicobailon](https://github.com/nicobailon) for the collaboration on the design and implementation. ([#145](https://github.com/badlogic/pi-mono/issues/145), supersedes [#158](https://github.com/badlogic/pi-mono/pull/158))
+- **Hooks system**: TypeScript modules that extend agent behavior by subscribing to lifecycle events. Hooks can intercept tool calls, prompt for confirmation, modify results, and inject messages from external sources. Auto-discovered from `~/.spi/agent/hooks/*.ts` and `.spi/hooks/*.ts`. Thanks to [@nicobailon](https://github.com/nicobailon) for the collaboration on the design and implementation. ([#145](https://github.com/badlogic/pi-mono/issues/145), supersedes [#158](https://github.com/badlogic/pi-mono/pull/158))
 
 - **`pi.send()` API**: Hooks can inject messages into the agent session from external sources (file watchers, webhooks, CI systems). If streaming, messages are queued; otherwise a new agent loop starts immediately.
 
@@ -3214,7 +3214,7 @@ _Dedicated to Peter's shoulder ([@steipete](https://twitter.com/steipete))_
 
 - **xhigh thinking level**: Added `xhigh` thinking level for OpenAI codex-max models. Cycle through thinking levels with Shift+Tab; `xhigh` appears only when using a codex-max model. ([#143](https://github.com/badlogic/pi-mono/issues/143))
 
-- **Collapse changelog setting**: Add `"collapseChangelog": true` to `~/.pi/agent/settings.json` to show a condensed "Updated to vX.Y.Z" message instead of the full changelog after updates. Use `/changelog` to view the full changelog. ([#148](https://github.com/badlogic/pi-mono/issues/148))
+- **Collapse changelog setting**: Add `"collapseChangelog": true` to `~/.spi/agent/settings.json` to show a condensed "Updated to vX.Y.Z" message instead of the full changelog after updates. Use `/changelog` to view the full changelog. ([#148](https://github.com/badlogic/pi-mono/issues/148))
 
 - **Bash mode**: Execute shell commands directly from the editor by prefixing with `!` (e.g., `!ls -la`). Output streams in real-time, is added to the LLM context, and persists in session history. Supports multiline commands, cancellation (Escape), truncation for large outputs, and preview/expand toggle (Ctrl+O). Also available in RPC mode via `{"type":"bash","command":"..."}`. ([#112](https://github.com/badlogic/pi-mono/pull/112), original implementation by [@markusylisiurunen](https://github.com/markusylisiurunen))
 
@@ -3234,7 +3234,7 @@ _Dedicated to Peter's shoulder ([@steipete](https://twitter.com/steipete))_
 
 ### Added
 
-- **Flexible Windows shell configuration**: The bash tool now supports multiple shell sources beyond Git Bash. Resolution order: (1) custom `shellPath` in settings.json, (2) Git Bash in standard locations, (3) any bash.exe on PATH. This enables Cygwin, MSYS2, and other bash environments. Configure with `~/.pi/agent/settings.json`: `{"shellPath": "C:\\cygwin64\\bin\\bash.exe"}`.
+- **Flexible Windows shell configuration**: The bash tool now supports multiple shell sources beyond Git Bash. Resolution order: (1) custom `shellPath` in settings.json, (2) Git Bash in standard locations, (3) any bash.exe on PATH. This enables Cygwin, MSYS2, and other bash environments. Configure with `~/.spi/agent/settings.json`: `{"shellPath": "C:\\cygwin64\\bin\\bash.exe"}`.
 
 ### Fixed
 
@@ -3447,7 +3447,7 @@ _Dedicated to Peter's shoulder ([@steipete](https://twitter.com/steipete))_
 
 ### Added
 
-- **File-based Slash Commands**: Create custom reusable prompts as `.txt` files in `~/.pi/slash-commands/`. Files become `/filename` commands with first-line descriptions. Supports `{{selection}}` placeholder for referencing selected/attached content.
+- **File-based Slash Commands**: Create custom reusable prompts as `.txt` files in `~/.spi/slash-commands/`. Files become `/filename` commands with first-line descriptions. Supports `{{selection}}` placeholder for referencing selected/attached content.
 - **`/branch` Command**: Create conversation branches from any previous user message. Opens a selector to pick a message, then creates a new session file starting from that point. Original message text is placed in the editor for modification.
 - **Unified Content References**: Both `@path` in messages and `--file path` CLI arguments now use the same attachment system with consistent MIME type detection.
 - **Drag & Drop Files**: Drop files onto the terminal to attach them to your message. Supports multiple files and both text and image content.
@@ -3509,7 +3509,7 @@ _Dedicated to Peter's shoulder ([@steipete](https://twitter.com/steipete))_
 
 ### Added
 
-- Added thinking level persistence. Default level stored in `~/.pi/settings.json`, restored on startup. Per-session overrides saved in session files.
+- Added thinking level persistence. Default level stored in `~/.spi/settings.json`, restored on startup. Per-session overrides saved in session files.
 - Added model cycling shortcut: `Ctrl+I` cycles through available models (or scoped models with `-m` flag).
 - Added automatic retry with exponential backoff for transient API errors (network issues, 500s, overload).
 - Cumulative token usage now shown in footer (total tokens used across all messages in session).
@@ -3526,7 +3526,7 @@ _Dedicated to Peter's shoulder ([@steipete](https://twitter.com/steipete))_
 
 ### Added
 
-- Add custom model configuration via `~/.pi/models.json`
+- Add custom model configuration via `~/.spi/models.json`
 
 ## [0.10.0] - 2025-11-25
 

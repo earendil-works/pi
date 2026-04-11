@@ -1,3 +1,4 @@
+import type { Static, TSchema } from "@sinclair/typebox";
 import type {
 	AssistantMessage,
 	AssistantMessageEvent,
@@ -9,8 +10,7 @@ import type {
 	TextContent,
 	Tool,
 	ToolResultMessage,
-} from "@mariozechner/pi-ai";
-import type { Static, TSchema } from "@sinclair/typebox";
+} from "@tculpepp/pi-ai";
 
 /**
  * Stream function used by the agent loop.

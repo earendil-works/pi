@@ -1,7 +1,7 @@
 {
-	"name": "@mariozechner/pi-web-ui",
+	"name": "@tculpepp/pi-web-ui",
 	"version": "0.66.1",
-	"description": "Reusable web UI components for AI chat interfaces powered by @mariozechner/pi-ai",
+	"description": "Reusable web UI components for AI chat interfaces powered by @tculpepp/pi-ai",
 	"type": "module",
 	"main": "dist/index.js",
 	"types": "dist/index.d.ts",
@@ -18,8 +18,8 @@
 	},
 	"dependencies": {
 		"@lmstudio/sdk": "^1.5.0",
-		"@mariozechner/pi-ai": "^0.66.1",
-		"@mariozechner/pi-tui": "^0.66.1",
+		"@tculpepp/pi-ai": "^0.66.1",
+		"@tculpepp/pi-tui": "^0.66.1",
 		"docx-preview": "^0.3.7",
 		"jszip": "^3.10.1",
 		"lucide": "^0.544.0",
@@ -46,6 +46,14 @@
 		"web-components",
 		"mini-lit"
 	],
-	"author": "Mario Zechner",
-	"license": "MIT"
+	"author": "Tom Culpepper",
+	"contributors": [
+		{ "name": "Mario Zechner", "url": "https://github.com/badlogic" }
+	],
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/tculpepp/secure-pi-mono.git",
+		"directory": "packages/web-ui"
+	}
 }

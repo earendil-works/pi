@@ -13,7 +13,7 @@ import {
 	Spacer,
 	truncateToWidth,
 	visibleWidth,
-} from "@mariozechner/pi-tui";
+} from "@tculpepp/pi-tui";
 import { CONFIG_DIR_NAME } from "../../../config.js";
 import type { PathMetadata, ResolvedPaths, ResolvedResource } from "../../../core/package-manager.js";
 import type { PackageSource, SettingsManager } from "../../../core/settings-manager.js";
@@ -61,7 +61,7 @@ function getGroupLabel(metadata: PathMetadata): string {
 	}
 	// Top-level resources
 	if (metadata.source === "auto") {
-		return metadata.scope === "user" ? "User (~/.pi/agent/)" : "Project (.pi/)";
+		return metadata.scope === "user" ? "User (~/.spi/agent/)" : "Project (.spi/)";
 	}
 	return metadata.scope === "user" ? "User settings" : "Project settings";
 }

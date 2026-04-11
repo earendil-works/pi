@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        **Before you start:** Read [CONTRIBUTING.md](https://github.com/badlogic/pi-mono/blob/main/CONTRIBUTING.md).
+        **Before you start:** Read [CONTRIBUTING.md](https://github.com/tculpepp/secure-pi-mono/blob/main/CONTRIBUTING.md).
         
         Keep this short. If it doesn't fit on one screen, it's too long. Write in your own voice.
 

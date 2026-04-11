@@ -7,8 +7,8 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { AssistantMessage, ImageContent, Message, Model, OAuthProviderId } from "@mariozechner/pi-ai";
+import type { AgentMessage } from "@tculpepp/pi-agent-core";
+import type { AssistantMessage, ImageContent, Message, Model, OAuthProviderId } from "@tculpepp/pi-ai";
 import type {
 	AutocompleteItem,
 	EditorComponent,
@@ -19,7 +19,7 @@ import type {
 	OverlayHandle,
 	OverlayOptions,
 	SlashCommand,
-} from "@mariozechner/pi-tui";
+} from "@tculpepp/pi-tui";
 import {
 	CombinedAutocompleteProvider,
 	type Component,
@@ -35,7 +35,7 @@ import {
 	TruncatedText,
 	TUI,
 	visibleWidth,
-} from "@mariozechner/pi-tui";
+} from "@tculpepp/pi-tui";
 import { spawn, spawnSync } from "child_process";
 import {
 	APP_NAME,
@@ -666,10 +666,10 @@ export class InteractiveMode {
 	 * Check npm registry for a newer version.
 	 */
 	private async checkForNewVersion(): Promise<string | undefined> {
-		if (process.env.PI_SKIP_VERSION_CHECK || process.env.PI_OFFLINE) return undefined;
+		if (process.env.SPI_SKIP_VERSION_CHECK || process.env.SPI_OFFLINE) return undefined;
 
 		try {
-			const response = await fetch("https://registry.npmjs.org/@mariozechner/pi-coding-agent/latest", {
+			const response = await fetch("https://registry.npmjs.org/@tculpepp/pi-coding-agent/latest", {
 				signal: AbortSignal.timeout(10000),
 			});
 			if (!response.ok) return undefined;
@@ -688,7 +688,7 @@ export class InteractiveMode {
 	}
 
 	private async checkForPackageUpdates(): Promise<string[]> {
-		if (process.env.PI_OFFLINE) {
+		if (process.env.SPI_OFFLINE) {
 			return [];
 		}
 
@@ -3092,7 +3092,7 @@ export class InteractiveMode {
 	}
 
 	showNewVersionNotification(newVersion: string): void {
-		const action = theme.fg("accent", getUpdateInstruction("@mariozechner/pi-coding-agent"));
+		const action = theme.fg("accent", getUpdateInstruction("@tculpepp/pi-coding-agent"));
 		const updateInstruction = theme.fg("muted", `New version ${newVersion} is available. `) + action;
 		const changelogUrl = theme.fg(
 			"accent",
@@ -4208,8 +4208,8 @@ export class InteractiveMode {
 	}
 
 	private async handleShareCommand(): Promise<void> {
-		if (process.env.PI_OFFLINE) {
-			this.showError("Session sharing is not available in closed-network mode (PI_OFFLINE is set).");
+		if (process.env.SPI_OFFLINE) {
+			this.showError("Session sharing is not available in closed-network mode (SPI_OFFLINE is set).");
 			return;
 		}
 

@@ -1,7 +1,7 @@
-import type { AgentTool } from "@mariozechner/pi-agent-core";
-import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
-import { Text } from "@mariozechner/pi-tui";
 import { type Static, Type } from "@sinclair/typebox";
+import type { AgentTool } from "@tculpepp/pi-agent-core";
+import type { ImageContent, TextContent } from "@tculpepp/pi-ai";
+import { Text } from "@tculpepp/pi-tui";
 import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.js";

@@ -15,7 +15,7 @@ const NETWORK_TIMEOUT_MS = 10000;
 const UPDATE_CHECK_CONCURRENCY = 4;
 
 function isOfflineModeEnabled(): boolean {
-	const value = process.env.PI_OFFLINE;
+	const value = process.env.SPI_OFFLINE;
 	if (!value) return false;
 	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
 }
@@ -470,8 +470,8 @@ function collectAutoThemeEntries(dir: string): string[] {
 function readPiManifestFile(packageJsonPath: string): PiManifest | null {
 	try {
 		const content = readFileSync(packageJsonPath, "utf-8");
-		const pkg = JSON.parse(content) as { pi?: PiManifest };
-		return pkg.pi ?? null;
+		const pkg = JSON.parse(content) as { spi?: PiManifest; pi?: PiManifest };
+		return pkg.spi ?? pkg.pi ?? null;
 	} catch {
 		return null;
 	}

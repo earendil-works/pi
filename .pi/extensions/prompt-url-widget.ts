@@ -1,5 +1,5 @@
-import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Container, Text } from "@mariozechner/pi-tui";
+import { DynamicBorder, type ExtensionAPI, type ExtensionContext } from "@tculpepp/pi-coding-agent";
+import { Container, Text } from "@tculpepp/pi-tui";
 
 const PR_PROMPT_PATTERN = /^\s*You are given one or more GitHub PR URLs:\s*(\S+)/im;
 const ISSUE_PROMPT_PATTERN = /^\s*Analyze GitHub issue\(s\):\s*(\S+)/im;

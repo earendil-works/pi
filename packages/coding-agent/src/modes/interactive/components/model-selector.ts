@@ -1,4 +1,4 @@
-import { type Model, modelsAreEqual } from "@mariozechner/pi-ai";
+import { type Model, modelsAreEqual } from "@tculpepp/pi-ai";
 import {
 	Container,
 	type Focusable,
@@ -8,7 +8,7 @@ import {
 	Spacer,
 	Text,
 	type TUI,
-} from "@mariozechner/pi-tui";
+} from "@tculpepp/pi-tui";
 import type { ModelRegistry } from "../../../core/model-registry.js";
 import type { SettingsManager } from "../../../core/settings-manager.js";
 import { theme } from "../theme/theme.js";

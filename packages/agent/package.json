@@ -1,5 +1,5 @@
 {
-	"name": "@mariozechner/pi-agent-core",
+	"name": "@tculpepp/pi-agent-core",
 	"version": "0.66.1",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
@@ -17,7 +17,7 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-		"@mariozechner/pi-ai": "^0.66.1"
+		"@tculpepp/pi-ai": "^0.66.1"
 	},
 	"keywords": [
 		"ai",
@@ -26,11 +26,14 @@
 		"transport",
 		"state-management"
 	],
-	"author": "Mario Zechner",
+	"author": "Tom Culpepper",
+	"contributors": [
+		{ "name": "Mario Zechner", "url": "https://github.com/badlogic" }
+	],
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/badlogic/pi-mono.git",
+		"url": "git+https://github.com/tculpepp/secure-pi-mono.git",
 		"directory": "packages/agent"
 	},
 	"engines": {

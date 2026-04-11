@@ -1,24 +1,15 @@
 <p align="center">
-  <a href="https://shittycodingagent.ai">
-    <img src="https://shittycodingagent.ai/logo.svg" alt="pi logo" width="128">
-  </a>
-</p>
-<p align="center">
-  <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
-  <a href="https://www.npmjs.com/package/@mariozechner/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@mariozechner/pi-coding-agent?style=flat-square" /></a>
-  <a href="https://github.com/badlogic/pi-mono/actions/workflows/ci.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/badlogic/pi-mono/ci.yml?style=flat-square&branch=main" /></a>
-</p>
-<p align="center">
-  <a href="https://pi.dev">pi.dev</a> domain graciously donated by
-  <br /><br />
-  <a href="https://exe.dev"><img src="docs/images/exy.png" alt="Exy mascot" width="48" /><br />exe.dev</a>
+  <a href="https://www.npmjs.com/package/@tculpepp/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@tculpepp/pi-coding-agent?style=flat-square" /></a>
+  <a href="https://github.com/tculpepp/secure-pi-mono/actions/workflows/ci.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/tculpepp/secure-pi-mono/ci.yml?style=flat-square&branch=main" /></a>
 </p>
 
-Pi is a minimal terminal coding harness. Adapt pi to your workflows, not the other way around, without having to fork and modify pi internals. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Pi Packages](#pi-packages) and share them with others via npm or git.
+> **Fork notice:** This is a security-hardened fork of [badlogic/pi-mono](https://github.com/badlogic/pi-mono) by [Mario Zechner](https://github.com/badlogic), maintained for deployment in closed networks. See the original project for the upstream community release.
 
-Pi ships with powerful defaults but skips features like sub agents and plan mode. Instead, you can ask pi to build what you want or install a third party pi package that matches your workflow.
+Spi is a minimal terminal coding harness. Adapt spi to your workflows, not the other way around, without having to fork and modify spi internals. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Spi Packages](#pi-packages) and share them with others via npm or git.
 
-Pi runs in four modes: interactive, print or JSON, RPC for process integration, and an SDK for embedding in your own apps. See [openclaw/openclaw](https://github.com/openclaw/openclaw) for a real-world SDK integration.
+Spi ships with powerful defaults but skips features like sub agents and plan mode. Instead, you can ask spi to build what you want or install a third party spi package that matches your workflow.
+
+Spi runs in four modes: interactive, print or JSON, RPC for process integration, and an SDK for embedding in your own apps. See [openclaw/openclaw](https://github.com/openclaw/openclaw) for a real-world SDK integration.
 
 ## Table of Contents
 
@@ -50,13 +41,13 @@ Pi runs in four modes: interactive, print or JSON, RPC for process integration, 
 ## Quick Start
 
 ```bash
-npm install -g @mariozechner/pi-coding-agent
+npm install -g @tculpepp/pi-coding-agent
 ```
 
 This build runs in **closed-network mode** by default. Configure a self-hosted model endpoint before first launch (see [Closed-Network Mode](#closed-network-mode)):
 
 ```bash
-pi
+spi
 ```
 
 Then just talk to pi. By default, pi gives the model four tools: `read`, `write`, `edit`, and `bash`. The model uses these to fulfill your requests. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [pi packages](#pi-packages).
@@ -75,7 +66,7 @@ This fork is configured for deployment in closed networks that cannot reach comm
 
 ### Configuring a Self-Hosted Model
 
-Create `~/.pi/agent/models.json` with your internal inference endpoint. Pi reuses the same wire protocol as the commercial providers, so any OpenAI-compatible server works with `api: "openai-completions"`.
+Create `~/.spi/agent/models.json` with your internal inference endpoint. Spi reuses the same wire protocol as the commercial providers, so any OpenAI-compatible server works with `api: "openai-completions"`.
 
 **vLLM / llama.cpp / LM Studio** (standard OpenAI-compat, `/v1` path):
 
@@ -144,10 +135,10 @@ Create `~/.pi/agent/models.json` with your internal inference endpoint. Pi reuse
 
 Generate an Open WebUI API key from Settings → Account. Model IDs use Ollama's `name:tag` format — check your Open WebUI model list for the exact strings.
 
-Then start pi and the model is immediately available:
+Then start spi and the model is immediately available:
 
 ```bash
-pi --model gemma3:27b
+spi --model gemma3:27b
 ```
 
 #### Protocol selection
@@ -190,7 +181,7 @@ See [docs/models.md](docs/models.md) for the full configuration reference.
 
 ## Providers & Models
 
-Pi ships with protocol implementations for 10 LLM APIs. In this closed-network build, **all built-in commercial cloud endpoints are hidden when `secureMode: true`**. Providers only appear in the model list after the user configures an explicit `baseUrl` in `models.json`.
+Spi ships with protocol implementations for 10 LLM APIs. In this closed-network build, **all built-in commercial cloud endpoints are hidden when `secureMode: true`**. Providers only appear in the model list after the user configures an explicit `baseUrl` in `models.json`.
 
 The protocol implementations themselves remain intact, so any self-hosted model that speaks a supported wire format works without code changes.
 
@@ -204,7 +195,7 @@ The protocol implementations themselves remain intact, so any self-hosted model 
 - `bedrock-converse-stream` — Amazon Bedrock Converse
 - `mistral-conversations` — Mistral Conversations API
 
-**Add self-hosted providers:** Configure via `~/.pi/agent/models.json`. See [Closed-Network Mode](#closed-network-mode) for a quick-start and [docs/models.md](docs/models.md) for the full reference.
+**Add self-hosted providers:** Configure via `~/.spi/agent/models.json`. See [Closed-Network Mode](#closed-network-mode) for a quick-start and [docs/models.md](docs/models.md) for the full reference.
 
 **Custom APIs or OAuth:** Use extensions. See [docs/custom-provider.md](docs/custom-provider.md).
 
@@ -258,11 +249,11 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/reload` | Reload keybindings, extensions, skills, prompts, and context files (themes hot-reload automatically) |
 | `/hotkeys` | Show all keyboard shortcuts |
 | `/changelog` | Display version history |
-| `/quit` | Quit pi |
+| `/quit` | Quit spi |
 
 ### Keyboard Shortcuts
 
-See `/hotkeys` for the full list. Customize via `~/.pi/agent/keybindings.json`. See [docs/keybindings.md](docs/keybindings.md).
+See `/hotkeys` for the full list. Customize via `~/.spi/agent/keybindings.json`. See [docs/keybindings.md](docs/keybindings.md).
 
 **Commonly used:**
 
@@ -287,7 +278,7 @@ Submit messages while the agent is working:
 - **Escape** aborts and restores queued messages to editor
 - **Alt+Up** retrieves queued messages back to editor
 
-On Windows Terminal, `Alt+Enter` is fullscreen by default. Remap it in [docs/terminal-setup.md](docs/terminal-setup.md) so pi can receive the follow-up shortcut.
+On Windows Terminal, `Alt+Enter` is fullscreen by default. Remap it in [docs/terminal-setup.md](docs/terminal-setup.md) so spi can receive the follow-up shortcut.
 
 Configure delivery in [settings](docs/settings.md): `steeringMode` and `followUpMode` can be `"one-at-a-time"` (default, waits for response) or `"all"` (delivers all queued at once). `transport` selects provider transport preference (`"sse"`, `"websocket"`, or `"auto"`) for providers that support multiple transports.
 
@@ -299,14 +290,14 @@ Sessions are stored as JSONL files with a tree structure. Each entry has an `id`
 
 ### Management
 
-Sessions auto-save to `~/.pi/agent/sessions/` organized by working directory.
+Sessions auto-save to `~/.spi/agent/sessions/` organized by working directory.
 
 ```bash
-pi -c                  # Continue most recent session
-pi -r                  # Browse and select from past sessions
-pi --no-session        # Ephemeral mode (don't save)
-pi --session <path>    # Use specific session file or ID
-pi --fork <path>       # Fork specific session file or ID into a new session
+spi -c                  # Continue most recent session
+spi -r                  # Browse and select from past sessions
+spi --no-session        # Ephemeral mode (don't save)
+spi --session <path>    # Use specific session file or ID
+spi --fork <path>       # Fork specific session file or ID into a new session
 ```
 
 ### Branching
@@ -341,8 +332,8 @@ Use `/settings` to modify common options, or edit JSON files directly:
 
 | Location | Scope |
 |----------|-------|
-| `~/.pi/agent/settings.json` | Global (all projects) |
-| `.pi/settings.json` | Project (overrides global) |
+| `~/.spi/agent/settings.json` | Global (all projects) |
+| `.spi/settings.json` | Project (overrides global) |
 
 See [docs/settings.md](docs/settings.md) for all options.
 
@@ -350,8 +341,8 @@ See [docs/settings.md](docs/settings.md) for all options.
 
 ## Context Files
 
-Pi loads `AGENTS.md` (or `CLAUDE.md`) at startup from:
-- `~/.pi/agent/AGENTS.md` (global)
+Spi loads `AGENTS.md` (or `CLAUDE.md`) at startup from:
+- `~/.spi/agent/AGENTS.md` (global)
 - Parent directories (walking up from cwd)
 - Current directory
 
@@ -359,7 +350,7 @@ Use for project instructions, conventions, common commands. All matching files a
 
 ### System Prompt
 
-Replace the default system prompt with `.pi/SYSTEM.md` (project) or `~/.pi/agent/SYSTEM.md` (global). Append without replacing via `APPEND_SYSTEM.md`.
+Replace the default system prompt with `.spi/SYSTEM.md` (project) or `~/.spi/agent/SYSTEM.md` (global). Append without replacing via `APPEND_SYSTEM.md`.
 
 ---
 
@@ -370,19 +361,19 @@ Replace the default system prompt with `.pi/SYSTEM.md` (project) or `~/.pi/agent
 Reusable prompts as Markdown files. Type `/name` to expand.
 
 ```markdown
-<!-- ~/.pi/agent/prompts/review.md -->
+<!-- ~/.spi/agent/prompts/review.md -->
 Review this code for bugs, security issues, and performance problems.
 Focus on: {{focus}}
 ```
 
-Place in `~/.pi/agent/prompts/`, `.pi/prompts/`, or a [pi package](#pi-packages) to share with others. See [docs/prompt-templates.md](docs/prompt-templates.md).
+Place in `~/.spi/agent/prompts/`, `.spi/prompts/`, or a [pi package](#pi-packages) to share with others. See [docs/prompt-templates.md](docs/prompt-templates.md).
 
 ### Skills
 
 On-demand capability packages following the [Agent Skills standard](https://agentskills.io). Invoke via `/skill:name` or let the agent load them automatically.
 
 ```markdown
-<!-- ~/.pi/agent/skills/my-skill/SKILL.md -->
+<!-- ~/.spi/agent/skills/my-skill/SKILL.md -->
 # My Skill
 Use this skill when the user asks about X.
 
@@ -391,13 +382,13 @@ Use this skill when the user asks about X.
 2. Then that
 ```
 
-Place in `~/.pi/agent/skills/`, `~/.agents/skills/`, `.pi/skills/`, or `.agents/skills/` (from `cwd` up through parent directories) or a [pi package](#pi-packages) to share with others. See [docs/skills.md](docs/skills.md).
+Place in `~/.spi/agent/skills/`, `~/.agents/skills/`, `.spi/skills/`, or `.agents/skills/` (from `cwd` up through parent directories) or a [pi package](#pi-packages) to share with others. See [docs/skills.md](docs/skills.md).
 
 ### Extensions
 
 <p align="center"><img src="docs/images/doom-extension.png" alt="Doom Extension" width="600"></p>
 
-TypeScript modules that extend pi with custom tools, commands, keyboard shortcuts, event handlers, and UI components.
+TypeScript modules that extend spi with custom tools, commands, keyboard shortcuts, event handlers, and UI components.
 
 ```typescript
 export default function (pi: ExtensionAPI) {
@@ -417,17 +408,17 @@ export default function (pi: ExtensionAPI) {
 - Git checkpointing and auto-commit
 - SSH and sandbox execution
 - MCP server integration
-- Make pi look like Claude Code
+- Make spi look like Claude Code
 - Games while waiting (yes, Doom runs)
 - ...anything you can dream up
 
-Place in `~/.pi/agent/extensions/`, `.pi/extensions/`, or a [pi package](#pi-packages) to share with others. See [docs/extensions.md](docs/extensions.md) and [examples/extensions/](examples/extensions/).
+Place in `~/.spi/agent/extensions/`, `.spi/extensions/`, or a [pi package](#pi-packages) to share with others. See [docs/extensions.md](docs/extensions.md) and [examples/extensions/](examples/extensions/).
 
 ### Themes
 
-Built-in: `dark`, `light`. Themes hot-reload: modify the active theme file and pi immediately applies changes.
+Built-in: `dark`, `light`. Themes hot-reload: modify the active theme file and spi immediately applies changes.
 
-Place in `~/.pi/agent/themes/`, `.pi/themes/`, or a [pi package](#pi-packages) to share with others. See [docs/themes.md](docs/themes.md).
+Place in `~/.spi/agent/themes/`, `.spi/themes/`, or a [pi package](#pi-packages) to share with others. See [docs/themes.md](docs/themes.md).
 
 ### Pi Packages
 
@@ -436,32 +427,32 @@ Bundle and share extensions, skills, prompts, and themes via npm or git. Find pa
 > **Security:** Pi packages run with full system access. Extensions execute arbitrary code, and skills can instruct the model to perform any action including running executables. Review source code before installing third-party packages.
 
 ```bash
-pi install npm:@foo/pi-tools
-pi install npm:@foo/pi-tools@1.2.3      # pinned version
-pi install git:github.com/user/repo
-pi install git:github.com/user/repo@v1  # tag or commit
-pi install git:git@github.com:user/repo
-pi install git:git@github.com:user/repo@v1  # tag or commit
-pi install https://github.com/user/repo
-pi install https://github.com/user/repo@v1      # tag or commit
-pi install ssh://git@github.com/user/repo
-pi install ssh://git@github.com/user/repo@v1    # tag or commit
-pi remove npm:@foo/pi-tools
-pi uninstall npm:@foo/pi-tools          # alias for remove
-pi list
-pi update                               # skips pinned packages
-pi config                               # enable/disable extensions, skills, prompts, themes
+spi install npm:@foo/pi-tools
+spi install npm:@foo/pi-tools@1.2.3      # pinned version
+spi install git:github.com/user/repo
+spi install git:github.com/user/repo@v1  # tag or commit
+spi install git:git@github.com:user/repo
+spi install git:git@github.com:user/repo@v1  # tag or commit
+spi install https://github.com/user/repo
+spi install https://github.com/user/repo@v1      # tag or commit
+spi install ssh://git@github.com/user/repo
+spi install ssh://git@github.com/user/repo@v1    # tag or commit
+spi remove npm:@foo/pi-tools
+spi uninstall npm:@foo/pi-tools          # alias for remove
+spi list
+spi update                               # skips pinned packages
+spi config                               # enable/disable extensions, skills, prompts, themes
 ```
 
-Packages install to `~/.pi/agent/git/` (git) or global npm. Use `-l` for project-local installs (`.pi/git/`, `.pi/npm/`). If you use a Node version manager and want package installs to reuse a stable npm context, set `npmCommand` in `settings.json`, for example `["mise", "exec", "node@20", "--", "npm"]`.
+Packages install to `~/.spi/agent/git/` (git) or global npm. Use `-l` for project-local installs (`.spi/git/`, `.spi/npm/`). If you use a Node version manager and want package installs to reuse a stable npm context, set `npmCommand` in `settings.json`, for example `["mise", "exec", "node@20", "--", "npm"]`.
 
-Create a package by adding a `pi` key to `package.json`:
+Create a package by adding a `spi` key to `package.json`:
 
 ```json
 {
-  "name": "my-pi-package",
-  "keywords": ["pi-package"],
-  "pi": {
+  "name": "my-spi-package",
+  "keywords": ["spi-package"],
+  "spi": {
     "extensions": ["./extensions"],
     "skills": ["./skills"],
     "prompts": ["./prompts"],
@@ -470,7 +461,7 @@ Create a package by adding a `pi` key to `package.json`:
 }
 ```
 
-Without a `pi` manifest, pi auto-discovers from conventional directories (`extensions/`, `skills/`, `prompts/`, `themes/`).
+Without a `spi` manifest, spi auto-discovers from conventional directories (`extensions/`, `skills/`, `prompts/`, `themes/`).
 
 See [docs/packages.md](docs/packages.md).
 
@@ -481,7 +472,7 @@ See [docs/packages.md](docs/packages.md).
 ### SDK
 
 ```typescript
-import { AuthStorage, createAgentSession, ModelRegistry, SessionManager } from "@mariozechner/pi-coding-agent";
+import { AuthStorage, createAgentSession, ModelRegistry, SessionManager } from "@tculpepp/pi-coding-agent";
 
 const authStorage = AuthStorage.create();
 const modelRegistry = ModelRegistry.create(authStorage);
@@ -503,7 +494,7 @@ See [docs/sdk.md](docs/sdk.md) and [examples/sdk/](examples/sdk/).
 For non-Node.js integrations, use RPC mode over stdin/stdout:
 
 ```bash
-pi --mode rpc
+spi --mode rpc
 ```
 
 RPC mode uses strict LF-delimited JSONL framing. Clients must split records on `\n` only. Do not use generic line readers like Node `readline`, which also split on Unicode separators inside JSON payloads.
@@ -535,18 +526,18 @@ Read the [blog post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) 
 ## CLI Reference
 
 ```bash
-pi [options] [@files...] [messages...]
+spi [options] [@files...] [messages...]
 ```
 
 ### Package Commands
 
 ```bash
-pi install <source> [-l]     # Install package, -l for project-local
-pi remove <source> [-l]      # Remove package
-pi uninstall <source> [-l]   # Alias for remove
-pi update [source]           # Update packages (skips pinned)
-pi list                      # List installed packages
-pi config                    # Enable/disable package resources
+spi install <source> [-l]     # Install package, -l for project-local
+spi remove <source> [-l]      # Remove package
+spi uninstall <source> [-l]   # Alias for remove
+spi update [source]           # Update packages (skips pinned)
+spi list                      # List installed packages
+spi config                    # Enable/disable package resources
 ```
 
 ### Modes
@@ -559,10 +550,10 @@ pi config                    # Enable/disable package resources
 | `--mode rpc` | RPC mode for process integration (see [docs/rpc.md](docs/rpc.md)) |
 | `--export <in> [out]` | Export session to HTML |
 
-In print mode, pi also reads piped stdin and merges it into the initial prompt:
+In print mode, spi also reads piped stdin and merges it into the initial prompt:
 
 ```bash
-cat README.md | pi -p "Summarize this text"
+cat README.md | spi -p "Summarize this text"
 ```
 
 ### Model Options
@@ -626,50 +617,50 @@ Combine `--no-*` with explicit flags to load exactly what you need, ignoring set
 Prefix files with `@` to include in the message:
 
 ```bash
-pi @prompt.md "Answer this"
-pi -p @screenshot.png "What's in this image?"
-pi @code.ts @test.ts "Review these files"
+spi @prompt.md "Answer this"
+spi -p @screenshot.png "What's in this image?"
+spi @code.ts @test.ts "Review these files"
 ```
 
 ### Examples
 
 ```bash
 # Interactive with initial prompt
-pi "List all .ts files in src/"
+spi "List all .ts files in src/"
 
 # Non-interactive
-pi -p "Summarize this codebase"
+spi -p "Summarize this codebase"
 
 # Non-interactive with piped stdin
-cat README.md | pi -p "Summarize this text"
+cat README.md | spi -p "Summarize this text"
 
 # Different model
-pi --provider openai --model gpt-4o "Help me refactor"
+spi --provider openai --model gpt-4o "Help me refactor"
 
 # Model with provider prefix (no --provider needed)
-pi --model openai/gpt-4o "Help me refactor"
+spi --model openai/gpt-4o "Help me refactor"
 
 # Model with thinking level shorthand
-pi --model sonnet:high "Solve this complex problem"
+spi --model sonnet:high "Solve this complex problem"
 
 # Limit model cycling
-pi --models "claude-*,gpt-4o"
+spi --models "claude-*,gpt-4o"
 
 # Read-only mode
-pi --tools read,grep,find,ls -p "Review the code"
+spi --tools read,grep,find,ls -p "Review the code"
 
 # High thinking level
-pi --thinking high "Solve this complex problem"
+spi --thinking high "Solve this complex problem"
 ```
 
 ### Environment Variables
 
 | Variable | Description |
 |----------|-------------|
-| `PI_CODING_AGENT_DIR` | Override config directory (default: `~/.pi/agent`) |
-| `PI_PACKAGE_DIR` | Override package directory (useful for Nix/Guix where store paths tokenize poorly) |
-| `PI_SKIP_VERSION_CHECK` | Skip version check at startup |
-| `PI_CACHE_RETENTION` | Set to `long` for extended prompt cache (Anthropic: 1h, OpenAI: 24h) |
+| `SPI_CODING_AGENT_DIR` | Override config directory (default: `~/.spi/agent`) |
+| `SPI_PACKAGE_DIR` | Override package directory (useful for Nix/Guix where store paths tokenize poorly) |
+| `SPI_SKIP_VERSION_CHECK` | Skip version check at startup |
+| `SPI_CACHE_RETENTION` | Set to `long` for extended prompt cache (Anthropic: 1h, OpenAI: 24h) |
 | `VISUAL`, `EDITOR` | External editor for Ctrl+G |
 
 ---
@@ -686,6 +677,6 @@ MIT
 
 ## See Also
 
-- [@mariozechner/pi-ai](https://www.npmjs.com/package/@mariozechner/pi-ai): Core LLM toolkit
-- [@mariozechner/pi-agent](https://www.npmjs.com/package/@mariozechner/pi-agent): Agent framework
-- [@mariozechner/pi-tui](https://www.npmjs.com/package/@mariozechner/pi-tui): Terminal UI components
+- [@tculpepp/pi-ai](https://www.npmjs.com/package/@tculpepp/pi-ai): Core LLM toolkit
+- [@tculpepp/pi-agent-core](https://www.npmjs.com/package/@tculpepp/pi-agent-core): Agent framework
+- [@tculpepp/pi-tui](https://www.npmjs.com/package/@tculpepp/pi-tui): Terminal UI components

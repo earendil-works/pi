@@ -7,8 +7,8 @@
 
 import { resolve } from "node:path";
 import { createInterface } from "node:readline";
-import { type ImageContent, modelsAreEqual, supportsXhigh } from "@mariozechner/pi-ai";
-import { ProcessTerminal, setKeybindings, TUI } from "@mariozechner/pi-tui";
+import { type ImageContent, modelsAreEqual, supportsXhigh } from "@tculpepp/pi-ai";
+import { ProcessTerminal, setKeybindings, TUI } from "@tculpepp/pi-tui";
 import chalk from "chalk";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.js";
 import { processFileArguments } from "./cli/file-processor.js";
@@ -421,14 +421,14 @@ async function promptForMissingSessionCwd(
 export async function main(args: string[]) {
 	// Closed-network security fork: permanently disable outbound non-LLM calls
 	// (version checks, package update checks, session sharing).
-	process.env.PI_OFFLINE = "1";
-	process.env.PI_SKIP_VERSION_CHECK = "1";
+	process.env.SPI_OFFLINE = "1";
+	process.env.SPI_SKIP_VERSION_CHECK = "1";
 
 	resetTimings();
-	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.PI_OFFLINE);
+	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.SPI_OFFLINE);
 	if (offlineMode) {
-		process.env.PI_OFFLINE = "1";
-		process.env.PI_SKIP_VERSION_CHECK = "1";
+		process.env.SPI_OFFLINE = "1";
+		process.env.SPI_SKIP_VERSION_CHECK = "1";
 	}
 
 	if (await handlePackageCommand(args)) {

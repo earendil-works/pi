@@ -1,5 +1,5 @@
 {
-	"name": "@mariozechner/pi-mom",
+	"name": "@tculpepp/pi-mom",
 	"version": "0.66.1",
 	"description": "Slack bot that delegates messages to the pi coding agent",
 	"type": "module",
@@ -20,9 +20,9 @@
 	},
 	"dependencies": {
 		"@anthropic-ai/sandbox-runtime": "^0.0.16",
-		"@mariozechner/pi-agent-core": "^0.66.1",
-		"@mariozechner/pi-ai": "^0.66.1",
-		"@mariozechner/pi-coding-agent": "^0.66.1",
+		"@tculpepp/pi-agent-core": "^0.66.1",
+		"@tculpepp/pi-ai": "^0.66.1",
+		"@tculpepp/pi-coding-agent": "^0.66.1",
 		"@sinclair/typebox": "^0.34.0",
 		"@slack/socket-mode": "^2.0.0",
 		"@slack/web-api": "^7.0.0",
@@ -41,11 +41,14 @@
 		"ai",
 		"agent"
 	],
-	"author": "Mario Zechner",
+	"author": "Tom Culpepper",
+	"contributors": [
+		{ "name": "Mario Zechner", "url": "https://github.com/badlogic" }
+	],
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/badlogic/pi-mono.git",
+		"url": "git+https://github.com/tculpepp/secure-pi-mono.git",
 		"directory": "packages/mom"
 	},
 	"engines": {

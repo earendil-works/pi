@@ -10,7 +10,7 @@ import {
 	DefaultResourceLoader,
 	type PromptTemplate,
 	SessionManager,
-} from "@mariozechner/pi-coding-agent";
+} from "@tculpepp/pi-coding-agent";
 
 // Define custom templates
 const deployTemplate: PromptTemplate = {
@@ -33,7 +33,7 @@ const loader = new DefaultResourceLoader({
 });
 await loader.reload();
 
-// Discover templates from cwd/.pi/prompts/ and ~/.pi/agent/prompts/
+// Discover templates from cwd/.spi/prompts/ and ~/.spi/agent/prompts/
 const discovered = loader.getPrompts().prompts;
 console.log("Discovered prompt templates:");
 for (const template of discovered) {

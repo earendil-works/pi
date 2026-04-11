@@ -5,8 +5,8 @@
  * Height is calculated from width to maintain DOOM's aspect ratio.
  */
 
-import type { Component } from "@mariozechner/pi-tui";
-import { isKeyRelease, type TUI } from "@mariozechner/pi-tui";
+import type { Component } from "@tculpepp/pi-tui";
+import { isKeyRelease, type TUI } from "@tculpepp/pi-tui";
 import type { DoomEngine } from "./doom-engine.js";
 import { DoomKeys, mapKeyToDoom } from "./doom-keys.js";
 

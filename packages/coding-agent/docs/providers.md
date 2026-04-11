@@ -21,7 +21,7 @@ Use `/login` in interactive mode, then select a provider:
 - Google Gemini CLI
 - Google Antigravity
 
-Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired.
+Use `/logout` to clear credentials. Tokens are stored in `~/.spi/agent/auth.json` and auto-refresh when expired.
 
 ### GitHub Copilot
 
@@ -71,11 +71,11 @@ pi
 | MiniMax | `MINIMAX_API_KEY` | `minimax` |
 | MiniMax (China) | `MINIMAX_CN_API_KEY` | `minimax-cn` |
 
-Reference for environment variables and `auth.json` keys: [`const envMap`](https://github.com/badlogic/pi-mono/blob/main/packages/ai/src/env-api-keys.ts) in [`packages/ai/src/env-api-keys.ts`](https://github.com/badlogic/pi-mono/blob/main/packages/ai/src/env-api-keys.ts).
+Reference for environment variables and `auth.json` keys: [`const envMap`](https://github.com/tculpepp/secure-pi-mono/blob/main/packages/ai/src/env-api-keys.ts) in [`packages/ai/src/env-api-keys.ts`](https://github.com/tculpepp/secure-pi-mono/blob/main/packages/ai/src/env-api-keys.ts).
 
 #### Auth File
 
-Store credentials in `~/.pi/agent/auth.json`:
+Store credentials in `~/.spi/agent/auth.json`:
 
 ```json
 {

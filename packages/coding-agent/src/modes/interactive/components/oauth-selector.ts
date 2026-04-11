@@ -1,6 +1,6 @@
-import type { OAuthProviderInterface } from "@mariozechner/pi-ai";
-import { getOAuthProviders } from "@mariozechner/pi-ai/oauth";
-import { Container, getKeybindings, Spacer, TruncatedText } from "@mariozechner/pi-tui";
+import type { OAuthProviderInterface } from "@tculpepp/pi-ai";
+import { getOAuthProviders } from "@tculpepp/pi-ai/oauth";
+import { Container, getKeybindings, Spacer, TruncatedText } from "@tculpepp/pi-tui";
 import type { AuthStorage } from "../../../core/auth-storage.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
