@@ -24,32 +24,47 @@ const scopePrefixes: Record<SourceInfo["scope"], string> = {
 	temporary: "t",
 };
 
-const localFormatters: Record<SourceInfoStyle, () => string | undefined> = {
-	none: () => undefined,
-	minimal: () => "",
-	"name-only": () => "",
-	tiny: () => "",
-	short: () => "",
-	full: () => "",
-};
+function withDefault<T>(overrides: Partial<Record<SourceInfoStyle, T>>, fallback: T): Record<SourceInfoStyle, T> {
+	return new Proxy({} as Record<SourceInfoStyle, T>, {
+		get(_target, prop: string) {
+			return overrides[prop as SourceInfoStyle] ?? fallback;
+		},
+	});
+}
 
-const npmFormatters: Record<SourceInfoStyle, (s: NpmSource) => string | undefined> = {
-	none: () => undefined,
-	minimal: () => "",
-	"name-only": (s) => s.name.split("/").pop()!,
-	tiny: (s) => s.name,
-	short: (s) => `npm:${s.name}`,
-	full: (s) => `npm:${s.name}`,
-};
+const localFormatters = withDefault<() => string | undefined>({ none: () => undefined }, () => "");
 
-const gitFormatters: Record<SourceInfoStyle, (s: GitSource) => string | undefined> = {
-	none: () => undefined,
-	minimal: () => "",
-	"name-only": (s) => `${s.repo}${s.ref}`,
-	tiny: (s) => `${s.path}${s.ref}`,
-	short: (s) => `git:${s.path}${s.ref}`,
-	full: (s) => `git:${s.host}/${s.path}${s.ref}`,
-};
+const npmFull = (s: NpmSource): string => `npm:${s.name}`;
+const npmFormatters = withDefault<(s: NpmSource) => string | undefined>(
+	{
+		none: () => undefined,
+		minimal: () => "",
+		"name-only": (s) => s.name.split("/").pop()!,
+		tiny: (s) => s.name,
+		short: npmFull,
+		full: npmFull,
+	},
+	npmFull,
+);
+
+const gitFull = (s: GitSource): string => `git:${s.host}/${s.path}${s.ref}`;
+const gitFormatters = withDefault<(s: GitSource) => string | undefined>(
+	{
+		none: () => undefined,
+		minimal: () => "",
+		"name-only": (s) => `${s.repo}${s.ref}`,
+		tiny: (s) => `${s.path}${s.ref}`,
+		short: (s) => `git:${s.path}${s.ref}`,
+		full: gitFull,
+	},
+	gitFull,
+);
+
+const sourceFormatters = {
+	local: localFormatters,
+	npm: npmFormatters,
+	git: gitFormatters,
+} as Record<ParsedSource["type"], Record<SourceInfoStyle, (s: ParsedSource) => string | undefined>>;
 
 function parseSource(raw: string): ParsedSource {
 	const source = raw.trim();
@@ -75,13 +90,7 @@ function parseSource(raw: string): ParsedSource {
 export function formatSourceTag(sourceInfo: SourceInfo, style: SourceInfoStyle): string | undefined {
 	const prefix = scopePrefixes[sourceInfo.scope];
 	const parsed = parseSource(sourceInfo.source);
-
-	const detail =
-		parsed.type === "npm"
-			? npmFormatters[style](parsed)
-			: parsed.type === "git"
-				? gitFormatters[style](parsed)
-				: localFormatters[style]();
+	const detail = sourceFormatters[parsed.type][style](parsed);
 
 	if (detail === undefined) return undefined;
 	return detail ? `${prefix}:${detail}` : prefix;
