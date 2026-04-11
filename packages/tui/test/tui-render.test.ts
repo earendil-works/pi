@@ -53,6 +53,10 @@ async function withEnv<T>(updates: Record<string, string | undefined>, run: () =
 	}
 }
 
+async function waitRender() {
+	await new Promise((r) => setTimeout(r, 50));
+}
+
 function getCellItalic(terminal: VirtualTerminal, row: number, col: number): number {
 	const xterm = (terminal as unknown as { xterm: XtermTerminalType }).xterm;
 	const buffer = xterm.buffer.active;

@@ -592,6 +592,7 @@ describe("Markdown component", () => {
 			const component = new MarkdownWithInput(markdown);
 			tui.addChild(component);
 			tui.start();
+			await new Promise((r) => setTimeout(r, 20));
 			await terminal.flush();
 
 			assert.ok(component.markdownLineCount > 0);
