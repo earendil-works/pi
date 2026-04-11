@@ -26,12 +26,18 @@ describe("formatSourceTag", () => {
 		});
 
 		it("shows only scope prefix for project scope", () => {
-			const info = makeSourceInfo({ scope: "project", source: "git:https://github.com/jvortmann/pi-claude-commands" });
+			const info = makeSourceInfo({
+				scope: "project",
+				source: "git:https://github.com/jvortmann/pi-claude-commands",
+			});
 			expect(formatSourceTag(info, "minimal")).toBe("p");
 		});
 
 		it("shows only scope prefix for temporary scope", () => {
-			const info = makeSourceInfo({ scope: "temporary", source: "git:https://github.com/jvortmann/pi-claude-commands" });
+			const info = makeSourceInfo({
+				scope: "temporary",
+				source: "git:https://github.com/jvortmann/pi-claude-commands",
+			});
 			expect(formatSourceTag(info, "minimal")).toBe("t");
 		});
 	});
