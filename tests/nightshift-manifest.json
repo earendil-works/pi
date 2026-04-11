@@ -1,0 +1,13 @@
+{
+  "plans/2026-04-08-move-web-tools-v1.md": {
+    "files": [
+      "packages/coding-agent/test/web-tools-extension.test.ts",
+      "packages/coding-agent/test/web-tools-builtin-removal.test.ts",
+      "packages/coding-agent/test/web-tools-source-removal.test.ts",
+      "packages/coding-agent/test/web-tools-error-handling.test.ts",
+      "packages/coding-agent/test/web-tools-extension-integration.test.ts"
+    ],
+    "created": "2026-04-11T19:42:10.028Z",
+    "count": 0
+  }
+}
