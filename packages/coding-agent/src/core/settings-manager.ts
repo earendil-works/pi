@@ -95,6 +95,7 @@ export interface Settings {
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
+	sourceInfoStyle?: "full" | "short" | "tiny" | "name-only" | "minimal" | "none"; // Display style for source info tags in autocomplete (default: "full")
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -955,5 +956,15 @@ export class SettingsManager {
 
 	getCodeBlockIndent(): string {
 		return this.settings.markdown?.codeBlockIndent ?? "  ";
+	}
+
+	getSourceInfoStyle(): "full" | "short" | "tiny" | "name-only" | "minimal" | "none" {
+		return this.settings.sourceInfoStyle ?? "full";
+	}
+
+	setSourceInfoStyle(style: "full" | "short" | "tiny" | "name-only" | "minimal" | "none"): void {
+		this.globalSettings.sourceInfoStyle = style;
+		this.markModified("sourceInfoStyle");
+		this.save();
 	}
 }
