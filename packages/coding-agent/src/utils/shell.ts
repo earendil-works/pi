@@ -173,6 +173,35 @@ export function sanitizeBinaryOutput(str: string): string {
 }
 
 /**
+ * Registry of actively running detached child process PIDs.
+ *
+ * Because child processes are spawned with `detached: true` (to enable
+ * process-group kills), they live in their own process groups and do NOT
+ * receive SIGHUP when the controlling terminal closes. If the parent pi
+ * process is killed by SIGHUP without explicitly cleaning these up, the
+ * children become orphans (reparented to PID 1) and run forever.
+ *
+ * Call `trackChildPid` / `untrackChildPid` around every detached spawn,
+ * and `killAllTrackedChildren` from signal handlers to prevent leaks.
+ */
+const trackedChildPids = new Set<number>();
+
+export function trackChildPid(pid: number): void {
+	trackedChildPids.add(pid);
+}
+
+export function untrackChildPid(pid: number): void {
+	trackedChildPids.delete(pid);
+}
+
+export function killAllTrackedChildren(): void {
+	for (const pid of trackedChildPids) {
+		killProcessTree(pid);
+	}
+	trackedChildPids.clear();
+}
+
+/**
  * Kill a process and all its children (cross-platform)
  */
 export function killProcessTree(pid: number): void {
