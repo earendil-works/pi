@@ -1,5 +1,5 @@
 import { LMStudioClient } from "@lmstudio/sdk";
-import type { Model } from "@tculpepp/pi-ai";
+import type { Model } from "@tculpepp/spi-ai";
 import { Ollama } from "ollama/browser";
 
 /**

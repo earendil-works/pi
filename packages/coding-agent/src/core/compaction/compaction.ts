@@ -5,9 +5,9 @@
  * and after compaction the session is reloaded.
  */
 
-import type { AgentMessage } from "@tculpepp/pi-agent-core";
-import type { AssistantMessage, Model, Usage } from "@tculpepp/pi-ai";
-import { completeSimple } from "@tculpepp/pi-ai";
+import type { AgentMessage } from "@tculpepp/spi-agent-core";
+import type { AssistantMessage, Model, Usage } from "@tculpepp/spi-ai";
+import { completeSimple } from "@tculpepp/spi-ai";
 import {
 	convertToLlm,
 	createBranchSummaryMessage,

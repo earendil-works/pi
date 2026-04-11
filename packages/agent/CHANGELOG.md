@@ -4,7 +4,7 @@
 
 ### Changed
 
-- npm package renamed from `@mariozechner/pi-agent-core` to `@tculpepp/pi-agent-core`.
+- npm package renamed from `@mariozechner/pi-agent-core` to `@tculpepp/spi-agent-core`.
 
 ## [0.66.1] - 2026-04-08
 

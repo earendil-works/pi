@@ -10,7 +10,7 @@ import type {
 	TextContent,
 	Tool,
 	ToolResultMessage,
-} from "@tculpepp/pi-ai";
+} from "@tculpepp/spi-ai";
 
 /**
  * Stream function used by the agent loop.

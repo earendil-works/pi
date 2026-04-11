@@ -1,4 +1,4 @@
-import type { Message } from "@tculpepp/pi-ai";
+import type { Message } from "@tculpepp/spi-ai";
 import { describe, expect, it } from "vitest";
 import { serializeConversation } from "../src/core/compaction/utils.js";
 

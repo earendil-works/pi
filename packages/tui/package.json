@@ -1,5 +1,5 @@
 {
-	"name": "@tculpepp/pi-tui",
+	"name": "@tculpepp/spi-tui",
 	"version": "0.66.1",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"type": "module",

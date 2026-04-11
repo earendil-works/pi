@@ -1,5 +1,5 @@
-import type { AgentMessage, ThinkingLevel } from "@tculpepp/pi-agent-core";
-import type { Model } from "@tculpepp/pi-ai";
+import type { AgentMessage, ThinkingLevel } from "@tculpepp/spi-agent-core";
+import type { Model } from "@tculpepp/spi-ai";
 
 /**
  * Transaction interface for atomic operations across stores.

@@ -1,6 +1,6 @@
 import "@mariozechner/mini-lit/dist/ThemeToggle.js";
-import { Agent, type AgentMessage } from "@tculpepp/pi-agent-core";
-import { getModel } from "@tculpepp/pi-ai";
+import { Agent, type AgentMessage } from "@tculpepp/spi-agent-core";
+import { getModel } from "@tculpepp/spi-ai";
 import {
 	type AgentState,
 	ApiKeyPromptDialog,
@@ -18,7 +18,7 @@ import {
 	SettingsDialog,
 	SettingsStore,
 	setAppStorage,
-} from "@tculpepp/pi-web-ui";
+} from "@tculpepp/spi-web-ui";
 import { html, render } from "lit";
 import { Bell, History, Plus, Settings } from "lucide";
 import "./app.css";

@@ -12,8 +12,8 @@
   },
   "dependencies": {
     "@mariozechner/mini-lit": "^0.2.0",
-    "@tculpepp/pi-ai": "file:../../ai",
-    "@tculpepp/pi-web-ui": "file:../",
+    "@tculpepp/spi-ai": "file:../../ai",
+    "@tculpepp/spi-web-ui": "file:../",
     "@tailwindcss/vite": "^4.1.17",
     "lit": "^3.3.1",
     "lucide": "^0.544.0"

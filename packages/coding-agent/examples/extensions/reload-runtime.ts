@@ -6,7 +6,7 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ExtensionAPI } from "@tculpepp/pi-coding-agent";
+import type { ExtensionAPI } from "@tculpepp/spi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
 	// Command entrypoint for reload.

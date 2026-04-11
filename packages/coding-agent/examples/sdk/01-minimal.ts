@@ -5,7 +5,7 @@
  * from cwd and ~/.spi/agent. Model chosen from settings or first available.
  */
 
-import { createAgentSession } from "@tculpepp/pi-coding-agent";
+import { createAgentSession } from "@tculpepp/spi-coding-agent";
 
 const { session } = await createAgentSession();
 

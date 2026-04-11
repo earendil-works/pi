@@ -1,6 +1,6 @@
 import { join } from "node:path";
-import type { ThinkingLevel } from "@tculpepp/pi-agent-core";
-import type { Model } from "@tculpepp/pi-ai";
+import type { ThinkingLevel } from "@tculpepp/spi-agent-core";
+import type { Model } from "@tculpepp/spi-ai";
 import { getAgentDir } from "../config.js";
 import { AuthStorage } from "./auth-storage.js";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.js";

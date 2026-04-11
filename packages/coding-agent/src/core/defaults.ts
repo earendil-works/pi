@@ -1,3 +1,3 @@
-import type { ThinkingLevel } from "@tculpepp/pi-agent-core";
+import type { ThinkingLevel } from "@tculpepp/spi-agent-core";
 
 export const DEFAULT_THINKING_LEVEL: ThinkingLevel = "medium";

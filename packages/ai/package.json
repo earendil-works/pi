@@ -1,5 +1,5 @@
 {
-	"name": "@tculpepp/pi-ai",
+	"name": "@tculpepp/spi-ai",
 	"version": "0.66.1",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",

@@ -30,8 +30,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { type Static, Type } from "@sinclair/typebox";
-import { StringEnum } from "@tculpepp/pi-ai";
-import { type ExtensionAPI, getAgentDir, withFileMutationQueue } from "@tculpepp/pi-coding-agent";
+import { StringEnum } from "@tculpepp/spi-ai";
+import { type ExtensionAPI, getAgentDir, withFileMutationQueue } from "@tculpepp/spi-coding-agent";
 
 const PROVIDER = "google-antigravity";
 

@@ -1,5 +1,5 @@
 {
-	"name": "@tculpepp/pi",
+	"name": "@tculpepp/spi",
 	"version": "0.66.1",
 	"description": "CLI tool for managing vLLM deployments on GPU pods",
 	"type": "module",
@@ -36,7 +36,7 @@
 		"node": ">=20.0.0"
 	},
 	"dependencies": {
-		"@tculpepp/pi-agent-core": "^0.66.1",
+		"@tculpepp/spi-agent-core": "^0.66.1",
 		"chalk": "^5.5.0"
 	},
 	"devDependencies": {}

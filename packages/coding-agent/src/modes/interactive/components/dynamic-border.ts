@@ -1,4 +1,4 @@
-import type { Component } from "@tculpepp/pi-tui";
+import type { Component } from "@tculpepp/spi-tui";
 import { theme } from "../theme/theme.js";
 
 /**

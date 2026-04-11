@@ -1,4 +1,4 @@
-import type { AgentTool } from "@tculpepp/pi-agent-core";
+import type { AgentTool } from "@tculpepp/spi-agent-core";
 import type { Executor } from "../sandbox.js";
 import { attachTool } from "./attach.js";
 import { createBashTool } from "./bash.js";

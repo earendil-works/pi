@@ -50,7 +50,7 @@ pi.registerProvider("my-provider", {
 ## Quick Reference
 
 ```typescript
-import type { ExtensionAPI } from "@tculpepp/pi-coding-agent";
+import type { ExtensionAPI } from "@tculpepp/spi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
   // Override baseUrl for existing provider
@@ -232,7 +232,7 @@ pi.registerProvider("custom-api", {
 Add OAuth/SSO authentication that integrates with `/login`:
 
 ```typescript
-import type { OAuthCredentials, OAuthLoginCallbacks } from "@tculpepp/pi-ai";
+import type { OAuthCredentials, OAuthLoginCallbacks } from "@tculpepp/spi-ai";
 
 pi.registerProvider("corporate-ai", {
   baseUrl: "https://ai.corp.com/v1",
@@ -345,7 +345,7 @@ import {
   type SimpleStreamOptions,
   calculateCost,
   createAssistantMessageEventStream,
-} from "@tculpepp/pi-ai";
+} from "@tculpepp/spi-ai";
 
 function streamMyProvider(
   model: Model<any>,

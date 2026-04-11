@@ -4,8 +4,8 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { AgentTool } from "@tculpepp/pi-agent-core";
-import type { AssistantMessage } from "@tculpepp/pi-ai";
+import type { AgentTool } from "@tculpepp/spi-agent-core";
+import type { AssistantMessage } from "@tculpepp/spi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { createHarness, createHarnessWithExtensions, type Harness } from "./test-harness.js";
 

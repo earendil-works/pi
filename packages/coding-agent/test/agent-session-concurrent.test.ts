@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Type } from "@sinclair/typebox";
-import { Agent } from "@tculpepp/pi-agent-core";
+import { Agent } from "@tculpepp/spi-agent-core";
 import {
 	type AssistantMessage,
 	type AssistantMessageEvent,
@@ -14,7 +14,7 @@ import {
 	getModel,
 	type ImageContent,
 	type TextContent,
-} from "@tculpepp/pi-ai";
+} from "@tculpepp/spi-ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.js";
 import { AuthStorage } from "../src/core/auth-storage.js";

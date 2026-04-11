@@ -1,5 +1,5 @@
 {
-	"name": "@tculpepp/pi-agent-core",
+	"name": "@tculpepp/spi-agent-core",
 	"version": "0.66.1",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
@@ -17,7 +17,7 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-		"@tculpepp/pi-ai": "^0.66.1"
+		"@tculpepp/spi-ai": "^0.66.1"
 	},
 	"keywords": [
 		"ai",

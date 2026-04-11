@@ -11,7 +11,7 @@ import {
 	DefaultResourceLoader,
 	SessionManager,
 	type Skill,
-} from "@tculpepp/pi-coding-agent";
+} from "@tculpepp/spi-coding-agent";
 
 // Or define custom skills inline
 const customSkill: Skill = {

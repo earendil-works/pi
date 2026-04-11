@@ -1,4 +1,4 @@
-import type { AgentState } from "@tculpepp/pi-agent-core";
+import type { AgentState } from "@tculpepp/spi-agent-core";
 import { Store } from "../store.js";
 import type { SessionData, SessionMetadata, StoreConfig } from "../types.js";
 

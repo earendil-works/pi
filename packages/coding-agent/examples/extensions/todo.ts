@@ -11,9 +11,9 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import { StringEnum } from "@tculpepp/pi-ai";
-import type { ExtensionAPI, ExtensionContext, Theme } from "@tculpepp/pi-coding-agent";
-import { matchesKey, Text, truncateToWidth } from "@tculpepp/pi-tui";
+import { StringEnum } from "@tculpepp/spi-ai";
+import type { ExtensionAPI, ExtensionContext, Theme } from "@tculpepp/spi-coding-agent";
+import { matchesKey, Text, truncateToWidth } from "@tculpepp/spi-tui";
 
 interface Todo {
 	id: number;

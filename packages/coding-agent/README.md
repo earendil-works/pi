@@ -1,5 +1,5 @@
 <p align="center">
-  <a href="https://www.npmjs.com/package/@tculpepp/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@tculpepp/pi-coding-agent?style=flat-square" /></a>
+  <a href="https://www.npmjs.com/package/@tculpepp/spi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@tculpepp/spi-coding-agent?style=flat-square" /></a>
   <a href="https://github.com/tculpepp/secure-pi-mono/actions/workflows/ci.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/tculpepp/secure-pi-mono/ci.yml?style=flat-square&branch=main" /></a>
 </p>
 
@@ -41,7 +41,7 @@ Spi runs in four modes: interactive, print or JSON, RPC for process integration,
 ## Quick Start
 
 ```bash
-npm install -g @tculpepp/pi-coding-agent
+npm install -g @tculpepp/spi-coding-agent
 ```
 
 This build runs in **closed-network mode** by default. Configure a self-hosted model endpoint before first launch (see [Closed-Network Mode](#closed-network-mode)):
@@ -472,7 +472,7 @@ See [docs/packages.md](docs/packages.md).
 ### SDK
 
 ```typescript
-import { AuthStorage, createAgentSession, ModelRegistry, SessionManager } from "@tculpepp/pi-coding-agent";
+import { AuthStorage, createAgentSession, ModelRegistry, SessionManager } from "@tculpepp/spi-coding-agent";
 
 const authStorage = AuthStorage.create();
 const modelRegistry = ModelRegistry.create(authStorage);
@@ -677,6 +677,6 @@ MIT
 
 ## See Also
 
-- [@tculpepp/pi-ai](https://www.npmjs.com/package/@tculpepp/pi-ai): Core LLM toolkit
-- [@tculpepp/pi-agent-core](https://www.npmjs.com/package/@tculpepp/pi-agent-core): Agent framework
-- [@tculpepp/pi-tui](https://www.npmjs.com/package/@tculpepp/pi-tui): Terminal UI components
+- [@tculpepp/spi-ai](https://www.npmjs.com/package/@tculpepp/spi-ai): Core LLM toolkit
+- [@tculpepp/spi-agent-core](https://www.npmjs.com/package/@tculpepp/spi-agent-core): Agent framework
+- [@tculpepp/spi-tui](https://www.npmjs.com/package/@tculpepp/spi-tui): Terminal UI components

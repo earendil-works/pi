@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
-import type { AgentTool, ThinkingLevel } from "@tculpepp/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall, type Model } from "@tculpepp/pi-ai";
+import type { AgentTool, ThinkingLevel } from "@tculpepp/spi-agent-core";
+import { fauxAssistantMessage, fauxToolCall, type Model } from "@tculpepp/spi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { ExtensionAPI } from "../../src/index.js";
 import { createHarness, getAssistantTexts, type Harness } from "./harness.js";

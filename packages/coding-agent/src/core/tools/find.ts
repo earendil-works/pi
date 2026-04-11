@@ -1,6 +1,6 @@
 import { type Static, Type } from "@sinclair/typebox";
-import type { AgentTool } from "@tculpepp/pi-agent-core";
-import { Text } from "@tculpepp/pi-tui";
+import type { AgentTool } from "@tculpepp/spi-agent-core";
+import { Text } from "@tculpepp/spi-tui";
 import { spawnSync } from "child_process";
 import { existsSync } from "fs";
 import { globSync } from "glob";

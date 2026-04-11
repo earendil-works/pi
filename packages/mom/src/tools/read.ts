@@ -1,6 +1,6 @@
 import { Type } from "@sinclair/typebox";
-import type { AgentTool } from "@tculpepp/pi-agent-core";
-import type { ImageContent, TextContent } from "@tculpepp/pi-ai";
+import type { AgentTool } from "@tculpepp/spi-agent-core";
+import type { ImageContent, TextContent } from "@tculpepp/spi-ai";
 import { extname } from "path";
 import type { Executor } from "../sandbox.js";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateHead } from "./truncate.js";

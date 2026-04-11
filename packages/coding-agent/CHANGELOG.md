@@ -11,7 +11,7 @@
 - CLI command renamed from `pi` to `spi`.
 - Config directory renamed from `.pi/` to `.spi/`.
 - Environment variables renamed: `PI_CODING_AGENT_DIR` → `SPI_CODING_AGENT_DIR`, `PI_OFFLINE` → `SPI_OFFLINE`, `PI_PACKAGE_DIR` → `SPI_PACKAGE_DIR`, `PI_SHARE_VIEWER_URL` → `SPI_SHARE_VIEWER_URL`.
-- npm package renamed from `@mariozechner/pi-coding-agent` to `@tculpepp/pi-coding-agent`.
+- npm package renamed from `@mariozechner/pi-coding-agent` to `@tculpepp/spi-coding-agent`.
 - Extension and package manifests now use the `spi` key (e.g. `"spi": { ... }` in `package.json`). The legacy `pi` key is still accepted for compatibility with upstream packages.
 
 ### Fixed

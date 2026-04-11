@@ -4,7 +4,7 @@
 
 ### Changed
 
-- npm package renamed from `@mariozechner/pi-ai` to `@tculpepp/pi-ai`.
+- npm package renamed from `@mariozechner/pi-ai` to `@tculpepp/spi-ai`.
 
 ## [0.66.1] - 2026-04-08
 

@@ -10,7 +10,7 @@ import {
 	DefaultResourceLoader,
 	type PromptTemplate,
 	SessionManager,
-} from "@tculpepp/pi-coding-agent";
+} from "@tculpepp/spi-coding-agent";
 
 // Define custom templates
 const deployTemplate: PromptTemplate = {

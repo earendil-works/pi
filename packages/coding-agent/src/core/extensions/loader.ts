@@ -14,14 +14,14 @@ import { createJiti } from "@mariozechner/jiti";
 // These MUST be static so Bun bundles them into the compiled binary.
 // The virtualModules option then makes them available to extensions.
 import * as _bundledTypebox from "@sinclair/typebox";
-import * as _bundledPiAgentCore from "@tculpepp/pi-agent-core";
-import * as _bundledPiAi from "@tculpepp/pi-ai";
-import * as _bundledPiAiOauth from "@tculpepp/pi-ai/oauth";
-import type { KeyId } from "@tculpepp/pi-tui";
-import * as _bundledPiTui from "@tculpepp/pi-tui";
+import * as _bundledPiAgentCore from "@tculpepp/spi-agent-core";
+import * as _bundledPiAi from "@tculpepp/spi-ai";
+import * as _bundledPiAiOauth from "@tculpepp/spi-ai/oauth";
+import type { KeyId } from "@tculpepp/spi-tui";
+import * as _bundledPiTui from "@tculpepp/spi-tui";
 import { CONFIG_DIR_NAME, getAgentDir, isBunBinary } from "../../config.js";
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
-// avoiding a circular dependency. Extensions can import from @tculpepp/pi-coding-agent.
+// avoiding a circular dependency. Extensions can import from @tculpepp/spi-coding-agent.
 import * as _bundledPiCodingAgent from "../../index.js";
 import { createEventBus, type EventBus } from "../event-bus.js";
 import type { ExecOptions } from "../exec.js";
@@ -42,11 +42,11 @@ import type {
 /** Modules available to extensions via virtualModules (for compiled Bun binary) */
 const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@sinclair/typebox": _bundledTypebox,
-	"@tculpepp/pi-agent-core": _bundledPiAgentCore,
-	"@tculpepp/pi-tui": _bundledPiTui,
-	"@tculpepp/pi-ai": _bundledPiAi,
-	"@tculpepp/pi-ai/oauth": _bundledPiAiOauth,
-	"@tculpepp/pi-coding-agent": _bundledPiCodingAgent,
+	"@tculpepp/spi-agent-core": _bundledPiAgentCore,
+	"@tculpepp/spi-tui": _bundledPiTui,
+	"@tculpepp/spi-ai": _bundledPiAi,
+	"@tculpepp/spi-ai/oauth": _bundledPiAiOauth,
+	"@tculpepp/spi-coding-agent": _bundledPiCodingAgent,
 };
 
 const require = createRequire(import.meta.url);
@@ -75,11 +75,11 @@ function getAliases(): Record<string, string> {
 	};
 
 	_aliases = {
-		"@tculpepp/pi-coding-agent": packageIndex,
-		"@tculpepp/pi-agent-core": resolveWorkspaceOrImport("agent/dist/index.js", "@tculpepp/pi-agent-core"),
-		"@tculpepp/pi-tui": resolveWorkspaceOrImport("tui/dist/index.js", "@tculpepp/pi-tui"),
-		"@tculpepp/pi-ai": resolveWorkspaceOrImport("ai/dist/index.js", "@tculpepp/pi-ai"),
-		"@tculpepp/pi-ai/oauth": resolveWorkspaceOrImport("ai/dist/oauth.js", "@tculpepp/pi-ai/oauth"),
+		"@tculpepp/spi-coding-agent": packageIndex,
+		"@tculpepp/spi-agent-core": resolveWorkspaceOrImport("agent/dist/index.js", "@tculpepp/spi-agent-core"),
+		"@tculpepp/spi-tui": resolveWorkspaceOrImport("tui/dist/index.js", "@tculpepp/spi-tui"),
+		"@tculpepp/spi-ai": resolveWorkspaceOrImport("ai/dist/index.js", "@tculpepp/spi-ai"),
+		"@tculpepp/spi-ai/oauth": resolveWorkspaceOrImport("ai/dist/oauth.js", "@tculpepp/spi-ai/oauth"),
 		"@sinclair/typebox": typeboxRoot,
 	};
 

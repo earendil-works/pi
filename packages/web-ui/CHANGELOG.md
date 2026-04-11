@@ -4,7 +4,7 @@
 
 ### Changed
 
-- npm package renamed from `@mariozechner/pi-web-ui` to `@tculpepp/pi-web-ui`.
+- npm package renamed from `@mariozechner/pi-web-ui` to `@tculpepp/spi-web-ui`.
 
 ## [0.66.1] - 2026-04-08
 

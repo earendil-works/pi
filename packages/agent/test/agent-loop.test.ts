@@ -6,7 +6,7 @@ import {
 	type Message,
 	type Model,
 	type UserMessage,
-} from "@tculpepp/pi-ai";
+} from "@tculpepp/spi-ai";
 import { describe, expect, it } from "vitest";
 import { agentLoop, agentLoopContinue } from "../src/agent-loop.js";
 import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "../src/types.js";

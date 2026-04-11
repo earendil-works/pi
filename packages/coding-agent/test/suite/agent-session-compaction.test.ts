@@ -1,4 +1,4 @@
-import { type AssistantMessage, fauxAssistantMessage, type Model } from "@tculpepp/pi-ai";
+import { type AssistantMessage, fauxAssistantMessage, type Model } from "@tculpepp/spi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHarness, type Harness } from "./harness.js";
 

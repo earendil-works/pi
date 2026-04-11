@@ -4,7 +4,7 @@
 
 ### Changed
 
-- npm package renamed from `@mariozechner/pi-tui` to `@tculpepp/pi-tui`.
+- npm package renamed from `@mariozechner/pi-tui` to `@tculpepp/spi-tui`.
 
 ## [0.66.1] - 2026-04-08
 

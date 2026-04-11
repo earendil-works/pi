@@ -1,7 +1,7 @@
 import { i18n } from "@mariozechner/mini-lit";
 import { type Static, Type } from "@sinclair/typebox";
-import type { AgentTool } from "@tculpepp/pi-agent-core";
-import type { ToolResultMessage } from "@tculpepp/pi-ai";
+import type { AgentTool } from "@tculpepp/spi-agent-core";
+import type { ToolResultMessage } from "@tculpepp/spi-ai";
 import { html } from "lit";
 import { createRef, ref } from "lit/directives/ref.js";
 import { Code } from "lucide";

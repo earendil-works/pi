@@ -5,9 +5,9 @@
  * the selected file in VS Code's diff view.
  */
 
-import type { ExtensionAPI } from "@tculpepp/pi-coding-agent";
-import { DynamicBorder } from "@tculpepp/pi-coding-agent";
-import { Container, Key, matchesKey, type SelectItem, SelectList, Text } from "@tculpepp/pi-tui";
+import type { ExtensionAPI } from "@tculpepp/spi-coding-agent";
+import { DynamicBorder } from "@tculpepp/spi-coding-agent";
+import { Container, Key, matchesKey, type SelectItem, SelectList, Text } from "@tculpepp/spi-tui";
 
 interface FileInfo {
 	status: string;

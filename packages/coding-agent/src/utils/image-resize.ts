@@ -1,4 +1,4 @@
-import type { ImageContent } from "@tculpepp/pi-ai";
+import type { ImageContent } from "@tculpepp/spi-ai";
 import { applyExifOrientation } from "./exif-orientation.js";
 import { loadPhoton } from "./photon.js";
 

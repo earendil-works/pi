@@ -7,8 +7,8 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentMessage } from "@tculpepp/pi-agent-core";
-import type { AssistantMessage, ImageContent, Message, Model, OAuthProviderId } from "@tculpepp/pi-ai";
+import type { AgentMessage } from "@tculpepp/spi-agent-core";
+import type { AssistantMessage, ImageContent, Message, Model, OAuthProviderId } from "@tculpepp/spi-ai";
 import type {
 	AutocompleteItem,
 	EditorComponent,
@@ -19,7 +19,7 @@ import type {
 	OverlayHandle,
 	OverlayOptions,
 	SlashCommand,
-} from "@tculpepp/pi-tui";
+} from "@tculpepp/spi-tui";
 import {
 	CombinedAutocompleteProvider,
 	type Component,
@@ -35,7 +35,7 @@ import {
 	TruncatedText,
 	TUI,
 	visibleWidth,
-} from "@tculpepp/pi-tui";
+} from "@tculpepp/spi-tui";
 import { spawn, spawnSync } from "child_process";
 import {
 	APP_NAME,
@@ -669,7 +669,7 @@ export class InteractiveMode {
 		if (process.env.SPI_SKIP_VERSION_CHECK || process.env.SPI_OFFLINE) return undefined;
 
 		try {
-			const response = await fetch("https://registry.npmjs.org/@tculpepp/pi-coding-agent/latest", {
+			const response = await fetch("https://registry.npmjs.org/@tculpepp/spi-coding-agent/latest", {
 				signal: AbortSignal.timeout(10000),
 			});
 			if (!response.ok) return undefined;
@@ -3092,7 +3092,7 @@ export class InteractiveMode {
 	}
 
 	showNewVersionNotification(newVersion: string): void {
-		const action = theme.fg("accent", getUpdateInstruction("@tculpepp/pi-coding-agent"));
+		const action = theme.fg("accent", getUpdateInstruction("@tculpepp/spi-coding-agent"));
 		const updateInstruction = theme.fg("muted", `New version ${newVersion} is available. `) + action;
 		const changelogUrl = theme.fg(
 			"accent",

@@ -4,7 +4,7 @@
  * Shows how to replace or modify the default system prompt.
  */
 
-import { createAgentSession, DefaultResourceLoader, SessionManager } from "@tculpepp/pi-coding-agent";
+import { createAgentSession, DefaultResourceLoader, SessionManager } from "@tculpepp/spi-coding-agent";
 
 // Option 1: Replace prompt entirely
 const loader1 = new DefaultResourceLoader({

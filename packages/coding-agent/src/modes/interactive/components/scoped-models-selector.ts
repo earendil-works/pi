@@ -1,4 +1,4 @@
-import type { Model } from "@tculpepp/pi-ai";
+import type { Model } from "@tculpepp/spi-ai";
 import {
 	Container,
 	type Focusable,
@@ -9,7 +9,7 @@ import {
 	matchesKey,
 	Spacer,
 	Text,
-} from "@tculpepp/pi-tui";
+} from "@tculpepp/spi-tui";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 

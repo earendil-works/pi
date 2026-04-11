@@ -34,7 +34,7 @@ Source on GitHub ([pi-mono](https://github.com/tculpepp/secure-pi-mono)):
 - [`packages/ai/src/types.ts`](https://github.com/tculpepp/secure-pi-mono/blob/main/packages/ai/src/types.ts) - Base message types (UserMessage, AssistantMessage, ToolResultMessage)
 - [`packages/agent/src/types.ts`](https://github.com/tculpepp/secure-pi-mono/blob/main/packages/agent/src/types.ts) - AgentMessage union type
 
-For TypeScript definitions in your project, inspect `node_modules/@tculpepp/pi-coding-agent/dist/` and `node_modules/@tculpepp/pi-ai/dist/`.
+For TypeScript definitions in your project, inspect `node_modules/@tculpepp/spi-coding-agent/dist/` and `node_modules/@tculpepp/spi-ai/dist/`.
 
 ## Message Types
 

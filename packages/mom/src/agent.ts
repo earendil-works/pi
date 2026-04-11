@@ -1,5 +1,5 @@
-import { Agent, type AgentEvent } from "@tculpepp/pi-agent-core";
-import { getModel, type ImageContent } from "@tculpepp/pi-ai";
+import { Agent, type AgentEvent } from "@tculpepp/spi-agent-core";
+import { getModel, type ImageContent } from "@tculpepp/spi-ai";
 import {
 	AgentSession,
 	AuthStorage,
@@ -11,7 +11,7 @@ import {
 	type ResourceLoader,
 	SessionManager,
 	type Skill,
-} from "@tculpepp/pi-coding-agent";
+} from "@tculpepp/spi-coding-agent";
 import { existsSync, readFileSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { homedir } from "os";

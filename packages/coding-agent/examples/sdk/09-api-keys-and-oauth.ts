@@ -4,7 +4,7 @@
  * Configure API key resolution via AuthStorage and ModelRegistry.
  */
 
-import { AuthStorage, createAgentSession, ModelRegistry, SessionManager } from "@tculpepp/pi-coding-agent";
+import { AuthStorage, createAgentSession, ModelRegistry, SessionManager } from "@tculpepp/spi-coding-agent";
 
 // Default: AuthStorage uses ~/.spi/agent/auth.json
 // ModelRegistry loads built-in + custom models from ~/.spi/agent/models.json

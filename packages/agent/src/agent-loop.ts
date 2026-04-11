@@ -10,7 +10,7 @@ import {
 	streamSimple,
 	type ToolResultMessage,
 	validateToolArguments,
-} from "@tculpepp/pi-ai";
+} from "@tculpepp/spi-ai";
 import type {
 	AgentContext,
 	AgentEvent,

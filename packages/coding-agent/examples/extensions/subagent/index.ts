@@ -17,11 +17,11 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { Type } from "@sinclair/typebox";
-import type { AgentToolResult } from "@tculpepp/pi-agent-core";
-import type { Message } from "@tculpepp/pi-ai";
-import { StringEnum } from "@tculpepp/pi-ai";
-import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@tculpepp/pi-coding-agent";
-import { Container, Markdown, Spacer, Text } from "@tculpepp/pi-tui";
+import type { AgentToolResult } from "@tculpepp/spi-agent-core";
+import type { Message } from "@tculpepp/spi-ai";
+import { StringEnum } from "@tculpepp/spi-ai";
+import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@tculpepp/spi-coding-agent";
+import { Container, Markdown, Spacer, Text } from "@tculpepp/spi-tui";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
 
 const MAX_PARALLEL_TASKS = 8;

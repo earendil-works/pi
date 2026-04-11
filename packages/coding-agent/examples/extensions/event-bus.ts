@@ -7,7 +7,7 @@
  * Usage: /emit [event-name] [data] - emit an event on the bus
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@tculpepp/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@tculpepp/spi-coding-agent";
 
 export default function (pi: ExtensionAPI) {
 	// Store ctx for use in event handler

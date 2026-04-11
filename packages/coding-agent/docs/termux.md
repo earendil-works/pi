@@ -17,7 +17,7 @@ pkg update && pkg upgrade
 pkg install nodejs termux-api git
 
 # Install pi
-npm install -g @tculpepp/pi-coding-agent
+npm install -g @tculpepp/spi-coding-agent
 
 # Create config directory
 mkdir -p ~/.spi/agent

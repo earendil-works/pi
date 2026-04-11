@@ -5,8 +5,8 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { ExtensionAPI } from "@tculpepp/pi-coding-agent";
-import { Editor, type EditorTheme, Key, matchesKey, Text, truncateToWidth } from "@tculpepp/pi-tui";
+import type { ExtensionAPI } from "@tculpepp/spi-coding-agent";
+import { Editor, type EditorTheme, Key, matchesKey, Text, truncateToWidth } from "@tculpepp/spi-tui";
 
 interface OptionWithDesc {
 	label: string;

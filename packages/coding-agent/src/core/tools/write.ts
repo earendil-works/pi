@@ -1,6 +1,6 @@
 import { type Static, Type } from "@sinclair/typebox";
-import type { AgentTool } from "@tculpepp/pi-agent-core";
-import { Container, Text } from "@tculpepp/pi-tui";
+import type { AgentTool } from "@tculpepp/spi-agent-core";
+import { Container, Text } from "@tculpepp/spi-tui";
 import { mkdir as fsMkdir, writeFile as fsWriteFile } from "fs/promises";
 import { dirname } from "path";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.js";

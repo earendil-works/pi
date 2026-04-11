@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Api, Context, Model, OpenAICompletionsCompat } from "@tculpepp/pi-ai";
-import { getApiProvider } from "@tculpepp/pi-ai";
-import { getOAuthProvider } from "@tculpepp/pi-ai/oauth";
+import type { Api, Context, Model, OpenAICompletionsCompat } from "@tculpepp/spi-ai";
+import { getApiProvider } from "@tculpepp/spi-ai";
+import { getOAuthProvider } from "@tculpepp/spi-ai/oauth";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.js";
 import { clearApiKeyCache, ModelRegistry } from "../src/core/model-registry.js";

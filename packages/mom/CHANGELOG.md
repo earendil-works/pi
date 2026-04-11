@@ -4,7 +4,7 @@
 
 ### Changed
 
-- npm package renamed from `@mariozechner/pi-mom` to `@tculpepp/pi-mom`.
+- npm package renamed from `@mariozechner/pi-mom` to `@tculpepp/spi-mom`.
 
 ## [0.66.1] - 2026-04-08
 

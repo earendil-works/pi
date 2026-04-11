@@ -17,8 +17,8 @@ import {
 	registerApiProvider,
 	resetApiProviders,
 	type SimpleStreamOptions,
-} from "@tculpepp/pi-ai";
-import { registerOAuthProvider, resetOAuthProviders } from "@tculpepp/pi-ai/oauth";
+} from "@tculpepp/spi-ai";
+import { registerOAuthProvider, resetOAuthProviders } from "@tculpepp/spi-ai/oauth";
 import AjvModule from "ajv";
 import { existsSync, readFileSync } from "fs";
 import { join } from "path";

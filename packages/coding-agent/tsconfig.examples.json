@@ -3,10 +3,10 @@
 	"compilerOptions": {
 		"noEmit": true,
 		"paths": {
-			"@tculpepp/pi-coding-agent": ["./src/index.ts"],
-			"@tculpepp/pi-coding-agent/hooks": ["./src/core/hooks/index.ts"],
-			"@tculpepp/pi-tui": ["../tui/src/index.ts"],
-			"@tculpepp/pi-ai": ["../ai/src/index.ts"],
+			"@tculpepp/spi-coding-agent": ["./src/index.ts"],
+			"@tculpepp/spi-coding-agent/hooks": ["./src/core/hooks/index.ts"],
+			"@tculpepp/spi-tui": ["../tui/src/index.ts"],
+			"@tculpepp/spi-ai": ["../ai/src/index.ts"],
 			"@sinclair/typebox": ["../../node_modules/@sinclair/typebox"]
 		},
 		"skipLibCheck": true

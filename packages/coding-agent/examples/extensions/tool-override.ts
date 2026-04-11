@@ -21,8 +21,8 @@
  */
 
 import { Type } from "@sinclair/typebox";
-import type { TextContent } from "@tculpepp/pi-ai";
-import { type ExtensionAPI, getAgentDir, withFileMutationQueue } from "@tculpepp/pi-coding-agent";
+import type { TextContent } from "@tculpepp/spi-ai";
+import { type ExtensionAPI, getAgentDir, withFileMutationQueue } from "@tculpepp/spi-coding-agent";
 import { constants, readFileSync } from "fs";
 import { access, appendFile, readFile } from "fs/promises";
 import { join, resolve } from "path";

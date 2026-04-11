@@ -1,6 +1,6 @@
 import { type Static, Type } from "@sinclair/typebox";
-import type { AgentTool } from "@tculpepp/pi-agent-core";
-import { Container, Text } from "@tculpepp/pi-tui";
+import type { AgentTool } from "@tculpepp/spi-agent-core";
+import { Container, Text } from "@tculpepp/spi-tui";
 import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
 import { renderDiff } from "../../modes/interactive/components/diff.js";

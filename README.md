@@ -75,10 +75,10 @@ See [packages/coding-agent/docs/models.md](packages/coding-agent/docs/models.md)
 
 | Package | Description |
 |---------|-------------|
-| **[@tculpepp/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
-| **[@tculpepp/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
-| **[@tculpepp/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
-| **[@tculpepp/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
+| **[@tculpepp/spi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
+| **[@tculpepp/spi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
+| **[@tculpepp/spi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
+| **[@tculpepp/spi-tui](packages/tui)** | Terminal UI library with differential rendering |
 
 ## Development
 

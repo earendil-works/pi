@@ -1,7 +1,7 @@
 import { Buffer } from "node:buffer";
 import { Type } from "@sinclair/typebox";
-import type { AgentTool } from "@tculpepp/pi-agent-core";
-import { fauxAssistantMessage, fauxToolCall } from "@tculpepp/pi-ai";
+import type { AgentTool } from "@tculpepp/spi-agent-core";
+import { fauxAssistantMessage, fauxToolCall } from "@tculpepp/spi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import type { BashOperations } from "../../src/core/tools/bash.js";
 import { createHarness, type Harness } from "./harness.js";
