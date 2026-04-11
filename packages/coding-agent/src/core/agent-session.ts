@@ -190,6 +190,8 @@ export interface ModelCycleResult {
 	isScoped: boolean;
 }
 
+type PreparedPromptResult = { kind: "handled" } | { kind: "queued" } | { kind: "run"; messages: AgentMessage[] };
+
 /** Session statistics for /session command */
 export interface SessionStats {
 	sessionFile: string | undefined;
@@ -927,6 +929,38 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		const prepared = await this._preparePrompt(text, options);
+		if (prepared.kind !== "run") {
+			return;
+		}
+
+		await this.agent.prompt(prepared.messages);
+		await this.waitForRetry();
+	}
+
+	/**
+	 * Start a prompt after preflight succeeds, but do not wait for the full run to finish.
+	 * RPC mode uses this so the command gets exactly one authoritative response.
+	 */
+	async startPrompt(text: string, options?: PromptOptions): Promise<void> {
+		const prepared = await this._preparePrompt(text, options);
+		if (prepared.kind !== "run") {
+			return;
+		}
+
+		let startError: unknown;
+		void this.agent.prompt(prepared.messages).catch((error) => {
+			startError = error;
+		});
+		// Give immediate rejections one microtask turn to surface so callers can treat them as
+		// acceptance failures instead of success-followed-by-error.
+		await Promise.resolve();
+		if (startError) {
+			throw startError;
+		}
+	}
+
+	private async _preparePrompt(text: string, options?: PromptOptions): Promise<PreparedPromptResult> {
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 
 		// Handle extension commands first (execute immediately, even during streaming)
@@ -934,8 +968,7 @@ export class AgentSession {
 		if (expandPromptTemplates && text.startsWith("/")) {
 			const handled = await this._tryExecuteExtensionCommand(text);
 			if (handled) {
-				// Extension command executed, no prompt to send
-				return;
+				return { kind: "handled" };
 			}
 		}
 
@@ -949,7 +982,7 @@ export class AgentSession {
 				options?.source ?? "interactive",
 			);
 			if (inputResult.action === "handled") {
-				return;
+				return { kind: "handled" };
 			}
 			if (inputResult.action === "transform") {
 				currentText = inputResult.text;
@@ -976,7 +1009,7 @@ export class AgentSession {
 			} else {
 				await this._queueSteer(expandedText, currentImages);
 			}
-			return;
+			return { kind: "queued" };
 		}
 
 		// Flush any pending bash messages before the new prompt
@@ -1061,8 +1094,7 @@ export class AgentSession {
 			}
 		}
 
-		await this.agent.prompt(messages);
-		await this.waitForRetry();
+		return { kind: "run", messages };
 	}
 
 	/**
