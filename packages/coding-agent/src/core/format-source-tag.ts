@@ -37,12 +37,12 @@ const localFormatters = withDefault<() => string | undefined>({ none: () => unde
 const npmFull = (s: NpmSource): string => `npm:${s.name}`;
 const npmFormatters = withDefault<(s: NpmSource) => string | undefined>(
 	{
-		none: () => undefined,
-		minimal: () => "",
-		"name-only": (s) => s.name.split("/").pop()!,
-		tiny: (s) => s.name,
-		short: npmFull,
 		full: npmFull,
+		short: npmFull,
+		tiny: (s) => s.name,
+		"name-only": (s) => s.name.split("/").pop()!,
+		minimal: () => "",
+		none: () => undefined,
 	},
 	npmFull,
 );
@@ -50,12 +50,12 @@ const npmFormatters = withDefault<(s: NpmSource) => string | undefined>(
 const gitFull = (s: GitSource): string => `git:${s.host}/${s.path}${s.ref}`;
 const gitFormatters = withDefault<(s: GitSource) => string | undefined>(
 	{
-		none: () => undefined,
-		minimal: () => "",
-		"name-only": (s) => `${s.repo}${s.ref}`,
-		tiny: (s) => `${s.path}${s.ref}`,
-		short: (s) => `git:${s.path}${s.ref}`,
 		full: gitFull,
+		short: (s) => `git:${s.path}${s.ref}`,
+		tiny: (s) => `${s.path}${s.ref}`,
+		"name-only": (s) => `${s.repo}${s.ref}`,
+		minimal: () => "",
+		none: () => undefined,
 	},
 	gitFull,
 );
