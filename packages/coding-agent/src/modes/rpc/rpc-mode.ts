@@ -348,16 +348,13 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			// =================================================================
 
 			case "prompt": {
-				// Don't await - events will stream
-				// Extension commands are executed immediately, file prompt templates are expanded
-				// If streaming and streamingBehavior specified, queues via steer/followUp
-				session
-					.prompt(command.message, {
-						images: command.images,
-						streamingBehavior: command.streamingBehavior,
-						source: "rpc",
-					})
-					.catch((e) => output(error(id, "prompt", e.message)));
+				// Await prompt preflight so this request gets exactly one authoritative response.
+				// Events still stream asynchronously after the prompt has started or been queued.
+				await session.startPrompt(command.message, {
+					images: command.images,
+					streamingBehavior: command.streamingBehavior,
+					source: "rpc",
+				});
 				return success(id, "prompt");
 			}
 
