@@ -30,7 +30,7 @@ See these complete provider examples:
 
 ## secureMode Requirement
 
-When `secureMode: true` is set in `settings.json`, `pi.registerProvider()` calls that do not include an explicit `baseUrl` are **rejected at registration time** with a logged error. This prevents extensions from inadvertently introducing cloud-reachable providers in a closed-network deployment.
+`secureMode` is **on by default**. Any `pi.registerProvider()` call that does not include an explicit `baseUrl` is **rejected at registration time** with a logged error. This prevents extensions from inadvertently introducing cloud-reachable providers in a closed-network deployment.
 
 Any extension that registers a provider for internal infrastructure must include `baseUrl`:
 

@@ -4,7 +4,7 @@ Add custom providers and models (Ollama, vLLM, LM Studio, proxies) via `~/.pi/ag
 
 ## Closed-Network Deployment
 
-When `secureMode: true` is set in `settings.json`, **only providers with an explicit `baseUrl` in this file are visible**. Built-in providers that would otherwise reach commercial cloud endpoints are hidden. Configure at least one provider with a `baseUrl` before launching pi, or the model list will be empty.
+`secureMode` is **on by default**. Only providers with an explicit `baseUrl` in this file are visible. Built-in providers that would otherwise reach commercial cloud endpoints are hidden. Configure at least one provider with a `baseUrl` before launching pi, or the model list will be empty.
 
 Minimum required configuration to get started:
 

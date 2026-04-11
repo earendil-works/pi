@@ -17,21 +17,15 @@ Version checks, package update checks, and session sharing are suppressed at sta
 
 ### 2. `secureMode` — provider allowlist enforcement
 
-A new `secureMode` setting gates which LLM providers the application can reach. When enabled, **any provider that does not have an explicit `baseUrl` configured in `models.json` is hidden from the model list and blocked from registration**.
+`secureMode` is **on by default**. Any provider that does not have an explicit `baseUrl` configured in `models.json` is hidden from the model list and blocked from registration.
 
-This means all built-in commercial cloud endpoints (Anthropic, OpenAI, Google, Mistral, Bedrock, etc.) are invisible by default. A model only becomes available after an administrator explicitly configures its endpoint in `models.json`. The protocol implementations (OpenAI-compat, Anthropic-compat, Google-compat, etc.) remain intact so self-hosted models can use them without additional code.
+All built-in commercial cloud endpoints (Anthropic, OpenAI, Google, Mistral, Bedrock, etc.) are invisible unless redirected through a `baseUrl` in `models.json`. The protocol implementations (OpenAI-compat, Anthropic-compat, Google-compat, etc.) remain intact so self-hosted models can use them without additional code.
 
 Enforcement points:
 - `ModelRegistry.getAvailable()` — filters the model picker and cycling list
 - `ModelRegistry.registerProvider()` — blocks extension-registered providers without a `baseUrl`
 - `resolveCliModel()` — blocks CLI `--model` selection of ungated providers
 - `runner.ts bindCore()` — blocks extension provider registrations at bind time
-
-Activate by adding to `~/.pi/agent/settings.json` or `.pi/settings.json`:
-
-```json
-{ "secureMode": true }
-```
 
 ### 3. No default models
 
@@ -66,11 +60,10 @@ Create `~/.pi/agent/models.json`:
 }
 ```
 
-Enable `secureMode` in `~/.pi/agent/settings.json`:
+Set defaults in `~/.pi/agent/settings.json`:
 
 ```json
 {
-  "secureMode": true,
   "defaultProvider": "internal-llm",
   "defaultModel": "gemma-3-27b-it"
 }

@@ -145,13 +145,13 @@ When multiple sources specify a session directory, `--session-dir` CLI flag take
 |---------|------|---------|-------------|
 | `secureMode` | boolean | `true` | When `true`, only providers with an explicit `baseUrl` in `models.json` appear in the model list. Built-in cloud endpoints (Anthropic, OpenAI, Google, etc.) are hidden unless redirected via `models.json`. |
 
-Enable for closed-network deployments where all LLM traffic must route through internal infrastructure:
+`secureMode` is **on by default**. Any provider or model that does not have an explicit `baseUrl` configured in `models.json` is filtered from `getAvailable()` results and blocked from being registered by extensions. A clear error message is shown when a blocked provider is requested.
+
+To opt out (not recommended outside development):
 
 ```json
-{ "secureMode": true }
+{ "secureMode": false }
 ```
-
-With `secureMode` on, any provider or model that does not have an explicit `baseUrl` configured is filtered from `getAvailable()` results and blocked from being registered by extensions. A clear error message is shown when a blocked provider is requested.
 
 See [models.md](models.md) for how to configure self-hosted providers.
 
@@ -244,7 +244,6 @@ Closed-network configuration (pair with `models.json` — see [models.md](models
 
 ```json
 {
-  "secureMode": true,
   "defaultProvider": "internal-llm",
   "defaultModel": "gemma-3-27b-it",
   "defaultThinkingLevel": "off"

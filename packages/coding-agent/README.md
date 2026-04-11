@@ -69,19 +69,9 @@ Then just talk to pi. By default, pi gives the model four tools: `read`, `write`
 
 This fork is configured for deployment in closed networks that cannot reach commercial LLM cloud endpoints. Two behavioral changes are always active:
 
-1. **secureMode enforcement** — when `secureMode: true` is set in `settings.json`, only providers that have an explicit `baseUrl` configured in `models.json` are visible in the model list. Built-in providers (Anthropic, OpenAI, Google, etc.) are hidden unless the user has redirected them to internal infrastructure. The protocol implementations (OpenAI-compat, Anthropic-compat, Google-compat) remain intact so self-hosted models can use them.
+1. **secureMode enforcement** — enabled by default. Only providers that have an explicit `baseUrl` configured in `models.json` are visible in the model list. Built-in providers (Anthropic, OpenAI, Google, etc.) are hidden unless redirected to internal infrastructure. The protocol implementations (OpenAI-compat, Anthropic-compat, Google-compat) remain intact so self-hosted models can use them.
 
 2. **Outbound calls disabled** — version checks and package update checks are permanently suppressed. The `/share` command is also unavailable.
-
-### Enabling secureMode
-
-Add to `~/.pi/agent/settings.json` (global) or `.pi/settings.json` (project):
-
-```json
-{
-  "secureMode": true
-}
-```
 
 ### Configuring a Self-Hosted Model
 
