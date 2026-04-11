@@ -419,10 +419,14 @@ async function executeToolCallsParallel(
 		execution: executePreparedToolCall(prepared, signal, emit),
 	}));
 
-	for (const running of runningCalls) {
-		const executed = await running.execution;
-		results.push(
-			await finalizeExecutedToolCall(
+	// Use Promise.allSettled to ensure all parallel tool results are collected
+	// even if one tool's finalization throws. Sequential await would lose all
+	// results after the first failure, causing the agent loop to deadlock
+	// waiting for missing tool results that will never arrive.
+	const settled = await Promise.allSettled(
+		runningCalls.map(async (running) => {
+			const executed = await running.execution;
+			return finalizeExecutedToolCall(
 				currentContext,
 				assistantMessage,
 				running.prepared,
@@ -430,8 +434,28 @@ async function executeToolCallsParallel(
 				config,
 				signal,
 				emit,
-			),
-		);
+			);
+		}),
+	);
+
+	for (let i = 0; i < settled.length; i++) {
+		const outcome = settled[i];
+		if (outcome.status === "fulfilled") {
+			results.push(outcome.value);
+		} else {
+			// Emit an error tool result so the agent loop can continue.
+			const toolCall = runningCalls[i].prepared.toolCall;
+			results.push(
+				await emitToolCallOutcome(
+					toolCall,
+					createErrorToolResult(
+						outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason),
+					),
+					true,
+					emit,
+				),
+			);
+		}
 	}
 
 	return results;
