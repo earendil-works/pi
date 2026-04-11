@@ -303,11 +303,13 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 
 			if (spaceIndex === -1) {
 				const prefix = textBeforeCursor.slice(1);
-				const commandItems = this.commands.map((cmd) => ({
-					name: "name" in cmd ? cmd.name : cmd.value,
-					label: "name" in cmd ? cmd.name : cmd.label,
-					description: cmd.description,
-				}));
+				const commandItems = this.commands
+					.map((cmd) => ({
+						name: "name" in cmd ? cmd.name : cmd.value,
+						label: "name" in cmd ? cmd.name : cmd.label,
+						description: cmd.description,
+					}))
+					.filter((item) => typeof item.name === "string" && typeof item.label === "string");
 
 				const filtered = fuzzyFilter(commandItems, prefix, (item) => item.name).map((item) => ({
 					value: item.name,
@@ -339,8 +341,17 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 				return null;
 			}
 
+			// Validate and sanitize autocomplete items
+			const validItems = argumentSuggestions.filter(
+				(item) => item && typeof item === "object" && typeof item.value === "string",
+			);
+
+			if (validItems.length === 0) {
+				return null;
+			}
+
 			return {
-				items: argumentSuggestions,
+				items: validItems,
 				prefix: argumentText,
 			};
 		}

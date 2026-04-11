@@ -2012,6 +2012,10 @@ export class Editor implements Component, Focusable {
 
 		for (let i = 0; i < items.length; i++) {
 			const value = items[i]!.value;
+			// Defensive check: ensure value is a string, as extensions might return anything at runtime
+			if (typeof value !== "string") {
+				continue;
+			}
 			if (value === prefix) {
 				return i; // Exact match always wins
 			}

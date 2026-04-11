@@ -10,6 +10,10 @@ export interface FuzzyMatch {
 }
 
 export function fuzzyMatch(query: string, text: string): FuzzyMatch {
+	// Defensive check: ensure both query and text are strings
+	if (typeof query !== "string" || typeof text !== "string") {
+		return { matches: false, score: 0 };
+	}
 	const queryLower = query.toLowerCase();
 	const textLower = text.toLowerCase();
 
@@ -110,6 +114,12 @@ export function fuzzyFilter<T>(items: T[], query: string, getText: (item: T) => 
 
 	for (const item of items) {
 		const text = getText(item);
+
+		// Skip items where getText doesn't return a string
+		if (typeof text !== "string") {
+			continue;
+		}
+
 		let totalScore = 0;
 		let allMatch = true;
 
