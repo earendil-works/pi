@@ -241,7 +241,7 @@ interface WebSearchResult {
 }
 
 /** Regular expression to decode HTML entities */
-const HTML_ENTITY_REGEX = /&#(\d+);|&#x([0-9a-fA-F]+);|&#([a-zA-Z]+);|&([a-zA-Z]+);/g;
+const HTML_ENTITY_REGEX = /&#(\d+);|&#x([0-9a-fA-F]+);|&([a-zA-Z]+);/g;
 
 /**
  * Decode HTML entities in a string.
