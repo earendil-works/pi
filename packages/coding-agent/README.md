@@ -521,21 +521,28 @@ cat README.md | pi -p "Summarize this text"
 | `--tools <list>` | Enable specific built-in tools (default: `read,bash,edit,write`) |
 | `--no-tools` | Disable all built-in tools (extension tools still work) |
 
-Available built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`, `web_search`, `web_fetch`
+Available built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`
 
 ### Web Tools
 
-The `web_search` and `web_fetch` tools enable autonomous web research. Use `--tools=web` to enable both.
+The `web_search` and `web_fetch` tools enable autonomous web research. Place the extension at `.pi/extensions/web-tools.ts` to enable these tools. They auto-activate on startup — no `--tools` flag needed.
 
 | Tool | Description | Parameters |
 |------|-------------|------------|
 | `web_search` | Search the web for information via DuckDuckGo | `query` (required), `max_results` (optional, default 5) |
 | `web_fetch` | Fetch web page content as markdown via Jina Reader | `url` (required) |
 
+**Installation:**
+```bash
+curl -o ~/.pi/extensions/web-tools.ts https://raw.githubusercontent.com/badlogic/pi/main/.pi/extensions/web-tools.ts
+```
+
+**To disable:** Remove `~/.pi/extensions/web-tools.ts`.
+
 **Example workflow:**
 ```bash
-# Enable web tools for research tasks
-pi --tools=web
+# No flags needed - tools auto-activate when extension exists
+pi
 
 # In the session, the agent can now:
 # 1. Search for information: web_search({ query: "latest AI news" })
@@ -544,14 +551,10 @@ pi --tools=web
 
 **SSRF Protection:** `web_fetch` includes protection against Server-Side Request Forgery attacks, blocking access to:
 - Localhost and 127.x.x.x addresses
-- Private networks (10.x.x.x, 172.16-31.x.x, 192.168.x.x)
-- Link-local addresses (169.254.x.x, including AWS metadata)
-- IPv6 equivalents of the above
-
-**Known Limitations:**
-- Jina Reader free tier has no guaranteed SLA; research tasks may stall on outages
-- DuckDuckGo HTML format may change; parsing failures return error JSON for retry
-- Hostnames like `localhost.localdomain` cannot be blocked without DNS resolution
+- Private networks (10.x.x.x, 172.16-31.x.x, 192.168.x.x, 0.0.0.0/8)
+- Link-local addresses (169.254.x.x, fe80::/10, including AWS/GCP metadata)
+- IPv6 unique local addresses (fc00::/7, fd00::/8)
+- IPv4-mapped IPv6 addresses
 
 ### Resource Options
 

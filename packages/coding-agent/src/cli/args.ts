@@ -237,7 +237,8 @@ ${chalk.bold("Options:")}
                                  Supports globs (anthropic/*, *sonnet*) and fuzzy matching
   --no-tools                     Disable all built-in tools
   --tools <tools>                Comma-separated list of tools to enable (default: read,bash,edit,write)
-                                 Available: read, bash, edit, write, grep, find, ls, web_search, web_fetch
+                                 Available: read, bash, edit, write, grep, find, ls
+                                 Note: web_search and web_fetch are available as extensions
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh
   --extension, -e <path>         Load an extension file (can be used multiple times)
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
@@ -342,7 +343,8 @@ ${chalk.bold("Available Tools (default: read, bash, edit, write):")}
   grep   - Search file contents (read-only, off by default)
   find   - Find files by glob pattern (read-only, off by default)
   ls     - List directory contents (read-only, off by default)
-  web_search - Search the web for information
-  web_fetch  - Fetch web page content as markdown
+
+Web tools (web_search, web_fetch) are available via the web-tools extension.
+See https://github.com/badlogic/pi#web-tools
 `);
 }

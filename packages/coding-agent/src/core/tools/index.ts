@@ -73,21 +73,6 @@ export {
 	truncateTail,
 } from "./truncate.js";
 export {
-	createWebFetchTool,
-	createWebFetchToolDefinition,
-	type WebFetchToolDetails,
-	type WebFetchToolInput,
-	webFetchTool,
-} from "./web-fetch.js";
-export {
-	createWebSearchTool,
-	createWebSearchToolDefinition,
-	type WebSearchResult,
-	type WebSearchToolDetails,
-	type WebSearchToolInput,
-	webSearchTool,
-} from "./web-search.js";
-export {
 	createWriteTool,
 	createWriteToolDefinition,
 	type WriteOperations,
@@ -117,14 +102,12 @@ import {
 	readTool,
 	readToolDefinition,
 } from "./read.js";
-import { createWebFetchTool, createWebFetchToolDefinition, webFetchTool } from "./web-fetch.js";
-import { createWebSearchTool, createWebSearchToolDefinition, webSearchTool } from "./web-search.js";
 import { createWriteTool, createWriteToolDefinition, writeTool, writeToolDefinition } from "./write.js";
 
 export type Tool = AgentTool<any>;
 export type ToolDef = ToolDefinition<any, any>;
 
-export const codingTools: Tool[] = [readTool, bashTool, editTool, writeTool, webSearchTool, webFetchTool];
+export const codingTools: Tool[] = [readTool, bashTool, editTool, writeTool];
 export const readOnlyTools: Tool[] = [readTool, grepTool, findTool, lsTool];
 
 export const allTools = {
@@ -135,8 +118,6 @@ export const allTools = {
 	grep: grepTool,
 	find: findTool,
 	ls: lsTool,
-	web_search: webSearchTool,
-	web_fetch: webFetchTool,
 };
 
 export const allToolDefinitions = {
@@ -147,18 +128,9 @@ export const allToolDefinitions = {
 	grep: grepToolDefinition,
 	find: findToolDefinition,
 	ls: lsToolDefinition,
-	web_search: createWebSearchToolDefinition(),
-	web_fetch: createWebFetchToolDefinition(),
 };
 
 export type ToolName = keyof typeof allTools;
-
-/** Web tools group for unified activation */
-export const webTools = {
-	group: "web" as const,
-	web_search: webSearchTool,
-	web_fetch: webFetchTool,
-};
 
 export interface ToolsOptions {
 	read?: ReadToolOptions;
@@ -192,8 +164,6 @@ export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): R
 		grep: createGrepToolDefinition(cwd),
 		find: createFindToolDefinition(cwd),
 		ls: createLsToolDefinition(cwd),
-		web_search: createWebSearchToolDefinition(),
-		web_fetch: createWebFetchToolDefinition(),
 	};
 }
 
@@ -219,7 +189,5 @@ export function createAllTools(cwd: string, options?: ToolsOptions): Record<Tool
 		grep: createGrepTool(cwd),
 		find: createFindTool(cwd),
 		ls: createLsTool(cwd),
-		web_search: createWebSearchTool(),
-		web_fetch: createWebFetchTool(),
 	};
 }
