@@ -959,6 +959,6 @@ export class SettingsManager {
 	}
 
 	getSecureMode(): boolean {
-		return this.settings.secureMode ?? false;
+		return this.settings.secureMode ?? true;
 	}
 }

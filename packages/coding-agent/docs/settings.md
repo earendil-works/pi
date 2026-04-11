@@ -143,7 +143,7 @@ When multiple sources specify a session directory, `--session-dir` CLI flag take
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `secureMode` | boolean | `false` | When `true`, only providers with an explicit `baseUrl` in `models.json` appear in the model list. Built-in cloud endpoints (Anthropic, OpenAI, Google, etc.) are hidden unless redirected via `models.json`. |
+| `secureMode` | boolean | `true` | When `true`, only providers with an explicit `baseUrl` in `models.json` appear in the model list. Built-in cloud endpoints (Anthropic, OpenAI, Google, etc.) are hidden unless redirected via `models.json`. |
 
 Enable for closed-network deployments where all LLM traffic must route through internal infrastructure:
 
