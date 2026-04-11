@@ -28,6 +28,25 @@ See these complete provider examples:
 - [Config Reference](#config-reference)
 - [Model Definition Reference](#model-definition-reference)
 
+## secureMode Requirement
+
+`secureMode` is **on by default**. Any `pi.registerProvider()` call that does not include an explicit `baseUrl` is **rejected at registration time** with a logged error. This prevents extensions from inadvertently introducing cloud-reachable providers in a closed-network deployment.
+
+Any extension that registers a provider for internal infrastructure must include `baseUrl`:
+
+```typescript
+// Rejected in secureMode — no baseUrl
+pi.registerProvider("my-provider", { headers: { "X-Custom": "value" } });
+
+// Accepted — baseUrl makes the destination explicit
+pi.registerProvider("my-provider", {
+  baseUrl: "https://inference.internal/v1",
+  headers: { "X-Custom": "value" }
+});
+```
+
+---
+
 ## Quick Reference
 
 ```typescript

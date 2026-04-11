@@ -4208,6 +4208,11 @@ export class InteractiveMode {
 	}
 
 	private async handleShareCommand(): Promise<void> {
+		if (process.env.PI_OFFLINE) {
+			this.showError("Session sharing is not available in closed-network mode (PI_OFFLINE is set).");
+			return;
+		}
+
 		// Check if gh is available and logged in
 		try {
 			const authResult = spawnSync("gh", ["auth", "status"], { encoding: "utf-8" });

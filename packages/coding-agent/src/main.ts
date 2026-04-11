@@ -419,6 +419,11 @@ async function promptForMissingSessionCwd(
 }
 
 export async function main(args: string[]) {
+	// Closed-network security fork: permanently disable outbound non-LLM calls
+	// (version checks, package update checks, session sharing).
+	process.env.PI_OFFLINE = "1";
+	process.env.PI_SKIP_VERSION_CHECK = "1";
+
 	resetTimings();
 	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.PI_OFFLINE);
 	if (offlineMode) {

@@ -139,6 +139,22 @@ When a provider requests a retry delay longer than `maxDelayMs` (e.g., Google's 
 
 When multiple sources specify a session directory, `--session-dir` CLI flag takes precedence over `sessionDir` in settings.json.
 
+### Security
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `secureMode` | boolean | `true` | When `true`, only providers with an explicit `baseUrl` in `models.json` appear in the model list. Built-in cloud endpoints (Anthropic, OpenAI, Google, etc.) are hidden unless redirected via `models.json`. |
+
+`secureMode` is **on by default**. Any provider or model that does not have an explicit `baseUrl` configured in `models.json` is filtered from `getAvailable()` results and blocked from being registered by extensions. A clear error message is shown when a blocked provider is requested.
+
+To opt out (not recommended outside development):
+
+```json
+{ "secureMode": false }
+```
+
+See [models.md](models.md) for how to configure self-hosted providers.
+
 ### Model Cycling
 
 | Setting | Type | Default | Description |
@@ -200,7 +216,9 @@ Object form filters which resources to load:
 
 See [packages.md](packages.md) for package management details.
 
-## Example
+## Examples
+
+Standard configuration:
 
 ```json
 {
@@ -219,6 +237,16 @@ See [packages.md](packages.md) for package management details.
   },
   "enabledModels": ["claude-*", "gpt-4o"],
   "packages": ["pi-skills"]
+}
+```
+
+Closed-network configuration (pair with `models.json` — see [models.md](models.md)):
+
+```json
+{
+  "defaultProvider": "internal-llm",
+  "defaultModel": "gemma-3-27b-it",
+  "defaultThinkingLevel": "off"
 }
 ```
 

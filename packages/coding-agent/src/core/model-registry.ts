@@ -30,6 +30,7 @@ import {
 	resolveConfigValueUncached,
 	resolveHeadersOrThrow,
 } from "./resolve-config-value.js";
+import { SECURE_MODE_PROVIDER_ERROR } from "./security-policy.js";
 
 const Ajv = (AjvModule as any).default || AjvModule;
 const ajv = new Ajv();
@@ -292,6 +293,10 @@ export class ModelRegistry {
 	private modelRequestHeaders: Map<string, Record<string, string>> = new Map();
 	private registeredProviders: Map<string, ProviderConfigInput> = new Map();
 	private loadError: string | undefined = undefined;
+	/** Providers that have an explicit baseUrl configured (from models.json or extension registration). */
+	private providersWithCustomBaseUrl: Set<string> = new Set();
+	/** When true, only providers in providersWithCustomBaseUrl are available. */
+	private secureMode: boolean = false;
 
 	private constructor(
 		readonly authStorage: AuthStorage,
@@ -314,6 +319,7 @@ export class ModelRegistry {
 	refresh(): void {
 		this.providerRequestConfigs.clear();
 		this.modelRequestHeaders.clear();
+		this.providersWithCustomBaseUrl.clear();
 		this.loadError = undefined;
 
 		// Ensure dynamic API/OAuth registrations are rebuilt from current provider state.
@@ -441,6 +447,11 @@ export class ModelRegistry {
 					});
 				}
 
+				// Track providers with explicit baseUrl for secureMode enforcement.
+				if (providerConfig.baseUrl) {
+					this.providersWithCustomBaseUrl.add(providerName);
+				}
+
 				this.storeProviderRequestConfig(providerName, providerConfig);
 
 				if (providerConfig.modelOverrides) {
@@ -552,10 +563,33 @@ export class ModelRegistry {
 
 	/**
 	 * Get only models that have auth configured.
+	 * In secureMode, additionally filters out providers that lack a custom baseUrl.
 	 * This is a fast check that doesn't refresh OAuth tokens.
 	 */
 	getAvailable(): Model<Api>[] {
-		return this.models.filter((m) => this.hasConfiguredAuth(m));
+		return this.models.filter((m) => {
+			if (!this.hasConfiguredAuth(m)) return false;
+			if (this.secureMode && !this.providersWithCustomBaseUrl.has(m.provider)) return false;
+			return true;
+		});
+	}
+
+	/** Enable or disable secureMode. Call after loading settings. */
+	setSecureMode(enabled: boolean): void {
+		this.secureMode = enabled;
+	}
+
+	getSecureMode(): boolean {
+		return this.secureMode;
+	}
+
+	/**
+	 * Returns true if the provider is permitted under current security policy.
+	 * Always true when secureMode is off; requires an explicit baseUrl when on.
+	 */
+	isProviderAllowed(providerName: string): boolean {
+		if (!this.secureMode) return true;
+		return this.providersWithCustomBaseUrl.has(providerName);
 	}
 
 	/**
@@ -680,6 +714,9 @@ export class ModelRegistry {
 	 * If provider has oauth: registers OAuth provider for /login support.
 	 */
 	registerProvider(providerName: string, config: ProviderConfigInput): void {
+		if (this.secureMode && !config.baseUrl) {
+			throw new Error(`[secureMode] Provider "${providerName}": ${SECURE_MODE_PROVIDER_ERROR}`);
+		}
 		this.validateProviderConfig(providerName, config);
 		this.applyProviderConfig(providerName, config);
 		this.registeredProviders.set(providerName, config);
@@ -725,6 +762,11 @@ export class ModelRegistry {
 	}
 
 	private applyProviderConfig(providerName: string, config: ProviderConfigInput): void {
+		// Track providers with an explicit baseUrl for secureMode enforcement.
+		if (config.baseUrl) {
+			this.providersWithCustomBaseUrl.add(providerName);
+		}
+
 		// Register OAuth provider if provided
 		if (config.oauth) {
 			// Ensure the OAuth provider ID matches the provider name
