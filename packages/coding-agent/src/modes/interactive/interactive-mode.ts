@@ -64,12 +64,12 @@ import type { ResourceDiagnostic } from "../../core/resource-loader.js";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.js";
 import { type SessionContext, SessionManager } from "../../core/session-manager.js";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.js";
+import { prefixAutocompleteDescription } from "../../core/format-source-tag.js";
 import type { SourceInfo } from "../../core/source-info.js";
 import type { TruncationResult } from "../../core/tools/truncate.js";
 import { getChangelogPath, getNewEntries, parseChangelog } from "../../utils/changelog.js";
 import { copyToClipboard } from "../../utils/clipboard.js";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.js";
-import { parseGitUrl } from "../../utils/git.js";
 import { ensureTool } from "../../utils/tools-manager.js";
 import { ArminComponent } from "./components/armin.js";
 import { AssistantMessageComponent } from "./components/assistant-message.js";
@@ -305,37 +305,8 @@ export class InteractiveMode {
 		initTheme(this.settingsManager.getTheme(), true);
 	}
 
-	private getAutocompleteSourceTag(sourceInfo?: SourceInfo): string | undefined {
-		if (!sourceInfo) {
-			return undefined;
-		}
-
-		const scopePrefix = sourceInfo.scope === "user" ? "u" : sourceInfo.scope === "project" ? "p" : "t";
-		const source = sourceInfo.source.trim();
-
-		if (source === "auto" || source === "local" || source === "cli") {
-			return scopePrefix;
-		}
-
-		if (source.startsWith("npm:")) {
-			return `${scopePrefix}:${source}`;
-		}
-
-		const gitSource = parseGitUrl(source);
-		if (gitSource) {
-			const ref = gitSource.ref ? `@${gitSource.ref}` : "";
-			return `${scopePrefix}:git:${gitSource.host}/${gitSource.path}${ref}`;
-		}
-
-		return scopePrefix;
-	}
-
 	private prefixAutocompleteDescription(description: string | undefined, sourceInfo?: SourceInfo): string | undefined {
-		const sourceTag = this.getAutocompleteSourceTag(sourceInfo);
-		if (!sourceTag) {
-			return description;
-		}
-		return description ? `[${sourceTag}] ${description}` : `[${sourceTag}]`;
+		return prefixAutocompleteDescription(description, sourceInfo, this.settingsManager.getSourceInfoStyle());
 	}
 
 	private getBuiltInCommandConflictDiagnostics(extensionRunner: ExtensionRunner | undefined): ResourceDiagnostic[] {
