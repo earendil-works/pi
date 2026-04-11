@@ -6908,7 +6908,7 @@ export const MODELS = {
 				cacheWrite: 3.75,
 			},
 			contextWindow: 200000,
-			maxTokens: 64000,
+			maxTokens: 128000,
 		} satisfies Model<"openai-completions">,
 		"anthropic/claude-3.7-sonnet:thinking": {
 			id: "anthropic/claude-3.7-sonnet:thinking",
@@ -7043,7 +7043,7 @@ export const MODELS = {
 				cacheRead: 0.3,
 				cacheWrite: 3.75,
 			},
-			contextWindow: 200000,
+			contextWindow: 1000000,
 			maxTokens: 64000,
 		} satisfies Model<"openai-completions">,
 		"anthropic/claude-sonnet-4.5": {
@@ -7130,23 +7130,6 @@ export const MODELS = {
 			},
 			contextWindow: 131072,
 			maxTokens: 131072,
-		} satisfies Model<"openai-completions">,
-		"arcee-ai/trinity-mini:free": {
-			id: "arcee-ai/trinity-mini:free",
-			name: "Arcee AI: Trinity Mini (free)",
-			api: "openai-completions",
-			provider: "openrouter",
-			baseUrl: "https://openrouter.ai/api/v1",
-			reasoning: true,
-			input: ["text"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
-			contextWindow: 131072,
-			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
 		"arcee-ai/virtuoso-large": {
 			id: "arcee-ai/virtuoso-large",
@@ -7684,7 +7667,7 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
-				input: 0.13,
+				input: 0.12,
 				output: 0.39999999999999997,
 				cacheRead: 0,
 				cacheWrite: 0,
@@ -8812,7 +8795,7 @@ export const MODELS = {
 				cacheWrite: 0,
 			},
 			contextWindow: 1047576,
-			maxTokens: 32768,
+			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
 		"openai/gpt-4.1-mini": {
 			id: "openai/gpt-4.1-mini",
@@ -8859,7 +8842,7 @@ export const MODELS = {
 			cost: {
 				input: 2.5,
 				output: 10,
-				cacheRead: 1.25,
+				cacheRead: 0,
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
@@ -9080,11 +9063,11 @@ export const MODELS = {
 			cost: {
 				input: 0.049999999999999996,
 				output: 0.39999999999999997,
-				cacheRead: 0.005,
+				cacheRead: 0.01,
 				cacheWrite: 0,
 			},
 			contextWindow: 400000,
-			maxTokens: 128000,
+			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
 		"openai/gpt-5-pro": {
 			id: "openai/gpt-5-pro",
@@ -9114,7 +9097,7 @@ export const MODELS = {
 			cost: {
 				input: 1.25,
 				output: 10,
-				cacheRead: 0.125,
+				cacheRead: 0.13,
 				cacheWrite: 0,
 			},
 			contextWindow: 400000,
@@ -9182,11 +9165,11 @@ export const MODELS = {
 			cost: {
 				input: 0.25,
 				output: 2,
-				cacheRead: 0.024999999999999998,
+				cacheRead: 0.03,
 				cacheWrite: 0,
 			},
 			contextWindow: 400000,
-			maxTokens: 100000,
+			maxTokens: 128000,
 		} satisfies Model<"openai-completions">,
 		"openai/gpt-5.2": {
 			id: "openai/gpt-5.2",
@@ -9220,7 +9203,7 @@ export const MODELS = {
 				cacheWrite: 0,
 			},
 			contextWindow: 128000,
-			maxTokens: 16384,
+			maxTokens: 32000,
 		} satisfies Model<"openai-completions">,
 		"openai/gpt-5.2-codex": {
 			id: "openai/gpt-5.2-codex",
@@ -9436,12 +9419,12 @@ export const MODELS = {
 			input: ["text"],
 			cost: {
 				input: 0.03,
-				output: 0.11,
-				cacheRead: 0.015,
+				output: 0.14,
+				cacheRead: 0,
 				cacheWrite: 0,
 			},
 			contextWindow: 131072,
-			maxTokens: 131072,
+			maxTokens: 4096,
 		} satisfies Model<"openai-completions">,
 		"openai/gpt-oss-20b:free": {
 			id: "openai/gpt-oss-20b:free",
@@ -10514,23 +10497,6 @@ export const MODELS = {
 			contextWindow: 262144,
 			maxTokens: 65536,
 		} satisfies Model<"openai-completions">,
-		"stepfun/step-3.5-flash:free": {
-			id: "stepfun/step-3.5-flash:free",
-			name: "StepFun: Step 3.5 Flash (free)",
-			api: "openai-completions",
-			provider: "openrouter",
-			baseUrl: "https://openrouter.ai/api/v1",
-			reasoning: true,
-			input: ["text"],
-			cost: {
-				input: 0,
-				output: 0,
-				cacheRead: 0,
-				cacheWrite: 0,
-			},
-			contextWindow: 256000,
-			maxTokens: 256000,
-		} satisfies Model<"openai-completions">,
 		"thedrummer/rocinante-12b": {
 			id: "thedrummer/rocinante-12b",
 			name: "TheDrummer: Rocinante 12B",
@@ -10999,13 +10965,13 @@ export const MODELS = {
 			reasoning: true,
 			input: ["text"],
 			cost: {
-				input: 1.395,
-				output: 4.4,
-				cacheRead: 0.26,
+				input: 0.95,
+				output: 3.15,
+				cacheRead: 0.475,
 				cacheWrite: 0,
 			},
 			contextWindow: 202752,
-			maxTokens: 131072,
+			maxTokens: 65535,
 		} satisfies Model<"openai-completions">,
 		"z-ai/glm-5v-turbo": {
 			id: "z-ai/glm-5v-turbo",
@@ -11785,7 +11751,7 @@ export const MODELS = {
 			cost: {
 				input: 0.25,
 				output: 1.5,
-				cacheRead: 0,
+				cacheRead: 0.03,
 				cacheWrite: 0,
 			},
 			contextWindow: 1000000,
