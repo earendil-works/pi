@@ -1,6 +1,6 @@
 {
 	"name": "@tculpepp/spi",
-	"version": "0.66.1",
+	"version": "0.66.2",
 	"description": "CLI tool for managing vLLM deployments on GPU pods",
 	"type": "module",
 	"bin": {
@@ -24,7 +24,10 @@
 	],
 	"author": "Tom Culpepper",
 	"contributors": [
-		{ "name": "Mario Zechner", "url": "https://github.com/badlogic" }
+		{
+			"name": "Mario Zechner",
+			"url": "https://github.com/badlogic"
+		}
 	],
 	"license": "MIT",
 	"repository": {
@@ -36,7 +39,7 @@
 		"node": ">=20.0.0"
 	},
 	"dependencies": {
-		"@tculpepp/spi-agent-core": "^0.66.1",
+		"@tculpepp/spi-agent-core": "^0.66.2",
 		"chalk": "^5.5.0"
 	},
 	"devDependencies": {}

@@ -1,6 +1,6 @@
 {
 	"name": "@tculpepp/spi-coding-agent",
-	"version": "0.66.1",
+	"version": "0.66.2",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
 	"piConfig": {
@@ -40,9 +40,9 @@
 	},
 	"dependencies": {
 		"@mariozechner/jiti": "^2.6.2",
-		"@tculpepp/spi-agent-core": "^0.66.1",
-		"@tculpepp/spi-ai": "^0.66.1",
-		"@tculpepp/spi-tui": "^0.66.1",
+		"@tculpepp/spi-agent-core": "^0.66.2",
+		"@tculpepp/spi-ai": "^0.66.2",
+		"@tculpepp/spi-tui": "^0.66.2",
 		"@silvia-odwyer/photon-node": "^0.3.4",
 		"ajv": "^8.17.1",
 		"chalk": "^5.5.0",
@@ -89,7 +89,10 @@
 	],
 	"author": "Tom Culpepper",
 	"contributors": [
-		{ "name": "Mario Zechner", "url": "https://github.com/badlogic" }
+		{
+			"name": "Mario Zechner",
+			"url": "https://github.com/badlogic"
+		}
 	],
 	"license": "MIT",
 	"repository": {

@@ -1,6 +1,6 @@
 {
 	"name": "@tculpepp/spi-tui",
-	"version": "0.66.1",
+	"version": "0.66.2",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"type": "module",
 	"main": "dist/index.js",
@@ -26,7 +26,10 @@
 	],
 	"author": "Tom Culpepper",
 	"contributors": [
-		{ "name": "Mario Zechner", "url": "https://github.com/badlogic" }
+		{
+			"name": "Mario Zechner",
+			"url": "https://github.com/badlogic"
+		}
 	],
 	"license": "MIT",
 	"repository": {

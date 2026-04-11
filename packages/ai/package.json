@@ -1,6 +1,6 @@
 {
 	"name": "@tculpepp/spi-ai",
-	"version": "0.66.1",
+	"version": "0.66.2",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -98,7 +98,10 @@
 	],
 	"author": "Tom Culpepper",
 	"contributors": [
-		{ "name": "Mario Zechner", "url": "https://github.com/badlogic" }
+		{
+			"name": "Mario Zechner",
+			"url": "https://github.com/badlogic"
+		}
 	],
 	"license": "MIT",
 	"repository": {

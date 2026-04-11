@@ -1,6 +1,6 @@
 {
 	"name": "@tculpepp/spi-agent-core",
-	"version": "0.66.1",
+	"version": "0.66.2",
 	"description": "General-purpose agent with transport abstraction, state management, and attachment support",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -17,7 +17,7 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-		"@tculpepp/spi-ai": "^0.66.1"
+		"@tculpepp/spi-ai": "^0.66.2"
 	},
 	"keywords": [
 		"ai",
@@ -28,7 +28,10 @@
 	],
 	"author": "Tom Culpepper",
 	"contributors": [
-		{ "name": "Mario Zechner", "url": "https://github.com/badlogic" }
+		{
+			"name": "Mario Zechner",
+			"url": "https://github.com/badlogic"
+		}
 	],
 	"license": "MIT",
 	"repository": {
