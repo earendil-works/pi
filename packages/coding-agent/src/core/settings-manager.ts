@@ -95,6 +95,7 @@ export interface Settings {
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
+	secureMode?: boolean; // When true, only providers with an explicit baseUrl in models.json are permitted
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -955,5 +956,9 @@ export class SettingsManager {
 
 	getCodeBlockIndent(): string {
 		return this.settings.markdown?.codeBlockIndent ?? "  ";
+	}
+
+	getSecureMode(): boolean {
+		return this.settings.secureMode ?? false;
 	}
 }

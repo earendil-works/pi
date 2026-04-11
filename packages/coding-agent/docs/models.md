@@ -2,6 +2,31 @@
 
 Add custom providers and models (Ollama, vLLM, LM Studio, proxies) via `~/.pi/agent/models.json`.
 
+## Closed-Network Deployment
+
+When `secureMode: true` is set in `settings.json`, **only providers with an explicit `baseUrl` in this file are visible**. Built-in providers that would otherwise reach commercial cloud endpoints are hidden. Configure at least one provider with a `baseUrl` before launching pi, or the model list will be empty.
+
+Minimum required configuration to get started:
+
+```json
+{
+  "providers": {
+    "my-internal-server": {
+      "baseUrl": "http://inference.internal:8000/v1",
+      "api": "openai-completions",
+      "apiKey": "INTERNAL_API_KEY",
+      "models": [
+        { "id": "my-model-name" }
+      ]
+    }
+  }
+}
+```
+
+The `apiKey` value is an environment variable name — set `INTERNAL_API_KEY` in your environment before launching. If your server does not require authentication, use any non-empty string literal (e.g., `"apiKey": "none"`).
+
+---
+
 ## Table of Contents
 
 - [Minimal Example](#minimal-example)
@@ -89,6 +114,63 @@ Override defaults when you need specific values:
 ```
 
 The file reloads each time you open `/model`. Edit during session; no restart needed.
+
+## Open WebUI Example
+
+[Open WebUI](https://github.com/open-webui/open-webui) is a self-hosted web UI that sits in front of Ollama, vLLM, or other backends and exposes an OpenAI-compatible API. Use `api: "openai-completions"` with the following compat flags.
+
+**Important:** Open WebUI's chat completions endpoint is `/api/chat/completions`, not `/api/v1/chat/completions`. Set `baseUrl` to `http://your-host:port/api` (without `/v1`) so the client constructs the correct path.
+
+```json
+{
+  "providers": {
+    "open-webui": {
+      "baseUrl": "http://openwebui.internal:3000/api",
+      "api": "openai-completions",
+      "apiKey": "OPENWEBUI_API_KEY",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "supportsUsageInStreaming": false,
+        "supportsStore": false,
+        "supportsStrictMode": false,
+        "maxTokensField": "max_tokens"
+      },
+      "models": [
+        {
+          "id": "gemma3:27b",
+          "name": "Gemma 3 27B",
+          "input": ["text", "image"],
+          "contextWindow": 131072,
+          "maxTokens": 16384
+        },
+        {
+          "id": "mistral:7b",
+          "name": "Mistral 7B",
+          "input": ["text"],
+          "contextWindow": 32768,
+          "maxTokens": 8192
+        }
+      ]
+    }
+  }
+}
+```
+
+**Authentication:** Generate an API key from Open WebUI → Settings → Account. The key will have an `sk-` prefix and is sent as a standard `Authorization: Bearer` header.
+
+**Model IDs:** Use the exact model name as it appears in Open WebUI, typically in Ollama's `name:tag` format (e.g., `gemma3:27b`, `mistral:7b`, `llama3.1:8b-instruct-q4_K_M`). Check the Open WebUI model list or run `ollama list` on the server to get the correct IDs.
+
+**Why each compat flag:**
+
+| Flag | Reason |
+|------|--------|
+| `supportsDeveloperRole: false` | Open WebUI does not yet accept the `developer` role in inbound requests; use `system` role only |
+| `supportsReasoningEffort: false` | Gemma and Mistral models do not support `reasoning_effort`; sending it causes errors |
+| `supportsUsageInStreaming: false` | Token usage may be absent from streaming chunks; avoids misleading zero-cost display |
+| `supportsStore: false` | The `store` field is an OpenAI-specific feature not supported by local models |
+| `supportsStrictMode: false` | Strict tool schema enforcement is not supported by Gemma/Mistral |
+| `maxTokensField: "max_tokens"` | Open WebUI uses `max_tokens`; the default `max_completion_tokens` is rejected |
 
 ## Google AI Studio Example
 
@@ -216,6 +298,8 @@ Route a built-in provider through a proxy without redefining models:
 ```
 
 All built-in Anthropic models remain available. Existing OAuth or API key auth continues to work.
+
+In **secureMode**, this entry (with its explicit `baseUrl`) is what makes the built-in Anthropic models visible — without it, the provider is hidden even if an API key is set. Setting `baseUrl` here signals that traffic is routed through controlled infrastructure.
 
 To merge custom models into a built-in provider, include the `models` array:
 

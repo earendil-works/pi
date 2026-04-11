@@ -1,15 +1,3 @@
-<!-- OSS_WEEKEND_START -->
-# 🏖️ OSS Weekend
-
-**Issue tracker reopens Monday, April 13, 2026.**
-
-OSS weekend runs Thursday, April 2, 2026 through Monday, April 13, 2026. New issues and PRs from unapproved contributors are auto-closed during this time. Approved contributors can still open issues and PRs if something is genuinely urgent, but please keep that to pressing matters only. For support, join [Discord](https://discord.com/invite/3cU7Bz4UPx).
-
-> _Current focus: at the moment i'm deep in refactoring internals, and need to focus._
-<!-- OSS_WEEKEND_END -->
-
----
-
 <p align="center">
   <a href="https://shittycodingagent.ai">
     <img src="https://shittycodingagent.ai/logo.svg" alt="pi logo" width="128">
@@ -32,25 +20,10 @@ Pi ships with powerful defaults but skips features like sub agents and plan mode
 
 Pi runs in four modes: interactive, print or JSON, RPC for process integration, and an SDK for embedding in your own apps. See [openclaw/openclaw](https://github.com/openclaw/openclaw) for a real-world SDK integration.
 
-## Share your OSS coding agent sessions
-
-If you use pi for open source work, please share your coding agent sessions.
-
-Public OSS session data helps improve models, prompts, tools, and evaluations using real development workflows.
-
-For the full explanation, see [this post on X](https://x.com/badlogicgames/status/2037811643774652911).
-
-To publish sessions, use [`badlogic/pi-share-hf`](https://github.com/badlogic/pi-share-hf). Read its README.md for setup instructions. All you need is a Hugging Face account, the Hugging Face CLI, and `pi-share-hf`.
-
-You can also watch [this video](https://x.com/badlogicgames/status/2041151967695634619), where I show how I publish my `pi-mono` sessions.
-
-I regularly publish my own `pi-mono` work sessions here:
-
-- [badlogicgames/pi-mono on Hugging Face](https://huggingface.co/datasets/badlogicgames/pi-mono)
-
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Closed-Network Mode](#closed-network-mode)
 - [Providers & Models](#providers--models)
 - [Interactive Mode](#interactive-mode)
   - [Editor](#editor)
@@ -80,18 +53,10 @@ I regularly publish my own `pi-mono` work sessions here:
 npm install -g @mariozechner/pi-coding-agent
 ```
 
-Authenticate with an API key:
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-pi
-```
-
-Or use your existing subscription:
+This build runs in **closed-network mode** by default. Configure a self-hosted model endpoint before first launch (see [Closed-Network Mode](#closed-network-mode)):
 
 ```bash
 pi
-/login  # Then select provider
 ```
 
 Then just talk to pi. By default, pi gives the model four tools: `read`, `write`, `edit`, and `bash`. The model uses these to fulfill your requests. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [pi packages](#pi-packages).
@@ -100,40 +65,158 @@ Then just talk to pi. By default, pi gives the model four tools: `read`, `write`
 
 ---
 
+## Closed-Network Mode
+
+This fork is configured for deployment in closed networks that cannot reach commercial LLM cloud endpoints. Two behavioral changes are always active:
+
+1. **secureMode enforcement** — when `secureMode: true` is set in `settings.json`, only providers that have an explicit `baseUrl` configured in `models.json` are visible in the model list. Built-in providers (Anthropic, OpenAI, Google, etc.) are hidden unless the user has redirected them to internal infrastructure. The protocol implementations (OpenAI-compat, Anthropic-compat, Google-compat) remain intact so self-hosted models can use them.
+
+2. **Outbound calls disabled** — version checks and package update checks are permanently suppressed. The `/share` command is also unavailable.
+
+### Enabling secureMode
+
+Add to `~/.pi/agent/settings.json` (global) or `.pi/settings.json` (project):
+
+```json
+{
+  "secureMode": true
+}
+```
+
+### Configuring a Self-Hosted Model
+
+Create `~/.pi/agent/models.json` with your internal inference endpoint. Pi reuses the same wire protocol as the commercial providers, so any OpenAI-compatible server works with `api: "openai-completions"`.
+
+**vLLM / llama.cpp / LM Studio** (standard OpenAI-compat, `/v1` path):
+
+```json
+{
+  "providers": {
+    "internal-llm": {
+      "baseUrl": "http://inference.internal:8000/v1",
+      "api": "openai-completions",
+      "apiKey": "INTERNAL_API_KEY",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false
+      },
+      "models": [
+        {
+          "id": "gemma-3-27b-it",
+          "name": "Gemma 3 27B (Internal)",
+          "input": ["text", "image"],
+          "contextWindow": 131072,
+          "maxTokens": 16384
+        }
+      ]
+    }
+  }
+}
+```
+
+**Open WebUI** (uses `/api/chat/completions`, not `/api/v1/chat/completions` — set `baseUrl` to `.../api`):
+
+```json
+{
+  "providers": {
+    "open-webui": {
+      "baseUrl": "http://openwebui.internal:3000/api",
+      "api": "openai-completions",
+      "apiKey": "OPENWEBUI_API_KEY",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "supportsUsageInStreaming": false,
+        "supportsStore": false,
+        "supportsStrictMode": false,
+        "maxTokensField": "max_tokens"
+      },
+      "models": [
+        {
+          "id": "gemma3:27b",
+          "name": "Gemma 3 27B",
+          "input": ["text", "image"],
+          "contextWindow": 131072,
+          "maxTokens": 16384
+        },
+        {
+          "id": "mistral:7b",
+          "name": "Mistral 7B",
+          "input": ["text"],
+          "contextWindow": 32768,
+          "maxTokens": 8192
+        }
+      ]
+    }
+  }
+}
+```
+
+Generate an Open WebUI API key from Settings → Account. Model IDs use Ollama's `name:tag` format — check your Open WebUI model list for the exact strings.
+
+Then start pi and the model is immediately available:
+
+```bash
+pi --model gemma3:27b
+```
+
+#### Protocol selection
+
+| Your server speaks | Use `api` |
+|--------------------|-----------|
+| OpenAI Chat Completions | `openai-completions` |
+| OpenAI Responses | `openai-responses` |
+| Anthropic Messages | `anthropic-messages` |
+| Google Generative AI | `google-generative-ai` |
+
+#### Redirecting a built-in provider through an internal proxy
+
+If your infrastructure proxies traffic for a specific commercial API (e.g., an Anthropic-compatible gateway), point the existing provider at it. The model list is preserved; only the endpoint changes:
+
+```json
+{
+  "providers": {
+    "anthropic": {
+      "baseUrl": "https://llm-gateway.internal/anthropic",
+      "apiKey": "INTERNAL_GATEWAY_KEY"
+    }
+  }
+}
+```
+
+In `secureMode` this provider entry (with its explicit `baseUrl`) makes all built-in Anthropic models available again, routed through your gateway.
+
+#### API key resolution
+
+The `apiKey` field supports three formats:
+
+- **Environment variable name** — `"INTERNAL_API_KEY"` reads `$INTERNAL_API_KEY` at runtime
+- **Shell command** — `"!command"` runs the command and uses stdout (e.g., `"!vault kv get -field=token secret/llm"`)
+- **Literal value** — the string is used as-is (not recommended for secrets)
+
+See [docs/models.md](docs/models.md) for the full configuration reference.
+
+---
+
 ## Providers & Models
 
-For each built-in provider, pi maintains a list of tool-capable models, updated with every release. Authenticate via subscription (`/login`) or API key, then select any model from that provider via `/model` (or Ctrl+L).
+Pi ships with protocol implementations for 10 LLM APIs. In this closed-network build, **all built-in commercial cloud endpoints are hidden when `secureMode: true`**. Providers only appear in the model list after the user configures an explicit `baseUrl` in `models.json`.
 
-**Subscriptions:**
-- Anthropic Claude Pro/Max
-- OpenAI ChatGPT Plus/Pro (Codex)
-- GitHub Copilot
-- Google Gemini CLI
-- Google Antigravity
+The protocol implementations themselves remain intact, so any self-hosted model that speaks a supported wire format works without code changes.
 
-**API keys:**
-- Anthropic
-- OpenAI
-- Azure OpenAI
-- Google Gemini
-- Google Vertex
-- Amazon Bedrock
-- Mistral
-- Groq
-- Cerebras
-- xAI
-- OpenRouter
-- Vercel AI Gateway
-- ZAI
-- OpenCode Zen
-- OpenCode Go
-- Hugging Face
-- Kimi For Coding
-- MiniMax
+**Supported protocols:**
+- `openai-completions` — OpenAI Chat Completions and compatibles (vLLM, Ollama, LM Studio, llama.cpp, SGLang)
+- `openai-responses` — OpenAI Responses API
+- `anthropic-messages` — Anthropic Messages API and compatibles
+- `google-generative-ai` — Google Generative AI REST API
+- `google-vertex` — Google Vertex AI
+- `azure-openai-responses` — Azure OpenAI Responses
+- `bedrock-converse-stream` — Amazon Bedrock Converse
+- `mistral-conversations` — Mistral Conversations API
 
-See [docs/providers.md](docs/providers.md) for detailed setup instructions.
+**Add self-hosted providers:** Configure via `~/.pi/agent/models.json`. See [Closed-Network Mode](#closed-network-mode) for a quick-start and [docs/models.md](docs/models.md) for the full reference.
 
-**Custom providers & models:** Add providers via `~/.pi/agent/models.json` if they speak a supported API (OpenAI, Anthropic, Google). For custom APIs or OAuth, use extensions. See [docs/models.md](docs/models.md) and [docs/custom-provider.md](docs/custom-provider.md).
+**Custom APIs or OAuth:** Use extensions. See [docs/custom-provider.md](docs/custom-provider.md).
 
 ---
 
@@ -181,7 +264,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/compact [prompt]` | Manually compact context, optional custom instructions |
 | `/copy` | Copy last assistant message to clipboard |
 | `/export [file]` | Export session to HTML file |
-| `/share` | Upload as private GitHub gist with shareable HTML link |
+| `/share` | Upload as private GitHub gist with shareable HTML link (unavailable in closed-network mode) |
 | `/reload` | Reload keybindings, extensions, skills, prompts, and context files (themes hot-reload automatically) |
 | `/hotkeys` | Show all keyboard shortcuts |
 | `/changelog` | Display version history |

@@ -409,6 +409,14 @@ export function resolveCliModel(options: {
 	});
 
 	if (model) {
+		if (!modelRegistry.isProviderAllowed(model.provider)) {
+			return {
+				model: undefined,
+				thinkingLevel: undefined,
+				warning: undefined,
+				error: `[secureMode] Provider "${model.provider}" requires an explicit baseUrl in models.json. Configure it to point to your internal infrastructure.`,
+			};
+		}
 		return { model, thinkingLevel, warning, error: undefined };
 	}
 
