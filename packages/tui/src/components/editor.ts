@@ -271,6 +271,13 @@ export class Editor implements Component, Focusable {
 	// Preferred visual column for vertical cursor movement (sticky column)
 	private preferredVisualCol: number | null = null;
 
+	// When the cursor is snapped to the start of an atomic segment, e.g. a
+	// paste marker, cursorCol no longer reflects where the cursor would have
+	// landed. This field stores the pre-snap cursorCol so that the next
+	// vertical move can resolve it to a visual column on whatever VL it belongs
+	// to.
+	private snappedFromCursorCol: number | null = null;
+
 	// Undo support
 	private undoStack = new UndoStack<EditorState>();
 
@@ -1246,6 +1253,7 @@ export class Editor implements Component, Focusable {
 	private setCursorCol(col: number): void {
 		this.state.cursorCol = col;
 		this.preferredVisualCol = null;
+		this.snappedFromCursorCol = null;
 	}
 
 	/**
@@ -1259,47 +1267,79 @@ export class Editor implements Component, Focusable {
 	): void {
 		const currentVL = visualLines[currentVisualLine];
 		const targetVL = visualLines[targetVisualLine];
+		if (!(currentVL && targetVL)) return;
 
-		if (currentVL && targetVL) {
-			const currentVisualCol = this.state.cursorCol - currentVL.startCol;
+		// When the cursor was snapped to a segment start, resolve the pre-snap
+		// position against the VL it belongs to. This gives the correct visual
+		// column even after a resize reshuffles VLs.
+		let currentVisualCol: number;
+		if (this.snappedFromCursorCol !== null) {
+			const vlIndex = this.findVisualLineAt(visualLines, currentVL.logicalLine, this.snappedFromCursorCol);
+			currentVisualCol = this.snappedFromCursorCol - visualLines[vlIndex].startCol;
+		} else {
+			currentVisualCol = this.state.cursorCol - currentVL.startCol;
+		}
 
-			// For non-last segments, clamp to length-1 to stay within the segment
-			const isLastSourceSegment =
-				currentVisualLine === visualLines.length - 1 ||
-				visualLines[currentVisualLine + 1]?.logicalLine !== currentVL.logicalLine;
-			const sourceMaxVisualCol = isLastSourceSegment ? currentVL.length : Math.max(0, currentVL.length - 1);
+		// For non-last segments, clamp to length-1 to stay within the segment
+		const isLastSourceSegment =
+			currentVisualLine === visualLines.length - 1 ||
+			visualLines[currentVisualLine + 1]?.logicalLine !== currentVL.logicalLine;
+		const sourceMaxVisualCol = isLastSourceSegment ? currentVL.length : Math.max(0, currentVL.length - 1);
 
-			const isLastTargetSegment =
-				targetVisualLine === visualLines.length - 1 ||
-				visualLines[targetVisualLine + 1]?.logicalLine !== targetVL.logicalLine;
-			const targetMaxVisualCol = isLastTargetSegment ? targetVL.length : Math.max(0, targetVL.length - 1);
+		const isLastTargetSegment =
+			targetVisualLine === visualLines.length - 1 ||
+			visualLines[targetVisualLine + 1]?.logicalLine !== targetVL.logicalLine;
+		const targetMaxVisualCol = isLastTargetSegment ? targetVL.length : Math.max(0, targetVL.length - 1);
 
-			const moveToVisualCol = this.computeVerticalMoveColumn(
-				currentVisualCol,
-				sourceMaxVisualCol,
-				targetMaxVisualCol,
-			);
+		const moveToVisualCol = this.computeVerticalMoveColumn(currentVisualCol, sourceMaxVisualCol, targetMaxVisualCol);
 
-			// Set cursor position
-			this.state.cursorLine = targetVL.logicalLine;
-			const targetCol = targetVL.startCol + moveToVisualCol;
-			const logicalLine = this.state.lines[targetVL.logicalLine] || "";
-			this.state.cursorCol = Math.min(targetCol, logicalLine.length);
+		// Set cursor position
+		this.state.cursorLine = targetVL.logicalLine;
+		const targetCol = targetVL.startCol + moveToVisualCol;
+		const logicalLine = this.state.lines[targetVL.logicalLine] || "";
+		this.state.cursorCol = Math.min(targetCol, logicalLine.length);
 
-			// Snap cursor to atomic segment boundary (e.g. paste markers)
-			// so the cursor never lands in the middle of a multi-grapheme unit.
-			// Single-grapheme segments don't need snapping.
-			const segments = [...this.segment(logicalLine)];
-			for (const seg of segments) {
-				if (seg.index > this.state.cursorCol) break;
-				if (seg.segment.length <= 1) continue;
-				if (this.state.cursorCol < seg.index + seg.segment.length) {
-					// jump to the start of the segment when moving up, to the end when moving down.
-					this.state.cursorCol = currentVisualLine > targetVisualLine ? seg.index : seg.index + seg.segment.length;
-					break;
+		// Snap cursor to atomic segment boundary (e.g. paste markers)
+		// so the cursor never lands in the middle of a multi-grapheme unit.
+		// Single-grapheme segments don't need snapping.
+		const segments = [...this.segment(logicalLine)];
+		for (const seg of segments) {
+			if (seg.index > this.state.cursorCol) break;
+			if (seg.segment.length <= 1) continue;
+			if (this.state.cursorCol < seg.index + seg.segment.length) {
+				const isContinuation = seg.index < targetVL.startCol;
+				const isMovingDown = targetVisualLine > currentVisualLine;
+
+				if (isContinuation && isMovingDown) {
+					// The segment started on a previous visual line, and we
+					// already visited it on the way down. Skip all remaining
+					// continuation VLs and land on the first VL past it.
+					const segEnd = seg.index + seg.segment.length;
+					let next = targetVisualLine + 1;
+					while (
+						next < visualLines.length &&
+						visualLines[next].logicalLine === targetVL.logicalLine &&
+						visualLines[next].startCol < segEnd
+					) {
+						next++;
+					}
+					if (next < visualLines.length) {
+						this.moveToVisualLine(visualLines, currentVisualLine, next);
+						return;
+					}
 				}
+
+				// Snap to the start of the segment so it gets highlighted.
+				// Store the pre-snap position so the next vertical move can
+				// resolve it to the correct visual column.
+				this.snappedFromCursorCol = this.state.cursorCol;
+				this.state.cursorCol = seg.index;
+				return;
 			}
 		}
+
+		// No snap occurred – we moved out of the atomic segment.
+		this.snappedFromCursorCol = null;
 	}
 
 	/**
@@ -1605,27 +1645,34 @@ export class Editor implements Component, Focusable {
 	}
 
 	/**
+	 * Find the visual line index that contains the given logical position.
+	 */
+	private findVisualLineAt(
+		visualLines: Array<{ logicalLine: number; startCol: number; length: number }>,
+		line: number,
+		col: number,
+	): number {
+		for (let i = 0; i < visualLines.length; i++) {
+			const vl = visualLines[i];
+			if (!vl || vl.logicalLine !== line) continue;
+			const offset = col - vl.startCol;
+			// Cursor is in this segment if it's within range. For the last
+			// segment of a logical line, cursor can be at length (end position)
+			const isLastSegmentOfLine = i === visualLines.length - 1 || visualLines[i + 1]?.logicalLine !== vl.logicalLine;
+			if (offset >= 0 && (offset < vl.length || (isLastSegmentOfLine && offset === vl.length))) {
+				return i;
+			}
+		}
+		return visualLines.length - 1;
+	}
+
+	/**
 	 * Find the visual line index for the current cursor position.
 	 */
 	private findCurrentVisualLine(
 		visualLines: Array<{ logicalLine: number; startCol: number; length: number }>,
 	): number {
-		for (let i = 0; i < visualLines.length; i++) {
-			const vl = visualLines[i];
-			if (!vl) continue;
-			if (vl.logicalLine === this.state.cursorLine) {
-				const colInSegment = this.state.cursorCol - vl.startCol;
-				// Cursor is in this segment if it's within range
-				// For the last segment of a logical line, cursor can be at length (end position)
-				const isLastSegmentOfLine =
-					i === visualLines.length - 1 || visualLines[i + 1]?.logicalLine !== vl.logicalLine;
-				if (colInSegment >= 0 && (colInSegment < vl.length || (isLastSegmentOfLine && colInSegment <= vl.length))) {
-					return i;
-				}
-			}
-		}
-		// Fallback: return last visual line
-		return visualLines.length - 1;
+		return this.findVisualLineAt(visualLines, this.state.cursorLine, this.state.cursorCol);
 	}
 
 	private moveCursor(deltaLine: number, deltaCol: number): void {
