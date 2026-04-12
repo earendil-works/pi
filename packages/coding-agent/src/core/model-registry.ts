@@ -463,7 +463,10 @@ export class ModelRegistry {
 	}
 
 	private validateConfig(config: ModelsConfig): void {
+		const builtInProviders = new Set<string>(getProviders());
+
 		for (const [providerName, providerConfig] of Object.entries(config.providers)) {
+			const isBuiltIn = builtInProviders.has(providerName);
 			const hasProviderApi = !!providerConfig.api;
 			const models = providerConfig.models ?? [];
 			const hasModelOverrides =
@@ -476,8 +479,8 @@ export class ModelRegistry {
 						`Provider ${providerName}: must specify "baseUrl", "compat", "modelOverrides", or "models".`,
 					);
 				}
-			} else {
-				// Custom models are merged into provider models and require endpoint + auth.
+			} else if (!isBuiltIn) {
+				// Non-built-in providers with custom models require endpoint + auth.
 				if (!providerConfig.baseUrl) {
 					throw new Error(`Provider ${providerName}: "baseUrl" is required when defining custom models.`);
 				}
@@ -485,15 +488,18 @@ export class ModelRegistry {
 					throw new Error(`Provider ${providerName}: "apiKey" is required when defining custom models.`);
 				}
 			}
+			// Built-in providers with custom models: baseUrl/apiKey/api are optional,
+			// inherited from built-in models. Auth comes from env vars / auth storage.
 
 			for (const modelDef of models) {
 				const hasModelApi = !!modelDef.api;
 
-				if (!hasProviderApi && !hasModelApi) {
+				if (!hasProviderApi && !hasModelApi && !isBuiltIn) {
 					throw new Error(
 						`Provider ${providerName}, model ${modelDef.id}: no "api" specified. Set at provider or model level.`,
 					);
 				}
+				// For built-in providers, api is optional — inherited from built-in models.
 
 				if (!modelDef.id) throw new Error(`Provider ${providerName}: model missing "id"`);
 				// Validate contextWindow/maxTokens only if provided (they have defaults)
@@ -507,27 +513,43 @@ export class ModelRegistry {
 
 	private parseModels(config: ModelsConfig): Model<Api>[] {
 		const models: Model<Api>[] = [];
+		const builtInProviders = new Set<string>(getProviders());
+
+		// Cache built-in defaults (api, baseUrl) per provider, extracted from first model.
+		const builtInDefaultsCache = new Map<string, { api: string; baseUrl: string }>();
+		const getBuiltInDefaults = (providerName: string): { api: string; baseUrl: string } | undefined => {
+			if (!builtInProviders.has(providerName)) return undefined;
+			if (builtInDefaultsCache.has(providerName)) return builtInDefaultsCache.get(providerName);
+			const builtIn = getModels(providerName as KnownProvider) as Model<Api>[];
+			if (builtIn.length === 0) return undefined;
+			const defaults = { api: builtIn[0].api, baseUrl: builtIn[0].baseUrl };
+			builtInDefaultsCache.set(providerName, defaults);
+			return defaults;
+		};
 
 		for (const [providerName, providerConfig] of Object.entries(config.providers)) {
 			const modelDefs = providerConfig.models ?? [];
 			if (modelDefs.length === 0) continue; // Override-only, no custom models
 
+			const builtInDefaults = getBuiltInDefaults(providerName);
+
 			for (const modelDef of modelDefs) {
-				const api = modelDef.api || providerConfig.api;
+				const api = modelDef.api ?? providerConfig.api ?? builtInDefaults?.api;
 				if (!api) continue;
+
+				const baseUrl = modelDef.baseUrl ?? providerConfig.baseUrl ?? builtInDefaults?.baseUrl;
+				if (!baseUrl) continue;
 
 				const compat = mergeCompat(providerConfig.compat, modelDef.compat);
 				this.storeModelHeaders(providerName, modelDef.id, modelDef.headers);
 
-				// Provider baseUrl is required when custom models are defined.
-				// Individual models can override it with modelDef.baseUrl.
 				const defaultCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 				models.push({
 					id: modelDef.id,
 					name: modelDef.name ?? modelDef.id,
 					api: api as Api,
 					provider: providerName,
-					baseUrl: modelDef.baseUrl ?? providerConfig.baseUrl!,
+					baseUrl,
 					reasoning: modelDef.reasoning ?? false,
 					input: (modelDef.input ?? ["text"]) as ("text" | "image")[],
 					cost: modelDef.cost ?? defaultCost,
