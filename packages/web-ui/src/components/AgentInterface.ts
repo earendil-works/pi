@@ -13,8 +13,33 @@ import type { Attachment } from "../utils/attachment-utils.js";
 import { formatUsage } from "../utils/format.js";
 import { i18n } from "../utils/i18n.js";
 import { createStreamFn } from "../utils/proxy-utils.js";
+import type { CustomProviderType } from "../storage/stores/custom-providers-store.js";
 import type { UserMessageWithAttachments } from "./Messages.js";
 import type { StreamingMessageContainer } from "./StreamingMessageContainer.js";
+
+/**
+ * Resolve an API key for a custom provider stored in the custom-providers store.
+ * Returns the provider's configured key, or a type-appropriate placeholder for
+ * local servers (Ollama, LM Studio, etc.) that do not require real authentication.
+ * Returns null if the provider is not found in the custom-providers store.
+ */
+async function getCustomProviderApiKey(provider: string): Promise<string | null> {
+	try {
+		const customProviders = await getAppStorage().customProviders.getAll();
+		const cp = customProviders.find((p) => p.name === provider);
+		if (!cp) return null;
+		if (cp.apiKey) return cp.apiKey;
+		const placeholders: Partial<Record<CustomProviderType, string>> = {
+			ollama: "ollama",
+			"llama.cpp": "llamacpp",
+			vllm: "vllm",
+			lmstudio: "lmstudio",
+		};
+		return placeholders[cp.type] ?? null;
+	} catch {
+		return null;
+	}
+}
 
 @customElement("agent-interface")
 export class AgentInterface extends LitElement {
@@ -146,7 +171,9 @@ export class AgentInterface extends LitElement {
 		if (!this.session.getApiKey) {
 			this.session.getApiKey = async (provider: string) => {
 				const key = await getAppStorage().providerKeys.get(provider);
-				return key ?? undefined;
+				if (key) return key;
+				// Fall back to the custom provider's stored key or a type-appropriate placeholder
+				return (await getCustomProviderApiKey(provider)) ?? undefined;
 			};
 		}
 
@@ -220,10 +247,15 @@ export class AgentInterface extends LitElement {
 
 		// Check if API key exists for the provider (only needed in direct mode)
 		const provider = session.state.model.provider;
-		const apiKey = await getAppStorage().providerKeys.get(provider);
+		let effectiveApiKey = await getAppStorage().providerKeys.get(provider);
 
-		// If no API key, prompt for it
-		if (!apiKey) {
+		// Fall back to the custom provider's stored key or placeholder (covers Ollama, LM Studio, etc.)
+		if (!effectiveApiKey) {
+			effectiveApiKey = await getCustomProviderApiKey(provider);
+		}
+
+		// If still no API key, prompt for it
+		if (!effectiveApiKey) {
 			if (!this.onApiKeyRequired) {
 				console.error("No API key configured and no onApiKeyRequired handler set");
 				return;

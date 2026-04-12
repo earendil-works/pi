@@ -821,6 +821,10 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
 	const isGroq = provider === "groq" || baseUrl.includes("groq.com");
 
+	const isOllama = provider === "ollama" || baseUrl.includes(":11434");
+	const isLMStudio = provider === "lmstudio" || provider === "lm-studio" || baseUrl.includes(":1234");
+	const isLocalLLM = isOllama || isLMStudio;
+
 	const reasoningEffortMap =
 		isGroq && model.id === "qwen/qwen3-32b"
 			? {
@@ -832,12 +836,12 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 				}
 			: {};
 	return {
-		supportsStore: !isNonStandard,
-		supportsDeveloperRole: !isNonStandard,
-		supportsReasoningEffort: !isGrok && !isZai,
+		supportsStore: !isNonStandard && !isLocalLLM,
+		supportsDeveloperRole: !isNonStandard && !isLocalLLM,
+		supportsReasoningEffort: !isGrok && !isZai && !isLocalLLM,
 		reasoningEffortMap,
 		supportsUsageInStreaming: true,
-		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
+		maxTokensField: useMaxTokens || isLocalLLM ? "max_tokens" : "max_completion_tokens",
 		requiresToolResultName: false,
 		requiresAssistantAfterToolResult: false,
 		requiresThinkingAsText: false,
@@ -849,7 +853,7 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 		openRouterRouting: {},
 		vercelGatewayRouting: {},
 		zaiToolStream: false,
-		supportsStrictMode: true,
+		supportsStrictMode: !isLocalLLM,
 	};
 }
 
