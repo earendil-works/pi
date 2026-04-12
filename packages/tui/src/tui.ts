@@ -899,6 +899,15 @@ export class TUI extends Container {
 
 		newLines = this.applyLineResets(newLines);
 
+		// Sync render state for early returns that don't move the viewport.
+		const commitState = (): void => {
+			this.positionHardwareCursor(cursorPos, newLines.length);
+			this.previousLines = newLines;
+			this.previousWidth = width;
+			this.previousHeight = height;
+			this.previousViewportTop = prevViewportTop;
+		};
+
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean): void => {
 			this.fullRedrawCount += 1;
@@ -1035,11 +1044,7 @@ export class TUI extends Container {
 				this.cursorRow = targetRow;
 				this.hardwareCursorRow = targetRow;
 			}
-			this.positionHardwareCursor(cursorPos, newLines.length);
-			this.previousLines = newLines;
-			this.previousWidth = width;
-			this.previousHeight = height;
-			this.previousViewportTop = prevViewportTop;
+			commitState();
 			return;
 		}
 
