@@ -947,20 +947,39 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	async update(source?: string): Promise<void> {
+		if (isOfflineModeEnabled()) {
+			return;
+		}
+
+		// Check for available updates first
+		const updates = await this.checkForAvailableUpdates();
+		if (updates.length === 0) {
+			return;
+		}
+
 		const globalSettings = this.settingsManager.getGlobalSettings();
 		const projectSettings = this.settingsManager.getProjectSettings();
 		const identity = source ? this.getPackageIdentity(source) : undefined;
 		let matched = false;
 
+		// Filter updates by source if specified
+		const updateSources = new Set(
+			updates
+				.filter(u => !identity || this.getPackageIdentity(u.source, "user") === identity || this.getPackageIdentity(u.source, "project") === identity)
+				.map(u => u.source)
+		);
+
 		for (const pkg of globalSettings.packages ?? []) {
 			const sourceStr = typeof pkg === "string" ? pkg : pkg.source;
 			if (identity && this.getPackageIdentity(sourceStr, "user") !== identity) continue;
+			if (!updateSources.has(sourceStr)) continue;
 			matched = true;
 			await this.updateSourceForScope(sourceStr, "user");
 		}
 		for (const pkg of projectSettings.packages ?? []) {
 			const sourceStr = typeof pkg === "string" ? pkg : pkg.source;
 			if (identity && this.getPackageIdentity(sourceStr, "project") !== identity) continue;
+			if (!updateSources.has(sourceStr)) continue;
 			matched = true;
 			await this.updateSourceForScope(sourceStr, "project");
 		}
