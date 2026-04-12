@@ -1048,6 +1048,14 @@ export class TUI extends Container {
 			return;
 		}
 
+		// All changes are strictly above the visible viewport (e.g. a spinner ticking
+		// offscreen while a tall ui.custom dialog fills the screen). The terminal
+		// already shows the correct pixels, so just sync state without writing.
+		if (lastChanged < prevViewportTop && newLines.length === this.previousLines.length) {
+			commitState();
+			return;
+		}
+
 		// Differential rendering can only touch what was actually visible.
 		// If the first changed line is above the previous viewport, we need a full redraw.
 		if (firstChanged < prevViewportTop) {
