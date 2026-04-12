@@ -1,6 +1,20 @@
 import { LMStudioClient } from "@lmstudio/sdk";
-import type { Model } from "@mariozechner/pi-ai";
+import type { Model, OpenAICompletionsCompat } from "@mariozechner/pi-ai";
 import { Ollama } from "ollama/browser";
+
+/**
+ * Compat settings shared by local LLM servers (Ollama, LM Studio).
+ * These servers speak the OpenAI Completions API but do not support
+ * newer OpenAI-specific fields such as `store`, the `developer` role,
+ * `reasoning_effort`, `max_completion_tokens`, or strict tool schemas.
+ */
+const LOCAL_LLM_COMPAT: OpenAICompletionsCompat = {
+	supportsStore: false,
+	supportsDeveloperRole: false,
+	supportsReasoningEffort: false,
+	maxTokensField: "max_tokens",
+	supportsStrictMode: false,
+};
 
 /**
  * Discover models from an Ollama server.
@@ -59,6 +73,7 @@ export async function discoverOllamaModels(baseUrl: string, _apiKey?: string): P
 					},
 					contextWindow: contextWindow,
 					maxTokens: maxTokens,
+					compat: LOCAL_LLM_COMPAT,
 				};
 
 				return ollamaModel;
@@ -242,6 +257,7 @@ export async function discoverLMStudioModels(baseUrl: string, _apiKey?: string):
 					},
 					contextWindow: contextWindow,
 					maxTokens: maxTokens,
+					compat: LOCAL_LLM_COMPAT,
 				};
 
 				return lmStudioModel;
