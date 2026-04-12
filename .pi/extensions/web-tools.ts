@@ -1,7 +1,9 @@
 /**
  * Web Tools Extension
  *
- * Provides web_search and web_fetch tools via DuckDuckGo HTML and Jina Reader.
+ * Provides web_search and web_fetch tools via Jina Reader (r.jina.ai).
+ * web_search proxies DuckDuckGo Lite through Jina Reader to avoid bot-blocking
+ * that hits direct DDG scrapers.
  * Auto-activates when placed at ~/.pi/extensions/web-tools.ts
  *
  * SSRF Protection:
@@ -231,7 +233,7 @@ function isUrlBlocked(url: URL): boolean {
 }
 
 // =============================================================================
-// DuckDuckGo Search
+// Web Search (DDG Lite proxied through Jina Reader)
 // =============================================================================
 
 interface WebSearchResult {
@@ -240,118 +242,152 @@ interface WebSearchResult {
 	snippet: string;
 }
 
-/** Regular expression to decode HTML entities */
-const HTML_ENTITY_REGEX = /&#(\d+);|&#x([0-9a-fA-F]+);|&([a-zA-Z]+);/g;
-
-/**
- * Decode HTML entities in a string.
- */
-function decodeHtmlEntities(str: string): string {
-	return str.replace(HTML_ENTITY_REGEX, (_match, dec, hex, namedRef, named) => {
-		if (dec !== undefined) {
-			return String.fromCharCode(parseInt(dec, 10));
-		}
-		if (hex !== undefined) {
-			return String.fromCharCode(parseInt(hex, 16));
-		}
-		if (namedRef !== undefined) {
-			return decodeNamedEntity(namedRef);
-		}
-		if (named !== undefined) {
-			return decodeNamedEntity(named);
-		}
-		return _match;
-	});
+/** Raised when a search backend returns an anti-bot challenge page. */
+class SearchBlockedError extends Error {
+	constructor(message = "Search backend blocked the request") {
+		super(message);
+		this.name = "SearchBlockedError";
+	}
 }
 
-/** Map of common HTML named entities */
-const NAMED_ENTITIES: Record<string, string> = {
-	amp: "\u0026",
-	lt: "\u003c",
-	gt: "\u003e",
-	quot: "\u0022",
-	apos: "\u0027",
-	nbsp: "\u00a0",
-	ndash: "\u2013",
-	mdash: "\u2014",
-	hellip: "\u2026",
-	copy: "\u00a9",
-	reg: "\u00ae",
-	trade: "\u2122",
-	ldquo: "\u201c",
-	rdquo: "\u201d",
-	lsquo: "\u2018",
-	rsquo: "\u2019",
-	bull: "\u2022",
-	prime: "\u2032",
-	Prime: "\u2033",
-	deg: "\u00b0",
-	plusmn: "\u00b1",
-	frac14: "\u00bc",
-	frac12: "\u00bd",
-	frac34: "\u00be",
-	times: "\u00d7",
-	divide: "\u00f7",
-	forall: "\u2200",
-	exist: "\u2203",
-	empty: "\u2205",
-	infin: "\u221e",
-	sum: "\u2211",
-	prod: "\u220f",
-	part: "\u2202",
-	nabla: "\u2207",
-	ne: "\u2260",
-	le: "\u2264",
-	ge: "\u2265",
-	mu: "\u03bc",
-	alpha: "\u03b1",
-	beta: "\u03b2",
-	gamma: "\u03b3",
-	delta: "\u03b4",
-	epsilon: "\u03b5",
-	theta: "\u03b8",
-	lambda: "\u03bb",
-	pi: "\u03c0",
-	sigma: "\u03c3",
-	phi: "\u03c6",
-	omega: "\u03c9",
-};
+/** Markers that indicate DuckDuckGo served an anti-bot interstitial instead of real results. */
+const ANOMALY_MARKERS = ["anomaly.js", "Unfortunately, bots", "challenge-form"];
 
 /**
- * Decode a named HTML entity.
+ * Decode a DuckDuckGo redirector URL (//duckduckgo.com/l/?uddg=<encoded>&...).
+ * Returns the original URL on success, or null if the input is not a DDG redirector.
  */
-function decodeNamedEntity(name: string): string {
-	return NAMED_ENTITIES[name] ?? `&${name};`;
+function decodeDuckDuckGoRedirect(href: string): string | null {
+	try {
+		const normalized = href.startsWith("//") ? `https:${href}` : href;
+		const parsed = new URL(normalized);
+		if (!parsed.hostname.endsWith("duckduckgo.com")) return null;
+		const uddg = parsed.searchParams.get("uddg");
+		if (!uddg) return null;
+		return decodeURIComponent(uddg);
+	} catch {
+		return null;
+	}
 }
 
 /**
- * Extract text content from an HTML string, stripping tags.
+ * Resolve a result URL: decode DDG redirectors, pass everything else through.
  */
-function extractText(html: string): string {
-	let text = html.replace(/<[^>]*>/g, "");
-	text = decodeHtmlEntities(text);
-	text = text.replace(/\s+/g, " ").trim();
-	return text;
+function resolveResultUrl(href: string): string {
+	const decoded = decodeDuckDuckGoRedirect(href);
+	if (decoded) return decoded;
+	if (href.startsWith("//")) return `https:${href}`;
+	return href;
+}
+
+/** True if the URL should be filtered out as DDG navigation/chrome, not a real result. */
+function isNavigationUrl(url: string): boolean {
+	try {
+		const parsed = new URL(url);
+		const host = parsed.hostname.toLowerCase();
+		if (host === "duckduckgo.com" || host.endsWith(".duckduckgo.com")) {
+			// Skip DDG's own pages unless it's a redirect we've already decoded
+			return true;
+		}
+		return false;
+	} catch {
+		return true;
+	}
 }
 
 /**
- * Search DuckDuckGo for the given query.
+ * Parse Jina-converted DDG Lite markdown into structured results.
+ *
+ * DDG Lite returns a very simple HTML table of results. Jina's markdown output
+ * preserves links as `[text](url)` and text runs between them. We walk the
+ * markdown, collect every link, decode DDG redirectors, and pair each link
+ * with the text that follows it (up to the next link or blank line) as the snippet.
+ *
+ * This parser is deliberately tolerant: if Jina's exact output shape drifts,
+ * we still extract usable title+url pairs and fall back to empty snippets.
  */
-async function searchDuckDuckGo(
+function parseJinaSearchMarkdown(markdown: string, maxResults: number): WebSearchResult[] {
+	const results: WebSearchResult[] = [];
+	const linkPattern = /\[([^\]]+)\]\(([^)]+)\)/g;
+
+	const matches: Array<{ title: string; url: string; start: number; end: number }> = [];
+	let m: RegExpExecArray | null = linkPattern.exec(markdown);
+	while (m !== null) {
+		const title = m[1].trim();
+		const rawHref = m[2].trim();
+		const url = resolveResultUrl(rawHref);
+		if (title && url && !isNavigationUrl(url)) {
+			matches.push({ title, url, start: m.index, end: m.index + m[0].length });
+		}
+		m = linkPattern.exec(markdown);
+	}
+
+	// Deduplicate by URL, preserve first occurrence
+	const seen = new Set<string>();
+	for (let i = 0; i < matches.length && results.length < maxResults; i++) {
+		const current = matches[i];
+		if (seen.has(current.url)) continue;
+		seen.add(current.url);
+
+		// Snippet: text between this link's end and the next match's start
+		const nextStart = i + 1 < matches.length ? matches[i + 1].start : markdown.length;
+		const between = markdown.slice(current.end, nextStart);
+		let domain: string | undefined;
+		try {
+			domain = new URL(current.url).hostname.replace(/^www\./, "");
+		} catch {
+			/* ignore */
+		}
+		const snippet = between
+			.split("\n")
+			.map((l) => l.trim())
+			.filter((l) => {
+				if (l.length === 0) return false;
+				if (l.startsWith("[") || l.startsWith("#") || l.startsWith("---") || l.startsWith("!")) return false;
+				if (/^\d+\.$/.test(l)) return false;
+				if (domain && (l === domain || l === `www.${domain}` || l.startsWith(`${domain}/`) || l.startsWith(`www.${domain}/`)))
+					return false;
+				return true;
+			})
+			.join(" ")
+			.replace(/\*\*/g, "")
+			.replace(/\s*\d+\.\s*$/, "")
+			.slice(0, 300)
+			.trim();
+
+		results.push({ title: current.title, url: current.url, snippet });
+	}
+
+	return results;
+}
+
+/**
+ * Search by proxying DuckDuckGo Lite through Jina Reader.
+ *
+ * Using Jina Reader as the fetch layer sidesteps DDG's bot-detection of direct
+ * scrapers (DDG returns an "anomaly" page for `Mozilla/5.0 (compatible; PiBot/1.0)`
+ * and similar UAs). Jina Reader fetches from its own IP pool with proper rendering
+ * and returns the resulting page as clean markdown, which we then parse.
+ */
+async function searchViaJinaReader(
 	query: string,
-	maxResults: number = 5,
+	maxResults: number,
 	signal?: AbortSignal,
 ): Promise<WebSearchResult[]> {
 	const encodedQuery = encodeURIComponent(query);
-	const url = `https://html.duckduckgo.com/html/?q=${encodedQuery}`;
+	const ddgUrl = `https://lite.duckduckgo.com/lite/?q=${encodedQuery}`;
+	const jinaUrl = `https://r.jina.ai/${ddgUrl}`;
 
-	const response = await fetch(url, {
-		signal,
-		headers: {
-			Accept: "text/html",
-			"User-Agent": "Mozilla/5.0 (compatible; PiBot/1.0)",
-		},
-	});
+	const headers: Record<string, string> = {
+		Accept: "text/markdown, text/plain",
+		"X-Return-Format": "markdown",
+		"User-Agent": "Mozilla/5.0 (compatible; PiBot/1.0)",
+	};
+	if (process.env.JINA_API_KEY) {
+		headers.Authorization = `Bearer ${process.env.JINA_API_KEY}`;
+	}
+
+	const response = await fetch(jinaUrl, { signal, headers });
 
 	if (!response.ok) {
 		if (response.status === 429) {
@@ -360,42 +396,13 @@ async function searchDuckDuckGo(
 		throw new Error(`Search failed: HTTP ${response.status}`);
 	}
 
-	const html = await response.text();
-	return parseDuckDuckGoHtml(html, maxResults);
-}
+	const markdown = await response.text();
 
-/**
- * Parse DuckDuckGo HTML search results into structured data.
- */
-function parseDuckDuckGoHtml(html: string, maxResults: number): WebSearchResult[] {
-	const results: WebSearchResult[] = [];
-
-	const resultLinkPattern = /<a[^>]*class="[^"]*result__a[^"]*"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi;
-	const snippetPattern = /<a[^>]*class="[^"]*result__snippet[^"]*"[^>]*>([\s\S]*?)<\/a>/gi;
-
-	resultLinkPattern.lastIndex = 0;
-	let match: RegExpExecArray | null = resultLinkPattern.exec(html);
-	while (match !== null) {
-		const url = decodeHtmlEntities(match[1]);
-		const titleHtml = match[2];
-		const title = extractText(titleHtml);
-
-		if (!title || !url) {
-			match = resultLinkPattern.exec(html);
-			continue;
-		}
-
-		const afterResult = html.slice(match.index + match[0].length);
-		const snippetMatch = snippetPattern.exec(afterResult);
-		const snippet = snippetMatch ? extractText(snippetMatch[1]) : "";
-
-		results.push({ title, url, snippet });
-
-		snippetPattern.lastIndex = 0;
-		match = resultLinkPattern.exec(html);
+	if (ANOMALY_MARKERS.some((marker) => markdown.includes(marker))) {
+		throw new SearchBlockedError();
 	}
 
-	return results.slice(0, maxResults);
+	return parseJinaSearchMarkdown(markdown, maxResults);
 }
 
 // =============================================================================
@@ -579,6 +586,8 @@ export default function (pi: ExtensionAPI) {
 				}),
 			),
 		}),
+		// retry:true  → transient: caller may retry with the same or a modified query
+		// retry:false → permanent: query was empty or yielded no real results, retry won't help
 		async execute(_toolCallId, { query, max_results }, signal) {
 			if (!query || query.trim() === "") {
 				return {
@@ -590,11 +599,11 @@ export default function (pi: ExtensionAPI) {
 			const effectiveMaxResults = max_results ?? 5;
 
 			try {
-				const results = await searchDuckDuckGo(query, effectiveMaxResults, signal);
+				const results = await searchViaJinaReader(query, effectiveMaxResults, signal);
 
 				if (results.length === 0) {
 					return {
-						content: [{ type: "text", text: JSON.stringify({ error: "Search failed", retry: false }) }],
+						content: [{ type: "text", text: JSON.stringify({ error: "No results for query", retry: false }) }],
 						details: undefined,
 					};
 				}
@@ -604,7 +613,20 @@ export default function (pi: ExtensionAPI) {
 					details: { results },
 				};
 			} catch (error) {
+				if (error instanceof SearchBlockedError) {
+					return {
+						content: [
+							{
+								type: "text",
+								text: JSON.stringify({ error: "Search backend blocked the request", retry: true }),
+							},
+						],
+						details: undefined,
+					};
+				}
+
 				const message = error instanceof Error ? error.message : "Unknown error";
+				const truncated = message.length > 200 ? `${message.slice(0, 200)}...` : message;
 				const isRateLimit = message.toLowerCase().includes("rate limit");
 
 				return {
@@ -612,7 +634,7 @@ export default function (pi: ExtensionAPI) {
 						{
 							type: "text",
 							text: JSON.stringify({
-								error: isRateLimit ? "Search rate limited" : "Search failed",
+								error: isRateLimit ? "Search rate limited" : `Search failed: ${truncated}`,
 								retry: true,
 							}),
 						},
