@@ -265,6 +265,7 @@ async function createSessionManager(
 			const selectedPath = await selectSession(
 				(onProgress) => SessionManager.list(cwd, sessionDir, onProgress),
 				SessionManager.listAll,
+				settingsManager.getResumeScope(),
 			);
 			if (!selectedPath) {
 				console.log(chalk.dim("No session selected"));

@@ -8,6 +8,7 @@
 ### Added
 
 - Set `PI_CODING_AGENT=true` environment variable at startup so sub-processes can detect they are running inside the coding agent ([#2868](https://github.com/badlogic/pi-mono/issues/2868))
+- Added `resumeScope` setting (`"current"` | `"all"`) to control which tab opens by default in the session resume picker
 
 ## [0.66.1] - 2026-04-08
 

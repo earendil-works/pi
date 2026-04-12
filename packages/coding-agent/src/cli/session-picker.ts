@@ -13,6 +13,7 @@ type SessionsLoader = (onProgress?: SessionListProgress) => Promise<SessionInfo[
 export async function selectSession(
 	currentSessionsLoader: SessionsLoader,
 	allSessionsLoader: SessionsLoader,
+	initialScope: "current" | "all" = "current",
 ): Promise<string | null> {
 	return new Promise((resolve) => {
 		const ui = new TUI(new ProcessTerminal());
@@ -42,7 +43,7 @@ export async function selectSession(
 				process.exit(0);
 			},
 			() => ui.requestRender(),
-			{ showRenameHint: false, keybindings },
+			{ showRenameHint: false, keybindings, initialScope },
 		);
 
 		ui.addChild(selector);

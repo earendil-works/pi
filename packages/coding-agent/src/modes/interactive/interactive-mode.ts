@@ -3358,6 +3358,7 @@ export class InteractiveMode {
 					autocompleteMaxVisible: this.settingsManager.getAutocompleteMaxVisible(),
 					quietStartup: this.settingsManager.getQuietStartup(),
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
+					resumeScope: this.settingsManager.getResumeScope(),
 				},
 				{
 					onAutoCompactChange: (enabled) => {
@@ -3456,6 +3457,9 @@ export class InteractiveMode {
 					onClearOnShrinkChange: (enabled) => {
 						this.settingsManager.setClearOnShrink(enabled);
 						this.ui.setClearOnShrink(enabled);
+					},
+					onResumeScopeChange: (scope) => {
+						this.settingsManager.setResumeScope(scope);
 					},
 					onCancel: () => {
 						done();
@@ -3883,6 +3887,7 @@ export class InteractiveMode {
 					},
 					showRenameHint: true,
 					keybindings: this.keybindings,
+					initialScope: this.settingsManager.getResumeScope(),
 				},
 
 				this.sessionManager.getSessionFile(),

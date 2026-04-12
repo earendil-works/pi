@@ -50,6 +50,7 @@ export interface SettingsConfig {
 	autocompleteMaxVisible: number;
 	quietStartup: boolean;
 	clearOnShrink: boolean;
+	resumeScope: "current" | "all";
 }
 
 export interface SettingsCallbacks {
@@ -73,6 +74,7 @@ export interface SettingsCallbacks {
 	onAutocompleteMaxVisibleChange: (maxVisible: number) => void;
 	onQuietStartupChange: (enabled: boolean) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
+	onResumeScopeChange: (scope: "current" | "all") => void;
 	onCancel: () => void;
 }
 
@@ -354,6 +356,16 @@ export class SettingsSelectorComponent extends Container {
 			values: ["true", "false"],
 		});
 
+		// Resume scope toggle (insert after clear-on-shrink)
+		const clearOnShrinkIndex = items.findIndex((item) => item.id === "clear-on-shrink");
+		items.splice(clearOnShrinkIndex + 1, 0, {
+			id: "resume-scope",
+			label: "Resume scope",
+			description: "Default scope shown when opening the session resume picker",
+			currentValue: config.resumeScope,
+			values: ["current", "all"],
+		});
+
 		// Add borders
 		this.addChild(new DynamicBorder());
 
@@ -415,6 +427,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "clear-on-shrink":
 						callbacks.onClearOnShrinkChange(newValue === "true");
+						break;
+					case "resume-scope":
+						callbacks.onResumeScopeChange(newValue as "current" | "all");
 						break;
 				}
 			},

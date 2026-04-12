@@ -731,11 +731,13 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			renameSession?: (sessionPath: string, currentName: string | undefined) => Promise<void>;
 			showRenameHint?: boolean;
 			keybindings?: KeybindingsManager;
+			initialScope?: SessionScope;
 		},
 		currentSessionFilePath?: string,
 	) {
 		super();
 		this.keybindings = options?.keybindings ?? KeybindingsManager.create();
+		this.scope = options?.initialScope ?? "current";
 		this.currentSessionsLoader = currentSessionsLoader;
 		this.allSessionsLoader = allSessionsLoader;
 		this.onCancel = onCancel;
@@ -830,12 +832,8 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			this.requestRender();
 		};
 
-		// Start loading current sessions immediately
-		this.loadCurrentSessions();
-	}
-
-	private loadCurrentSessions(): void {
-		void this.loadScope("current", "initial");
+		// Start loading the initial scope immediately
+		void this.loadScope(this.scope, "initial");
 	}
 
 	private enterRenameMode(sessionPath: string, currentName: string | undefined): void {

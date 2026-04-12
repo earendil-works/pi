@@ -95,6 +95,7 @@ export interface Settings {
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
 	markdown?: MarkdownSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
+	resumeScope?: "current" | "all"; // default: "current" - scope shown by default in the session resume picker
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -955,5 +956,15 @@ export class SettingsManager {
 
 	getCodeBlockIndent(): string {
 		return this.settings.markdown?.codeBlockIndent ?? "  ";
+	}
+
+	getResumeScope(): "current" | "all" {
+		return this.settings.resumeScope ?? "current";
+	}
+
+	setResumeScope(scope: "current" | "all"): void {
+		this.globalSettings.resumeScope = scope;
+		this.markModified("resumeScope");
+		this.save();
 	}
 }
