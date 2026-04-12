@@ -411,6 +411,11 @@ function buildParams(
 	}
 	if (options.maxTokens !== undefined) {
 		generationConfig.maxOutputTokens = options.maxTokens;
+	} else if (
+		isGemini3ProModel(model as unknown as Model<"google-generative-ai">) ||
+		isGemini3FlashModel(model as unknown as Model<"google-generative-ai">)
+	) {
+		generationConfig.maxOutputTokens = 16384;
 	}
 
 	const config: GenerateContentConfig = {
@@ -531,6 +536,26 @@ function getGoogleBudget(
 	if (model.id.includes("2.5-flash")) {
 		const budgets: Record<ClampedThinkingLevel, number> = {
 			minimal: 128,
+			low: 2048,
+			medium: 8192,
+			high: 24576,
+		};
+		return budgets[effort];
+	}
+
+	if (isGemini3ProModel(model)) {
+		const budgets: Record<ClampedThinkingLevel, number> = {
+			minimal: 1024,
+			low: 4096,
+			medium: 16384,
+			high: 32768,
+		};
+		return budgets[effort];
+	}
+
+	if (isGemini3FlashModel(model)) {
+		const budgets: Record<ClampedThinkingLevel, number> = {
+			minimal: 512,
 			low: 2048,
 			medium: 8192,
 			high: 24576,
