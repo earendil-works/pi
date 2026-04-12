@@ -75,6 +75,18 @@ npm run check        # Lint, format, and type check
 
 > **Note:** `npm run check` requires `npm run build` to be run first. The web-ui package uses `tsc` which needs compiled `.d.ts` files from dependencies.
 
+## Growth History
+
+## Star History
+
+<a href="https://www.star-history.com/?repos=badlogic%2Fpi-mono&type=date&legend=bottom-right">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=badlogic/pi-mono&type=date&theme=dark&legend=bottom-right" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=badlogic/pi-mono&type=date&legend=bottom-right" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=badlogic/pi-mono&type=date&legend=bottom-right" />
+ </picture>
+</a>
+
 ## License
 
 MIT
