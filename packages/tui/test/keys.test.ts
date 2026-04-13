@@ -76,6 +76,15 @@ describe("matchesKey", () => {
 			setKittyProtocolActive(false);
 		});
 
+		it("should match super-modified Kitty bindings", () => {
+			setKittyProtocolActive(true);
+			assert.strictEqual(matchesKey("\x1b[107;9u", "super+k"), true);
+			assert.strictEqual(matchesKey("\x1b[13;9u", "super+enter"), true);
+			assert.strictEqual(parseKey("\x1b[107;9u"), "super+k");
+			assert.strictEqual(parseKey("\x1b[13;9u"), "super+enter");
+			setKittyProtocolActive(false);
+		});
+
 		it("should normalize Kitty keypad functional keys to logical digits, symbols, and navigation", () => {
 			setKittyProtocolActive(true);
 			assert.strictEqual(matchesKey("\x1b[57400u", "1"), true);
@@ -462,7 +471,7 @@ describe("parseKey", () => {
 
 		it("should ignore Kitty CSI-u with unsupported modifiers", () => {
 			setKittyProtocolActive(true);
-			assert.strictEqual(parseKey("\x1b[99;9u"), undefined);
+			assert.strictEqual(parseKey("\x1b[99;17u"), undefined);
 			setKittyProtocolActive(false);
 		});
 	});

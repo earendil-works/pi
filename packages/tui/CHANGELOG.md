@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Kitty keyboard protocol support for `super`-modified keybindings such as `super+k` and `super+enter` ([#2979](https://github.com/badlogic/pi-mono/issues/2979))
+
 ## [0.67.1] - 2026-04-13
 
 ## [0.67.0] - 2026-04-13

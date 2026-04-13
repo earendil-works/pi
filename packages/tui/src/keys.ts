@@ -139,28 +139,17 @@ type SpecialKey =
 	| "f12";
 
 type BaseKey = Letter | Digit | SymbolKey | SpecialKey;
+type ModifierName = "ctrl" | "shift" | "alt" | "super";
+
+type ModifiedKeyId<Key extends string, RemainingModifiers extends ModifierName = ModifierName> = {
+	[M in RemainingModifiers]: `${M}+${Key}` | `${M}+${ModifiedKeyId<Key, Exclude<RemainingModifiers, M>>}`;
+}[RemainingModifiers];
 
 /**
  * Union type of all valid key identifiers.
  * Provides autocomplete and catches typos at compile time.
  */
-export type KeyId =
-	| BaseKey
-	| `ctrl+${BaseKey}`
-	| `shift+${BaseKey}`
-	| `alt+${BaseKey}`
-	| `ctrl+shift+${BaseKey}`
-	| `shift+ctrl+${BaseKey}`
-	| `ctrl+alt+${BaseKey}`
-	| `alt+ctrl+${BaseKey}`
-	| `shift+alt+${BaseKey}`
-	| `alt+shift+${BaseKey}`
-	| `ctrl+shift+alt+${BaseKey}`
-	| `ctrl+alt+shift+${BaseKey}`
-	| `shift+ctrl+alt+${BaseKey}`
-	| `shift+alt+ctrl+${BaseKey}`
-	| `alt+ctrl+shift+${BaseKey}`
-	| `alt+shift+ctrl+${BaseKey}`;
+export type KeyId = BaseKey | ModifiedKeyId<BaseKey>;
 
 /**
  * Helper object for creating typed key identifiers with autocomplete.
@@ -296,6 +285,7 @@ const MODIFIERS = {
 	shift: 1,
 	alt: 2,
 	ctrl: 4,
+	super: 8,
 } as const;
 
 const LOCK_MASK = 64 + 128; // Caps Lock + Num Lock
@@ -759,15 +749,18 @@ function matchesPrintableModifyOtherKeys(data: string, expectedKeycode: number, 
 function formatKeyNameWithModifiers(keyName: string, modifier: number): string | undefined {
 	const mods: string[] = [];
 	const effectiveMod = modifier & ~LOCK_MASK;
-	const supportedModifierMask = MODIFIERS.shift | MODIFIERS.ctrl | MODIFIERS.alt;
+	const supportedModifierMask = MODIFIERS.shift | MODIFIERS.ctrl | MODIFIERS.alt | MODIFIERS.super;
 	if ((effectiveMod & ~supportedModifierMask) !== 0) return undefined;
 	if (effectiveMod & MODIFIERS.shift) mods.push("shift");
 	if (effectiveMod & MODIFIERS.ctrl) mods.push("ctrl");
 	if (effectiveMod & MODIFIERS.alt) mods.push("alt");
+	if (effectiveMod & MODIFIERS.super) mods.push("super");
 	return mods.length > 0 ? `${mods.join("+")}+${keyName}` : keyName;
 }
 
-function parseKeyId(keyId: string): { key: string; ctrl: boolean; shift: boolean; alt: boolean } | null {
+function parseKeyId(
+	keyId: string,
+): { key: string; ctrl: boolean; shift: boolean; alt: boolean; super: boolean } | null {
 	const parts = keyId.toLowerCase().split("+");
 	const key = parts[parts.length - 1];
 	if (!key) return null;
@@ -776,6 +769,7 @@ function parseKeyId(keyId: string): { key: string; ctrl: boolean; shift: boolean
 		ctrl: parts.includes("ctrl"),
 		shift: parts.includes("shift"),
 		alt: parts.includes("alt"),
+		super: parts.includes("super"),
 	};
 }
 
@@ -788,6 +782,7 @@ function parseKeyId(keyId: string): { key: string; ctrl: boolean; shift: boolean
  * - Ctrl combinations: "ctrl+c", "ctrl+z", etc.
  * - Shift combinations: "shift+tab", "shift+enter"
  * - Alt combinations: "alt+enter", "alt+backspace"
+ * - Super combinations: "super+k", "super+enter"
  * - Combined modifiers: "shift+ctrl+p", "ctrl+alt+x"
  *
  * Use the Key helper for autocomplete: Key.ctrl("c"), Key.escape, Key.ctrlShift("p")
@@ -799,11 +794,12 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 	const parsed = parseKeyId(keyId);
 	if (!parsed) return false;
 
-	const { key, ctrl, shift, alt } = parsed;
+	const { key, ctrl, shift, alt, super: superModifier } = parsed;
 	let modifier = 0;
 	if (shift) modifier |= MODIFIERS.shift;
 	if (alt) modifier |= MODIFIERS.alt;
 	if (ctrl) modifier |= MODIFIERS.ctrl;
+	if (superModifier) modifier |= MODIFIERS.super;
 
 	switch (key) {
 		case "escape":
@@ -817,10 +813,10 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 
 		case "space":
 			if (!_kittyProtocolActive) {
-				if (ctrl && !alt && !shift && data === "\x00") {
+				if (modifier === MODIFIERS.ctrl && data === "\x00") {
 					return true;
 				}
-				if (alt && !ctrl && !shift && data === "\x1b ") {
+				if (modifier === MODIFIERS.alt && data === "\x1b ") {
 					return true;
 				}
 			}
@@ -837,7 +833,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 			);
 
 		case "tab":
-			if (shift && !ctrl && !alt) {
+			if (modifier === MODIFIERS.shift) {
 				return (
 					data === "\x1b[Z" ||
 					matchesKittySequence(data, CODEPOINTS.tab, MODIFIERS.shift) ||
@@ -854,7 +850,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 
 		case "enter":
 		case "return":
-			if (shift && !ctrl && !alt) {
+			if (modifier === MODIFIERS.shift) {
 				// CSI u sequences (standard Kitty protocol)
 				if (
 					matchesKittySequence(data, CODEPOINTS.enter, MODIFIERS.shift) ||
@@ -874,7 +870,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 				}
 				return false;
 			}
-			if (alt && !ctrl && !shift) {
+			if (modifier === MODIFIERS.alt) {
 				// CSI u sequences (standard Kitty protocol)
 				if (
 					matchesKittySequence(data, CODEPOINTS.enter, MODIFIERS.alt) ||
@@ -909,7 +905,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 			);
 
 		case "backspace":
-			if (alt && !ctrl && !shift) {
+			if (modifier === MODIFIERS.alt) {
 				if (data === "\x1b\x7f" || data === "\x1b\b") {
 					return true;
 				}
@@ -918,7 +914,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 					matchesModifyOtherKeys(data, CODEPOINTS.backspace, MODIFIERS.alt)
 				);
 			}
-			if (ctrl && !alt && !shift) {
+			if (modifier === MODIFIERS.ctrl) {
 				// Legacy raw 0x08 is ambiguous: it can be Ctrl+Backspace on Windows
 				// Terminal or plain Backspace on other terminals, while also
 				// overlapping with Ctrl+H.
@@ -1019,7 +1015,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 			return matchesKittySequence(data, FUNCTIONAL_CODEPOINTS.pageDown, modifier);
 
 		case "up":
-			if (alt && !ctrl && !shift) {
+			if (modifier === MODIFIERS.alt) {
 				return data === "\x1bp" || matchesKittySequence(data, ARROW_CODEPOINTS.up, MODIFIERS.alt);
 			}
 			if (modifier === 0) {
@@ -1034,7 +1030,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 			return matchesKittySequence(data, ARROW_CODEPOINTS.up, modifier);
 
 		case "down":
-			if (alt && !ctrl && !shift) {
+			if (modifier === MODIFIERS.alt) {
 				return data === "\x1bn" || matchesKittySequence(data, ARROW_CODEPOINTS.down, MODIFIERS.alt);
 			}
 			if (modifier === 0) {
@@ -1049,7 +1045,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 			return matchesKittySequence(data, ARROW_CODEPOINTS.down, modifier);
 
 		case "left":
-			if (alt && !ctrl && !shift) {
+			if (modifier === MODIFIERS.alt) {
 				return (
 					data === "\x1b[1;3D" ||
 					(!_kittyProtocolActive && data === "\x1bB") ||
@@ -1057,7 +1053,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 					matchesKittySequence(data, ARROW_CODEPOINTS.left, MODIFIERS.alt)
 				);
 			}
-			if (ctrl && !alt && !shift) {
+			if (modifier === MODIFIERS.ctrl) {
 				return (
 					data === "\x1b[1;5D" ||
 					matchesLegacyModifierSequence(data, "left", MODIFIERS.ctrl) ||
@@ -1076,7 +1072,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 			return matchesKittySequence(data, ARROW_CODEPOINTS.left, modifier);
 
 		case "right":
-			if (alt && !ctrl && !shift) {
+			if (modifier === MODIFIERS.alt) {
 				return (
 					data === "\x1b[1;3C" ||
 					(!_kittyProtocolActive && data === "\x1bF") ||
@@ -1084,7 +1080,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 					matchesKittySequence(data, ARROW_CODEPOINTS.right, MODIFIERS.alt)
 				);
 			}
-			if (ctrl && !alt && !shift) {
+			if (modifier === MODIFIERS.ctrl) {
 				return (
 					data === "\x1b[1;5C" ||
 					matchesLegacyModifierSequence(data, "right", MODIFIERS.ctrl) ||
@@ -1129,17 +1125,17 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 		const isLetter = key >= "a" && key <= "z";
 		const isDigit = isDigitKey(key);
 
-		if (ctrl && alt && !shift && !_kittyProtocolActive && rawCtrl) {
+		if (modifier === MODIFIERS.ctrl + MODIFIERS.alt && !_kittyProtocolActive && rawCtrl) {
 			// Legacy: ctrl+alt+key is ESC followed by the control character
 			return data === `\x1b${rawCtrl}`;
 		}
 
-		if (alt && !ctrl && !shift && !_kittyProtocolActive && (isLetter || isDigit)) {
+		if (modifier === MODIFIERS.alt && !_kittyProtocolActive && (isLetter || isDigit)) {
 			// Legacy: alt+letter/digit is ESC followed by the key
 			if (data === `\x1b${key}`) return true;
 		}
 
-		if (ctrl && !shift && !alt) {
+		if (modifier === MODIFIERS.ctrl) {
 			// Legacy: ctrl+key sends the control character
 			if (rawCtrl && data === rawCtrl) return true;
 			return (
@@ -1148,14 +1144,14 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 			);
 		}
 
-		if (ctrl && shift && !alt) {
+		if (modifier === MODIFIERS.shift + MODIFIERS.ctrl) {
 			return (
 				matchesKittySequence(data, codepoint, MODIFIERS.shift + MODIFIERS.ctrl) ||
 				matchesPrintableModifyOtherKeys(data, codepoint, MODIFIERS.shift + MODIFIERS.ctrl)
 			);
 		}
 
-		if (shift && !ctrl && !alt) {
+		if (modifier === MODIFIERS.shift) {
 			// Legacy: shift+letter produces uppercase
 			if (isLetter && data === key.toUpperCase()) return true;
 			return (
@@ -1313,8 +1309,8 @@ const KITTY_PRINTABLE_ALLOWED_MODIFIERS = MODIFIERS.shift | LOCK_MASK;
  * CSI-u sequences for all keys, including plain printable characters. This
  * function extracts the printable character from such sequences.
  *
- * Only accepts plain or Shift-modified keys. Rejects Ctrl, Alt, and unsupported
- * modifier combinations (those are handled by keybinding matching instead).
+ * Only accepts plain or Shift-modified keys. Rejects Ctrl, Alt, Super/Meta, and
+ * other non-text modifier combinations (those are handled by keybinding matching instead).
  * Prefers the shifted keycode when Shift is held and a shifted key is reported.
  *
  * @param data - Raw input data from terminal
@@ -1334,8 +1330,8 @@ export function decodeKittyPrintable(data: string): string | undefined {
 	const modifier = Number.isFinite(modValue) ? modValue - 1 : 0;
 
 	// Only accept printable CSI-u input for plain or Shift-modified text keys.
-	// Reject unsupported modifier bits (e.g. Super/Meta) to avoid inserting
-	// characters from modifier-only terminal events.
+	// Reject non-text modifier bits (e.g. Ctrl, Alt, Super/Meta) to avoid
+	// inserting characters from modified-key terminal events.
 	if ((modifier & ~KITTY_PRINTABLE_ALLOWED_MODIFIERS) !== 0) return undefined;
 	if (modifier & (MODIFIERS.alt | MODIFIERS.ctrl)) return undefined;
 

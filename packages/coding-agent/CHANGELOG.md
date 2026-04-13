@@ -39,6 +39,7 @@ How to disable it:
 
 - Added full `openRouterRouting` field support in `models.json`, including fallbacks, parameter requirements, data collection, ZDR, ignore lists, quantizations, provider sorting, max price, and preferred throughput and latency constraints ([#2904](https://github.com/badlogic/pi-mono/pull/2904) by [@zmberber](https://github.com/zmberber))
 - Set `PI_CODING_AGENT=true` environment variable at startup so sub-processes can detect they are running inside the coding agent ([#2868](https://github.com/badlogic/pi-mono/issues/2868))
+- Added interactive keybinding support for Kitty `super`-modified shortcuts such as `super+k` and `super+enter` ([#2979](https://github.com/badlogic/pi-mono/issues/2979))
 
 ### Fixed
 
