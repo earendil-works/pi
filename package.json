@@ -53,7 +53,6 @@
 	},
 	"overrides": {
 		"rimraf": "6.1.2",
-		"fast-xml-parser": "5.3.8",
 		"gaxios": {
 			"rimraf": "6.1.2"
 		}
