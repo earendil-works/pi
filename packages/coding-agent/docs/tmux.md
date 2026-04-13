@@ -55,6 +55,16 @@ Without tmux extended keys, modified Enter keys collapse to legacy sequences:
 
 This affects the default keybindings (`Enter` to submit, `Shift+Enter` for newline) and any custom keybindings using modified Enter.
 
+## Suppressing the Warning
+
+If you intentionally run tmux without extended keys and want to suppress the startup warning, set the `PI_SKIP_TMUX_WARNING` environment variable:
+
+```bash
+export PI_SKIP_TMUX_WARNING=1
+```
+
+This skips the tmux keyboard check entirely. Modified Enter keys (Shift+Enter, Ctrl+Enter, etc.) may still not work as expected.
+
 ## Requirements
 
 - tmux 3.2 or later (run `tmux -V` to check)

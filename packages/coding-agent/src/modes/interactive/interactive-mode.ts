@@ -707,6 +707,7 @@ export class InteractiveMode {
 
 	private async checkTmuxKeyboardSetup(): Promise<string | undefined> {
 		if (!process.env.TMUX) return undefined;
+		if (process.env.PI_SKIP_TMUX_WARNING) return undefined;
 
 		const runTmuxShow = (option: string): Promise<string | undefined> => {
 			return new Promise((resolve) => {
