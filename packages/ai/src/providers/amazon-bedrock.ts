@@ -61,6 +61,12 @@ export interface BedrockOptions extends StreamOptions {
 	 * Tags appear in AWS Cost Explorer split cost allocation data.
 	 * @see https://docs.aws.amazon.com/bedrock/latest/APIReference/API_runtime_ConverseStream.html */
 	requestMetadata?: Record<string, string>;
+	/** Bearer token for Bedrock API key authentication.
+	 * When set, bypasses SigV4 signing and sends Authorization: Bearer <token> instead.
+	 * Requires `bedrock:CallWithBearerToken` IAM permission on the token's identity.
+	 * Set via AWS_BEARER_TOKEN_BEDROCK env var or pass directly.
+	 * @see https://docs.aws.amazon.com/service-authorization/latest/reference/list_amazonbedrock.html */
+	bearerToken?: string;
 }
 
 type Block = (TextContent | ThinkingContent | ToolCall) & { index?: number; partialJson?: string };
@@ -97,6 +103,9 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			profile: options.profile,
 		};
 
+		// Resolve bearer token for API key auth (bypasses SigV4)
+		const bearerToken = options.bearerToken || process.env.AWS_BEARER_TOKEN_BEDROCK || undefined;
+
 		// in Node.js/Bun environment only
 		if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
 			// Region resolution: explicit option > env vars > SDK default chain.
@@ -114,6 +123,15 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				config.credentials = {
 					accessKeyId: "dummy-access-key",
 					secretAccessKey: "dummy-secret-key",
+				};
+			}
+
+			// Bearer token auth: use API key instead of SigV4 signing.
+			// Requires bedrock:CallWithBearerToken IAM permission.
+			if (bearerToken && process.env.AWS_BEDROCK_SKIP_AUTH !== "1") {
+				config.credentials = {
+					accessKeyId: "bearer-token-auth",
+					secretAccessKey: "bearer-token-auth",
 				};
 			}
 
@@ -150,6 +168,22 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 
 		try {
 			const client = new BedrockRuntimeClient(config);
+
+			// Inject bearer token middleware after SigV4 signing
+			if (bearerToken) {
+				client.middlewareStack.addRelativeTo(
+					(next) => async (args: any) => {
+						if (args.request?.headers) {
+							args.request.headers["authorization"] = `Bearer ${bearerToken}`;
+							delete args.request.headers["x-amz-date"];
+							delete args.request.headers["x-amz-security-token"];
+							delete args.request.headers["x-amz-content-sha256"];
+						}
+						return next(args);
+					},
+					{ relation: "after", toMiddleware: "awsAuthMiddleware", name: "bearerTokenAuth" },
+				);
+			}
 
 			const cacheRetention = resolveCacheRetention(options.cacheRetention);
 			let commandInput = {
