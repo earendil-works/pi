@@ -132,7 +132,8 @@ export class AgentSessionRuntime {
 		}
 
 		const previousSessionFile = this.session.sessionFile;
-		const sessionManager = SessionManager.open(sessionPath, undefined, cwdOverride);
+		const defaultSessionMode = this.session.sessionManager.getDefaultSessionMode();
+		const sessionManager = SessionManager.open(sessionPath, undefined, cwdOverride, defaultSessionMode);
 		assertSessionCwdExists(sessionManager, this.cwd);
 		await this.teardownCurrent();
 		this.apply(
@@ -157,7 +158,8 @@ export class AgentSessionRuntime {
 
 		const previousSessionFile = this.session.sessionFile;
 		const sessionDir = this.session.sessionManager.getSessionDir();
-		const sessionManager = SessionManager.create(this.cwd, sessionDir);
+		const defaultSessionMode = this.session.sessionManager.getDefaultSessionMode();
+		const sessionManager = SessionManager.create(this.cwd, sessionDir, defaultSessionMode);
 		if (options?.parentSession) {
 			sessionManager.newSession({ parentSession: options.parentSession });
 		}
@@ -191,6 +193,7 @@ export class AgentSessionRuntime {
 
 		const previousSessionFile = this.session.sessionFile;
 		const selectedText = extractUserMessageText(selectedEntry.message.content);
+		const defaultSessionMode = this.session.sessionManager.getDefaultSessionMode();
 		if (this.session.sessionManager.isPersisted()) {
 			const currentSessionFile = this.session.sessionFile;
 			if (!currentSessionFile) {
@@ -198,7 +201,7 @@ export class AgentSessionRuntime {
 			}
 			const sessionDir = this.session.sessionManager.getSessionDir();
 			if (!selectedEntry.parentId) {
-				const sessionManager = SessionManager.create(this.cwd, sessionDir);
+				const sessionManager = SessionManager.create(this.cwd, sessionDir, defaultSessionMode);
 				sessionManager.newSession({ parentSession: currentSessionFile });
 				await this.teardownCurrent();
 				this.apply(
@@ -212,12 +215,12 @@ export class AgentSessionRuntime {
 				return { cancelled: false, selectedText };
 			}
 
-			const sourceManager = SessionManager.open(currentSessionFile, sessionDir);
+			const sourceManager = SessionManager.open(currentSessionFile, sessionDir, undefined, defaultSessionMode);
 			const forkedSessionPath = sourceManager.createBranchedSession(selectedEntry.parentId);
 			if (!forkedSessionPath) {
 				throw new Error("Failed to create forked session");
 			}
-			const sessionManager = SessionManager.open(forkedSessionPath, sessionDir);
+			const sessionManager = SessionManager.open(forkedSessionPath, sessionDir, undefined, defaultSessionMode);
 			await this.teardownCurrent();
 			this.apply(
 				await this.createRuntime({
@@ -270,7 +273,8 @@ export class AgentSessionRuntime {
 			copyFileSync(resolvedPath, destinationPath);
 		}
 
-		const sessionManager = SessionManager.open(destinationPath, sessionDir, cwdOverride);
+		const defaultSessionMode = this.session.sessionManager.getDefaultSessionMode();
+		const sessionManager = SessionManager.open(destinationPath, sessionDir, cwdOverride, defaultSessionMode);
 		assertSessionCwdExists(sessionManager, this.cwd);
 		await this.teardownCurrent();
 		this.apply(

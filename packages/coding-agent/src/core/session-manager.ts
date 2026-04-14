@@ -26,6 +26,8 @@ import {
 
 export const CURRENT_SESSION_VERSION = 3;
 
+export type SessionMode = "interactive" | "headless";
+
 export interface SessionHeader {
 	type: "session";
 	version?: number; // v1 sessions don't have this
@@ -33,6 +35,7 @@ export interface SessionHeader {
 	timestamp: string;
 	cwd: string;
 	parentSession?: string;
+	sessionMode?: SessionMode;
 }
 
 export interface NewSessionOptions {
@@ -178,6 +181,7 @@ export interface SessionInfo {
 	messageCount: number;
 	firstMessage: string;
 	allMessagesText: string;
+	isHeadless: boolean;
 }
 
 export type ReadonlySessionManager = Pick<
@@ -541,6 +545,27 @@ function getSessionModifiedDate(entries: FileEntry[], header: SessionHeader, sta
 	return !Number.isNaN(headerTime) ? new Date(headerTime) : statsMtime;
 }
 
+function inferHeadlessSession(header: SessionHeader, firstMessage: string, userMessageCount: number): boolean {
+	if (header.sessionMode === "interactive") {
+		return false;
+	}
+	if (header.sessionMode === "headless") {
+		return true;
+	}
+
+	const normalized = firstMessage.trim();
+	if (!normalized || userMessageCount !== 1) {
+		return false;
+	}
+
+	return (
+		(/^you are\b/i.test(normalized) && normalized.length > 200) ||
+		/\bOutput EXACTLY one JSON block\b/i.test(normalized) ||
+		/\bYour job is to\b/i.test(normalized) ||
+		/\bTreat these operator feedback rules as required instructions\b/i.test(normalized)
+	);
+}
+
 async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 	try {
 		const content = await readFile(filePath, "utf8");
@@ -562,6 +587,7 @@ async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 
 		const stats = await stat(filePath);
 		let messageCount = 0;
+		let userMessageCount = 0;
 		let firstMessage = "";
 		const allMessages: string[] = [];
 		let name: string | undefined;
@@ -584,8 +610,11 @@ async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 			if (!textContent) continue;
 
 			allMessages.push(textContent);
-			if (!firstMessage && message.role === "user") {
-				firstMessage = textContent;
+			if (message.role === "user") {
+				userMessageCount++;
+				if (!firstMessage) {
+					firstMessage = textContent;
+				}
 			}
 		}
 
@@ -605,6 +634,7 @@ async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 			messageCount,
 			firstMessage: firstMessage || "(no messages)",
 			allMessagesText: allMessages.join(" "),
+			isHeadless: inferHeadlessSession(header as SessionHeader, firstMessage, userMessageCount),
 		};
 	} catch {
 		return null;
@@ -673,11 +703,19 @@ export class SessionManager {
 	private labelsById: Map<string, string> = new Map();
 	private labelTimestampsById: Map<string, string> = new Map();
 	private leafId: string | null = null;
+	private defaultSessionMode?: SessionMode;
 
-	private constructor(cwd: string, sessionDir: string, sessionFile: string | undefined, persist: boolean) {
+	private constructor(
+		cwd: string,
+		sessionDir: string,
+		sessionFile: string | undefined,
+		persist: boolean,
+		defaultSessionMode?: SessionMode,
+	) {
 		this.cwd = cwd;
 		this.sessionDir = sessionDir;
 		this.persist = persist;
+		this.defaultSessionMode = defaultSessionMode;
 		if (persist && sessionDir && !existsSync(sessionDir)) {
 			mkdirSync(sessionDir, { recursive: true });
 		}
@@ -732,6 +770,7 @@ export class SessionManager {
 			timestamp,
 			cwd: this.cwd,
 			parentSession: options?.parentSession,
+			sessionMode: this.defaultSessionMode,
 		};
 		this.fileEntries = [header];
 		this.byId.clear();
@@ -791,6 +830,10 @@ export class SessionManager {
 
 	getSessionFile(): string | undefined {
 		return this.sessionFile;
+	}
+
+	getDefaultSessionMode(): SessionMode | undefined {
+		return this.defaultSessionMode;
 	}
 
 	_persist(entry: SessionEntry): void {
@@ -1261,9 +1304,9 @@ export class SessionManager {
 	 * @param cwd Working directory (stored in session header)
 	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
 	 */
-	static create(cwd: string, sessionDir?: string): SessionManager {
+	static create(cwd: string, sessionDir?: string, defaultSessionMode?: SessionMode): SessionManager {
 		const dir = sessionDir ?? getDefaultSessionDir(cwd);
-		return new SessionManager(cwd, dir, undefined, true);
+		return new SessionManager(cwd, dir, undefined, true, defaultSessionMode);
 	}
 
 	/**
@@ -1272,14 +1315,19 @@ export class SessionManager {
 	 * @param sessionDir Optional session directory for /new or /branch. If omitted, derives from file's parent.
 	 * @param cwdOverride Optional cwd override instead of the session header cwd.
 	 */
-	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
+	static open(
+		path: string,
+		sessionDir?: string,
+		cwdOverride?: string,
+		defaultSessionMode?: SessionMode,
+	): SessionManager {
 		// Extract cwd from session header if possible, otherwise use process.cwd()
 		const entries = loadEntriesFromFile(path);
 		const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
 		const cwd = cwdOverride ?? header?.cwd ?? process.cwd();
 		// If no sessionDir provided, derive from file's parent directory
 		const dir = sessionDir ?? resolve(path, "..");
-		return new SessionManager(cwd, dir, path, true);
+		return new SessionManager(cwd, dir, path, true, defaultSessionMode);
 	}
 
 	/**
@@ -1287,18 +1335,18 @@ export class SessionManager {
 	 * @param cwd Working directory
 	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
 	 */
-	static continueRecent(cwd: string, sessionDir?: string): SessionManager {
+	static continueRecent(cwd: string, sessionDir?: string, defaultSessionMode?: SessionMode): SessionManager {
 		const dir = sessionDir ?? getDefaultSessionDir(cwd);
 		const mostRecent = findMostRecentSession(dir);
 		if (mostRecent) {
-			return new SessionManager(cwd, dir, mostRecent, true);
+			return new SessionManager(cwd, dir, mostRecent, true, defaultSessionMode);
 		}
-		return new SessionManager(cwd, dir, undefined, true);
+		return new SessionManager(cwd, dir, undefined, true, defaultSessionMode);
 	}
 
 	/** Create an in-memory session (no file persistence) */
-	static inMemory(cwd: string = process.cwd()): SessionManager {
-		return new SessionManager(cwd, "", undefined, false);
+	static inMemory(cwd: string = process.cwd(), defaultSessionMode?: SessionMode): SessionManager {
+		return new SessionManager(cwd, "", undefined, false, defaultSessionMode);
 	}
 
 	/**
@@ -1308,7 +1356,12 @@ export class SessionManager {
 	 * @param targetCwd Target working directory (where the new session will be stored)
 	 * @param sessionDir Optional session directory. If omitted, uses default for targetCwd.
 	 */
-	static forkFrom(sourcePath: string, targetCwd: string, sessionDir?: string): SessionManager {
+	static forkFrom(
+		sourcePath: string,
+		targetCwd: string,
+		sessionDir?: string,
+		defaultSessionMode?: SessionMode,
+	): SessionManager {
 		const sourceEntries = loadEntriesFromFile(sourcePath);
 		if (sourceEntries.length === 0) {
 			throw new Error(`Cannot fork: source session file is empty or invalid: ${sourcePath}`);
@@ -1338,6 +1391,7 @@ export class SessionManager {
 			timestamp,
 			cwd: targetCwd,
 			parentSession: sourcePath,
+			sessionMode: defaultSessionMode,
 		};
 		appendFileSync(newSessionFile, `${JSON.stringify(newHeader)}\n`);
 
@@ -1348,7 +1402,7 @@ export class SessionManager {
 			}
 		}
 
-		return new SessionManager(targetCwd, dir, newSessionFile, true);
+		return new SessionManager(targetCwd, dir, newSessionFile, true, defaultSessionMode);
 	}
 
 	/**

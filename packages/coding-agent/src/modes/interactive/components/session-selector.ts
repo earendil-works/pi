@@ -51,6 +51,7 @@ class SessionSelectorHeader implements Component {
 	private scope: SessionScope;
 	private sortMode: SortMode;
 	private nameFilter: NameFilter;
+	private showHidden: boolean;
 	private requestRender: () => void;
 	private loading = false;
 	private loadProgress: { loaded: number; total: number } | null = null;
@@ -60,10 +61,17 @@ class SessionSelectorHeader implements Component {
 	private statusTimeout: ReturnType<typeof setTimeout> | null = null;
 	private showRenameHint = false;
 
-	constructor(scope: SessionScope, sortMode: SortMode, nameFilter: NameFilter, requestRender: () => void) {
+	constructor(
+		scope: SessionScope,
+		sortMode: SortMode,
+		nameFilter: NameFilter,
+		showHidden: boolean,
+		requestRender: () => void,
+	) {
 		this.scope = scope;
 		this.sortMode = sortMode;
 		this.nameFilter = nameFilter;
+		this.showHidden = showHidden;
 		this.requestRender = requestRender;
 	}
 
@@ -77,6 +85,10 @@ class SessionSelectorHeader implements Component {
 
 	setNameFilter(nameFilter: NameFilter): void {
 		this.nameFilter = nameFilter;
+	}
+
+	setShowHidden(showHidden: boolean): void {
+		this.showHidden = showHidden;
 	}
 
 	setLoading(loading: boolean): void {
@@ -131,6 +143,9 @@ class SessionSelectorHeader implements Component {
 		const nameLabel = this.nameFilter === "all" ? "All" : "Named";
 		const nameText = theme.fg("muted", "Name: ") + theme.fg("accent", nameLabel);
 
+		const hiddenLabel = this.showHidden ? "Shown" : "Hidden";
+		const hiddenText = theme.fg("muted", "Auto: ") + theme.fg("accent", hiddenLabel);
+
 		let scopeText: string;
 		if (this.loading) {
 			const progressText = this.loadProgress ? `${this.loadProgress.loaded}/${this.loadProgress.total}` : "...";
@@ -141,7 +156,7 @@ class SessionSelectorHeader implements Component {
 			scopeText = `${theme.fg("muted", "○ Current Folder | ")}${theme.fg("accent", "◉ All")}`;
 		}
 
-		const rightText = truncateToWidth(`${scopeText}  ${nameText}  ${sortText}`, width, "");
+		const rightText = truncateToWidth(`${scopeText}  ${nameText}  ${hiddenText}  ${sortText}`, width, "");
 		const availableLeft = Math.max(0, width - visibleWidth(rightText) - 1);
 		const left = truncateToWidth(leftText, availableLeft, "");
 		const spacing = Math.max(0, width - visibleWidth(left) - visibleWidth(rightText));
@@ -165,6 +180,7 @@ class SessionSelectorHeader implements Component {
 			const hint2Parts = [
 				keyHint("app.session.toggleSort", "sort"),
 				keyHint("app.session.toggleNamedFilter", "named"),
+				keyHint("app.session.toggleHidden", `auto ${this.showHidden ? "shown" : "hidden"}`),
 				keyHint("app.session.delete", "delete"),
 				keyHint("app.session.togglePath", `path ${pathState}`),
 			];
@@ -270,6 +286,7 @@ class SessionList implements Component, Focusable {
 	private showCwd = false;
 	private sortMode: SortMode = "threaded";
 	private nameFilter: NameFilter = "all";
+	private showHidden = false;
 	private keybindings: KeybindingsManager;
 	private showPath = false;
 	private confirmingDeletePath: string | null = null;
@@ -280,6 +297,7 @@ class SessionList implements Component, Focusable {
 	public onToggleScope?: () => void;
 	public onToggleSort?: () => void;
 	public onToggleNameFilter?: () => void;
+	public onToggleHidden?: () => void;
 	public onTogglePath?: (showPath: boolean) => void;
 	public onDeleteConfirmationChange?: (path: string | null) => void;
 	public onDeleteSession?: (sessionPath: string) => Promise<void>;
@@ -342,10 +360,20 @@ class SessionList implements Component, Focusable {
 		this.filterSessions(this.searchInput.getValue());
 	}
 
+	setShowHidden(showHidden: boolean): void {
+		this.showHidden = showHidden;
+		this.filterSessions(this.searchInput.getValue());
+	}
+
 	private filterSessions(query: string): void {
 		const trimmed = query.trim();
+		const visibilityFiltered = this.showHidden
+			? this.allSessions
+			: this.allSessions.filter((session) => !session.isHeadless);
 		const nameFiltered =
-			this.nameFilter === "all" ? this.allSessions : this.allSessions.filter((session) => hasSessionName(session));
+			this.nameFilter === "all"
+				? visibilityFiltered
+				: visibilityFiltered.filter((session) => hasSessionName(session));
 
 		if (this.sortMode === "threaded" && !trimmed) {
 			// Threaded mode without search: show tree structure
@@ -538,6 +566,11 @@ class SessionList implements Component, Focusable {
 			return;
 		}
 
+		if (this.keybindings.matches(keyData, "app.session.toggleHidden")) {
+			this.onToggleHidden?.();
+			return;
+		}
+
 		// Ctrl+P: toggle path display
 		if (kb.matches(keyData, "app.session.togglePath")) {
 			this.showPath = !this.showPath;
@@ -677,6 +710,7 @@ export class SessionSelectorComponent extends Container implements Focusable {
 	private scope: SessionScope = "current";
 	private sortMode: SortMode = "threaded";
 	private nameFilter: NameFilter = "all";
+	private showHidden = false;
 	private currentSessions: SessionInfo[] | null = null;
 	private allSessions: SessionInfo[] | null = null;
 	private currentSessionsLoader: SessionsLoader;
@@ -740,7 +774,13 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		this.allSessionsLoader = allSessionsLoader;
 		this.onCancel = onCancel;
 		this.requestRender = requestRender;
-		this.header = new SessionSelectorHeader(this.scope, this.sortMode, this.nameFilter, this.requestRender);
+		this.header = new SessionSelectorHeader(
+			this.scope,
+			this.sortMode,
+			this.nameFilter,
+			this.showHidden,
+			this.requestRender,
+		);
 		const renameSession = options?.renameSession;
 		this.renameSession = renameSession;
 		this.canRename = !!renameSession;
@@ -755,6 +795,7 @@ export class SessionSelectorComponent extends Container implements Focusable {
 			this.keybindings,
 			currentSessionFilePath,
 		);
+		this.sessionList.setShowHidden(this.showHidden);
 
 		this.buildBaseLayout(this.sessionList);
 
@@ -779,6 +820,7 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		this.sessionList.onToggleScope = () => this.toggleScope();
 		this.sessionList.onToggleSort = () => this.toggleSortMode();
 		this.sessionList.onToggleNameFilter = () => this.toggleNameFilter();
+		this.sessionList.onToggleHidden = () => this.toggleHidden();
 		this.sessionList.onRenameSession = (sessionPath) => {
 			if (!renameSession) return;
 			if (this.scope === "current" && this.currentLoading) return;
@@ -972,6 +1014,13 @@ export class SessionSelectorComponent extends Container implements Focusable {
 		this.nameFilter = this.nameFilter === "all" ? "named" : "all";
 		this.header.setNameFilter(this.nameFilter);
 		this.sessionList.setNameFilter(this.nameFilter);
+		this.requestRender();
+	}
+
+	private toggleHidden(): void {
+		this.showHidden = !this.showHidden;
+		this.header.setShowHidden(this.showHidden);
+		this.sessionList.setShowHidden(this.showHidden);
 		this.requestRender();
 	}
 

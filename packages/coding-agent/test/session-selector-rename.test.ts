@@ -22,6 +22,7 @@ function makeSession(overrides: Partial<SessionInfo> & { id: string }): SessionI
 		messageCount: overrides.messageCount ?? 1,
 		firstMessage: overrides.firstMessage ?? "hello",
 		allMessagesText: overrides.allMessagesText ?? "hello",
+		isHeadless: overrides.isHeadless ?? false,
 	};
 }
 

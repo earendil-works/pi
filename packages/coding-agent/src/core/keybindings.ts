@@ -22,6 +22,7 @@ export interface AppKeybindings {
 	"app.tools.expand": true;
 	"app.thinking.toggle": true;
 	"app.session.toggleNamedFilter": true;
+	"app.session.toggleHidden": true;
 	"app.editor.external": true;
 	"app.message.followUp": true;
 	"app.message.dequeue": true;
@@ -74,6 +75,10 @@ export const KEYBINDINGS = {
 	"app.session.toggleNamedFilter": {
 		defaultKeys: "ctrl+n",
 		description: "Toggle named session filter",
+	},
+	"app.session.toggleHidden": {
+		defaultKeys: "ctrl+shift+h",
+		description: "Toggle hidden session visibility",
 	},
 	"app.editor.external": {
 		defaultKeys: "ctrl+g",
@@ -176,6 +181,7 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	expandTools: "app.tools.expand",
 	toggleThinking: "app.thinking.toggle",
 	toggleSessionNamedFilter: "app.session.toggleNamedFilter",
+	toggleSessionHidden: "app.session.toggleHidden",
 	externalEditor: "app.editor.external",
 	followUp: "app.message.followUp",
 	dequeue: "app.message.dequeue",
