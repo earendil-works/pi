@@ -9,6 +9,7 @@ import {
 	type Transport,
 } from "@mariozechner/pi-ai";
 import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.js";
+import { appendNodeErrorCodes, collectNodeErrorCodes, isNodeTlsCertificateErrorCode } from "./node-error.js";
 import type {
 	AfterToolCallContext,
 	AfterToolCallResult,
@@ -30,11 +31,6 @@ function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
 	);
 }
 
-const FETCH_FAILED_PATTERN = /^fetch failed(?::.*)?$/i;
-const CERTIFICATE_ERROR_PATTERN =
-	/certificate|self[\s-]?signed|unable to verify|unable to get (local )?issuer|cert[_\s-]?/i;
-const HAS_CERT_SETUP_GUIDANCE_PATTERN = /NODE_EXTRA_CA_CERTS|npm config set cafile/i;
-
 function toErrorMessage(error: unknown): string {
 	if (error instanceof Error) {
 		if (error.message === "fetch failed" && error.cause instanceof Error && error.cause.message) {
@@ -45,13 +41,14 @@ function toErrorMessage(error: unknown): string {
 	return String(error);
 }
 
-function addCertificateTrustStoreGuidance(errorMessage: string): string {
+function addCertificateTrustStoreGuidance(errorMessage: string, codes: readonly string[]): string {
 	const trimmed = errorMessage.trim();
 	if (!trimmed) return "Unknown error";
-	if (HAS_CERT_SETUP_GUIDANCE_PATTERN.test(trimmed)) return trimmed;
+	if (trimmed.includes("NODE_EXTRA_CA_CERTS") || trimmed.includes("npm config set cafile")) return trimmed;
 
-	const shouldAddGuidance = FETCH_FAILED_PATTERN.test(trimmed) || CERTIFICATE_ERROR_PATTERN.test(trimmed);
-	if (!shouldAddGuidance) return trimmed;
+	if (!codes.some((code) => isNodeTlsCertificateErrorCode(code))) {
+		return trimmed;
+	}
 
 	return [
 		trimmed,
@@ -63,7 +60,10 @@ function addCertificateTrustStoreGuidance(errorMessage: string): string {
 }
 
 function formatAgentErrorMessage(error: unknown): string {
-	return addCertificateTrustStoreGuidance(toErrorMessage(error));
+	const baseMessage = toErrorMessage(error).trim() || "Unknown error";
+	const codes = collectNodeErrorCodes(error);
+	const messageWithCodes = appendNodeErrorCodes(baseMessage, codes);
+	return addCertificateTrustStoreGuidance(messageWithCodes, codes);
 }
 
 const EMPTY_USAGE = {

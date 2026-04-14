@@ -11,6 +11,7 @@ import {
 	type ToolResultMessage,
 	validateToolArguments,
 } from "@mariozechner/pi-ai";
+import { appendNodeErrorCodes, extractNodeErrorCodesFromMessage, isNodeTlsCertificateErrorCode } from "./node-error.js";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -24,23 +25,27 @@ import type {
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
 
-const FETCH_FAILED_PATTERN = /^fetch failed(?::.*)?$/i;
-const CERTIFICATE_ERROR_PATTERN =
-	/certificate|self[\s-]?signed|unable to verify|unable to get (local )?issuer|cert[_\s-]?|SSL interception/i;
-const HAS_CERT_SETUP_GUIDANCE_PATTERN = /NODE_EXTRA_CA_CERTS|npm config set cafile|NODE_TLS_REJECT_UNAUTHORIZED/i;
-
 function enhanceAssistantErrorMessage(errorMessage: string | undefined): string | undefined {
 	if (!errorMessage) return errorMessage;
 
 	const trimmed = errorMessage.trim();
 	if (!trimmed) return errorMessage;
-	if (HAS_CERT_SETUP_GUIDANCE_PATTERN.test(trimmed)) return trimmed;
+	if (
+		trimmed.includes("NODE_EXTRA_CA_CERTS") ||
+		trimmed.includes("npm config set cafile") ||
+		trimmed.includes("NODE_TLS_REJECT_UNAUTHORIZED")
+	) {
+		return trimmed;
+	}
 
-	const shouldAddGuidance = FETCH_FAILED_PATTERN.test(trimmed) || CERTIFICATE_ERROR_PATTERN.test(trimmed);
-	if (!shouldAddGuidance) return trimmed;
+	const codes = extractNodeErrorCodesFromMessage(trimmed);
+	if (!codes.some((code) => isNodeTlsCertificateErrorCode(code))) {
+		return trimmed;
+	}
 
+	const withNodeCodes = appendNodeErrorCodes(trimmed, codes);
 	return [
-		trimmed,
+		withNodeCodes,
 		"",
 		"Potential SSL interception / corporate TLS proxy detected.",
 		"Recommended trust-store setup:",

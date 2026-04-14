@@ -21,6 +21,7 @@ import type {
 	ToolCall,
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
+import { formatProviderError } from "../utils/node-error.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import {
 	convertMessages,
@@ -454,11 +455,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli", GoogleGe
 							throw new Error("Request was aborted");
 						}
 					}
-					// Extract detailed error message from fetch errors (Node includes cause)
 					lastError = error instanceof Error ? error : new Error(String(error));
-					if (lastError.message === "fetch failed" && lastError.cause instanceof Error) {
-						lastError = new Error(`Network error: ${lastError.cause.message}`);
-					}
 					// Network errors are retryable
 					if (attempt < MAX_RETRIES) {
 						const delayMs = BASE_DELAY_MS * 2 ** attempt;
@@ -796,7 +793,7 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli", GoogleGe
 				}
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+			output.errorMessage = formatProviderError(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

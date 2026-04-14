@@ -131,8 +131,59 @@ type CompactionQueuedMessage = {
 
 const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
 	"Anthropic subscription auth is active. Third-party usage now draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage.";
-const SSL_INTERCEPTION_ERROR_PATTERN =
-	/Potential SSL interception|corporate TLS proxy|NODE_EXTRA_CA_CERTS|npm config set cafile|fetch failed|certificate|self[\s-]?signed|unable to verify|unable to get (local )?issuer|cert[_\s-]?/i;
+
+const NODE_TLS_CERTIFICATE_ERROR_CODES = new Set<string>([
+	"CERT_CHAIN_TOO_LONG",
+	"CERT_HAS_EXPIRED",
+	"CERT_NOT_YET_VALID",
+	"CERT_REJECTED",
+	"CERT_SIGNATURE_FAILURE",
+	"CERT_UNTRUSTED",
+	"CRL_HAS_EXPIRED",
+	"CRL_NOT_YET_VALID",
+	"CRL_SIGNATURE_FAILURE",
+	"DEPTH_ZERO_SELF_SIGNED_CERT",
+	"ERR_TLS_CERT_ALTNAME_INVALID",
+	"HOSTNAME_MISMATCH",
+	"INVALID_CA",
+	"INVALID_PURPOSE",
+	"PATH_LENGTH_EXCEEDED",
+	"SELF_SIGNED_CERT_IN_CHAIN",
+	"UNABLE_TO_GET_ISSUER_CERT",
+	"UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+	"UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+]);
+
+function extractNodeErrorCodes(errorMessage: string): string[] {
+	const codes: string[] = [];
+
+	for (const line of errorMessage.split("\n")) {
+		const trimmed = line.trim();
+		if (trimmed.startsWith("Node.js error code: ")) {
+			const code = trimmed.slice("Node.js error code: ".length).trim();
+			if (code.length > 0 && !codes.includes(code)) {
+				codes.push(code);
+			}
+			continue;
+		}
+		if (trimmed.startsWith("Node.js error codes: ")) {
+			for (const codePart of trimmed.slice("Node.js error codes: ".length).split(",")) {
+				const code = codePart.trim();
+				if (code.length > 0 && !codes.includes(code)) {
+					codes.push(code);
+				}
+			}
+		}
+	}
+
+	for (const knownCode of NODE_TLS_CERTIFICATE_ERROR_CODES) {
+		if (errorMessage.includes(knownCode) && !codes.includes(knownCode)) {
+			codes.push(knownCode);
+		}
+	}
+
+	return codes;
+}
 
 function isAnthropicSubscriptionAuthKey(apiKey: string | undefined): boolean {
 	return typeof apiKey === "string" && apiKey.startsWith("sk-ant-oat");
@@ -3128,7 +3179,9 @@ export class InteractiveMode {
 		if (!errorMessage) return false;
 		if (this.insecureTlsFallbackPromptShown) return false;
 		if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0") return false;
-		return SSL_INTERCEPTION_ERROR_PATTERN.test(errorMessage);
+
+		const codes = extractNodeErrorCodes(errorMessage);
+		return codes.some((code) => NODE_TLS_CERTIFICATE_ERROR_CODES.has(code));
 	}
 
 	private async maybeOfferInsecureTlsFallback(errorMessage: string | undefined): Promise<void> {
