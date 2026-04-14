@@ -57,6 +57,24 @@ export {
 	parseKey,
 	setKittyProtocolActive,
 } from "./keys.js";
+export { type BoundsAwareComponent, PaneContainer } from "./pane-container.js";
+// Split tree and pane container
+export {
+	adjacentPane,
+	allPanes,
+	computeLayout,
+	type Divider,
+	type LayoutResult,
+	newLeaf,
+	type PaneLayout,
+	paneCount,
+	type Rect,
+	removePane,
+	type SplitDirection,
+	type SplitNode,
+	setRatio,
+	splitPane,
+} from "./split-tree.js";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.js";
 // Terminal interface and implementations
