@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added support for multiple `--append-system-prompt` flags, each value is appended to the system prompt separated by double newlines ([#3169](https://github.com/badlogic/pi-mono/pull/3169) by [@aliou](https://github.com/aliou))
+
 ## [0.67.1] - 2026-04-13
 
 ### Telemetry
