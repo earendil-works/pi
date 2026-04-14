@@ -115,6 +115,8 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 						});
 					} else if (block.type === "toolCall") {
 						block.arguments = parseStreamingJson(block.partialArgs);
+						// Finalize in-place and strip the scratch buffer so replay only
+						// carries parsed arguments.
 						delete block.partialArgs;
 						stream.push({
 							type: "toolcall_end",
@@ -289,7 +291,11 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
-			for (const block of output.content) delete (block as any).index;
+			for (const block of output.content) {
+				delete (block as { index?: number }).index;
+				// partialArgs is only a streaming scratch buffer; never persist it.
+				delete (block as { partialArgs?: string }).partialArgs;
+			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
 			// Some providers via OpenRouter give additional information in this field.

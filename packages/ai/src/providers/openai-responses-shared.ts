@@ -452,12 +452,22 @@ export async function processResponsesStream<TApi extends Api>(
 					currentBlock?.type === "toolCall" && currentBlock.partialJson
 						? parseStreamingJson(currentBlock.partialJson)
 						: parseStreamingJson(item.arguments || "{}");
-				const toolCall: ToolCall = {
-					type: "toolCall",
-					id: `${item.call_id}|${item.id}`,
-					name: item.name,
-					arguments: args,
-				};
+
+				let toolCall: ToolCall;
+				if (currentBlock?.type === "toolCall") {
+					// Finalize in-place and strip the scratch buffer so replay only
+					// carries parsed arguments.
+					currentBlock.arguments = args;
+					delete (currentBlock as { partialJson?: string }).partialJson;
+					toolCall = currentBlock;
+				} else {
+					toolCall = {
+						type: "toolCall",
+						id: `${item.call_id}|${item.id}`,
+						name: item.name,
+						arguments: args,
+					};
+				}
 
 				currentBlock = null;
 				stream.push({ type: "toolcall_end", contentIndex: blockIndex(), toolCall, partial: output });

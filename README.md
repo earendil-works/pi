@@ -1,11 +1,9 @@
 <!-- OSS_WEEKEND_START -->
 # 🏖️ OSS Weekend
 
-**Issue tracker reopens Monday, April 13, 2026.**
+**Issue tracker reopens Monday, April 20, 2026.**
 
-OSS weekend runs Thursday, April 2, 2026 through Monday, April 13, 2026. New issues and PRs from unapproved contributors are auto-closed during this time. Approved contributors can still open issues and PRs if something is genuinely urgent, but please keep that to pressing matters only. For support, join [Discord](https://discord.com/invite/3cU7Bz4UPx).
-
-> _Current focus: at the moment i'm deep in refactoring internals, and need to focus._
+OSS weekend runs Monday, April 13, 2026 through Monday, April 20, 2026. New issues and PRs from unapproved contributors are auto-closed during this time. Approved contributors can still open issues and PRs if something is genuinely urgent, but please keep that to pressing matters only. For support, join [Discord](https://discord.com/invite/3cU7Bz4UPx).
 <!-- OSS_WEEKEND_END -->
 
 ---

@@ -89,6 +89,10 @@ export const streamMistral: StreamFunction<"mistral-conversations", MistralOptio
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			for (const block of output.content) {
+				// partialArgs is only a streaming scratch buffer; never persist it.
+				delete (block as { partialArgs?: string }).partialArgs;
+			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatMistralError(error);
 			stream.push({ type: "error", reason: output.stopReason, error: output });
@@ -424,6 +428,8 @@ async function consumeChatStream(
 		if (block.type !== "toolCall") continue;
 		const toolBlock = block as ToolCall & { partialArgs?: string };
 		toolBlock.arguments = parseStreamingJson<Record<string, unknown>>(toolBlock.partialArgs);
+		// Finalize in-place and strip the scratch buffer so replay only
+		// carries parsed arguments.
 		delete toolBlock.partialArgs;
 		stream.push({
 			type: "toolcall_end",

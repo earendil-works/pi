@@ -1400,18 +1400,18 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			expect(refreshTemporaryGitSourceSpy).not.toHaveBeenCalled();
 		});
 
-		it("should not fetch npm registry during resolve for installed unpinned packages", async () => {
+		it("should not run npm view during resolve for installed unpinned packages", async () => {
 			const installedPath = join(tempDir, ".pi", "npm", "node_modules", "example");
 			mkdirSync(join(installedPath, "extensions"), { recursive: true });
 			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }));
 			writeFileSync(join(installedPath, "extensions", "index.ts"), "export default function() {};");
 			settingsManager.setProjectPackages(["npm:example"]);
 
-			const fetchSpy = vi.spyOn(globalThis, "fetch");
+			const runCommandCaptureSpy = vi.spyOn(packageManager as any, "runCommandCapture");
 
 			const result = await packageManager.resolve();
 			expect(result.extensions.some((r) => pathEndsWith(r.path, "extensions/index.ts") && r.enabled)).toBe(true);
-			expect(fetchSpy).not.toHaveBeenCalled();
+			expect(runCommandCaptureSpy).not.toHaveBeenCalled();
 		});
 
 		it("should reinstall pinned npm packages when installed version does not match", async () => {
@@ -1430,11 +1430,11 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 
 		it("should not check package updates when offline", async () => {
 			process.env.PI_OFFLINE = "1";
-			const fetchSpy = vi.spyOn(globalThis, "fetch");
+			const runCommandCaptureSpy = vi.spyOn(packageManager as any, "runCommandCapture");
 
 			const updates = await packageManager.checkForAvailableUpdates();
 			expect(updates).toEqual([]);
-			expect(fetchSpy).not.toHaveBeenCalled();
+			expect(runCommandCaptureSpy).not.toHaveBeenCalled();
 		});
 
 		it("should report updates for installed unpinned npm packages", async () => {
@@ -1443,11 +1443,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			writeFileSync(join(installedPath, "package.json"), JSON.stringify({ name: "example", version: "1.0.0" }));
 			settingsManager.setProjectPackages(["npm:example"]);
 
-			const fetchMock = vi.fn().mockResolvedValue({
-				ok: true,
-				json: async () => ({ version: "1.2.3" }),
-			});
-			vi.stubGlobal("fetch", fetchMock);
+			vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue('"1.2.3"');
 
 			const updates = await packageManager.checkForAvailableUpdates();
 			expect(updates).toEqual([
@@ -1467,30 +1463,50 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			const parsedGitSource = (packageManager as any).parseSource("git:github.com/example/repo@v1");
 			const installedGitPath = (packageManager as any).getGitInstallPath(parsedGitSource, "project") as string;
 			mkdirSync(installedGitPath, { recursive: true });
+
 			settingsManager.setProjectPackages(["npm:example@1.0.0", "git:github.com/example/repo@v1"]);
 
-			const fetchSpy = vi.spyOn(globalThis, "fetch");
+			const runCommandCaptureSpy = vi.spyOn(packageManager as any, "runCommandCapture");
 			const gitUpdateSpy = vi.spyOn(packageManager as any, "gitHasAvailableUpdate");
 
 			const updates = await packageManager.checkForAvailableUpdates();
 			expect(updates).toEqual([]);
-			expect(fetchSpy).not.toHaveBeenCalled();
+			expect(runCommandCaptureSpy).not.toHaveBeenCalled();
 			expect(gitUpdateSpy).not.toHaveBeenCalled();
 		});
 
-		it("should pass an AbortSignal timeout when fetching npm latest version", async () => {
-			const fetchMock = vi.fn().mockResolvedValue({
-				ok: true,
-				json: async () => ({ version: "1.2.3" }),
-			});
-			vi.stubGlobal("fetch", fetchMock);
+		it("should use npm view to fetch latest version", async () => {
+			const runCommandCaptureSpy = vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue('"1.2.3"');
 
 			const latest = await (packageManager as any).getLatestNpmVersion("example");
 			expect(latest).toBe("1.2.3");
-			expect(fetchMock).toHaveBeenCalledTimes(1);
+			expect(runCommandCaptureSpy).toHaveBeenCalledTimes(1);
+			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
+				"npm",
+				["view", "example", "version", "--json"],
+				expect.objectContaining({ cwd: tempDir, timeoutMs: expect.any(Number) }),
+			);
+		});
 
-			const [, options] = fetchMock.mock.calls[0] as [string, RequestInit | undefined];
-			expect(options?.signal).toBeDefined();
+		it("should use npmCommand argv for npm update checks", async () => {
+			settingsManager = SettingsManager.inMemory({
+				npmCommand: ["mise", "exec", "node@20", "--", "npm"],
+			});
+			packageManager = new DefaultPackageManager({
+				cwd: tempDir,
+				agentDir,
+				settingsManager,
+			});
+
+			const runCommandCaptureSpy = vi.spyOn(packageManager as any, "runCommandCapture").mockResolvedValue('"1.2.3"');
+
+			const latest = await (packageManager as any).getLatestNpmVersion("@scope/pkg");
+			expect(latest).toBe("1.2.3");
+			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
+				"mise",
+				["exec", "node@20", "--", "npm", "view", "@scope/pkg", "version", "--json"],
+				expect.objectContaining({ cwd: tempDir }),
+			);
 		});
 	});
 });

@@ -1317,12 +1317,15 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	private async getLatestNpmVersion(packageName: string): Promise<string> {
-		const response = await fetch(`https://registry.npmjs.org/${packageName}/latest`, {
-			signal: AbortSignal.timeout(NETWORK_TIMEOUT_MS),
-		});
-		if (!response.ok) throw new Error(`Failed to fetch npm registry: ${response.status}`);
-		const data = (await response.json()) as { version: string };
-		return data.version;
+		const npmCommand = this.getNpmCommand();
+		const stdout = await this.runCommandCapture(
+			npmCommand.command,
+			[...npmCommand.args, "view", packageName, "version", "--json"],
+			{ cwd: this.cwd, timeoutMs: NETWORK_TIMEOUT_MS },
+		);
+		const raw = stdout.trim();
+		if (!raw) throw new Error("Empty response from npm view");
+		return JSON.parse(raw);
 	}
 
 	private async gitHasAvailableUpdate(installedPath: string): Promise<boolean> {
