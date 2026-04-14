@@ -62,5 +62,8 @@ export class BorderedLoader extends Container {
 		if ("dispose" in this.loader && typeof this.loader.dispose === "function") {
 			this.loader.dispose();
 		}
+		if ("stop" in this.loader && typeof this.loader.stop === "function") {
+			this.loader.stop();
+		}
 	}
 }
