@@ -24,6 +24,43 @@ import type {
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
 
+const FETCH_FAILED_PATTERN = /^fetch failed(?::.*)?$/i;
+const CERTIFICATE_ERROR_PATTERN =
+	/certificate|self[\s-]?signed|unable to verify|unable to get (local )?issuer|cert[_\s-]?|SSL interception/i;
+const HAS_CERT_SETUP_GUIDANCE_PATTERN = /NODE_EXTRA_CA_CERTS|npm config set cafile|NODE_TLS_REJECT_UNAUTHORIZED/i;
+
+function enhanceAssistantErrorMessage(errorMessage: string | undefined): string | undefined {
+	if (!errorMessage) return errorMessage;
+
+	const trimmed = errorMessage.trim();
+	if (!trimmed) return errorMessage;
+	if (HAS_CERT_SETUP_GUIDANCE_PATTERN.test(trimmed)) return trimmed;
+
+	const shouldAddGuidance = FETCH_FAILED_PATTERN.test(trimmed) || CERTIFICATE_ERROR_PATTERN.test(trimmed);
+	if (!shouldAddGuidance) return trimmed;
+
+	return [
+		trimmed,
+		"",
+		"Potential SSL interception / corporate TLS proxy detected.",
+		"Recommended trust-store setup:",
+		"  export NODE_EXTRA_CA_CERTS=/path/to/corporate-ca.pem",
+		"  npm config set cafile /path/to/corporate-ca.pem",
+		"Temporary workaround (insecure):",
+		"  NODE_TLS_REJECT_UNAUTHORIZED=0",
+	].join("\n");
+}
+
+function enhanceAssistantError(message: AssistantMessage): AssistantMessage {
+	if (message.stopReason !== "error") return message;
+	const nextError = enhanceAssistantErrorMessage(message.errorMessage);
+	if (nextError === message.errorMessage) return message;
+	return {
+		...message,
+		errorMessage: nextError,
+	};
+}
+
 /**
  * Start an agent loop with a new prompt message.
  * The prompt is added to the context and events are emitted for it.
@@ -304,7 +341,7 @@ async function streamAssistantResponse(
 
 			case "done":
 			case "error": {
-				const finalMessage = await response.result();
+				const finalMessage = enhanceAssistantError(await response.result());
 				if (addedPartial) {
 					context.messages[context.messages.length - 1] = finalMessage;
 				} else {
@@ -319,7 +356,7 @@ async function streamAssistantResponse(
 		}
 	}
 
-	const finalMessage = await response.result();
+	const finalMessage = enhanceAssistantError(await response.result());
 	if (addedPartial) {
 		context.messages[context.messages.length - 1] = finalMessage;
 	} else {

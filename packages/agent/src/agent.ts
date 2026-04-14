@@ -30,6 +30,42 @@ function defaultConvertToLlm(messages: AgentMessage[]): Message[] {
 	);
 }
 
+const FETCH_FAILED_PATTERN = /^fetch failed(?::.*)?$/i;
+const CERTIFICATE_ERROR_PATTERN =
+	/certificate|self[\s-]?signed|unable to verify|unable to get (local )?issuer|cert[_\s-]?/i;
+const HAS_CERT_SETUP_GUIDANCE_PATTERN = /NODE_EXTRA_CA_CERTS|npm config set cafile/i;
+
+function toErrorMessage(error: unknown): string {
+	if (error instanceof Error) {
+		if (error.message === "fetch failed" && error.cause instanceof Error && error.cause.message) {
+			return `fetch failed: ${error.cause.message}`;
+		}
+		return error.message;
+	}
+	return String(error);
+}
+
+function addCertificateTrustStoreGuidance(errorMessage: string): string {
+	const trimmed = errorMessage.trim();
+	if (!trimmed) return "Unknown error";
+	if (HAS_CERT_SETUP_GUIDANCE_PATTERN.test(trimmed)) return trimmed;
+
+	const shouldAddGuidance = FETCH_FAILED_PATTERN.test(trimmed) || CERTIFICATE_ERROR_PATTERN.test(trimmed);
+	if (!shouldAddGuidance) return trimmed;
+
+	return [
+		trimmed,
+		"",
+		"If this is caused by a corporate TLS proxy (e.g. Zscaler), configure Node/npm trust:",
+		"  export NODE_EXTRA_CA_CERTS=/path/to/corporate-ca.pem",
+		"  npm config set cafile /path/to/corporate-ca.pem",
+	].join("\n");
+}
+
+function formatAgentErrorMessage(error: unknown): string {
+	return addCertificateTrustStoreGuidance(toErrorMessage(error));
+}
+
 const EMPTY_USAGE = {
 	input: 0,
 	output: 0,
@@ -465,7 +501,7 @@ export class Agent {
 			model: this._state.model.id,
 			usage: EMPTY_USAGE,
 			stopReason: aborted ? "aborted" : "error",
-			errorMessage: error instanceof Error ? error.message : String(error),
+			errorMessage: formatAgentErrorMessage(error),
 			timestamp: Date.now(),
 		} satisfies AgentMessage;
 		this._state.messages.push(failureMessage);

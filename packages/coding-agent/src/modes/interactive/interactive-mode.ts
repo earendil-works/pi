@@ -131,6 +131,8 @@ type CompactionQueuedMessage = {
 
 const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
 	"Anthropic subscription auth is active. Third-party usage now draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage.";
+const SSL_INTERCEPTION_ERROR_PATTERN =
+	/Potential SSL interception|corporate TLS proxy|NODE_EXTRA_CA_CERTS|npm config set cafile|fetch failed|certificate|self[\s-]?signed|unable to verify|unable to get (local )?issuer|cert[_\s-]?/i;
 
 function isAnthropicSubscriptionAuthKey(apiKey: string | undefined): boolean {
 	return typeof apiKey === "string" && apiKey.startsWith("sk-ant-oat");
@@ -188,6 +190,7 @@ export class InteractiveMode {
 	private changelogMarkdown: string | undefined = undefined;
 	private startupNoticesShown = false;
 	private anthropicSubscriptionWarningShown = false;
+	private insecureTlsFallbackPromptShown = false;
 
 	// Status line tracking (for mutating immediately-sequential status updates)
 	private lastStatusSpacer: Spacer | undefined = undefined;
@@ -2458,6 +2461,9 @@ export class InteractiveMode {
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
 					this.footer.invalidate();
+					if (event.message.stopReason === "error") {
+						await this.maybeOfferInsecureTlsFallback(errorMessage);
+					}
 				}
 				this.ui.requestRender();
 				break;
@@ -3116,6 +3122,31 @@ export class InteractiveMode {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(theme.fg("warning", `Warning: ${warningMessage}`), 1, 0));
 		this.ui.requestRender();
+	}
+
+	private shouldOfferInsecureTlsFallback(errorMessage: string | undefined): boolean {
+		if (!errorMessage) return false;
+		if (this.insecureTlsFallbackPromptShown) return false;
+		if (process.env.NODE_TLS_REJECT_UNAUTHORIZED === "0") return false;
+		return SSL_INTERCEPTION_ERROR_PATTERN.test(errorMessage);
+	}
+
+	private async maybeOfferInsecureTlsFallback(errorMessage: string | undefined): Promise<void> {
+		if (!this.shouldOfferInsecureTlsFallback(errorMessage)) return;
+		this.insecureTlsFallbackPromptShown = true;
+
+		const confirmed = await this.showExtensionConfirm(
+			"SSL interception detected",
+			"Network TLS/certificate failure detected. Enable insecure TLS fallback for this pi process (NODE_TLS_REJECT_UNAUTHORIZED=0)? This disables certificate verification.",
+		);
+		if (!confirmed) {
+			return;
+		}
+
+		process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+		this.showWarning(
+			"Enabled insecure TLS fallback for this process. Retry your prompt. Prefer NODE_EXTRA_CA_CERTS for a secure fix.",
+		);
 	}
 
 	showNewVersionNotification(newVersion: string): void {
