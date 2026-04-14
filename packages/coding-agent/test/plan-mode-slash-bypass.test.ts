@@ -53,6 +53,7 @@ const mockUIContext: ExtensionUIContext = {
 	onTerminalInput: () => () => {},
 	setStatus: () => {},
 	setWorkingMessage: () => {},
+	setHiddenThinkingLabel: () => {},
 	setWidget: (() => {}) as ExtensionUIContext["setWidget"],
 	setFooter: () => {},
 	setHeader: () => {},
@@ -91,7 +92,7 @@ describe("plan-mode slash command bypass", () => {
 		fs.writeFileSync(path.join(extensionsDir, "ext.ts"), extensionSource);
 		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 		const sm = SessionManager.inMemory();
-		const mr = new ModelRegistry(AuthStorage.create(path.join(tempDir, "auth.json")));
+		const mr = ModelRegistry.inMemory(AuthStorage.create(path.join(tempDir, "auth.json")));
 		const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sm, mr);
 		runner.setUIContext(mockUIContext);
 		return runner;

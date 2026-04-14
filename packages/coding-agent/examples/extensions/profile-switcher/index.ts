@@ -201,7 +201,7 @@ export default function profileSwitcher(pi: ExtensionAPI) {
 		setStatus(ctx, config.activeProfile);
 	});
 
-	pi.on("session_switch", async (_event, ctx) => {
+	pi.on("session_start", async (_event, ctx) => {
 		try {
 			const config = loadProfilesConfig(getProfilesPath());
 			setStatus(ctx, config.activeProfile);

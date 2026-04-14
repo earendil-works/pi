@@ -57,6 +57,36 @@ I regularly publish my own `pi-mono` work sessions here:
 | **[@mariozechner/pi-web-ui](packages/web-ui)** | Web components for AI chat interfaces |
 | **[@mariozechner/pi-pods](packages/pods)** | CLI for managing vLLM deployments on GPU pods |
 
+## Fork Features (LLMpsycho)
+
+This fork adds the following on top of upstream pi:
+
+### Factory Model Integration
+Load models from [Factory](https://factory.ai) settings (`~/.factory/settings.json`) automatically. Factory `customModels` appear alongside built-in models and are selectable via `/models` or `--model factory/<name>`. Per-model API keys are resolved from the Factory config — no extra env vars needed.
+
+### Subagent System
+A subagent extension that spawns isolated `pi` processes for delegated tasks. Supports single, parallel (up to 8), and chained (sequential with `{previous}` handoff) execution modes. Available agents are injected into the system prompt so the LLM can use them proactively.
+
+**Installed agents:** api-designer, backend, debug, devops, explore, frontend, librarian, memory, metis, momus, oracle, prometheus, reviewer, sentinel, tdd-orchestrator, tdd-test-writer, tla-precheck.
+
+### Plan Mode with Subagent Pipeline
+`/plan <task>` runs a planning pipeline via subagents:
+1. **metis** — intent analysis, risk identification, planning directives
+2. **prometheus** — executable work plan with atomic tasks and dependencies
+3. **momus** — plan review, loops until approved (up to 3 cycles)
+
+Once approved, the plan is presented for execution with step tracking (`[DONE:n]` markers).
+
+### Memory Hooks
+A `memory-hooks` extension that connects session lifecycle to a Neo4j palace-structured knowledge graph:
+- **On shutdown** — analyzes the session for save-worthy context (code changes, bug fixes, new features). If the session contained meaningful work, writes a Memory node into the palace graph with Wing/Room/Hall/Drawer structure and automatic cross-project tunneling.
+- **On session start** — on the first user message of a new session, extracts keywords from the prompt and queries Neo4j for related memories. Matched memories are injected into the system prompt so the agent starts with relevant project context.
+
+Connects via Neo4j HTTP API (port 7474). Configure with `NEO4J_HTTP_URL`, `NEO4J_USERNAME`, `NEO4J_PASSWORD` env vars.
+
+### Profile Switcher
+Named model profiles that move the main session model, subagent routing, and fallback targets together. `/profile <name>` switches between preconfigured profiles (e.g., `openai` vs `anthropic`), and `--profile <name>` sets the profile at startup. Profiles are defined in `~/.pi/agent/profiles.json`.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for contribution guidelines and [AGENTS.md](AGENTS.md) for project-specific rules (for both humans and agents).
@@ -72,6 +102,19 @@ npm run check        # Lint, format, and type check
 ```
 
 > **Note:** `npm run check` requires `npm run build` to be run first. The web-ui package uses `tsc` which needs compiled `.d.ts` files from dependencies.
+
+### Iterative Development Workflow
+
+For active development with the `pi` CLI available globally:
+
+```bash
+npm run build                              # Build all packages
+cd packages/coding-agent && npm link       # Create global symlink for `pi` binary
+pi --version                               # Verify installation (e.g., 0.65.2)
+pi --help                                  # View full usage guide
+```
+
+After linking, use `pi` from any directory. Re-run `npm run build` after code changes to update the global binary.
 
 ## License
 

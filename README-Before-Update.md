@@ -232,7 +232,57 @@ Prompt integrity notes:
 - `backend` is now part of the live local agent roster, and the repo-side execution prompt knows to route server-side work to it.
 - `memory`, `metis`, `frontend`, `tla-precheck`, `librarian`, `momus`, `sentinel`, and `tester` were cleaned up so their prompt instructions match their real tool contracts more closely.
 
-### Local Pi Installation Snapshot (2026-03-18)
+### Custom CodeDB Native Search Extension
+
+On 2026-04-14 we added a local CodeDB-backed extension so pi can use indexed code search natively without MCP.
+
+**What it adds:**
+1. `code_tree` — CodeDB project tree view
+2. `codebase_search` — indexed full-text search, with exact identifier mode when `literal: true`
+3. `find_symbol` — symbol definition lookup
+4. `file_outline` — parser-backed file symbol outline
+5. `hot_files` — recently modified files from CodeDB
+6. `/codedb-status` — quick runtime status check
+
+**Custom files outside git:**
+
+| Path | Description |
+|------|-------------|
+| `/Users/besi/.pi/agent/extensions/codedb/index.ts` | Global native CodeDB extension |
+
+**Runtime dependency:**
+- CodeDB binary currently resolves at `/Users/besi/bin/codedb`
+- Override path via `CODEDB_BIN`
+
+Practical answer:
+- This is native pi extension wiring, not MCP.
+- It auto-loads from `~/.pi/agent/extensions/codedb/` for all sessions.
+- It currently adds CodeDB-native discovery tools instead of patching pi core built-ins, which keeps upstream merge risk low.
+
+### Custom Memory Hooks Extension
+
+On 2026-04-07 we added a memory-hooks extension that integrates Neo4j palace-structured memory with the pi session lifecycle.
+
+**Two hooks:**
+1. `session_shutdown` — Analyzes session entries for save-worthy context (code changes, bug fixes). Writes a Memory node into the palace graph via Neo4j HTTP API.
+2. `before_agent_start` (first message of new session only) — Queries Neo4j rooms for keywords in the user's prompt and injects recalled memories into the system prompt.
+
+**Custom files at risk during upstream sync:**
+
+| Path | Description |
+|------|-------------|
+| `packages/coding-agent/examples/extensions/memory-hooks/index.ts` | Memory hooks extension (does NOT exist upstream) |
+
+**Runtime symlinks outside git:**
+
+- `/Users/besi/.pi/agent/extensions/memory-hooks/index.ts`
+
+**Environment variables:**
+- `NEO4J_HTTP_URL` (default: `http://localhost:7474`)
+- `NEO4J_USERNAME` (default: `neo4j`)
+- `NEO4J_PASSWORD` (default: `password`)
+
+### Local Pi Installation Snapshot (2026-04-14)
 
 This section tracks the local pi runtime outside the repo so future recovery/sync work has complete context.
 
@@ -246,6 +296,7 @@ This section tracks the local pi runtime outside the repo so future recovery/syn
 | Installed `pi-autoresearch` checkout | `/Users/besi/.pi/agent/git/github.com/davebcn87/pi-autoresearch` |
 | Agent specs directory | `/Users/besi/.pi/agent/agents` |
 | Current custom agent count | `15` |
+| Snapshot date | `2026-04-14` |
 | Models registry | `/Users/besi/.pi/agent/models.json` |
 | Extra local model | `claude-sonnet-4-6` |
 | Profiles registry | `/Users/besi/.pi/agent/profiles.json` |
@@ -254,9 +305,12 @@ This section tracks the local pi runtime outside the repo so future recovery/syn
 | Startup presentation | `quietStartup: true` plus `startup-ascii` extension |
 | Subagent extension symlinks | `agents.ts`, `cmux.ts`, `index.ts`, `session.ts`, `subagent-done.ts` |
 | Profile-switcher symlinks | `index.ts`, `profiles.ts` |
+| Memory-hooks symlink | `index.ts` |
 | Fallback policy source | `~/.pi/agent/profiles.json > activeProfile > fallbackTargets` |
 
 Current extension directories:
+- `codedb`
+- `memory-hooks`
 - `model-fallback`
 - `plan-mode`
 - `pre-commit-gate`

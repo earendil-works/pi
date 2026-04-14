@@ -55,7 +55,7 @@ describe("plan-mode execution UI", () => {
 		tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-plan-mode-execution-ui-"));
 		sessionManager = SessionManager.inMemory();
 		const authStorage = AuthStorage.create(path.join(tempDir, "auth.json"));
-		modelRegistry = new ModelRegistry(authStorage);
+		modelRegistry = ModelRegistry.inMemory(authStorage);
 	});
 
 	afterEach(() => {
@@ -83,6 +83,7 @@ describe("plan-mode execution UI", () => {
 			onTerminalInput: () => () => {},
 			setStatus: () => {},
 			setWorkingMessage: () => {},
+			setHiddenThinkingLabel: () => {},
 			setWidget: ((id, lines, options) => {
 				widgets.set(id, lines as string[] | undefined);
 				widgetOptions.set(id, options);
@@ -128,6 +129,7 @@ describe("plan-mode execution UI", () => {
 		const extensionContextActions: ExtensionContextActions = {
 			getModel: () => undefined,
 			isIdle: () => true,
+			getSignal: () => undefined,
 			abort: () => {},
 			hasPendingMessages: () => false,
 			shutdown: () => {},
@@ -211,6 +213,7 @@ describe("plan-mode execution UI", () => {
 			onTerminalInput: () => () => {},
 			setStatus: () => {},
 			setWorkingMessage: () => {},
+			setHiddenThinkingLabel: () => {},
 			setWidget: ((id, lines) => {
 				widgets.set(id, lines as string[] | undefined);
 			}) as ExtensionUIContext["setWidget"],
@@ -253,6 +256,7 @@ describe("plan-mode execution UI", () => {
 		const extensionContextActions: ExtensionContextActions = {
 			getModel: () => undefined,
 			isIdle: () => true,
+			getSignal: () => undefined,
 			abort: () => {},
 			hasPendingMessages: () => false,
 			shutdown: () => {},
@@ -264,7 +268,7 @@ describe("plan-mode execution UI", () => {
 		runner.setUIContext(uiContext);
 		runner.bindCore(extensionActions, extensionContextActions);
 
-		await runner.emit({ type: "session_start" });
+		await runner.emit({ type: "session_start", reason: "startup" });
 
 		const widgetLines = widgets.get("plan-todos");
 		expect(widgetLines).toBeDefined();

@@ -20,7 +20,7 @@ import { fileURLToPath } from "node:url";
 import type { AgentToolResult } from "@mariozechner/pi-agent-core";
 import type { Message } from "@mariozechner/pi-ai";
 import { StringEnum } from "@mariozechner/pi-ai";
-import { type ExtensionAPI, getMarkdownTheme, withFileMutationQueue } from "@mariozechner/pi-coding-agent";
+import { type ExtensionAPI, getAgentDir, getMarkdownTheme, withFileMutationQueue } from "@mariozechner/pi-coding-agent";
 import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
@@ -343,6 +343,34 @@ function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	return { command: "pi", args };
 }
 
+/**
+ * Resolve the effective model for an agent by checking the active profile.
+ * Profile overrides take precedence over the agent's .md frontmatter model.
+ * Supports both schemas: agents[name].model (repo) and agentModels[name] (simple).
+ */
+function resolveAgentModel(agentName: string, agentModel: string | undefined): string | undefined {
+	const profilesPath = path.join(getAgentDir(), "profiles.json");
+	if (!fs.existsSync(profilesPath)) return agentModel;
+	try {
+		const data = JSON.parse(fs.readFileSync(profilesPath, "utf-8"));
+		const profileName = typeof data.activeProfile === "string" ? data.activeProfile : null;
+		if (!profileName) return agentModel;
+		const profile = data.profiles?.[profileName];
+		if (!profile) return agentModel;
+		// Repo schema: agents[name].model
+		const agentEntry = profile.agents?.[agentName];
+		if (agentEntry && typeof agentEntry === "object" && typeof agentEntry.model === "string") {
+			return agentEntry.model;
+		}
+		// Simple schema: agentModels[name]
+		const simpleOverride = profile.agentModels?.[agentName];
+		if (typeof simpleOverride === "string") return simpleOverride;
+		return agentModel;
+	} catch {
+		return agentModel;
+	}
+}
+
 type OnUpdateCallback = (partial: AgentToolResult<SubagentDetails>) => void;
 
 async function runSingleAgent(
@@ -372,8 +400,10 @@ async function runSingleAgent(
 		};
 	}
 
+	const effectiveModel = resolveAgentModel(agentName, agent.model);
+
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	if (agent.model) args.push("--model", agent.model);
+	if (effectiveModel) args.push("--model", effectiveModel);
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
 	let tmpPromptDir: string | null = null;
@@ -387,7 +417,7 @@ async function runSingleAgent(
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		model: agent.model,
+		model: effectiveModel,
 		step,
 	};
 

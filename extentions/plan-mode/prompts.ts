@@ -1,0 +1,1 @@
+/Users/besi/Code/pi-mono/packages/coding-agent/examples/extensions/plan-mode/prompts.ts

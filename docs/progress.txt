@@ -1,0 +1,37 @@
+Auto-Cycle Plugin Progress — 2026-04-07
+
+Wave 1: Scaffold ................................................ DONE
+  T1: plugin.json
+  T2: hooks.json
+
+Wave 2: Copy Existing Scripts ................................... DONE
+  T3: neo4j_memory_common.py (912 lines shared library)
+  T4: continue_until_complete.py
+  T5: guard_clear.py
+  T6: gate_clear_complete.py
+  T7: neo4j_prompt_context.py (+ sys.path fix)
+  T8: memory.md droid
+
+Wave 3: New Hooks ............................................... DONE
+  T9: session_start_context.py (SessionStart — Neo4j recall)
+  T10: session_end_save.py (SessionEnd — transcript analysis + save)
+
+Wave 4: Skills, Commands, README ................................ DONE
+  T11: skills/neo4j-memory/SKILL.md
+  T12: commands/memory.md
+  T13: README.md
+
+Wave 5: Install + Verify ....................................... DONE
+  T14: Local marketplace registered (local-plugins)
+  T15: Plugin installed (auto-cycle@local, e2f17a6)
+  T16: Smoke tests passed:
+    - SessionStart: Neo4j recall works (pi-mono learnings returned)
+    - UserPromptSubmit (neo4j_prompt_context): topic matching works
+    - UserPromptSubmit (continue_until_complete): activation/block works
+    - All 6 scripts compile cleanly
+    - All 3 new scripts import neo4j_memory_common correctly
+
+Pending:
+  - Hook deduplication: continue_until_complete.py exists in both
+    settings.json and plugin hooks.json. Remove from settings.json
+    to avoid double execution.

@@ -7812,23 +7812,6 @@ export const MODELS = {
 			contextWindow: 256000,
 			maxTokens: 80000,
 		} satisfies Model<"openai-completions">,
-		"meituan/longcat-flash-chat": {
-			id: "meituan/longcat-flash-chat",
-			name: "Meituan: LongCat Flash Chat",
-			api: "openai-completions",
-			provider: "openrouter",
-			baseUrl: "https://openrouter.ai/api/v1",
-			reasoning: false,
-			input: ["text"],
-			cost: {
-				input: 0.19999999999999998,
-				output: 0.7999999999999999,
-				cacheRead: 0.19999999999999998,
-				cacheWrite: 0,
-			},
-			contextWindow: 131072,
-			maxTokens: 131072,
-		} satisfies Model<"openai-completions">,
 		"meta-llama/llama-3-8b-instruct": {
 			id: "meta-llama/llama-3-8b-instruct",
 			name: "Meta: Llama 3 8B Instruct",
@@ -8469,11 +8452,11 @@ export const MODELS = {
 			cost: {
 				input: 0.6,
 				output: 2.5,
-				cacheRead: 0,
+				cacheRead: 0.15,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
-			maxTokens: 4096,
+			maxTokens: 262144,
 		} satisfies Model<"openai-completions">,
 		"moonshotai/kimi-k2.5": {
 			id: "moonshotai/kimi-k2.5",

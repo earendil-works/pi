@@ -3,6 +3,7 @@ Read /Users/besi/Code/pi-mono/README-Before-Update.md
 Remote Repo : https://github.com/aeitroc/pi-mono
 Readme : https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent#readme
 Documentation : https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent/docs
+Build and installed on /Users/besi/.pi to use and test features.
 
 npm workspaces monorepo for `pi`, an AI coding agent CLI. TypeScript, ESM, Biome, tsgo.
 
@@ -49,7 +50,7 @@ read README.md, then ask which module(s) to work on. Based on the answer, read t
 - packages/web-ui/README.md
 
 ## Local Pi Installation Context (IMPORTANT)
-- Snapshot date: `2026-03-18`
+- Snapshot date: `2026-04-14`
 - Local pi install root: `/Users/besi/.pi`
 - Runtime root: `/Users/besi/.pi/agent`
 - Runtime AGENTS pointer: `/Users/besi/.pi/agent/AGENTS.MD` -> `/Users/besi/.claude/CLAUDE.md`
@@ -63,7 +64,7 @@ read README.md, then ask which module(s) to work on. Based on the answer, read t
 - Agent spec directory:
   - `/Users/besi/.pi/agent/agents` (14 files: debug, devops, explore, frontend, librarian, memory, metis, momus, orchestrator, prometheus, reviewer, sentinel, tester, tla-precheck)
 - Extension directory:
-  - `/Users/besi/.pi/agent/extensions` (`model-fallback`, `plan-mode`, `pre-commit-gate`, `quality-gate`, `ralph`, `subagent`)
+  - `/Users/besi/.pi/agent/extensions` (`codedb`, `memory-hooks`, `model-fallback`, `plan-mode`, `pre-commit-gate`, `profile-switcher`, `quality-gate`, `ralph`, `startup-ascii`, `subagent`)
 
 When `.pi` installation details change:
 - Update this section and `README-Before-Update.md` section `Local Pi Installation Snapshot` in the same task.

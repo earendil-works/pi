@@ -1,37 +1,53 @@
-# ai — Unified LLM API
+# web-ui — Browser UI components for AI chat
 
-Streaming LLM abstraction across multiple providers. No internal dependencies — this is the foundation package.
+## OVERVIEW
+Web components for AI chat interfaces using mini-lit, Tailwind CSS, and IndexedDB storage.
 
-## Structure
+## STRUCTURE
 ```
 src/
-  types.ts         # Api union, StreamOptions, Model, Message, Content types
-  stream.ts        # Provider dispatch: SimpleStreamOptions → provider-specific stream
-  context.ts       # Context/token management, message truncation
-  models.ts        # Model registry, discovery, built-in model definitions
-  providers/       # One file per LLM provider (see providers/AGENTS.md)
-  utils/           # OAuth flows, token helpers
-scripts/
-  generate-models.ts  # Fetches model catalogs from providers → models.generated.ts
+  ChatPanel.ts           — Top-level: agent + artifacts layout
+  index.ts               — Barrel exports
+  components/            — LitElement web components
+    sandbox/             — Iframe runtime providers
+  dialogs/               — Modal components
+  storage/               — IndexedDB persistence
+    store.ts             — Abstract Store base
+    backends/            — IndexedDB implementation
+    stores/              — Sessions, settings, provider keys
+  tools/                 — Tool rendering system
+    artifacts/           — HTML, SVG, PDF, Markdown, etc.
+    renderers/           — Bash, Calculate, Default, etc.
+  utils/
+    i18n.ts              — Translations (EN/DE)
+    attachment-utils.ts  — File loading, MIME detection
+example/                 — Standalone demo app
 ```
 
-## Where to Look
-| Task | Location |
-|------|----------|
-| Add LLM provider | `src/providers/` + `src/types.ts` + `src/stream.ts` |
-| Fix streaming bug | `src/stream.ts` → provider file |
-| Change message format | `src/types.ts` |
-| Update model list | `scripts/generate-models.ts` |
-| OAuth/auth issues | `src/utils/oauth/` |
+## WHERE TO LOOK
+| Task | Start |
+|------|-------|
+| New UI component | `src/components/` — extend LitElement, `@customElement("pi-*")` |
+| New dialog | `src/dialogs/` |
+| New tool renderer | Implement `ToolRenderer` in `src/tools/renderers/`, register in `renderer-registry.ts` |
+| New artifact type | `src/tools/artifacts/` |
+| New storage store | Extend `Store` in `src/storage/stores/` |
+| Add translatable string | `src/utils/i18n.ts` — add to both `en` and `de` |
+| Sandbox runtime | `src/components/sandbox/` |
 
-## Anti-Patterns
-- NEVER add provider-specific logic to `stream.ts` — belongs in provider file
-- NEVER skip test files when adding a provider (see root AGENTS.md checklist)
-- NEVER convert to top-level imports in `env-api-keys.ts`, `openai-codex-responses.ts`, `utils/oauth/openai-codex.ts` — breaks browser/Vite builds
-- `models.generated.ts` is auto-generated — never edit manually, run `npm run generate-models`
+## CONVENTIONS
+- Components use `@mariozechner/mini-lit` with `@customElement("pi-*")` decorator.
+- CSS lives in `src/app.css`, compiled by Tailwind CLI.
+- Registries (tools, messages) use register/get/render pattern — no static imports of implementations.
+- Storage uses abstract `Store` base with `StorageBackend`; IndexedDB is the only backend.
+- Build uses standard `tsc` (not tsgo) with `experimentalDecorators: true`.
+- Check script: `biome check --write --error-on-warnings . && tsc --noEmit`.
+- Every public symbol re-exported from `src/index.ts`.
 
-## Commands
-```bash
-# Run specific test
-npx tsx ../../node_modules/vitest/dist/cli.js --run test/stream.test.ts
-```
+## ANTI-PATTERNS
+- Do not import `lit` directly for base classes — use `@mariozechner/mini-lit`.
+- Do not create per-component CSS files — all styles via Tailwind in `app.css` or inline.
+- Do not hardcode English strings — add entries to `i18n.ts`.
+- Do not register tools/renderers at module top-level — use registry functions.
+- Do not add storage logic outside `storage/` directory.
+- Do not use `useDefineForClassFields: true` — Lit decorators require `false`.
