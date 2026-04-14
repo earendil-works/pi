@@ -80,6 +80,11 @@ export class AgentSessionRuntime {
 		return this._modelFallbackMessage;
 	}
 
+	/** Expose the runtime factory for creating independent sessions (e.g., split panes). */
+	get runtimeFactory(): CreateAgentSessionRuntimeFactory {
+		return this.createRuntime;
+	}
+
 	private async emitBeforeSwitch(
 		reason: "new" | "resume",
 		targetSessionFile?: string,

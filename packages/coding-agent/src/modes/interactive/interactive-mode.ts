@@ -23,11 +23,13 @@ import type {
 import {
 	CombinedAutocompleteProvider,
 	type Component,
+	computeLayout,
 	Container,
 	fuzzyFilter,
 	Loader,
 	Markdown,
 	matchesKey,
+	PaneContainer,
 	ProcessTerminal,
 	Spacer,
 	setKeybindings,
@@ -94,10 +96,13 @@ import { ScopedModelsSelectorComponent } from "./components/scoped-models-select
 import { SessionSelectorComponent } from "./components/session-selector.js";
 import { SettingsSelectorComponent } from "./components/settings-selector.js";
 import { SkillInvocationMessageComponent } from "./components/skill-invocation-message.js";
+import { TabBar } from "./components/tab-bar.js";
 import { ToolExecutionComponent } from "./components/tool-execution.js";
 import { TreeSelectorComponent } from "./components/tree-selector.js";
 import { UserMessageComponent } from "./components/user-message.js";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.js";
+import { InteractivePane } from "./interactive-pane.js";
+import { TabManager } from "./tab-manager.js";
 import {
 	getAvailableThemes,
 	getAvailableThemesWithPaths,
@@ -254,6 +259,12 @@ export class InteractiveMode {
 	// Custom header from extension (undefined = use built-in header)
 	private customHeader: (Component & { dispose?(): void }) | undefined = undefined;
 
+	// ── Multiplexer state ───────────────────────────────────────────────────
+	private tabManager: TabManager;
+	private paneContainer!: PaneContainer;
+	private tabBar: TabBar;
+	private primaryPane!: InteractivePane;
+
 	// Convenience accessors
 	private get session(): AgentSession {
 		return this.runtimeHost.session;
@@ -299,6 +310,10 @@ export class InteractiveMode {
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
+
+		// Initialize multiplexer
+		this.tabManager = new TabManager();
+		this.tabBar = new TabBar();
 
 		// Register themes from resource loader and initialize
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
@@ -478,14 +493,10 @@ export class InteractiveMode {
 		const [fdPath] = await Promise.all([ensureTool("fd"), ensureTool("rg")]);
 		this.fdPath = fdPath;
 
-		// Add header container as first child
-		this.ui.addChild(this.headerContainer);
-
-		// Add header with keybindings from config (unless silenced)
+		// Build header content
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
 			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
 
-			// Build startup instructions using keybinding hint helpers
 			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
 
 			const instructions = [
@@ -515,24 +526,37 @@ export class InteractiveMode {
 			);
 			this.builtInHeader = new Text(`${logo}\n${instructions}\n\n${onboarding}`, 1, 0);
 
-			// Setup UI layout
 			this.headerContainer.addChild(new Spacer(1));
 			this.headerContainer.addChild(this.builtInHeader);
 			this.headerContainer.addChild(new Spacer(1));
 		} else {
-			// Minimal header when silenced
 			this.builtInHeader = new Text("", 0, 0);
 			this.headerContainer.addChild(this.builtInHeader);
 		}
 
-		this.ui.addChild(this.chatContainer);
-		this.ui.addChild(this.pendingMessagesContainer);
-		this.ui.addChild(this.statusContainer);
-		this.renderWidgets(); // Initialize with default spacer
-		this.ui.addChild(this.widgetContainerAbove);
-		this.ui.addChild(this.editorContainer);
-		this.ui.addChild(this.widgetContainerBelow);
-		this.ui.addChild(this.footer);
+		// Create primary pane — everything inside the pane (header to footer)
+		const { paneId } = this.tabManager.createTab("Session");
+		this.primaryPane = new InteractivePane(paneId);
+		this.primaryPane.addChild(this.headerContainer);
+		this.primaryPane.addChild(this.chatContainer);
+		this.primaryPane.addChild(this.pendingMessagesContainer);
+		this.primaryPane.addChild(this.statusContainer);
+		this.renderWidgets();
+		this.primaryPane.addChild(this.widgetContainerAbove);
+		this.primaryPane.addChild(this.editorContainer);
+		this.primaryPane.addChild(this.widgetContainerBelow);
+		this.primaryPane.addChild(this.footer);
+
+		// Set up PaneContainer with the primary pane
+		this.paneContainer = new PaneContainer(paneId, this.primaryPane);
+		this.paneContainer.siblingRows = 0;
+
+		// TabBar (hidden for single tab, shown when >1)
+		this.ui.addChild(this.tabBar as Component);
+
+		// PaneContainer is the only child of TUI — all content lives inside panes
+		this.ui.addChild(this.paneContainer as Component);
+
 		this.ui.setFocus(this.editor);
 
 		this.setupKeyHandlers();
@@ -540,6 +564,10 @@ export class InteractiveMode {
 
 		// Start the UI before initializing extensions so session_start handlers can use interactive dialogs
 		this.ui.start();
+
+		// Enable mouse click-to-focus for pane switching
+		this.enableMousePaneFocus();
+
 		this.isInitialized = true;
 
 		// Initialize extensions first so resources are shown before messages
@@ -2078,6 +2106,21 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.session.fork", () => this.showUserMessageSelector());
 		this.defaultEditor.onAction("app.session.resume", () => this.showSessionSelector());
 
+		// Pane management
+		this.defaultEditor.onAction("app.pane.splitH", () => this.handleSplitPane("horizontal"));
+		this.defaultEditor.onAction("app.pane.splitV", () => this.handleSplitPane("vertical"));
+		this.defaultEditor.onAction("app.pane.close", () => this.handleClosePane());
+		this.defaultEditor.onAction("app.pane.focusLeft", () => this.handleFocusPane("left"));
+		this.defaultEditor.onAction("app.pane.focusRight", () => this.handleFocusPane("right"));
+		this.defaultEditor.onAction("app.pane.focusUp", () => this.handleFocusPane("up"));
+		this.defaultEditor.onAction("app.pane.focusDown", () => this.handleFocusPane("down"));
+
+		// Tab management
+		this.defaultEditor.onAction("app.tab.new", () => this.handleNewTab());
+		this.defaultEditor.onAction("app.tab.close", () => this.handleCloseTab());
+		this.defaultEditor.onAction("app.tab.next", () => this.handleSwitchTab("next"));
+		this.defaultEditor.onAction("app.tab.prev", () => this.handleSwitchTab("prev"));
+
 		this.defaultEditor.onChange = (text: string) => {
 			const wasBashMode = this.isBashMode;
 			this.isBashMode = text.trimStart().startsWith("!");
@@ -2173,6 +2216,11 @@ export class InteractiveMode {
 			}
 			if (text === "/hotkeys") {
 				this.handleHotkeysCommand();
+				this.editor.setText("");
+				return;
+			}
+			if (text === "/keys") {
+				this.handleKeysCommand();
 				this.editor.setText("");
 				return;
 			}
@@ -4426,6 +4474,63 @@ export class InteractiveMode {
 		return this.capitalizeKey(keyText(action));
 	}
 
+	private handleKeysCommand(): void {
+		const k = (action: AppKeybinding) => this.getAppKeyDisplay(action);
+		const sections = [
+			theme.bold(theme.fg("accent", "── Multiplexer ──")),
+			"",
+			theme.bold("  Pane Management"),
+			`  ${theme.fg("accent", k("app.pane.splitH").padEnd(14))} Split pane horizontally`,
+			`  ${theme.fg("accent", k("app.pane.splitV").padEnd(14))} Split pane vertically`,
+			`  ${theme.fg("accent", k("app.pane.close").padEnd(14))} Close current pane`,
+			`  ${theme.fg("accent", "Click".padEnd(14))} Click to focus pane`,
+			"",
+			theme.bold("  Pane Focus"),
+			`  ${theme.fg("accent", k("app.pane.focusLeft").padEnd(14))} Focus pane left`,
+			`  ${theme.fg("accent", k("app.pane.focusRight").padEnd(14))} Focus pane right`,
+			`  ${theme.fg("accent", k("app.pane.focusUp").padEnd(14))} Focus pane up`,
+			`  ${theme.fg("accent", k("app.pane.focusDown").padEnd(14))} Focus pane down`,
+			"",
+			theme.bold("  Tab Management"),
+			`  ${theme.fg("accent", k("app.tab.new").padEnd(14))} New tab`,
+			`  ${theme.fg("accent", k("app.tab.close").padEnd(14))} Close tab`,
+			`  ${theme.fg("accent", k("app.tab.next").padEnd(14))} Next tab`,
+			`  ${theme.fg("accent", k("app.tab.prev").padEnd(14))} Previous tab`,
+			"",
+			theme.bold(theme.fg("accent", "── General ──")),
+			"",
+			theme.bold("  Session"),
+			`  ${theme.fg("accent", k("app.interrupt").padEnd(14))} Cancel / abort`,
+			`  ${theme.fg("accent", k("app.clear").padEnd(14))} Clear editor`,
+			`  ${theme.fg("accent", (k("app.clear") + " x2").padEnd(14))} Exit`,
+			`  ${theme.fg("accent", k("app.exit").padEnd(14))} Exit (empty editor)`,
+			`  ${theme.fg("accent", k("app.suspend").padEnd(14))} Suspend to background`,
+			"",
+			theme.bold("  Model & Thinking"),
+			`  ${theme.fg("accent", k("app.thinking.cycle").padEnd(14))} Cycle thinking level`,
+			`  ${theme.fg("accent", k("app.model.cycleForward").padEnd(14))} Next model`,
+			`  ${theme.fg("accent", k("app.model.cycleBackward").padEnd(14))} Previous model`,
+			`  ${theme.fg("accent", k("app.model.select").padEnd(14))} Model selector`,
+			"",
+			theme.bold("  Tools & Display"),
+			`  ${theme.fg("accent", k("app.tools.expand").padEnd(14))} Toggle tool output`,
+			`  ${theme.fg("accent", k("app.thinking.toggle").padEnd(14))} Toggle thinking blocks`,
+			`  ${theme.fg("accent", k("app.editor.external").padEnd(14))} External editor`,
+			"",
+			theme.bold("  Messages"),
+			`  ${theme.fg("accent", k("app.message.followUp").padEnd(14))} Queue follow-up`,
+			`  ${theme.fg("accent", k("app.message.dequeue").padEnd(14))} Edit queued messages`,
+			`  ${theme.fg("accent", k("app.clipboard.pasteImage").padEnd(14))} Paste image`,
+			`  ${theme.fg("accent", "/".padEnd(14))} Slash commands`,
+			`  ${theme.fg("accent", "!".padEnd(14))} Run bash`,
+		];
+		const msg = new Text(sections.join("\n"), 1, 1);
+		this.chatContainer.addChild(new Spacer(1));
+		this.chatContainer.addChild(msg);
+		this.chatContainer.addChild(new Spacer(1));
+		this.ui.requestRender();
+	}
+
 	private handleHotkeysCommand(): void {
 		// Navigation keybindings
 		const cursorUp = this.getEditorKeyDisplay("tui.editor.cursorUp");
@@ -4732,7 +4837,165 @@ export class InteractiveMode {
 		}
 	}
 
+	// ── Multiplexer handlers ────────────────────────────────────────────────
+
+	/**
+	 * Atomically sync PaneContainer + TabBar from TabManager state.
+	 * Every multiplexer handler calls this instead of manually updating
+	 * setRoot/setActivePaneId/updateTabBar/requestRender individually.
+	 */
+	private syncMultiplexerState(): void {
+		const tab = this.tabManager.activeTab;
+		if (!tab) return;
+		this.paneContainer.setRoot(tab.splitRoot);
+		this.paneContainer.setActivePaneId(tab.activePaneId);
+		this.tabBar.setTabs(this.tabManager.getAllTabs(), this.tabManager.activeIndex);
+
+		// Set TUI keyboard focus to the active pane's editor
+		if (tab.activePaneId === this.primaryPane.paneId) {
+			// Primary pane uses InteractiveMode's own editor
+			this.ui.setFocus(this.editor);
+		} else {
+			const activePane = this.paneContainer.getPane(tab.activePaneId);
+			if (activePane && activePane instanceof InteractivePane) {
+				const editor = activePane.getEditor();
+				if (editor) {
+					this.ui.setFocus(editor);
+				}
+			}
+		}
+
+		this.ui.requestRender();
+	}
+
+	private handleSplitPane(direction: "horizontal" | "vertical"): void {
+		const newPaneId = this.tabManager.splitCurrentPane(direction);
+		if (!newPaneId) return;
+
+		const newPane = new InteractivePane(newPaneId);
+		this.paneContainer.setPane(newPaneId, newPane);
+		this.syncMultiplexerState();
+
+		// Initialize a live session asynchronously
+		this.initPaneSession(newPane).catch((err) => {
+			newPane.addChild(new Text(`\x1b[31m  Session error: ${err}\x1b[0m`, 1, 0) as Component);
+			this.ui.requestRender();
+		});
+	}
+
+	private handleClosePane(): void {
+		const tab = this.tabManager.activeTab;
+		if (!tab) return;
+		const closingPaneId = tab.activePaneId;
+		// removePane calls dispose() on PtyPane/disposable components
+		this.paneContainer.removePane(closingPaneId);
+		this.tabManager.closePane(closingPaneId);
+		this.syncMultiplexerState();
+	}
+
+	private handleFocusPane(direction: "up" | "down" | "left" | "right"): void {
+		this.tabManager.focusDirection(direction);
+		this.syncMultiplexerState();
+	}
+
+	private handleNewTab(): void {
+		const { paneId } = this.tabManager.createTab();
+		const newPane = new InteractivePane(paneId);
+		this.paneContainer.setPane(paneId, newPane);
+		this.syncMultiplexerState();
+
+		// Initialize a live session asynchronously
+		this.initPaneSession(newPane).catch((err) => {
+			newPane.addChild(new Text(`\x1b[31m  Session error: ${err}\x1b[0m`, 1, 0) as Component);
+			this.ui.requestRender();
+		});
+	}
+
+	private handleCloseTab(): void {
+		const tab = this.tabManager.activeTab;
+		if (!tab) return;
+		// closeTab returns the closed tab's pane IDs for cleanup
+		const closedPaneIds = this.tabManager.closeTab(tab.id);
+		if (closedPaneIds) {
+			for (const paneId of closedPaneIds) {
+				this.paneContainer.removePane(paneId); // calls dispose() on disposable components
+			}
+			this.syncMultiplexerState();
+		}
+	}
+
+	private enableMousePaneFocus(): void {
+		// Enable SGR mouse button reporting
+		process.stdout.write("\x1b[?1000h\x1b[?1006h");
+
+		// Register input listener to intercept mouse click events
+		this.ui.addInputListener((data: string) => {
+			// SGR mouse format: ESC[<btn;col;row M (press) or m (release)
+			const match = data.match(/^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/);
+			if (!match) return undefined;
+
+			const btn = Number.parseInt(match[1], 10);
+			const col = Number.parseInt(match[2], 10) - 1; // 1-based → 0-based
+			const row = Number.parseInt(match[3], 10) - 1;
+			const isPress = match[4] === "M";
+
+			// Only handle left-button press (btn 0)
+			if (btn !== 0 || !isPress) return { consume: true };
+
+			// Map click coordinates to a pane using the layout
+			const tab = this.tabManager.activeTab;
+			if (!tab) return { consume: true };
+
+			const termWidth = process.stdout.columns || 80;
+			const termHeight = process.stdout.rows || 24;
+			// Account for tab bar (1 row if >1 tab) and footer (2 rows)
+			const tabBarHeight = this.tabManager.tabCount > 1 ? 1 : 0;
+			const footerHeight = 2;
+			const paneAreaHeight = termHeight - tabBarHeight - footerHeight;
+			const paneAreaTop = tabBarHeight;
+
+			// Adjust row to pane-relative coordinates
+			const paneRow = row - paneAreaTop;
+			if (paneRow < 0 || paneRow >= paneAreaHeight) return { consume: true };
+
+			// Compute layout and find which pane was clicked
+			const layout = computeLayout(tab.splitRoot, { x: 0, y: 0, width: termWidth, height: paneAreaHeight });
+			for (const pl of layout.panes) {
+				if (
+					col >= pl.rect.x &&
+					col < pl.rect.x + pl.rect.width &&
+					paneRow >= pl.rect.y &&
+					paneRow < pl.rect.y + pl.rect.height
+				) {
+					if (pl.paneId !== tab.activePaneId) {
+						this.tabManager.setActivePaneId(pl.paneId);
+						this.syncMultiplexerState();
+					}
+					return { consume: true };
+				}
+			}
+
+			return { consume: true };
+		});
+	}
+
+	private async initPaneSession(pane: InteractivePane): Promise<void> {
+		const factory = this.runtimeHost.runtimeFactory;
+		const cwd = this.sessionManager.getCwd();
+		const agentDir = this.runtimeHost.services.agentDir;
+		const sessionDir = this.sessionManager.getSessionDir();
+		await pane.initSession(factory, cwd, agentDir, sessionDir, this.ui, this.keybindings);
+	}
+
+	private handleSwitchTab(direction: "next" | "prev"): void {
+		if (direction === "next") this.tabManager.nextTab();
+		else this.tabManager.prevTab();
+		this.syncMultiplexerState();
+	}
+
 	stop(): void {
+		// Disable mouse reporting
+		process.stdout.write("\x1b[?1000l\x1b[?1006l");
 		if (this.loadingAnimation) {
 			this.loadingAnimation.stop();
 			this.loadingAnimation = undefined;

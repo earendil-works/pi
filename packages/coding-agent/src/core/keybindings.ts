@@ -39,6 +39,19 @@ export interface AppKeybindings {
 	"app.session.rename": true;
 	"app.session.delete": true;
 	"app.session.deleteNoninvasive": true;
+	// Pane management
+	"app.pane.splitH": true;
+	"app.pane.splitV": true;
+	"app.pane.close": true;
+	"app.pane.focusLeft": true;
+	"app.pane.focusRight": true;
+	"app.pane.focusUp": true;
+	"app.pane.focusDown": true;
+	// Tab management
+	"app.tab.new": true;
+	"app.tab.close": true;
+	"app.tab.next": true;
+	"app.tab.prev": true;
 }
 
 export type AppKeybinding = keyof AppKeybindings;
@@ -130,6 +143,52 @@ export const KEYBINDINGS = {
 	"app.session.deleteNoninvasive": {
 		defaultKeys: "ctrl+backspace",
 		description: "Delete session when query is empty",
+	},
+	// Pane management (alt+letter works reliably in legacy terminals on Windows)
+	"app.pane.splitH": {
+		defaultKeys: "alt+h",
+		description: "Split pane horizontally",
+	},
+	"app.pane.splitV": {
+		defaultKeys: "alt+s",
+		description: "Split pane vertically",
+	},
+	"app.pane.close": {
+		defaultKeys: "alt+w",
+		description: "Close current pane",
+	},
+	"app.pane.focusLeft": {
+		defaultKeys: "alt+a",
+		description: "Focus pane left",
+	},
+	"app.pane.focusRight": {
+		defaultKeys: "alt+d",
+		description: "Focus pane right",
+	},
+	"app.pane.focusUp": {
+		defaultKeys: "alt+e",
+		description: "Focus pane up",
+	},
+	"app.pane.focusDown": {
+		defaultKeys: "alt+x",
+		description: "Focus pane down",
+	},
+	// Tab management (alt+letter works reliably in legacy terminals on Windows)
+	"app.tab.new": {
+		defaultKeys: "alt+t",
+		description: "New tab",
+	},
+	"app.tab.close": {
+		defaultKeys: "alt+q",
+		description: "Close tab",
+	},
+	"app.tab.next": {
+		defaultKeys: "alt+n",
+		description: "Next tab",
+	},
+	"app.tab.prev": {
+		defaultKeys: "alt+b",
+		description: "Previous tab",
 	},
 } as const satisfies KeybindingDefinitions;
 
