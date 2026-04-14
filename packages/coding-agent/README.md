@@ -76,6 +76,8 @@ I regularly publish my own `pi-mono` work sessions here:
 
 ```bash
 npm install -g @mariozechner/pi-coding-agent
+# or via mise
+mise use -g npm:@mariozechner/pi-coding-agent
 ```
 
 Authenticate with an API key:
