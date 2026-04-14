@@ -184,6 +184,21 @@ export class ProcessTerminal implements Terminal {
 	private queryAndEnableKittyProtocol(): void {
 		this.setupStdinBuffer();
 		process.stdin.on("data", this.stdinDataHandler!);
+
+		// Skip Kitty protocol query inside terminal multiplexers that
+		// advertise partial support.  Zellij responds to CSI ? u (via the
+		// outer emulator) but only implements progressive enhancement
+		// level 1, so Pi's parser activates with flags 1+2+4 and then
+		// silently rejects ESC-prefix Alt sequences.  The Kitty spec has
+		// no capability negotiation — a response implies full support.
+		// Fall back to modifyOtherKeys mode 2 directly instead.
+		// Ref: https://github.com/zellij-org/zellij/issues/3789
+		if (process.env.ZELLIJ || process.env.PI_FORCE_LEGACY_KEYS) {
+			process.stdout.write("\x1b[>4;2m");
+			this._modifyOtherKeysActive = true;
+			return;
+		}
+
 		process.stdout.write("\x1b[?u");
 		setTimeout(() => {
 			if (!this._kittyProtocolActive && !this._modifyOtherKeysActive) {
