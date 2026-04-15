@@ -5,7 +5,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
-import { CONFIG_DIR_NAME } from "../config.js";
+import { CONFIG_DIR_NAME, detectInstallMethod } from "../config.js";
 import { type GitSource, parseGitUrl } from "../utils/git.js";
 import { isLocalPath } from "../utils/paths.js";
 import { isStdoutTakenOver } from "./output-guard.js";
@@ -1539,6 +1539,8 @@ export class DefaultPackageManager implements PackageManager {
 	private getNpmCommand(): { command: string; args: string[] } {
 		const configuredCommand = this.settingsManager.getNpmCommand();
 		if (!configuredCommand || configuredCommand.length === 0) {
+			const installMethod = detectInstallMethod();
+			if (installMethod === "bun" || installMethod === "bun-binary") return { command: "bun", args: [] };
 			return { command: "npm", args: [] };
 		}
 		const [command, ...args] = configuredCommand;
@@ -1711,13 +1713,27 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	private getGlobalNpmRoot(): string {
-		const npmCommand = this.getNpmCommand();
-		const commandKey = [npmCommand.command, ...npmCommand.args].join("\0");
+		const installMethod = detectInstallMethod();
+		const commandKey = [installMethod, process.env.BUN_INSTALL?.trim() ?? ""].join("\0");
 		if (this.globalNpmRoot && this.globalNpmRootCommandKey === commandKey) {
 			return this.globalNpmRoot;
 		}
-		const result = this.runNpmCommandSync(["root", "-g"]);
-		this.globalNpmRoot = result.trim();
+		if (installMethod === "bun" || installMethod === "bun-binary") {
+			const bunInstallDir = process.env.BUN_INSTALL?.trim();
+			if (bunInstallDir) {
+				const bunGlobalRoot = resolve(bunInstallDir, "install", "global", "node_modules");
+				if (existsSync(bunGlobalRoot)) {
+					this.globalNpmRoot = bunGlobalRoot;
+				}
+			}
+			if (!this.globalNpmRoot) {
+				const binDir = this.runNpmCommandSync(["pm", "bin", "-g"]).trim();
+				this.globalNpmRoot = resolve(binDir, "..", "install", "global", "node_modules");
+			}
+		} else {
+			const result = this.runNpmCommandSync(["root", "-g"]);
+			this.globalNpmRoot = result.trim();
+		}
 		this.globalNpmRootCommandKey = commandKey;
 		return this.globalNpmRoot;
 	}
