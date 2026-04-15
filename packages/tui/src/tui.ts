@@ -172,6 +172,20 @@ export interface OverlayHandle {
 	isFocused(): boolean;
 }
 
+export type ViewportAlign = "start" | "end" | "center" | "nearest";
+
+export interface ViewportState {
+	mode: "followBottom" | "manual";
+	topRow: number;
+	height: number;
+	totalRows: number;
+}
+
+export interface ViewportSnapshot {
+	mode: "followBottom" | "manual";
+	topRow?: number;
+}
+
 /**
  * Container - a component that contains other components
  */
@@ -260,10 +274,22 @@ export class TUI extends Container {
 		return this.fullRedrawCount;
 	}
 
-	scrollToRow(row: number, options?: { align?: "start" | "end" }): void {
+	scrollToRow(row: number, options?: { align?: ViewportAlign }): void {
 		const align = options?.align ?? "start";
 		const baseRow = Math.max(0, row);
-		const viewportTop = align === "end" ? baseRow - this.terminal.rows + 1 : baseRow;
+		const currentTop = this.getViewportTop();
+		const viewportTop =
+			align === "end"
+				? baseRow - this.terminal.rows + 1
+				: align === "center"
+					? baseRow - Math.floor(this.terminal.rows / 2)
+					: align === "nearest"
+						? baseRow < currentTop
+							? baseRow
+							: baseRow >= currentTop + this.terminal.rows
+								? baseRow - this.terminal.rows + 1
+								: currentTop
+						: baseRow;
 		this.manualViewportTop = Math.max(0, viewportTop);
 		this.requestRender(true);
 	}
@@ -282,6 +308,29 @@ export class TUI extends Container {
 
 	getViewportTop(): number {
 		return this.manualViewportTop ?? this.previousViewportTop;
+	}
+
+	getViewportState(): ViewportState {
+		return {
+			mode: this.isFollowingBottom() ? "followBottom" : "manual",
+			topRow: this.getViewportTop(),
+			height: this.terminal.rows,
+			totalRows: this.previousLines.length,
+		};
+	}
+
+	captureViewport(): ViewportSnapshot {
+		const state = this.getViewportState();
+		return state.mode === "manual" ? { mode: "manual", topRow: state.topRow } : { mode: "followBottom" };
+	}
+
+	restoreViewport(snapshot: ViewportSnapshot): void {
+		if (snapshot.mode === "followBottom") {
+			this.followBottom();
+			return;
+		}
+		this.manualViewportTop = Math.max(0, snapshot.topRow ?? 0);
+		this.requestRender(true);
 	}
 
 	getShowHardwareCursor(): boolean {

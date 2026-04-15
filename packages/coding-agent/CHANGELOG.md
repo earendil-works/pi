@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added extension UI chat navigation helpers `scrollToEntry()` and `scrollToBottom()` in interactive mode, enabling extensions to jump to the rendered start or end of a session entry.
+- Added persistent interactive viewport navigation APIs for extensions: `navigateTo()`, `registerAnchor()`, viewport capture/restore helpers, and `scrollToEntry()` / `scrollToBottom()` convenience methods.
 
 ## [0.67.2] - 2026-04-14
 

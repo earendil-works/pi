@@ -25,6 +25,8 @@ export type {
 	// Re-exports
 	AgentToolResult,
 	AgentToolUpdateCallback,
+	AnchorRegistration,
+	AnchorResolver,
 	AppendEntryHandler,
 	// App keybindings (for custom editors)
 	AppKeybinding,
@@ -93,6 +95,9 @@ export type {
 	MessageUpdateEvent,
 	ModelSelectEvent,
 	ModelSelectSource,
+	NavigationAlign,
+	NavigationResult,
+	NavigationTarget,
 	// Provider Registration
 	ProviderConfig,
 	ProviderModelConfig,
@@ -145,6 +150,8 @@ export type {
 	// Events - User Bash
 	UserBashEvent,
 	UserBashEventResult,
+	ViewportSnapshot,
+	ViewportState,
 	WidgetPlacement,
 	WriteToolCallEvent,
 	WriteToolResultEvent,

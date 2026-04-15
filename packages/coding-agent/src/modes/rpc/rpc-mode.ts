@@ -281,12 +281,32 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			// Tool expansion not supported in RPC mode - no TUI
 		},
 
+		navigateTo() {
+			return { success: false, error: "Scrolling is only supported in interactive mode" };
+		},
+
 		scrollToEntry() {
 			return { success: false, error: "Scrolling is only supported in interactive mode" };
 		},
 
 		scrollToBottom() {
 			// Viewport scrolling not supported in RPC mode - no TUI
+		},
+
+		registerAnchor() {
+			return () => {};
+		},
+
+		getViewportState() {
+			return { mode: "followBottom" as const, topRow: 0, height: 0, totalRows: 0 };
+		},
+
+		captureViewport() {
+			return { mode: "followBottom" as const };
+		},
+
+		restoreViewport() {
+			// Viewport restore not supported in RPC mode - no TUI
 		},
 	});
 

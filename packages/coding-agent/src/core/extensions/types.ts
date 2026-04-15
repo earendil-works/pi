@@ -101,6 +101,49 @@ export interface ExtensionWidgetOptions {
 /** Raw terminal input listener for extensions. */
 export type TerminalInputHandler = (data: string) => { consume?: boolean; data?: string } | undefined;
 
+/** Vertical alignment for viewport navigation targets. */
+export type NavigationAlign = "start" | "end" | "center" | "nearest";
+
+/** Low-level navigation target for the interactive viewport. */
+export type NavigationTarget =
+	| { kind: "entry"; id: string }
+	| { kind: "anchor"; id: string }
+	| { kind: "row"; row: number };
+
+/** Result returned by viewport navigation attempts. */
+export interface NavigationResult {
+	success: boolean;
+	error?: string;
+	targetRow?: number;
+	clamped?: boolean;
+}
+
+/** Current viewport state. */
+export interface ViewportState {
+	mode: "followBottom" | "manual";
+	topRow: number;
+	height: number;
+	totalRows: number;
+}
+
+/** Serializable snapshot for temporary viewport jumps. */
+export interface ViewportSnapshot {
+	mode: "followBottom" | "manual";
+	topRow?: number;
+}
+
+/** Resolved anchor location. */
+export type AnchorResolver =
+	| { kind: "component"; component: Component }
+	| { kind: "range"; start: Component; end: Component }
+	| { kind: "row"; row: number };
+
+/** Anchor registration for reusable navigation targets. */
+export interface AnchorRegistration {
+	id: string;
+	resolve: () => AnchorResolver | undefined;
+}
+
 /**
  * UI context for extensions to request interactive UI.
  * Each mode (interactive, RPC, print) provides its own implementation.
@@ -240,11 +283,26 @@ export interface ExtensionUIContext {
 	/** Set tool output expansion state. */
 	setToolsExpanded(expanded: boolean): void;
 
+	/** Navigate the viewport to an entry, anchor, or absolute row. */
+	navigateTo(target: NavigationTarget, options?: { align?: NavigationAlign }): NavigationResult;
+
 	/** Scroll the chat viewport so a rendered session entry is visible. */
-	scrollToEntry(entryId: string, options?: { align?: "start" | "end" }): { success: boolean; error?: string };
+	scrollToEntry(entryId: string, options?: { align?: "start" | "end" }): NavigationResult;
 
 	/** Return the chat viewport to the live bottom-following position. */
 	scrollToBottom(): void;
+
+	/** Register a reusable navigation anchor. Returns an unregister function. */
+	registerAnchor(anchor: AnchorRegistration): () => void;
+
+	/** Inspect the current viewport state. */
+	getViewportState(): ViewportState;
+
+	/** Capture the current viewport position for later restoration. */
+	captureViewport(): ViewportSnapshot;
+
+	/** Restore a previously captured viewport snapshot. */
+	restoreViewport(snapshot: ViewportSnapshot): void;
 }
 
 // ============================================================================

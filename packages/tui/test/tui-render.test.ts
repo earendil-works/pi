@@ -550,4 +550,30 @@ describe("TUI manual viewport", () => {
 
 		tui.stop();
 	});
+
+	it("captures and restores a manual viewport snapshot", async () => {
+		const terminal = new VirtualTerminal(40, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 12 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+
+		tui.scrollToRow(4, { align: "center" });
+		await terminal.waitForRender();
+		const snapshot = tui.captureViewport();
+
+		tui.followBottom();
+		await terminal.waitForRender();
+		tui.restoreViewport(snapshot);
+		await terminal.waitForRender();
+
+		const viewport = terminal.getViewport();
+		assert.ok(viewport[0]?.includes("Line 2"), `Expected Line 2 at top after restore, got: ${viewport[0]}`);
+		assert.ok(viewport[2]?.includes("Line 4"), `Expected Line 4 near center after restore, got: ${viewport[2]}`);
+
+		tui.stop();
+	});
 });

@@ -99,6 +99,9 @@ export {
 	type OverlayOptions,
 	type SizeValue,
 	TUI,
+	type ViewportAlign,
+	type ViewportSnapshot,
+	type ViewportState,
 } from "./tui.js";
 // Utilities
 export { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "./utils.js";

@@ -197,8 +197,13 @@ const noOpUIContext: ExtensionUIContext = {
 	setTheme: (_theme: string | Theme) => ({ success: false, error: "UI not available" }),
 	getToolsExpanded: () => false,
 	setToolsExpanded: () => {},
+	navigateTo: () => ({ success: false, error: "UI not available" }),
 	scrollToEntry: () => ({ success: false, error: "UI not available" }),
 	scrollToBottom: () => {},
+	registerAnchor: () => () => {},
+	getViewportState: () => ({ mode: "followBottom", topRow: 0, height: 0, totalRows: 0 }),
+	captureViewport: () => ({ mode: "followBottom" }),
+	restoreViewport: () => {},
 };
 
 export class ExtensionRunner {
