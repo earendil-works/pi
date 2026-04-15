@@ -429,9 +429,13 @@ function buildParams(model: Model<"openai-completions">, context: Context, optio
 		} else {
 			openRouterParams.reasoning = { effort: "none" };
 		}
-	} else if (options?.reasoningEffort && model.reasoning && compat.supportsReasoningEffort) {
+	} else if (model.reasoning && compat.supportsReasoningEffort) {
 		// OpenAI-style reasoning_effort
-		(params as any).reasoning_effort = mapReasoningEffort(options.reasoningEffort, compat.reasoningEffortMap);
+		if (options?.reasoningEffort) {
+			(params as any).reasoning_effort = mapReasoningEffort(options.reasoningEffort, compat.reasoningEffortMap);
+		} else if (compat.reasoningEffortWhenDisabled) {
+			(params as any).reasoning_effort = compat.reasoningEffortWhenDisabled;
+		}
 	}
 
 	// OpenRouter provider routing preferences
@@ -842,6 +846,14 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 		supportsDeveloperRole: !isNonStandard,
 		supportsReasoningEffort: !isGrok && !isZai,
 		reasoningEffortMap,
+		reasoningEffortWhenDisabled:
+			(provider === "ollama" ||
+				baseUrl.includes("11434") ||
+				baseUrl.includes("/v1") ||
+				baseUrl.includes("ollama")) &&
+			/gemma-?4/i.test(model.id)
+				? "none"
+				: "",
 		supportsUsageInStreaming: true,
 		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",
 		requiresToolResultName: false,
@@ -872,6 +884,7 @@ function getCompat(model: Model<"openai-completions">): Required<OpenAICompletio
 		supportsDeveloperRole: model.compat.supportsDeveloperRole ?? detected.supportsDeveloperRole,
 		supportsReasoningEffort: model.compat.supportsReasoningEffort ?? detected.supportsReasoningEffort,
 		reasoningEffortMap: model.compat.reasoningEffortMap ?? detected.reasoningEffortMap,
+		reasoningEffortWhenDisabled: model.compat.reasoningEffortWhenDisabled ?? detected.reasoningEffortWhenDisabled,
 		supportsUsageInStreaming: model.compat.supportsUsageInStreaming ?? detected.supportsUsageInStreaming,
 		maxTokensField: model.compat.maxTokensField ?? detected.maxTokensField,
 		requiresToolResultName: model.compat.requiresToolResultName ?? detected.requiresToolResultName,

@@ -200,6 +200,46 @@ describe("openai-completions tool_choice", () => {
 		expect(params.reasoning_effort).toBe("medium");
 	});
 
+	it("sends reasoning_effort=none for ollama gemma4 when reasoning is off", async () => {
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = {
+			...baseModel,
+			api: "openai-completions",
+			provider: "ollama",
+			baseUrl: "http://localhost:11434/v1",
+			id: "gemma-4-27b-it",
+			reasoning: true,
+			compat: {
+				supportsReasoningEffort: true,
+				thinkingFormat: "openai",
+				reasoningEffortWhenDisabled: "none",
+			},
+		} as const;
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Hi",
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{
+				apiKey: "test",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as { reasoning_effort?: string };
+		expect(params.reasoning_effort).toBe("none");
+	});
+
 	it("enables tool_stream for supported z.ai models with tools", async () => {
 		const model = getModel("zai", "glm-5")!;
 		const tools: Tool[] = [
