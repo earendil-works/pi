@@ -150,3 +150,58 @@ describe("wrapTextWithAnsi", () => {
 		});
 	});
 });
+
+describe("wrapTextWithAnsi with OSC 8 hyperlinks", () => {
+	it("re-emits OSC 8 open at the start of continuation lines", () => {
+		// A hyperlink whose text is long enough to wrap
+		const url = "https://example.com";
+		// OSC 8 open + text that is 10 visible chars + OSC 8 close
+		const input = `\x1b]8;;${url}\x1b\\0123456789\x1b]8;;\x1b\\`;
+		const lines = wrapTextWithAnsi(input, 6);
+
+		// Every line that contains visible text from inside the hyperlink
+		// should start with the OSC 8 open sequence (or be preceded by it).
+		for (const line of lines) {
+			// If the line has visible content it must begin with the OSC 8 re-open
+			// OR it is the line where the close appeared with no following content.
+			const stripped = line.replace(/\x1b\]8;;[^\x1b\x07]*\x1b\\/g, "").replace(/\x1b\[[0-9;]*m/g, "");
+			if (stripped.trim().length > 0) {
+				assert.ok(
+					line.startsWith(`\x1b]8;;${url}\x1b\\`) || line.includes(`\x1b]8;;${url}\x1b\\`),
+					`Line "${line}" has visible text but no OSC 8 re-open`,
+				);
+			}
+		}
+	});
+
+	it("closes OSC 8 before each line break", () => {
+		const url = "https://example.com";
+		const input = `\x1b]8;;${url}\x1b\\0123456789\x1b]8;;\x1b\\`;
+		const lines = wrapTextWithAnsi(input, 6);
+
+		for (let i = 0; i < lines.length - 1; i++) {
+			const line = lines[i];
+			// Every non-final line that is inside a hyperlink should end with the close
+			if (line.includes(`\x1b]8;;${url}\x1b\\`)) {
+				assert.ok(
+					line.endsWith("\x1b]8;;\x1b\\"),
+					`Non-final line "${line}" is inside a hyperlink but does not close it`,
+				);
+			}
+		}
+	});
+
+	it("does not emit OSC 8 sequences on lines that are outside the hyperlink", () => {
+		const url = "https://example.com";
+		const input = `before \x1b]8;;${url}\x1b\\link\x1b]8;;\x1b\\ after`;
+		const lines = wrapTextWithAnsi(input, 80);
+
+		// With width 80 everything fits on one line; there should be exactly one
+		// OSC 8 open and one OSC 8 close.
+		assert.strictEqual(lines.length, 1);
+		const openCount = (lines[0].match(/\x1b\]8;;https:[^\x1b]+\x1b\\/g) ?? []).length;
+		const closeCount = (lines[0].match(/\x1b\]8;;\x1b\\/g) ?? []).length;
+		assert.strictEqual(openCount, 1);
+		assert.strictEqual(closeCount, 1);
+	});
+});

@@ -81,6 +81,11 @@ export function resetCapabilitiesCache(): void {
 	cachedCapabilities = null;
 }
 
+/** Override the cached capabilities. Useful in tests to exercise both code paths. */
+export function setCapabilities(caps: TerminalCapabilities): void {
+	cachedCapabilities = caps;
+}
+
 const KITTY_PREFIX = "\x1b_G";
 const ITERM2_PREFIX = "\x1b]1337;File=";
 
@@ -370,6 +375,20 @@ export function renderImage(
 	}
 
 	return null;
+}
+
+/**
+ * Wrap text in an OSC 8 hyperlink sequence.
+ * The text is rendered as a clickable hyperlink in terminals that support OSC 8
+ * (Ghostty, Kitty, WezTerm, iTerm2, VSCode, and others).
+ * In terminals that do not support OSC 8, the escape sequences are ignored
+ * and only the plain text is displayed.
+ *
+ * @param text - The visible text to display
+ * @param url - The URL to link to
+ */
+export function hyperlink(text: string, url: string): string {
+	return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
 }
 
 export function imageFallback(mimeType: string, dimensions?: ImageDimensions, filename?: string): string {

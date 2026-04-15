@@ -4,7 +4,7 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { isImageLine } from "../src/terminal-image.js";
+import { hyperlink, isImageLine } from "../src/terminal-image.js";
 
 describe("isImageLine", () => {
 	describe("iTerm2 image protocol", () => {
@@ -149,5 +149,31 @@ describe("isImageLine", () => {
 			const filePathLine = "/path/to/File_1337_backup/image.jpg";
 			assert.strictEqual(isImageLine(filePathLine), false);
 		});
+	});
+});
+
+describe("hyperlink", () => {
+	it("wraps text in OSC 8 open and close sequences", () => {
+		const result = hyperlink("click me", "https://example.com");
+		assert.strictEqual(result, "\x1b]8;;https://example.com\x1b\\click me\x1b]8;;\x1b\\");
+	});
+
+	it("preserves ANSI styling inside the hyperlink", () => {
+		const styled = "\x1b[4m\x1b[34mclick me\x1b[0m";
+		const result = hyperlink(styled, "https://example.com");
+		assert.ok(result.startsWith("\x1b]8;;https://example.com\x1b\\"));
+		assert.ok(result.includes(styled));
+		assert.ok(result.endsWith("\x1b]8;;\x1b\\"));
+	});
+
+	it("works with empty text", () => {
+		const result = hyperlink("", "https://example.com");
+		assert.strictEqual(result, "\x1b]8;;https://example.com\x1b\\\x1b]8;;\x1b\\");
+	});
+
+	it("works with file:// URIs", () => {
+		const result = hyperlink("README.md", "file:///home/user/README.md");
+		assert.ok(result.includes("file:///home/user/README.md"));
+		assert.ok(result.includes("README.md"));
 	});
 });

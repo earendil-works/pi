@@ -311,8 +311,16 @@ class AnsiCodeTracker {
 	private strikethrough = false;
 	private fgColor: string | null = null; // Stores the full code like "31" or "38;5;240"
 	private bgColor: string | null = null; // Stores the full code like "41" or "48;5;240"
+	private activeHyperlink: string | null = null; // Active OSC 8 hyperlink URL, or null
 
 	process(ansiCode: string): void {
+		// OSC 8 hyperlink: \x1b]8;;<url>\x1b\\ (open) or \x1b]8;;\x1b\\ (close)
+		if (ansiCode.startsWith("\x1b]8;")) {
+			const m = ansiCode.match(/^\x1b\]8;[^;]*;([^\x1b\x07]*)/);
+			this.activeHyperlink = m?.[1] ? m[1] : null;
+			return;
+		}
+
 		if (!ansiCode.endsWith("m")) {
 			return;
 		}
@@ -447,11 +455,13 @@ class AnsiCodeTracker {
 		this.strikethrough = false;
 		this.fgColor = null;
 		this.bgColor = null;
+		// SGR reset does not affect OSC 8 hyperlink state
 	}
 
 	/** Clear all state for reuse. */
 	clear(): void {
 		this.reset();
+		this.activeHyperlink = null;
 	}
 
 	getActiveCodes(): string {
@@ -467,8 +477,11 @@ class AnsiCodeTracker {
 		if (this.fgColor) codes.push(this.fgColor);
 		if (this.bgColor) codes.push(this.bgColor);
 
-		if (codes.length === 0) return "";
-		return `\x1b[${codes.join(";")}m`;
+		let result = codes.length > 0 ? `\x1b[${codes.join(";")}m` : "";
+		if (this.activeHyperlink) {
+			result += `\x1b]8;;${this.activeHyperlink}\x1b\\`;
+		}
+		return result;
 	}
 
 	hasActiveCodes(): boolean {
@@ -482,22 +495,26 @@ class AnsiCodeTracker {
 			this.hidden ||
 			this.strikethrough ||
 			this.fgColor !== null ||
-			this.bgColor !== null
+			this.bgColor !== null ||
+			this.activeHyperlink !== null
 		);
 	}
 
 	/**
-	 * Get reset codes for attributes that need to be turned off at line end,
-	 * specifically underline which bleeds into padding.
-	 * Returns empty string if no problematic attributes are active.
+	 * Get reset codes for attributes that need to be turned off at line end.
+	 * Underline must be closed to prevent bleeding into padding.
+	 * Active OSC 8 hyperlinks must be closed and re-opened on the next line.
+	 * Returns empty string if no attributes need closing.
 	 */
 	getLineEndReset(): string {
-		// Only underline causes visual bleeding into padding
-		// Other attributes like colors don't visually bleed to padding
+		let result = "";
 		if (this.underline) {
-			return "\x1b[24m"; // Underline off only
+			result += "\x1b[24m"; // Underline off only
 		}
-		return "";
+		if (this.activeHyperlink) {
+			result += "\x1b]8;;\x1b\\"; // Close hyperlink; re-opened at line start via getActiveCodes()
+		}
+		return result;
 	}
 }
 
