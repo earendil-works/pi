@@ -5,7 +5,7 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
-import { CONFIG_DIR_NAME } from "../config.js";
+import { CONFIG_DIR_NAME, isBunRuntime } from "../config.js";
 import { type GitSource, parseGitUrl } from "../utils/git.js";
 import { isLocalPath } from "../utils/paths.js";
 import { isStdoutTakenOver } from "./output-guard.js";
@@ -1539,6 +1539,7 @@ export class DefaultPackageManager implements PackageManager {
 	private getNpmCommand(): { command: string; args: string[] } {
 		const configuredCommand = this.settingsManager.getNpmCommand();
 		if (!configuredCommand || configuredCommand.length === 0) {
+			if (isBunRuntime) return { command: "bun", args: [] };
 			return { command: "npm", args: [] };
 		}
 		const [command, ...args] = configuredCommand;
@@ -1712,12 +1713,18 @@ export class DefaultPackageManager implements PackageManager {
 
 	private getGlobalNpmRoot(): string {
 		const npmCommand = this.getNpmCommand();
-		const commandKey = [npmCommand.command, ...npmCommand.args].join("\0");
+		const commandKey = [npmCommand.command, ...npmCommand.args].join(" ");
 		if (this.globalNpmRoot && this.globalNpmRootCommandKey === commandKey) {
 			return this.globalNpmRoot;
 		}
-		const result = this.runNpmCommandSync(["root", "-g"]);
-		this.globalNpmRoot = result.trim();
+		if (npmCommand.command === "bun") {
+			// bun does not implement "root -g"; use "bun pm bin -g" and resolve ../node_modules
+			const binDir = this.runNpmCommandSync(["pm", "bin", "-g"]);
+			this.globalNpmRoot = join(binDir.trim(), "..", "node_modules");
+		} else {
+			const result = this.runNpmCommandSync(["root", "-g"]);
+			this.globalNpmRoot = result.trim();
+		}
 		this.globalNpmRootCommandKey = commandKey;
 		return this.globalNpmRoot;
 	}
@@ -2210,7 +2217,7 @@ export class DefaultPackageManager implements PackageManager {
 				if (timeout) clearTimeout(timeout);
 				reject(error);
 			});
-			child.on("exit", (code) => {
+			child.on("close", (code) => {
 				if (timeout) clearTimeout(timeout);
 				if (timedOut) {
 					reject(new Error(`${command} ${args.join(" ")} timed out after ${options?.timeoutMs}ms`));

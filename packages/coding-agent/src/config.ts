@@ -39,7 +39,7 @@ export function detectInstallMethod(): InstallMethod {
 	if (resolvedPath.includes("/yarn/") || resolvedPath.includes("/.yarn/") || resolvedPath.includes("\\yarn\\")) {
 		return "yarn";
 	}
-	if (isBunRuntime) {
+	if (isBunRuntime || resolvedPath.includes("/.bun/") || resolvedPath.includes("\\.bun\\")) {
 		return "bun";
 	}
 	if (resolvedPath.includes("/npm/") || resolvedPath.includes("/node_modules/") || resolvedPath.includes("\\npm\\")) {
@@ -110,7 +110,7 @@ export function getPackageDir(): string {
  */
 export function getThemesDir(): string {
 	if (isBunBinary) {
-		return join(dirname(process.execPath), "theme");
+		return join(getPackageDir(), "theme");
 	}
 	// Theme is in modes/interactive/theme/ relative to src/ or dist/
 	const packageDir = getPackageDir();
@@ -126,7 +126,7 @@ export function getThemesDir(): string {
  */
 export function getExportTemplateDir(): string {
 	if (isBunBinary) {
-		return join(dirname(process.execPath), "export-html");
+		return join(getPackageDir(), "export-html");
 	}
 	const packageDir = getPackageDir();
 	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
@@ -166,7 +166,7 @@ export function getChangelogPath(): string {
  */
 export function getInteractiveAssetsDir(): string {
 	if (isBunBinary) {
-		return join(dirname(process.execPath), "assets");
+		return join(getPackageDir(), "assets");
 	}
 	const packageDir = getPackageDir();
 	const srcOrDist = existsSync(join(packageDir, "src")) ? "src" : "dist";
