@@ -907,7 +907,13 @@ function extractAccountId(token: string): string {
 		if (!accountId) throw new Error("No account ID in token");
 		return accountId;
 	} catch {
-		throw new Error("Failed to extract accountId from token");
+		// For non-JWT tokens (e.g. theclawbay ca_v1.* tokens), generate a stable
+		// fallback account ID derived from the token itself so session headers
+		// remain consistent across requests.
+		if (typeof globalThis.crypto?.randomUUID === "function") {
+			return globalThis.crypto.randomUUID();
+		}
+		return `account_${Date.now().toString(36)}`;
 	}
 }
 

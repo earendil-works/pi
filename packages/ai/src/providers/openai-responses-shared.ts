@@ -479,12 +479,15 @@ export async function processResponsesStream<TApi extends Api>(
 			}
 			if (response?.usage) {
 				const cachedTokens = response.usage.input_tokens_details?.cached_tokens || 0;
+				const cacheWriteTokens =
+					(response.usage as { input_tokens_details?: { cache_write_tokens?: number } }).input_tokens_details
+						?.cache_write_tokens || 0;
 				output.usage = {
 					// OpenAI includes cached tokens in input_tokens, so subtract to get non-cached input
-					input: (response.usage.input_tokens || 0) - cachedTokens,
+					input: (response.usage.input_tokens || 0) - cachedTokens - cacheWriteTokens,
 					output: response.usage.output_tokens || 0,
 					cacheRead: cachedTokens,
-					cacheWrite: 0,
+					cacheWrite: cacheWriteTokens,
 					totalTokens: response.usage.total_tokens || 0,
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
 				};
