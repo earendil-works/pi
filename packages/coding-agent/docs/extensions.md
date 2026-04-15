@@ -1988,6 +1988,13 @@ const wasExpanded = ctx.ui.getToolsExpanded();
 ctx.ui.setToolsExpanded(true);
 ctx.ui.setToolsExpanded(wasExpanded);
 
+// Chat viewport navigation (interactive mode only)
+const result = ctx.ui.scrollToEntry(entryId, { align: "start" });  // or "end"
+if (!result.success) {
+  ctx.ui.notify(result.error ?? "Failed to scroll", "error");
+}
+ctx.ui.scrollToBottom();
+
 // Custom editor (vim mode, emacs mode, etc.)
 ctx.ui.setEditorComponent((tui, theme, keybindings) => new VimEditor(tui, theme, keybindings));
 ctx.ui.setEditorComponent(undefined);  // Restore default editor

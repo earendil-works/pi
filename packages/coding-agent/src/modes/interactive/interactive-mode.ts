@@ -62,7 +62,7 @@ import { findExactModelReferenceMatch, resolveModelScope } from "../../core/mode
 import { DefaultPackageManager } from "../../core/package-manager.js";
 import type { ResourceDiagnostic } from "../../core/resource-loader.js";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.js";
-import { type SessionContext, SessionManager } from "../../core/session-manager.js";
+import { type SessionContext, type SessionEntry, SessionManager } from "../../core/session-manager.js";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.js";
 import type { SourceInfo } from "../../core/source-info.js";
 import type { TruncationResult } from "../../core/tools/truncate.js";
@@ -252,6 +252,9 @@ export class InteractiveMode {
 
 	// Header container that holds the built-in or custom header
 	private headerContainer: Container;
+	private entryRenderRanges = new Map<string, { start: Component; end: Component }>();
+	private pendingEntryRenderRanges: Array<{ start: Component; end: Component }> = [];
+	private streamingEntryRenderRange: { start: Component; end: Component } | undefined;
 
 	// Built-in header (logo + keybinding hints + changelog)
 	private builtInHeader: Component | undefined = undefined;
@@ -1694,7 +1697,70 @@ export class InteractiveMode {
 			},
 			getToolsExpanded: () => this.toolOutputExpanded,
 			setToolsExpanded: (expanded) => this.setToolsExpanded(expanded),
+			scrollToEntry: (entryId, options) => this.scrollToEntry(entryId, options),
+			scrollToBottom: () => this.ui.followBottom(),
 		};
+	}
+
+	private scrollToEntry(entryId: string, options?: { align?: "start" | "end" }): { success: boolean; error?: string } {
+		this.bindPendingEntryRenderRanges();
+		const range = this.entryRenderRanges.get(entryId);
+		if (!range) {
+			return { success: false, error: `Entry '${entryId}' is not currently rendered` };
+		}
+
+		const row = this.getComponentRow(options?.align === "end" ? range.end : range.start, options?.align);
+		if (row === undefined) {
+			return { success: false, error: `Could not locate rendered component for entry '${entryId}'` };
+		}
+
+		this.ui.scrollToRow(row, { align: options?.align ?? "start" });
+		return { success: true };
+	}
+
+	private bindPendingEntryRenderRanges(): void {
+		if (this.pendingEntryRenderRanges.length === 0) {
+			return;
+		}
+
+		const context = this.sessionManager.buildSessionContext();
+		const unmappedEntries = context.entries.filter(
+			(entry) => this.canBindPendingEntryRange(entry) && !this.entryRenderRanges.has(entry.id),
+		);
+		if (unmappedEntries.length === 0) {
+			this.pendingEntryRenderRanges = [];
+			return;
+		}
+
+		const assignableCount = Math.min(unmappedEntries.length, this.pendingEntryRenderRanges.length);
+		const entrySlice = unmappedEntries.slice(-assignableCount);
+		const rangeSlice = this.pendingEntryRenderRanges.slice(-assignableCount);
+
+		for (const [index, entry] of entrySlice.entries()) {
+			this.entryRenderRanges.set(entry.id, rangeSlice[index]);
+		}
+
+		this.pendingEntryRenderRanges.splice(this.pendingEntryRenderRanges.length - assignableCount, assignableCount);
+	}
+
+	private canBindPendingEntryRange(entry: SessionEntry): boolean {
+		if (entry.type === "custom_message" || entry.type === "branch_summary" || entry.type === "compaction") {
+			return true;
+		}
+		return entry.type === "message" && entry.message.role !== "toolResult";
+	}
+
+	private getComponentRow(component: Component, align: "start" | "end" = "start"): number | undefined {
+		const width = this.ui.terminal.columns;
+		let row = this.headerContainer.render(width).length;
+		for (const child of this.chatContainer.children) {
+			const childHeight = child.render(width).length;
+			if (child === component) {
+				return align === "end" ? row + Math.max(0, childHeight - 1) : row;
+			}
+			row += childHeight;
+		}
+		return undefined;
 	}
 
 	/**
@@ -2384,6 +2450,10 @@ export class InteractiveMode {
 					);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
+					this.streamingEntryRenderRange = {
+						start: this.streamingComponent,
+						end: this.streamingComponent,
+					};
 					this.streamingComponent.updateContent(this.streamingMessage);
 					this.ui.requestRender();
 				}
@@ -2411,6 +2481,9 @@ export class InteractiveMode {
 								component.setExpanded(this.toolOutputExpanded);
 								this.chatContainer.addChild(component);
 								this.pendingTools.set(content.id, component);
+								if (this.streamingEntryRenderRange) {
+									this.streamingEntryRenderRange.end = component;
+								}
 							} else {
 								const component = this.pendingTools.get(content.id);
 								if (component) {
@@ -2457,6 +2530,10 @@ export class InteractiveMode {
 					}
 					this.streamingComponent = undefined;
 					this.streamingMessage = undefined;
+					if (this.streamingEntryRenderRange) {
+						this.pendingEntryRenderRanges.push(this.streamingEntryRenderRange);
+						this.streamingEntryRenderRange = undefined;
+					}
 					this.footer.invalidate();
 				}
 				this.ui.requestRender();
@@ -2663,7 +2740,8 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
+	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean; entryId?: string }): void {
+		const startIndex = this.chatContainer.children.length;
 		switch (message.role) {
 			case "bashExecution": {
 				const component = new BashExecutionComponent(message.command, this.ui, message.excludeFromContext);
@@ -2751,6 +2829,19 @@ export class InteractiveMode {
 				const _exhaustive: never = message;
 			}
 		}
+
+		const addedComponents = this.chatContainer.children.slice(startIndex);
+		if (addedComponents.length > 0) {
+			const range = {
+				start: addedComponents[0],
+				end: addedComponents[addedComponents.length - 1],
+			};
+			if (options?.entryId) {
+				this.entryRenderRanges.set(options.entryId, range);
+			} else {
+				this.pendingEntryRenderRanges.push(range);
+			}
+		}
 	}
 
 	/**
@@ -2764,16 +2855,21 @@ export class InteractiveMode {
 		options: { updateFooter?: boolean; populateHistory?: boolean } = {},
 	): void {
 		this.pendingTools.clear();
+		this.entryRenderRanges.clear();
+		this.pendingEntryRenderRanges = [];
+		this.streamingEntryRenderRange = undefined;
 
 		if (options.updateFooter) {
 			this.footer.invalidate();
 			this.updateEditorBorderColor();
 		}
 
-		for (const message of sessionContext.messages) {
+		for (const [index, message] of sessionContext.messages.entries()) {
+			const entry = sessionContext.entries[index];
 			// Assistant messages need special handling for tool calls
 			if (message.role === "assistant") {
-				this.addMessageToChat(message);
+				const startIndex = this.chatContainer.children.length;
+				this.addMessageToChat(message, { entryId: entry?.id });
 				// Render tool call components
 				for (const content of message.content) {
 					if (content.type === "toolCall") {
@@ -2806,16 +2902,28 @@ export class InteractiveMode {
 						}
 					}
 				}
+				if (entry) {
+					const addedComponents = this.chatContainer.children.slice(startIndex);
+					if (addedComponents.length > 0) {
+						this.entryRenderRanges.set(entry.id, {
+							start: addedComponents[0],
+							end: addedComponents[addedComponents.length - 1],
+						});
+					}
+				}
 			} else if (message.role === "toolResult") {
 				// Match tool results to pending tool components
 				const component = this.pendingTools.get(message.toolCallId);
 				if (component) {
 					component.updateResult(message);
 					this.pendingTools.delete(message.toolCallId);
+					if (entry) {
+						this.entryRenderRanges.set(entry.id, { start: component, end: component });
+					}
 				}
 			} else {
 				// All other messages use standard rendering
-				this.addMessageToChat(message, options);
+				this.addMessageToChat(message, { ...options, entryId: entry?.id });
 			}
 		}
 

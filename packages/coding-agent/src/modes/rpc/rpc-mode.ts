@@ -280,6 +280,14 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		setToolsExpanded(_expanded: boolean) {
 			// Tool expansion not supported in RPC mode - no TUI
 		},
+
+		scrollToEntry() {
+			return { success: false, error: "Scrolling is only supported in interactive mode" };
+		},
+
+		scrollToBottom() {
+			// Viewport scrolling not supported in RPC mode - no TUI
+		},
 	});
 
 	const rebindSession = async (): Promise<void> => {

@@ -161,6 +161,7 @@ export interface SessionTreeNode {
 
 export interface SessionContext {
 	messages: AgentMessage[];
+	entries: SessionEntry[];
 	thinkingLevel: string;
 	model: { provider: string; modelId: string } | null;
 }
@@ -329,7 +330,7 @@ export function buildSessionContext(
 	let leaf: SessionEntry | undefined;
 	if (leafId === null) {
 		// Explicitly null - return no messages (navigated to before first entry)
-		return { messages: [], thinkingLevel: "off", model: null };
+		return { messages: [], entries: [], thinkingLevel: "off", model: null };
 	}
 	if (leafId) {
 		leaf = byId.get(leafId);
@@ -340,7 +341,7 @@ export function buildSessionContext(
 	}
 
 	if (!leaf) {
-		return { messages: [], thinkingLevel: "off", model: null };
+		return { messages: [], entries: [], thinkingLevel: "off", model: null };
 	}
 
 	// Walk from leaf to root, collecting path
@@ -374,22 +375,27 @@ export function buildSessionContext(
 	// 2. Emit kept messages (from firstKeptEntryId up to compaction)
 	// 3. Emit messages after compaction
 	const messages: AgentMessage[] = [];
+	const messageEntries: SessionEntry[] = [];
 
 	const appendMessage = (entry: SessionEntry) => {
 		if (entry.type === "message") {
 			messages.push(entry.message);
+			messageEntries.push(entry);
 		} else if (entry.type === "custom_message") {
 			messages.push(
 				createCustomMessage(entry.customType, entry.content, entry.display, entry.details, entry.timestamp),
 			);
+			messageEntries.push(entry);
 		} else if (entry.type === "branch_summary" && entry.summary) {
 			messages.push(createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp));
+			messageEntries.push(entry);
 		}
 	};
 
 	if (compaction) {
 		// Emit summary first
 		messages.push(createCompactionSummaryMessage(compaction.summary, compaction.tokensBefore, compaction.timestamp));
+		messageEntries.push(compaction);
 
 		// Find compaction index in path
 		const compactionIdx = path.findIndex((e) => e.type === "compaction" && e.id === compaction.id);
@@ -418,7 +424,7 @@ export function buildSessionContext(
 		}
 	}
 
-	return { messages, thinkingLevel, model };
+	return { messages, entries: messageEntries, thinkingLevel, model };
 }
 
 /**

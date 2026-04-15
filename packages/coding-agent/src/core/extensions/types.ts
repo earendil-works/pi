@@ -239,6 +239,12 @@ export interface ExtensionUIContext {
 
 	/** Set tool output expansion state. */
 	setToolsExpanded(expanded: boolean): void;
+
+	/** Scroll the chat viewport so a rendered session entry is visible. */
+	scrollToEntry(entryId: string, options?: { align?: "start" | "end" }): { success: boolean; error?: string };
+
+	/** Return the chat viewport to the live bottom-following position. */
+	scrollToBottom(): void;
 }
 
 // ============================================================================

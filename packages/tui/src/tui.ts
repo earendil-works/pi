@@ -234,6 +234,7 @@ export class TUI extends Container {
 	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1"; // Clear empty rows when content shrinks (default: off)
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
+	private manualViewportTop: number | undefined;
 	private fullRedrawCount = 0;
 	private stopped = false;
 
@@ -257,6 +258,30 @@ export class TUI extends Container {
 
 	get fullRedraws(): number {
 		return this.fullRedrawCount;
+	}
+
+	scrollToRow(row: number, options?: { align?: "start" | "end" }): void {
+		const align = options?.align ?? "start";
+		const baseRow = Math.max(0, row);
+		const viewportTop = align === "end" ? baseRow - this.terminal.rows + 1 : baseRow;
+		this.manualViewportTop = Math.max(0, viewportTop);
+		this.requestRender(true);
+	}
+
+	followBottom(): void {
+		if (this.manualViewportTop === undefined) {
+			return;
+		}
+		this.manualViewportTop = undefined;
+		this.requestRender(true);
+	}
+
+	isFollowingBottom(): boolean {
+		return this.manualViewportTop === undefined;
+	}
+
+	getViewportTop(): number {
+		return this.manualViewportTop ?? this.previousViewportTop;
 	}
 
 	getShowHardwareCursor(): boolean {
@@ -732,7 +757,12 @@ export class TUI extends Container {
 	}
 
 	/** Composite all overlays into content lines (sorted by focusOrder, higher = on top). */
-	private compositeOverlays(lines: string[], termWidth: number, termHeight: number): string[] {
+	private compositeOverlays(
+		lines: string[],
+		termWidth: number,
+		termHeight: number,
+		viewportTopOverride?: number,
+	): string[] {
 		if (this.overlayStack.length === 0) return lines;
 		const result = [...lines];
 
@@ -767,14 +797,20 @@ export class TUI extends Container {
 		// Pad to at least terminal height so overlays have screen-relative positions.
 		// Excludes maxLinesRendered: the historical high-water mark caused self-reinforcing
 		// inflation that pushed content into scrollback on terminal widen.
-		const workingHeight = Math.max(result.length, termHeight, minLinesNeeded);
+		const workingHeight = Math.max(
+			result.length,
+			termHeight,
+			minLinesNeeded,
+			(viewportTopOverride ?? 0) + termHeight,
+		);
 
 		// Extend result with empty lines if content is too short for overlay placement or working area
 		while (result.length < workingHeight) {
 			result.push("");
 		}
 
-		const viewportStart = Math.max(0, workingHeight - termHeight);
+		const viewportStart =
+			viewportTopOverride !== undefined ? viewportTopOverride : Math.max(0, workingHeight - termHeight);
 
 		// Composite each overlay
 		for (const { overlayLines, row, col, w } of rendered) {
@@ -865,9 +901,13 @@ export class TUI extends Container {
 	 * @param height - Terminal height (visible viewport size)
 	 * @returns Cursor position { row, col } or null if no marker found
 	 */
-	private extractCursorPosition(lines: string[], height: number): { row: number; col: number } | null {
+	private extractCursorPosition(
+		lines: string[],
+		height: number,
+		viewportTopOverride?: number,
+	): { row: number; col: number } | null {
 		// Only scan the bottom `height` lines (visible viewport)
-		const viewportTop = Math.max(0, lines.length - height);
+		const viewportTop = viewportTopOverride !== undefined ? viewportTopOverride : Math.max(0, lines.length - height);
 		for (let row = lines.length - 1; row >= viewportTop; row--) {
 			const line = lines[row];
 			const markerIndex = line.indexOf(CURSOR_MARKER);
@@ -883,6 +923,14 @@ export class TUI extends Container {
 			}
 		}
 		return null;
+	}
+
+	private clampViewportTop(viewportTop: number, totalLines: number, height: number): number {
+		return Math.max(0, Math.min(viewportTop, Math.max(0, totalLines - height)));
+	}
+
+	private renderViewportSlice(lines: string[], viewportTop: number, height: number): string[] {
+		return lines.slice(viewportTop, viewportTop + height);
 	}
 
 	private doRender(): void {
@@ -901,12 +949,45 @@ export class TUI extends Container {
 			return targetScreenRow - currentScreenRow;
 		};
 
+		const requestedViewportTopRaw =
+			this.manualViewportTop !== undefined ? Math.max(0, this.manualViewportTop) : undefined;
+
 		// Render all components to get new lines
 		let newLines = this.render(width);
+		const requestedViewportTop =
+			requestedViewportTopRaw !== undefined
+				? this.clampViewportTop(requestedViewportTopRaw, newLines.length, height)
+				: undefined;
 
 		// Composite overlays into the rendered lines (before differential compare)
 		if (this.overlayStack.length > 0) {
-			newLines = this.compositeOverlays(newLines, width, height);
+			newLines = this.compositeOverlays(newLines, width, height, requestedViewportTop);
+		}
+
+		if (requestedViewportTop !== undefined) {
+			const viewportTop = this.clampViewportTop(requestedViewportTop, newLines.length, height);
+			this.manualViewportTop = viewportTop;
+			const cursorPos = this.extractCursorPosition(newLines, height, viewportTop);
+			const renderedLines = this.applyLineResets(this.renderViewportSlice(newLines, viewportTop, height));
+			let buffer = "\x1b[?2026h\x1b[2J\x1b[H\x1b[3J";
+			for (let i = 0; i < renderedLines.length; i++) {
+				if (i > 0) {
+					buffer += "\r\n";
+				}
+				buffer += renderedLines[i];
+			}
+			buffer += "\x1b[?2026l";
+			this.fullRedrawCount += 1;
+			this.terminal.write(buffer);
+			this.cursorRow = Math.max(0, newLines.length - 1);
+			this.hardwareCursorRow = Math.max(viewportTop, viewportTop + renderedLines.length - 1);
+			this.maxLinesRendered = newLines.length;
+			this.previousViewportTop = viewportTop;
+			this.positionHardwareCursor(cursorPos, newLines.length);
+			this.previousLines = newLines;
+			this.previousWidth = width;
+			this.previousHeight = height;
+			return;
 		}
 
 		// Extract cursor position before applying line resets (marker must be found first)

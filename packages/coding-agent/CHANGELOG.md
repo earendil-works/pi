@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added extension UI chat navigation helpers `scrollToEntry()` and `scrollToBottom()` in interactive mode, enabling extensions to jump to the rendered start or end of a session entry.
+
 ## [0.67.2] - 2026-04-14
 
 ### New Features

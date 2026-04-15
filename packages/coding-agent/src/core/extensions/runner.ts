@@ -197,6 +197,8 @@ const noOpUIContext: ExtensionUIContext = {
 	setTheme: (_theme: string | Theme) => ({ success: false, error: "UI not available" }),
 	getToolsExpanded: () => false,
 	setToolsExpanded: () => {},
+	scrollToEntry: () => ({ success: false, error: "UI not available" }),
+	scrollToBottom: () => {},
 };
 
 export class ExtensionRunner {

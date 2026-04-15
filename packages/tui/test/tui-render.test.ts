@@ -507,3 +507,47 @@ describe("TUI differential rendering", () => {
 		tui.stop();
 	});
 });
+
+describe("TUI manual viewport", () => {
+	it("scrolls to a requested row aligned to the top", async () => {
+		const terminal = new VirtualTerminal(40, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 12 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+
+		tui.scrollToRow(3, { align: "start" });
+		await terminal.waitForRender();
+
+		const viewport = terminal.getViewport();
+		assert.ok(viewport[0]?.includes("Line 3"), `Expected Line 3 at top, got: ${viewport[0]}`);
+		assert.ok(viewport[4]?.includes("Line 7"), `Expected Line 7 at bottom, got: ${viewport[4]}`);
+
+		tui.stop();
+	});
+
+	it("returns to bottom-follow mode after followBottom", async () => {
+		const terminal = new VirtualTerminal(40, 5);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 12 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+
+		tui.scrollToRow(2, { align: "start" });
+		await terminal.waitForRender();
+		tui.followBottom();
+		await terminal.waitForRender();
+
+		const viewport = terminal.getViewport();
+		assert.ok(viewport[0]?.includes("Line 7"), `Expected Line 7 at top, got: ${viewport[0]}`);
+		assert.ok(viewport[4]?.includes("Line 11"), `Expected Line 11 at bottom, got: ${viewport[4]}`);
+
+		tui.stop();
+	});
+});

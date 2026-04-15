@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added manual viewport control to `TUI` via `scrollToRow()` and `followBottom()`, so interactive clients can jump to specific rendered rows without giving up the default bottom-follow behavior.
+
 ## [0.67.2] - 2026-04-14
 
 ### Added
