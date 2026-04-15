@@ -232,7 +232,7 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 				summary: options?.reasoningSummary || "auto",
 			};
 			params.include = ["reasoning.encrypted_content"];
-		} else if (model.provider !== "github-copilot") {
+		} else if (!model.id.startsWith("gpt-5-") && model.id !== "gpt-5") {
 			params.reasoning = { effort: "none" };
 		}
 	}
