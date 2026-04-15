@@ -244,6 +244,16 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 							if (currentBlock.type === "toolCall") {
 								if (toolCall.id) currentBlock.id = toolCall.id;
 								if (toolCall.function?.name) currentBlock.name = toolCall.function.name;
+								// Gemini's OpenAI-compatibility endpoint emits its opaque thought
+								// signature on each tool_call as
+								// tool_calls[].extra_content.google.thought_signature. The signature
+								// must be echoed back on the next request or Gemini 3 rejects the
+								// turn with "Function call is missing a thought_signature…".
+								const geminiSig = (toolCall as { extra_content?: { google?: { thought_signature?: unknown } } })
+									.extra_content?.google?.thought_signature;
+								if (typeof geminiSig === "string" && geminiSig.length > 0) {
+									currentBlock.thoughtSignature = geminiSig;
+								}
 								let delta = "";
 								if (toolCall.function?.arguments) {
 									delta = toolCall.function.arguments;
@@ -611,14 +621,46 @@ export function convertMessages(
 
 			const toolCalls = msg.content.filter((b) => b.type === "toolCall") as ToolCall[];
 			if (toolCalls.length > 0) {
-				assistantMsg.tool_calls = toolCalls.map((tc) => ({
-					id: tc.id,
-					type: "function" as const,
-					function: {
-						name: tc.name,
-						arguments: JSON.stringify(tc.arguments),
-					},
-				}));
+				assistantMsg.tool_calls = toolCalls.map((tc) => {
+					const out: {
+						id: string;
+						type: "function";
+						function: { name: string; arguments: string };
+						extra_content?: { google: { thought_signature: string } };
+					} = {
+						id: tc.id,
+						type: "function" as const,
+						function: {
+							name: tc.name,
+							arguments: JSON.stringify(tc.arguments),
+						},
+					};
+					// If the captured signature is a bare Gemini thought_signature (not the
+					// JSON-wrapped OpenAI reasoning.encrypted detail), round-trip it via
+					// extra_content.google.thought_signature so Gemini 3 accepts the next turn.
+					const sig = tc.thoughtSignature;
+					if (typeof sig === "string" && sig.length > 0) {
+						let looksLikeReasoningDetail = false;
+						if (sig[0] === "{" || sig[0] === "[") {
+							try {
+								const parsed = JSON.parse(sig);
+								if (
+									parsed &&
+									typeof parsed === "object" &&
+									(parsed as { type?: unknown }).type === "reasoning.encrypted"
+								) {
+									looksLikeReasoningDetail = true;
+								}
+							} catch {
+								// not JSON — treat as bare signature
+							}
+						}
+						if (!looksLikeReasoningDetail) {
+							out.extra_content = { google: { thought_signature: sig } };
+						}
+					}
+					return out;
+				});
 				const reasoningDetails = toolCalls
 					.filter((tc) => tc.thoughtSignature)
 					.map((tc) => {
