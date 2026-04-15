@@ -198,8 +198,6 @@ const noOpUIContext: ExtensionUIContext = {
 	getToolsExpanded: () => false,
 	setToolsExpanded: () => {},
 	navigateTo: () => ({ success: false, error: "UI not available" }),
-	scrollToEntry: () => ({ success: false, error: "UI not available" }),
-	scrollToBottom: () => {},
 	registerAnchor: () => () => {},
 	getViewportState: () => ({ mode: "followBottom", topRow: 0, height: 0, totalRows: 0 }),
 	captureViewport: () => ({ mode: "followBottom" }),

@@ -108,6 +108,7 @@ export type NavigationAlign = "start" | "end" | "center" | "nearest";
 export type NavigationTarget =
 	| { kind: "entry"; id: string }
 	| { kind: "anchor"; id: string }
+	| { kind: "bottom" }
 	| { kind: "row"; row: number };
 
 /** Result returned by viewport navigation attempts. */
@@ -285,12 +286,6 @@ export interface ExtensionUIContext {
 
 	/** Navigate the viewport to an entry, anchor, or absolute row. */
 	navigateTo(target: NavigationTarget, options?: { align?: NavigationAlign }): NavigationResult;
-
-	/** Scroll the chat viewport so a rendered session entry is visible. */
-	scrollToEntry(entryId: string, options?: { align?: "start" | "end" }): NavigationResult;
-
-	/** Return the chat viewport to the live bottom-following position. */
-	scrollToBottom(): void;
 
 	/** Register a reusable navigation anchor. Returns an unregister function. */
 	registerAnchor(anchor: AnchorRegistration): () => void;

@@ -95,6 +95,16 @@ export class NavigationController {
 	}
 
 	navigateTo(target: NavigationTarget, options?: { align?: NavigationAlign }): NavigationResult {
+		if (target.kind === "bottom") {
+			this.tui.followBottom();
+			const state = this.tui.getViewportState();
+			return {
+				success: true,
+				targetRow: Math.max(0, state.totalRows - 1),
+				clamped: false,
+			};
+		}
+
 		const align = options?.align ?? "start";
 		const resolved = this.resolveTarget(target);
 		if (!resolved) {
@@ -130,14 +140,6 @@ export class NavigationController {
 		};
 	}
 
-	scrollToEntry(entryId: string, options?: { align?: "start" | "end" }): NavigationResult {
-		return this.navigateTo({ kind: "entry", id: entryId }, options);
-	}
-
-	scrollToBottom(): void {
-		this.tui.followBottom();
-	}
-
 	getViewportState(): ViewportState {
 		return this.tui.getViewportState();
 	}
@@ -151,6 +153,9 @@ export class NavigationController {
 	}
 
 	private resolveTarget(target: NavigationTarget): AnchorResolver | undefined {
+		if (target.kind === "bottom") {
+			return { kind: "row", row: Math.max(0, this.tui.getViewportState().totalRows - 1) };
+		}
 		if (target.kind === "row") {
 			return { kind: "row", row: target.row };
 		}
@@ -216,6 +221,9 @@ export class NavigationController {
 		}
 		if (target.kind === "anchor") {
 			return `Anchor '${target.id}' is not currently available`;
+		}
+		if (target.kind === "bottom") {
+			return "Bottom of viewport is not currently available";
 		}
 		return `Row '${target.row}' is not currently available`;
 	}

@@ -1994,9 +1994,6 @@ if (!result.success) {
   ctx.ui.notify(result.error ?? "Failed to scroll", "error");
 }
 
-// Convenience wrapper for entry navigation
-ctx.ui.scrollToEntry(entryId, { align: "end" });
-
 // Custom reusable anchors
 const unregister = ctx.ui.registerAnchor({
   id: "my-ext:last-summary",
@@ -2006,7 +2003,7 @@ ctx.ui.navigateTo({ kind: "anchor", id: "my-ext:last-summary" }, { align: "neare
 
 // Capture + restore temporary navigation
 const snapshot = ctx.ui.captureViewport();
-ctx.ui.scrollToBottom();
+ctx.ui.navigateTo({ kind: "bottom" });
 ctx.ui.restoreViewport(snapshot);
 
 // Custom editor (vim mode, emacs mode, etc.)

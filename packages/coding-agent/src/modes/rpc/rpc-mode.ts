@@ -285,14 +285,6 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			return { success: false, error: "Scrolling is only supported in interactive mode" };
 		},
 
-		scrollToEntry() {
-			return { success: false, error: "Scrolling is only supported in interactive mode" };
-		},
-
-		scrollToBottom() {
-			// Viewport scrolling not supported in RPC mode - no TUI
-		},
-
 		registerAnchor() {
 			return () => {};
 		},

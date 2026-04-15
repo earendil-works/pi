@@ -4,7 +4,7 @@
 
 ### Added
 
-- Added persistent interactive viewport navigation APIs for extensions: `navigateTo()`, `registerAnchor()`, viewport capture/restore helpers, and `scrollToEntry()` / `scrollToBottom()` convenience methods.
+- Added persistent interactive viewport navigation APIs for extensions: `navigateTo()`, `registerAnchor()`, and viewport capture/restore helpers.
 
 ## [0.67.2] - 2026-04-14
 

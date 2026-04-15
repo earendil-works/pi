@@ -1701,8 +1701,6 @@ export class InteractiveMode {
 			getToolsExpanded: () => this.toolOutputExpanded,
 			setToolsExpanded: (expanded) => this.setToolsExpanded(expanded),
 			navigateTo: (target, options) => this.navigateTo(target, options),
-			scrollToEntry: (entryId, options) => this.scrollToEntry(entryId, options),
-			scrollToBottom: () => this.navigationController.scrollToBottom(),
 			registerAnchor: (anchor) => this.registerAnchor(anchor),
 			getViewportState: () => this.navigationController.getViewportState(),
 			captureViewport: () => this.captureViewport(),
@@ -1713,10 +1711,6 @@ export class InteractiveMode {
 	private navigateTo(target: NavigationTarget, options?: { align?: "start" | "end" | "center" | "nearest" }) {
 		this.navigationController.bindPendingEntryRanges(this.sessionManager.buildSessionContext());
 		return this.navigationController.navigateTo(target, options);
-	}
-
-	private scrollToEntry(entryId: string, options?: { align?: "start" | "end" }) {
-		return this.navigateTo({ kind: "entry", id: entryId }, options);
 	}
 
 	private registerAnchor(anchor: AnchorRegistration): () => void {
