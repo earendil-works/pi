@@ -307,6 +307,94 @@ describe("agentLoop with AgentMessage", () => {
 		}
 	});
 
+	it("should skip tool execution when tool arguments JSON is invalid", async () => {
+		const toolSchema = Type.Object({});
+		let executed = false;
+		const tool: AgentTool<typeof toolSchema, { ok: true }> = {
+			name: "noop",
+			label: "Noop",
+			description: "No-op tool",
+			parameters: toolSchema,
+			async execute() {
+				executed = true;
+				return {
+					content: [{ type: "text", text: "executed" }],
+					details: { ok: true },
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+
+		const userPrompt: AgentMessage = createUserMessage("run noop");
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let callIndex = 0;
+		const events: AgentEvent[] = [];
+		const stream = agentLoop([userPrompt], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					const message = createAssistantMessage(
+						[
+							{
+								type: "toolCall",
+								id: "tool-1",
+								name: "noop",
+								arguments: {},
+								argumentsParseError: "parse error",
+							},
+						],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		expect(executed).toBe(false);
+
+		const toolExecutionEnd = events.find(
+			(event): event is Extract<AgentEvent, { type: "tool_execution_end" }> =>
+				event.type === "tool_execution_end" && event.toolCallId === "tool-1",
+		);
+		expect(toolExecutionEnd).toBeDefined();
+		expect(toolExecutionEnd?.isError).toBe(true);
+
+		const toolResultMessage = events.find(
+			(event): event is Extract<AgentEvent, { type: "message_end" }> =>
+				event.type === "message_end" &&
+				event.message.role === "toolResult" &&
+				event.message.toolCallId === "tool-1",
+		);
+		expect(toolResultMessage).toBeDefined();
+		if (toolResultMessage && toolResultMessage.message.role === "toolResult") {
+			expect(toolResultMessage.message.isError).toBe(true);
+			expect(toolResultMessage.message.content).toEqual([
+				{
+					type: "text",
+					text: 'Invalid tool arguments JSON for "noop": parse error',
+				},
+			]);
+		}
+	});
+
 	it("should execute mutated beforeToolCall args without revalidation", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: Array<string | number> = [];

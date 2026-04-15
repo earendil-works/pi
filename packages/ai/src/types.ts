@@ -161,6 +161,12 @@ export interface ToolCall {
 	id: string;
 	name: string;
 	arguments: Record<string, any>;
+	/**
+	 * Provider-reported parse/normalization error for tool-call arguments.
+	 * When present, runtimes should treat this tool call as invalid input and
+	 * skip execution, returning an error tool result instead.
+	 */
+	argumentsParseError?: string;
 	thoughtSignature?: string; // Google-specific: opaque signature for reusing thought context
 }
 

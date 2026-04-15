@@ -476,6 +476,16 @@ async function prepareToolCall(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 ): Promise<PreparedToolCall | ImmediateToolCallOutcome> {
+	if (toolCall.argumentsParseError) {
+		return {
+			kind: "immediate",
+			result: createErrorToolResult(
+				`Invalid tool arguments JSON for "${toolCall.name}": ${toolCall.argumentsParseError}`,
+			),
+			isError: true,
+		};
+	}
+
 	const tool = currentContext.tools?.find((t) => t.name === toolCall.name);
 	if (!tool) {
 		return {
