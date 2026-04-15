@@ -45,6 +45,7 @@ export interface GoogleVertexOptions extends StreamOptions {
 }
 
 const API_VERSION = "v1";
+const GCP_VERTEX_CREDENTIALS_MARKER = "gcp-vertex-credentials";
 
 const THINKING_LEVEL_MAP: Record<GoogleThinkingLevel, ThinkingLevel> = {
 	THINKING_LEVEL_UNSPECIFIED: ThinkingLevel.THINKING_LEVEL_UNSPECIFIED,
@@ -370,7 +371,7 @@ function createClientWithApiKey(
 
 function resolveApiKey(options?: GoogleVertexOptions): string | undefined {
 	const apiKey = options?.apiKey?.trim() || process.env.GOOGLE_CLOUD_API_KEY?.trim();
-	if (!apiKey || isPlaceholderApiKey(apiKey)) {
+	if (!apiKey || apiKey === GCP_VERTEX_CREDENTIALS_MARKER || isPlaceholderApiKey(apiKey)) {
 		return undefined;
 	}
 	return apiKey;

@@ -86,6 +86,25 @@ describe("google-vertex api key resolution", () => {
 		expect(googleGenAiMock.constructorCalls[0]).not.toHaveProperty("apiKey");
 	});
 
+	it("falls back to ADC when options.apiKey is the gcp-vertex-credentials marker", async () => {
+		const stream = streamGoogleVertex(model, context, {
+			apiKey: "gcp-vertex-credentials",
+			project: "test-project",
+			location: "us-central1",
+		});
+
+		await stream.result();
+
+		expect(googleGenAiMock.constructorCalls).toHaveLength(1);
+		expect(googleGenAiMock.constructorCalls[0]).toMatchObject({
+			vertexai: true,
+			project: "test-project",
+			location: "us-central1",
+			apiVersion: "v1",
+		});
+		expect(googleGenAiMock.constructorCalls[0]).not.toHaveProperty("apiKey");
+	});
+
 	it("falls back to ADC when GOOGLE_CLOUD_API_KEY is a placeholder marker", async () => {
 		process.env.GOOGLE_CLOUD_API_KEY = "<authenticated>";
 
