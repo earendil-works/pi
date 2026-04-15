@@ -609,6 +609,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			for (const [modelId, model] of Object.entries(data["kimi-for-coding"].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
+				// Skip deprecated model slug
+				if (modelId === "k2p5") continue;
 
 				models.push({
 					id: modelId,
@@ -1475,13 +1477,13 @@ async function generateModels() {
 			maxTokens: 32768,
 		},
 		{
-			id: "k2p5",
-			name: "Kimi K2.5",
+			id: "kimi-for-coding",
+			name: "Kimi For Coding",
 			api: "anthropic-messages",
 			provider: "kimi-coding",
 			baseUrl: KIMI_CODING_BASE_URL,
 			reasoning: true,
-			input: ["text"],
+			input: ["text", "image"],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 			contextWindow: 262144,
 			maxTokens: 32768,

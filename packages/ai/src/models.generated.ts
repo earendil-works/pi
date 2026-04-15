@@ -4685,9 +4685,9 @@ export const MODELS = {
 		} satisfies Model<"openai-completions">,
 	},
 	"kimi-coding": {
-		"k2p5": {
-			id: "k2p5",
-			name: "Kimi K2.5",
+		"kimi-for-coding": {
+			id: "kimi-for-coding",
+			name: "Kimi For Coding",
 			api: "anthropic-messages",
 			provider: "kimi-coding",
 			baseUrl: "https://api.kimi.com/coding",
@@ -7744,23 +7744,6 @@ export const MODELS = {
 			contextWindow: 262144,
 			maxTokens: 32768,
 		} satisfies Model<"openai-completions">,
-		"inception/mercury": {
-			id: "inception/mercury",
-			name: "Inception: Mercury",
-			api: "openai-completions",
-			provider: "openrouter",
-			baseUrl: "https://openrouter.ai/api/v1",
-			reasoning: false,
-			input: ["text"],
-			cost: {
-				input: 0.25,
-				output: 0.75,
-				cacheRead: 0.024999999999999998,
-				cacheWrite: 0,
-			},
-			contextWindow: 128000,
-			maxTokens: 32000,
-		} satisfies Model<"openai-completions">,
 		"inception/mercury-2": {
 			id: "inception/mercury-2",
 			name: "Inception: Mercury 2",
@@ -7777,23 +7760,6 @@ export const MODELS = {
 			},
 			contextWindow: 128000,
 			maxTokens: 50000,
-		} satisfies Model<"openai-completions">,
-		"inception/mercury-coder": {
-			id: "inception/mercury-coder",
-			name: "Inception: Mercury Coder",
-			api: "openai-completions",
-			provider: "openrouter",
-			baseUrl: "https://openrouter.ai/api/v1",
-			reasoning: false,
-			input: ["text"],
-			cost: {
-				input: 0.25,
-				output: 0.75,
-				cacheRead: 0.024999999999999998,
-				cacheWrite: 0,
-			},
-			contextWindow: 128000,
-			maxTokens: 32000,
 		} satisfies Model<"openai-completions">,
 		"kwaipilot/kat-coder-pro-v2": {
 			id: "kwaipilot/kat-coder-pro-v2",
