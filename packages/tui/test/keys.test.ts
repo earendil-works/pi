@@ -4,7 +4,7 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { decodeKittyPrintable, matchesKey, parseKey, setKittyProtocolActive } from "../src/keys.js";
+import { decodeKittyPrintable, Key, matchesKey, parseKey, setKittyProtocolActive } from "../src/keys.js";
 
 function withEnv(name: string, value: string | undefined, fn: () => void): void {
 	const previous = process.env[name];
@@ -63,6 +63,21 @@ describe("matchesKey", () => {
 			// Latin ctrl+c without base layout key (terminal doesn't support flag 4)
 			const latinCtrlC = "\x1b[99;5u";
 			assert.strictEqual(matchesKey(latinCtrlC, "ctrl+c"), true);
+			setKittyProtocolActive(false);
+		});
+
+		it("should match super-modified Kitty bindings, including combined modifiers", () => {
+			setKittyProtocolActive(true);
+			assert.strictEqual(matchesKey("\x1b[107;9u", "super+k"), true);
+			assert.strictEqual(matchesKey("\x1b[13;9u", "super+enter"), true);
+			assert.strictEqual(matchesKey("\x1b[107;13u", Key.ctrlSuper("k")), true);
+			assert.strictEqual(matchesKey("\x1b[107;13u", "ctrl+super+k"), true);
+			assert.strictEqual(matchesKey("\x1b[107;14u", "ctrl+shift+super+k"), true);
+			assert.strictEqual(matchesKey("\x1b[107;13u", "super+k"), false);
+			assert.strictEqual(parseKey("\x1b[107;9u"), "super+k");
+			assert.strictEqual(parseKey("\x1b[13;9u"), "super+enter");
+			assert.strictEqual(parseKey("\x1b[107;13u"), "ctrl+super+k");
+			assert.strictEqual(parseKey("\x1b[107;14u"), "shift+ctrl+super+k");
 			setKittyProtocolActive(false);
 		});
 
@@ -238,6 +253,18 @@ describe("matchesKey", () => {
 			assert.strictEqual(matchesKey("\x1b[27;2;49~", "shift+1"), true);
 			assert.strictEqual(parseKey("\x1b[27;5;49~"), "ctrl+1");
 			assert.strictEqual(parseKey("\x1b[27;2;49~"), "shift+1");
+		});
+
+		it("should match Ctrl+Alt+letter via CSI-u when kitty inactive", () => {
+			setKittyProtocolActive(false);
+			assert.strictEqual(matchesKey("\x1b[104;7u", "ctrl+alt+h"), true);
+			assert.strictEqual(parseKey("\x1b[104;7u"), "ctrl+alt+h");
+		});
+
+		it("should match Ctrl+Alt+letter via xterm modifyOtherKeys", () => {
+			setKittyProtocolActive(false);
+			assert.strictEqual(matchesKey("\x1b[27;7;104~", "ctrl+alt+h"), true);
+			assert.strictEqual(parseKey("\x1b[27;7;104~"), "ctrl+alt+h");
 		});
 	});
 
@@ -462,7 +489,7 @@ describe("parseKey", () => {
 
 		it("should ignore Kitty CSI-u with unsupported modifiers", () => {
 			setKittyProtocolActive(true);
-			assert.strictEqual(parseKey("\x1b[99;9u"), undefined);
+			assert.strictEqual(parseKey("\x1b[99;17u"), undefined);
 			setKittyProtocolActive(false);
 		});
 	});

@@ -206,4 +206,11 @@ export class VirtualTerminal implements Terminal {
 			y: buffer.cursorY,
 		};
 	}
+
+	/** Wait for TUI's throttled render pipeline to settle. */
+	async waitForRender(): Promise<void> {
+		await new Promise<void>((resolve) => process.nextTick(resolve));
+		await new Promise<void>((resolve) => setTimeout(resolve, 20));
+		await this.flush();
+	}
 }

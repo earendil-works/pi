@@ -40,12 +40,14 @@ When reading issues:
   gh issue view <number> --json title,body,comments,labels,state
   ```
 
-## OSS Weekend
-- If the user says `enable OSS weekend mode until X`, run `node scripts/oss-weekend.mjs --mode=close --end-date=YYYY-MM-DD --git` with the requested end date
-- If the user says `end OSS weekend mode`, run `node scripts/oss-weekend.mjs --mode=open --git`
-- The script updates `README.md`, `packages/coding-agent/README.md`, and `.github/oss-weekend.json`
-- With `--git`, the script stages only those OSS weekend files, commits them, and pushes them
-- During OSS weekend, `.github/workflows/oss-weekend-issues.yml` auto-closes new issues from non-maintainers, and `.github/workflows/pr-gate.yml` auto-closes PRs from approved non-maintainers with the weekend message
+## Contribution Gate
+- New issues from new contributors are auto-closed by `.github/workflows/issue-gate.yml`
+- New PRs from new contributors without PR rights are auto-closed by `.github/workflows/pr-gate.yml`
+- Maintainer approval comments are handled by `.github/workflows/approve-contributor.yml`
+- Maintainers review auto-closed issues daily
+- Issues that do not meet the quality bar in `CONTRIBUTING.md` are not reopened and do not receive a reply
+- `lgtmi` approves future issues
+- `lgtm` approves future issues and rights to submit PRs
 
 When creating issues:
 - Add `pkg:*` labels to indicate which package(s) the issue affects

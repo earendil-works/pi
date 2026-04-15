@@ -211,6 +211,7 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 		} catch (error) {
 			for (const block of output.content) {
 				delete (block as Block).index;
+				// partialJson is only a streaming scratch buffer; never persist it.
 				delete (block as Block).partialJson;
 			}
 			output.stopReason = options.signal?.aborted ? "aborted" : "error";
@@ -413,6 +414,8 @@ function handleContentBlockStop(
 			break;
 		case "toolCall":
 			block.arguments = parseStreamingJson(block.partialJson);
+			// Finalize in-place and strip the scratch buffer so replay only
+			// carries parsed arguments.
 			delete (block as Block).partialJson;
 			stream.push({ type: "toolcall_end", contentIndex: index, toolCall: block, partial: output });
 			break;

@@ -6,10 +6,10 @@
  */
 
 import { resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual, supportsXhigh } from "@mariozechner/pi-ai";
 import { ProcessTerminal, setKeybindings, TUI } from "@mariozechner/pi-tui";
 import chalk from "chalk";
-import { createInterface } from "readline";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.js";
 import { processFileArguments } from "./cli/file-processor.js";
 import { buildInitialMessage } from "./cli/initial-message.js";
@@ -24,6 +24,7 @@ import {
 } from "./core/agent-session-services.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { exportFromFile } from "./core/export-html/index.js";
+import type { ExtensionFactory } from "./core/extensions/types.js";
 import { KeybindingsManager } from "./core/keybindings.js";
 import type { ModelRegistry } from "./core/model-registry.js";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
@@ -418,7 +419,11 @@ async function promptForMissingSessionCwd(
 	});
 }
 
-export async function main(args: string[]) {
+export interface MainOptions {
+	extensionFactories?: ExtensionFactory[];
+}
+
+export async function main(args: string[], options?: MainOptions) {
 	resetTimings();
 	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.PI_OFFLINE);
 	if (offlineMode) {
@@ -535,6 +540,7 @@ export async function main(args: string[]) {
 				noThemes: parsed.noThemes,
 				systemPrompt: parsed.systemPrompt,
 				appendSystemPrompt: parsed.appendSystemPrompt,
+				extensionFactories: options?.extensionFactories,
 			},
 		});
 		const { settingsManager, modelRegistry, resourceLoader } = services;

@@ -303,7 +303,7 @@ describe("openai-codex streaming", () => {
 		expect(result.stopReason).toBe("length");
 	});
 
-	it("sets conversation_id/session_id headers and prompt_cache_key when sessionId is provided", async () => {
+	it("sets session_id/x-client-request-id headers and prompt_cache_key when sessionId is provided", async () => {
 		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
 		process.env.PI_CODING_AGENT_DIR = tempDir;
 
@@ -364,13 +364,12 @@ describe("openai-codex streaming", () => {
 			if (url === "https://chatgpt.com/backend-api/codex/responses") {
 				const headers = init?.headers instanceof Headers ? init.headers : undefined;
 				// Verify sessionId is set in headers
-				expect(headers?.get("conversation_id")).toBe(sessionId);
 				expect(headers?.get("session_id")).toBe(sessionId);
+				expect(headers?.get("x-client-request-id")).toBe(sessionId);
 
 				// Verify sessionId is set in request body as prompt_cache_key
 				const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
 				expect(body?.prompt_cache_key).toBe(sessionId);
-				expect(body?.prompt_cache_retention).toBe("in-memory");
 
 				return new Response(stream, {
 					status: 200,
@@ -500,7 +499,7 @@ describe("openai-codex streaming", () => {
 		await streamResult.result();
 	});
 
-	it("does not set conversation_id/session_id headers when sessionId is not provided", async () => {
+	it("does not set session_id/x-client-request-id headers when sessionId is not provided", async () => {
 		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
 		process.env.PI_CODING_AGENT_DIR = tempDir;
 
@@ -560,8 +559,8 @@ describe("openai-codex streaming", () => {
 			if (url === "https://chatgpt.com/backend-api/codex/responses") {
 				const headers = init?.headers instanceof Headers ? init.headers : undefined;
 				// Verify headers are not set when sessionId is not provided
-				expect(headers?.has("conversation_id")).toBe(false);
 				expect(headers?.has("session_id")).toBe(false);
+				expect(headers?.has("x-client-request-id")).toBe(false);
 
 				return new Response(stream, {
 					status: 200,

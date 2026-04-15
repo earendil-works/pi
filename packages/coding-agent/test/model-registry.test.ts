@@ -192,6 +192,49 @@ describe("ModelRegistry", () => {
 	});
 
 	describe("custom models merge behavior", () => {
+		test("built-in provider custom models inherit api and baseUrl without explicit fields", () => {
+			// Built-in providers already have api/baseUrl on every model, and auth
+			// comes from env vars / auth storage. No need to specify them.
+			writeRawModelsJson({
+				openrouter: {
+					models: [
+						{
+							id: "fake-provider/fake-model",
+							name: "Fake model",
+							reasoning: true,
+							input: ["text"],
+						},
+					],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			expect(registry.getError()).toBeUndefined();
+
+			const model = registry.find("openrouter", "fake-provider/fake-model");
+			expect(model).toBeDefined();
+			expect(model?.api).toBe("openai-completions");
+			expect(model?.baseUrl).toBe("https://openrouter.ai/api/v1");
+		});
+
+		test("non-built-in provider custom models still require baseUrl and apiKey", () => {
+			writeRawModelsJson({
+				"my-custom-provider": {
+					models: [
+						{
+							id: "my-model",
+							api: "openai-completions",
+							reasoning: false,
+							input: ["text"],
+						},
+					],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			expect(registry.getError()).toContain("baseUrl");
+		});
+
 		test("custom provider with same name as built-in merges with built-in models", () => {
 			writeModelsJson({
 				anthropic: providerConfig("https://my-proxy.example.com/v1", [{ id: "claude-custom" }]),

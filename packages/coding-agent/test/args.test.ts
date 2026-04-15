@@ -92,7 +92,12 @@ describe("parseArgs", () => {
 
 		test("parses --append-system-prompt", () => {
 			const result = parseArgs(["--append-system-prompt", "Additional context"]);
-			expect(result.appendSystemPrompt).toBe("Additional context");
+			expect(result.appendSystemPrompt).toEqual(["Additional context"]);
+		});
+
+		test("parses multiple --append-system-prompt flags", () => {
+			const result = parseArgs(["--append-system-prompt", "Context A", "--append-system-prompt", "Context B"]);
+			expect(result.appendSystemPrompt).toEqual(["Context A", "Context B"]);
 		});
 
 		test("parses --mode", () => {

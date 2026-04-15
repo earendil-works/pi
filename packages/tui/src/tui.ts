@@ -5,6 +5,7 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.js";
 import type { Terminal } from "./terminal.js";
 import { getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.js";
@@ -201,7 +202,10 @@ export class Container implements Component {
 	render(width: number): string[] {
 		const lines: string[] = [];
 		for (const child of this.children) {
-			lines.push(...child.render(width));
+			const childLines = child.render(width);
+			for (const line of childLines) {
+				lines.push(line);
+			}
 		}
 		return lines;
 	}
@@ -221,6 +225,9 @@ export class TUI extends Container {
 	/** Global callback for debug key (Shift+Ctrl+D). Called before input is forwarded to focused component. */
 	public onDebug?: () => void;
 	private renderRequested = false;
+	private renderTimer: NodeJS.Timeout | undefined;
+	private lastRenderAt = 0;
+	private static readonly MIN_RENDER_INTERVAL_MS = 16;
 	private cursorRow = 0; // Logical cursor row (end of rendered content)
 	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
 	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
@@ -442,6 +449,10 @@ export class TUI extends Container {
 
 	stop(): void {
 		this.stopped = true;
+		if (this.renderTimer) {
+			clearTimeout(this.renderTimer);
+			this.renderTimer = undefined;
+		}
 		// Move cursor to the end of the content to prevent overwriting/artifacts on exit
 		if (this.previousLines.length > 0) {
 			const targetRow = this.previousLines.length; // Line after the last content
@@ -467,13 +478,44 @@ export class TUI extends Container {
 			this.hardwareCursorRow = 0;
 			this.maxLinesRendered = 0;
 			this.previousViewportTop = 0;
+			if (this.renderTimer) {
+				clearTimeout(this.renderTimer);
+				this.renderTimer = undefined;
+			}
+			this.renderRequested = true;
+			process.nextTick(() => {
+				if (this.stopped || !this.renderRequested) {
+					return;
+				}
+				this.renderRequested = false;
+				this.lastRenderAt = performance.now();
+				this.doRender();
+			});
+			return;
 		}
 		if (this.renderRequested) return;
 		this.renderRequested = true;
-		process.nextTick(() => {
+		process.nextTick(() => this.scheduleRender());
+	}
+
+	private scheduleRender(): void {
+		if (this.stopped || this.renderTimer || !this.renderRequested) {
+			return;
+		}
+		const elapsed = performance.now() - this.lastRenderAt;
+		const delay = Math.max(0, TUI.MIN_RENDER_INTERVAL_MS - elapsed);
+		this.renderTimer = setTimeout(() => {
+			this.renderTimer = undefined;
+			if (this.stopped || !this.renderRequested) {
+				return;
+			}
 			this.renderRequested = false;
+			this.lastRenderAt = performance.now();
 			this.doRender();
-		});
+			if (this.renderRequested) {
+				this.scheduleRender();
+			}
+		}, delay);
 	}
 
 	private handleInput(data: string): void {

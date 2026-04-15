@@ -60,6 +60,9 @@ export class MessageEditor extends LitElement {
 	};
 
 	private handleKeyDown = (e: KeyboardEvent) => {
+		// Ignore key events during IME composition (e.g. CJK input)
+		if (e.isComposing || e.key === "Process") return;
+
 		if (e.key === "Enter" && !e.shiftKey) {
 			e.preventDefault();
 			if (!this.isStreaming && !this.processingFiles && (this.value.trim() || this.attachments.length > 0)) {

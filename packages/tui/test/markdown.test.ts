@@ -592,7 +592,7 @@ describe("Markdown component", () => {
 			const component = new MarkdownWithInput(markdown);
 			tui.addChild(component);
 			tui.start();
-			await terminal.flush();
+			await terminal.waitForRender();
 
 			assert.ok(component.markdownLineCount > 0);
 			const inputRow = component.markdownLineCount;
@@ -1032,7 +1032,7 @@ bar`,
 			const tui = new TUI(terminal);
 			tui.addChild(markdown);
 			tui.start();
-			await terminal.flush();
+			await terminal.waitForRender();
 
 			const renderedLine = markdown.render(80)[0];
 			assert.ok(renderedLine, "Should render heading line");

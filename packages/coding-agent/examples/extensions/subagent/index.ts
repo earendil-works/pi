@@ -219,7 +219,8 @@ async function writePromptToTempFile(agentName: string, prompt: string): Promise
 
 function getPiInvocation(args: string[]): { command: string; args: string[] } {
 	const currentScript = process.argv[1];
-	if (currentScript && fs.existsSync(currentScript)) {
+	const isBunVirtualScript = currentScript?.startsWith("/$bunfs/root/");
+	if (currentScript && !isBunVirtualScript && fs.existsSync(currentScript)) {
 		return { command: process.execPath, args: [currentScript, ...args] };
 	}
 

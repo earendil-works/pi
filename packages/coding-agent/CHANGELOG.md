@@ -2,11 +2,118 @@
 
 ## [Unreleased]
 
+## [0.67.2] - 2026-04-14
+
+### New Features
+
+- Support for multiple `--append-system-prompt` flags, each value is appended to the system prompt separated by double newlines. See [README.md#other-options](README.md#other-options).
+- Support for passing inline extension factories to `main()` for embedded integrations and custom entrypoints.
+- Interactive keybinding support for Kitty `super`-modified shortcuts such as `super+k`, `super+enter`, and `ctrl+super+k`. See [docs/keybindings.md](docs/keybindings.md).
+
+### Added
+
+- Added support for multiple `--append-system-prompt` flags, each value is appended to the system prompt separated by double newlines ([#3171](https://github.com/badlogic/pi-mono/pull/3171) by [@aliou](https://github.com/aliou))
+- Added interactive keybinding support for Kitty `super`-modified shortcuts such as `super+k`, `super+enter`, and `ctrl+super+k` ([#3111](https://github.com/badlogic/pi-mono/pull/3111) by [@sudosubin](https://github.com/sudosubin))
+- Added support for passing inline extension factories to `main()` for embedded integrations and custom entrypoints ([#3099](https://github.com/badlogic/pi-mono/pull/3099) by [@pmateusz](https://github.com/pmateusz))
+
+### Fixed
+
+- Fixed direct OpenAI Responses and Codex SSE requests to align `prompt_cache_key`, `session_id`, and `x-client-request-id` values with the same session-derived identifier, improving prompt cache affinity for append-only sessions ([#3018](https://github.com/badlogic/pi-mono/pull/3018) by [@steipete](https://github.com/steipete))
+- Fixed streaming-only `partialJson` scratch buffers leaking into persisted OpenAI Responses tool calls, which could corrupt follow-up payloads on resumed conversations.
+- Fixed Ctrl+Alt letter key matching in tmux by falling through from legacy ESC-prefixed handling to CSI-u and xterm `modifyOtherKeys` parsing when the legacy form does not match ([#2989](https://github.com/badlogic/pi-mono/pull/2989) by [@kaofelix](https://github.com/kaofelix))
+- Fixed the shipped `subagent` example to avoid leaking Bun virtual filesystem script paths into subagent prompts ([#3002](https://github.com/badlogic/pi-mono/pull/3002) by [@nathyong](https://github.com/nathyong))
+- Fixed bordered loaders to stop their animation timer when disposed, preventing stale loader updates after teardown.
+
+## [0.67.1] - 2026-04-13
+
+### Telemetry
+
+Interactive mode now sends a lightweight anonymous install/update telemetry ping to `https://pi.dev/install?version=x.y.z` after it writes `lastChangelogVersion` in `settings.json`.
+
+Why this exists:
+- Pi needs a reliable per-version usage signal to understand whether releases are being adopted and to help justify funding continued development.
+- npm download counts are not a reliable proxy for actual Pi usage.
+
+How it works:
+- It only runs in interactive mode.
+- It does not run in RPC mode, print mode, JSON mode, or SDK mode.
+- On a fresh interactive install, Pi writes `lastChangelogVersion`, then sends the ping.
+- On later interactive startups, if the local changelog contains entries newer than the previously stored `lastChangelogVersion`, Pi writes the new `lastChangelogVersion`, then sends the ping.
+- The request is fire-and-forget. Startup does not wait for it, and any errors are ignored.
+
+What data is collected:
+- Only the Pi version in the request path, for example `https://pi.dev/install?version=0.67.1`.
+- The server stores only aggregate per-version counters such as `{ "0.67.1": 3 }`.
+- It does not store IP addresses, client identifiers, prompts, paths, models, auth state, or any other per-user data. It literally only increments a counter for that version.
+
+How to disable it:
+- `/settings` → disable `Install telemetry`
+- `settings.json` → set `enableInstallTelemetry` to `false`
+- `PI_OFFLINE=1`
+- `PI_TELEMETRY=0`
+
+### New Features
+
+- Full `openRouterRouting` support in `models.json`, including fallbacks, parameter requirements, data collection, ZDR, ignore lists, quantizations, provider sorting, max price, and preferred throughput and latency constraints. See [docs/models.md](docs/models.md).
+- `PI_CODING_AGENT=true` environment variable set at startup so subprocesses can detect they are running inside the coding agent.
+- Updated `antigravity-image-gen.ts` example extension to use User-Agent version `1.21.9` ([#2901](https://github.com/badlogic/pi-mono/pull/2901) by [@aadishv](https://github.com/aadishv))
+- Fixed `--list-models` silently swallowing `models.json` load errors; errors are now printed to stderr ([#3072](https://github.com/badlogic/pi-mono/issues/3072))
+- Fixed custom models for built-in providers (e.g. `openrouter`) being silently dropped from `--list-models` by inheriting `api`/`baseUrl` from built-in model definitions and no longer requiring `apiKey` for providers with existing auth ([#2921](https://github.com/badlogic/pi-mono/issues/2921) and [#3072](https://github.com/badlogic/pi-mono/issues/3072))
+### Added
+
+- Added full `openRouterRouting` field support in `models.json`, including fallbacks, parameter requirements, data collection, ZDR, ignore lists, quantizations, provider sorting, max price, and preferred throughput and latency constraints ([#2904](https://github.com/badlogic/pi-mono/pull/2904) by [@zmberber](https://github.com/zmberber))
+- Set `PI_CODING_AGENT=true` environment variable at startup so sub-processes can detect they are running inside the coding agent ([#2868](https://github.com/badlogic/pi-mono/issues/2868))
+
+### Fixed
+
+- Fixed interactive changelog rendering for the telemetry notes by moving the section under a `### Telemetry` heading, so startup shows the full release notes instead of only the version header.
+- Updated `antigravity-image-gen.ts` example extension to use User-Agent version `1.21.9` ([#2901](https://github.com/badlogic/pi-mono/pull/2901) by [@aadishv](https://github.com/aadishv))
+- Bumped default Antigravity User-Agent version to `1.21.9` ([#2901](https://github.com/badlogic/pi-mono/pull/2901) by [@aadishv](https://github.com/aadishv))
+- Fixed Gemma 4 thinking level mapping to route between `MINIMAL` and `HIGH`, and map Pi reasoning levels to the model's supported thinking levels ([#2903](https://github.com/badlogic/pi-mono/pull/2903) by [@aadishv](https://github.com/aadishv))
+- Fixed Gemini 2.5 Flash Lite minimal thinking budget to use the model's supported 512-token minimum instead of the regular Flash 128-token minimum, avoiding invalid thinking budget errors ([#2861](https://github.com/badlogic/pi-mono/pull/2861) by [@JasonOA888](https://github.com/JasonOA888))
+- Fixed OpenAI Codex Responses requests to forward configured `serviceTier` values, restoring service-tier selection for Codex sessions ([#2996](https://github.com/badlogic/pi-mono/pull/2996) by [@markusylisiurunen](https://github.com/markusylisiurunen))
+- Fixed newly generated session IDs to use UUIDv7, improving time locality for session-based request routing ([#3018](https://github.com/badlogic/pi-mono/pull/3018) by [@steipete](https://github.com/steipete))
+- Fixed `Container.render()` stack overflow on long sessions by replacing `Array.push(...spread)` with a loop-based push, preventing `RangeError: Maximum call stack size exceeded` when child output exceeds the V8 call stack argument limit ([#2651](https://github.com/badlogic/pi-mono/issues/2651))
+- Fixed editor sticky-column tracking around paste markers so vertical cursor navigation restores the column from before the cursor entered a paste marker instead of jumping inside or past pasted content ([#3092](https://github.com/badlogic/pi-mono/pull/3092) by [@Perlence](https://github.com/Perlence))
+- Fixed queued messages typed during `/tree` branch summarization to flush automatically after navigation completes, so they no longer remain stuck in the steering queue ([#3091](https://github.com/badlogic/pi-mono/pull/3091) by [@Perlence](https://github.com/Perlence))
+- Fixed npm package update check to work with packages on non-default registries by using `npm view` instead of hardcoded `registry.npmjs.org` fetch ([#3164](https://github.com/badlogic/pi-mono/pull/3164) by [@aliou](https://github.com/aliou))
+
+## [0.67.0] - 2026-04-13
+
+See [0.67.1]. Version 0.67.0 shipped with a changelog formatting error that caused interactive startup to show only the version header instead of the full release notes.
+
+## [0.66.1] - 2026-04-08
+
+### Changed
+
+- Changed the Earendil announcement from an automatic startup notice to the hidden `/dementedelves` slash command.
+
+## [0.66.0] - 2026-04-08
+
+### New Features
+
+- Earendil startup announcement with bundled inline image rendering and a linked blog post for April 8 and 9, 2026.
+- Interactive Anthropic subscription auth warning when Anthropic subscription auth is active, clarifying that Anthropic third-party usage draws from extra usage and is billed per token.
+
+### Fixed
+
+- Fixed bare `readline` import to use `node:readline` prefix for Deno compatibility ([#2885](https://github.com/badlogic/pi-mono/issues/2885) by [@milosv-vtool](https://github.com/milosv-vtool))
+- Fixed auto-retry to treat stream failures like `request ended without sending any chunks` as transient errors ([#2892](https://github.com/badlogic/pi-mono/issues/2892))
+- Fixed interactive startup notices to render after the initial resource listing, and added a bundled Earendil startup announcement with inline image rendering for April 8 and 9, 2026. Moved the blog link above the image to avoid overlap with terminal image rendering.
+- Fixed interactive mode to warn when Anthropic subscription auth is active, so users know Anthropic third-party usage draws from extra usage and is billed per token.
+
+## [0.65.2] - 2026-04-06
+
+## [0.65.1] - 2026-04-05
+
 ### Fixed
 
 - Fixed bash output truncation by line count to always persist full output to a temp file, preventing data loss when output exceeds 2000 lines but stays under the byte threshold ([#2852](https://github.com/badlogic/pi-mono/issues/2852))
 - RpcClient now forwards subprocess stderr to parent process in real-time ([#2805](https://github.com/badlogic/pi-mono/issues/2805))
 - Theme file watcher now handles async `fs.watch` error events instead of crashing the process ([#2791](https://github.com/badlogic/pi-mono/issues/2791))
+- Fixed stored session cwd handling so resuming or importing a session whose original working directory no longer exists now prompts interactive users to continue in the current cwd, while non-interactive modes fail with a clear error.
+- Fixed resource collision precedence so project and user skills, prompt templates, and themes override package resources consistently, and CLI-provided paths take precedence over discovered resources ([#2781](https://github.com/badlogic/pi-mono/issues/2781))
+- Fixed OpenAI-compatible completions streaming usage accounting to preserve `prompt_tokens_details.cache_write_tokens` and normalize OpenRouter `cached_tokens`, preventing incorrect cache read/write token and cost reporting in pi ([#2802](https://github.com/badlogic/pi-mono/issues/2802))
 - Fixed CLI extension paths like `git:gist.github.com/...` being incorrectly resolved against cwd instead of being passed through to the package manager ([#2845](https://github.com/badlogic/pi-mono/pull/2845) by [@aliou](https://github.com/aliou))
 - Fixed piped stdin runs with `--mode json` to preserve JSONL output instead of falling back to plain text ([#2848](https://github.com/badlogic/pi-mono/pull/2848) by [@aliou](https://github.com/aliou))
 - Fixed interactive command docs to stop listing removed `/exit` as a supported quit command ([#2850](https://github.com/badlogic/pi-mono/issues/2850))

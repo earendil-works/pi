@@ -1,42 +1,69 @@
 # Contributing to pi
 
-Thanks for wanting to contribute! This guide exists to save both of us time.
+This guide exists to save both sides time.
 
 ## The One Rule
 
-**You must understand your code.** If you can't explain what your changes do and how they interact with the rest of the system, your PR will be closed.
+**You must understand your code.** If you cannot explain what your changes do and how they interact with the rest of the system, your PR will be closed.
 
-Using AI to write code is fine. You can gain understanding by interrogating an agent with access to the codebase until you grasp all edge cases and effects of your changes. What's not fine is submitting agent-generated slop without that understanding.
+Using AI to write code is fine. Submitting AI-generated slop without understanding it is not.
 
 If you use an agent, run it from the `pi-mono` root directory so it picks up `AGENTS.md` automatically. Your agent must follow the rules and guidelines in that file.
 
-## First-Time Contributors
+## Contribution Gate
 
-We use an approval gate for new contributors:
+All issues and PRs from new contributors are auto-closed by default.
 
-1. Open an issue describing what you want to change and why
-2. Keep it concise (if it doesn't fit on one screen, it's too long)
-3. Write in your own voice, at least for the intro
-4. A maintainer will comment `lgtm` if approved
-5. Once approved, you can submit PRs
+Maintainers review auto-closed issues daily and reopen worthwhile ones. Issues that do not meet the quality bar below will not be reopened or receive a reply.
 
-This exists because AI makes it trivial to generate plausible-looking but low-quality contributions. The issue step lets us filter early.
+Approval happens through maintainer replies on issues:
+
+- `lgtmi`: your future issues will not be auto-closed
+- `lgtm`: your future issues and PRs will not be auto-closed
+
+`lgtmi` does not grant rights to submit PRs. Only `lgtm` grants rights to submit PRs.
+
+## Quality Bar For Issues
+
+If you open an issue, you must use one of the two GitHub issue templates.
+
+If you open an issue, keep it short, concrete, and worth reading.
+
+- Keep it concise. If it does not fit on one screen, it is too long.
+- Write in your own voice.
+- State the bug or request clearly.
+- Explain why it matters.
+- If you want to implement the change yourself, say so.
+
+If the issue is real and written well, a maintainer may reopen it, reply `lgtmi`, or reply `lgtm`.
+
+## Blocking
+
+If you ignore this document twice, or if you spam the tracker with agent-generated issues, your GitHub account will be permanently blocked.
+
+If you send a large volume of issues through automation, your GitHub account will be permanently blocked. No taksies backsies.
 
 ## Before Submitting a PR
 
+Do not open a PR unless you have already been approved with `lgtm`.
+
+Before submitting a PR:
+
 ```bash
-npm run check  # must pass with no errors
-./test.sh      # must pass
+npm run check
+./test.sh
 ```
+
+Both must pass.
 
 Do not edit `CHANGELOG.md`. Changelog entries are added by maintainers.
 
-If you're adding a new provider to `packages/ai`, see `AGENTS.md` for required tests.
+If you are adding a new provider to `packages/ai`, see `AGENTS.md` for required tests.
 
 ## Philosophy
 
-pi's core is minimal. If your feature doesn't belong in the core, it should be an extension. PRs that bloat the core will likely be rejected.
+pi's core is minimal. If your feature does not belong in the core, it should be an extension. PRs that bloat the core will likely be rejected.
 
 ## Questions?
 
-Open an issue or ask on [Discord](https://discord.com/invite/nKXTsAcmbT).
+Ask on [Discord](https://discord.com/invite/nKXTsAcmbT).

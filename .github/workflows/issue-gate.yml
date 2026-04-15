@@ -1,20 +1,22 @@
-name: OSS Weekend Issues
+name: Issue Gate
 
 on:
   issues:
     types: [opened]
 
 jobs:
-  close-issues-during-weekend:
+  check-contributor:
     runs-on: ubuntu-latest
     permissions:
       contents: read
       issues: write
     steps:
-      - name: Close new issues during OSS weekend
+      - name: Check issue author
         uses: actions/github-script@v7
         with:
           script: |
+            const APPROVED_FILE = '.github/APPROVED_CONTRIBUTORS';
+            const VALID_CAPABILITIES = new Set(['issue', 'pr']);
             const issueAuthor = context.payload.issue.user.login;
             const defaultBranch = context.payload.repository.default_branch;
 
@@ -51,50 +53,55 @@ jobs:
               return Buffer.from(fileContent.content, 'base64').toString('utf8');
             }
 
+            function parseApprovedUsers(content) {
+              const users = new Map();
+
+              for (const rawLine of content.split('\n')) {
+                const line = rawLine.trim();
+                if (!line || line.startsWith('#')) continue;
+
+                const parts = line.split(/\s+/);
+                if (parts.length !== 2) {
+                  console.log(`Skipping malformed line: ${rawLine}`);
+                  continue;
+                }
+
+                const [username, capability] = parts;
+                const normalizedCapability = capability.toLowerCase();
+                if (!VALID_CAPABILITIES.has(normalizedCapability)) {
+                  console.log(`Skipping line with invalid capability: ${rawLine}`);
+                  continue;
+                }
+
+                users.set(username.toLowerCase(), normalizedCapability);
+              }
+
+              return users;
+            }
+
             const permission = await getPermission(issueAuthor);
             if (['admin', 'maintain', 'write'].includes(permission)) {
               console.log(`${issueAuthor} is a collaborator with ${permission} access`);
               return;
             }
 
-            const approvedContent = await getTextFile('.github/APPROVED_CONTRIBUTORS');
-            const approvedList = approvedContent
-              .split('\n')
-              .map(line => line.trim().toLowerCase())
-              .filter(line => line && !line.startsWith('#'));
-            const isApprovedContributor = approvedList.includes(issueAuthor.toLowerCase());
+            const approvedContent = await getTextFile(APPROVED_FILE);
+            const approvedUsers = parseApprovedUsers(approvedContent);
+            const capability = approvedUsers.get(issueAuthor.toLowerCase());
 
-            let weekendState;
-            try {
-              weekendState = JSON.parse(await getTextFile('.github/oss-weekend.json'));
-            } catch (error) {
-              if (error && typeof error === 'object' && 'status' in error && error.status === 404) {
-                console.log('OSS weekend is not active');
-                return;
-              }
-              throw error;
-            }
-
-            if (!weekendState?.active) {
-              console.log('OSS weekend is not active');
+            if (capability === 'issue' || capability === 'pr') {
+              console.log(`${issueAuthor} is approved for ${capability}`);
               return;
             }
 
-            if (isApprovedContributor) {
-              console.log(`${issueAuthor} is in the approved contributors list`);
-              return;
-            }
-
-            const reopenDate = weekendState.reopensOnText || weekendState.reopensOn || 'after the weekend';
-            const discordUrl = weekendState.discordUrl || 'https://discord.com/invite/3cU7Bz4UPx';
-            const reason = typeof weekendState.reason === 'string' && weekendState.reason.trim() ? weekendState.reason.trim() : null;
             const message = [
-              `Hi @${issueAuthor}, thanks for opening an issue.`,
+              'This issue was auto-closed. All issues from new contributors are auto-closed by default.',
               '',
-              `OSS weekend is active until ${reopenDate}, so new issues from unapproved contributors are being auto-closed for now.`,
-              ...(reason ? ['', `Current focus: ${reason}`] : []),
+              `Maintainers review auto-closed issues daily and reopen worthwhile ones. Issues that do not meet the quality bar in [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md) will not be reopened or receive a reply.`,
               '',
-              `Please reopen or submit this issue again after ${reopenDate}. For support, join [Discord](${discordUrl}).`,
+              'If a maintainer replies `lgtmi` on one of your issues, your future issues will stay open. If a maintainer replies `lgtm`, your future issues and PRs will stay open.',
+              '',
+              `See [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md).`,
             ].join('\n');
 
             await github.rest.issues.createComment({

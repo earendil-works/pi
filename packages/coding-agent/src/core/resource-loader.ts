@@ -127,7 +127,7 @@ export interface DefaultResourceLoaderOptions {
 	noPromptTemplates?: boolean;
 	noThemes?: boolean;
 	systemPrompt?: string;
-	appendSystemPrompt?: string;
+	appendSystemPrompt?: string[];
 	extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
 	skillsOverride?: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
 		skills: Skill[];
@@ -164,7 +164,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private noPromptTemplates: boolean;
 	private noThemes: boolean;
 	private systemPromptSource?: string;
-	private appendSystemPromptSource?: string;
+	private appendSystemPromptSource?: string[];
 	private extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
 	private skillsOverride?: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
 		skills: Skill[];
@@ -458,9 +458,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 		);
 		this.systemPrompt = this.systemPromptOverride ? this.systemPromptOverride(baseSystemPrompt) : baseSystemPrompt;
 
-		const appendSource = this.appendSystemPromptSource ?? this.discoverAppendSystemPromptFile();
-		const resolvedAppend = resolvePromptInput(appendSource, "append system prompt");
-		const baseAppend = resolvedAppend ? [resolvedAppend] : [];
+		const appendSources =
+			this.appendSystemPromptSource ??
+			(this.discoverAppendSystemPromptFile() ? [this.discoverAppendSystemPromptFile()!] : []);
+		const baseAppend = appendSources
+			.map((s) => resolvePromptInput(s, "append system prompt"))
+			.filter((s): s is string => s !== undefined);
 		this.appendSystemPrompt = this.appendSystemPromptOverride
 			? this.appendSystemPromptOverride(baseAppend)
 			: baseAppend;
