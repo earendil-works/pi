@@ -153,7 +153,7 @@ export type {
 } from "./core/package-manager.js";
 export { DefaultPackageManager } from "./core/package-manager.js";
 export type { ResourceCollision, ResourceDiagnostic, ResourceLoader } from "./core/resource-loader.js";
-export { DefaultResourceLoader } from "./core/resource-loader.js";
+export { DefaultResourceLoader, loadProjectContextFiles } from "./core/resource-loader.js";
 // SDK for programmatic usage
 export {
 	AgentSessionRuntime,

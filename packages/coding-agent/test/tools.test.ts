@@ -557,6 +557,15 @@ describe("Coding Agent Tools", () => {
 			expect(output).toContain("kept.txt");
 			expect(output).not.toContain("ignored.txt");
 		});
+
+		it("should surface fd glob parse errors", async () => {
+			await expect(
+				findTool.execute("test-call-15", {
+					pattern: "[",
+					path: testDir,
+				}),
+			).rejects.toThrow(/error parsing glob|fd exited with code 1|fd error/i);
+		});
 	});
 
 	describe("ls tool", () => {

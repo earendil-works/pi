@@ -231,6 +231,18 @@ describe("parseArgs", () => {
 		});
 	});
 
+	describe("--no-context-files flag", () => {
+		test("parses --no-context-files flag", () => {
+			const result = parseArgs(["--no-context-files"]);
+			expect(result.noContextFiles).toBe(true);
+		});
+
+		test("parses -nc shorthand", () => {
+			const result = parseArgs(["-nc"]);
+			expect(result.noContextFiles).toBe(true);
+		});
+	});
+
 	describe("--verbose flag", () => {
 		test("parses --verbose flag", () => {
 			const result = parseArgs(["--verbose"]);

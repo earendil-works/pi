@@ -21,6 +21,7 @@ import type {
 	ToolCall,
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
+import { headersToRecord } from "../utils/headers.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import {
 	convertMessages,
@@ -408,6 +409,10 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli", GoogleGe
 						body: requestBodyJson,
 						signal: options?.signal,
 					});
+					await options?.onResponse?.(
+						{ status: response.status, headers: headersToRecord(response.headers) },
+						model,
+					);
 
 					if (response.ok) {
 						break; // Success, exit retry loop
@@ -757,6 +762,10 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli", GoogleGe
 						body: requestBodyJson,
 						signal: options?.signal,
 					});
+					await options?.onResponse?.(
+						{ status: currentResponse.status, headers: headersToRecord(currentResponse.headers) },
+						model,
+					);
 
 					if (!currentResponse.ok) {
 						const retryErrorText = await currentResponse.text();

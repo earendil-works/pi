@@ -379,6 +379,8 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	promptGuidelines?: string[];
 	/** Parameter schema (TypeBox) */
 	parameters: TParams;
+	/** Controls whether ToolExecutionComponent renders the standard colored shell or the tool renders its own framing. */
+	renderShell?: "default" | "self";
 
 	/** Optional compatibility shim to prepare raw tool call arguments before schema validation. Must return an object conforming to TParams. */
 	prepareArguments?: (args: unknown) => Static<TParams>;
@@ -539,6 +541,13 @@ export interface ContextEvent {
 export interface BeforeProviderRequestEvent {
 	type: "before_provider_request";
 	payload: unknown;
+}
+
+/** Fired after a provider response is received and before the response stream is consumed. */
+export interface AfterProviderResponseEvent {
+	type: "after_provider_response";
+	status: number;
+	headers: Record<string, string>;
 }
 
 /** Fired after user submits prompt but before agent loop. */
@@ -861,6 +870,7 @@ export type ExtensionEvent =
 	| SessionEvent
 	| ContextEvent
 	| BeforeProviderRequestEvent
+	| AfterProviderResponseEvent
 	| BeforeAgentStartEvent
 	| AgentStartEvent
 	| AgentEndEvent
@@ -1008,6 +1018,7 @@ export interface ExtensionAPI {
 		event: "before_provider_request",
 		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
 	): void;
+	on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): void;
 	on(event: "before_agent_start", handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>): void;
 	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
 	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;

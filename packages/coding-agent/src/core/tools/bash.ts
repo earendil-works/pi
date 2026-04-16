@@ -10,7 +10,13 @@ import { keyHint } from "../../modes/interactive/components/keybinding-hints.js"
 import { truncateToVisualLines } from "../../modes/interactive/components/visual-truncate.js";
 import { theme } from "../../modes/interactive/theme/theme.js";
 import { waitForChildProcess } from "../../utils/child-process.js";
-import { getShellConfig, getShellEnv, killProcessTree } from "../../utils/shell.js";
+import {
+	getShellConfig,
+	getShellEnv,
+	killProcessTree,
+	trackDetachedChildPid,
+	untrackDetachedChildPid,
+} from "../../utils/shell.js";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.js";
 import { getTextOutput, invalidArgText, str } from "./render-utils.js";
 import { wrapToolDefinition } from "./tool-definition-wrapper.js";
@@ -81,6 +87,7 @@ export function createLocalBashOperations(): BashOperations {
 					env: env ?? getShellEnv(),
 					stdio: ["ignore", "pipe", "pipe"],
 				});
+				if (child.pid) trackDetachedChildPid(child.pid);
 				let timedOut = false;
 				let timeoutHandle: NodeJS.Timeout | undefined;
 				// Set timeout if provided.
@@ -105,6 +112,7 @@ export function createLocalBashOperations(): BashOperations {
 				// on inherited stdio handles held by detached descendants.
 				waitForChildProcess(child)
 					.then((code) => {
+						if (child.pid) untrackDetachedChildPid(child.pid);
 						if (timeoutHandle) clearTimeout(timeoutHandle);
 						if (signal) signal.removeEventListener("abort", onAbort);
 						if (signal?.aborted) {
@@ -118,6 +126,7 @@ export function createLocalBashOperations(): BashOperations {
 						resolve({ exitCode: code });
 					})
 					.catch((err) => {
+						if (child.pid) untrackDetachedChildPid(child.pid);
 						if (timeoutHandle) clearTimeout(timeoutHandle);
 						if (signal) signal.removeEventListener("abort", onAbort);
 						reject(err);

@@ -57,6 +57,11 @@ export type CacheRetention = "none" | "short" | "long";
 
 export type Transport = "sse" | "websocket" | "auto";
 
+export interface ProviderResponse {
+	status: number;
+	headers: Record<string, string>;
+}
+
 export interface StreamOptions {
 	temperature?: number;
 	maxTokens?: number;
@@ -83,6 +88,11 @@ export interface StreamOptions {
 	 * Return undefined to keep the payload unchanged.
 	 */
 	onPayload?: (payload: unknown, model: Model<Api>) => unknown | undefined | Promise<unknown | undefined>;
+	/**
+	 * Optional callback invoked after an HTTP response is received and before
+	 * its body stream is consumed.
+	 */
+	onResponse?: (response: ProviderResponse, model: Model<Api>) => void | Promise<void>;
 	/**
 	 * Optional custom HTTP headers to include in API requests.
 	 * Merged with provider defaults; can override default headers.

@@ -9,6 +9,7 @@
 import type { AssistantMessage, ImageContent } from "@mariozechner/pi-ai";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.js";
 import { flushRawStdout, writeRawStdout } from "../core/output-guard.js";
+import { killTrackedDetachedChildren } from "../utils/shell.js";
 
 /**
  * Options for print mode.
@@ -51,6 +52,7 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 
 		for (const signal of signals) {
 			const handler = () => {
+				killTrackedDetachedChildren();
 				void disposeRuntime().finally(() => {
 					process.exit(signal === "SIGHUP" ? 129 : 143);
 				});

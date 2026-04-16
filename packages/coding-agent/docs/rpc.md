@@ -41,7 +41,7 @@ In particular, Node `readline` is not protocol-compliant for RPC mode because it
 
 #### prompt
 
-Send a user prompt to the agent. Returns immediately; events stream asynchronously.
+Send a user prompt to the agent. The command response is emitted after the prompt is accepted, queued, or handled. Events continue streaming asynchronously after acceptance.
 
 ```json
 {"id": "req-1", "type": "prompt", "message": "Hello, world!"}
@@ -71,6 +71,8 @@ Response:
 ```json
 {"id": "req-1", "type": "response", "command": "prompt", "success": true}
 ```
+
+`success: true` means the prompt was accepted, queued, or handled immediately. `success: false` means the prompt was rejected before acceptance. Failures after acceptance are reported through the normal event and message stream, not as a second `response` for the same request id.
 
 The `images` field is optional. Each image uses `ImageContent` format: `{"type": "image", "data": "base64-encoded-data", "mimeType": "image/png"}`.
 

@@ -1,3 +1,5 @@
+import { homedir } from "node:os";
+import * as path from "node:path";
 import { Container } from "@mariozechner/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.js";
@@ -60,6 +62,27 @@ describe("InteractiveMode.showStatus", () => {
 	});
 });
 
+describe("InteractiveMode.setToolsExpanded", () => {
+	test("applies expansion state to the active header and chat entries", () => {
+		const header = { setExpanded: vi.fn() };
+		const chatChild = { setExpanded: vi.fn() };
+		const fakeThis: any = {
+			toolOutputExpanded: false,
+			customHeader: undefined,
+			builtInHeader: header,
+			chatContainer: { children: [chatChild] },
+			ui: { requestRender: vi.fn() },
+		};
+
+		(InteractiveMode as any).prototype.setToolsExpanded.call(fakeThis, true);
+
+		expect(fakeThis.toolOutputExpanded).toBe(true);
+		expect(header.setExpanded).toHaveBeenCalledWith(true);
+		expect(chatChild.setExpanded).toHaveBeenCalledWith(true);
+		expect(fakeThis.ui.requestRender).toHaveBeenCalledTimes(1);
+	});
+});
+
 describe("InteractiveMode.createExtensionUIContext setTheme", () => {
 	test("persists theme changes to settings manager", () => {
 		initTheme("dark");
@@ -116,31 +139,41 @@ describe("InteractiveMode.showLoadedResources", () => {
 	function createShowLoadedResourcesThis(options: {
 		quietStartup: boolean;
 		verbose?: boolean;
-		skills?: Array<{ filePath: string }>;
+		toolOutputExpanded?: boolean;
+		cwd?: string;
+		contextFiles?: Array<{ path: string; content?: string }>;
+		extensions?: Array<{ path: string }>;
+		skills?: Array<{ filePath: string; name: string }>;
 		skillDiagnostics?: Array<{ type: "warning" | "error" | "collision"; message: string }>;
 	}) {
 		const fakeThis: any = {
 			options: { verbose: options.verbose ?? false },
+			toolOutputExpanded: options.toolOutputExpanded ?? false,
 			chatContainer: new Container(),
 			settingsManager: {
 				getQuietStartup: () => options.quietStartup,
+			},
+			sessionManager: {
+				getCwd: () => options.cwd ?? "/tmp/project",
 			},
 			session: {
 				promptTemplates: [],
 				extensionRunner: undefined,
 				resourceLoader: {
 					getPathMetadata: () => new Map(),
-					getAgentsFiles: () => ({ agentsFiles: [] }),
+					getAgentsFiles: () => ({ agentsFiles: options.contextFiles ?? [] }),
 					getSkills: () => ({
 						skills: options.skills ?? [],
 						diagnostics: options.skillDiagnostics ?? [],
 					}),
 					getPrompts: () => ({ prompts: [], diagnostics: [] }),
-					getExtensions: () => ({ extensions: [], errors: [], runtime: {} }),
+					getExtensions: () => ({ extensions: options.extensions ?? [], errors: [], runtime: {} }),
 					getThemes: () => ({ themes: [], diagnostics: [] }),
 				},
 			},
-			formatDisplayPath: (p: string) => p,
+			formatDisplayPath: (p: string) => (InteractiveMode as any).prototype.formatDisplayPath.call(fakeThis, p),
+			formatContextPath: (p: string) => (InteractiveMode as any).prototype.formatContextPath.call(fakeThis, p),
+			getStartupExpansionState: () => (InteractiveMode as any).prototype.getStartupExpansionState.call(fakeThis),
 			buildScopeGroups: () => [],
 			formatScopeGroups: () => "resource-list",
 			getShortPath: (p: string) => p,
@@ -151,10 +184,117 @@ describe("InteractiveMode.showLoadedResources", () => {
 		return fakeThis;
 	}
 
+	test("shows a compact resource listing by default", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			skills: [{ filePath: "/tmp/skill/SKILL.md", name: "commit" }],
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+
+		const output = renderAll(fakeThis.chatContainer);
+		expect(output).toContain("[Skills]");
+		expect(output).toContain("commit");
+		expect(output).not.toContain("resource-list");
+	});
+
+	test("shows full resource listing when expanded", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			toolOutputExpanded: true,
+			skills: [{ filePath: "/tmp/skill/SKILL.md", name: "commit" }],
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+
+		const output = renderAll(fakeThis.chatContainer);
+		expect(output).toContain("[Skills]");
+		expect(output).toContain("resource-list");
+		expect(output).not.toContain("commit");
+	});
+
+	test("shows full resource listing on verbose startup even when tool output is collapsed", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: true,
+			verbose: true,
+			toolOutputExpanded: false,
+			skills: [{ filePath: "/tmp/skill/SKILL.md", name: "commit" }],
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+
+		const output = renderAll(fakeThis.chatContainer);
+		expect(output).toContain("[Skills]");
+		expect(output).toContain("resource-list");
+		expect(output).not.toContain("commit");
+	});
+
+	test("abbreviates extensions in compact listing", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			extensions: [{ path: "/tmp/extensions/answer.ts" }, { path: "/tmp/extensions/btw.ts" }],
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+
+		const output = renderAll(fakeThis.chatContainer);
+		expect(output).toContain("[Extensions]");
+		expect(output).toContain("answer.ts, btw.ts");
+		expect(output).not.toContain("extensions/answer.ts");
+	});
+
+	test("shows context paths relative to cwd while preserving full external paths", () => {
+		const home = homedir();
+		const cwd = path.join(home, "Development", "pi-mono");
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			cwd,
+			contextFiles: [{ path: path.join(home, ".pi", "agent", "AGENTS.md") }, { path: path.join(cwd, "AGENTS.md") }],
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+
+		const output = renderAll(fakeThis.chatContainer).replace(/\\/g, "/");
+		expect(output).toContain("[Context]");
+		expect(output).toContain("~/.pi/agent/AGENTS.md, AGENTS.md");
+		expect(output).not.toContain(`${cwd.replace(/\\/g, "/")}/AGENTS.md`);
+	});
+
+	test("shows full context paths when expanded", () => {
+		const home = homedir();
+		const cwd = path.join(home, "Development", "pi-mono");
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			toolOutputExpanded: true,
+			cwd,
+			contextFiles: [{ path: path.join(home, ".pi", "agent", "AGENTS.md") }, { path: path.join(cwd, "AGENTS.md") }],
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+
+		const output = renderAll(fakeThis.chatContainer).replace(/\\/g, "/");
+		expect(output).toContain("[Context]");
+		expect(output).toContain("~/.pi/agent/AGENTS.md");
+		expect(output).toContain("~/Development/pi-mono/AGENTS.md");
+		expect(output).not.toContain("~/.pi/agent/AGENTS.md, AGENTS.md");
+	});
+
 	test("does not show verbose listing on quiet startup during reload", () => {
 		const fakeThis = createShowLoadedResourcesThis({
 			quietStartup: true,
-			skills: [{ filePath: "/tmp/skill/SKILL.md" }],
+			skills: [{ filePath: "/tmp/skill/SKILL.md", name: "commit" }],
 		});
 
 		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
@@ -169,7 +309,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 	test("still shows diagnostics on quiet startup when requested", () => {
 		const fakeThis = createShowLoadedResourcesThis({
 			quietStartup: true,
-			skills: [{ filePath: "/tmp/skill/SKILL.md" }],
+			skills: [{ filePath: "/tmp/skill/SKILL.md", name: "commit" }],
 			skillDiagnostics: [{ type: "warning", message: "duplicate skill name" }],
 		});
 

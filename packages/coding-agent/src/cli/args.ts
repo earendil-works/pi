@@ -39,6 +39,7 @@ export interface Args {
 	noPromptTemplates?: boolean;
 	themes?: string[];
 	noThemes?: boolean;
+	noContextFiles?: boolean;
 	listModels?: string | true;
 	offline?: boolean;
 	verbose?: boolean;
@@ -150,6 +151,8 @@ export function parseArgs(args: string[]): Args {
 			result.noPromptTemplates = true;
 		} else if (arg === "--no-themes") {
 			result.noThemes = true;
+		} else if (arg === "--no-context-files" || arg === "-nc") {
+			result.noContextFiles = true;
 		} else if (arg === "--list-models") {
 			// Check if next arg is a search pattern (not a flag or file arg)
 			if (i + 1 < args.length && !args[i + 1].startsWith("-") && !args[i + 1].startsWith("@")) {
@@ -240,6 +243,7 @@ ${chalk.bold("Options:")}
   --no-prompt-templates, -np     Disable prompt template discovery and loading
   --theme <path>                 Load a theme file or directory (can be used multiple times)
   --no-themes                    Disable theme discovery and loading
+  --no-context-files, -nc        Disable AGENTS.md and CLAUDE.md discovery and loading
   --export <file>                Export session file to HTML and exit
   --list-models [search]         List available models (with optional fuzzy search)
   --verbose                      Force verbose startup (overrides quietStartup setting)

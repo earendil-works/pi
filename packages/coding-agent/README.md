@@ -278,6 +278,8 @@ Pi loads `AGENTS.md` (or `CLAUDE.md`) at startup from:
 
 Use for project instructions, conventions, common commands. All matching files are concatenated.
 
+Disable context file loading with `--no-context-files` (or `-nc`).
+
 ### System Prompt
 
 Replace the default system prompt with `.pi/SYSTEM.md` (project) or `~/.pi/agent/SYSTEM.md` (global). Append without replacing via `APPEND_SYSTEM.md`.
@@ -529,6 +531,7 @@ Available built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`
 | `--no-prompt-templates` | Disable prompt template discovery |
 | `--theme <path>` | Load theme (repeatable) |
 | `--no-themes` | Disable theme discovery |
+| `--no-context-files`, `-nc` | Disable AGENTS.md and CLAUDE.md context file discovery |
 
 Combine `--no-*` with explicit flags to load exactly what you need, ignoring settings.json (e.g., `--no-extensions -e ./my-ext.ts`).
 

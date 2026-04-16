@@ -182,6 +182,25 @@ unsubscribe = session.subscribe(() => {});
 
 ### Prompting and Message Queueing
 
+`PromptOptions` controls prompt expansion, queueing behavior while streaming, and prompt preflight notifications:
+
+```typescript
+interface PromptOptions {
+  expandPromptTemplates?: boolean;
+  images?: ImageContent[];
+  streamingBehavior?: "steer" | "followUp";
+  source?: InputSource;
+  preflightResult?: (success: boolean) => void;
+}
+```
+
+`preflightResult` is called once per `prompt()` invocation:
+
+- `true` when the prompt was accepted, queued, or handled immediately
+- `false` when prompt preflight rejected before acceptance
+
+It fires before `prompt()` resolves. `prompt()` still resolves only after the full accepted run finishes, including retries. Failures after acceptance are reported through the normal event and message stream, not through `preflightResult(false)`.
+
 The `prompt()` method handles prompt templates, extension commands, and message sending:
 
 ```typescript
@@ -200,8 +219,10 @@ await session.prompt("After you're done, also check X", { streamingBehavior: "fo
 
 **Behavior:**
 - **Extension commands** (e.g., `/mycommand`): Execute immediately, even during streaming. They manage their own LLM interaction via `pi.sendMessage()`.
-- **File-based prompt templates** (from `.md` files): Expanded to their content before sending/queueing.
+- **File-based prompt templates** (from `.md` files): Expanded to their content before sending or queueing.
 - **During streaming without `streamingBehavior`**: Throws an error. Use `steer()` or `followUp()` directly, or specify the option.
+- **`preflightResult(true)`**: Means the prompt was accepted, queued, or handled immediately.
+- **`preflightResult(false)`**: Means preflight rejected before acceptance.
 
 For explicit queueing during streaming:
 

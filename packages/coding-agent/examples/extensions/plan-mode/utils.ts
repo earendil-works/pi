@@ -91,7 +91,7 @@ const SAFE_PATTERNS = [
 	/^\s*rg\b/,
 	/^\s*fd\b/,
 	/^\s*bat\b/,
-	/^\s*exa\b/,
+	/^\s*eza\b/,
 ];
 
 export function isSafeCommand(command: string): boolean {

@@ -33,6 +33,7 @@ import type {
 	Usage,
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
+import { headersToRecord } from "../utils/headers.js";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.js";
 import { buildBaseOptions, clampReasoning } from "./simple-options.js";
 
@@ -214,6 +215,10 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 						body: bodyJson,
 						signal: options?.signal,
 					});
+					await options?.onResponse?.(
+						{ status: response.status, headers: headersToRecord(response.headers) },
+						model,
+					);
 
 					if (response.ok) {
 						break;
@@ -527,14 +532,6 @@ function getWebSocketConstructor(): WebSocketConstructor | null {
 	const ctor = (globalThis as { WebSocket?: unknown }).WebSocket;
 	if (typeof ctor !== "function") return null;
 	return ctor as unknown as WebSocketConstructor;
-}
-
-function headersToRecord(headers: Headers): Record<string, string> {
-	const out: Record<string, string> = {};
-	for (const [key, value] of headers.entries()) {
-		out[key] = value;
-	}
-	return out;
 }
 
 function getWebSocketReadyState(socket: WebSocketLike): number | undefined {

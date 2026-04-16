@@ -28,6 +28,40 @@ describe("InteractiveMode.handleCtrlZ", () => {
 		vi.restoreAllMocks();
 	});
 
+	test("shows a status message and skips suspend on Windows", () => {
+		const ui: FakeUi = {
+			start: vi.fn(),
+			stop: vi.fn(),
+			requestRender: vi.fn(),
+		};
+		const showStatus = vi.fn();
+		const context: HandleCtrlZThis & { showStatus: (message: string) => void } = { ui, showStatus };
+		const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
+		Object.defineProperty(process, "platform", {
+			configurable: true,
+			value: "win32",
+		});
+		const setIntervalSpy = vi.spyOn(globalThis, "setInterval");
+		const processOnSpy = vi.spyOn(process, "on");
+		const processOnceSpy = vi.spyOn(process, "once");
+		const processKillSpy = vi.spyOn(process, "kill");
+
+		try {
+			callHandleCtrlZ(context);
+		} finally {
+			if (platformDescriptor) {
+				Object.defineProperty(process, "platform", platformDescriptor);
+			}
+		}
+
+		expect(showStatus).toHaveBeenCalledWith("Suspend to background is not supported on Windows");
+		expect(ui.stop).not.toHaveBeenCalled();
+		expect(setIntervalSpy).not.toHaveBeenCalled();
+		expect(processOnSpy).not.toHaveBeenCalledWith("SIGINT", expect.any(Function));
+		expect(processOnceSpy).not.toHaveBeenCalledWith("SIGCONT", expect.any(Function));
+		expect(processKillSpy).not.toHaveBeenCalled();
+	});
+
 	test("keeps the process alive while suspended and restores the TUI on SIGCONT", () => {
 		const ui: FakeUi = {
 			start: vi.fn(),

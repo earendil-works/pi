@@ -538,6 +538,7 @@ export async function main(args: string[], options?: MainOptions) {
 				noSkills: parsed.noSkills,
 				noPromptTemplates: parsed.noPromptTemplates,
 				noThemes: parsed.noThemes,
+				noContextFiles: parsed.noContextFiles,
 				systemPrompt: parsed.systemPrompt,
 				appendSystemPrompt: parsed.appendSystemPrompt,
 				extensionFactories: options?.extensionFactories,

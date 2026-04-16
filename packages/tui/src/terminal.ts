@@ -184,17 +184,6 @@ export class ProcessTerminal implements Terminal {
 	private queryAndEnableKittyProtocol(): void {
 		this.setupStdinBuffer();
 		process.stdin.on("data", this.stdinDataHandler!);
-
-		// Zellij forwards the Kitty query to the outer terminal, which can make
-		// Pi enable its Kitty parser even though Zellij still sends Alt as
-		// legacy ESC-prefixed sequences. Skip the Kitty query there and use
-		// modifyOtherKeys directly instead.
-		if (process.env.ZELLIJ) {
-			process.stdout.write("\x1b[>4;2m");
-			this._modifyOtherKeysActive = true;
-			return;
-		}
-
 		process.stdout.write("\x1b[?u");
 		setTimeout(() => {
 			if (!this._kittyProtocolActive && !this._modifyOtherKeysActive) {

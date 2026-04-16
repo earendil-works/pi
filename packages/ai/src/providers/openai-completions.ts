@@ -27,6 +27,7 @@ import type {
 	ToolResultMessage,
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
+import { headersToRecord } from "../utils/headers.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.js";
@@ -91,7 +92,10 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			if (nextParams !== undefined) {
 				params = nextParams as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
 			}
-			const openaiStream = await client.chat.completions.create(params, { signal: options?.signal });
+			const { data: openaiStream, response } = await client.chat.completions
+				.create(params, { signal: options?.signal })
+				.withResponse();
+			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
 			let currentBlock: TextContent | ThinkingContent | (ToolCall & { partialArgs?: string }) | null = null;

@@ -1448,9 +1448,23 @@
       }
 
       // Configure marked with syntax highlighting and HTML escaping for text
+      const strictStrikethroughRegex = /^(~~)(?=[^\s~])((?:\\.|[^\\])*?(?:\\.|[^\s~\\]))\1(?=[^~]|$)/;
+
       marked.use({
         breaks: true,
         gfm: true,
+        tokenizer: {
+          del(src) {
+            const match = strictStrikethroughRegex.exec(src);
+            if (!match) return undefined;
+            return {
+              type: 'del',
+              raw: match[0],
+              text: match[2],
+              tokens: this.lexer.inlineTokens(match[2])
+            };
+          }
+        },
         renderer: {
           // Code blocks: syntax highlight, no HTML escaping
           code(token) {

@@ -52,7 +52,10 @@ export const KEYBINDINGS = {
 	"app.interrupt": { defaultKeys: "escape", description: "Cancel or abort" },
 	"app.clear": { defaultKeys: "ctrl+c", description: "Clear editor" },
 	"app.exit": { defaultKeys: "ctrl+d", description: "Exit when editor is empty" },
-	"app.suspend": { defaultKeys: "ctrl+z", description: "Suspend to background" },
+	"app.suspend": {
+		defaultKeys: process.platform === "win32" ? [] : "ctrl+z",
+		description: "Suspend to background",
+	},
 	"app.thinking.cycle": {
 		defaultKeys: "shift+tab",
 		description: "Cycle thinking level",

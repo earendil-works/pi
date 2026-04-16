@@ -4,7 +4,62 @@
 
 ### Fixed
 
-- Fixed Alt keybindings inside Zellij by skipping the Kitty keyboard protocol query there and enabling xterm `modifyOtherKeys` mode 2 directly ([#3163](https://github.com/badlogic/pi-mono/issues/3163))
+- Fixed `--verbose` startup output to begin with expanded startup help and loaded resource listings after the compact startup header change ([#3147](https://github.com/badlogic/pi-mono/issues/3147))
+
+## [0.67.5] - 2026-04-16
+
+### Fixed
+
+- Fixed Opus 4.7 adaptive thinking configuration across Anthropic and Bedrock providers by recognizing Opus 4.7 adaptive-thinking support and mapping `xhigh` reasoning to provider-supported effort values ([#3286](https://github.com/badlogic/pi-mono/pull/3286) by [@markusylisiurunen](https://github.com/markusylisiurunen))
+- Fixed Zellij `Shift+Enter` regressions by reverting the Zellij-specific Kitty keyboard query bypass and restoring the previous keyboard negotiation behavior ([#3259](https://github.com/badlogic/pi-mono/issues/3259))
+
+## [0.67.4] - 2026-04-16
+
+### New Features
+
+- `--no-context-files` (`-nc`) disables automatic `AGENTS.md` / `CLAUDE.md` discovery when you need a clean run without project context injection. See [README.md#context-files](README.md#context-files).
+- `loadProjectContextFiles()` is now exported as a standalone utility for extensions and SDK-style integrations that need to inspect the same context-file resolution order used by the CLI. See [README.md#context-files](README.md#context-files).
+- New `after_provider_response` extension hook lets extensions inspect provider HTTP status codes and headers immediately after response creation and before stream consumption. See [docs/extensions.md](docs/extensions.md).
+
+### Added
+
+- Added `--no-context-files` (`-nc`) to disable `AGENTS.md` and `CLAUDE.md` context file discovery and loading ([#3253](https://github.com/badlogic/pi-mono/issues/3253))
+- Exported `loadProjectContextFiles()` as a standalone utility so extensions can discover project context files without instantiating a full `DefaultResourceLoader` ([#3142](https://github.com/badlogic/pi-mono/issues/3142))
+- Added `after_provider_response` extension hook so extensions can inspect provider HTTP status codes and headers after each provider response is received and before stream consumption begins ([#3128](https://github.com/badlogic/pi-mono/issues/3128))
+
+### Changed
+
+- Added `claude-opus-4-7` model for Anthropic.
+- Changed Anthropic prompt caching to add a `cache_control` breakpoint on the last tool definition, so tool schemas can be cached independently from transcript updates while preserving existing cache retention behavior ([#3260](https://github.com/badlogic/pi-mono/issues/3260))
+
+### Fixed
+
+- Fixed markdown strikethrough parsing in interactive rendering and HTML export to require strict double-tilde delimiters (`~~text~~`) with non-whitespace boundaries.
+- Fixed shutdown handling to kill tracked detached `bash` tool child processes on exit signals, preventing orphaned background processes.
+- Fixed flaky `edit-tool-no-full-redraw` TUI tests by waiting for asynchronous preview and preflight error rendering instead of relying on fixed render ticks.
+- Fixed `kimi-coding` default model selection to use `kimi-for-coding` instead of `kimi-k2-thinking` ([#3242](https://github.com/badlogic/pi-mono/issues/3242))
+- Fixed `ctrl+z` on native Windows to avoid crashing interactive mode, disable the default suspend binding there, and show a status message when suspend is invoked manually ([#3191](https://github.com/badlogic/pi-mono/issues/3191))
+- Fixed `find` tool cancellation and responsiveness on broad searches by making `.gitignore` discovery and `fd` execution fully abort-aware and non-blocking ([#3148](https://github.com/badlogic/pi-mono/issues/3148))
+- Fixed `grep` broad-search stalls when `context=0` by formatting match lines from ripgrep JSON output instead of doing synchronous per-match file reads ([#3205](https://github.com/badlogic/pi-mono/issues/3205))
+
+## [0.67.3] - 2026-04-15
+
+### New Features
+
+- `renderShell: "self"` for custom and built-in tool renderers so tools can own their outer shell instead of the default boxed shell. Useful for stable large previews such as edit diffs. See [docs/extensions.md#custom-rendering](docs/extensions.md#custom-rendering).
+- Interactive auto-retry status now shows a live countdown during backoff instead of a static retry delay message.
+
+### Added
+
+- Added `renderShell: "self"` for custom and built-in tool renderers so tools can own their outer shell instead of using the default boxed shell. This is useful for stable large previews such as edit diffs ([#3134](https://github.com/badlogic/pi-mono/issues/3134))
+
+### Fixed
+
+- Fixed edit diff previews to stay visible during edit permission dialogs and session replay without reintroducing large-result redraw flicker ([#3134](https://github.com/badlogic/pi-mono/issues/3134))
+- Fixed `/reload` to render a static reload status box instead of an animated spinner, avoiding redraw instability during interactive reloads.
+- Fixed the `plan-mode` example extension to allow `eza` in the read-only bash allowlist instead of the deprecated `exa` command ([#3240](https://github.com/badlogic/pi-mono/pull/3240) by [@rwachtler](https://github.com/rwachtler))
+- Fixed `google-vertex` API key resolution to treat `gcp-vertex-credentials` as an Application Default Credentials marker instead of a literal API key, so marker-based setups correctly fall back to ADC ([#3221](https://github.com/badlogic/pi-mono/pull/3221) by [@deepkilo](https://github.com/deepkilo))
+- Fixed RPC `prompt` to wait for prompt preflight success before emitting its single authoritative response, while still treating handled and queued prompts as success ([#3049](https://github.com/badlogic/pi-mono/issues/3049))
 - Fixed `/scoped-models` reordering to propagate into the `/model` scoped tab, preserving the user-defined scoped model order instead of re-sorting it ([#3217](https://github.com/badlogic/pi-mono/issues/3217))
 - Fixed `session_shutdown` to fire on `SIGHUP` and `SIGTERM` in interactive, print, and RPC modes so extensions can run shutdown cleanup on those signal-driven exits ([#3212](https://github.com/badlogic/pi-mono/issues/3212))
 - Fixed screenshot path parsing to handle lower case am/pm in macOS screenshot filenames ([#3194](https://github.com/badlogic/pi-mono/pull/3194) by [@jay-aye-see-kay](https://github.com/jay-aye-see-kay))

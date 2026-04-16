@@ -1,9 +1,10 @@
+import { createInterface } from "node:readline";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Text } from "@mariozechner/pi-tui";
 import { type Static, Type } from "@sinclair/typebox";
-import { spawnSync } from "child_process";
+import { spawn } from "child_process";
 import { existsSync } from "fs";
-import { globSync } from "glob";
+import { glob } from "glob";
 import path from "path";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.js";
 import { ensureTool } from "../../utils/tools-manager.js";
@@ -133,7 +134,19 @@ export function createFindToolDefinition(
 					return;
 				}
 
-				const onAbort = () => reject(new Error("Operation aborted"));
+				let settled = false;
+				let stopChild: (() => void) | undefined;
+				const settle = (fn: () => void) => {
+					if (settled) return;
+					settled = true;
+					signal?.removeEventListener("abort", onAbort);
+					stopChild = undefined;
+					fn();
+				};
+				const onAbort = () => {
+					stopChild?.();
+					settle(() => reject(new Error("Operation aborted")));
+				};
 				signal?.addEventListener("abort", onAbort, { once: true });
 
 				(async () => {
@@ -145,19 +158,28 @@ export function createFindToolDefinition(
 						// If custom operations provide glob(), use that instead of fd.
 						if (customOps?.glob) {
 							if (!(await ops.exists(searchPath))) {
-								reject(new Error(`Path not found: ${searchPath}`));
+								settle(() => reject(new Error(`Path not found: ${searchPath}`)));
+								return;
+							}
+							if (signal?.aborted) {
+								settle(() => reject(new Error("Operation aborted")));
 								return;
 							}
 							const results = await ops.glob(pattern, searchPath, {
 								ignore: ["**/node_modules/**", "**/.git/**"],
 								limit: effectiveLimit,
 							});
-							signal?.removeEventListener("abort", onAbort);
+							if (signal?.aborted) {
+								settle(() => reject(new Error("Operation aborted")));
+								return;
+							}
 							if (results.length === 0) {
-								resolve({
-									content: [{ type: "text", text: "No files found matching pattern" }],
-									details: undefined,
-								});
+								settle(() =>
+									resolve({
+										content: [{ type: "text", text: "No files found matching pattern" }],
+										details: undefined,
+									}),
+								);
 								return;
 							}
 
@@ -183,17 +205,23 @@ export function createFindToolDefinition(
 							if (notices.length > 0) {
 								resultOutput += `\n\n[${notices.join(". ")}]`;
 							}
-							resolve({
-								content: [{ type: "text", text: resultOutput }],
-								details: Object.keys(details).length > 0 ? details : undefined,
-							});
+							settle(() =>
+								resolve({
+									content: [{ type: "text", text: resultOutput }],
+									details: Object.keys(details).length > 0 ? details : undefined,
+								}),
+							);
 							return;
 						}
 
 						// Default implementation uses fd.
 						const fdPath = await ensureTool("fd", true);
+						if (signal?.aborted) {
+							settle(() => reject(new Error("Operation aborted")));
+							return;
+						}
 						if (!fdPath) {
-							reject(new Error("fd is not available and could not be downloaded"));
+							settle(() => reject(new Error("fd is not available and could not be downloaded")));
 							return;
 						}
 
@@ -210,84 +238,128 @@ export function createFindToolDefinition(
 						const rootGitignore = path.join(searchPath, ".gitignore");
 						if (existsSync(rootGitignore)) gitignoreFiles.add(rootGitignore);
 						try {
-							const nestedGitignores = globSync("**/.gitignore", {
+							const nestedGitignores = await glob("**/.gitignore", {
 								cwd: searchPath,
 								dot: true,
 								absolute: true,
 								ignore: ["**/node_modules/**", "**/.git/**"],
+								signal,
 							});
 							for (const file of nestedGitignores) gitignoreFiles.add(file);
 						} catch {
+							if (signal?.aborted) {
+								settle(() => reject(new Error("Operation aborted")));
+								return;
+							}
 							// ignore
+						}
+						if (signal?.aborted) {
+							settle(() => reject(new Error("Operation aborted")));
+							return;
 						}
 						for (const gitignorePath of gitignoreFiles) args.push("--ignore-file", gitignorePath);
 						args.push(pattern, searchPath);
 
-						const result = spawnSync(fdPath, args, { encoding: "utf-8", maxBuffer: 10 * 1024 * 1024 });
-						signal?.removeEventListener("abort", onAbort);
-						if (result.error) {
-							reject(new Error(`Failed to run fd: ${result.error.message}`));
-							return;
-						}
+						const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+						const rl = createInterface({ input: child.stdout });
+						let stderr = "";
+						const lines: string[] = [];
 
-						const output = result.stdout?.trim() || "";
-						if (result.status !== 0) {
-							const errorMsg = result.stderr?.trim() || `fd exited with code ${result.status}`;
-							if (!output) {
-								reject(new Error(errorMsg));
+						stopChild = () => {
+							if (!child.killed) {
+								child.kill();
+							}
+						};
+
+						const cleanup = () => {
+							rl.close();
+						};
+
+						child.stderr?.on("data", (chunk) => {
+							stderr += chunk.toString();
+						});
+
+						rl.on("line", (line) => {
+							lines.push(line);
+						});
+
+						child.on("error", (error) => {
+							cleanup();
+							settle(() => reject(new Error(`Failed to run fd: ${error.message}`)));
+						});
+
+						child.on("close", (code) => {
+							cleanup();
+							if (signal?.aborted) {
+								settle(() => reject(new Error("Operation aborted")));
 								return;
 							}
-						}
-						if (!output) {
-							resolve({
-								content: [{ type: "text", text: "No files found matching pattern" }],
-								details: undefined,
-							});
+							const output = lines.join("\n");
+							if (code !== 0) {
+								const errorMsg = stderr.trim() || `fd exited with code ${code}`;
+								if (!output) {
+									settle(() => reject(new Error(errorMsg)));
+									return;
+								}
+							}
+							if (!output) {
+								settle(() =>
+									resolve({
+										content: [{ type: "text", text: "No files found matching pattern" }],
+										details: undefined,
+									}),
+								);
+								return;
+							}
+
+							const relativized: string[] = [];
+							for (const rawLine of lines) {
+								const line = rawLine.replace(/\r$/, "").trim();
+								if (!line) continue;
+								const hadTrailingSlash = line.endsWith("/") || line.endsWith("\\");
+								let relativePath = line;
+								if (line.startsWith(searchPath)) {
+									relativePath = line.slice(searchPath.length + 1);
+								} else {
+									relativePath = path.relative(searchPath, line);
+								}
+								if (hadTrailingSlash && !relativePath.endsWith("/")) relativePath += "/";
+								relativized.push(toPosixPath(relativePath));
+							}
+
+							const resultLimitReached = relativized.length >= effectiveLimit;
+							const rawOutput = relativized.join("\n");
+							const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
+							let resultOutput = truncation.content;
+							const details: FindToolDetails = {};
+							const notices: string[] = [];
+							if (resultLimitReached) {
+								notices.push(
+									`${effectiveLimit} results limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
+								);
+								details.resultLimitReached = effectiveLimit;
+							}
+							if (truncation.truncated) {
+								notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
+								details.truncation = truncation;
+							}
+							if (notices.length > 0) {
+								resultOutput += `\n\n[${notices.join(". ")}]`;
+							}
+							settle(() =>
+								resolve({
+									content: [{ type: "text", text: resultOutput }],
+									details: Object.keys(details).length > 0 ? details : undefined,
+								}),
+							);
+						});
+					} catch (e) {
+						if (signal?.aborted) {
+							settle(() => reject(new Error("Operation aborted")));
 							return;
 						}
-
-						const lines = output.split("\n");
-						const relativized: string[] = [];
-						for (const rawLine of lines) {
-							const line = rawLine.replace(/\r$/, "").trim();
-							if (!line) continue;
-							const hadTrailingSlash = line.endsWith("/") || line.endsWith("\\");
-							let relativePath = line;
-							if (line.startsWith(searchPath)) {
-								relativePath = line.slice(searchPath.length + 1);
-							} else {
-								relativePath = path.relative(searchPath, line);
-							}
-							if (hadTrailingSlash && !relativePath.endsWith("/")) relativePath += "/";
-							relativized.push(toPosixPath(relativePath));
-						}
-
-						const resultLimitReached = relativized.length >= effectiveLimit;
-						const rawOutput = relativized.join("\n");
-						const truncation = truncateHead(rawOutput, { maxLines: Number.MAX_SAFE_INTEGER });
-						let resultOutput = truncation.content;
-						const details: FindToolDetails = {};
-						const notices: string[] = [];
-						if (resultLimitReached) {
-							notices.push(
-								`${effectiveLimit} results limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
-							);
-							details.resultLimitReached = effectiveLimit;
-						}
-						if (truncation.truncated) {
-							notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
-							details.truncation = truncation;
-						}
-						if (notices.length > 0) {
-							resultOutput += `\n\n[${notices.join(". ")}]`;
-						}
-						resolve({
-							content: [{ type: "text", text: resultOutput }],
-							details: Object.keys(details).length > 0 ? details : undefined,
-						});
-					} catch (e: any) {
-						signal?.removeEventListener("abort", onAbort);
-						reject(e);
+						const error = e instanceof Error ? e : new Error(String(e));
+						settle(() => reject(error));
 					}
 				})();
 			});
