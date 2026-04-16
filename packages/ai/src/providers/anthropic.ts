@@ -256,7 +256,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 			if (nextParams !== undefined) {
 				params = nextParams as MessageCreateParamsStreaming;
 			}
-			const anthropicStream = client.messages.stream({ ...params, stream: true }, { signal: options?.signal });
+			const anthropicStream = await client.messages.create({ ...params, stream: true }, { signal: options?.signal });
 			stream.push({ type: "start", partial: output });
 
 			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string })) & { index: number };

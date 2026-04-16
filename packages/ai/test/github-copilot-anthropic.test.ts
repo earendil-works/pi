@@ -4,7 +4,7 @@ import type { Context } from "../src/types.js";
 
 const mockState = vi.hoisted(() => ({
 	constructorOpts: undefined as Record<string, unknown> | undefined,
-	streamParams: undefined as Record<string, unknown> | undefined,
+	createParams: undefined as Record<string, unknown> | undefined,
 }));
 
 vi.mock("@anthropic-ai/sdk", () => {
@@ -32,8 +32,8 @@ vi.mock("@anthropic-ai/sdk", () => {
 			mockState.constructorOpts = opts;
 		}
 		messages = {
-			stream: (params: Record<string, unknown>) => {
-				mockState.streamParams = params;
+			create: (params: Record<string, unknown>) => {
+				mockState.createParams = params;
 				return fakeStream;
 			},
 		};
@@ -79,7 +79,7 @@ describe("Copilot Claude via Anthropic Messages", () => {
 		expect(beta).not.toContain("fine-grained-tool-streaming");
 
 		// Payload is valid Anthropic Messages format
-		const params = mockState.streamParams!;
+		const params = mockState.createParams!;
 		expect(params.model).toBe("claude-sonnet-4");
 		expect(params.stream).toBe(true);
 		expect(params.max_tokens).toBeGreaterThan(0);
