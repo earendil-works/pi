@@ -178,7 +178,7 @@ function createClient(
 		Object.assign(headers, copilotHeaders);
 	}
 
-	if (sessionId && model.provider === "openai" && model.baseUrl.includes("api.openai.com")) {
+	if (sessionId) {
 		headers.session_id = sessionId;
 		headers["x-client-request-id"] = sessionId;
 	}
