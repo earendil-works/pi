@@ -21,6 +21,11 @@ interface Todo {
 	done: boolean;
 }
 
+/** Deep-clone a todo array so mutations to live state don't corrupt historical snapshots. */
+function cloneTodos(todos: readonly Todo[]): Todo[] {
+	return todos.map((t) => ({ ...t }));
+}
+
 interface TodoDetails {
 	action: "list" | "add" | "toggle" | "clear";
 	todos: Todo[];
@@ -122,7 +127,7 @@ export default function (pi: ExtensionAPI) {
 
 			const details = msg.details as TodoDetails | undefined;
 			if (details) {
-				todos = details.todos;
+				todos = cloneTodos(details.todos);
 				nextId = details.nextId;
 			}
 		}
@@ -151,21 +156,21 @@ export default function (pi: ExtensionAPI) {
 									: "No todos",
 							},
 						],
-						details: { action: "list", todos: [...todos], nextId } as TodoDetails,
+						details: { action: "list", todos: cloneTodos(todos), nextId } as TodoDetails,
 					};
 
 				case "add": {
 					if (!params.text) {
 						return {
 							content: [{ type: "text", text: "Error: text required for add" }],
-							details: { action: "add", todos: [...todos], nextId, error: "text required" } as TodoDetails,
+							details: { action: "add", todos: cloneTodos(todos), nextId, error: "text required" } as TodoDetails,
 						};
 					}
 					const newTodo: Todo = { id: nextId++, text: params.text, done: false };
-					todos.push(newTodo);
+					todos = [...todos, newTodo];
 					return {
 						content: [{ type: "text", text: `Added todo #${newTodo.id}: ${newTodo.text}` }],
-						details: { action: "add", todos: [...todos], nextId } as TodoDetails,
+						details: { action: "add", todos: cloneTodos(todos), nextId } as TodoDetails,
 					};
 				}
 
@@ -173,7 +178,7 @@ export default function (pi: ExtensionAPI) {
 					if (params.id === undefined) {
 						return {
 							content: [{ type: "text", text: "Error: id required for toggle" }],
-							details: { action: "toggle", todos: [...todos], nextId, error: "id required" } as TodoDetails,
+							details: { action: "toggle", todos: cloneTodos(todos), nextId, error: "id required" } as TodoDetails,
 						};
 					}
 					const todo = todos.find((t) => t.id === params.id);
@@ -182,16 +187,17 @@ export default function (pi: ExtensionAPI) {
 							content: [{ type: "text", text: `Todo #${params.id} not found` }],
 							details: {
 								action: "toggle",
-								todos: [...todos],
+								todos: cloneTodos(todos),
 								nextId,
 								error: `#${params.id} not found`,
 							} as TodoDetails,
 						};
 					}
-					todo.done = !todo.done;
+					const toggled: Todo = { ...todo, done: !todo.done };
+					todos = todos.map((t) => (t.id === toggled.id ? toggled : t));
 					return {
-						content: [{ type: "text", text: `Todo #${todo.id} ${todo.done ? "completed" : "uncompleted"}` }],
-						details: { action: "toggle", todos: [...todos], nextId } as TodoDetails,
+						content: [{ type: "text", text: `Todo #${toggled.id} ${toggled.done ? "completed" : "uncompleted"}` }],
+						details: { action: "toggle", todos: cloneTodos(todos), nextId } as TodoDetails,
 					};
 				}
 
@@ -210,7 +216,7 @@ export default function (pi: ExtensionAPI) {
 						content: [{ type: "text", text: `Unknown action: ${params.action}` }],
 						details: {
 							action: "list",
-							todos: [...todos],
+							todos: cloneTodos(todos),
 							nextId,
 							error: `unknown action: ${params.action}`,
 						} as TodoDetails,
