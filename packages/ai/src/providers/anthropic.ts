@@ -448,21 +448,24 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 };
 
 /**
- * Check if a model supports adaptive thinking (Opus 4.6 and Sonnet 4.6)
+ * Check if a model supports adaptive thinking (Opus 4.6+, Sonnet 4.6+)
  */
 function supportsAdaptiveThinking(modelId: string): boolean {
-	// Opus 4.6 and Sonnet 4.6 model IDs (with or without date suffix)
-	return (
-		modelId.includes("opus-4-6") ||
-		modelId.includes("opus-4.6") ||
-		modelId.includes("sonnet-4-6") ||
-		modelId.includes("sonnet-4.6")
-	);
+	const adaptivePattern = /(?:opus|sonnet)-4[-.](\d+)/;
+	const match = modelId.match(adaptivePattern);
+	return match !== null && parseInt(match[1], 10) >= 6;
+}
+
+/**
+ * Check if a model is an Opus variant (supports effort "max").
+ */
+function isOpusModel(modelId: string): boolean {
+	return modelId.includes("opus");
 }
 
 /**
  * Map ThinkingLevel to Anthropic effort levels for adaptive thinking.
- * Note: effort "max" is only valid on Opus 4.6.
+ * Note: effort "max" is only valid on Opus models.
  */
 function mapThinkingLevelToEffort(level: SimpleStreamOptions["reasoning"], modelId: string): AnthropicEffort {
 	switch (level) {
@@ -475,7 +478,7 @@ function mapThinkingLevelToEffort(level: SimpleStreamOptions["reasoning"], model
 		case "high":
 			return "high";
 		case "xhigh":
-			return modelId.includes("opus-4-6") || modelId.includes("opus-4.6") ? "max" : "high";
+			return isOpusModel(modelId) ? "max" : "high";
 		default:
 			return "high";
 	}
