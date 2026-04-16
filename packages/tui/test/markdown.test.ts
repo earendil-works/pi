@@ -2,13 +2,61 @@ import assert from "node:assert";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
 import { Chalk } from "chalk";
-import { Markdown } from "../src/components/markdown.js";
+import { type DefaultTextStyle, Markdown, type MarkdownTheme } from "../src/components/markdown.js";
 import { type Component, TUI } from "../src/tui.js";
 import { defaultMarkdownTheme } from "./test-themes.js";
 import { VirtualTerminal } from "./virtual-terminal.js";
 
 // Force full color in CI so ANSI assertions are deterministic
 const chalk = new Chalk({ level: 3 });
+
+const detectableMarkdownTheme: MarkdownTheme = {
+	...defaultMarkdownTheme,
+	code: (text: string) => chalk.bgBlue.white(`CODE<${text}>`),
+	codeBlock: (text: string) => chalk.bgGreen.black(`BLOCK<${text}>`),
+	codeBlockBorder: (text: string) => chalk.bgRed.white(`BORDER<${text}>`),
+	highlightCode: (code: string, lang?: string) =>
+		code.split("\n").map((line, index) => chalk.bgMagenta.white(`HL[${lang ?? ""}:${index}]<${line}>`)),
+	codeBlockIndent: ">> ",
+};
+
+function stripAnsi(text: string): string {
+	return text.replace(/\x1b\[[0-9;]*m/g, "");
+}
+
+function renderMarkdown(
+	text: string,
+	width = 80,
+	theme: MarkdownTheme = defaultMarkdownTheme,
+	defaultTextStyle?: DefaultTextStyle,
+): string[] {
+	return new Markdown(text, 0, 0, theme, defaultTextStyle).render(width);
+}
+
+function renderPlainMarkdown(
+	text: string,
+	width = 80,
+	theme: MarkdownTheme = defaultMarkdownTheme,
+	defaultTextStyle?: DefaultTextStyle,
+): string[] {
+	return renderMarkdown(text, width, theme, defaultTextStyle).map((line) => stripAnsi(line).trimEnd());
+}
+
+class MarkdownWithInput implements Component {
+	public markdownLineCount = 0;
+
+	constructor(private readonly markdown: Markdown) {}
+
+	render(width: number): string[] {
+		const lines = this.markdown.render(width);
+		this.markdownLineCount = lines.length;
+		return [...lines, "INPUT"];
+	}
+
+	invalidate(): void {
+		this.markdown.invalidate();
+	}
+}
 
 function getCellItalic(terminal: VirtualTerminal, row: number, col: number): number {
 	const xterm = (terminal as unknown as { xterm: XtermTerminalType }).xterm;
@@ -28,6 +76,16 @@ function getCellUnderline(terminal: VirtualTerminal, row: number, col: number): 
 	const cell = line.getCell(col);
 	assert.ok(cell, `Missing cell at row ${row} col ${col}`);
 	return cell.isUnderline();
+}
+
+function getCellFg(terminal: VirtualTerminal, row: number, col: number): number {
+	const xterm = (terminal as unknown as { xterm: XtermTerminalType }).xterm;
+	const buffer = xterm.buffer.active;
+	const line = buffer.getLine(buffer.viewportY + row);
+	assert.ok(line, `Missing buffer line at row ${row}`);
+	const cell = line.getCell(col);
+	assert.ok(cell, `Missing cell at row ${row} col ${col}`);
+	return cell.getFgColor();
 }
 
 describe("Markdown component", () => {
@@ -566,22 +624,6 @@ describe("Markdown component", () => {
 		});
 
 		it("should not leak styles into following lines when rendered in TUI", async () => {
-			class MarkdownWithInput implements Component {
-				public markdownLineCount = 0;
-
-				constructor(private readonly markdown: Markdown) {}
-
-				render(width: number): string[] {
-					const lines = this.markdown.render(width);
-					this.markdownLineCount = lines.length;
-					return [...lines, "INPUT"];
-				}
-
-				invalidate(): void {
-					this.markdown.invalidate();
-				}
-			}
-
 			const markdown = new Markdown("This is thinking with `inline code`", 1, 0, defaultMarkdownTheme, {
 				color: (text) => chalk.gray(text),
 				italic: true,
@@ -597,6 +639,280 @@ describe("Markdown component", () => {
 			assert.ok(component.markdownLineCount > 0);
 			const inputRow = component.markdownLineCount;
 			assert.strictEqual(getCellItalic(terminal, inputRow, 0), 0);
+			tui.stop();
+		});
+	});
+
+	describe("Math delimiters", () => {
+		it("should render inline \\(...\\) inside a paragraph with code styling", () => {
+			const lines = renderMarkdown("before \\(x^2\\) after", 80, detectableMarkdownTheme);
+			const plainLines = lines.map((line) => stripAnsi(line).trimEnd());
+			const joinedOutput = lines.join("\n");
+
+			assert.deepStrictEqual(plainLines, ["before CODE<x^2> after"]);
+			assert.ok(joinedOutput.includes("\x1b[44m"), "Inline math should use the detectable code style");
+			assert.ok(!plainLines[0]?.includes("\\("), "Should strip the opening inline math delimiter");
+			assert.ok(!plainLines[0]?.includes("\\)"), "Should strip the closing inline math delimiter");
+		});
+
+		it("should render top-level \\[...\\], $$...$$, and fenced math as fence-free display blocks", () => {
+			const cases = [
+				{ name: "\\[...\\]", text: "\\[\nx^2 + y^2\n= z^2\n\\]" },
+				{ name: "$$...$$", text: "$$\nx^2 + y^2\n= z^2\n$$" },
+				{ name: "```math", text: "```math\nx^2 + y^2\n= z^2\n```" },
+			];
+			const expected = ["  x^2 + y^2", "  = z^2"];
+
+			for (const testCase of cases) {
+				assert.deepStrictEqual(
+					renderPlainMarkdown(testCase.text),
+					expected,
+					`Unexpected display-math output for ${testCase.name}`,
+				);
+			}
+		});
+
+		it("should render positive container-stripped blockquote math for \\[...\\] and $$...$$", () => {
+			const cases = [
+				{ name: "blockquote \\[...\\]", text: "> \\[\n> x^2 + y^2\n> = z^2\n> \\]" },
+				{ name: "blockquote $$...$$", text: "> $$\n> x^2 + y^2\n> = z^2\n> $$" },
+			];
+			const expected = ["│   x^2 + y^2", "│   = z^2"];
+
+			for (const testCase of cases) {
+				assert.deepStrictEqual(
+					renderPlainMarkdown(testCase.text),
+					expected,
+					`Unexpected blockquote display-math output for ${testCase.name}`,
+				);
+			}
+		});
+
+		it("should keep blockquote near-miss delimiters literal when prose shares stripped lines", () => {
+			assert.deepStrictEqual(renderPlainMarkdown("> before \\[\n> x^2\n> \\] after"), [
+				"│ before",
+				"│ [",
+				"│ x^2",
+				"│ ] after",
+			]);
+			assert.deepStrictEqual(renderPlainMarkdown("> before $$\n> x^2\n> $$ after"), [
+				"│ before",
+				"│ $$",
+				"│ x^2",
+				"│ $$ after",
+			]);
+		});
+
+		it("should render positive loose-list container-stripped math for \\[...\\] and $$...$$", () => {
+			const cases = [
+				{ name: "loose-list \\[...\\]", text: "- item\n\n  \\[\n  x^2 + y^2\n  = z^2\n  \\]" },
+				{ name: "loose-list $$...$$", text: "- item\n\n  $$\n  x^2 + y^2\n  = z^2\n  $$" },
+			];
+			const expected = ["- item", "    x^2 + y^2", "    = z^2"];
+
+			for (const testCase of cases) {
+				assert.deepStrictEqual(
+					renderPlainMarkdown(testCase.text),
+					expected,
+					`Unexpected loose-list display-math output for ${testCase.name}`,
+				);
+			}
+		});
+
+		it("should keep loose-list near-miss delimiters literal for \\[...\\] and $$...$$", () => {
+			assert.deepStrictEqual(renderPlainMarkdown("- item\n\n  before \\[\n  x^2\n  \\] after"), [
+				"- item",
+				"  before [",
+				"x^2",
+				"] after",
+			]);
+			assert.deepStrictEqual(renderPlainMarkdown("- item\n\n  before $$\n  x^2\n  $$ after"), [
+				"- item",
+				"  before $$",
+				"x^2",
+				"$$ after",
+			]);
+		});
+
+		it("should render positive tight-list container-stripped math for \\[...\\] and $$...$$ without loosening the list", () => {
+			const cases = [
+				{ name: "tight-list \\[...\\]", text: "- \\[\n  x^2 + y^2\n  = z^2\n  \\]\n- next" },
+				{ name: "tight-list $$...$$", text: "- $$\n  x^2 + y^2\n  = z^2\n  $$\n- next" },
+			];
+			const expected = ["-   x^2 + y^2", "    = z^2", "- next"];
+
+			for (const testCase of cases) {
+				assert.deepStrictEqual(
+					renderPlainMarkdown(testCase.text),
+					expected,
+					`Unexpected tight-list display-math output for ${testCase.name}`,
+				);
+			}
+		});
+
+		it("should keep tight-list near-miss delimiters literal for \\[...\\] and $$...$$", () => {
+			assert.deepStrictEqual(renderPlainMarkdown("- before \\[\n  x^2\n  \\] after\n- next"), [
+				"- before [",
+				"x^2",
+				"] after",
+				"- next",
+			]);
+			assert.deepStrictEqual(renderPlainMarkdown("- before $$\n  x^2\n  $$ after\n- next"), [
+				"- before $$",
+				"x^2",
+				"$$ after",
+				"- next",
+			]);
+		});
+
+		it("should keep top-level near-miss delimiters literal when prose shares a line", () => {
+			assert.deepStrictEqual(renderPlainMarkdown("before \\[\nx^2\n\\] after"), ["before", "[", "x^2", "] after"]);
+			assert.deepStrictEqual(renderPlainMarkdown("before $$\nx^2\n$$ after"), ["before", "$$", "x^2", "$$ after"]);
+		});
+
+		it("should keep malformed and single-dollar-like math candidates literal", () => {
+			assert.deepStrictEqual(renderPlainMarkdown("\\[\nx^2"), ["[", "x^2"]);
+			assert.deepStrictEqual(renderPlainMarkdown("$$\nx^2"), ["$$", "x^2"]);
+			assert.deepStrictEqual(renderPlainMarkdown("before \\(x^2 after"), ["before (x^2 after"]);
+			assert.deepStrictEqual(renderPlainMarkdown("Price is $20 in $HOME and $PATH, not $x$."), [
+				"Price is $20 in $HOME and $PATH, not $x$.",
+			]);
+		});
+
+		it("should keep spacing stable when math is adjacent to headings and paragraphs", () => {
+			const plainLines = renderPlainMarkdown("# Heading\n\n$$\nx^2\n$$\n\ntext");
+			assert.deepStrictEqual(plainLines, ["Heading", "", "  x^2", "", "text"]);
+		});
+
+		it("should give \\[...\\], $$...$$, and fenced math the same detectable no-border no-highlight contract", () => {
+			const cases = ["\\[\nx^2 + y^2\n= z^2\n\\]", "$$\nx^2 + y^2\n= z^2\n$$", "```math\nx^2 + y^2\n= z^2\n```"];
+			const outputs = cases.map((text) => renderMarkdown(text, 80, detectableMarkdownTheme));
+			const plainOutputs = outputs.map((lines) => lines.map((line) => stripAnsi(line).trimEnd()));
+
+			assert.deepStrictEqual(plainOutputs[0], plainOutputs[1]);
+			assert.deepStrictEqual(plainOutputs[1], plainOutputs[2]);
+			assert.deepStrictEqual(outputs[0], outputs[1]);
+			assert.deepStrictEqual(outputs[1], outputs[2]);
+
+			const joinedOutput = outputs[0].join("\n");
+			assert.ok(joinedOutput.includes("\x1b[42m"), "Display math should use detectable codeBlock styling");
+			assert.ok(!joinedOutput.includes("BORDER<"), "Display math should bypass codeBlockBorder");
+			assert.ok(!joinedOutput.includes("HL["), "Display math should bypass highlightCode");
+		});
+
+		it("should still use the detectable highlightCode and codeBlockBorder path for normal fenced code", () => {
+			const lines = renderMarkdown("```ts\nconst answer = 42;\n```", 80, detectableMarkdownTheme);
+			const plainLines = lines.map((line) => stripAnsi(line).trimEnd());
+			const joinedOutput = lines.join("\n");
+
+			assert.deepStrictEqual(plainLines, ["BORDER<```ts>", ">> HL[ts:0]<const answer = 42;>", "BORDER<```>"]);
+			assert.ok(joinedOutput.includes("\x1b[41m"), "Normal code should render border styling");
+			assert.ok(joinedOutput.includes("\x1b[45m"), "Normal code should render highlight output");
+		});
+
+		it("should wrap narrow display math without synthetic fences or highlight markers", () => {
+			const cases = [
+				"\\[\nabcdefghij1234567890\n\\]",
+				"$$\nabcdefghij1234567890\n$$",
+				"```math\nabcdefghij1234567890\n```",
+			];
+
+			for (const text of cases) {
+				const lines = renderMarkdown(text, 12, detectableMarkdownTheme);
+				const plainLines = lines.map((line) => stripAnsi(line).trimEnd());
+				const joinedOutput = lines.join("\n");
+				const compactPlain = plainLines.join("").replace(/\s+/g, "");
+
+				assert.ok(
+					compactPlain.includes("BLOCK<abcdefghij1234567890>"),
+					`Wrapped display math lost content: ${JSON.stringify(plainLines)}`,
+				);
+				assert.ok(
+					!plainLines.some((line) => line.includes("BORDER<") || line.includes("HL[") || line.includes("```")),
+					`Display math should stay fence-free when wrapped: ${JSON.stringify(plainLines)}`,
+				);
+				assert.ok(
+					joinedOutput.includes("\x1b[42m"),
+					"Wrapped display math should keep detectable codeBlock styling",
+				);
+				assert.ok(!joinedOutput.includes("\x1b[41m"), "Wrapped display math should not use border styling");
+				assert.ok(!joinedOutput.includes("\x1b[45m"), "Wrapped display math should not use highlight styling");
+			}
+		});
+
+		it("should reset inline math styling without leaking into following text or later lines in TUI", async () => {
+			const defaultTextStyle: DefaultTextStyle = {
+				color: (text) => chalk.gray(text),
+				italic: true,
+			};
+			const markdown = new Markdown(
+				"before \\(x^2\\) after continuation text",
+				0,
+				0,
+				defaultMarkdownTheme,
+				defaultTextStyle,
+			);
+			const terminal = new VirtualTerminal(20, 6);
+			const tui = new TUI(terminal);
+			const component = new MarkdownWithInput(markdown);
+			tui.addChild(component);
+			tui.start();
+			await terminal.waitForRender();
+
+			assert.ok(
+				component.markdownLineCount > 1,
+				`Expected wrapped markdown lines, got ${component.markdownLineCount}`,
+			);
+
+			const beforeFg = getCellFg(terminal, 0, 0);
+			const mathFg = getCellFg(terminal, 0, 7);
+			const afterFg = getCellFg(terminal, 0, 11);
+			const continuationFg = getCellFg(terminal, 1, 0);
+
+			assert.notStrictEqual(
+				mathFg,
+				beforeFg,
+				"Inline math should use a different foreground style than surrounding text",
+			);
+			assert.strictEqual(
+				afterFg,
+				beforeFg,
+				"Text after inline math should restore the surrounding foreground style",
+			);
+			assert.strictEqual(
+				continuationFg,
+				beforeFg,
+				"Wrapped continuation text should restore the surrounding foreground style",
+			);
+			assert.ok(getCellItalic(terminal, 0, 0) !== 0, "Surrounding text should stay italic");
+			assert.strictEqual(
+				getCellItalic(terminal, 0, 7),
+				0,
+				"Inline math should use code styling without inherited italics",
+			);
+			assert.strictEqual(
+				getCellItalic(terminal, 0, 11),
+				getCellItalic(terminal, 0, 0),
+				"Text after inline math should restore italic styling",
+			);
+			assert.strictEqual(
+				getCellItalic(terminal, 1, 0),
+				getCellItalic(terminal, 0, 0),
+				"Wrapped continuation text should restore italic styling",
+			);
+
+			const inputRow = component.markdownLineCount;
+			assert.notStrictEqual(
+				getCellFg(terminal, inputRow, 0),
+				mathFg,
+				"The next rendered line should not inherit inline math foreground styling",
+			);
+			assert.strictEqual(
+				getCellItalic(terminal, inputRow, 0),
+				0,
+				"The next rendered line should not inherit inline math italics",
+			);
+
 			tui.stop();
 		});
 	});

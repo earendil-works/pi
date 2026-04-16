@@ -357,10 +357,16 @@ md.setText("Updated markdown");
 
 **Features:**
 - Headings, bold, italic, code blocks, lists, links, blockquotes
+- TUI math fallback rendering for inline `\(...\)`, display `\[...\]`, own-line `$$...$$`, and fenced blocks with a `math` info string; inline math reuses `code`, and display math renders as fence-free blocks with `codeBlock`
 - HTML tags rendered as plain text
 - Optional syntax highlighting via `highlightCode`
 - Padding support
 - Render caching for performance
+
+**Math fallback scope (v1):**
+- Styling fallback only; no TeX layout engine or full typesetting
+- Single-dollar inline math (`$...$`) is not supported and renders literally
+- `\[...\]` and `$$...$$` only switch to display-math fallback when the delimiters stay on otherwise-empty logical lines; near-misses stay literal, including in blockquotes and list items
 
 ### Loader
 

@@ -1,4 +1,4 @@
-import { marked, type Token } from "marked";
+import { Marked, type Token, type TokenizerExtension } from "marked";
 import { isImageLine } from "../terminal-image.js";
 import type { Component } from "../tui.js";
 import { applyBackgroundToLine, visibleWidth, wrapTextWithAnsi } from "../utils.js";
@@ -50,6 +50,119 @@ interface InlineStyleContext {
 	applyText: (text: string) => string;
 	stylePrefix: string;
 }
+
+interface MathInlineToken {
+	type: "mathInline";
+	raw: string;
+	text: string;
+}
+
+interface MathBlockToken {
+	type: "mathBlock";
+	raw: string;
+	text: string;
+}
+
+interface DisplayMathMatch {
+	raw: string;
+	text: string;
+}
+
+const INLINE_MATH_PATTERN = /^\\\(([\s\S]*?)\\\)/;
+const DISPLAY_MATH_PREFIX_PATTERNS = [
+	/^[ \t]*\\\[[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*\\\][ \t]*(?:\r?\n|$)/,
+	/^[ \t]*\$\$[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*\$\$[ \t]*(?:\r?\n|$)/,
+] as const;
+const DISPLAY_MATH_FULL_PATTERNS = [
+	/^[ \t]*\\\[[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*\\\][ \t]*$/,
+	/^[ \t]*\$\$[ \t]*\r?\n([\s\S]*?)\r?\n[ \t]*\$\$[ \t]*$/,
+] as const;
+
+function getEarliestMarkerIndex(src: string, markers: string[]): number | undefined {
+	const indexes = markers.map((marker) => src.indexOf(marker)).filter((index) => index >= 0);
+	if (indexes.length === 0) {
+		return undefined;
+	}
+	return Math.min(...indexes);
+}
+
+function matchDisplayMathPrefix(src: string): DisplayMathMatch | undefined {
+	for (const pattern of DISPLAY_MATH_PREFIX_PATTERNS) {
+		const match = src.match(pattern);
+		if (match) {
+			return {
+				raw: match[0],
+				text: match[1] ?? "",
+			};
+		}
+	}
+	return undefined;
+}
+
+function matchFullDisplayMath(src: string): DisplayMathMatch | undefined {
+	for (const pattern of DISPLAY_MATH_FULL_PATTERNS) {
+		const match = src.match(pattern);
+		if (match) {
+			return {
+				raw: match[0],
+				text: match[1] ?? "",
+			};
+		}
+	}
+	return undefined;
+}
+
+const inlineMathTokenizer: TokenizerExtension = {
+	name: "mathInline",
+	level: "inline",
+	start(src) {
+		return getEarliestMarkerIndex(src, ["\\("]);
+	},
+	tokenizer(src) {
+		const match = src.match(INLINE_MATH_PATTERN);
+		if (!match) {
+			return undefined;
+		}
+
+		const text = match[1] ?? "";
+		if (text.includes("\n") || text.includes("\r")) {
+			return undefined;
+		}
+
+		const token: MathInlineToken = {
+			type: "mathInline",
+			raw: match[0],
+			text,
+		};
+		return token;
+	},
+};
+
+const blockMathTokenizer: TokenizerExtension = {
+	name: "mathBlock",
+	level: "block",
+	start(src) {
+		return getEarliestMarkerIndex(src, ["\\[", "$$"]);
+	},
+	tokenizer(src) {
+		const match = matchDisplayMathPrefix(src);
+		if (!match) {
+			return undefined;
+		}
+
+		const token: MathBlockToken = {
+			type: "mathBlock",
+			raw: match.raw,
+			text: match.text,
+		};
+		return token;
+	},
+};
+
+const markdownLexer = new Marked();
+markdownLexer.use({
+	extensions: [blockMathTokenizer, inlineMathTokenizer],
+});
 
 export class Markdown implements Component {
 	private text: string;
@@ -112,7 +225,7 @@ export class Markdown implements Component {
 		const normalizedText = this.text.replace(/\t/g, "   ");
 
 		// Parse markdown to HTML-like tokens
-		const tokens = marked.lexer(normalizedText);
+		const tokens = markdownLexer.lexer(normalizedText);
 
 		// Convert tokens to styled terminal output
 		const renderedLines: string[] = [];
@@ -260,6 +373,53 @@ export class Markdown implements Component {
 		};
 	}
 
+	private isMathInlineToken(token: Token): token is MathInlineToken {
+		return token.type === "mathInline" && "text" in token && typeof token.text === "string";
+	}
+
+	private isMathBlockToken(token: Token): token is MathBlockToken {
+		return token.type === "mathBlock" && "text" in token && typeof token.text === "string";
+	}
+
+	private renderDisplayMathLines(text: string): string[] {
+		const indent = this.theme.codeBlockIndent ?? "  ";
+		return text.split(/\r?\n/).map((line) => `${indent}${this.theme.codeBlock(line)}`);
+	}
+
+	private tryRenderContainerStrippedDisplayMath(text: string): string[] | undefined {
+		const match = matchFullDisplayMath(text);
+		if (!match) {
+			return undefined;
+		}
+		return this.renderDisplayMathLines(match.text);
+	}
+
+	private getContainerTokenText(tokens: Token[]): string | undefined {
+		let text = "";
+		for (const token of tokens) {
+			switch (token.type) {
+				case "space":
+					text += token.raw;
+					break;
+				case "text":
+				case "paragraph":
+					text += token.text;
+					break;
+				default:
+					return undefined;
+			}
+		}
+		return text;
+	}
+
+	private tryRenderContainerStrippedDisplayMathTokens(tokens: Token[]): string[] | undefined {
+		const text = this.getContainerTokenText(tokens);
+		if (!text) {
+			return undefined;
+		}
+		return this.tryRenderContainerStrippedDisplayMath(text);
+	}
+
 	private renderToken(
 		token: Token,
 		width: number,
@@ -298,8 +458,13 @@ export class Markdown implements Component {
 			}
 
 			case "paragraph": {
-				const paragraphText = this.renderInlineTokens(token.tokens || [], styleContext);
-				lines.push(paragraphText);
+				const displayMathLines = this.tryRenderContainerStrippedDisplayMath(token.text);
+				if (displayMathLines) {
+					lines.push(...displayMathLines);
+				} else {
+					const paragraphText = this.renderInlineTokens(token.tokens || [], styleContext);
+					lines.push(paragraphText);
+				}
 				// Don't add spacing if next token is space or list
 				if (nextTokenType && nextTokenType !== "list" && nextTokenType !== "space") {
 					lines.push("");
@@ -307,7 +472,25 @@ export class Markdown implements Component {
 				break;
 			}
 
+			case "mathBlock": {
+				if (this.isMathBlockToken(token)) {
+					lines.push(...this.renderDisplayMathLines(token.text));
+				}
+				if (nextTokenType && nextTokenType !== "space") {
+					lines.push("");
+				}
+				break;
+			}
+
 			case "code": {
+				if (token.lang?.trim() === "math") {
+					lines.push(...this.renderDisplayMathLines(token.text));
+					if (nextTokenType && nextTokenType !== "space") {
+						lines.push("");
+					}
+					break;
+				}
+
 				const indent = this.theme.codeBlockIndent ?? "  ";
 				lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
 				if (this.theme.highlightCode) {
@@ -462,6 +645,12 @@ export class Markdown implements Component {
 					result += this.theme.code(token.text) + stylePrefix;
 					break;
 
+				case "mathInline":
+					if (this.isMathInlineToken(token)) {
+						result += this.theme.code(token.text) + stylePrefix;
+					}
+					break;
+
 				case "link": {
 					const linkText = this.renderInlineTokens(token.tokens || [], resolvedStyleContext);
 					// If link text matches href, only show the link once
@@ -572,6 +761,11 @@ export class Markdown implements Component {
 	 * Returns lines WITHOUT the parent indent (renderList will add it)
 	 */
 	private renderListItem(tokens: Token[], parentDepth: number, styleContext?: InlineStyleContext): string[] {
+		const mathLines = this.tryRenderContainerStrippedDisplayMathTokens(tokens);
+		if (mathLines) {
+			return mathLines;
+		}
+
 		const lines: string[] = [];
 
 		for (const token of tokens) {
@@ -581,6 +775,12 @@ export class Markdown implements Component {
 				const nestedLines = this.renderList(token as any, parentDepth + 1, styleContext);
 				lines.push(...nestedLines);
 			} else if (token.type === "text") {
+				const displayMathLines = this.tryRenderContainerStrippedDisplayMath(token.text);
+				if (displayMathLines) {
+					lines.push(...displayMathLines);
+					continue;
+				}
+
 				// Text content (may have inline tokens)
 				const text =
 					token.tokens && token.tokens.length > 0
@@ -588,10 +788,25 @@ export class Markdown implements Component {
 						: token.text || "";
 				lines.push(text);
 			} else if (token.type === "paragraph") {
+				const displayMathLines = this.tryRenderContainerStrippedDisplayMath(token.text);
+				if (displayMathLines) {
+					lines.push(...displayMathLines);
+					continue;
+				}
+
 				// Paragraph in list item
 				const text = this.renderInlineTokens(token.tokens || [], styleContext);
 				lines.push(text);
+			} else if (token.type === "mathBlock") {
+				if (this.isMathBlockToken(token)) {
+					lines.push(...this.renderDisplayMathLines(token.text));
+				}
 			} else if (token.type === "code") {
+				if (token.lang?.trim() === "math") {
+					lines.push(...this.renderDisplayMathLines(token.text));
+					continue;
+				}
+
 				// Code block in list item
 				const indent = this.theme.codeBlockIndent ?? "  ";
 				lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
