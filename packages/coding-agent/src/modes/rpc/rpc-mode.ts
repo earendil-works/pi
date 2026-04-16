@@ -18,10 +18,9 @@ import type {
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
 } from "../../core/extensions/index.js";
-import { takeOverStdout, writeRawStdout } from "../../core/output-guard.js";
 import { killTrackedDetachedChildren } from "../../utils/shell.js";
 import { type Theme, theme } from "../interactive/theme/theme.js";
-import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.js";
+import { createStdioTransport } from "./rpc-transport.js";
 import type {
 	RpcCommand,
 	RpcExtensionUIRequest,
@@ -29,6 +28,7 @@ import type {
 	RpcResponse,
 	RpcSessionState,
 	RpcSlashCommand,
+	RpcTransport,
 } from "./rpc-types.js";
 
 // Re-export types for consumers
@@ -38,19 +38,29 @@ export type {
 	RpcExtensionUIResponse,
 	RpcResponse,
 	RpcSessionState,
+	RpcTransport,
 } from "./rpc-types.js";
+
+export interface RpcModeOptions {
+	/** Custom transport for the RPC protocol. Defaults to stdio. */
+	transport?: RpcTransport;
+}
 
 /**
  * Run in RPC mode.
- * Listens for JSON commands on stdin, outputs events and responses on stdout.
+ *
+ * By default, listens for JSON commands on stdin and outputs events/responses
+ * on stdout. Pass a custom {@link RpcTransport} via options to use a different
+ * channel (e.g. WebSocket).
  */
-export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<never> {
-	takeOverStdout();
+export async function runRpcMode(runtimeHost: AgentSessionRuntime, options: RpcModeOptions = {}): Promise<never> {
+	const t = options.transport ?? createStdioTransport();
+	t.setup?.();
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
 
 	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
-		writeRawStdout(serializeJsonLine(obj));
+		t.write(obj);
 	};
 
 	const success = <T extends RpcCommand["type"]>(
@@ -655,7 +665,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		unsubscribe?.();
 		await runtimeHost.dispose();
 		detachInput();
-		process.stdin.pause();
+		t.close();
 		process.exit(exitCode);
 	}
 
@@ -664,28 +674,14 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		await shutdown();
 	}
 
-	const handleInputLine = async (line: string) => {
-		let parsed: unknown;
-		try {
-			parsed = JSON.parse(line);
-		} catch (parseError: unknown) {
-			output(
-				error(
-					undefined,
-					"parse",
-					`Failed to parse command: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
-				),
-			);
+	const handleMessage = async (parsed: unknown) => {
+		if (typeof parsed !== "object" || parsed === null) {
+			output(error(undefined, "parse", "Invalid message: expected a JSON object"));
 			return;
 		}
 
 		// Handle extension UI responses
-		if (
-			typeof parsed === "object" &&
-			parsed !== null &&
-			"type" in parsed &&
-			parsed.type === "extension_ui_response"
-		) {
+		if ("type" in parsed && parsed.type === "extension_ui_response") {
 			const response = parsed as RpcExtensionUIResponse;
 			const pending = pendingExtensionRequests.get(response.id);
 			if (pending) {
@@ -713,18 +709,16 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		}
 	};
 
-	const onInputEnd = () => {
-		void shutdown();
-	};
-	process.stdin.on("end", onInputEnd);
-
 	detachInput = (() => {
-		const detachJsonl = attachJsonlLineReader(process.stdin, (line) => {
-			void handleInputLine(line);
+		const detachEnd = t.onEnd(() => {
+			void shutdown();
+		});
+		const detachMessage = t.onMessage((message) => {
+			void handleMessage(message);
 		});
 		return () => {
-			detachJsonl();
-			process.stdin.off("end", onInputEnd);
+			detachMessage();
+			detachEnd();
 		};
 	})();
 

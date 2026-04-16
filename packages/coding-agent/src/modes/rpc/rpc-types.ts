@@ -6,6 +6,38 @@
  */
 
 import type { AgentMessage, ThinkingLevel } from "@mariozechner/pi-agent-core";
+
+// ============================================================================
+// RPC Transport
+// ============================================================================
+
+/**
+ * RpcTransport defines the I/O channel interface for the RPC protocol.
+ *
+ * Operates at the message level: each call to {@link write} sends one complete
+ * message, and each invocation of the {@link onMessage} callback delivers one
+ * complete message. Serialization format (JSONL, framed binary, etc.) is an
+ * implementation detail of the transport.
+ *
+ * The default implementation uses stdio with JSONL framing. Custom
+ * implementations can use WebSocket or other transports.
+ */
+export interface RpcTransport {
+	/** Send a single message to the remote end. */
+	write(message: object): void;
+	/** Register a callback for incoming messages. Returns a detach function. */
+	onMessage(callback: (message: unknown) => void): () => void;
+	/** Register a callback for when the transport is closed by the remote end. Returns a detach function. */
+	onEnd(callback: () => void): () => void;
+	/**
+	 * Called once before the transport is used.
+	 * Stdio uses this to take over stdout so stray writes don't corrupt the channel.
+	 */
+	setup?(): void;
+	/** Called during shutdown to release transport resources. */
+	close(): void;
+}
+
 import type { ImageContent, Model } from "@mariozechner/pi-ai";
 import type { SessionStats } from "../../core/agent-session.js";
 import type { BashResult } from "../../core/bash-executor.js";

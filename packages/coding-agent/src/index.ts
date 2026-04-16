@@ -294,9 +294,11 @@ export {
 export { type MainOptions, main } from "./main.js";
 // Run modes for programmatic SDK usage
 export {
+	createStdioTransport,
 	InteractiveMode,
 	type InteractiveModeOptions,
 	type PrintModeOptions,
+	type RpcModeOptions,
 	runPrintMode,
 	runRpcMode,
 } from "./modes/index.js";
