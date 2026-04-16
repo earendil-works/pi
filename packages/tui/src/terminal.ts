@@ -55,10 +55,12 @@ export interface Terminal {
  */
 export class ProcessTerminal implements Terminal {
 	private wasRaw = false;
+	private stopped = false;
 	private inputHandler?: (data: string) => void;
 	private resizeHandler?: () => void;
 	private _kittyProtocolActive = false;
 	private _modifyOtherKeysActive = false;
+	private kittyFallbackTimer?: ReturnType<typeof setTimeout>;
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string) => void;
 	private writeLogPath = (() => {
@@ -81,6 +83,7 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	start(onInput: (data: string) => void, onResize: () => void): void {
+		this.stopped = false;
 		this.inputHandler = onInput;
 		this.resizeHandler = onResize;
 
@@ -136,6 +139,7 @@ export class ProcessTerminal implements Terminal {
 			if (!this._kittyProtocolActive) {
 				const match = sequence.match(kittyResponsePattern);
 				if (match) {
+					this.clearKittyFallbackTimer();
 					this._kittyProtocolActive = true;
 					setKittyProtocolActive(true);
 
@@ -184,24 +188,24 @@ export class ProcessTerminal implements Terminal {
 	private queryAndEnableKittyProtocol(): void {
 		this.setupStdinBuffer();
 		process.stdin.on("data", this.stdinDataHandler!);
-
-		// Zellij forwards the Kitty query to the outer terminal, which can make
-		// Pi enable its Kitty parser even though Zellij still sends Alt as
-		// legacy ESC-prefixed sequences. Skip the Kitty query there and use
-		// modifyOtherKeys directly instead.
-		if (process.env.ZELLIJ) {
-			process.stdout.write("\x1b[>4;2m");
-			this._modifyOtherKeysActive = true;
-			return;
-		}
+		this.clearKittyFallbackTimer();
 
 		process.stdout.write("\x1b[?u");
-		setTimeout(() => {
+		this.kittyFallbackTimer = setTimeout(() => {
+			this.kittyFallbackTimer = undefined;
+			if (this.stopped) return;
 			if (!this._kittyProtocolActive && !this._modifyOtherKeysActive) {
 				process.stdout.write("\x1b[>4;2m");
 				this._modifyOtherKeysActive = true;
 			}
 		}, 150);
+	}
+
+	private clearKittyFallbackTimer(): void {
+		if (this.kittyFallbackTimer !== undefined) {
+			clearTimeout(this.kittyFallbackTimer);
+			this.kittyFallbackTimer = undefined;
+		}
 	}
 
 	/**
@@ -234,6 +238,7 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	async drainInput(maxMs = 1000, idleMs = 50): Promise<void> {
+		this.clearKittyFallbackTimer();
 		if (this._kittyProtocolActive) {
 			// Disable Kitty keyboard protocol first so any late key releases
 			// do not generate new Kitty escape sequences.
@@ -272,6 +277,9 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	stop(): void {
+		this.stopped = true;
+		this.clearKittyFallbackTimer();
+
 		// Disable bracketed paste mode
 		process.stdout.write("\x1b[?2004l");
 

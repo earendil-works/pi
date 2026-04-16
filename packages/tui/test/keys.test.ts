@@ -441,6 +441,44 @@ describe("matchesKey", () => {
 			setKittyProtocolActive(false);
 		});
 
+		it("should classify \\x1b\\r as shift+enter in Kitty mode outside Zellij", () => {
+			setKittyProtocolActive(true);
+			withEnvVars(
+				{
+					ZELLIJ: undefined,
+					ZELLIJ_PANE_ID: undefined,
+				},
+				() => {
+					assert.strictEqual(matchesKey("\x1b\r", "shift+enter"), true);
+					assert.strictEqual(matchesKey("\x1b\r", "alt+enter"), false);
+					assert.strictEqual(parseKey("\x1b\r"), "shift+enter");
+				},
+			);
+			setKittyProtocolActive(false);
+		});
+
+		it("should accept legacy alt-prefixed sequences in Kitty mode inside Zellij", () => {
+			setKittyProtocolActive(true);
+			withEnvVars(
+				{
+					ZELLIJ: "0",
+					ZELLIJ_PANE_ID: "1",
+				},
+				() => {
+					assert.strictEqual(matchesKey("\x1ba", "alt+a"), true);
+					assert.strictEqual(matchesKey("\x1b\x03", "ctrl+alt+c"), true);
+					assert.strictEqual(matchesKey("\x1b ", "alt+space"), true);
+					assert.strictEqual(matchesKey("\x1b\r", "alt+enter"), true);
+					assert.strictEqual(matchesKey("\x1b\r", "shift+enter"), false);
+					assert.strictEqual(parseKey("\x1ba"), "alt+a");
+					assert.strictEqual(parseKey("\x1b\x03"), "ctrl+alt+c");
+					assert.strictEqual(parseKey("\x1b\r"), "alt+enter");
+					assert.strictEqual(parseKey("\x1bB"), "alt+left");
+				},
+			);
+			setKittyProtocolActive(false);
+		});
+
 		it("should match arrow keys", () => {
 			assert.strictEqual(matchesKey("\x1b[A", "up"), true);
 			assert.strictEqual(matchesKey("\x1b[B", "down"), true);

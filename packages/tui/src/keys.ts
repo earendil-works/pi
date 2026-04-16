@@ -704,6 +704,14 @@ function isWindowsTerminalSession(): boolean {
 	);
 }
 
+function isZellijSession(): boolean {
+	return Boolean(process.env.ZELLIJ) || Boolean(process.env.ZELLIJ_PANE_ID);
+}
+
+function allowsLegacyAltSequences(): boolean {
+	return !_kittyProtocolActive || isZellijSession();
+}
+
 /**
  * Raw 0x08 (BS) is ambiguous in legacy terminals.
  *
@@ -820,7 +828,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 			);
 
 		case "space":
-			if (!_kittyProtocolActive) {
+			if (allowsLegacyAltSequences()) {
 				if (modifier === MODIFIERS.ctrl && data === "\x00") {
 					return true;
 				}
@@ -874,7 +882,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 				// \x1b\r = Kitty's "map shift+enter send_text all \e\r"
 				// \n = Ghostty's "keybind = shift+enter=text:\n"
 				if (_kittyProtocolActive) {
-					return data === "\x1b\r" || data === "\n";
+					return data === "\n" || (!isZellijSession() && data === "\x1b\r");
 				}
 				return false;
 			}
@@ -892,7 +900,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 				}
 				// \x1b\r is alt+enter only in legacy mode (no Kitty protocol)
 				// When Kitty protocol is active, alt+enter comes as CSI u sequence
-				if (!_kittyProtocolActive) {
+				if (allowsLegacyAltSequences()) {
 					return data === "\x1b\r";
 				}
 				return false;
@@ -1056,7 +1064,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 			if (modifier === MODIFIERS.alt) {
 				return (
 					data === "\x1b[1;3D" ||
-					(!_kittyProtocolActive && data === "\x1bB") ||
+					(allowsLegacyAltSequences() && data === "\x1bB") ||
 					data === "\x1bb" ||
 					matchesKittySequence(data, ARROW_CODEPOINTS.left, MODIFIERS.alt)
 				);
@@ -1083,7 +1091,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 			if (modifier === MODIFIERS.alt) {
 				return (
 					data === "\x1b[1;3C" ||
-					(!_kittyProtocolActive && data === "\x1bF") ||
+					(allowsLegacyAltSequences() && data === "\x1bF") ||
 					data === "\x1bf" ||
 					matchesKittySequence(data, ARROW_CODEPOINTS.right, MODIFIERS.alt)
 				);
@@ -1133,14 +1141,14 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 		const isLetter = key >= "a" && key <= "z";
 		const isDigit = isDigitKey(key);
 
-		if (modifier === MODIFIERS.ctrl + MODIFIERS.alt && !_kittyProtocolActive && rawCtrl) {
+		if (modifier === MODIFIERS.ctrl + MODIFIERS.alt && allowsLegacyAltSequences() && rawCtrl) {
 			// Legacy: ctrl+alt+key is ESC followed by the control character.
 			// If that legacy form does not match, continue so CSI-u and
 			// modifyOtherKeys sequences from tmux can still be recognized.
 			if (data === `\x1b${rawCtrl}`) return true;
 		}
 
-		if (modifier === MODIFIERS.alt && !_kittyProtocolActive && (isLetter || isDigit)) {
+		if (modifier === MODIFIERS.alt && allowsLegacyAltSequences() && (isLetter || isDigit)) {
 			// Legacy: alt+letter/digit is ESC followed by the key
 			if (data === `\x1b${key}`) return true;
 		}
@@ -1241,10 +1249,11 @@ export function parseKey(data: string): string | undefined {
 
 	// Mode-aware legacy sequences
 	// When Kitty protocol is active, ambiguous sequences are interpreted as custom terminal mappings:
-	// - \x1b\r = shift+enter (Kitty mapping), not alt+enter
+	// - \x1b\r = shift+enter (Kitty mapping), except in Zellij where it is used for alt+enter legacy fallback
 	// - \n = shift+enter (Ghostty mapping)
 	if (_kittyProtocolActive) {
-		if (data === "\x1b\r" || data === "\n") return "shift+enter";
+		if (data === "\n") return "shift+enter";
+		if (!isZellijSession() && data === "\x1b\r") return "shift+enter";
 	}
 
 	const legacySequenceKeyId = LEGACY_SEQUENCE_KEY_IDS[data];
@@ -1266,12 +1275,12 @@ export function parseKey(data: string): string | undefined {
 	if (data === "\x7f") return "backspace";
 	if (data === "\x08") return isWindowsTerminalSession() ? "ctrl+backspace" : "backspace";
 	if (data === "\x1b[Z") return "shift+tab";
-	if (!_kittyProtocolActive && data === "\x1b\r") return "alt+enter";
-	if (!_kittyProtocolActive && data === "\x1b ") return "alt+space";
+	if (allowsLegacyAltSequences() && data === "\x1b\r") return "alt+enter";
+	if (allowsLegacyAltSequences() && data === "\x1b ") return "alt+space";
 	if (data === "\x1b\x7f" || data === "\x1b\b") return "alt+backspace";
-	if (!_kittyProtocolActive && data === "\x1bB") return "alt+left";
-	if (!_kittyProtocolActive && data === "\x1bF") return "alt+right";
-	if (!_kittyProtocolActive && data.length === 2 && data[0] === "\x1b") {
+	if (allowsLegacyAltSequences() && data === "\x1bB") return "alt+left";
+	if (allowsLegacyAltSequences() && data === "\x1bF") return "alt+right";
+	if (allowsLegacyAltSequences() && data.length === 2 && data[0] === "\x1b") {
 		const code = data.charCodeAt(1);
 		if (code >= 1 && code <= 26) {
 			return `ctrl+alt+${String.fromCharCode(code + 96)}`;
