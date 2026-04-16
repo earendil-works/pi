@@ -1,6 +1,6 @@
 {
 	"name": "@mariozechner/pi-ai",
-	"version": "0.67.4",
+	"version": "0.67.5",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -72,8 +72,8 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-		"@anthropic-ai/sdk": "^0.73.0",
-		"@aws-sdk/client-bedrock-runtime": "^3.983.0",
+		"@anthropic-ai/sdk": "^0.90.0",
+		"@aws-sdk/client-bedrock-runtime": "^3.1030.0",
 		"@google/genai": "^1.40.0",
 		"@mistralai/mistralai": "1.14.1",
 		"@sinclair/typebox": "^0.34.41",

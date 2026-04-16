@@ -189,7 +189,6 @@ export class ProcessTerminal implements Terminal {
 		this.setupStdinBuffer();
 		process.stdin.on("data", this.stdinDataHandler!);
 		this.clearKittyFallbackTimer();
-
 		process.stdout.write("\x1b[?u");
 		this.kittyFallbackTimer = setTimeout(() => {
 			this.kittyFallbackTimer = undefined;

@@ -32,12 +32,6 @@ If you want `Shift+Enter` to keep working in tmux via that remap, add `ctrl+j` t
 }
 ```
 
-## Zellij
-
-Pi detects Zellij automatically and skips the Kitty keyboard protocol query there.
-Zellij currently forwards that query to the outer terminal but still sends Alt as legacy ESC-prefixed sequences, which can break Alt keybindings if applications enable Kitty mode.
-Pi uses xterm `modifyOtherKeys` mode 2 inside Zellij instead, so no extra Zellij config is required.
-
 ## WezTerm
 
 Create `~/.wezterm.lua`:

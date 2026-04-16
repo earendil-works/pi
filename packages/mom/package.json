@@ -1,6 +1,6 @@
 {
 	"name": "@mariozechner/pi-mom",
-	"version": "0.67.4",
+	"version": "0.67.5",
 	"description": "Slack bot that delegates messages to the pi coding agent",
 	"type": "module",
 	"bin": {
@@ -20,9 +20,9 @@
 	},
 	"dependencies": {
 		"@anthropic-ai/sandbox-runtime": "^0.0.16",
-		"@mariozechner/pi-agent-core": "^0.67.4",
-		"@mariozechner/pi-ai": "^0.67.4",
-		"@mariozechner/pi-coding-agent": "^0.67.4",
+		"@mariozechner/pi-agent-core": "^0.67.5",
+		"@mariozechner/pi-ai": "^0.67.5",
+		"@mariozechner/pi-coding-agent": "^0.67.5",
 		"@sinclair/typebox": "^0.34.0",
 		"@slack/socket-mode": "^2.0.0",
 		"@slack/web-api": "^7.0.0",

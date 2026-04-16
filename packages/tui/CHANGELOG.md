@@ -2,17 +2,17 @@
 
 ## [Unreleased]
 
+## [0.67.5] - 2026-04-16
+
+### Fixed
+
+- Fixed Zellij `Shift+Enter` regressions by reverting the Zellij-specific Kitty keyboard query bypass and restoring the previous keyboard negotiation behavior ([#3259](https://github.com/badlogic/pi-mono/issues/3259))
+
 ## [0.67.4] - 2026-04-16
 
 ### Fixed
 
 - Fixed markdown strikethrough parsing to require strict double-tilde delimiters (`~~text~~`) with non-whitespace boundaries, preventing accidental strikethrough from loose tilde usage.
-
-## [0.67.3] - 2026-04-15
-
-### Fixed
-
-- Fixed Alt keybindings inside Zellij by skipping the Kitty keyboard protocol query there and enabling xterm `modifyOtherKeys` mode 2 directly ([#3163](https://github.com/badlogic/pi-mono/issues/3163))
 
 ## [0.67.2] - 2026-04-14
 
