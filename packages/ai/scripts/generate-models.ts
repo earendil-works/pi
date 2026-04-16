@@ -927,6 +927,27 @@ async function generateModels() {
 		}
 	}
 
+	if (!allModels.some((m) => m.provider === "github-copilot" && m.id === "claude-opus-4.7")) {
+		allModels.push({
+			id: "claude-opus-4.7",
+			name: "Claude Opus 4.7",
+			api: "anthropic-messages",
+			provider: "github-copilot",
+			baseUrl: "https://api.individual.githubcopilot.com",
+			headers: { ...COPILOT_STATIC_HEADERS },
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 1000000,
+			maxTokens: 128000,
+		});
+	}
+
 	if (!allModels.some((m) => m.provider === "openai" && m.id === "gpt-5.4")) {
 		allModels.push({
 			id: "gpt-5.4",
