@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Bedrock provider sending invalid `interleaved-thinking-2025-05-14` beta flag for Claude Opus 4.7 model by adding 4.7 to adaptive thinking support
+
 ## [0.67.4] - 2026-04-16
 
 ### Changed
