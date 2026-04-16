@@ -542,9 +542,12 @@ export function convertMessages(
 
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
+				const sanitized = sanitizeSurrogates(msg.content);
+				if (!sanitized || sanitized.trim().length === 0)
+					continue;
 				params.push({
 					role: "user",
-					content: sanitizeSurrogates(msg.content),
+					content: sanitized,
 				});
 			} else {
 				const content: ChatCompletionContentPart[] = msg.content.map((item): ChatCompletionContentPart => {
@@ -669,7 +672,7 @@ export function convertMessages(
 				// Some providers require the 'name' field in tool results
 				const toolResultMsg: ChatCompletionToolMessageParam = {
 					role: "tool",
-					content: sanitizeSurrogates(hasText ? textResult : "(see attached image)"),
+					content: sanitizeSurrogates(hasText ? textResult : hasImages ? "(see attached image)" : "(no output)"),
 					tool_call_id: toolMsg.toolCallId,
 				};
 				if (compat.requiresToolResultName && toolMsg.toolName) {
