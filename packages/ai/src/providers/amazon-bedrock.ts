@@ -423,15 +423,19 @@ function handleContentBlockStop(
 }
 
 /**
- * Check if the model supports adaptive thinking (Opus 4.6 and Sonnet 4.6).
+ * Check if the model supports adaptive thinking.
+ * Claude 4.6+ models use adaptive thinking (type:adaptive + output_config.effort)
+ * instead of the legacy type:enabled + budget_tokens format.
  */
 function supportsAdaptiveThinking(modelId: string): boolean {
-	return (
-		modelId.includes("opus-4-6") ||
-		modelId.includes("opus-4.6") ||
-		modelId.includes("sonnet-4-6") ||
-		modelId.includes("sonnet-4.6")
-	);
+	const id = modelId.toLowerCase();
+	const match = id.match(/claude-(?:opus|sonnet|haiku)-?(\d+)[.-](\d+)/);
+	if (match) {
+		const major = parseInt(match[1], 10);
+		const minor = parseInt(match[2], 10);
+		if (major > 4 || (major === 4 && minor >= 6)) return true;
+	}
+	return false;
 }
 
 function mapThinkingLevelToEffort(
@@ -447,7 +451,7 @@ function mapThinkingLevelToEffort(
 		case "high":
 			return "high";
 		case "xhigh":
-			return modelId.includes("opus-4-6") || modelId.includes("opus-4.6") ? "max" : "high";
+			return modelId.includes("opus-4") ? "max" : "high";
 		default:
 			return "high";
 	}
