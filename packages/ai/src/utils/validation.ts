@@ -73,6 +73,8 @@ export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 	// Clone arguments so AJV can safely mutate for type coercion
 	const args = structuredClone(toolCall.arguments);
 
+	coerceStringifiedJsonFields(args, tool.parameters);
+
 	// Validate the arguments (AJV mutates args in-place for type coercion)
 	if (validate(args)) {
 		return args;
@@ -90,4 +92,35 @@ export function validateToolArguments(tool: Tool, toolCall: ToolCall): any {
 	const errorMessage = `Validation failed for tool "${toolCall.name}":\n${errors}\n\nReceived arguments:\n${JSON.stringify(toolCall.arguments, null, 2)}`;
 
 	throw new Error(errorMessage);
+}
+
+/**
+ * Some models (Opus 4.6, GLM-5.1) send array/object parameters as JSON strings.
+ * Parse them back into real values before AJV validation.
+ */
+function coerceStringifiedJsonFields(args: Record<string, any>, schema: any): void {
+	const properties = schema?.properties;
+	if (!properties || typeof args !== "object" || args === null) return;
+
+	for (const [key, propSchema] of Object.entries<any>(properties)) {
+		const value = args[key];
+		if (typeof value !== "string") continue;
+
+		const expectedType = propSchema?.type;
+		if (expectedType !== "array" && expectedType !== "object") continue;
+
+		try {
+			const parsed = JSON.parse(value);
+			if (expectedType === "array" && Array.isArray(parsed)) {
+				args[key] = parsed;
+			} else if (
+				expectedType === "object" &&
+				typeof parsed === "object" &&
+				parsed !== null &&
+				!Array.isArray(parsed)
+			) {
+				args[key] = parsed;
+			}
+		} catch {}
+	}
 }
