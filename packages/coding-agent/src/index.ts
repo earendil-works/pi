@@ -113,6 +113,7 @@ export type {
 	ToolCallEvent,
 	ToolCallEventResult,
 	ToolDefinition,
+	ToolExecutionMode,
 	ToolInfo,
 	ToolRenderResultOptions,
 	ToolResultEvent,
