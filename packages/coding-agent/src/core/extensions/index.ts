@@ -81,6 +81,7 @@ export type {
 	InputEvent,
 	InputEventResult,
 	InputSource,
+	InteractiveWidgetComponent,
 	KeybindingsManager,
 	LoadExtensionsResult,
 	LsToolCallEvent,

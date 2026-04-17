@@ -57,6 +57,8 @@ export {
 	parseKey,
 	setKittyProtocolActive,
 } from "./keys.js";
+// Mouse input helpers
+export { type MouseButton, type ParsedMouseEvent, parseSgrMouseEvent } from "./mouse.js";
 // Input buffering for batch splitting
 export { StdinBuffer, type StdinBufferEventMap, type StdinBufferOptions } from "./stdin-buffer.js";
 // Terminal interface and implementations

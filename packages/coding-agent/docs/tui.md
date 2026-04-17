@@ -739,6 +739,13 @@ ctx.ui.setStatus("my-ext", undefined);
 
 Show persistent content above or below the input editor. Good for todo lists, progress.
 
+When a widget is returned from `ctx.ui.setWidget(...)`, it can also be interactive:
+- `focused?: boolean` — toggled when the widget gains or loses focus
+- `handleMouse?(event)` — receives left-click events with widget-local zero-based `row` / `col`
+- `handleInput?(data)` — receives keyboard input once the widget is focused
+
+This is an extension-widget feature provided by the coding agent. It does **not** add `handleMouse` to the generic `@mariozechner/pi-tui` `Component` interface.
+
 ```typescript
 // Simple string array (above editor by default)
 ctx.ui.setWidget("my-widget", ["Line 1", "Line 2"]);
@@ -759,11 +766,26 @@ ctx.ui.setWidget("my-widget", (_tui, theme) => {
   };
 });
 
+// Interactive widget
+ctx.ui.setWidget("my-widget", (_tui, theme) => ({
+  focused: false,
+  render(width: number) {
+    return [this.focused ? theme.fg("accent", "Focused") : "Widget"];
+  },
+  handleMouse(event) {
+    // event.row / event.col are local to this widget
+  },
+  handleInput(data: string) {
+    // keyboard input after click-to-focus
+  },
+  invalidate() {},
+}));
+
 // Clear
 ctx.ui.setWidget("my-widget", undefined);
 ```
 
-**Examples:** [plan-mode.ts](../examples/extensions/plan-mode.ts)
+**Examples:** [plan-mode.ts](../examples/extensions/plan-mode.ts), [widget-mouse.ts](../examples/extensions/widget-mouse.ts)
 
 ### Pattern 6: Custom Footer
 

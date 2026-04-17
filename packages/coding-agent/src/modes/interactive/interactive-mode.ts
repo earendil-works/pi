@@ -29,6 +29,7 @@ import {
 	Markdown,
 	matchesKey,
 	ProcessTerminal,
+	parseSgrMouseEvent,
 	Spacer,
 	setKeybindings,
 	Text,
@@ -54,6 +55,7 @@ import type {
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
 	ExtensionWidgetOptions,
+	InteractiveWidgetComponent,
 } from "../../core/extensions/index.js";
 import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.js";
 import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.js";
@@ -146,6 +148,22 @@ type CompactionQueuedMessage = {
 	text: string;
 	mode: "steer" | "followUp";
 };
+
+type WidgetRegion = {
+	component: InteractiveWidgetComponent;
+	placement: "aboveEditor" | "belowEditor";
+	startRow: number;
+	height: number;
+	width: number;
+};
+
+function isInteractiveWidgetComponent(component: InteractiveWidgetComponent): boolean {
+	return (
+		typeof component.handleMouse === "function" ||
+		typeof component.handleInput === "function" ||
+		"focused" in component
+	);
+}
 
 const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
 	"Anthropic subscription auth is active. Third-party usage now draws from extra usage and is billed per token, not your Claude plan limits. Manage extra usage at https://claude.ai/settings/usage.";
@@ -273,8 +291,8 @@ export class InteractiveMode {
 	private extensionTerminalInputUnsubscribers = new Set<() => void>();
 
 	// Extension widgets (components rendered above/below the editor)
-	private extensionWidgetsAbove = new Map<string, Component & { dispose?(): void }>();
-	private extensionWidgetsBelow = new Map<string, Component & { dispose?(): void }>();
+	private extensionWidgetsAbove = new Map<string, InteractiveWidgetComponent>();
+	private extensionWidgetsBelow = new Map<string, InteractiveWidgetComponent>();
 	private widgetContainerAbove!: Container;
 	private widgetContainerBelow!: Container;
 
@@ -332,6 +350,12 @@ export class InteractiveMode {
 		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
 		this.footer = new FooterComponent(this.session, this.footerDataProvider);
 		this.footer.setAutoCompactEnabled(this.session.autoCompactionEnabled);
+		this.ui.addInputListener((data) => {
+			if (this.handleInteractiveWidgetEscape(data)) {
+				return { consume: true };
+			}
+			return this.routeWidgetMouseInput(data) ? { consume: true } : undefined;
+		});
 
 		// Load hide thinking block setting
 		this.hideThinkingBlock = this.settingsManager.getHideThinkingBlock();
@@ -1546,11 +1570,11 @@ export class InteractiveMode {
 	 */
 	private setExtensionWidget(
 		key: string,
-		content: string[] | ((tui: TUI, thm: Theme) => Component & { dispose?(): void }) | undefined,
+		content: string[] | ((tui: TUI, thm: Theme) => InteractiveWidgetComponent) | undefined,
 		options?: ExtensionWidgetOptions,
 	): void {
 		const placement = options?.placement ?? "aboveEditor";
-		const removeExisting = (map: Map<string, Component & { dispose?(): void }>) => {
+		const removeExisting = (map: Map<string, InteractiveWidgetComponent>) => {
 			const existing = map.get(key);
 			if (existing?.dispose) existing.dispose();
 			map.delete(key);
@@ -1564,7 +1588,7 @@ export class InteractiveMode {
 			return;
 		}
 
-		let component: Component & { dispose?(): void };
+		let component: InteractiveWidgetComponent;
 
 		if (Array.isArray(content)) {
 			// Wrap string array in a Container with Text components
@@ -1639,7 +1663,7 @@ export class InteractiveMode {
 
 	private renderWidgetContainer(
 		container: Container,
-		widgets: Map<string, Component & { dispose?(): void }>,
+		widgets: Map<string, InteractiveWidgetComponent>,
 		spacerWhenEmpty: boolean,
 		leadingSpacer: boolean,
 	): void {
@@ -1658,6 +1682,104 @@ export class InteractiveMode {
 		for (const component of widgets.values()) {
 			container.addChild(component);
 		}
+	}
+
+	private getComponentHeight(component: Component, width: number): number {
+		return component.render(width).length;
+	}
+
+	private appendWidgetRegions(
+		regions: WidgetRegion[],
+		widgets: Map<string, InteractiveWidgetComponent>,
+		startRow: number,
+		width: number,
+		placement: "aboveEditor" | "belowEditor",
+		spacerWhenEmpty: boolean,
+		leadingSpacer: boolean,
+	): number {
+		let row = startRow;
+		if (widgets.size === 0) {
+			return row + (spacerWhenEmpty ? 1 : 0);
+		}
+
+		if (leadingSpacer) {
+			row += 1;
+		}
+
+		for (const component of widgets.values()) {
+			const height = this.getComponentHeight(component, width);
+			regions.push({ component, placement, startRow: row, height, width });
+			row += height;
+		}
+
+		return row;
+	}
+
+	private buildWidgetRegions(): WidgetRegion[] {
+		const width = Math.max(1, this.ui.terminal.columns || 1);
+		let row = 0;
+		const regions: WidgetRegion[] = [];
+
+		row += this.getComponentHeight(this.headerContainer, width);
+		row += this.getComponentHeight(this.chatContainer, width);
+		row += this.getComponentHeight(this.pendingMessagesContainer, width);
+		row += this.getComponentHeight(this.statusContainer, width);
+		row = this.appendWidgetRegions(regions, this.extensionWidgetsAbove, row, width, "aboveEditor", true, true);
+		row += this.getComponentHeight(this.editorContainer, width);
+		this.appendWidgetRegions(regions, this.extensionWidgetsBelow, row, width, "belowEditor", false, false);
+
+		return regions;
+	}
+
+	private handleInteractiveWidgetEscape(data: string): boolean {
+		if (!matchesKey(data, "escape")) {
+			return false;
+		}
+		const focusedComponent = this.ui.getFocusedComponent();
+		if (!focusedComponent || focusedComponent === this.editor) {
+			return false;
+		}
+		if (!isInteractiveWidgetComponent(focusedComponent as InteractiveWidgetComponent)) {
+			return false;
+		}
+		this.ui.setFocus(this.editor);
+		this.ui.requestRender();
+		return true;
+	}
+
+	private routeWidgetMouseInput(data: string): boolean {
+		const event = parseSgrMouseEvent(data);
+		if (!event) {
+			return false;
+		}
+
+		const contentRow = this.ui.screenRowToContentRow(event.row);
+		const region = this.buildWidgetRegions().find(
+			(candidate) =>
+				contentRow >= candidate.startRow &&
+				contentRow < candidate.startRow + candidate.height &&
+				event.col >= 0 &&
+				event.col < candidate.width,
+		);
+		if (!region) {
+			this.ui.setFocus(this.editor);
+			this.ui.requestRender();
+			return true;
+		}
+		if (!isInteractiveWidgetComponent(region.component)) {
+			this.ui.setFocus(this.editor);
+			this.ui.requestRender();
+			return true;
+		}
+
+		this.ui.setFocus(region.component);
+		region.component.handleMouse?.({
+			...event,
+			row: contentRow - region.startRow,
+			col: event.col,
+		});
+		this.ui.requestRender();
+		return true;
 	}
 
 	/**

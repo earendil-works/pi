@@ -299,6 +299,18 @@ export class TUI extends Container {
 		}
 	}
 
+	getFocusedComponent(): Component | null {
+		return this.focusedComponent;
+	}
+
+	getViewportTop(): number {
+		return this.previousViewportTop;
+	}
+
+	screenRowToContentRow(screenRow: number): number {
+		return this.previousViewportTop + (screenRow - this.terminal.contentOriginRow);
+	}
+
 	/**
 	 * Show an overlay component with configurable positioning and sizing.
 	 * Returns a handle to control the overlay's visibility.

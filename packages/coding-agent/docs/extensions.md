@@ -2002,6 +2002,22 @@ ctx.ui.setWidget("my-widget", ["Line 1", "Line 2"]);
 // Widget below editor
 ctx.ui.setWidget("my-widget", ["Line 1", "Line 2"], { placement: "belowEditor" });
 ctx.ui.setWidget("my-widget", (tui, theme) => new Text(theme.fg("accent", "Custom"), 0, 0));
+
+// Interactive widget: click to focus, optional widget-local mouse events
+ctx.ui.setWidget("widget-mouse", (_tui, theme) => ({
+  focused: false,
+  render(width) {
+    return [this.focused ? theme.fg("accent", "Focused widget") : "Widget"];
+  },
+  handleMouse(event) {
+    // event.row / event.col are zero-based within this widget
+  },
+  handleInput(data) {
+    // receives keyboard input after the widget is focused
+  },
+  invalidate() {},
+}));
+
 ctx.ui.setWidget("my-widget", undefined);  // Clear
 
 // Custom footer (replaces built-in footer entirely)
@@ -2040,6 +2056,11 @@ if (!result.success) {
 ctx.ui.setTheme(lightTheme!);  // Or switch by Theme object
 ctx.ui.theme.fg("accent", "styled text");  // Access current theme
 ```
+
+Interactive widgets are an extension-widget-only capability:
+- `focused?: boolean` is toggled by the coding agent when widget focus changes
+- `handleMouse?(event)` receives left-click events with widget-local zero-based `row` / `col`
+- widgets without `focused` / `handleMouse` continue to work unchanged
 
 ### Custom Components
 
@@ -2266,6 +2287,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `modal-editor.ts` | Vim-style modal editor | `setEditorComponent`, `CustomEditor` |
 | `rainbow-editor.ts` | Custom editor styling | `setEditorComponent` |
 | `widget-placement.ts` | Widget above/below editor | `setWidget` |
+| `widget-mouse.ts` | Clickable/focusable widget with widget-local mouse events | `setWidget`, `handleMouse`, `focused` |
 | `overlay-test.ts` | Overlay components | `ui.custom` with overlay options |
 | `overlay-qa-tests.ts` | Comprehensive overlay tests | `ui.custom`, all overlay options |
 | `notify.ts` | Simple notifications | `ui.notify` |

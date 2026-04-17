@@ -35,6 +35,7 @@ import type {
 	KeyId,
 	OverlayHandle,
 	OverlayOptions,
+	ParsedMouseEvent,
 	TUI,
 } from "@mariozechner/pi-tui";
 import type { Static, TSchema } from "@sinclair/typebox";
@@ -101,6 +102,13 @@ export interface ExtensionWidgetOptions {
 /** Raw terminal input listener for extensions. */
 export type TerminalInputHandler = (data: string) => { consume?: boolean; data?: string } | undefined;
 
+/** Optional interactive widget surface for extension widgets. */
+export type InteractiveWidgetComponent = Component & {
+	dispose?(): void;
+	focused?: boolean;
+	handleMouse?(event: ParsedMouseEvent): void;
+};
+
 /**
  * UI context for extensions to request interactive UI.
  * Each mode (interactive, RPC, print) provides its own implementation.
@@ -134,7 +142,7 @@ export interface ExtensionUIContext {
 	setWidget(key: string, content: string[] | undefined, options?: ExtensionWidgetOptions): void;
 	setWidget(
 		key: string,
-		content: ((tui: TUI, theme: Theme) => Component & { dispose?(): void }) | undefined,
+		content: ((tui: TUI, theme: Theme) => InteractiveWidgetComponent) | undefined,
 		options?: ExtensionWidgetOptions,
 	): void;
 

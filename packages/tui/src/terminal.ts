@@ -34,6 +34,9 @@ export interface Terminal {
 	// Whether Kitty keyboard protocol is active
 	get kittyProtocolActive(): boolean;
 
+	// Screen row where TUI content started rendering (0-based, best-effort)
+	get contentOriginRow(): number;
+
 	// Cursor positioning (relative to current position)
 	moveBy(lines: number): void; // Move cursor up (negative) or down (positive) by N lines
 
@@ -59,6 +62,8 @@ export class ProcessTerminal implements Terminal {
 	private resizeHandler?: () => void;
 	private _kittyProtocolActive = false;
 	private _modifyOtherKeysActive = false;
+	private _mouseReportingActive = false;
+	private _contentOriginRow = 0;
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string) => void;
 	private writeLogPath = (() => {
@@ -80,6 +85,10 @@ export class ProcessTerminal implements Terminal {
 		return this._kittyProtocolActive;
 	}
 
+	get contentOriginRow(): number {
+		return this._contentOriginRow;
+	}
+
 	start(onInput: (data: string) => void, onResize: () => void): void {
 		this.inputHandler = onInput;
 		this.resizeHandler = onResize;
@@ -94,6 +103,7 @@ export class ProcessTerminal implements Terminal {
 
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		process.stdout.write("\x1b[?2004h");
+		this.enableMouseReporting();
 
 		// Set up resize handler immediately
 		process.stdout.on("resize", this.resizeHandler);
@@ -129,6 +139,7 @@ export class ProcessTerminal implements Terminal {
 
 		// Kitty protocol response pattern: \x1b[?<flags>u
 		const kittyResponsePattern = /^\x1b\[\?(\d+)u$/;
+		const cursorPositionPattern = /^\x1b\[(\d+);(\d+)R$/;
 
 		// Forward individual sequences to the input handler
 		this.stdinBuffer.on("data", (sequence) => {
@@ -147,6 +158,15 @@ export class ProcessTerminal implements Terminal {
 					process.stdout.write("\x1b[>7u");
 					return; // Don't forward protocol response to TUI
 				}
+			}
+
+			const cursorMatch = sequence.match(cursorPositionPattern);
+			if (cursorMatch) {
+				const row = Number.parseInt(cursorMatch[1]!, 10);
+				if (Number.isFinite(row)) {
+					this._contentOriginRow = Math.max(0, row - 1);
+				}
+				return;
 			}
 
 			if (this.inputHandler) {
@@ -184,6 +204,7 @@ export class ProcessTerminal implements Terminal {
 	private queryAndEnableKittyProtocol(): void {
 		this.setupStdinBuffer();
 		process.stdin.on("data", this.stdinDataHandler!);
+		process.stdout.write("\x1b[6n");
 		process.stdout.write("\x1b[?u");
 		setTimeout(() => {
 			if (!this._kittyProtocolActive && !this._modifyOtherKeysActive) {
@@ -222,7 +243,20 @@ export class ProcessTerminal implements Terminal {
 		}
 	}
 
+	private enableMouseReporting(): void {
+		if (this._mouseReportingActive) return;
+		process.stdout.write("\x1b[?1000h\x1b[?1006h");
+		this._mouseReportingActive = true;
+	}
+
+	private disableMouseReporting(): void {
+		if (!this._mouseReportingActive) return;
+		process.stdout.write("\x1b[?1000l\x1b[?1006l");
+		this._mouseReportingActive = false;
+	}
+
 	async drainInput(maxMs = 1000, idleMs = 50): Promise<void> {
+		this.disableMouseReporting();
 		if (this._kittyProtocolActive) {
 			// Disable Kitty keyboard protocol first so any late key releases
 			// do not generate new Kitty escape sequences.
@@ -261,8 +295,9 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	stop(): void {
-		// Disable bracketed paste mode
+		// Disable bracketed paste mode and mouse reporting
 		process.stdout.write("\x1b[?2004l");
+		this.disableMouseReporting();
 
 		// Disable Kitty keyboard protocol if not already done by drainInput()
 		if (this._kittyProtocolActive) {

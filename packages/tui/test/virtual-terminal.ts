@@ -14,6 +14,8 @@ export class VirtualTerminal implements Terminal {
 	private resizeHandler?: () => void;
 	private _columns: number;
 	private _rows: number;
+	private _mouseReportingActive = false;
+	private _contentOriginRow = 0;
 
 	constructor(columns = 80, rows = 24) {
 		this._columns = columns;
@@ -32,8 +34,10 @@ export class VirtualTerminal implements Terminal {
 	start(onInput: (data: string) => void, onResize: () => void): void {
 		this.inputHandler = onInput;
 		this.resizeHandler = onResize;
-		// Enable bracketed paste mode for consistency with ProcessTerminal
+		// Enable bracketed paste mode and mouse reporting for consistency with ProcessTerminal
 		this.xterm.write("\x1b[?2004h");
+		this.xterm.write("\x1b[?1000h\x1b[?1006h");
+		this._mouseReportingActive = true;
 	}
 
 	async drainInput(_maxMs?: number, _idleMs?: number): Promise<void> {
@@ -41,8 +45,12 @@ export class VirtualTerminal implements Terminal {
 	}
 
 	stop(): void {
-		// Disable bracketed paste mode
+		// Disable bracketed paste mode and mouse reporting
 		this.xterm.write("\x1b[?2004l");
+		if (this._mouseReportingActive) {
+			this.xterm.write("\x1b[?1000l\x1b[?1006l");
+			this._mouseReportingActive = false;
+		}
 		this.inputHandler = undefined;
 		this.resizeHandler = undefined;
 	}
@@ -62,6 +70,10 @@ export class VirtualTerminal implements Terminal {
 	get kittyProtocolActive(): boolean {
 		// Virtual terminal always reports Kitty protocol as active for testing
 		return true;
+	}
+
+	get contentOriginRow(): number {
+		return this._contentOriginRow;
 	}
 
 	moveBy(lines: number): void {
