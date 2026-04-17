@@ -884,6 +884,33 @@ Content`,
 			expect(result.skills.some((r) => isEnabled(r, "good-skill", "includes"))).toBe(true);
 			expect(result.skills.some((r) => r.path.includes("bad-skill"))).toBe(false);
 		});
+
+		it("should expand positive glob manifest entries before collecting skills", async () => {
+			const pkgDir = join(tempDir, "skill-manifest-glob-pkg");
+			mkdirSync(join(pkgDir, "plugins/pdf-to-markdown/skills/pdf-to-markdown"), { recursive: true });
+			mkdirSync(join(pkgDir, "plugins/nutrient-dws/skills/document-processor-api"), { recursive: true });
+			writeFileSync(
+				join(pkgDir, "plugins/pdf-to-markdown/skills/pdf-to-markdown", "SKILL.md"),
+				"---\nname: pdf-to-markdown\ndescription: PDF to Markdown\n---\nContent",
+			);
+			writeFileSync(
+				join(pkgDir, "plugins/nutrient-dws/skills/document-processor-api", "SKILL.md"),
+				"---\nname: document-processor-api\ndescription: DWS\n---\nContent",
+			);
+			writeFileSync(
+				join(pkgDir, "package.json"),
+				JSON.stringify({
+					name: "skill-manifest-glob-pkg",
+					pi: {
+						skills: ["./plugins/*/skills"],
+					},
+				}),
+			);
+
+			const result = await packageManager.resolveExtensionSources([pkgDir]);
+			expect(result.skills.some((r) => isEnabled(r, "pdf-to-markdown", "includes"))).toBe(true);
+			expect(result.skills.some((r) => isEnabled(r, "document-processor-api", "includes"))).toBe(true);
+		});
 	});
 
 	describe("pattern filtering in package filters", () => {
