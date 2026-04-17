@@ -13,6 +13,7 @@ import type {
 	AgentToolResult,
 	AgentToolUpdateCallback,
 	ThinkingLevel,
+	ToolExecutionMode,
 } from "@mariozechner/pi-agent-core";
 import type {
 	Api,
@@ -384,6 +385,15 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 
 	/** Optional compatibility shim to prepare raw tool call arguments before schema validation. Must return an object conforming to TParams. */
 	prepareArguments?: (args: unknown) => Static<TParams>;
+
+	/**
+	 * Per-tool execution mode override.
+	 * - "sequential": this tool must execute one at a time with other tool calls.
+	 * - "parallel": this tool can execute concurrently with other tool calls.
+	 *
+	 * If omitted, the default execution mode applies.
+	 */
+	executionMode?: ToolExecutionMode;
 
 	/** Execute the tool. */
 	execute(
