@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### New Features
+
+- Added built-in Nebius Token Factory model support with `NEBIUS_API_KEY` auth.
+
 ## [0.62.0] - 2026-03-23
 
 ### New Features

@@ -52,6 +52,7 @@ Unified LLM API with automatic model discovery, provider configuration, token an
 - **OpenAI Codex** (ChatGPT Plus/Pro subscription, requires OAuth, see below)
 - **Anthropic**
 - **Google**
+- **Nebius Token Factory**
 - **Vertex AI** (Gemini via Vertex AI)
 - **Mistral**
 - **Groq**
@@ -643,7 +644,7 @@ A **provider** offers models through a specific API. For example:
 - **Google** models use the `google-generative-ai` API
 - **OpenAI** models use the `openai-responses` API
 - **Mistral** models use the `mistral-conversations` API
-- **xAI, Cerebras, Groq, etc.** models use the `openai-completions` API (OpenAI-compatible)
+- **xAI, Cerebras, Groq, Nebius Token Factory, etc.** models use the `openai-completions` API (OpenAI-compatible)
 
 ### Querying Providers and Models
 
@@ -932,6 +933,7 @@ In Node.js environments, you can set environment variables to avoid passing API 
 | Azure OpenAI | `AZURE_OPENAI_API_KEY` + `AZURE_OPENAI_BASE_URL` or `AZURE_OPENAI_RESOURCE_NAME` (optional `AZURE_OPENAI_API_VERSION`, `AZURE_OPENAI_DEPLOYMENT_NAME_MAP` like `model=deployment,model2=deployment2`) |
 | Anthropic | `ANTHROPIC_API_KEY` or `ANTHROPIC_OAUTH_TOKEN` |
 | Google | `GEMINI_API_KEY` |
+| Nebius Token Factory | `NEBIUS_API_KEY` |
 | Vertex AI | `GOOGLE_CLOUD_API_KEY` or `GOOGLE_CLOUD_PROJECT` (or `GCLOUD_PROJECT`) + `GOOGLE_CLOUD_LOCATION` + ADC |
 | Mistral | `MISTRAL_API_KEY` |
 | Groq | `GROQ_API_KEY` |

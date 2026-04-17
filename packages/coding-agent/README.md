@@ -98,6 +98,7 @@ For each built-in provider, pi maintains a list of tool-capable models, updated 
 - OpenAI
 - Azure OpenAI
 - Google Gemini
+- Nebius Token Factory
 - Google Vertex
 - Amazon Bedrock
 - Mistral

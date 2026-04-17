@@ -790,9 +790,11 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 	const provider = model.provider;
 	const baseUrl = model.baseUrl;
 
+	const isNebius = provider === "nebius" || baseUrl.includes("tokenfactory.nebius.com");
 	const isZai = provider === "zai" || baseUrl.includes("api.z.ai");
 
 	const isNonStandard =
+		isNebius ||
 		provider === "cerebras" ||
 		baseUrl.includes("cerebras.ai") ||
 		provider === "xai" ||
@@ -803,7 +805,7 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 		provider === "opencode" ||
 		baseUrl.includes("opencode.ai");
 
-	const useMaxTokens = baseUrl.includes("chutes.ai");
+	const useMaxTokens = isNebius || baseUrl.includes("chutes.ai");
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
 	const isGroq = provider === "groq" || baseUrl.includes("groq.com");
@@ -821,7 +823,7 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 	return {
 		supportsStore: !isNonStandard,
 		supportsDeveloperRole: !isNonStandard,
-		supportsReasoningEffort: !isGrok && !isZai,
+		supportsReasoningEffort: !isNebius && !isGrok && !isZai,
 		reasoningEffortMap,
 		supportsUsageInStreaming: true,
 		maxTokensField: useMaxTokens ? "max_tokens" : "max_completion_tokens",

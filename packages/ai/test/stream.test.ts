@@ -24,9 +24,11 @@ const oauthTokens = await Promise.all([
 	resolveApiKey("github-copilot"),
 	resolveApiKey("google-gemini-cli"),
 	resolveApiKey("google-antigravity"),
+	resolveApiKey("nebius"),
 	resolveApiKey("openai-codex"),
 ]);
-const [anthropicOAuthToken, githubCopilotToken, geminiCliToken, antigravityToken, openaiCodexToken] = oauthTokens;
+const [anthropicOAuthToken, githubCopilotToken, geminiCliToken, antigravityToken, nebiusApiKey, openaiCodexToken] =
+	oauthTokens;
 
 // Calculator tool definition (same as examples)
 // Note: Using StringEnum helper because Google's API doesn't support anyOf/const patterns
@@ -610,6 +612,32 @@ describe("Generate E2E Tests", () => {
 
 		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
 			await multiTurn(llm, { reasoningEffort: "medium" });
+		});
+	});
+
+	describe.skipIf(!nebiusApiKey)("Nebius Provider (Kimi-K2.5 via OpenAI Completions)", () => {
+		const llm = getModel("nebius", "moonshotai/Kimi-K2.5");
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm, { apiKey: nebiusApiKey! });
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm, { apiKey: nebiusApiKey! });
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm, { apiKey: nebiusApiKey! });
+		});
+
+		it("should handle thinking mode", { retry: 3 }, async () => {
+			const thinkingModel = getModel("nebius", "deepseek-ai/DeepSeek-R1-0528");
+			await handleThinking(thinkingModel, { apiKey: nebiusApiKey! });
+		});
+
+		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+			const thinkingModel = getModel("nebius", "deepseek-ai/DeepSeek-R1-0528");
+			await multiTurn(thinkingModel, { apiKey: nebiusApiKey! });
 		});
 	});
 

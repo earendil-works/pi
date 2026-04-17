@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Nebius Token Factory provider support via the OpenAI-compatible completions path, with model metadata sourced from models.dev and auth via `NEBIUS_API_KEY`.
+
 ## [0.62.0] - 2026-03-23
 
 ### Added

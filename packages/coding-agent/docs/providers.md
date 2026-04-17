@@ -57,6 +57,7 @@ pi
 | Azure OpenAI Responses | `AZURE_OPENAI_API_KEY` | `azure-openai-responses` |
 | OpenAI | `OPENAI_API_KEY` | `openai` |
 | Google Gemini | `GEMINI_API_KEY` | `google` |
+| Nebius Token Factory | `NEBIUS_API_KEY` | `nebius` |
 | Mistral | `MISTRAL_API_KEY` | `mistral` |
 | Groq | `GROQ_API_KEY` | `groq` |
 | Cerebras | `CEREBRAS_API_KEY` | `cerebras` |
@@ -82,6 +83,7 @@ Store credentials in `~/.pi/agent/auth.json`:
   "anthropic": { "type": "api_key", "key": "sk-ant-..." },
   "openai": { "type": "api_key", "key": "sk-..." },
   "google": { "type": "api_key", "key": "..." },
+  "nebius": { "type": "api_key", "key": "..." },
   "opencode": { "type": "api_key", "key": "..." },
   "opencode-go": { "type": "api_key", "key": "..." }
 }
@@ -110,6 +112,16 @@ The `key` field supports three formats:
 OAuth credentials are also stored here after `/login` and managed automatically.
 
 ## Cloud Providers
+
+### Nebius Token Factory
+
+```bash
+export NEBIUS_API_KEY=...
+
+pi --provider nebius --model moonshotai/Kimi-K2.5
+```
+
+Nebius models use the OpenAI-compatible completions path with the default base URL `https://api.tokenfactory.nebius.com/v1`.
 
 ### Azure OpenAI
 

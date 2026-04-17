@@ -27,9 +27,10 @@ const oauthTokens = await Promise.all([
 	resolveApiKey("github-copilot"),
 	resolveApiKey("google-gemini-cli"),
 	resolveApiKey("google-antigravity"),
+	resolveApiKey("nebius"),
 	resolveApiKey("openai-codex"),
 ]);
-const [githubCopilotToken, geminiCliToken, antigravityToken, openaiCodexToken] = oauthTokens;
+const [githubCopilotToken, geminiCliToken, antigravityToken, nebiusApiKey, openaiCodexToken] = oauthTokens;
 
 // Lorem ipsum paragraph for realistic token estimation
 const LOREM_IPSUM = `Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat. Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum. `;
@@ -375,6 +376,17 @@ describe("Context overflow error handling", () => {
 		it("Kimi-K2.5 - should detect overflow via isContextOverflow", async () => {
 			const model = getModel("huggingface", "moonshotai/Kimi-K2.5");
 			const result = await testContextOverflow(model, process.env.HF_TOKEN!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	describe.skipIf(!nebiusApiKey)("Nebius", () => {
+		it("Kimi-K2.5 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("nebius", "moonshotai/Kimi-K2.5");
+			const result = await testContextOverflow(model, nebiusApiKey!);
 			logResult(result);
 
 			expect(result.stopReason).toBe("error");

@@ -23,6 +23,7 @@ export type KnownProvider =
 	| "google-gemini-cli"
 	| "google-antigravity"
 	| "google-vertex"
+	| "nebius"
 	| "openai"
 	| "azure-openai-responses"
 	| "openai-codex"
