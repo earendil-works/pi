@@ -152,8 +152,14 @@ export interface ThinkingContent {
 
 export interface ImageContent {
 	type: "image";
-	data: string; // base64 encoded image data
-	mimeType: string; // e.g., "image/jpeg", "image/png"
+	data: string; // base64 encoded media data
+	/**
+	 * Media MIME type. Historically image/jpeg, image/png, etc., but also accepts
+	 * video/* and audio/* for providers that support multimodal input beyond still
+	 * images (e.g. Gemma 3/4, Gemini, GPT-4o). Providers map this to the correct
+	 * content-part shape based on the prefix.
+	 */
+	mimeType: string;
 }
 
 export interface ToolCall {
@@ -318,7 +324,7 @@ export interface Model<TApi extends Api> {
 	provider: Provider;
 	baseUrl: string;
 	reasoning: boolean;
-	input: ("text" | "image")[];
+	input: ("text" | "image" | "video" | "audio")[];
 	cost: {
 		input: number; // $/million tokens
 		output: number; // $/million tokens

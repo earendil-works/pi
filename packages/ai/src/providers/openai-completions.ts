@@ -528,18 +528,32 @@ export function convertMessages(
 							type: "text",
 							text: sanitizeSurrogates(item.text),
 						} satisfies ChatCompletionContentPartText;
-					} else {
-						return {
-							type: "image_url",
-							image_url: {
-								url: `data:${item.mimeType};base64,${item.data}`,
-							},
-						} satisfies ChatCompletionContentPartImage;
 					}
+					const dataUrl = `data:${item.mimeType};base64,${item.data}`;
+					// video_url and audio_url are non-standard OpenAI extensions supported by
+					// vLLM, Ollama, and other OpenAI-compatible servers hosting multimodal
+					// models (Gemma 3/4, Qwen2.5-Omni). The SDK forwards unknown part types
+					// unchanged, so passing `as any` is safe and intentional.
+					if (item.mimeType.startsWith("video/")) {
+						return { type: "video_url", video_url: { url: dataUrl } } as any;
+					}
+					if (item.mimeType.startsWith("audio/")) {
+						return { type: "audio_url", audio_url: { url: dataUrl } } as any;
+					}
+					return {
+						type: "image_url",
+						image_url: {
+							url: dataUrl,
+						},
+					} satisfies ChatCompletionContentPartImage;
 				});
-				const filteredContent = !model.input.includes("image")
-					? content.filter((c) => c.type !== "image_url")
-					: content;
+				const filteredContent = content.filter((c) => {
+					if (c.type === "text") return true;
+					if (c.type === "image_url") return model.input.includes("image");
+					if ((c as any).type === "video_url") return model.input.includes("video");
+					if ((c as any).type === "audio_url") return model.input.includes("audio");
+					return true;
+				});
 				if (filteredContent.length === 0) continue;
 				params.push({
 					role: "user",

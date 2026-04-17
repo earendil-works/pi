@@ -136,15 +136,29 @@ export function convertResponsesMessages<TApi extends Api>(
 							text: sanitizeSurrogates(item.text),
 						} satisfies ResponseInputText;
 					}
+					const dataUrl = `data:${item.mimeType};base64,${item.data}`;
+					// Non-standard content parts for multimodal models served via OpenAI-
+					// compatible gateways (vLLM, Ollama) — the Responses API forwards
+					// unknown part types unchanged.
+					if (item.mimeType.startsWith("video/")) {
+						return { type: "input_video", video_url: dataUrl } as any;
+					}
+					if (item.mimeType.startsWith("audio/")) {
+						return { type: "input_audio", audio_url: dataUrl } as any;
+					}
 					return {
 						type: "input_image",
 						detail: "auto",
-						image_url: `data:${item.mimeType};base64,${item.data}`,
+						image_url: dataUrl,
 					} satisfies ResponseInputImage;
 				});
-				const filteredContent = !model.input.includes("image")
-					? content.filter((c) => c.type !== "input_image")
-					: content;
+				const filteredContent = content.filter((c) => {
+					if (c.type === "input_text") return true;
+					if (c.type === "input_image") return model.input.includes("image");
+					if ((c as any).type === "input_video") return model.input.includes("video");
+					if ((c as any).type === "input_audio") return model.input.includes("audio");
+					return true;
+				});
 				if (filteredContent.length === 0) continue;
 				messages.push({
 					role: "user",
