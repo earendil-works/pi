@@ -1128,7 +1128,24 @@ export class InteractiveMode {
 			const normalizedPath = shortPath.replace(/\\/g, "/");
 			const segments = normalizedPath.split("/").filter((segment) => segment.length > 0 && segment !== "~");
 			if (segments.length > 0) {
-				return segments[segments.length - 1]!;
+				let name = segments[segments.length - 1]!;
+				// For index.ts/index.js, use a meaningful parent directory or package name
+				if (/^index\.[tj]sx?$/.test(name)) {
+					const genericDirs = new Set(["dist", "src", "lib", "build", "out"]);
+					let parentIdx = segments.length - 2;
+					while (parentIdx >= 0 && genericDirs.has(segments[parentIdx]!)) {
+						parentIdx--;
+					}
+					if (parentIdx >= 0) {
+						name = segments[parentIdx]!;
+					} else {
+						const npmMatch = resourcePath.match(/node_modules\/(@?[^/]+(?:\/[^/]+)?)/);
+						if (npmMatch) {
+							name = npmMatch[1]!;
+						}
+					}
+				}
+				return name.replace(/\.[tj]sx?$/, "");
 			}
 			return shortPath;
 		};

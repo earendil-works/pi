@@ -247,8 +247,43 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		const output = renderAll(fakeThis.chatContainer);
 		expect(output).toContain("[Extensions]");
-		expect(output).toContain("answer.ts, btw.ts");
-		expect(output).not.toContain("extensions/answer.ts");
+		expect(output).toContain("answer, btw");
+		expect(output).not.toContain("extensions/answer");
+	});
+
+	test("uses parent directory name for index.ts extensions", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			extensions: [
+				{ path: "/tmp/extensions/my-plugin/index.ts" },
+				{ path: "/tmp/extensions/standalone.ts" },
+			],
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+
+		const output = renderAll(fakeThis.chatContainer);
+		expect(output).toContain("my-plugin");
+		expect(output).toContain("standalone");
+		expect(output).not.toContain("index");
+	});
+
+	test("skips generic parent dirs like dist for index.js extensions", () => {
+		const fakeThis = createShowLoadedResourcesThis({
+			quietStartup: false,
+			extensions: [{ path: "/tmp/extensions/cool-ext/dist/index.js" }],
+		});
+
+		(InteractiveMode as any).prototype.showLoadedResources.call(fakeThis, {
+			force: false,
+		});
+
+		const output = renderAll(fakeThis.chatContainer);
+		expect(output).toContain("cool-ext");
+		expect(output).not.toContain("dist");
+		expect(output).not.toContain("index");
 	});
 
 	test("shows context paths relative to cwd while preserving full external paths", () => {
