@@ -542,9 +542,11 @@ export function convertMessages(
 
 		if (msg.role === "user") {
 			if (typeof msg.content === "string") {
+				const sanitized = sanitizeSurrogates(msg.content);
+				if (!sanitized || sanitized.trim().length === 0) continue;
 				params.push({
 					role: "user",
-					content: sanitizeSurrogates(msg.content),
+					content: sanitized,
 				});
 			} else {
 				const content: ChatCompletionContentPart[] = msg.content.map((item): ChatCompletionContentPart => {
@@ -664,12 +666,13 @@ export function convertMessages(
 					.join("\n");
 				const hasImages = toolMsg.content.some((c) => c.type === "image");
 
-				// Always send tool result with text (or placeholder if only images)
+				// Always send tool result with text (or placeholder if only images / no content)
 				const hasText = textResult.length > 0;
+				const toolResultContent = hasText ? textResult : hasImages ? "(see attached image)" : "(no output)";
 				// Some providers require the 'name' field in tool results
 				const toolResultMsg: ChatCompletionToolMessageParam = {
 					role: "tool",
-					content: sanitizeSurrogates(hasText ? textResult : "(see attached image)"),
+					content: sanitizeSurrogates(toolResultContent),
 					tool_call_id: toolMsg.toolCallId,
 				};
 				if (compat.requiresToolResultName && toolMsg.toolName) {
