@@ -104,6 +104,8 @@ Tool execution mode is configurable:
 - `parallel` (default): preflight tool calls sequentially, execute allowed tools concurrently, emit final `tool_execution_end` and `toolResult` messages in assistant source order
 - `sequential`: execute tool calls one by one, matching the historical behavior
 
+The mode can be set globally via `toolExecution` in the agent config, or per-tool via `executionMode` on `AgentTool`. If any tool call in a batch targets a tool with `executionMode: "sequential"`, the entire batch executes sequentially regardless of the global setting.
+
 The `beforeToolCall` hook runs after `tool_execution_start` and validated argument parsing. It can block execution. The `afterToolCall` hook runs after tool execution finishes and before `tool_execution_end` and final tool result message events are emitted.
 
 When you use the `Agent` class, assistant `message_end` processing is treated as a barrier before tool preflight begins. That means `beforeToolCall` sees agent state that already includes the assistant message that requested the tool call.
@@ -367,6 +369,11 @@ const readFileTool: AgentTool = {
   parameters: Type.Object({
     path: Type.String({ description: "File path" }),
   }),
+  // Override execution mode for this tool (optional).
+  // "sequential" forces the entire batch to run one at a time.
+  // "parallel" allows concurrent execution with other tool calls.
+  // If omitted, the global toolExecution config applies.
+  executionMode: "sequential",
   execute: async (toolCallId, params, signal, onUpdate) => {
     const content = await fs.readFile(params.path, "utf-8");
 
@@ -432,7 +439,7 @@ const context: AgentContext = {
 const config: AgentLoopConfig = {
   model: getModel("openai", "gpt-4o"),
   convertToLlm: (msgs) => msgs.filter(m => ["user", "assistant", "toolResult"].includes(m.role)),
-  toolExecution: "parallel",
+  toolExecution: "parallel",  // overridden by per-tool executionMode if set
   beforeToolCall: async ({ toolCall, args, context }) => undefined,
   afterToolCall: async ({ toolCall, result, isError, context }) => undefined,
 };
