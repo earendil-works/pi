@@ -1,34 +1,23 @@
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
-import { Agent, type AgentState, ProviderTransport } from "@kennyfrc/mu-agent-core";
-import type { AgentTool, Api, AssistantMessage, Model } from "@kennyfrc/mu-ai";
-import type { TSchema } from "@sinclair/typebox";
+import type { Api, Model } from "@kennyfrc/mu-ai";
 import chalk from "chalk";
+import { findModel } from "../model-config.js";
 
-import { builtInExtensions } from "../extensions/built-ins.js";
-import { ExtensionLoader } from "../extensions/loader.js";
-import { ExtensionManager } from "../extensions/manager.js";
-import { findModel, getApiKeyForModel } from "../model-config.js";
-import { buildSystemPrompt as buildSystemPromptFromYaml } from "../prompts/index.js";
-import { SessionManager } from "../session-manager.js";
-import { allTools } from "../tools/index.js";
 import {
 	type AlwaysOnThinkingLevel,
 	type CreateAlwaysOnAgentInput,
 	createAlwaysOnAgentRegistry,
 } from "./agent-registry.js";
+import { executeAlwaysOnRunWithMu } from "./execute-run.js";
+import { createAlwaysOnService } from "./service.js";
 import {
 	type AlwaysOnExecutionTarget,
-	type AlwaysOnRunOutcome,
-	type AlwaysOnSupervisorExecutionRequest,
-	type AlwaysOnSupervisorExecutionResult,
-	type AlwaysOnSupervisorStartedExecution,
 	createAlwaysOnSupervisor,
 	renderAlwaysOnJobs,
 	renderAlwaysOnRuns,
 	renderAlwaysOnThread,
 } from "./supervisor.js";
-import { resolveAlwaysOnToolSelection } from "./tool-selection.js";
 
 type AlwaysOnCommand =
 	| {
@@ -152,192 +141,6 @@ function parseExecutionTargetOverride(input: {
 		provider: input.provider,
 		modelId: input.modelId,
 		thinkingLevel: input.thinkingLevel ?? "off",
-	};
-}
-
-async function withTemporaryCwd<T>(cwd: string, fn: () => Promise<T>): Promise<T> {
-	const previousCwd = process.cwd();
-	process.chdir(cwd);
-	try {
-		return await fn();
-	} finally {
-		process.chdir(previousCwd);
-	}
-}
-
-function buildAlwaysOnErrorAssistantMessage(model: Model<Api>, text: string): AssistantMessage {
-	return {
-		role: "assistant",
-		content: [{ type: "text", text }],
-		api: model.api,
-		provider: model.provider,
-		model: model.id,
-		usage: {
-			input: 0,
-			output: 0,
-			cacheRead: 0,
-			cacheWrite: 0,
-			totalTokens: 0,
-			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-		},
-		stopReason: "error",
-		timestamp: Date.now(),
-		errorMessage: text,
-	};
-}
-
-function detectAlwaysOnTerminalOutcome(agent: Agent): { outcome: AlwaysOnRunOutcome; errorMessage?: string } {
-	const runtimeError = agent.state.error?.trim();
-	if (runtimeError) {
-		return { outcome: "error", errorMessage: runtimeError };
-	}
-
-	for (let index = agent.state.messages.length - 1; index >= 0; index -= 1) {
-		const message = agent.state.messages[index];
-		if (message.role !== "assistant") {
-			continue;
-		}
-		if (message.stopReason === "error") {
-			return {
-				outcome: "error",
-				errorMessage: message.errorMessage?.trim() || "Assistant run ended with an error",
-			};
-		}
-		break;
-	}
-
-	return { outcome: "completed" };
-}
-
-function buildAlwaysOnAgentState(options: {
-	systemPrompt: string;
-	model: Model<Api>;
-	thinkingLevel: AlwaysOnThinkingLevel;
-	tools: Array<AgentTool<TSchema, unknown>>;
-}): AgentState {
-	return {
-		systemPrompt: options.systemPrompt,
-		model: options.model,
-		thinkingLevel: options.thinkingLevel,
-		fastMode: false,
-		tools: options.tools,
-		messages: [],
-		isStreaming: false,
-		streamMessage: null,
-		pendingToolCalls: new Set<string>(),
-	};
-}
-
-async function createAlwaysOnExtensionManager(
-	workspacePath: string,
-	configDir: string | undefined,
-	sessionManager: SessionManager,
-): Promise<ExtensionManager> {
-	const extensionManager = new ExtensionManager({
-		builtInTools: allTools as never,
-		sessionManager,
-	});
-	const extensionLoader = new ExtensionLoader(extensionManager, {
-		projectDir: workspacePath,
-		configDir,
-		builtInExtensions,
-	});
-	await extensionLoader.loadAll();
-	return extensionManager;
-}
-
-function executeAlwaysOnRunWithMu(
-	request: AlwaysOnSupervisorExecutionRequest,
-	configDir: string | undefined,
-): AlwaysOnSupervisorStartedExecution {
-	const workspacePath = resolve(request.workItem.workspacePath ?? request.agent.workspacePath);
-	const sessionManager = new SessionManager(false, undefined, false, workspacePath);
-	const sessionId = sessionManager.getSessionId();
-
-	return {
-		sessionId,
-		completion: Promise.resolve().then(async (): Promise<AlwaysOnSupervisorExecutionResult> => {
-			const model = validateModelSelection(request.effectiveTarget.provider, request.effectiveTarget.modelId);
-
-			const workspaceExists = existsSync(workspacePath) && statSync(workspacePath).isDirectory();
-			if (!workspaceExists) {
-				const state = buildAlwaysOnAgentState({
-					systemPrompt: "always-on workspace validation failed",
-					model,
-					thinkingLevel: request.effectiveTarget.thinkingLevel,
-					tools: [],
-				});
-				sessionManager.startSession(state);
-				const errorMessage = `Workspace path does not exist: ${workspacePath}`;
-				sessionManager.saveMessage(buildAlwaysOnErrorAssistantMessage(model, errorMessage));
-				return { outcome: "error", errorMessage };
-			}
-
-			const apiKey = await getApiKeyForModel(model);
-			if (!apiKey) {
-				const state = buildAlwaysOnAgentState({
-					systemPrompt: "always-on credential validation failed",
-					model,
-					thinkingLevel: request.effectiveTarget.thinkingLevel,
-					tools: [],
-				});
-				await withTemporaryCwd(workspacePath, async () => {
-					sessionManager.startSession(state);
-					return Promise.resolve();
-				});
-				const errorMessage = `No API key found for ${model.provider}`;
-				sessionManager.saveMessage(buildAlwaysOnErrorAssistantMessage(model, errorMessage));
-				return { outcome: "error", errorMessage };
-			}
-
-			const extensionManager = await createAlwaysOnExtensionManager(workspacePath, configDir, sessionManager);
-			const selection = resolveAlwaysOnToolSelection({ model, extensionManager });
-			const tools = selection.tools as Array<AgentTool<TSchema, unknown>>;
-			const systemPrompt = await withTemporaryCwd(workspacePath, async () =>
-				buildSystemPromptFromYaml({
-					tools: tools.map((tool) => ({ name: tool.name, description: tool.description })),
-				}),
-			);
-
-			const agent = new Agent({
-				initialState: buildAlwaysOnAgentState({
-					systemPrompt,
-					model,
-					thinkingLevel: request.effectiveTarget.thinkingLevel,
-					tools,
-				}),
-				messagePreprocessor: extensionManager.getMessagePreprocessor(),
-				toolResultTransformer: extensionManager.composeToolResultTransformer(),
-				transport: new ProviderTransport({
-					getApiKey: async () => apiKey,
-				}),
-			});
-
-			agent.subscribe((event) => {
-				if (event.type === "message_end") {
-					sessionManager.saveMessage(event.message);
-				}
-			});
-
-			await withTemporaryCwd(workspacePath, async () => {
-				sessionManager.startSession(agent.state);
-				return Promise.resolve();
-			});
-
-			try {
-				await withTemporaryCwd(workspacePath, async () => agent.prompt(request.workItem.instruction));
-			} catch (error) {
-				const errorMessage = error instanceof Error ? error.message : String(error);
-				sessionManager.saveMessage(buildAlwaysOnErrorAssistantMessage(model, errorMessage));
-				return { outcome: "error", errorMessage };
-			}
-
-			const terminal = detectAlwaysOnTerminalOutcome(agent);
-			if (terminal.outcome === "error" && terminal.errorMessage) {
-				return { outcome: "error", errorMessage: terminal.errorMessage };
-			}
-			return { outcome: terminal.outcome };
-		}),
 	};
 }
 
@@ -733,22 +536,21 @@ export async function runAlwaysOnCommand(args: string[]): Promise<void> {
 	}
 
 	if (command.kind === "send") {
-		const supervisor = createAlwaysOnSupervisor({
+		const service = createAlwaysOnService({
 			baseDir: configDir,
 			executeRun: (request) => executeAlwaysOnRunWithMu(request, configDir),
 		});
 
-		const submission = await supervisor.submitImmediateWork({
+		const submission = await service.submit({
+			kind: "immediate",
 			agentId: command.agentId,
-			workspacePath: command.workspacePath ? resolve(command.workspacePath) : undefined,
+			workspacePath: command.workspacePath,
 			instruction: command.instruction,
 			executionTarget: command.executionTarget,
 		});
-		const drain = await supervisor.drainOnce();
-		const run =
-			drain.startedRuns.find((entry) => entry.workItemId === submission.workItemId) ??
-			supervisor.readRuns().find((entry) => entry.workItemId === submission.workItemId);
-		const workItem = supervisor.readWorkItems().find((entry) => entry.workItemId === submission.workItemId);
+		const snapshot = service.readSnapshot();
+		const run = snapshot.runs.find((entry) => entry.runId === submission.runId);
+		const workItem = snapshot.workItems.find((entry) => entry.workItemId === submission.workItemId);
 		if (!workItem || !run) {
 			throw new Error(`Always-on send failed to resolve the new work item/run for ${submission.workItemId}`);
 		}
@@ -764,16 +566,27 @@ export async function runAlwaysOnCommand(args: string[]): Promise<void> {
 	}
 
 	if (command.kind === "schedule") {
-		const supervisor = createAlwaysOnSupervisor({
+		const service = createAlwaysOnService({
 			baseDir: configDir,
 			executeRun: (request) => executeAlwaysOnRunWithMu(request, configDir),
 		});
-		const scheduled = await supervisor.scheduleWork({
-			agentId: command.agentId,
-			instruction: command.instruction,
-			schedule: command.schedule,
-			executionTarget: command.executionTarget,
-		});
+		const scheduled =
+			command.schedule.kind === "once"
+				? await service.submit({
+						kind: "once",
+						agentId: command.agentId,
+						instruction: command.instruction,
+						at: command.schedule.at,
+						executionTarget: command.executionTarget,
+					})
+				: await service.submit({
+						kind: "recurring",
+						agentId: command.agentId,
+						instruction: command.instruction,
+						cron: command.schedule.cron,
+						timezone: command.schedule.timezone,
+						executionTarget: command.executionTarget,
+					});
 		console.log(chalk.green(`Scheduled always-on job ${scheduled.workItemId}`));
 		console.log(`Instruction: ${command.instruction}`);
 		if (command.schedule.kind === "once") {
@@ -787,20 +600,19 @@ export async function runAlwaysOnCommand(args: string[]): Promise<void> {
 	}
 
 	if (command.kind === "follow-up") {
-		const supervisor = createAlwaysOnSupervisor({
+		const service = createAlwaysOnService({
 			baseDir: configDir,
 			executeRun: (request) => executeAlwaysOnRunWithMu(request, configDir),
 		});
-		const followUp = await supervisor.createFollowUpWorkItem({
-			workItemId: command.workItemId,
+		const followUp = await service.submit({
+			kind: "follow_up",
+			parentWorkItemId: command.workItemId,
 			instruction: command.instruction,
 			executionTarget: command.executionTarget,
 		});
-		const drain = await supervisor.drainOnce();
-		const run =
-			drain.startedRuns.find((entry) => entry.workItemId === followUp.workItemId) ??
-			supervisor.readRuns().find((entry) => entry.workItemId === followUp.workItemId);
-		const workItem = supervisor.readWorkItems().find((entry) => entry.workItemId === followUp.workItemId);
+		const snapshot = service.readSnapshot();
+		const run = snapshot.runs.find((entry) => entry.runId === followUp.runId);
+		const workItem = snapshot.workItems.find((entry) => entry.workItemId === followUp.workItemId);
 		if (!workItem || !run) {
 			throw new Error(`Always-on follow-up failed to resolve the new work item/run for ${followUp.workItemId}`);
 		}

@@ -136,6 +136,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "claude-opus-4-7": {
+			id: string;
+			name: string;
+			api: "anthropic-messages";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "claude-3-haiku-20240307": {
 			id: string;
 			name: string;
@@ -1253,23 +1270,6 @@ export declare const MODELS: {
 			baseUrl: string;
 			reasoning: true;
 			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "codex-mini-latest": {
-			id: string;
-			name: string;
-			api: "openai-responses";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
-			input: "text"[];
 			cost: {
 				input: number;
 				output: number;
@@ -2991,6 +2991,40 @@ export declare const MODELS: {
 		};
 	};
 	readonly openrouter: {
+		readonly "anthropic/claude-opus-4.7": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "openrouter/elephant-alpha": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: false;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "anthropic/claude-opus-4.6-fast": {
 			id: string;
 			name: string;
@@ -5048,23 +5082,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "meituan/longcat-flash-chat": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "qwen/qwen-plus-2025-07-28:thinking": {
 			id: string;
 			name: string;
@@ -5728,23 +5745,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "inception/mercury": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "mistralai/mistral-small-3.2-24b-instruct": {
 			id: string;
 			name: string;
@@ -5967,23 +5967,6 @@ export declare const MODELS: {
 			maxTokens: number;
 		};
 		readonly "arcee-ai/virtuoso-large": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "inception/mercury-coder": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6261,7 +6244,7 @@ export declare const MODELS: {
 			api: "openai-completions";
 			provider: string;
 			baseUrl: string;
-			reasoning: true;
+			reasoning: false;
 			input: "text"[];
 			cost: {
 				input: number;
@@ -6782,7 +6765,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "cohere/command-r-08-2024": {
+		readonly "cohere/command-r-plus-08-2024": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6799,7 +6782,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "cohere/command-r-plus-08-2024": {
+		readonly "cohere/command-r-08-2024": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6952,6 +6935,23 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
+		readonly "openai/gpt-4o-2024-05-13": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: false;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "openai/gpt-4o": {
 			id: string;
 			name: string;
@@ -6970,23 +6970,6 @@ export declare const MODELS: {
 			maxTokens: number;
 		};
 		readonly "openai/gpt-4o:extended": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "openai/gpt-4o-2024-05-13": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -7088,7 +7071,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-3.5-turbo-0613": {
+		readonly "openai/gpt-4-turbo-preview": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -7105,7 +7088,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4-turbo-preview": {
+		readonly "openai/gpt-3.5-turbo-0613": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -7207,7 +7190,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-3.5-turbo": {
+		readonly "openai/gpt-4": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -7224,7 +7207,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4": {
+		readonly "openai/gpt-3.5-turbo": {
 			id: string;
 			name: string;
 			api: "openai-completions";
