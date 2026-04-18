@@ -1291,8 +1291,12 @@
           <div class="header">
             <h1>Session: ${escapeHtml(header?.id || 'unknown')}</h1>
             <div class="help-bar">
-              <span>Ctrl+T toggle thinking · Ctrl+O toggle tools</span>
-              <button class="download-json-btn" onclick="downloadSessionJson()" title="Download session as JSONL">↓ JSONL</button>
+              <span class="help-hint">T toggle thinking · O toggle tools</span>
+              <div class="help-actions">
+                <button type="button" class="header-toggle-btn" data-action="toggle-thinking" title="Toggle thinking (T)">Toggle thinking</button>
+                <button type="button" class="header-toggle-btn" data-action="toggle-tools" title="Toggle tools (O)">Toggle tools</button>
+                <button type="button" class="download-json-btn" onclick="downloadSessionJson()" title="Download session as JSONL">↓ JSONL</button>
+              </div>
             </div>
             <div class="header-info">
               <div class="info-item"><span class="info-label">Date:</span><span class="info-value">${header?.timestamp ? new Date(header.timestamp).toLocaleString() : 'unknown'}</span></div>
@@ -1393,6 +1397,7 @@
         renderTree();
 
         document.getElementById('header-container').innerHTML = renderHeader();
+        attachHeaderHandlers();
 
         // Build messages using cached DOM nodes
         const messagesEl = document.getElementById('messages');
@@ -1672,6 +1677,20 @@
         });
       };
 
+      const attachHeaderHandlers = () => {
+        document.querySelector('[data-action="toggle-thinking"]')?.addEventListener('click', toggleThinking);
+        document.querySelector('[data-action="toggle-tools"]')?.addEventListener('click', toggleToolOutputs);
+      };
+
+      const isEditableTarget = (element) => {
+        if (!element) return false;
+        const tagName = element.tagName;
+        if (tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT' || tagName === 'BUTTON') {
+          return true;
+        }
+        return element.isContentEditable || Boolean(element.closest?.('[contenteditable="true"]'));
+      };
+
       // Keyboard shortcuts
       document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape') {
@@ -1679,11 +1698,16 @@
           searchQuery = '';
           navigateTo(leafId, 'bottom');
         }
-        if (e.ctrlKey && e.key === 't') {
+
+        if (isEditableTarget(document.activeElement)) {
+          return;
+        }
+
+        const key = e.key.toLowerCase();
+        if (key === 't') {
           e.preventDefault();
           toggleThinking();
-        }
-        if (e.ctrlKey && e.key === 'o') {
+        } else if (key === 'o') {
           e.preventDefault();
           toggleToolOutputs();
         }
