@@ -291,6 +291,8 @@ export interface OpenAICompletionsCompat {
 	zaiToolStream?: boolean;
 	/** Whether the provider supports the `strict` field in tool definitions. Default: true. */
 	supportsStrictMode?: boolean;
+	/** Cache control format for prompt caching. "anthropic" uses cache_control on text parts, "alibaba" uses providerOptions.alibaba.cacheControl on messages. Default: "anthropic". */
+	cacheControlFormat?: "anthropic" | "alibaba";
 }
 
 /** Compatibility settings for OpenAI Responses APIs. */

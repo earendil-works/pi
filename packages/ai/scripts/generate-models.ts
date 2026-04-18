@@ -3,7 +3,12 @@
 import { writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { Api, KnownProvider, Model } from "../src/types.js";
+import {
+  Api,
+  KnownProvider,
+  Model,
+  OpenAICompletionsCompat,
+} from "../src/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -484,6 +489,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				const npm = m.provider?.npm;
 				let api: Api;
 				let baseUrl: string;
+        let compat: OpenAICompletionsCompat | undefined;
 
 				if (npm === "@ai-sdk/openai") {
 					api = "openai-responses";
@@ -495,6 +501,10 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				} else if (npm === "@ai-sdk/google") {
 					api = "google-generative-ai";
 					baseUrl = `${variant.basePath}/v1`;
+				} else if (npm === "@ai-sdk/alibaba") {
+					api = "openai-completions";
+					baseUrl = `${variant.basePath}/v1`;
+					compat = { cacheControlFormat: "alibaba" };
 				} else {
 					// null, undefined, or @ai-sdk/openai-compatible
 					api = "openai-completions";
@@ -515,6 +525,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						cacheRead: m.cost?.cache_read || 0,
 						cacheWrite: m.cost?.cache_write || 0,
 					},
+					...(compat ? { compat } : {}),
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});

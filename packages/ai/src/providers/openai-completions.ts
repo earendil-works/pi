@@ -375,7 +375,7 @@ function createClient(
 function buildParams(model: Model<"openai-completions">, context: Context, options?: OpenAICompletionsOptions) {
 	const compat = getCompat(model);
 	const messages = convertMessages(model, context, compat);
-	maybeAddOpenRouterAnthropicCacheControl(model, messages);
+	maybeAddOpenRouterAnthropicAlibabaCacheControl(model, messages);
 
 	const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
 		model: model.id,
@@ -467,11 +467,15 @@ function mapReasoningEffort(
 	return reasoningEffortMap[effort] ?? effort;
 }
 
-function maybeAddOpenRouterAnthropicCacheControl(
+function maybeAddOpenRouterAnthropicAlibabaCacheControl(
 	model: Model<"openai-completions">,
 	messages: ChatCompletionMessageParam[],
 ): void {
-	if (model.provider !== "openrouter" || !model.id.startsWith("anthropic/")) return;
+	if (model.provider !== "openrouter" || !model.id.startsWith("anthropic/")) {
+		// Alibaba/Qwen supports prompt caching via cache_control on content parts
+		const compat = getCompat(model);
+		if (compat.cacheControlFormat !== "alibaba") return;
+	}
 
 	// Anthropic-style caching requires cache_control on a text part. Add a breakpoint
 	// on the last user/assistant message (walking backwards until we find text content).
@@ -833,6 +837,7 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
 	const isGroq = provider === "groq" || baseUrl.includes("groq.com");
+	const isAlibaba = provider === "alibaba" || baseUrl.includes("dashscope") || baseUrl.includes("aliyuncs.com");
 
 	const reasoningEffortMap =
 		isGroq && model.id === "qwen/qwen3-32b"
@@ -863,6 +868,7 @@ function detectCompat(model: Model<"openai-completions">): Required<OpenAIComple
 		vercelGatewayRouting: {},
 		zaiToolStream: false,
 		supportsStrictMode: true,
+		cacheControlFormat: isAlibaba ? "alibaba" : "anthropic",
 	};
 }
 
@@ -890,5 +896,6 @@ function getCompat(model: Model<"openai-completions">): Required<OpenAICompletio
 		vercelGatewayRouting: model.compat.vercelGatewayRouting ?? detected.vercelGatewayRouting,
 		zaiToolStream: model.compat.zaiToolStream ?? detected.zaiToolStream,
 		supportsStrictMode: model.compat.supportsStrictMode ?? detected.supportsStrictMode,
+		cacheControlFormat: model.compat.cacheControlFormat ?? detected.cacheControlFormat,
 	};
 }
