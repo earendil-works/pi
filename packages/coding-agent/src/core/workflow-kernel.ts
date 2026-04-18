@@ -19,7 +19,12 @@ import { convertToLlm } from "./messages.js";
 import { ModelRegistry } from "./model-registry.js";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
 import type { ResourceLoader } from "./resource-loader.js";
-import { type SessionLogSnapshot, SessionManager } from "./session-manager.js";
+import {
+	CURRENT_SESSION_VERSION,
+	createSessionId,
+	type SessionLogSnapshot,
+	SessionManager,
+} from "./session-manager.js";
 import type {
 	SessionCompactionRequest,
 	SessionLoopInput,
@@ -40,7 +45,8 @@ import type {
 } from "./settings-manager.js";
 import { SettingsManager } from "./settings-manager.js";
 import type { Skill } from "./skills.js";
-import type { SourceInfo } from "./source-info.js";
+import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.js";
+import { allToolDefinitions, type Tool, type ToolName } from "./tools/index.js";
 import {
 	getWorkflowSnapshotUnsupportedDirectAgentHooks,
 	markWorkflowSnapshotCompatibleAgent,
@@ -106,6 +112,49 @@ export interface WorkflowEnvironmentSnapshot {
 	promptTemplates?: PromptTemplate[];
 	skills?: WorkflowSkillSnapshot[];
 	agentsFiles?: WorkflowContextFileSnapshot[];
+}
+
+/** Skill input for the pure `buildWorkflowEnvironmentSnapshot` builder. */
+export interface BuildWorkflowSkillInput {
+	name: string;
+	description: string;
+	/** Frontmatter-stripped markdown body. Caller is responsible for reading the file. */
+	content: string;
+	location?: string;
+	baseDir?: string;
+	disableModelInvocation?: boolean;
+}
+
+/** Prompt-template input for the pure `buildWorkflowEnvironmentSnapshot` builder. */
+export interface BuildWorkflowPromptTemplateInput {
+	name: string;
+	content: string;
+	description?: string;
+	argumentHint?: string;
+}
+
+/** Input config for the pure `buildWorkflowEnvironmentSnapshot` builder. */
+export interface BuildWorkflowEnvironmentSnapshotInput {
+	systemPrompt: string;
+	builtinTools?: (ToolName | Tool)[];
+	customTools?: WorkflowToolSnapshot[];
+	skills?: BuildWorkflowSkillInput[];
+	agentsFiles?: WorkflowContextFileSnapshot[];
+	promptTemplates?: BuildWorkflowPromptTemplateInput[];
+	cwd?: string;
+	model?: Model<any>;
+	thinkingLevel?: ThinkingLevel;
+	appendSystemPrompt?: string[];
+	settings?: WorkflowSettingsSnapshot;
+	/** Defaults to all provided tool names in order (builtins first, then custom). */
+	activeToolNames?: string[];
+}
+
+/** Options for the pure `emptySessionLogSnapshot` factory. */
+export interface EmptySessionLogSnapshotOptions {
+	cwd?: string;
+	sessionId?: string;
+	timestamp?: string;
 }
 
 /** Input payload understood by the stepped workflow loop. */
@@ -258,28 +307,61 @@ function captureWorkflowTools(session: AgentSession): WorkflowToolSnapshot[] {
 		if (!definition) {
 			throw new Error(`Missing tool definition for ${tool.name}`);
 		}
-		return {
-			name: definition.name,
-			label: definition.label,
-			description: definition.description,
-			parameters: structuredClone(definition.parameters),
-			promptSnippet: definition.promptSnippet,
-			promptGuidelines: definition.promptGuidelines?.slice(),
-			prepareArguments: definition.prepareArguments,
-		};
+		return toolDefinitionToWorkflowSnapshot(definition);
 	});
 }
 
-function captureWorkflowSkills(session: AgentSession): WorkflowSkillSnapshot[] {
-	return session.resourceLoader.getSkills().skills.map((skill) => ({
+function skillToWorkflowSnapshot(skill: Skill, content: string): WorkflowSkillSnapshot {
+	return {
 		name: skill.name,
 		description: skill.description,
 		location: skill.filePath,
 		baseDir: skill.baseDir,
-		content: stripFrontmatter(readFileSync(skill.filePath, "utf-8")).trim(),
+		content,
 		sourceInfo: structuredClone(skill.sourceInfo),
 		disableModelInvocation: skill.disableModelInvocation,
-	}));
+	};
+}
+
+function captureWorkflowSkills(session: AgentSession): WorkflowSkillSnapshot[] {
+	return session.resourceLoader
+		.getSkills()
+		.skills.map((skill) =>
+			skillToWorkflowSnapshot(skill, stripFrontmatter(readFileSync(skill.filePath, "utf-8")).trim()),
+		);
+}
+
+function toolDefinitionToWorkflowSnapshot(definition: ToolDefinition): WorkflowToolSnapshot {
+	return {
+		name: definition.name,
+		label: definition.label,
+		description: definition.description,
+		parameters: structuredClone(definition.parameters),
+		promptSnippet: definition.promptSnippet,
+		promptGuidelines: definition.promptGuidelines?.slice(),
+		prepareArguments: definition.prepareArguments,
+	};
+}
+
+function cloneWorkflowToolSnapshot(snapshot: WorkflowToolSnapshot): WorkflowToolSnapshot {
+	return {
+		name: snapshot.name,
+		label: snapshot.label,
+		description: snapshot.description,
+		parameters: structuredClone(snapshot.parameters),
+		promptSnippet: snapshot.promptSnippet,
+		promptGuidelines: snapshot.promptGuidelines?.slice(),
+		prepareArguments: snapshot.prepareArguments,
+	};
+}
+
+function resolveBuiltinTool(entry: ToolName | Tool): WorkflowToolSnapshot {
+	const name = typeof entry === "string" ? entry : entry.name;
+	const definition = (allToolDefinitions as unknown as Record<string, ToolDefinition | undefined>)[name];
+	if (!definition) {
+		throw new Error(`Unknown builtin tool: ${name}`);
+	}
+	return toolDefinitionToWorkflowSnapshot(definition);
 }
 
 /**
@@ -319,6 +401,106 @@ export function captureWorkflowEnvironmentSnapshot(session: AgentSession): Workf
  */
 export function captureSessionLogSnapshot(sessionManager: SessionManager): SessionLogSnapshot {
 	return sessionManager.toSnapshot();
+}
+
+/**
+ * Pure builder that produces a WorkflowEnvironmentSnapshot from in-memory
+ * configuration, with no filesystem, auth, or registry access.
+ *
+ * Use this when a workflow host already has the system prompt, tools, skills,
+ * agents-files, and prompt templates in memory and just needs the snapshot for
+ * deterministic replay. Avoids booting a SessionStepRuntime at startup.
+ *
+ * Skill `content` must already be frontmatter-stripped. Prompt-template and
+ * skill SourceInfo are synthesized with scope "temporary". By default every
+ * provided tool is active — pass `activeToolNames` explicitly to override.
+ */
+export function buildWorkflowEnvironmentSnapshot(
+	config: BuildWorkflowEnvironmentSnapshotInput,
+): WorkflowEnvironmentSnapshot {
+	const builtinTools = (config.builtinTools ?? []).map(resolveBuiltinTool);
+	const customTools = (config.customTools ?? []).map(cloneWorkflowToolSnapshot);
+	const tools = [...builtinTools, ...customTools];
+
+	const seen = new Set<string>();
+	for (const tool of tools) {
+		if (seen.has(tool.name)) {
+			throw new Error(`Duplicate tool name in workflow snapshot: ${tool.name}`);
+		}
+		seen.add(tool.name);
+	}
+
+	const skills: WorkflowSkillSnapshot[] = (config.skills ?? []).map((input) => {
+		const location = input.location ?? `<in-memory>/skills/${input.name}.md`;
+		const baseDir = input.baseDir ?? "<in-memory>";
+		return {
+			name: input.name,
+			description: input.description,
+			location,
+			baseDir,
+			content: input.content,
+			sourceInfo: createSyntheticSourceInfo(location, {
+				source: "in-memory",
+				scope: "temporary",
+				baseDir,
+			}),
+			disableModelInvocation: input.disableModelInvocation ?? false,
+		};
+	});
+
+	const promptTemplates: PromptTemplate[] = (config.promptTemplates ?? []).map((input) => {
+		const filePath = `<in-memory>/prompts/${input.name}.md`;
+		return {
+			name: input.name,
+			content: input.content,
+			description: input.description ?? "",
+			argumentHint: input.argumentHint,
+			filePath,
+			sourceInfo: createSyntheticSourceInfo(filePath, {
+				source: "in-memory",
+				scope: "temporary",
+				baseDir: "<in-memory>",
+			}),
+		};
+	});
+
+	const agentsFiles = structuredClone(config.agentsFiles ?? []);
+	const activeToolNames = config.activeToolNames ? [...config.activeToolNames] : tools.map((t) => t.name);
+
+	return {
+		cwd: config.cwd ?? process.cwd(),
+		model: config.model ? structuredClone(config.model) : undefined,
+		thinkingLevel: config.thinkingLevel,
+		activeToolNames,
+		tools,
+		settings: config.settings ? structuredClone(config.settings) : undefined,
+		systemPrompt: config.systemPrompt,
+		appendSystemPrompt: config.appendSystemPrompt ? [...config.appendSystemPrompt] : undefined,
+		promptTemplates,
+		skills,
+		agentsFiles,
+	};
+}
+
+/**
+ * Pure factory for an empty SessionLogSnapshot.
+ *
+ * Avoids constructing a throwaway SessionManager.inMemory() just to call
+ * captureSessionLogSnapshot() at startup. The returned snapshot is accepted
+ * by initializeWorkflowState / stepWorkflowState.
+ */
+export function emptySessionLogSnapshot(options: EmptySessionLogSnapshotOptions = {}): SessionLogSnapshot {
+	return {
+		header: {
+			type: "session",
+			version: CURRENT_SESSION_VERSION,
+			id: options.sessionId ?? createSessionId(),
+			timestamp: options.timestamp ?? new Date().toISOString(),
+			cwd: options.cwd ?? process.cwd(),
+		},
+		entries: [],
+		leafId: null,
+	};
 }
 
 function createWorkflowResourceLoader(environment: WorkflowEnvironmentSnapshot): ResourceLoader {

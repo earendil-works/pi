@@ -159,6 +159,10 @@ export {
 	AgentSessionRuntime,
 	type AgentSessionRuntimeDiagnostic,
 	type AgentSessionServices,
+	type BuildWorkflowEnvironmentSnapshotInput,
+	type BuildWorkflowPromptTemplateInput,
+	type BuildWorkflowSkillInput,
+	buildWorkflowEnvironmentSnapshot,
 	type CreateAgentSessionFromServicesOptions,
 	type CreateAgentSessionOptions,
 	type CreateAgentSessionResult,
@@ -183,6 +187,8 @@ export {
 	createReadTool,
 	createSessionStepRuntime,
 	createWriteTool,
+	type EmptySessionLogSnapshotOptions,
+	emptySessionLogSnapshot,
 	initializeSessionLoopState,
 	initializeWorkflowState,
 	type PromptTemplate,
@@ -199,6 +205,7 @@ export {
 	CURRENT_SESSION_VERSION,
 	type CustomEntry,
 	type CustomMessageEntry,
+	createSessionId,
 	type FileEntry,
 	getLatestCompactionEntry,
 	type ModelChangeEntry,
@@ -248,6 +255,7 @@ export {
 export { createSyntheticSourceInfo } from "./core/source-info.js";
 // Tools
 export {
+	allToolDefinitions,
 	type BashOperations,
 	type BashSpawnContext,
 	type BashSpawnHook,
@@ -298,6 +306,7 @@ export {
 	type ReadToolOptions,
 	readTool,
 	readToolDefinition,
+	type ToolName,
 	type ToolsOptions,
 	type TruncationOptions,
 	type TruncationResult,

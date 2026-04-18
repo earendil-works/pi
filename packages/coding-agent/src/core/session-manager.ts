@@ -211,7 +211,7 @@ export type ReadonlySessionManager = Pick<
 	| "getSessionName"
 >;
 
-function createSessionId(): string {
+export function createSessionId(): string {
 	return uuidv7();
 }
 
