@@ -167,7 +167,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
-| `/session` | Show session info (path, tokens, cost) |
+| `/session` | Show session info (path, session ID, tokens, cost) |
 | `/tree` | Jump to any point in the session and continue from there |
 | `/fork` | Create a new session from the current branch |
 | `/compact [prompt]` | Manually compact context, optional custom instructions |
@@ -227,6 +227,8 @@ pi --no-session        # Ephemeral mode (don't save)
 pi --session <path>    # Use specific session file or ID
 pi --fork <path>       # Fork specific session file or ID into a new session
 ```
+
+Use `/session` in an interactive session to see the current session ID before reusing it with `--session <id>` or `--fork <id>`.
 
 ### Branching
 
