@@ -6,6 +6,7 @@ import {
 	closeSync,
 	existsSync,
 	mkdirSync,
+	realpathSync,
 	openSync,
 	readdirSync,
 	readFileSync,
@@ -547,6 +548,14 @@ function getSessionModifiedDate(entries: FileEntry[], header: SessionHeader, sta
 }
 
 async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
+	// Resolve symlinks so session paths are canonical — this ensures
+	// parentSession matching works across different symlink trees
+	// (e.g. multiple config profiles sharing a sessions directory).
+	try {
+		filePath = realpathSync(filePath);
+	} catch {
+		// If realpath fails (broken symlink, etc.), use the original path
+	}
 	try {
 		const content = await readFile(filePath, "utf8");
 		const entries: FileEntry[] = [];
@@ -595,7 +604,14 @@ async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 		}
 
 		const cwd = typeof (header as SessionHeader).cwd === "string" ? (header as SessionHeader).cwd : "";
-		const parentSessionPath = (header as SessionHeader).parentSession;
+		let parentSessionPath = (header as SessionHeader).parentSession;
+		if (parentSessionPath) {
+			try {
+				parentSessionPath = realpathSync(parentSessionPath);
+			} catch {
+				// Keep original path if symlink target doesn't exist
+			}
+		}
 
 		const modified = getSessionModifiedDate(entries, header as SessionHeader, stats.mtime);
 
