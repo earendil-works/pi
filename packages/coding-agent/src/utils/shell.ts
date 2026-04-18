@@ -138,38 +138,60 @@ export function getShellEnv(): NodeJS.ProcessEnv {
  * - Control characters (except tab, newline, carriage return)
  * - Lone surrogates
  * - Unicode Format characters (crash string-width due to a bug)
- * - Characters with undefined code points
  */
-export function sanitizeBinaryOutput(str: string): string {
-	// Use Array.from to properly iterate over code points (not code units)
-	// This handles surrogate pairs correctly and catches edge cases where
-	// codePointAt() might return undefined
-	return Array.from(str)
-		.filter((char) => {
-			// Filter out characters that cause string-width to crash
-			// This includes:
-			// - Unicode format characters
-			// - Lone surrogates (already filtered by Array.from)
-			// - Control chars except \t \n \r
-			// - Characters with undefined code points
+export function sanitizeBinaryOutput(str: unknown): string {
+	if (str == null) {
+		return "";
+	}
 
-			const code = char.codePointAt(0);
+	let text: string;
+	if (typeof str === "string") {
+		text = str;
+	} else {
+		try {
+			text = String(str);
+		} catch {
+			return "";
+		}
+	}
 
-			// Skip if code point is undefined (edge case with invalid strings)
-			if (code === undefined) return false;
+	// Scan code units and accumulate safe segments without per-char arrays.
+	// This keeps memory bounded and avoids Array.from() failures on very large inputs.
+	let out = "";
+	let segmentStart = 0;
+	for (let i = 0; i < text.length; ) {
+		const code = text.charCodeAt(i);
+		let charLength = 1;
+		let shouldDrop = false;
 
-			// Allow tab, newline, carriage return
-			if (code === 0x09 || code === 0x0a || code === 0x0d) return true;
+		if (code >= 0xd800 && code <= 0xdbff) {
+			const next = i + 1 < text.length ? text.charCodeAt(i + 1) : -1;
+			if (next >= 0xdc00 && next <= 0xdfff) {
+				charLength = 2;
+			} else {
+				shouldDrop = true;
+			}
+		} else if (code >= 0xdc00 && code <= 0xdfff) {
+			shouldDrop = true;
+		} else {
+			const isAllowedWhitespace = code === 0x09 || code === 0x0a || code === 0x0d;
+			const isControl = code <= 0x1f;
+			const isDangerousFormat = code >= 0xfff9 && code <= 0xfffb;
+			shouldDrop = !isAllowedWhitespace && (isControl || isDangerousFormat);
+		}
 
-			// Filter out control characters (0x00-0x1F, except 0x09, 0x0a, 0x0x0d)
-			if (code <= 0x1f) return false;
+		if (shouldDrop) {
+			out += text.slice(segmentStart, i);
+			segmentStart = i + charLength;
+		}
+		i += charLength;
+	}
 
-			// Filter out Unicode format characters
-			if (code >= 0xfff9 && code <= 0xfffb) return false;
-
-			return true;
-		})
-		.join("");
+	if (segmentStart === 0) {
+		return text;
+	}
+	out += text.slice(segmentStart);
+	return out;
 }
 
 /**
