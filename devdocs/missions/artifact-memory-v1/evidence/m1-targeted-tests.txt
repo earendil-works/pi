@@ -1,0 +1,15 @@
+
+> @kennyfrc/mu-coding-agent@0.24.165 test
+> vitest --run artifact-memory-store.red.test.ts artifact-memory-projection.red.test.ts
+
+
+ RUN  v3.2.4 /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+
+ ✓ test/artifact-memory-store.red.test.ts (1 test) 9ms
+ ✓ test/artifact-memory-projection.red.test.ts (1 test) 10ms
+
+ Test Files  2 passed (2)
+      Tests  2 passed (2)
+   Start at  14:06:44
+   Duration  723ms (transform 280ms, setup 973ms, collect 13ms, tests 19ms, environment 0ms, prepare 107ms)
+

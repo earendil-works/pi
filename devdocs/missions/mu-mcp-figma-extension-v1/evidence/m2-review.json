@@ -1,0 +1,22 @@
+{
+  "milestoneId": "http-runtime-tool-surface",
+  "verdict": "pass",
+  "summary": "The HTTP runtime slice now supports initialize/list/call behavior against a deterministic local harness and exposes a proxy-style Mu tool boundary.",
+  "findings": [
+    {
+      "severity": "info",
+      "message": "McpServerManager performs JSON-RPC initialize, tools/list, and tools/call requests over HTTP with explicit failure on non-OK responses.",
+      "file": "packages/coding-agent/src/mcp/server-manager.ts"
+    },
+    {
+      "severity": "info",
+      "message": "The proxy tool converts Mu tool input into an MCP tool call and returns Mu-style content plus projection metadata.",
+      "file": "packages/coding-agent/src/mcp/proxy-tool.ts"
+    },
+    {
+      "severity": "info",
+      "message": "The targeted suite proves connect/discover/call/degrade behavior plus a proxy-style Mu tool path against a deterministic local harness.",
+      "file": "packages/coding-agent/test/mcp-http-runtime.test.ts"
+    }
+  ]
+}

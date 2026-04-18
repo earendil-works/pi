@@ -1,0 +1,35 @@
+{
+  "tasks": [
+    {
+      "id": "baseline",
+      "title": "Read the mission files and confirm the scaffold is intact",
+      "status": "todo",
+      "validation": [
+        "test -f devdocs/missions/demo/SPEC.md",
+        "test -f devdocs/missions/demo/TASKS.json",
+        "test -f devdocs/missions/demo/PROGRESS.md",
+        "test -f devdocs/missions/demo/RUNBOOK.md"
+      ],
+      "notes": "Start here so the mission loop has a clear first slice."
+    },
+    {
+      "id": "artifact",
+      "title": "Create a tiny demo artifact inside the mission directory",
+      "status": "todo",
+      "validation": [
+        "test -f devdocs/missions/demo/output/hello.txt",
+        "grep -qx 'Hello from the demo mission.' devdocs/missions/demo/output/hello.txt"
+      ],
+      "notes": "Keep the artifact fully self-contained under devdocs/missions/demo/output/."
+    },
+    {
+      "id": "finish",
+      "title": "Mark the demo mission complete",
+      "status": "todo",
+      "validation": [
+        "python3 - <<'PY'\nimport json\nfrom pathlib import Path\npath = Path('devdocs/missions/demo/TASKS.json')\ndata = json.loads(path.read_text())\nassert all(task['status'] == 'done' for task in data['tasks'])\nPY"
+      ],
+      "notes": "Set this to done only after the earlier demo tasks are truly complete and PROGRESS.md says the mission is finished."
+    }
+  ]
+}

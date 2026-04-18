@@ -1,0 +1,11 @@
+{
+  "figma": {
+    "serverName": "figma",
+    "url": "https://mcp.figma.com/mcp"
+  },
+  "indicator": "MCP auth failed: figma",
+  "printed": [
+    "MCP auth failed: figma"
+  ],
+  "truthfulFailure": true
+}

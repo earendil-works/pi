@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "scopeName": "exec-json-architecture",
+  "createdAt": "2026-04-02T06:45:54.429Z",
+  "updatedAt": "2026-04-02T06:45:54.429Z",
+  "objectiveHistory": [
+    "Approve the architecture direction for adding a Codex-style `mu exec --json` mode before implementation."
+  ],
+  "entries": [
+    {
+      "id": "recommended",
+      "surface": "CLI / machine interface",
+      "commandOrAction": "Add `mu exec` and `mu exec --json`; implement JSONL via an adapter layer",
+      "expect": "Stable JSONL on stdout only; current `--print` and `--mode json` stay unchanged",
+      "notes": "Recommended path: smallest durable contract with lowest compatibility risk."
+    }
+  ],
+  "answers": [
+    {
+      "questionId": "boundaries",
+      "topic": "boundaries",
+      "prompt": "Approve this boundary split: keep current `--print` / `--mode json` behavior for compatibility, and add a new dedicated `mu exec` path for the stable machine-facing contract.",
+      "answer": "Let's hard mgirate to mu exec. I don't use the rest.",
+      "source": "custom",
+      "field": "decision"
+    },
+    {
+      "questionId": "abstractions",
+      "topic": "abstractions",
+      "prompt": "Approve this abstraction: add an exec event adapter/schema layer that maps Mu runtime events to stable JSONL events like `thread.started`, `turn.started`, `item.started`, `item.completed`, `turn.completed`, `turn.failed`, and `error`.",
+      "answer": "Approve",
+      "source": "option",
+      "field": "decision"
+    },
+    {
+      "questionId": "tradeoffs",
+      "topic": "tradeoffs",
+      "prompt": "Choose the v1 tradeoff. Recommendation: start with a small stable subset covering assistant messages, command execution, apply-patch/file changes, todo list, and turn lifecycle; leave fuller Codex parity for later.",
+      "answer": "Be exhaustive",
+      "source": "custom",
+      "field": "decision"
+    },
+    {
+      "questionId": "what-matters",
+      "topic": "priorities",
+      "prompt": "What matters most for v1? Recommendation: stable stdout JSONL contract, easy parsing, no human-oriented noise on stdout, and backward-compatible existing flags.",
+      "answer": "Stable machine contract first",
+      "source": "option",
+      "field": "decision"
+    }
+  ],
+  "notes": [
+    "Recommended action: add a dedicated `mu exec` subcommand with a stable JSONL event schema, implemented by an adapter layer that normalizes existing Mu runtime events rather than exposing raw internal `AgentEvent`s. This separates human and machine interfaces, gives stdout a durable contract, and minimizes churn in the current interactive/non-interactive flows."
+  ]
+}

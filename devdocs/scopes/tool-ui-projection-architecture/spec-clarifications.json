@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "scopeName": "tool-ui-projection-architecture",
+  "createdAt": "2026-03-30T09:58:03.463Z",
+  "updatedAt": "2026-03-30T09:58:03.463Z",
+  "objectiveHistory": [
+    "Approve the recommended architecture direction for a data-defined tool UI projection system before writing the final spec."
+  ],
+  "items": [
+    {
+      "id": "boundaries",
+      "topic": "boundaries",
+      "question": "Approve this boundary? Tools/extensions may emit pure projection data in `toolResult.details`; host renderers decide whether/how to show it. No tool directly instantiates TUI components.",
+      "answer": "Approve as proposed",
+      "source": "option",
+      "updatedAt": "2026-03-30T09:58:03.463Z"
+    },
+    {
+      "id": "abstractions",
+      "topic": "abstractions",
+      "question": "Approve this abstraction? Define one generic `ui_projection` schema with a small set of reusable primitives/cards/lists/actions, instead of one ad-hoc shape per tool.",
+      "answer": "Approve generic projection schema",
+      "source": "option",
+      "updatedAt": "2026-03-30T09:58:03.463Z"
+    },
+    {
+      "id": "tradeoffs",
+      "topic": "tradeoffs",
+      "question": "Which tradeoff should we optimize for first?",
+      "answer": "Rich interactive UI power",
+      "source": "option",
+      "updatedAt": "2026-03-30T09:58:03.463Z"
+    },
+    {
+      "id": "matters",
+      "topic": "what matters",
+      "question": "What matters most for v1 success?",
+      "answer": "We need something that works for all tools now.",
+      "source": "custom",
+      "updatedAt": "2026-03-30T09:58:03.463Z"
+    }
+  ],
+  "notes": [
+    "Recommendation: add a generic projection contract at the tool-result/details boundary, keep transcript display (`mu_display`) separate from interactive UI projection, and let the renderer host choose where to project each UI (inline band, dialog overlay, or transcript attachment). This fits existing extension/tool contracts, avoids hard-coding `todo_write`, and keeps non-TUI hosts free to ignore projections safely."
+  ]
+}

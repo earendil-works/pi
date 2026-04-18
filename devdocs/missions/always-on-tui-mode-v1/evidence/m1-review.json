@@ -1,0 +1,18 @@
+{
+  "status": "PASS",
+  "summary": "Shared always-on service exists and the CLI submission paths delegate to it.",
+  "findings": [
+    {
+      "severity": "info",
+      "message": "Added `packages/coding-agent/src/always-on/service.ts` with `createAlwaysOnService()`, `readSnapshot()`, and primitive `submit(...)` variants for immediate, once, recurring, and follow_up submissions."
+    },
+    {
+      "severity": "info",
+      "message": "Refactored `packages/coding-agent/src/always-on/cli.ts` so the `send`, `schedule`, and `follow-up` command paths now delegate to the shared service instead of owning unique orchestration logic."
+    },
+    {
+      "severity": "info",
+      "message": "The new contract is covered by `packages/coding-agent/test/always-on-service.red.test.ts`, and adjacent always-on tests remain green."
+    }
+  ]
+}

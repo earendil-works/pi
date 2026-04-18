@@ -1,0 +1,18 @@
+{
+  "status": "PASS",
+  "summary": "Append-only memory authority and derived workspace projection boundaries are implemented narrowly for milestone 1.",
+  "findings": [],
+  "checked": [
+    "packages/coding-agent/src/memory/store.ts",
+    "packages/coding-agent/src/memory/projection.ts",
+    "packages/coding-agent/src/main.ts",
+    "packages/coding-agent/src/tui/tui-renderer.ts",
+    "packages/coding-agent/test/artifact-memory-store.red.test.ts",
+    "packages/coding-agent/test/artifact-memory-projection.red.test.ts"
+  ],
+  "notes": [
+    "Authoritative state is append-only entries.jsonl under the memory root.",
+    "Workspace projections are rebuilt from ledger entries and persisted as derived JSON files.",
+    "The real CLI startup surface now exposes a loaded workspace projection without relying on raw ledger inspection."
+  ]
+}

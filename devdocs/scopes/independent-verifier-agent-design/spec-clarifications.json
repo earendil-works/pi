@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "scopeName": "independent-verifier-agent-design",
+  "createdAt": "2026-04-01T04:39:49.774Z",
+  "updatedAt": "2026-04-01T04:39:49.774Z",
+  "objectiveHistory": [
+    "Clarify independent verifier agent design"
+  ],
+  "items": [
+    {
+      "id": "verifier_trigger",
+      "topic": "Verifier Trigger",
+      "question": "When should the independent verifier agent be spawned?",
+      "answer": "Optional verifier (caller decides via flag)",
+      "source": "option",
+      "updatedAt": "2026-04-01T04:39:49.774Z"
+    },
+    {
+      "id": "verifier_checklist",
+      "topic": "Checklist Source",
+      "question": "How is the verification checklist determined?",
+      "answer": "Task-specific (custom checks based on the mission/task)",
+      "source": "option",
+      "updatedAt": "2026-04-01T04:39:49.774Z"
+    },
+    {
+      "id": "failure_handling",
+      "topic": "Failure Mode",
+      "question": "What happens when the verifier finds issues?",
+      "answer": "Escalate to parent (parent decides)",
+      "source": "option",
+      "updatedAt": "2026-04-01T04:39:49.774Z"
+    }
+  ],
+  "notes": [
+    "User proposes independent checker agent instead of CoVE self-verification"
+  ]
+}

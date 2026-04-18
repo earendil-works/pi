@@ -1,0 +1,130 @@
+{
+  "milestones": [
+    {
+      "id": "store-and-projection-core",
+      "title": "Append-only global memory store and derived workspace projections exist",
+      "goal": "The system has one authoritative append-only memory substrate under ~/.mu/wiki/ and can derive per-workspace projections without relying on a write-managed index as the source of truth.",
+      "taskIds": [
+        "red-store-and-projection-tests",
+        "implement-store-and-projection",
+        "acceptance-store-and-projection"
+      ],
+      "gateTaskId": "acceptance-store-and-projection",
+      "verification": [
+        {
+          "id": "m1-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- artifact-memory-store.red.test.ts artifact-memory-projection.red.test.ts",
+          "expect": "Targeted store/projection tests prove append-only authority and correct derived workspace projections.",
+          "evidence": "devdocs/missions/artifact-memory-v1/evidence/m1-targeted-tests.txt"
+        },
+        {
+          "id": "m1-review",
+          "kind": "review",
+          "command": "Review the memory store and projection implementation against SPEC.md and write findings JSON.",
+          "expect": "Review confirms append-only authority and derived workspace projection boundaries, or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/artifact-memory-v1/evidence/m1-review.json"
+        },
+        {
+          "id": "m1-assertion",
+          "kind": "assertion",
+          "command": "Assert that projections can be rebuilt from authoritative entries alone and that no write-managed index file is required as source of truth.",
+          "expect": "Assertions prove projections are derived rather than authoritative.",
+          "evidence": "devdocs/missions/artifact-memory-v1/evidence/m1-assertion.txt"
+        },
+        {
+          "id": "m1-xtui-surface",
+          "kind": "xtui",
+          "command": "Run the real CLI in temp workspaces and inspect the visible startup/retrieval surface for a workspace-specific projection after seeding deterministic memory fixtures.",
+          "expect": "The visible CLI surface shows workspace-specific derived memory context rather than requiring direct raw-store inspection only.",
+          "evidence": "devdocs/missions/artifact-memory-v1/evidence/m1-xtui.txt"
+        }
+      ],
+      "notes": "This milestone closes only after the core append-only model and derived workspace views are proven by tests, review, and assertions."
+    },
+    {
+      "id": "artifact-triggered-writes",
+      "title": "Durable artifact-producing tool completions append memory automatically",
+      "goal": "Completed edit/apply_patch/write operations and artifact-producing bash runs append durable memory entries, while non-durable or no-artifact activity does not.",
+      "taskIds": [
+        "red-artifact-trigger-tests",
+        "implement-artifact-triggers",
+        "acceptance-artifact-triggers"
+      ],
+      "gateTaskId": "acceptance-artifact-triggers",
+      "verification": [
+        {
+          "id": "m2-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- artifact-memory-triggers.red.test.ts",
+          "expect": "Targeted trigger tests prove automatic writes happen only for the approved durable tool completions.",
+          "evidence": "devdocs/missions/artifact-memory-v1/evidence/m2-targeted-tests.txt"
+        },
+        {
+          "id": "m2-review",
+          "kind": "review",
+          "command": "Review artifact-trigger behavior against SPEC.md and write findings JSON.",
+          "expect": "Review confirms the trigger surface is limited to durable artifact-producing tool completions, or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/artifact-memory-v1/evidence/m2-review.json"
+        },
+        {
+          "id": "m2-diff-assertion",
+          "kind": "diff",
+          "command": "Capture before/after memory-store fixtures for edit/apply_patch/write/bash scenarios and assert writes appear only in the approved cases.",
+          "expect": "Diff evidence and assertions prove the automatic-write policy is scoped correctly.",
+          "evidence": "devdocs/missions/artifact-memory-v1/evidence/m2-diff.txt"
+        },
+        {
+          "id": "m2-xtui-surface",
+          "kind": "xtui",
+          "command": "Run the real CLI through deterministic edit/apply_patch/write/bash scenarios and inspect the visible transcript/log surface to confirm durable artifact actions produce memory updates while non-artifact actions do not.",
+          "expect": "The visible CLI surface and captured evidence agree with the narrow artifact-triggered automatic-write policy.",
+          "evidence": "devdocs/missions/artifact-memory-v1/evidence/m2-xtui.txt"
+        }
+      ],
+      "notes": "This milestone closes only after automatic writes are shown to be explicit, narrow, and artifact-based."
+    },
+    {
+      "id": "memory-tools-and-fresh-session-retrieval",
+      "title": "Explicit memory tools and fresh-session retrieval are proven through the real CLI surface",
+      "goal": "The model can explicitly store/search/read memory through stable memory tools, and `mu exec --json` proves write-then-fresh-session-retrieve behavior with workspace-first projection semantics.",
+      "taskIds": [
+        "red-memory-tools-and-fresh-session-tests",
+        "implement-memory-tools-and-fresh-session-flow",
+        "acceptance-memory-tools-and-fresh-session"
+      ],
+      "gateTaskId": "acceptance-memory-tools-and-fresh-session",
+      "verification": [
+        {
+          "id": "m3-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- artifact-memory-tools.red.test.ts artifact-memory-fresh-session.red.test.ts",
+          "expect": "Targeted memory-tool and fresh-session tests pass for explicit store/search/read plus workspace-first retrieval.",
+          "evidence": "devdocs/missions/artifact-memory-v1/evidence/m3-targeted-tests.txt"
+        },
+        {
+          "id": "m3-review",
+          "kind": "review",
+          "command": "Review the memory tool surface and fresh-session retrieval flow against SPEC.md and write findings JSON.",
+          "expect": "Review confirms explicit memory requests use the memory tool boundary and that fresh-session retrieval semantics are correct, or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/artifact-memory-v1/evidence/m3-review.json"
+        },
+        {
+          "id": "m3-xtui-surface",
+          "kind": "xtui",
+          "command": "Run real `mu exec --json` flows in temp workspaces: first store memory, then start a fresh session and retrieve it, and inspect the visible CLI behavior.",
+          "expect": "The real CLI surface proves persistence across fresh sessions and workspace-first retrieval behavior.",
+          "evidence": "devdocs/missions/artifact-memory-v1/evidence/m3-xtui.txt"
+        },
+        {
+          "id": "m3-assertion",
+          "kind": "assertion",
+          "command": "Assert from captured exec JSON output and/or test hooks that explicit user-requested store operations used the memory tool boundary and that retrieval in a fresh session returned the expected value.",
+          "expect": "Assertions prove the stable memory-tool boundary and the fresh-session retrieval contract.",
+          "evidence": "devdocs/missions/artifact-memory-v1/evidence/m3-assertion.txt"
+        }
+      ],
+      "notes": "This milestone closes only after the tool boundary and fresh-session retrieval contract are proven through tests, review, and the real CLI surface."
+    }
+  ]
+}

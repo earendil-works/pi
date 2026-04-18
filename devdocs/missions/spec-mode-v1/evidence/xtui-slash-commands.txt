@@ -1,0 +1,18 @@
+XTUI Verification: Slash Commands Test
+========================================
+
+Test: Run mu coding-agent, type '/' to open slash command menu
+Result: PASS
+
+Observed:
+- Typing '/' opens the slash command overlay
+- Command list appears showing available commands
+- Commands include: /spec, /discover, /normal (from spec-mode extension)
+- Navigation with arrow keys works
+- Selecting a command prints confirmation message
+
+Screenshot captured: devdocs/missions/spec-mode-v1/evidence/xtui-slash.json
+
+Verification: /spec command appears in slash menu
+Verification: 'Spec mode active' confirmation appears when selected
+Status: VERIFIED

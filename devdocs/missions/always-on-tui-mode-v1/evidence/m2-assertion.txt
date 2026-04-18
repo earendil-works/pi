@@ -1,0 +1,5 @@
+PASS
+- `packages/coding-agent/src/tui/tui-renderer.ts` now owns an explicit `composerMode: "chat" | "always-on"` state field.
+- `/always-on` and `/always-on-exit` are handled as built-in commands before normal message submission.
+- Always-on mode is not inferred from `extensionManager.getIndicators()`; that heuristic remains limited to spec/discover handling.
+- The visible composer surface changes through `getComposerMetaLabel()` and `updateEditorBorderColor()` when `composerMode === "always-on"`.

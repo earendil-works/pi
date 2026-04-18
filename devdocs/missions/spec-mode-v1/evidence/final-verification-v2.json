@@ -1,0 +1,45 @@
+{
+  "verified": true,
+  "mission": "spec-mode-v1",
+  "report": "final-verification-v2",
+  "generatedAt": "2026-04-02T04:42:55.375893+00:00",
+  "findings": [
+    {
+      "check": "All tasks in TASKS.json have status done",
+      "status": "pass",
+      "details": "Verified 12/12 tasks in devdocs/missions/spec-mode-v1/TASKS.json are marked \"done\"."
+    },
+    {
+      "check": "npm run check",
+      "status": "pass",
+      "details": "Command completed successfully. Biome reported informational noUselessSwitchCase findings in packages/ai/src/providers/openai-completions.{ts,js} but did not fail. The check also performed write-mode formatting/lint actions, so the workspace remains dirty after verification."
+    },
+    {
+      "check": "npm test -w @kennyfrc/mu-coding-agent -- spec-mode",
+      "status": "pass",
+      "details": "Vitest passed: 2 test files, 16 tests passed."
+    },
+    {
+      "check": "Extension files exist at ~/.mu/agent/extensions/spec-mode/",
+      "status": "pass",
+      "details": "Verified directory exists with index.ts, reminders.ts, and verifier.ts."
+    },
+    {
+      "check": "All MILESTONES.json evidence files exist",
+      "status": "pass",
+      "details": "Verified all 10 milestone evidence files referenced by devdocs/missions/spec-mode-v1/MILESTONES.json exist under devdocs/missions/spec-mode-v1/evidence/."
+    },
+    {
+      "check": "FooterComponent renders extension indicators",
+      "status": "pass",
+      "details": "Verified indicator API wiring in packages/coding-agent/src/extensions/manager.ts:488, packages/coding-agent/src/extensions/manager.ts:572, FooterComponent indicator rendering in packages/coding-agent/src/tui/footer.ts:301 and packages/coding-agent/src/tui/footer.ts:364, and FooterComponent receives ExtensionManager in packages/coding-agent/src/tui/tui-renderer.ts:459. Spec-mode extension registers [SPEC]/[DISCOVER] indicators in ~/.mu/agent/extensions/spec-mode/index.ts. Focused footer test suite also passed via npm test -w @kennyfrc/mu-coding-agent -- footer.test.ts."
+    }
+  ],
+  "summary": "Spec-mode-v1 verification passed: required tasks are done, required evidence files exist, spec-mode tests pass, and the footer integration now renders extension indicators. npm run check succeeded with non-blocking informational lint notices and left the workspace dirty due to write-mode checks.",
+  "artifacts": {
+    "tasksFile": "devdocs/missions/spec-mode-v1/TASKS.json",
+    "milestonesFile": "devdocs/missions/spec-mode-v1/MILESTONES.json",
+    "evidenceDir": "devdocs/missions/spec-mode-v1/evidence",
+    "extensionDir": "~/.mu/agent/extensions/spec-mode"
+  }
+}

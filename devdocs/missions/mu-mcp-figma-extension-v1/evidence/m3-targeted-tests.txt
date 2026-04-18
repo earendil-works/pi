@@ -1,0 +1,15 @@
+
+> @kennyfrc/mu-coding-agent@0.24.186 test
+> vitest --run test/mcp-reload-runtime.test.ts test/mcp-status-ui.test.ts
+
+
+ RUN  v3.2.4 /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+
+ ✓ test/mcp-status-ui.test.ts (3 tests) 12ms
+ ✓ test/mcp-reload-runtime.test.ts (2 tests) 10ms
+
+ Test Files  2 passed (2)
+      Tests  5 passed (5)
+   Start at  12:50:05
+   Duration  2.14s (transform 849ms, setup 2.70s, collect 202ms, tests 23ms, environment 1ms, prepare 491ms)
+

@@ -1,0 +1,64 @@
+{
+  "version": 1,
+  "scopeName": "spawned-agent-verifier",
+  "createdAt": "2026-04-02T05:15:14.639Z",
+  "updatedAt": "2026-04-02T06:30:52.553Z",
+  "objectiveHistory": [
+    "Propose architecture for spawned-agent verifier and request human approval",
+    "Confirm the exact next task you want me to complete from the current checkpoint."
+  ],
+  "items": [
+    {
+      "id": "api_method",
+      "topic": "API Design",
+      "question": "How should extensions invoke spawn_agent?",
+      "answer": "it should be like any other tool",
+      "source": "custom",
+      "updatedAt": "2026-04-02T05:15:14.639Z"
+    },
+    {
+      "id": "verifier_model",
+      "topic": "Model Selection",
+      "question": "What model should the verifier child agent use?",
+      "answer": "inherit_from_parent",
+      "source": "option",
+      "updatedAt": "2026-04-02T05:15:14.639Z"
+    },
+    {
+      "id": "approval_flow",
+      "topic": "UX Flow",
+      "question": "How should verifier results be presented to the user?",
+      "answer": "auto_show_results",
+      "source": "option",
+      "updatedAt": "2026-04-02T05:15:14.639Z"
+    },
+    {
+      "id": "fallback",
+      "topic": "Error Handling",
+      "question": "What happens if spawned verifier fails?",
+      "answer": "no_validation",
+      "source": "option",
+      "updatedAt": "2026-04-02T05:15:14.639Z"
+    },
+    {
+      "id": "next-task",
+      "topic": "next step",
+      "question": "What do you want me to do next?",
+      "answer": "Implement `ExtensionApi.spawnAgent()` for spawned verifier support",
+      "source": "option",
+      "updatedAt": "2026-04-02T06:30:52.553Z"
+    },
+    {
+      "id": "scope",
+      "topic": "scope",
+      "question": "How far should I go in this turn?",
+      "answer": "Implement + verify targeted tests",
+      "source": "option",
+      "updatedAt": "2026-04-02T06:30:52.553Z"
+    }
+  ],
+  "notes": [
+    "Proposing architecture for spawned-agent verifier. Current inline validation works but we need proper spawned agent integration per SPEC.md. Two main options: (A) Add spawnAgent() directly to ExtensionApi - simple and explicit, (B) Allow extensions to invoke built-in tools - more general but complex. Also need to decide on verifier model and user flow.",
+    "I have partial work touching ExtensionApi verifier-related files. I want to lock in the exact deliverable before making further changes."
+  ]
+}

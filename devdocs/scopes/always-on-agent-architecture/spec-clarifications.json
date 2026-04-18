@@ -1,0 +1,174 @@
+{
+  "version": 1,
+  "scopeName": "always-on-agent-architecture",
+  "createdAt": "2026-03-31T12:45:58.197Z",
+  "updatedAt": "2026-03-31T13:41:58.963Z",
+  "objectiveHistory": [
+    "Approve the initial architecture for an always-on agent mode in this repo.",
+    "Lock the v1 design for sending contextual work to an always-on agent and scheduling that work.",
+    "Clarify whether always-on agent IDs are required, optional, or mostly hidden behind defaults/autogeneration.",
+    "Eliminate the last ambiguous edge cases in the always-on agent spec before implementation starts.",
+    "Lock the remaining ambiguity around global default agent selection and mutation."
+  ],
+  "items": [
+    {
+      "id": "boundaries",
+      "topic": "boundaries",
+      "question": "Approve this boundary for v1? New supervisor owns ticks/events/inbox/outbox; existing `Agent`, `SessionManager`, and TUI stay mostly unchanged.",
+      "answer": "Yes, keep supervisor separate (recommended)",
+      "source": "option",
+      "updatedAt": "2026-03-31T12:45:58.197Z"
+    },
+    {
+      "id": "abstractions",
+      "topic": "abstractions",
+      "question": "Which inbox/outbox abstraction should v1 use?",
+      "answer": "Append-only JSONL files in `~/.mu/agent/always-on/` (recommended)",
+      "source": "option",
+      "updatedAt": "2026-03-31T12:45:58.197Z"
+    },
+    {
+      "id": "tradeoffs",
+      "topic": "tradeoffs",
+      "question": "Which tradeoff should we optimize first?",
+      "answer": "Simplicity + auditability over lowest latency (recommended)",
+      "source": "option",
+      "updatedAt": "2026-03-31T12:45:58.197Z"
+    },
+    {
+      "id": "matters",
+      "topic": "what matters",
+      "question": "What matters most for v1 success?",
+      "answer": "Reliable always-on worker",
+      "source": "option",
+      "updatedAt": "2026-03-31T12:45:58.197Z"
+    },
+    {
+      "id": "context-shape",
+      "topic": "context",
+      "question": "For 'send work with context', what should the durable work item point at by default?",
+      "answer": "A workspace path + free-text instruction (recommended)",
+      "source": "option",
+      "updatedAt": "2026-03-31T12:53:41.943Z"
+    },
+    {
+      "id": "context-snapshot-vs-live",
+      "topic": "context",
+      "question": "When scheduled work runs later, should it use live current context or a frozen snapshot/reference from when the work item was created?",
+      "answer": "Live context at execution time",
+      "source": "option",
+      "updatedAt": "2026-03-31T12:53:41.943Z"
+    },
+    {
+      "id": "schedule-shape",
+      "topic": "scheduling",
+      "question": "What scheduling surface do you need first?",
+      "answer": "Both one-off and recurring (recommended)",
+      "source": "option",
+      "updatedAt": "2026-03-31T12:53:41.943Z"
+    },
+    {
+      "id": "schedule-result-policy",
+      "topic": "results",
+      "question": "When scheduled work runs, when should the system proactively notify you?",
+      "answer": "On completion and blocker (recommended)",
+      "source": "option",
+      "updatedAt": "2026-03-31T12:53:41.943Z"
+    },
+    {
+      "id": "job-identity",
+      "topic": "work items",
+      "question": "Should work be modeled as independent jobs, or should new messages mostly continue one long-lived thread?",
+      "answer": "should be an independent job, but there must be pointers to past jobs (as past job exsecution is important for learning over time), and we should be able to help point to it other threads",
+      "source": "custom",
+      "updatedAt": "2026-03-31T12:53:41.943Z"
+    },
+    {
+      "id": "agent-id-optional",
+      "topic": "agent identity",
+      "question": "Should `agent-id` be optional for normal usage?",
+      "answer": "Hybrid: auto-generate on create, but require id for later commands",
+      "source": "option",
+      "updatedAt": "2026-03-31T13:02:25.396Z"
+    },
+    {
+      "id": "default-agent-scope",
+      "topic": "agent identity",
+      "question": "If ids are optional, what defaulting rule should v1 use?",
+      "answer": "One default agent per workspace path (recommended)",
+      "source": "option",
+      "updatedAt": "2026-03-31T13:02:25.396Z"
+    },
+    {
+      "id": "agent-id-ux",
+      "topic": "agent identity",
+      "question": "How visible should the generated id be?",
+      "answer": "Show it after create and in list/status output (recommended)",
+      "source": "option",
+      "updatedAt": "2026-03-31T13:02:25.396Z"
+    },
+    {
+      "id": "missed-recurring-occurrences",
+      "topic": "scheduling",
+      "question": "If a recurring job misses multiple occurrences while the supervisor is down, what should happen on restart?",
+      "answer": "Run only the latest missed occurrence",
+      "source": "option",
+      "updatedAt": "2026-03-31T13:40:56.768Z"
+    },
+    {
+      "id": "overlapping-occurrences",
+      "topic": "concurrency",
+      "question": "If a recurring job is still running when the next occurrence becomes due, what should happen?",
+      "answer": "Queue exactly one pending follow-on occurrence after the current run finishes (recommended)",
+      "source": "option",
+      "updatedAt": "2026-03-31T13:40:56.768Z"
+    },
+    {
+      "id": "crash-after-run-started",
+      "topic": "restart semantics",
+      "question": "If the supervisor crashes after `run_started` but before `run_finished`, what should restart do?",
+      "answer": "Retry by creating a new replacement run and mark the old one abandoned/errored (recommended)",
+      "source": "option",
+      "updatedAt": "2026-03-31T13:40:56.768Z"
+    },
+    {
+      "id": "headless-ask-user",
+      "topic": "needs user input",
+      "question": "If a run hits `ask_user` or otherwise needs human input while headless, what exact behavior should be canonical?",
+      "answer": "We should remove tools that require user feedback like ask_user when in this always on mode. it simply does not make sense as the point is autonomy",
+      "source": "custom",
+      "updatedAt": "2026-03-31T13:40:56.768Z"
+    },
+    {
+      "id": "override-inheritance",
+      "topic": "execution tuple",
+      "question": "When you create a follow-up from a prior job, which provider/model/thinking tuple should it use by default if you do not restate one?",
+      "answer": "Inherit the prior job/run's effective tuple (recommended)",
+      "source": "option",
+      "updatedAt": "2026-03-31T13:40:56.768Z"
+    },
+    {
+      "id": "targeting-outside-workspace",
+      "topic": "cli targeting",
+      "question": "If you run a command from outside the workspace and do not pass `--agent` or `--workspace`, what should happen?",
+      "answer": "Use a global default agent",
+      "source": "option",
+      "updatedAt": "2026-03-31T13:40:56.768Z"
+    },
+    {
+      "id": "global-default-management",
+      "topic": "agent identity",
+      "question": "How should the global default agent be set and changed?",
+      "answer": "First created agent becomes global default automatically; later changes require an explicit `set-default` command (recommended)",
+      "source": "option",
+      "updatedAt": "2026-03-31T13:41:58.963Z"
+    }
+  ],
+  "notes": [
+    "Recommendation: build a new always-on supervisor layer outside the existing TUI/core Agent. Reuse the current Agent queue, RPC/session JSONL persistence, and subscription/notification patterns. Start with a single-worker, file-backed inbox/outbox plus timer + fs/webhook wake sources. This is the smallest path that satisfies always-on behavior, user messaging, and event/tick wakeups without invasive core changes.",
+    "Your new use cases suggest the core primitive is not 'chat' but 'work items with attached context plus optional schedule'. My current recommendation is: one always-on supervisor per agent, one append-only session ledger, and a first-class durable `work_item` record that can be triggered immediately or by schedule.",
+    "Recommendation: make `agent-id` optional on create/send/schedule. If omitted, auto-generate a stable id on create, and support a per-workspace default agent so common commands do not require remembering ids. Keep the id visible for inspection, threads, and follow-ups.",
+    "These are the adversarial cases most likely to cause the implementation to drift if left unspecified: missed schedule behavior, concurrency policy, restart semantics, ask_user behavior in headless mode, override inheritance, and ambiguous targeting from outside a workspace.",
+    "You clarified that untargeted CLI commands should use a global default agent. The remaining ambiguity is how that global default is established and changed over time when multiple agents exist."
+  ]
+}

@@ -1,0 +1,14 @@
+
+> @kennyfrc/mu-coding-agent@0.24.190 test
+> vitest --run always-on-service.red.test.ts
+
+
+ RUN  v3.2.4 /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+
+ ✓ test/always-on-service.red.test.ts (2 tests) 70ms
+
+ Test Files  1 passed (1)
+      Tests  2 passed (2)
+   Start at  22:44:08
+   Duration  1.11s (transform 470ms, setup 459ms, collect 342ms, tests 70ms, environment 0ms, prepare 50ms)
+

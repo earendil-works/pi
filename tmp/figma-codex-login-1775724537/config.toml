@@ -1,0 +1,5 @@
+rmcp_client = true
+mcp_oauth_credentials_store = "file"
+
+[mcp_servers.figma]
+url = "https://mcp.figma.com/mcp"

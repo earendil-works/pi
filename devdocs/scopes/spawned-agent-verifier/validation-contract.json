@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "scopeName": "spawned-agent-verifier",
+  "createdAt": "2026-04-02T05:15:14.638Z",
+  "updatedAt": "2026-04-02T05:15:14.638Z",
+  "objectiveHistory": [
+    "Propose architecture for spawned-agent verifier and request human approval"
+  ],
+  "entries": [
+    {
+      "id": "api-method",
+      "surface": "ExtensionApi.spawnAgent()",
+      "commandOrAction": "Add spawnAgent(options) method to ExtensionApi that spawns child agent",
+      "expect": "Extension can call api.spawnAgent({ message, model, reasoning }) to spawn verifier",
+      "notes": "Simple, explicit, matches existing ExtensionApi patterns like registerTool, context, etc."
+    },
+    {
+      "id": "verifier-model",
+      "surface": "gpt-4o-mini",
+      "commandOrAction": "Use lightweight model for verifier to minimize cost",
+      "expect": "Verifier agent uses gpt-4o-mini by default, with override option",
+      "notes": "Verifier only needs to check structure, not generate complex output"
+    },
+    {
+      "id": "approval-flow",
+      "surface": "auto_show_results",
+      "commandOrAction": "Verifier results automatically shown in transcript before human proceeds",
+      "expect": "Human sees PASS/FAIL with findings in chat before deciding to implement",
+      "notes": "Matches current expectation from SPEC.md - human sees results before approval"
+    },
+    {
+      "id": "fallback",
+      "surface": "inline_validation",
+      "commandOrAction": "If spawned verifier fails, fall back to existing inline validateSpec()",
+      "expect": "Graceful degradation - user still gets validation, just not via spawned agent",
+      "notes": "Already implemented inline validation works as fallback"
+    }
+  ],
+  "answers": [
+    {
+      "questionId": "api_method",
+      "topic": "API Design",
+      "prompt": "How should extensions invoke spawn_agent?",
+      "answer": "it should be like any other tool",
+      "source": "custom",
+      "entryId": "api-method"
+    },
+    {
+      "questionId": "verifier_model",
+      "topic": "Model Selection",
+      "prompt": "What model should the verifier child agent use?",
+      "answer": "inherit_from_parent",
+      "source": "option",
+      "entryId": "verifier-model"
+    },
+    {
+      "questionId": "approval_flow",
+      "topic": "UX Flow",
+      "prompt": "How should verifier results be presented to the user?",
+      "answer": "auto_show_results",
+      "source": "option",
+      "entryId": "approval-flow"
+    },
+    {
+      "questionId": "fallback",
+      "topic": "Error Handling",
+      "prompt": "What happens if spawned verifier fails?",
+      "answer": "no_validation",
+      "source": "option",
+      "entryId": "fallback"
+    }
+  ],
+  "notes": [
+    "Proposing architecture for spawned-agent verifier. Current inline validation works but we need proper spawned agent integration per SPEC.md. Two main options: (A) Add spawnAgent() directly to ExtensionApi - simple and explicit, (B) Allow extensions to invoke built-in tools - more general but complex. Also need to decide on verifier model and user flow."
+  ]
+}

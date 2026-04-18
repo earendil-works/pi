@@ -1,0 +1,91 @@
+PASS
+The XTUI-derived views match the authoritative always-on ledgers from the same run.
+
+Ledger facts confirmed:
+- `work-items.jsonl` contains the immediate job `job-73d5736d` with instruction `Inspect the workspace now`.
+- `runs.jsonl` contains run `run-e4a0703f` for `job-73d5736d` with outcome `error`, which matches the runs view and thread transcript.
+- `work-items.jsonl` contains the scheduled once job `job-8864db42` with `schedule.kind = once` and `at = 2026-04-10T00:05:00.000Z`, matching the schedule confirmation.
+- `work-items.jsonl` contains the follow-up job `job-aec9d714` with `relatedWorkItemIds = ["job-73d5736d"]` and inherited execution target metadata, matching the follow-up confirmation.
+- The selected agent shown in XTUI (`ao-aef58e12`) matches the agent id on all created work items.
+
+Structured ledger summary:
+{
+  "work_items": [
+    {
+      "type": "work_item_created",
+      "workItemId": "job-73d5736d",
+      "agentId": "ao-aef58e12",
+      "instruction": "Inspect the workspace now",
+      "timestamp": "2026-04-09T15:30:38.580Z"
+    },
+    {
+      "type": "work_item_created",
+      "workItemId": "job-8864db42",
+      "agentId": "ao-aef58e12",
+      "instruction": "Run once later",
+      "schedule": {
+        "kind": "once",
+        "at": "2026-04-10T00:05:00.000Z"
+      },
+      "timestamp": "2026-04-09T15:30:48.381Z"
+    },
+    {
+      "type": "work_item_created",
+      "workItemId": "job-aec9d714",
+      "agentId": "ao-aef58e12",
+      "instruction": "Continue the prior task",
+      "executionTarget": {
+        "provider": "openai",
+        "modelId": "gpt-4o-mini",
+        "thinkingLevel": "off"
+      },
+      "relatedWorkItemIds": [
+        "job-73d5736d"
+      ],
+      "relatedSessionIds": [
+        "a78165f5-cdfd-457a-9fe9-5081fbb64895"
+      ],
+      "timestamp": "2026-04-09T15:30:51.064Z"
+    }
+  ],
+  "runs": [
+    {
+      "type": "run_started",
+      "runId": "run-e4a0703f",
+      "workItemId": "job-73d5736d",
+      "agentId": "ao-aef58e12",
+      "trigger": "manual",
+      "provider": "openai",
+      "modelId": "gpt-4o-mini",
+      "thinkingLevel": "off",
+      "sessionId": "a78165f5-cdfd-457a-9fe9-5081fbb64895",
+      "timestamp": "2026-04-09T15:30:38.582Z"
+    },
+    {
+      "type": "run_finished",
+      "runId": "run-e4a0703f",
+      "outcome": "error",
+      "errorMessage": "401 Incorrect API key provided: test-ope***-key. You can find your API key at https://platform.openai.com/account/api-keys.",
+      "timestamp": "2026-04-09T15:30:39.568Z"
+    },
+    {
+      "type": "run_started",
+      "runId": "run-756ed748",
+      "workItemId": "job-aec9d714",
+      "agentId": "ao-aef58e12",
+      "trigger": "manual",
+      "provider": "openai",
+      "modelId": "gpt-4o-mini",
+      "thinkingLevel": "off",
+      "sessionId": "54ed0275-4f44-4efb-8e91-70eb28f16f77",
+      "timestamp": "2026-04-09T15:30:51.065Z"
+    },
+    {
+      "type": "run_finished",
+      "runId": "run-756ed748",
+      "outcome": "error",
+      "errorMessage": "401 Incorrect API key provided: test-ope***-key. You can find your API key at https://platform.openai.com/account/api-keys.",
+      "timestamp": "2026-04-09T15:30:51.878Z"
+    }
+  ]
+}

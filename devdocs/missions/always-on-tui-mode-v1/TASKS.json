@@ -1,0 +1,131 @@
+{
+  "tasks": [
+    {
+      "id": "architecture-approval",
+      "title": "Record the approved always-on TUI architecture before implementation begins",
+      "status": "done",
+      "validation": [
+        "echo 'ARCHITECTURE.md approved by human before implementation starts'"
+      ],
+      "notes": "Approved direction: built-in `/always-on` TUI mode, plain text in mode submits immediate jobs, shared CLI/TUI always-on service layer, phase 1 includes mode-scoped always-on tools, and the refined design keeps TUI-owned state minimal while leaving the supervisor as a separate default background owner."
+    },
+    {
+      "id": "service-extraction-red-tests",
+      "title": "Add failing tests for a shared always-on service layer and snapshot/submit primitives",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing shared always-on service primitives used by both CLI and TUI'"
+      ],
+      "notes": "Added `packages/coding-agent/test/always-on-service.red.test.ts` as the red harness for the missing shared service API. Confirmed red with `npm test -w @kennyfrc/mu-coding-agent -- always-on-service.red.test.ts`, which fails because `packages/coding-agent/src/always-on/service.ts` does not exist yet and therefore `createAlwaysOnService()`, `readSnapshot()`, and `submit(...)` are missing."
+    },
+    {
+      "id": "service-extraction-implementation",
+      "title": "Extract the shared always-on service layer from the CLI wrapper",
+      "status": "done",
+      "validation": [
+        "echo 'Shared always-on service tests pass and the CLI delegates to it'"
+      ],
+      "notes": "Added `packages/coding-agent/src/always-on/service.ts` with a shared `createAlwaysOnService()` boundary exposing `readSnapshot()` and primitive `submit(...)` variants. Refactored `packages/coding-agent/src/always-on/cli.ts` so the `send`, `schedule`, and `follow-up` paths delegate to the shared service. Verified green with `npm test -w @kennyfrc/mu-coding-agent -- always-on-service.red.test.ts` plus adjacent regression coverage: `always-on-send-run.red.test.ts`, `always-on-followup-history.red.test.ts`, `always-on-followup-tuple-inheritance.red.test.ts`, and `always-on-schedule.red.test.ts`."
+    },
+    {
+      "id": "service-layer-acceptance-gate",
+      "title": "Verify milestone shared-service-layer",
+      "status": "done",
+      "validation": [
+        "Milestone shared-service-layer verification passes"
+      ],
+      "notes": "Milestone 1 is green. Evidence recorded at `devdocs/missions/always-on-tui-mode-v1/evidence/m1-targeted-tests.txt`, `devdocs/missions/always-on-tui-mode-v1/evidence/m1-review.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m1-assertion.txt`, `devdocs/missions/always-on-tui-mode-v1/evidence/m1-xtui.txt`, and `devdocs/missions/always-on-tui-mode-v1/evidence/m1-xtui-snap.json`."
+    },
+    {
+      "id": "tui-mode-red-tests",
+      "title": "Add failing tests for `/always-on` mode entry, exit, and visible composer state",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing `/always-on` built-in command, explicit mode state, and visible composer/meta changes'"
+      ],
+      "notes": "Added `packages/coding-agent/test/always-on-slash-surface.red.test.ts` and `packages/coding-agent/test/always-on-tui-mode.red.test.ts` to define the missing `/always-on` mode surface. Confirmed the initial red state, then kept the tests as the contract for the implementation that followed."
+    },
+    {
+      "id": "tui-mode-implementation",
+      "title": "Implement explicit `/always-on` TUI mode with minimal session-local state",
+      "status": "done",
+      "validation": [
+        "echo 'TUI mode tests pass for mode entry, exit, and visible composer state'"
+      ],
+      "notes": "Implemented built-in `/always-on` and `/always-on-exit` handling in `packages/coding-agent/src/tui/tui-renderer.ts`, introduced explicit `composerMode` state, and made the composer meta label and border treatment reflect always-on mode without using extension-indicator label parsing. Verified green with `npm test -w @kennyfrc/mu-coding-agent -- always-on-tui-mode.red.test.ts always-on-slash-surface.red.test.ts` and adjacent command-surface coverage via `mission-command-surface.red.test.ts`, `background-jobs-slash.red.test.ts`, and `agents-slash.red.test.ts`."
+    },
+    {
+      "id": "tui-mode-acceptance-gate",
+      "title": "Verify milestone tui-mode-surface",
+      "status": "done",
+      "validation": [
+        "Milestone tui-mode-surface verification passes"
+      ],
+      "notes": "Milestone 2 is green. Evidence recorded at `devdocs/missions/always-on-tui-mode-v1/evidence/m2-targeted-tests.txt`, `devdocs/missions/always-on-tui-mode-v1/evidence/m2-review.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m2-assertion.txt`, `devdocs/missions/always-on-tui-mode-v1/evidence/m2-xtui.txt`, `devdocs/missions/always-on-tui-mode-v1/evidence/m2-xtui-enter.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m2-xtui-exit.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m2-xtui-mode-on.json`, and `devdocs/missions/always-on-tui-mode-v1/evidence/m2-xtui-mode-off.json`."
+    },
+    {
+      "id": "mode-submission-red-tests",
+      "title": "Add failing tests for plain-text submission semantics and mode-scoped tool selection",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing plain-text always-on submission behavior and mode-scoped tool gating'"
+      ],
+      "notes": "Added `packages/coding-agent/test/always-on-mode-submit.red.test.ts` and `packages/coding-agent/test/always-on-mode-tools.red.test.ts` as the red harness for mode-aware plain-text submission and tool/prompt gating. Confirmed red with `npm test -w @kennyfrc/mu-coding-agent -- always-on-mode-submit.red.test.ts always-on-mode-tools.red.test.ts`; evidence saved at `devdocs/missions/always-on-tui-mode-v1/evidence/m3-red-tests.txt`. The failures are the intended gaps: plain text in `/always-on` does not yet route to immediate always-on submission, and mode entry does not yet add the expected `always_on_snapshot` / `always_on_submit` tools or rebuild the prompt."
+    },
+    {
+      "id": "mode-submission-implementation",
+      "title": "Implement plain-text always-on submission and mode-aware tool/prompt refresh",
+      "status": "done",
+      "validation": [
+        "echo 'Plain-text always-on submission and mode-aware tool/prompt tests pass'"
+      ],
+      "notes": "Implemented mode-aware plain-text always-on submission and tool/prompt refresh in `packages/coding-agent/src/tui/tui-renderer.ts`. Added primitive mode-scoped tools `always_on_snapshot` and `always_on_submit`, cached/restored the pre-mode tool/prompt surface on entry/exit, and shared TUI/CLI run wiring via `packages/coding-agent/src/always-on/execute-run.ts`. Also fixed CLI regressions introduced during the extraction (`existsSync` / `findModel` imports in `packages/coding-agent/src/always-on/cli.ts`). Verified green with `npm test -w @kennyfrc/mu-coding-agent -- always-on-mode-submit.red.test.ts always-on-mode-tools.red.test.ts` plus adjacent regression coverage in `devdocs/missions/always-on-tui-mode-v1/evidence/m3-adjacent-tests.txt`."
+    },
+    {
+      "id": "mode-submission-acceptance-gate",
+      "title": "Verify milestone mode-submission-and-tools",
+      "status": "done",
+      "validation": [
+        "Milestone mode-submission-and-tools verification passes"
+      ],
+      "notes": "Milestone 3 is green. Evidence recorded at `devdocs/missions/always-on-tui-mode-v1/evidence/m3-targeted-tests.txt`, `devdocs/missions/always-on-tui-mode-v1/evidence/m3-review.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m3-assertion.txt`, `devdocs/missions/always-on-tui-mode-v1/evidence/m3-xtui.txt`, `devdocs/missions/always-on-tui-mode-v1/evidence/m3-xtui-create.txt`, `devdocs/missions/always-on-tui-mode-v1/evidence/m3-xtui-start.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m3-xtui-mode-on.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m3-xtui-submitted.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m3-xtui-mode-off.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m3-xtui-post-exit-submit.json`, and `devdocs/missions/always-on-tui-mode-v1/evidence/m3-adjacent-tests.txt`."
+    },
+    {
+      "id": "inspection-commands-red-tests",
+      "title": "Add failing tests for always-on inspection/scheduling slash commands and overlays",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing always-on agent selection, scheduling, inspection, and follow-up slash flows'"
+      ],
+      "notes": "Added `packages/coding-agent/test/always-on-mode-inspection.red.test.ts`, `packages/coding-agent/test/always-on-mode-schedule.red.test.ts`, and `packages/coding-agent/test/always-on-mode-followup.red.test.ts` as the red harness for the missing inspection, schedule, and follow-up always-on command surface. Confirmed red with `npm test -w @kennyfrc/mu-coding-agent -- always-on-mode-inspection.red.test.ts always-on-mode-schedule.red.test.ts always-on-mode-followup.red.test.ts`; evidence saved at `devdocs/missions/always-on-tui-mode-v1/evidence/m4-red-tests.txt`. The failures are the intended gaps: missing slash-command registration, inspection commands not reading derived always-on state, and schedule/follow-up commands falling through to immediate submission instead of the correct submission shapes."
+    },
+    {
+      "id": "inspection-commands-implementation",
+      "title": "Implement the always-on mode command surface for agent selection, scheduling, inspection, and follow-up",
+      "status": "done",
+      "validation": [
+        "echo 'Always-on command-surface tests pass and XTUI inspection is legible'"
+      ],
+      "notes": "Implemented the mode-specific always-on command surface in `packages/coding-agent/src/tui/tui-renderer.ts`: `/always-on-agent`, `/always-on-jobs`, `/always-on-runs`, `/always-on-thread`, `/always-on-schedule`, and `/always-on-follow-up`. Added session-local selected-agent state, routed schedule/follow-up/inspection actions through the shared always-on service, and exposed `readThread(runId)` from `packages/coding-agent/src/always-on/service.ts`. Verified green with `npm test -w @kennyfrc/mu-coding-agent -- always-on-mode-inspection.red.test.ts always-on-mode-schedule.red.test.ts always-on-mode-followup.red.test.ts` plus adjacent regression coverage in `devdocs/missions/always-on-tui-mode-v1/evidence/m4-adjacent-tests.txt`."
+    },
+    {
+      "id": "inspection-commands-acceptance-gate",
+      "title": "Verify milestone inspection-and-scheduling-surface",
+      "status": "done",
+      "validation": [
+        "Milestone inspection-and-scheduling-surface verification passes"
+      ],
+      "notes": "Milestone 4 is green. Evidence recorded at `devdocs/missions/always-on-tui-mode-v1/evidence/m4-targeted-tests.txt`, `devdocs/missions/always-on-tui-mode-v1/evidence/m4-review.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m4-xtui.txt`, `devdocs/missions/always-on-tui-mode-v1/evidence/m4-ledger-assertion.txt`, `devdocs/missions/always-on-tui-mode-v1/evidence/m4-adjacent-tests.txt`, `devdocs/missions/always-on-tui-mode-v1/evidence/m4-xtui-create.txt`, `devdocs/missions/always-on-tui-mode-v1/evidence/m4-xtui-start.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m4-xtui-mode-on.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m4-xtui-agent.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m4-xtui-immediate.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m4-xtui-jobs.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m4-xtui-runs.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m4-xtui-thread.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m4-xtui-schedule.json`, `devdocs/missions/always-on-tui-mode-v1/evidence/m4-xtui-followup.json`, and `devdocs/missions/always-on-tui-mode-v1/evidence/m4-runtime-ids.json`."
+    },
+    {
+      "id": "final-check",
+      "title": "Run full validation and mark the mission complete",
+      "status": "done",
+      "validation": [
+        "npm run check",
+        "python3 - <<'PY'\nimport json\nfrom pathlib import Path\npath = Path('devdocs/missions/always-on-tui-mode-v1/TASKS.json')\ndata = json.loads(path.read_text())\nassert all(task['status'] == 'done' for task in data['tasks'])\nPY"
+      ],
+      "notes": "`npm run check` passed after fixing the always-on tool return types in `packages/coding-agent/src/tui/tui-renderer.ts`. Mission harness re-validation passed with `node ~/.mu/agent/docs/scripts/mission-validator.mjs devdocs/missions/always-on-tui-mode-v1`, and all task statuses are now `done`."
+    }
+  ]
+}

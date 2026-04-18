@@ -1,0 +1,5 @@
+PASS
+- `packages/coding-agent/src/always-on/service.ts` is now the shared host-side service boundary.
+- `packages/coding-agent/src/always-on/cli.ts` imports `createAlwaysOnService` and delegates the `send`, `schedule`, and `follow-up` execution paths through `service.submit(...)`.
+- The shared service uses the existing agent registry and supervisor modules as the authoritative ledger-backed runtime.
+- The CLI no longer owns unique work-submission orchestration for these paths.

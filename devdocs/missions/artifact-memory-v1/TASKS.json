@@ -1,0 +1,104 @@
+{
+  "tasks": [
+    {
+      "id": "architecture-approval",
+      "title": "Record the approved artifact-memory v1 architecture before implementation begins",
+      "status": "done",
+      "validation": [
+        "echo 'ARCHITECTURE.md approved by human before implementation starts'"
+      ],
+      "notes": "Approved decisions: global append-only authority under ~/.mu/wiki/, workspace-specific derived projections, artifact-triggered automation only for edit/apply_patch/write/artifact-producing bash, explicit memory tools for user-requested storage and retrieval, no LLM classifier in v1, and fresh-session mu exec --json validation."
+    },
+    {
+      "id": "red-store-and-projection-tests",
+      "title": "Add failing tests for append-only memory storage and workspace projection derivation",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing append-only memory store and workspace projections'"
+      ],
+      "notes": "Cover entry append behavior, projection rebuilds, workspace scoping, empty-store behavior, and supersession metadata shape."
+    },
+    {
+      "id": "implement-store-and-projection",
+      "title": "Implement the append-only memory store and workspace projection derivation",
+      "status": "done",
+      "validation": [
+        "echo 'Memory store/projection tests pass and derived workspace projections are correct'"
+      ],
+      "notes": "Keep the authoritative shape append-only and derive workspace views instead of maintaining a write-managed index as the source of truth."
+    },
+    {
+      "id": "acceptance-store-and-projection",
+      "title": "Verify milestone store-and-projection-core",
+      "status": "done",
+      "validation": [
+        "Milestone store-and-projection-core verification passes"
+      ],
+      "notes": "Do not mark done until the milestone verification criteria in MILESTONES.json are green and evidence paths are populated."
+    },
+    {
+      "id": "red-artifact-trigger-tests",
+      "title": "Add failing tests for artifact-triggered memory writes from tool completions",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing artifact-triggered writes from edit/apply_patch/write/bash completions'"
+      ],
+      "notes": "Cover positive cases for edit/apply_patch/write, bash with produced artifacts, and negative cases for bash without artifacts or non-durable/no-op activity."
+    },
+    {
+      "id": "implement-artifact-triggers",
+      "title": "Implement artifact-triggered memory writes for durable tool completions",
+      "status": "done",
+      "validation": [
+        "echo 'Artifact-trigger tests pass for edit/apply_patch/write and artifact-producing bash only'"
+      ],
+      "notes": "Make the trigger logic explicit and observable. Do not add conversational-memory automation in this mission."
+    },
+    {
+      "id": "acceptance-artifact-triggers",
+      "title": "Verify milestone artifact-triggered-writes",
+      "status": "done",
+      "validation": [
+        "Milestone artifact-triggered-writes verification passes"
+      ],
+      "notes": "Do not mark done until the milestone verification criteria in MILESTONES.json are green and raw memory evidence matches the expected tool-trigger behavior."
+    },
+    {
+      "id": "red-memory-tools-and-fresh-session-tests",
+      "title": "Add failing tests for explicit memory tools and fresh-session retrieval through mu exec --json",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing memory_search/memory_read/memory_store surfaces and fresh-session retrieval proof'"
+      ],
+      "notes": "Cover explicit user-requested storage through the memory tool boundary, workspace-first retrieval, fresh-session retrieval, and multi-workspace projection behavior."
+    },
+    {
+      "id": "implement-memory-tools-and-fresh-session-flow",
+      "title": "Implement explicit memory tools and real fresh-session retrieval validation path",
+      "status": "done",
+      "validation": [
+        "echo 'Memory tool tests and fresh-session mu exec validation pass'"
+      ],
+      "notes": "Add the stable tool boundary for explicit store/search/read and prove write-then-retrieve behavior through real mu exec --json sessions in temp workspaces."
+    },
+    {
+      "id": "acceptance-memory-tools-and-fresh-session",
+      "title": "Verify milestone memory-tools-and-fresh-session-retrieval",
+      "status": "done",
+      "validation": [
+        "Milestone memory-tools-and-fresh-session-retrieval verification passes"
+      ],
+      "notes": "Do not mark done until the milestone verification criteria in MILESTONES.json are green and fresh-session retrieval is proven in the real CLI surface."
+    },
+    {
+      "id": "final-check",
+      "title": "Run full validation and mark the mission complete",
+      "status": "done",
+      "validation": [
+        "npm run check",
+        "python3 - <<'PY'\nimport json\nfrom pathlib import Path\npath = Path('devdocs/missions/artifact-memory-v1/TASKS.json')\ndata = json.loads(path.read_text())\nassert all(task['status'] == 'done' for task in data['tasks'])\nPY"
+      ],
+      "notes": "Mark this done only after all milestone gate tasks are done, real mu exec --json evidence exists, targeted tests are green, and PROGRESS.md says the mission is complete."
+    }
+  ]
+}

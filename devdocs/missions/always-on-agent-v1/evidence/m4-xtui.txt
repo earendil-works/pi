@@ -1,0 +1,84 @@
+===== create =====
+Created always-on agent ao-e268f486
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/tmp.gtGInnpaR8/workspace
+Model: openai-codex / gpt-5.4 / low
+Global default: yes
+Always-on agent ao-e268f486
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/tmp.gtGInnpaR8/workspace
+Model: openai-codex / gpt-5.4 / low
+Enabled: yes
+Global default: yes
+
+===== send (explicit override) =====
+Queued always-on job job-8986656b
+Agent: ao-e268f486
+Instruction: Reply briefly with FIRST and mention README
+Run: run-e0633bfa
+Session: e67c10b5-64bc-47d8-8eb0-bd7c52493cf6
+Outcome: running
+Model: openai-codex / gpt-5.4 / medium
+
+===== follow-up (inherited tuple) =====
+Queued always-on follow-up job-67758602
+Parent job: job-8986656b
+Instruction: Continue briefly without restating the tuple and mention prior run
+Related sessions: e67c10b5-64bc-47d8-8eb0-bd7c52493cf6
+Run: run-fd6bf842
+Session: 7f077a20-142a-48c2-8264-c8a3338a7824
+Outcome: running
+Model: openai-codex / gpt-5.4 / medium
+
+Initial job id: job-8986656b
+Initial run id: run-e0633bfa
+Initial session id: e67c10b5-64bc-47d8-8eb0-bd7c52493cf6
+Follow-up job id: job-67758602
+Follow-up run id: run-fd6bf842
+Follow-up session id: 7f077a20-142a-48c2-8264-c8a3338a7824
+
+===== jobs =====
+Always-on jobs:
+- job-8986656b (job)
+  Agent: ao-e268f486
+  Instruction: Reply briefly with FIRST and mention README
+  Status: completed
+- job-67758602 (follow-up)
+  Agent: ao-e268f486
+  Instruction: Continue briefly without restating the tuple and mention prior run
+  Status: completed
+  Follow-up to: job-8986656b
+  Related sessions: e67c10b5-64bc-47d8-8eb0-bd7c52493cf6
+
+===== runs (follow-up job) =====
+Always-on runs for job-67758602:
+Instruction: Continue briefly without restating the tuple and mention prior run
+Follow-up to: job-8986656b
+Related sessions: e67c10b5-64bc-47d8-8eb0-bd7c52493cf6
+- run-fd6bf842
+  Outcome: completed
+  Model: openai-codex / gpt-5.4 / medium
+  Session: 7f077a20-142a-48c2-8264-c8a3338a7824
+
+===== status =====
+Always-on agent ao-e268f486
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/tmp.gtGInnpaR8/workspace
+Model: openai-codex / gpt-5.4 / low
+Enabled: yes
+Global default: yes
+
+===== thread (follow-up run) =====
+Always-on thread for run run-fd6bf842
+
+Work item: job-67758602
+
+Session: 7f077a20-142a-48c2-8264-c8a3338a7824
+
+Follow-up to: job-8986656b
+
+Related sessions: e67c10b5-64bc-47d8-8eb0-bd7c52493cf6
+
+## User
+<user_message_time>Wednesday, April 1, 2026 at 8:13 AM GMT+8</user_message_time>
+Continue briefly without restating the tuple and mention prior run
+
+## Assistant
+Building on the prior run, the same pattern still holds, with the latest step acting as a short continuation rather than a reset.

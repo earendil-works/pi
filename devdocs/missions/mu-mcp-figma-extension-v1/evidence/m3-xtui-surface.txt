@@ -1,0 +1,10 @@
+xtui snap --cwd /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev --cmd 'npx tsx tmp/mu-m3-footer.ts' --until-text '=== unloaded ===' --timeout 5000
+
+Observed:
+- loaded state showed `command:present`
+- loaded state showed `tool:present`
+- loaded footer rendered `MCP: 0/2 connected`
+- unloaded state showed `command:missing`
+- unloaded state showed `tool:missing`
+- xtui matched `=== unloaded ===`
+- process exited with code 0

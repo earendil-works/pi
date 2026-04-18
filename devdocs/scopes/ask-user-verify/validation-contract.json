@@ -1,0 +1,34 @@
+{
+  "version": 1,
+  "scopeName": "ask-user-verify",
+  "createdAt": "2026-03-30T03:35:34.805Z",
+  "updatedAt": "2026-03-30T03:35:34.805Z",
+  "objectiveHistory": [
+    "Verify the ask_user TUI dialog flow is working correctly after the fix"
+  ],
+  "entries": [
+    {
+      "id": "verify-dialog",
+      "surface": "xtui",
+      "commandOrAction": "ask_user probe",
+      "expect": "Dialog overlay renders, footer pauses, input accepted"
+    }
+  ],
+  "answers": [
+    {
+      "questionId": "surface",
+      "topic": "Surface",
+      "prompt": "Which surface should verify this dialog behavior?",
+      "answer": "just regular logs?",
+      "source": "custom"
+    },
+    {
+      "questionId": "expectation",
+      "topic": "Expected behavior",
+      "prompt": "What do you expect to observe?",
+      "answer": "overlay renders centered with chrome",
+      "source": "option"
+    }
+  ],
+  "notes": []
+}

@@ -1,0 +1,47 @@
+$ MU_CODING_AGENT_DIR=<temp> mu always-on create --workspace <workspace> --provider openai-codex --model gpt-5.4 --thinking medium
+Created always-on agent ao-3cccb928
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/tmp.a7LhOOeF1Y/workspace
+Model: openai-codex / gpt-5.4 / medium
+Global default: yes
+Always-on agent ao-3cccb928
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/tmp.a7LhOOeF1Y/workspace
+Model: openai-codex / gpt-5.4 / medium
+Enabled: yes
+Global default: yes
+
+$ MU_CODING_AGENT_DIR=<temp> mu always-on create --workspace <workspace> --agent agent-two --provider openai-codex --model gpt-5.4 --thinking low
+Created always-on agent agent-two
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/tmp.a7LhOOeF1Y/workspace
+Model: openai-codex / gpt-5.4 / low
+Global default: no
+Always-on agent agent-two
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/tmp.a7LhOOeF1Y/workspace
+Model: openai-codex / gpt-5.4 / low
+Enabled: yes
+Default agent: no
+
+$ MU_CODING_AGENT_DIR=<temp> mu always-on set-default agent-two
+Global default always-on agent set to agent-two
+Always-on agent agent-two
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/tmp.a7LhOOeF1Y/workspace
+Model: openai-codex / gpt-5.4 / low
+Enabled: yes
+Global default: yes
+
+$ MU_CODING_AGENT_DIR=<temp> mu always-on agents
+Always-on agents:
+- ao-3cccb928
+  Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/tmp.a7LhOOeF1Y/workspace
+  Model: openai-codex / gpt-5.4 / medium
+  Enabled: yes
+- agent-two [global default]
+  Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/tmp.a7LhOOeF1Y/workspace
+  Model: openai-codex / gpt-5.4 / low
+  Enabled: yes
+
+$ MU_CODING_AGENT_DIR=<temp> mu always-on status --agent agent-two
+Always-on agent agent-two
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/tmp.a7LhOOeF1Y/workspace
+Model: openai-codex / gpt-5.4 / low
+Enabled: yes
+Global default: yes

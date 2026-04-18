@@ -1,0 +1,25 @@
+PASS
+XTUI verified the live `/always-on` control surface end to end in one temp workspace/config.
+
+Observed live surface checkpoints:
+- Mode entry shows the `always-on` composer label (`m4-xtui-mode-on.json`).
+- Agent selection shows `Always-on agent: ao-aef58e12` (`m4-xtui-agent.json`).
+- Immediate submission shows `Queued always-on job job-73d5736d (run run-e4a0703f)` (`m4-xtui-immediate.json`).
+- Jobs inspection shows job `job-73d5736d` for agent `ao-aef58e12` with instruction `Inspect the workspace now` (`m4-xtui-jobs.json`).
+- Runs inspection shows run `run-e4a0703f` for job `job-73d5736d` with outcome `error` (`m4-xtui-runs.json`).
+- Thread inspection shows `Always-on thread for run run-e4a0703f` and the original user instruction (`m4-xtui-thread.json`).
+- Schedule creation shows `Scheduled always-on job job-8864db42` (`m4-xtui-schedule.json`).
+- Follow-up creation shows `Queued always-on follow-up job-aec9d714` (`m4-xtui-followup.json`).
+
+Representative visible rows:
+- [mode-on] ╰──────────────────────────────────────── $0.000 (api) 0% of 128k • always-on ╯
+- [agent]  Always-on agent: ao-aef58e12
+- [immediate]  Queued always-on job job-73d5736d (run run-e4a0703f)                         █
+- [jobs]  Queued always-on job job-73d5736d (run run-e4a0703f)                         █
+- [jobs]  Always-on jobs:                                                              █
+- [runs]  Queued always-on job job-73d5736d (run run-e4a0703f)                         █
+- [runs]  Always-on runs:                                                              █
+- [thread]    Instruction: Inspect the workspace now                                     ░
+- [thread]  Always-on thread for run run-e4a0703f                                        ░
+- [schedule]  Scheduled always-on job job-8864db42                                         █
+- [followup]  Queued always-on follow-up job-aec9d714                                      █

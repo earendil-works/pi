@@ -1,0 +1,16 @@
+Verifier Flow Test
+==================
+
+Test: Run mu in spec mode, ask for a spec, observe verifier output
+Result: PARTIAL
+
+Observed:
+- Extension uses inline validation via validateSpec() function
+- No spawned agent verification currently implemented
+- Validation results are returned synchronously
+
+Note:
+- Full verifier flow with spawned child agent not yet implemented
+- Current implementation validates spec output inline only
+
+Status: PARTIAL - Inline validation works, no spawned agent verifier

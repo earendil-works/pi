@@ -1,0 +1,16 @@
+
+> @kennyfrc/mu-coding-agent@0.24.165 test
+> vitest --run artifact-memory-tools.red.test.ts artifact-memory-fresh-session.red.test.ts
+
+
+ RUN  v3.2.4 /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+
+ ✓ test/artifact-memory-tools.red.test.ts (1 test) 13ms
+ ✓ test/artifact-memory-fresh-session.red.test.ts (1 test) 1852ms
+   ✓ artifact memory fresh-session retrieval (red) > uses the memory tool boundary to store and then retrieve a fact across fresh mu exec --json sessions  1851ms
+
+ Test Files  2 passed (2)
+      Tests  2 passed (2)
+   Start at  14:38:50
+   Duration  2.61s (transform 455ms, setup 1.01s, collect 300ms, tests 1.86s, environment 0ms, prepare 170ms)
+

@@ -1,0 +1,6 @@
+PASS
+XTUI verified `/always-on` mode entry and exit in the real TUI.
+Mode-on rows containing always-on:
+- ╰──────────────────────────────────────────────────────────────────────────────── $0.000 (api) 0% of 128k • always-on ╯
+Mode-off rows containing always-on:
+- none

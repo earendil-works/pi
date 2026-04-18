@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "scopeName": "tool-ui-projection-replacement",
+  "createdAt": "2026-03-30T10:00:27.589Z",
+  "updatedAt": "2026-03-30T10:00:27.589Z",
+  "objectiveHistory": [
+    "Lock the replacement architecture for a centralized projection/display system that supersedes `mu_display`."
+  ],
+  "items": [
+    {
+      "id": "central-owner",
+      "topic": "boundaries",
+      "question": "Where should the centralized projection system primarily live?",
+      "answer": "Host-side projection registry with tool payloads as data input",
+      "source": "option",
+      "updatedAt": "2026-03-30T10:00:27.589Z"
+    },
+    {
+      "id": "replacement-scope",
+      "topic": "replacement scope",
+      "question": "Should the new system fully replace `mu_display` for all existing tools, or ship alongside it briefly during migration?",
+      "answer": "Fully replace immediately",
+      "source": "option",
+      "updatedAt": "2026-03-30T10:00:27.589Z"
+    },
+    {
+      "id": "projection-shape",
+      "topic": "abstractions",
+      "question": "What should the single protocol optimize for first?",
+      "answer": "Interactive UI first, transcript derived from it",
+      "source": "option",
+      "updatedAt": "2026-03-30T10:00:27.589Z"
+    },
+    {
+      "id": "host-control",
+      "topic": "tradeoffs",
+      "question": "How much control should the host renderer keep over final placement/styling?",
+      "answer": "High host control; tools declare intent only",
+      "source": "option",
+      "updatedAt": "2026-03-30T10:00:27.589Z"
+    },
+    {
+      "id": "must-win",
+      "topic": "what matters",
+      "question": "What is the most important property of the replacement?",
+      "answer": "Single source of truth",
+      "source": "option",
+      "updatedAt": "2026-03-30T10:00:27.589Z"
+    }
+  ],
+  "notes": [
+    "New recommendation: replace `mu_display` with one centralized projection/display protocol used by all tool outputs. That protocol should own transcript display, inline/dialog rendering, collapse rules, and optional interaction metadata so there is one source of truth instead of separate display/UI channels."
+  ]
+}

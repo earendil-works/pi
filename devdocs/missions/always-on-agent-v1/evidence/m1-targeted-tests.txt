@@ -1,0 +1,15 @@
+
+> @kennyfrc/mu-coding-agent@0.24.145 test
+> vitest --run always-on-agent-registry.red.test.ts always-on-global-default.red.test.ts
+
+
+ RUN  v3.2.4 /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+
+ ✓ test/always-on-agent-registry.red.test.ts (1 test) 35ms
+ ✓ test/always-on-global-default.red.test.ts (3 tests) 48ms
+
+ Test Files  2 passed (2)
+      Tests  4 passed (4)
+   Start at  22:10:06
+   Duration  2.96s (transform 1.02s, setup 3.51s, collect 58ms, tests 83ms, environment 1ms, prepare 741ms)
+

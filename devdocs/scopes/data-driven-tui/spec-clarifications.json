@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "scopeName": "data-driven-tui",
+  "createdAt": "2026-03-30T09:54:51.701Z",
+  "updatedAt": "2026-03-30T09:54:51.701Z",
+  "objectiveHistory": [
+    "Get human approval on the projection system architecture for UI-defined-in-data tied to tools"
+  ],
+  "items": [
+    {
+      "id": "architecture-approach",
+      "topic": "Architecture Approach",
+      "question": "Which architecture approach do you prefer for the projection system?\n\n1. **Projection Registry**: A central registry where extensions register projection renderers by type (e.g., 'todo-list', 'table', 'chart'). Tool results include `projection: { type: 'todo-list', data: {...} }` and the registry routes to the appropriate renderer.\n\n2. **Inline Components**: Keep the current pattern where components like `InlineToolOverlayComponent` handle multiple projection types internally, but make the dispatch pluggable via a map of `{ [type]: ComponentClass }`.\n\n3. **Hybrid**: Tool results include `mu_display.projection: { type: 'todo-list', version: 1, data: {...} }`. Built-in types render with optimized native TUI components. Extensions can register handlers for custom types that return a simple structured format (lines, colors, interactions) that the TUI renders.",
+      "answer": "Projection Registry",
+      "source": "option",
+      "updatedAt": "2026-03-30T09:54:51.701Z"
+    },
+    {
+      "id": "extension-api",
+      "topic": "Extension API",
+      "question": "How should extensions register custom projections?\n\n1. **registerProjection(type, handler)**: New ExtensionApi method. Handler receives projection data and returns a Component or structured render instructions.\n\n2. **include in registerTool()**: Add optional `projection` field to `registerTool()` options that defines how results should be projected.\n\n3. **Custom CLI output format**: Extensions output special JSONL records that the TUI interprets as projection instructions (no code registration needed).",
+      "answer": "include in registerTool()",
+      "source": "option",
+      "updatedAt": "2026-03-30T09:54:51.701Z"
+    },
+    {
+      "id": "data-format",
+      "topic": "Data Format",
+      "question": "What should the projection data format look like in tool results?\n\n1. **Hierarchical structured**: `details.projection = { type: 'list', items: [{status, label, priority}], actions: [...] }` - explicit structure, type-safe, requires schema definitions per projection type.\n\n2. **Flat with conventions**: `details.mu_display` stays flat but adds `projection: 'todo-list'` and the renderer knows to look for `details.todos`, `details.summary`, etc. Backward compatible, simpler but more implicit.\n\n3. **Full mu_display v2**: Extend mu_display to v2 with first-class projection support including interactive elements, sections, and inline components all in the display structure.",
+      "answer": "Hierarchical structured",
+      "source": "option",
+      "updatedAt": "2026-03-30T09:54:51.701Z"
+    }
+  ],
+  "notes": [
+    "Based on my analysis of the current system:\n\n**Current State (verified):**\n- `mu_display` v1 exists with `call`, `summary`, `output.collapse`, and `sections`\n- `InlineToolOverlayComponent` has hardcoded logic for `todo_write` - it reads `details.todos` and `details.summary` directly\n- Extensions can register tools but cannot define custom UI projections\n- The TUI handles the inline overlay specially in `TUIRenderer.updateInlineToolOverlay()`\n\n**What We Need:**\n1. Extensions can define custom UI projections for their tools\n2. Reusable pattern for common projections (todo-list, table, chart, progress)\n3. Backward compatibility with existing `mu_display` v1\n4. Clear separation: data in tool result, rendering in TUI via registered handlers\n\n**My Recommendation:**\n- Hybrid approach (option 3) with **Flat with conventions** data format (option 2)\n- Add `registerProjection(type, handler)` to ExtensionApi\n- Tool results use `mu_display.projection: { type: string, config?: object }` \n- Built-in types: 'todo-list', 'table', 'progress', 'chart'\n- Extensions register handlers for custom types or reuse built-in types with their own data\n\nThis keeps backward compatibility, minimizes changes to existing code, and gives extensions full control over custom UI while reusing built-in patterns."
+  ]
+}

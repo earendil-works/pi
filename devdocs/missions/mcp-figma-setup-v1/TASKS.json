@@ -1,0 +1,210 @@
+{
+  "tasks": [
+    {
+      "id": "architecture-approval",
+      "title": "Get human approval on the MCP core vs Figma pilot architecture",
+      "status": "done",
+      "validation": [
+        "echo 'ARCHITECTURE.md approved by human before implementation starts'"
+      ],
+      "notes": "Approved via ask_user: generic-core/Figma-pilot split, streamable-http-first plan, bearer-first auth, and local-harness-first validation order all approved by the user on 2026-04-08."
+    },
+    {
+      "id": "baseline-discovery",
+      "title": "Confirm the current coding-agent baseline and record any blockers before MCP implementation",
+      "status": "done",
+      "validation": [
+        "npm run check -w @kennyfrc/mu-coding-agent"
+      ],
+      "notes": "Completed 2026-04-08: `npm run check -w @kennyfrc/mu-coding-agent` returned green, so no package-level baseline blocker is currently recorded for starting MCP work."
+    },
+    {
+      "id": "baseline-acceptance-gate",
+      "title": "Verify milestone architecture-and-baseline",
+      "status": "done",
+      "validation": [
+        "echo 'Milestone architecture-and-baseline verification passes'"
+      ],
+      "notes": "Completed 2026-04-08. Milestone verification is green: architecture approved via ask_user, `.factory` source review found the mission boundaries coherent with the generic-core/Figma-pilot split and validation order, `npm run check -w @kennyfrc/mu-coding-agent` passed, and XTUI confirmed the live `mu --help` surface is usable (`AI assistant with read`)."
+    },
+    {
+      "id": "mcp-config-and-auth-red-tests",
+      "title": "Write failing tests for MCP config parsing, auth precedence, stdio shape acceptance, and redaction",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing MCP config/auth/redaction behavior'"
+      ],
+      "notes": "Completed 2026-04-08. Added `test/mcp-config.test.ts` and `test/mcp-auth-resolution.test.ts`, then confirmed the suite was red for the expected missing-module reason (`../src/mcp/config.js` not found)."
+    },
+    {
+      "id": "mcp-config-and-auth-implementation",
+      "title": "Implement generic MCP config loading, auth selection, and redaction",
+      "status": "done",
+      "validation": [
+        "npm run test -w @kennyfrc/mu-coding-agent -- test/mcp-config.test.ts test/mcp-auth-resolution.test.ts --maxWorkers=4",
+        "npm run check -w @kennyfrc/mu-coding-agent"
+      ],
+      "notes": "Completed 2026-04-08. Added `src/mcp/config.ts` with typed MCP config parsing for `streamable_http` and `stdio`, bearer env resolution, and actionable missing-credential errors that reference env names without exposing token values. Targeted tests and `npm run check -w @kennyfrc/mu-coding-agent` passed."
+    },
+    {
+      "id": "mcp-http-runtime-red-tests",
+      "title": "Write failing tests for MCP HTTP discovery, tool surfacing, and invocation through the normal runtime",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing MCP HTTP discovery/runtime behavior'"
+      ],
+      "notes": "Completed 2026-04-08. Added `test/mcp-http-runtime.test.ts` and confirmed it was red for the expected missing-module reason (`../src/mcp/http-runtime.js` not found)."
+    },
+    {
+      "id": "mcp-http-runtime-implementation",
+      "title": "Implement MCP HTTP connect, discovery, and normal-runtime invocation behavior",
+      "status": "done",
+      "validation": [
+        "npm run test -w @kennyfrc/mu-coding-agent -- test/mcp-http-runtime.test.ts --maxWorkers=4",
+        "npm run check -w @kennyfrc/mu-coding-agent"
+      ],
+      "notes": "Completed 2026-04-08. Added `src/mcp/http-runtime.ts` with a minimal host-owned HTTP runtime that discovers tools via a client, registers them through `ExtensionManager.loadExtension()`, surfaces deterministic tool names (`mcp__<server>__<tool>`), and preserves the normal wrapped invocation path. Targeted runtime tests and `npm run check -w @kennyfrc/mu-coding-agent` passed."
+    },
+    {
+      "id": "mcp-recovery-refresh-red-tests",
+      "title": "Write failing tests for session continuity, inventory refresh, malformed data, naming collisions, and recovery",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing MCP recovery/refresh/malformed-data behavior'"
+      ],
+      "notes": "Completed 2026-04-08. Added `test/mcp-inventory-refresh.test.ts`, `test/mcp-malformed-data.test.ts`, `test/mcp-tool-naming.test.ts`, `test/mcp-http-session.test.ts`, `test/mcp-abort-recovery.test.ts`, and `test/mcp-resume-recovery.test.ts`. Confirmed the red suite failed for the expected missing behavior: duplicate tool names were not rejected, `refresh()` was initially missing, `reconnect()` was missing, and `resumeStreamableHttpMcpServer()` was missing."
+    },
+    {
+      "id": "mcp-recovery-refresh-implementation",
+      "title": "Implement MCP recovery, refresh, malformed-data handling, and deterministic naming",
+      "status": "done",
+      "validation": [
+        "npm run test -w @kennyfrc/mu-coding-agent -- test/mcp-http-session.test.ts test/mcp-inventory-refresh.test.ts test/mcp-malformed-data.test.ts test/mcp-tool-naming.test.ts test/mcp-abort-recovery.test.ts test/mcp-resume-recovery.test.ts --maxWorkers=4",
+        "npm run check -w @kennyfrc/mu-coding-agent"
+      ],
+      "notes": "Completed 2026-04-08. Extended `src/mcp/http-runtime.ts` with refresh/reconnect support, fail-closed malformed discovery validation, duplicate-name rejection, and `resumeStreamableHttpMcpServer()`. Targeted recovery tests and `npm run check -w @kennyfrc/mu-coding-agent` passed."
+    },
+    {
+      "id": "generic-mcp-acceptance-gate",
+      "title": "Verify milestone generic-mcp-runtime",
+      "status": "done",
+      "validation": [
+        "echo 'Milestone generic-mcp-runtime verification passes'"
+      ],
+      "notes": "Completed 2026-04-08. Updated milestone verification is green: config/auth tests passed, generic runtime/recovery tests passed, local harness test (`test/mcp-local-harness.test.ts`) passed, source review confirms `src/mcp/http-runtime.ts` now contains a real fetch-based HTTP client path plus deterministic local-harness coverage, and `npm run check -w @kennyfrc/mu-coding-agent` passed."
+    },
+    {
+      "id": "local-harness-bootstrap",
+      "title": "Create or stabilize the deterministic local MCP harness on reserved ports",
+      "status": "done",
+      "validation": [
+        "npm run test -w @kennyfrc/mu-coding-agent -- test/mcp-local-harness.test.ts --maxWorkers=4"
+      ],
+      "notes": "Completed 2026-04-08. Added `test/mcp-local-harness.test.ts`, which starts a deterministic HTTP harness on reserved port `3210`, exposes tools at `/mcp/tools`, serves tool calls at `/mcp/call`, and proves end-to-end connect/discover/invoke behavior through the real HTTP runtime path."
+    },
+    {
+      "id": "figma-runtime-red-tests",
+      "title": "Write failing tests for Figma runtime loading and tool exposure",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing Figma runtime loading/tool exposure'"
+      ],
+      "notes": "Completed 2026-04-08. Added `test/figma-runtime-loading.test.ts` and `test/figma-tool-exposure.test.ts`, then confirmed the suite was red for the expected missing-module reason (`../src/mcp/figma-runtime.js` not found)."
+    },
+    {
+      "id": "figma-runtime-implementation",
+      "title": "Implement Figma pilot loading, config wiring, and tool exposure",
+      "status": "done",
+      "validation": [
+        "npm run test -w @kennyfrc/mu-coding-agent -- test/figma-runtime-loading.test.ts test/figma-tool-exposure.test.ts --maxWorkers=4",
+        "npm run check -w @kennyfrc/mu-coding-agent"
+      ],
+      "notes": "Completed 2026-04-08. Added `src/mcp/figma-runtime.ts` with a minimal pilot-layer loader that finds the `figma` server in generic MCP config and delegates to the generic HTTP runtime without baking Figma logic into the generic transport. Targeted tests and `npm run check -w @kennyfrc/mu-coding-agent` passed."
+    },
+    {
+      "id": "figma-ux-red-tests",
+      "title": "Write failing tests for Figma slash UX, visible status, and auth recovery",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing Figma UX/status/auth recovery behavior'"
+      ],
+      "notes": "Completed 2026-04-08. Added `test/figma-slash-ui.test.ts`, `test/figma-readiness-ui.test.ts`, `test/figma-bearer-auth.test.ts`, and `test/figma-oauth-recovery.test.ts`, then confirmed the suite was red for the expected missing-module reason (`../src/mcp/figma-ui.js` not found)."
+    },
+    {
+      "id": "figma-ux-implementation",
+      "title": "Implement Figma slash/status UX and truthful auth-failure recovery behavior",
+      "status": "done",
+      "validation": [
+        "npm run test -w @kennyfrc/mu-coding-agent -- test/figma-slash-ui.test.ts test/figma-readiness-ui.test.ts test/figma-bearer-auth.test.ts test/figma-oauth-recovery.test.ts --maxWorkers=4",
+        "npm run check -w @kennyfrc/mu-coding-agent"
+      ],
+      "notes": "Completed 2026-04-08. Added `src/mcp/figma-ui.ts` with pilot-layer slash commands (`figma-status`, `figma-reconnect`) and truthful indicator syncing that degrades a nominally connected state when no Figma tool is surfaced. Targeted UX tests and `npm run check -w @kennyfrc/mu-coding-agent` passed."
+    },
+    {
+      "id": "mcp-oauth-support-red-tests",
+      "title": "Write failing tests for metadata-based OAuth support detection and capability gating",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing MCP OAuth support detection and capability gating behavior'"
+      ],
+      "notes": "Completed 2026-04-08. Added `test/mcp-oauth-support.test.ts` and `test/figma-oauth-capability-gating.test.ts`, then confirmed the suite was red for the expected missing behavior: OAuth metadata discovery was absent, unauthenticated OAuth-backed servers tried tool discovery immediately, and the Figma UI did not register a gated `figma-login` command."
+    },
+    {
+      "id": "mcp-oauth-support-implementation",
+      "title": "Implement metadata-based OAuth detection, capability gating, and login-required UI state",
+      "status": "done",
+      "validation": [
+        "npm run test -w @kennyfrc/mu-coding-agent -- test/mcp-oauth-support.test.ts test/figma-oauth-capability-gating.test.ts --maxWorkers=4",
+        "npm run check -w @kennyfrc/mu-coding-agent"
+      ],
+      "notes": "Completed 2026-04-08. Extended `src/mcp/http-runtime.ts` with protected-resource and authorization-server metadata discovery, capability derivation (`authMode`, `loginSupported`, `toolDiscoveryAllowed`, `authState`), and OAuth-gated discovery for streamable HTTP servers. Extended `src/mcp/figma-ui.ts` with `login_required` status and a gated `figma-login` command. Targeted OAuth-support tests and package check passed."
+    },
+    {
+      "id": "mcp-oauth-login-red-tests",
+      "title": "Write failing tests for actual MCP OAuth login, callback handling, and credential persistence",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing MCP OAuth login callback and credential persistence behavior'"
+      ],
+      "notes": "Completed 2026-04-08. Added `test/mcp-oauth-login.test.ts`, `test/mcp-oauth-storage.test.ts`, and `test/figma-oauth-login-ui.test.ts`, then confirmed the suite was red for the expected missing behavior: `src/mcp/oauth.ts` did not exist yet, and `figma-login` did not print the returned authorization URL to the user-visible UI surface."
+    },
+    {
+      "id": "mcp-oauth-login-implementation",
+      "title": "Implement MCP OAuth login flow, credential storage, and token-backed reconnect",
+      "status": "done",
+      "validation": [
+        "npm run test -w @kennyfrc/mu-coding-agent -- test/mcp-oauth-login.test.ts test/mcp-oauth-storage.test.ts test/figma-oauth-login-ui.test.ts --maxWorkers=4",
+        "npm run check -w @kennyfrc/mu-coding-agent"
+      ],
+      "notes": "Completed 2026-04-08. Added `src/mcp/oauth.ts` with metadata-driven MCP OAuth login start, callback completion, token exchange, MCP-specific credential persistence, and Codex-style dynamic client registration against the server's advertised `registration_endpoint`. Updated `src/mcp/figma-ui.ts` so `figma-login` prints the returned authorization URL. Targeted login/storage tests and `npm run check -w @kennyfrc/mu-coding-agent` passed."
+    },
+    {
+      "id": "real-figma-validation",
+      "title": "Run one meaningful real Figma validation path or record the external blocker explicitly",
+      "status": "blocked",
+      "validation": [
+        "echo 'Real Figma validation completed or an explicit external blocker was recorded'"
+      ],
+      "notes": "Blocked 2026-04-08 after implementing the Codex-style dynamic client registration path. A live probe through Mu's real OAuth module (`startMcpOAuthLogin` against `https://mcp.figma.com/mcp`) now fails at the same externally bounded step every time: `MCP OAuth client registration failed: 403 Forbidden`. This confirms Mu can replicate the Codex-style flow mechanically, but Figma's remote MCP registration endpoint is refusing Mu as a client in this environment. No meaningful real Figma tool call can proceed until Figma grants a usable MCP OAuth client-registration path for Mu or some other approved-client bridge is provided."
+    },
+    {
+      "id": "figma-acceptance-gate",
+      "title": "Verify milestone figma-pilot-and-validation",
+      "status": "blocked",
+      "validation": [
+        "echo 'Milestone figma-pilot-and-validation verification passes'"
+      ],
+      "notes": "Blocked 2026-04-08 because `real-figma-validation` is blocked by Figma's `403 Forbidden` response at the remote MCP OAuth client-registration step. Deterministic local validation, visible UX checks, and targeted package verification are green, but the milestone cannot close without a meaningful real Figma tool result or an externally provided approved-client path."
+    },
+    {
+      "id": "final-root-check",
+      "title": "Run root validation and mark the mission complete",
+      "status": "blocked",
+      "validation": [
+        "npm run check",
+        "python3 - <<'PY'\nimport json\nfrom pathlib import Path\npath = Path('devdocs/missions/mcp-figma-setup-v1/TASKS.json')\ndata = json.loads(path.read_text())\nassert all(task['status'] == 'done' for task in data['tasks'])\nPY"
+      ],
+      "notes": "Blocked 2026-04-08 because `figma-acceptance-gate` is blocked. Root validation should only be rerun as the final completion step after the live-validation blocker is removed."
+    }
+  ]
+}

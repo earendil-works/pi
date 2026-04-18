@@ -1,0 +1,4 @@
+PASS: projection rebuilt from authoritative entries only
+authoritative_entries=2
+startup_summary=- [artifact] first artifact
+- [decision] projection is derived

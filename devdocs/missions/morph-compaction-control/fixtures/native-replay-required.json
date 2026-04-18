@@ -1,0 +1,95 @@
+{
+  "id": "native-replay-required",
+  "kind": "native-replay-required",
+  "source": "synthetic fixture derived from current native compact replay semantics",
+  "goal": "Continue the same-provider session without losing opaque native compact replay state.",
+  "query": "Continue the same-provider session after native compact replay",
+  "expectedStrategyGuard": "native-replay-required",
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "We already compacted this OpenAI/Codex thread once. Keep resume semantics exact and continue the existing debugging task."
+        }
+      ],
+      "timestamp": 1
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "I preserved the native compact replay item and inspected the remaining session history."
+        }
+      ],
+      "api": "openai-codex-responses",
+      "provider": "openai-codex",
+      "model": "gpt-5.4",
+      "usage": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 2
+    },
+    {
+      "role": "user",
+      "content": [],
+      "__muCompactResponseItem": {
+        "type": "compaction",
+        "encrypted_content": "opaque-native-replay-fixture"
+      },
+      "timestamp": 3
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "The next compaction strategy must keep native replay semantics instead of flattening this checkpoint into plain text."
+        }
+      ],
+      "api": "openai-codex-responses",
+      "provider": "openai-codex",
+      "model": "gpt-5.4",
+      "usage": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "totalTokens": 0,
+        "cost": {
+          "input": 0,
+          "output": 0,
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "total": 0
+        }
+      },
+      "stopReason": "stop",
+      "timestamp": 4
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Resume the same task and preserve whatever hidden replay state the provider needs."
+        }
+      ],
+      "timestamp": 5
+    }
+  ]
+}

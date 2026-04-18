@@ -1,0 +1,8 @@
+{
+  "url": "http://127.0.0.1:50148/mcp",
+  "connected": "connected",
+  "tools": [
+    "echo"
+  ],
+  "callText": "hello from harness"
+}

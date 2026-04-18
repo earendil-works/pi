@@ -1,0 +1,22 @@
+{
+  "milestoneId": "figma-pilot-proof",
+  "verdict": "pass",
+  "summary": "The Figma pilot stays a thin layer over the generic runtime and now reports configured-but-unproven Figma as auth_failed instead of connected.",
+  "findings": [
+    {
+      "severity": "info",
+      "message": "The Figma pilot boundary isolates detection of the Figma remote server and computes an honest initial status without changing the generic HTTP runtime contract.",
+      "file": "packages/coding-agent/src/mcp/figma-pilot.ts"
+    },
+    {
+      "severity": "info",
+      "message": "The MCP preset now uses the Figma pilot status to render the indicator and `/mcp` output, preventing a false connected state when only config exists.",
+      "file": "packages/coding-agent/src/extensions/presets/mcp.ts"
+    },
+    {
+      "severity": "info",
+      "message": "The targeted Figma suite proves both config recognition and honest visible failure reporting.",
+      "file": "packages/coding-agent/test/figma-pilot.test.ts"
+    }
+  ]
+}

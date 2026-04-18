@@ -1,0 +1,174 @@
+{
+  "milestones": [
+    {
+      "id": "shared-service-layer",
+      "title": "CLI and TUI share one always-on service layer",
+      "goal": "The existing always-on CLI no longer owns unique orchestration logic; both CLI and the future TUI mode can use one shared service layer with primitive-oriented snapshot and submission operations.",
+      "taskIds": [
+        "architecture-approval",
+        "service-extraction-red-tests",
+        "service-extraction-implementation",
+        "service-layer-acceptance-gate"
+      ],
+      "gateTaskId": "service-layer-acceptance-gate",
+      "verification": [
+        {
+          "id": "m1-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- always-on-service.red.test.ts",
+          "expect": "Targeted shared-service tests pass for snapshot and primitive submission behavior.",
+          "evidence": "devdocs/missions/always-on-tui-mode-v1/evidence/m1-targeted-tests.txt"
+        },
+        {
+          "id": "m1-review",
+          "kind": "review",
+          "command": "Review the shared always-on service extraction against SPEC.md and ARCHITECTURE.md and write findings JSON.",
+          "expect": "Review confirms the CLI/TUI reuse boundary is correct or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/always-on-tui-mode-v1/evidence/m1-review.json"
+        },
+        {
+          "id": "m1-cli-surface",
+          "kind": "xtui",
+          "command": "In a temp MU_CODING_AGENT_DIR and temp workspace, exercise the existing `mu always-on` surface after the refactor and verify the visible behavior is unchanged while the implementation now goes through the shared service layer.",
+          "expect": "The visible CLI always-on surface remains correct while the shared service boundary is in place.",
+          "evidence": "devdocs/missions/always-on-tui-mode-v1/evidence/m1-xtui.txt"
+        },
+        {
+          "id": "m1-assertion",
+          "kind": "assertion",
+          "command": "Inspect the refactored CLI path and assert it delegates to one shared always-on service instead of duplicating orchestration logic.",
+          "expect": "One shared service boundary is proven and the append-only ledger domain remains authoritative.",
+          "evidence": "devdocs/missions/always-on-tui-mode-v1/evidence/m1-assertion.txt"
+        }
+      ],
+      "notes": "Do not close this milestone until reuse is real in code rather than implied by prose."
+    },
+    {
+      "id": "tui-mode-surface",
+      "title": "`/always-on` is a real built-in TUI mode",
+      "goal": "The TUI has an explicit always-on mode with visible composer state, clean mode entry/exit behavior, and no reliance on extension-indicator string parsing.",
+      "taskIds": [
+        "tui-mode-red-tests",
+        "tui-mode-implementation",
+        "tui-mode-acceptance-gate"
+      ],
+      "gateTaskId": "tui-mode-acceptance-gate",
+      "verification": [
+        {
+          "id": "m2-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- always-on-tui-mode.red.test.ts always-on-slash-surface.red.test.ts",
+          "expect": "Targeted TUI tests pass for `/always-on` registration, mode entry/exit, and visible composer/meta state.",
+          "evidence": "devdocs/missions/always-on-tui-mode-v1/evidence/m2-targeted-tests.txt"
+        },
+        {
+          "id": "m2-review",
+          "kind": "review",
+          "command": "Review the TUI mode-state implementation against SPEC.md and ARCHITECTURE.md and write findings JSON.",
+          "expect": "Review confirms there is explicit mode state and no heuristic string parsing dependency, or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/always-on-tui-mode-v1/evidence/m2-review.json"
+        },
+        {
+          "id": "m2-tui-surface",
+          "kind": "xtui",
+          "command": "Launch the real TUI in a temp workspace, open the slash palette, enter `/always-on`, observe the visible mode treatment, then exit the mode and confirm the normal chat surface returns.",
+          "expect": "The real terminal surface makes the mode boundary legible and reversible.",
+          "evidence": "devdocs/missions/always-on-tui-mode-v1/evidence/m2-xtui.txt"
+        },
+        {
+          "id": "m2-assertion",
+          "kind": "assertion",
+          "command": "Assert from the renderer state that always-on mode is represented explicitly rather than inferred from extension-indicator labels.",
+          "expect": "The implementation owns one explicit always-on mode state and keeps TUI-owned state minimal.",
+          "evidence": "devdocs/missions/always-on-tui-mode-v1/evidence/m2-assertion.txt"
+        }
+      ],
+      "notes": "The gate closes only after the visible TUI surface and internal state model agree."
+    },
+    {
+      "id": "mode-submission-and-tools",
+      "title": "Always-on mode changes plain-text submission semantics and tool availability",
+      "goal": "While always-on mode is active, plain text submits immediate always-on jobs, and the model receives a small always-on tool surface that disappears on mode exit.",
+      "taskIds": [
+        "mode-submission-red-tests",
+        "mode-submission-implementation",
+        "mode-submission-acceptance-gate"
+      ],
+      "gateTaskId": "mode-submission-acceptance-gate",
+      "verification": [
+        {
+          "id": "m3-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- always-on-mode-submit.red.test.ts always-on-mode-tools.red.test.ts",
+          "expect": "Targeted tests pass for plain-text always-on submission and mode-aware tool/prompt gating.",
+          "evidence": "devdocs/missions/always-on-tui-mode-v1/evidence/m3-targeted-tests.txt"
+        },
+        {
+          "id": "m3-review",
+          "kind": "review",
+          "command": "Review mode-aware submission behavior and the mode-scoped always-on tool surface against SPEC.md and ARCHITECTURE.md and write findings JSON.",
+          "expect": "Review confirms plain text means immediate job creation only inside the mode and that the tool surface is primitive-oriented and scoped correctly.",
+          "evidence": "devdocs/missions/always-on-tui-mode-v1/evidence/m3-review.json"
+        },
+        {
+          "id": "m3-tui-surface",
+          "kind": "xtui",
+          "command": "Launch the real TUI in a temp workspace, enter `/always-on`, submit plain text, confirm a visible always-on job confirmation, then exit the mode and confirm plain text is normal chat again.",
+          "expect": "The visible terminal behavior proves submission semantics change only inside always-on mode.",
+          "evidence": "devdocs/missions/always-on-tui-mode-v1/evidence/m3-xtui.txt"
+        },
+        {
+          "id": "m3-assertion",
+          "kind": "assertion",
+          "command": "Assert that tool selection and system prompt refresh now respond to mode as well as model, and that always-on tools are removed on mode exit.",
+          "expect": "The mode-aware host/tool boundary is explicit, testable, and reversible.",
+          "evidence": "devdocs/missions/always-on-tui-mode-v1/evidence/m3-assertion.txt"
+        }
+      ],
+      "notes": "Do not close this milestone until mode entry/exit, plain-text behavior, and tool gating are all green."
+    },
+    {
+      "id": "inspection-and-scheduling-surface",
+      "title": "Always-on mode exposes a minimal control surface for inspection, scheduling, and follow-up",
+      "goal": "A user can choose an agent override, create scheduled or follow-up work, inspect jobs/runs/threads, and do so from a coherent always-on TUI surface backed by the shared service and existing ledgers.",
+      "taskIds": [
+        "inspection-commands-red-tests",
+        "inspection-commands-implementation",
+        "inspection-commands-acceptance-gate",
+        "final-check"
+      ],
+      "gateTaskId": "inspection-commands-acceptance-gate",
+      "verification": [
+        {
+          "id": "m4-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- always-on-mode-inspection.red.test.ts always-on-mode-schedule.red.test.ts always-on-mode-followup.red.test.ts",
+          "expect": "Targeted tests pass for agent selection, scheduling, jobs/runs/thread inspection, and follow-up flows in always-on mode.",
+          "evidence": "devdocs/missions/always-on-tui-mode-v1/evidence/m4-targeted-tests.txt"
+        },
+        {
+          "id": "m4-review",
+          "kind": "review",
+          "command": "Review the always-on mode command surface against SPEC.md and ARCHITECTURE.md and write findings JSON.",
+          "expect": "Review confirms the command surface is minimal, derived from authoritative ledger facts, and does not introduce a second control framework.",
+          "evidence": "devdocs/missions/always-on-tui-mode-v1/evidence/m4-review.json"
+        },
+        {
+          "id": "m4-tui-surface",
+          "kind": "xtui",
+          "command": "Launch the real TUI in a temp workspace, enter `/always-on`, select an agent, create scheduled work, inspect jobs/runs/thread views, create a follow-up, and verify the visible terminal flow remains legible.",
+          "expect": "The real terminal surface proves the always-on control surface is coherent and useful.",
+          "evidence": "devdocs/missions/always-on-tui-mode-v1/evidence/m4-xtui.txt"
+        },
+        {
+          "id": "m4-ledger-assertion",
+          "kind": "assertion",
+          "command": "Inspect the resulting always-on ledgers and linked run sessions and assert that the TUI-derived views match the authoritative facts for jobs, runs, schedules, and follow-up lineage.",
+          "expect": "The TUI surface remains a derived view over authoritative ledger facts.",
+          "evidence": "devdocs/missions/always-on-tui-mode-v1/evidence/m4-ledger-assertion.txt"
+        }
+      ],
+      "notes": "The mission is only complete when the visible always-on TUI surface, derived data views, and authoritative ledgers all agree and `npm run check` passes."
+    }
+  ]
+}

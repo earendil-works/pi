@@ -1,0 +1,10 @@
+Run ledger assertion passed.
+Job id: job-9ef2703c
+Run id: run-0f7d1133
+Session id: f8c6e652-58a0-4bdc-aaca-7fd78572f522
+Session file: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-m2-ledger-8mr69812/config/sessions/--var-folders-qt-42nnsb353yz2l81tcbj8xsvc0000gn-T-mu-m2-ledger-8mr69812-workspace--/2026-03-31T14-26-25-610Z_f8c6e652-58a0-4bdc-aaca-7fd78572f522.jsonl
+Work-item fact:
+{"agentId": "ao-d63c5c61", "executionTarget": {"modelId": "gpt-5.4", "provider": "openai-codex", "thinkingLevel": "medium"}, "instruction": "Summarize the workspace README", "timestamp": "2026-03-31T14:26:25.597Z", "type": "work_item_created", "workItemId": "job-9ef2703c"}
+Run facts:
+{"agentId": "ao-d63c5c61", "modelId": "gpt-5.4", "provider": "openai-codex", "runId": "run-0f7d1133", "sessionId": "f8c6e652-58a0-4bdc-aaca-7fd78572f522", "thinkingLevel": "medium", "timestamp": "2026-03-31T14:26:46.351Z", "trigger": "manual", "type": "run_started", "workItemId": "job-9ef2703c"}
+{"outcome": "completed", "runId": "run-0f7d1133", "timestamp": "2026-03-31T14:26:46.352Z", "type": "run_finished"}

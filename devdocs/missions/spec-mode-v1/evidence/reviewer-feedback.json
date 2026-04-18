@@ -1,0 +1,48 @@
+{
+  "findings": [
+    {
+      "category": "architecture",
+      "severity": "blocking",
+      "title": "Persistent slash command abstraction does not match the real UI integration points",
+      "body": "`ARCHITECTURE.md` claims the feature can be delivered with only `ExtensionApi` additions and with 'No changes to AgentState, TuiRenderer, or FooterComponent' (`devdocs/missions/spec-mode-v1/ARCHITECTURE.md:95`, `devdocs/missions/spec-mode-v1/ARCHITECTURE.md:97`). That does not fit the current code. Extension commands are surfaced to the slash overlay by mapping `extensionManager.listCommands()` inside `TuiRenderer` (`packages/coding-agent/src/tui/tui-renderer.ts:793`), executed through `command.execute(...)` (`packages/coding-agent/src/tui/tui-renderer.ts:4086`), and the footer has no extension badge registry API today (`packages/coding-agent/src/tui/footer.ts:193`). A persistent command with lifecycle, durable state restoration, and footer badge rendering therefore needs explicit integration in the TUI and/or footer layer, not just `types.ts` and `manager.ts`. As written, the abstraction hides the real implementation surface and is likely to push an agent into inventing an API that still cannot render or restore state correctly.",
+      "recommendation": "Rework the architecture around the existing primitives. Either (a) make spec-mode a normal `registerCommand` + `context` extension with a small explicit TUI/footer extension state hook, or (b) explicitly expand the approved core surface to include the real integration points in `TuiRenderer`/footer and describe how activation, restoration, and badge rendering flow end-to-end."
+    },
+    {
+      "category": "extension-first",
+      "severity": "blocking",
+      "title": "Mission targets the wrong extension directory",
+      "body": "The mission repeatedly requires the extension to live at `~/.mu/extensions/spec-mode/` (`devdocs/missions/spec-mode-v1/SPEC.md:11`, `devdocs/missions/spec-mode-v1/SPEC.md:39`, `devdocs/missions/spec-mode-v1/ARCHITECTURE.md:55`, `devdocs/missions/spec-mode-v1/RUNBOOK.md:17`, `devdocs/missions/spec-mode-v1/VERIFIER_GUIDE.md:9`). The real loader does not watch that path. It resolves the default config dir to `~/.mu/agent` and discovers extensions from `~/.mu/agent/extensions` plus project `.mu/extensions` (`packages/coding-agent/src/extensions/loader.ts:14`, `packages/coding-agent/src/extensions/loader.ts:59`, `packages/coding-agent/src/extensions/loader.ts:108`). A spawned agent following the mission literally would build the extension in a directory the product never loads.",
+      "recommendation": "Change every mission reference from `~/.mu/extensions/...` to the actual supported location (`~/.mu/agent/extensions/...`) or explicitly require project-local `.mu/extensions/...`. Then update all validation commands, review instructions, and examples to match."
+    },
+    {
+      "category": "verification",
+      "severity": "blocking",
+      "title": "The red/green validation contract is internally inconsistent and partly invalid shell",
+      "body": "`TASKS.json` mixes 'red tests should fail' semantics with milestone expectations that the same `.red.test.ts` files pass later. For example, `red-tests-core-api` expects `persistent-slash-command-api.red.test.ts` to output 'fail' (`devdocs/missions/spec-mode-v1/TASKS.json:18`), but `implementation-core-api` and milestone M1 later expect that same red-test file to pass (`devdocs/missions/spec-mode-v1/TASKS.json:53`, `devdocs/missions/spec-mode-v1/MILESTONES.json:18`). That naming/contract will confuse an execution agent about whether to preserve a red suite or rename it green. There are also brittle or incorrect shell checks, e.g. `grep -q 'getState|setState'` without `-E` (`devdocs/missions/spec-mode-v1/TASKS.json:21`), which searches for the literal pipe rather than alternation. Similar 'grep for pass/fail text' checks are weak because test runners may not emit those exact strings consistently.",
+      "recommendation": "Split the workflow cleanly into red and green artifacts. Either rename green tests after implementation or keep a single behavioral test and change task wording from red to targeted. Replace text-grep checks with deterministic exit-code-based commands, `rg` checks, or small assertion scripts."
+    },
+    {
+      "category": "verification",
+      "severity": "major",
+      "title": "Edge cases in the spec are not covered by executable verification",
+      "body": "`SPEC.md` names critical edge cases: multiple extensions, extension reload while active, mode change during streaming, and verifier spawn failure (`devdocs/missions/spec-mode-v1/SPEC.md:31`). None of those appear as strong executable gates in `TASKS.json` or `MILESTONES.json`. The milestone verifications focus on happy-path command tests, xtui observation, and prompt-log checks (`devdocs/missions/spec-mode-v1/MILESTONES.json:14`, `devdocs/missions/spec-mode-v1/MILESTONES.json:56`, `devdocs/missions/spec-mode-v1/MILESTONES.json:97`). That leaves the most failure-prone behaviors unprotected, especially because this feature is explicitly about persisted state and extension interaction.",
+      "recommendation": "Add explicit verification for each listed edge case: reload restores state, two extensions can coexist without badge/state collision, switching mode while streaming behaves deterministically, and verifier spawn failure degrades visibly without wedging the session."
+    },
+    {
+      "category": "completeness",
+      "severity": "major",
+      "title": "Required deliverables are referenced inconsistently across files",
+      "body": "The architecture and verifier guide both treat `verifier.ts` as a required extension file (`devdocs/missions/spec-mode-v1/ARCHITECTURE.md:60`, `devdocs/missions/spec-mode-v1/VERIFIER_GUIDE.md:43`, `devdocs/missions/spec-mode-v1/VERIFIER_GUIDE.md:56`), but the implementation task only validates `index.ts` and `reminders.ts` (`devdocs/missions/spec-mode-v1/TASKS.json:64`). The mission also writes many evidence artifacts under `devdocs/missions/spec-mode-v1/evidence/...`, but the mission directory did not include an `evidence/` folder before this review, and no task establishes that output surface. The official mission validator still reports `ok` because it checks only `SPEC.md`, `PROGRESS.md`, `RUNBOOK.md`, `TASKS.json`, and `MILESTONES.json`, so these omissions are invisible to the harness validator.",
+      "recommendation": "Make required deliverables explicit and aligned: validate `verifier.ts` in the implementation task, create/declare the `evidence/` directory as part of mission setup, and add a lightweight completeness checklist for non-validated mission files such as `ARCHITECTURE.md` and `VERIFIER_GUIDE.md`."
+    },
+    {
+      "category": "clarity",
+      "severity": "major",
+      "title": "Runbook instructions will mislead a spawned agent in a dirty workspace",
+      "body": "The runbook says to 'discard' failed approaches by reverting with `git checkout` (`devdocs/missions/spec-mode-v1/RUNBOOK.md:31`) and to 'Leave the repository in a clean working state' (`devdocs/missions/spec-mode-v1/RUNBOOK.md:44`). In this repository, there are already many unrelated modifications in the working tree, so that instruction is not realistically satisfiable and risks destructive behavior. The progress file also records no baseline commit and no test baseline yet (`devdocs/missions/spec-mode-v1/PROGRESS.md:4`, `devdocs/missions/spec-mode-v1/PROGRESS.md:8`). A spawned agent can understand the mission’s goal, but these operational instructions are not safe or precise enough for autonomous execution.",
+      "recommendation": "Rewrite the runbook to forbid destructive cleanup of unrelated changes, require selective edits only, and record a concrete baseline (commit or `git status` snapshot). Replace `git checkout` guidance with non-destructive alternatives and make 'clean working state' mean 'no unintended changes within the mission surface'."
+    }
+  ],
+  "overall_assessment": "fail",
+  "summary": "The mission has a useful goal, but it is not yet safely executable by a spawned agent. The biggest problems are a wrong extension path, an abstraction that does not match the real TUI/footer integration points, and a red/green verification contract that is contradictory and partially invalid."
+}

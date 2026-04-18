@@ -1,0 +1,15 @@
+
+> @kennyfrc/mu-coding-agent@0.24.186 test
+> vitest --run test/figma-pilot.test.ts test/figma-slash-ui.test.ts
+
+
+ RUN  v3.2.4 /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+
+ ✓ test/figma-pilot.test.ts (2 tests) 12ms
+ ✓ test/figma-slash-ui.test.ts (2 tests) 20ms
+
+ Test Files  2 passed (2)
+      Tests  4 passed (4)
+   Start at  12:56:34
+   Duration  828ms (transform 351ms, setup 1.00s, collect 62ms, tests 32ms, environment 0ms, prepare 179ms)
+

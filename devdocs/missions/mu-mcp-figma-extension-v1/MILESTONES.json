@@ -1,0 +1,145 @@
+{
+  "milestones": [
+    {
+      "id": "config-import-foundation",
+      "title": "Mu-native MCP config and import resolution are correct",
+      "goal": "Mu can resolve MCP config from Mu-native files and the approved import sources, including the local Figma definitions in `.factory` and Codex TOML, without carrying Pi-specific path assumptions.",
+      "taskIds": [
+        "architecture-approval",
+        "config-import-red-tests",
+        "config-import-implementation",
+        "config-import-acceptance-gate"
+      ],
+      "gateTaskId": "config-import-acceptance-gate",
+      "verification": [
+        {
+          "id": "m1-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- test/mcp-config.test.ts",
+          "expect": "Targeted config/import tests pass for Mu paths, `.factory` JSON imports, and Codex TOML imports.",
+          "evidence": "devdocs/missions/mu-mcp-figma-extension-v1/evidence/m1-targeted-tests.txt"
+        },
+        {
+          "id": "m1-review",
+          "kind": "review",
+          "command": "Review MCP config precedence and import parsing against SPEC.md and write findings JSON.",
+          "expect": "Review confirms Mu-native pathing/imports are correct or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/mu-mcp-figma-extension-v1/evidence/m1-review.json"
+        },
+        {
+          "id": "m1-curl-import-proof",
+          "kind": "curl",
+          "command": "Use disposable scripts to parse the real local `~/.factory/mcp.json` and `~/.codex/config.toml` and print the resolved Figma server definition.",
+          "expect": "The visible output shows Figma resolved from the supported import sources with Mu-native precedence.",
+          "evidence": "devdocs/missions/mu-mcp-figma-extension-v1/evidence/m1-curl-import-proof.txt"
+        }
+      ],
+      "notes": "Close this milestone only after Pi-specific path assumptions are removed and the local Figma definitions resolve through Mu-native import logic."
+    },
+    {
+      "id": "http-runtime-tool-surface",
+      "title": "HTTP MCP runtime can connect, discover inventory, and surface tools through Mu",
+      "goal": "A generic HTTP-first MCP runtime can connect to a deterministic local harness, discover remote inventory, and expose a proxy-first Mu tool surface with correct call/result behavior.",
+      "taskIds": [
+        "http-runtime-red-tests",
+        "http-runtime-implementation",
+        "http-runtime-acceptance-gate"
+      ],
+      "gateTaskId": "http-runtime-acceptance-gate",
+      "verification": [
+        {
+          "id": "m2-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- test/mcp-http-runtime.test.ts",
+          "expect": "HTTP runtime tests pass for connect/discover/call/degrade behavior against a local harness.",
+          "evidence": "devdocs/missions/mu-mcp-figma-extension-v1/evidence/m2-targeted-tests.txt"
+        },
+        {
+          "id": "m2-review",
+          "kind": "review",
+          "command": "Review MCP HTTP runtime/session ownership/tool mapping against SPEC.md and write findings JSON.",
+          "expect": "Review confirms generic runtime boundaries are intact or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/mu-mcp-figma-extension-v1/evidence/m2-review.json"
+        },
+        {
+          "id": "m2-curl-harness",
+          "kind": "curl",
+          "command": "Exercise the local MCP harness over HTTP and record connect/list/call output plus degraded-path behavior.",
+          "expect": "The harness shows real HTTP MCP behavior that Mu can consume, including failure-path evidence.",
+          "evidence": "devdocs/missions/mu-mcp-figma-extension-v1/evidence/m2-curl-harness.txt"
+        }
+      ],
+      "notes": "This milestone proves the generic MCP runtime independent of Figma-specific auth/client restrictions."
+    },
+    {
+      "id": "reload-resume-ux",
+      "title": "Reload, resume, and visible MCP UX are correct",
+      "goal": "Reload and resume fully clean stale MCP artifacts and the visible Mu status surface reflects connecting, connected, degraded, or auth-failed states without stale tool exposure.",
+      "taskIds": [
+        "reload-resume-red-tests",
+        "reload-resume-implementation",
+        "reload-resume-acceptance-gate"
+      ],
+      "gateTaskId": "reload-resume-acceptance-gate",
+      "verification": [
+        {
+          "id": "m3-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- test/mcp-reload-runtime.test.ts test/mcp-status-ui.test.ts",
+          "expect": "Reload/resume cleanup and status-surface tests pass with no stale MCP registrations.",
+          "evidence": "devdocs/missions/mu-mcp-figma-extension-v1/evidence/m3-targeted-tests.txt"
+        },
+        {
+          "id": "m3-review",
+          "kind": "review",
+          "command": "Review reload/resume cleanup, indicator ownership, and stale-surface handling against SPEC.md and write findings JSON.",
+          "expect": "Review confirms cleanup correctness or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/mu-mcp-figma-extension-v1/evidence/m3-review.json"
+        },
+        {
+          "id": "m3-xtui-surface",
+          "kind": "xtui",
+          "command": "Run Mu in a temp config/workspace, open `/mcp`, trigger reload and failure/recovery paths, and verify visible MCP state transitions plus stale-tool disappearance.",
+          "expect": "The terminal surface shows accurate MCP states and no stale callable surface after reload or degraded resume.",
+          "evidence": "devdocs/missions/mu-mcp-figma-extension-v1/evidence/m3-xtui-surface.txt"
+        }
+      ],
+      "notes": "This milestone closes only after visible UX and runtime cleanup agree."
+    },
+    {
+      "id": "figma-pilot-proof",
+      "title": "Figma pilot is proven through the real runtime path",
+      "goal": "Mu can attempt the real Figma MCP path from imported config and either complete a meaningful authenticated Figma operation or surface explicit auth/client-compatibility failure without false success.",
+      "taskIds": [
+        "figma-pilot-red-tests",
+        "figma-pilot-implementation",
+        "figma-pilot-acceptance-gate"
+      ],
+      "gateTaskId": "figma-pilot-acceptance-gate",
+      "verification": [
+        {
+          "id": "m4-targeted-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- test/figma-pilot.test.ts test/figma-slash-ui.test.ts",
+          "expect": "Figma pilot tests pass for config wiring and visible slash/status behavior.",
+          "evidence": "devdocs/missions/mu-mcp-figma-extension-v1/evidence/m4-targeted-tests.txt"
+        },
+        {
+          "id": "m4-review",
+          "kind": "review",
+          "command": "Review the Figma pilot layer against SPEC.md and write findings JSON.",
+          "expect": "Review confirms Figma remains a pilot on top of the generic runtime or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/mu-mcp-figma-extension-v1/evidence/m4-review.json"
+        },
+        {
+          "id": "m4-real-figma",
+          "kind": "curl",
+          "command": "Run the real Figma MCP validation path through Mu and capture either authenticated Figma-specific result data or explicit auth/client-failure output.",
+          "expect": "Evidence shows either a real Figma operation through Mu or a truthful explicit failure mode with no false connected state.",
+          "evidence": "devdocs/missions/mu-mcp-figma-extension-v1/evidence/m4-real-figma.txt"
+        }
+      ],
+      "notes": "This milestone is the real-world proof gate for the mission."
+    }
+  ]
+}

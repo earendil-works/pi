@@ -1,0 +1,36 @@
+{
+  "findings": [
+    {
+      "title": "ExtensionApi has getExtensionState/setExtensionState",
+      "body": "Verified in packages/coding-agent/src/extensions/types.ts: getExtensionState<T>(key: string): T | undefined; setExtensionState<T>(key: string, value: T): void;",
+      "severity": "blocking",
+      "files": ["packages/coding-agent/src/extensions/types.ts"]
+    },
+    {
+      "title": "ExtensionApi has registerExtensionIndicator",
+      "body": "Verified in packages/coding-agent/src/extensions/types.ts: registerExtensionIndicator(options: { id, label, color, priority? }): void",
+      "severity": "blocking",
+      "files": ["packages/coding-agent/src/extensions/types.ts"]
+    },
+    {
+      "title": "State storage persists to JSON files",
+      "body": "Verified in packages/coding-agent/src/extensions/manager.ts: State saved to ~/.mu/agent/extensions/<name>/state.json via saveExtensionState()",
+      "severity": "blocking",
+      "files": ["packages/coding-agent/src/extensions/manager.ts:140-160"]
+    },
+    {
+      "title": "Indicator registry implemented in ExtensionManager",
+      "body": "Verified: ExtensionManager maintains private indicators Map and provides register/update/remove methods",
+      "severity": "blocking",
+      "files": ["packages/coding-agent/src/extensions/manager.ts:230-270"]
+    },
+    {
+      "title": "FooterComponent renders extension indicators",
+      "body": "Verified in packages/coding-agent/src/tui/footer.ts: getExtensionIndicators() method fetches indicators from ExtensionManager and renders them in footer",
+      "severity": "blocking",
+      "files": ["packages/coding-agent/src/tui/footer.ts:300-315"]
+    }
+  ],
+  "overall_correctness": "correct",
+  "overall_summary": "Core API implementations for state storage and indicators are complete. FooterComponent now renders extension indicators from ExtensionManager. All required methods are present and functional."
+}

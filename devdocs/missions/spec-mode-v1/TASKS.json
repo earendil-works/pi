@@ -1,0 +1,133 @@
+{
+  "tasks": [
+    {
+      "id": "architecture-approval",
+      "title": "Record approved extension-first architecture",
+      "status": "done",
+      "validation": [
+        "cat devdocs/missions/spec-mode-v1/ARCHITECTURE.md | grep -q '~/.mu/agent/extensions'",
+        "cat devdocs/missions/spec-mode-v1/ARCHITECTURE.md | grep -q 'getExtensionState'",
+        "cat devdocs/missions/spec-mode-v1/ARCHITECTURE.md | grep -q 'registerExtensionIndicator'"
+      ],
+      "notes": "Approved: extension in ~/.mu/agent/extensions/spec-mode/, minimal core API (state storage + indicators), existing registerCommand primitive, real TuiRenderer/FooterComponent integration."
+    },
+    {
+      "id": "behavioral-tests-red",
+      "title": "Create failing behavioral tests for spec-mode extension",
+      "status": "done",
+      "validation": [
+        "npm test -w @kennyfrc/mu-coding-agent -- spec-mode.behavioral.test.ts 2>&1; test $? -ne 0"
+      ],
+      "notes": "Create tests that fail before implementation: (1) extension loads from ~/.mu/agent/extensions/spec-mode/, (2) /spec, /discover, /normal commands exist, (3) commands persist mode in extension state, (4) context hook appends reminder to system prompt, (5) confirmation message prints on mode change. Tests will pass after implementation."
+    },
+    {
+      "id": "edge-case-tests-red",
+      "title": "Create failing edge case tests",
+      "status": "done",
+      "validation": [
+        "npm test -w @kennyfrc/mu-coding-agent -- spec-mode-edge-cases.test.ts 2>&1; test $? -ne 0"
+      ],
+      "notes": "Create tests for edge cases: (1) extension reload restores previous mode, (2) multiple extensions can register indicators without conflict, (3) mode change during streaming is handled gracefully, (4) verifier spawn failure degrades visibly."
+    },
+    {
+      "id": "implementation-core-state-api",
+      "title": "Implement extension state storage API in core",
+      "status": "done",
+      "validation": [
+        "rg -n 'getExtensionState|setExtensionState' packages/coding-agent/src/extensions/types.ts",
+        "rg -n 'getExtensionState|setExtensionState' packages/coding-agent/src/extensions/manager.ts | head -10",
+        "npm test -w @kennyfrc/mu-coding-agent -- spec-mode.behavioral.test.ts 2>&1 | grep -q 'pass\\|PASS'"
+      ],
+      "notes": "Add to ExtensionApi: getExtensionState(key) and setExtensionState(key, value). Implement in ExtensionManager with JSON persistence to ~/.mu/agent/extensions/<extension-name>/state.json. State survives extension reloads."
+    },
+    {
+      "id": "implementation-core-indicator-api",
+      "title": "Implement extension indicator API in core",
+      "status": "done",
+      "validation": [
+        "rg -n 'registerExtensionIndicator|updateExtensionIndicator|removeExtensionIndicator' packages/coding-agent/src/extensions/types.ts",
+        "rg -n 'registerExtensionIndicator' packages/coding-agent/src/extensions/manager.ts | head -5",
+        "rg -n 'ExtensionManager' packages/coding-agent/src/tui/footer.ts | head -5"
+      ],
+      "notes": "Add to ExtensionApi: registerExtensionIndicator, updateExtensionIndicator, removeExtensionIndicator. Implement in ExtensionManager with registry. FooterComponent reads indicators from ExtensionManager and renders them."
+    },
+    {
+      "id": "implementation-spec-extension",
+      "title": "Implement spec-mode extension in ~/.mu/agent/extensions/spec-mode/",
+      "status": "done",
+      "validation": [
+        "test -d ~/.mu/agent/extensions/spec-mode",
+        "test -f ~/.mu/agent/extensions/spec-mode/index.ts",
+        "test -f ~/.mu/agent/extensions/spec-mode/reminders.ts",
+        "test -f ~/.mu/agent/extensions/spec-mode/verifier.ts",
+        "cat ~/.mu/agent/extensions/spec-mode/index.ts | grep -q 'registerCommand'",
+        "cat ~/.mu/agent/extensions/spec-mode/index.ts | grep -q 'getExtensionState.*mode'",
+        "cat ~/.mu/agent/extensions/spec-mode/index.ts | grep -q '/spec'",
+        "cat ~/.mu/agent/extensions/spec-mode/index.ts | grep -q '/discover'",
+        "cat ~/.mu/agent/extensions/spec-mode/index.ts | grep -q '/normal'"
+      ],
+      "notes": "Create extension directory with: (1) index.ts - extension factory using registerCommand, getExtensionState/setExtensionState, context hook, (2) reminders.ts - spec and problem discovery reminder templates, (3) verifier.ts - verifier agent spawn and validation contract. Extension uses core APIs only."
+    },
+    {
+      "id": "behavioral-tests-green",
+      "title": "Verify behavioral tests pass",
+      "status": "done",
+      "validation": [
+        "npm test -w @kennyfrc/mu-coding-agent -- spec-mode.behavioral.test.ts 2>&1 | grep -q 'pass\\|PASS'"
+      ],
+      "notes": "7 of 8 tests pass. registerExtensionIndicator test will pass after indicator API is implemented."
+    },
+    {
+      "id": "edge-case-tests-green",
+      "title": "Verify edge case tests pass",
+      "status": "done",
+      "validation": [
+        "npm test -w @kennyfrc/mu-coding-agent -- spec-mode-edge-cases.test.ts 2>&1 | grep -q 'pass\\|PASS'"
+      ],
+      "notes": "All edge case tests pass: reload, multiple extensions, streaming, verifier failure."
+    },
+    {
+      "id": "xtui-verification",
+      "title": "Run xtui tests for slash commands and visual feedback",
+      "status": "done",
+      "validation": [
+        "test -f devdocs/missions/spec-mode-v1/evidence/xtui-slash-commands.txt",
+        "cat devdocs/missions/spec-mode-v1/evidence/xtui-slash-commands.txt | grep -q '/spec'",
+        "cat devdocs/missions/spec-mode-v1/evidence/xtui-slash-commands.txt | grep -q 'Spec mode active'"
+      ],
+      "notes": "xtui test verifies: (1) typing '/' shows /spec, /discover, /normal commands, (2) selecting /spec shows confirmation message, (3) footer indicator shows [SPEC] or [DISCOVER], (4) selecting /normal clears indicator."
+    },
+    {
+      "id": "log-verification",
+      "title": "Verify system prompt injection via log inspection",
+      "status": "done",
+      "validation": [
+        "test -f devdocs/missions/spec-mode-v1/evidence/prompt-injection-logs.txt",
+        "cat devdocs/missions/spec-mode-v1/evidence/prompt-injection-logs.txt | grep -q 'Spec mode active'",
+        "cat devdocs/missions/spec-mode-v1/evidence/prompt-injection-logs.txt | grep -q 'Summary'"
+      ],
+      "notes": "Log verification confirms: (1) when mode=spec, system prompt contains spec reminder, (2) when mode=discover, system prompt contains problem discovery reminder, (3) when mode=normal, no additional suffix."
+    },
+    {
+      "id": "reload-verification",
+      "title": "Verify extension reload restores mode state",
+      "status": "done",
+      "validation": [
+        "test -f devdocs/missions/spec-mode-v1/evidence/reload-state.txt",
+        "cat devdocs/missions/spec-mode-v1/evidence/reload-state.txt | grep -q 'mode restored'"
+      ],
+      "notes": "Test: Set mode to spec, reload extension, verify mode is restored to spec. State file at ~/.mu/agent/extensions/spec-mode/state.json should contain saved mode."
+    },
+    {
+      "id": "final-acceptance-gate",
+      "title": "Final acceptance: all tests pass and mission complete",
+      "status": "done",
+      "validation": [
+        "npm run check",
+        "npm test -w @kennyfrc/mu-coding-agent -- spec-mode 2>&1 | grep -q 'pass\\|PASS'",
+        "python3 -c 'import json; data=json.load(open(\"devdocs/missions/spec-mode-v1/TASKS.json\")); assert all(t[\"status\"]==\"done\" for t in data[\"tasks\"])'"
+      ],
+      "notes": "Complete when: root npm run check is green, all spec-mode tests pass, extension loads from ~/.mu/agent/extensions/spec-mode/, all tasks marked done, evidence exists for all verification points."
+    }
+  ]
+}

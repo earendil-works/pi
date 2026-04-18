@@ -1,0 +1,19 @@
+{
+  "status": "PASS",
+  "summary": "Artifact-triggered memory writes are implemented narrowly: successful write/edit/apply_patch completions append entries, successful bash only appends when new artifacts are produced, and no-op bash does not write memory.",
+  "findings": [],
+  "checked": [
+    "packages/coding-agent/src/memory/artifact-trigger.ts",
+    "packages/coding-agent/src/memory/runtime.ts",
+    "packages/coding-agent/src/tools/bash.ts",
+    "packages/coding-agent/src/main.ts",
+    "packages/coding-agent/test/artifact-memory-triggers.red.test.ts",
+    "packages/coding-agent/test/artifact-memory-runtime.test.ts"
+  ],
+  "notes": [
+    "The classifier surface is explicit and tool-name-based; there is no conversational-memory automation in v1.",
+    "Foreground bash artifact detection is based on git status delta in the current repo, which keeps the v1 trigger narrow and observable.",
+    "Runtime integration proves the append-only ledger and projection update happen after successful relevant tool completions.",
+    "XTUI evidence uses a deterministic terminal fixture that renders the runtime outcome on a live TUI surface without depending on a remote model provider."
+  ]
+}

@@ -1,0 +1,15 @@
+
+> @kennyfrc/mu-coding-agent@0.24.165 test
+> vitest --run artifact-memory-triggers.red.test.ts artifact-memory-runtime.test.ts
+
+
+ RUN  v3.2.4 /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+
+ ✓ test/artifact-memory-triggers.red.test.ts (2 tests) 15ms
+ ✓ test/artifact-memory-runtime.test.ts (1 test) 172ms
+
+ Test Files  2 passed (2)
+      Tests  3 passed (3)
+   Start at  14:26:18
+   Duration  1.07s (transform 366ms, setup 1.01s, collect 144ms, tests 187ms, environment 0ms, prepare 138ms)
+

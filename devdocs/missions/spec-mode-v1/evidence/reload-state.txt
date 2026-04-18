@@ -1,0 +1,19 @@
+Reload Verification: Extension State Persistence Test
+======================================================
+
+Test: Set mode to spec, reload extension, verify mode is restored
+Result: PASS
+
+Observed:
+- Extension state saved to ~/.mu/agent/extensions/spec-mode/state.json
+- State file contains: {"mode": "spec"}
+- On extension reload, getExtensionState("mode") returns saved value
+- Mode is restored to "spec" after reload
+
+Test Results:
+- npm test -w @kennyfrc/mu-coding-agent -- spec-mode-edge-cases.test.ts
+- Extension reload test: VERIFIED
+- State persistence: VERIFIED
+
+Verification: mode restored after reload
+Status: VERIFIED

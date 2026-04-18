@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "scopeName": "askuser-ctrlc-and-todo-overlay-spec",
+  "createdAt": "2026-03-30T08:29:27.143Z",
+  "updatedAt": "2026-03-30T08:29:27.143Z",
+  "objectiveHistory": [
+    "Confirm the ask_user dialog Ctrl+C bug fix specification"
+  ],
+  "entries": [],
+  "answers": [
+    {
+      "questionId": "approve_spec",
+      "topic": "Specification Approval",
+      "prompt": "Do you approve the Ctrl+C behavior fix specification?",
+      "answer": "Approve as specified",
+      "source": "option"
+    },
+    {
+      "questionId": "scope_visibility",
+      "topic": "Scope Visibility",
+      "prompt": "Should todo_write ALSO appear in chat history (in addition to inline), or inline-only?",
+      "answer": "Yes - also show in chat history",
+      "source": "option"
+    },
+    {
+      "questionId": "dismissal",
+      "topic": "Dismissal Behavior",
+      "prompt": "How should the inline todo_write overlay be dismissed?",
+      "answer": "Dismiss with Escape key",
+      "source": "option"
+    },
+    {
+      "questionId": "persistence",
+      "topic": "Persistence",
+      "prompt": "How long should the inline todo_write overlay stay visible?",
+      "answer": "until ntexst todowrite or user initiated",
+      "source": "custom"
+    },
+    {
+      "questionId": "other_tools",
+      "topic": "Tool Scope",
+      "prompt": "Should other tools also support inline rendering, or only todo_write?",
+      "answer": "No - just todo_write",
+      "source": "option"
+    },
+    {
+      "questionId": "notes",
+      "topic": "Additional Notes",
+      "prompt": "Any other notes or changes needed for either the Ctrl+C fix or todo_write inline overlay?",
+      "answer": "none",
+      "source": "custom"
+    }
+  ],
+  "notes": [
+    "This ask_user covers TWO separate items: (1) The Ctrl+C bug fix for ask_user dialog (specification provided above), and (2) Clarification needed for the todo_write inline overlay feature request (pending answers on history behavior, dismissal, persistence, and tool scope)."
+  ]
+}

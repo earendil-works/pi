@@ -1,0 +1,62 @@
+{
+  "milestoneId": "scheduling-and-reconciliation",
+  "status": "pass",
+  "summary": "The scheduling milestone now matches the approved scope: scheduled runs persist run_started before execution, the separate supervisor has periodic tick plus file-watch wake behavior, recurring overlap keeps exactly one latest follow-on occurrence queued, and restart recovery replaces interrupted occurrences without duplication.",
+  "checks": [
+    {
+      "name": "run_started durability before execution",
+      "status": "pass",
+      "evidence": [
+        "packages/coding-agent/src/always-on/supervisor.ts:578",
+        "packages/coding-agent/src/always-on/supervisor.ts:589",
+        "packages/coding-agent/src/always-on/supervisor.ts:607"
+      ],
+      "notes": "The supervisor reserves the session id first, writes run_started immediately, and only then waits for run completion."
+    },
+    {
+      "name": "latest-missed recurrence and single-overlap queued follow-on",
+      "status": "pass",
+      "evidence": [
+        "packages/coding-agent/src/always-on/supervisor.ts:661",
+        "packages/coding-agent/src/always-on/supervisor.ts:666",
+        "packages/coding-agent/src/always-on/supervisor.ts:673",
+        "packages/coding-agent/src/always-on/supervisor.ts:684",
+        "packages/coding-agent/src/always-on/supervisor.ts:709"
+      ],
+      "notes": "Recurring work derives the latest due occurrence, records at most one later pending occurrence while a scheduled run is active, and starts only that latest follow-on after the active run finishes."
+    },
+    {
+      "name": "autonomous event wake plus periodic reconciliation tick",
+      "status": "pass",
+      "evidence": [
+        "packages/coding-agent/src/always-on/supervisor.ts:558",
+        "packages/coding-agent/src/always-on/supervisor.ts:733",
+        "packages/coding-agent/src/always-on/supervisor.ts:758",
+        "packages/coding-agent/src/always-on/supervisor.ts:771",
+        "packages/coding-agent/src/always-on/supervisor.ts:778",
+        "packages/coding-agent/src/always-on/cli.ts:602"
+      ],
+      "notes": "A running supervisor now wakes both from periodic ticks and from work-items ledger file changes while a separate `mu always-on supervisor` process is alive."
+    },
+    {
+      "name": "restart replacement and no duplicate occurrence execution",
+      "status": "pass",
+      "evidence": [
+        "packages/coding-agent/src/always-on/supervisor.ts:699",
+        "packages/coding-agent/src/always-on/supervisor.ts:701",
+        "packages/coding-agent/src/always-on/supervisor.ts:710"
+      ],
+      "notes": "If reconciliation finds an interrupted run for the selected occurrence, it marks that run abandoned and starts exactly one replacement run for the same occurrence key."
+    },
+    {
+      "name": "no incorrect model polling while idle",
+      "status": "pass",
+      "evidence": [
+        "packages/coding-agent/src/always-on/supervisor.ts:558",
+        "packages/coding-agent/src/always-on/supervisor.ts:778"
+      ],
+      "notes": "Idle behavior is driven by ledgers, file-watch events, and timer ticks rather than by asking the model whether work exists."
+    }
+  ],
+  "conclusion": "The scheduling-and-reconciliation milestone is review-green."
+}

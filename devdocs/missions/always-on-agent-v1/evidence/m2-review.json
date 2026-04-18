@@ -1,0 +1,51 @@
+{
+  "milestoneId": "send-run-lifecycle",
+  "status": "pass",
+  "checkedAt": "2026-03-31T14:26:00.000Z",
+  "summary": "The send/run slice matches the milestone scope: immediate work becomes a durable work item, the supervisor records a durable run lifecycle and linked session id, execution-target overrides win over stored agent defaults, and the always-on tool path excludes `ask_user`.",
+  "checks": [
+    {
+      "name": "durable work-item and run ledgers",
+      "status": "pass",
+      "evidence": [
+        "packages/coding-agent/src/always-on/supervisor.ts:242",
+        "packages/coding-agent/src/always-on/supervisor.ts:255",
+        "packages/coding-agent/src/always-on/supervisor.ts:308",
+        "packages/coding-agent/src/always-on/supervisor.ts:366"
+      ],
+      "notes": "The supervisor appends `work_item_created`, `run_started`, and `run_finished` facts to append-only ledgers and derives pending work plus visible run state from those facts."
+    },
+    {
+      "name": "execution-target override precedence and linked Mu session creation",
+      "status": "pass",
+      "evidence": [
+        "packages/coding-agent/src/always-on/supervisor.ts:383",
+        "packages/coding-agent/src/always-on/cli.ts:219",
+        "packages/coding-agent/src/always-on/cli.ts:259",
+        "packages/coding-agent/src/always-on/cli.ts:293"
+      ],
+      "notes": "The effective tuple comes from the work-item override when present, and the default executor creates a real `SessionManager` session before prompting so every run has a linked `sessionId` even on execution errors."
+    },
+    {
+      "name": "always-on tool selection excludes ask_user",
+      "status": "pass",
+      "evidence": [
+        "packages/coding-agent/src/always-on/tool-selection.ts:16",
+        "packages/coding-agent/src/always-on/tool-selection.ts:22",
+        "packages/coding-agent/src/always-on/cli.ts:259"
+      ],
+      "notes": "The always-on tool-selection wrapper filters out `ask_user` after extension expansion, so the built-in ask-user extension does not leak into headless always-on runs."
+    },
+    {
+      "name": "human-facing send/jobs/runs CLI surface",
+      "status": "pass",
+      "evidence": [
+        "packages/coding-agent/src/always-on/cli.ts:87",
+        "packages/coding-agent/src/always-on/cli.ts:397",
+        "packages/coding-agent/src/always-on/cli.ts:452"
+      ],
+      "notes": "`send` prints job/run/session linkage plus the effective tuple, while `jobs` and `runs` provide inspectable summaries without reading raw JSONL manually."
+    }
+  ],
+  "findings": []
+}

@@ -1,0 +1,41 @@
+{
+  "milestoneId": "agent-registry-defaults",
+  "status": "pass",
+  "checkedAt": "2026-03-31T14:09:00.000Z",
+  "summary": "The agent-registry/default slice matches the milestone scope: agent creation is append-only, the first agent becomes the global default automatically, explicit set-default appends a new default fact, and the CLI exposes create/agents/set-default/status with human-readable output.",
+  "checks": [
+    {
+      "name": "append-only ledger facts and derived default resolution",
+      "status": "pass",
+      "evidence": [
+        "packages/coding-agent/src/always-on/agent-registry.ts:141",
+        "packages/coding-agent/src/always-on/agent-registry.ts:159",
+        "packages/coding-agent/src/always-on/agent-registry.ts:205",
+        "packages/coding-agent/src/always-on/agent-registry.ts:231"
+      ],
+      "notes": "The registry reads only `agents.jsonl`, derives the current state from facts, appends `agent_created` and `workspace_default_set` events, and never mutates a sidecar summary file."
+    },
+    {
+      "name": "first-create auto-default and explicit set-default semantics",
+      "status": "pass",
+      "evidence": [
+        "packages/coding-agent/src/always-on/agent-registry.ts:235",
+        "packages/coding-agent/src/always-on/agent-registry.ts:252",
+        "packages/coding-agent/src/always-on/agent-registry.ts:270"
+      ],
+      "notes": "`createAgent()` auto-appends the first default only when no default exists, while later default changes require an explicit `setGlobalDefaultAgent()` call."
+    },
+    {
+      "name": "human-facing CLI surface for create/agents/set-default/status",
+      "status": "pass",
+      "evidence": [
+        "packages/coding-agent/src/always-on/cli.ts:59",
+        "packages/coding-agent/src/always-on/cli.ts:159",
+        "packages/coding-agent/src/main.ts:331",
+        "packages/coding-agent/src/main.ts:981"
+      ],
+      "notes": "The CLI validates the workspace path and provider/model tuple, prints clear create/set-default confirmations, and exposes registry/status inspection without entering the interactive runtime."
+    }
+  ],
+  "findings": []
+}

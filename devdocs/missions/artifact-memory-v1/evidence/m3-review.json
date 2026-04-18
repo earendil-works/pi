@@ -1,0 +1,19 @@
+{
+  "status": "PASS",
+  "summary": "Explicit memory_store, memory_search, and memory_read are implemented and the fresh-session exec flow uses the memory-tool boundary to persist and retrieve stored memory.",
+  "findings": [],
+  "checked": [
+    "packages/coding-agent/src/memory/query.ts",
+    "packages/coding-agent/src/tools/memory-tools.ts",
+    "packages/coding-agent/src/tools/index.ts",
+    "packages/coding-agent/src/tools/tool-selection.ts",
+    "packages/coding-agent/src/prompts/tools.yaml",
+    "packages/coding-agent/test/artifact-memory-tools.red.test.ts",
+    "packages/coding-agent/test/artifact-memory-fresh-session.red.test.ts"
+  ],
+  "notes": [
+    "memory_store appends authoritative entries and refreshes the workspace projection immediately.",
+    "memory_search ranks hits workspace-first and returns stable entry ids for follow-up reads.",
+    "The fresh-session exec proof uses deterministic provider transport only to force the memory tool calls; persistence and retrieval are still exercised through the real CLI entrypoint and tool boundary."
+  ]
+}

@@ -1,0 +1,164 @@
+{
+  "milestones": [
+    {
+      "id": "architecture-and-baseline",
+      "title": "Architecture is approved and the coding-agent baseline is ready for MCP work",
+      "goal": "The mission has an approved architecture and any existing package blockers that would invalidate MCP work are identified and handled first.",
+      "taskIds": [
+        "architecture-approval",
+        "baseline-discovery",
+        "baseline-acceptance-gate"
+      ],
+      "gateTaskId": "baseline-acceptance-gate",
+      "verification": [
+        {
+          "id": "m1-baseline-check",
+          "kind": "command",
+          "command": "npm run check -w @kennyfrc/mu-coding-agent",
+          "expect": "The package baseline is green or any remaining blocker is explicitly recorded in mission progress before MCP implementation begins.",
+          "evidence": "devdocs/missions/mcp-figma-setup-v1/evidence/m1-baseline-check.txt"
+        },
+        {
+          "id": "m1-architecture-review",
+          "kind": "review",
+          "command": "Review `ARCHITECTURE.md` and `SPEC.md` against the source material from `.factory/library/mcp.md`, `.factory/library/architecture.md`, and `.factory/library/user-testing.md`; confirm the generic-core/Figma-pilot split, transport order, auth stance, and validation order are coherent before implementation begins.",
+          "expect": "Review confirms the mission boundaries are coherent or reports blocking issues with file references before implementation starts.",
+          "evidence": "devdocs/missions/mcp-figma-setup-v1/evidence/m1-architecture-review.json"
+        },
+        {
+          "id": "m1-xtui-surface",
+          "kind": "xtui",
+          "command": "Run the coding-agent CLI in a temp workspace and inspect the startup/help surface to confirm the package baseline is usable before MCP work begins; capture any visible blocker if startup/help is already degraded.",
+          "expect": "The visible CLI surface is usable at baseline, or any blocker is explicitly captured as pre-existing evidence.",
+          "evidence": "devdocs/missions/mcp-figma-setup-v1/evidence/m1-xtui.txt"
+        }
+      ],
+      "notes": "Do not begin durable MCP implementation until architecture is approved and the baseline state is understood."
+    },
+    {
+      "id": "generic-mcp-runtime",
+      "title": "Generic MCP runtime works through the normal Mu runtime surface",
+      "goal": "Mu can load MCP config, connect to HTTP-backed servers, discover tools, invoke them through the normal runtime, and recover or refresh without stale state.",
+      "taskIds": [
+        "mcp-config-and-auth-red-tests",
+        "mcp-config-and-auth-implementation",
+        "mcp-http-runtime-red-tests",
+        "mcp-http-runtime-implementation",
+        "mcp-recovery-refresh-red-tests",
+        "mcp-recovery-refresh-implementation",
+        "generic-mcp-acceptance-gate"
+      ],
+      "gateTaskId": "generic-mcp-acceptance-gate",
+      "verification": [
+        {
+          "id": "m2-config-auth",
+          "kind": "command",
+          "command": "npm run test -w @kennyfrc/mu-coding-agent -- test/mcp-config.test.ts test/mcp-auth-resolution.test.ts --maxWorkers=4",
+          "expect": "Config, auth precedence, and redaction behavior are proven.",
+          "evidence": "devdocs/missions/mcp-figma-setup-v1/evidence/m2-config-auth.txt"
+        },
+        {
+          "id": "m2-runtime",
+          "kind": "command",
+          "command": "npm run test -w @kennyfrc/mu-coding-agent -- test/mcp-http-runtime.test.ts test/mcp-http-session.test.ts test/mcp-inventory-refresh.test.ts test/mcp-malformed-data.test.ts test/mcp-tool-naming.test.ts --maxWorkers=4",
+          "expect": "Discovery, invocation, session continuity, refresh, malformed-data handling, and deterministic naming are proven.",
+          "evidence": "devdocs/missions/mcp-figma-setup-v1/evidence/m2-runtime.txt"
+        },
+        {
+          "id": "m2-review",
+          "kind": "review",
+          "command": "Review the generic MCP runtime implementation against `SPEC.md`, focusing on lifecycle ownership, deterministic naming, redaction, recovery, and the rule that remote tools flow through the normal runtime surface.",
+          "expect": "Review confirms the generic MCP runtime is correctly layered and does not leak Figma-specific behavior, or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/mcp-figma-setup-v1/evidence/m2-review.json"
+        },
+        {
+          "id": "m2-local-harness-tests",
+          "kind": "command",
+          "command": "npm run test -w @kennyfrc/mu-coding-agent -- test/mcp-local-harness.test.ts --maxWorkers=4",
+          "expect": "A deterministic local MCP harness proves connect/discover/invoke behavior through test-only verification without requiring a separate curl contract.",
+          "evidence": "devdocs/missions/mcp-figma-setup-v1/evidence/m2-local-harness-tests.txt"
+        },
+        {
+          "id": "m2-package-check",
+          "kind": "command",
+          "command": "npm run check -w @kennyfrc/mu-coding-agent",
+          "expect": "The package remains green with generic MCP runtime changes.",
+          "evidence": "devdocs/missions/mcp-figma-setup-v1/evidence/m2-package-check.txt"
+        }
+      ],
+      "notes": "Figma-specific logic stays out of scope for this milestone."
+    },
+    {
+      "id": "figma-pilot-and-validation",
+      "title": "Figma proves the generic MCP runtime in both deterministic and real validation paths",
+      "goal": "The Figma pilot loads through normal runtime paths, shows truthful status UX, and completes at least one meaningful Figma operation through the normal tool pipeline.",
+      "taskIds": [
+        "local-harness-bootstrap",
+        "figma-runtime-red-tests",
+        "figma-runtime-implementation",
+        "figma-ux-red-tests",
+        "figma-ux-implementation",
+        "mcp-oauth-support-red-tests",
+        "mcp-oauth-support-implementation",
+        "mcp-oauth-login-red-tests",
+        "mcp-oauth-login-implementation",
+        "real-figma-validation",
+        "figma-acceptance-gate",
+        "final-root-check"
+      ],
+      "gateTaskId": "figma-acceptance-gate",
+      "verification": [
+        {
+          "id": "m3-local-harness",
+          "kind": "command",
+          "command": "npm run test -w @kennyfrc/mu-coding-agent -- test/mcp-local-harness.test.ts --maxWorkers=4",
+          "expect": "The deterministic local MCP harness works on reserved ports and exposes tools end-to-end.",
+          "evidence": "devdocs/missions/mcp-figma-setup-v1/evidence/m3-local-harness.txt"
+        },
+        {
+          "id": "m3-figma-tests",
+          "kind": "command",
+          "command": "npm run test -w @kennyfrc/mu-coding-agent -- test/figma-runtime-loading.test.ts test/figma-tool-exposure.test.ts test/figma-slash-ui.test.ts test/figma-readiness-ui.test.ts test/figma-bearer-auth.test.ts test/figma-oauth-recovery.test.ts test/figma-oauth-capability-gating.test.ts --maxWorkers=4",
+          "expect": "Figma loading, tool exposure, UX, bearer auth behavior, and login-required capability gating are proven.",
+          "evidence": "devdocs/missions/mcp-figma-setup-v1/evidence/m3-figma-tests.txt"
+        },
+        {
+          "id": "m3-oauth-support-tests",
+          "kind": "command",
+          "command": "npm run test -w @kennyfrc/mu-coding-agent -- test/mcp-oauth-support.test.ts --maxWorkers=4",
+          "expect": "Metadata-based OAuth support detection and runtime capability gating are proven against a deterministic harness.",
+          "evidence": "devdocs/missions/mcp-figma-setup-v1/evidence/m3-oauth-support-tests.txt"
+        },
+        {
+          "id": "m3-xtui",
+          "kind": "xtui",
+          "command": "Verify Figma slash-command discovery and connection-state UI show disconnected, connecting, connected, and degraded/auth-failed states truthfully.",
+          "expect": "Visible UX matches actual callable runtime state.",
+          "evidence": "devdocs/missions/mcp-figma-setup-v1/evidence/m3-xtui.txt"
+        },
+        {
+          "id": "m3-review",
+          "kind": "review",
+          "command": "Review the Figma pilot implementation against `SPEC.md`, focusing on pilot-layer boundaries, truthful readiness UX, auth recovery behavior, metadata-driven OAuth support detection, and evidence that the normal tool pipeline is used end-to-end.",
+          "expect": "Review confirms the Figma pilot is layered correctly on the generic runtime, surfaces truthful status, and gates OAuth-backed capability exposure from metadata rather than guesswork, or reports blocking findings with file references.",
+          "evidence": "devdocs/missions/mcp-figma-setup-v1/evidence/m3-review.json"
+        },
+        {
+          "id": "m3-real-figma",
+          "kind": "command",
+          "command": "Run one real Figma validation path against the configured endpoint and capture concrete Figma-specific output, or record an explicit external blocker.",
+          "expect": "Real validation either succeeds meaningfully or is blocked only by missing external access/credentials.",
+          "evidence": "devdocs/missions/mcp-figma-setup-v1/evidence/m3-real-figma.txt"
+        },
+        {
+          "id": "m3-root-check",
+          "kind": "command",
+          "command": "npm run check",
+          "expect": "The repo remains green after MCP and Figma pilot work.",
+          "evidence": "devdocs/missions/mcp-figma-setup-v1/evidence/m3-root-check.txt"
+        }
+      ],
+      "notes": "This milestone is not complete until the visible UI and actual tool surface agree."
+    }
+  ]
+}

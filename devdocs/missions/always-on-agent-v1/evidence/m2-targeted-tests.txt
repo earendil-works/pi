@@ -1,0 +1,17 @@
+
+> @kennyfrc/mu-coding-agent@0.24.145 test
+> vitest --run always-on-send-run.red.test.ts always-on-supervisor.red.test.ts always-on-execution-target.red.test.ts always-on-tool-selection.red.test.ts
+
+
+ RUN  v3.2.4 /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+
+ ✓ test/always-on-tool-selection.red.test.ts (1 test) 17ms
+ ✓ test/always-on-supervisor.red.test.ts (1 test) 19ms
+ ✓ test/always-on-execution-target.red.test.ts (1 test) 45ms
+ ✓ test/always-on-send-run.red.test.ts (1 test) 44ms
+
+ Test Files  4 passed (4)
+      Tests  4 passed (4)
+   Start at  22:26:01
+   Duration  1.12s (transform 472ms, setup 2.12s, collect 1.29s, tests 125ms, environment 0ms, prepare 288ms)
+

@@ -1,0 +1,18 @@
+{
+  "status": "PASS",
+  "summary": "The always-on inspection, schedule, agent-selection, and follow-up command surface is implemented in the TUI.",
+  "findings": [
+    {
+      "severity": "info",
+      "message": "`packages/coding-agent/src/tui/tui-renderer.ts` now registers `/always-on-agent`, `/always-on-jobs`, `/always-on-runs`, `/always-on-thread`, `/always-on-schedule`, and `/always-on-follow-up` as built-in commands."
+    },
+    {
+      "severity": "info",
+      "message": "The renderer now keeps a session-local selected always-on agent id and routes schedule/follow-up/inspection commands through the shared always-on service instead of falling through to immediate submission."
+    },
+    {
+      "severity": "info",
+      "message": "`packages/coding-agent/src/always-on/service.ts` now exposes `readThread(runId)` so thread inspection stays on the shared ledger-backed service boundary."
+    }
+  ]
+}

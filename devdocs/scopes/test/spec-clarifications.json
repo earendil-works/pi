@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "scopeName": "test",
+  "createdAt": "2026-04-03T04:30:44.964Z",
+  "updatedAt": "2026-04-03T04:30:44.964Z",
+  "objectiveHistory": [
+    "Confirm approach for removing scope from ask_user before implementation"
+  ],
+  "items": [
+    {
+      "id": "storage-delete",
+      "topic": "File deletion",
+      "question": "Delete storage.ts entirely (99% scope logic) or keep as stub?",
+      "answer": "Delete entirely",
+      "source": "option",
+      "updatedAt": "2026-04-03T04:30:44.964Z"
+    },
+    {
+      "id": "tests-strategy",
+      "topic": "Test strategy",
+      "question": "Should I fix existing tests incrementally (red→green per file) or batch update all tests after implementation?",
+      "answer": "Incremental per file",
+      "source": "option",
+      "updatedAt": "2026-04-03T04:30:44.964Z"
+    }
+  ],
+  "notes": []
+}

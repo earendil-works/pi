@@ -1,0 +1,32 @@
+{
+  "followUpWorkItemId": "job-cabc10f8",
+  "followUpRunId": "run-402d852e",
+  "followUpSessionId": "131c9d89-fcb8-42a2-9688-5c1910fcb869",
+  "relatedWorkItemIds": [
+    "job-f7bba51d"
+  ],
+  "relatedSessionIds": [
+    "769612c9-c6e5-4940-a658-d27f8de428f7"
+  ],
+  "threadSurfaceVerified": true
+}
+
+--- thread output ---
+
+Always-on thread for run run-402d852e
+
+Work item: job-cabc10f8
+
+Session: 131c9d89-fcb8-42a2-9688-5c1910fcb869
+
+Follow-up to: job-f7bba51d
+
+Related sessions: 769612c9-c6e5-4940-a658-d27f8de428f7
+
+## User
+<user_message_time>Wednesday, April 1, 2026 at 8:15 AM GMT+8</user_message_time>
+Reply briefly with THREAD-FOLLOWUP
+
+## Assistant
+THREAD-FOLLOWUP
+

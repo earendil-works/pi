@@ -1,0 +1,43 @@
+{
+  "version": 1,
+  "scopeName": "tool-ui-projection-implementation-scope",
+  "createdAt": "2026-03-30T12:08:18.061Z",
+  "updatedAt": "2026-03-30T12:08:18.061Z",
+  "objectiveHistory": [
+    "Lock the implementation scope and verification contract for replacing `mu_display` with the centralized projection system."
+  ],
+  "entries": [],
+  "answers": [
+    {
+      "questionId": "scope-slice",
+      "topic": "implementation scope",
+      "prompt": "What should this first implementation slice include?",
+      "answer": "Projection runtime + schema + migrate all built-in tools now",
+      "source": "option"
+    },
+    {
+      "questionId": "transcript-shape",
+      "topic": "transcript derivation",
+      "prompt": "For the first slice, how strict should transcript derivation be?",
+      "answer": "It can change if the new projection is cleaner",
+      "source": "option"
+    },
+    {
+      "questionId": "verification",
+      "topic": "verification contract",
+      "prompt": "What verification matters most for this implementation?",
+      "answer": "Tests plus `xtui` proof for inline/dialog behavior",
+      "source": "option"
+    },
+    {
+      "questionId": "compat",
+      "topic": "compatibility boundary",
+      "prompt": "If untouched tools still rely on `mu_display` today, should I convert them in this pass or explicitly break/fail until they are migrated?",
+      "answer": "Convert them in this pass",
+      "source": "option"
+    }
+  ],
+  "notes": [
+    "I’m assuming we should implement this incrementally but with the new projection as the only structured display contract in touched paths. The highest-risk ambiguity is migration scope: whether to convert all tools now or build the projection runtime plus migrate one representative tool first."
+  ]
+}

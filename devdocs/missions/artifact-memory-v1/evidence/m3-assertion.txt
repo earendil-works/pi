@@ -1,0 +1,4 @@
+PASS: explicit memory store/search boundary used in fresh mu exec --json sessions
+store_tool=memory_store
+retrieve_tool=memory_search
+retrieved_value=ORANGE-KITE-441

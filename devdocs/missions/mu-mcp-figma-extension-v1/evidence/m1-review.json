@@ -1,0 +1,22 @@
+{
+  "milestoneId": "config-import-foundation",
+  "verdict": "pass",
+  "summary": "Mu-native MCP config precedence and import parsing match the mission spec after fixing Codex TOML section leakage.",
+  "findings": [
+    {
+      "severity": "info",
+      "message": "The loader now imports `.factory/mcp.json` and `~/.codex/config.toml`, then overlays Mu user config and project config in that order.",
+      "file": "packages/coding-agent/src/mcp/config.ts"
+    },
+    {
+      "severity": "info",
+      "message": "Non-MCP TOML sections now reset the active MCP table, so later Codex sections like `[[skills.config]]` no longer pollute the last MCP server entry.",
+      "file": "packages/coding-agent/src/mcp/config.ts"
+    },
+    {
+      "severity": "info",
+      "message": "The targeted suite proves `.factory` JSON import, Codex TOML import, precedence, and explicit non-dependence on `~/.codex/config.json`.",
+      "file": "packages/coding-agent/test/mcp-config.test.ts"
+    }
+  ]
+}

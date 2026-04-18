@@ -1,0 +1,40 @@
+[
+  {
+    "type": "run_started",
+    "runId": "run-interrupted",
+    "workItemId": "job-6d4777c2",
+    "agentId": "restart-agent",
+    "trigger": "schedule",
+    "scheduledOccurrenceKey": "2099-01-01T00:15:00.000Z",
+    "provider": "openai-codex",
+    "modelId": "gpt-5.4",
+    "thinkingLevel": "medium",
+    "sessionId": "session-interrupted",
+    "timestamp": "2099-01-01T00:15:00.000Z"
+  },
+  {
+    "type": "run_finished",
+    "runId": "run-interrupted",
+    "outcome": "abandoned",
+    "timestamp": "2099-01-01T00:15:00.000Z"
+  },
+  {
+    "type": "run_started",
+    "runId": "run-b5b15a82",
+    "workItemId": "job-6d4777c2",
+    "agentId": "restart-agent",
+    "trigger": "schedule",
+    "scheduledOccurrenceKey": "2099-01-01T00:15:00.000Z",
+    "provider": "openai-codex",
+    "modelId": "gpt-5.4",
+    "thinkingLevel": "medium",
+    "sessionId": "d3b294df-a0d0-46f9-a0bc-ae9937432093",
+    "timestamp": "2099-01-01T00:15:00.000Z"
+  },
+  {
+    "type": "run_finished",
+    "runId": "run-b5b15a82",
+    "outcome": "completed",
+    "timestamp": "2099-01-01T00:15:00.000Z"
+  }
+]

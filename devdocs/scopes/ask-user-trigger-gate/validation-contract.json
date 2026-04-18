@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "scopeName": "ask-user-trigger-gate",
+  "createdAt": "2026-03-30T08:13:54.667Z",
+  "updatedAt": "2026-03-30T08:13:54.667Z",
+  "objectiveHistory": [
+    "Finalize the implementation plan for making ask_user trigger deterministically when specification or validation-contract details are materially ambiguous"
+  ],
+  "entries": [
+    {
+      "id": "ask-user-ambiguous-spec",
+      "surface": "vitest",
+      "commandOrAction": "Add regression tests for ambiguous spec/discovery requests to require ask_user before final answer",
+      "expect": "Red before fix, green after fix",
+      "notes": "Primary executable correctness check"
+    },
+    {
+      "id": "ask-user-cancel",
+      "surface": "vitest",
+      "commandOrAction": "Add dialog/orchestration regression test for explicit cancellation path",
+      "expect": "Cancellation only on explicit Esc/Ctrl+C; assistant reports cancellation clearly",
+      "notes": "Protect against silent failure"
+    },
+    {
+      "id": "ask-user-manual-xtui",
+      "surface": "xtui",
+      "commandOrAction": "Run an interactive session with a representative ambiguous specification request",
+      "expect": "ask_user dialog appears before full spec answer is produced",
+      "notes": "Confirms real TUI behavior"
+    }
+  ],
+  "answers": [
+    {
+      "questionId": "fix-boundary",
+      "topic": "boundary",
+      "prompt": "Where should the primary fix live?",
+      "answer": "Prompt/guideline changes only",
+      "source": "option",
+      "field": "boundary"
+    },
+    {
+      "questionId": "trigger-policy",
+      "topic": "trigger policy",
+      "prompt": "When should ask_user be required?",
+      "answer": "Broadly whenever the assistant is uncertain",
+      "source": "option",
+      "field": "policy"
+    },
+    {
+      "questionId": "reuse-scope",
+      "topic": "scope reuse",
+      "prompt": "If prior ask_user answers already exist for the active scope, what should happen?",
+      "answer": "Always ask again for fresh confirmation",
+      "source": "option",
+      "field": "scopeReuse"
+    },
+    {
+      "questionId": "cancel-behavior",
+      "topic": "cancel behavior",
+      "prompt": "If the user cancels the ask_user dialog, what should the assistant do next?",
+      "answer": "Stop and report that clarification was cancelled",
+      "source": "option",
+      "field": "cancelBehavior"
+    },
+    {
+      "questionId": "verification-surface",
+      "topic": "validation contract",
+      "prompt": "What verification should be required for this change?",
+      "answer": "Tests plus manual xtui verification",
+      "source": "option",
+      "field": "verification"
+    }
+  ],
+  "notes": [
+    "I recommend adding a deterministic pre-response gate in coding-agent orchestration rather than relying on prompt wording alone."
+  ]
+}

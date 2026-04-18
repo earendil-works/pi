@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "scopeName": "spawn_agent-cove-verification-improvements",
+  "createdAt": "2026-04-01T04:37:21.585Z",
+  "updatedAt": "2026-04-01T04:37:21.585Z",
+  "objectiveHistory": [
+    "Get human approval on CoVE-based verification improvements for spawn_agent"
+  ],
+  "items": [
+    {
+      "id": "verification_approach",
+      "topic": "Verification Strategy",
+      "question": "Which verification approach should we implement for spawn_agent?",
+      "answer": "Factor+Revise CoVE (5-step, moderate overhead)",
+      "source": "option",
+      "updatedAt": "2026-04-01T04:37:21.585Z"
+    },
+    {
+      "id": "verification_strictness",
+      "topic": "Strictness Level",
+      "question": "How strict should the verification requirement be?",
+      "answer": "Guided: Child SHOULD verify, but can complete without",
+      "source": "option",
+      "updatedAt": "2026-04-01T04:37:21.585Z"
+    },
+    {
+      "id": "sections_required",
+      "topic": "Required Sections",
+      "question": "Which verification structure should child agents follow?",
+      "answer": "Free-form: Agent decides verification depth based on task complexity",
+      "source": "option",
+      "updatedAt": "2026-04-01T04:37:21.585Z"
+    }
+  ],
+  "notes": []
+}

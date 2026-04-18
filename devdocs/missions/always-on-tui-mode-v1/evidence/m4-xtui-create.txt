@@ -1,0 +1,9 @@
+Created always-on agent ao-aef58e12
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-ao-m4-gate-pass-med0088z/workspace
+Model: openai / gpt-4o-mini / off
+Global default: yes
+Always-on agent ao-aef58e12
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-ao-m4-gate-pass-med0088z/workspace
+Model: openai / gpt-4o-mini / off
+Enabled: yes
+Global default: yes

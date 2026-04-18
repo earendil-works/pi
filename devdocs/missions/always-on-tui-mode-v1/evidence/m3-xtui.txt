@@ -1,0 +1,12 @@
+PASS
+XTUI verified the live `/always-on` → submit → `/always-on-exit` flow.
+
+Observed:
+- Entering `/always-on` is accepted in the live TUI (`m3-xtui-mode-on.json`).
+- The first always-on submission is recorded before exit (`m3-xtui-submitted.json` / `m3-xtui-mode-off.json`).
+- After `/always-on-exit`, a plain-text `normal chat again` submit produces a second visible OpenAI auth error in normal chat (`m3-xtui-post-exit-submit.json`).
+- The auth error shown before `normal chat again` belongs to the prior always-on submission; the auth error shown after `normal chat again` belongs to the restored normal-chat path.
+
+Key rows:
+- `m3-xtui-mode-off.json`: `/always-on`, `Summarize the README`, `/always-on-exit`, then `Error: 401 Incorrect API key...`
+- `m3-xtui-post-exit-submit.json`: `normal chat again`, then another `Error: 401 Incorrect API key...`

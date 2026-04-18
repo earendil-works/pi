@@ -1,0 +1,86 @@
+===== create =====
+Created always-on agent ao-4b5e04d0
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/tmp.RbjKxQw9pG/workspace
+Model: openai-codex / gpt-5.4 / medium
+Global default: yes
+Always-on agent ao-4b5e04d0
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/tmp.RbjKxQw9pG/workspace
+Model: openai-codex / gpt-5.4 / medium
+Enabled: yes
+Global default: yes
+
+===== schedule once =====
+Scheduled always-on job job-5e70e71d
+Instruction: Once evidence job
+Schedule: once at 2099-01-01T00:05:00.000Z
+
+===== schedule recurring =====
+Scheduled always-on job job-d7c0a330
+Instruction: Recurring evidence job
+Schedule: */5 * * * * (UTC)
+
+===== jobs before due =====
+Always-on jobs:
+- job-5e70e71d
+  Agent: ao-4b5e04d0
+  Instruction: Once evidence job
+  Status: pending
+- job-d7c0a330
+  Agent: ao-4b5e04d0
+  Instruction: Recurring evidence job
+  Status: pending
+
+===== controlled supervisor reconcile =====
+Controlled-clock reconcile at 2099-01-01T00:17:00.000Z
+[
+  {
+    "runId": "run-597da890",
+    "workItemId": "job-5e70e71d",
+    "trigger": "schedule",
+    "scheduledOccurrenceKey": "2099-01-01T00:05:00.000Z",
+    "outcome": "completed"
+  },
+  {
+    "runId": "run-536984f2",
+    "workItemId": "job-d7c0a330",
+    "trigger": "schedule",
+    "scheduledOccurrenceKey": "2099-01-01T00:15:00.000Z",
+    "outcome": "completed"
+  }
+]
+
+===== jobs after due =====
+Always-on jobs:
+- job-5e70e71d
+  Agent: ao-4b5e04d0
+  Instruction: Once evidence job
+  Status: completed
+- job-d7c0a330
+  Agent: ao-4b5e04d0
+  Instruction: Recurring evidence job
+  Status: completed
+
+===== runs once =====
+Always-on runs for job-5e70e71d:
+- run-597da890
+  Outcome: completed
+  Model: openai-codex / gpt-5.4 / medium
+  Session: 3ebd9d5d-80aa-4580-bb8b-37bc51dc7090
+
+===== runs recurring =====
+Always-on runs for job-d7c0a330:
+- run-536984f2
+  Outcome: completed
+  Model: openai-codex / gpt-5.4 / medium
+  Session: 8cc0a640-334a-404c-be27-cebf5d0d7733
+
+===== jobs after second inspection =====
+Always-on jobs:
+- job-5e70e71d
+  Agent: ao-4b5e04d0
+  Instruction: Once evidence job
+  Status: completed
+- job-d7c0a330
+  Agent: ao-4b5e04d0
+  Instruction: Recurring evidence job
+  Status: completed

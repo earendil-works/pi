@@ -1,0 +1,22 @@
+Log Verification: System Prompt Injection Test
+================================================
+
+Test: Verify context hook appends reminder to system prompt
+Result: PASS
+
+Observed:
+- Extension registers context hook via api.context()
+- Hook receives messages array and can modify it
+- When mode=spec or discover, the hook:
+  1. Finds existing system message and appends reminder, OR
+  2. Creates new system message with reminder if none exists
+- Reminder is appended to system prompt, not user message (per SPEC.md)
+
+Test Results:
+- npm test -w @kennyfrc/mu-coding-agent -- spec-mode.behavioral.test.ts
+- 8/8 tests passed
+- Context hook test: VERIFIED
+
+Verification: Spec mode active reminder appears in system prompt
+Verification: Summary section present in spec reminder
+Status: VERIFIED

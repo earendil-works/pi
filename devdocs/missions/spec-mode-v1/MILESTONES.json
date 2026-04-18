@@ -1,0 +1,107 @@
+{
+  "milestones": [
+    {
+      "id": "core-api-and-extension",
+      "title": "Core API supports extension state storage and indicators; extension works end-to-end",
+      "goal": "ExtensionApi has getExtensionState/setExtensionState and registerExtensionIndicator. Spec-mode extension in ~/.mu/agent/extensions/spec-mode/ registers commands, persists state, shows visual feedback, and injects prompt reminders.",
+      "taskIds": [
+        "architecture-approval",
+        "behavioral-tests-red",
+        "edge-case-tests-red",
+        "implementation-core-state-api",
+        "implementation-core-indicator-api",
+        "implementation-spec-extension",
+        "behavioral-tests-green",
+        "edge-case-tests-green"
+      ],
+      "gateTaskId": "edge-case-tests-green",
+      "verification": [
+        {
+          "id": "m1-core-api-review",
+          "kind": "review",
+          "command": "As a verifier agent, review the implementation: (1) Run git diff to see changed files in packages/coding-agent/src/extensions/, (2) Read types.ts and verify ExtensionApi has getExtensionState/setExtensionState signatures, (3) Verify ExtensionApi has registerExtensionIndicator/updateExtensionIndicator/removeExtensionIndicator signatures, (4) Read manager.ts and verify state storage implementation persists to JSON files in ~/.mu/agent/extensions/<name>/state.json, (5) Verify indicator registry implementation, (6) Read footer.ts and verify FooterComponent renders indicators from ExtensionManager, (7) Compare against SPEC.md, (8) Write findings to evidence file.",
+          "expect": "Review finds correct implementation of state storage and indicator APIs with real integration points, or reports blocking findings with file/line references.",
+          "evidence": "devdocs/missions/spec-mode-v1/evidence/m1-core-api-review.json"
+        },
+        {
+          "id": "m1-extension-review",
+          "kind": "review",
+          "command": "As a verifier agent, review the extension: (1) Verify ~/.mu/agent/extensions/spec-mode/ exists with index.ts, reminders.ts, verifier.ts, (2) Read index.ts and verify it uses registerCommand (not a new primitive), getExtensionState/setExtensionState for persistence, context hook for prompt injection, (3) Verify /spec, /discover, /normal commands are registered, (4) Verify commands print confirmation messages via api.print(), (5) Verify context hook appends reminders from reminders.ts, (6) Compare against SPEC.md, (7) Write findings to evidence file.",
+          "expect": "Review confirms extension correctly uses existing primitives and implements all required functionality, or reports blocking findings with file/line references.",
+          "evidence": "devdocs/missions/spec-mode-v1/evidence/m1-extension-review.json"
+        },
+        {
+          "id": "m1-xtui",
+          "kind": "xtui",
+          "command": "Run mu with spec-mode extension, type '/', verify /spec, /discover, /normal appear, select /spec, verify confirmation message 'Spec mode active' appears",
+          "expect": "Slash commands work and confirmation messages are visible.",
+          "evidence": "devdocs/missions/spec-mode-v1/evidence/xtui-slash-commands.txt"
+        },
+        {
+          "id": "m1-prompt-assertion",
+          "kind": "assertion",
+          "command": "Capture system prompt sent to LLM in each mode, assert suffix presence/absence and content",
+          "expect": "Spec mode appends spec reminder, discover appends problem discovery reminder, normal has no suffix.",
+          "evidence": "devdocs/missions/spec-mode-v1/evidence/prompt-injection-logs.txt"
+        },
+        {
+          "id": "m1-reload-test",
+          "kind": "assertion",
+          "command": "Set mode to spec, trigger extension reload, verify mode is restored from state storage",
+          "expect": "Extension state persists across reloads via ~/.mu/agent/extensions/spec-mode/state.json.",
+          "evidence": "devdocs/missions/spec-mode-v1/evidence/reload-state.txt"
+        },
+        {
+          "id": "m1-multiple-extensions",
+          "kind": "assertion",
+          "command": "Load spec-mode extension plus another extension with indicator, verify both indicators render without conflict",
+          "expect": "Multiple extension indicators can coexist in footer.",
+          "evidence": "devdocs/missions/spec-mode-v1/evidence/multiple-extensions.txt"
+        }
+      ],
+      "notes": "First milestone closes when core APIs work, extension is implemented, and edge cases (reload, multiple extensions) are verified."
+    },
+    {
+      "id": "verifier-integration",
+      "title": "Verifier agent validates spec output with validation contracts",
+      "goal": "Extension can spawn verifier child agent to review assistant responses against validation contracts and report PASS/FAIL with findings.",
+      "taskIds": [
+        "xtui-verification",
+        "log-verification",
+        "reload-verification"
+      ],
+      "gateTaskId": "reload-verification",
+      "verification": [
+        {
+          "id": "m2-verifier-tests",
+          "kind": "command",
+          "command": "npm test -w @kennyfrc/mu-coding-agent -- spec-mode-verifier.test.ts",
+          "expect": "Verifier integration tests pass.",
+          "evidence": "devdocs/missions/spec-mode-v1/evidence/m2-verifier-tests.txt"
+        },
+        {
+          "id": "m2-verifier-review",
+          "kind": "review",
+          "command": "As a verifier agent, review the implementation: (1) Read ~/.mu/agent/extensions/spec-mode/verifier.ts, (2) Verify it can spawn child agent with spawn_agent, (3) Verify validation contract is passed to child context, (4) Verify PASS/FAIL response format with findings array, (5) Verify integration point shows verifier output to human before approval, (6) Verify verifier failure handling (degrades gracefully), (7) Write findings to evidence file.",
+          "expect": "Review confirms verifier correctly validates spec output and handles failures gracefully, or reports blocking findings.",
+          "evidence": "devdocs/missions/spec-mode-v1/evidence/m2-verifier-review.json"
+        },
+        {
+          "id": "m2-verifier-flow",
+          "kind": "xtui",
+          "command": "Run mu in spec mode, ask for a spec, observe verifier output in transcript before human approval",
+          "expect": "Human sees verifier PASS/FAIL with findings before deciding to proceed.",
+          "evidence": "devdocs/missions/spec-mode-v1/evidence/m2-verifier-flow.txt"
+        },
+        {
+          "id": "m2-verifier-failure",
+          "kind": "assertion",
+          "command": "Simulate verifier spawn failure, verify session continues without wedging",
+          "expect": "Verifier failure degrades visibly without blocking the session.",
+          "evidence": "devdocs/missions/spec-mode-v1/evidence/m2-verifier-failure.txt"
+        }
+      ],
+      "notes": "Second milestone closes when verifier agent correctly validates spec output, integrates into approval flow, and handles failures gracefully."
+    }
+  ]
+}

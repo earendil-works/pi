@@ -1,0 +1,16 @@
+
+> @kennyfrc/mu-coding-agent@0.24.145 test
+> vitest --run always-on-schedule.red.test.ts always-on-reconciliation-tick.red.test.ts always-on-restart-recovery.red.test.ts
+
+
+ RUN  v3.2.4 /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+
+ ✓ test/always-on-schedule.red.test.ts (1 test) 43ms
+ ✓ test/always-on-restart-recovery.red.test.ts (2 tests) 47ms
+ ✓ test/always-on-reconciliation-tick.red.test.ts (3 tests) 67ms
+
+ Test Files  3 passed (3)
+      Tests  6 passed (6)
+   Start at  23:08:45
+   Duration  1.04s (transform 441ms, setup 1.45s, collect 894ms, tests 157ms, environment 0ms, prepare 202ms)
+

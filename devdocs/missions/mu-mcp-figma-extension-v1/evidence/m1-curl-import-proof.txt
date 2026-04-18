@@ -1,0 +1,9 @@
+{
+  "figma": {
+    "url": "https://mcp.figma.com/mcp"
+  },
+  "serverNames": [
+    "RepoPrompt",
+    "figma"
+  ]
+}

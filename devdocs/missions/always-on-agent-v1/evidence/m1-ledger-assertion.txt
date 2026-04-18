@@ -1,0 +1,8 @@
+Ledger assertion passed.
+Ledger path: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-m1-ledger-bnmje4bw/config/always-on/agents.jsonl
+Current default agent: agent-two
+Facts:
+{"agentId": "ao-477482c9", "modelId": "gpt-5.4", "provider": "openai-codex", "thinkingLevel": "medium", "timestamp": "2026-03-31T14:10:22.681Z", "type": "agent_created", "workspacePath": "/var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-m1-ledger-bnmje4bw/workspace"}
+{"agentId": "ao-477482c9", "timestamp": "2026-03-31T14:10:22.681Z", "type": "workspace_default_set"}
+{"agentId": "agent-two", "modelId": "gpt-5.4", "provider": "openai-codex", "thinkingLevel": "low", "timestamp": "2026-03-31T14:10:25.013Z", "type": "agent_created", "workspacePath": "/var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-m1-ledger-bnmje4bw/workspace"}
+{"agentId": "agent-two", "timestamp": "2026-03-31T14:10:27.081Z", "type": "workspace_default_set"}

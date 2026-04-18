@@ -1,0 +1,15 @@
+Artifact memory XTUI verification
+Transcript summary
+- write => stored
+- edit => stored
+- apply_patch => stored
+- bash artifact => stored
+- bash no artifact => skipped
+Stored entries: 4
+tool:write :: /private/var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-m2-xtui-ws-dKhlZD/src/artifact.ts
+tool:edit :: /private/var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-m2-xtui-ws-dKhlZD/src/artifact.ts
+tool:apply_patch :: /private/var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-m2-xtui-ws-dKhlZD/src/added.ts
+tool:bash :: /private/var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-m2-xtui-ws-dKhlZD/dist/output.txt
+Workspace memory projection
+- [artifact] Successfully wrote 31 bytes to
+- [artifact] (no output)

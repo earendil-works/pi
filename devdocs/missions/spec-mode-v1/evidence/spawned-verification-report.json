@@ -1,0 +1,14 @@
+{
+  "mission_complete": true,
+  "tasks_done": "12/12",
+  "checks_passed": [
+    "All TASKS.json tasks are done (verified with python3)",
+    "npm run check passed",
+    "npm test -w @kennyfrc/mu-coding-agent -- spec-mode passed",
+    "Spec-mode extension directory exists at ~/.mu/agent/extensions/spec-mode/",
+    "All evidence files referenced by MILESTONES.json exist in devdocs/missions/spec-mode-v1/evidence/"
+  ],
+  "checks_failed": [],
+  "missing_evidence": [],
+  "summary": "Mission verification passed: 12/12 tasks are done, required repo checks are green, the spec-mode extension exists, and all milestone evidence files are present."
+}

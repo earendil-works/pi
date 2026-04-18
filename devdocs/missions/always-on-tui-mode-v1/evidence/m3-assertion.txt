@@ -1,0 +1,5 @@
+PASS
+- `packages/coding-agent/src/tui/tui-renderer.ts` now refreshes tools and prompt through a mode-aware path, not a model-only path.
+- While `composerMode === "always-on"`, the renderer augments the tool surface with `always_on_snapshot` and `always_on_submit`.
+- `/always-on` caches the pre-mode tools/system prompt, and `/always-on-exit` restores them.
+- Plain text in always-on mode is handled before normal chat model/API-key validation and is submitted as immediate always-on work.

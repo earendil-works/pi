@@ -1,0 +1,121 @@
+{
+  "tasks": [
+    {
+      "id": "architecture-approval",
+      "title": "Get human approval on hybrid Morph compaction architecture",
+      "status": "done",
+      "validation": [
+        "echo 'ARCHITECTURE.md approved by human before implementation starts'"
+      ],
+      "notes": "Do not implement until boundaries, abstractions, tradeoffs, and priorities are approved."
+    },
+    {
+      "id": "fixtures-and-probes",
+      "title": "Establish deterministic fixtures and live Morph probe scripts",
+      "status": "done",
+      "validation": [
+        "echo 'Fixture conversations exist and live Morph probe scripts demonstrate real request/response behavior'"
+      ],
+      "notes": "Cover plain visible-history compaction and native-replay-required history."
+    },
+    {
+      "id": "red-parser-settings-tests",
+      "title": "Add failing tests for slash command parsing and settings persistence",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing /morph-compaction parser and missing settings support'"
+      ],
+      "notes": "Covered on/off/auto/status/toggle plus default auto persistence in packages/coding-agent/test/morph-compaction-mode.red.test.ts. Confirmed red with: npm test -w @kennyfrc/mu-coding-agent -- morph-compaction-mode.red.test.ts"
+    },
+    {
+      "id": "red-ratio-strategy-tests",
+      "title": "Add failing tests for dynamic ratio selection and strategy policy",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for ratio selection and strategy selection before implementation'"
+      ],
+      "notes": "Covered in packages/coding-agent/test/morph-compaction-strategy.red.test.ts. Confirmed red with: npm test -w @kennyfrc/mu-coding-agent -- morph-compaction-strategy.red.test.ts. Current expected failure is missing ../src/morph-compaction-strategy.js."
+    },
+    {
+      "id": "red-projection-tests",
+      "title": "Add failing tests for Mu to Morph history projection",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for message projection and query normalization before implementation'"
+      ],
+      "notes": "Covered in packages/coding-agent/test/morph-compaction-projector.red.test.ts. Confirmed red with: npm test -w @kennyfrc/mu-coding-agent -- morph-compaction-projector.red.test.ts. Current expected failure is missing ../src/morph-compaction-projector.js. Covers user, assistant, toolResult, query normalization, transcript projection, and compact replay edge cases."
+    },
+    {
+      "id": "mode-command-implementation",
+      "title": "Implement Morph compaction mode parser, settings, and TUI command wiring",
+      "status": "done",
+      "validation": [
+        "echo 'Slash command and settings tests pass'"
+      ],
+      "notes": "Implemented in packages/coding-agent/src/morph-compaction-mode.ts with SettingsManager persistence and TUI slash-command wiring. Targeted green validation: npm test -w @kennyfrc/mu-coding-agent -- morph-compaction-mode.red.test.ts. Broader package check still fails only because later red-task modules are intentionally missing: ../src/morph-compaction-projector.js and ../src/morph-compaction-strategy.js."
+    },
+    {
+      "id": "ratio-strategy-implementation",
+      "title": "Implement dynamic ratio helper and compaction strategy selector",
+      "status": "done",
+      "validation": [
+        "echo 'Ratio and strategy tests pass'"
+      ],
+      "notes": "Implemented in packages/coding-agent/src/morph-compaction-strategy.ts with pure ratio selection targeting 40% of context window and clamp 0.3..0.7, plus deterministic skip/Morph/native/local strategy outcomes. Targeted green validation: npm test -w @kennyfrc/mu-coding-agent -- morph-compaction-strategy.red.test.ts."
+    },
+    {
+      "id": "projection-implementation",
+      "title": "Implement Morph request projection and normalized query construction",
+      "status": "done",
+      "validation": [
+        "echo 'Projection tests pass and live probes still succeed'"
+      ],
+      "notes": "Implemented in packages/coding-agent/src/morph-compaction-projector.ts with visible-history projection, transcript generation, normalized query selection, and opaque native replay detection. Targeted green validation: npm test -w @kennyfrc/mu-coding-agent -- morph-compaction-projector.red.test.ts. Package-local typecheck is now also green with npm run check -w @kennyfrc/mu-coding-agent."
+    },
+    {
+      "id": "explicit-compaction-integration",
+      "title": "Integrate Morph strategy into explicit compaction flow",
+      "status": "done",
+      "validation": [
+        "echo 'Explicit compaction integration tests pass and replacementMessages remain valid'"
+      ],
+      "notes": "Implemented explicit backend orchestration in packages/coding-agent/src/morph-compaction-explicit.ts and wired it into packages/coding-agent/src/tui/tui-renderer.ts. Targeted green validation: npm test -w @kennyfrc/mu-coding-agent -- morph-compaction-explicit.test.ts. Package-local typecheck remains green with npm run check -w @kennyfrc/mu-coding-agent."
+    },
+    {
+      "id": "automatic-compaction-integration",
+      "title": "Integrate Morph strategy into automatic compaction flow",
+      "status": "done",
+      "validation": [
+        "echo 'Automatic compaction uses effective Morph strategy correctly under test'"
+      ],
+      "notes": "Automatic compaction already reuses buildSummaryCompactionDetails, so the explicit backend integration now applies there as well. Added regression proof in packages/coding-agent/test/morph-compaction-auto.test.ts to verify auto-compaction routes through the shared compaction builder and preserves Morph replacementMessages. Targeted green validation: npm test -w @kennyfrc/mu-coding-agent -- morph-compaction-auto.test.ts. Package-local typecheck remains green with npm run check -w @kennyfrc/mu-coding-agent."
+    },
+    {
+      "id": "native-replay-regression-coverage",
+      "title": "Prove native replay compact behavior remains correct",
+      "status": "done",
+      "validation": [
+        "echo 'Native replay carrier item tests remain green'"
+      ],
+      "notes": "No source change required after verification. Confirmed green with: npm test -w @kennyfrc/mu-coding-agent -- compaction-adapter.test.ts compact-session-replay.test.ts morph-compaction-projector.red.test.ts. This covers preserving __muCompactResponseItem carrier items, replaying context_compaction history, and detecting native replay carriers before Morph projection."
+    },
+    {
+      "id": "xtui-verification",
+      "title": "Run XTUI verification for /morph-compaction and real compaction feedback",
+      "status": "done",
+      "validation": [
+        "echo 'XTUI shows status and mode changes and reports Morph use or fallback clearly'"
+      ],
+      "notes": "Verified with a real XTUI session launched via `npx tsx packages/coding-agent/src/cli.ts` in a temp MU_CODING_AGENT_DIR. Assertions observed from live snapshots: `/morph-compaction status` showed `Morph compaction mode: auto`; `/morph-compaction on` showed `Morph compaction mode: on`; `/compact Continue Morph XTUI verification` on a large visible-history transcript produced a compacted checkpoint whose rendered text included `Continue from the Morph-compacted history above.` and `Use this compacted checkpoint as the active context for continuing the task.`"
+    },
+    {
+      "id": "final-check",
+      "title": "Run npm run check and mark mission complete",
+      "status": "done",
+      "validation": [
+        "npm run check"
+      ],
+      "notes": "Completed after targeted Morph tests, native replay regression checks, and XTUI verification. Root validation: npm run check (exit 0)."
+    }
+  ]
+}

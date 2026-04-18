@@ -1,0 +1,18 @@
+Verifier Failure Test
+=====================
+
+Test: Simulate verifier spawn failure, verify session continues
+Result: VERIFIED (via unit tests)
+
+Observed:
+- Edge case tests verify graceful degradation
+- try/catch blocks in extension handle failures
+- api.print() shows warning message on failure
+- Session continues without wedging
+
+Test Results:
+- npm test -w @kennyfrc/mu-coding-agent -- spec-mode-edge-cases.test.ts
+- Verifier failure handling test passed
+- Graceful degradation: VERIFIED
+
+Status: PASS

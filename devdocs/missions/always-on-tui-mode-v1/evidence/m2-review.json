@@ -1,0 +1,18 @@
+{
+  "status": "PASS",
+  "summary": "`/always-on` is now a real built-in TUI mode with explicit state and visible composer treatment.",
+  "findings": [
+    {
+      "severity": "info",
+      "message": "Added built-in `/always-on` and `/always-on-exit` slash commands in `packages/coding-agent/src/tui/tui-renderer.ts`."
+    },
+    {
+      "severity": "info",
+      "message": "Introduced explicit `composerMode` state in `packages/coding-agent/src/tui/tui-renderer.ts` instead of inferring always-on mode from extension-indicator labels."
+    },
+    {
+      "severity": "info",
+      "message": "`getComposerMetaLabel()` and `updateEditorBorderColor()` now reflect always-on mode visibly without changing normal chat behavior."
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+$ MU_CODING_AGENT_DIR=<temp> mu always-on create --workspace <workspace> --provider openai-codex --model gpt-5.4 --thinking low
+Created always-on agent ao-8dc2294a
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/tmp.dxufrOMgtj/workspace
+Model: openai-codex / gpt-5.4 / low
+Global default: yes
+Always-on agent ao-8dc2294a
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/tmp.dxufrOMgtj/workspace
+Model: openai-codex / gpt-5.4 / low
+Enabled: yes
+Global default: yes
+
+$ MU_CODING_AGENT_DIR=<temp> mu always-on send --provider openai-codex --model gpt-5.4 --thinking medium "<instruction>"
+Queued always-on job job-11b9d943
+Agent: ao-8dc2294a
+Instruction: Summarize the workspace README
+Run: run-a78c43b4
+Session: 1128a71d-9c3b-4cc6-a697-e2b0320fb83e
+Outcome: completed
+Model: openai-codex / gpt-5.4 / medium
+
+$ MU_CODING_AGENT_DIR=<temp> mu always-on jobs
+Always-on jobs:
+- job-11b9d943
+  Agent: ao-8dc2294a
+  Instruction: Summarize the workspace README
+  Status: completed
+
+$ MU_CODING_AGENT_DIR=<temp> mu always-on runs job-11b9d943
+Always-on runs for job-11b9d943:
+- run-a78c43b4
+  Outcome: completed
+  Model: openai-codex / gpt-5.4 / medium
+  Session: 1128a71d-9c3b-4cc6-a697-e2b0320fb83e

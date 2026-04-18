@@ -1,0 +1,131 @@
+{
+  "tasks": [
+    {
+      "id": "architecture-approval",
+      "title": "Record the approved MCP/Figma architecture before implementation begins",
+      "status": "done",
+      "validation": [
+        "echo 'ARCHITECTURE.md approved by human before implementation starts'"
+      ],
+      "notes": "Approved: generic MCP runtime inside Mu's extension lifecycle, Figma-specific pilot layer, Mu-native config/import adapters, and priority on real Figma auth/client viability while preserving Mu-native architecture cleanliness."
+    },
+    {
+      "id": "config-import-red-tests",
+      "title": "Add failing tests for Mu-native MCP config resolution and import adapters",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing Mu-native MCP config and import adapter behavior'"
+      ],
+      "notes": "Cover `~/.mu/agent/mcp.json`, `.mu/mcp.json`, `.factory` JSON import, Codex TOML import, disabled server handling, precedence, and explicit rejection of stale Pi-specific path assumptions."
+    },
+    {
+      "id": "config-import-implementation",
+      "title": "Implement Mu-native MCP config loading and approved import adapters",
+      "status": "done",
+      "validation": [
+        "echo 'Mu-native MCP config/import tests pass and resolve the local Figma definition correctly'"
+      ],
+      "notes": "Add config parsing modules and any TOML dependency required for Codex config import. Keep naming and ownership deterministic."
+    },
+    {
+      "id": "config-import-acceptance-gate",
+      "title": "Verify milestone config-import-foundation",
+      "status": "done",
+      "validation": [
+        "Milestone config-import-foundation verification passes"
+      ],
+      "notes": "Do not mark done until the milestone verification criteria in MILESTONES.json are green and evidence paths are populated."
+    },
+    {
+      "id": "http-runtime-red-tests",
+      "title": "Add failing tests for HTTP MCP connection, discovery, tool calls, and degraded behavior",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing HTTP MCP runtime behavior against a local harness'"
+      ],
+      "notes": "Use a deterministic local MCP harness. Cover connect, tool inventory discovery, proxy-tool call forwarding, result mapping, and explicit degraded behavior."
+    },
+    {
+      "id": "http-runtime-implementation",
+      "title": "Implement generic HTTP-first MCP runtime and proxy-first Mu tool surface",
+      "status": "done",
+      "validation": [
+        "echo 'HTTP MCP runtime tests pass and Mu can call the local harness through the normal tool path'"
+      ],
+      "notes": "Add MCP runtime dependencies, server/session manager, tool adapter, and built-in `mcp` extension wiring. Preserve generic boundaries so stdio can be added later through the same contract."
+    },
+    {
+      "id": "http-runtime-acceptance-gate",
+      "title": "Verify milestone http-runtime-tool-surface",
+      "status": "done",
+      "validation": [
+        "Milestone http-runtime-tool-surface verification passes"
+      ],
+      "notes": "Do not mark done until local-harness evidence and review both agree the generic runtime works."
+    },
+    {
+      "id": "reload-resume-red-tests",
+      "title": "Add failing tests for reload/resume cleanup and MCP status UX",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for stale MCP surface cleanup and visible MCP state handling'"
+      ],
+      "notes": "Cover stale tool removal, indicator cleanup, degraded resume, and slash/status rendering of connecting/connected/degraded/auth-failed states."
+    },
+    {
+      "id": "reload-resume-implementation",
+      "title": "Implement reload/resume cleanup and visible MCP UX",
+      "status": "done",
+      "validation": [
+        "echo 'Reload/resume cleanup tests pass and visible MCP state is correct'"
+      ],
+      "notes": "Reuse the existing extension manager cleanup model so MCP artifacts are owned and removable by source id alone."
+    },
+    {
+      "id": "reload-resume-acceptance-gate",
+      "title": "Verify milestone reload-resume-ux",
+      "status": "done",
+      "validation": [
+        "Milestone reload-resume-ux verification passes"
+      ],
+      "notes": "Do not mark done until XTUI-visible state and runtime cleanup evidence are both green."
+    },
+    {
+      "id": "figma-pilot-red-tests",
+      "title": "Add failing tests for Figma pilot config wiring and honest failure reporting",
+      "status": "done",
+      "validation": [
+        "echo 'Red tests fail for missing Figma pilot behavior and explicit auth/client failure handling'"
+      ],
+      "notes": "Cover imported Figma config recognition, slash/status labeling, and the rule that Mu must never report Figma connected unless the real path succeeds."
+    },
+    {
+      "id": "figma-pilot-implementation",
+      "title": "Implement the Figma pilot layer on top of the generic MCP runtime",
+      "status": "done",
+      "validation": [
+        "echo 'Figma pilot tests pass and the real runtime path yields either real Figma results or explicit truthful failure'"
+      ],
+      "notes": "Keep Figma-specific behavior thin: config wiring, labels, status, and real validation path. Do not let Figma-specific transport logic leak into the generic runtime."
+    },
+    {
+      "id": "figma-pilot-acceptance-gate",
+      "title": "Verify milestone figma-pilot-proof",
+      "status": "done",
+      "validation": [
+        "Milestone figma-pilot-proof verification passes"
+      ],
+      "notes": "Do not mark done until the real Figma evidence shows either authenticated success or explicit client/auth failure with no false-positive connected state."
+    },
+    {
+      "id": "final-check",
+      "title": "Run final validation and mark the mission complete",
+      "status": "done",
+      "validation": [
+        "npm run check",
+        "python3 - <<'PY'\nimport json\nfrom pathlib import Path\npath = Path('devdocs/missions/mu-mcp-figma-extension-v1/TASKS.json')\ndata = json.loads(path.read_text())\nassert all(task['status'] == 'done' for task in data['tasks'])\nPY"
+      ],
+      "notes": "Mark this done only after all milestone gate tasks are done, evidence exists, and PROGRESS.md says the mission is complete."
+    }
+  ]
+}

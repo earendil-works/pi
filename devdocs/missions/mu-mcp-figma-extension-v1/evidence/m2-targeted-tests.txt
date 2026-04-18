@@ -1,0 +1,14 @@
+
+> @kennyfrc/mu-coding-agent@0.24.186 test
+> vitest --run test/mcp-http-runtime.test.ts
+
+
+ RUN  v3.2.4 /Users/kennyfrc/Documents/code/work/pi-mono-kenn-dev/packages/coding-agent
+
+ ✓ test/mcp-http-runtime.test.ts (4 tests) 45ms
+
+ Test Files  1 passed (1)
+      Tests  4 passed (4)
+   Start at  12:45:08
+   Duration  831ms (transform 313ms, setup 539ms, collect 6ms, tests 45ms, environment 0ms, prepare 90ms)
+

@@ -1,0 +1,51 @@
+{
+  "milestoneId": "follow-up-history-threads",
+  "status": "pass",
+  "checkedAt": "2026-04-01T00:16:38Z",
+  "summary": "The follow-up/history milestone matches the approved scope: follow-up work items preserve parent job/session lineage, omitted follow-up tuples inherit the prior effective run tuple, jobs/runs/thread surfaces render that lineage clearly, and completion/blocker outcomes dispatch visible notifications.",
+  "checks": [
+    {
+      "name": "follow-up lineage and tuple inheritance",
+      "status": "pass",
+      "evidence": [
+        "packages/coding-agent/src/always-on/supervisor.ts:842",
+        "packages/coding-agent/src/always-on/supervisor.ts:871",
+        "packages/coding-agent/src/always-on/supervisor.ts:872",
+        "packages/coding-agent/src/always-on/supervisor.ts:873"
+      ],
+      "notes": "createFollowUpWorkItem() resolves the parent job, derives the prior effective run tuple when no override is supplied, and persists related work-item/session links on the new follow-up work item."
+    },
+    {
+      "name": "jobs runs and thread surfaces expose lineage without a special transcript format",
+      "status": "pass",
+      "evidence": [
+        "packages/coding-agent/src/always-on/supervisor.ts:932",
+        "packages/coding-agent/src/always-on/supervisor.ts:958",
+        "packages/coding-agent/src/always-on/supervisor.ts:983"
+      ],
+      "notes": "The inspection helpers render follow-up ancestry and related session ids directly from the ledgers, and thread inspection delegates to the existing SessionManager transcript lookup instead of inventing a separate always-on transcript store."
+    },
+    {
+      "name": "follow-up and thread CLI surfaces are explicit and inspectable",
+      "status": "pass",
+      "evidence": [
+        "packages/coding-agent/src/always-on/cli.ts:601",
+        "packages/coding-agent/src/always-on/cli.ts:713",
+        "packages/coding-agent/src/always-on/cli.ts:789"
+      ],
+      "notes": "The CLI exposes mu always-on follow-up <job-id> ... and mu always-on thread <run-id>, prints parent job/session references, and surfaces the effective provider/model/thinking tuple used for the new run."
+    },
+    {
+      "name": "completion blocker and needs-user outcomes trigger visible notifications",
+      "status": "pass",
+      "evidence": [
+        "packages/coding-agent/src/always-on/supervisor.ts:560",
+        "packages/coding-agent/src/always-on/supervisor.ts:589",
+        "packages/coding-agent/src/always-on/supervisor.ts:689"
+      ],
+      "notes": "Notification payloads are emitted only for completed, blocked, and needs_user terminal outcomes, matching the milestone requirement for visible completion/blocker notifications."
+    }
+  ],
+  "findings": [],
+  "conclusion": "The follow-up-history-threads milestone is review-green."
+}

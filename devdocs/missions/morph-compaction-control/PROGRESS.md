@@ -1,0 +1,83 @@
+# Progress
+
+## Status
+- complete
+
+## Next Smallest Step
+- Mission complete.
+
+## Notes
+- Mission created to cover both the `/morph-compaction` slash command and Morph-backed compaction strategy overall.
+- `fixtures-and-probes` is complete.
+- Durable fixtures now live under `devdocs/missions/morph-compaction-control/fixtures/README.md`.
+- Live probe materialization lives under `devdocs/missions/morph-compaction-control/scripts/materialize-live-probes.mjs`.
+- Verified live Morph request shapes against the real API after `source ~/.bashrc` exposed `MORPH_API_KEY`:
+  - `POST /v1/compact` with `{ messages, query, compression_ratio, preserve_recent }`
+  - `POST /v1/compact` with `{ input, query, compression_ratio, preserve_recent }`
+  - `POST /v1/responses` with `{ model: "morph-compactor", input, query }`
+- Latest live probe results on the committed visible-history fixture:
+  - message mode: `input_tokens=13617`, `output_tokens=8500`, `compression_ratio=0.624`
+  - transcript mode: `input_tokens=13616`, `output_tokens=7923`, `compression_ratio=0.582`
+  - verbatim check: `nonVerbatimLineCount=0`
+- Default persisted Morph compaction mode is intended to be `auto`.
+- Recommended architecture is hybrid:
+  - Morph for safe textual compaction paths
+  - native OpenAI/Codex compact for opaque replay-sensitive paths
+  - local fallback summary when remote paths are unavailable
+- Dynamic ratio selection is intended to target `40%` of the current model context window using heuristic token estimation and clamp to `0.3..0.7`.
+- Verification must include:
+  - targeted automated tests
+  - live Morph API probes
+  - XTUI verification of the real slash command path
+- Architecture approval is complete.
+- No spec-level blockers remain.
+- Added `packages/coding-agent/test/morph-compaction-mode.red.test.ts` to lock the first red slice.
+- Confirmed red with `npm test -w @kennyfrc/mu-coding-agent -- morph-compaction-mode.red.test.ts`.
+- Current expected failures are:
+  - missing `../src/morph-compaction-mode.js`
+  - missing `SettingsManager.getMorphCompactionMode()`
+  - missing `SettingsManager.setMorphCompactionMode()`
+- Added `packages/coding-agent/test/morph-compaction-strategy.red.test.ts` to lock the ratio-selection and strategy-policy slice.
+- Confirmed red with `npm test -w @kennyfrc/mu-coding-agent -- morph-compaction-strategy.red.test.ts`.
+- Current expected failure for the new slice is:
+  - missing `../src/morph-compaction-strategy.js`
+- Added `packages/coding-agent/test/morph-compaction-projector.red.test.ts` to lock the projection and query-normalization slice.
+- Confirmed red with `npm test -w @kennyfrc/mu-coding-agent -- morph-compaction-projector.red.test.ts`.
+- Current expected failure for the new slice is:
+  - missing `../src/morph-compaction-projector.js`
+- Completed `mode-command-implementation`.
+- Added `packages/coding-agent/src/morph-compaction-mode.ts` for the mode type, default, parser, and command application helper.
+- Added `SettingsManager.getMorphCompactionMode()` / `setMorphCompactionMode()` with default `auto` persistence.
+- Wired `/morph-compaction` into `packages/coding-agent/src/tui/tui-renderer.ts` built-in slash commands and command handling.
+- Confirmed green for the first implementation slice with `npm test -w @kennyfrc/mu-coding-agent -- morph-compaction-mode.red.test.ts`.
+- A broader package-local `npm run check -w @kennyfrc/mu-coding-agent` still fails only because later planned red-task modules are intentionally absent:
+  - missing `../src/morph-compaction-projector.js`
+  - missing `../src/morph-compaction-strategy.js`
+- Completed `ratio-strategy-implementation`.
+- Added `packages/coding-agent/src/morph-compaction-strategy.ts` for pure ratio selection and compaction backend policy.
+- Confirmed green for the second implementation slice with `npm test -w @kennyfrc/mu-coding-agent -- morph-compaction-strategy.red.test.ts`.
+- Completed `projection-implementation`.
+- Added `packages/coding-agent/src/morph-compaction-projector.ts` for Morph-safe message projection, transcript generation, query normalization, and native replay detection.
+- Confirmed green for the third implementation slice with `npm test -w @kennyfrc/mu-coding-agent -- morph-compaction-projector.red.test.ts`.
+- Package-local typecheck is now green with `npm run check -w @kennyfrc/mu-coding-agent`.
+- Completed `explicit-compaction-integration`.
+- Added `packages/coding-agent/src/morph-compaction-explicit.ts` to orchestrate explicit backend selection across Morph, native replay compact, and local summary fallback.
+- Wired explicit `/compact` summary mode through the new strategy executor in `packages/coding-agent/src/tui/tui-renderer.ts`.
+- Added `packages/coding-agent/test/morph-compaction-explicit.test.ts` to cover Morph success, local fallback, native replay preference, and Morph failure fallback.
+- Confirmed green for the explicit integration slice with `npm test -w @kennyfrc/mu-coding-agent -- morph-compaction-explicit.test.ts`.
+- Reconfirmed package-local typecheck is green with `npm run check -w @kennyfrc/mu-coding-agent`.
+- Completed `automatic-compaction-integration`.
+- Added `packages/coding-agent/test/morph-compaction-auto.test.ts` to verify auto-compaction routes through the shared summary-compaction builder and preserves Morph replacementMessages into the auto handoff path.
+- Confirmed green for the automatic integration slice with `npm test -w @kennyfrc/mu-coding-agent -- morph-compaction-auto.test.ts`.
+- Reconfirmed package-local typecheck is green with `npm run check -w @kennyfrc/mu-coding-agent`.
+- Completed `native-replay-regression-coverage` through targeted verification.
+- Confirmed green with `npm test -w @kennyfrc/mu-coding-agent -- compaction-adapter.test.ts compact-session-replay.test.ts morph-compaction-projector.red.test.ts`.
+- This verified native compact carrier preservation, replay of `context_compaction` session entries, and detection of native replay carriers before Morph projection.
+- Completed `xtui-verification`.
+- Ran a real XTUI session via `npx tsx packages/coding-agent/src/cli.ts` under a temp `MU_CODING_AGENT_DIR`.
+- Verified user-visible command output for:
+  - `/morph-compaction status` -> `Morph compaction mode: auto`
+  - `/morph-compaction on` -> `Morph compaction mode: on`
+  - `/compact Continue Morph XTUI verification` -> rendered compacted checkpoint text including `Continue from the Morph-compacted history above.`
+- Completed `final-check`.
+- Root validation passed with `npm run check`.

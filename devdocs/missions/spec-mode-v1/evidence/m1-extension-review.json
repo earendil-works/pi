@@ -1,0 +1,36 @@
+{
+  "findings": [
+    {
+      "title": "Extension uses registerCommand (not new primitive)",
+      "body": "Verified in ~/.mu/agent/extensions/spec-mode/index.ts: Uses existing registerCommand API for /spec, /discover, /normal commands",
+      "severity": "blocking",
+      "files": ["~/.mu/agent/extensions/spec-mode/index.ts:70-100"]
+    },
+    {
+      "title": "Extension uses getExtensionState/setExtensionState",
+      "body": "Verified: Extension calls api.getExtensionState('mode') on load and api.setExtensionState('mode', mode) in command handlers",
+      "severity": "blocking",
+      "files": ["~/.mu/agent/extensions/spec-mode/index.ts:25", "~/.mu/agent/extensions/spec-mode/index.ts:85"]
+    },
+    {
+      "title": "Extension uses context hook for prompt injection",
+      "body": "Verified: Extension registers api.context() hook that appends reminders to user messages",
+      "severity": "blocking",
+      "files": ["~/.mu/agent/extensions/spec-mode/index.ts:30-50"]
+    },
+    {
+      "title": "Commands print confirmation messages via api.print()",
+      "body": "Verified: All three commands use ctx.print() with color options to show confirmation",
+      "severity": "blocking",
+      "files": ["~/.mu/agent/extensions/spec-mode/index.ts:80-95"]
+    },
+    {
+      "title": "Context hook appends reminders from reminders.ts",
+      "body": "Verified: Context hook imports getModeReminder from ./reminders.js and appends to message content",
+      "severity": "blocking",
+      "files": ["~/.mu/agent/extensions/spec-mode/reminders.ts", "~/.mu/agent/extensions/spec-mode/index.ts:38"]
+    }
+  ],
+  "overall_correctness": "correct",
+  "overall_summary": "Extension correctly uses existing ExtensionApi primitives (registerCommand, getExtensionState/setExtensionState, context hook) and implements all required functionality per SPEC.md."
+}

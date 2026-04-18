@@ -1,0 +1,15 @@
+PASS
+XTUI captured the refactored always-on CLI surface in a live shell session.
+Observed lines:
+- kennyfrc MU_CODING_AGENT_DIR=/var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-ao-m1-xtui-nzvrto5b npx tsx packages/co
+- ding-agent/src/cli.ts always-on create --workspace /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-ao-m1-xtui-nzvrto
+- 5b/workspace --provider openai-codex --model gpt-5.4 --thinking medium
+- Created always-on agent ao-7e9e95ba
+- Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-ao-m1-xtui-nzvrto5b/workspace
+- Model: openai-codex / gpt-5.4 / medium
+- Global default: yes
+- Always-on agent ao-7e9e95ba
+- Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-ao-m1-xtui-nzvrto5b/workspace
+- Model: openai-codex / gpt-5.4 / medium
+- Enabled: yes
+- Global default: yes

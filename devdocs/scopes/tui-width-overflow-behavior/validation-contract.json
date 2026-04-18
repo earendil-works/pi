@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "scopeName": "tui-width-overflow-behavior",
+  "createdAt": "2026-04-01T07:58:17.746Z",
+  "updatedAt": "2026-04-01T07:58:17.746Z",
+  "objectiveHistory": [
+    "Lock down expected overflow behavior for TUI single-line controls so the recommendation matches intended UX"
+  ],
+  "entries": [
+    {
+      "id": "truncate-default",
+      "surface": "TUI rows",
+      "commandOrAction": "Clamp every rendered row to terminal width",
+      "expect": "No crash; stable layout; selectors show truncated labels/descriptions"
+    },
+    {
+      "id": "mixed-default",
+      "surface": "TUI rows",
+      "commandOrAction": "Keep horizontal scrolling for editors/inputs, truncate non-editable rows, and keep a final TUI-level clamp as a safety net",
+      "expect": "No crash; good UX for editing and selectors"
+    }
+  ],
+  "answers": [
+    {
+      "questionId": "overflow-ux",
+      "topic": "overflow behavior",
+      "prompt": "When a single-line TUI row would exceed terminal width, what should be the default behavior?",
+      "answer": "Choose the most performant option",
+      "source": "custom",
+      "field": "preferredOverflowBehavior"
+    }
+  ],
+  "notes": [
+    "Discovery found real overflows in SelectList, Input, and coding-agent session selector, plus inconsistent TUI enforcement between initial full render and later diff renders."
+  ]
+}

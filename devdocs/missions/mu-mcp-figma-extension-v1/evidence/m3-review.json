@@ -1,0 +1,22 @@
+{
+  "milestoneId": "reload-resume-ux",
+  "verdict": "pass",
+  "summary": "The current MCP slice owns its command/tool/indicator through the built-in extension system, so unload removes those artifacts and the visible status label formatting is explicit.",
+  "findings": [
+    {
+      "severity": "info",
+      "message": "The built-in extension registry now includes `preset:mcp`, which registers the `mcp` command, `mcp` tool, and `mcp-status` indicator under one source id.",
+      "file": "packages/coding-agent/src/extensions/presets/mcp.ts"
+    },
+    {
+      "severity": "info",
+      "message": "Reload/unload cleanup relies on existing extension-manager ownership rules, and the targeted tests prove those MCP artifacts disappear when the source id is unloaded.",
+      "file": "packages/coding-agent/test/mcp-reload-runtime.test.ts"
+    },
+    {
+      "severity": "info",
+      "message": "The visible MCP status label is now explicitly formatted for connected, degraded, and auth_failed states.",
+      "file": "packages/coding-agent/src/mcp/status.ts"
+    }
+  ]
+}

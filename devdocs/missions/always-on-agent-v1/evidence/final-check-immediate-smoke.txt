@@ -1,0 +1,98 @@
+===== create =====
+Created always-on agent ao-f61df33b
+Workspace: /Users/kennyfrc/work/ai21
+Model: openai-codex / gpt-5.4 / medium
+Global default: yes
+Always-on agent ao-f61df33b
+Workspace: /Users/kennyfrc/work/ai21
+Model: openai-codex / gpt-5.4 / medium
+Enabled: yes
+Global default: yes
+
+===== send =====
+Queued always-on job job-78c96f2d
+Agent: ao-f61df33b
+Instruction: Working in ~/work/ai21, locate the Postmark mailer service and use it to send a real email to kenn@askmonolith.com confirming that the always-on-agent-v1 final-check task is done.
+
+Requirements:
+- use the existing Ruby service at services/postmark_mailer_service.rb
+- load .env with Dotenv so POSTMARK_API_TOKEN is available at runtime
+- create any temporary .erb template outside the repo (for example under /tmp)
+- print explicit success or failure from the command you run
+- clean up temporary files after sending
+- do not modify repository files
+- do not ask for human input
+
+Use this subject line exactly:
+[mu always-on smoke test] always-on-agent-v1 final check complete
+
+The body should clearly say that the mission is complete and that this email was sent by the always-on smoke test from the ai21 workspace.
+Run: run-ea9633a0
+Session: e3334166-abf0-4d8d-9dd5-a5e15c0270a5
+Outcome: running
+Model: openai-codex / gpt-5.4 / medium
+
+===== runs =====
+Always-on runs for job-78c96f2d:
+Instruction: Working in ~/work/ai21, locate the Postmark mailer service and use it to send a real email to kenn@askmonolith.com confirming that the always-on-agent-v1 final-check task is done.
+
+Requirements:
+- use the existing Ruby service at services/postmark_mailer_service.rb
+- load .env with Dotenv so POSTMARK_API_TOKEN is available at runtime
+- create any temporary .erb template outside the repo (for example under /tmp)
+- print explicit success or failure from the command you run
+- clean up temporary files after sending
+- do not modify repository files
+- do not ask for human input
+
+Use this subject line exactly:
+[mu always-on smoke test] always-on-agent-v1 final check complete
+
+The body should clearly say that the mission is complete and that this email was sent by the always-on smoke test from the ai21 workspace.
+- run-ea9633a0
+  Outcome: completed
+  Model: openai-codex / gpt-5.4 / medium
+  Session: e3334166-abf0-4d8d-9dd5-a5e15c0270a5
+
+===== thread =====
+Always-on thread for run run-ea9633a0
+
+Work item: job-78c96f2d
+
+Session: e3334166-abf0-4d8d-9dd5-a5e15c0270a5
+
+## User
+<user_message_time>Wednesday, April 1, 2026 at 8:23 AM GMT+8</user_message_time>
+Working in ~/work/ai21, locate the Postmark mailer service and use it to send a real email to kenn@askmonolith.com confirming that the always-on-agent-v1 final-check task is done.
+
+Requirements:
+- use the existing Ruby service at services/postmark_mailer_service.rb
+- load .env with Dotenv so POSTMARK_API_TOKEN is available at runtime
+- create any temporary .erb template outside the repo (for example under /tmp)
+- print explicit success or failure from the command you run
+- clean up temporary files after sending
+- do not modify repository files
+- do not ask for human input
+
+Use this subject line exactly:
+[mu always-on smoke test] always-on-agent-v1 final check complete
+
+The body should clearly say that the mission is complete and that this email was sent by the always-on smoke test from the ai21 workspace.
+
+## Assistant
+Done — sent the email successfully to `kenn@askmonolith.com` using `services/postmark_mailer_service.rb`.
+
+Result:
+- `SUCCESS: sent Postmark email to kenn@askmonolith.com with subject: [mu always-on smoke test] always-on-agent-v1 final check complete`
+
+Notes:
+- Loaded `.env` with `Dotenv`
+- Used a temporary `.erb` template under `/tmp`
+- Cleaned up temporary files
+- Did not modify repository files
+
+===== ids =====
+job_id=job-78c96f2d
+run_id=run-ea9633a0
+session_id=e3334166-abf0-4d8d-9dd5-a5e15c0270a5
+mu_config_dir=/var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/tmp.JENCisQ5Co/config

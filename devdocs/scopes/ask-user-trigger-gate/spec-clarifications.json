@@ -1,0 +1,54 @@
+{
+  "version": 1,
+  "scopeName": "ask-user-trigger-gate",
+  "createdAt": "2026-03-30T08:13:54.667Z",
+  "updatedAt": "2026-03-30T08:13:54.667Z",
+  "objectiveHistory": [
+    "Finalize the implementation plan for making ask_user trigger deterministically when specification or validation-contract details are materially ambiguous"
+  ],
+  "items": [
+    {
+      "id": "fix-boundary",
+      "topic": "boundary",
+      "question": "Where should the primary fix live?",
+      "answer": "Prompt/guideline changes only",
+      "source": "option",
+      "updatedAt": "2026-03-30T08:13:54.667Z"
+    },
+    {
+      "id": "trigger-policy",
+      "topic": "trigger policy",
+      "question": "When should ask_user be required?",
+      "answer": "Broadly whenever the assistant is uncertain",
+      "source": "option",
+      "updatedAt": "2026-03-30T08:13:54.667Z"
+    },
+    {
+      "id": "reuse-scope",
+      "topic": "scope reuse",
+      "question": "If prior ask_user answers already exist for the active scope, what should happen?",
+      "answer": "Always ask again for fresh confirmation",
+      "source": "option",
+      "updatedAt": "2026-03-30T08:13:54.667Z"
+    },
+    {
+      "id": "cancel-behavior",
+      "topic": "cancel behavior",
+      "question": "If the user cancels the ask_user dialog, what should the assistant do next?",
+      "answer": "Stop and report that clarification was cancelled",
+      "source": "option",
+      "updatedAt": "2026-03-30T08:13:54.667Z"
+    },
+    {
+      "id": "verification-surface",
+      "topic": "validation contract",
+      "question": "What verification should be required for this change?",
+      "answer": "Tests plus manual xtui verification",
+      "source": "option",
+      "updatedAt": "2026-03-30T08:13:54.667Z"
+    }
+  ],
+  "notes": [
+    "I recommend adding a deterministic pre-response gate in coding-agent orchestration rather than relying on prompt wording alone."
+  ]
+}

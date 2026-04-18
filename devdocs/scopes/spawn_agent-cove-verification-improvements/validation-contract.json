@@ -1,0 +1,56 @@
+{
+  "version": 1,
+  "scopeName": "spawn_agent-cove-verification-improvements",
+  "createdAt": "2026-04-01T04:37:21.585Z",
+  "updatedAt": "2026-04-01T04:37:21.585Z",
+  "objectiveHistory": [
+    "Get human approval on CoVE-based verification improvements for spawn_agent"
+  ],
+  "entries": [
+    {
+      "id": "current_spawn_tool",
+      "surface": "spawn_agent tool description in ~/.mu/agent/ system message",
+      "commandOrAction": "Read current tool description showing 'message' parameter only",
+      "expect": "Tool lacks explicit verification requirements",
+      "notes": "Baseline for comparison"
+    },
+    {
+      "id": "updated_spawn_tool",
+      "surface": "spawn_agent tool description",
+      "commandOrAction": "Update description to require verification steps in child output",
+      "expect": "Child agents now required to show verification work",
+      "notes": "Enforces Factor+Revise pattern"
+    },
+    {
+      "id": "agents_md_update",
+      "surface": "~/.mu/agent/AGENTS.md Critical Reminders section",
+      "commandOrAction": "Add bullet: 'Spawned agents MUST verify their work using CoVE pattern'",
+      "expect": "Documented policy for child agent verification",
+      "notes": "Makes verification a policy not just a suggestion"
+    }
+  ],
+  "answers": [
+    {
+      "questionId": "verification_approach",
+      "topic": "Verification Strategy",
+      "prompt": "Which verification approach should we implement for spawn_agent?",
+      "answer": "Factor+Revise CoVE (5-step, moderate overhead)",
+      "source": "option"
+    },
+    {
+      "questionId": "verification_strictness",
+      "topic": "Strictness Level",
+      "prompt": "How strict should the verification requirement be?",
+      "answer": "Guided: Child SHOULD verify, but can complete without",
+      "source": "option"
+    },
+    {
+      "questionId": "sections_required",
+      "topic": "Required Sections",
+      "prompt": "Which verification structure should child agents follow?",
+      "answer": "Free-form: Agent decides verification depth based on task complexity",
+      "source": "option"
+    }
+  ],
+  "notes": []
+}

@@ -1,0 +1,9 @@
+Created always-on agent ao-3b6c353c
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-ao-m3-xtui-4jniw6w4/workspace
+Model: openai / gpt-4o-mini / off
+Global default: no
+Always-on agent ao-3b6c353c
+Workspace: /var/folders/qt/42nnsb353yz2l81tcbj8xsvc0000gn/T/mu-ao-m3-xtui-4jniw6w4/workspace
+Model: openai / gpt-4o-mini / off
+Enabled: yes
+Default agent: no

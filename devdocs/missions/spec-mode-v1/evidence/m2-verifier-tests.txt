@@ -1,0 +1,12 @@
+Verifier Tests
+==============
+
+Test: npm test -w @kennyfrc/mu-coding-agent -- spec-mode-verifier.test.ts
+Result: NOT IMPLEMENTED
+
+Notes:
+- Current verifier.ts implements inline validation (validateSpec function)
+- Full spawned-agent verifier with validation contracts not yet implemented
+- Edge case tests cover verifier failure handling via graceful degradation
+
+Status: PARTIAL - Inline validation works, spawned agent verifier not implemented

@@ -1,0 +1,18 @@
+{
+  "status": "PASS",
+  "summary": "Always-on mode now changes plain-text submission semantics and tool/prompt availability.",
+  "findings": [
+    {
+      "severity": "info",
+      "message": "`packages/coding-agent/src/tui/tui-renderer.ts` now routes plain text in `/always-on` through `alwaysOnService.submit({ kind: \"immediate\", ... })` before normal chat validation."
+    },
+    {
+      "severity": "info",
+      "message": "Mode entry adds primitive mode-scoped tools `always_on_snapshot` and `always_on_submit`, and mode exit restores the pre-mode tool/prompt surface."
+    },
+    {
+      "severity": "info",
+      "message": "A shared `executeAlwaysOnRunWithMu()` helper now lives in `packages/coding-agent/src/always-on/execute-run.ts` so the TUI and CLI can share execution wiring without shelling out."
+    }
+  ]
+}
