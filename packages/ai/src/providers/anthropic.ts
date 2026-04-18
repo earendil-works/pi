@@ -467,18 +467,29 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 };
 
 /**
- * Check if a model supports adaptive thinking (Opus 4.6+, Sonnet 4.6)
+ * Check if a model supports adaptive thinking (Claude 4.6+)
  */
 function supportsAdaptiveThinking(modelId: string): boolean {
-	// Adaptive-thinking model IDs (with or without date suffix)
 	return (
 		modelId.includes("opus-4-6") ||
 		modelId.includes("opus-4.6") ||
 		modelId.includes("opus-4-7") ||
 		modelId.includes("opus-4.7") ||
 		modelId.includes("sonnet-4-6") ||
-		modelId.includes("sonnet-4.6")
+		modelId.includes("sonnet-4.6") ||
+		modelId.includes("sonnet-4-7") ||
+		modelId.includes("sonnet-4.7") ||
+		modelId.includes("haiku-4-7") ||
+		modelId.includes("haiku-4.7")
 	);
+}
+
+/**
+ * Check if a model belongs to the Claude 4.7 family.
+ * Claude 4.7 rejects temperature, top_p, and top_k parameters.
+ */
+function isClaude47(modelId: string): boolean {
+	return modelId.includes("4-7") || modelId.includes("4.7");
 }
 
 /**
@@ -679,8 +690,8 @@ function buildParams(
 		];
 	}
 
-	// Temperature is incompatible with extended thinking (adaptive or budget-based).
-	if (options?.temperature !== undefined && !options?.thinkingEnabled) {
+	// Temperature is incompatible with extended thinking and with Claude 4.7 models.
+	if (options?.temperature !== undefined && !options?.thinkingEnabled && !isClaude47(model.id)) {
 		params.temperature = options.temperature;
 	}
 
