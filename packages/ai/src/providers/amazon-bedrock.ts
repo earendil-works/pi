@@ -182,7 +182,10 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				modelId: model.id,
 				messages: convertMessages(context, model, cacheRetention),
 				system: buildSystemPrompt(context.systemPrompt, model, cacheRetention),
-				inferenceConfig: { maxTokens: options.maxTokens, temperature: options.temperature },
+				inferenceConfig: {
+					...(options.maxTokens !== undefined && { maxTokens: options.maxTokens }),
+					...(options.temperature !== undefined && { temperature: options.temperature }),
+				},
 				toolConfig: convertToolConfig(context.tools, options.toolChoice),
 				additionalModelRequestFields: buildAdditionalModelRequestFields(model, options),
 				...(options.requestMetadata !== undefined && { requestMetadata: options.requestMetadata }),
