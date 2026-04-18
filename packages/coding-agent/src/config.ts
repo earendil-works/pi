@@ -33,7 +33,12 @@ export function detectInstallMethod(): InstallMethod {
 
 	const resolvedPath = `${__dirname}\0${process.execPath || ""}`.toLowerCase();
 
-	if (resolvedPath.includes("/pnpm/") || resolvedPath.includes("/.pnpm/") || resolvedPath.includes("\\pnpm\\")) {
+	if (
+		resolvedPath.includes("/pnpm/") ||
+		resolvedPath.includes("/.pnpm/") ||
+		resolvedPath.includes("\\pnpm\\") ||
+		resolvedPath.includes("\\.pnpm\\")
+	) {
 		return "pnpm";
 	}
 	if (resolvedPath.includes("/yarn/") || resolvedPath.includes("/.yarn/") || resolvedPath.includes("\\yarn\\")) {
