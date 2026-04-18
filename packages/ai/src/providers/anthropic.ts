@@ -467,7 +467,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 };
 
 /**
- * Check if a model supports adaptive thinking (Opus 4.6+, Sonnet 4.6)
+ * Check if a model supports adaptive thinking (Opus 4.6+, Sonnet 4.6+, Haiku 4.7+)
  */
 function supportsAdaptiveThinking(modelId: string): boolean {
 	// Adaptive-thinking model IDs (with or without date suffix)
@@ -477,7 +477,26 @@ function supportsAdaptiveThinking(modelId: string): boolean {
 		modelId.includes("opus-4-7") ||
 		modelId.includes("opus-4.7") ||
 		modelId.includes("sonnet-4-6") ||
-		modelId.includes("sonnet-4.6")
+		modelId.includes("sonnet-4.6") ||
+		modelId.includes("sonnet-4-7") ||
+		modelId.includes("sonnet-4.7") ||
+		modelId.includes("haiku-4-7") ||
+		modelId.includes("haiku-4.7")
+	);
+}
+
+/**
+ * Check if a model is part of the Claude 4.7 family.
+ * Claude 4.7 rejects temperature/top_p/top_k with a 400 error, even without thinking.
+ */
+function isClaude47(modelId: string): boolean {
+	return (
+		modelId.includes("opus-4-7") ||
+		modelId.includes("opus-4.7") ||
+		modelId.includes("sonnet-4-7") ||
+		modelId.includes("sonnet-4.7") ||
+		modelId.includes("haiku-4-7") ||
+		modelId.includes("haiku-4.7")
 	);
 }
 
@@ -680,7 +699,8 @@ function buildParams(
 	}
 
 	// Temperature is incompatible with extended thinking (adaptive or budget-based).
-	if (options?.temperature !== undefined && !options?.thinkingEnabled) {
+	// Claude 4.7 family rejects temperature/top_p/top_k entirely, even when thinking is disabled.
+	if (options?.temperature !== undefined && !options?.thinkingEnabled && !isClaude47(model.id)) {
 		params.temperature = options.temperature;
 	}
 
