@@ -2,11 +2,8 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { AuthStorage } from "../src/core/auth-storage.js";
 import { ExtensionRunner } from "../src/core/extensions/runner.js";
-import { ModelRegistry } from "../src/core/model-registry.js";
 import { DefaultResourceLoader } from "../src/core/resource-loader.js";
-import { SessionManager } from "../src/core/session-manager.js";
 import { SettingsManager } from "../src/core/settings-manager.js";
 import type { Skill } from "../src/core/skills.js";
 import { createSyntheticSourceInfo } from "../src/core/source-info.js";
@@ -197,15 +194,12 @@ Project skill`,
 			expect(extensionsResult.extensions).toHaveLength(2);
 			expect(extensionsResult.errors.some((e) => e.error.includes('Command "/deploy" conflicts'))).toBe(false);
 
-			const sessionManager = SessionManager.inMemory();
-			const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
-			const modelRegistry = ModelRegistry.create(authStorage);
 			const runner = new ExtensionRunner(
 				extensionsResult.extensions,
 				extensionsResult.runtime,
 				cwd,
-				sessionManager,
-				modelRegistry,
+				{} as never,
+				{} as never,
 			);
 
 			expect(runner.getCommand("deploy:1")?.description).toBe("project deploy");
@@ -274,6 +268,48 @@ Content`,
 
 			const { agentsFiles } = loader.getAgentsFiles();
 			expect(agentsFiles.some((f) => f.path.includes("AGENTS.md"))).toBe(true);
+		});
+
+		it("should discover a custom context filename when configured", async () => {
+			const workspaceDir = join(tempDir, "workspace");
+			const nestedCwd = join(workspaceDir, "project");
+			mkdirSync(nestedCwd, { recursive: true });
+
+			writeFileSync(join(agentDir, "my_agents.md"), "# Global Guidelines\n\nUse my_agents.md.");
+			writeFileSync(join(workspaceDir, "my_agents.md"), "# Workspace Guidelines\n\nUse workspace my_agents.md.");
+			writeFileSync(join(nestedCwd, "AGENTS.md"), "# Default Guidelines\n\nIgnore AGENTS.md.");
+
+			const loader = new DefaultResourceLoader({
+				cwd: nestedCwd,
+				agentDir,
+				agentsFile: "my_agents.md",
+			});
+			await loader.reload();
+
+			const { agentsFiles } = loader.getAgentsFiles();
+			expect(agentsFiles.map((file) => file.path)).toEqual([
+				join(agentDir, "my_agents.md"),
+				join(workspaceDir, "my_agents.md"),
+			]);
+		});
+
+		it("should load one explicit context file path when configured", async () => {
+			const explicitDir = join(tempDir, "explicit");
+			mkdirSync(explicitDir, { recursive: true });
+			const explicitPath = join(explicitDir, "my_agents.md");
+			writeFileSync(explicitPath, "# Explicit Guidelines\n\nOnly this file should load.");
+			writeFileSync(join(agentDir, "AGENTS.md"), "# Global Guidelines\n\nIgnore global AGENTS.");
+			writeFileSync(join(cwd, "AGENTS.md"), "# Project Guidelines\n\nIgnore project AGENTS.");
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				agentsFile: explicitPath,
+			});
+			await loader.reload();
+
+			const { agentsFiles } = loader.getAgentsFiles();
+			expect(agentsFiles.map((file) => file.path)).toEqual([explicitPath]);
 		});
 
 		it("should skip AGENTS.md and CLAUDE.md discovery when noContextFiles is true", async () => {
@@ -557,15 +593,12 @@ export default function(pi: ExtensionAPI) {
 			const extensionsResult = loader.getExtensions();
 			expect(extensionsResult.extensions[0]?.path).toBe(explicitExtPath);
 
-			const sessionManager = SessionManager.inMemory();
-			const authStorage = AuthStorage.create(join(tempDir, "auth-explicit.json"));
-			const modelRegistry = ModelRegistry.create(authStorage);
 			const runner = new ExtensionRunner(
 				extensionsResult.extensions,
 				extensionsResult.runtime,
 				cwd,
-				sessionManager,
-				modelRegistry,
+				{} as never,
+				{} as never,
 			);
 
 			expect(runner.getCommand("deploy:1")?.description).toBe("explicit command");

@@ -14,6 +14,7 @@ export interface Args {
 	provider?: string;
 	model?: string;
 	apiKey?: string;
+	agentsFile?: string;
 	systemPrompt?: string;
 	appendSystemPrompt?: string[];
 	thinking?: ThinkingLevel;
@@ -86,6 +87,8 @@ export function parseArgs(args: string[]): Args {
 			result.model = args[++i];
 		} else if (arg === "--api-key" && i + 1 < args.length) {
 			result.apiKey = args[++i];
+		} else if (arg === "--agents-file" && i + 1 < args.length) {
+			result.agentsFile = args[++i];
 		} else if (arg === "--system-prompt" && i + 1 < args.length) {
 			result.systemPrompt = args[++i];
 		} else if (arg === "--append-system-prompt" && i + 1 < args.length) {
@@ -187,6 +190,13 @@ export function parseArgs(args: string[]): Args {
 		}
 	}
 
+	if (result.noContextFiles && result.agentsFile) {
+		result.diagnostics.push({
+			type: "error",
+			message: "--agents-file cannot be combined with --no-context-files",
+		});
+	}
+
 	return result;
 }
 
@@ -219,6 +229,7 @@ ${chalk.bold("Options:")}
   --provider <name>              Provider name (default: google)
   --model <pattern>              Model pattern or ID (supports "provider/id" and optional ":<thinking>")
   --api-key <key>                API key (defaults to env vars)
+  --agents-file <name|path>      Custom context filename to discover, or an explicit context file path
   --system-prompt <text>         System prompt (default: coding assistant prompt)
   --append-system-prompt <text>  Append text or file contents to the system prompt (can be used multiple times)
   --mode <mode>                  Output mode: text (default), json, or rpc
@@ -295,6 +306,12 @@ ${chalk.bold("Examples:")}
 
   # Read-only mode (no file modifications possible)
   ${APP_NAME} --tools read,grep,find,ls -p "Review the code in src/"
+
+  # Use a custom context filename
+  ${APP_NAME} --agents-file my_agents.md
+
+  # Use one explicit context file path
+  ${APP_NAME} --agents-file ./.pi/my_agents.md
 
   # Export a session file to HTML
   ${APP_NAME} --export ~/${CONFIG_DIR_NAME}/agent/sessions/--path--/session.jsonl

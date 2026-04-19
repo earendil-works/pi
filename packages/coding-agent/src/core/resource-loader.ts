@@ -38,6 +38,8 @@ export interface ResourceLoader {
 	reload(): Promise<void>;
 }
 
+const DEFAULT_CONTEXT_FILE_CANDIDATES = ["AGENTS.md", "CLAUDE.md"] as const;
+
 function resolvePromptInput(input: string | undefined, description: string): string | undefined {
 	if (!input) {
 		return undefined;
@@ -55,34 +57,57 @@ function resolvePromptInput(input: string | undefined, description: string): str
 	return input;
 }
 
-function loadContextFileFromDir(dir: string): { path: string; content: string } | null {
-	const candidates = ["AGENTS.md", "CLAUDE.md"];
+function isExplicitContextFilePath(value: string): boolean {
+	return value.includes("/") || value.includes("\\") || value.startsWith(".") || value.startsWith("~");
+}
+
+function loadContextFile(filePath: string): { path: string; content: string } | null {
+	if (!existsSync(filePath)) {
+		return null;
+	}
+
+	try {
+		return {
+			path: filePath,
+			content: readFileSync(filePath, "utf-8"),
+		};
+	} catch (error) {
+		console.error(chalk.yellow(`Warning: Could not read ${filePath}: ${error}`));
+		return null;
+	}
+}
+
+function loadContextFileFromDir(dir: string, candidates: readonly string[]): { path: string; content: string } | null {
 	for (const filename of candidates) {
-		const filePath = join(dir, filename);
-		if (existsSync(filePath)) {
-			try {
-				return {
-					path: filePath,
-					content: readFileSync(filePath, "utf-8"),
-				};
-			} catch (error) {
-				console.error(chalk.yellow(`Warning: Could not read ${filePath}: ${error}`));
-			}
+		const contextFile = loadContextFile(join(dir, filename));
+		if (contextFile) {
+			return contextFile;
 		}
 	}
 	return null;
 }
 
 export function loadProjectContextFiles(
-	options: { cwd?: string; agentDir?: string } = {},
+	options: {
+		cwd?: string;
+		agentDir?: string;
+		contextFileCandidates?: readonly string[];
+		explicitContextFile?: string;
+	} = {},
 ): Array<{ path: string; content: string }> {
 	const resolvedCwd = options.cwd ?? process.cwd();
 	const resolvedAgentDir = options.agentDir ?? getAgentDir();
+	const contextFileCandidates = options.contextFileCandidates ?? DEFAULT_CONTEXT_FILE_CANDIDATES;
+
+	if (options.explicitContextFile) {
+		const contextFile = loadContextFile(options.explicitContextFile);
+		return contextFile ? [contextFile] : [];
+	}
 
 	const contextFiles: Array<{ path: string; content: string }> = [];
 	const seenPaths = new Set<string>();
 
-	const globalContext = loadContextFileFromDir(resolvedAgentDir);
+	const globalContext = loadContextFileFromDir(resolvedAgentDir, contextFileCandidates);
 	if (globalContext) {
 		contextFiles.push(globalContext);
 		seenPaths.add(globalContext.path);
@@ -94,7 +119,7 @@ export function loadProjectContextFiles(
 	const root = resolve("/");
 
 	while (true) {
-		const contextFile = loadContextFileFromDir(currentDir);
+		const contextFile = loadContextFileFromDir(currentDir, contextFileCandidates);
 		if (contextFile && !seenPaths.has(contextFile.path)) {
 			ancestorContextFiles.unshift(contextFile);
 			seenPaths.add(contextFile.path);
@@ -127,6 +152,7 @@ export interface DefaultResourceLoaderOptions {
 	noPromptTemplates?: boolean;
 	noThemes?: boolean;
 	noContextFiles?: boolean;
+	agentsFile?: string;
 	systemPrompt?: string;
 	appendSystemPrompt?: string[];
 	extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
@@ -165,6 +191,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private noPromptTemplates: boolean;
 	private noThemes: boolean;
 	private noContextFiles: boolean;
+	private contextFileCandidates: string[];
+	private explicitContextFile?: string;
 	private systemPromptSource?: string;
 	private appendSystemPromptSource?: string[];
 	private extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
@@ -223,6 +251,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.noPromptTemplates = options.noPromptTemplates ?? false;
 		this.noThemes = options.noThemes ?? false;
 		this.noContextFiles = options.noContextFiles ?? false;
+		const agentsFile = options.agentsFile?.trim();
+		this.explicitContextFile =
+			agentsFile && isExplicitContextFilePath(agentsFile) ? this.resolveResourcePath(agentsFile) : undefined;
+		this.contextFileCandidates =
+			agentsFile && !this.explicitContextFile ? [agentsFile] : [...DEFAULT_CONTEXT_FILE_CANDIDATES];
 		this.systemPromptSource = options.systemPrompt;
 		this.appendSystemPromptSource = options.appendSystemPrompt;
 		this.extensionsOverride = options.extensionsOverride;
@@ -452,7 +485,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 		}
 
 		const agentsFiles = {
-			agentsFiles: this.noContextFiles ? [] : loadProjectContextFiles({ cwd: this.cwd, agentDir: this.agentDir }),
+			agentsFiles: this.noContextFiles
+				? []
+				: loadProjectContextFiles({
+						cwd: this.cwd,
+						agentDir: this.agentDir,
+						contextFileCandidates: this.contextFileCandidates,
+						explicitContextFile: this.explicitContextFile,
+					}),
 		};
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
 		this.agentsFiles = resolvedAgentsFiles.agentsFiles;

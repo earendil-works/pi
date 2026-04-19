@@ -85,6 +85,11 @@ describe("parseArgs", () => {
 			expect(result.apiKey).toBe("sk-test-key");
 		});
 
+		test("parses --agents-file", () => {
+			const result = parseArgs(["--agents-file", "my_agents.md"]);
+			expect(result.agentsFile).toBe("my_agents.md");
+		});
+
 		test("parses --system-prompt", () => {
 			const result = parseArgs(["--system-prompt", "You are a helpful assistant"]);
 			expect(result.systemPrompt).toBe("You are a helpful assistant");
@@ -240,6 +245,16 @@ describe("parseArgs", () => {
 		test("parses -nc shorthand", () => {
 			const result = parseArgs(["-nc"]);
 			expect(result.noContextFiles).toBe(true);
+		});
+
+		test("reports conflicting --agents-file and --no-context-files", () => {
+			const result = parseArgs(["--agents-file", "my_agents.md", "--no-context-files"]);
+			expect(result.diagnostics).toEqual([
+				{
+					type: "error",
+					message: "--agents-file cannot be combined with --no-context-files",
+				},
+			]);
 		});
 	});
 
