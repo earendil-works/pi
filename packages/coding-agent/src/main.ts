@@ -17,6 +17,7 @@ import { ExtensionManager } from "./extensions/manager.js";
 import { ensureIdentityEnv } from "./identity-env.js";
 import { type MissionLoopResult, runMissionLoop } from "./missions/mission-runner.js";
 import { findModel, getApiKeyForModel, getAvailableModels } from "./model-config.js";
+import { ProcessRegistry } from "./process-registry.js";
 import { loadProjectContextFiles } from "./project-context.js";
 import { buildSystemPrompt as buildSystemPromptFromYaml } from "./prompts/index.js";
 import { setCurrentModel, setCurrentThinkingLevel } from "./runtime-state.js";
@@ -1542,6 +1543,15 @@ export async function main(args: string[]) {
 				console.log(chalk.dim(`  - ${filePath}`));
 			}
 		}
+	}
+
+	// Reconcile process registry with live OS processes on startup
+	try {
+		const registry = new ProcessRegistry();
+		await registry.reconcile();
+		await registry.prune();
+	} catch {
+		// Non-fatal — registry reconciliation should not prevent startup
 	}
 
 	// Route to appropriate mode
