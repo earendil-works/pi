@@ -6,18 +6,10 @@ import { fileURLToPath } from "node:url";
 import type { ThinkingLevel } from "@kennyfrc/mu-agent-core";
 import { type AgentTool, StringEnum } from "@kennyfrc/mu-ai";
 import { Type } from "@sinclair/typebox";
+import { generateProcessName, ProcessRegistry, type ProcessStatus } from "../process-registry.js";
 import { getToolDescription } from "../prompts/index.js";
 import { getCurrentModel, getCurrentThinkingLevel } from "../runtime-state.js";
-import {
-	buildSpawnAgentVerifierPrompt,
-	buildSpawnAgentVerifierSystemPrompt,
-	parseSpawnAgentVerificationReport,
-	type SpawnAgentTerminalResult,
-	type SpawnAgentVerificationReport,
-	type SpawnAgentVerificationRunRequest,
-	VERIFIER_READ_ONLY_TOOLS,
-} from "../spawn-agent-verification.js";
-import { inspectSpawnedAgentSession } from "../spawned-agents.js";
+import { inspectSpawnedAgentSession, type SpawnedAgentStatus } from "../spawned-agents.js";
 import {
 	type ResolvedSpawnAgentRequest,
 	resolveSpawnAgentRequest,
@@ -28,7 +20,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const RPC_START_TIMEOUT_MS = 120_000;
-const RPC_TERMINAL_TIMEOUT_MS = 5 * 60 * 1000;
+
+const registry = new ProcessRegistry();
 
 const missionStartupSchema = Type.Object({
 	type: StringEnum(["mission"] as const, { description: "Startup mode for the child agent." }),
@@ -43,7 +36,7 @@ const missionStartupSchema = Type.Object({
 const contextStartupSchema = Type.Object({
 	type: StringEnum(["context"] as const, { description: "Startup mode for the child agent." }),
 	specPath: Type.String({
-		description: "Required spec file path for validation context. The verifier will check against this spec.",
+		description: "Required spec file path for validation context.",
 	}),
 });
 
@@ -52,22 +45,17 @@ const spawnAgentStartupSchema = Type.Union([missionStartupSchema, contextStartup
 const spawnAgentSchema = Type.Object({
 	message: Type.Optional(Type.String({ description: "Task for the spawned agent (optional when startup provided)." })),
 	startup: Type.Optional(spawnAgentStartupSchema),
-	model: Type.Optional(
-		Type.String({
-			description:
-				"Exact model override in provider/modelId form, e.g., fireworks/accounts/fireworks/routers/kimi-k2p5-turbo",
-		}),
-	),
 	reasoning: Type.Optional(
 		StringEnum(["inherit", "off", "minimal", "low", "medium", "high", "xhigh"] as const, {
 			description: "Reasoning level override.",
 		}),
 	),
-	verificationChecks: Type.Array(Type.String({ description: "A validation contract checklist item." }), {
-		minItems: 1,
-		description:
-			"Required validation contract - the verifier will check worker output against these criteria. Minimum 1 check required.",
-	}),
+	verificationChecks: Type.Optional(
+		Type.Array(Type.String({ description: "A validation contract checklist item." }), {
+			description:
+				"Optional validation contract checklist. If provided, stored as metadata in the process registry.",
+		}),
+	),
 });
 
 interface SpawnAgentMissionStartup {
@@ -91,17 +79,13 @@ interface SpawnAgentRpcMissionInput {
 	missionPath: string;
 }
 
-interface SpawnAgentRpcVerificationInput extends SpawnAgentVerificationRunRequest {
-	type: "verification_run";
-}
-
-type SpawnAgentRpcInput = SpawnAgentRpcPromptInput | SpawnAgentRpcMissionInput | SpawnAgentRpcVerificationInput;
+type SpawnAgentRpcInput = SpawnAgentRpcPromptInput | SpawnAgentRpcMissionInput;
 
 type SpawnAgentStartup = SpawnAgentMissionStartup | SpawnAgentContextStartup;
 
 interface SpawnedRpcChildHandle {
 	details: SpawnAgentDetails;
-	waitForTerminalState: (timeoutMs?: number) => Promise<SpawnAgentTerminalResult>;
+	pid: number;
 	cleanup: () => void;
 }
 
@@ -110,8 +94,6 @@ interface SpawnRpcChildOptions {
 	rpcInput: SpawnAgentRpcInput;
 	signal?: AbortSignal;
 	onProgress?: (chunk: string) => void;
-	systemPrompt?: string;
-	tools?: readonly string[];
 }
 
 export interface SpawnAgentDetails {
@@ -121,51 +103,57 @@ export interface SpawnAgentDetails {
 	effectiveReasoning: string;
 }
 
-export interface SpawnAgentCompositeDetails extends SpawnAgentDetails {
-	worker: SpawnAgentDetails;
-	workerResult: SpawnAgentTerminalResult;
-	verifier: SpawnAgentDetails;
-	verifierResult: SpawnAgentTerminalResult;
-	verificationReport: SpawnAgentVerificationReport;
+export interface SpawnAgentResult {
+	processName: string;
+	sessionId: string;
+	sessionFile: string;
+	effectiveModel: string;
+	effectiveReasoning: string;
+	pid: number;
+	status: "running";
+	verificationChecks?: string[];
 }
 
-type SpawnAgentExecuteDetails = SpawnAgentDetails | SpawnAgentCompositeDetails | undefined;
+type SpawnAgentExecuteDetails = SpawnAgentResult | undefined;
 
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isDeterministicVerifierMode(): boolean {
-	return process.env.VITEST === "true" || process.env.MU_SPAWN_AGENT_DETERMINISTIC_VERIFIER === "1";
+function mapSpawnedStatusToProcessStatus(status: SpawnedAgentStatus): ProcessStatus {
+	switch (status) {
+		case "completed":
+			return "completed";
+		case "error":
+			return "failed";
+		case "aborted":
+			return "killed";
+		case "not_found":
+		case "timed_out":
+			return "exited";
+		default:
+			return "exited";
+	}
 }
 
-async function waitForSpawnedAgentTerminalState(
-	details: SpawnAgentDetails,
-	timeoutMs: number,
-	signal?: AbortSignal,
-): Promise<SpawnAgentTerminalResult> {
-	const deadline = Date.now() + timeoutMs;
-	for (;;) {
-		if (signal?.aborted) {
-			return { status: "timed_out" };
+/**
+ * Fire-and-forget background watcher that polls the spawned agent session
+ * and updates the process registry when it reaches a terminal state.
+ */
+function watchSpawnedAgentStatus(processName: string, sessionId: string, sessionFile: string): void {
+	(async () => {
+		for (;;) {
+			await delay(2000);
+			const inspected = inspectSpawnedAgentSession(sessionId, sessionFile);
+			if (inspected.status !== "running") {
+				const newStatus = mapSpawnedStatusToProcessStatus(inspected.status);
+				await registry.updateStatus(processName, newStatus);
+				break;
+			}
 		}
-		const inspected = inspectSpawnedAgentSession(details.sessionId, details.sessionFile);
-		if (inspected.status !== "running") {
-			return {
-				status: inspected.status,
-				stopReason: inspected.stopReason,
-				text: inspected.text,
-			};
-		}
-		if (Date.now() >= deadline) {
-			return {
-				status: "timed_out",
-				stopReason: inspected.stopReason,
-				text: inspected.text,
-			};
-		}
-		await delay(50);
-	}
+	})().catch(() => {
+		// Silently ignore errors — the registry will be reconciled on next startup
+	});
 }
 
 async function spawnRpcChild(options: SpawnRpcChildOptions): Promise<SpawnedRpcChildHandle> {
@@ -184,12 +172,6 @@ async function spawnRpcChild(options: SpawnRpcChildOptions): Promise<SpawnedRpcC
 
 	if (options.resolved.effectiveReasoning !== "off") {
 		childArgs.push("--thinking", options.resolved.effectiveReasoning);
-	}
-	if (options.systemPrompt) {
-		childArgs.push("--system-prompt", options.systemPrompt);
-	}
-	if (options.tools && options.tools.length > 0) {
-		childArgs.push("--tools", options.tools.join(","));
 	}
 
 	const child = spawn(process.execPath, childArgs, {
@@ -297,32 +279,17 @@ async function spawnRpcChild(options: SpawnRpcChildOptions): Promise<SpawnedRpcC
 		});
 	});
 
+	if (child.pid === undefined) {
+		throw new Error("spawn_agent child process failed to start (no PID)");
+	}
+
 	return {
 		details: startResult,
-		waitForTerminalState: async (timeoutMs: number = RPC_TERMINAL_TIMEOUT_MS) =>
-			waitForSpawnedAgentTerminalState(startResult, timeoutMs, options.signal),
+		pid: child.pid,
 		cleanup: () => {
 			options.signal?.removeEventListener("abort", abortChild);
 			rl.close();
 		},
-	};
-}
-
-function buildVerifierRequest(
-	worker: SpawnAgentDetails,
-	args: SpawnAgentExecuteArgs,
-): SpawnAgentVerificationRunRequest {
-	return {
-		workerSessionId: worker.sessionId,
-		workerSessionFile: worker.sessionFile,
-		missionPath: args.startup?.type === "mission" ? args.startup.missionPath : undefined,
-		specPath:
-			args.startup?.type === "context"
-				? args.startup.specPath
-				: args.startup?.type === "mission"
-					? args.startup.specPath
-					: undefined,
-		verificationChecks: args.verificationChecks,
 	};
 }
 
@@ -334,27 +301,11 @@ function buildPromptMessage(message: string, startup: SpawnAgentStartup | undefi
 	return `${message.trim()}\n\nStartup context:\n- Before doing the task, read the spec file at ${startup.specPath}.\n- Treat that spec file as authoritative context for the delegated work.`;
 }
 
-function normalizeVerificationReport(
-	verifierResult: SpawnAgentTerminalResult,
-	fallbackText: string | undefined,
-): SpawnAgentVerificationReport {
-	const parsed = parseSpawnAgentVerificationReport(fallbackText ?? "");
-	const issues = [...parsed.issues];
-	if (verifierResult.status !== "completed") {
-		issues.unshift(`Verifier session did not complete successfully (status: ${verifierResult.status}).`);
-	}
-	return {
-		status: issues.length === 0 ? parsed.status : "FAIL",
-		issues,
-	};
-}
-
 interface SpawnAgentExecuteArgs {
 	message?: string;
 	startup?: SpawnAgentStartup;
-	model?: string;
 	reasoning?: SpawnAgentReasoning;
-	verificationChecks: string[];
+	verificationChecks?: string[];
 }
 
 export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentExecuteDetails> = {
@@ -375,20 +326,6 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentExecut
 					{
 						type: "text" as const,
 						text: "Error: startup is required. Pass either { type: 'mission', missionPath: '...' } or { type: 'context', specPath: '...' } to provide spec context.",
-					},
-				],
-				details: undefined,
-				isError: true,
-			};
-		}
-
-		// Strict contract: validation contract (verificationChecks) is ALWAYS required
-		if (!args.verificationChecks || args.verificationChecks.length === 0) {
-			return {
-				content: [
-					{
-						type: "text" as const,
-						text: "Error: verificationChecks is required. Pass at least one validation contract check. Verification is mandatory.",
 					},
 				],
 				details: undefined,
@@ -436,7 +373,6 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentExecut
 				parentModel,
 				parentThinkingLevel,
 				message: buildPromptMessage(args.message ?? "", args.startup),
-				model: args.model,
 				reasoning: args.reasoning,
 			});
 		} catch (error) {
@@ -447,7 +383,6 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentExecut
 			};
 		}
 
-		// Strict contract: verification is ALWAYS enabled
 		const workerRpcInput: SpawnAgentRpcInput =
 			args.startup?.type === "mission"
 				? { type: "mission_run", missionPath: args.startup.missionPath }
@@ -460,50 +395,40 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentExecut
 			onProgress,
 		});
 
-		// Strict contract: verification is ALWAYS enabled - no early return
-		const workerResult = await workerHandle.waitForTerminalState();
-		workerHandle.cleanup();
+		// Register in process registry
+		const processName = generateProcessName(
+			"worker",
+			args.startup.type === "mission" ? args.startup.missionPath : (args.message ?? ""),
+		);
 
-		const verifierRequest = buildVerifierRequest(workerHandle.details, args);
-		const verifierHandle = await spawnRpcChild({
-			resolved,
-			rpcInput: isDeterministicVerifierMode()
-				? {
-						type: "verification_run",
-						...verifierRequest,
-					}
-				: {
-						type: "prompt",
-						message: buildSpawnAgentVerifierPrompt(verifierRequest),
-					},
-			signal,
-			onProgress,
-			systemPrompt: isDeterministicVerifierMode() ? undefined : buildSpawnAgentVerifierSystemPrompt(),
-			tools: isDeterministicVerifierMode() ? undefined : VERIFIER_READ_ONLY_TOOLS,
+		const entry = await registry.register({
+			type: "worker",
+			pid: workerHandle.pid,
+			name: processName,
+			sessionId: workerHandle.details.sessionId,
+			sessionFile: workerHandle.details.sessionFile,
+			verificationChecks: args.verificationChecks,
 		});
 
-		const verifierResult = await verifierHandle.waitForTerminalState();
-		verifierHandle.cleanup();
-
-		const verificationReport = normalizeVerificationReport(verifierResult, verifierResult.text);
+		// Start background status watcher (fire-and-forget)
+		watchSpawnedAgentStatus(entry.processName, workerHandle.details.sessionId, workerHandle.details.sessionFile);
 
 		return {
 			content: [
 				{
 					type: "text" as const,
-					text: `Spawned worker ${workerHandle.details.sessionId} and verifier ${verifierHandle.details.sessionId}. Verification ${verificationReport.status}.`,
+					text: `Spawned worker ${workerHandle.details.sessionId} as '${entry.processName}' (pid ${workerHandle.pid}). Status: running. Use wait_agent to check results.`,
 				},
 			],
 			details: {
+				processName: entry.processName,
 				sessionId: workerHandle.details.sessionId,
 				sessionFile: workerHandle.details.sessionFile,
 				effectiveModel: workerHandle.details.effectiveModel,
 				effectiveReasoning: workerHandle.details.effectiveReasoning,
-				worker: workerHandle.details,
-				workerResult,
-				verifier: verifierHandle.details,
-				verifierResult,
-				verificationReport,
+				pid: workerHandle.pid,
+				status: "running" as const,
+				verificationChecks: args.verificationChecks,
 			},
 		};
 	},
