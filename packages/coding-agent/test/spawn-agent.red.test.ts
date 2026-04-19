@@ -34,7 +34,7 @@ describe("spawn_agent red suite", () => {
 		}
 	});
 
-	test("registers a built-in spawn_agent tool with message/model/reasoning parameters", () => {
+	test("registers a built-in spawn_agent tool with message/reasoning parameters", () => {
 		const toolMap = allTools as Record<string, unknown>;
 		const spawnAgentTool = toolMap.spawn_agent as
 			| {
@@ -54,11 +54,10 @@ describe("spawn_agent red suite", () => {
 		const properties = (spawnAgentTool.parameters as { properties?: Record<string, unknown> }).properties;
 		expect(properties).toBeDefined();
 		expect(properties).toHaveProperty("message");
-		expect(properties).toHaveProperty("model");
 		expect(properties).toHaveProperty("reasoning");
 	});
 
-	test("resolves exact provider/model and preserves xhigh for supported models", () => {
+	test("inherits parent model and preserves xhigh for supported models", () => {
 		const parentModel = getModel("openai", "gpt-5.1-codex");
 		expect(parentModel).toBeDefined();
 
@@ -66,16 +65,15 @@ describe("spawn_agent red suite", () => {
 			parentModel: parentModel!,
 			parentThinkingLevel: "medium",
 			message: "delegate this",
-			model: "openai-codex/gpt-5.3-codex",
 			reasoning: "xhigh",
 		});
 
-		expect(resolved.effectiveModel.provider).toBe("openai-codex");
-		expect(resolved.effectiveModel.id).toBe("gpt-5.3-codex");
+		expect(resolved.effectiveModel.provider).toBe("openai");
+		expect(resolved.effectiveModel.id).toBe("gpt-5.1-codex");
 		expect(resolved.effectiveReasoning).toBe("xhigh");
 	});
 
-	test("preserves inherited reasoning when the target model supports it", () => {
+	test("preserves inherited reasoning when the parent model supports it", () => {
 		const parentModel = getModel("openai", "gpt-5.1-codex");
 		expect(parentModel).toBeDefined();
 
@@ -83,12 +81,11 @@ describe("spawn_agent red suite", () => {
 			parentModel: parentModel!,
 			parentThinkingLevel: "high",
 			message: "delegate this",
-			model: "xai/grok-code-fast-1",
 			reasoning: "inherit",
 		});
 
-		expect(resolved.effectiveModel.provider).toBe("xai");
-		expect(resolved.effectiveModel.id).toBe("grok-code-fast-1");
+		expect(resolved.effectiveModel.provider).toBe("openai");
+		expect(resolved.effectiveModel.id).toBe("gpt-5.1-codex");
 		expect(resolved.effectiveReasoning).toBe("high");
 	});
 
@@ -285,7 +282,6 @@ describe("spawn_agent red suite", () => {
 				const result = (await spawnAgentTool.execute("toolcall_spawn_2", {
 					message: "Reply with exactly CHILD_OK and nothing else.",
 					startup: { type: "context", specPath },
-					model: "openai/gpt-5.1-codex",
 					verificationChecks: ["Reply contains CHILD_OK"],
 				})) as {
 					content: Array<{ type: "text"; text: string }>;
@@ -325,7 +321,6 @@ describe("spawn_agent red suite", () => {
 				const result = (await spawnAgentTool.execute("toolcall_spawn_1", {
 					message: "Reply with exactly CHILD_OK and nothing else.",
 					startup: { type: "context", specPath },
-					model: "openai/gpt-5.1-codex",
 					reasoning: "low",
 					verificationChecks: ["Reply contains CHILD_OK"],
 				})) as {
@@ -384,7 +379,6 @@ describe("spawn_agent red suite", () => {
 							"After it finishes, reply with exactly DONE and nothing else.",
 						].join("\n"),
 						startup: { type: "context", specPath },
-						model: "openai/gpt-5.1-codex",
 						reasoning: "off",
 						verificationChecks: ["Command executed successfully", "Reply contains DONE"],
 					},
@@ -439,7 +433,6 @@ describe("spawn_agent red suite", () => {
 							"After it finishes, reply with exactly DONE and nothing else.",
 						].join("\n"),
 						startup: { type: "context", specPath },
-						model: "openai/gpt-5.1-codex",
 						reasoning: "off",
 						verificationChecks: ["Command executed", "Reply contains DONE"],
 					},
