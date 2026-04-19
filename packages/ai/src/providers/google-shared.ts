@@ -7,6 +7,52 @@ import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { transformMessages } from "./transform-messages.js";
 
+function cleanJsonSchemaForAnthropic(obj: any): any {
+    if (!obj || typeof obj !== "object") return obj;
+    if (Array.isArray(obj)) return obj.map(cleanJsonSchemaForAnthropic);
+
+    let result: any = {};
+    for (const [k, v] of Object.entries(obj)) {
+        if (k === "$schema") continue;
+        if (k === "const") {
+            result["enum"] = [v];
+        } else {
+            result[k] = cleanJsonSchemaForAnthropic(v);
+        }
+    }
+
+    if (result.anyOf && Array.isArray(result.anyOf)) {
+        if (result.anyOf.length === 0) {
+            delete result.anyOf;
+        } else {
+            const isAllEnum = result.anyOf.every((item: any) => item && item.enum && Array.isArray(item.enum));
+            if (isAllEnum) {
+                const combinedEnum: any[] = [];
+                for (const item of result.anyOf) {
+                    combinedEnum.push(...item.enum);
+                }
+                if (!result.type && result.anyOf[0] && result.anyOf[0].type) {
+                    result.type = result.anyOf[0].type;
+                } else if (!result.type) {
+                    result.type = typeof combinedEnum[0] === "string" ? "string" : "number";
+                }
+                delete result.anyOf;
+                result.enum = combinedEnum;
+            } else {
+                delete result.anyOf;
+                result.description = (result.description ? result.description + " " : "") + "(Note: Any valid JSON type is accepted here due to schema constraints)";
+                delete result.type;
+            }
+        }
+    }
+
+    if (result.oneOf) delete result.oneOf;
+    if (result.allOf) delete result.allOf;
+
+    return result;
+}
+
+
 type GoogleApiType = "google-generative-ai" | "google-gemini-cli" | "google-vertex";
 
 /**
@@ -251,6 +297,9 @@ export function convertTools(
 	tools: Tool[],
 	useParameters = false,
 ): { functionDeclarations: Record<string, unknown>[] }[] | undefined {
+	if (useParameters) {
+		tools = tools.map(t => ({...t, parameters: cleanJsonSchemaForAnthropic(t.parameters)}));
+	}
 	if (tools.length === 0) return undefined;
 	return [
 		{
