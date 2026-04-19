@@ -283,6 +283,10 @@ function applyModelOverride(model: Model<Api>, override: ModelOverride): Model<A
 /** Clear the config value command cache. Exported for testing. */
 export const clearApiKeyCache = clearConfigValueCache;
 
+export interface ModelRegistryOptions {
+	isTelemetryEnabled?: () => boolean;
+}
+
 /**
  * Model registry - loads and manages models, resolves API keys via AuthStorage.
  */
@@ -292,20 +296,27 @@ export class ModelRegistry {
 	private modelRequestHeaders: Map<string, Record<string, string>> = new Map();
 	private registeredProviders: Map<string, ProviderConfigInput> = new Map();
 	private loadError: string | undefined = undefined;
+	private readonly telemetryEnabledResolver: () => boolean;
 
 	private constructor(
 		readonly authStorage: AuthStorage,
 		private modelsJsonPath: string | undefined,
+		options: ModelRegistryOptions = {},
 	) {
+		this.telemetryEnabledResolver = options.isTelemetryEnabled ?? (() => true);
 		this.loadModels();
 	}
 
-	static create(authStorage: AuthStorage, modelsJsonPath: string = join(getAgentDir(), "models.json")): ModelRegistry {
-		return new ModelRegistry(authStorage, modelsJsonPath);
+	static create(
+		authStorage: AuthStorage,
+		modelsJsonPath: string = join(getAgentDir(), "models.json"),
+		options: ModelRegistryOptions = {},
+	): ModelRegistry {
+		return new ModelRegistry(authStorage, modelsJsonPath, options);
 	}
 
-	static inMemory(authStorage: AuthStorage): ModelRegistry {
-		return new ModelRegistry(authStorage, undefined);
+	static inMemory(authStorage: AuthStorage, options: ModelRegistryOptions = {}): ModelRegistry {
+		return new ModelRegistry(authStorage, undefined, options);
 	}
 
 	/**
@@ -648,9 +659,22 @@ export class ModelRegistry {
 				`model "${model.provider}/${model.id}"`,
 			);
 
+			const openRouterAttributionHeaders: Record<string, string> | undefined =
+				this.telemetryEnabledResolver() &&
+				// Users can configure custom provider names in models.json
+				// while still routing requests through OpenRouter endpoints,
+				// so need to check both.
+				(model.provider === "openrouter" || model.baseUrl.includes("openrouter.ai"))
+					? {
+							"HTTP-Referer": "https://pi.dev",
+							"X-OpenRouter-Title": "pi",
+							"X-OpenRouter-Categories": "cli-agent",
+						}
+					: undefined;
+
 			let headers =
-				model.headers || providerHeaders || modelHeaders
-					? { ...model.headers, ...providerHeaders, ...modelHeaders }
+				openRouterAttributionHeaders || model.headers || providerHeaders || modelHeaders
+					? { ...openRouterAttributionHeaders, ...model.headers, ...providerHeaders, ...modelHeaders }
 					: undefined;
 
 			if (providerConfig?.authHeader) {

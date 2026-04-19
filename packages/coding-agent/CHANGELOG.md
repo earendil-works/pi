@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed OpenRouter request attribution to include Pi app headers (`HTTP-Referer: https://pi.dev`, `X-OpenRouter-Title: pi`, `X-OpenRouter-Categories: cli-agent`) so Pi usage can be attributed in OpenRouter rankings ([#3414](https://github.com/badlogic/pi-mono/issues/3414))
+
 ## [0.67.68] - 2026-04-17
 
 ## [0.67.67] - 2026-04-17

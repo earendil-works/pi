@@ -758,6 +758,80 @@ describe("ModelRegistry", () => {
 		});
 	});
 
+	describe("OpenRouter attribution headers", () => {
+		test("adds default attribution headers for OpenRouter models", async () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const openRouterModel = registry.getAll().find((m) => m.provider === "openrouter");
+			expect(openRouterModel).toBeDefined();
+
+			const auth = await registry.getApiKeyAndHeaders(openRouterModel!);
+			expect(auth.ok).toBe(true);
+			if (auth.ok) {
+				expect(auth.headers?.["HTTP-Referer"]).toBe("https://pi.dev");
+				expect(auth.headers?.["X-OpenRouter-Title"]).toBe("pi");
+				expect(auth.headers?.["X-OpenRouter-Categories"]).toBe("cli-agent");
+			}
+		});
+
+		test("does not add attribution headers for non-OpenRouter models", async () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const openAi = registry.getAll().find((m) => m.provider === "openai");
+			expect(openAi).toBeDefined();
+
+			const auth = await registry.getApiKeyAndHeaders(openAi!);
+			expect(auth.ok).toBe(true);
+			if (auth.ok) {
+				expect(auth.headers?.["HTTP-Referer"]).toBeUndefined();
+				expect(auth.headers?.["X-OpenRouter-Title"]).toBeUndefined();
+				expect(auth.headers?.["X-OpenRouter-Categories"]).toBeUndefined();
+			}
+		});
+
+		test("does not add default attribution headers when telemetry is disabled", async () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath, {
+				isTelemetryEnabled: () => false,
+			});
+			const openRouterModel = registry.getAll().find((m) => m.provider === "openrouter");
+			expect(openRouterModel).toBeDefined();
+
+			const auth = await registry.getApiKeyAndHeaders(openRouterModel!);
+			expect(auth.ok).toBe(true);
+			if (auth.ok) {
+				expect(auth.headers?.["HTTP-Referer"]).toBeUndefined();
+				expect(auth.headers?.["X-OpenRouter-Title"]).toBeUndefined();
+				expect(auth.headers?.["X-OpenRouter-Categories"]).toBeUndefined();
+			}
+		});
+
+		test("allows models.json headers to override default attribution headers", async () => {
+			writeRawModelsJson({
+				openrouter: {
+					modelOverrides: {
+						"anthropic/claude-sonnet-4": {
+							headers: {
+								"HTTP-Referer": "https://override.example",
+								"X-OpenRouter-Title": "override-title",
+								"X-OpenRouter-Categories": "custom-category",
+							},
+						},
+					},
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const model = registry.find("openrouter", "anthropic/claude-sonnet-4");
+			expect(model).toBeDefined();
+
+			const auth = await registry.getApiKeyAndHeaders(model!);
+			expect(auth.ok).toBe(true);
+			if (auth.ok) {
+				expect(auth.headers?.["HTTP-Referer"]).toBe("https://override.example");
+				expect(auth.headers?.["X-OpenRouter-Title"]).toBe("override-title");
+				expect(auth.headers?.["X-OpenRouter-Categories"]).toBe("custom-category");
+			}
+		});
+	});
+
 	describe("dynamic provider lifecycle", () => {
 		test("failed registerProvider does not persist invalid streamSimple config", () => {
 			const registry = ModelRegistry.create(authStorage, modelsJsonPath);

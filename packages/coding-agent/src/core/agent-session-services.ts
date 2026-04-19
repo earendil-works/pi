@@ -9,6 +9,7 @@ import { DefaultResourceLoader, type DefaultResourceLoaderOptions, type Resource
 import { type CreateAgentSessionResult, createAgentSession } from "./sdk.js";
 import type { SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
+import { isInstallTelemetryEnabled } from "./telemetry.js";
 import type { Tool } from "./tools/index.js";
 
 /**
@@ -133,7 +134,11 @@ export async function createAgentSessionServices(
 	const agentDir = options.agentDir ?? getAgentDir();
 	const authStorage = options.authStorage ?? AuthStorage.create(join(agentDir, "auth.json"));
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
-	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, join(agentDir, "models.json"));
+	const modelRegistry =
+		options.modelRegistry ??
+		ModelRegistry.create(authStorage, join(agentDir, "models.json"), {
+			isTelemetryEnabled: () => isInstallTelemetryEnabled(settingsManager),
+		});
 	const resourceLoader = new DefaultResourceLoader({
 		...(options.resourceLoaderOptions ?? {}),
 		cwd,
