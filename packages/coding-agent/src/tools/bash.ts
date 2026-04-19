@@ -5,12 +5,15 @@ import { createWriteStream, existsSync, unlink, type WriteStream } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
+import { generateProcessName, ProcessRegistry } from "../process-registry.js";
 import { getToolDescription } from "../prompts/index.js";
 import { findRepoRoot } from "../utils/find-repo-root.js";
 
 const MAX_OUTPUT_BYTES = 32 * 1024; // 32KB
 const MAX_LOG_FILE_BYTES = 100 * 1024 * 1024; // 100MB - prevent disk exhaustion
 const MAX_BACKGROUND_OUTPUT_CHARS = 8 * 1024;
+
+const registry = new ProcessRegistry();
 
 export type BackgroundJobStatus = "running" | "exited" | "killed" | "failed";
 export type BackgroundJobReason = "explicit_background" | "timeout_promoted";
@@ -28,6 +31,7 @@ export interface BackgroundJobSnapshot {
 	recentOutput: string;
 	recentStdout: string;
 	recentStderr: string;
+	processName?: string; // auto-generated name in the process registry
 }
 
 interface BackgroundJobState extends BackgroundJobSnapshot {
@@ -84,6 +88,10 @@ export function killBackgroundJob(id: string): boolean {
 	job.status = "killed";
 	job.endedAt = Date.now();
 	killProcessTree(job.pid);
+	// Update registry
+	if (job.processName) {
+		registry.updateStatus(job.processName, "killed").catch(() => {});
+	}
 	return true;
 }
 
@@ -93,6 +101,10 @@ export function killAllBackgroundJobs(): number {
 		job.status = "killed";
 		job.endedAt = Date.now();
 		killProcessTree(job.pid);
+		// Update registry
+		if (job.processName) {
+			registry.updateStatus(job.processName, "killed").catch(() => {});
+		}
 	}
 	return runningJobs.length;
 }
@@ -105,6 +117,7 @@ function registerBackgroundJob(
 	const startedAt = options?.startedAt ?? Date.now();
 	const id = Math.random().toString(36).slice(2, 10);
 	const pid = child.pid ?? -1;
+	const processName = generateProcessName("bash", command);
 	const job: BackgroundJobState = {
 		id,
 		pid,
@@ -118,14 +131,30 @@ function registerBackgroundJob(
 		stdoutDecoder: new StringDecoder("utf8"),
 		stderrDecoder: new StringDecoder("utf8"),
 		child,
+		processName,
 	};
 	backgroundJobs.set(id, job);
+
+	// Register in process registry (fire-and-forget)
+	registry
+		.register({
+			type: "bash",
+			pid: child.pid ?? -1,
+			name: processName,
+			jobId: id,
+			command,
+		})
+		.catch(() => {});
 
 	child.on("error", (error) => {
 		job.status = "failed";
 		job.endedAt = Date.now();
 		appendBackgroundOutput(job, "recentStderr", String(error));
 		appendBackgroundOutput(job, "recentOutput", String(error));
+		// Update registry
+		if (job.processName) {
+			registry.updateStatus(job.processName, "failed").catch(() => {});
+		}
 	});
 
 	child.stdout?.on("data", (data: Buffer) => {
@@ -162,6 +191,12 @@ function registerBackgroundJob(
 		if (job.status !== "killed") {
 			job.status = code === 0 ? "exited" : "failed";
 		}
+		// Update registry
+		if (job.processName) {
+			registry
+				.updateStatus(job.processName, code === 0 ? "completed" : "failed", { exitCode: code ?? undefined })
+				.catch(() => {});
+		}
 	});
 
 	return (
@@ -175,6 +210,7 @@ function registerBackgroundJob(
 			recentOutput: trimRecentOutput(options?.initialOutput ?? ""),
 			recentStdout: "",
 			recentStderr: "",
+			processName,
 		}
 	);
 }
@@ -199,7 +235,7 @@ function buildBackgroundJobHelpText(jobId: string): string {
 
 function buildBackgroundJobResult(job: BackgroundJobSnapshot): {
 	content: Array<{ type: "text"; text: string }>;
-	details: { backgroundJob: BackgroundJobSnapshot };
+	details: { backgroundJob: BackgroundJobSnapshot; processName?: string };
 } {
 	const text =
 		job.reason === "timeout_promoted"
@@ -226,13 +262,14 @@ function buildBackgroundJobResult(job: BackgroundJobSnapshot): {
 		],
 		details: {
 			backgroundJob: job,
+			processName: job.processName,
 		},
 	};
 }
 
 function buildBackgroundJobStatusResult(job: BackgroundJobSnapshot): {
 	content: Array<{ type: "text"; text: string }>;
-	details: { backgroundJob: BackgroundJobSnapshot };
+	details: { backgroundJob: BackgroundJobSnapshot; processName?: string };
 } {
 	let text: string;
 	if (job.status === "running") {
@@ -252,7 +289,10 @@ function buildBackgroundJobStatusResult(job: BackgroundJobSnapshot): {
 
 	return {
 		content: [{ type: "text", text }],
-		details: { backgroundJob: job },
+		details: {
+			backgroundJob: job,
+			processName: job.processName,
+		},
 	};
 }
 
