@@ -15,6 +15,8 @@ type AntigravityCredentials = OAuthCredentials & {
 	projectId: string;
 };
 
+const CALLBACK_HOST = process.env.PI_OAUTH_CALLBACK_HOST || "127.0.0.1";
+
 let _createServer: typeof import("node:http").createServer | null = null;
 let _httpImportPromise: Promise<void> | null = null;
 if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
@@ -110,7 +112,7 @@ async function startCallbackServer(): Promise<CallbackServerInfo> {
 			reject(err);
 		});
 
-		server.listen(51121, "127.0.0.1", () => {
+		server.listen(51121, CALLBACK_HOST, () => {
 			resolve({
 				server,
 				cancelWait: () => {
