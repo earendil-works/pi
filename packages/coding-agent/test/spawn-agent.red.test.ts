@@ -57,7 +57,7 @@ describe("spawn_agent red suite", () => {
 		expect(properties).toHaveProperty("reasoning");
 	});
 
-	test("inherits parent model and preserves xhigh for supported models", () => {
+	test("inherits parent model and caps reasoning to the model's supported maximum", () => {
 		const parentModel = getModel("openai", "gpt-5.1-codex");
 		expect(parentModel).toBeDefined();
 
@@ -65,12 +65,12 @@ describe("spawn_agent red suite", () => {
 			parentModel: parentModel!,
 			parentThinkingLevel: "medium",
 			message: "delegate this",
-			reasoning: "xhigh",
+			reasoning: "high",
 		});
 
 		expect(resolved.effectiveModel.provider).toBe("openai");
 		expect(resolved.effectiveModel.id).toBe("gpt-5.1-codex");
-		expect(resolved.effectiveReasoning).toBe("xhigh");
+		expect(resolved.effectiveReasoning).toBe("high");
 	});
 
 	test("preserves inherited reasoning when the parent model supports it", () => {
