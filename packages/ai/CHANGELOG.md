@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed OpenRouter Meta tests by switching `meta-llama/llama-4-maverick` to `meta-llama/llama-4-scout` to avoid type-check failures from model-catalog drift.
+
 ## [0.67.68] - 2026-04-17
 
 ### Fixed

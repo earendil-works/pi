@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { PassThrough } from "node:stream";
@@ -307,6 +307,35 @@ Content`,
 				expect(matchingSkills[0]?.enabled).toBe(true);
 				expect(matchingSkills[0]?.metadata.scope).toBe("user");
 				expect(matchingSkills[0]?.metadata.source).toBe("auto");
+			} finally {
+				if (previousHome === undefined) {
+					delete process.env.HOME;
+				} else {
+					process.env.HOME = previousHome;
+				}
+			}
+		});
+
+		it("should dedupe user skill entries when ~/.pi/agent/skills is a symlink to ~/.agents/skills", async () => {
+			const previousHome = process.env.HOME;
+			process.env.HOME = tempDir;
+
+			try {
+				const agentSkillsDir = join(agentDir, "skills");
+				const agentsSkillsDir = join(tempDir, ".agents", "skills");
+				mkdirSync(agentsSkillsDir, { recursive: true });
+				// Use junction on Windows to avoid EPERM when symlink privileges are unavailable.
+				const directoryLinkType = process.platform === "win32" ? "junction" : "dir";
+				symlinkSync(agentsSkillsDir, agentSkillsDir, directoryLinkType);
+
+				const skillPath = join(agentsSkillsDir, "foo", "SKILL.md");
+				mkdirSync(join(agentsSkillsDir, "foo"), { recursive: true });
+				writeFileSync(skillPath, "---\nname: foo\ndescription: foo\n---\n");
+
+				const result = await packageManager.resolve();
+				const fooSkills = result.skills.filter((r) => pathEndsWith(r.path, "foo/SKILL.md"));
+
+				expect(fooSkills).toHaveLength(1);
 			} finally {
 				if (previousHome === undefined) {
 					delete process.env.HOME;
