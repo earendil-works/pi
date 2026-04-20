@@ -113,6 +113,17 @@ export interface StreamOptions {
 	 * For example, Anthropic uses `user_id` for abuse tracking and rate limiting.
 	 */
 	metadata?: Record<string, unknown>;
+	/**
+	 * Optional image optimizer called before sending images to the provider.
+	 * Receives an ImageContent block and returns an optimized version (e.g.,
+	 * PNG-to-JPEG conversion, re-encoding at lower quality, resizing).
+	 * Applied to all ImageContent blocks in context messages before the
+	 * provider sees them. If not provided, images are sent as-is.
+	 *
+	 * The optimizer runs once per ImageContent block per stream/complete call.
+	 * Returning the input unchanged is safe and skips replacement.
+	 */
+	optimizeImage?: (image: ImageContent) => ImageContent | Promise<ImageContent>;
 }
 
 export type ProviderStreamOptions = StreamOptions & Record<string, unknown>;

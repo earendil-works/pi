@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `optimizeImage` callback to `StreamOptions`, allowing callers to compress, resize, or re-encode `ImageContent` blocks before they are sent to the provider. Applied automatically to all images in user and toolResult messages. No-op when not provided.
+
 ## [0.67.68] - 2026-04-17
 
 ### Fixed

@@ -11,6 +11,8 @@ import type {
 	SimpleStreamOptions,
 	StreamOptions,
 } from "./types.js";
+import { AssistantMessageEventStream as AssistantMessageEventStreamClass } from "./utils/event-stream.js";
+import { optimizeContextImages } from "./utils/optimize-context-images.js";
 
 export { getEnvApiKey } from "./env-api-keys.js";
 
@@ -28,7 +30,12 @@ export function stream<TApi extends Api>(
 	options?: ProviderStreamOptions,
 ): AssistantMessageEventStream {
 	const provider = resolveApiProvider(model.api);
-	return provider.stream(model, context, options as StreamOptions);
+	if (!options?.optimizeImage) {
+		return provider.stream(model, context, options as StreamOptions);
+	}
+	return wrapWithImageOptimization(context, options as StreamOptions, (ctx) =>
+		provider.stream(model, ctx, options as StreamOptions),
+	);
 }
 
 export async function complete<TApi extends Api>(
@@ -46,7 +53,10 @@ export function streamSimple<TApi extends Api>(
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
 	const provider = resolveApiProvider(model.api);
-	return provider.streamSimple(model, context, options);
+	if (!options?.optimizeImage) {
+		return provider.streamSimple(model, context, options);
+	}
+	return wrapWithImageOptimization(context, options, (ctx) => provider.streamSimple(model, ctx, options));
 }
 
 export async function completeSimple<TApi extends Api>(
@@ -56,4 +66,55 @@ export async function completeSimple<TApi extends Api>(
 ): Promise<AssistantMessage> {
 	const s = streamSimple(model, context, options);
 	return s.result();
+}
+
+/**
+ * Wrap a provider stream call with image optimization.
+ * Optimizes images in the context before delegating to the provider,
+ * then forwards all events from the inner stream to the outer stream.
+ */
+function wrapWithImageOptimization(
+	context: Context,
+	options: StreamOptions,
+	createInnerStream: (optimizedContext: Context) => AssistantMessageEventStream,
+): AssistantMessageEventStream {
+	const outer = new AssistantMessageEventStreamClass();
+
+	queueMicrotask(async () => {
+		try {
+			const optimizedContext = await optimizeContextImages(context, options);
+			const inner = createInnerStream(optimizedContext);
+			for await (const event of inner) {
+				outer.push(event);
+			}
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			const errorMsg: AssistantMessage = {
+				role: "assistant",
+				content: [],
+				api: "" as Api,
+				provider: "",
+				model: "",
+				usage: {
+					input: 0,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 0,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				stopReason: "error",
+				errorMessage: `Image optimization failed: ${errorMessage}`,
+				timestamp: Date.now(),
+			};
+			outer.push({
+				type: "error",
+				reason: "error",
+				error: errorMsg,
+			});
+			outer.end(errorMsg);
+		}
+	});
+
+	return outer;
 }
