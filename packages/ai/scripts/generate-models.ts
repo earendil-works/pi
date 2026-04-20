@@ -3,7 +3,7 @@
 import { writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { Api, KnownProvider, Model, type OpenAICompletionsCompat } from "../src/types.js";
+import type { Api, KnownProvider, Model, OpenAICompletionsCompat } from "../src/types.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -622,8 +622,10 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 				// Normalize to the canonical model id and drop duplicates when canonical exists.
 				if (modelId === "k2p5" && hasCanonicalModel) continue;
 
-				const normalizedId = modelId === "k2p5" ? "kimi-for-coding" : modelId;
-				const normalizedName = modelId === "k2p5" ? "Kimi For Coding" : m.name || normalizedId;
+				const normalizedId =
+					modelId === "k2p5" ? "kimi-for-coding" : modelId === "k2p6" ? "kimi-k2.6" : modelId;
+				const normalizedName =
+					modelId === "k2p5" ? "Kimi For Coding" : modelId === "k2p6" ? "Kimi K2.6" : m.name || normalizedId;
 
 				models.push({
 					id: normalizedId,

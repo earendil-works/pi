@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `kimi-k2.6` as a built-in `kimi-coding` model generated from models.dev data.
+
 ## [0.68.0] - 2026-04-20
 
 ### Added
