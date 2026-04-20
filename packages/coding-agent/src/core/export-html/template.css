@@ -510,6 +510,7 @@
       margin: 0;
       padding: 0;
       line-height: var(--line-height);
+      white-space: pre-wrap;
     }
 
     .tool-output pre {
