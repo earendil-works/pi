@@ -324,6 +324,7 @@ ${chalk.bold("Environment Variables:")}
   AWS_ACCESS_KEY_ID                - AWS access key for Amazon Bedrock
   AWS_SECRET_ACCESS_KEY            - AWS secret key for Amazon Bedrock
   AWS_BEARER_TOKEN_BEDROCK         - Bedrock API key (bearer token)
+  AWS_BEARER_TOKEN_BEDROCK_CMD     - Command to fetch a fresh Bedrock bearer token per request
   AWS_REGION                       - AWS region for Amazon Bedrock (e.g., us-east-1)
   ${ENV_AGENT_DIR.padEnd(32)} - Session storage directory (default: ~/${CONFIG_DIR_NAME}/agent)
   PI_PACKAGE_DIR                   - Override package directory (for Nix/Guix store paths)

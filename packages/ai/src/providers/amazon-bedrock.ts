@@ -122,7 +122,9 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 		}
 
 		// Resolve bearer token for Bedrock API key auth.
-		const bearerToken = options.bearerToken || process.env.AWS_BEARER_TOKEN_BEDROCK || undefined;
+		// AWS_BEARER_TOKEN_BEDROCK_CMD runs a command to fetch a fresh token each request,
+		// avoiding stale-token issues when the token expires (e.g. after 1 hour).
+		const bearerToken = options.bearerToken || (await resolveBearerToken()) || undefined;
 		const useBearerToken = bearerToken !== undefined && process.env.AWS_BEDROCK_SKIP_AUTH !== "1";
 
 		// in Node.js/Bun environment only
@@ -279,6 +281,22 @@ const BEDROCK_ERROR_PREFIXES: Record<string, string> = {
 	ThrottlingException: "Throttling error",
 	ServiceUnavailableException: "Service unavailable",
 };
+
+/**
+ * Resolves a Bedrock bearer token. Supports two modes:
+ * 1. `AWS_BEARER_TOKEN_BEDROCK_CMD` – executes the command to fetch a fresh token
+ *    on every request, preventing stale-token issues when tokens expire.
+ * 2. `AWS_BEARER_TOKEN_BEDROCK` – static token from the environment (original behavior).
+ */
+export async function resolveBearerToken(): Promise<string | undefined> {
+	const cmd = process.env.AWS_BEARER_TOKEN_BEDROCK_CMD;
+	if (cmd) {
+		const { execSync } = await import("node:child_process");
+		const token = execSync(cmd, { encoding: "utf-8", timeout: 10_000 }).trim();
+		if (token) return token;
+	}
+	return process.env.AWS_BEARER_TOKEN_BEDROCK;
+}
 
 /**
  * Format a Bedrock error with a human-readable prefix.

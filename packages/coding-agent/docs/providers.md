@@ -137,6 +137,9 @@ export AWS_SECRET_ACCESS_KEY=...
 # Option 3: Bearer Token
 export AWS_BEARER_TOKEN_BEDROCK=...
 
+# Option 3b: Bearer Token Command (auto-refreshes on every request)
+export AWS_BEARER_TOKEN_BEDROCK_CMD="your-token-refresh-command"
+
 # Optional region (defaults to us-east-1)
 export AWS_REGION=us-west-2
 ```
