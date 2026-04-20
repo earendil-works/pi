@@ -597,11 +597,11 @@ function convertMessages(
 					role: ConversationRole.USER,
 					content:
 						typeof m.content === "string"
-							? [{ text: sanitizeSurrogates(m.content) }]
+							? [{ text: sanitizeSurrogates(m.content) || " " }]
 							: m.content.map((c) => {
 									switch (c.type) {
 										case "text":
-											return { text: sanitizeSurrogates(c.text) };
+											const sanitized = sanitizeSurrogates(c.text); if (!sanitized || sanitized.trim().length === 0) return { text: " " }; return { text: sanitized };
 										case "image":
 											return { image: createImageBlock(c.mimeType, c.data) };
 										default:
@@ -685,7 +685,7 @@ function convertMessages(
 						content: m.content.map((c) =>
 							c.type === "image"
 								? { image: createImageBlock(c.mimeType, c.data) }
-								: { text: sanitizeSurrogates(c.text) },
+								: { text: sanitizeSurrogates(c.text) || " " },
 						),
 						status: m.isError ? ToolResultStatus.ERROR : ToolResultStatus.SUCCESS,
 					},
@@ -701,7 +701,7 @@ function convertMessages(
 							content: nextMsg.content.map((c) =>
 								c.type === "image"
 									? { image: createImageBlock(c.mimeType, c.data) }
-									: { text: sanitizeSurrogates(c.text) },
+									: { text: sanitizeSurrogates(c.text) || " " },
 							),
 							status: nextMsg.isError ? ToolResultStatus.ERROR : ToolResultStatus.SUCCESS,
 						},
