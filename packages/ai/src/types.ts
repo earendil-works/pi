@@ -122,6 +122,20 @@ export interface SimpleStreamOptions extends StreamOptions {
 	reasoning?: ThinkingLevel;
 	/** Custom token budgets for thinking levels (token-based providers only) */
 	thinkingBudgets?: ThinkingBudgets;
+	/**
+	 * Optional working directory.
+	 *
+	 * Most providers ignore this — built-in HTTP providers do not spawn
+	 * subprocesses. Custom providers (e.g. adapters that delegate to an
+	 * external SDK or CLI which executes tools on the host filesystem) should
+	 * use this as the cwd for that subprocess when provided.
+	 *
+	 * This exists so multi-session hosts (e.g. a server that runs many agent
+	 * sessions in one OS process) can pass each session's cwd through to the
+	 * provider without relying on `process.cwd()`, which is a single global
+	 * value and races across concurrent sessions.
+	 */
+	cwd?: string;
 }
 
 // Generic StreamFunction with typed options.

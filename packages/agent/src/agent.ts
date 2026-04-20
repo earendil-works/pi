@@ -108,6 +108,12 @@ export interface AgentOptions {
 	transport?: Transport;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
+	/**
+	 * Optional working directory, forwarded to the stream function on every
+	 * request via {@link AgentLoopConfig}. Providers that do not spawn
+	 * subprocesses ignore this; see {@link SimpleStreamOptions.cwd}.
+	 */
+	cwd?: string;
 }
 
 class PendingMessageQueue {
@@ -186,6 +192,8 @@ export class Agent {
 	public maxRetryDelayMs?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
+	/** Optional working directory forwarded to the stream function. */
+	public cwd?: string;
 
 	constructor(options: AgentOptions = {}) {
 		this._state = createMutableAgentState(options.initialState);
@@ -204,6 +212,7 @@ export class Agent {
 		this.transport = options.transport ?? "sse";
 		this.maxRetryDelayMs = options.maxRetryDelayMs;
 		this.toolExecution = options.toolExecution ?? "parallel";
+		this.cwd = options.cwd;
 	}
 
 	/**
@@ -413,6 +422,7 @@ export class Agent {
 			model: this._state.model,
 			reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
 			sessionId: this.sessionId,
+			cwd: this.cwd,
 			onPayload: this.onPayload,
 			onResponse: this.onResponse,
 			transport: this.transport,
