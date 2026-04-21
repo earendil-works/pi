@@ -215,10 +215,39 @@ async function walkDirectoryWithFd(
 	});
 }
 
+export interface MentionSuggestion {
+	/** Logical identifier without leading '@'. Displayed in the list and used as default insert. */
+	value: string;
+	/** Display text in the list. Falls back to value if identical. */
+	label: string;
+	/** Shown in the second column of the list. */
+	description?: string;
+	/** Verbatim text to insert, replacing the entire @-token. Must include '@' if desired. If omitted, '@' + value is inserted. */
+	insertText?: string;
+	/** If true, the suggestion is incomplete and no trailing space is added after insertion so autocomplete stays active for further input. */
+	isIncomplete?: boolean;
+}
+
+export interface MentionProvider {
+	getSuggestions(args: {
+		/** Text after '@'. May be empty (bare '@' typed). Does NOT include the '@'. */
+		query: string;
+		signal: AbortSignal;
+	}): Promise<MentionSuggestion[] | null> | MentionSuggestion[] | null;
+}
+
+export interface MentionProviderEntry {
+	provider: MentionProvider;
+	sourceLabel?: string;
+}
+
+export type AutocompleteItemData = { kind: "file" } | { kind: "mention"; suggestion: MentionSuggestion };
+
 export interface AutocompleteItem {
 	value: string;
 	label: string;
 	description?: string;
+	data?: AutocompleteItemData;
 }
 
 type Awaitable<T> = T | Promise<T>;
@@ -263,15 +292,26 @@ export interface AutocompleteProvider {
 }
 
 // Combined provider that handles both slash commands and file paths
+const MAX_FILE_SUGGESTIONS = 20;
+const MAX_MENTION_PROVIDER_SUGGESTIONS = 20;
+const MAX_TOTAL_SUGGESTIONS = 50;
+
 export class CombinedAutocompleteProvider implements AutocompleteProvider {
 	private commands: (SlashCommand | AutocompleteItem)[];
 	private basePath: string;
 	private fdPath: string | null;
+	private mentionProviders: MentionProviderEntry[];
 
-	constructor(commands: (SlashCommand | AutocompleteItem)[] = [], basePath: string, fdPath: string | null = null) {
+	constructor(
+		commands: (SlashCommand | AutocompleteItem)[] = [],
+		basePath: string,
+		fdPath: string | null = null,
+		mentionProviders: MentionProviderEntry[] = [],
+	) {
 		this.commands = commands;
 		this.basePath = basePath;
 		this.fdPath = fdPath;
+		this.mentionProviders = mentionProviders;
 	}
 
 	async getSuggestions(
@@ -286,14 +326,24 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		const atPrefix = this.extractAtPrefix(textBeforeCursor);
 		if (atPrefix) {
 			const { rawPrefix, isQuotedPrefix } = parsePathPrefix(atPrefix);
-			const suggestions = await this.getFuzzyFileSuggestions(rawPrefix, {
+			const fileSuggestions = await this.getFuzzyFileSuggestions(rawPrefix, {
 				isQuotedPrefix,
 				signal: options.signal,
 			});
-			if (suggestions.length === 0) return null;
+
+			// Query mention providers in parallel
+			const mentionItems = await this.getMentionSuggestions(rawPrefix, options.signal);
+
+			// Merge: files first, then mention providers in registration order
+			const allItems = [...fileSuggestions.slice(0, MAX_FILE_SUGGESTIONS), ...mentionItems].slice(
+				0,
+				MAX_TOTAL_SUGGESTIONS,
+			);
+
+			if (allItems.length === 0) return null;
 
 			return {
-				items: suggestions,
+				items: allItems,
 				prefix: atPrefix,
 			};
 		}
@@ -399,6 +449,30 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 
 		// Check if we're completing a file attachment (prefix starts with "@")
 		if (prefix.startsWith("@")) {
+			// Check if this is a mention item
+			if (item.data?.kind === "mention") {
+				const suggestion = item.data.suggestion;
+				// If insertText is set, use it verbatim; otherwise quote the value if needed
+				const insertText =
+					suggestion.insertText ??
+					buildCompletionValue(suggestion.value, {
+						isDirectory: false,
+						isAtPrefix: true,
+						isQuotedPrefix: false,
+					});
+				// No trailing space when provider signals an incomplete suggestion (keeps autocomplete active)
+				const suffix = suggestion.isIncomplete ? "" : " ";
+				const newLine = `${beforePrefix}${insertText}${suffix}${adjustedAfterCursor}`;
+				const newLines = [...lines];
+				newLines[cursorLine] = newLine;
+
+				return {
+					lines: newLines,
+					cursorLine,
+					cursorCol: beforePrefix.length + insertText.length + suffix.length,
+				};
+			}
+
 			// This is a file attachment completion
 			// Don't add space after directories so user can continue autocompleting
 			const isDirectory = item.label.endsWith("/");
@@ -762,6 +836,52 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		} catch {
 			return [];
 		}
+	}
+
+	private async getMentionSuggestions(query: string, signal: AbortSignal): Promise<AutocompleteItem[]> {
+		if (this.mentionProviders.length === 0) return [];
+
+		// Kick off all providers in parallel
+		const providerPromises = this.mentionProviders.map(async (entry) => {
+			try {
+				const result = await entry.provider.getSuggestions({ query, signal });
+				if (result === null || !Array.isArray(result)) return [];
+				return result
+					.filter(
+						(item): item is MentionSuggestion =>
+							typeof item === "object" &&
+							item !== null &&
+							typeof item.value === "string" &&
+							typeof item.label === "string",
+					)
+					.slice(0, MAX_MENTION_PROVIDER_SUGGESTIONS)
+					.map((suggestion) => {
+						const description = entry.sourceLabel
+							? suggestion.description
+								? `[${entry.sourceLabel}] ${suggestion.description}`
+								: `[${entry.sourceLabel}]`
+							: suggestion.description;
+						return {
+							value: `@${suggestion.value}`,
+							label: suggestion.label,
+							description,
+							data: { kind: "mention" as const, suggestion },
+						};
+					});
+			} catch {
+				return [];
+			}
+		});
+
+		const settled = await Promise.allSettled(providerPromises);
+
+		const items: AutocompleteItem[] = [];
+		for (const result of settled) {
+			if (result.status === "fulfilled") {
+				items.push(...result.value);
+			}
+		}
+		return items;
 	}
 
 	// Check if we should trigger file completion (called on Tab key)

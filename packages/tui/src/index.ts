@@ -3,9 +3,13 @@
 // Autocomplete support
 export {
 	type AutocompleteItem,
+	type AutocompleteItemData,
 	type AutocompleteProvider,
 	type AutocompleteSuggestions,
 	CombinedAutocompleteProvider,
+	type MentionProvider,
+	type MentionProviderEntry,
+	type MentionSuggestion,
 	type SlashCommand,
 } from "./autocomplete.js";
 // Components
