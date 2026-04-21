@@ -117,6 +117,14 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 | `session-name.ts` | Name sessions for the session selector via `setSessionName` |
 | `bookmark.ts` | Bookmark entries with labels for `/tree` navigation via `setLabel` |
 
+### Mention Providers
+
+| Extension | Description |
+|-----------|-------------|
+| `git-mention.ts` | Suggests git branches on `@` trigger via `registerMentionProvider` |
+| `pi-docs-mention.ts` | Suggests docs/examples files on `@docs:` prefix |
+| `workspace-mention.ts` | Suggests files from monorepo packages on `@<name>:` prefix with `isIncomplete` for hierarchical navigation |
+
 ### Custom Providers
 
 | Extension | Description |

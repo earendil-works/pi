@@ -12,6 +12,7 @@ Extensions are TypeScript modules that extend pi's behavior. They can subscribe 
 - **User interaction** - Prompt users via `ctx.ui` (select, confirm, input, notify)
 - **Custom UI components** - Full TUI components with keyboard input via `ctx.ui.custom()` for complex interactions
 - **Custom commands** - Register commands like `/mycommand` via `pi.registerCommand()`
+- **Mention providers** - Add `@` autocomplete suggestions via `pi.registerMentionProvider()`
 - **Session persistence** - Store state that survives restarts via `pi.appendEntry()`
 - **Custom rendering** - Control how tool calls/results and messages appear in TUI
 
@@ -1284,6 +1285,47 @@ pi.registerCommand("deploy", {
   },
 });
 ```
+
+### pi.registerMentionProvider(provider)
+
+Register a mention provider that contributes `@` autocomplete suggestions. When the user types `@` in the editor, all registered mention providers are queried in parallel alongside file suggestions.
+
+```typescript
+import type { ExtensionAPI, MentionProvider } from "@mariozechner/pi-coding-agent";
+
+export default function (pi: ExtensionAPI) {
+  const provider: MentionProvider = {
+    async getSuggestions({ query, signal }) {
+      // Return null if not applicable (e.g., wrong prefix)
+      // Return [] if applicable but no matches
+      // Return suggestions otherwise
+      return [
+        {
+          value: "item-id",
+          label: "Display Name",
+          description: "Optional detail",
+        },
+      ];
+    },
+  };
+
+  pi.registerMentionProvider(provider);
+}
+```
+
+**MentionSuggestion fields:**
+- `value` (required) - Logical identifier without the leading `@`. Used as default insertion text.
+- `label` (required) - Display text in the autocomplete list.
+- `description` (optional) - Shown in the second column of the list.
+- `insertText` (optional) - Verbatim text to insert, replacing the entire `@`-token. Must include `@` if desired. If omitted, `@` + `value` is inserted.
+- `isIncomplete` (optional) - If `true`, no trailing space is added after insertion so autocomplete stays active for further input. Useful for hierarchical/namespaced suggestions (e.g., `@workspace:file`).
+
+**getSuggestions return values:**
+- `null` - Provider is not applicable for this query (skipped, no error)
+- `[]` - Provider is applicable but has no matches
+- `MentionSuggestion[]` - Suggestions to display
+
+The `signal` parameter is an `AbortSignal` that is aborted when the user types another character (starting a new query cycle). Use it to cancel expensive operations like shell commands.
 
 ### pi.getCommands()
 
