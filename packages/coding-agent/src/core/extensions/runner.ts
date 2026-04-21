@@ -37,6 +37,7 @@ import type {
 	MessageRenderer,
 	ProviderConfig,
 	RegisteredCommand,
+	RegisteredMentionProvider,
 	RegisteredTool,
 	ResolvedCommand,
 	ResourcesDiscoverEvent,
@@ -521,6 +522,15 @@ export class ExtensionRunner {
 	getRegisteredCommands(): ResolvedCommand[] {
 		this.commandDiagnostics = [];
 		return this.resolveRegisteredCommands();
+	}
+
+	/** Get all registered mention providers from all extensions. */
+	getRegisteredMentionProviders(): RegisteredMentionProvider[] {
+		const providers: RegisteredMentionProvider[] = [];
+		for (const ext of this.extensions) {
+			providers.push(...ext.mentionProviders);
+		}
+		return providers;
 	}
 
 	getCommandDiagnostics(): ResourceDiagnostic[] {

@@ -34,6 +34,7 @@ import type {
 	EditorComponent,
 	EditorTheme,
 	KeyId,
+	MentionProvider,
 	OverlayHandle,
 	OverlayOptions,
 	TUI,
@@ -1256,6 +1257,13 @@ export interface ExtensionAPI {
 	 */
 	unregisterProvider(name: string): void;
 
+	// =========================================================================
+	// Mention Provider Registration
+	// =========================================================================
+
+	/** Register a mention provider for @ autocomplete. */
+	registerMentionProvider(provider: MentionProvider): void;
+
 	/** Shared event bus for extension communication. */
 	events: EventBus;
 }
@@ -1467,6 +1475,11 @@ export interface ExtensionCommandContextActions {
  */
 export interface ExtensionRuntime extends ExtensionRuntimeState, ExtensionActions {}
 
+export interface RegisteredMentionProvider {
+	provider: MentionProvider;
+	sourceInfo: SourceInfo;
+}
+
 /** Loaded extension with all registered items. */
 export interface Extension {
 	path: string;
@@ -1478,6 +1491,7 @@ export interface Extension {
 	commands: Map<string, RegisteredCommand>;
 	flags: Map<string, ExtensionFlag>;
 	shortcuts: Map<KeyId, ExtensionShortcut>;
+	mentionProviders: RegisteredMentionProvider[];
 }
 
 /** Result of loading extensions. */

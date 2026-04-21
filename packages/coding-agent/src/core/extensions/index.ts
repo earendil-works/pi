@@ -2,6 +2,12 @@
  * Extension system for lifecycle events and custom tools.
  */
 
+export type {
+	AutocompleteItemData,
+	MentionProvider,
+	MentionProviderEntry,
+	MentionSuggestion,
+} from "@mariozechner/pi-tui";
 export type { SlashCommandInfo, SlashCommandSource } from "../slash-commands.js";
 export type { SourceInfo } from "../source-info.js";
 export {
@@ -102,6 +108,7 @@ export type {
 	ReadToolResultEvent,
 	// Commands
 	RegisteredCommand,
+	RegisteredMentionProvider,
 	RegisteredTool,
 	ResolvedCommand,
 	// Events - Resources

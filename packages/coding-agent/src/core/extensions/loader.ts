@@ -13,7 +13,7 @@ import { createJiti } from "@mariozechner/jiti";
 import * as _bundledPiAgentCore from "@mariozechner/pi-agent-core";
 import * as _bundledPiAi from "@mariozechner/pi-ai";
 import * as _bundledPiAiOauth from "@mariozechner/pi-ai/oauth";
-import type { KeyId } from "@mariozechner/pi-tui";
+import type { KeyId, MentionProvider } from "@mariozechner/pi-tui";
 import * as _bundledPiTui from "@mariozechner/pi-tui";
 // Static imports of packages that extensions may use.
 // These MUST be static so Bun bundles them into the compiled binary.
@@ -283,6 +283,10 @@ function createExtensionAPI(
 			runtime.unregisterProvider(name, extension.path);
 		},
 
+		registerMentionProvider(provider: MentionProvider) {
+			extension.mentionProviders.push({ provider, sourceInfo: extension.sourceInfo });
+		},
+
 		events: eventBus,
 	} as ExtensionAPI;
 
@@ -323,6 +327,7 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		commands: new Map(),
 		flags: new Map(),
 		shortcuts: new Map(),
+		mentionProviders: [],
 	};
 }
 
