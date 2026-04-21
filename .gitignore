@@ -37,4 +37,6 @@ todo.md
 plans/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
+.pi/tasks/
+.pi/extensions/paper-audit/node_modules/
 collect.sh

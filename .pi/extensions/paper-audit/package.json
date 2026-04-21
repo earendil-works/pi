@@ -1,0 +1,13 @@
+{
+	"name": "pi-extension-paper-audit",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"pi": {
+		"extensions": ["./index.ts"]
+	},
+	"peerDependencies": {
+		"@mariozechner/pi-ai": "*",
+		"@mariozechner/pi-coding-agent": "*"
+	}
+}
