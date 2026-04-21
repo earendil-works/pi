@@ -76,8 +76,8 @@
 
         // Create nodes
         for (const entry of entries) {
-          nodeMap.set(entry.id, { 
-            entry, 
+          nodeMap.set(entry.id, {
+            entry,
             children: [],
             label: labelMap.get(entry.id)
           });
@@ -200,7 +200,7 @@
         const stack = [];
 
         // Add roots (prioritize branch containing active leaf)
-        const orderedRoots = [...roots].sort((a, b) => 
+        const orderedRoots = [...roots].sort((a, b) =>
           Number(containsActive.get(b)) - Number(containsActive.get(a))
         );
         for (let i = orderedRoots.length - 1; i >= 0; i--) {
@@ -217,7 +217,7 @@
           const multipleChildren = children.length > 1;
 
           // Order children (active branch first)
-          const orderedChildren = [...children].sort((a, b) => 
+          const orderedChildren = [...children].sort((a, b) =>
             Number(containsActive.get(b)) - Number(containsActive.get(a))
           );
 
@@ -880,8 +880,8 @@
         const renderResultImages = () => {
           const images = getResultImages();
           if (images.length === 0) return '';
-          return '<div class="tool-images">' + 
-            images.map(img => `<img src="data:${img.mimeType};base64,${img.data}" class="tool-image" />`).join('') + 
+          return '<div class="tool-images">' +
+            images.map(img => `<img src="data:${img.mimeType};base64,${img.data}" class="tool-image" />`).join('') +
             '</div>';
         };
 
@@ -964,6 +964,22 @@
             }
             break;
           }
+          case 'ls': {
+            const dirPath = str(args.path);
+            const limit = args.limit;
+
+            let pathHtml = dirPath === null ? invalidArg : escapeHtml(shortenPath(dirPath || '.'));
+            if (limit !== undefined) {
+              pathHtml += ` <span class="line-count">(limit ${escapeHtml(String(limit))})</span>`;
+            }
+
+            html += `<div class="tool-header"><span class="tool-name">ls</span> <span class="tool-path">${pathHtml}</span></div>`;
+            if (result) {
+              const output = getResultText().trim();
+              if (output) html += formatExpandableOutput(output, 20);
+            }
+            break;
+          }
           default: {
             // Check for pre-rendered custom tool HTML
             const rendered = renderedTools?.[call.id];
@@ -974,7 +990,7 @@
               } else {
                 html += `<div class="tool-header"><span class="tool-name">${escapeHtml(name)}</span></div>`;
               }
-              
+
               if (rendered.resultHtmlCollapsed && rendered.resultHtmlExpanded && rendered.resultHtmlCollapsed !== rendered.resultHtmlExpanded) {
                 // Both collapsed and expanded differ - render expandable section
                 html += `<div class="tool-output expandable ansi-rendered" onclick="if(window.getSelection().toString())return;this.classList.toggle('expanded')">
@@ -1040,21 +1056,21 @@
         // Check for injected base URL (used when loaded in iframe via srcdoc)
         const baseUrlMeta = document.querySelector('meta[name="pi-share-base-url"]');
         const baseUrl = baseUrlMeta ? baseUrlMeta.content : window.location.href.split('?')[0];
-        
+
         const url = new URL(window.location.href);
         // Find the gist ID (first query param without value, e.g., ?abc123)
         const gistId = Array.from(url.searchParams.keys()).find(k => !url.searchParams.get(k));
-        
+
         // Build the share URL
         const params = new URLSearchParams();
         params.set('leafId', currentLeafId);
         params.set('targetId', entryId);
-        
+
         // If we have an injected base URL (iframe context), use it directly
         if (baseUrlMeta) {
           return `${baseUrl}&${params.toString()}`;
         }
-        
+
         // Otherwise build from current location (direct file access)
         url.search = gistId ? `?${gistId}&${params.toString()}` : `?${params.toString()}`;
         return url.toString();
@@ -1074,7 +1090,7 @@
         } catch (err) {
           // Clipboard API failed, try fallback
         }
-        
+
         // Fallback for HTTP or when Clipboard API is unavailable
         if (!success) {
           try {
@@ -1090,7 +1106,7 @@
             console.error('Failed to copy:', err);
           }
         }
-        
+
         if (success && button) {
           const originalHtml = button.innerHTML;
           button.innerHTML = '✓';
@@ -1138,7 +1154,7 @@
               }
             }
 
-            const text = typeof content === 'string' ? content : 
+            const text = typeof content === 'string' ? content :
               content.filter(c => c.type === 'text').map(c => c.text).join('\n');
             if (text.trim()) {
               html += `<div class="markdown-content">${safeMarkedParse(text)}</div>`;
