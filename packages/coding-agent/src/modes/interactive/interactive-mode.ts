@@ -16,6 +16,7 @@ import type {
 	Keybinding,
 	KeyId,
 	MarkdownTheme,
+	MentionProviderEntry,
 	OverlayHandle,
 	OverlayOptions,
 	SlashCommand,
@@ -457,11 +458,20 @@ export class InteractiveMode {
 			}
 		}
 
+		// Collect mention providers from extensions
+		const mentionProviders: MentionProviderEntry[] = this.session.extensionRunner
+			.getRegisteredMentionProviders()
+			.map((registered) => ({
+				provider: registered.provider,
+				sourceLabel: this.getAutocompleteSourceTag(registered.sourceInfo),
+			}));
+
 		// Setup autocomplete
 		this.autocompleteProvider = new CombinedAutocompleteProvider(
 			[...slashCommands, ...templateCommands, ...extensionCommands, ...skillCommandList],
 			this.sessionManager.getCwd(),
 			fdPath,
+			mentionProviders,
 		);
 		this.defaultEditor.setAutocompleteProvider(this.autocompleteProvider);
 		if (this.editor !== this.defaultEditor) {
