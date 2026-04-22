@@ -2991,7 +2991,24 @@ export declare const MODELS: {
 		};
 	};
 	readonly openrouter: {
-		readonly "anthropic/claude-opus-4.7": {
+		readonly "inclusionai/ling-2.6-flash:free": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: false;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "~anthropic/claude-opus-latest": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -3008,14 +3025,31 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openrouter/elephant-alpha": {
+		readonly "moonshotai/kimi-k2.6": {
 			id: string;
 			name: string;
 			api: "openai-completions";
 			provider: string;
 			baseUrl: string;
-			reasoning: false;
-			input: "text"[];
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "anthropic/claude-opus-4.7": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
 			cost: {
 				input: number;
 				output: number;
@@ -4623,23 +4657,6 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-5-image-mini": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
 		readonly "anthropic/claude-haiku-4.5": {
 			id: string;
 			name: string;
@@ -4681,23 +4698,6 @@ export declare const MODELS: {
 			provider: string;
 			baseUrl: string;
 			reasoning: false;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "openai/gpt-5-image": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: true;
 			input: ("image" | "text")[];
 			cost: {
 				input: number;
@@ -5649,7 +5649,7 @@ export declare const MODELS: {
 			api: "openai-completions";
 			provider: string;
 			baseUrl: string;
-			reasoning: true;
+			reasoning: false;
 			input: "text"[];
 			cost: {
 				input: number;
@@ -6195,23 +6195,6 @@ export declare const MODELS: {
 			baseUrl: string;
 			reasoning: false;
 			input: "text"[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "meta-llama/llama-4-maverick": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: ("image" | "text")[];
 			cost: {
 				input: number;
 				output: number;
@@ -6953,23 +6936,6 @@ export declare const MODELS: {
 			maxTokens: number;
 		};
 		readonly "openai/gpt-4o": {
-			id: string;
-			name: string;
-			api: "openai-completions";
-			provider: string;
-			baseUrl: string;
-			reasoning: false;
-			input: ("image" | "text")[];
-			cost: {
-				input: number;
-				output: number;
-				cacheRead: number;
-				cacheWrite: number;
-			};
-			contextWindow: number;
-			maxTokens: number;
-		};
-		readonly "openai/gpt-4o:extended": {
 			id: string;
 			name: string;
 			api: "openai-completions";
