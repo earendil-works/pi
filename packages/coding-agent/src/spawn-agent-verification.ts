@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { resolve } from "node:path";
 import { inspectSpawnedAgentSession, type SpawnedAgentStatus } from "./spawned-agents.js";
 
 export const VERIFIER_READ_ONLY_TOOLS = ["read", "bash", "grep", "glob"] as const;
@@ -9,7 +9,6 @@ export type SpawnAgentVerificationStatus = "PASS" | "FAIL";
 export interface SpawnAgentVerificationRunRequest {
 	workerSessionId: string;
 	workerSessionFile: string;
-	missionPath?: string;
 	specPath?: string;
 	verificationChecks?: string[];
 }
@@ -73,8 +72,7 @@ Use FAIL when any requested check is not satisfied, the worker result is incompl
 }
 
 export function buildSpawnAgentVerifierPrompt(request: SpawnAgentVerificationRunRequest): string {
-	const missionPath = request.missionPath ? resolve(request.missionPath) : null;
-	const specPath = request.specPath ? resolve(request.specPath) : missionPath ? join(missionPath, "SPEC.md") : null;
+	const specPath = request.specPath ? resolve(request.specPath) : null;
 	const checks = request.verificationChecks?.filter((check) => check.trim().length > 0) ?? [];
 	const checksBlock =
 		checks.length > 0
@@ -88,7 +86,6 @@ export function buildSpawnAgentVerifierPrompt(request: SpawnAgentVerificationRun
 <session_file>${escapeXml(request.workerSessionFile)}</session_file>
 </worker_session>
 
-${missionPath ? `<mission_path>${escapeXml(missionPath)}</mission_path>` : ""}
 ${specPath ? `<spec_path>${escapeXml(specPath)}</spec_path>` : ""}
 
 <requested_checks>
@@ -97,7 +94,6 @@ ${escapeXml(checksBlock)}
 
 Instructions:
 - inspect the worker session file and its final result
-		if a mission path is provided, read SPEC.md from that mission path
 		- if a spec path is provided, read that spec file as authoritative validation context
 		- report only concrete issues
 		- return PASS only when the worker result and spec adherence checks both look good
@@ -155,20 +151,7 @@ export function runDeterministicSpawnAgentVerification(
 		issues.push("Worker result was empty or unavailable.");
 	}
 
-	if (request.missionPath) {
-		const resolvedMissionPath = resolve(request.missionPath);
-		const specPath = request.specPath ? resolve(request.specPath) : join(resolvedMissionPath, "SPEC.md");
-		if (!existsSync(specPath)) {
-			issues.push(`SPEC.md was not found at ${specPath}.`);
-		} else {
-			const specText = readFileSync(specPath, "utf8").trim();
-			if (specText.length === 0) {
-				issues.push(`SPEC.md at ${specPath} was empty.`);
-			}
-		}
-	}
-
-	if (!request.missionPath && request.specPath) {
+	if (request.specPath) {
 		const resolvedSpecPath = resolve(request.specPath);
 		if (!existsSync(resolvedSpecPath)) {
 			issues.push(`Spec file was not found at ${resolvedSpecPath}.`);
@@ -185,14 +168,8 @@ export function runDeterministicSpawnAgentVerification(
 		if (trimmedCheck.length === 0) {
 			continue;
 		}
-		if (
-			/SPEC\.md|spec file|spec path|validation contract/i.test(trimmedCheck) &&
-			!request.missionPath &&
-			!request.specPath
-		) {
-			issues.push(
-				`Requested check "${trimmedCheck}" requires spec context, but neither missionPath nor specPath was provided.`,
-			);
+		if (/SPEC\.md|spec file|spec path|validation contract/i.test(trimmedCheck) && !request.specPath) {
+			issues.push(`Requested check "${trimmedCheck}" requires spec context, but specPath was not provided.`);
 		}
 	}
 

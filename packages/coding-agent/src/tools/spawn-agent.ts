@@ -23,16 +23,6 @@ const RPC_START_TIMEOUT_MS = 120_000;
 
 const registry = new ProcessRegistry();
 
-const missionStartupSchema = Type.Object({
-	type: StringEnum(["mission"] as const, { description: "Startup mode for the child agent." }),
-	missionPath: Type.String({ description: "Path to the mission directory the child should run." }),
-	specPath: Type.Optional(
-		Type.String({
-			description: "Optional spec file path to override the default mission SPEC.md.",
-		}),
-	),
-});
-
 const contextStartupSchema = Type.Object({
 	type: StringEnum(["context"] as const, { description: "Startup mode for the child agent." }),
 	specPath: Type.String({
@@ -40,7 +30,7 @@ const contextStartupSchema = Type.Object({
 	}),
 });
 
-const spawnAgentStartupSchema = Type.Union([missionStartupSchema, contextStartupSchema]);
+const spawnAgentStartupSchema = contextStartupSchema;
 
 const spawnAgentSchema = Type.Object({
 	message: Type.Optional(Type.String({ description: "Task for the spawned agent (optional when startup provided)." })),
@@ -58,12 +48,6 @@ const spawnAgentSchema = Type.Object({
 	),
 });
 
-interface SpawnAgentMissionStartup {
-	type: "mission";
-	missionPath: string;
-	specPath?: string;
-}
-
 interface SpawnAgentContextStartup {
 	type: "context";
 	specPath: string;
@@ -74,14 +58,9 @@ interface SpawnAgentRpcPromptInput {
 	message: string;
 }
 
-interface SpawnAgentRpcMissionInput {
-	type: "mission_run";
-	missionPath: string;
-}
+type SpawnAgentRpcInput = SpawnAgentRpcPromptInput;
 
-type SpawnAgentRpcInput = SpawnAgentRpcPromptInput | SpawnAgentRpcMissionInput;
-
-type SpawnAgentStartup = SpawnAgentMissionStartup | SpawnAgentContextStartup;
+type SpawnAgentStartup = SpawnAgentContextStartup;
 
 interface SpawnedRpcChildHandle {
 	details: SpawnAgentDetails;
@@ -294,7 +273,7 @@ async function spawnRpcChild(options: SpawnRpcChildOptions): Promise<SpawnedRpcC
 }
 
 function buildPromptMessage(message: string, startup: SpawnAgentStartup | undefined): string {
-	if (startup?.type !== "context") {
+	if (!startup) {
 		return message;
 	}
 
@@ -325,7 +304,7 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentExecut
 				content: [
 					{
 						type: "text" as const,
-						text: "Error: startup is required. Pass either { type: 'mission', missionPath: '...' } or { type: 'context', specPath: '...' } to provide spec context.",
+						text: "Error: startup is required. Pass { type: 'context', specPath: '...' } to provide spec context.",
 					},
 				],
 				details: undefined,
@@ -333,15 +312,7 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentExecut
 			};
 		}
 
-		if (args.startup?.type === "mission" && args.startup.missionPath.trim().length === 0) {
-			return {
-				content: [{ type: "text" as const, text: "Error: startup.missionPath must be a non-empty string." }],
-				details: undefined,
-				isError: true,
-			};
-		}
-
-		if (args.startup?.type === "context" && args.startup.specPath.trim().length === 0) {
+		if (args.startup.specPath.trim().length === 0) {
 			return {
 				content: [{ type: "text" as const, text: "Error: startup.specPath must be a non-empty string." }],
 				details: undefined,
@@ -349,7 +320,7 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentExecut
 			};
 		}
 
-		if (args.startup?.type === "context" && !args.message?.trim()) {
+		if (!args.message?.trim()) {
 			return {
 				content: [{ type: "text" as const, text: 'Error: startup.type "context" requires a non-empty message.' }],
 				details: undefined,
@@ -383,10 +354,7 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentExecut
 			};
 		}
 
-		const workerRpcInput: SpawnAgentRpcInput =
-			args.startup?.type === "mission"
-				? { type: "mission_run", missionPath: args.startup.missionPath }
-				: { type: "prompt", message: resolved.message };
+		const workerRpcInput: SpawnAgentRpcInput = { type: "prompt", message: resolved.message };
 
 		const workerHandle = await spawnRpcChild({
 			resolved,
@@ -396,10 +364,7 @@ export const spawnAgentTool: AgentTool<typeof spawnAgentSchema, SpawnAgentExecut
 		});
 
 		// Register in process registry
-		const processName = generateProcessName(
-			"worker",
-			args.startup.type === "mission" ? args.startup.missionPath : (args.message ?? ""),
-		);
+		const processName = generateProcessName("worker", args.message ?? "");
 
 		const entry = await registry.register({
 			type: "worker",

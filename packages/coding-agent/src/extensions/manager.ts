@@ -675,7 +675,7 @@ export class ExtensionManager {
 
 	async spawnAgent(params: {
 		message?: string;
-		startup?: { type: "mission"; missionPath: string; specPath?: string } | { type: "context"; specPath: string };
+		startup?: { type: "context"; specPath: string };
 		model?: string;
 		reasoning?: "inherit" | "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 		verify?: boolean;

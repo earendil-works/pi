@@ -37,12 +37,9 @@ describe("coerceStringEncodedObjects", () => {
 		expect(result.config).toEqual({ key: "value" });
 	});
 
-	it("should coerce a string-encoded union-of-objects property", () => {
+	it("should coerce a string-encoded object property in a single-variant schema", () => {
 		const schema = Type.Object({
-			startup: Type.Union([
-				Type.Object({ type: Type.String({ enum: ["mission"] }), missionPath: Type.String() }),
-				Type.Object({ type: Type.String({ enum: ["context"] }), specPath: Type.String() }),
-			]),
+			startup: Type.Object({ type: Type.String({ enum: ["context"] }), specPath: Type.String() }),
 		});
 
 		const args = {
@@ -167,18 +164,12 @@ describe("coerceStringEncodedObjects", () => {
 	});
 
 	it("should handle the full spawn_agent-style schema", () => {
-		const missionStartupSchema = Type.Object({
-			type: Type.String({ enum: ["mission"] }),
-			missionPath: Type.String(),
-			specPath: Type.Optional(Type.String()),
-		});
-
 		const contextStartupSchema = Type.Object({
 			type: Type.String({ enum: ["context"] }),
 			specPath: Type.String(),
 		});
 
-		const spawnAgentStartupSchema = Type.Union([missionStartupSchema, contextStartupSchema]);
+		const spawnAgentStartupSchema = contextStartupSchema;
 
 		const spawnAgentSchema = Type.Object({
 			message: Type.Optional(Type.String()),
@@ -240,17 +231,12 @@ describe("coerceStringEncodedObjects", () => {
 // ---------------------------------------------------------------------------
 
 describe("validateToolArguments with string-encoded coercion", () => {
-	const missionStartupSchema = Type.Object({
-		type: Type.String({ enum: ["mission"] }),
-		missionPath: Type.String(),
-	});
-
 	const contextStartupSchema = Type.Object({
 		type: Type.String({ enum: ["context"] }),
 		specPath: Type.String(),
 	});
 
-	const spawnAgentStartupSchema = Type.Union([missionStartupSchema, contextStartupSchema]);
+	const spawnAgentStartupSchema = contextStartupSchema;
 
 	const spawnAgentSchema = Type.Object({
 		message: Type.Optional(Type.String()),
@@ -294,17 +280,6 @@ describe("validateToolArguments with string-encoded coercion", () => {
 		// and AJV will reject it
 		expect(() => validateToolArguments(tool, toolCall)).toThrow(/Validation failed/);
 	});
-
-	it("should coerce string-encoded mission startup", () => {
-		const tool = makeTool(spawnAgentSchema);
-		const toolCall = makeToolCall("spawn_agent", {
-			startup: '{"type": "mission", "missionPath": "devdocs/my-mission"}',
-			verificationChecks: ["check1"],
-		});
-
-		const result = validateToolArguments(tool, toolCall);
-		expect(result.startup).toEqual({ type: "mission", missionPath: "devdocs/my-mission" });
-	});
 });
 
 // ---------------------------------------------------------------------------
@@ -314,16 +289,12 @@ describe("validateToolArguments with string-encoded coercion", () => {
 describe("formatSchemaInfo with union types", () => {
 	it("should describe anyOf properties with their variants", () => {
 		const schema = Type.Object({
-			startup: Type.Union([
-				Type.Object({ type: Type.String({ enum: ["mission"] }), missionPath: Type.String() }),
-				Type.Object({ type: Type.String({ enum: ["context"] }), specPath: Type.String() }),
-			]),
+			startup: Type.Union([Type.Object({ type: Type.String({ enum: ["context"] }), specPath: Type.String() })]),
 		});
 
 		const info = formatSchemaInfo(schema as unknown as Record<string, unknown>);
 		expect(info).toContain("startup");
-		// Should describe at least one of the union variants
-		expect(info).toMatch(/mission|context/);
+		expect(info).toMatch(/object/);
 	});
 
 	it("should describe enum-typed properties", () => {

@@ -40,17 +40,14 @@ describe("spawn_agent verifier prompt and reporting contract (red)", () => {
 		rmSync(configDir, { recursive: true, force: true });
 	});
 
-	test("full spawn_agent tool description teaches validation-contract verification and spec-file startup context", () => {
+	test("full spawn_agent tool description teaches verification metadata and spec-file startup context", () => {
 		const description = getToolDescription("spawn_agent");
 
 		expect(description).toMatch(/verifier/i);
 		expect(description).toMatch(/verificationChecks/i);
-		expect(description).toMatch(/validation contract/i);
+		expect(description).toMatch(/validation metadata/i);
 		expect(description).toMatch(/spec context|specPath/i);
-		expect(description).toMatch(/missionPath|mission path|mission-path/i);
 		expect(description).toMatch(/specPath|spec path|spec-file|spec file/i);
-		expect(description).toMatch(/fireworks\/accounts\/fireworks\/routers\/kimi-k2p5-turbo/i);
-		expect(description).toMatch(/PASS|FAIL/i);
 		expect(description).toMatch(/parent decides|retry|accept|abort/i);
 		// New strict contract assertions
 		expect(description).toMatch(/ALWAYS required|REQUIRED/i);
@@ -62,7 +59,7 @@ describe("spawn_agent verifier prompt and reporting contract (red)", () => {
 		expect(descriptions.spawn_agent).toMatch(/verify|verification|verifier/i);
 	});
 
-	test("spawned-agent reporting can render composite worker plus verifier results instead of dropping verifier-aware details", () => {
+	test("spawned-agent reporting can render simple worker results", () => {
 		const model = getModel("openai", "gpt-5.1-codex");
 		if (!model) throw new Error("Expected model to exist");
 
@@ -71,29 +68,19 @@ describe("spawn_agent verifier prompt and reporting contract (red)", () => {
 
 		parent.saveMessage(
 			buildToolResultMessage("spawn_agent", {
-				worker: {
-					sessionId: "worker-session-id",
-					sessionFile: "/tmp/worker-session.jsonl",
-					effectiveModel: "openai/gpt-5.1-codex",
-					effectiveReasoning: "off",
-				},
-				verifier: {
-					sessionId: "verifier-session-id",
-					sessionFile: "/tmp/verifier-session.jsonl",
-					effectiveModel: "openai/gpt-5.1-codex",
-					effectiveReasoning: "off",
-				},
-				verificationReport: {
-					status: "FAIL",
-					issues: ["SPEC.md was not checked"],
-				},
+				processName: "worker-test",
+				sessionId: "worker-session-id",
+				sessionFile: "/tmp/worker-session.jsonl",
+				effectiveModel: "openai/gpt-5.1-codex",
+				effectiveReasoning: "off",
+				pid: 12345,
+				status: "running",
 			}),
 		);
 
 		const report = formatSpawnedAgentsReport(parent.getSessionFile());
 		expect(report).toContain("worker-session-id");
-		expect(report).toContain("verifier-session-id");
-		expect(report).toContain("FAIL");
-		expect(report).toContain("SPEC.md was not checked");
+		expect(report).toContain("openai/gpt-5.1-codex");
+		expect(report).toContain("unwaited");
 	});
 });

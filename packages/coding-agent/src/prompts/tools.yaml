@@ -236,7 +236,7 @@ spawn_agent: |
   Important:
   - Do NOT use `spawn_agent` unless the user explicitly asks you to delegate, parallelize, or use a spawned/sub agent.
   - spawn_agent SERIALIZES by default - it waits for the child to complete and returns results inline. Use `wait_agent` explicitly only if you spawned multiple children in parallel and need to collect all results.
-  - Startup with spec context is ALWAYS required - either `{ type: "mission", missionPath: "..." }` or `{ type: "context", specPath: "..." }`.
+  - Startup with spec context is ALWAYS required - pass `{ type: "context", specPath: "..." }`.
   - `verificationChecks` is optional metadata stored in the process registry. No verifier runs automatically.
   - The tool returns immediately with `processName`, `sessionId`, and `status: "running"`. Use `wait_agent` to check results.
   - Only parallelize multiple children when the user explicitly requests it. Default is sequential execution.
@@ -244,7 +244,7 @@ spawn_agent: |
 
   Parameters:
   - message: Task for the spawned agent (optional when startup provided).
-  - startup: REQUIRED spec context. Supports `{ type: "mission", missionPath: "...", specPath?: "..." }` or `{ type: "context", specPath: "..." }`.
+  - startup: REQUIRED spec context. Pass `{ type: "context", specPath: "..." }`.
   - reasoning: Optional reasoning level override: `inherit`, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`.
   - verificationChecks: Optional string[] validation metadata. Stored in the process registry for reference.
 
