@@ -1,5 +1,31 @@
 import { describe, expect, it } from "vitest";
-import { shouldPauseAssistantActiveTiming, shouldStartAssistantActiveTiming } from "./tui-renderer.js";
+import {
+	shouldCaptureTtft,
+	shouldPauseAssistantActiveTiming,
+	shouldStartAssistantActiveTiming,
+} from "./tui-renderer.js";
+
+describe("tui renderer TTFT capture", () => {
+	it("triggers TTFT capture on text_delta and toolcall_delta (same as assistant-active timing start)", () => {
+		expect(shouldCaptureTtft({ type: "text_delta", contentIndex: 0, delta: "hi", partial: {} as never })).toBe(true);
+		expect(
+			shouldCaptureTtft({
+				type: "toolcall_delta",
+				contentIndex: 0,
+				delta: '{"command":"echo hi"}',
+				partial: {} as never,
+			}),
+		).toBe(true);
+	});
+
+	it("does not trigger TTFT capture on thinking_delta or block-start events", () => {
+		expect(shouldCaptureTtft({ type: "thinking_delta", contentIndex: 0, delta: "plan", partial: {} as never })).toBe(
+			false,
+		);
+		expect(shouldCaptureTtft({ type: "text_start", contentIndex: 0, partial: {} as never })).toBe(false);
+		expect(shouldCaptureTtft({ type: "toolcall_start", contentIndex: 0, partial: {} as never })).toBe(false);
+	});
+});
 
 describe("tui renderer assistant-active timing", () => {
 	it("starts timing only for streamed assistant text or tool-call deltas", () => {

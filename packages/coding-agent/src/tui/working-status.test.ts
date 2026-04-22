@@ -100,4 +100,38 @@ describe("working-status", () => {
 
 		expect(estimateWorkingStatusTokens(thinkingOnlyMessage)).toBe(0);
 	});
+
+	// TTFT (Time To First Token) tests
+
+	it("formats the working label with ttft between tps and lat.", () => {
+		expect(formatWorkingStatus(28_000, 1_176, 3_800, 28_000, 1_200)).toBe(
+			"Working (28s • 42 tps • 1.2s ttft • 3.8s lat. • esc→stop)",
+		);
+	});
+
+	it("formats the working label with ttft but no latency", () => {
+		expect(formatWorkingStatus(9_000, 210, undefined, 9_000, 800)).toBe(
+			"Working (9s • 23 tps • 0.8s ttft • esc→stop)",
+		);
+	});
+
+	it("omits ttft when undefined in working label", () => {
+		expect(formatWorkingStatus(28_000, 1_176, 3_800, 28_000, undefined)).toBe(
+			"Working (28s • 42 tps • 3.8s lat. • esc→stop)",
+		);
+	});
+
+	it("formats the done label with ttft between tps and lat.", () => {
+		expect(formatDoneStatus(28_000, 1_176, 3_800, 28_000, 1_200)).toBe(
+			"Done after 28s - 42 tps - 1.2s ttft - 3.8s lat.",
+		);
+	});
+
+	it("formats the done label with ttft but no latency", () => {
+		expect(formatDoneStatus(9_000, 210, undefined, 9_000, 800)).toBe("Done after 9s - 23 tps - 0.8s ttft");
+	});
+
+	it("omits ttft when undefined in done label", () => {
+		expect(formatDoneStatus(28_000, 1_176, 3_800, 28_000, undefined)).toBe("Done after 28s - 42 tps - 3.8s lat.");
+	});
 });

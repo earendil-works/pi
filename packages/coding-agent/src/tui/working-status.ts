@@ -26,13 +26,16 @@ export function formatWorkingStatus(
 	estimatedOutputTokens: number,
 	averageLatencyMs?: number,
 	tokensPerSecondElapsedMs: number = elapsedMs,
+	ttftMs?: number,
 ): string {
 	const elapsed = formatElapsed(elapsedMs);
 	const tps = formatTps(tokensPerSecondElapsedMs, estimatedOutputTokens);
+	const ttft = formatTtft(ttftMs);
 	const avgLatency = formatAverageLatency(averageLatencyMs);
-	return avgLatency === null
-		? `Working (${elapsed} • ${tps} tps • esc→stop)`
-		: `Working (${elapsed} • ${tps} tps • ${avgLatency} lat. • esc→stop)`;
+	const segments = [`${tps} tps`];
+	if (ttft !== null) segments.push(`${ttft} ttft`);
+	if (avgLatency !== null) segments.push(`${avgLatency} lat.`);
+	return `Working (${elapsed} • ${segments.join(" • ")} • esc→stop)`;
 }
 
 export function formatDoneStatus(
@@ -40,13 +43,16 @@ export function formatDoneStatus(
 	estimatedOutputTokens: number,
 	averageLatencyMs?: number,
 	tokensPerSecondElapsedMs: number = elapsedMs,
+	ttftMs?: number,
 ): string {
 	const elapsed = formatElapsed(elapsedMs);
 	const tps = formatTps(tokensPerSecondElapsedMs, estimatedOutputTokens);
+	const ttft = formatTtft(ttftMs);
 	const avgLatency = formatAverageLatency(averageLatencyMs);
-	return avgLatency === null
-		? `Done after ${elapsed} - ${tps} tps`
-		: `Done after ${elapsed} - ${tps} tps - ${avgLatency} lat.`;
+	const segments = [`${tps} tps`];
+	if (ttft !== null) segments.push(`${ttft} ttft`);
+	if (avgLatency !== null) segments.push(`${avgLatency} lat.`);
+	return `Done after ${elapsed} - ${segments.join(" - ")}`;
 }
 
 export function getWorkingStatusSpinnerFrame(nowMs: number): string {
@@ -60,6 +66,13 @@ function formatTps(elapsedMs: number, estimatedOutputTokens: number): number {
 		return 0;
 	}
 	return Math.round((estimatedOutputTokens * 1000) / elapsedMs);
+}
+
+function formatTtft(ttftMs: number | undefined): string | null {
+	if (ttftMs === undefined) {
+		return null;
+	}
+	return `${(ttftMs / 1000).toFixed(1)}s`;
 }
 
 function formatAverageLatency(averageLatencyMs: number | undefined): string | null {

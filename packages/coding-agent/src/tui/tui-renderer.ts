@@ -222,6 +222,10 @@ class ToastOverlayComponent implements Component {
 	invalidate(): void {}
 }
 
+export function shouldCaptureTtft(event: AssistantMessageEvent): boolean {
+	return shouldStartAssistantActiveTiming(event);
+}
+
 export function shouldStartAssistantActiveTiming(event: AssistantMessageEvent): boolean {
 	return event.type === "text_delta" || event.type === "toolcall_delta";
 }
@@ -422,6 +426,7 @@ export class TuiRenderer {
 	private pendingLatencyStartTime: number | null = null;
 	private accumulatedLatencyMs = 0;
 	private latencyGapCount = 0;
+	private ttftMs: number | null = null;
 	private workingStatusPausedAt: number | null = null;
 	private shouldResumeWorkingStatusTimer = false;
 	private ignoreNextAgentEndForAutoHandoffAbort = false;
@@ -1263,6 +1268,7 @@ export class TuiRenderer {
 			this.getEstimatedOutputTokens(),
 			this.getAverageLatencyMs(),
 			this.getAssistantActiveMs(),
+			this.ttftMs ?? undefined,
 		);
 	}
 
@@ -1297,6 +1303,7 @@ export class TuiRenderer {
 		this.pendingLatencyStartTime = now;
 		this.accumulatedLatencyMs = 0;
 		this.latencyGapCount = 0;
+		this.ttftMs = null;
 	}
 
 	private clearWorkingStatusMetrics(): void {
@@ -1308,6 +1315,7 @@ export class TuiRenderer {
 		this.pendingLatencyStartTime = null;
 		this.accumulatedLatencyMs = 0;
 		this.latencyGapCount = 0;
+		this.ttftMs = null;
 		this.workingStatusPausedAt = null;
 		this.shouldResumeWorkingStatusTimer = false;
 	}
@@ -1562,6 +1570,9 @@ export class TuiRenderer {
 					const assistantMsg = event.message as AssistantMessage;
 					if (shouldStartAssistantActiveTiming(event.assistantMessageEvent)) {
 						this.startAssistantActiveTimer();
+					}
+					if (this.ttftMs === null && shouldCaptureTtft(event.assistantMessageEvent)) {
+						this.ttftMs = Date.now() - (this.workingStartTime ?? Date.now());
 					}
 					this.streamingComponent.applyAssistantMessageEvent(event.assistantMessageEvent);
 					this.currentAssistantEstimatedOutputTokens = estimateWorkingStatusTokens(assistantMsg);
@@ -1868,6 +1879,7 @@ export class TuiRenderer {
 					this.getEstimatedOutputTokens(),
 					this.getAverageLatencyMs(),
 					this.getAssistantActiveMs(),
+					this.ttftMs ?? undefined,
 				);
 
 				// Stop timer interval

@@ -132,4 +132,48 @@ describe("FooterComponent", () => {
 		expect(lines[1]).toContain(hint);
 		expect(hintCount).toBe(1);
 	});
+
+	it("renders TTFT alongside latency in the active footer secondary row", () => {
+		const footer = new FooterComponent(createState());
+		footer.setTitle("Investigate footer layout overflow");
+		footer.setTransientStatus({
+			indicator: "░▒▓█   ",
+			message: "Working (9s • 21 tps • 1.2s ttft • 2.3s lat. • esc→stop)",
+		});
+
+		const lines = footer.render(120).map((line) => stripAnsi(line));
+
+		expect(lines).toHaveLength(2);
+		expect(lines[0]).toContain("Working • 9s");
+		expect(lines[1]).toContain("21 tps • 1.2s ttft • 2.3s lat. • esc→stop");
+	});
+
+	it("renders TTFT without latency in the active footer secondary row", () => {
+		const footer = new FooterComponent(createState());
+		footer.setTransientStatus({
+			indicator: "░▒▓█   ",
+			message: "Working (9s • 21 tps • 0.8s ttft • esc→stop)",
+		});
+
+		const lines = footer.render(100).map((line) => stripAnsi(line));
+
+		expect(lines).toHaveLength(2);
+		expect(lines[1]).toContain("21 tps • 0.8s ttft • esc→stop");
+	});
+
+	it("keeps both footer rows within width when TTFT and latency are shown", () => {
+		const footer = new FooterComponent(createState());
+		footer.setTitle("A long title that should still truncate properly with TTFT");
+		footer.setTransientStatus({
+			indicator: "░▒▓█   ",
+			message: "Working (999s • 999 tps • 99.9s ttft • 99.9s lat. • esc→stop)",
+		});
+
+		const width = 60;
+		const lines = footer.render(width).map((line) => stripAnsi(line));
+
+		for (const line of lines) {
+			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
+		}
+	});
 });
