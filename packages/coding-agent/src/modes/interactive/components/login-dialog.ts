@@ -30,12 +30,13 @@ export class LoginDialogComponent extends Container implements Focusable {
 		tui: TUI,
 		providerId: string,
 		private onComplete: (success: boolean, message?: string) => void,
+		providerNameOverride?: string,
 	) {
 		super();
 		this.tui = tui;
 
 		const providerInfo = getOAuthProviders().find((p) => p.id === providerId);
-		const providerName = providerInfo?.name || providerId;
+		const providerName = providerNameOverride || providerInfo?.name || providerId;
 
 		// Top border
 		this.addChild(new DynamicBorder());

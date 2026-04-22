@@ -44,7 +44,7 @@ Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json`
 
 ### Environment Variables or Auth File
 
-Set via environment variable:
+Use `/login` in interactive mode and select a provider to store an API key in `auth.json`, or set credentials via environment variable:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...

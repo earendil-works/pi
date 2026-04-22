@@ -96,7 +96,7 @@ import { FooterComponent } from "./components/footer.js";
 import { keyHint, keyText, rawKeyHint } from "./components/keybinding-hints.js";
 import { LoginDialogComponent } from "./components/login-dialog.js";
 import { ModelSelectorComponent } from "./components/model-selector.js";
-import { OAuthSelectorComponent } from "./components/oauth-selector.js";
+import { type AuthSelectorProvider, OAuthSelectorComponent } from "./components/oauth-selector.js";
 import { ScopedModelsSelectorComponent } from "./components/scoped-models-selector.js";
 import { SessionSelectorComponent } from "./components/session-selector.js";
 import { SettingsSelectorComponent } from "./components/settings-selector.js";
@@ -165,6 +165,33 @@ function isUnknownModel(model: Model<any> | undefined): boolean {
 
 function hasDefaultModelProvider(providerId: string): providerId is keyof typeof defaultModelPerProvider {
 	return providerId in defaultModelPerProvider;
+}
+
+const API_KEY_PROVIDER_NAMES: Record<string, string> = {
+	"azure-openai-responses": "Azure OpenAI Responses",
+	cerebras: "Cerebras",
+	fireworks: "Fireworks",
+	google: "Google Gemini",
+	"google-vertex": "Google Vertex AI",
+	groq: "Groq",
+	huggingface: "Hugging Face",
+	"kimi-coding": "Kimi For Coding",
+	mistral: "Mistral",
+	minimax: "MiniMax",
+	"minimax-cn": "MiniMax (China)",
+	opencode: "OpenCode Zen",
+	"opencode-go": "OpenCode Go",
+	openai: "OpenAI",
+	openrouter: "OpenRouter",
+	"vercel-ai-gateway": "Vercel AI Gateway",
+	xai: "xAI",
+	zai: "ZAI",
+};
+
+const API_KEY_LOGIN_PROVIDER_BLOCKLIST = new Set(["amazon-bedrock", "llama.cpp", "lmstudio", "ollama"]);
+
+function getApiKeyProviderDisplayName(providerId: string): string {
+	return API_KEY_PROVIDER_NAMES[providerId] ?? providerId;
 }
 
 /**
@@ -4258,42 +4285,95 @@ export class InteractiveMode {
 		}
 	}
 
-	private async showOAuthSelector(mode: "login" | "logout"): Promise<void> {
-		if (mode === "logout") {
-			const providers = this.session.modelRegistry.authStorage.list();
-			const loggedInProviders = providers.filter(
-				(p) => this.session.modelRegistry.authStorage.get(p)?.type === "oauth",
-			);
-			if (loggedInProviders.length === 0) {
-				this.showStatus("No OAuth providers logged in. Use /login first.");
-				return;
+	private getLoginProviderOptions(): AuthSelectorProvider[] {
+		const authStorage = this.session.modelRegistry.authStorage;
+		const oauthProviders = authStorage.getOAuthProviders();
+		const oauthProviderIds = new Set(oauthProviders.map((provider) => provider.id));
+		const options: AuthSelectorProvider[] = oauthProviders.map((provider) => ({
+			id: provider.id,
+			name: provider.name,
+			authType: "oauth",
+		}));
+
+		const modelProviders = new Set(this.session.modelRegistry.getAll().map((model) => model.provider));
+		for (const providerId of modelProviders) {
+			if (oauthProviderIds.has(providerId) || API_KEY_LOGIN_PROVIDER_BLOCKLIST.has(providerId)) {
+				continue;
 			}
+			options.push({
+				id: providerId,
+				name: getApiKeyProviderDisplayName(providerId),
+				authType: "api_key",
+			});
+		}
+
+		return options.sort((a, b) => a.name.localeCompare(b.name));
+	}
+
+	private getLogoutProviderOptions(): AuthSelectorProvider[] {
+		const authStorage = this.session.modelRegistry.authStorage;
+		const oauthNameById = new Map(authStorage.getOAuthProviders().map((provider) => [provider.id, provider.name]));
+		const options: AuthSelectorProvider[] = [];
+
+		for (const providerId of authStorage.list()) {
+			const credential = authStorage.get(providerId);
+			if (!credential) {
+				continue;
+			}
+			options.push({
+				id: providerId,
+				name:
+					credential.type === "oauth"
+						? (oauthNameById.get(providerId) ?? providerId)
+						: getApiKeyProviderDisplayName(providerId),
+				authType: credential.type,
+			});
+		}
+
+		return options.sort((a, b) => a.name.localeCompare(b.name));
+	}
+
+	private async showOAuthSelector(mode: "login" | "logout"): Promise<void> {
+		const providerOptions = mode === "login" ? this.getLoginProviderOptions() : this.getLogoutProviderOptions();
+
+		if (providerOptions.length === 0) {
+			this.showStatus(mode === "login" ? "No providers available." : "No providers logged in. Use /login first.");
+			return;
 		}
 
 		this.showSelector((done) => {
 			const selector = new OAuthSelectorComponent(
 				mode,
 				this.session.modelRegistry.authStorage,
+				providerOptions,
 				async (providerId: string) => {
 					done();
 
-					if (mode === "login") {
-						await this.showLoginDialog(providerId);
-					} else {
-						// Logout flow
-						const providerInfo = this.session.modelRegistry.authStorage
-							.getOAuthProviders()
-							.find((p) => p.id === providerId);
-						const providerName = providerInfo?.name || providerId;
+					const providerOption = providerOptions.find((provider) => provider.id === providerId);
+					if (!providerOption) {
+						return;
+					}
 
-						try {
-							this.session.modelRegistry.authStorage.logout(providerId);
-							this.session.modelRegistry.refresh();
-							await this.updateAvailableProviderCount();
-							this.showStatus(`Logged out of ${providerName}`);
-						} catch (error: unknown) {
-							this.showError(`Logout failed: ${error instanceof Error ? error.message : String(error)}`);
+					if (mode === "login") {
+						if (providerOption.authType === "oauth") {
+							await this.showLoginDialog(providerOption.id, providerOption.name);
+						} else {
+							await this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
 						}
+						return;
+					}
+
+					try {
+						this.session.modelRegistry.authStorage.logout(providerOption.id);
+						this.session.modelRegistry.refresh();
+						await this.updateAvailableProviderCount();
+						const message =
+							providerOption.authType === "oauth"
+								? `Logged out of ${providerOption.name}`
+								: `Removed API key for ${providerOption.name}`;
+						this.showStatus(message);
+					} catch (error: unknown) {
+						this.showError(`Logout failed: ${error instanceof Error ? error.message : String(error)}`);
 					}
 				},
 				() => {
@@ -4305,18 +4385,120 @@ export class InteractiveMode {
 		});
 	}
 
-	private async showLoginDialog(providerId: string): Promise<void> {
-		const providerInfo = this.session.modelRegistry.authStorage.getOAuthProviders().find((p) => p.id === providerId);
-		const providerName = providerInfo?.name || providerId;
+	private async completeProviderAuthentication(
+		providerId: string,
+		providerName: string,
+		authType: "oauth" | "api_key",
+		previousModel: Model<any> | undefined,
+	): Promise<void> {
+		this.session.modelRegistry.refresh();
+
+		const actionLabel = authType === "oauth" ? `Logged in to ${providerName}` : `Saved API key for ${providerName}`;
+
+		let selectedModel: Model<any> | undefined;
+		let selectionError: string | undefined;
+		if (isUnknownModel(previousModel)) {
+			const availableModels = this.session.modelRegistry.getAvailable();
+			const providerModels = availableModels.filter((model) => model.provider === providerId);
+			if (!hasDefaultModelProvider(providerId)) {
+				selectionError = `${actionLabel}, but no default model is configured for provider "${providerId}". Use /model to select a model.`;
+			} else if (providerModels.length === 0) {
+				selectionError = `${actionLabel}, but no models are available for that provider. Use /model to select a model.`;
+			} else {
+				const defaultModelId = defaultModelPerProvider[providerId];
+				selectedModel = providerModels.find((model) => model.id === defaultModelId);
+				if (!selectedModel) {
+					selectionError = `${actionLabel}, but its default model "${defaultModelId}" is not available. Use /model to select a model.`;
+				} else {
+					try {
+						await this.session.setModel(selectedModel);
+					} catch (error: unknown) {
+						selectedModel = undefined;
+						const errorMessage = error instanceof Error ? error.message : String(error);
+						selectionError = `${actionLabel}, but selecting its default model failed: ${errorMessage}. Use /model to select a model.`;
+					}
+				}
+			}
+		}
+
+		await this.updateAvailableProviderCount();
+		this.footer.invalidate();
+		this.updateEditorBorderColor();
+		if (selectedModel) {
+			this.showStatus(`${actionLabel}. Selected ${selectedModel.id}. Credentials saved to ${getAuthPath()}`);
+			void this.maybeWarnAboutAnthropicSubscriptionAuth(selectedModel);
+			this.checkDaxnutsEasterEgg(selectedModel);
+		} else {
+			this.showStatus(`${actionLabel}. Credentials saved to ${getAuthPath()}`);
+			if (selectionError) {
+				this.showError(selectionError);
+			} else {
+				void this.maybeWarnAboutAnthropicSubscriptionAuth();
+			}
+		}
+	}
+
+	private async showApiKeyLoginDialog(providerId: string, providerName: string): Promise<void> {
+		const previousModel = this.session.model;
+
+		const dialog = new LoginDialogComponent(
+			this.ui,
+			providerId,
+			(_success, _message) => {
+				// Completion handled below
+			},
+			providerName,
+		);
+
+		this.editorContainer.clear();
+		this.editorContainer.addChild(dialog);
+		this.ui.setFocus(dialog);
+		this.ui.requestRender();
+
+		const restoreEditor = () => {
+			this.editorContainer.clear();
+			this.editorContainer.addChild(this.editor);
+			this.ui.setFocus(this.editor);
+			this.ui.requestRender();
+		};
+
+		try {
+			const apiKey = (await dialog.showPrompt("Enter API key:")).trim();
+			if (!apiKey) {
+				throw new Error("API key cannot be empty.");
+			}
+
+			this.session.modelRegistry.authStorage.set(providerId, { type: "api_key", key: apiKey });
+
+			restoreEditor();
+			await this.completeProviderAuthentication(providerId, providerName, "api_key", previousModel);
+		} catch (error: unknown) {
+			restoreEditor();
+			const errorMsg = error instanceof Error ? error.message : String(error);
+			if (errorMsg !== "Login cancelled") {
+				this.showError(`Failed to save API key for ${providerName}: ${errorMsg}`);
+			}
+		}
+	}
+
+	private async showLoginDialog(providerId: string, providerName: string): Promise<void> {
+		const providerInfo = this.session.modelRegistry.authStorage
+			.getOAuthProviders()
+			.find((provider) => provider.id === providerId);
 		const previousModel = this.session.model;
 
 		// Providers that use callback servers (can paste redirect URL)
 		const usesCallbackServer = providerInfo?.usesCallbackServer ?? false;
 
 		// Create login dialog component
-		const dialog = new LoginDialogComponent(this.ui, providerId, (_success, _message) => {
-			// Completion handled below
-		});
+		const dialog = new LoginDialogComponent(
+			this.ui,
+			providerId,
+			(_success, _message) => {
+				// Completion handled below
+			},
+			providerName,
+		);
 
 		// Show dialog in editor container
 		this.editorContainer.clear();
@@ -4383,51 +4565,7 @@ export class InteractiveMode {
 
 			// Success
 			restoreEditor();
-			this.session.modelRegistry.refresh();
-
-			let selectedModel: Model<any> | undefined;
-			let selectionError: string | undefined;
-			if (isUnknownModel(previousModel)) {
-				const availableModels = this.session.modelRegistry.getAvailable();
-				const providerModels = availableModels.filter((model) => model.provider === providerId);
-				if (!hasDefaultModelProvider(providerId)) {
-					selectionError = `Logged in to ${providerName}, but no default model is configured for provider "${providerId}". Use /model to select a model.`;
-				} else if (providerModels.length === 0) {
-					selectionError = `Logged in to ${providerName}, but no models are available for that provider. Use /model to select a model.`;
-				} else {
-					const defaultModelId = defaultModelPerProvider[providerId];
-					selectedModel = providerModels.find((model) => model.id === defaultModelId);
-					if (!selectedModel) {
-						selectionError = `Logged in to ${providerName}, but its default model "${defaultModelId}" is not available. Use /model to select a model.`;
-					} else {
-						try {
-							await this.session.setModel(selectedModel);
-						} catch (error: unknown) {
-							selectedModel = undefined;
-							const errorMessage = error instanceof Error ? error.message : String(error);
-							selectionError = `Logged in to ${providerName}, but selecting its default model failed: ${errorMessage}. Use /model to select a model.`;
-						}
-					}
-				}
-			}
-
-			await this.updateAvailableProviderCount();
-			this.footer.invalidate();
-			this.updateEditorBorderColor();
-			if (selectedModel) {
-				this.showStatus(
-					`Logged in to ${providerName}. Selected ${selectedModel.id}. Credentials saved to ${getAuthPath()}`,
-				);
-				void this.maybeWarnAboutAnthropicSubscriptionAuth(selectedModel);
-				this.checkDaxnutsEasterEgg(selectedModel);
-			} else {
-				this.showStatus(`Logged in to ${providerName}. Credentials saved to ${getAuthPath()}`);
-				if (selectionError) {
-					this.showError(selectionError);
-				} else {
-					void this.maybeWarnAboutAnthropicSubscriptionAuth();
-				}
-			}
+			await this.completeProviderAuthentication(providerId, providerName, "oauth", previousModel);
 		} catch (error: unknown) {
 			restoreEditor();
 			const errorMsg = error instanceof Error ? error.message : String(error);
