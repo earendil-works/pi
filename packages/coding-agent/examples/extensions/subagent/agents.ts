@@ -12,7 +12,6 @@ export interface AgentConfig {
 	name: string;
 	description: string;
 	tools?: string[];
-	model?: string;
 	systemPrompt: string;
 	source: "user" | "project";
 	filePath: string;
@@ -64,7 +63,6 @@ function loadAgentsFromDir(dir: string, source: "user" | "project"): AgentConfig
 			name: frontmatter.name,
 			description: frontmatter.description,
 			tools: tools && tools.length > 0 ? tools : undefined,
-			model: frontmatter.model,
 			systemPrompt: body,
 			source,
 			filePath,

@@ -24,6 +24,70 @@ import { Container, Markdown, Spacer, Text } from "@mariozechner/pi-tui";
 import { Type } from "@sinclair/typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
 
+interface SubagentProviderConfig {
+	provider: string;
+	model?: string;
+}
+
+type SubagentProvidersMap = Record<string, SubagentProviderConfig>;
+
+let subagentProvidersCache: SubagentProvidersMap | null = null;
+
+function loadSubagentProviders(cwd: string): SubagentProvidersMap {
+	if (subagentProvidersCache !== null) return subagentProvidersCache;
+
+	const result: SubagentProvidersMap = {};
+
+	// Load project-local settings first, then global (project overrides global)
+	const settingsPaths = [
+		path.join(cwd, ".pi", "settings.json"),
+		path.join(os.homedir(), ".pi", "agent", "settings.json"),
+	];
+
+	for (const settingsFile of settingsPaths) {
+		try {
+			if (!fs.existsSync(settingsFile)) continue;
+			const content = fs.readFileSync(settingsFile, "utf-8");
+			const settings = JSON.parse(content) as Record<string, unknown>;
+			const providers = settings.subagentProviders as Record<string, unknown> | undefined;
+			if (providers) {
+				for (const [agentName, config] of Object.entries(providers)) {
+					const cfg = config as Record<string, unknown>;
+				if (!cfg.provider) continue;
+				result[agentName] = {
+					provider: cfg.provider as string,
+					model: (cfg.model as string) || undefined,
+				};
+			}
+		} catch {
+			// Ignore malformed settings files
+		}
+	}
+
+	subagentProvidersCache = result;
+	return result;
+}
+
+function resolveProvider(agentName: string, cwd: string): { provider?: string; model?: string } {
+	const providers = loadSubagentProviders(cwd);
+	const agentConfig = providers[agentName];
+
+	// Per-agent mapping with both provider and optional model
+	if (agentConfig && "provider" in agentConfig) {
+		return { provider: agentConfig.provider, model: (agentConfig as any).model };
+	}
+
+	// Global default - may have only provider
+	const globalConfig = providers["*"];
+	if (globalConfig && "provider" in globalConfig) {
+		return { provider: globalConfig.provider, model: (globalConfig as any).model };
+	}
+
+	// No subagentProviders defined - child pi uses its own defaults from settings.json
+	return {};
+}
+
+
 const MAX_PARALLEL_TASKS = 8;
 const MAX_CONCURRENCY = 4;
 const COLLAPSED_ITEM_COUNT = 10;
@@ -247,6 +311,7 @@ async function runSingleAgent(
 	makeDetails: (results: SingleResult[]) => SubagentDetails,
 ): Promise<SingleResult> {
 	const agent = agents.find((a) => a.name === agentName);
+	const resolved = resolveProvider(agentName, cwd || defaultCwd);
 
 	if (!agent) {
 		const available = agents.map((a) => `"${a.name}"`).join(", ") || "none";
@@ -263,7 +328,12 @@ async function runSingleAgent(
 	}
 
 	const args: string[] = ["--mode", "json", "-p", "--no-session"];
-	if (agent.model) args.push("--model", agent.model);
+	if (resolved.provider) {
+		args.push("--provider", resolved.provider);
+	}
+	if (resolved.model) {
+		args.push("--model", resolved.model);
+	}
 	if (agent.tools && agent.tools.length > 0) args.push("--tools", agent.tools.join(","));
 
 	let tmpPromptDir: string | null = null;
@@ -277,7 +347,7 @@ async function runSingleAgent(
 		messages: [],
 		stderr: "",
 		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, contextTokens: 0, turns: 0 },
-		model: agent.model,
+		model: resolved.model,
 		step,
 	};
 
@@ -303,10 +373,13 @@ async function runSingleAgent(
 
 		const exitCode = await new Promise<number>((resolve) => {
 			const invocation = getPiInvocation(args);
+			const env = { ...process.env };
+
 			const proc = spawn(invocation.command, invocation.args, {
 				cwd: cwd ?? defaultCwd,
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
+				env,
 			});
 			let buffer = "";
 
