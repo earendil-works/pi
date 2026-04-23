@@ -143,6 +143,8 @@ import { autoFenceHtmlInMarkdown } from "../utils/auto-fence-html.js";
 import { generateThreadListingMeta } from "../utils/auto-title.js";
 import { addToLimitedSet } from "../utils/limited-set.js";
 import { readAppendedFileChunkSync } from "../utils/read-appended-file-chunk.js";
+import { openView } from "../view/open-view.js";
+import { renderViewHtml } from "../view/render-view-html.js";
 import { AssistantMessageComponent } from "./assistant-message.js";
 import { ChatLayoutComponent, createChatContentContainer } from "./chat-layout.js";
 import { formatComposerStatusLabel } from "./composer-status-label.js";
@@ -570,6 +572,11 @@ export class TuiRenderer {
 			description: "Copy last agent message to clipboard",
 		};
 
+		const viewCommand: SlashCommand = {
+			name: "view",
+			description: "Open last agent message in a rendered HTML window",
+		};
+
 		const selectCommand: SlashCommand = {
 			name: "select",
 			description: "Temporarily disable mouse capture so you can drag-select text",
@@ -832,6 +839,7 @@ export class TuiRenderer {
 			changelogCommand,
 			clearCommand,
 			copyCommand,
+			viewCommand,
 			exportCommand,
 			fastCommand,
 			compactCommand,
@@ -4159,6 +4167,13 @@ export class TuiRenderer {
 			return;
 		}
 
+		// Check for /view command
+		if (rawText === "/view") {
+			this.handleViewCommand();
+			this.editor.setText("");
+			return;
+		}
+
 		if (rawText === "/select") {
 			this.handleSelectCommand();
 			this.editor.setText("");
@@ -4666,6 +4681,55 @@ export class TuiRenderer {
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new Text(theme.fg("dim", "Copied last agent message to clipboard"), 1, 0));
 		this.ui.requestRender();
+	}
+
+	private handleViewCommand(): void {
+		// Find the last assistant message
+		const lastAssistantMessage = this.agent.state.messages
+			.slice()
+			.reverse()
+			.find((m) => m.role === "assistant");
+
+		if (!lastAssistantMessage) {
+			this.showError("No agent messages to view yet.");
+			return;
+		}
+
+		// Extract raw text content from all text blocks
+		let textContent = "";
+
+		for (const content of lastAssistantMessage.content) {
+			if (content.type === "text") {
+				textContent += content.text;
+			}
+		}
+
+		if (!textContent.trim()) {
+			this.showError("Last agent message contains no text content.");
+			return;
+		}
+
+		// Render and open (async — don't block the TUI)
+		const sessionId = this.sessionManager.getSessionId();
+		const html = renderViewHtml(textContent);
+
+		openView(html, {
+			sessionId,
+			title: "mu /view",
+			onSubmit: (text: string) => {
+				// Submit from the Glimpse textarea — route through the editor submit flow
+				void this.handleEditorTextSubmission(text, "next");
+			},
+		})
+			.then((result) => {
+				const label = result.method === "glimpse" ? "Opened in Glimpse window" : "Opened in browser";
+				this.chatContainer.addChild(new Spacer(1));
+				this.chatContainer.addChild(new Text(theme.fg("dim", `${label}: ${result.path}`), 1, 0));
+				this.ui.requestRender();
+			})
+			.catch((error: unknown) => {
+				this.showError(error instanceof Error ? error.message : String(error));
+			});
 	}
 
 	private handleSelectCommand(): void {
