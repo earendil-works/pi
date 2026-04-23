@@ -89,6 +89,7 @@ export class FooterDataProvider {
 	private static readonly WATCH_DEBOUNCE_MS = 500;
 
 	private extensionStatuses = new Map<string, string>();
+	private hint: string | undefined = undefined;
 	private cachedBranch: string | null | undefined = undefined;
 	private gitPaths: GitPaths | null | undefined = undefined;
 	private headWatcher: FSWatcher | null = null;
@@ -122,6 +123,14 @@ export class FooterDataProvider {
 		return this.extensionStatuses;
 	}
 
+	/**
+	 * Transient hint text (e.g. "Press Ctrl-C again to exit"). Custom footers
+	 * can opt in by reading this and rendering it in place of the pwd line.
+	 */
+	getHint(): string | undefined {
+		return this.hint;
+	}
+
 	/** Subscribe to git branch changes. Returns unsubscribe function. */
 	onBranchChange(callback: () => void): () => void {
 		this.branchChangeCallbacks.add(callback);
@@ -140,6 +149,11 @@ export class FooterDataProvider {
 	/** Internal: clear extension statuses */
 	clearExtensionStatuses(): void {
 		this.extensionStatuses.clear();
+	}
+
+	/** Internal: set or clear the transient hint */
+	setHint(text: string | undefined): void {
+		this.hint = text;
 	}
 
 	/** Number of unique providers with available models (for footer display) */
@@ -350,5 +364,5 @@ export class FooterDataProvider {
 /** Read-only view for extensions - excludes setExtensionStatus, setAvailableProviderCount and dispose */
 export type ReadonlyFooterDataProvider = Pick<
 	FooterDataProvider,
-	"getGitBranch" | "getExtensionStatuses" | "getAvailableProviderCount" | "onBranchChange"
+	"getGitBranch" | "getExtensionStatuses" | "getHint" | "getAvailableProviderCount" | "onBranchChange"
 >;

@@ -249,6 +249,11 @@ export class InteractiveMode {
 	private lastStatusSpacer: Spacer | undefined = undefined;
 	private lastStatusText: Text | undefined = undefined;
 
+	// Transient hint for the footer (e.g. "Press Ctrl-C again to exit").
+	// State lives on footerDataProvider so custom footers can opt in by reading
+	// `footerData.getHint()` in their own render().
+	private hintTimer: ReturnType<typeof setTimeout> | undefined = undefined;
+
 	// Streaming message tracking
 	private streamingComponent: AssistantMessageComponent | undefined = undefined;
 	private streamingMessage: AssistantMessage | undefined = undefined;
@@ -2328,6 +2333,7 @@ export class InteractiveMode {
 				if (action !== "none") {
 					const now = Date.now();
 					if (now - this.lastEscapeTime < 500) {
+						this.clearHint();
 						if (action === "tree") {
 							this.showTreeSelector();
 						} else {
@@ -2336,6 +2342,7 @@ export class InteractiveMode {
 						this.lastEscapeTime = 0;
 					} else {
 						this.lastEscapeTime = now;
+						this.showTransientHint(`Press Esc again to open /${action}`, 500);
 					}
 				}
 			}
@@ -2954,6 +2961,26 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
+	/**
+	 * Show a transient hint in the footer's first line (replaces pwd), auto-clearing
+	 * after ttlMs. Used for double-press cues (e.g. "Press Ctrl-C again to exit").
+	 */
+	private showTransientHint(message: string, ttlMs: number): void {
+		if (this.hintTimer) clearTimeout(this.hintTimer);
+		this.footerDataProvider.setHint(message);
+		this.ui.requestRender();
+		this.hintTimer = setTimeout(() => this.clearHint(), ttlMs);
+	}
+
+	private clearHint(): void {
+		if (this.hintTimer) {
+			clearTimeout(this.hintTimer);
+			this.hintTimer = undefined;
+		}
+		this.footerDataProvider.setHint(undefined);
+		this.ui.requestRender();
+	}
+
 	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
 		switch (message.role) {
 			case "bashExecution": {
@@ -3164,6 +3191,7 @@ export class InteractiveMode {
 		} else {
 			this.clearEditor();
 			this.lastSigintTime = now;
+			this.showTransientHint("Press Ctrl-C again to exit", 500);
 		}
 	}
 
