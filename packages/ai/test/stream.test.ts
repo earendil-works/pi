@@ -1092,8 +1092,8 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe("OpenAI Codex Provider (gpt-5.2-codex)", () => {
-		const llm = getModel("openai-codex", "gpt-5.2-codex");
+	describe("OpenAI Codex Provider (gpt-5.4)", () => {
+		const llm = getModel("openai-codex", "gpt-5.4");
 
 		it.skipIf(!openaiCodexToken)("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(llm, { apiKey: openaiCodexToken });

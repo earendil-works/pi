@@ -147,6 +147,7 @@ function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: number
 		switchSession: vi.fn(async () => ({ cancelled: true })),
 		fork: vi.fn(async () => ({ cancelled: true, selectedText: "" })),
 		dispose: vi.fn(async () => {}),
+		setRebindSession: vi.fn(),
 	} as unknown as AgentSessionRuntime;
 
 	return {

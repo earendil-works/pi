@@ -27,6 +27,7 @@ type FakeRuntimeHost = {
 	fork: ReturnType<typeof vi.fn>;
 	switchSession: ReturnType<typeof vi.fn>;
 	dispose: ReturnType<typeof vi.fn>;
+	setRebindSession: ReturnType<typeof vi.fn>;
 };
 
 function createAssistantMessage(options?: {
@@ -81,6 +82,7 @@ function createRuntimeHost(assistantMessage: AssistantMessage): FakeRuntimeHost 
 		dispose: vi.fn(async () => {
 			await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
 		}),
+		setRebindSession: vi.fn(),
 	};
 }
 

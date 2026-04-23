@@ -441,6 +441,117 @@ describe("openai-completions tool_choice", () => {
 		expect(response.content).toEqual([{ type: "text", text: "OK" }]);
 	});
 
+	it("coalesces tool call deltas by stable index when provider mutates ids mid-stream", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-kimi-bad-stream",
+				choices: [
+					{
+						delta: {
+							tool_calls: [
+								{
+									index: 0,
+									id: "functions.read:0",
+									type: "function",
+									function: { name: "read", arguments: "" },
+								},
+							],
+						},
+						finish_reason: null,
+					},
+				],
+			},
+			{
+				id: "chatcmpl-kimi-bad-stream",
+				choices: [
+					{
+						delta: {
+							tool_calls: [
+								{
+									index: 0,
+									id: "chatcmpl-tool-a",
+									type: "function",
+									function: { name: null, arguments: '{"path":"README' },
+								},
+							],
+						},
+						finish_reason: null,
+					},
+				],
+			},
+			{
+				id: "chatcmpl-kimi-bad-stream",
+				choices: [
+					{
+						delta: {
+							tool_calls: [
+								{
+									index: 0,
+									id: "chatcmpl-tool-b",
+									type: "function",
+									function: { name: null, arguments: '.md"}' },
+								},
+							],
+						},
+						finish_reason: "tool_calls",
+					},
+				],
+				usage: {
+					prompt_tokens: 10,
+					completion_tokens: 5,
+					prompt_tokens_details: { cached_tokens: 0 },
+					completion_tokens_details: { reasoning_tokens: 0 },
+				},
+			},
+		];
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const tool: Tool = {
+			name: "read",
+			description: "Read a file",
+			parameters: Type.Object({
+				path: Type.String(),
+			}),
+		};
+		const s = streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Read README.md",
+						timestamp: Date.now(),
+					},
+				],
+				tools: [tool],
+			},
+			{ apiKey: "test" },
+		);
+
+		const toolCallContentIndexes: number[] = [];
+		for await (const event of s) {
+			if (event.type === "toolcall_start" || event.type === "toolcall_delta" || event.type === "toolcall_end") {
+				toolCallContentIndexes.push(event.contentIndex);
+			}
+		}
+
+		const response = await s.result();
+		expect(response.stopReason).toBe("toolUse");
+		expect(toolCallContentIndexes).toEqual([0, 0, 0, 0, 0]);
+		expect(response.content).toHaveLength(1);
+		const toolCall = response.content[0];
+		expect(toolCall.type).toBe("toolCall");
+		if (toolCall.type !== "toolCall") {
+			throw new Error("Expected toolCall content");
+		}
+		expect(toolCall.id).toBe("functions.read:0");
+		expect(toolCall.name).toBe("read");
+		expect(toolCall.arguments).toEqual({ path: "README.md" });
+		expect(toolCall).not.toHaveProperty("streamIndex");
+		expect(toolCall).not.toHaveProperty("partialArgs");
+	});
+
 	it("preserves prompt_tokens_details.cache_write_tokens from chunk usage", async () => {
 		mockState.chunks = [
 			{

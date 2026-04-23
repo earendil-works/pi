@@ -43,7 +43,6 @@
 		"@mariozechner/pi-ai": "^0.69.0",
 		"@mariozechner/pi-tui": "^0.69.0",
 		"@silvia-odwyer/photon-node": "^0.3.4",
-		"typebox": "^1.1.24",
 		"chalk": "^5.5.0",
 		"cli-highlight": "^2.1.11",
 		"diff": "^8.0.2",
@@ -56,8 +55,9 @@
 		"minimatch": "^10.2.3",
 		"proper-lockfile": "^4.1.2",
 		"strip-ansi": "^7.1.0",
+		"typebox": "^1.1.24",
 		"undici": "^7.19.1",
-		"uuid": "^11.1.0",
+		"uuid": "^14.0.0",
 		"yaml": "^2.8.2"
 	},
 	"overrides": {

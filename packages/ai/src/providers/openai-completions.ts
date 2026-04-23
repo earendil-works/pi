@@ -150,33 +150,44 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
-			let currentBlock: TextContent | ThinkingContent | (ToolCall & { partialArgs?: string }) | null = null;
+			interface StreamingToolCallBlock extends ToolCall {
+				partialArgs?: string;
+				streamIndex?: number;
+			}
+
+			let currentBlock: TextContent | ThinkingContent | StreamingToolCallBlock | null = null;
 			const blocks = output.content;
-			const blockIndex = () => blocks.length - 1;
+			const getContentIndex = (block: typeof currentBlock) => (block ? blocks.indexOf(block) : -1);
+			const currentContentIndex = () => getContentIndex(currentBlock);
 			const finishCurrentBlock = (block?: typeof currentBlock) => {
 				if (block) {
+					const contentIndex = getContentIndex(block);
+					if (contentIndex === -1) {
+						return;
+					}
 					if (block.type === "text") {
 						stream.push({
 							type: "text_end",
-							contentIndex: blockIndex(),
+							contentIndex,
 							content: block.text,
 							partial: output,
 						});
 					} else if (block.type === "thinking") {
 						stream.push({
 							type: "thinking_end",
-							contentIndex: blockIndex(),
+							contentIndex,
 							content: block.thinking,
 							partial: output,
 						});
 					} else if (block.type === "toolCall") {
 						block.arguments = parseStreamingJson(block.partialArgs);
-						// Finalize in-place and strip the scratch buffer so replay only
+						// Finalize in-place and strip the scratch buffers so replay only
 						// carries parsed arguments.
 						delete block.partialArgs;
+						delete block.streamIndex;
 						stream.push({
 							type: "toolcall_end",
-							contentIndex: blockIndex(),
+							contentIndex,
 							toolCall: block,
 							partial: output,
 						});
@@ -221,14 +232,14 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 							finishCurrentBlock(currentBlock);
 							currentBlock = { type: "text", text: "" };
 							output.content.push(currentBlock);
-							stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+							stream.push({ type: "text_start", contentIndex: currentContentIndex(), partial: output });
 						}
 
 						if (currentBlock.type === "text") {
 							currentBlock.text += choice.delta.content;
 							stream.push({
 								type: "text_delta",
-								contentIndex: blockIndex(),
+								contentIndex: currentContentIndex(),
 								delta: choice.delta.content,
 								partial: output,
 							});
@@ -263,7 +274,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 								thinkingSignature: foundReasoningField,
 							};
 							output.content.push(currentBlock);
-							stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+							stream.push({ type: "thinking_start", contentIndex: currentContentIndex(), partial: output });
 						}
 
 						if (currentBlock.type === "thinking") {
@@ -271,7 +282,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 							currentBlock.thinking += delta;
 							stream.push({
 								type: "thinking_delta",
-								contentIndex: blockIndex(),
+								contentIndex: currentContentIndex(),
 								delta,
 								partial: output,
 							});
@@ -280,11 +291,13 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 
 					if (choice?.delta?.tool_calls) {
 						for (const toolCall of choice.delta.tool_calls) {
-							if (
-								!currentBlock ||
-								currentBlock.type !== "toolCall" ||
-								(toolCall.id && currentBlock.id !== toolCall.id)
-							) {
+							const streamIndex = typeof toolCall.index === "number" ? toolCall.index : undefined;
+							const sameToolCall =
+								currentBlock?.type === "toolCall" &&
+								((streamIndex !== undefined && currentBlock.streamIndex === streamIndex) ||
+									(streamIndex === undefined && toolCall.id && currentBlock.id === toolCall.id));
+
+							if (!sameToolCall) {
 								finishCurrentBlock(currentBlock);
 								currentBlock = {
 									type: "toolCall",
@@ -292,23 +305,34 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 									name: toolCall.function?.name || "",
 									arguments: {},
 									partialArgs: "",
+									streamIndex,
 								};
 								output.content.push(currentBlock);
-								stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+								stream.push({
+									type: "toolcall_start",
+									contentIndex: getContentIndex(currentBlock),
+									partial: output,
+								});
 							}
 
-							if (currentBlock.type === "toolCall") {
-								if (toolCall.id) currentBlock.id = toolCall.id;
-								if (toolCall.function?.name) currentBlock.name = toolCall.function.name;
+							const currentToolCallBlock = currentBlock?.type === "toolCall" ? currentBlock : null;
+							if (currentToolCallBlock) {
+								if (!currentToolCallBlock.id && toolCall.id) currentToolCallBlock.id = toolCall.id;
+								if (!currentToolCallBlock.name && toolCall.function?.name) {
+									currentToolCallBlock.name = toolCall.function.name;
+								}
+								if (currentToolCallBlock.streamIndex === undefined && streamIndex !== undefined) {
+									currentToolCallBlock.streamIndex = streamIndex;
+								}
 								let delta = "";
 								if (toolCall.function?.arguments) {
 									delta = toolCall.function.arguments;
-									currentBlock.partialArgs += toolCall.function.arguments;
-									currentBlock.arguments = parseStreamingJson(currentBlock.partialArgs);
+									currentToolCallBlock.partialArgs += toolCall.function.arguments;
+									currentToolCallBlock.arguments = parseStreamingJson(currentToolCallBlock.partialArgs);
 								}
 								stream.push({
 									type: "toolcall_delta",
-									contentIndex: blockIndex(),
+									contentIndex: getContentIndex(currentToolCallBlock),
 									delta,
 									partial: output,
 								});
@@ -349,8 +373,9 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 		} catch (error) {
 			for (const block of output.content) {
 				delete (block as { index?: number }).index;
-				// partialArgs is only a streaming scratch buffer; never persist it.
+				// Streaming scratch buffers are only used during parsing; never persist them.
 				delete (block as { partialArgs?: string }).partialArgs;
+				delete (block as { streamIndex?: number }).streamIndex;
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
