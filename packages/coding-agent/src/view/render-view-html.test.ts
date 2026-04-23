@@ -63,4 +63,42 @@ console.assert(html.includes("glimpse.send"), "FAIL: no glimpse.send for submit"
 console.assert(html.includes("e.key === 'Enter'"), "FAIL: no Enter key handler");
 console.assert(html.includes("!e.shiftKey"), "FAIL: no Shift+Enter check");
 
+// 9. Typography: headings, lists, paragraphs, blockquotes, hr
+const css = html.match(/<style>([\s\S]*?)<\/style>/)?.[1] ?? "";
+const assertCss = (label: string, re: RegExp) => {
+	if (!re.test(css)) {
+		console.error(`FAIL: ${label}`);
+		process.exit(1);
+	}
+};
+const denyCss = (label: string, re: RegExp) => {
+	if (re.test(css)) {
+		console.error(`FAIL: ${label} (should not exist)`);
+		process.exit(1);
+	}
+};
+
+// Lists
+assertCss("#content ul padding-left", /#content\s+ul[^{]*\{[^}]*padding-left/);
+assertCss("#content ol padding-left", /#content\s+ol[^{]*\{[^}]*padding-left/);
+assertCss("#content li margin", /#content\s+li[^{]*\{[^}]*margin/);
+assertCss("nested list margin", /#content\s+li\s*>\s*(ul|ol)[^{]*\{[^}]*margin/);
+assertCss("#content p margin", /#content\s+p[^{]*\{[^}]*margin/);
+
+// Headings: margins restored, no font-size overrides
+assertCss("#content headings margin-top", /#content\s+h[1-6][^{]*\{[^}]*margin-top/);
+assertCss("#content headings margin-bottom", /#content\s+h[1-6][^{]*\{[^}]*margin-bottom/);
+denyCss("heading font-size overrides", /#content\s+h[1-6][^{]*\{[^}]*font-size/);
+
+// Blockquote: vertical margins (not just left border)
+assertCss("blockquote vertical margin", /#content\s+blockquote[^{]*\{[^}]*margin/);
+
+// HR: section-break-sized margins (>= 2em)
+const hrRule = css.match(/#content\s+hr[^{]*\{[^}]*\}/)?.[0] ?? "";
+const hrMarginEm = hrRule.match(/margin:\s*([\d.]+)\s*em/);
+if (!hrMarginEm || parseFloat(hrMarginEm[1]) < 2) {
+	console.error("FAIL: hr margin < 2em");
+	process.exit(1);
+}
+
 console.log("All assertions passed.");

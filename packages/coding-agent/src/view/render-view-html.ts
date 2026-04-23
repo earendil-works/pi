@@ -64,10 +64,15 @@ body {
 #content code { background: #313244; padding: 2px 6px; border-radius: 3px; font-size: 0.9em; }
 #content pre { background: #313244; padding: 12px; border-radius: 6px; overflow-x: auto; }
 #content pre code { background: none; padding: 0; font-size: 0.9em; }
-#content blockquote { border-left: 3px solid #45475a; margin: 0; padding-left: 16px; color: #a6adc8; }
-#content h1, #content h2, #content h3, #content h4, #content h5, #content h6 { color: #cba6f7; }
+#content h1, #content h2, #content h3, #content h4, #content h5, #content h6 { color: #cba6f7; margin-top: 1.5em; margin-bottom: 0.5em; }
+#content h1 { margin-top: 0; }
+#content p { margin: 0.75em 0; }
+#content ul, #content ol { padding-left: 1.5em; margin: 0.75em 0; }
+#content li { margin: 0.25em 0; }
+#content li > ul, #content li > ol { margin: 0.25em 0; }
+#content blockquote { border-left: 3px solid #45475a; margin: 1.5em 0; padding-left: 1em; color: #a6adc8; }
+#content hr { border: none; border-top: 1px solid #45475a; margin: 3em 0; }
 #content a { color: #89b4fa; }
-#content hr { border: none; border-top: 1px solid #45475a; margin: 16px 0; }
 #content img { max-width: 100%; border-radius: 6px; }
 #input-bar {
   display: flex;
