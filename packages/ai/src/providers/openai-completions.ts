@@ -26,6 +26,7 @@ import type {
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { parseStreamingJson } from "../utils/json-parse.js";
+import { getExponentialBackoff, sleep } from "../utils/retry.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
 import { transformMessages } from "./transorm-messages.js";
 
@@ -157,7 +158,93 @@ function isBasetenReasoningEffortModel(model: Model<"openai-completions">): bool
 	return modelId === "openai/gpt-oss-120b" || modelId.endsWith("/gpt-oss-120b");
 }
 
-// State machine for parsing <think> tags from streaming content
+/**
+ * Check if error is a retryable 429 from a baseten URL.
+ * Only 429 + baseten => retryable. Non-baseten or non-429 => not retryable.
+ */
+function isRetryableBaseten429(error: unknown, model: Model<"openai-completions">, signal?: AbortSignal): boolean {
+	if (signal?.aborted) return false;
+	if (!isBasetenBaseUrl(model.baseUrl)) return false;
+
+	const record = typeof error === "object" && error !== null ? (error as Record<string, unknown>) : null;
+	const status = record?.status;
+	if (typeof status !== "number" || status !== 429) return false;
+
+	return true;
+}
+
+/** Default baseten retry parameters */
+const BASETEN_DEFAULT_MAX_RETRIES = 5;
+const BASETEN_DEFAULT_BASE_DELAY = 1000;
+const BASETEN_DEFAULT_MAX_DELAY = 15000;
+
+/** Resolved retry options: baseten gets defaults, non-baseten gets zero retries. */
+function resolveBasetenRetryOptions(
+	model: Model<"openai-completions">,
+	retryOverride?: StreamOptions["retry"],
+): { maxRetries: number; baseDelay: number; maxDelay: number } {
+	if (!isBasetenBaseUrl(model.baseUrl)) {
+		return { maxRetries: 0, baseDelay: 0, maxDelay: 0 };
+	}
+	return {
+		maxRetries: retryOverride?.maxRetries ?? BASETEN_DEFAULT_MAX_RETRIES,
+		baseDelay: retryOverride?.baseDelay ?? BASETEN_DEFAULT_BASE_DELAY,
+		maxDelay: retryOverride?.maxDelay ?? BASETEN_DEFAULT_MAX_DELAY,
+	};
+}
+
+/**
+ * Extract retry-after value in milliseconds from an error's headers.
+ * Supports both `retry-after-ms` (milliseconds) and `retry-after` (seconds or HTTP-date).
+ */
+function getRetryAfterMs(error: unknown): number | undefined {
+	const record = typeof error === "object" && error !== null ? (error as Record<string, unknown>) : null;
+	const headers = record?.headers;
+	if (!headers || typeof headers !== "object") return undefined;
+
+	// headers may be a Headers instance or a plain object
+	const get = (name: string): string | null => {
+		if (typeof (headers as Headers).get === "function") {
+			return (headers as Headers).get(name);
+		}
+		const plain = headers as Record<string, unknown>;
+		const key = Object.keys(plain).find((k) => k.toLowerCase() === name.toLowerCase());
+		const val = key ? plain[key] : undefined;
+		return typeof val === "string" ? val : null;
+	};
+
+	const retryAfterMs = get("retry-after-ms");
+	if (retryAfterMs) {
+		const ms = parseFloat(retryAfterMs);
+		if (!Number.isNaN(ms) && ms > 0) return ms;
+	}
+
+	const retryAfter = get("retry-after");
+	if (retryAfter) {
+		const seconds = parseFloat(retryAfter);
+		if (!Number.isNaN(seconds) && seconds > 0) return seconds * 1000;
+		const date = Date.parse(retryAfter);
+		if (!Number.isNaN(date)) {
+			const diff = date - Date.now();
+			if (diff > 0) return diff;
+		}
+	}
+
+	return undefined;
+}
+
+/**
+ * Calculate retry delay: exponential backoff, but respect retry-after header.
+ * Uses Math.max(backoff, retryAfterMs) capped at maxDelay.
+ */
+function getRetryDelay(attempt: number, baseDelay: number, maxDelay: number, error: unknown): number {
+	const backoff = getExponentialBackoff(attempt, baseDelay, maxDelay);
+	const retryAfterMs = getRetryAfterMs(error);
+	if (retryAfterMs === undefined) return Math.min(maxDelay, backoff);
+	return Math.min(maxDelay, Math.max(backoff, retryAfterMs));
+}
+
+// State machine for parsing<think> tags from streaming content
 // Many open-source models (DeepSeek, Qwen, etc.) output reasoning in <think> tags
 interface ThinkParseState {
 	mode: "text" | "think";
@@ -300,6 +387,8 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 	const stream = new AssistantMessageEventStream();
 
 	(async () => {
+		const { maxRetries, baseDelay, maxDelay } = resolveBasetenRetryOptions(model, options?.retry);
+
 		const output: AssistantMessage = {
 			role: "assistant",
 			content: [],
@@ -318,269 +407,326 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions"> = (
 			timestamp: Date.now(),
 		};
 
-		try {
-			const client = createClient(model, options?.apiKey);
-			const params = buildParams(model, context, options);
-			const openaiStream = await client.chat.completions.create(params, { signal: options?.signal });
-			stream.push({ type: "start", partial: output });
+		let lastError: unknown;
+		let hasEmittedStart = false;
+		let attempts = 0;
 
-			let currentBlock: TextContent | ThinkingContent | (ToolCall & { partialArgs?: string }) | null = null;
-			const blocks = output.content;
-			const blockIndex = () => blocks.length - 1;
-			// State machine for parsing <think> tags embedded in content
-			const thinkParseState = createThinkParseState();
-			const finishCurrentBlock = (block?: typeof currentBlock) => {
-				if (block) {
-					if (block.type === "text") {
-						stream.push({
-							type: "text_end",
-							contentIndex: blockIndex(),
-							content: block.text,
-							partial: output,
-						});
-					} else if (block.type === "thinking") {
-						stream.push({
-							type: "thinking_end",
-							contentIndex: blockIndex(),
-							content: block.thinking,
-							partial: output,
-						});
-					} else if (block.type === "toolCall") {
-						// Handle double-encoded JSON (some models produce this)
-						block.arguments = parsePossiblyDoubleEncoded(block.partialArgs);
+		// Retry window = before first event emission (prevents duplicate start events)
+		for (let attempt = 0; attempt <= maxRetries; attempt++) {
+			attempts = attempt + 1;
+			try {
+				output.content = [];
 
-						delete block.partialArgs;
-						stream.push({
-							type: "toolcall_end",
-							contentIndex: blockIndex(),
-							toolCall: block,
-							partial: output,
-						});
+				const client = createClient(model, options?.apiKey);
+				const params = buildParams(model, context, options);
+				const openaiStream = await client.chat.completions.create(params, { signal: options?.signal });
+
+				// Must get first chunk before emitting start (retry boundary)
+				const iterator = openaiStream[Symbol.asyncIterator]();
+				const firstResult = await iterator.next();
+
+				if (firstResult.done) {
+					throw new Error("Stream ended without events");
+				}
+
+				if (!hasEmittedStart) {
+					hasEmittedStart = true;
+					stream.push({ type: "start", partial: output });
+				}
+
+				let currentBlock: TextContent | ThinkingContent | (ToolCall & { partialArgs?: string }) | null = null;
+				const blocks = output.content;
+				const blockIndex = () => blocks.length - 1;
+				// State machine for parsing <think> tags embedded in content
+				const thinkParseState = createThinkParseState();
+				const finishCurrentBlock = (block?: typeof currentBlock) => {
+					if (block) {
+						if (block.type === "text") {
+							stream.push({
+								type: "text_end",
+								contentIndex: blockIndex(),
+								content: block.text,
+								partial: output,
+							});
+						} else if (block.type === "thinking") {
+							stream.push({
+								type: "thinking_end",
+								contentIndex: blockIndex(),
+								content: block.thinking,
+								partial: output,
+							});
+						} else if (block.type === "toolCall") {
+							// Handle double-encoded JSON (some models produce this)
+							block.arguments = parsePossiblyDoubleEncoded(block.partialArgs);
+
+							delete block.partialArgs;
+							stream.push({
+								type: "toolcall_end",
+								contentIndex: blockIndex(),
+								toolCall: block,
+								partial: output,
+							});
+						}
 					}
-				}
-			};
-
-			for await (const chunk of openaiStream) {
-				if (chunk.usage) {
-					const cachedTokens = chunk.usage.prompt_tokens_details?.cached_tokens || 0;
-					const reasoningTokens = chunk.usage.completion_tokens_details?.reasoning_tokens || 0;
-					const input = (chunk.usage.prompt_tokens || 0) - cachedTokens;
-					const outputTokens = (chunk.usage.completion_tokens || 0) + reasoningTokens;
-					output.usage = {
-						// OpenAI includes cached tokens in prompt_tokens, so subtract to get non-cached input
-						input,
-						output: outputTokens,
-						cacheRead: cachedTokens,
-						cacheWrite: 0,
-						// Compute totalTokens ourselves since we add reasoning_tokens to output
-						totalTokens: input + outputTokens + cachedTokens,
-						cost: {
-							input: 0,
-							output: 0,
-							cacheRead: 0,
-							cacheWrite: 0,
-							total: 0,
-						},
-					};
-					calculateCost(model, output.usage);
-				}
-
-				const choice = chunk.choices[0];
-				if (!choice) continue;
-				const choiceWithMessage = choice as ChatCompletionChunk.Choice & {
-					message?: {
-						content?: string | null;
-						reasoning_content?: string | null;
-						reasoning?: string | null;
-						tool_calls?: OpenAIToolCallDelta[];
-					};
 				};
 
-				if (choice.finish_reason) {
-					output.stopReason = mapStopReason(choice.finish_reason);
-				}
+				const processChunk = (chunk: ChatCompletionChunk) => {
+					if (chunk.usage) {
+						const cachedTokens = chunk.usage.prompt_tokens_details?.cached_tokens || 0;
+						const reasoningTokens = chunk.usage.completion_tokens_details?.reasoning_tokens || 0;
+						const input = (chunk.usage.prompt_tokens || 0) - cachedTokens;
+						const outputTokens = (chunk.usage.completion_tokens || 0) + reasoningTokens;
+						output.usage = {
+							// OpenAI includes cached tokens in prompt_tokens, so subtract to get non-cached input
+							input,
+							output: outputTokens,
+							cacheRead: cachedTokens,
+							cacheWrite: 0,
+							// Compute totalTokens ourselves since we add reasoning_tokens to output
+							totalTokens: input + outputTokens + cachedTokens,
+							cost: {
+								input: 0,
+								output: 0,
+								cacheRead: 0,
+								cacheWrite: 0,
+								total: 0,
+							},
+						};
+						calculateCost(model, output.usage);
+					}
 
-				const contentDelta =
-					getNonEmptyStringField(choice.delta, "content") ??
-					getNonEmptyStringField(choiceWithMessage.message, "content");
-				if (contentDelta) {
-					// Parse <think> tags from content (used by DeepSeek, Qwen, etc.)
-					const segments = splitThinkSegments(contentDelta, thinkParseState);
+					const choice = chunk.choices[0];
+					if (!choice) return;
+					const choiceWithMessage = choice as ChatCompletionChunk.Choice & {
+						message?: {
+							content?: string | null;
+							reasoning_content?: string | null;
+							reasoning?: string | null;
+							tool_calls?: OpenAIToolCallDelta[];
+						};
+					};
 
-					for (const segment of segments) {
-						if (segment.kind === "thinking") {
-							// Switch to thinking block if needed
+					if (choice.finish_reason) {
+						output.stopReason = mapStopReason(choice.finish_reason);
+					}
+
+					const contentDelta =
+						getNonEmptyStringField(choice.delta, "content") ??
+						getNonEmptyStringField(choiceWithMessage.message, "content");
+					if (contentDelta) {
+						// Parse <think> tags from content (used by DeepSeek, Qwen, etc.)
+						const segments = splitThinkSegments(contentDelta, thinkParseState);
+
+						for (const segment of segments) {
+							if (segment.kind === "thinking") {
+								// Switch to thinking block if needed
+								if (!currentBlock || currentBlock.type !== "thinking") {
+									finishCurrentBlock(currentBlock);
+									currentBlock = { type: "thinking", thinking: "", thinkingSignature: "think_tag" };
+									output.content.push(currentBlock);
+									stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
+								}
+								if (currentBlock.type === "thinking") {
+									currentBlock.thinking += segment.chunk;
+									stream.push({
+										type: "thinking_delta",
+										contentIndex: blockIndex(),
+										delta: segment.chunk,
+										partial: output,
+									});
+								}
+							} else {
+								// Text segment - switch to text block if needed
+								if (!currentBlock || currentBlock.type !== "text") {
+									finishCurrentBlock(currentBlock);
+									currentBlock = { type: "text", text: "" };
+									output.content.push(currentBlock);
+									stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
+								}
+								if (currentBlock.type === "text") {
+									currentBlock.text += segment.chunk;
+									stream.push({
+										type: "text_delta",
+										contentIndex: blockIndex(),
+										delta: segment.chunk,
+										partial: output,
+									});
+								}
+							}
+						}
+					}
+
+					// Some endpoints return reasoning in reasoning_content (llama.cpp),
+					// or reasoning (other OpenAI-compatible endpoints).
+					// Baseten may return these on choice.message instead of choice.delta.
+					const reasoningFields = ["reasoning_content", "reasoning"];
+					for (const field of reasoningFields) {
+						const reasoningDelta =
+							getNonEmptyStringField(choice.delta, field) ??
+							getNonEmptyStringField(choiceWithMessage.message, field);
+						if (reasoningDelta) {
 							if (!currentBlock || currentBlock.type !== "thinking") {
 								finishCurrentBlock(currentBlock);
-								currentBlock = { type: "thinking", thinking: "", thinkingSignature: "think_tag" };
+								currentBlock = {
+									type: "thinking",
+									thinking: "",
+									thinkingSignature: field,
+								};
 								output.content.push(currentBlock);
 								stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
 							}
+
 							if (currentBlock.type === "thinking") {
-								currentBlock.thinking += segment.chunk;
+								currentBlock.thinking += reasoningDelta;
 								stream.push({
 									type: "thinking_delta",
 									contentIndex: blockIndex(),
-									delta: segment.chunk,
-									partial: output,
-								});
-							}
-						} else {
-							// Text segment - switch to text block if needed
-							if (!currentBlock || currentBlock.type !== "text") {
-								finishCurrentBlock(currentBlock);
-								currentBlock = { type: "text", text: "" };
-								output.content.push(currentBlock);
-								stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
-							}
-							if (currentBlock.type === "text") {
-								currentBlock.text += segment.chunk;
-								stream.push({
-									type: "text_delta",
-									contentIndex: blockIndex(),
-									delta: segment.chunk,
+									delta: reasoningDelta,
 									partial: output,
 								});
 							}
 						}
 					}
+
+					const toolCalls =
+						choice.delta?.tool_calls && choice.delta.tool_calls.length > 0
+							? (choice.delta.tool_calls as OpenAIToolCallDelta[])
+							: choiceWithMessage.message?.tool_calls && choiceWithMessage.message.tool_calls.length > 0
+								? choiceWithMessage.message.tool_calls
+								: null;
+					if (toolCalls) {
+						for (const toolCall of toolCalls) {
+							// Use function.name to detect new tool calls (not id).
+							// Fireworks sends different ids for continuation chunks of the same tool call.
+							const hasName =
+								toolCall.function?.name !== null &&
+								toolCall.function?.name !== undefined &&
+								toolCall.function.name.length > 0;
+							if (!currentBlock || currentBlock.type !== "toolCall" || hasName) {
+								finishCurrentBlock(currentBlock);
+								currentBlock = {
+									type: "toolCall",
+									id: toolCall.id || "",
+									name: toolCall.function?.name || "",
+									arguments: {},
+									partialArgs: "",
+								};
+								output.content.push(currentBlock);
+								stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+							}
+
+							if (currentBlock.type === "toolCall") {
+								if (toolCall.function?.name) currentBlock.name = toolCall.function.name;
+								let delta = "";
+								if (toolCall.function?.arguments) {
+									delta = toolCall.function.arguments;
+									currentBlock.partialArgs += toolCall.function.arguments;
+									currentBlock.arguments = parseStreamingJson(currentBlock.partialArgs);
+								}
+								stream.push({
+									type: "toolcall_delta",
+									contentIndex: blockIndex(),
+									delta,
+									partial: output,
+								});
+							}
+						}
+					}
+				};
+
+				// Process first chunk (already pulled for retry boundary)
+				processChunk(firstResult.value);
+
+				// Continue with remaining chunks via the async iterator
+				let nextResult = await iterator.next();
+				while (!nextResult.done) {
+					processChunk(nextResult.value);
+					nextResult = await iterator.next();
 				}
 
-				// Some endpoints return reasoning in reasoning_content (llama.cpp),
-				// or reasoning (other OpenAI-compatible endpoints).
-				// Baseten may return these on choice.message instead of choice.delta.
-				const reasoningFields = ["reasoning_content", "reasoning"];
-				for (const field of reasoningFields) {
-					const reasoningDelta =
-						getNonEmptyStringField(choice.delta, field) ??
-						getNonEmptyStringField(choiceWithMessage.message, field);
-					if (reasoningDelta) {
+				// Flush any remaining content in the think parse buffer
+				const remainingSegments = flushThinkParseState(thinkParseState);
+				for (const segment of remainingSegments) {
+					if (segment.kind === "thinking") {
 						if (!currentBlock || currentBlock.type !== "thinking") {
 							finishCurrentBlock(currentBlock);
-							currentBlock = {
-								type: "thinking",
-								thinking: "",
-								thinkingSignature: field,
-							};
+							currentBlock = { type: "thinking", thinking: "", thinkingSignature: "think_tag" };
 							output.content.push(currentBlock);
 							stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
 						}
-
 						if (currentBlock.type === "thinking") {
-							currentBlock.thinking += reasoningDelta;
+							currentBlock.thinking += segment.chunk;
 							stream.push({
 								type: "thinking_delta",
 								contentIndex: blockIndex(),
-								delta: reasoningDelta,
+								delta: segment.chunk,
 								partial: output,
 							});
 						}
-					}
-				}
-
-				const toolCalls =
-					choice.delta?.tool_calls && choice.delta.tool_calls.length > 0
-						? (choice.delta.tool_calls as OpenAIToolCallDelta[])
-						: choiceWithMessage.message?.tool_calls && choiceWithMessage.message.tool_calls.length > 0
-							? choiceWithMessage.message.tool_calls
-							: null;
-				if (toolCalls) {
-					for (const toolCall of toolCalls) {
-						// Use function.name to detect new tool calls (not id).
-						// Fireworks sends different ids for continuation chunks of the same tool call.
-						const hasName =
-							toolCall.function?.name !== null &&
-							toolCall.function?.name !== undefined &&
-							toolCall.function.name.length > 0;
-						if (!currentBlock || currentBlock.type !== "toolCall" || hasName) {
+					} else {
+						if (!currentBlock || currentBlock.type !== "text") {
 							finishCurrentBlock(currentBlock);
-							currentBlock = {
-								type: "toolCall",
-								id: toolCall.id || "",
-								name: toolCall.function?.name || "",
-								arguments: {},
-								partialArgs: "",
-							};
+							currentBlock = { type: "text", text: "" };
 							output.content.push(currentBlock);
-							stream.push({ type: "toolcall_start", contentIndex: blockIndex(), partial: output });
+							stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
 						}
-
-						if (currentBlock.type === "toolCall") {
-							if (toolCall.function?.name) currentBlock.name = toolCall.function.name;
-							let delta = "";
-							if (toolCall.function?.arguments) {
-								delta = toolCall.function.arguments;
-								currentBlock.partialArgs += toolCall.function.arguments;
-								currentBlock.arguments = parseStreamingJson(currentBlock.partialArgs);
-							}
+						if (currentBlock.type === "text") {
+							currentBlock.text += segment.chunk;
 							stream.push({
-								type: "toolcall_delta",
+								type: "text_delta",
 								contentIndex: blockIndex(),
-								delta,
+								delta: segment.chunk,
 								partial: output,
 							});
 						}
 					}
 				}
-			}
 
-			// Flush any remaining content in the think parse buffer
-			const remainingSegments = flushThinkParseState(thinkParseState);
-			for (const segment of remainingSegments) {
-				if (segment.kind === "thinking") {
-					if (!currentBlock || currentBlock.type !== "thinking") {
-						finishCurrentBlock(currentBlock);
-						currentBlock = { type: "thinking", thinking: "", thinkingSignature: "think_tag" };
-						output.content.push(currentBlock);
-						stream.push({ type: "thinking_start", contentIndex: blockIndex(), partial: output });
-					}
-					if (currentBlock.type === "thinking") {
-						currentBlock.thinking += segment.chunk;
-						stream.push({
-							type: "thinking_delta",
-							contentIndex: blockIndex(),
-							delta: segment.chunk,
-							partial: output,
-						});
-					}
-				} else {
-					if (!currentBlock || currentBlock.type !== "text") {
-						finishCurrentBlock(currentBlock);
-						currentBlock = { type: "text", text: "" };
-						output.content.push(currentBlock);
-						stream.push({ type: "text_start", contentIndex: blockIndex(), partial: output });
-					}
-					if (currentBlock.type === "text") {
-						currentBlock.text += segment.chunk;
-						stream.push({
-							type: "text_delta",
-							contentIndex: blockIndex(),
-							delta: segment.chunk,
-							partial: output,
-						});
-					}
+				finishCurrentBlock(currentBlock);
+
+				if (options?.signal?.aborted) {
+					throw new Error("Request was aborted");
 				}
+
+				if (output.stopReason === "aborted" || output.stopReason === "error") {
+					throw new Error("An unkown error ocurred");
+				}
+
+				stream.push({ type: "done", reason: output.stopReason, message: output });
+				stream.end();
+				return;
+			} catch (error) {
+				lastError = error;
+
+				for (const block of output.content) delete (block as any).index;
+
+				const shouldRetry =
+					!hasEmittedStart && isRetryableBaseten429(error, model, options?.signal) && attempt < maxRetries;
+
+				if (shouldRetry) {
+					const delay = getRetryDelay(attempt, baseDelay, maxDelay, error);
+					try {
+						await sleep(delay, options?.signal);
+					} catch {
+						break;
+					}
+					continue;
+				}
+
+				break;
 			}
-
-			finishCurrentBlock(currentBlock);
-
-			if (options?.signal?.aborted) {
-				throw new Error("Request was aborted");
-			}
-
-			if (output.stopReason === "aborted" || output.stopReason === "error") {
-				throw new Error("An unkown error ocurred");
-			}
-
-			stream.push({ type: "done", reason: output.stopReason, message: output });
-			stream.end();
-		} catch (error) {
-			for (const block of output.content) delete (block as any).index;
-			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
-			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
-			stream.push({ type: "error", reason: output.stopReason, error: output });
-			stream.end();
 		}
+
+		// Retry loop exhausted or non-retryable error
+		if (!hasEmittedStart) {
+			stream.push({ type: "start", partial: output });
+		}
+
+		output.stopReason = options?.signal?.aborted ? "aborted" : "error";
+		const errorMessage = lastError instanceof Error ? lastError.message : JSON.stringify(lastError);
+		output.errorMessage = attempts > 1 ? `${errorMessage} (after ${attempts} attempts)` : errorMessage;
+		stream.push({ type: "error", reason: output.stopReason, error: output });
+		stream.end();
 	})();
 
 	return stream;

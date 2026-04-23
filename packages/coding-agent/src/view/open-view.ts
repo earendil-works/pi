@@ -63,11 +63,11 @@ export async function openView(html: string, options: OpenViewOptions): Promise<
 			});
 
 			// Listen for submit messages from the textarea
-			win.on("message", (data: Record<string, unknown>) => {
+			win.on("message", ((data: Record<string, unknown>) => {
 				if (data?.type === "submit" && typeof data.text === "string" && (data.text as string).trim()) {
 					options.onSubmit?.((data.text as string).trim());
 				}
-			});
+			}) as () => void);
 
 			win.on("error", () => {
 				clearTimeout(timeout);
