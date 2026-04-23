@@ -767,7 +767,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "gemini-2.5-flash-lite": {
+		readonly "gemma-4-26b-a4b-it": {
 			id: string;
 			name: string;
 			api: "google-generative-ai";
@@ -784,7 +784,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "gemma-4-26b-it": {
+		readonly "gemini-2.5-flash-lite": {
 			id: string;
 			name: string;
 			api: "google-generative-ai";
@@ -2991,6 +2991,23 @@ export declare const MODELS: {
 		};
 	};
 	readonly openrouter: {
+		readonly "tencent/hy3-preview:free": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "xiaomi/mimo-v2.5-pro": {
 			id: string;
 			name: string;
