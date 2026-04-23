@@ -7,6 +7,32 @@ import { access, constants, readFile } from "fs/promises";
 import { extname, resolve as resolvePath } from "path";
 import { findModel, getApiKeyForModel } from "../model-config.js";
 import { getToolDescription } from "../prompts/index.js";
+import { getCurrentModel } from "../runtime-state.js";
+
+type ReadImageMode = "delegate" | "self";
+
+type ReadImageModeModelCandidate = {
+	provider: string;
+	id: string;
+	input: readonly ("text" | "image")[];
+};
+
+export function resolveReadImageMode({
+	requestedMode,
+	activeModel,
+	fallbackModel,
+}: {
+	requestedMode?: ReadImageMode;
+	activeModel?: ReadImageModeModelCandidate | null;
+	fallbackModel?: ReadImageModeModelCandidate | null;
+}): ReadImageMode {
+	if (requestedMode) {
+		return requestedMode;
+	}
+
+	const resolvedModel = activeModel ?? fallbackModel;
+	return resolvedModel?.input.includes("image") ? "self" : "delegate";
+}
 
 /**
  * Expand ~ to home directory
@@ -140,18 +166,23 @@ async function loadImageSource(
 			return { error: `Unsupported image format: ${extname(source)}`, source };
 		}
 
-		// Check if file exists
-		await access(absolutePath, constants.R_OK);
+		try {
+			// Check if file exists
+			await access(absolutePath, constants.R_OK);
 
-		// Check if aborted before reading
-		if (abortState?.current) {
-			return { error: "Operation aborted", source };
+			// Check if aborted before reading
+			if (abortState?.current) {
+				return { error: "Operation aborted", source };
+			}
+
+			// Read the image file
+			const buffer = await readFile(absolutePath);
+			const base64 = buffer.toString("base64");
+			return { base64, mimeType: fileMimeType, source };
+		} catch (error) {
+			const errorMessage = error instanceof Error ? error.message : String(error);
+			return { error: `Failed to read file: ${errorMessage}`, source };
 		}
-
-		// Read the image file
-		const buffer = await readFile(absolutePath);
-		const base64 = buffer.toString("base64");
-		return { base64, mimeType: fileMimeType, source };
 	}
 }
 
@@ -163,7 +194,7 @@ const readImageSchema = Type.Object({
 	mode: Type.Optional(
 		StringEnum(["delegate", "self"] as const, {
 			description:
-				'How to handle the image: delegate = analyze via the dedicated image reader model, self = inject the image into the current chat so the active model reads it in the same context. On Anthropic models, prefer `mode: "self"` when you want Claude to inspect the image directly in the current conversation.',
+				'How to handle the image: delegate = analyze via the dedicated image reader model, self = inject the image into the current chat so the active model reads it in the same context. When the active model supports image input, prefer `mode: "self"`. If the active model does not support image input, use `mode: "delegate"`.',
 		}),
 	),
 	context: Type.Optional(
@@ -277,7 +308,13 @@ export const readImageTool: AgentTool<typeof readImageSchema, ReadImageDetails> 
 		signal?: AbortSignal,
 		_onProgress?: (chunk: string) => void,
 	) => {
-		const requestedMode = mode ?? "delegate";
+		const activeModel = getCurrentModel();
+		const fallbackModel = activeModel ? findModel(activeModel.provider, activeModel.id).model : null;
+		const requestedMode = resolveReadImageMode({
+			requestedMode: mode,
+			activeModel,
+			fallbackModel,
+		});
 
 		// Check if already aborted - return tool-shaped error instead of throwing
 		if (signal?.aborted) {
@@ -413,48 +450,15 @@ export const readImageTool: AgentTool<typeof readImageSchema, ReadImageDetails> 
 
 			const modelResult = findModel(provider, "gemini-3-flash-preview");
 			if (!modelResult.model) {
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>Model gemini-3-flash-preview not found for provider ${provider}</error></image_extract>`,
-						},
-					],
-					details: undefined,
-					isError: true,
-				};
+				throw new Error(`Model gemini-3-flash-preview not found for provider ${provider}`);
 			}
 
 			const selectedModel = modelResult.model;
 
-			let apiKey: string | undefined;
-			try {
-				apiKey = await getApiKeyForModel(selectedModel);
-			} catch (error) {
-				const msg = error instanceof Error ? error.message : String(error);
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>${escapeXmlAttr(msg)}</error></image_extract>`,
-						},
-					],
-					details: undefined,
-					isError: true,
-				};
-			}
+			const apiKey = await getApiKeyForModel(selectedModel);
 
 			if (!apiKey) {
-				return {
-					content: [
-						{
-							type: "text" as const,
-							text: `<image_extract objective="${escapeXmlAttr(objective)}" source="${escapeXmlAttr(path)}"><error>No OAuth token available for ${provider}</error></image_extract>`,
-						},
-					],
-					details: undefined,
-					isError: true,
-				};
+				throw new Error(`No OAuth token available for ${provider}`);
 			}
 
 			// Build the user message content with primary image and optional reference images
@@ -563,6 +567,10 @@ CRITICAL CONSTRAINTS:
 					details: undefined,
 					isError: true,
 				};
+			}
+
+			if (requestedMode === "delegate") {
+				throw error;
 			}
 
 			if (!abortState.current) {
