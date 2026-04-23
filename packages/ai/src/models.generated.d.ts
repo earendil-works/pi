@@ -2991,6 +2991,40 @@ export declare const MODELS: {
 		};
 	};
 	readonly openrouter: {
+		readonly "xiaomi/mimo-v2.5-pro": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: "text"[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
+		readonly "xiaomi/mimo-v2.5": {
+			id: string;
+			name: string;
+			api: "openai-completions";
+			provider: string;
+			baseUrl: string;
+			reasoning: true;
+			input: ("image" | "text")[];
+			cost: {
+				input: number;
+				output: number;
+				cacheRead: number;
+				cacheWrite: number;
+			};
+			contextWindow: number;
+			maxTokens: number;
+		};
 		readonly "inclusionai/ling-2.6-flash:free": {
 			id: string;
 			name: string;
@@ -3858,7 +3892,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "arcee-ai/trinity-large-preview:free": {
+		readonly "arcee-ai/trinity-large-preview": {
 			id: string;
 			name: string;
 			api: "openai-completions";
