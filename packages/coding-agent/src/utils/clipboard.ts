@@ -18,20 +18,29 @@ function copyToX11Clipboard(options: NativeClipboardExecOptions): void {
 }
 
 export async function copyToClipboard(text: string): Promise<void> {
-	// Always emit OSC 52 - works over SSH/mosh, harmless locally
-	const encoded = Buffer.from(text).toString("base64");
-	process.stdout.write(`\x1b]52;c;${encoded}\x07`);
-
+	// Await the native addon to completion *before* emitting OSC 52. If OSC 52
+	// is emitted first, the outer terminal (tmux with set-clipboard on, iTerm2,
+	// Ghostty, etc.) may write NSPasteboard concurrently with the native
+	// addon's tokio worker, which panics the addon on macOS with
+	// `writeObjects failed` (kPasteboardSyncErr). Sequential is safe. OSC 52
+	// still fires afterward so SSH/mosh sessions (where native writes the
+	// wrong machine's clipboard) reach the user's real terminal.
+	let nativeOk = false;
 	try {
 		if (clipboard) {
 			await clipboard.setText(text);
-			return;
+			nativeOk = true;
 		}
 	} catch {
-		// Fall through to platform-specific clipboard tools.
+		// Native failed. Fall through to OSC 52 + platform-specific tools.
 	}
 
-	// Also try native tools (best effort for local sessions)
+	const encoded = Buffer.from(text).toString("base64");
+	process.stdout.write(`\x1b]52;c;${encoded}\x07`);
+
+	if (nativeOk) return;
+
+	// Also try platform-specific shell tools (best effort for local sessions)
 	const p = platform();
 	const options: NativeClipboardExecOptions = { input: text, timeout: 5000, stdio: ["pipe", "ignore", "ignore"] };
 
