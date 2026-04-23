@@ -1,3 +1,4 @@
+import type { ThinkingLevel } from "@kennyfrc/mu-agent-core";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -11,6 +12,24 @@ import { generateFileTree } from "./file-tree.js";
 // -----------------------------------------------------------------------------
 
 export { HANDOFF_NUDGE_THRESHOLD } from "../auto-handoff.js";
+
+// -----------------------------------------------------------------------------
+// Reasoning Guidelines
+// -----------------------------------------------------------------------------
+
+const REASONING_BUDGETS: Record<Exclude<ThinkingLevel, "off">, number> = {
+	minimal: 1000,
+	low: 2000,
+	medium: 8000,
+	high: 16000,
+	xhigh: 32000,
+};
+
+export function getReasoningGuidelines(thinkingLevel: ThinkingLevel): string | null {
+	if (thinkingLevel === "off") return null;
+	const n = REASONING_BUDGETS[thinkingLevel];
+	return `<reasoning_guidelines>\nKeep your reasoning concise. Use less than ${n} tokens for internal thinking. Proceed directly through reasoning.\n</reasoning_guidelines>`;
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -203,8 +222,16 @@ export async function buildSystemPromptSections(options: {
 	contextFiles?: ContextFile[];
 	includeFileTree?: boolean;
 	cwd?: string;
+	thinkingLevel?: ThinkingLevel;
 }): Promise<SystemPromptSections> {
-	const { customPrompt, tools, contextFiles = [], includeFileTree = true, cwd = process.cwd() } = options;
+	const {
+		customPrompt,
+		tools,
+		contextFiles = [],
+		includeFileTree = true,
+		cwd = process.cwd(),
+		thinkingLevel,
+	} = options;
 
 	let fileTreeSection = "";
 	if (includeFileTree) {
@@ -215,7 +242,9 @@ export async function buildSystemPromptSections(options: {
 	}
 
 	const contextBlock = formatContextFiles(contextFiles);
-	const metadata = `<metadata>\nCurrent working directory: ${cwd}${fileTreeSection}\n</metadata>`;
+	const reasoningGuidelines = thinkingLevel ? getReasoningGuidelines(thinkingLevel) : null;
+	const metadataSuffix = reasoningGuidelines ? `\n\n${reasoningGuidelines}` : "";
+	const metadata = `<metadata>\nCurrent working directory: ${cwd}${fileTreeSection}\n</metadata>${metadataSuffix}`;
 
 	if (customPrompt) {
 		return {
@@ -268,6 +297,7 @@ export async function buildSystemPrompt(options: {
 	contextFiles?: ContextFile[];
 	includeFileTree?: boolean;
 	cwd?: string;
+	thinkingLevel?: ThinkingLevel;
 }): Promise<string> {
 	const sections = await buildSystemPromptSections(options);
 	return [sections.systemInstructions, sections.contextFiles, sections.metadata]

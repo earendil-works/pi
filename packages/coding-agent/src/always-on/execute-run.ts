@@ -172,6 +172,7 @@ export function executeAlwaysOnRunWithMu(
 			const systemPrompt = await withTemporaryCwd(workspacePath, async () =>
 				buildSystemPromptFromYaml({
 					tools: tools.map((tool) => ({ name: tool.name, description: tool.description })),
+					thinkingLevel: request.effectiveTarget.thinkingLevel,
 				}),
 			);
 

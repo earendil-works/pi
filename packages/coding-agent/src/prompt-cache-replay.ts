@@ -200,6 +200,7 @@ export async function buildReplayContext(args: {
 		tools: tools.map((tool) => ({ name: tool.name, description: tool.description })),
 		contextFiles: loadProjectContextFiles(args.meta.cwd),
 		cwd: args.meta.cwd,
+		thinkingLevel: "off",
 	});
 	return {
 		model,

@@ -1,6 +1,59 @@
 import { describe, expect, it } from "vitest";
 import { buildSystemPrompt, buildSystemPromptSections } from "../src/prompts/index.js";
 
+describe("reasoning guidelines in system prompt", () => {
+	it("includes reasoning guidelines when thinkingLevel is medium", async () => {
+		const prompt = await buildSystemPrompt({
+			customPrompt: "Be concise.",
+			includeFileTree: false,
+			thinkingLevel: "medium",
+		});
+		expect(prompt).toContain("<reasoning_guidelines>");
+		expect(prompt).toContain("8000");
+		expect(prompt).toContain("</reasoning_guidelines>");
+	});
+
+	it("omits reasoning guidelines when thinkingLevel is off", async () => {
+		const prompt = await buildSystemPrompt({
+			customPrompt: "Be concise.",
+			includeFileTree: false,
+			thinkingLevel: "off",
+		});
+		expect(prompt).not.toContain("<reasoning_guidelines>");
+	});
+
+	it("omits reasoning guidelines when thinkingLevel is not provided", async () => {
+		const prompt = await buildSystemPrompt({
+			customPrompt: "Be concise.",
+			includeFileTree: false,
+		});
+		expect(prompt).not.toContain("<reasoning_guidelines>");
+	});
+
+	it("appends reasoning guidelines after metadata section", async () => {
+		const sections = await buildSystemPromptSections({
+			customPrompt: "Be concise.",
+			includeFileTree: false,
+			thinkingLevel: "high",
+		});
+		expect(sections.metadata).toContain("<reasoning_guidelines>");
+		expect(sections.metadata).toContain("16000");
+		// Guidelines come after the closing </metadata> tag
+		const metadataClose = sections.metadata.indexOf("</metadata>");
+		const guidelinesOpen = sections.metadata.indexOf("<reasoning_guidelines>");
+		expect(guidelinesOpen).toBeGreaterThan(metadataClose);
+	});
+
+	it("includes correct N for xhigh", async () => {
+		const prompt = await buildSystemPrompt({
+			customPrompt: "Be concise.",
+			includeFileTree: false,
+			thinkingLevel: "xhigh",
+		});
+		expect(prompt).toContain("32000");
+	});
+});
+
 describe("system prompt sections", () => {
 	it("keeps system instructions separate from context files and metadata", async () => {
 		const sections = await buildSystemPromptSections({

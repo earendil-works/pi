@@ -2526,6 +2526,14 @@ export class TuiRenderer {
 		this.agent.setSystemPrompt(systemPrompt);
 	}
 
+	private async refreshSystemPromptForThinkingLevel(): Promise<void> {
+		if (!this.systemPromptBuilder) {
+			return;
+		}
+		const systemPrompt = await this.systemPromptBuilder(this.agent.state.tools);
+		this.agent.setSystemPrompt(systemPrompt);
+	}
+
 	private getAlwaysOnService(): AlwaysOnService {
 		if (!this.alwaysOnService) {
 			const configDir = process.env.MU_CODING_AGENT_DIR;
@@ -2584,6 +2592,7 @@ export class TuiRenderer {
 
 		// Apply the new thinking level
 		this.agent.setThinkingLevel(nextLevel);
+		void this.refreshSystemPromptForThinkingLevel();
 
 		// Save thinking level change to session and settings
 		this.sessionManager.saveThinkingLevelChange(nextLevel);
@@ -2652,6 +2661,7 @@ export class TuiRenderer {
 				supportsXhigh(nextModel),
 			);
 			this.agent.setThinkingLevel(effectiveThinking);
+			await this.refreshSystemPromptForThinkingLevel();
 			this.sessionManager.saveThinkingLevelChange(effectiveThinking);
 			this.settingsManager.setDefaultThinkingLevel(effectiveThinking);
 			this.updateEditorBorderColor();
@@ -2722,6 +2732,7 @@ export class TuiRenderer {
 			);
 			if (effectiveThinking !== currentThinking) {
 				this.agent.setThinkingLevel(effectiveThinking);
+				await this.refreshSystemPromptForThinkingLevel();
 				this.sessionManager.saveThinkingLevelChange(effectiveThinking);
 				this.settingsManager.setDefaultThinkingLevel(effectiveThinking);
 				this.updateEditorBorderColor();
@@ -2898,6 +2909,7 @@ export class TuiRenderer {
 			(level) => {
 				// Apply the selected thinking level
 				this.agent.setThinkingLevel(level);
+				void this.refreshSystemPromptForThinkingLevel();
 
 				// Save thinking level change to session and settings
 				this.sessionManager.saveThinkingLevelChange(level);
@@ -3169,6 +3181,7 @@ export class TuiRenderer {
 				const effectiveThinking = getEffectiveThinkingLevel(currentThinking, model.reasoning, supportsXhigh(model));
 				if (effectiveThinking !== currentThinking) {
 					this.agent.setThinkingLevel(effectiveThinking);
+					await this.refreshSystemPromptForThinkingLevel();
 					this.sessionManager.saveThinkingLevelChange(effectiveThinking);
 					this.settingsManager.setDefaultThinkingLevel(effectiveThinking);
 					this.updateEditorBorderColor();
