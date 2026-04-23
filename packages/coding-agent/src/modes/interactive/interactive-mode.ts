@@ -3174,6 +3174,7 @@ export class InteractiveMode {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
 		this.unregisterSignalHandlers();
+		this.resetExtensionUI();
 		await this.runtimeHost.dispose();
 
 		// Wait for any pending renders to complete
