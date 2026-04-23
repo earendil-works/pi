@@ -285,6 +285,149 @@ describe("Markdown component", () => {
 		});
 	});
 
+	describe("Blockquote with block-level content", () => {
+		it("should render list items inside a blockquote", () => {
+			const markdown = new Markdown(
+				`> Here is a quote:
+> - Item one
+> - Item two`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+
+			assert.ok(
+				plainLines.some((line) => line.includes("Here is a quote:")),
+				"Should render quote text",
+			);
+			assert.ok(
+				plainLines.some((line) => line.includes("Item one")),
+				"Should render list item one",
+			);
+			assert.ok(
+				plainLines.some((line) => line.includes("Item two")),
+				"Should render list item two",
+			);
+		});
+
+		it("should render bullet characters for list items inside a blockquote", () => {
+			const markdown = new Markdown(
+				`> - Item one
+> - Item two`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+
+			assert.ok(
+				plainLines.some((line) => line.includes("- ") && line.includes("Item one")),
+				"List items inside blockquote should have bullet prefix",
+			);
+		});
+
+		it("should render ordered list inside a blockquote", () => {
+			const markdown = new Markdown(
+				`> 1. First
+> 2. Second
+> 3. Third`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+
+			assert.ok(
+				plainLines.some((line) => line.includes("First")),
+				"Should render first item",
+			);
+			assert.ok(
+				plainLines.some((line) => line.includes("Second")),
+				"Should render second item",
+			);
+			assert.ok(
+				plainLines.some((line) => line.includes("Third")),
+				"Should render third item",
+			);
+		});
+
+		it("should render code block inside a blockquote", () => {
+			const markdown = new Markdown(
+				`> Example:
+> \`\`\`
+> code here
+> \`\`\``,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+
+			assert.ok(
+				plainLines.some((line) => line.includes("Example")),
+				"Should render quote text",
+			);
+			assert.ok(
+				plainLines.some((line) => line.includes("code here")),
+				"Should render code inside blockquote",
+			);
+		});
+
+		it("should render paragraph + list inside a blockquote (separated by blank line)", () => {
+			const markdown = new Markdown(
+				`> Intro paragraph:
+>
+> - Item one
+> - Item two`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+
+			assert.ok(
+				plainLines.some((line) => line.includes("Intro paragraph:")),
+				"Should render paragraph",
+			);
+			assert.ok(
+				plainLines.some((line) => line.includes("Item one")),
+				"Should render list item one",
+			);
+			assert.ok(
+				plainLines.some((line) => line.includes("Item two")),
+				"Should render list item two",
+			);
+		});
+
+		it("should render blockquote with quote border on every line including list items", () => {
+			const markdown = new Markdown(
+				`> Quote text
+> - List item`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+
+			// Both the text line and the list line should have the quote border (│)
+			const quoteLines = plainLines.filter((line) => line.includes("│"));
+			assert.ok(quoteLines.length >= 2, "Quote border should appear on text and list lines");
+		});
+	});
+
 	describe("HTML-like tags in text", () => {
 		it("should render content with HTML-like tags as text", () => {
 			// When the model emits something like <thinking>content</thinking> in regular text,
