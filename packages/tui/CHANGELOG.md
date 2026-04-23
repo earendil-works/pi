@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added SIXEL image rendering support for terminals that report SIXEL support, using `img2sixel` (libsixel), including runtime capability probing, automatic backend selection, and `PI_TUI_IMAGE_PROTOCOL` / `PI_TUI_SIXEL_ENCODER` overrides.
+
 ## [0.69.0] - 2026-04-22
 
 ### Added

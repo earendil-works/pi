@@ -1,4 +1,9 @@
-export type ImageProtocol = "kitty" | "iterm2" | null;
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+export type ImageProtocol = "kitty" | "iterm2" | "sixel" | null;
 
 export interface TerminalCapabilities {
 	images: ImageProtocol;
@@ -24,7 +29,12 @@ export interface ImageRenderOptions {
 	imageId?: number;
 }
 
+interface SixelEncoder {
+	command: string;
+}
+
 let cachedCapabilities: TerminalCapabilities | null = null;
+let cachedSixelEncoder: SixelEncoder | null | undefined;
 
 // Default cell dimensions - updated by TUI when terminal responds to query
 let cellDimensions: CellDimensions = { widthPx: 9, heightPx: 18 };
@@ -37,51 +47,80 @@ export function setCellDimensions(dims: CellDimensions): void {
 	cellDimensions = dims;
 }
 
+function getImageProtocolOverride(): ImageProtocol | "none" | undefined {
+	const value = process.env.PI_TUI_IMAGE_PROTOCOL?.trim().toLowerCase();
+	if (!value || value === "auto") {
+		return undefined;
+	}
+	if (value === "kitty" || value === "iterm2" || value === "sixel") {
+		return value;
+	}
+	if (value === "none" || value === "off" || value === "false") {
+		return "none";
+	}
+	return undefined;
+}
+
+function isTmuxOrScreen(term: string, env: NodeJS.ProcessEnv = process.env): boolean {
+	return !!env.TMUX || term.startsWith("tmux") || term.startsWith("screen");
+}
+
 export function detectCapabilities(): TerminalCapabilities {
 	const termProgram = process.env.TERM_PROGRAM?.toLowerCase() || "";
 	const term = process.env.TERM?.toLowerCase() || "";
 	const colorTerm = process.env.COLORTERM?.toLowerCase() || "";
+	const imageProtocolOverride = getImageProtocolOverride();
+	const trueColor = colorTerm === "truecolor" || colorTerm === "24bit";
+
+	let images: ImageProtocol = null;
+	let hyperlinks = false;
+	let terminalTrueColor = trueColor;
+
+	if (process.env.KITTY_WINDOW_ID || termProgram === "kitty") {
+		images = "kitty";
+		hyperlinks = true;
+		terminalTrueColor = true;
+	} else if (termProgram === "ghostty" || term.includes("ghostty") || process.env.GHOSTTY_RESOURCES_DIR) {
+		images = "kitty";
+		hyperlinks = true;
+		terminalTrueColor = true;
+	} else if (process.env.WEZTERM_PANE || termProgram === "wezterm") {
+		images = "kitty";
+		hyperlinks = true;
+		terminalTrueColor = true;
+	} else if (process.env.ITERM_SESSION_ID || termProgram === "iterm.app") {
+		images = "iterm2";
+		hyperlinks = true;
+		terminalTrueColor = true;
+	} else if (process.env.WT_SESSION) {
+		hyperlinks = true;
+		terminalTrueColor = true;
+	} else if (termProgram === "vscode") {
+		hyperlinks = true;
+		terminalTrueColor = true;
+	} else if (termProgram === "alacritty") {
+		hyperlinks = true;
+		terminalTrueColor = true;
+	}
 
 	// tmux and screen swallow OSC 8 by default (passthrough is opt-in and wraps
 	// sequences differently). Force hyperlinks off whenever we detect them, even
 	// when the outer terminal would otherwise support OSC 8. Image protocols are
-	// also unreliable under tmux/screen, so leave `images: null` for safety.
-	const inTmuxOrScreen = !!process.env.TMUX || term.startsWith("tmux") || term.startsWith("screen");
+	// also unreliable under tmux/screen, so leave `images: null` for safety unless
+	// the user explicitly overrides the image protocol.
+	const inTmuxOrScreen = isTmuxOrScreen(term);
 	if (inTmuxOrScreen) {
-		const trueColor = colorTerm === "truecolor" || colorTerm === "24bit";
-		return { images: null, trueColor, hyperlinks: false };
+		hyperlinks = false;
+		if (imageProtocolOverride === undefined) {
+			images = null;
+		}
 	}
 
-	if (process.env.KITTY_WINDOW_ID || termProgram === "kitty") {
-		return { images: "kitty", trueColor: true, hyperlinks: true };
+	if (imageProtocolOverride !== undefined) {
+		images = imageProtocolOverride === "none" ? null : imageProtocolOverride;
 	}
 
-	if (termProgram === "ghostty" || term.includes("ghostty") || process.env.GHOSTTY_RESOURCES_DIR) {
-		return { images: "kitty", trueColor: true, hyperlinks: true };
-	}
-
-	if (process.env.WEZTERM_PANE || termProgram === "wezterm") {
-		return { images: "kitty", trueColor: true, hyperlinks: true };
-	}
-
-	if (process.env.ITERM_SESSION_ID || termProgram === "iterm.app") {
-		return { images: "iterm2", trueColor: true, hyperlinks: true };
-	}
-
-	if (termProgram === "vscode") {
-		return { images: null, trueColor: true, hyperlinks: true };
-	}
-
-	if (termProgram === "alacritty") {
-		return { images: null, trueColor: true, hyperlinks: true };
-	}
-
-	// Unknown terminal: be conservative. OSC 8 is rendered invisibly as "just
-	// text" on terminals that swallow it, which means the URL disappears from
-	// the rendered output. Default to the legacy `text (url)` behavior unless we
-	// have positively identified a hyperlink-capable terminal above.
-	const trueColor = colorTerm === "truecolor" || colorTerm === "24bit";
-	return { images: null, trueColor, hyperlinks: false };
+	return { images, trueColor: terminalTrueColor, hyperlinks };
 }
 
 export function getCapabilities(): TerminalCapabilities {
@@ -93,6 +132,7 @@ export function getCapabilities(): TerminalCapabilities {
 
 export function resetCapabilitiesCache(): void {
 	cachedCapabilities = null;
+	cachedSixelEncoder = undefined;
 }
 
 /** Override the cached capabilities. Useful in tests to exercise both code paths. */
@@ -102,14 +142,28 @@ export function setCapabilities(caps: TerminalCapabilities): void {
 
 const KITTY_PREFIX = "\x1b_G";
 const ITERM2_PREFIX = "\x1b]1337;File=";
+const SIXEL_PREFIX = "\x1bP";
+const SIXEL_START_PATTERN = /\x1bP(?:[0-9;]*)q/;
+const PRIMARY_DEVICE_ATTRIBUTES_PATTERN = /^\x1b\[\??([0-9;]*)c$/;
+const SIXEL_ENCODER_CHECK_TIMEOUT_MS = 1000;
+const SIXEL_ENCODE_TIMEOUT_MS = 5000;
 
 export function isImageLine(line: string): boolean {
 	// Fast path: sequence at line start (single-row images)
-	if (line.startsWith(KITTY_PREFIX) || line.startsWith(ITERM2_PREFIX)) {
+	if (
+		line.startsWith(KITTY_PREFIX) ||
+		line.startsWith(ITERM2_PREFIX) ||
+		(line.startsWith(SIXEL_PREFIX) && SIXEL_START_PATTERN.test(line))
+	) {
 		return true;
 	}
+
 	// Slow path: sequence elsewhere (multi-row images have cursor-up prefix)
-	return line.includes(KITTY_PREFIX) || line.includes(ITERM2_PREFIX);
+	return (
+		line.includes(KITTY_PREFIX) ||
+		line.includes(ITERM2_PREFIX) ||
+		(line.includes(SIXEL_PREFIX) && SIXEL_START_PATTERN.test(line))
+	);
 }
 
 /**
@@ -204,6 +258,106 @@ export function encodeITerm2(
 	}
 
 	return `\x1b]1337;File=${params.join(";")}:${base64Data}\x07`;
+}
+
+function detectSixelEncoder(): SixelEncoder | null {
+	if (cachedSixelEncoder !== undefined) {
+		return cachedSixelEncoder;
+	}
+
+	const explicitCommand = process.env.PI_TUI_SIXEL_ENCODER?.trim();
+	if (explicitCommand) {
+		const encoder: SixelEncoder = { command: explicitCommand };
+		const check = spawnSync(encoder.command, ["-V"], {
+			encoding: "utf8",
+			timeout: SIXEL_ENCODER_CHECK_TIMEOUT_MS,
+		});
+		cachedSixelEncoder = check.error || check.status !== 0 ? null : encoder;
+		return cachedSixelEncoder;
+	}
+
+	const encoder: SixelEncoder = { command: "img2sixel" };
+	const check = spawnSync(encoder.command, ["-V"], {
+		encoding: "utf8",
+		timeout: SIXEL_ENCODER_CHECK_TIMEOUT_MS,
+	});
+	cachedSixelEncoder = check.error || check.status !== 0 ? null : encoder;
+	return cachedSixelEncoder;
+}
+
+function buildSixelArgs(inputPath: string, columns: number, rows: number, preserveAspectRatio: boolean): string[] {
+	const dims = getCellDimensions();
+	const widthPx = Math.max(1, Math.round(columns * dims.widthPx));
+	const heightPx = Math.max(1, Math.round(rows * dims.heightPx));
+	const args = ["-w", `${widthPx}px`];
+	if (!preserveAspectRatio) {
+		args.push("-h", `${heightPx}px`);
+	}
+	args.push(inputPath);
+	return args;
+}
+
+export function shouldAutoDetectSixel(caps: TerminalCapabilities = getCapabilities()): boolean {
+	if (getImageProtocolOverride() !== undefined) {
+		return false;
+	}
+	if (caps.images) {
+		return false;
+	}
+	const term = process.env.TERM?.toLowerCase() || "";
+	if (isTmuxOrScreen(term)) {
+		return false;
+	}
+	return detectSixelEncoder() !== null;
+}
+
+export function parsePrimaryDeviceAttributesSixelSupport(response: string): boolean | null {
+	const match = response.match(PRIMARY_DEVICE_ATTRIBUTES_PATTERN);
+	if (!match) {
+		return null;
+	}
+	return match[1].split(";").some((param) => param === "4");
+}
+
+export function encodeSixel(
+	base64Data: string,
+	options: {
+		columns?: number;
+		rows?: number;
+		preserveAspectRatio?: boolean;
+	} = {},
+): string | null {
+	const encoder = detectSixelEncoder();
+	if (!encoder) {
+		return null;
+	}
+
+	const columns = Math.max(1, options.columns ?? 80);
+	const rows = Math.max(1, options.rows ?? 24);
+	const preserveAspectRatio = options.preserveAspectRatio ?? true;
+	const tempDir = mkdtempSync(join(tmpdir(), "pi-tui-sixel-"));
+	const inputPath = join(tempDir, "image.bin");
+
+	try {
+		writeFileSync(inputPath, Buffer.from(base64Data, "base64"));
+		const result = spawnSync(encoder.command, buildSixelArgs(inputPath, columns, rows, preserveAspectRatio), {
+			encoding: "utf8",
+			maxBuffer: 20 * 1024 * 1024,
+			timeout: SIXEL_ENCODE_TIMEOUT_MS,
+		});
+
+		if (result.error || result.status !== 0 || !result.stdout) {
+			return null;
+		}
+
+		const sequence = result.stdout.replace(/[\r\n]+$/, "");
+		if (!SIXEL_START_PATTERN.test(sequence)) {
+			return null;
+		}
+		return sequence;
+	} finally {
+		rmSync(tempDir, { recursive: true, force: true });
+	}
 }
 
 export function calculateImageRows(
@@ -388,13 +542,25 @@ export function renderImage(
 		return { sequence, rows };
 	}
 
+	if (caps.images === "sixel") {
+		const sequence = encodeSixel(base64Data, {
+			columns: maxWidth,
+			rows,
+			preserveAspectRatio: options.preserveAspectRatio,
+		});
+		if (!sequence) {
+			return null;
+		}
+		return { sequence, rows };
+	}
+
 	return null;
 }
 
 /**
  * Wrap text in an OSC 8 hyperlink sequence.
  * The text is rendered as a clickable hyperlink in terminals that support OSC 8
- * (Ghostty, Kitty, WezTerm, iTerm2, VSCode, and others).
+ * (Ghostty, Kitty, WezTerm, iTerm2, VSCode, Windows Terminal, and others).
  * In terminals that do not support OSC 8, the escape sequences are ignored
  * and only the plain text is displayed.
  *

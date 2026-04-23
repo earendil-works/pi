@@ -3,8 +3,21 @@
  */
 
 import assert from "node:assert";
-import { describe, it } from "node:test";
-import { detectCapabilities, hyperlink, isImageLine } from "../src/terminal-image.js";
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, it } from "node:test";
+import {
+	detectCapabilities,
+	hyperlink,
+	isImageLine,
+	parsePrimaryDeviceAttributesSixelSupport,
+	renderImage,
+	resetCapabilitiesCache,
+	setCapabilities,
+	setCellDimensions,
+	shouldAutoDetectSixel,
+} from "../src/terminal-image.js";
 
 const ENV_KEYS = [
 	"TERM",
@@ -15,6 +28,12 @@ const ENV_KEYS = [
 	"GHOSTTY_RESOURCES_DIR",
 	"WEZTERM_PANE",
 	"ITERM_SESSION_ID",
+	"WT_SESSION",
+	"WSL_DISTRO_NAME",
+	"WSL_INTEROP",
+	"WSLENV",
+	"PI_TUI_IMAGE_PROTOCOL",
+	"PI_TUI_SIXEL_ENCODER",
 ] as const;
 
 function withEnv(overrides: Record<string, string | undefined>, fn: () => void): void {
@@ -23,6 +42,7 @@ function withEnv(overrides: Record<string, string | undefined>, fn: () => void):
 		saved[key] = process.env[key];
 		delete process.env[key];
 	}
+	resetCapabilitiesCache();
 	try {
 		for (const [k, v] of Object.entries(overrides)) {
 			if (v === undefined) delete process.env[k];
@@ -34,8 +54,54 @@ function withEnv(overrides: Record<string, string | undefined>, fn: () => void):
 			if (saved[key] === undefined) delete process.env[key];
 			else process.env[key] = saved[key];
 		}
+		resetCapabilitiesCache();
 	}
 }
+
+function createFakeSixelEncoder(
+	baseName = "fake-img2sixel",
+	versionExitCode = 0,
+): { path: string; cleanup: () => void } {
+	const dir = mkdtempSync(join(tmpdir(), "pi-tui-sixel-test-"));
+	const programPath = join(dir, `${baseName}.js`);
+	writeFileSync(
+		programPath,
+		`const args = process.argv.slice(2);
+const versionExitCode = ${versionExitCode};
+if (args.includes("--version") || args.includes("-V")) {
+	if (versionExitCode !== 0) {
+		process.stderr.write("fake encoder version check failed\\n");
+		process.exit(versionExitCode);
+	}
+	process.stdout.write("fake encoder 1.0\\n");
+	process.exit(0);
+}
+process.stdout.write("\\x1bPqMOCK:" + args.join("|") + "\\x1b\\\\\\n");
+`,
+	);
+
+	if (process.platform === "win32") {
+		const wrapperPath = join(dir, `${baseName}.cmd`);
+		writeFileSync(wrapperPath, `@echo off\r\n"${process.execPath}" "${programPath}" %*\r\n`);
+		return {
+			path: wrapperPath,
+			cleanup: () => rmSync(dir, { recursive: true, force: true }),
+		};
+	}
+
+	const wrapperPath = join(dir, baseName);
+	writeFileSync(wrapperPath, `#!/bin/sh\nexec "${process.execPath}" "${programPath}" "$@"\n`);
+	chmodSync(wrapperPath, 0o755);
+	return {
+		path: wrapperPath,
+		cleanup: () => rmSync(dir, { recursive: true, force: true }),
+	};
+}
+
+afterEach(() => {
+	resetCapabilitiesCache();
+	setCellDimensions({ widthPx: 9, heightPx: 18 });
+});
 
 describe("isImageLine", () => {
 	describe("iTerm2 image protocol", () => {
@@ -86,6 +152,23 @@ describe("isImageLine", () => {
 			// Kitty protocol adds padding to escape sequences
 			const kittyWithPadding = "  \x1b_Ga=T,f=100...\x1b\\\x1b_Gm=i=1;\x1b\\  ";
 			assert.strictEqual(isImageLine(kittyWithPadding), true);
+		});
+	});
+
+	describe("SIXEL image protocol", () => {
+		it("should detect SIXEL image escape sequence at start of line", () => {
+			const sixelImageLine = "\x1bPq~~@@~~\x1b\\";
+			assert.strictEqual(isImageLine(sixelImageLine), true);
+		});
+
+		it("should detect SIXEL image escape sequence with parameters", () => {
+			const sixelImageLine = "\x1bP0;0;0q#0;2;0;0;0-~~\x1b\\";
+			assert.strictEqual(isImageLine(sixelImageLine), true);
+		});
+
+		it("should detect SIXEL image escape sequence after cursor movement", () => {
+			const sixelImageLine = "\x1b[4A\x1bPq#0~~~~\x1b\\";
+			assert.strictEqual(isImageLine(sixelImageLine), true);
 		});
 	});
 
@@ -151,6 +234,11 @@ describe("isImageLine", () => {
 		it("should not detect images in lines with partial Kitty sequences", () => {
 			// Similar prefix but missing the complete sequence
 			const partialSequence = "Some text with _G but missing ESC at start";
+			assert.strictEqual(isImageLine(partialSequence), false);
+		});
+
+		it("should not detect images in lines with partial SIXEL sequences", () => {
+			const partialSequence = "Some text with \x1bP but missing the q introducer";
 			assert.strictEqual(isImageLine(partialSequence), false);
 		});
 
@@ -244,10 +332,133 @@ describe("detectCapabilities", () => {
 		});
 	});
 
-	it("enables hyperlinks for VSCode", () => {
+	it("keeps Windows Terminal on text fallback until runtime SIXEL probing succeeds", () => {
+		withEnv({ WT_SESSION: "1" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.hyperlinks, true);
+			assert.strictEqual(caps.images, null);
+		});
+	});
+
+	it("keeps VSCode on text fallback until runtime SIXEL probing succeeds", () => {
+		withEnv({ TERM_PROGRAM: "vscode", WSL_DISTRO_NAME: "Ubuntu" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.hyperlinks, true);
+			assert.strictEqual(caps.images, null);
+		});
+	});
+
+	it("allows PI_TUI_IMAGE_PROTOCOL to force SIXEL", () => {
+		withEnv({ PI_TUI_IMAGE_PROTOCOL: "sixel" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.images, "sixel");
+		});
+	});
+
+	it("allows PI_TUI_IMAGE_PROTOCOL to disable images", () => {
+		withEnv({ WT_SESSION: "1", PI_TUI_IMAGE_PROTOCOL: "none" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.hyperlinks, true);
+			assert.strictEqual(caps.images, null);
+		});
+	});
+
+	it("probes SIXEL support only when no image protocol is already selected", () => {
+		const encoder = createFakeSixelEncoder();
+		try {
+			withEnv({ PI_TUI_SIXEL_ENCODER: encoder.path }, () => {
+				const caps = detectCapabilities();
+				assert.strictEqual(caps.images, null);
+				assert.strictEqual(shouldAutoDetectSixel(caps), true);
+			});
+		} finally {
+			encoder.cleanup();
+		}
+	});
+
+	it("does not probe SIXEL under tmux by default", () => {
+		const encoder = createFakeSixelEncoder();
+		try {
+			withEnv({ PI_TUI_SIXEL_ENCODER: encoder.path, TERM: "tmux-256color" }, () => {
+				const caps = detectCapabilities();
+				assert.strictEqual(caps.images, null);
+				assert.strictEqual(shouldAutoDetectSixel(caps), false);
+			});
+		} finally {
+			encoder.cleanup();
+		}
+	});
+
+	it("does not probe SIXEL when encoder health check exits non-zero", () => {
+		const encoder = createFakeSixelEncoder("fake-img2sixel-failing", 1);
+		try {
+			withEnv({ PI_TUI_SIXEL_ENCODER: encoder.path }, () => {
+				const caps = detectCapabilities();
+				assert.strictEqual(caps.images, null);
+				assert.strictEqual(shouldAutoDetectSixel(caps), false);
+			});
+		} finally {
+			encoder.cleanup();
+		}
+	});
+
+	it("enables hyperlinks for VSCode outside Windows and WSL", () => {
 		withEnv({ TERM_PROGRAM: "vscode" }, () => {
 			const caps = detectCapabilities();
 			assert.strictEqual(caps.hyperlinks, true);
+			assert.strictEqual(caps.images, null);
+		});
+	});
+});
+
+describe("parsePrimaryDeviceAttributesSixelSupport", () => {
+	it("detects SIXEL support from DA1 responses", () => {
+		assert.strictEqual(parsePrimaryDeviceAttributesSixelSupport("\x1b[?62;4;22c"), true);
+		assert.strictEqual(parsePrimaryDeviceAttributesSixelSupport("\x1b[?1;2c"), false);
+	});
+
+	it("returns null for non-DA1 responses", () => {
+		assert.strictEqual(parsePrimaryDeviceAttributesSixelSupport("\x1b[6;20;10t"), null);
+	});
+});
+
+describe("renderImage", () => {
+	it("renders SIXEL output via img2sixel", () => {
+		const encoder = createFakeSixelEncoder();
+		try {
+			withEnv({ PI_TUI_SIXEL_ENCODER: encoder.path }, () => {
+				setCapabilities({ images: "sixel", trueColor: true, hyperlinks: true });
+				setCellDimensions({ widthPx: 10, heightPx: 20 });
+				const result = renderImage(
+					Buffer.from("fake").toString("base64"),
+					{ widthPx: 200, heightPx: 100 },
+					{
+						maxWidthCells: 20,
+					},
+				);
+
+				assert.ok(result);
+				assert.strictEqual(result.rows, 5);
+				assert.ok(result.sequence.startsWith("\x1bPqMOCK:"));
+				assert.ok(result.sequence.includes("-w|200px|"));
+				assert.ok(!result.sequence.includes("|-h|"));
+			});
+		} finally {
+			encoder.cleanup();
+		}
+	});
+
+	it("falls back when SIXEL encoder is unavailable", () => {
+		withEnv({ PI_TUI_SIXEL_ENCODER: "/definitely/not/present/pi-tui-sixel-encoder" }, () => {
+			setCapabilities({ images: "sixel", trueColor: true, hyperlinks: true });
+			const result = renderImage(
+				Buffer.from("fake").toString("base64"),
+				{ widthPx: 200, heightPx: 100 },
+				{
+					maxWidthCells: 20,
+				},
+			);
+			assert.strictEqual(result, null);
 		});
 	});
 });

@@ -71,6 +71,7 @@ export {
 	detectCapabilities,
 	encodeITerm2,
 	encodeKitty,
+	encodeSixel,
 	getCapabilities,
 	getCellDimensions,
 	getGifDimensions,

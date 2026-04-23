@@ -10,7 +10,7 @@ Minimal terminal UI framework with differential rendering and synchronized outpu
 - **Component-based**: Simple Component interface with render() method
 - **Theme Support**: Components accept theme interfaces for customizable styling
 - **Built-in Components**: Text, TruncatedText, Input, Editor, Markdown, Loader, SelectList, SettingsList, Spacer, Image, Box, Container
-- **Inline Images**: Renders images in terminals that support Kitty or iTerm2 graphics protocols
+- **Inline Images**: Renders images in terminals that support Kitty, iTerm2, or SIXEL graphics protocols
 - **Autocomplete Support**: File paths and slash commands
 
 ## Quick Start
@@ -487,7 +487,7 @@ const spacer = new Spacer(2); // 2 empty lines (default: 1)
 
 ### Image
 
-Renders images inline for terminals that support the Kitty graphics protocol (Kitty, Ghostty, WezTerm) or iTerm2 inline images. Falls back to a text placeholder on unsupported terminals.
+Renders images inline for terminals that support the Kitty graphics protocol (Kitty, Ghostty, WezTerm), iTerm2 inline images, or SIXEL output. Falls back to a text placeholder on unsupported terminals or when no SIXEL encoder is available.
 
 ```typescript
 interface ImageTheme {
@@ -510,6 +510,8 @@ tui.addChild(image);
 ```
 
 Supported formats: PNG, JPEG, GIF, WebP. Dimensions are parsed from the image headers automatically.
+
+SIXEL rendering uses an external `img2sixel` encoder (libsixel). `pi-tui` auto-detects `img2sixel`, or you can point it at a specific binary with `PI_TUI_SIXEL_ENCODER=/path/to/img2sixel`. When Kitty and iTerm2 are not available, `pi-tui` probes the terminal at startup and enables SIXEL automatically only if the terminal reports support. You can still force or disable a specific image backend with `PI_TUI_IMAGE_PROTOCOL=kitty|iterm2|sixel|none`.
 
 ## Autocomplete
 
@@ -765,3 +767,23 @@ Set `PI_TUI_WRITE_LOG` to capture the raw ANSI stream written to stdout.
 ```bash
 PI_TUI_WRITE_LOG=/tmp/tui-ansi.log npx tsx test/chat-simple.ts
 ```
+
+### Image protocol overrides
+
+`pi-tui` detects Kitty and iTerm2 image support automatically. When no native image protocol is available, it probes the terminal for SIXEL support and uses it automatically when `img2sixel` is available. You can still override image detection with these environment variables:
+
+```bash
+# Force a specific image backend
+PI_TUI_IMAGE_PROTOCOL=sixel
+PI_TUI_IMAGE_PROTOCOL=kitty
+PI_TUI_IMAGE_PROTOCOL=iterm2
+PI_TUI_IMAGE_PROTOCOL=none
+
+# Use a specific SIXEL encoder binary
+PI_TUI_SIXEL_ENCODER=/path/to/img2sixel
+```
+
+Notes:
+- SIXEL auto-detection uses the terminal's DA1 capability response and requires an external `img2sixel` encoder (libsixel).
+- Kitty and iTerm2 remain preferred over SIXEL when their native protocols are available.
+- tmux/screen still default to image rendering off unless you explicitly override the protocol.

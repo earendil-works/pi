@@ -8,7 +8,14 @@ import * as path from "node:path";
 import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.js";
 import type { Terminal } from "./terminal.js";
-import { getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.js";
+import {
+	getCapabilities,
+	isImageLine,
+	parsePrimaryDeviceAttributesSixelSupport,
+	setCapabilities,
+	setCellDimensions,
+	shouldAutoDetectSixel,
+} from "./terminal-image.js";
 import { extractSegments, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.js";
 
 /**
@@ -228,6 +235,7 @@ export class TUI extends Container {
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
+	private static readonly SIXEL_PROBE_TIMEOUT_MS = 2000;
 	private cursorRow = 0; // Logical cursor row (end of rendered content)
 	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
 	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
@@ -236,6 +244,9 @@ export class TUI extends Container {
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	private fullRedrawCount = 0;
 	private stopped = false;
+	private pendingSixelProbe = false;
+	private acceptLateSixelProbeResponse = false;
+	private sixelProbeTimer: NodeJS.Timeout | undefined;
 
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
@@ -422,6 +433,7 @@ export class TUI extends Container {
 			() => this.requestRender(),
 		);
 		this.terminal.hideCursor();
+		this.querySixelSupport();
 		this.queryCellSize();
 		this.requestRender();
 	}
@@ -437,6 +449,26 @@ export class TUI extends Container {
 		this.inputListeners.delete(listener);
 	}
 
+	private querySixelSupport(): void {
+		if (!shouldAutoDetectSixel()) {
+			return;
+		}
+		this.pendingSixelProbe = true;
+		this.acceptLateSixelProbeResponse = false;
+		this.sixelProbeTimer = setTimeout(() => {
+			this.sixelProbeTimer = undefined;
+			if (!this.pendingSixelProbe) {
+				return;
+			}
+			// Keep a short late-response window until the first non-probe input.
+			this.pendingSixelProbe = false;
+			this.acceptLateSixelProbeResponse = true;
+		}, TUI.SIXEL_PROBE_TIMEOUT_MS);
+		// Query terminal capabilities via DA1. Response format is typically
+		// CSI ? <device> ; <extension> ; ... c, where extension code 4 indicates SIXEL.
+		this.terminal.write("\x1b[c");
+	}
+
 	private queryCellSize(): void {
 		// Only query if terminal supports images (cell size is only used for image rendering)
 		if (!getCapabilities().images) {
@@ -449,6 +481,12 @@ export class TUI extends Container {
 
 	stop(): void {
 		this.stopped = true;
+		if (this.sixelProbeTimer) {
+			clearTimeout(this.sixelProbeTimer);
+			this.sixelProbeTimer = undefined;
+		}
+		this.pendingSixelProbe = false;
+		this.acceptLateSixelProbeResponse = false;
 		if (this.renderTimer) {
 			clearTimeout(this.renderTimer);
 			this.renderTimer = undefined;
@@ -536,8 +574,8 @@ export class TUI extends Container {
 			data = current;
 		}
 
-		// Consume terminal cell size responses without blocking unrelated input.
-		if (this.consumeCellSizeResponse(data)) {
+		// Consume terminal capability responses without blocking unrelated input.
+		if (this.consumeSixelSupportResponse(data) || this.consumeCellSizeResponse(data)) {
 			return;
 		}
 
@@ -571,6 +609,38 @@ export class TUI extends Container {
 			this.focusedComponent.handleInput(data);
 			this.requestRender();
 		}
+	}
+
+	private consumeSixelSupportResponse(data: string): boolean {
+		if (!this.pendingSixelProbe && !this.acceptLateSixelProbeResponse) {
+			return false;
+		}
+
+		const sixelSupport = parsePrimaryDeviceAttributesSixelSupport(data);
+		if (sixelSupport === null) {
+			if (this.acceptLateSixelProbeResponse) {
+				this.acceptLateSixelProbeResponse = false;
+			}
+			return false;
+		}
+
+		if (this.sixelProbeTimer) {
+			clearTimeout(this.sixelProbeTimer);
+			this.sixelProbeTimer = undefined;
+		}
+		this.pendingSixelProbe = false;
+		this.acceptLateSixelProbeResponse = false;
+
+		if (!sixelSupport) {
+			return true;
+		}
+
+		const capabilities = getCapabilities();
+		setCapabilities({ ...capabilities, images: "sixel" });
+		this.queryCellSize();
+		this.invalidate();
+		this.requestRender();
+		return true;
 	}
 
 	private consumeCellSizeResponse(data: string): boolean {
