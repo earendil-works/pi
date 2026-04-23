@@ -291,10 +291,26 @@ export class Markdown implements Component {
 			}
 
 			case "blockquote": {
-				const quoteText = this.renderInlineTokens(token.tokens || []);
-				const quoteLines = quoteText.split("\n");
-				for (const quoteLine of quoteLines) {
-					lines.push(this.theme.quoteBorder("│ ") + this.theme.quote(this.theme.italic(quoteLine)));
+				const bqTokens = token.tokens || [];
+				const innerLines: string[] = [];
+				for (let i = 0; i < bqTokens.length; i++) {
+					const bqToken = bqTokens[i];
+					const nextBqToken = bqTokens[i + 1];
+					// Space tokens inside blockquotes produce a blank line
+					if (bqToken.type === "space") {
+						innerLines.push("");
+						continue;
+					}
+					const rendered = this.renderToken(bqToken, width, nextBqToken?.type);
+					innerLines.push(...rendered);
+				}
+				// Remove trailing blank line added by the last block-level child
+				// (we add our own spacing below)
+				if (innerLines.length > 0 && innerLines[innerLines.length - 1] === "") {
+					innerLines.pop();
+				}
+				for (const innerLine of innerLines) {
+					lines.push(this.theme.quoteBorder("│ ") + this.theme.quote(this.theme.italic(innerLine)));
 				}
 				lines.push(""); // Add spacing after blockquotes
 				break;
