@@ -30,8 +30,11 @@
 		"canvas": "^3.2.0",
 		"chalk": "^5.5.0",
 		"diff": "^8.0.2",
+		"glimpseui": "^0.8.0",
 		"glob": "^11.0.3",
+		"highlight.js": "^11.11.1",
 		"jiti": "^2.6.1",
+		"marked-highlight": "^2.2.4",
 		"yaml": "^2.8.2"
 	},
 	"devDependencies": {
