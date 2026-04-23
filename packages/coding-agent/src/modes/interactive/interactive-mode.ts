@@ -41,6 +41,7 @@ import {
 import { spawn, spawnSync } from "child_process";
 import {
 	APP_NAME,
+	APP_TITLE,
 	getAgentDir,
 	getAuthPath,
 	getDebugLogPath,
@@ -637,9 +638,9 @@ export class InteractiveMode {
 		const cwdBasename = path.basename(this.sessionManager.getCwd());
 		const sessionName = this.sessionManager.getSessionName();
 		if (sessionName) {
-			this.ui.terminal.setTitle(`π - ${sessionName} - ${cwdBasename}`);
+			this.ui.terminal.setTitle(`${APP_TITLE} - ${sessionName} - ${cwdBasename}`);
 		} else {
-			this.ui.terminal.setTitle(`π - ${cwdBasename}`);
+			this.ui.terminal.setTitle(`${APP_TITLE} - ${cwdBasename}`);
 		}
 	}
 
