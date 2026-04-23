@@ -3932,7 +3932,7 @@ export class InteractiveMode {
 				},
 				() => {
 					done();
-					this.ui.requestRender();
+					this.showLoginAuthTypeSelector();
 				},
 				initialSearchInput,
 			);
@@ -4285,7 +4285,7 @@ export class InteractiveMode {
 		}
 	}
 
-	private getLoginProviderOptions(): AuthSelectorProvider[] {
+	private getLoginProviderOptions(authType?: "oauth" | "api_key"): AuthSelectorProvider[] {
 		const authStorage = this.session.modelRegistry.authStorage;
 		const oauthProviders = authStorage.getOAuthProviders();
 		const oauthProviderIds = new Set(oauthProviders.map((provider) => provider.id));
@@ -4307,7 +4307,8 @@ export class InteractiveMode {
 			});
 		}
 
-		return options.sort((a, b) => a.name.localeCompare(b.name));
+		const filteredOptions = authType ? options.filter((option) => option.authType === authType) : options;
+		return filteredOptions.sort((a, b) => a.name.localeCompare(b.name));
 	}
 
 	private getLogoutProviderOptions(): AuthSelectorProvider[] {
@@ -4333,11 +4334,73 @@ export class InteractiveMode {
 		return options.sort((a, b) => a.name.localeCompare(b.name));
 	}
 
-	private async showOAuthSelector(mode: "login" | "logout"): Promise<void> {
-		const providerOptions = mode === "login" ? this.getLoginProviderOptions() : this.getLogoutProviderOptions();
+	private showLoginAuthTypeSelector(): void {
+		const subscriptionLabel = "Use a subscription";
+		const apiKeyLabel = "Use an API key";
+		this.showSelector((done) => {
+			const selector = new ExtensionSelectorComponent(
+				"Select authentication method:",
+				[subscriptionLabel, apiKeyLabel],
+				(option) => {
+					done();
+					const authType = option === subscriptionLabel ? "oauth" : "api_key";
+					this.showLoginProviderSelector(authType);
+				},
+				() => {
+					done();
+					this.ui.requestRender();
+				},
+			);
+			return { component: selector, focus: selector };
+		});
+	}
 
+	private showLoginProviderSelector(authType: "oauth" | "api_key"): void {
+		const providerOptions = this.getLoginProviderOptions(authType);
 		if (providerOptions.length === 0) {
-			this.showStatus(mode === "login" ? "No providers available." : "No providers logged in. Use /login first.");
+			this.showStatus(
+				authType === "oauth" ? "No subscription providers available." : "No API key providers available.",
+			);
+			return;
+		}
+
+		this.showSelector((done) => {
+			const selector = new OAuthSelectorComponent(
+				"login",
+				this.session.modelRegistry.authStorage,
+				providerOptions,
+				async (providerId: string) => {
+					done();
+
+					const providerOption = providerOptions.find((provider) => provider.id === providerId);
+					if (!providerOption) {
+						return;
+					}
+
+					if (providerOption.authType === "oauth") {
+						await this.showLoginDialog(providerOption.id, providerOption.name);
+					} else {
+						await this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
+					}
+				},
+				() => {
+					done();
+					this.showLoginAuthTypeSelector();
+				},
+			);
+			return { component: selector, focus: selector };
+		});
+	}
+
+	private async showOAuthSelector(mode: "login" | "logout"): Promise<void> {
+		if (mode === "login") {
+			this.showLoginAuthTypeSelector();
+			return;
+		}
+
+		const providerOptions = this.getLogoutProviderOptions();
+		if (providerOptions.length === 0) {
+			this.showStatus("No providers logged in. Use /login first.");
 			return;
 		}
 
@@ -4351,15 +4414,6 @@ export class InteractiveMode {
 
 					const providerOption = providerOptions.find((provider) => provider.id === providerId);
 					if (!providerOption) {
-						return;
-					}
-
-					if (mode === "login") {
-						if (providerOption.authType === "oauth") {
-							await this.showLoginDialog(providerOption.id, providerOption.name);
-						} else {
-							await this.showApiKeyLoginDialog(providerOption.id, providerOption.name);
-						}
 						return;
 					}
 

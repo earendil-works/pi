@@ -101,7 +101,14 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 	private updateList(): void {
 		this.listContainer.clear();
 
-		for (let i = 0; i < this.filteredProviders.length; i++) {
+		const maxVisible = 8;
+		const startIndex = Math.max(
+			0,
+			Math.min(this.selectedIndex - Math.floor(maxVisible / 2), this.filteredProviders.length - maxVisible),
+		);
+		const endIndex = Math.min(startIndex + maxVisible, this.filteredProviders.length);
+
+		for (let i = startIndex; i < endIndex; i++) {
 			const provider = this.filteredProviders[i];
 			if (!provider) continue;
 
@@ -110,22 +117,24 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 			// Check if user is configured for this provider
 			const credentials = this.authStorage.get(provider.id);
 			const statusIndicator = credentials
-				? theme.fg("success", ` ✓ ${credentials.type === "oauth" ? "oauth" : "api key"}`)
-				: "";
-			const authTypeLabel = provider.authType === "oauth" ? "oauth" : "api key";
-			const suffix = theme.fg("muted", ` (${authTypeLabel})`);
-
+				? theme.fg("success", " ✓ configured")
+				: theme.fg("muted", " • unconfigured");
 			let line = "";
 			if (isSelected) {
 				const prefix = theme.fg("accent", "→ ");
 				const text = theme.fg("accent", provider.name);
-				line = prefix + text + suffix + statusIndicator;
+				line = prefix + text + statusIndicator;
 			} else {
 				const text = `  ${provider.name}`;
-				line = text + suffix + statusIndicator;
+				line = text + statusIndicator;
 			}
 
 			this.listContainer.addChild(new TruncatedText(line, 0, 0));
+		}
+
+		if (startIndex > 0 || endIndex < this.filteredProviders.length) {
+			const scrollInfo = theme.fg("muted", `  (${this.selectedIndex + 1}/${this.filteredProviders.length})`);
+			this.listContainer.addChild(new TruncatedText(scrollInfo, 0, 0));
 		}
 
 		// Show "no providers" if empty
