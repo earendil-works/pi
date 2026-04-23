@@ -1,6 +1,7 @@
 import { type ExecFileException, execFile, spawnSync } from "child_process";
-import { existsSync, type FSWatcher, readFileSync, statSync, unwatchFile, watch, watchFile } from "fs";
+import { existsSync, type FSWatcher, readFileSync, statSync, unwatchFile, watchFile } from "fs";
 import { dirname, join, resolve } from "path";
+import { closeWatcher, FS_WATCH_RETRY_DELAY_MS, watchWithErrorHandler } from "../utils/fs-watch.js";
 
 type GitPaths = {
 	repoDir: string;
@@ -97,6 +98,7 @@ export class FooterDataProvider {
 	private branchChangeCallbacks = new Set<() => void>();
 	private availableProviderCount = 0;
 	private refreshTimer: ReturnType<typeof setTimeout> | null = null;
+	private gitWatcherRetryTimer: ReturnType<typeof setTimeout> | null = null;
 	private refreshInFlight = false;
 	private refreshPending = false;
 	private disposed = false;
@@ -160,22 +162,7 @@ export class FooterDataProvider {
 			clearTimeout(this.refreshTimer);
 			this.refreshTimer = null;
 		}
-		if (this.headWatcher) {
-			this.headWatcher.close();
-			this.headWatcher = null;
-		}
-		if (this.reftableWatcher) {
-			this.reftableWatcher.close();
-			this.reftableWatcher = null;
-		}
-		if (this.reftableTablesListWatcher) {
-			this.reftableTablesListWatcher.close();
-			this.reftableTablesListWatcher = null;
-		}
-		if (this.reftableTablesListPath) {
-			unwatchFile(this.reftableTablesListPath);
-			this.reftableTablesListPath = null;
-		}
+		this.clearGitWatchers();
 		this.cachedBranch = undefined;
 		this.gitPaths = findGitPaths(cwd);
 		this.setupGitWatcher();
@@ -189,22 +176,7 @@ export class FooterDataProvider {
 			clearTimeout(this.refreshTimer);
 			this.refreshTimer = null;
 		}
-		if (this.headWatcher) {
-			this.headWatcher.close();
-			this.headWatcher = null;
-		}
-		if (this.reftableWatcher) {
-			this.reftableWatcher.close();
-			this.reftableWatcher = null;
-		}
-		if (this.reftableTablesListWatcher) {
-			this.reftableTablesListWatcher.close();
-			this.reftableTablesListWatcher = null;
-		}
-		if (this.reftableTablesListPath) {
-			unwatchFile(this.reftableTablesListPath);
-			this.reftableTablesListPath = null;
-		}
+		this.clearGitWatchers();
 		this.branchChangeCallbacks.clear();
 	}
 
@@ -280,43 +252,86 @@ export class FooterDataProvider {
 		}
 	}
 
+	private clearGitWatchers(): void {
+		closeWatcher(this.headWatcher);
+		this.headWatcher = null;
+		closeWatcher(this.reftableWatcher);
+		this.reftableWatcher = null;
+		closeWatcher(this.reftableTablesListWatcher);
+		this.reftableTablesListWatcher = null;
+		if (this.reftableTablesListPath) {
+			unwatchFile(this.reftableTablesListPath);
+			this.reftableTablesListPath = null;
+		}
+		if (this.gitWatcherRetryTimer) {
+			clearTimeout(this.gitWatcherRetryTimer);
+			this.gitWatcherRetryTimer = null;
+		}
+	}
+
+	private scheduleGitWatcherRetry(): void {
+		if (this.disposed || this.gitWatcherRetryTimer) {
+			return;
+		}
+
+		this.gitWatcherRetryTimer = setTimeout(() => {
+			this.gitWatcherRetryTimer = null;
+			this.setupGitWatcher();
+		}, FS_WATCH_RETRY_DELAY_MS);
+	}
+
+	private handleGitWatcherError(): void {
+		this.clearGitWatchers();
+		this.scheduleGitWatcherRetry();
+	}
+
 	private setupGitWatcher(): void {
+		this.clearGitWatchers();
 		if (!this.gitPaths) return;
 
 		// Watch the directory containing HEAD, not HEAD itself.
 		// Git uses atomic writes (write temp, rename over HEAD), which changes the inode.
 		// fs.watch on a file stops working after the inode changes.
-		try {
-			this.headWatcher = watch(dirname(this.gitPaths.headPath), (_eventType, filename) => {
-				if (!filename || filename.toString() === "HEAD") {
+		this.headWatcher = watchWithErrorHandler(
+			dirname(this.gitPaths.headPath),
+			(_eventType, filename) => {
+				if (!filename || filename === "HEAD") {
 					this.scheduleRefresh();
 				}
-			});
-		} catch {
-			// Silently fail if we can't watch
+			},
+			() => this.handleGitWatcherError(),
+		);
+		if (!this.headWatcher) {
+			return;
 		}
 
 		// In reftable repos, branch switches update files in the reftable directory
 		// instead of HEAD. Watch it separately so the footer picks up those changes.
 		const reftableDir = join(this.gitPaths.commonGitDir, "reftable");
 		if (existsSync(reftableDir)) {
-			try {
-				this.reftableWatcher = watch(reftableDir, () => {
+			this.reftableWatcher = watchWithErrorHandler(
+				reftableDir,
+				() => {
 					this.scheduleRefresh();
-				});
-			} catch {
-				// Silently fail if we can't watch
+				},
+				() => this.handleGitWatcherError(),
+			);
+			if (!this.reftableWatcher) {
+				return;
 			}
 
 			const tablesListPath = join(reftableDir, "tables.list");
 			if (existsSync(tablesListPath)) {
 				this.reftableTablesListPath = tablesListPath;
-				try {
-					this.reftableTablesListWatcher = watch(tablesListPath, () => {
+				this.reftableTablesListWatcher = watchWithErrorHandler(
+					tablesListPath,
+					() => {
 						this.scheduleRefresh();
-					});
-				} catch {
-					// Silently fail if we can't watch
+					},
+					() => this.handleGitWatcherError(),
+				);
+				if (!this.reftableTablesListWatcher) {
+					return;
 				}
 				watchFile(tablesListPath, { interval: 250 }, (current, previous) => {
 					if (

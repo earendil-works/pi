@@ -5120,6 +5120,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "kimi-coding",
 			baseUrl: "https://api.kimi.com/coding",
+			headers: {"User-Agent":"KimiCLI/1.5"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -5137,6 +5138,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "kimi-coding",
 			baseUrl: "https://api.kimi.com/coding",
+			headers: {"User-Agent":"KimiCLI/1.5"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -5154,6 +5156,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "kimi-coding",
 			baseUrl: "https://api.kimi.com/coding",
+			headers: {"User-Agent":"KimiCLI/1.5"},
 			reasoning: true,
 			input: ["text"],
 			cost: {

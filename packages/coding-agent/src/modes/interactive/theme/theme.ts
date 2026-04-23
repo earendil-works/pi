@@ -7,6 +7,7 @@ import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 import { getCustomThemesDir, getThemesDir } from "../../../config.js";
 import type { SourceInfo } from "../../../core/source-info.js";
+import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.js";
 
 // ============================================================================
 // Types & Schema
@@ -789,32 +790,27 @@ function startThemeWatcher(): void {
 		}, 100);
 	};
 
-	try {
-		themeWatcher = fs.watch(customThemesDir, (_eventType, filename) => {
-			if (currentThemeName !== watchedThemeName) {
-				return;
-			}
-			if (!filename) {
+	themeWatcher =
+		watchWithErrorHandler(
+			customThemesDir,
+			(_eventType, filename) => {
+				if (currentThemeName !== watchedThemeName) {
+					return;
+				}
+				if (!filename) {
+					scheduleReload();
+					return;
+				}
+				if (filename !== watchedFileName) {
+					return;
+				}
 				scheduleReload();
-				return;
-			}
-			const changedFile = String(filename);
-			if (changedFile !== watchedFileName) {
-				return;
-			}
-			scheduleReload();
-		});
-		themeWatcher.on("error", () => {
-			try {
-				themeWatcher?.close();
-			} catch {
-				/* ignore */
-			}
-			themeWatcher = undefined;
-		});
-	} catch (_error) {
-		// Ignore errors starting watcher
-	}
+			},
+			() => {
+				closeWatcher(themeWatcher);
+				themeWatcher = undefined;
+			},
+		) ?? undefined;
 }
 
 export function stopThemeWatcher(): void {
@@ -822,10 +818,8 @@ export function stopThemeWatcher(): void {
 		clearTimeout(themeReloadTimer);
 		themeReloadTimer = undefined;
 	}
-	if (themeWatcher) {
-		themeWatcher.close();
-		themeWatcher = undefined;
-	}
+	closeWatcher(themeWatcher);
+	themeWatcher = undefined;
 }
 
 // ============================================================================
