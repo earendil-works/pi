@@ -207,6 +207,23 @@ function loadCustomModels(): { models: Model<Api>[]; error: string | null } {
 }
 
 /**
+ * Resolve `${VAR}` templates in header values from process.env.
+ * Supports `${MU_SESSION_ID}`, `${MU_RUN_ID}`, etc.
+ * Unresolved vars are left as-is (not stripped).
+ */
+function resolveHeaderTemplates(headers: Record<string, string> | undefined): Record<string, string> | undefined {
+	if (!headers) return undefined;
+	const resolved: Record<string, string> = {};
+	for (const [key, value] of Object.entries(headers)) {
+		resolved[key] = value.replace(/\$\{([^}]+)\}/g, (match, varName: string) => {
+			const envValue = process.env[varName];
+			return envValue !== undefined ? envValue : match;
+		});
+	}
+	return resolved;
+}
+
+/**
  * Validate config structure and requirements
  */
 function validateConfig(config: ModelsConfig): void {
@@ -256,9 +273,10 @@ function parseModels(config: ModelsConfig): Model<Api>[] {
 				continue;
 			}
 
-			// Merge headers: provider headers are base, model headers override
-			const headers =
+			// Merge headers: provider headers are base, model headers override, then resolve templates
+			const mergedHeaders =
 				providerConfig.headers || modelDef.headers ? { ...providerConfig.headers, ...modelDef.headers } : undefined;
+			const headers = resolveHeaderTemplates(mergedHeaders);
 
 			models.push({
 				id: modelDef.id,
@@ -289,8 +307,9 @@ function parseProviderModelsFromConfig(providerName: string, providerConfig: Pro
 		const api = modelDef.api || providerConfig.api;
 		if (!api) continue;
 
-		const headers =
+		const mergedHeaders =
 			providerConfig.headers || modelDef.headers ? { ...providerConfig.headers, ...modelDef.headers } : undefined;
+		const headers = resolveHeaderTemplates(mergedHeaders);
 
 		models.push({
 			id: modelDef.id,
