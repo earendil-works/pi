@@ -1677,6 +1677,16 @@ describe("Editor component", () => {
 			assert.strictEqual(editor.isShowingAutocomplete(), false);
 		});
 
+		it("decodes CSI-u Ctrl+letter sequences inside bracketed paste (tmux popup)", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+
+			// tmux popups with extended-keys-format=csi-u re-encode \n in pastes as
+			// \x1b[106;5u (Ctrl+J). Without decoding, the per-char filter strips ESC
+			// and leaks "[106;5u" between lines. See issue #3599.
+			editor.handleInput("\x1b[200~line1\x1b[106;5uline2\x1b[106;5uline3\x1b[201~");
+			assert.strictEqual(editor.getText(), "line1\nline2\nline3");
+		});
+
 		it("undoes multi-line paste atomically", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 
