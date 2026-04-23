@@ -910,6 +910,12 @@ export class InteractiveMode {
 		return result;
 	}
 
+	private formatExtensionDisplayPath(path: string): string {
+		let result = this.formatDisplayPath(path);
+		result = result.replace(/\/index\.ts$/, "").replace(/\/index\.js$/, "");
+		return result;
+	}
+
 	private formatContextPath(p: string): string {
 		const cwd = path.resolve(this.sessionManager.getCwd());
 		const absolutePath = path.isAbsolute(p) ? path.resolve(p) : path.resolve(cwd, p);
@@ -1044,11 +1050,18 @@ export class InteractiveMode {
 
 	private getCompactExtensionLabels(extensions: Array<{ path: string; sourceInfo?: SourceInfo }>): string[] {
 		const nonPackageExtensions = extensions
-			.map((extension) => ({
-				path: extension.path,
-				sourceInfo: extension.sourceInfo,
-				segments: this.getCompactDisplayPathSegments(extension.path),
-			}))
+			.map((extension) => {
+				const segments = this.getCompactDisplayPathSegments(extension.path);
+				const lastSegment = segments[segments.length - 1];
+				if (segments.length > 1 && (lastSegment === "index.ts" || lastSegment === "index.js")) {
+					segments.pop();
+				}
+				return {
+					path: extension.path,
+					sourceInfo: extension.sourceInfo,
+					segments,
+				};
+			})
 			.filter((extension) => !this.isPackageSource(extension.sourceInfo));
 
 		return extensions.map((extension) => {
@@ -1373,8 +1386,9 @@ export class InteractiveMode {
 			if (extensions.length > 0) {
 				const groups = this.buildScopeGroups(extensions);
 				const extList = this.formatScopeGroups(groups, {
-					formatPath: (item) => this.formatDisplayPath(item.path),
-					formatPackagePath: (item) => this.getShortPath(item.path, item.sourceInfo),
+					formatPath: (item) => this.formatExtensionDisplayPath(item.path),
+					formatPackagePath: (item) =>
+						this.formatExtensionDisplayPath(this.getShortPath(item.path, item.sourceInfo)),
 				});
 				const extensionCompactList = formatCompactList(this.getCompactExtensionLabels(extensions));
 				addLoadedSection("Extensions", extensionCompactList, extList, "mdHeading");
