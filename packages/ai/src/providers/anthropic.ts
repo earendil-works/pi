@@ -669,7 +669,7 @@ function supportsAdaptiveThinking(modelId: string): boolean {
 
 /**
  * Map ThinkingLevel to Anthropic effort levels for adaptive thinking.
- * Note: effort "max" is only valid on Opus 4.6, while Opus 4.7 supports "xhigh".
+ * Note: effort "max" is only valid on Opus 4.6 and DeepSeek V4 Pro, while Opus 4.7 supports "xhigh".
  */
 function mapThinkingLevelToEffort(level: SimpleStreamOptions["reasoning"], modelId: string): AnthropicEffort {
 	switch (level) {
@@ -687,6 +687,9 @@ function mapThinkingLevelToEffort(level: SimpleStreamOptions["reasoning"], model
 			}
 			if (modelId.includes("opus-4-7") || modelId.includes("opus-4.7")) {
 				return "xhigh";
+			}
+			if (modelId.includes("deepseek-v4-pro")) {
+				return "max";
 			}
 			return "high";
 		default:
