@@ -2794,6 +2794,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -2811,6 +2812,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -2828,6 +2830,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -2845,6 +2848,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -2862,6 +2866,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -2879,6 +2884,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -2896,6 +2902,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -2913,6 +2920,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -2930,6 +2938,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -2947,6 +2956,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: false,
 			input: ["text"],
 			cost: {
@@ -2964,6 +2974,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -2981,6 +2992,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -2998,6 +3010,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -3015,6 +3028,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -3032,6 +3046,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -3049,6 +3064,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -3066,6 +3082,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -3083,6 +3100,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "fireworks",
 			baseUrl: "https://api.fireworks.ai/inference",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsFineGrainedToolStreamingBeta":false,"supportsToolCacheControl":false},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -7125,6 +7143,40 @@ export const MODELS = {
 			contextWindow: 1050000,
 			maxTokens: 128000,
 		} satisfies Model<"openai-responses">,
+		"gpt-5.5": {
+			id: "gpt-5.5",
+			name: "GPT-5.5",
+			api: "openai-responses",
+			provider: "opencode",
+			baseUrl: "https://opencode.ai/zen/v1",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 5,
+				output: 30,
+				cacheRead: 0.5,
+				cacheWrite: 0,
+			},
+			contextWindow: 1050000,
+			maxTokens: 130000,
+		} satisfies Model<"openai-responses">,
+		"gpt-5.5-pro": {
+			id: "gpt-5.5-pro",
+			name: "GPT-5.5 Pro",
+			api: "openai-responses",
+			provider: "opencode",
+			baseUrl: "https://opencode.ai/zen/v1",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 30,
+				output: 180,
+				cacheRead: 30,
+				cacheWrite: 0,
+			},
+			contextWindow: 1050000,
+			maxTokens: 128000,
+		} satisfies Model<"openai-responses">,
 		"hy3-preview-free": {
 			id: "hy3-preview-free",
 			name: "Hy3 preview Free",
@@ -7297,6 +7349,42 @@ export const MODELS = {
 		} satisfies Model<"anthropic-messages">,
 	},
 	"opencode-go": {
+		"deepseek-v4-flash": {
+			id: "deepseek-v4-flash",
+			name: "DeepSeek V4 Flash",
+			api: "openai-completions",
+			provider: "opencode-go",
+			baseUrl: "https://opencode.ai/zen/go/v1",
+			compat: {"requiresReasoningContentOnAssistantMessages":true},
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0.14,
+				output: 0.28,
+				cacheRead: 0.028,
+				cacheWrite: 0,
+			},
+			contextWindow: 1000000,
+			maxTokens: 384000,
+		} satisfies Model<"openai-completions">,
+		"deepseek-v4-pro": {
+			id: "deepseek-v4-pro",
+			name: "DeepSeek V4 Pro",
+			api: "openai-completions",
+			provider: "opencode-go",
+			baseUrl: "https://opencode.ai/zen/go/v1",
+			compat: {"requiresReasoningContentOnAssistantMessages":true},
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 1.74,
+				output: 3.48,
+				cacheRead: 0.145,
+				cacheWrite: 0,
+			},
+			contextWindow: 1000000,
+			maxTokens: 384000,
+		} satisfies Model<"openai-completions">,
 		"glm-5": {
 			id: "glm-5",
 			name: "GLM-5",
@@ -8301,7 +8389,7 @@ export const MODELS = {
 				cacheRead: 0.024999999999999998,
 				cacheWrite: 0.08333333333333334,
 			},
-			contextWindow: 1048576,
+			contextWindow: 1000000,
 			maxTokens: 8192,
 		} satisfies Model<"openai-completions">,
 		"google/gemini-2.0-flash-lite-001": {
@@ -10106,6 +10194,40 @@ export const MODELS = {
 			contextWindow: 1050000,
 			maxTokens: 128000,
 		} satisfies Model<"openai-completions">,
+		"openai/gpt-5.5": {
+			id: "openai/gpt-5.5",
+			name: "OpenAI: GPT-5.5",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 5,
+				output: 30,
+				cacheRead: 0.5,
+				cacheWrite: 0,
+			},
+			contextWindow: 1050000,
+			maxTokens: 128000,
+		} satisfies Model<"openai-completions">,
+		"openai/gpt-5.5-pro": {
+			id: "openai/gpt-5.5-pro",
+			name: "OpenAI: GPT-5.5 Pro",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://openrouter.ai/api/v1",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 30,
+				output: 180,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 1050000,
+			maxTokens: 128000,
+		} satisfies Model<"openai-completions">,
 		"openai/gpt-audio": {
 			id: "openai/gpt-audio",
 			name: "OpenAI: GPT Audio",
@@ -10778,9 +10900,9 @@ export const MODELS = {
 			reasoning: false,
 			input: ["text"],
 			cost: {
-				input: 0.15,
+				input: 0.14,
 				output: 0.7999999999999999,
-				cacheRead: 0.11,
+				cacheRead: 0.09,
 				cacheWrite: 0,
 			},
 			contextWindow: 262144,
@@ -11698,11 +11820,11 @@ export const MODELS = {
 			cost: {
 				input: 0.3,
 				output: 0.8999999999999999,
-				cacheRead: 0,
+				cacheRead: 0.049999999999999996,
 				cacheWrite: 0,
 			},
 			contextWindow: 131072,
-			maxTokens: 131072,
+			maxTokens: 24000,
 		} satisfies Model<"openai-completions">,
 		"z-ai/glm-4.7": {
 			id: "z-ai/glm-4.7",
@@ -12499,7 +12621,7 @@ export const MODELS = {
 			cost: {
 				input: 0.14,
 				output: 0.28,
-				cacheRead: 0.014,
+				cacheRead: 0.028,
 				cacheWrite: 0,
 			},
 			contextWindow: 1000000,
@@ -13795,6 +13917,40 @@ export const MODELS = {
 				cacheWrite: 0,
 			},
 			contextWindow: 1050000,
+			maxTokens: 128000,
+		} satisfies Model<"anthropic-messages">,
+		"openai/gpt-5.5": {
+			id: "openai/gpt-5.5",
+			name: "GPT 5.5",
+			api: "anthropic-messages",
+			provider: "vercel-ai-gateway",
+			baseUrl: "https://ai-gateway.vercel.sh",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 5,
+				output: 30,
+				cacheRead: 0.5,
+				cacheWrite: 0,
+			},
+			contextWindow: 1000000,
+			maxTokens: 128000,
+		} satisfies Model<"anthropic-messages">,
+		"openai/gpt-5.5-pro": {
+			id: "openai/gpt-5.5-pro",
+			name: "GPT 5.5 Pro",
+			api: "anthropic-messages",
+			provider: "vercel-ai-gateway",
+			baseUrl: "https://ai-gateway.vercel.sh",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 30,
+				output: 180,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 1000000,
 			maxTokens: 128000,
 		} satisfies Model<"anthropic-messages">,
 		"openai/gpt-oss-20b": {

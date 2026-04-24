@@ -166,6 +166,8 @@ const INTERLEAVED_THINKING_BETA = "interleaved-thinking-2025-05-14";
 function getAnthropicCompat(model: Model<"anthropic-messages">): Required<AnthropicMessagesCompat> {
 	return {
 		supportsEagerToolInputStreaming: model.compat?.supportsEagerToolInputStreaming ?? true,
+		supportsFineGrainedToolStreamingBeta: model.compat?.supportsFineGrainedToolStreamingBeta ?? true,
+		supportsToolCacheControl: model.compat?.supportsToolCacheControl ?? true,
 		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
 	};
 }
@@ -878,10 +880,12 @@ function buildParams(
 	}
 
 	if (context.tools && context.tools.length > 0) {
+		const compat = getAnthropicCompat(model);
 		params.tools = convertTools(
 			context.tools,
 			isOAuthToken,
-			getAnthropicCompat(model).supportsEagerToolInputStreaming,
+			compat.supportsEagerToolInputStreaming,
+			compat.supportsToolCacheControl,
 			cacheControl,
 		);
 	}
@@ -1106,13 +1110,17 @@ function convertMessages(
 }
 
 function shouldUseFineGrainedToolStreamingBeta(model: Model<"anthropic-messages">, context: Context): boolean {
-	return !!context.tools?.length && !getAnthropicCompat(model).supportsEagerToolInputStreaming;
+	const compat = getAnthropicCompat(model);
+	return (
+		!!context.tools?.length && !compat.supportsEagerToolInputStreaming && compat.supportsFineGrainedToolStreamingBeta
+	);
 }
 
 function convertTools(
 	tools: Tool[],
 	isOAuthToken: boolean,
 	supportsEagerToolInputStreaming: boolean,
+	supportsToolCacheControl: boolean,
 	cacheControl?: CacheControlEphemeral,
 ): Anthropic.Messages.Tool[] {
 	if (!tools) return [];
@@ -1129,7 +1137,9 @@ function convertTools(
 				properties: schema.properties ?? {},
 				required: schema.required ?? [],
 			},
-			...(cacheControl && index === tools.length - 1 ? { cache_control: cacheControl } : {}),
+			...(cacheControl && supportsToolCacheControl && index === tools.length - 1
+				? { cache_control: cacheControl }
+				: {}),
 		};
 	});
 }

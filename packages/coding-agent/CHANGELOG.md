@@ -5,6 +5,7 @@
 ### Fixed
 
 - Fixed coding-agent test expectations for current default models and missing-auth guidance.
+- Fixed Fireworks tool-enabled requests by honoring Anthropic compatibility flags for unsupported tool streaming and tool cache-control fields.
 
 ## [0.70.2] - 2026-04-24
 

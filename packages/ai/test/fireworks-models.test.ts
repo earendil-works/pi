@@ -20,6 +20,11 @@ describe("Fireworks models", () => {
 		expect(model.api).toBe("anthropic-messages");
 		expect(model.provider).toBe("fireworks");
 		expect(model.baseUrl).toBe("https://api.fireworks.ai/inference");
+		expect(model.compat).toEqual({
+			supportsEagerToolInputStreaming: false,
+			supportsFineGrainedToolStreamingBeta: false,
+			supportsToolCacheControl: false,
+		});
 		expect(model.reasoning).toBe(true);
 		expect(model.input).toEqual(["text", "image"]);
 		expect(model.contextWindow).toBe(262000);

@@ -3,7 +3,7 @@ import type { AddressInfo } from "node:net";
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { streamAnthropic } from "../src/providers/anthropic.js";
-import type { Context, Model, Tool } from "../src/types.js";
+import type { CacheRetention, Context, Model, Tool } from "../src/types.js";
 
 interface CapturedRequest {
 	headers: IncomingMessage["headers"];
@@ -55,6 +55,7 @@ function writeEmptySseResponse(response: ServerResponse): void {
 async function captureAnthropicRequest(
 	compat: Model<"anthropic-messages">["compat"],
 	context: Context,
+	cacheRetention: CacheRetention = "none",
 ): Promise<CapturedRequest> {
 	let capturedRequest: CapturedRequest | undefined;
 
@@ -72,7 +73,7 @@ async function captureAnthropicRequest(
 	try {
 		const stream = streamAnthropic(createModel(`http://127.0.0.1:${address.port}`, compat), context, {
 			apiKey: "test-key",
-			cacheRetention: "none",
+			cacheRetention,
 		});
 
 		for await (const event of stream) {
@@ -113,10 +114,26 @@ describe("Anthropic eager tool input streaming compatibility", () => {
 		expect(request.headers["anthropic-beta"]).toBe("fine-grained-tool-streaming-2025-05-14");
 	});
 
+	it("does not send the legacy fine-grained tool streaming beta when disabled", async () => {
+		const request = await captureAnthropicRequest(
+			{ supportsEagerToolInputStreaming: false, supportsFineGrainedToolStreamingBeta: false },
+			createContext(),
+		);
+
+		expect(getFirstTool(request.body).eager_input_streaming).toBeUndefined();
+		expect(request.headers["anthropic-beta"]).toBeUndefined();
+	});
+
 	it("does not send the legacy fine-grained tool streaming beta when there are no tools", async () => {
 		const request = await captureAnthropicRequest({ supportsEagerToolInputStreaming: false }, createContext([]));
 
 		expect(request.body.tools).toBeUndefined();
 		expect(request.headers["anthropic-beta"]).toBeUndefined();
+	});
+
+	it("omits tool cache control when disabled", async () => {
+		const request = await captureAnthropicRequest({ supportsToolCacheControl: false }, createContext(), "short");
+
+		expect(getFirstTool(request.body).cache_control).toBeUndefined();
 	});
 });

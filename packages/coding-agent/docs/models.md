@@ -274,7 +274,7 @@ Behavior notes:
 
 For providers or proxies using `api: "anthropic-messages"`, use `compat.supportsEagerToolInputStreaming` to control Anthropic fine-grained tool streaming compatibility.
 
-By default pi sends per-tool `eager_input_streaming: true`. If a proxy or Anthropic-compatible backend rejects that field, set `supportsEagerToolInputStreaming` to `false`. Pi will omit `tools[].eager_input_streaming` and send the legacy `fine-grained-tool-streaming-2025-05-14` beta header for tool-enabled requests instead.
+By default pi sends per-tool `eager_input_streaming: true`. If a proxy or Anthropic-compatible backend rejects that field, set `supportsEagerToolInputStreaming` to `false`. Pi will omit `tools[].eager_input_streaming` and send the legacy `fine-grained-tool-streaming-2025-05-14` beta header for tool-enabled requests instead. If the backend also rejects that beta header or Anthropic `cache_control` markers on tool definitions, set `supportsFineGrainedToolStreamingBeta` or `supportsToolCacheControl` to `false`.
 
 ```json
 {
@@ -285,6 +285,8 @@ By default pi sends per-tool `eager_input_streaming: true`. If a proxy or Anthro
       "apiKey": "ANTHROPIC_PROXY_KEY",
       "compat": {
         "supportsEagerToolInputStreaming": false,
+        "supportsFineGrainedToolStreamingBeta": false,
+        "supportsToolCacheControl": false,
         "supportsLongCacheRetention": true
       },
       "models": [
@@ -301,7 +303,9 @@ By default pi sends per-tool `eager_input_streaming: true`. If a proxy or Anthro
 
 | Field | Description |
 |-------|-------------|
-| `supportsEagerToolInputStreaming` | Whether the provider accepts per-tool `eager_input_streaming`. Default: `true`. Set to `false` to omit that field and use the legacy fine-grained tool streaming beta header on tool-enabled requests. |
+| `supportsEagerToolInputStreaming` | Whether the provider accepts per-tool `eager_input_streaming`. Default: `true`. Set to `false` to omit that field and use the legacy fine-grained tool streaming beta header on tool-enabled requests unless `supportsFineGrainedToolStreamingBeta` is also `false`. |
+| `supportsFineGrainedToolStreamingBeta` | Whether the provider accepts the legacy fine-grained tool streaming beta header when `supportsEagerToolInputStreaming` is `false`. Default: `true`. |
+| `supportsToolCacheControl` | Whether the provider accepts Anthropic `cache_control` markers on tool definitions. Default: `true`. |
 | `supportsLongCacheRetention` | Whether the provider accepts Anthropic long cache retention (`cache_control.ttl: "1h"`) when cache retention is `long`. Default: `true`. |
 
 ## OpenAI Compatibility

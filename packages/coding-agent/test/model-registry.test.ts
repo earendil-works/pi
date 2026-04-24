@@ -432,7 +432,7 @@ describe("ModelRegistry", () => {
 			expect(compat?.cacheControlFormat).toBe("anthropic");
 		});
 
-		test("compat schema accepts Anthropic eager tool input streaming flag", () => {
+		test("compat schema accepts Anthropic tool compatibility flags", () => {
 			writeRawModelsJson({
 				demo: {
 					baseUrl: "https://example.com",
@@ -440,6 +440,8 @@ describe("ModelRegistry", () => {
 					api: "anthropic-messages",
 					compat: {
 						supportsEagerToolInputStreaming: false,
+						supportsFineGrainedToolStreamingBeta: false,
+						supportsToolCacheControl: false,
 					},
 					models: [
 						{
@@ -459,6 +461,8 @@ describe("ModelRegistry", () => {
 
 			expect(registry.getError()).toBeUndefined();
 			expect(compat?.supportsEagerToolInputStreaming).toBe(false);
+			expect(compat?.supportsFineGrainedToolStreamingBeta).toBe(false);
+			expect(compat?.supportsToolCacheControl).toBe(false);
 		});
 
 		test("compat schema accepts long cache retention flag", () => {

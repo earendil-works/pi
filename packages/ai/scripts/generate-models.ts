@@ -72,6 +72,12 @@ const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-sonnet-4.5",
 ]);
 
+const FIREWORKS_ANTHROPIC_COMPAT: AnthropicMessagesCompat = {
+	supportsEagerToolInputStreaming: false,
+	supportsFineGrainedToolStreamingBeta: false,
+	supportsToolCacheControl: false,
+};
+
 function getAnthropicMessagesCompat(provider: string, modelId: string): AnthropicMessagesCompat | undefined {
 	return EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS.has(`${provider}:${modelId}`)
 		? { supportsEagerToolInputStreaming: false }
@@ -502,6 +508,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					provider: "fireworks",
 					// Fireworks Anthropic-compatible API - SDK appends /v1/messages
 					baseUrl: "https://api.fireworks.ai/inference",
+					compat: FIREWORKS_ANTHROPIC_COMPAT,
 					reasoning: m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {

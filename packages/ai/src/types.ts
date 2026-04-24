@@ -331,6 +331,10 @@ export interface AnthropicMessagesCompat {
 	 * Default: true.
 	 */
 	supportsEagerToolInputStreaming?: boolean;
+	/** Whether the provider supports the legacy fine-grained tool streaming beta header when `supportsEagerToolInputStreaming` is false. Default: true. */
+	supportsFineGrainedToolStreamingBeta?: boolean;
+	/** Whether the provider accepts Anthropic `cache_control` markers on tool definitions. Default: true. */
+	supportsToolCacheControl?: boolean;
 	/** Whether the provider supports Anthropic long cache retention (`cache_control.ttl: "1h"`). Default: true. */
 	supportsLongCacheRetention?: boolean;
 }

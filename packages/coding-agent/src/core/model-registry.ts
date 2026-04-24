@@ -123,6 +123,8 @@ const OpenAIResponsesCompatSchema = Type.Object({
 
 const AnthropicMessagesCompatSchema = Type.Object({
 	supportsEagerToolInputStreaming: Type.Optional(Type.Boolean()),
+	supportsFineGrainedToolStreamingBeta: Type.Optional(Type.Boolean()),
+	supportsToolCacheControl: Type.Optional(Type.Boolean()),
 	supportsLongCacheRetention: Type.Optional(Type.Boolean()),
 });
 
