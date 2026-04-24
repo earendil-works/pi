@@ -72,7 +72,7 @@ Ask on [Discord](https://discord.com/invite/nKXTsAcmbT).
 
 ### Why are new issues and PRs auto-closed?
 
-pi receives more issues than the maintainers can responsibly review in real time. Many reports are duplicates, provider problems, local configuration issues, or AI-generated text that looks plausible but is not actionable. Auto-closing creates a buffer so maintainers can review the tracker on their own schedule and reopen the issues that meet the quality bar.
+pi receives more issues than the maintainers can responsibly review in real time. Many reports do not meet the quality bar in this guide or do not follow CONTRIBUTING.md. Some are slung at the repository mindlessly via an agent instead of being reviewed and shaped by the person submitting them. Auto-closing creates a buffer so maintainers can review the tracker on their own schedule and reopen the issues that meet the quality bar.
 
 ### Why are weekend issues not reviewed?
 
