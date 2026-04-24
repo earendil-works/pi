@@ -113,6 +113,7 @@ For each built-in provider, pi maintains a list of tool-capable models, updated 
 - Mistral
 - Groq
 - Cerebras
+- DeepSeek
 - xAI
 - OpenRouter
 - Vercel AI Gateway

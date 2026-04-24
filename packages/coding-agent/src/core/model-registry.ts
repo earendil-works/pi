@@ -101,6 +101,7 @@ const OpenAICompletionsCompatSchema = Type.Object({
 	thinkingFormat: Type.Optional(
 		Type.Union([
 			Type.Literal("openai"),
+			Type.Literal("deepseek"),
 			Type.Literal("openrouter"),
 			Type.Literal("zai"),
 			Type.Literal("qwen"),

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added DeepSeek provider support for DeepSeek V4 Flash/Pro via the OpenAI-compatible API, including `thinking` mode toggling, DeepSeek effort mapping, cache usage accounting, and `DEEPSEEK_API_KEY` auth.
+
 ## [0.70.0] - 2026-04-23
 
 ### Added

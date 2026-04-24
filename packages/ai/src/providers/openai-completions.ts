@@ -93,6 +93,14 @@ type ChatCompletionTextPartWithCacheControl = ChatCompletionContentPartText & {
 	cache_control?: OpenAICompatCacheControl;
 };
 
+type ChatCompletionAssistantMessageWithReasoning = ChatCompletionAssistantMessageParam & {
+	reasoning_content?: string;
+};
+
+interface ConvertMessagesOptions {
+	requireAssistantReasoningContent?: boolean;
+}
+
 type ChatCompletionToolWithCacheControl = OpenAI.Chat.Completions.ChatCompletionTool & {
 	cache_control?: OpenAICompatCacheControl;
 };
@@ -464,7 +472,9 @@ function buildParams(
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
 	cacheRetention: CacheRetention = resolveCacheRetention(options?.cacheRetention),
 ) {
-	const messages = convertMessages(model, context, compat);
+	const requireAssistantReasoningContent =
+		compat.thinkingFormat === "deepseek" && model.reasoning && !!options?.reasoningEffort;
+	const messages = convertMessages(model, context, compat, { requireAssistantReasoningContent });
 	const cacheControl = getCompatCacheControl(compat, cacheRetention);
 
 	const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
@@ -526,6 +536,13 @@ function buildParams(
 			enable_thinking: !!options?.reasoningEffort,
 			preserve_thinking: true,
 		};
+	} else if (compat.thinkingFormat === "deepseek" && model.reasoning) {
+		if (options?.reasoningEffort) {
+			(params as any).thinking = { type: "enabled" };
+			(params as any).reasoning_effort = mapReasoningEffort(options.reasoningEffort, compat.reasoningEffortMap);
+		} else {
+			(params as any).thinking = { type: "disabled" };
+		}
 	} else if (compat.thinkingFormat === "openrouter" && model.reasoning) {
 		// OpenRouter normalizes reasoning across providers via a nested reasoning object.
 		const openRouterParams = params as typeof params & { reasoning?: { effort?: string } };
@@ -686,6 +703,7 @@ export function convertMessages(
 	model: Model<"openai-completions">,
 	context: Context,
 	compat: ResolvedOpenAICompletionsCompat,
+	options: ConvertMessagesOptions = {},
 ): ChatCompletionMessageParam[] {
 	const params: ChatCompletionMessageParam[] = [];
 
@@ -831,6 +849,14 @@ export function convertMessages(
 					(assistantMsg as any).reasoning_details = reasoningDetails;
 				}
 			}
+			// DeepSeek thinking mode requires replayed assistant history to include
+			// `reasoning_content`. Turns produced with thinking disabled, and
+			// cross-provider handoffs, do not have real reasoning content, but the API
+			// accepts an empty string and preserves structured replay.
+			if (options.requireAssistantReasoningContent) {
+				const deepSeekAssistantMsg = assistantMsg as ChatCompletionAssistantMessageWithReasoning;
+				deepSeekAssistantMsg.reasoning_content ??= "";
+			}
 			// Skip assistant messages that have no content and no tool calls.
 			// Some providers require "either content or tool_calls, but not none".
 			// Other providers also don't accept empty assistant messages.
@@ -939,12 +965,19 @@ function parseChunkUsage(
 		prompt_tokens?: number;
 		completion_tokens?: number;
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+		prompt_cache_hit_tokens?: number;
+		prompt_cache_miss_tokens?: number;
 	},
 	model: Model<"openai-completions">,
 ): AssistantMessage["usage"] {
 	const promptTokens = rawUsage.prompt_tokens || 0;
-	const reportedCachedTokens = rawUsage.prompt_tokens_details?.cached_tokens || 0;
-	const cacheWriteTokens = rawUsage.prompt_tokens_details?.cache_write_tokens || 0;
+	const deepSeekCacheHitTokens = rawUsage.prompt_cache_hit_tokens;
+	const deepSeekCacheMissTokens = rawUsage.prompt_cache_miss_tokens;
+	const hasDeepSeekCacheUsage = deepSeekCacheHitTokens !== undefined || deepSeekCacheMissTokens !== undefined;
+	const reportedCachedTokens = hasDeepSeekCacheUsage
+		? (deepSeekCacheHitTokens ?? Math.max(0, promptTokens - (deepSeekCacheMissTokens ?? 0)))
+		: rawUsage.prompt_tokens_details?.cached_tokens || 0;
+	const cacheWriteTokens = hasDeepSeekCacheUsage ? 0 : rawUsage.prompt_tokens_details?.cache_write_tokens || 0;
 
 	// Normalize to pi-ai semantics:
 	// - cacheRead: hits from cache created by previous requests only
@@ -954,7 +987,9 @@ function parseChunkUsage(
 	const cacheReadTokens =
 		cacheWriteTokens > 0 ? Math.max(0, reportedCachedTokens - cacheWriteTokens) : reportedCachedTokens;
 
-	const input = Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
+	const input = hasDeepSeekCacheUsage
+		? (deepSeekCacheMissTokens ?? Math.max(0, promptTokens - cacheReadTokens))
+		: Math.max(0, promptTokens - cacheReadTokens - cacheWriteTokens);
 	// OpenAI completion_tokens already includes reasoning_tokens.
 	const outputTokens = rawUsage.completion_tokens || 0;
 	const usage: AssistantMessage["usage"] = {
@@ -987,6 +1022,8 @@ function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"] | str
 			return { stopReason: "error", errorMessage: "Provider finish_reason: content_filter" };
 		case "network_error":
 			return { stopReason: "error", errorMessage: "Provider finish_reason: network_error" };
+		case "insufficient_system_resource":
+			return { stopReason: "error", errorMessage: "Provider finish_reason: insufficient_system_resource" };
 		default:
 			return {
 				stopReason: "error",
@@ -1005,6 +1042,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 	const baseUrl = model.baseUrl;
 
 	const isZai = provider === "zai" || baseUrl.includes("api.z.ai");
+	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
 
 	const isNonStandard =
 		provider === "cerebras" ||
@@ -1012,27 +1050,35 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		provider === "xai" ||
 		baseUrl.includes("api.x.ai") ||
 		baseUrl.includes("chutes.ai") ||
-		baseUrl.includes("deepseek.com") ||
+		isDeepSeek ||
 		isZai ||
 		provider === "opencode" ||
 		baseUrl.includes("opencode.ai");
 
-	const useMaxTokens = baseUrl.includes("chutes.ai");
+	const useMaxTokens = baseUrl.includes("chutes.ai") || isDeepSeek;
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
 	const isGroq = provider === "groq" || baseUrl.includes("groq.com");
 	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
 
-	const reasoningEffortMap =
-		isGroq && model.id === "qwen/qwen3-32b"
-			? {
-					minimal: "default",
-					low: "default",
-					medium: "default",
-					high: "default",
-					xhigh: "default",
-				}
-			: {};
+	let reasoningEffortMap: Partial<Record<NonNullable<OpenAICompletionsOptions["reasoningEffort"]>, string>> = {};
+	if (isGroq && model.id === "qwen/qwen3-32b") {
+		reasoningEffortMap = {
+			minimal: "default",
+			low: "default",
+			medium: "default",
+			high: "default",
+			xhigh: "default",
+		};
+	} else if (isDeepSeek) {
+		reasoningEffortMap = {
+			minimal: "high",
+			low: "high",
+			medium: "high",
+			high: "high",
+			xhigh: "max",
+		};
+	}
 	return {
 		supportsStore: !isNonStandard,
 		supportsDeveloperRole: !isNonStandard,
@@ -1045,9 +1091,11 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		requiresThinkingAsText: false,
 		thinkingFormat: isZai
 			? "zai"
-			: provider === "openrouter" || baseUrl.includes("openrouter.ai")
-				? "openrouter"
-				: "openai",
+			: isDeepSeek
+				? "deepseek"
+				: provider === "openrouter" || baseUrl.includes("openrouter.ai")
+					? "openrouter"
+					: "openai",
 		openRouterRouting: {},
 		vercelGatewayRouting: {},
 		zaiToolStream: false,

@@ -66,6 +66,18 @@ const KIMI_STATIC_HEADERS = {
 const AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1";
 const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
 const ZAI_TOOL_STREAM_UNSUPPORTED_MODELS = new Set(["glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v"]);
+const DEEPSEEK_V4_COMPAT = {
+	thinkingFormat: "deepseek",
+	supportsDeveloperRole: false,
+	supportsStore: false,
+	reasoningEffortMap: {
+		minimal: "high",
+		low: "high",
+		medium: "high",
+		high: "high",
+		xhigh: "max",
+	},
+} satisfies OpenAICompletionsCompat;
 const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-haiku-4.5",
 	"github-copilot:claude-sonnet-4",
@@ -727,6 +739,48 @@ async function generateModels() {
 		(model) =>
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
 	);
+
+	if (!allModels.some((model) => model.provider === "deepseek" && model.id === "deepseek-v4-flash")) {
+		allModels.push({
+			id: "deepseek-v4-flash",
+			name: "DeepSeek V4 Flash",
+			api: "openai-completions",
+			provider: "deepseek",
+			baseUrl: "https://api.deepseek.com",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0.14,
+				output: 0.28,
+				cacheRead: 0.028,
+				cacheWrite: 0,
+			},
+			contextWindow: 1048576,
+			maxTokens: 393216,
+			compat: DEEPSEEK_V4_COMPAT,
+		});
+	}
+
+	if (!allModels.some((model) => model.provider === "deepseek" && model.id === "deepseek-v4-pro")) {
+		allModels.push({
+			id: "deepseek-v4-pro",
+			name: "DeepSeek V4 Pro",
+			api: "openai-completions",
+			provider: "deepseek",
+			baseUrl: "https://api.deepseek.com",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 1.74,
+				output: 3.48,
+				cacheRead: 0.145,
+				cacheWrite: 0,
+			},
+			contextWindow: 1048576,
+			maxTokens: 393216,
+			compat: DEEPSEEK_V4_COMPAT,
+		});
+	}
 
 	// Fix incorrect cache pricing for Claude Opus 4.5 from models.dev
 	// models.dev has 3x the correct pricing (1.5/18.75 instead of 0.5/6.25)

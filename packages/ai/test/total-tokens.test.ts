@@ -307,6 +307,29 @@ describe("totalTokens field", () => {
 	});
 
 	// =========================================================================
+	// DeepSeek
+	// =========================================================================
+
+	describe.skipIf(!process.env.DEEPSEEK_API_KEY)("DeepSeek", () => {
+		it(
+			"deepseek-v4-pro - should return totalTokens equal to sum of components",
+			{ retry: 3, timeout: 60000 },
+			async () => {
+				const llm = getModel("deepseek", "deepseek-v4-pro");
+
+				console.log(`\nDeepSeek / ${llm.id}:`);
+				const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.DEEPSEEK_API_KEY });
+
+				logUsage("First request", first);
+				logUsage("Second request", second);
+
+				assertTotalTokensEqualsComponents(first);
+				assertTotalTokensEqualsComponents(second);
+			},
+		);
+	});
+
+	// =========================================================================
 	// Hugging Face
 	// =========================================================================
 

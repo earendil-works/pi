@@ -168,6 +168,14 @@ describe("Tool Call Without Result Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.DEEPSEEK_API_KEY)("DeepSeek Provider", () => {
+		const model = getModel("deepseek", "deepseek-v4-pro");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
 	describe.skipIf(!process.env.HF_TOKEN)("Hugging Face Provider", () => {
 		const model = getModel("huggingface", "moonshotai/Kimi-K2.5");
 

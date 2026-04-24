@@ -60,6 +60,7 @@ pi
 | Mistral | `MISTRAL_API_KEY` | `mistral` |
 | Groq | `GROQ_API_KEY` | `groq` |
 | Cerebras | `CEREBRAS_API_KEY` | `cerebras` |
+| DeepSeek | `DEEPSEEK_API_KEY` | `deepseek` |
 | xAI | `XAI_API_KEY` | `xai` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |

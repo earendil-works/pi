@@ -131,6 +131,18 @@ describe("AI Providers Abort Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.DEEPSEEK_API_KEY)("DeepSeek Provider Abort", () => {
+		const llm = getModel("deepseek", "deepseek-v4-pro");
+
+		it("should abort mid-stream", { retry: 3 }, async () => {
+			await testAbortSignal(llm, { reasoningEffort: "medium" });
+		});
+
+		it("should handle immediate abort", { retry: 3 }, async () => {
+			await testImmediateAbort(llm, { reasoningEffort: "medium" });
+		});
+	});
+
 	describe.skipIf(!process.env.OPENAI_API_KEY)("OpenAI Responses Provider Abort", () => {
 		const llm = getModel("openai", "gpt-5-mini");
 

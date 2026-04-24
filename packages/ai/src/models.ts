@@ -71,6 +71,10 @@ export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
 		return true;
 	}
 
+	if (model.provider === "deepseek" && model.id.startsWith("deepseek-v4-")) {
+		return true;
+	}
+
 	return false;
 }
 

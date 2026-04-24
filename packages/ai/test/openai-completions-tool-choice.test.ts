@@ -11,10 +11,12 @@ const mockState = vi.hoisted(() => ({
 				id?: string;
 				choices?: Array<{ delta: Record<string, unknown>; finish_reason: string | null; usage?: unknown }>;
 				usage?: {
-					prompt_tokens: number;
-					completion_tokens: number;
-					prompt_tokens_details: { cached_tokens: number; cache_write_tokens?: number };
-					completion_tokens_details: { reasoning_tokens: number };
+					prompt_tokens?: number;
+					completion_tokens?: number;
+					prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
+					completion_tokens_details?: { reasoning_tokens?: number };
+					prompt_cache_hit_tokens?: number;
+					prompt_cache_miss_tokens?: number;
 				};
 		  }>
 		| undefined,
@@ -209,6 +211,202 @@ describe("openai-completions tool_choice", () => {
 
 		const params = (payload ?? mockState.lastParams) as { reasoning_effort?: string };
 		expect(params.reasoning_effort).toBe("medium");
+	});
+
+	async function captureDeepSeekPayload(reasoning?: "minimal" | "low" | "medium" | "high" | "xhigh") {
+		let payload: unknown;
+		await streamSimple(
+			getModel("deepseek", "deepseek-v4-pro"),
+			{
+				messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test",
+				reasoning,
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+		return payload ?? mockState.lastParams;
+	}
+
+	it("sends DeepSeek thinking disabled when Pi reasoning is off", async () => {
+		const params = (await captureDeepSeekPayload()) as { thinking?: { type?: string }; reasoning_effort?: string };
+
+		expect(params.thinking).toEqual({ type: "disabled" });
+		expect(params.reasoning_effort).toBeUndefined();
+	});
+
+	it("sends DeepSeek thinking enabled and maps medium effort to high", async () => {
+		const params = (await captureDeepSeekPayload("medium")) as {
+			thinking?: { type?: string };
+			reasoning_effort?: string;
+		};
+
+		expect(params.thinking).toEqual({ type: "enabled" });
+		expect(params.reasoning_effort).toBe("high");
+	});
+
+	it("maps xhigh DeepSeek reasoning to max", async () => {
+		const params = (await captureDeepSeekPayload("xhigh")) as {
+			thinking?: { type?: string };
+			reasoning_effort?: string;
+		};
+
+		expect(params.thinking).toEqual({ type: "enabled" });
+		expect(params.reasoning_effort).toBe("max");
+	});
+
+	it("adds empty reasoning_content for DeepSeek thinking replay after a non-thinking assistant turn", async () => {
+		let payload: unknown;
+		await streamSimple(
+			getModel("deepseek", "deepseek-v4-pro"),
+			{
+				messages: [
+					{ role: "user", content: "Think first", timestamp: 1 },
+					{
+						role: "assistant",
+						api: "openai-completions",
+						provider: "deepseek",
+						model: "deepseek-v4-pro",
+						content: [
+							{ type: "thinking", thinking: "reasoning", thinkingSignature: "reasoning_content" },
+							{ type: "text", text: "answer" },
+						],
+						usage: {
+							input: 0,
+							output: 0,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 0,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+						},
+						stopReason: "stop",
+						timestamp: 2,
+					},
+					{ role: "user", content: "Now do not think", timestamp: 3 },
+					{
+						role: "assistant",
+						api: "openai-completions",
+						provider: "deepseek",
+						model: "deepseek-v4-pro",
+						content: [{ type: "text", text: "non-thinking answer" }],
+						usage: {
+							input: 0,
+							output: 0,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 0,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+						},
+						stopReason: "stop",
+						timestamp: 4,
+					},
+					{ role: "user", content: "Think again", timestamp: 5 },
+				],
+			},
+			{
+				apiKey: "test",
+				reasoning: "medium",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as {
+			messages?: Array<{ role?: string; reasoning_content?: string }>;
+			thinking?: { type?: string };
+			reasoning_effort?: string;
+		};
+		expect(params.thinking).toEqual({ type: "enabled" });
+		expect(params.reasoning_effort).toBe("high");
+		expect(params.messages?.[1]?.reasoning_content).toBe("reasoning");
+		expect(params.messages?.[3]?.reasoning_content).toBe("");
+	});
+
+	it("adds empty reasoning_content for DeepSeek thinking replay with assistant tool calls", async () => {
+		let payload: unknown;
+		await streamSimple(
+			getModel("deepseek", "deepseek-v4-pro"),
+			{
+				messages: [
+					{ role: "user", content: "Use the tool", timestamp: 1 },
+					{
+						role: "assistant",
+						api: "openai-completions",
+						provider: "other-provider",
+						model: "other-model",
+						content: [{ type: "toolCall", id: "call_1", name: "lookup", arguments: {} }],
+						usage: {
+							input: 0,
+							output: 0,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 0,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+						},
+						stopReason: "toolUse",
+						timestamp: 2,
+					},
+					{
+						role: "toolResult",
+						toolCallId: "call_1",
+						toolName: "lookup",
+						content: [{ type: "text", text: "result" }],
+						isError: false,
+						timestamp: 3,
+					},
+					{ role: "user", content: "Continue", timestamp: 4 },
+				],
+				tools: [{ name: "lookup", description: "Lookup", parameters: Type.Object({}) }],
+			},
+			{
+				apiKey: "test",
+				reasoning: "medium",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as {
+			messages?: Array<{ role?: string; reasoning_content?: string; tool_calls?: unknown[] }>;
+			thinking?: { type?: string };
+			reasoning_effort?: string;
+		};
+		expect(params.thinking).toEqual({ type: "enabled" });
+		expect(params.reasoning_effort).toBe("high");
+		expect(params.messages?.[1]?.reasoning_content).toBe("");
+	});
+
+	it("normalizes DeepSeek cache hit and miss usage fields", async () => {
+		mockState.chunks = [
+			{
+				choices: [{ delta: {}, finish_reason: "stop" }],
+				usage: {
+					prompt_tokens: 10,
+					prompt_cache_hit_tokens: 7,
+					prompt_cache_miss_tokens: 3,
+					completion_tokens: 5,
+				},
+			},
+		];
+
+		const message = await streamSimple(
+			getModel("deepseek", "deepseek-v4-pro"),
+			{
+				messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect(message.usage.input).toBe(3);
+		expect(message.usage.cacheRead).toBe(7);
+		expect(message.usage.cacheWrite).toBe(0);
+		expect(message.usage.output).toBe(5);
+		expect(message.usage.totalTokens).toBe(15);
 	});
 
 	it("enables tool_stream for supported z.ai models with tools", async () => {

@@ -30,6 +30,7 @@ export type KnownProvider =
 	| "xai"
 	| "groq"
 	| "cerebras"
+	| "deepseek"
 	| "openrouter"
 	| "vercel-ai-gateway"
 	| "zai"
@@ -282,8 +283,8 @@ export interface OpenAICompletionsCompat {
 	requiresAssistantAfterToolResult?: boolean;
 	/** Whether thinking blocks must be converted to text blocks with <thinking> delimiters. Default: auto-detected from URL. */
 	requiresThinkingAsText?: boolean;
-	/** Format for reasoning/thinking parameter. "openai" uses reasoning_effort, "openrouter" uses reasoning: { effort }, "zai" uses top-level enable_thinking: boolean, "qwen" uses top-level enable_thinking: boolean, and "qwen-chat-template" uses chat_template_kwargs.enable_thinking. Default: "openai". */
-	thinkingFormat?: "openai" | "openrouter" | "zai" | "qwen" | "qwen-chat-template";
+	/** Format for reasoning/thinking parameter. "openai" uses reasoning_effort, "deepseek" uses thinking.type plus reasoning_effort, "openrouter" uses reasoning: { effort }, "zai" uses top-level enable_thinking: boolean, "qwen" uses top-level enable_thinking: boolean, and "qwen-chat-template" uses chat_template_kwargs.enable_thinking. Default: "openai". */
+	thinkingFormat?: "openai" | "deepseek" | "openrouter" | "zai" | "qwen" | "qwen-chat-template";
 	/** OpenRouter-specific routing preferences. Only used when baseUrl points to OpenRouter. */
 	openRouterRouting?: OpenRouterRouting;
 	/** Vercel AI Gateway routing preferences. Only used when baseUrl points to Vercel AI Gateway. */

@@ -84,6 +84,8 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "xai", model: "grok-code-fast-1", label: "xai-grok-code-fast-1" },
 	// Cerebras
 	{ provider: "cerebras", model: "zai-glm-4.7", label: "cerebras-zai-glm-4.7" },
+	// DeepSeek
+	{ provider: "deepseek", model: "deepseek-v4-pro", label: "deepseek-v4-pro" },
 	// Groq
 	{ provider: "groq", model: "openai/gpt-oss-120b", label: "groq-gpt-oss-120b" },
 	// Hugging Face
