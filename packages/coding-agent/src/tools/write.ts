@@ -30,7 +30,10 @@ export const writeTool: AgentTool<typeof writeSchema> = {
 	label: "write",
 	description: getToolDescription("write"),
 	parameters: writeSchema,
-	getResourceKey: ({ path }) => `file:${resolvePath(expandPath(path))}`,
+	getResourceKey: ({ path }) => {
+		if (typeof path !== "string") return undefined;
+		return `file:${resolvePath(expandPath(path))}`;
+	},
 	execute: async (
 		_toolCallId: string,
 		{ path, content }: { path: string; content: string },
