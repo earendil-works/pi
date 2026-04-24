@@ -67,3 +67,25 @@ pi's core is minimal. If your feature does not belong in the core, it should be 
 ## Questions?
 
 Ask on [Discord](https://discord.com/invite/nKXTsAcmbT).
+
+## FAQ
+
+### Why are new issues and PRs auto-closed?
+
+pi receives more issues than the maintainers can responsibly review in real time. Many reports are duplicates, provider problems, local configuration issues, or AI-generated text that looks plausible but is not actionable. Auto-closing creates a buffer so maintainers can review the tracker on their own schedule and reopen the issues that meet the quality bar.
+
+### Why are weekend issues not reviewed?
+
+Maintainers need uninterrupted time away from the issue tracker. Issues submitted Friday through Sunday are auto-closed and are not part of the Monday review queue. If a problem is urgent, ask on Discord and include the short version, a repro, and the relevant logs.
+
+### Why do some issues get no reply?
+
+A reply is maintenance work too. Low-signal issues, unclear reports, duplicates, and issues that do not follow this guide may be closed without discussion. This keeps time available for reproducible bugs, thoughtful requests, and contributors who have done the work to make their report actionable.
+
+### Why not let AI triage everything?
+
+AI can help group duplicates, summarize reports, and spot missing information. It is not trusted to make final maintainer decisions. Polished AI-generated issues can still be wrong, misleading, or expensive to investigate. Human review remains the final gate.
+
+### Is this hostile to contributors?
+
+No. It is a guardrail against burnout and tracker spam. Short, concrete, reproducible issues are welcome. Thoughtful contributions are welcome. Automated slop, entitlement, and large volumes of low-effort reports are not.
