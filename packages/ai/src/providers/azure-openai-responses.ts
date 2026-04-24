@@ -145,7 +145,26 @@ export const streamSimpleAzureOpenAIResponses: StreamFunction<"azure-openai-resp
 };
 
 function normalizeAzureBaseUrl(baseUrl: string): string {
-	return baseUrl.replace(/\/+$/, "");
+	const trimmed = baseUrl.trim().replace(/\/+$/, "");
+	let url: URL;
+	try {
+		url = new URL(trimmed);
+	} catch {
+		throw new Error(`Invalid Azure OpenAI base URL: ${baseUrl}`);
+	}
+
+	const isAzureHost =
+		url.hostname.endsWith(".openai.azure.com") || url.hostname.endsWith(".cognitiveservices.azure.com");
+	const normalizedPath = url.pathname.replace(/\/+$/, "");
+
+	// Ensure Azure hosts have /openai/v1 as base path so the AzureOpenAI SDK
+	// can append /deployments/<model>/... and ?api-version=v1 correctly.
+	if (isAzureHost && (normalizedPath === "" || normalizedPath === "/" || normalizedPath === "/openai")) {
+		url.pathname = "/openai/v1";
+		url.search = "";
+	}
+
+	return url.toString().replace(/\/+$/, "");
 }
 
 function buildDefaultBaseUrl(resourceName: string): string {

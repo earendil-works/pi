@@ -117,6 +117,8 @@ OAuth credentials are also stored here after `/login` and managed automatically.
 ```bash
 export AZURE_OPENAI_API_KEY=...
 export AZURE_OPENAI_BASE_URL=https://your-resource.openai.azure.com
+# also supported: https://your-resource.cognitiveservices.azure.com
+# root endpoints are auto-normalized to /openai/v1
 # or use resource name instead of base URL
 export AZURE_OPENAI_RESOURCE_NAME=your-resource
 
