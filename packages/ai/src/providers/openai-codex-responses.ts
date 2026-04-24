@@ -340,7 +340,7 @@ function buildRequestBody(
 		body.service_tier = options.serviceTier;
 	}
 
-	if (context.tools) {
+	if (context.tools && context.tools.length > 0) {
 		body.tools = convertResponsesTools(context.tools, { strict: null });
 	}
 

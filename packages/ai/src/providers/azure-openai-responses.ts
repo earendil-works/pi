@@ -233,7 +233,7 @@ function buildParams(
 		params.temperature = options?.temperature;
 	}
 
-	if (context.tools) {
+	if (context.tools && context.tools.length > 0) {
 		params.tools = convertResponsesTools(context.tools);
 	}
 

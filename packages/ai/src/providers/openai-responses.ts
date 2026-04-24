@@ -222,7 +222,7 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 		params.service_tier = options.serviceTier;
 	}
 
-	if (context.tools) {
+	if (context.tools && context.tools.length > 0) {
 		params.tools = convertResponsesTools(context.tools);
 	}
 
