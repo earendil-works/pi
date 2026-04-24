@@ -176,4 +176,32 @@ describe("FooterComponent", () => {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
 	});
+
+	it("renders thinking duration between ttft and latency in the active footer secondary row", () => {
+		const footer = new FooterComponent(createState());
+		footer.setTitle("Investigate footer layout overflow");
+		footer.setTransientStatus({
+			indicator: "░▒▓█   ",
+			message: "Working (9s • 21 tps • 1.2s ttft • 5.0s think • 2.3s lat. • esc→stop)",
+		});
+
+		const lines = footer.render(120).map((line) => stripAnsi(line));
+
+		expect(lines).toHaveLength(2);
+		expect(lines[0]).toContain("Working • 9s");
+		expect(lines[1]).toContain("21 tps • 1.2s ttft • 5.0s think • 2.3s lat. • esc→stop");
+	});
+
+	it("renders thinking duration without ttft or latency", () => {
+		const footer = new FooterComponent(createState());
+		footer.setTransientStatus({
+			indicator: "░▒▓█   ",
+			message: "Working (9s • 21 tps • 5.0s think • esc→stop)",
+		});
+
+		const lines = footer.render(100).map((line) => stripAnsi(line));
+
+		expect(lines).toHaveLength(2);
+		expect(lines[1]).toContain("21 tps • 5.0s think • esc→stop");
+	});
 });

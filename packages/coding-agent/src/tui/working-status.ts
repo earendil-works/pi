@@ -27,13 +27,16 @@ export function formatWorkingStatus(
 	averageLatencyMs?: number,
 	tokensPerSecondElapsedMs: number = elapsedMs,
 	ttftMs?: number,
+	thinkMs?: number,
 ): string {
 	const elapsed = formatElapsed(elapsedMs);
 	const tps = formatTps(tokensPerSecondElapsedMs, estimatedOutputTokens);
-	const ttft = formatTtft(ttftMs);
-	const avgLatency = formatAverageLatency(averageLatencyMs);
+	const ttft = formatTime(ttftMs);
+	const think = formatTime(thinkMs);
+	const avgLatency = formatTime(averageLatencyMs);
 	const segments = [`${tps} tps`];
 	if (ttft !== null) segments.push(`${ttft} ttft`);
+	if (think !== null) segments.push(`${think} think`);
 	if (avgLatency !== null) segments.push(`${avgLatency} lat.`);
 	return `Working (${elapsed} • ${segments.join(" • ")} • esc→stop)`;
 }
@@ -44,13 +47,16 @@ export function formatDoneStatus(
 	averageLatencyMs?: number,
 	tokensPerSecondElapsedMs: number = elapsedMs,
 	ttftMs?: number,
+	thinkMs?: number,
 ): string {
 	const elapsed = formatElapsed(elapsedMs);
 	const tps = formatTps(tokensPerSecondElapsedMs, estimatedOutputTokens);
-	const ttft = formatTtft(ttftMs);
-	const avgLatency = formatAverageLatency(averageLatencyMs);
+	const ttft = formatTime(ttftMs);
+	const think = formatTime(thinkMs);
+	const avgLatency = formatTime(averageLatencyMs);
 	const segments = [`${tps} tps`];
 	if (ttft !== null) segments.push(`${ttft} ttft`);
+	if (think !== null) segments.push(`${think} think`);
 	if (avgLatency !== null) segments.push(`${avgLatency} lat.`);
 	return `Done after ${elapsed} - ${segments.join(" - ")}`;
 }
@@ -68,16 +74,9 @@ function formatTps(elapsedMs: number, estimatedOutputTokens: number): number {
 	return Math.round((estimatedOutputTokens * 1000) / elapsedMs);
 }
 
-function formatTtft(ttftMs: number | undefined): string | null {
-	if (ttftMs === undefined) {
+function formatTime(ms: number | undefined): string | null {
+	if (ms === undefined || ms === 0) {
 		return null;
 	}
-	return `${(ttftMs / 1000).toFixed(1)}s`;
-}
-
-function formatAverageLatency(averageLatencyMs: number | undefined): string | null {
-	if (averageLatencyMs === undefined) {
-		return null;
-	}
-	return `${(averageLatencyMs / 1000).toFixed(1)}s`;
+	return `${(ms / 1000).toFixed(1)}s`;
 }

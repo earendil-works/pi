@@ -134,4 +134,48 @@ describe("working-status", () => {
 	it("omits ttft when undefined in done label", () => {
 		expect(formatDoneStatus(28_000, 1_176, 3_800, 28_000, undefined)).toBe("Done after 28s - 42 tps - 3.8s lat.");
 	});
+
+	// Thinking duration tests
+
+	it("formats the working label with think between ttft and lat.", () => {
+		expect(formatWorkingStatus(28_000, 1_176, 3_800, 28_000, 1_200, 5_000)).toBe(
+			"Working (28s • 42 tps • 1.2s ttft • 5.0s think • 3.8s lat. • esc→stop)",
+		);
+	});
+
+	it("formats the working label with think but no ttft or latency", () => {
+		expect(formatWorkingStatus(9_000, 210, undefined, 9_000, undefined, 3_000)).toBe(
+			"Working (9s • 23 tps • 3.0s think • esc→stop)",
+		);
+	});
+
+	it("omits think when undefined or zero in working label", () => {
+		expect(formatWorkingStatus(28_000, 1_176, 3_800, 28_000, 1_200, undefined)).toBe(
+			"Working (28s • 42 tps • 1.2s ttft • 3.8s lat. • esc→stop)",
+		);
+		expect(formatWorkingStatus(28_000, 1_176, 3_800, 28_000, 1_200, 0)).toBe(
+			"Working (28s • 42 tps • 1.2s ttft • 3.8s lat. • esc→stop)",
+		);
+	});
+
+	it("formats the done label with think between ttft and lat.", () => {
+		expect(formatDoneStatus(28_000, 1_176, 3_800, 28_000, 1_200, 5_000)).toBe(
+			"Done after 28s - 42 tps - 1.2s ttft - 5.0s think - 3.8s lat.",
+		);
+	});
+
+	it("formats the done label with think but no ttft or latency", () => {
+		expect(formatDoneStatus(9_000, 210, undefined, 9_000, undefined, 3_000)).toBe(
+			"Done after 9s - 23 tps - 3.0s think",
+		);
+	});
+
+	it("omits think when undefined or zero in done label", () => {
+		expect(formatDoneStatus(28_000, 1_176, 3_800, 28_000, 1_200, undefined)).toBe(
+			"Done after 28s - 42 tps - 1.2s ttft - 3.8s lat.",
+		);
+		expect(formatDoneStatus(28_000, 1_176, 3_800, 28_000, 1_200, 0)).toBe(
+			"Done after 28s - 42 tps - 1.2s ttft - 3.8s lat.",
+		);
+	});
 });

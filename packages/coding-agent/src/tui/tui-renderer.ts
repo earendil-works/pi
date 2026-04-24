@@ -429,6 +429,8 @@ export class TuiRenderer {
 	private accumulatedLatencyMs = 0;
 	private latencyGapCount = 0;
 	private ttftMs: number | null = null;
+	private thinkingStartTime: number | null = null;
+	private accumulatedThinkingMs = 0;
 	private workingStatusPausedAt: number | null = null;
 	private shouldResumeWorkingStatusTimer = false;
 	private ignoreNextAgentEndForAutoHandoffAbort = false;
@@ -1277,6 +1279,7 @@ export class TuiRenderer {
 			this.getAverageLatencyMs(),
 			this.getAssistantActiveMs(),
 			this.ttftMs ?? undefined,
+			this.accumulatedThinkingMs || undefined,
 		);
 	}
 
@@ -1312,6 +1315,8 @@ export class TuiRenderer {
 		this.accumulatedLatencyMs = 0;
 		this.latencyGapCount = 0;
 		this.ttftMs = null;
+		this.thinkingStartTime = null;
+		this.accumulatedThinkingMs = 0;
 	}
 
 	private clearWorkingStatusMetrics(): void {
@@ -1324,6 +1329,8 @@ export class TuiRenderer {
 		this.accumulatedLatencyMs = 0;
 		this.latencyGapCount = 0;
 		this.ttftMs = null;
+		this.thinkingStartTime = null;
+		this.accumulatedThinkingMs = 0;
 		this.workingStatusPausedAt = null;
 		this.shouldResumeWorkingStatusTimer = false;
 	}
@@ -1582,6 +1589,20 @@ export class TuiRenderer {
 					if (this.ttftMs === null && shouldCaptureTtft(event.assistantMessageEvent)) {
 						this.ttftMs = Date.now() - (this.workingStartTime ?? Date.now());
 					}
+
+					// Track thinking duration per turn
+					if (event.assistantMessageEvent.type === "thinking_start") {
+						if (this.thinkingStartTime === null) {
+							this.thinkingStartTime = Date.now();
+						}
+					}
+					if (event.assistantMessageEvent.type === "thinking_end") {
+						if (this.thinkingStartTime !== null) {
+							this.accumulatedThinkingMs += Date.now() - this.thinkingStartTime;
+							this.thinkingStartTime = null;
+						}
+					}
+
 					this.streamingComponent.applyAssistantMessageEvent(event.assistantMessageEvent);
 					this.currentAssistantEstimatedOutputTokens = estimateWorkingStatusTokens(assistantMsg);
 					if (shouldPauseAssistantActiveTiming(event.assistantMessageEvent)) {
@@ -1888,6 +1909,7 @@ export class TuiRenderer {
 					this.getAverageLatencyMs(),
 					this.getAssistantActiveMs(),
 					this.ttftMs ?? undefined,
+					this.accumulatedThinkingMs || undefined,
 				);
 
 				// Stop timer interval
