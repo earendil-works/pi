@@ -4,7 +4,11 @@
 
 ### Fixed
 
+- Fixed OpenAI-compatible prompt cache tests to cover proxies that explicitly disable long cache retention.
 - Stopped sending `tools: []` on OpenAI-compatible, Anthropic, OpenAI Responses, OpenAI Codex Responses, and Azure OpenAI Responses requests when no tools are active (e.g. `pi --no-tools`). DashScope/Aliyun Qwen (OpenAI-compatible) rejects empty tools arrays with `"[] is too short - 'tools'"` (HTTP 400); the field is now omitted unless the conversation has tool history (the existing LiteLLM/Anthropic-proxy workaround).
+- Fixed `supportsXhigh()` to recognize DeepSeek V4 Pro, preserving `xhigh` reasoning requests so they map to DeepSeek's `max` effort ([#3662](https://github.com/badlogic/pi-mono/issues/3662))
+- Fixed OpenAI-compatible DeepSeek V4 model replay to include empty `reasoning_content` on assistant messages when needed, preventing OpenRouter DeepSeek V4 sessions from failing after responses without reasoning deltas ([#3668](https://github.com/badlogic/pi-mono/issues/3668))
+
 ## [0.70.2] - 2026-04-24
 
 ### Fixed

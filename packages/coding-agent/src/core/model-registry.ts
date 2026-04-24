@@ -758,7 +758,7 @@ export class ModelRegistry {
 	registerProvider(providerName: string, config: ProviderConfigInput): void {
 		this.validateProviderConfig(providerName, config);
 		this.applyProviderConfig(providerName, config);
-		this.registeredProviders.set(providerName, config);
+		this.upsertRegisteredProvider(providerName, config);
 	}
 
 	/**
@@ -774,6 +774,25 @@ export class ModelRegistry {
 		if (!this.registeredProviders.has(providerName)) return;
 		this.registeredProviders.delete(providerName);
 		this.refresh();
+	}
+
+	/**
+	 * Upsert a provider config into registeredProviders.
+	 * If the provider is already registered, defined values in the incoming config
+	 * override existing ones; undefined values are preserved from the stored config.
+	 * If the provider is not registered, the incoming config is stored as-is.
+	 */
+	private upsertRegisteredProvider(providerName: string, config: ProviderConfigInput): void {
+		const existing = this.registeredProviders.get(providerName);
+		if (!existing) {
+			this.registeredProviders.set(providerName, config);
+			return;
+		}
+		for (const k of Object.keys(config) as (keyof ProviderConfigInput)[]) {
+			if (config[k] !== undefined) {
+				(existing as Record<string, unknown>)[k] = config[k];
+			}
+		}
 	}
 
 	private validateProviderConfig(providerName: string, config: ProviderConfigInput): void {

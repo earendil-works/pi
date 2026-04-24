@@ -18,6 +18,9 @@ pi
 
 Authenticate with `/login` for subscription providers, or set an API key such as `ANTHROPIC_API_KEY` before starting pi.
 
+Once you are signed in, you can ask pi about itself and it will answer you.  No
+need to read the docs yourself ;-)
+
 ## Start here
 
 - [Providers](providers.md) - subscription and API-key setup for built-in providers.

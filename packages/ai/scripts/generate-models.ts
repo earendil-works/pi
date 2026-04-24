@@ -1063,6 +1063,15 @@ async function generateModels() {
 	];
 	allModels.push(...deepseekV4Models);
 
+	for (const candidate of allModels) {
+		if (candidate.api === "openai-completions" && candidate.id.includes("deepseek-v4")) {
+			candidate.compat = {
+				...candidate.compat,
+				requiresReasoningContentOnAssistantMessages: true,
+			};
+		}
+	}
+
 	const minimaxDirectSupportedIds = new Set(["MiniMax-M2.7", "MiniMax-M2.7-highspeed"]);
 
 	for (const candidate of allModels) {

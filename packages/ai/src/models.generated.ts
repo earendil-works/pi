@@ -8240,6 +8240,7 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
+			compat: {"requiresReasoningContentOnAssistantMessages":true},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -8257,6 +8258,7 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "openrouter",
 			baseUrl: "https://openrouter.ai/api/v1",
+			compat: {"requiresReasoningContentOnAssistantMessages":true},
 			reasoning: true,
 			input: ["text"],
 			cost: {
