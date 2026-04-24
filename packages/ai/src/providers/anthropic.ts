@@ -936,9 +936,17 @@ function buildParams(
 	return params;
 }
 
-// Normalize tool call IDs to match Anthropic's required pattern and length
-function normalizeToolCallId(id: string): string {
-	return id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+// Normalize tool call IDs to match Anthropic's required pattern and length.
+// Anthropic rejects tool_use.id that doesn't match ^[a-zA-Z0-9_-]+$ (1+ chars,
+// max 64). Some providers emit disallowed characters (e.g. Moonshot/Kimi uses
+// `functions.<name>:<idx>`), and orphaned or failed tool calls can carry
+// empty IDs. After stripping disallowed chars we fall back to a stable
+// placeholder so the empty case still matches Anthropic's pattern; the
+// transform-message tool-call/tool-result pairing is preserved because the
+// same empty input always maps to the same output.
+export function normalizeToolCallId(id: string): string {
+	const sanitized = id.replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 64);
+	return sanitized.length > 0 ? sanitized : "call_missing";
 }
 
 function convertMessages(
