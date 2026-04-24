@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>Pi Web - AI Coding Assistant</title>
+		<meta name="description" content="Browser-based AI coding assistant powered by pi" />
+		<link rel="stylesheet" href="/app.css" />
+	</head>
+	<body>
+		<div id="app">
+			<div class="header">
+				<div class="header-left">
+					<button id="newSessionBtn" class="btn btn-ghost" title="New Session">
+						<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M12 5v14M5 12h14"/>
+						</svg>
+					</button>
+					<h1>Pi Web</h1>
+				</div>
+				<div class="header-right">
+					<div id="modelSelector" class="model-selector">
+						<select id="modelSelect" disabled>
+							<option value="">Loading models...</option>
+						</select>
+					</div>
+					<div class="thinking-selector">
+						<select id="thinkingSelect" disabled>
+							<option value="off">Off</option>
+							<option value="low">Low</option>
+							<option value="medium">Medium</option>
+							<option value="high">High</option>
+						</select>
+					</div>
+				</div>
+			</div>
+
+			<div id="messagesContainer" class="messages-container">
+				<div class="loading-message">
+					<div class="spinner"></div>
+					<span>Connecting to server...</span>
+				</div>
+			</div>
+
+			<div class="input-area">
+				<div id="inputContainer" class="input-container">
+					<textarea
+						id="messageInput"
+						placeholder="Type your message here..."
+						disabled
+						rows="1"
+					></textarea>
+					<button id="sendBtn" class="btn btn-primary" disabled>
+						<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+							<path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/>
+						</svg>
+					</button>
+					<button id="stopBtn" class="btn btn-danger" style="display: none">
+						<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+							<rect x="4" y="4" width="16" height="16" rx="2"/>
+						</svg>
+					</button>
+				</div>
+				<div id="statusBar" class="status-bar">
+					<span id="statusText">Ready</span>
+				</div>
+			</div>
+		</div>
+		<script src="/app.js"></script>
+	</body>
+</html>

@@ -1,0 +1,57 @@
+{
+	"name": "@mariozechner/pi-web-server",
+	"version": "0.0.3",
+	"description": "Web server for pi AI coding assistant with browser UI",
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		}
+	},
+	"bin": {
+		"pi-web": "./dist/cli.js"
+	},
+	"scripts": {
+		"clean": "shx rm -rf dist",
+		"build": "tsgo -p tsconfig.build.json",
+		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+		"check": "biome check --write --error-on-warnings . && tsgo --noEmit",
+		"prepublishOnly": "npm run clean && npm run build"
+	},
+	"dependencies": {
+		"@mariozechner/mini-lit": "^0.2.0",
+		"@mariozechner/pi-coding-agent": "file:../coding-agent",
+		"@mariozechner/pi-web-ui": "file:../web-ui",
+		"cors": "^2.8.5",
+		"express": "^4.21.0",
+		"lucide": "^0.544.0",
+		"ws": "^8.18.0"
+	},
+	"devDependencies": {
+		"@types/cors": "^2.8.17",
+		"@types/express": "^4.17.21",
+		"@types/node": "^24.3.0",
+		"@types/ws": "^8.5.13",
+		"typescript": "^5.7.3"
+	},
+	"keywords": [
+		"ai",
+		"coding-assistant",
+		"web-ui",
+		"browser",
+		"http-server"
+	],
+	"author": "Mario Zechner",
+	"license": "MIT",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/badlogic/pi-mono.git",
+		"directory": "packages/web-server"
+	},
+	"engines": {
+		"node": ">=20.6.0"
+	}
+}
