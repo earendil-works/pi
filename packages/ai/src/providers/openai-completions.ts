@@ -785,6 +785,23 @@ export function convertMessages(
 			const nonEmptyThinkingBlocks = msg.content
 				.filter(isThinkingContentBlock)
 				.filter((block) => block.thinking.trim().length > 0);
+
+			// When the endpoint requires reasoning_content on replayed assistant messages
+			// (e.g. DeepSeek), carry the prior turn's actual reasoning rather than relying
+			// on the empty-string fallback below. DeepSeek docs require the prior turn's
+			// reasoning to be passed back on tool-call turns; sending the real text
+			// preserves reasoning continuity across multi-turn sessions.
+			// https://api-docs.deepseek.com/guides/thinking_mode
+			if (
+				compat.requiresReasoningContentOnAssistantMessages &&
+				model.reasoning &&
+				nonEmptyThinkingBlocks.length > 0
+			) {
+				(assistantMsg as { reasoning_content?: string }).reasoning_content = nonEmptyThinkingBlocks
+					.map((block) => sanitizeSurrogates(block.thinking))
+					.join("\n");
+			}
+
 			if (nonEmptyThinkingBlocks.length > 0) {
 				if (compat.requiresThinkingAsText) {
 					// Convert thinking blocks to plain text (no tags to avoid model mimicking them)
