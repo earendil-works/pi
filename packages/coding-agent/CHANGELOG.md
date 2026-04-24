@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `/reload` dropping the editor's prompt history so Up-arrow no longer cycled previously submitted prompts ([#3667](https://github.com/badlogic/pi-mono/issues/3667))
+
 ## [0.70.2] - 2026-04-24
 
 ### Fixed

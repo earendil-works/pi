@@ -3186,10 +3186,10 @@ export class InteractiveMode {
 		});
 	}
 
-	private rebuildChatFromMessages(): void {
+	private rebuildChatFromMessages(options: { populateHistory?: boolean } = {}): void {
 		this.chatContainer.clear();
 		const context = this.sessionManager.buildSessionContext();
-		this.renderSessionContext(context);
+		this.renderSessionContext(context, options);
 	}
 
 	// =========================================================================
@@ -4778,7 +4778,9 @@ export class InteractiveMode {
 			this.setupAutocompleteProvider();
 			const runner = this.session.extensionRunner;
 			this.setupExtensionShortcuts(runner);
-			this.rebuildChatFromMessages();
+			// Repopulate the editor's prompt history from the existing session
+			// messages so Up-arrow still cycles prior prompts after /reload.
+			this.rebuildChatFromMessages({ populateHistory: true });
 			dismissReloadBox(this.editor as Component);
 			this.showLoadedResources({
 				force: false,
