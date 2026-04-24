@@ -34,11 +34,13 @@ export function formatWorkingStatus(
 	const ttft = formatTime(ttftMs);
 	const think = formatTime(thinkMs);
 	const avgLatency = formatTime(averageLatencyMs);
-	const segments = [`${tps} tps`];
+	const segments: string[] = [`${elapsed} total`];
+	if (think !== null) segments.push(`${think} thinking`);
+	segments.push(`${tps} tps`);
 	if (ttft !== null) segments.push(`${ttft} ttft`);
-	if (think !== null) segments.push(`${think} think`);
 	if (avgLatency !== null) segments.push(`${avgLatency} lat.`);
-	return `Working (${elapsed} • ${segments.join(" • ")} • esc→stop)`;
+	segments.push("esc→stop");
+	return `Working • ${segments.join(" • ")}`;
 }
 
 export function formatDoneStatus(
@@ -54,11 +56,12 @@ export function formatDoneStatus(
 	const ttft = formatTime(ttftMs);
 	const think = formatTime(thinkMs);
 	const avgLatency = formatTime(averageLatencyMs);
-	const segments = [`${tps} tps`];
+	const segments: string[] = [`${elapsed} total`];
+	if (think !== null) segments.push(`${think} thinking`);
+	segments.push(`${tps} tps`);
 	if (ttft !== null) segments.push(`${ttft} ttft`);
-	if (think !== null) segments.push(`${think} think`);
 	if (avgLatency !== null) segments.push(`${avgLatency} lat.`);
-	return `Done after ${elapsed} - ${segments.join(" - ")}`;
+	return `Done • ${segments.join(" • ")}`;
 }
 
 export function getWorkingStatusSpinnerFrame(nowMs: number): string {

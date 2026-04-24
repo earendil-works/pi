@@ -145,26 +145,29 @@ function styleWorkingIndicator(indicator: string, color: string): string {
 }
 
 function splitWorkingFooterMessage(message: string): WorkingFooterLines {
-	const match = /^Working \((.+)\)$/.exec(message);
-	if (!match) {
+	if (!message.startsWith("Working • ")) {
 		return {
 			primary: message,
 			secondary: "",
 		};
 	}
 
-	const segments = match[1].split(" • ");
-	const elapsed = segments.shift();
-	if (!elapsed) {
-		return {
-			primary: message,
-			secondary: "",
-		};
+	const segments = message.slice("Working • ".length).split(" • ");
+	const primarySegments: string[] = [];
+
+	// Always include elapsed total (first segment)
+	if (segments.length > 0) primarySegments.push(segments[0]);
+
+	// Include thinking if present (second segment ends with " thinking")
+	if (segments.length > 1 && segments[1].endsWith(" thinking")) {
+		primarySegments.push(segments[1]);
 	}
+
+	const secondarySegments = segments.slice(primarySegments.length);
 
 	return {
-		primary: `Working • ${elapsed}`,
-		secondary: segments.join(" • "),
+		primary: `Working • ${primarySegments.join(" • ")}`,
+		secondary: secondarySegments.join(" • "),
 	};
 }
 
