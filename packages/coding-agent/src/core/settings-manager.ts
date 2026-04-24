@@ -67,6 +67,7 @@ export interface Settings {
 	lastChangelogVersion?: string;
 	defaultProvider?: string;
 	defaultModel?: string;
+	persistModelChanges?: boolean; // default: true - when false, /model and Ctrl+P cycling are session-only
 	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 	transport?: TransportSetting; // default: "sse"
 	steeringMode?: "all" | "one-at-a-time";
@@ -578,6 +579,29 @@ export class SettingsManager {
 		this.markModified("defaultProvider");
 		this.markModified("defaultModel");
 		this.save();
+	}
+
+	getPersistModelChanges(): boolean {
+		return this.settings.persistModelChanges ?? true;
+	}
+
+	setPersistModelChanges(value: boolean): void {
+		this.globalSettings.persistModelChanges = value;
+		this.markModified("persistModelChanges");
+		this.save();
+	}
+
+	/**
+	 * Persist the current model/provider as the new default for future sessions,
+	 * unless the user has opted out via `persistModelChanges: false`.
+	 *
+	 * Call this from flows where the user is picking a model for the current
+	 * session (e.g. `/model`, Ctrl+P cycling). Use `setDefaultModelAndProvider`
+	 * directly when the user explicitly asks to set a new default.
+	 */
+	maybePersistDefaultModel(provider: string, modelId: string): void {
+		if (!this.getPersistModelChanges()) return;
+		this.setDefaultModelAndProvider(provider, modelId);
 	}
 
 	getSteeringMode(): "all" | "one-at-a-time" {

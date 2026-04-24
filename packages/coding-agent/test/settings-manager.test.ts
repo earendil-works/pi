@@ -155,6 +155,75 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("persistModelChanges", () => {
+		it("defaults to true (preserves existing auto-persist behavior)", () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getPersistModelChanges()).toBe(true);
+		});
+
+		it("reflects the configured value from settings.json", () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ persistModelChanges: false }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getPersistModelChanges()).toBe(false);
+		});
+
+		it("maybePersistDefaultModel writes defaultProvider/defaultModel when enabled", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.maybePersistDefaultModel("anthropic", "claude-opus-4-5");
+			await manager.flush();
+
+			const saved = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			expect(saved.defaultProvider).toBe("anthropic");
+			expect(saved.defaultModel).toBe("claude-opus-4-5");
+			expect(saved.theme).toBe("dark");
+		});
+
+		it("maybePersistDefaultModel is a no-op when persistModelChanges is false", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(
+				settingsPath,
+				JSON.stringify({
+					persistModelChanges: false,
+					defaultProvider: "anthropic",
+					defaultModel: "claude-sonnet-4-20250514",
+				}),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.maybePersistDefaultModel("openai", "gpt-5");
+			await manager.flush();
+
+			const saved = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			expect(saved.defaultProvider).toBe("anthropic");
+			expect(saved.defaultModel).toBe("claude-sonnet-4-20250514");
+			expect(saved.persistModelChanges).toBe(false);
+			// In-memory model stays as-is (the method is a pure no-op when disabled).
+			expect(manager.getDefaultProvider()).toBe("anthropic");
+			expect(manager.getDefaultModel()).toBe("claude-sonnet-4-20250514");
+		});
+
+		it("setDefaultModelAndProvider still persists even when persistModelChanges is false", async () => {
+			// Explicit API for "make this my new default" must keep working, e.g. for a /settings
+			// action or custom extension, regardless of the auto-persist preference.
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ persistModelChanges: false }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.setDefaultModelAndProvider("openai", "gpt-5");
+			await manager.flush();
+
+			const saved = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			expect(saved.defaultProvider).toBe("openai");
+			expect(saved.defaultModel).toBe("gpt-5");
+			expect(saved.persistModelChanges).toBe(false);
+		});
+	});
+
 	describe("reload", () => {
 		it("should reload global settings from disk", async () => {
 			const settingsPath = join(agentDir, "settings.json");

@@ -327,8 +327,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	}
 
 	private handleSelect(model: Model<any>): void {
-		// Save as new default
-		this.settingsManager.setDefaultModelAndProvider(model.provider, model.id);
+		// Save as new default (no-op when persistModelChanges is disabled)
+		this.settingsManager.maybePersistDefaultModel(model.provider, model.id);
 		this.onSelectCallback(model);
 	}
 
