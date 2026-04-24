@@ -127,7 +127,7 @@ function getGlobalPackageRoots(method: InstallMethod): string[] {
 		}
 		case "pnpm": {
 			const root = readCommandOutput("pnpm", ["root", "-g"]);
-			return root ? [root] : [];
+			return root ? [root, dirname(root)] : [];
 		}
 		case "yarn": {
 			const dir = readCommandOutput("yarn", ["global", "dir"]);

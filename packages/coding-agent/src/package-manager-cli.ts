@@ -375,12 +375,7 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 		return true;
 	}
 
-	if (
-		options.command === "update" &&
-		options.updateTarget &&
-		updateTargetIncludesSelf(options.updateTarget) &&
-		!canSelfUpdate()
-	) {
+	if (options.command === "update" && options.updateTarget?.type === "self" && !canSelfUpdate()) {
 		printSelfUpdateUnavailable();
 		process.exitCode = 1;
 		return true;
@@ -464,8 +459,12 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 					}
 				}
 				if (updateTargetIncludesSelf(target)) {
-					await runSelfUpdate();
-					console.log(chalk.green(`Updated ${APP_NAME}`));
+					if (canSelfUpdate()) {
+						await runSelfUpdate();
+						console.log(chalk.green(`Updated ${APP_NAME}`));
+					} else {
+						printSelfUpdateUnavailable();
+					}
 				}
 				return true;
 			}
