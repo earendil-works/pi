@@ -171,7 +171,18 @@ export function convertResponsesMessages<TApi extends Api>(
 				if (block.type === "thinking") {
 					if (block.thinkingSignature) {
 						const reasoningItem = JSON.parse(block.thinkingSignature) as ResponseReasoningItem;
-						output.push(reasoningItem);
+						// Azure Responses API requires every reasoning item (rs_*) to be
+						// followed by its paired message/function_call in the same turn,
+						// otherwise it returns 400 "reasoning was provided without its
+						// required following item". Only replay the reasoning item when
+						// a pairable follower exists in this assistant turn.
+						const blockIdx = msg.content.indexOf(block);
+						const hasFollower = msg.content
+							.slice(blockIdx + 1)
+							.some((b) => b.type === "text" || b.type === "toolCall");
+						if (hasFollower) {
+							output.push(reasoningItem);
+						}
 					}
 				} else if (block.type === "text") {
 					const textBlock = block as TextContent;
