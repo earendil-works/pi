@@ -38,13 +38,13 @@ describe("FooterComponent", () => {
 		footer.setTitle("Investigate footer layout overflow");
 		footer.setTransientStatus({
 			indicator: "░▒▓█   ",
-			message: "Working (9s • 21 tps • 2.3s lat. • esc→stop)",
+			message: "Working • 9s total • 21 tps • 2.3s lat. • esc→stop",
 		});
 
 		const lines = footer.render(120).map((line) => stripAnsi(line));
 
 		expect(lines).toHaveLength(2);
-		expect(lines[0]).toContain("Working • 9s");
+		expect(lines[0]).toContain("Working • 9s total");
 		expect(lines[0]).toContain("Investigate footer layout overflow");
 		expect(lines[1]).toContain("21 tps • 2.3s lat. • esc→stop");
 		expect(lines[1]).toContain("pi-mono");
@@ -54,13 +54,13 @@ describe("FooterComponent", () => {
 		const footer = new FooterComponent(createState());
 		footer.setTransientStatus({
 			indicator: "░▒▓█   ",
-			message: "Working (9s • 21 tps • esc→stop)",
+			message: "Working • 9s total • 21 tps • esc→stop",
 		});
 
 		const lines = footer.render(100).map((line) => stripAnsi(line));
 
 		expect(lines).toHaveLength(2);
-		expect(lines[0]).toContain("Working • 9s");
+		expect(lines[0]).toContain("Working • 9s total");
 		expect(lines[1]).toContain("21 tps • esc→stop");
 	});
 
@@ -69,7 +69,7 @@ describe("FooterComponent", () => {
 		footer.setTitle("A very long footer title that should be truncated before it collides with the working status");
 		footer.setTransientStatus({
 			indicator: "░▒▓█   ",
-			message: "Working (999s • 999 tps • 99.9s lat. • esc→stop)",
+			message: "Working • 999s total • 999 tps • 99.9s lat. • esc→stop",
 		});
 
 		const width = 56;
@@ -84,7 +84,7 @@ describe("FooterComponent", () => {
 		const footer = new FooterComponent(createState());
 		footer.setTransientStatus({
 			indicator: "░▒▓█   ",
-			message: "Working (9s • 21 tps • esc→stop)",
+			message: "Working • 9s total • 21 tps • esc→stop",
 		});
 
 		const rendered = footer.render(100)[0] ?? "";
@@ -104,7 +104,7 @@ describe("FooterComponent", () => {
 		footer.setTitle("Investigate footer layout overflow");
 		footer.setTransientStatus({
 			indicator: "░▒▓█   ",
-			message: "Working (9s • 21 tps • 2.3s lat. • esc→stop)",
+			message: "Working • 9s total • 21 tps • 2.3s lat. • esc→stop",
 		});
 
 		footer.setTransientStatus(null);
@@ -138,13 +138,13 @@ describe("FooterComponent", () => {
 		footer.setTitle("Investigate footer layout overflow");
 		footer.setTransientStatus({
 			indicator: "░▒▓█   ",
-			message: "Working (9s • 21 tps • 1.2s ttft • 2.3s lat. • esc→stop)",
+			message: "Working • 9s total • 21 tps • 1.2s ttft • 2.3s lat. • esc→stop",
 		});
 
 		const lines = footer.render(120).map((line) => stripAnsi(line));
 
 		expect(lines).toHaveLength(2);
-		expect(lines[0]).toContain("Working • 9s");
+		expect(lines[0]).toContain("Working • 9s total");
 		expect(lines[1]).toContain("21 tps • 1.2s ttft • 2.3s lat. • esc→stop");
 	});
 
@@ -152,7 +152,7 @@ describe("FooterComponent", () => {
 		const footer = new FooterComponent(createState());
 		footer.setTransientStatus({
 			indicator: "░▒▓█   ",
-			message: "Working (9s • 21 tps • 0.8s ttft • esc→stop)",
+			message: "Working • 9s total • 21 tps • 0.8s ttft • esc→stop",
 		});
 
 		const lines = footer.render(100).map((line) => stripAnsi(line));
@@ -166,7 +166,7 @@ describe("FooterComponent", () => {
 		footer.setTitle("A long title that should still truncate properly with TTFT");
 		footer.setTransientStatus({
 			indicator: "░▒▓█   ",
-			message: "Working (999s • 999 tps • 99.9s ttft • 99.9s lat. • esc→stop)",
+			message: "Working • 999s total • 999 tps • 99.9s ttft • 99.9s lat. • esc→stop",
 		});
 
 		const width = 60;
@@ -177,31 +177,32 @@ describe("FooterComponent", () => {
 		}
 	});
 
-	it("renders thinking duration between ttft and latency in the active footer secondary row", () => {
+	it("renders thinking duration in the active footer primary row", () => {
 		const footer = new FooterComponent(createState());
 		footer.setTitle("Investigate footer layout overflow");
 		footer.setTransientStatus({
 			indicator: "░▒▓█   ",
-			message: "Working (9s • 21 tps • 1.2s ttft • 5.0s think • 2.3s lat. • esc→stop)",
+			message: "Working • 9s total • 5.0s thinking • 21 tps • 1.2s ttft • 2.3s lat. • esc→stop",
 		});
 
 		const lines = footer.render(120).map((line) => stripAnsi(line));
 
 		expect(lines).toHaveLength(2);
-		expect(lines[0]).toContain("Working • 9s");
-		expect(lines[1]).toContain("21 tps • 1.2s ttft • 5.0s think • 2.3s lat. • esc→stop");
+		expect(lines[0]).toContain("Working • 9s total • 5.0s thinking");
+		expect(lines[1]).toContain("21 tps • 1.2s ttft • 2.3s lat. • esc→stop");
 	});
 
 	it("renders thinking duration without ttft or latency", () => {
 		const footer = new FooterComponent(createState());
 		footer.setTransientStatus({
 			indicator: "░▒▓█   ",
-			message: "Working (9s • 21 tps • 5.0s think • esc→stop)",
+			message: "Working • 9s total • 5.0s thinking • 21 tps • esc→stop",
 		});
 
 		const lines = footer.render(100).map((line) => stripAnsi(line));
 
 		expect(lines).toHaveLength(2);
-		expect(lines[1]).toContain("21 tps • 5.0s think • esc→stop");
+		expect(lines[0]).toContain("Working • 9s total • 5.0s thinking");
+		expect(lines[1]).toContain("21 tps • esc→stop");
 	});
 });

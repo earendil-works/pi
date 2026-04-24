@@ -29,40 +29,40 @@ function baseAssistantMessage(): AssistantMessage {
 
 describe("working-status", () => {
 	it("formats the initial label with 0 tps", () => {
-		expect(formatWorkingStatus(0, 0)).toBe("Working (0s • 0 tps • esc→stop)");
+		expect(formatWorkingStatus(0, 0)).toBe("Working • 0s total • 0 tps • esc→stop");
 	});
 
 	it("formats elapsed time and rounded tps", () => {
-		expect(formatWorkingStatus(88_000, 2_112)).toBe("Working (1m 28s • 24 tps • esc→stop)");
+		expect(formatWorkingStatus(88_000, 2_112)).toBe("Working • 1m 28s total • 24 tps • esc→stop");
 	});
 
 	it("uses subsecond elapsed time for working tps", () => {
-		expect(formatWorkingStatus(500, 10)).toBe("Working (0s • 20 tps • esc→stop)");
-		expect(formatWorkingStatus(1_500, 10)).toBe("Working (1s • 7 tps • esc→stop)");
+		expect(formatWorkingStatus(500, 10)).toBe("Working • 0s total • 20 tps • esc→stop");
+		expect(formatWorkingStatus(1_500, 10)).toBe("Working • 1s total • 7 tps • esc→stop");
 	});
 
 	it("formats the done label with elapsed time and rounded tps", () => {
-		expect(formatDoneStatus(88_000, 2_112)).toBe("Done after 1m 28s - 24 tps");
+		expect(formatDoneStatus(88_000, 2_112)).toBe("Done • 1m 28s total • 24 tps");
 	});
 
 	it("uses subsecond elapsed time for done tps", () => {
-		expect(formatDoneStatus(250, 25)).toBe("Done after 0s - 100 tps");
+		expect(formatDoneStatus(250, 25)).toBe("Done • 0s total • 100 tps");
 	});
 
 	it("formats the working label with average latency", () => {
-		expect(formatWorkingStatus(28_000, 1_176, 3_800)).toBe("Working (28s • 42 tps • 3.8s lat. • esc→stop)");
+		expect(formatWorkingStatus(28_000, 1_176, 3_800)).toBe("Working • 28s total • 42 tps • 3.8s lat. • esc→stop");
 	});
 
 	it("formats the done label with average latency", () => {
-		expect(formatDoneStatus(28_000, 1_176, 3_800)).toBe("Done after 28s - 42 tps - 3.8s lat.");
+		expect(formatDoneStatus(28_000, 1_176, 3_800)).toBe("Done • 28s total • 42 tps • 3.8s lat.");
 	});
 
 	it("keeps working elapsed time independent from TPS elapsed time", () => {
-		expect(formatWorkingStatus(5_000, 40, undefined, 2_000)).toBe("Working (5s • 20 tps • esc→stop)");
+		expect(formatWorkingStatus(5_000, 40, undefined, 2_000)).toBe("Working • 5s total • 20 tps • esc→stop");
 	});
 
 	it("keeps done elapsed time independent from TPS elapsed time", () => {
-		expect(formatDoneStatus(5_000, 40, undefined, 2_000)).toBe("Done after 5s - 20 tps");
+		expect(formatDoneStatus(5_000, 40, undefined, 2_000)).toBe("Done • 5s total • 20 tps");
 	});
 
 	it("derives spinner frames from wall-clock time instead of update frequency", () => {
@@ -105,77 +105,77 @@ describe("working-status", () => {
 
 	it("formats the working label with ttft between tps and lat.", () => {
 		expect(formatWorkingStatus(28_000, 1_176, 3_800, 28_000, 1_200)).toBe(
-			"Working (28s • 42 tps • 1.2s ttft • 3.8s lat. • esc→stop)",
+			"Working • 28s total • 42 tps • 1.2s ttft • 3.8s lat. • esc→stop",
 		);
 	});
 
 	it("formats the working label with ttft but no latency", () => {
 		expect(formatWorkingStatus(9_000, 210, undefined, 9_000, 800)).toBe(
-			"Working (9s • 23 tps • 0.8s ttft • esc→stop)",
+			"Working • 9s total • 23 tps • 0.8s ttft • esc→stop",
 		);
 	});
 
 	it("omits ttft when undefined in working label", () => {
 		expect(formatWorkingStatus(28_000, 1_176, 3_800, 28_000, undefined)).toBe(
-			"Working (28s • 42 tps • 3.8s lat. • esc→stop)",
+			"Working • 28s total • 42 tps • 3.8s lat. • esc→stop",
 		);
 	});
 
 	it("formats the done label with ttft between tps and lat.", () => {
 		expect(formatDoneStatus(28_000, 1_176, 3_800, 28_000, 1_200)).toBe(
-			"Done after 28s - 42 tps - 1.2s ttft - 3.8s lat.",
+			"Done • 28s total • 42 tps • 1.2s ttft • 3.8s lat.",
 		);
 	});
 
 	it("formats the done label with ttft but no latency", () => {
-		expect(formatDoneStatus(9_000, 210, undefined, 9_000, 800)).toBe("Done after 9s - 23 tps - 0.8s ttft");
+		expect(formatDoneStatus(9_000, 210, undefined, 9_000, 800)).toBe("Done • 9s total • 23 tps • 0.8s ttft");
 	});
 
 	it("omits ttft when undefined in done label", () => {
-		expect(formatDoneStatus(28_000, 1_176, 3_800, 28_000, undefined)).toBe("Done after 28s - 42 tps - 3.8s lat.");
+		expect(formatDoneStatus(28_000, 1_176, 3_800, 28_000, undefined)).toBe("Done • 28s total • 42 tps • 3.8s lat.");
 	});
 
 	// Thinking duration tests
 
-	it("formats the working label with think between ttft and lat.", () => {
+	it("formats the working label with think between tps and lat.", () => {
 		expect(formatWorkingStatus(28_000, 1_176, 3_800, 28_000, 1_200, 5_000)).toBe(
-			"Working (28s • 42 tps • 1.2s ttft • 5.0s think • 3.8s lat. • esc→stop)",
+			"Working • 28s total • 5.0s thinking • 42 tps • 1.2s ttft • 3.8s lat. • esc→stop",
 		);
 	});
 
 	it("formats the working label with think but no ttft or latency", () => {
 		expect(formatWorkingStatus(9_000, 210, undefined, 9_000, undefined, 3_000)).toBe(
-			"Working (9s • 23 tps • 3.0s think • esc→stop)",
+			"Working • 9s total • 3.0s thinking • 23 tps • esc→stop",
 		);
 	});
 
 	it("omits think when undefined or zero in working label", () => {
 		expect(formatWorkingStatus(28_000, 1_176, 3_800, 28_000, 1_200, undefined)).toBe(
-			"Working (28s • 42 tps • 1.2s ttft • 3.8s lat. • esc→stop)",
+			"Working • 28s total • 42 tps • 1.2s ttft • 3.8s lat. • esc→stop",
 		);
 		expect(formatWorkingStatus(28_000, 1_176, 3_800, 28_000, 1_200, 0)).toBe(
-			"Working (28s • 42 tps • 1.2s ttft • 3.8s lat. • esc→stop)",
+			"Working • 28s total • 42 tps • 1.2s ttft • 3.8s lat. • esc→stop",
 		);
 	});
 
-	it("formats the done label with think between ttft and lat.", () => {
+	it("formats the done label with think between tps and lat.", () => {
 		expect(formatDoneStatus(28_000, 1_176, 3_800, 28_000, 1_200, 5_000)).toBe(
-			"Done after 28s - 42 tps - 1.2s ttft - 5.0s think - 3.8s lat.",
+			"Done • 28s total • 5.0s thinking • 42 tps • 1.2s ttft • 3.8s lat.",
 		);
 	});
 
 	it("formats the done label with think but no ttft or latency", () => {
 		expect(formatDoneStatus(9_000, 210, undefined, 9_000, undefined, 3_000)).toBe(
-			"Done after 9s - 23 tps - 3.0s think",
+			"Done • 9s total • 3.0s thinking • 23 tps",
 		);
 	});
 
 	it("omits think when undefined or zero in done label", () => {
 		expect(formatDoneStatus(28_000, 1_176, 3_800, 28_000, 1_200, undefined)).toBe(
-			"Done after 28s - 42 tps - 1.2s ttft - 3.8s lat.",
+			"Done • 28s total • 42 tps • 1.2s ttft • 3.8s lat.",
 		);
 		expect(formatDoneStatus(28_000, 1_176, 3_800, 28_000, 1_200, 0)).toBe(
-			"Done after 28s - 42 tps - 1.2s ttft - 3.8s lat.",
+			"Done • 28s total • 42 tps • 1.2s ttft • 3.8s lat.",
 		);
 	});
 });
