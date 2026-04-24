@@ -464,6 +464,7 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 						console.log(chalk.green(`Updated ${APP_NAME}`));
 					} else {
 						printSelfUpdateUnavailable();
+						process.exitCode = 1;
 					}
 				}
 				return true;
