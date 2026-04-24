@@ -1,7 +1,7 @@
 import { spawnSync } from "child_process";
-import { existsSync, readFileSync, realpathSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { homedir } from "os";
-import { dirname, isAbsolute, join, relative, resolve } from "path";
+import { dirname, join, resolve, sep } from "path";
 import { fileURLToPath } from "url";
 
 // =============================================================================
@@ -100,25 +100,6 @@ function readCommandOutput(command: string, args: string[]): string | undefined 
 	return stdout || undefined;
 }
 
-function realpathOrResolve(path: string): string {
-	try {
-		return realpathSync(path);
-	} catch {
-		return resolve(path);
-	}
-}
-
-function pathContains(parent: string, child: string): boolean {
-	let normalizedParent = realpathOrResolve(parent);
-	let normalizedChild = realpathOrResolve(child);
-	if (process.platform === "win32") {
-		normalizedParent = normalizedParent.toLowerCase();
-		normalizedChild = normalizedChild.toLowerCase();
-	}
-	const rel = relative(normalizedParent, normalizedChild);
-	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
-}
-
 function getGlobalPackageRoots(method: InstallMethod): string[] {
 	switch (method) {
 		case "npm": {
@@ -148,8 +129,21 @@ function getGlobalPackageRoots(method: InstallMethod): string[] {
 }
 
 function isManagedByGlobalPackageManager(method: InstallMethod): boolean {
-	const packageDir = getPackageDir();
-	return getGlobalPackageRoots(method).some((root) => existsSync(root) && pathContains(root, packageDir));
+	let packageDir = resolve(getPackageDir());
+	if (process.platform === "win32") {
+		packageDir = packageDir.toLowerCase();
+	}
+	return getGlobalPackageRoots(method).some((root) => {
+		let normalizedRoot = resolve(root);
+		if (process.platform === "win32") {
+			normalizedRoot = normalizedRoot.toLowerCase();
+		}
+		return (
+			existsSync(normalizedRoot) &&
+			(packageDir === normalizedRoot ||
+				packageDir.startsWith(normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`))
+		);
+	});
 }
 
 export function getSelfUpdateCommand(packageName: string): SelfUpdateCommand | undefined {
