@@ -2,10 +2,6 @@
 
 ## [Unreleased]
 
-### Added
-
-- Added DeepSeek as a built-in API-key provider with `deepseek-v4-pro` as the default model.
-
 ## [0.70.0] - 2026-04-23
 
 ### New Features
