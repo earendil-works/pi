@@ -6952,7 +6952,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4o-mini": {
+		readonly "openai/gpt-4o-mini-2024-07-18": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -6969,7 +6969,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4o-mini-2024-07-18": {
+		readonly "openai/gpt-4o-mini": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -7003,7 +7003,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4o": {
+		readonly "openai/gpt-4o-2024-05-13": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -7020,7 +7020,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4o-2024-05-13": {
+		readonly "openai/gpt-4o": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -7122,7 +7122,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-3.5-turbo-0613": {
+		readonly "openai/gpt-4-turbo-preview": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -7139,7 +7139,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4-turbo-preview": {
+		readonly "openai/gpt-3.5-turbo-0613": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -7241,7 +7241,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-3.5-turbo": {
+		readonly "openai/gpt-4": {
 			id: string;
 			name: string;
 			api: "openai-completions";
@@ -7258,7 +7258,7 @@ export declare const MODELS: {
 			contextWindow: number;
 			maxTokens: number;
 		};
-		readonly "openai/gpt-4": {
+		readonly "openai/gpt-3.5-turbo": {
 			id: string;
 			name: string;
 			api: "openai-completions";
