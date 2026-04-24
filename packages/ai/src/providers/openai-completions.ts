@@ -831,6 +831,15 @@ export function convertMessages(
 					(assistantMsg as any).reasoning_details = reasoningDetails;
 				}
 			}
+			// DeepSeek V4 Pro requires reasoning_content for ALL assistant messages
+			// when the model supports reasoning (thinking mode). If any assistant message
+			// lacks reasoning_content while others have it, DeepSeek rejects the request.
+			// This is needed when switching from non-reasoning models (e.g. Kimi) whose
+			// messages don't have thinking blocks with reasoning_content.
+			// The value must be a non-empty string; null or empty string still causes errors.
+			if (model.reasoning && !(assistantMsg as any).reasoning_content && !(assistantMsg as any).reasoning) {
+				(assistantMsg as any).reasoning_content = "(previous reasoning omitted)";
+			}
 			// Skip assistant messages that have no content and no tool calls.
 			// Some providers require "either content or tool_calls, but not none".
 			// Other providers also don't accept empty assistant messages.
