@@ -85,14 +85,9 @@ export function resolveFigmaOAuthClientConfig(config: McpConfig): FigmaOAuthClie
 	const definition = config.mcpServers[figma.serverName];
 	const oauth = definition?.oauth;
 
-	// Check config/env first, then fall back to stored credentials from DCR
-	const storedCreds = loadOAuthCredentials(FIGMA_PROVIDER_ID);
-	const clientId = oauth?.clientId ?? getEnvValue("MU_FIGMA_OAUTH_CLIENT_ID") ?? storedCreds?.client_id;
-	let clientSecret =
+	const clientId = oauth?.clientId ?? getEnvValue("MU_FIGMA_OAUTH_CLIENT_ID");
+	const clientSecret =
 		oauth?.clientSecret ?? getEnvValue(oauth?.clientSecretEnv) ?? getEnvValue("MU_FIGMA_OAUTH_CLIENT_SECRET");
-	if (!clientSecret && storedCreds?.client_secret) {
-		clientSecret = storedCreds.client_secret;
-	}
 
 	const redirectUri = oauth?.redirectUri ?? getEnvValue("MU_FIGMA_OAUTH_REDIRECT_URI") ?? DEFAULT_REDIRECT_URI;
 
@@ -103,6 +98,17 @@ export function resolveFigmaOAuthClientConfig(config: McpConfig): FigmaOAuthClie
 		redirectUri,
 		serverName: figma.serverName,
 		serverUrl: figma.url,
+	};
+}
+
+function addStoredFigmaDcrCredentials(clientConfig: FigmaOAuthClientConfig): FigmaOAuthClientConfig {
+	if (clientConfig.clientId && clientConfig.clientSecret) return clientConfig;
+
+	const storedCreds = loadOAuthCredentials(FIGMA_PROVIDER_ID);
+	return {
+		...clientConfig,
+		clientId: clientConfig.clientId || storedCreds?.client_id || "",
+		clientSecret: clientConfig.clientSecret ?? storedCreds?.client_secret,
 	};
 }
 
@@ -256,7 +262,7 @@ export async function loginFigmaMcp(
 	config?: McpConfig,
 ): Promise<void> {
 	const mcpConfig = config ?? (await loadMcpConfig());
-	let clientConfig = resolveFigmaOAuthClientConfig(mcpConfig);
+	let clientConfig = addStoredFigmaDcrCredentials(resolveFigmaOAuthClientConfig(mcpConfig));
 
 	// If no clientId OR no clientSecret, perform DCR to get fresh credentials
 	// DCR credentials require both client_id and client_secret for token operations

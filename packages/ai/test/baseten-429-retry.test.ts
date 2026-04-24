@@ -14,8 +14,15 @@ vi.mock("../src/utils/retry.js", () => ({
 	},
 	sleep: (ms: number, signal?: AbortSignal) => {
 		sleepCalls.push(ms);
-		if (signal?.aborted) return Promise.reject(new Error("Aborted"));
-		return Promise.resolve();
+		return new Promise<void>((resolve, reject) => {
+			setTimeout(() => {
+				if (signal?.aborted) {
+					reject(new Error("Aborted"));
+					return;
+				}
+				resolve();
+			}, 0);
+		});
 	},
 }));
 

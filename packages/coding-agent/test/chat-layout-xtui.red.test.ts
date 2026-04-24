@@ -306,7 +306,7 @@ describe("xtui chat layout spec", () => {
 		);
 
 		const initialPaletteRows = initialRows.filter(
-			(row) => row.includes("Commands") || row.includes("Search  /") || row.includes("/branch"),
+			(row) => row.includes("Commands") || row.includes("Search  /") || row.includes("/agents"),
 		);
 		const paletteRows = rows.filter(
 			(row) =>
@@ -316,7 +316,7 @@ describe("xtui chat layout spec", () => {
 
 		expect(initialPaletteRows.some((row) => row.includes("Commands"))).toBe(true);
 		expect(initialPaletteRows.some((row) => row.includes("Search  /"))).toBe(true);
-		expect(initialPaletteRows.some((row) => row.includes("/branch"))).toBe(true);
+		expect(initialPaletteRows.some((row) => row.includes("/agents"))).toBe(true);
 		expect(paletteRows.some((row) => row.includes("Search  /mo"))).toBe(true);
 		expect(paletteRows.some((row) => row.includes("/model"))).toBe(true);
 		expect(paletteInteriorRows.length).toBeGreaterThanOrEqual(6);
