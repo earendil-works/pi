@@ -470,6 +470,7 @@ function buildParams(
 	cacheRetention: CacheRetention = resolveCacheRetention(options?.cacheRetention),
 ) {
 	const messages = convertMessages(model, context, compat);
+	injectDeepSeekReasoningContent(messages, model);
 	const cacheControl = getCompatCacheControl(compat, cacheRetention);
 
 	const params: OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming = {
@@ -568,6 +569,33 @@ function buildParams(
 	}
 
 	return params;
+}
+
+/**
+ * DeepSeek V4 thinking mode requires reasoning_content to be passed back
+ * in assistant tool-call history. If missing, the API returns 400:
+ * "The reasoning_content in the thinking mode must be passed back to the API."
+ *
+ * An empty string is a safe fallback (verified against the live API).
+ */
+function injectDeepSeekReasoningContent(
+	messages: ChatCompletionMessageParam[],
+	model: Model<"openai-completions">,
+): void {
+	if (model.provider !== "deepseek" && !model.baseUrl?.includes?.("deepseek.com")) {
+		return;
+	}
+	for (const msg of messages) {
+		if (msg.role !== "assistant") continue;
+		const assistant = msg as ChatCompletionAssistantMessageParam & {
+			reasoning_content?: string;
+			tool_calls?: Array<{ function?: { arguments?: string; name?: string }; id?: string; type?: string }>;
+		};
+		// Only inject for messages that carry tool_calls and lack reasoning_content
+		if (!assistant.tool_calls || assistant.tool_calls.length === 0) continue;
+		if (assistant.reasoning_content !== undefined) continue;
+		assistant.reasoning_content = "";
+	}
 }
 
 function mapReasoningEffort(
