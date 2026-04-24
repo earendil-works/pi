@@ -172,30 +172,21 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 			continue;
 		}
 
-		if (arg === "--extension" || arg.startsWith("--extension=")) {
+		if (arg === "--extension") {
 			if (command !== "update") {
-				invalidOption = invalidOption ?? (arg === "--extension" ? arg : "--extension");
-				if (arg === "--extension") index++;
+				invalidOption = invalidOption ?? arg;
 				continue;
 			}
 
-			let value: string | undefined;
-			if (arg.startsWith("--extension=")) {
-				value = arg.slice("--extension=".length);
-			} else {
-				const next = rest[index + 1];
-				if (next && !next.startsWith("-")) {
-					value = next;
-					index++;
-				}
-			}
-
-			if (!value) {
-				missingOptionValue = missingOptionValue ?? "--extension";
+			const value = rest[index + 1];
+			if (!value || value.startsWith("-")) {
+				missingOptionValue = missingOptionValue ?? arg;
 			} else if (extensionFlagSource) {
 				conflictingOptions = conflictingOptions ?? "--extension can only be provided once";
+				index++;
 			} else {
 				extensionFlagSource = value;
+				index++;
 			}
 			continue;
 		}
