@@ -1,4 +1,4 @@
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../src/models.js";
 import { streamOpenAICompletions } from "../src/providers/openai-completions.js";
@@ -126,9 +126,27 @@ describe("openai-completions cacheControlFormat", () => {
 		mockState.lastParams = undefined;
 	});
 
-	it("applies Anthropic-style cache markers for built-in opencode-go Qwen models", async () => {
-		const model = getModel("opencode-go", "qwen3.5-plus");
-		expect(model.compat?.cacheControlFormat).toBe("anthropic");
+	it("applies Anthropic-style cache markers when model compat enables them", async () => {
+		const model: Model<"openai-completions"> = {
+			id: "custom-qwen",
+			name: "Custom Qwen",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://example.com/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 128000,
+			maxTokens: 32000,
+			compat: {
+				cacheControlFormat: "anthropic",
+			},
+		};
 
 		const params = await capturePayload(model);
 		expectAnthropicCacheMarkers(params);
@@ -141,7 +159,26 @@ describe("openai-completions cacheControlFormat", () => {
 	});
 
 	it("omits Anthropic-style cache markers when cacheRetention is none", async () => {
-		const model = getModel("opencode-go", "qwen3.5-plus");
+		const model: Model<"openai-completions"> = {
+			id: "custom-qwen",
+			name: "Custom Qwen",
+			api: "openai-completions",
+			provider: "openrouter",
+			baseUrl: "https://example.com/v1",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+			},
+			contextWindow: 128000,
+			maxTokens: 32000,
+			compat: {
+				cacheControlFormat: "anthropic",
+			},
+		};
 		const params = await capturePayload(model, { cacheRetention: "none" });
 		const instructionMessage = getInstructionMessage(params);
 

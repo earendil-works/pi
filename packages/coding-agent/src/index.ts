@@ -17,6 +17,7 @@ export {
 export {
 	type ApiKeyCredential,
 	type AuthCredential,
+	type AuthStatus,
 	AuthStorage,
 	type AuthStorageBackend,
 	FileAuthStorageBackend,
@@ -54,6 +55,7 @@ export type {
 	AgentToolResult,
 	AgentToolUpdateCallback,
 	AppKeybinding,
+	AutocompleteProviderFactory,
 	BashToolCallEvent,
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,

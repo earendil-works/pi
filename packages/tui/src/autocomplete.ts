@@ -261,6 +261,9 @@ export interface AutocompleteProvider {
 		cursorLine: number;
 		cursorCol: number;
 	};
+
+	// Check if file completion should trigger for explicit Tab completion
+	shouldTriggerFileCompletion?(lines: string[], cursorLine: number, cursorCol: number): boolean;
 }
 
 // Combined provider that handles both slash commands and file paths

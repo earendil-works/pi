@@ -28,6 +28,7 @@ export interface Args {
 	models?: string[];
 	tools?: string[];
 	noTools?: boolean;
+	noBuiltinTools?: boolean;
 	extensions?: string[];
 	noExtensions?: boolean;
 	print?: boolean;
@@ -100,9 +101,11 @@ export function parseArgs(args: string[]): Args {
 			result.sessionDir = args[++i];
 		} else if (arg === "--models" && i + 1 < args.length) {
 			result.models = args[++i].split(",").map((s) => s.trim());
-		} else if (arg === "--no-tools") {
+		} else if (arg === "--no-tools" || arg === "-nt") {
 			result.noTools = true;
-		} else if (arg === "--tools" && i + 1 < args.length) {
+		} else if (arg === "--no-builtin-tools" || arg === "-nbt") {
+			result.noBuiltinTools = true;
+		} else if ((arg === "--tools" || arg === "-t") && i + 1 < args.length) {
 			result.tools = args[++i]
 				.split(",")
 				.map((s) => s.trim())
@@ -221,9 +224,10 @@ ${chalk.bold("Options:")}
   --no-session                   Don't save session (ephemeral)
   --models <patterns>            Comma-separated model patterns for Ctrl+P cycling
                                  Supports globs (anthropic/*, *sonnet*) and fuzzy matching
-  --no-tools                     Disable all tools by default (built-in and extension)
-  --tools <tools>                Comma-separated allowlist of tool names to enable
-                                 Applies to built-in and extension tools
+  --no-tools, -nt                Disable all tools by default (built-in and extension)
+  --no-builtin-tools, -nbt       Disable built-in tools by default but keep extension/custom tools enabled
+  --tools, -t <tools>            Comma-separated allowlist of tool names to enable
+                                 Applies to built-in, extension, and custom tools
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh
   --extension, -e <path>         Load an extension file (can be used multiple times)
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
@@ -299,6 +303,7 @@ ${chalk.bold("Environment Variables:")}
   AZURE_OPENAI_RESOURCE_NAME       - Azure OpenAI resource name (alternative to base URL)
   AZURE_OPENAI_API_VERSION         - Azure OpenAI API version (default: v1)
   AZURE_OPENAI_DEPLOYMENT_NAME_MAP - Azure OpenAI model=deployment map (comma-separated)
+  DEEPSEEK_API_KEY                 - DeepSeek API key
   GEMINI_API_KEY                   - Google Gemini API key
   GROQ_API_KEY                     - Groq API key
   CEREBRAS_API_KEY                 - Cerebras API key

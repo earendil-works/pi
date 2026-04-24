@@ -20,8 +20,8 @@ describe("supportsXhigh", () => {
 		expect(supportsXhigh(model!)).toBe(false);
 	});
 
-	it("returns true for GPT-5.4 models", () => {
-		const model = getModel("openai-codex", "gpt-5.4");
+	it.each(["gpt-5.4", "gpt-5.5"] as const)("returns true for %s models", (modelId) => {
+		const model = getModel("openai-codex", modelId);
 		expect(model).toBeDefined();
 		expect(supportsXhigh(model!)).toBe(true);
 	});

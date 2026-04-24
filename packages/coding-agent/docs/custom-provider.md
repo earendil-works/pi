@@ -627,11 +627,12 @@ interface ProviderModelConfig {
     requiresToolResultName?: boolean;
     requiresAssistantAfterToolResult?: boolean;
     requiresThinkingAsText?: boolean;
-    thinkingFormat?: "openai" | "zai" | "qwen" | "qwen-chat-template";
+    requiresReasoningContentOnAssistantMessages?: boolean;
+    thinkingFormat?: "openai" | "deepseek" | "zai" | "qwen" | "qwen-chat-template";
     cacheControlFormat?: "anthropic";
   };
 }
 ```
 
-`qwen` is for DashScope-style top-level `enable_thinking`. Use `qwen-chat-template` for local Qwen-compatible servers that read `chat_template_kwargs.enable_thinking`.
+`deepseek` sends `thinking: { type: "enabled" | "disabled" }` and `reasoning_effort` when enabled. `qwen` is for DashScope-style top-level `enable_thinking`. Use `qwen-chat-template` for local Qwen-compatible servers that read `chat_template_kwargs.enable_thinking`.
 `cacheControlFormat: "anthropic"` applies Anthropic-style `cache_control` markers to the system prompt, last tool definition, and last user/assistant text content.

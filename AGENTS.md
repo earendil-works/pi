@@ -153,17 +153,18 @@ Create provider file exporting:
 
 ### 5. Tests (`packages/ai/test/`)
 
-Add provider to: `stream.test.ts`, `tokens.test.ts`, `abort.test.ts`, `empty.test.ts`, `context-overflow.test.ts`, `image-limits.test.ts`, `unicode-surrogate.test.ts`, `tool-call-without-result.test.ts`, `image-tool-result.test.ts`, `total-tokens.test.ts`, `cross-provider-handoff.test.ts`.
-
-For `cross-provider-handoff.test.ts`, add at least one provider/model pair. If the provider exposes multiple model families (for example GPT and Claude), add at least one pair per family.
-
-For non-standard auth, create utility (e.g., `bedrock-utils.ts`) with credential detection.
+- Always add the provider to `stream.test.ts` with at least one representative model, even if it reuses an existing API implementation such as `openai-completions`.
+- Add the provider to the broader provider matrix where applicable: `tokens.test.ts`, `abort.test.ts`, `empty.test.ts`, `context-overflow.test.ts`, `image-limits.test.ts`, `unicode-surrogate.test.ts`, `tool-call-without-result.test.ts`, `image-tool-result.test.ts`, `total-tokens.test.ts`, `cross-provider-handoff.test.ts`.
+- For `cross-provider-handoff.test.ts`, add at least one provider/model pair. If the provider exposes multiple model families (for example GPT and Claude), add at least one pair per family.
+- For non-standard auth, create utility (e.g., `bedrock-utils.ts`) with credential detection.
 
 ### 6. Coding Agent (`packages/coding-agent/`)
 
-- `src/core/model-resolver.ts`: Add default model ID to `DEFAULT_MODELS`
+- `src/core/model-resolver.ts`: Add default model ID to `defaultModelPerProvider`
+- `src/modes/interactive/interactive-mode.ts`: Add API-key login display name to `API_KEY_LOGIN_PROVIDERS` so `/login` shows the provider for built-in API-key auth.
 - `src/cli/args.ts`: Add env var documentation
 - `README.md`: Add provider setup instructions
+- `docs/providers.md`: Add setup instructions, env var, and `auth.json` key
 
 ### 7. Documentation
 
@@ -203,6 +204,7 @@ Multiple agents may work on different files in the same worktree simultaneously.
 - ALWAYS use `git add <specific-file-paths>` listing only files you modified
 - Before committing, run `git status` and verify you are only staging YOUR files
 - Track which files you created/modified/deleted during the session
+- It is always fine to include `packages/ai/src/models.generated.ts` in a commit alongside the actual files you want to commit
 
 ### Forbidden Git Operations
 

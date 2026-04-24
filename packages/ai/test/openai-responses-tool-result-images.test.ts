@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { Type } from "@sinclair/typebox";
 import type { ResponseFunctionCallOutputItemList } from "openai/resources/responses/responses.js";
+import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import type { Api, Context, Model, StreamOptions, Tool, ToolResultMessage } from "../src/index.js";
 import { complete, getModel } from "../src/index.js";

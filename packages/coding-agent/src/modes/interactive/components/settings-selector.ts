@@ -52,6 +52,7 @@ export interface SettingsConfig {
 	autocompleteMaxVisible: number;
 	quietStartup: boolean;
 	clearOnShrink: boolean;
+	showTerminalProgress: boolean;
 }
 
 export interface SettingsCallbacks {
@@ -77,6 +78,7 @@ export interface SettingsCallbacks {
 	onAutocompleteMaxVisibleChange: (maxVisible: number) => void;
 	onQuietStartupChange: (enabled: boolean) => void;
 	onClearOnShrinkChange: (enabled: boolean) => void;
+	onShowTerminalProgressChange: (enabled: boolean) => void;
 	onCancel: () => void;
 }
 
@@ -372,6 +374,16 @@ export class SettingsSelectorComponent extends Container {
 			values: ["true", "false"],
 		});
 
+		// Terminal progress toggle (insert after clear-on-shrink)
+		const clearOnShrinkIndex = items.findIndex((item) => item.id === "clear-on-shrink");
+		items.splice(clearOnShrinkIndex + 1, 0, {
+			id: "terminal-progress",
+			label: "Terminal progress",
+			description: "Show OSC 9;4 progress indicators in the terminal tab bar",
+			currentValue: config.showTerminalProgress ? "true" : "false",
+			values: ["true", "false"],
+		});
+
 		// Add borders
 		this.addChild(new DynamicBorder());
 
@@ -439,6 +451,9 @@ export class SettingsSelectorComponent extends Container {
 						break;
 					case "clear-on-shrink":
 						callbacks.onClearOnShrinkChange(newValue === "true");
+						break;
+					case "terminal-progress":
+						callbacks.onShowTerminalProgressChange(newValue === "true");
 						break;
 				}
 			},

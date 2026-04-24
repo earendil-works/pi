@@ -8,7 +8,7 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 const ECHO_PARAMS = Type.Object({
 	message: Type.String({ description: "Message to echo" }),

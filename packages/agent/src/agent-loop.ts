@@ -199,11 +199,13 @@ async function runLoop(
 
 			// Check for tool calls
 			const toolCalls = message.content.filter((c) => c.type === "toolCall");
-			hasMoreToolCalls = toolCalls.length > 0;
 
 			const toolResults: ToolResultMessage[] = [];
-			if (hasMoreToolCalls) {
-				toolResults.push(...(await executeToolCalls(currentContext, message, config, signal, emit)));
+			hasMoreToolCalls = false;
+			if (toolCalls.length > 0) {
+				const executedToolBatch = await executeToolCalls(currentContext, message, config, signal, emit);
+				toolResults.push(...executedToolBatch.messages);
+				hasMoreToolCalls = !executedToolBatch.terminate;
 
 				for (const result of toolResults) {
 					currentContext.messages.push(result);
@@ -339,7 +341,7 @@ async function executeToolCalls(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
-): Promise<ToolResultMessage[]> {
+): Promise<ExecutedToolCallBatch> {
 	const toolCalls = assistantMessage.content.filter((c) => c.type === "toolCall");
 	const hasSequentialToolCall = toolCalls.some(
 		(tc) => currentContext.tools?.find((t) => t.name === tc.name)?.executionMode === "sequential",
@@ -350,6 +352,11 @@ async function executeToolCalls(
 	return executeToolCallsParallel(currentContext, assistantMessage, toolCalls, config, signal, emit);
 }
 
+type ExecutedToolCallBatch = {
+	messages: ToolResultMessage[];
+	terminate: boolean;
+};
+
 async function executeToolCallsSequential(
 	currentContext: AgentContext,
 	assistantMessage: AssistantMessage,
@@ -357,8 +364,9 @@ async function executeToolCallsSequential(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
-): Promise<ToolResultMessage[]> {
-	const results: ToolResultMessage[] = [];
+): Promise<ExecutedToolCallBatch> {
+	const finalizedCalls: FinalizedToolCallOutcome[] = [];
+	const messages: ToolResultMessage[] = [];
 
 	for (const toolCall of toolCalls) {
 		await emit({
@@ -391,10 +399,14 @@ async function executeToolCallsSequential(
 		await emitToolExecutionEnd(finalized, emit);
 		const toolResultMessage = createToolResultMessage(finalized);
 		await emitToolResultMessage(toolResultMessage, emit);
-		results.push(toolResultMessage);
+		finalizedCalls.push(finalized);
+		messages.push(toolResultMessage);
 	}
 
-	return results;
+	return {
+		messages,
+		terminate: shouldTerminateToolBatch(finalizedCalls),
+	};
 }
 
 async function executeToolCallsParallel(
@@ -404,7 +416,7 @@ async function executeToolCallsParallel(
 	config: AgentLoopConfig,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
-): Promise<ToolResultMessage[]> {
+): Promise<ExecutedToolCallBatch> {
 	const finalizedCalls: FinalizedToolCallEntry[] = [];
 
 	for (const toolCall of toolCalls) {
@@ -445,14 +457,17 @@ async function executeToolCallsParallel(
 	const orderedFinalizedCalls = await Promise.all(
 		finalizedCalls.map((entry) => (typeof entry === "function" ? entry() : Promise.resolve(entry))),
 	);
-	const results: ToolResultMessage[] = [];
+	const messages: ToolResultMessage[] = [];
 	for (const finalized of orderedFinalizedCalls) {
 		const toolResultMessage = createToolResultMessage(finalized);
 		await emitToolResultMessage(toolResultMessage, emit);
-		results.push(toolResultMessage);
+		messages.push(toolResultMessage);
 	}
 
-	return results;
+	return {
+		messages,
+		terminate: shouldTerminateToolBatch(orderedFinalizedCalls),
+	};
 }
 
 type PreparedToolCall = {
@@ -480,6 +495,10 @@ type FinalizedToolCallOutcome = {
 };
 
 type FinalizedToolCallEntry = FinalizedToolCallOutcome | (() => Promise<FinalizedToolCallOutcome>);
+
+function shouldTerminateToolBatch(finalizedCalls: FinalizedToolCallOutcome[]): boolean {
+	return finalizedCalls.length > 0 && finalizedCalls.every((finalized) => finalized.result.terminate === true);
+}
 
 function prepareToolCallArguments(tool: AgentTool<any>, toolCall: AgentToolCall): AgentToolCall {
 	if (!tool.prepareArguments) {
@@ -612,6 +631,7 @@ async function finalizeExecutedToolCall(
 				result = {
 					content: afterResult.content ?? result.content,
 					details: afterResult.details ?? result.details,
+					terminate: afterResult.terminate ?? result.terminate,
 				};
 				isError = afterResult.isError ?? isError;
 			}

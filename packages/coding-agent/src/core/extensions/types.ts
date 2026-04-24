@@ -30,6 +30,7 @@ import type {
 } from "@mariozechner/pi-ai";
 import type {
 	AutocompleteItem,
+	AutocompleteProvider,
 	Component,
 	EditorComponent,
 	EditorTheme,
@@ -38,7 +39,7 @@ import type {
 	OverlayOptions,
 	TUI,
 } from "@mariozechner/pi-tui";
-import type { Static, TSchema } from "@sinclair/typebox";
+import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.js";
 import type { BashResult } from "../bash-executor.js";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.js";
@@ -111,6 +112,9 @@ export interface WorkingIndicatorOptions {
 	/** Frame interval in milliseconds for animated indicators. */
 	intervalMs?: number;
 }
+
+/** Wrap the current autocomplete provider with additional behavior. */
+export type AutocompleteProviderFactory = (current: AutocompleteProvider) => AutocompleteProvider;
 
 /**
  * UI context for extensions to request interactive UI.
@@ -205,6 +209,9 @@ export interface ExtensionUIContext {
 
 	/** Show a multi-line editor for text editing. */
 	editor(title: string, prefill?: string): Promise<string | undefined>;
+
+	/** Stack additional autocomplete behavior on top of the built-in provider. */
+	addAutocompleteProvider(factory: AutocompleteProviderFactory): void;
 
 	/**
 	 * Set a custom editor component via factory function.
@@ -472,7 +479,7 @@ type AnyToolDefinition = ToolDefinition<any, any, any>;
 export function defineTool<TParams extends TSchema, TDetails = unknown, TState = any>(
 	tool: ToolDefinition<TParams, TDetails, TState>,
 ): ToolDefinition<TParams, TDetails, TState> & AnyToolDefinition {
-	return tool;
+	return tool as ToolDefinition<TParams, TDetails, TState> & AnyToolDefinition;
 }
 
 // ============================================================================

@@ -19,6 +19,8 @@ jobs:
             const VALID_CAPABILITIES = new Set(['issue', 'pr']);
             const issueAuthor = context.payload.issue.user.login;
             const defaultBranch = context.payload.repository.default_branch;
+            const issueCreatedDay = new Date(context.payload.issue.created_at).getUTCDay();
+            const isFridayThroughSunday = issueCreatedDay === 5 || issueCreatedDay === 6 || issueCreatedDay === 0;
 
             if (issueAuthor.endsWith('[bot]') || issueAuthor === 'dependabot[bot]') {
               console.log(`Skipping bot: ${issueAuthor}`);
@@ -96,6 +98,11 @@ jobs:
 
             const message = [
               'This issue was auto-closed. All issues from new contributors are auto-closed by default.',
+              ...(isFridayThroughSunday
+                ? [
+                    'Issues submitted Friday through Sunday are not reviewed. If this is urgent, ask on Discord: https://discord.com/invite/3cU7Bz4UPx',
+                  ]
+                : []),
               '',
               `Maintainers review auto-closed issues daily and reopen worthwhile ones. Issues that do not meet the quality bar in [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md) will not be reopened or receive a reply.`,
               '',
@@ -110,6 +117,15 @@ jobs:
               issue_number: context.issue.number,
               body: message,
             });
+
+            if (isFridayThroughSunday) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['closed-because-weekend'],
+              });
+            }
 
             await github.rest.issues.update({
               owner: context.repo.owner,

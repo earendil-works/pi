@@ -157,6 +157,32 @@ describe("AgentSessionRuntime session lifecycle events", () => {
 		expect(events).toEqual([{ type: "session_before_switch", reason: "new", targetSessionFile: undefined }]);
 	});
 
+	it("runs beforeSessionInvalidate after session_shutdown and before rebindSession", async () => {
+		const phases: string[] = [];
+		const { runtimeHost } = await createRuntimeHost((pi) => {
+			pi.on("session_shutdown", () => {
+				phases.push("session_shutdown");
+			});
+		});
+		const oldSession = runtimeHost.session;
+		runtimeHost.setBeforeSessionInvalidate(() => {
+			phases.push("beforeSessionInvalidate");
+			expect(oldSession.extensionRunner.createContext().cwd).toBe(oldSession.sessionManager.getCwd());
+		});
+		runtimeHost.setRebindSession(async () => {
+			phases.push("rebindSession");
+		});
+
+		await runtimeHost.newSession();
+
+		expect(phases).toEqual(["session_shutdown", "beforeSessionInvalidate", "rebindSession"]);
+		expect(() => oldSession.extensionRunner.createContext().cwd).toThrow(
+			"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
+		);
+		runtimeHost.setBeforeSessionInvalidate(undefined);
+		runtimeHost.setRebindSession(undefined);
+	});
+
 	it("emits session_before_fork and session_start and honors cancellation", async () => {
 		const events: RecordedSessionEvent[] = [];
 		let cancelNextFork = false;

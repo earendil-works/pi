@@ -18,8 +18,10 @@ import * as _bundledPiTui from "@mariozechner/pi-tui";
 // Static imports of packages that extensions may use.
 // These MUST be static so Bun bundles them into the compiled binary.
 // The virtualModules option then makes them available to extensions.
-import * as _bundledTypebox from "@sinclair/typebox";
-import { getAgentDir, isBunBinary } from "../../config.js";
+import * as _bundledTypebox from "typebox";
+import * as _bundledTypeboxCompile from "typebox/compile";
+import * as _bundledTypeboxValue from "typebox/value";
+import { CONFIG_DIR_NAME, getAgentDir, isBunBinary } from "../../config.js";
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
 // avoiding a circular dependency. Extensions can import from @mariozechner/pi-coding-agent.
 import * as _bundledPiCodingAgent from "../../index.js";
@@ -41,7 +43,12 @@ import type {
 
 /** Modules available to extensions via virtualModules (for compiled Bun binary) */
 const VIRTUAL_MODULES: Record<string, unknown> = {
+	typebox: _bundledTypebox,
+	"typebox/compile": _bundledTypeboxCompile,
+	"typebox/value": _bundledTypeboxValue,
 	"@sinclair/typebox": _bundledTypebox,
+	"@sinclair/typebox/compile": _bundledTypeboxCompile,
+	"@sinclair/typebox/value": _bundledTypeboxValue,
 	"@mariozechner/pi-agent-core": _bundledPiAgentCore,
 	"@mariozechner/pi-tui": _bundledPiTui,
 	"@mariozechner/pi-ai": _bundledPiAi,
@@ -56,14 +63,16 @@ const require = createRequire(import.meta.url);
  * In Bun binary mode, virtualModules is used instead.
  */
 let _aliases: Record<string, string> | null = null;
+
 function getAliases(): Record<string, string> {
 	if (_aliases) return _aliases;
 
 	const __dirname = path.dirname(fileURLToPath(import.meta.url));
 	const packageIndex = path.resolve(__dirname, "../..", "index.js");
 
-	const typeboxEntry = require.resolve("@sinclair/typebox");
-	const typeboxRoot = typeboxEntry.replace(/[\\/]build[\\/]cjs[\\/]index\.js$/, "");
+	const typeboxEntry = require.resolve("typebox");
+	const typeboxCompileEntry = require.resolve("typebox/compile");
+	const typeboxValueEntry = require.resolve("typebox/value");
 
 	const packagesRoot = path.resolve(__dirname, "../../../../");
 	const resolveWorkspaceOrImport = (workspaceRelativePath: string, specifier: string): string => {
@@ -80,7 +89,12 @@ function getAliases(): Record<string, string> {
 		"@mariozechner/pi-tui": resolveWorkspaceOrImport("tui/dist/index.js", "@mariozechner/pi-tui"),
 		"@mariozechner/pi-ai": resolveWorkspaceOrImport("ai/dist/index.js", "@mariozechner/pi-ai"),
 		"@mariozechner/pi-ai/oauth": resolveWorkspaceOrImport("ai/dist/oauth.js", "@mariozechner/pi-ai/oauth"),
-		"@sinclair/typebox": typeboxRoot,
+		typebox: typeboxEntry,
+		"typebox/compile": typeboxCompileEntry,
+		"typebox/value": typeboxValueEntry,
+		"@sinclair/typebox": typeboxEntry,
+		"@sinclair/typebox/compile": typeboxCompileEntry,
+		"@sinclair/typebox/value": typeboxValueEntry,
 	};
 
 	return _aliases;
@@ -150,7 +164,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
 		invalidate: (message) => {
 			state.staleMessage ??=
 				message ??
-				"This extension instance is stale after session replacement or reload. Use the provided replacement-session context instead.";
+				"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().";
 		},
 		// Pre-bind: queue registrations so bindCore() can flush them once the
 		// model registry is available. bindCore() replaces both with direct calls.
@@ -562,8 +576,8 @@ export async function discoverAndLoadExtensions(
 		}
 	};
 
-	// 1. Project-local extensions: cwd/.pi/extensions/
-	const localExtDir = path.join(cwd, ".pi", "extensions");
+	// 1. Project-local extensions: cwd/${CONFIG_DIR_NAME}/extensions/
+	const localExtDir = path.join(cwd, CONFIG_DIR_NAME, "extensions");
 	addPaths(discoverExtensionsInDir(localExtDir));
 
 	// 2. Global extensions: agentDir/extensions/

@@ -1,4 +1,4 @@
-import type { AutocompleteProvider, AutocompleteSuggestions, CombinedAutocompleteProvider } from "../autocomplete.js";
+import type { AutocompleteProvider, AutocompleteSuggestions } from "../autocomplete.js";
 import { getKeybindings } from "../keybindings.js";
 import { decodePrintableKey, matchesKey } from "../keys.js";
 import { KillRing } from "../kill-ring.js";
@@ -1054,17 +1054,16 @@ export class Editor implements Component, Focusable {
 			if (char === "/" && this.isAtStartOfMessage()) {
 				this.tryTriggerAutocomplete();
 			}
-			// Auto-trigger for "@" file reference (fuzzy search)
-			else if (char === "@") {
+			// Auto-trigger for symbol-based completion like @ or # at token boundaries
+			else if (char === "@" || char === "#") {
 				const currentLine = this.state.lines[this.state.cursorLine] || "";
 				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-				// Only trigger if @ is after whitespace or at start of line
-				const charBeforeAt = textBeforeCursor[textBeforeCursor.length - 2];
-				if (textBeforeCursor.length === 1 || charBeforeAt === " " || charBeforeAt === "\t") {
+				const charBeforeSymbol = textBeforeCursor[textBeforeCursor.length - 2];
+				if (textBeforeCursor.length === 1 || charBeforeSymbol === " " || charBeforeSymbol === "\t") {
 					this.tryTriggerAutocomplete();
 				}
 			}
-			// Also auto-trigger when typing letters in a slash command context
+			// Also auto-trigger when typing letters in a slash command or symbol completion context
 			else if (/[a-zA-Z0-9.\-_]/.test(char)) {
 				const currentLine = this.state.lines[this.state.cursorLine] || "";
 				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
@@ -1072,8 +1071,8 @@ export class Editor implements Component, Focusable {
 				if (this.isInSlashCommandContext(textBeforeCursor)) {
 					this.tryTriggerAutocomplete();
 				}
-				// Check if we're in an @ file reference context
-				else if (textBeforeCursor.match(/(?:^|[\s])@[^\s]*$/)) {
+				// Check if we're in a symbol-based completion context like @ or #
+				else if (textBeforeCursor.match(/(?:^|[\s])[@#][^\s]*$/)) {
 					this.tryTriggerAutocomplete();
 				}
 			}
@@ -1089,8 +1088,20 @@ export class Editor implements Component, Focusable {
 
 		this.pushUndoSnapshot();
 
+		// Some terminals (e.g. tmux popups with extended-keys-format=csi-u) re-encode
+		// control bytes inside bracketed paste as CSI-u Ctrl+<letter> sequences
+		// (ESC [ <codepoint> ; 5 u). Decode those back to their literal byte so the
+		// per-char filter below preserves newlines instead of stripping ESC and
+		// leaking the printable tail (e.g. "[106;5u") into the editor.
+		const decodedText = pastedText.replace(/\x1b\[(\d+);5u/g, (match, code) => {
+			const cp = Number(code);
+			if (cp >= 97 && cp <= 122) return String.fromCharCode(cp - 96);
+			if (cp >= 65 && cp <= 90) return String.fromCharCode(cp - 64);
+			return match;
+		});
+
 		// Clean the pasted text: normalize line endings, expand tabs
-		const cleanText = this.normalizeText(pastedText);
+		const cleanText = this.normalizeText(decodedText);
 
 		// Filter out non-printable characters except newlines
 		let filteredText = cleanText
@@ -1240,8 +1251,8 @@ export class Editor implements Component, Focusable {
 			if (this.isInSlashCommandContext(textBeforeCursor)) {
 				this.tryTriggerAutocomplete();
 			}
-			// @ file reference context
-			else if (textBeforeCursor.match(/(?:^|[\s])@[^\s]*$/)) {
+			// Symbol-based completion context like @ or #
+			else if (textBeforeCursor.match(/(?:^|[\s])[@#][^\s]*$/)) {
 				this.tryTriggerAutocomplete();
 			}
 		}
@@ -1604,8 +1615,8 @@ export class Editor implements Component, Focusable {
 			if (this.isInSlashCommandContext(textBeforeCursor)) {
 				this.tryTriggerAutocomplete();
 			}
-			// @ file reference context
-			else if (textBeforeCursor.match(/(?:^|[\s])@[^\s]*$/)) {
+			// Symbol-based completion context like @ or #
+			else if (textBeforeCursor.match(/(?:^|[\s])[@#][^\s]*$/)) {
 				this.tryTriggerAutocomplete();
 			}
 		}
@@ -2108,10 +2119,13 @@ export class Editor implements Component, Focusable {
 		if (!this.autocompleteProvider) return;
 
 		if (options.force) {
-			const provider = this.autocompleteProvider as CombinedAutocompleteProvider;
 			const shouldTrigger =
-				!provider.shouldTriggerFileCompletion ||
-				provider.shouldTriggerFileCompletion(this.state.lines, this.state.cursorLine, this.state.cursorCol);
+				!this.autocompleteProvider.shouldTriggerFileCompletion ||
+				this.autocompleteProvider.shouldTriggerFileCompletion(
+					this.state.lines,
+					this.state.cursorLine,
+					this.state.cursorCol,
+				);
 			if (!shouldTrigger) {
 				return;
 			}
@@ -2162,8 +2176,8 @@ export class Editor implements Component, Focusable {
 
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 		const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-		const isAttachmentContext = /(?:^|[ \t])@(?:"[^"]*|[^\s]*)$/.test(textBeforeCursor);
-		return isAttachmentContext ? ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS : 0;
+		const isSymbolAutocompleteContext = /(?:^|[ \t])(?:@(?:"[^"]*|[^\s]*)|#[^\s]*)$/.test(textBeforeCursor);
+		return isSymbolAutocompleteContext ? ATTACHMENT_AUTOCOMPLETE_DEBOUNCE_MS : 0;
 	}
 
 	private async runAutocompleteRequest(

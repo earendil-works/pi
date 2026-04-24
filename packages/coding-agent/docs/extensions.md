@@ -57,7 +57,7 @@ Create `~/.pi/agent/extensions/my-extension.ts`:
 
 ```typescript
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
   // React to events
@@ -139,13 +139,13 @@ To share extensions via npm or git as pi packages, see [packages.md](packages.md
 | Package | Purpose |
 |---------|---------|
 | `@mariozechner/pi-coding-agent` | Extension types (`ExtensionAPI`, `ExtensionContext`, events) |
-| `@sinclair/typebox` | Schema definitions for tool parameters |
+| `typebox` | Schema definitions for tool parameters |
 | `@mariozechner/pi-ai` | AI utilities (`StringEnum` for Google-compatible enums) |
 | `@mariozechner/pi-tui` | TUI components for custom rendering |
 
 npm dependencies work too. Add a `package.json` next to your extension (or in a parent directory), run `npm install`, and imports from `node_modules/` are resolved automatically.
 
-For distributed pi packages installed with `pi install` (npm or git), runtime deps must be in `dependencies`. Package installation uses production installs (`npm install --omit=dev`), so `devDependencies` are not available at runtime.
+For distributed pi packages installed with `pi install` (npm or git), runtime deps must be in `dependencies`. Package installation uses production installs (`npm install --omit=dev`) by default, so `devDependencies` are not available at runtime; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers.
 
 Node.js built-ins (`node:fs`, `node:path`, etc.) are also available.
 
@@ -466,7 +466,8 @@ Fired after user submits prompt, before agent loop. Can inject a message and/or 
 pi.on("before_agent_start", async (event, ctx) => {
   // event.prompt - user's prompt text
   // event.images - attached images (if any)
-  // event.systemPrompt - current system prompt
+  // event.systemPrompt - current chained system prompt for this handler
+  //   (includes changes from earlier before_agent_start handlers)
   // event.systemPromptOptions - structured options used to build the system prompt
   //   .customPrompt - any custom system prompt (from --system-prompt, SYSTEM.md, or custom templates)
   //   .selectedTools - tools currently active in the prompt
@@ -491,6 +492,8 @@ pi.on("before_agent_start", async (event, ctx) => {
 ```
 
 The `systemPromptOptions` field gives extensions access to the same structured data Pi uses to build the system prompt. This lets you inspect what Pi has loaded — custom prompts, guidelines, tool snippets, context files, skills — without re-discovering resources or re-parsing flags. Use it when your extension needs to make deep, informed changes to the system prompt while respecting user-provided configuration.
+
+Inside `before_agent_start`, `event.systemPrompt` and `ctx.getSystemPrompt()` both reflect the chained system prompt as of the current handler. Later `before_agent_start` handlers can still modify it again.
 
 #### agent_start / agent_end
 
@@ -579,6 +582,8 @@ pi.on("context", async (event, ctx) => {
 #### before_provider_request
 
 Fired after the provider-specific payload is built, right before the request is sent. Handlers run in extension load order. Returning `undefined` keeps the payload unchanged. Returning any other value replaces the payload for later handlers and for the actual request.
+
+This hook can rewrite provider-level system instructions or remove them entirely. Those payload-level changes are not reflected by `ctx.getSystemPrompt()`, which reports Pi's system prompt string rather than the final serialized provider payload.
 
 ```typescript
 pi.on("before_provider_request", (event, ctx) => {
@@ -918,7 +923,12 @@ ctx.compact({
 
 ### ctx.getSystemPrompt()
 
-Returns the current effective system prompt. This includes any modifications made by `before_agent_start` handlers for the current turn.
+Returns Pi's current system prompt string.
+
+- During `before_agent_start`, this reflects chained system-prompt changes made so far for the current turn.
+- It does not include later `context` message mutations.
+- It does not include `before_provider_request` payload rewrites.
+- If later-loaded extensions run after yours, they can still change what is ultimately sent.
 
 ```typescript
 pi.on("before_agent_start", (event, ctx) => {
@@ -982,14 +992,19 @@ Options:
 Fork from a specific entry, creating a new session file:
 
 ```typescript
-const result = await ctx.fork("entry-id-123");
-if (!result.cancelled) {
-  // Now in the forked session
+const result = await ctx.fork("entry-id-123", {
+  withSession: async (ctx) => {
+    // Use only the replacement-session ctx here.
+    ctx.ui.notify("Now in the forked session", "info");
+  },
+});
+if (result.cancelled) {
+  // An extension cancelled the fork
 }
 
 const cloneResult = await ctx.fork("entry-id-456", { position: "at" });
-if (!cloneResult.cancelled) {
-  // New session contains the active path through entry-id-456
+if (cloneResult.cancelled) {
+  // An extension cancelled the clone
 }
 ```
 
@@ -1050,7 +1065,11 @@ pi.registerCommand("switch", {
       sessions.map(s => s.file),
     );
     if (choice) {
-      await ctx.switchSession(choice);
+      await ctx.switchSession(choice, {
+        withSession: async (ctx) => {
+          ctx.ui.notify("Switched session", "info");
+        },
+      });
     }
   },
 });
@@ -1129,7 +1148,7 @@ Example tool the LLM can call to trigger reload:
 
 ```typescript
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 export default function (pi: ExtensionAPI) {
   pi.registerCommand("reload-runtime", {
@@ -1176,7 +1195,7 @@ Use `promptSnippet` to opt a custom tool into a one-line entry in `Available too
 See [dynamic-tools.ts](../examples/extensions/dynamic-tools.ts) for a full example.
 
 ```typescript
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { StringEnum } from "@mariozechner/pi-ai";
 
 pi.registerTool({
@@ -1413,7 +1432,7 @@ pi.registerFlag("plan", {
 });
 
 // Check value
-if (pi.getFlag("--plan")) {
+if (pi.getFlag("plan")) {
   // Plan mode enabled
 }
 ```
@@ -1647,7 +1666,7 @@ async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
 ### Tool Definition
 
 ```typescript
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { StringEnum } from "@mariozechner/pi-ai";
 import { Text } from "@mariozechner/pi-tui";
 
@@ -1691,6 +1710,9 @@ pi.registerTool({
     return {
       content: [{ type: "text", text: "Done" }],  // Sent to LLM
       details: { data: result },                   // For rendering & state
+      // Optional: stop after this tool batch when every finalized tool result
+      // in the batch also returns terminate: true.
+      terminate: true,
     };
   },
 
@@ -1701,6 +1723,8 @@ pi.registerTool({
 ```
 
 **Signaling errors:** To mark a tool execution as failed (sets `isError: true` on the result and reports it to the LLM), throw an error from `execute`. Returning a value never sets the error flag regardless of what properties you include in the return object.
+
+**Early termination:** Return `terminate: true` from `execute()` to hint that the automatic follow-up LLM call should be skipped after the current tool batch. This only takes effect when every finalized tool result in that batch is terminating. See [examples/extensions/structured-output.ts](../examples/extensions/structured-output.ts) for a minimal example where the agent ends on a final structured-output tool call.
 
 ```typescript
 // Correct: throw to signal an error
@@ -1770,10 +1794,10 @@ Extensions can override built-in tools (`read`, `bash`, `edit`, `write`, `grep`,
 pi -e ./tool-override.ts
 ```
 
-Alternatively, use `--no-tools` to start without any built-in tools:
+Alternatively, use `--no-builtin-tools` to start without any built-in tools while keeping extension tools enabled:
 ```bash
 # No built-in tools, only extension tools
-pi --no-tools -e ./my-extension.ts
+pi --no-builtin-tools -e ./my-extension.ts
 ```
 
 See [examples/extensions/tool-override.ts](../examples/extensions/tool-override.ts) for a complete example that overrides `read` with logging and access control.
@@ -2048,6 +2072,7 @@ Extensions can interact with users via `ctx.ui` methods and customize how messag
 - Status indicators (setStatus)
 - Working message and indicator during streaming (`setWorkingMessage`, `setWorkingIndicator`)
 - Widgets above/below editor (setWidget)
+- Autocomplete providers layered on top of built-in slash/path completion (addAutocompleteProvider)
 - Custom footers (setFooter)
 
 ### Dialogs
@@ -2169,6 +2194,28 @@ const current = ctx.ui.getEditorText();
 // Paste into editor (triggers paste handling, including collapse for large content)
 ctx.ui.pasteToEditor("pasted content");
 
+// Stack custom autocomplete behavior on top of the built-in provider
+ctx.ui.addAutocompleteProvider((current) => ({
+  async getSuggestions(lines, line, col, options) {
+    const beforeCursor = (lines[line] ?? "").slice(0, col);
+    const match = beforeCursor.match(/(?:^|[ \t])#([^\s#]*)$/);
+    if (!match) {
+      return current.getSuggestions(lines, line, col, options);
+    }
+
+    return {
+      prefix: `#${match[1] ?? ""}`,
+      items: [{ value: "#2983", label: "#2983", description: "Extension API for autocomplete" }],
+    };
+  },
+  applyCompletion(lines, line, col, item, prefix) {
+    return current.applyCompletion(lines, line, col, item, prefix);
+  },
+  shouldTriggerFileCompletion(lines, line, col) {
+    return current.shouldTriggerFileCompletion?.(lines, line, col) ?? true;
+  },
+}));
+
 // Tool output expansion
 const wasExpanded = ctx.ui.getToolsExpanded();
 ctx.ui.setToolsExpanded(true);
@@ -2190,6 +2237,50 @@ ctx.ui.theme.fg("accent", "styled text");  // Access current theme
 ```
 
 Custom working-indicator frames are rendered verbatim. If you want colors, add them to the frame strings yourself, for example with `ctx.ui.theme.fg(...)`.
+
+### Autocomplete Providers
+
+Use `ctx.ui.addAutocompleteProvider()` to stack custom autocomplete logic on top of the built-in slash-command and path provider.
+
+Typical pattern:
+
+- inspect the text before the cursor
+- return your own suggestions when your extension-specific syntax matches
+- otherwise delegate to `current.getSuggestions(...)`
+- delegate `applyCompletion(...)` unless you need custom insertion behavior
+
+```typescript
+pi.on("session_start", (_event, ctx) => {
+  ctx.ui.addAutocompleteProvider((current) => ({
+    async getSuggestions(lines, cursorLine, cursorCol, options) {
+      const line = lines[cursorLine] ?? "";
+      const beforeCursor = line.slice(0, cursorCol);
+      const match = beforeCursor.match(/(?:^|[ \t])#([^\s#]*)$/);
+      if (!match) {
+        return current.getSuggestions(lines, cursorLine, cursorCol, options);
+      }
+
+      return {
+        prefix: `#${match[1] ?? ""}`,
+        items: [
+          { value: "#2983", label: "#2983", description: "Extension API for registering custom @ autocomplete providers" },
+          { value: "#2753", label: "#2753", description: "Reload stale resource settings" },
+        ],
+      };
+    },
+
+    applyCompletion(lines, cursorLine, cursorCol, item, prefix) {
+      return current.applyCompletion(lines, cursorLine, cursorCol, item, prefix);
+    },
+
+    shouldTriggerFileCompletion(lines, cursorLine, cursorCol) {
+      return current.shouldTriggerFileCompletion?.(lines, cursorLine, cursorCol) ?? true;
+    },
+  }));
+});
+```
+
+See [github-issue-autocomplete.ts](../examples/extensions/github-issue-autocomplete.ts) for a complete example that preloads the latest open GitHub issues with `gh issue list` and filters them locally for fast `#...` completion. It requires GitHub CLI (`gh`) and a GitHub repository checkout.
 
 ### Custom Components
 
@@ -2383,6 +2474,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `questionnaire.ts` | Multi-step wizard tool | `registerTool`, `ui.custom` |
 | `todo.ts` | Stateful tool with persistence | `registerTool`, `appendEntry`, `renderResult`, session events |
 | `dynamic-tools.ts` | Register tools after startup and during commands | `registerTool`, `session_start`, `registerCommand` |
+| `structured-output.ts` | Final structured-output tool with `terminate: true` | `registerTool`, terminating tool results |
 | `truncated-tool.ts` | Output truncation example | `registerTool`, `truncateHead` |
 | `tool-override.ts` | Override built-in read tool | `registerTool` (same name as built-in) |
 | **Commands** |||
@@ -2413,6 +2505,7 @@ All examples in [examples/extensions/](../examples/extensions/).
 | **UI Components** |||
 | `status-line.ts` | Footer status indicator | `setStatus`, session events |
 | `working-indicator.ts` | Customize the streaming working indicator | `setWorkingIndicator`, `registerCommand` |
+| `github-issue-autocomplete.ts` | Add `#1234` issue completions on top of built-in autocomplete by preloading recent open issues from `gh issue list` | `addAutocompleteProvider`, `on("session_start")`, `exec` |
 | `custom-footer.ts` | Replace footer entirely | `registerCommand`, `setFooter` |
 | `custom-header.ts` | Replace startup header | `on("session_start")`, `setHeader` |
 | `modal-editor.ts` | Vim-style modal editor | `setEditorComponent`, `CustomEditor` |

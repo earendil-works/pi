@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.70.2] - 2026-04-24
+
+## [0.70.1] - 2026-04-24
+
+## [0.70.0] - 2026-04-23
+
+### Fixed
+
+- Fixed Mom event-directory `fs.watch` error handling to retry after transient watcher failures such as `EMFILE`, avoiding startup crashes ([#3564](https://github.com/badlogic/pi-mono/issues/3564))
+
+## [0.69.0] - 2026-04-22
+
+### Breaking Changes
+
+- Migrated Mom's TypeBox-based tool examples and runtime dependency from `@sinclair/typebox` 0.34.x to `typebox` 1.x. Install and import from `typebox` instead of `@sinclair/typebox` when authoring Mom tools and integrations ([#3112](https://github.com/badlogic/pi-mono/issues/3112))
+
 ## [0.68.1] - 2026-04-22
 
 ## [0.68.0] - 2026-04-20

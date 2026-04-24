@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [0.70.2] - 2026-04-24
+
+## [0.70.1] - 2026-04-24
+
+## [0.70.0] - 2026-04-23
+
+## [0.69.0] - 2026-04-22
+
+### Breaking Changes
+
+- Migrated public TypeBox-facing types and examples from `@sinclair/typebox` 0.34.x to `typebox` 1.x. Install and import from `typebox` instead of relying on `@sinclair/typebox` transitively ([#3112](https://github.com/badlogic/pi-mono/issues/3112))
+
+### Added
+
+- Added `terminate: true` tool-result hints to skip the automatic follow-up LLM call when every finalized tool result in the current batch opts into early termination ([#3525](https://github.com/badlogic/pi-mono/issues/3525))
+
 ## [0.68.1] - 2026-04-22
 
 ### Fixed

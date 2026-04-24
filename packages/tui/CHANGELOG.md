@@ -2,9 +2,26 @@
 
 ## [Unreleased]
 
+## [0.70.2] - 2026-04-24
+
+## [0.70.1] - 2026-04-24
+
+### Fixed
+
+- Fixed CSI-u Ctrl+letter decoding inside bracketed paste, so pasted modified-key escape sequences no longer become literal editor text ([#3623](https://github.com/badlogic/pi-mono/pull/3623) by [@Exrun94](https://github.com/Exrun94))
+
+## [0.70.0] - 2026-04-23
+
+### Fixed
+
+- Kept OSC 9;4 terminal progress alive with periodic updates so Ghostty does not clear the indicator during long-running agent work ([#3610](https://github.com/badlogic/pi-mono/issues/3610))
+
+## [0.69.0] - 2026-04-22
+
 ### Added
 
 - Added `setProgress(active: boolean)` to the `Terminal` interface for OSC 9;4 progress indicator support
+- Added generic stacked autocomplete support for extension wrappers via `AutocompleteProvider.shouldTriggerFileCompletion?()` and `#` as a natural autocomplete trigger alongside `@` ([#2983](https://github.com/badlogic/pi-mono/issues/2983))
 
 ## [0.68.1] - 2026-04-22
 

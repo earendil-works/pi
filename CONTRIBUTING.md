@@ -14,6 +14,8 @@ If you use an agent, run it from the `pi-mono` root directory so it picks up `AG
 
 All issues and PRs from new contributors are auto-closed by default.
 
+Issues submitted Friday through Sunday are not reviewed. If something is urgent, ask on Discord: https://discord.com/invite/3cU7Bz4UPx
+
 Maintainers review auto-closed issues daily and reopen worthwhile ones. Issues that do not meet the quality bar below will not be reopened or receive a reply.
 
 Approval happens through maintainer replies on issues:

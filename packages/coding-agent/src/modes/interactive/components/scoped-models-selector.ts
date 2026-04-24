@@ -107,7 +107,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 	private listContainer: Container;
 	private footerText: Text;
 	private callbacks: ModelsCallbacks;
-	private maxVisible = 15;
+	private maxVisible = 8;
 	private isDirty = false;
 
 	constructor(config: ModelsConfig, callbacks: ModelsCallbacks) {

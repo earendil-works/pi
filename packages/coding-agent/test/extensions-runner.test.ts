@@ -291,7 +291,7 @@ describe("ExtensionRunner", () => {
 	describe("tool collection", () => {
 		it("collects tools from multiple extensions", async () => {
 			const toolCode = (name: string) => `
-				import { Type } from "@sinclair/typebox";
+				import { Type } from "typebox";
 				export default function(pi) {
 					pi.registerTool({
 						name: "${name}",
@@ -315,7 +315,7 @@ describe("ExtensionRunner", () => {
 
 		it("keeps first tool when two extensions register the same name", async () => {
 			const first = `
-				import { Type } from "@sinclair/typebox";
+				import { Type } from "typebox";
 				export default function(pi) {
 					pi.registerTool({
 						name: "shared",
@@ -327,7 +327,7 @@ describe("ExtensionRunner", () => {
 				}
 			`;
 			const second = `
-				import { Type } from "@sinclair/typebox";
+				import { Type } from "typebox";
 				export default function(pi) {
 					pi.registerTool({
 						name: "shared",
@@ -559,6 +559,50 @@ describe("ExtensionRunner", () => {
 
 			// The flag values are stored in the shared runtime
 			expect(result.runtime.flagValues.get("--test-flag")).toBe(true);
+		});
+	});
+
+	describe("before_agent_start", () => {
+		it("keeps ctx.getSystemPrompt() in sync with chained system prompt updates", async () => {
+			const extCode1 = `
+				export default function(pi) {
+					pi.on("before_agent_start", async (_event, ctx) => {
+						return {
+							systemPrompt: ctx.getSystemPrompt() + "\\nfirst",
+						};
+					});
+				}
+			`;
+			const extCode2 = `
+				export default function(pi) {
+					pi.on("before_agent_start", async (_event, ctx) => {
+						return {
+							systemPrompt: ctx.getSystemPrompt() + "\\nsecond",
+						};
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "before-agent-start-1.ts"), extCode1);
+			fs.writeFileSync(path.join(extensionsDir, "before-agent-start-2.ts"), extCode2);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			expect(result.extensions).toHaveLength(2);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(error.error));
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const chained = await runner.emitBeforeAgentStart("hello", undefined, "base", {
+				cwd: tempDir,
+			});
+
+			expect(errors).toEqual([]);
+
+			expect(chained).toEqual({
+				messages: undefined,
+				systemPrompt: "base\nfirst\nsecond",
+			});
 		});
 	});
 

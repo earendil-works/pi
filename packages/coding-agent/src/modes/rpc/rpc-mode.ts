@@ -259,6 +259,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			});
 		},
 
+		addAutocompleteProvider(): void {
+			// Autocomplete provider composition is not supported in RPC mode
+		},
+
 		setEditorComponent(): void {
 			// Custom editor components not supported in RPC mode
 		},

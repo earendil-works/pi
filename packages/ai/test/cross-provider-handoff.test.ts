@@ -22,8 +22,8 @@
  * Fixtures are generated fresh on each run.
  */
 
-import { Type } from "@sinclair/typebox";
 import { writeFileSync } from "fs";
+import { Type } from "typebox";
 import { beforeAll, describe, expect, it } from "vitest";
 import { getModel } from "../src/models.js";
 import { completeSimple, getEnvApiKey } from "../src/stream.js";

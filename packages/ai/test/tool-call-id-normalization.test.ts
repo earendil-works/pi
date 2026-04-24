@@ -10,7 +10,7 @@
  * Regression test for: https://github.com/badlogic/pi-mono/issues/1022
  */
 
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { getModel } from "../src/models.js";
 import { completeSimple, getEnvApiKey } from "../src/stream.js";

@@ -55,64 +55,22 @@ function hasVertexAdcCredentials(): boolean {
 	return cachedVertexAdcCredentialsExists;
 }
 
-/**
- * Get API key for provider from known environment variables, e.g. OPENAI_API_KEY.
- *
- * Will not return API keys for providers that require OAuth tokens.
- */
-export function getEnvApiKey(provider: KnownProvider): string | undefined;
-export function getEnvApiKey(provider: string): string | undefined;
-export function getEnvApiKey(provider: any): string | undefined {
-	// Fall back to environment variables
+function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 	if (provider === "github-copilot") {
-		return process.env.COPILOT_GITHUB_TOKEN || process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+		return ["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"];
 	}
 
 	// ANTHROPIC_OAUTH_TOKEN takes precedence over ANTHROPIC_API_KEY
 	if (provider === "anthropic") {
-		return process.env.ANTHROPIC_OAUTH_TOKEN || process.env.ANTHROPIC_API_KEY;
-	}
-
-	// Vertex AI supports either an explicit API key or Application Default Credentials
-	// Auth is configured via `gcloud auth application-default login`
-	if (provider === "google-vertex") {
-		if (process.env.GOOGLE_CLOUD_API_KEY) {
-			return process.env.GOOGLE_CLOUD_API_KEY;
-		}
-
-		const hasCredentials = hasVertexAdcCredentials();
-		const hasProject = !!(process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT);
-		const hasLocation = !!process.env.GOOGLE_CLOUD_LOCATION;
-
-		if (hasCredentials && hasProject && hasLocation) {
-			return "<authenticated>";
-		}
-	}
-
-	if (provider === "amazon-bedrock") {
-		// Amazon Bedrock supports multiple credential sources:
-		// 1. AWS_PROFILE - named profile from ~/.aws/credentials
-		// 2. AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY - standard IAM keys
-		// 3. AWS_BEARER_TOKEN_BEDROCK - Bedrock API keys (bearer token)
-		// 4. AWS_CONTAINER_CREDENTIALS_RELATIVE_URI - ECS task roles
-		// 5. AWS_CONTAINER_CREDENTIALS_FULL_URI - ECS task roles (full URI)
-		// 6. AWS_WEB_IDENTITY_TOKEN_FILE - IRSA (IAM Roles for Service Accounts)
-		if (
-			process.env.AWS_PROFILE ||
-			(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) ||
-			process.env.AWS_BEARER_TOKEN_BEDROCK ||
-			process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI ||
-			process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI ||
-			process.env.AWS_WEB_IDENTITY_TOKEN_FILE
-		) {
-			return "<authenticated>";
-		}
+		return ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"];
 	}
 
 	const envMap: Record<string, string> = {
 		openai: "OPENAI_API_KEY",
 		"azure-openai-responses": "AZURE_OPENAI_API_KEY",
+		deepseek: "DEEPSEEK_API_KEY",
 		google: "GEMINI_API_KEY",
+		"google-vertex": "GOOGLE_CLOUD_API_KEY",
 		groq: "GROQ_API_KEY",
 		cerebras: "CEREBRAS_API_KEY",
 		xai: "XAI_API_KEY",
@@ -130,5 +88,68 @@ export function getEnvApiKey(provider: any): string | undefined {
 	};
 
 	const envVar = envMap[provider];
-	return envVar ? process.env[envVar] : undefined;
+	return envVar ? [envVar] : undefined;
+}
+
+/**
+ * Find configured environment variables that can provide an API key for a provider.
+ *
+ * This only reports actual API key variables. It intentionally excludes ambient
+ * credential sources such as AWS profiles, AWS IAM credentials, and Google
+ * Application Default Credentials.
+ */
+export function findEnvKeys(provider: KnownProvider): string[] | undefined;
+export function findEnvKeys(provider: string): string[] | undefined;
+export function findEnvKeys(provider: string): string[] | undefined {
+	const envVars = getApiKeyEnvVars(provider);
+	if (!envVars) return undefined;
+
+	const found = envVars.filter((envVar) => !!process.env[envVar]);
+	return found.length > 0 ? found : undefined;
+}
+
+/**
+ * Get API key for provider from known environment variables, e.g. OPENAI_API_KEY.
+ *
+ * Will not return API keys for providers that require OAuth tokens.
+ */
+export function getEnvApiKey(provider: KnownProvider): string | undefined;
+export function getEnvApiKey(provider: string): string | undefined;
+export function getEnvApiKey(provider: string): string | undefined {
+	const envKeys = findEnvKeys(provider);
+	if (envKeys?.[0]) return process.env[envKeys[0]];
+
+	// Vertex AI supports either an explicit API key or Application Default Credentials.
+	// Auth is configured via `gcloud auth application-default login`.
+	if (provider === "google-vertex") {
+		const hasCredentials = hasVertexAdcCredentials();
+		const hasProject = !!(process.env.GOOGLE_CLOUD_PROJECT || process.env.GCLOUD_PROJECT);
+		const hasLocation = !!process.env.GOOGLE_CLOUD_LOCATION;
+
+		if (hasCredentials && hasProject && hasLocation) {
+			return "<authenticated>";
+		}
+	}
+
+	if (provider === "amazon-bedrock") {
+		// Amazon Bedrock supports multiple credential sources:
+		// 1. AWS_PROFILE - named profile from ~/.aws/credentials
+		// 2. AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY - standard IAM keys
+		// 3. AWS_BEARER_TOKEN_BEDROCK - Bedrock bearer token
+		// 4. AWS_CONTAINER_CREDENTIALS_RELATIVE_URI - ECS task roles
+		// 5. AWS_CONTAINER_CREDENTIALS_FULL_URI - ECS task roles (full URI)
+		// 6. AWS_WEB_IDENTITY_TOKEN_FILE - IRSA (IAM Roles for Service Accounts)
+		if (
+			process.env.AWS_PROFILE ||
+			(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY) ||
+			process.env.AWS_BEARER_TOKEN_BEDROCK ||
+			process.env.AWS_CONTAINER_CREDENTIALS_RELATIVE_URI ||
+			process.env.AWS_CONTAINER_CREDENTIALS_FULL_URI ||
+			process.env.AWS_WEB_IDENTITY_TOKEN_FILE
+		) {
+			return "<authenticated>";
+		}
+	}
+
+	return undefined;
 }

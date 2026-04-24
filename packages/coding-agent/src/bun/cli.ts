@@ -1,5 +1,7 @@
 #!/usr/bin/env node
-process.title = "pi";
+import { APP_NAME } from "../config.js";
+
+process.title = APP_NAME;
 process.emitWarning = (() => {}) as typeof process.emitWarning;
 
 await import("./register-bedrock.js");

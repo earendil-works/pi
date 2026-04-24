@@ -1,6 +1,6 @@
 import { Text, type TUI } from "@mariozechner/pi-tui";
-import { Type } from "@sinclair/typebox";
 import stripAnsi from "strip-ansi";
+import { Type } from "typebox";
 import { beforeAll, describe, expect, test } from "vitest";
 import type { ToolDefinition } from "../src/core/extensions/types.js";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.js";

@@ -8,6 +8,7 @@ import type {
 	CacheRetention,
 	Context,
 	Model,
+	OpenAIResponsesCompat,
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
@@ -35,18 +36,18 @@ function resolveCacheRetention(cacheRetention?: CacheRetention): CacheRetention 
 	return "short";
 }
 
-/**
- * Get prompt cache retention based on cacheRetention and base URL.
- * Only applies to direct OpenAI API calls (api.openai.com).
- */
-function getPromptCacheRetention(baseUrl: string, cacheRetention: CacheRetention): "24h" | undefined {
-	if (cacheRetention !== "long") {
-		return undefined;
-	}
-	if (baseUrl.includes("api.openai.com")) {
-		return "24h";
-	}
-	return undefined;
+function getCompat(model: Model<"openai-responses">): Required<OpenAIResponsesCompat> {
+	return {
+		sendSessionIdHeader: model.compat?.sendSessionIdHeader ?? true,
+		supportsLongCacheRetention: model.compat?.supportsLongCacheRetention ?? true,
+	};
+}
+
+function getPromptCacheRetention(
+	compat: Required<OpenAIResponsesCompat>,
+	cacheRetention: CacheRetention,
+): "24h" | undefined {
+	return cacheRetention === "long" && compat.supportsLongCacheRetention ? "24h" : undefined;
 }
 
 // OpenAI Responses-specific options
@@ -97,15 +98,18 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses", OpenAIRes
 			if (nextParams !== undefined) {
 				params = nextParams as ResponseCreateParamsStreaming;
 			}
-			const { data: openaiStream, response } = await client.responses
-				.create(params, options?.signal ? { signal: options.signal } : undefined)
-				.withResponse();
+			const requestOptions = {
+				...(options?.signal ? { signal: options.signal } : {}),
+				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
+				...(options?.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
+			};
+			const { data: openaiStream, response } = await client.responses.create(params, requestOptions).withResponse();
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
 			await processResponsesStream(openaiStream, output, stream, model, {
 				serviceTier: options?.serviceTier,
-				applyServiceTierPricing,
+				applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
 			});
 
 			if (options?.signal?.aborted) {
@@ -169,6 +173,7 @@ function createClient(
 		apiKey = process.env.OPENAI_API_KEY;
 	}
 
+	const compat = getCompat(model);
 	const headers = { ...model.headers };
 	if (model.provider === "github-copilot") {
 		const hasImages = hasCopilotVisionInput(context.messages);
@@ -180,7 +185,9 @@ function createClient(
 	}
 
 	if (sessionId) {
-		headers.session_id = sessionId;
+		if (compat.sendSessionIdHeader) {
+			headers.session_id = sessionId;
+		}
 		headers["x-client-request-id"] = sessionId;
 	}
 
@@ -201,12 +208,13 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 	const messages = convertResponsesMessages(model, context, OPENAI_TOOL_CALL_PROVIDERS);
 
 	const cacheRetention = resolveCacheRetention(options?.cacheRetention);
+	const compat = getCompat(model);
 	const params: ResponseCreateParamsStreaming = {
 		model: model.id,
 		input: messages,
 		stream: true,
 		prompt_cache_key: cacheRetention === "none" ? undefined : options?.sessionId,
-		prompt_cache_retention: getPromptCacheRetention(model.baseUrl, cacheRetention),
+		prompt_cache_retention: getPromptCacheRetention(compat, cacheRetention),
 		store: false,
 	};
 
@@ -241,19 +249,26 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 	return params;
 }
 
-function getServiceTierCostMultiplier(serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined): number {
+function getServiceTierCostMultiplier(
+	model: Pick<Model<"openai-responses">, "id">,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
+): number {
 	switch (serviceTier) {
 		case "flex":
 			return 0.5;
 		case "priority":
-			return 2;
+			return model.id === "gpt-5.5" ? 2.5 : 2;
 		default:
 			return 1;
 	}
 }
 
-function applyServiceTierPricing(usage: Usage, serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined) {
-	const multiplier = getServiceTierCostMultiplier(serviceTier);
+function applyServiceTierPricing(
+	usage: Usage,
+	serviceTier: ResponseCreateParamsStreaming["service_tier"] | undefined,
+	model: Pick<Model<"openai-responses">, "id">,
+) {
+	const multiplier = getServiceTierCostMultiplier(model, serviceTier);
 	if (multiplier === 1) return;
 
 	usage.cost.input *= multiplier;

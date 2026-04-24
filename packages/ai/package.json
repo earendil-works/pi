@@ -1,6 +1,6 @@
 {
 	"name": "@mariozechner/pi-ai",
-	"version": "0.68.1",
+	"version": "0.70.2",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -76,9 +76,7 @@
 		"@aws-sdk/client-bedrock-runtime": "^3.1030.0",
 		"@google/genai": "^1.40.0",
 		"@mistralai/mistralai": "^2.2.0",
-		"@sinclair/typebox": "^0.34.41",
-		"ajv": "^8.17.1",
-		"ajv-formats": "^3.0.1",
+		"typebox": "^1.1.24",
 		"chalk": "^5.6.2",
 		"openai": "6.26.0",
 		"partial-json": "^0.1.7",

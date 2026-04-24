@@ -1,9 +1,9 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { ToolResultMessage } from "@mariozechner/pi-ai";
-import { type Static, Type } from "@sinclair/typebox";
 import { html } from "lit";
 import { createRef, ref } from "lit/directives/ref.js";
 import { FileText } from "lucide";
+import { type Static, Type } from "typebox";
 import { EXTRACT_DOCUMENT_DESCRIPTION } from "../prompts/prompts.js";
 import { loadAttachment } from "../utils/attachment-utils.js";
 import { isCorsError } from "../utils/proxy-utils.js";

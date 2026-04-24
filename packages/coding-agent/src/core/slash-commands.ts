@@ -1,3 +1,4 @@
+import { APP_NAME } from "../config.js";
 import type { SourceInfo } from "./source-info.js";
 
 export type SlashCommandSource = "extension" | "prompt" | "skill";
@@ -29,11 +30,11 @@ export const BUILTIN_SLASH_COMMANDS: ReadonlyArray<BuiltinSlashCommand> = [
 	{ name: "fork", description: "Create a new fork from a previous user message" },
 	{ name: "clone", description: "Duplicate the current session at the current position" },
 	{ name: "tree", description: "Navigate session tree (switch branches)" },
-	{ name: "login", description: "Login with OAuth provider" },
-	{ name: "logout", description: "Logout from OAuth provider" },
+	{ name: "login", description: "Configure provider authentication" },
+	{ name: "logout", description: "Remove provider authentication" },
 	{ name: "new", description: "Start a new session" },
 	{ name: "compact", description: "Manually compact the session context" },
 	{ name: "resume", description: "Resume a different session" },
 	{ name: "reload", description: "Reload keybindings, extensions, skills, prompts, and themes" },
-	{ name: "quit", description: "Quit pi" },
+	{ name: "quit", description: `Quit ${APP_NAME}` },
 ];

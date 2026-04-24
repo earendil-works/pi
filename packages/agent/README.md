@@ -110,6 +110,8 @@ The mode can be set globally via `toolExecution` in the agent config, or per-too
 
 The `beforeToolCall` hook runs after `tool_execution_start` and validated argument parsing. It can block execution. The `afterToolCall` hook runs after tool execution finishes and before `tool_execution_end` and final tool result message events are emitted.
 
+Tools can also return `terminate: true` to hint that the automatic follow-up LLM call should be skipped. The loop only stops early when every finalized tool result in that batch sets `terminate: true`. Mixed batches continue normally.
+
 When you use the `Agent` class, assistant `message_end` processing is treated as a barrier before tool preflight begins. That means `beforeToolCall` sees agent state that already includes the assistant message that requested the tool call.
 
 ### continue() Event Sequence
@@ -137,8 +139,8 @@ The last message in context must be `user` or `toolResult` (not `assistant`).
 | `tool_execution_start` | Tool begins |
 | `tool_execution_update` | Tool streams progress |
 | `tool_execution_end` | Tool completes |
-+
-+`Agent.subscribe()` listeners are awaited in registration order. `agent_end` means no more loop events will be emitted, but `await agent.waitForIdle()` and `await agent.prompt(...)` only settle after awaited `agent_end` listeners finish.
+
+`Agent.subscribe()` listeners are awaited in registration order. `agent_end` means no more loop events will be emitted, but `await agent.waitForIdle()` and `await agent.prompt(...)` only settle after awaited `agent_end` listeners finish.
 
 ## Agent Options
 
@@ -186,6 +188,9 @@ const agent = new Agent({
 
   // Postprocess each tool result before final tool events are emitted.
   afterToolCall: async ({ toolCall, result, isError, context }) => {
+    if (toolCall.name === "notify_done" && !isError) {
+      return { terminate: true };
+    }
     if (!isError) {
       return { details: { ...result.details, audited: true } };
     }
@@ -362,7 +367,7 @@ const agent = new Agent({
 Define tools using `AgentTool`:
 
 ```typescript
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 const readFileTool: AgentTool = {
   name: "read_file",
@@ -382,6 +387,8 @@ const readFileTool: AgentTool = {
     // Optional: stream progress
     onUpdate?.({ content: [{ type: "text", text: "Reading..." }], details: {} });
 
+    // Optional: add `terminate: true` here to skip the automatic follow-up LLM call
+    // when every finalized tool result in the batch does the same.
     return {
       content: [{ type: "text", text: content }],
       details: { path: params.path, size: content.length },
@@ -407,6 +414,8 @@ execute: async (toolCallId, params, signal, onUpdate) => {
 ```
 
 Thrown errors are caught by the agent and reported to the LLM as tool errors with `isError: true`.
+
+Return `terminate: true` from `execute()` or `afterToolCall` to hint that the agent should stop after the current tool batch. This only takes effect when every finalized tool result in the batch is terminating. The hint is runtime-only; emitted `toolResult` transcript messages remain standard LLM tool results.
 
 ## Proxy Usage
 

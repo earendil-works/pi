@@ -15,13 +15,14 @@ import { processFileArguments } from "./cli/file-processor.js";
 import { buildInitialMessage } from "./cli/initial-message.js";
 import { listModels } from "./cli/list-models.js";
 import { selectSession } from "./cli/session-picker.js";
-import { getAgentDir, getModelsPath, VERSION } from "./config.js";
+import { getAgentDir, VERSION } from "./config.js";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.js";
 import {
 	type AgentSessionRuntimeDiagnostic,
 	createAgentSessionFromServices,
 	createAgentSessionServices,
 } from "./core/agent-session-services.js";
+import { formatNoModelsAvailableMessage } from "./core/auth-guidance.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { exportFromFile } from "./core/export-html/index.js";
 import type { ExtensionFactory } from "./core/extensions/types.js";
@@ -366,10 +367,11 @@ function buildSessionOptions(
 
 	// Tools
 	if (parsed.noTools) {
-		// --no-tools: start with no built-in tools
-		// --tools can still add specific ones back, including extension tools.
-		options.tools = parsed.tools && parsed.tools.length > 0 ? [...parsed.tools] : [];
-	} else if (parsed.tools) {
+		options.noTools = "all";
+	} else if (parsed.noBuiltinTools) {
+		options.noTools = "builtin";
+	}
+	if (parsed.tools) {
 		options.tools = [...parsed.tools];
 	}
 
@@ -584,6 +586,7 @@ export async function main(args: string[], options?: MainOptions) {
 			thinkingLevel: sessionOptions.thinkingLevel,
 			scopedModels: sessionOptions.scopedModels,
 			tools: sessionOptions.tools,
+			noTools: sessionOptions.noTools,
 			customTools: sessionOptions.customTools,
 		});
 		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
@@ -661,10 +664,7 @@ export async function main(args: string[], options?: MainOptions) {
 	time("createAgentSession");
 
 	if (appMode !== "interactive" && !session.model) {
-		console.error(chalk.red("No models available."));
-		console.error(chalk.yellow("\nSet an API key environment variable:"));
-		console.error("  ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.");
-		console.error(chalk.yellow(`\nOr create ${getModelsPath()}`));
+		console.error(chalk.red(formatNoModelsAvailableMessage()));
 		process.exit(1);
 	}
 

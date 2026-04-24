@@ -257,15 +257,46 @@ describe("parseArgs", () => {
 		});
 	});
 
-	describe("--no-tools flag", () => {
+	describe("tool flags", () => {
 		test("parses --no-tools flag", () => {
 			const result = parseArgs(["--no-tools"]);
 			expect(result.noTools).toBe(true);
 		});
 
+		test("parses -nt shorthand", () => {
+			const result = parseArgs(["-nt"]);
+			expect(result.noTools).toBe(true);
+		});
+
+		test("parses --no-builtin-tools flag", () => {
+			const result = parseArgs(["--no-builtin-tools"]);
+			expect(result.noBuiltinTools).toBe(true);
+		});
+
+		test("parses -nbt shorthand", () => {
+			const result = parseArgs(["-nbt"]);
+			expect(result.noBuiltinTools).toBe(true);
+		});
+
+		test("parses --tools flag", () => {
+			const result = parseArgs(["--tools", "read,bash"]);
+			expect(result.tools).toEqual(["read", "bash"]);
+		});
+
+		test("parses -t shorthand", () => {
+			const result = parseArgs(["-t", "read,bash"]);
+			expect(result.tools).toEqual(["read", "bash"]);
+		});
+
 		test("parses --no-tools with explicit --tools flags", () => {
 			const result = parseArgs(["--no-tools", "--tools", "read,bash"]);
 			expect(result.noTools).toBe(true);
+			expect(result.tools).toEqual(["read", "bash"]);
+		});
+
+		test("parses --no-builtin-tools with explicit --tools flags", () => {
+			const result = parseArgs(["--no-builtin-tools", "--tools", "read,bash"]);
+			expect(result.noBuiltinTools).toBe(true);
 			expect(result.tools).toEqual(["read", "bash"]);
 		});
 	});

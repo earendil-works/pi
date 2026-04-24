@@ -14,7 +14,7 @@ import {
 	type ImageContent,
 	type TextContent,
 } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.js";
 import { AuthStorage } from "../src/core/auth-storage.js";
@@ -450,6 +450,7 @@ describe("AgentSession concurrent prompt guard", () => {
 					systemPrompt: string,
 					systemPromptOptions: BuildSystemPromptOptions,
 				) => Promise<undefined>;
+				invalidate: (message?: string) => void;
 			};
 		};
 		sessionWithRunner._extensionRunner = {
@@ -466,6 +467,7 @@ describe("AgentSession concurrent prompt guard", () => {
 			},
 			emitInput: async () => ({ action: "continue" }),
 			emitBeforeAgentStart: async () => undefined,
+			invalidate: () => {},
 		};
 
 		await session.prompt("hi");
@@ -590,6 +592,7 @@ describe("AgentSession concurrent prompt guard", () => {
 					systemPrompt: string,
 					systemPromptOptions: BuildSystemPromptOptions,
 				) => Promise<undefined>;
+				invalidate: (message?: string) => void;
 			};
 		};
 		sessionWithRunner._extensionRunner = {
@@ -601,6 +604,7 @@ describe("AgentSession concurrent prompt guard", () => {
 			},
 			emitInput: async () => ({ action: "continue" }),
 			emitBeforeAgentStart: async () => undefined,
+			invalidate: () => {},
 		};
 
 		await session.prompt("hi");

@@ -460,6 +460,20 @@ Content`,
 		});
 	});
 
+	describe("windows command spawning", () => {
+		it("should avoid the shell for git so Windows paths with spaces stay single arguments", () => {
+			vi.spyOn(process, "platform", "get").mockReturnValue("win32");
+			const managerWithInternals = packageManager as unknown as {
+				shouldUseWindowsShell(command: string): boolean;
+			};
+
+			expect(managerWithInternals.shouldUseWindowsShell("git")).toBe(false);
+			expect(managerWithInternals.shouldUseWindowsShell("npm")).toBe(true);
+			expect(managerWithInternals.shouldUseWindowsShell("pnpm")).toBe(true);
+			expect(managerWithInternals.shouldUseWindowsShell("C:/Program Files/nodejs/npm.cmd")).toBe(true);
+		});
+	});
+
 	describe("npmCommand", () => {
 		it("should use npmCommand argv for npm installs", async () => {
 			settingsManager = SettingsManager.inMemory({
@@ -500,6 +514,33 @@ Content`,
 			expect(runCommandSpy).toHaveBeenCalledWith("npm", ["install", "--omit=dev"], { cwd: targetDir });
 		});
 
+		it("should use plain install for git package dependencies when npmCommand is configured", async () => {
+			settingsManager = SettingsManager.inMemory({
+				npmCommand: ["pnpm"],
+			});
+			packageManager = new DefaultPackageManager({
+				cwd: tempDir,
+				agentDir,
+				settingsManager,
+			});
+
+			const source = "git:github.com/user/repo";
+			const targetDir = join(agentDir, "git", "github.com", "user", "repo");
+			const runCommandSpy = vi
+				.spyOn(packageManager as any, "runCommand")
+				.mockImplementation(async (...callArgs: unknown[]) => {
+					const [command, args] = callArgs as [string, string[]];
+					if (command === "git" && args[0] === "clone") {
+						mkdirSync(targetDir, { recursive: true });
+						writeFileSync(join(targetDir, "package.json"), JSON.stringify({ name: "repo", version: "1.0.0" }));
+					}
+				});
+
+			await packageManager.install(source);
+
+			expect(runCommandSpy).toHaveBeenCalledWith("pnpm", ["install"], { cwd: targetDir });
+		});
+
 		it("should update git package dependencies with --omit=dev", async () => {
 			const source = "git:github.com/user/repo";
 			const targetDir = join(tempDir, ".pi", "git", "github.com", "user", "repo");
@@ -525,6 +566,44 @@ Content`,
 			await packageManager.update(source);
 
 			expect(runCommandSpy).toHaveBeenCalledWith("npm", ["install", "--omit=dev"], { cwd: targetDir });
+		});
+
+		it("should use plain install through npmCommand argv when updating git package dependencies", async () => {
+			settingsManager = SettingsManager.inMemory({
+				npmCommand: ["mise", "exec", "node@20", "--", "pnpm"],
+			});
+			packageManager = new DefaultPackageManager({
+				cwd: tempDir,
+				agentDir,
+				settingsManager,
+			});
+
+			const source = "git:github.com/user/repo";
+			const targetDir = join(tempDir, ".pi", "git", "github.com", "user", "repo");
+			mkdirSync(targetDir, { recursive: true });
+			writeFileSync(join(targetDir, "package.json"), JSON.stringify({ name: "repo", version: "1.0.0" }));
+			settingsManager.setProjectPackages([source]);
+
+			vi.spyOn(packageManager as any, "runCommandCapture").mockImplementation(async (...callArgs: unknown[]) => {
+				const [_command, args] = callArgs as [string, string[]];
+				if (args[0] === "rev-parse" && args[1] === "--abbrev-ref" && args[2] === "@{upstream}") {
+					return "origin/main";
+				}
+				if (args[0] === "rev-parse" && args[1] === "@{upstream}") {
+					return "remote-head";
+				}
+				if (args[0] === "rev-parse" && args[1] === "HEAD") {
+					return "local-head";
+				}
+				throw new Error(`Unexpected runCommandCapture args: ${args.join(" ")}`);
+			});
+			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
+
+			await packageManager.update(source);
+
+			expect(runCommandSpy).toHaveBeenCalledWith("mise", ["exec", "node@20", "--", "pnpm", "install"], {
+				cwd: targetDir,
+			});
 		});
 
 		it("should use npmCommand argv for npm root lookup and invalidate cached root when npmCommand changes", () => {

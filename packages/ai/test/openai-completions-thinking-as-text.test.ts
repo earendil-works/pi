@@ -31,6 +31,7 @@ const compat = {
 	requiresToolResultName: false,
 	requiresAssistantAfterToolResult: false,
 	requiresThinkingAsText: true,
+	requiresReasoningContentOnAssistantMessages: false,
 	thinkingFormat: "openai",
 	openRouterRouting: {},
 	vercelGatewayRouting: {},
@@ -38,6 +39,7 @@ const compat = {
 	supportsStrictMode: true,
 	cacheControlFormat: undefined,
 	sendSessionAffinityHeaders: false,
+	supportsLongCacheRetention: true,
 } satisfies Required<Omit<OpenAICompletionsCompat, "cacheControlFormat">> & {
 	cacheControlFormat?: OpenAICompletionsCompat["cacheControlFormat"];
 };

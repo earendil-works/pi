@@ -1,7 +1,7 @@
-import { Type } from "@sinclair/typebox";
 import { type ChildProcess, execSync, spawn } from "child_process";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
+import { Type } from "typebox";
 import { fileURLToPath } from "url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { getModel } from "../src/models.js";
@@ -447,8 +447,35 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe.skipIf(!process.env.OPENAI_API_KEY)("OpenAI Responses Provider (gpt-5-mini)", () => {
-		const llm = getModel("openai", "gpt-5-mini");
+	describe.skipIf(!process.env.DEEPSEEK_API_KEY)(
+		"DeepSeek Provider (deepseek-v4-flash via OpenAI Completions)",
+		() => {
+			const llm = getModel("deepseek", "deepseek-v4-flash");
+
+			it("should complete basic text generation", { retry: 3 }, async () => {
+				await basicTextGeneration(llm);
+			});
+
+			it("should handle tool calling", { retry: 3 }, async () => {
+				await handleToolCall(llm);
+			});
+
+			it("should handle streaming", { retry: 3 }, async () => {
+				await handleStreaming(llm);
+			});
+
+			it("should handle thinking mode", { retry: 3 }, async () => {
+				await handleThinking(llm, { reasoningEffort: "high" });
+			});
+
+			it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+				await multiTurn(llm, { reasoningEffort: "high" });
+			});
+		},
+	);
+
+	describe.skipIf(!process.env.OPENAI_API_KEY)("OpenAI Responses Provider (gpt-5.4)", () => {
+		const llm = getModel("openai", "gpt-5.4");
 
 		it("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(llm);
@@ -1092,8 +1119,8 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe("OpenAI Codex Provider (gpt-5.2-codex)", () => {
-		const llm = getModel("openai-codex", "gpt-5.2-codex");
+	describe("OpenAI Codex Provider (gpt-5.4)", () => {
+		const llm = getModel("openai-codex", "gpt-5.4");
 
 		it.skipIf(!openaiCodexToken)("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(llm, { apiKey: openaiCodexToken });
@@ -1120,8 +1147,8 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe("OpenAI Codex Provider (gpt-5.3-codex)", () => {
-		const llm = getModel("openai-codex", "gpt-5.3-codex");
+	describe("OpenAI Codex Provider (gpt-5.5)", () => {
+		const llm = getModel("openai-codex", "gpt-5.5");
 
 		it.skipIf(!openaiCodexToken)("should complete basic text generation", { retry: 3 }, async () => {
 			await basicTextGeneration(llm, { apiKey: openaiCodexToken });
@@ -1135,12 +1162,12 @@ describe("Generate E2E Tests", () => {
 			await handleStreaming(llm, { apiKey: openaiCodexToken });
 		});
 
-		it.skipIf(!openaiCodexToken)("should handle thinking with reasoningEffort high", { retry: 3 }, async () => {
-			await handleThinking(llm, { apiKey: openaiCodexToken, reasoningEffort: "high" });
+		it.skipIf(!openaiCodexToken)("should handle thinking with reasoningEffort xhigh", { retry: 3 }, async () => {
+			await handleThinking(llm, { apiKey: openaiCodexToken, reasoningEffort: "xhigh" });
 		});
 
 		it.skipIf(!openaiCodexToken)("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
-			await multiTurn(llm, { apiKey: openaiCodexToken, reasoningEffort: "high" });
+			await multiTurn(llm, { apiKey: openaiCodexToken, reasoningEffort: "xhigh" });
 		});
 
 		it.skipIf(!openaiCodexToken)("should handle image input", { retry: 3 }, async () => {
@@ -1148,8 +1175,8 @@ describe("Generate E2E Tests", () => {
 		});
 	});
 
-	describe("OpenAI Codex Provider (gpt-5.3-codex via WebSocket)", () => {
-		const llm = getModel("openai-codex", "gpt-5.3-codex");
+	describe("OpenAI Codex Provider (gpt-5.5 via WebSocket)", () => {
+		const llm = getModel("openai-codex", "gpt-5.5");
 		const wsOptions = { apiKey: openaiCodexToken, transport: "websocket" as const };
 
 		it.skipIf(!openaiCodexToken)("should complete basic text generation", { retry: 3 }, async () => {
@@ -1164,12 +1191,12 @@ describe("Generate E2E Tests", () => {
 			await handleStreaming(llm, wsOptions);
 		});
 
-		it.skipIf(!openaiCodexToken)("should handle thinking with reasoningEffort high", { retry: 3 }, async () => {
-			await handleThinking(llm, { ...wsOptions, reasoningEffort: "high" });
+		it.skipIf(!openaiCodexToken)("should handle thinking with reasoningEffort xhigh", { retry: 3 }, async () => {
+			await handleThinking(llm, { ...wsOptions, reasoningEffort: "xhigh" });
 		});
 
 		it.skipIf(!openaiCodexToken)("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
-			await multiTurn(llm, { ...wsOptions, reasoningEffort: "high" });
+			await multiTurn(llm, { ...wsOptions, reasoningEffort: "xhigh" });
 		});
 
 		it.skipIf(!openaiCodexToken)("should handle image input", { retry: 3 }, async () => {
@@ -1237,13 +1264,16 @@ describe("Generate E2E Tests", () => {
 
 			const payload = capturedPayload as {
 				additionalModelRequestFields?: {
-					thinking?: { type?: string };
+					thinking?: { type?: string; display?: string };
 					output_config?: { effort?: string };
 					anthropic_beta?: string[];
 				};
 			};
 
-			expect(payload.additionalModelRequestFields?.thinking).toEqual({ type: "adaptive" });
+			expect(payload.additionalModelRequestFields?.thinking).toEqual({
+				type: "adaptive",
+				display: "summarized",
+			});
 			expect(payload.additionalModelRequestFields?.output_config).toEqual({ effort: "max" });
 			expect(payload.additionalModelRequestFields?.anthropic_beta).toBeUndefined();
 		});

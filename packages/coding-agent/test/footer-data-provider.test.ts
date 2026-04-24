@@ -1,5 +1,5 @@
 import { execFile, spawnSync } from "child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
+import { existsSync, type FSWatcher, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -231,6 +231,35 @@ describe("FooterDataProvider reftable branch detection", () => {
 			expect(onBranchChange).toHaveBeenCalledTimes(1);
 		} finally {
 			provider.dispose();
+		}
+	});
+
+	it("retries git watchers 5 seconds after an async fs.watch error", async () => {
+		vi.useFakeTimers();
+		const repoDir = createPlainRepo(tempDir);
+		process.chdir(repoDir);
+
+		const provider = new FooterDataProvider(repoDir);
+		try {
+			const providerWithInternals = provider as unknown as {
+				headWatcher: FSWatcher | null;
+			};
+			const originalWatcher = providerWithInternals.headWatcher;
+			expect(originalWatcher).not.toBeNull();
+			expect(originalWatcher?.listenerCount("error")).toBeGreaterThan(0);
+
+			originalWatcher?.emit("error", new Error("simulated EMFILE"));
+			expect(providerWithInternals.headWatcher).toBeNull();
+
+			await vi.advanceTimersByTimeAsync(4999);
+			expect(providerWithInternals.headWatcher).toBeNull();
+
+			await vi.advanceTimersByTimeAsync(1);
+			expect(providerWithInternals.headWatcher).not.toBeNull();
+			expect(providerWithInternals.headWatcher).not.toBe(originalWatcher);
+		} finally {
+			provider.dispose();
+			vi.useRealTimers();
 		}
 	});
 });

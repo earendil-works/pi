@@ -66,6 +66,7 @@ function extractUserMessageText(content: string | Array<{ type: string; text?: s
  */
 export class AgentSessionRuntime {
 	private rebindSession?: (session: AgentSession) => Promise<void>;
+	private beforeSessionInvalidate?: () => void;
 
 	constructor(
 		private _session: AgentSession,
@@ -97,6 +98,18 @@ export class AgentSessionRuntime {
 
 	setRebindSession(rebindSession?: (session: AgentSession) => Promise<void>): void {
 		this.rebindSession = rebindSession;
+	}
+
+	/**
+	 * Set a synchronous callback that runs after `session_shutdown` handlers finish
+	 * but before the current session is invalidated.
+	 *
+	 * This is for host-owned UI teardown that must not yield to the event loop,
+	 * such as detaching extension-provided TUI components before the old extension
+	 * context becomes stale.
+	 */
+	setBeforeSessionInvalidate(beforeSessionInvalidate?: () => void): void {
+		this.beforeSessionInvalidate = beforeSessionInvalidate;
 	}
 
 	private async emitBeforeSwitch(
@@ -139,6 +152,7 @@ export class AgentSessionRuntime {
 			reason,
 			targetSessionFile,
 		});
+		this.beforeSessionInvalidate?.();
 		this.session.dispose();
 	}
 
@@ -354,6 +368,7 @@ export class AgentSessionRuntime {
 			type: "session_shutdown",
 			reason: "quit",
 		});
+		this.beforeSessionInvalidate?.();
 		this.session.dispose();
 	}
 }

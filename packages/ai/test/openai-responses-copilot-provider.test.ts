@@ -108,6 +108,18 @@ describe("openai-responses provider defaults", () => {
 		expect(captured).toEqual({ sessionId: "session-123", clientRequestId: "session-123" });
 	});
 
+	it("can omit the session_id header while preserving other cache-affinity headers", async () => {
+		const proxyModel: Model<"openai-responses"> = {
+			...getModel("openai", "gpt-5.4"),
+			provider: "opencode",
+			baseUrl: "https://proxy.example.com/v1",
+			compat: { sendSessionIdHeader: false },
+		};
+		const captured = await captureOpenAIResponseHeaders({ sessionId: "session-123" }, proxyModel);
+
+		expect(captured).toEqual({ sessionId: null, clientRequestId: "session-123" });
+	});
+
 	it("lets explicit headers override the default OpenAI cache-affinity headers", async () => {
 		const captured = await captureOpenAIResponseHeaders({
 			sessionId: "session-123",
@@ -124,5 +136,50 @@ describe("openai-responses provider defaults", () => {
 		const captured = await captureOpenAIResponseHeaders({ cacheRetention: "none", sessionId: "session-123" });
 
 		expect(captured).toEqual({ sessionId: null, clientRequestId: null });
+	});
+
+	it.each([
+		["gpt-5.4", "priority", 2],
+		["gpt-5.5", "priority", 2.5],
+		["gpt-5.5", "flex", 0.5],
+	] as const)("applies %s %s service-tier cost multiplier", async (modelId, serviceTier, multiplier) => {
+		const model = getModel("openai", modelId);
+		const sse = `${[
+			`data: ${JSON.stringify({
+				type: "response.completed",
+				response: {
+					status: "completed",
+					service_tier: serviceTier,
+					usage: {
+						input_tokens: 1000000,
+						output_tokens: 1000000,
+						total_tokens: 2000000,
+						input_tokens_details: { cached_tokens: 0 },
+					},
+				},
+			})}`,
+		].join("\n\n")}\n\n`;
+
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response(sse, {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+
+		const stream = streamOpenAIResponses(
+			model,
+			{
+				systemPrompt: "sys",
+				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+			},
+			{ apiKey: "test-key", serviceTier },
+		);
+
+		const result = await stream.result();
+
+		expect(result.usage.cost.input).toBe(model.cost.input * multiplier);
+		expect(result.usage.cost.output).toBe(model.cost.output * multiplier);
+		expect(result.usage.cost.total).toBe((model.cost.input + model.cost.output) * multiplier);
 	});
 });

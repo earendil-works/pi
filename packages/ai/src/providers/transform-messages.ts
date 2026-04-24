@@ -213,5 +213,8 @@ export function transformMessages<TApi extends Api>(
 		}
 	}
 
+	// If the conversation ends with unresolved tool calls, synthesize results now.
+	insertSyntheticToolResults();
+
 	return result;
 }
