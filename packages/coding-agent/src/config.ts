@@ -1,6 +1,7 @@
-import { existsSync, readFileSync } from "fs";
+import { spawnSync } from "child_process";
+import { existsSync, readFileSync, realpathSync } from "fs";
 import { homedir } from "os";
-import { dirname, join, resolve } from "path";
+import { dirname, isAbsolute, join, relative, resolve } from "path";
 import { fileURLToPath } from "url";
 
 // =============================================================================
@@ -26,6 +27,12 @@ export const isBunRuntime = !!process.versions.bun;
 
 export type InstallMethod = "bun-binary" | "npm" | "pnpm" | "yarn" | "bun" | "unknown";
 
+export interface SelfUpdateCommand {
+	command: string;
+	args: string[];
+	display: string;
+}
+
 export function detectInstallMethod(): InstallMethod {
 	if (isBunBinary) {
 		return "bun-binary";
@@ -49,22 +56,129 @@ export function detectInstallMethod(): InstallMethod {
 	return "unknown";
 }
 
-export function getUpdateInstruction(packageName: string): string {
-	const method = detectInstallMethod();
+function getSelfUpdateCommandForMethod(method: InstallMethod, packageName: string): SelfUpdateCommand | undefined {
 	switch (method) {
 		case "bun-binary":
-			return `Download from: https://github.com/badlogic/pi-mono/releases/latest`;
+			return undefined;
 		case "pnpm":
-			return `Run: pnpm install -g ${packageName}`;
+			return {
+				command: "pnpm",
+				args: ["install", "-g", packageName],
+				display: `pnpm install -g ${packageName}`,
+			};
 		case "yarn":
-			return `Run: yarn global add ${packageName}`;
+			return {
+				command: "yarn",
+				args: ["global", "add", packageName],
+				display: `yarn global add ${packageName}`,
+			};
 		case "bun":
-			return `Run: bun install -g ${packageName}`;
+			return {
+				command: "bun",
+				args: ["install", "-g", packageName],
+				display: `bun install -g ${packageName}`,
+			};
 		case "npm":
-			return `Run: npm install -g ${packageName}`;
-		default:
-			return `Run: npm install -g ${packageName}`;
+			return {
+				command: "npm",
+				args: ["install", "-g", packageName],
+				display: `npm install -g ${packageName}`,
+			};
+		case "unknown":
+			return undefined;
 	}
+}
+
+function readCommandOutput(command: string, args: string[]): string | undefined {
+	const result = spawnSync(command, args, {
+		encoding: "utf-8",
+		stdio: ["ignore", "pipe", "ignore"],
+		timeout: 2000,
+	});
+	if (result.status !== 0) return undefined;
+	const stdout = result.stdout.trim();
+	return stdout || undefined;
+}
+
+function realpathOrResolve(path: string): string {
+	try {
+		return realpathSync(path);
+	} catch {
+		return resolve(path);
+	}
+}
+
+function pathContains(parent: string, child: string): boolean {
+	let normalizedParent = realpathOrResolve(parent);
+	let normalizedChild = realpathOrResolve(child);
+	if (process.platform === "win32") {
+		normalizedParent = normalizedParent.toLowerCase();
+		normalizedChild = normalizedChild.toLowerCase();
+	}
+	const rel = relative(normalizedParent, normalizedChild);
+	return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function getGlobalPackageRoots(method: InstallMethod): string[] {
+	switch (method) {
+		case "npm": {
+			const root = readCommandOutput("npm", ["root", "-g"]);
+			return root ? [root] : [];
+		}
+		case "pnpm": {
+			const root = readCommandOutput("pnpm", ["root", "-g"]);
+			return root ? [root] : [];
+		}
+		case "yarn": {
+			const dir = readCommandOutput("yarn", ["global", "dir"]);
+			return dir ? [dir, join(dir, "node_modules")] : [];
+		}
+		case "bun": {
+			const bunBin = readCommandOutput("bun", ["pm", "bin", "-g"]);
+			const roots = [join(homedir(), ".bun", "install", "global", "node_modules")];
+			if (bunBin) {
+				roots.push(join(dirname(dirname(bunBin)), "install", "global", "node_modules"));
+			}
+			return roots;
+		}
+		case "bun-binary":
+		case "unknown":
+			return [];
+	}
+}
+
+function isManagedByGlobalPackageManager(method: InstallMethod): boolean {
+	const packageDir = getPackageDir();
+	return getGlobalPackageRoots(method).some((root) => existsSync(root) && pathContains(root, packageDir));
+}
+
+export function getSelfUpdateCommand(packageName: string): SelfUpdateCommand | undefined {
+	const method = detectInstallMethod();
+	const command = getSelfUpdateCommandForMethod(method, packageName);
+	if (!command || !isManagedByGlobalPackageManager(method)) {
+		return undefined;
+	}
+	return command;
+}
+
+export function getSelfUpdateUnavailableInstruction(packageName: string): string {
+	const method = detectInstallMethod();
+	if (method === "bun-binary") {
+		return `Download from: https://github.com/badlogic/pi-mono/releases/latest`;
+	}
+	if (getSelfUpdateCommandForMethod(method, packageName)) {
+		return `This installation is not managed by a global ${method} install. Update it with the package manager, wrapper, or source checkout that provides it.`;
+	}
+	return `Update ${packageName} using the package manager, wrapper, or source checkout that provides this installation.`;
+}
+
+export function getUpdateInstruction(packageName: string): string {
+	const method = detectInstallMethod();
+	const command = getSelfUpdateCommandForMethod(method, packageName);
+	if (command) {
+		return `Run: ${command.display}`;
+	}
+	return getSelfUpdateUnavailableInstruction(packageName);
 }
 
 // =============================================================================
@@ -182,13 +296,23 @@ export function getBundledInteractiveAssetPath(name: string): string {
 // App Config (from package.json piConfig)
 // =============================================================================
 
-const pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8"));
+interface PackageJson {
+	name?: string;
+	version?: string;
+	piConfig?: {
+		name?: string;
+		configDir?: string;
+	};
+}
+
+const pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8")) as PackageJson;
 
 const piConfigName: string | undefined = pkg.piConfig?.name;
+export const PACKAGE_NAME: string = pkg.name || "@mariozechner/pi-coding-agent";
 export const APP_NAME: string = piConfigName || "pi";
 export const APP_TITLE: string = piConfigName ? APP_NAME : "π";
 export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
-export const VERSION: string = pkg.version;
+export const VERSION: string = pkg.version || "0.0.0";
 
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;

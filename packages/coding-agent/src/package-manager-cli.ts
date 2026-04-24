@@ -1,17 +1,30 @@
 import chalk from "chalk";
+import { spawn } from "child_process";
 import { selectConfig } from "./cli/config-selector.js";
-import { APP_NAME, getAgentDir } from "./config.js";
+import {
+	APP_NAME,
+	getAgentDir,
+	getSelfUpdateCommand,
+	getSelfUpdateUnavailableInstruction,
+	PACKAGE_NAME,
+} from "./config.js";
 import { DefaultPackageManager } from "./core/package-manager.js";
 import { SettingsManager } from "./core/settings-manager.js";
 
 export type PackageCommand = "install" | "remove" | "update" | "list";
 
+type UpdateTarget = { type: "all" } | { type: "self" } | { type: "extensions"; source?: string };
+
 interface PackageCommandOptions {
 	command: PackageCommand;
 	source?: string;
+	updateTarget?: UpdateTarget;
 	local: boolean;
 	help: boolean;
 	invalidOption?: string;
+	invalidArgument?: string;
+	missingOptionValue?: string;
+	conflictingOptions?: string;
 }
 
 function reportSettingsErrors(settingsManager: SettingsManager, context: string): void {
@@ -31,7 +44,7 @@ function getPackageCommandUsage(command: PackageCommand): string {
 		case "remove":
 			return `${APP_NAME} remove <source> [-l]`;
 		case "update":
-			return `${APP_NAME} update [source]`;
+			return `${APP_NAME} update [source|self|pi] [--self] [--extensions] [--extension <source>]`;
 		case "list":
 			return `${APP_NAME} list`;
 	}
@@ -78,8 +91,17 @@ Examples:
 			console.log(`${chalk.bold("Usage:")}
   ${getPackageCommandUsage("update")}
 
-Update installed packages.
-If <source> is provided, only that package is updated.
+Update pi and installed packages.
+
+Options:
+  --self                  Update pi only
+  --extensions            Update installed packages only
+  --extension <source>    Update one package only
+
+Short forms:
+  ${APP_NAME} update <source>       Update one package
+  ${APP_NAME} update self           Update pi only
+  ${APP_NAME} update pi             Update pi only
 `);
 			return;
 
@@ -108,9 +130,16 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 	let local = false;
 	let help = false;
 	let invalidOption: string | undefined;
+	let invalidArgument: string | undefined;
+	let missingOptionValue: string | undefined;
+	let conflictingOptions: string | undefined;
 	let source: string | undefined;
+	let selfFlag = false;
+	let extensionsFlag = false;
+	let extensionFlagSource: string | undefined;
 
-	for (const arg of rest) {
+	for (let index = 0; index < rest.length; index++) {
+		const arg = rest[index];
 		if (arg === "-h" || arg === "--help") {
 			help = true;
 			continue;
@@ -125,6 +154,52 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 			continue;
 		}
 
+		if (arg === "--self") {
+			if (command === "update") {
+				selfFlag = true;
+			} else {
+				invalidOption = invalidOption ?? arg;
+			}
+			continue;
+		}
+
+		if (arg === "--extensions") {
+			if (command === "update") {
+				extensionsFlag = true;
+			} else {
+				invalidOption = invalidOption ?? arg;
+			}
+			continue;
+		}
+
+		if (arg === "--extension" || arg.startsWith("--extension=")) {
+			if (command !== "update") {
+				invalidOption = invalidOption ?? (arg === "--extension" ? arg : "--extension");
+				if (arg === "--extension") index++;
+				continue;
+			}
+
+			let value: string | undefined;
+			if (arg.startsWith("--extension=")) {
+				value = arg.slice("--extension=".length);
+			} else {
+				const next = rest[index + 1];
+				if (next && !next.startsWith("-")) {
+					value = next;
+					index++;
+				}
+			}
+
+			if (!value) {
+				missingOptionValue = missingOptionValue ?? "--extension";
+			} else if (extensionFlagSource) {
+				conflictingOptions = conflictingOptions ?? "--extension can only be provided once";
+			} else {
+				extensionFlagSource = value;
+			}
+			continue;
+		}
+
 		if (arg.startsWith("-")) {
 			invalidOption = invalidOption ?? arg;
 			continue;
@@ -132,10 +207,103 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 
 		if (!source) {
 			source = arg;
+		} else {
+			invalidArgument = invalidArgument ?? arg;
 		}
 	}
 
-	return { command, source, local, help, invalidOption };
+	let updateTarget: UpdateTarget | undefined;
+	if (command === "update") {
+		if (extensionFlagSource) {
+			if (selfFlag || extensionsFlag) {
+				conflictingOptions = conflictingOptions ?? "--extension cannot be combined with --self or --extensions";
+			}
+			if (source) {
+				conflictingOptions = conflictingOptions ?? "--extension cannot be combined with a positional source";
+			}
+			updateTarget = { type: "extensions", source: extensionFlagSource };
+		} else if (source) {
+			const sourceIsSelf = source === "self" || source === "pi";
+			if (sourceIsSelf) {
+				updateTarget = extensionsFlag ? { type: "all" } : { type: "self" };
+			} else {
+				if (extensionsFlag || selfFlag) {
+					conflictingOptions =
+						conflictingOptions ?? "positional update targets cannot be combined with --self or --extensions";
+				}
+				updateTarget = { type: "extensions", source };
+			}
+		} else if (selfFlag && extensionsFlag) {
+			updateTarget = { type: "all" };
+		} else if (selfFlag) {
+			updateTarget = { type: "self" };
+		} else if (extensionsFlag) {
+			updateTarget = { type: "extensions" };
+		} else {
+			updateTarget = { type: "all" };
+		}
+	}
+
+	return {
+		command,
+		source,
+		updateTarget,
+		local,
+		help,
+		invalidOption,
+		invalidArgument,
+		missingOptionValue,
+		conflictingOptions,
+	};
+}
+
+function updateTargetIncludesSelf(target: UpdateTarget): boolean {
+	return target.type === "all" || target.type === "self";
+}
+
+function updateTargetIncludesExtensions(target: UpdateTarget): boolean {
+	return target.type === "all" || target.type === "extensions";
+}
+
+function canSelfUpdate(): boolean {
+	return getSelfUpdateCommand(PACKAGE_NAME) !== undefined;
+}
+
+function printSelfUpdateUnavailable(): void {
+	console.error(`error: ${APP_NAME} cannot self-update this installation.`);
+	console.error(getSelfUpdateUnavailableInstruction(PACKAGE_NAME));
+
+	const entrypoint = process.argv[1];
+	if (entrypoint) {
+		console.error("");
+		console.error(`Location of pi executable: ${entrypoint}`);
+	}
+}
+
+async function runSelfUpdate(): Promise<void> {
+	const command = getSelfUpdateCommand(PACKAGE_NAME);
+	if (!command) {
+		throw new Error(
+			`${APP_NAME} cannot self-update this installation. ${getSelfUpdateUnavailableInstruction(PACKAGE_NAME)}`,
+		);
+	}
+
+	console.log(chalk.dim(`Updating ${APP_NAME} with ${command.display}...`));
+	await new Promise<void>((resolve, reject) => {
+		const child = spawn(command.command, command.args, { stdio: "inherit" });
+		child.on("error", (error) => {
+			reject(error);
+		});
+		child.on("close", (code, signal) => {
+			if (code === 0) {
+				resolve();
+			} else if (signal) {
+				reject(new Error(`${command.display} terminated by signal ${signal}`));
+			} else {
+				reject(new Error(`${command.display} exited with code ${code ?? "unknown"}`));
+			}
+		});
+	});
 }
 
 export async function handleConfigCommand(args: string[]): Promise<boolean> {
@@ -178,10 +346,42 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 		return true;
 	}
 
+	if (options.missingOptionValue) {
+		console.error(chalk.red(`Missing value for ${options.missingOptionValue}.`));
+		console.error(chalk.dim(`Usage: ${getPackageCommandUsage(options.command)}`));
+		process.exitCode = 1;
+		return true;
+	}
+
+	if (options.invalidArgument) {
+		console.error(chalk.red(`Unexpected argument ${options.invalidArgument}.`));
+		console.error(chalk.dim(`Usage: ${getPackageCommandUsage(options.command)}`));
+		process.exitCode = 1;
+		return true;
+	}
+
+	if (options.conflictingOptions) {
+		console.error(chalk.red(options.conflictingOptions));
+		console.error(chalk.dim(`Usage: ${getPackageCommandUsage(options.command)}`));
+		process.exitCode = 1;
+		return true;
+	}
+
 	const source = options.source;
 	if ((options.command === "install" || options.command === "remove") && !source) {
 		console.error(chalk.red(`Missing ${options.command} source.`));
 		console.error(chalk.dim(`Usage: ${getPackageCommandUsage(options.command)}`));
+		process.exitCode = 1;
+		return true;
+	}
+
+	if (
+		options.command === "update" &&
+		options.updateTarget &&
+		updateTargetIncludesSelf(options.updateTarget) &&
+		!canSelfUpdate()
+	) {
+		printSelfUpdateUnavailable();
 		process.exitCode = 1;
 		return true;
 	}
@@ -252,14 +452,23 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 				return true;
 			}
 
-			case "update":
-				await packageManager.update(source);
-				if (source) {
-					console.log(chalk.green(`Updated ${source}`));
-				} else {
-					console.log(chalk.green("Updated packages"));
+			case "update": {
+				const target = options.updateTarget ?? { type: "all" };
+				if (updateTargetIncludesExtensions(target)) {
+					const updateSource = target.type === "extensions" ? target.source : undefined;
+					await packageManager.update(updateSource);
+					if (updateSource) {
+						console.log(chalk.green(`Updated ${updateSource}`));
+					} else {
+						console.log(chalk.green("Updated packages"));
+					}
+				}
+				if (updateTargetIncludesSelf(target)) {
+					await runSelfUpdate();
+					console.log(chalk.green(`Updated ${APP_NAME}`));
 				}
 				return true;
+			}
 		}
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : "Unknown package command error";

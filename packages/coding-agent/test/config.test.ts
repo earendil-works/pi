@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "vitest";
-import { detectInstallMethod, getUpdateInstruction } from "../src/config.js";
+import { detectInstallMethod, getSelfUpdateCommand, getUpdateInstruction } from "../src/config.js";
 
 const execPathDescriptor = Object.getOwnPropertyDescriptor(process, "execPath");
 
@@ -25,6 +25,16 @@ describe("detectInstallMethod", () => {
 		expect(detectInstallMethod()).toBe("pnpm");
 		expect(getUpdateInstruction("@mariozechner/pi-coding-agent")).toBe(
 			"Run: pnpm install -g @mariozechner/pi-coding-agent",
+		);
+	});
+
+	test("does not self-update unknown wrapper installs", () => {
+		setExecPath("/usr/local/bin/node");
+
+		expect(detectInstallMethod()).toBe("unknown");
+		expect(getSelfUpdateCommand("@mariozechner/pi-coding-agent")).toBeUndefined();
+		expect(getUpdateInstruction("@mariozechner/pi-coding-agent")).toBe(
+			"Update @mariozechner/pi-coding-agent using the package manager, wrapper, or source checkout that provides this installation.",
 		);
 	});
 });
