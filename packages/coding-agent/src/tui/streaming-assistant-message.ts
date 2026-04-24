@@ -84,18 +84,7 @@ export class StreamingAssistantMessageComponent extends Container {
 		this.clear();
 		this.addChild(this.streamingContainer);
 
-		this.textBuffer = "";
-		this.thinkingBuffer = "";
-
-		// Seed from any already-present content (usually empty at message_start).
-		for (const c of message.content) {
-			if (c.type === "text") {
-				this.textBuffer = this.appendRolling(this.textBuffer, c.text);
-			}
-			if (c.type === "thinking") {
-				this.thinkingBuffer = this.appendRolling(this.thinkingBuffer, c.thinking);
-			}
-		}
+		this.setBuffersFromMessage(message);
 
 		this.updateStreamingDisplay();
 	}
@@ -110,15 +99,25 @@ export class StreamingAssistantMessageComponent extends Container {
 				this.updateStreamingDisplay();
 				return;
 
-			case "text_delta":
-				this.textBuffer = this.appendRolling(this.textBuffer, event.delta);
+			case "text_delta": {
+				const snapshot = event.partial.content[event.contentIndex];
+				this.textBuffer =
+					snapshot?.type === "text"
+						? this.setBuffersFromMessage(event.partial).text
+						: this.appendRolling(this.textBuffer, event.delta);
 				this.updateStreamingDisplay();
 				return;
+			}
 
-			case "thinking_delta":
-				this.thinkingBuffer = this.appendRolling(this.thinkingBuffer, event.delta);
+			case "thinking_delta": {
+				const snapshot = event.partial.content[event.contentIndex];
+				this.thinkingBuffer =
+					snapshot?.type === "thinking"
+						? this.setBuffersFromMessage(event.partial).thinking
+						: this.appendRolling(this.thinkingBuffer, event.delta);
 				this.updateStreamingDisplay();
 				return;
+			}
 
 			case "text_end":
 				// Some providers may emit a final content snapshot; prefer it to avoid
@@ -161,6 +160,22 @@ export class StreamingAssistantMessageComponent extends Container {
 
 		this.thinkingMarkdown.setText(hasThinking ? fixed.thinking : "");
 		this.responseMarkdown.setText(hasText ? fixed.text : "");
+	}
+
+	private setBuffersFromMessage(message: AssistantMessage): { text: string; thinking: string } {
+		this.textBuffer = "";
+		this.thinkingBuffer = "";
+
+		for (const c of message.content) {
+			if (c.type === "text") {
+				this.textBuffer = this.appendRolling(this.textBuffer, c.text);
+			}
+			if (c.type === "thinking") {
+				this.thinkingBuffer = this.appendRolling(this.thinkingBuffer, c.thinking);
+			}
+		}
+
+		return { text: this.textBuffer, thinking: this.thinkingBuffer };
 	}
 
 	private appendRolling(current: string, chunk: string): string {

@@ -82,6 +82,57 @@ describe("StreamingAssistantMessageComponent", () => {
 		expect(rendered).toContain("ANSWER");
 	});
 
+	it("does not duplicate a thinking delta already present in the seeded partial", () => {
+		const partial: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [{ type: "thinking", thinking: " The", thinkingSignature: "reasoning" }],
+		};
+		const c = new StreamingAssistantMessageComponent({ maxBufferChars: 10_000 });
+		c.resetFromMessage(partial);
+
+		c.applyAssistantMessageEvent({ type: "thinking_delta", contentIndex: 0, delta: " The", partial });
+
+		const rendered = stripAnsi(c.render(200).join("\n"));
+		expect(countOccurrences(rendered, "The")).toBe(1);
+		expect(rendered).not.toContain("The The");
+	});
+
+	it("does not duplicate a text delta already present in the seeded partial", () => {
+		const partial: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [{ type: "text", text: "Hello" }],
+		};
+		const c = new StreamingAssistantMessageComponent({ maxBufferChars: 10_000 });
+		c.resetFromMessage(partial);
+
+		c.applyAssistantMessageEvent({ type: "text_delta", contentIndex: 0, delta: "Hello", partial });
+
+		const rendered = stripAnsi(c.render(200).join("\n"));
+		expect(countOccurrences(rendered, "Hello")).toBe(1);
+		expect(rendered).not.toContain("HelloHello");
+	});
+
+	it("keeps earlier same-type blocks when applying a cumulative partial snapshot", () => {
+		const partial: AssistantMessage = {
+			...baseAssistantMessage(),
+			content: [
+				{ type: "text", text: "First block." },
+				{ type: "thinking", thinking: " Thinking block.", thinkingSignature: "reasoning" },
+				{ type: "text", text: "Second block." },
+			],
+		};
+		const c = new StreamingAssistantMessageComponent({ maxBufferChars: 10_000 });
+		c.resetFromMessage(partial);
+
+		c.applyAssistantMessageEvent({ type: "text_delta", contentIndex: 2, delta: "Second block.", partial });
+
+		const rendered = stripAnsi(c.render(200).join("\n"));
+		expect(rendered).toContain("First block.");
+		expect(rendered).toContain("Second block.");
+		expect(rendered).toContain("Thinking block.");
+		expect(countOccurrences(rendered, "Second block.")).toBe(1);
+	});
+
 	it("does not spill duplicated thinking suffix into the response while streaming", () => {
 		const c = new StreamingAssistantMessageComponent({ maxBufferChars: 10_000 });
 		c.applyAssistantMessageEvent(thinkingDelta("THINKING_TRACE"));
