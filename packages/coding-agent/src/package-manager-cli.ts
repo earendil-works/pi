@@ -99,9 +99,9 @@ Options:
   --extension <source>    Update one package only
 
 Short forms:
+  ${APP_NAME} update                Update pi and all extensions
   ${APP_NAME} update <source>       Update one package
-  ${APP_NAME} update self           Update pi only
-  ${APP_NAME} update pi             Update pi only
+  ${APP_NAME} update pi             Update pi only (self works as alias to pi)
 `);
 			return;
 
