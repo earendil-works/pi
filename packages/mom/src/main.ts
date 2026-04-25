@@ -254,15 +254,10 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 
 		deleteMessage: async () => {
 			updatePromise = updatePromise.then(async () => {
-				// Delete thread messages first (in reverse order)
-				for (let i = threadMessageTs.length - 1; i >= 0; i--) {
-					try {
-						await slack.deleteMessage(event.channel, threadMessageTs[i]);
-					} catch {
-						// Ignore errors deleting thread messages
-					}
-				}
+				// Delete thread messages first in parallel
+				await Promise.allSettled(threadMessageTs.map((ts) => slack.deleteMessage(event.channel, ts)));
 				threadMessageTs.length = 0;
+
 				// Then delete main message
 				if (messageTs) {
 					await slack.deleteMessage(event.channel, messageTs);
