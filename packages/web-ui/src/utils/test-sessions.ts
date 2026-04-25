@@ -463,7 +463,7 @@ export const longSession = {
 			content: [
 				{
 					type: "text",
-					text: "you managed to enter the text in teh text area, but click is not possible because the app thinks no text has been entered yet",
+					text: "you managed to enter the text in the text area, but click is not possible because the app thinks no text has been entered yet",
 				},
 			],
 		},
