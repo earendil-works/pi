@@ -382,7 +382,23 @@ function resolveCustomBaseUrl(baseUrl: string): string | undefined {
 	if (!trimmed || trimmed.includes("{location}")) {
 		return undefined;
 	}
+	if (isNativeVertexEndpoint(trimmed)) {
+		return undefined;
+	}
 	return trimmed;
+}
+
+function isNativeVertexEndpoint(baseUrl: string): boolean {
+	try {
+		const { hostname } = new URL(baseUrl);
+		return (
+			hostname === "aiplatform.googleapis.com" ||
+			hostname.endsWith("-aiplatform.googleapis.com") ||
+			/^aiplatform\.[^.]+\.rep\.googleapis\.com$/.test(hostname)
+		);
+	} catch {
+		return false;
+	}
 }
 
 function baseUrlIncludesApiVersion(baseUrl: string): boolean {

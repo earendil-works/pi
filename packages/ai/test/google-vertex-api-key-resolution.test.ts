@@ -157,6 +157,47 @@ describe("google-vertex api key resolution", () => {
 		expect(googleGenAiMock.constructorCalls[0]?.httpOptions).toBeUndefined();
 	});
 
+	it("treats global Vertex endpoint as native, not a custom proxy", async () => {
+		const globalModel: Model<"google-vertex"> = { ...model, baseUrl: "https://aiplatform.googleapis.com" };
+		const stream = streamGoogleVertex(globalModel, context, {
+			project: "test-project",
+			location: "global",
+		});
+
+		await stream.result();
+
+		expect(googleGenAiMock.constructorCalls).toHaveLength(1);
+		expect(googleGenAiMock.constructorCalls[0]).toMatchObject({
+			vertexai: true,
+			project: "test-project",
+			location: "global",
+			apiVersion: "v1",
+		});
+		expect(googleGenAiMock.constructorCalls[0]?.httpOptions).toBeUndefined();
+	});
+
+	it("treats hardcoded regional Vertex endpoint as native, not a custom proxy", async () => {
+		const regionalModel: Model<"google-vertex"> = {
+			...model,
+			baseUrl: "https://us-central1-aiplatform.googleapis.com",
+		};
+		const stream = streamGoogleVertex(regionalModel, context, {
+			project: "test-project",
+			location: "us-central1",
+		});
+
+		await stream.result();
+
+		expect(googleGenAiMock.constructorCalls).toHaveLength(1);
+		expect(googleGenAiMock.constructorCalls[0]).toMatchObject({
+			vertexai: true,
+			project: "test-project",
+			location: "us-central1",
+			apiVersion: "v1",
+		});
+		expect(googleGenAiMock.constructorCalls[0]?.httpOptions).toBeUndefined();
+	});
+
 	it("forwards custom baseUrl to the ADC client", async () => {
 		const customModel: Model<"google-vertex"> = { ...model, baseUrl: "https://proxy.example.com" };
 		const stream = streamGoogleVertex(customModel, context, {
