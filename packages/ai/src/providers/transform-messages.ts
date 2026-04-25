@@ -107,6 +107,10 @@ export function transformMessages<TApi extends Api>(
 					// Skip empty thinking blocks, convert others to plain text
 					if (!block.thinking || block.thinking.trim() === "") return [];
 					if (isSameModel) return block;
+					// For cross-model calls where the target model has reasoning enabled,
+					// preserve thinking blocks so convertMessages can include reasoning_content
+					// (e.g., DeepSeek requires reasoning_content to be echoed back)
+					if (model.reasoning) return block;
 					return {
 						type: "text" as const,
 						text: block.thinking,
