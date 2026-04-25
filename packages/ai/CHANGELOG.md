@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added CrofAI as a built-in OpenAI-compatible provider with 18 models fetched dynamically from the Crof.ai `/v1/models` endpoint and `CROF_API_KEY` authentication.
+
 ### Changed
 
 - Changed OpenAI Codex Responses default text verbosity to `low` when no verbosity is specified.

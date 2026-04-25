@@ -307,6 +307,25 @@ describe("totalTokens field", () => {
 	});
 
 	// =========================================================================
+	// CrofAI
+	// =========================================================================
+
+	describe.skipIf(!process.env.CROF_API_KEY)("CrofAI", () => {
+		it("kimi-k2.6 - should return totalTokens equal to sum of components", { retry: 3, timeout: 60000 }, async () => {
+			const llm = getModel("crof", "kimi-k2.6");
+
+			console.log(`\nCrofAI / ${llm.id}:`);
+			const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.CROF_API_KEY });
+
+			logUsage("First request", first);
+			logUsage("Second request", second);
+
+			assertTotalTokensEqualsComponents(first);
+			assertTotalTokensEqualsComponents(second);
+		});
+	});
+
+	// =========================================================================
 	// Hugging Face
 	// =========================================================================
 

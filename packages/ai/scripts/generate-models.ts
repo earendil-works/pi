@@ -142,6 +142,62 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 	}
 }
 
+async function fetchCrofModels(): Promise<Model<any>[]> {
+	try {
+		console.log("Fetching models from Crof.ai API...");
+		const response = await fetch("https://crof.ai/v1/models");
+		const data = await response.json();
+		const models: Model<any>[] = [];
+
+		const items = Array.isArray(data.data) ? (data.data as any[]) : [];
+		for (const model of items) {
+			const input: ("text" | "image")[] = ["text"];
+			// Mark known vision-capable models
+			if (
+				model.id === "kimi-k2.5" ||
+				model.id === "kimi-k2.6" ||
+				model.id === "kimi-k2.6-precision" ||
+				model.id === "gemma-4-31b-it"
+			) {
+				input.push("image");
+			}
+
+			const roundCost = (v: number) => Math.round(v * 10000) / 10000;
+			const inputCost = roundCost(parseFloat(model.pricing?.prompt || "0") * 1_000_000);
+			const outputCost = roundCost(parseFloat(model.pricing?.completion || "0") * 1_000_000);
+			const cacheReadCost = roundCost(parseFloat(model.pricing?.cache_prompt || "0") * 1_000_000);
+
+			// DeepSeek models on Crof.ai are known reasoning models even if the API
+			// does not flag them with reasoning_effort
+			const isDeepSeek = typeof model.id === "string" && model.id.startsWith("deepseek");
+
+			models.push({
+				id: model.id,
+				name: model.name || model.id,
+				api: "openai-completions",
+				provider: "crof",
+				baseUrl: "https://crof.ai/v1",
+				reasoning: model.reasoning_effort === true || model.custom_reasoning === true || isDeepSeek,
+				input,
+				cost: {
+					input: inputCost,
+					output: outputCost,
+					cacheRead: cacheReadCost,
+					cacheWrite: 0,
+				},
+				contextWindow: model.context_length || 4096,
+				maxTokens: model.max_completion_tokens || 4096,
+			});
+		}
+
+		console.log(`Fetched ${models.length} models from Crof.ai`);
+		return models;
+	} catch (error) {
+		console.error("Failed to fetch Crof.ai models:", error);
+		return [];
+	}
+}
+
 async function fetchAiGatewayModels(): Promise<Model<any>[]> {
 	try {
 		console.log("Fetching models from Vercel AI Gateway API...");
@@ -721,9 +777,10 @@ async function generateModels() {
 	const modelsDevModels = await loadModelsDevData();
 	const openRouterModels = await fetchOpenRouterModels();
 	const aiGatewayModels = await fetchAiGatewayModels();
+	const crofModels = await fetchCrofModels();
 
 	// Combine models (models.dev has priority)
-	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels].filter(
+	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels, ...crofModels].filter(
 		(model) =>
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
 	);

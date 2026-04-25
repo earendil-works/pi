@@ -199,6 +199,7 @@ const API_KEY_LOGIN_PROVIDERS: Record<string, string> = {
 	"vercel-ai-gateway": "Vercel AI Gateway",
 	xai: "xAI",
 	zai: "ZAI",
+	crof: "CrofAI",
 };
 
 const BUILT_IN_API_KEY_LOGIN_PROVIDERS = new Set(Object.keys(API_KEY_LOGIN_PROVIDERS));
