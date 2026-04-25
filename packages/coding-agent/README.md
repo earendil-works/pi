@@ -289,6 +289,8 @@ Disable context file loading with `--no-context-files` (or `-nc`).
 
 ### System Prompt
 
+The system prompt is background instructions Pi sends with each request to the AI. It tells the AI how to behave, what tools it can use, and what rules to follow.
+
 Replace the default system prompt with `.pi/SYSTEM.md` (project) or `~/.pi/agent/SYSTEM.md` (global). Append without replacing via `APPEND_SYSTEM.md`.
 
 ---
