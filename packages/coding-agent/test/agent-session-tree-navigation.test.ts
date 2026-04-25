@@ -10,7 +10,44 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { API_KEY, createTestSession, type TestSessionContext } from "./utilities.js";
+import { API_KEY, buildTestTree, createTestSession, type TestSessionContext } from "./utilities.js";
+
+describe("AgentSession tree navigation extension cancellation", () => {
+	let ctx: TestSessionContext;
+
+	beforeEach(() => {
+		ctx = createTestSession({ inMemory: true });
+	});
+
+	afterEach(() => {
+		ctx.cleanup();
+	});
+
+	it("clears branch-summary busy state when a session_before_tree extension cancels navigation", async () => {
+		const { session, sessionManager } = ctx;
+		const ids = buildTestTree(sessionManager, {
+			messages: [
+				{ role: "user", text: "first" },
+				{ role: "assistant", text: "first response" },
+				{ role: "user", text: "second" },
+				{ role: "assistant", text: "second response" },
+			],
+		});
+		const leafBefore = sessionManager.getLeafId();
+
+		const runner = {
+			hasHandlers: (eventType: string) => eventType === "session_before_tree",
+			emit: async () => ({ cancel: true }),
+		};
+		(session as unknown as { _extensionRunner: typeof runner })._extensionRunner = runner;
+
+		const result = await session.navigateTree(ids.get("first")!, { summarize: false });
+
+		expect(result).toEqual({ cancelled: true });
+		expect(session.isCompacting).toBe(false);
+		expect(sessionManager.getLeafId()).toBe(leafBefore);
+	});
+});
 
 describe.skipIf(!API_KEY)("AgentSession tree navigation e2e", () => {
 	let ctx: TestSessionContext;

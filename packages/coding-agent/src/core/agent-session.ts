@@ -2709,71 +2709,80 @@ export class AgentSession {
 			label,
 		};
 
-		// Set up abort controller for summarization
-		this._branchSummaryAbortController = new AbortController();
+		// Set up abort controller for the hook and optional branch summarization phase.
+		const branchSummaryAbortController = new AbortController();
+		this._branchSummaryAbortController = branchSummaryAbortController;
+		const clearBranchSummaryAbortController = () => {
+			if (this._branchSummaryAbortController === branchSummaryAbortController) {
+				this._branchSummaryAbortController = undefined;
+			}
+		};
 		let extensionSummary: { summary: string; details?: unknown } | undefined;
 		let fromExtension = false;
-
-		// Emit session_before_tree event
-		if (this._extensionRunner.hasHandlers("session_before_tree")) {
-			const result = (await this._extensionRunner.emit({
-				type: "session_before_tree",
-				preparation,
-				signal: this._branchSummaryAbortController.signal,
-			})) as SessionBeforeTreeResult | undefined;
-
-			if (result?.cancel) {
-				return { cancelled: true };
-			}
-
-			if (result?.summary && options.summarize) {
-				extensionSummary = result.summary;
-				fromExtension = true;
-			}
-
-			// Allow extensions to override instructions and label
-			if (result?.customInstructions !== undefined) {
-				customInstructions = result.customInstructions;
-			}
-			if (result?.replaceInstructions !== undefined) {
-				replaceInstructions = result.replaceInstructions;
-			}
-			if (result?.label !== undefined) {
-				label = result.label;
-			}
-		}
-
-		// Run default summarizer if needed
 		let summaryText: string | undefined;
 		let summaryDetails: unknown;
-		if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
-			const model = this.model!;
-			const { apiKey, headers } = await this._getRequiredRequestAuth(model);
-			const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
-			const result = await generateBranchSummary(entriesToSummarize, {
-				model,
-				apiKey,
-				headers,
-				signal: this._branchSummaryAbortController.signal,
-				customInstructions,
-				replaceInstructions,
-				reserveTokens: branchSummarySettings.reserveTokens,
-			});
-			this._branchSummaryAbortController = undefined;
-			if (result.aborted) {
-				return { cancelled: true, aborted: true };
+
+		try {
+			// Emit session_before_tree event
+			if (this._extensionRunner.hasHandlers("session_before_tree")) {
+				const result = (await this._extensionRunner.emit({
+					type: "session_before_tree",
+					preparation,
+					signal: branchSummaryAbortController.signal,
+				})) as SessionBeforeTreeResult | undefined;
+
+				if (result?.cancel) {
+					return { cancelled: true };
+				}
+
+				if (result?.summary && options.summarize) {
+					extensionSummary = result.summary;
+					fromExtension = true;
+				}
+
+				// Allow extensions to override instructions and label
+				if (result?.customInstructions !== undefined) {
+					customInstructions = result.customInstructions;
+				}
+				if (result?.replaceInstructions !== undefined) {
+					replaceInstructions = result.replaceInstructions;
+				}
+				if (result?.label !== undefined) {
+					label = result.label;
+				}
 			}
-			if (result.error) {
-				throw new Error(result.error);
+
+			// Run default summarizer if needed
+			if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
+				const model = this.model!;
+				const { apiKey, headers } = await this._getRequiredRequestAuth(model);
+				const branchSummarySettings = this.settingsManager.getBranchSummarySettings();
+				const result = await generateBranchSummary(entriesToSummarize, {
+					model,
+					apiKey,
+					headers,
+					signal: branchSummaryAbortController.signal,
+					customInstructions,
+					replaceInstructions,
+					reserveTokens: branchSummarySettings.reserveTokens,
+				});
+				if (result.aborted) {
+					return { cancelled: true, aborted: true };
+				}
+				if (result.error) {
+					throw new Error(result.error);
+				}
+				summaryText = result.summary;
+				summaryDetails = {
+					readFiles: result.readFiles || [],
+					modifiedFiles: result.modifiedFiles || [],
+				};
+			} else if (extensionSummary) {
+				summaryText = extensionSummary.summary;
+				summaryDetails = extensionSummary.details;
 			}
-			summaryText = result.summary;
-			summaryDetails = {
-				readFiles: result.readFiles || [],
-				modifiedFiles: result.modifiedFiles || [],
-			};
-		} else if (extensionSummary) {
-			summaryText = extensionSummary.summary;
-			summaryDetails = extensionSummary.details;
+		} finally {
+			clearBranchSummaryAbortController();
 		}
 
 		// Determine the new leaf position based on target type
