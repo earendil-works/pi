@@ -11,7 +11,7 @@ import type {
 	ChatCompletionToolMessageParam,
 } from "openai/resources/chat/completions.js";
 import { getEnvApiKey } from "../env-api-keys.js";
-import { calculateCost, supportsXhigh } from "../models.js";
+import { calculateCost, supportsXhigh, validateModel } from "../models.js";
 import type {
 	AssistantMessage,
 	CacheRetention,
@@ -1018,6 +1018,12 @@ function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"] | str
  * Returns a fully resolved OpenAICompletionsCompat object with all fields set.
  */
 function detectCompat(model: Model<"openai-completions">): ResolvedOpenAICompletionsCompat {
+	validateModel(
+		model,
+		"detectCompat",
+		"Try running with --no-session or clear the session directory.",
+	);
+
 	const provider = model.provider;
 	const baseUrl = model.baseUrl;
 

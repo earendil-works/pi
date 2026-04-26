@@ -1,6 +1,35 @@
 import { MODELS } from "./models.generated.js";
 import type { Api, KnownProvider, Model, Usage } from "./types.js";
 
+/**
+ * Validates that a model object is properly defined with required fields.
+ * Throws a descriptive error if validation fails.
+ * @param model The model to validate
+ * @param context Description of where the validation is happening (e.g., function name)
+ * @param suggestion Optional suggestion for how to fix the issue
+ * @throws Error if model is undefined or missing required fields
+ */
+export function validateModel<TApi extends Api>(
+	model: Model<TApi> | undefined,
+	context: string,
+	suggestion?: string,
+): asserts model is Model<TApi> {
+	if (!model) {
+		const baseMessage = `${context}: model is undefined.`;
+		const defaultSuggestion =
+			"This may happen when restoring a session with a provider/model that no longer exists in models.json.";
+		throw new Error(
+			suggestion ? `${baseMessage} ${suggestion}` : `${baseMessage} ${defaultSuggestion}`,
+		);
+	}
+	if (!model.id) {
+		throw new Error(
+			`${context}: model.id is undefined for provider "${model.provider}". ` +
+				"This indicates an invalid model configuration.",
+		);
+	}
+}
+
 const modelRegistry: Map<string, Map<string, Model<Api>>> = new Map();
 
 // Initialize registry from MODELS on module load
@@ -54,6 +83,8 @@ export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage
  * - Opus 4.6+ models (xhigh maps to adaptive effort "max" on Anthropic-compatible providers)
  */
 export function supportsXhigh<TApi extends Api>(model: Model<TApi>): boolean {
+	validateModel(model, "supportsXhigh");
+
 	if (
 		model.id.includes("gpt-5.2") ||
 		model.id.includes("gpt-5.3") ||
