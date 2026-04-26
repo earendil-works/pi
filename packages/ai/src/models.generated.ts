@@ -2539,7 +2539,7 @@ export const MODELS = {
 				cacheRead: 0.5,
 				cacheWrite: 0,
 			},
-			contextWindow: 272000,
+			contextWindow: 1050000,
 			maxTokens: 128000,
 		} satisfies Model<"azure-openai-responses">,
 		"o1": {
@@ -6336,7 +6336,7 @@ export const MODELS = {
 				cacheRead: 0.5,
 				cacheWrite: 0,
 			},
-			contextWindow: 272000,
+			contextWindow: 1050000,
 			maxTokens: 128000,
 		} satisfies Model<"openai-responses">,
 		"o1": {
@@ -6644,7 +6644,7 @@ export const MODELS = {
 				cacheRead: 0.5,
 				cacheWrite: 0,
 			},
-			contextWindow: 272000,
+			contextWindow: 400000,
 			maxTokens: 128000,
 		} satisfies Model<"openai-codex-responses">,
 	},

@@ -772,8 +772,12 @@ async function generateModels() {
 			candidate.contextWindow = 272000;
 			candidate.maxTokens = 128000;
 		}
-		if (candidate.provider === "openai" && (candidate.id === "gpt-5.4" || candidate.id === "gpt-5.5")) {
+		if (candidate.provider === "openai" && candidate.id === "gpt-5.4") {
 			candidate.contextWindow = 272000;
+			candidate.maxTokens = 128000;
+		}
+		if (candidate.provider === "openai" && candidate.id === "gpt-5.5") {
+			candidate.contextWindow = 1050000;
 			candidate.maxTokens = 128000;
 		}
 		// Keep selected OpenRouter model metadata stable until upstream settles.
@@ -1096,9 +1100,10 @@ async function generateModels() {
 
 	// OpenAI Codex (ChatGPT OAuth) models
 	// NOTE: These are not fetched from models.dev; we keep a small, explicit list to avoid aliases.
-	// Context window is based on observed server limits (400s above ~272k), not marketing numbers.
+	// Older Codex routes are based on observed server limits (400s above ~272k), not marketing numbers.
 	const CODEX_BASE_URL = "https://chatgpt.com/backend-api";
 	const CODEX_CONTEXT = 272000;
+	const CODEX_GPT55_CONTEXT = 400000;
 	const CODEX_MAX_TOKENS = 128000;
 	const codexModels: Model<"openai-codex-responses">[] = [
 		{
@@ -1194,7 +1199,7 @@ async function generateModels() {
 			reasoning: true,
 			input: ["text", "image"],
 			cost: { input: 5, output: 30, cacheRead: 0.5, cacheWrite: 0 },
-			contextWindow: CODEX_CONTEXT,
+			contextWindow: CODEX_GPT55_CONTEXT,
 			maxTokens: CODEX_MAX_TOKENS,
 		},
 		{
