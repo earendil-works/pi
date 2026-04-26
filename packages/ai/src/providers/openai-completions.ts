@@ -723,6 +723,7 @@ export function convertMessages(
 	}
 
 	let lastRole: string | null = null;
+	let lastReasoningContent: string | undefined;
 
 	for (let i = 0; i < transformedMessages.length; i++) {
 		const msg = transformedMessages[i];
@@ -769,6 +770,7 @@ export function convertMessages(
 				role: "assistant",
 				content: compat.requiresAssistantAfterToolResult ? "" : null,
 			};
+			const requiresReasoningContent = compat.requiresReasoningContentOnAssistantMessages && model.reasoning;
 
 			const assistantTextParts = msg.content
 				.filter(isTextContentBlock)
@@ -786,6 +788,13 @@ export function convertMessages(
 				.filter(isThinkingContentBlock)
 				.filter((block) => block.thinking.trim().length > 0);
 			if (nonEmptyThinkingBlocks.length > 0) {
+				const reasoningContent = nonEmptyThinkingBlocks
+					.map((block) => sanitizeSurrogates(block.thinking))
+					.join("\n");
+				if (requiresReasoningContent) {
+					(assistantMsg as { reasoning_content?: string }).reasoning_content = reasoningContent;
+					lastReasoningContent = reasoningContent;
+				}
 				if (compat.requiresThinkingAsText) {
 					// Convert thinking blocks to plain text (no tags to avoid model mimicking them)
 					const thinkingText = nonEmptyThinkingBlocks
@@ -805,7 +814,7 @@ export function convertMessages(
 					// Use the signature from the first thinking block if available (for llama.cpp server + gpt-oss)
 					const signature = nonEmptyThinkingBlocks[0].thinkingSignature;
 					if (signature && signature.length > 0) {
-						(assistantMsg as any)[signature] = nonEmptyThinkingBlocks.map((block) => block.thinking).join("\n");
+						(assistantMsg as any)[signature] = reasoningContent;
 					}
 				}
 			} else if (assistantText.length > 0) {
@@ -815,6 +824,9 @@ export function convertMessages(
 				// NVIDIA NIM) to mirror the content-block structure literally in their
 				// output, producing recursive nesting like [{'type':'text','text':'[{...}]'}].
 				assistantMsg.content = assistantText;
+				if (requiresReasoningContent && lastRole === "toolResult" && lastReasoningContent) {
+					(assistantMsg as { reasoning_content?: string }).reasoning_content = lastReasoningContent;
+				}
 			}
 
 			const toolCalls = msg.content.filter(isToolCallBlock);
@@ -840,10 +852,17 @@ export function convertMessages(
 				if (reasoningDetails.length > 0) {
 					(assistantMsg as any).reasoning_details = reasoningDetails;
 				}
+				if (
+					requiresReasoningContent &&
+					lastRole === "toolResult" &&
+					lastReasoningContent &&
+					(assistantMsg as { reasoning_content?: string }).reasoning_content === undefined
+				) {
+					(assistantMsg as { reasoning_content?: string }).reasoning_content = lastReasoningContent;
+				}
 			}
 			if (
-				compat.requiresReasoningContentOnAssistantMessages &&
-				model.reasoning &&
+				requiresReasoningContent &&
 				(assistantMsg as { reasoning_content?: string }).reasoning_content === undefined
 			) {
 				(assistantMsg as { reasoning_content?: string }).reasoning_content = "";
