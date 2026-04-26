@@ -1,0 +1,8 @@
+{
+    "name": "Pi Coding Agent Development",
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+    "features": {
+        "ghcr.io/devcontainers/features/node:1": { "version": "24" }
+    },
+    "postCreateCommand": "npm install -g @mariozechner/pi-coding-agent && npm install -g @anthropic-ai/claude-code"
+}
