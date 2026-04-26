@@ -191,6 +191,10 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
 | `id` | Yes | — | Model identifier (passed to the API) |
 | `name` | No | `id` | Human-readable model label. Used for matching (`--model` patterns) and shown in model details/status text. |
 | `api` | No | provider's `api` | Override provider's API for this model |
+| `baseUrl` | No | provider's `baseUrl` | Override provider endpoint for this model |
+| `apiKey` | No | provider's `apiKey` | Override provider API key for this model |
+| `headers` | No | none | Extra request headers for this model |
+| `authHeader` | No | provider's `authHeader` | Override auth header behavior for this model |
 | `reasoning` | No | `false` | Supports extended thinking |
 | `input` | No | `["text"]` | Input types: `["text"]` or `["text", "image"]` |
 | `contextWindow` | No | `128000` | Context window size in tokens |

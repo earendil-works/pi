@@ -139,6 +139,8 @@ const ModelDefinitionSchema = Type.Object({
 	name: Type.Optional(Type.String({ minLength: 1 })),
 	api: Type.Optional(Type.String({ minLength: 1 })),
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
+	apiKey: Type.Optional(Type.String({ minLength: 1 })),
+	authHeader: Type.Optional(Type.Boolean()),
 	reasoning: Type.Optional(Type.Boolean()),
 	input: Type.Optional(Type.Array(Type.Union([Type.Literal("text"), Type.Literal("image")]))),
 	cost: Type.Optional(
@@ -315,7 +317,7 @@ export const clearApiKeyCache = clearConfigValueCache;
 export class ModelRegistry {
 	private models: Model<Api>[] = [];
 	private providerRequestConfigs: Map<string, ProviderRequestConfig> = new Map();
-	private modelRequestHeaders: Map<string, Record<string, string>> = new Map();
+	private modelRequestConfigs: Map<string, ProviderRequestConfig> = new Map();
 	private registeredProviders: Map<string, ProviderConfigInput> = new Map();
 	private loadError: string | undefined = undefined;
 
@@ -339,7 +341,7 @@ export class ModelRegistry {
 	 */
 	refresh(): void {
 		this.providerRequestConfigs.clear();
-		this.modelRequestHeaders.clear();
+		this.modelRequestConfigs.clear();
 		this.loadError = undefined;
 
 		// Ensure dynamic API/OAuth registrations are rebuilt from current provider state.
@@ -474,7 +476,7 @@ export class ModelRegistry {
 				if (providerConfig.modelOverrides) {
 					modelOverrides.set(providerName, new Map(Object.entries(providerConfig.modelOverrides)));
 					for (const [modelId, modelOverride] of Object.entries(providerConfig.modelOverrides)) {
-						this.storeModelHeaders(providerName, modelId, modelOverride.headers);
+						this.storeModelRequestConfig(providerName, modelId, modelOverride);
 					}
 				}
 			}
@@ -508,12 +510,22 @@ export class ModelRegistry {
 					);
 				}
 			} else if (!isBuiltIn) {
-				// Non-built-in providers with custom models require endpoint + auth.
+				// Non-built-in providers with custom models require endpoint + auth at provider or model level.
 				if (!providerConfig.baseUrl) {
-					throw new Error(`Provider ${providerName}: "baseUrl" is required when defining custom models.`);
+					const modelWithoutBaseUrl = models.find((modelDef) => !modelDef.baseUrl);
+					if (modelWithoutBaseUrl) {
+						throw new Error(
+							`Provider ${providerName}, model ${modelWithoutBaseUrl.id}: "baseUrl" is required when provider "baseUrl" is not set.`,
+						);
+					}
 				}
 				if (!providerConfig.apiKey) {
-					throw new Error(`Provider ${providerName}: "apiKey" is required when defining custom models.`);
+					const modelWithoutApiKey = models.find((modelDef) => !modelDef.apiKey);
+					if (modelWithoutApiKey) {
+						throw new Error(
+							`Provider ${providerName}, model ${modelWithoutApiKey.id}: "apiKey" is required when provider "apiKey" is not set.`,
+						);
+					}
 				}
 			}
 			// Built-in providers with custom models: baseUrl/apiKey/api are optional,
@@ -569,7 +581,7 @@ export class ModelRegistry {
 				if (!baseUrl) continue;
 
 				const compat = mergeCompat(providerConfig.compat, modelDef.compat);
-				this.storeModelHeaders(providerName, modelDef.id, modelDef.headers);
+				this.storeModelRequestConfig(providerName, modelDef.id, modelDef);
 
 				const defaultCost = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
 				models.push({
@@ -619,8 +631,10 @@ export class ModelRegistry {
 	 * Get API key for a model.
 	 */
 	hasConfiguredAuth(model: Model<Api>): boolean {
+		const modelConfig = this.modelRequestConfigs.get(this.getModelRequestKey(model.provider, model.id));
 		return (
 			this.authStorage.hasAuth(model.provider) ||
+			modelConfig?.apiKey !== undefined ||
 			this.providerRequestConfigs.get(model.provider)?.apiKey !== undefined
 		);
 	}
@@ -648,13 +662,26 @@ export class ModelRegistry {
 		});
 	}
 
-	private storeModelHeaders(providerName: string, modelId: string, headers?: Record<string, string>): void {
+	private storeModelRequestConfig(
+		providerName: string,
+		modelId: string,
+		config: {
+			apiKey?: string;
+			headers?: Record<string, string>;
+			authHeader?: boolean;
+		},
+	): void {
 		const key = this.getModelRequestKey(providerName, modelId);
-		if (!headers || Object.keys(headers).length === 0) {
-			this.modelRequestHeaders.delete(key);
+		if (!config.apiKey && !config.headers && !config.authHeader) {
+			this.modelRequestConfigs.delete(key);
 			return;
 		}
-		this.modelRequestHeaders.set(key, headers);
+
+		this.modelRequestConfigs.set(key, {
+			apiKey: config.apiKey,
+			headers: config.headers,
+			authHeader: config.authHeader,
+		});
 	}
 
 	/**
@@ -663,25 +690,27 @@ export class ModelRegistry {
 	async getApiKeyAndHeaders(model: Model<Api>): Promise<ResolvedRequestAuth> {
 		try {
 			const providerConfig = this.providerRequestConfigs.get(model.provider);
+			const modelConfig = this.modelRequestConfigs.get(this.getModelRequestKey(model.provider, model.id));
 			const apiKeyFromAuthStorage = await this.authStorage.getApiKey(model.provider, { includeFallback: false });
 			const apiKey =
 				apiKeyFromAuthStorage ??
+				(modelConfig?.apiKey
+					? resolveConfigValueOrThrow(modelConfig.apiKey, `API key for model "${model.provider}/${model.id}"`)
+					: undefined) ??
 				(providerConfig?.apiKey
 					? resolveConfigValueOrThrow(providerConfig.apiKey, `API key for provider "${model.provider}"`)
 					: undefined);
 
 			const providerHeaders = resolveHeadersOrThrow(providerConfig?.headers, `provider "${model.provider}"`);
-			const modelHeaders = resolveHeadersOrThrow(
-				this.modelRequestHeaders.get(this.getModelRequestKey(model.provider, model.id)),
-				`model "${model.provider}/${model.id}"`,
-			);
+			const modelHeaders = resolveHeadersOrThrow(modelConfig?.headers, `model "${model.provider}/${model.id}"`);
 
 			let headers =
 				model.headers || providerHeaders || modelHeaders
 					? { ...model.headers, ...providerHeaders, ...modelHeaders }
 					: undefined;
 
-			if (providerConfig?.authHeader) {
+			const useAuthHeader = modelConfig?.authHeader ?? providerConfig?.authHeader;
+			if (useAuthHeader) {
 				if (!apiKey) {
 					return { ok: false, error: `No API key found for "${model.provider}"` };
 				}
@@ -712,8 +741,15 @@ export class ModelRegistry {
 		}
 
 		const providerApiKey = this.providerRequestConfigs.get(provider)?.apiKey;
-		if (!providerApiKey) {
+		const hasModelApiKey = [...this.modelRequestConfigs.entries()].some(
+			([key, config]) => key.startsWith(`${provider}:`) && config.apiKey,
+		);
+		if (!providerApiKey && !hasModelApiKey) {
 			return authStatus;
+		}
+
+		if (!providerApiKey) {
+			return { configured: true, source: "models_json_key" };
 		}
 
 		if (providerApiKey.startsWith("!")) {
@@ -805,10 +841,20 @@ export class ModelRegistry {
 		}
 
 		if (!config.baseUrl) {
-			throw new Error(`Provider ${providerName}: "baseUrl" is required when defining models.`);
+			const modelWithoutBaseUrl = config.models.find((modelDef) => !modelDef.baseUrl);
+			if (modelWithoutBaseUrl) {
+				throw new Error(
+					`Provider ${providerName}, model ${modelWithoutBaseUrl.id}: "baseUrl" is required when provider "baseUrl" is not set.`,
+				);
+			}
 		}
 		if (!config.apiKey && !config.oauth) {
-			throw new Error(`Provider ${providerName}: "apiKey" or "oauth" is required when defining models.`);
+			const modelWithoutApiKey = config.models.find((modelDef) => !modelDef.apiKey);
+			if (modelWithoutApiKey) {
+				throw new Error(
+					`Provider ${providerName}, model ${modelWithoutApiKey.id}: "apiKey" is required when provider "apiKey" or "oauth" is not set.`,
+				);
+			}
 		}
 
 		for (const modelDef of config.models) {
@@ -851,14 +897,14 @@ export class ModelRegistry {
 			// Parse and add new models
 			for (const modelDef of config.models) {
 				const api = modelDef.api || config.api;
-				this.storeModelHeaders(providerName, modelDef.id, modelDef.headers);
+				this.storeModelRequestConfig(providerName, modelDef.id, modelDef);
 
 				this.models.push({
 					id: modelDef.id,
 					name: modelDef.name,
 					api: api as Api,
 					provider: providerName,
-					baseUrl: config.baseUrl!,
+					baseUrl: modelDef.baseUrl ?? config.baseUrl!,
 					reasoning: modelDef.reasoning,
 					input: modelDef.input as ("text" | "image")[],
 					cost: modelDef.cost,
@@ -906,6 +952,8 @@ export interface ProviderConfigInput {
 		name: string;
 		api?: Api;
 		baseUrl?: string;
+		apiKey?: string;
+		authHeader?: boolean;
 		reasoning: boolean;
 		input: ("text" | "image")[];
 		cost: { input: number; output: number; cacheRead: number; cacheWrite: number };

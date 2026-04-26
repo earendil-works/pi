@@ -527,6 +527,117 @@ describe("ModelRegistry", () => {
 			expect(glm5?.baseUrl).toBe("https://opencode.ai/zen/go/v1");
 		});
 
+		test("non-built-in provider accepts endpoint and apiKey entirely at model level", async () => {
+			writeRawModelsJson({
+				"mixed-provider": {
+					models: [
+						{
+							id: "model-a",
+							api: "openai-responses",
+							baseUrl: "https://model-a.test/v1",
+							apiKey: "KEY_A",
+							reasoning: true,
+							input: ["text", "image"],
+							contextWindow: 272000,
+							maxTokens: 128000,
+						},
+						{
+							id: "model-b",
+							api: "google-generative-ai",
+							baseUrl: "https://model-b.test/v1beta",
+							apiKey: "KEY_B",
+							headers: { "User-Agent": "ModelBClient/1.0" },
+							reasoning: true,
+							input: ["text", "image"],
+							contextWindow: 1048576,
+							maxTokens: 65536,
+						},
+					],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			expect(registry.getError()).toBeUndefined();
+
+			const modelA = registry.find("mixed-provider", "model-a");
+			const modelB = registry.find("mixed-provider", "model-b");
+
+			expect(modelA?.baseUrl).toBe("https://model-a.test/v1");
+			expect(modelA?.api).toBe("openai-responses");
+			expect(modelB?.baseUrl).toBe("https://model-b.test/v1beta");
+			expect(modelB?.api).toBe("google-generative-ai");
+			expect(
+				registry
+					.getAvailable()
+					.filter((m) => m.provider === "mixed-provider")
+					.map((m) => m.id),
+			).toEqual(["model-a", "model-b"]);
+
+			expect(await registry.getApiKeyAndHeaders(modelA!)).toEqual({ ok: true, apiKey: "KEY_A" });
+			expect(await registry.getApiKeyAndHeaders(modelB!)).toEqual({
+				ok: true,
+				apiKey: "KEY_B",
+				headers: { "User-Agent": "ModelBClient/1.0" },
+			});
+		});
+
+		test("model-level apiKey overrides provider-level apiKey", async () => {
+			writeRawModelsJson({
+				"mixed-provider": {
+					baseUrl: "https://provider.test/v1",
+					apiKey: "PROVIDER_KEY",
+					api: "openai-completions",
+					models: [
+						{
+							id: "model-a",
+							apiKey: "MODEL_A_KEY",
+							reasoning: false,
+							input: ["text"],
+						},
+						{
+							id: "model-b",
+							reasoning: false,
+							input: ["text"],
+						},
+					],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const modelA = registry.find("mixed-provider", "model-a");
+			const modelB = registry.find("mixed-provider", "model-b");
+
+			expect(await registry.getApiKeyAndHeaders(modelA!)).toEqual({ ok: true, apiKey: "MODEL_A_KEY" });
+			expect(await registry.getApiKeyAndHeaders(modelB!)).toEqual({ ok: true, apiKey: "PROVIDER_KEY" });
+		});
+
+		test("model-level authHeader uses model apiKey", async () => {
+			writeRawModelsJson({
+				custom: {
+					models: [
+						{
+							id: "model-a",
+							api: "openai-completions",
+							baseUrl: "https://example.com/v1",
+							apiKey: "MODEL_A_KEY",
+							authHeader: true,
+							reasoning: false,
+							input: ["text"],
+						},
+					],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const model = registry.find("custom", "model-a");
+
+			expect(await registry.getApiKeyAndHeaders(model!)).toEqual({
+				ok: true,
+				apiKey: "MODEL_A_KEY",
+				headers: { Authorization: "Bearer MODEL_A_KEY" },
+			});
+		});
+
 		test("modelOverrides still apply when provider also defines models", () => {
 			writeRawModelsJson({
 				openrouter: {
@@ -1005,6 +1116,49 @@ describe("ModelRegistry", () => {
 					"custom-a",
 					"custom-b",
 				]);
+			});
+
+			test("dynamic provider accepts model-level baseUrl and apiKey", async () => {
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+				registry.registerProvider("mixed-provider", {
+					api: "openai-completions",
+					models: [
+						{
+							id: "model-a",
+							name: "Model A",
+							api: "openai-responses",
+							baseUrl: "https://model-a.test/v1",
+							apiKey: "KEY_A",
+							reasoning: true,
+							input: ["text", "image"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 272000,
+							maxTokens: 128000,
+						},
+						{
+							id: "model-b",
+							name: "Model B",
+							api: "google-generative-ai",
+							baseUrl: "https://model-b.test/v1beta",
+							apiKey: "KEY_B",
+							reasoning: true,
+							input: ["text", "image"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 1048576,
+							maxTokens: 65536,
+						},
+					],
+				});
+				registry.refresh();
+
+				const modelA = registry.find("mixed-provider", "model-a");
+				const modelB = registry.find("mixed-provider", "model-b");
+
+				expect(modelA?.baseUrl).toBe("https://model-a.test/v1");
+				expect(modelB?.baseUrl).toBe("https://model-b.test/v1beta");
+				expect(await registry.getApiKeyAndHeaders(modelA!)).toEqual({ ok: true, apiKey: "KEY_A" });
+				expect(await registry.getApiKeyAndHeaders(modelB!)).toEqual({ ok: true, apiKey: "KEY_B" });
 			});
 
 			test("baseUrl-only override keeps custom provider models after refresh", () => {
