@@ -7,7 +7,7 @@ import {
 	type ThinkingConfig,
 	ThinkingLevel,
 } from "@google/genai";
-import { calculateCost } from "../models.js";
+import { calculateCost, validateModel } from "../models.js";
 import type {
 	Api,
 	AssistantMessage,
@@ -65,6 +65,8 @@ export const streamGoogleVertex: StreamFunction<"google-vertex", GoogleVertexOpt
 	context: Context,
 	options?: GoogleVertexOptions,
 ): AssistantMessageEventStream => {
+	validateModel(model, "streamGoogleVertex");
+
 	const stream = new AssistantMessageEventStream();
 
 	(async () => {

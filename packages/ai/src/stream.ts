@@ -1,6 +1,7 @@
 import "./providers/register-builtins.js";
 
 import { getApiProvider } from "./api-registry.js";
+import { validateModel } from "./models.js";
 import type {
 	Api,
 	AssistantMessage,
@@ -27,6 +28,7 @@ export function stream<TApi extends Api>(
 	context: Context,
 	options?: ProviderStreamOptions,
 ): AssistantMessageEventStream {
+	validateModel(model, "stream");
 	const provider = resolveApiProvider(model.api);
 	return provider.stream(model, context, options as StreamOptions);
 }
@@ -45,6 +47,7 @@ export function streamSimple<TApi extends Api>(
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
+	validateModel(model, "streamSimple");
 	const provider = resolveApiProvider(model.api);
 	return provider.streamSimple(model, context, options);
 }

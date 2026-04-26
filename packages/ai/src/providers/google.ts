@@ -5,7 +5,7 @@ import {
 	type ThinkingConfig,
 } from "@google/genai";
 import { getEnvApiKey } from "../env-api-keys.js";
-import { calculateCost } from "../models.js";
+import { calculateCost, validateModel } from "../models.js";
 import type {
 	Api,
 	AssistantMessage,
@@ -50,6 +50,8 @@ export const streamGoogle: StreamFunction<"google-generative-ai", GoogleOptions>
 	context: Context,
 	options?: GoogleOptions,
 ): AssistantMessageEventStream => {
+	validateModel(model, "streamGoogle");
+
 	const stream = new AssistantMessageEventStream();
 
 	(async () => {

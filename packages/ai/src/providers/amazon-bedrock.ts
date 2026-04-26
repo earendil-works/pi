@@ -21,7 +21,7 @@ import {
 	ToolResultStatus,
 } from "@aws-sdk/client-bedrock-runtime";
 import type { DocumentType } from "@smithy/types";
-import { calculateCost } from "../models.js";
+import { calculateCost, validateModel } from "../models.js";
 import type {
 	Api,
 	AssistantMessage,
@@ -89,6 +89,8 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 	context: Context,
 	options: BedrockOptions = {},
 ): AssistantMessageEventStream => {
+	validateModel(model, "streamBedrock");
+
 	const stream = new AssistantMessageEventStream();
 
 	(async () => {
@@ -313,6 +315,8 @@ export const streamSimpleBedrock: StreamFunction<"bedrock-converse-stream", Simp
 	context: Context,
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream => {
+	validateModel(model, "streamSimpleBedrock");
+
 	const base = buildBaseOptions(model, options, undefined);
 	if (!options?.reasoning) {
 		return streamBedrock(model, context, { ...base, reasoning: undefined } satisfies BedrockOptions);

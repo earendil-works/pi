@@ -212,10 +212,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			model = restoredModel;
 		}
 		if (!model) {
-			modelFallbackMessage =
-				`Could not restore model ${existingSession.model.provider}/${existingSession.model.modelId} ` +
-				`(model no longer exists or has been renamed). ` +
-				`Use --no-session to start a fresh session, or update models.json to include this model.`;
+			modelFallbackMessage = `Could not restore model ${existingSession.model.provider}/${existingSession.model.modelId}`;
 		}
 	}
 

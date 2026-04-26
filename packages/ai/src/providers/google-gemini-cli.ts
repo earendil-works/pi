@@ -5,7 +5,7 @@
  */
 
 import type { Content, ThinkingConfig } from "@google/genai";
-import { calculateCost } from "../models.js";
+import { calculateCost, validateModel } from "../models.js";
 import type {
 	Api,
 	AssistantMessage,
@@ -323,6 +323,8 @@ export const streamGoogleGeminiCli: StreamFunction<"google-gemini-cli", GoogleGe
 	context: Context,
 	options?: GoogleGeminiCliOptions,
 ): AssistantMessageEventStream => {
+	validateModel(model, "streamGoogleGeminiCli");
+
 	const stream = new AssistantMessageEventStream();
 
 	(async () => {
