@@ -1832,7 +1832,16 @@ export class DefaultPackageManager implements PackageManager {
 		if (this.globalNpmRoot && this.globalNpmRootCommandKey === commandKey) {
 			return this.globalNpmRoot;
 		}
-		const result = this.runNpmCommandSync(["root", "-g"]);
+
+		let result: string;
+		if (npmCommand.command === "bun") {
+			// bun: extract path from `bun pm ls -g` output (first line like "/home/user/.bun/install/global node_modules")
+			const output = this.runCommandSync("bun", ["pm", "ls", "-g"]);
+			result = output.split(" node_modules")[0].trim();
+		} else {
+			result = this.runNpmCommandSync(["root", "-g"]);
+		}
+
 		this.globalNpmRoot = result.trim();
 		this.globalNpmRootCommandKey = commandKey;
 		return this.globalNpmRoot;
