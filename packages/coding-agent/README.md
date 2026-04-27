@@ -1,6 +1,10 @@
 <p align="center">
   <a href="https://pi.dev">
-    <img src="https://pi.dev/logo.svg" alt="pi logo" width="128">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://pi.dev/logo.svg">
+      <source media="(prefers-color-scheme: light)" srcset="https://huggingface.co/buckets/julien-c/my-training-bucket/resolve/pi-logo-dark.svg">
+      <img alt="pi logo" src="https://pi.dev/logo.svg" width="128">
+    </picture>
   </a>
 </p>
 <p align="center">
