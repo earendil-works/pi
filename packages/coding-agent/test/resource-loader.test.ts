@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -154,6 +154,36 @@ Project skill`,
 
 			const theme = loader.getThemes().themes.find((t) => t.name === "collision-theme");
 			expect(theme?.sourcePath).toBe(projectThemePath);
+		});
+
+		it("should load symlinked user and project extensions once", async () => {
+			const sharedExtDir = join(tempDir, "shared-extensions");
+			mkdirSync(sharedExtDir, { recursive: true });
+			writeFileSync(
+				join(sharedExtDir, "shared.ts"),
+				`export default function(pi) {
+	pi.registerCommand("shared", {
+		description: "shared command",
+		handler: async () => {},
+	});
+}`,
+			);
+
+			mkdirSync(agentDir, { recursive: true });
+			mkdirSync(join(cwd, ".pi"), { recursive: true });
+			symlinkSync(sharedExtDir, join(agentDir, "extensions"), "dir");
+			symlinkSync(sharedExtDir, join(cwd, ".pi", "extensions"), "dir");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			const extensionsResult = loader.getExtensions();
+			expect(extensionsResult.extensions).toHaveLength(1);
+			expect(extensionsResult.errors).toEqual([]);
+
+			// mergePaths processes project paths before user paths, so the project
+			// alias is the canonical survivor.
+			expect(extensionsResult.extensions[0].path).toBe(join(cwd, ".pi", "extensions", "shared.ts"));
 		});
 
 		it("should keep both extensions loaded when command names collide", async () => {

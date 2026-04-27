@@ -158,6 +158,63 @@ Content`,
 			expect(result.prompts.some((r) => r.path === promptPath && !r.enabled)).toBe(true);
 		});
 
+		it("should resolve symlinked user and project resources once", async () => {
+			const sharedDir = join(tempDir, "shared-resources");
+			const sharedExtensionsDir = join(sharedDir, "extensions");
+			const sharedSkillsDir = join(sharedDir, "skills");
+			const sharedPromptsDir = join(sharedDir, "prompts");
+			const sharedThemesDir = join(sharedDir, "themes");
+			mkdirSync(sharedExtensionsDir, { recursive: true });
+			mkdirSync(sharedSkillsDir, { recursive: true });
+			mkdirSync(sharedPromptsDir, { recursive: true });
+			mkdirSync(sharedThemesDir, { recursive: true });
+
+			writeFileSync(join(sharedExtensionsDir, "shared.ts"), "export default function() {}");
+			mkdirSync(join(sharedSkillsDir, "shared-skill"), { recursive: true });
+			writeFileSync(
+				join(sharedSkillsDir, "shared-skill", "SKILL.md"),
+				`---
+name: shared-skill
+description: Shared skill
+---
+Content`,
+			);
+			writeFileSync(join(sharedPromptsDir, "shared.md"), "Shared prompt");
+			writeFileSync(join(sharedThemesDir, "shared.json"), JSON.stringify({ name: "shared-theme" }));
+
+			mkdirSync(join(agentDir), { recursive: true });
+			mkdirSync(join(tempDir, ".pi"), { recursive: true });
+			symlinkSync(sharedExtensionsDir, join(agentDir, "extensions"), "dir");
+			symlinkSync(sharedSkillsDir, join(agentDir, "skills"), "dir");
+			symlinkSync(sharedPromptsDir, join(agentDir, "prompts"), "dir");
+			symlinkSync(sharedThemesDir, join(agentDir, "themes"), "dir");
+			symlinkSync(sharedExtensionsDir, join(tempDir, ".pi", "extensions"), "dir");
+			symlinkSync(sharedSkillsDir, join(tempDir, ".pi", "skills"), "dir");
+			symlinkSync(sharedPromptsDir, join(tempDir, ".pi", "prompts"), "dir");
+			symlinkSync(sharedThemesDir, join(tempDir, ".pi", "themes"), "dir");
+
+			const result = await packageManager.resolve();
+
+			expect({
+				extensions: result.extensions.length,
+				skills: result.skills.length,
+				prompts: result.prompts.length,
+				themes: result.themes.length,
+			}).toEqual({
+				extensions: 1,
+				skills: 1,
+				prompts: 1,
+				themes: 1,
+			});
+
+			// Project auto-discovered has higher precedence than user auto-discovered,
+			// so the surviving entry should be scoped to project.
+			expect(result.extensions[0].metadata.scope).toBe("project");
+			expect(result.skills[0].metadata.scope).toBe("project");
+			expect(result.prompts[0].metadata.scope).toBe("project");
+			expect(result.themes[0].metadata.scope).toBe("project");
+		});
+
 		it("should auto-discover project prompts with overrides", async () => {
 			const promptsDir = join(tempDir, ".pi", "prompts");
 			mkdirSync(promptsDir, { recursive: true });
