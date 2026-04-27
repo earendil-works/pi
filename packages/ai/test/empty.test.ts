@@ -308,6 +308,29 @@ describe("AI Providers Empty Message Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.CLOUDFLARE_API_KEY || !process.env.CLOUDFLARE_ACCOUNT_ID)(
+		"Cloudflare Workers AI Provider Empty Messages",
+		() => {
+			const llm = getModel("cloudflare-workers-ai", "@cf/moonshotai/kimi-k2.6");
+
+			it("should handle empty content array", { retry: 3, timeout: 30000 }, async () => {
+				await testEmptyMessage(llm);
+			});
+
+			it("should handle empty string content", { retry: 3, timeout: 30000 }, async () => {
+				await testEmptyStringMessage(llm);
+			});
+
+			it("should handle whitespace-only content", { retry: 3, timeout: 30000 }, async () => {
+				await testWhitespaceOnlyMessage(llm);
+			});
+
+			it("should handle empty assistant message in conversation", { retry: 3, timeout: 30000 }, async () => {
+				await testEmptyAssistantMessage(llm);
+			});
+		},
+	);
+
 	describe.skipIf(!process.env.HF_TOKEN)("Hugging Face Provider Empty Messages", () => {
 		const llm = getModel("huggingface", "moonshotai/Kimi-K2.5");
 

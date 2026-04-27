@@ -61,6 +61,7 @@ pi
 | Mistral | `MISTRAL_API_KEY` | `mistral` |
 | Groq | `GROQ_API_KEY` | `groq` |
 | Cerebras | `CEREBRAS_API_KEY` | `cerebras` |
+| Cloudflare Workers AI | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`) | `cloudflare-workers-ai` |
 | xAI | `XAI_API_KEY` | `xai` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |
@@ -169,6 +170,18 @@ export AWS_BEDROCK_SKIP_AUTH=1
 # Set if your proxy only supports HTTP/1.1
 export AWS_BEDROCK_FORCE_HTTP1=1
 ```
+
+### Cloudflare Workers AI
+
+`CLOUDFLARE_API_KEY` can be set via `/login`. `CLOUDFLARE_ACCOUNT_ID` must be set as an environment variable.
+
+```bash
+export CLOUDFLARE_API_KEY=...           # or use /login
+export CLOUDFLARE_ACCOUNT_ID=...
+pi --provider cloudflare-workers-ai --model "@cf/moonshotai/kimi-k2.6"
+```
+
+Pi automatically sets `x-session-affinity` for [prefix caching](https://developers.cloudflare.com/workers-ai/features/prompt-caching/) discounts.
 
 ### Google Vertex AI
 
