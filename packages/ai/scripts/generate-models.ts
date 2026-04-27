@@ -3,7 +3,11 @@
 import { writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { CLOUDFLARE_WORKERS_AI_BASE_URL } from "../src/providers/cloudflare.js";
+import {
+	CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL,
+	CLOUDFLARE_AI_GATEWAY_OPENAI_BASE_URL,
+	CLOUDFLARE_WORKERS_AI_BASE_URL,
+} from "../src/providers/cloudflare.js";
 import {
 	Api,
 	type AnthropicMessagesCompat,
@@ -405,6 +409,52 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					maxTokens: m.limit?.output || 4096,
 					headers: { ...CLOUDFLARE_STATIC_HEADERS },
 					compat: { sendSessionAffinityHeaders: true },
+				});
+			}
+		}
+
+		// Process Cloudflare AI Gateway models
+		if (data["cloudflare-ai-gateway"]?.models) {
+			for (const [prefixedId, model] of Object.entries(data["cloudflare-ai-gateway"].models)) {
+				const m = model as ModelsDevModel;
+				if (m.tool_call !== true) continue;
+
+				const slashIdx = prefixedId.indexOf("/");
+				if (slashIdx === -1) continue;
+				const upstream = prefixedId.slice(0, slashIdx);
+				const nativeId = prefixedId.slice(slashIdx + 1);
+
+				let api: "openai-completions" | "openai-responses";
+				let baseUrl: string;
+				let id: string;
+				if (upstream === "openai") {
+					api = "openai-responses";
+					baseUrl = CLOUDFLARE_AI_GATEWAY_OPENAI_BASE_URL;
+					id = nativeId;
+				} else if (upstream === "workers-ai" || upstream === "anthropic") {
+					api = "openai-completions";
+					baseUrl = CLOUDFLARE_AI_GATEWAY_COMPAT_BASE_URL;
+					id = prefixedId;
+				} else {
+					continue;
+				}
+
+				models.push({
+					id,
+					name: m.name || id,
+					api,
+					provider: "cloudflare-ai-gateway",
+					baseUrl,
+					reasoning: m.reasoning === true,
+					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+					cost: {
+						input: m.cost?.input || 0,
+						output: m.cost?.output || 0,
+						cacheRead: m.cost?.cache_read || 0,
+						cacheWrite: m.cost?.cache_write || 0,
+					},
+					contextWindow: m.limit?.context || 4096,
+					maxTokens: m.limit?.output || 4096,
 				});
 			}
 		}

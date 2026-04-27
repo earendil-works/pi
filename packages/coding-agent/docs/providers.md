@@ -61,6 +61,7 @@ pi
 | Mistral | `MISTRAL_API_KEY` | `mistral` |
 | Groq | `GROQ_API_KEY` | `groq` |
 | Cerebras | `CEREBRAS_API_KEY` | `cerebras` |
+| Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_GATEWAY_ID`) | `cloudflare-ai-gateway` |
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`) | `cloudflare-workers-ai` |
 | xAI | `XAI_API_KEY` | `xai` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
@@ -172,6 +173,19 @@ export AWS_BEDROCK_SKIP_AUTH=1
 # Set if your proxy only supports HTTP/1.1
 export AWS_BEDROCK_FORCE_HTTP1=1
 ```
+
+### Cloudflare AI Gateway
+
+`CLOUDFLARE_API_KEY` can be set via `/login`. The account ID and gateway slug must be set as environment variables.
+
+```bash
+export CLOUDFLARE_API_KEY=...           # or use /login
+export CLOUDFLARE_ACCOUNT_ID=...
+export CLOUDFLARE_GATEWAY_ID=...        # create at dash.cloudflare.com → AI → AI Gateway
+pi --provider cloudflare-ai-gateway --model "anthropic/claude-sonnet-4-5"
+```
+
+Routes to OpenAI, Anthropic, and Workers AI through Cloudflare's [Unified API](https://developers.cloudflare.com/ai-gateway/usage/unified-api/) (`/compat`). Workers AI and Anthropic models use the prefixed model id (`workers-ai/@cf/...`, `anthropic/...`). OpenAI reasoning models (gpt-5.x, o-series) need `/v1/responses` which `/compat` doesn't yet expose, so they route through the gateway's `/openai` provider-specific subpath with the native id (`gpt-5.1`). Requires BYOK or unified billing on the gateway for non-Workers-AI upstreams.
 
 ### Cloudflare Workers AI
 

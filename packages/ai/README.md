@@ -57,6 +57,7 @@ Unified LLM API with automatic model discovery, provider configuration, token an
 - **Mistral**
 - **Groq**
 - **Cerebras**
+- **Cloudflare AI Gateway**
 - **Cloudflare Workers AI**
 - **xAI**
 - **OpenRouter**
@@ -1029,6 +1030,7 @@ In Node.js environments, you can set environment variables to avoid passing API 
 | Mistral | `MISTRAL_API_KEY` |
 | Groq | `GROQ_API_KEY` |
 | Cerebras | `CEREBRAS_API_KEY` |
+| Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` + `CLOUDFLARE_GATEWAY_ID` |
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` |
 | xAI | `XAI_API_KEY` |
 | Fireworks | `FIREWORKS_API_KEY` |
