@@ -2286,40 +2286,37 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	private toResolvedPaths(accumulator: ResourceAccumulator): ResolvedPaths {
-		const toResolved = (entries: Map<string, { metadata: PathMetadata; enabled: boolean }>): ResolvedResource[] => {
+		const mapToResolved = (
+			entries: Map<string, { metadata: PathMetadata; enabled: boolean }>,
+		): ResolvedResource[] => {
 			const resolved = Array.from(entries.entries()).map(([path, { metadata, enabled }]) => ({
 				path,
 				enabled,
 				metadata,
 			}));
 			resolved.sort((a, b) => resourcePrecedenceRank(a.metadata) - resourcePrecedenceRank(b.metadata));
-			return resolved;
+
+			const seen = new Set<string>();
+			return resolved.filter((entry) => {
+				let canonicalPath: string;
+				try {
+					// Resolve symlink aliases to detect duplicate files.
+					canonicalPath = realpathSync(entry.path);
+				} catch {
+					// Fallback to raw path to match loadSkills() behavior.
+					canonicalPath = entry.path;
+				}
+				if (seen.has(canonicalPath)) return false;
+				seen.add(canonicalPath);
+				return true;
+			});
 		};
 
-		const seenCanonicalSkillPaths = new Set<string>();
-		const resolvedSkills = toResolved(accumulator.skills).filter((entry) => {
-			let canonicalPath: string;
-			try {
-				// Resolve symlink aliases to detect duplicate files.
-				canonicalPath = realpathSync(entry.path);
-			} catch {
-				// Fallback to raw path to match loadSkills() behavior.
-				canonicalPath = entry.path;
-			}
-
-			if (seenCanonicalSkillPaths.has(canonicalPath)) {
-				return false;
-			}
-
-			seenCanonicalSkillPaths.add(canonicalPath);
-			return true;
-		});
-
 		return {
-			extensions: toResolved(accumulator.extensions),
-			skills: resolvedSkills,
-			prompts: toResolved(accumulator.prompts),
-			themes: toResolved(accumulator.themes),
+			extensions: mapToResolved(accumulator.extensions),
+			skills: mapToResolved(accumulator.skills),
+			prompts: mapToResolved(accumulator.prompts),
+			themes: mapToResolved(accumulator.themes),
 		};
 	}
 
