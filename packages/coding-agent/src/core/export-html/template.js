@@ -881,7 +881,7 @@
           const images = getResultImages();
           if (images.length === 0) return '';
           return '<div class="tool-images">' +
-            images.map(img => `<img src="data:${escapeHtml(img.mimeType || 'image/png')};base64,${img.data}" class="tool-image" />`).join('') +
+            images.map(img => `<img src="data:${escapeHtml(img.mimeType || 'image/png')};base64,${escapeHtml(img.data || '')}" class="tool-image" />`).join('') +
             '</div>';
         };
 
@@ -1148,7 +1148,7 @@
               if (images.length > 0) {
                 html += '<div class="message-images">';
                 for (const img of images) {
-                  html += `<img src="data:${escapeHtml(img.mimeType || 'image/png')};base64,${img.data}" class="message-image" />`;
+                  html += `<img src="data:${escapeHtml(img.mimeType || 'image/png')};base64,${escapeHtml(img.data || '')}" class="message-image" />`;
                 }
                 html += '</div>';
               }

@@ -25,4 +25,10 @@ describe("export HTML markdown link sanitization", () => {
 		expect(templateJs).not.toMatch(/\$\{img\.mimeType\}/);
 		expect(templateJs).toMatch(/escapeHtml\(img\.mimeType/);
 	});
+
+	it("escapes image data attributes", () => {
+		// Image data is embedded in src attributes and must not allow attribute breakout.
+		expect(templateJs).not.toMatch(/;base64,\$\{img\.data\}"/);
+		expect(templateJs).toMatch(/;base64,\$\{escapeHtml\(img\.data \|\| (?:''|"")\)\}"/);
+	});
 });
