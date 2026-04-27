@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Removed generated Cloudflare Workers AI `User-Agent` model headers so attribution can be controlled by callers.
+
 ## [0.70.5] - 2026-04-27
 
 ## [0.70.4] - 2026-04-27

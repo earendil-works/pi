@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Cloudflare Workers AI attribution headers to honor the install telemetry setting.
+
 ## [0.70.5] - 2026-04-27
 
 ### Fixed
