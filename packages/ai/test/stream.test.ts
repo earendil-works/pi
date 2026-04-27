@@ -643,6 +643,60 @@ describe("Generate E2E Tests", () => {
 		},
 	);
 
+	describe.skipIf(
+		!process.env.CLOUDFLARE_API_KEY || !process.env.CLOUDFLARE_ACCOUNT_ID || !process.env.CLOUDFLARE_GATEWAY_ID,
+	)("Cloudflare AI Gateway → Workers AI (Kimi K2.6 via /compat)", () => {
+		const llm = getModel("cloudflare-ai-gateway", "workers-ai/@cf/moonshotai/kimi-k2.6");
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+	});
+
+	describe.skipIf(
+		!process.env.CLOUDFLARE_API_KEY || !process.env.CLOUDFLARE_ACCOUNT_ID || !process.env.CLOUDFLARE_GATEWAY_ID,
+	)("Cloudflare AI Gateway → OpenAI (gpt-5.1 via /openai responses)", () => {
+		const llm = getModel("cloudflare-ai-gateway", "gpt-5.1");
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+	});
+
+	describe.skipIf(
+		!process.env.CLOUDFLARE_API_KEY || !process.env.CLOUDFLARE_ACCOUNT_ID || !process.env.CLOUDFLARE_GATEWAY_ID,
+	)("Cloudflare AI Gateway → Anthropic (claude-sonnet-4-5 via /compat)", () => {
+		const llm = getModel("cloudflare-ai-gateway", "anthropic/claude-sonnet-4-5");
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+	});
+
 	describe.skipIf(!process.env.HF_TOKEN)("Hugging Face Provider (Kimi-K2.5 via OpenAI Completions)", () => {
 		const llm = getModel("huggingface", "moonshotai/Kimi-K2.5");
 
