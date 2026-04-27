@@ -15165,6 +15165,8 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-workers-ai",
 			baseUrl: "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+			headers: {"User-Agent":"pi-coding-agent"},
+			compat: {"sendSessionAffinityHeaders":true},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -15182,6 +15184,8 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-workers-ai",
 			baseUrl: "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+			headers: {"User-Agent":"pi-coding-agent"},
+			compat: {"sendSessionAffinityHeaders":true},
 			reasoning: false,
 			input: ["text", "image"],
 			cost: {
@@ -15199,6 +15203,8 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-workers-ai",
 			baseUrl: "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+			headers: {"User-Agent":"pi-coding-agent"},
+			compat: {"sendSessionAffinityHeaders":true},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -15216,6 +15222,8 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-workers-ai",
 			baseUrl: "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+			headers: {"User-Agent":"pi-coding-agent"},
+			compat: {"sendSessionAffinityHeaders":true},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -15233,6 +15241,8 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-workers-ai",
 			baseUrl: "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+			headers: {"User-Agent":"pi-coding-agent"},
+			compat: {"sendSessionAffinityHeaders":true},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -15250,6 +15260,8 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-workers-ai",
 			baseUrl: "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+			headers: {"User-Agent":"pi-coding-agent"},
+			compat: {"sendSessionAffinityHeaders":true},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -15267,6 +15279,8 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-workers-ai",
 			baseUrl: "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+			headers: {"User-Agent":"pi-coding-agent"},
+			compat: {"sendSessionAffinityHeaders":true},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -15284,6 +15298,8 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-workers-ai",
 			baseUrl: "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
+			headers: {"User-Agent":"pi-coding-agent"},
+			compat: {"sendSessionAffinityHeaders":true},
 			reasoning: true,
 			input: ["text"],
 			cost: {
