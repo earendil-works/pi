@@ -466,7 +466,11 @@ function readPiManifest(packageJsonPath: string): PiManifest | null {
 }
 
 function isExtensionFile(name: string): boolean {
-	return name.endsWith(".ts") || name.endsWith(".js");
+	return (name.endsWith(".ts") || name.endsWith(".js")) &&
+		!name.endsWith(".test.ts") &&
+		!name.endsWith(".spec.ts") &&
+		!name.endsWith(".test.js") &&
+		!name.endsWith(".spec.js");
 }
 
 /**
