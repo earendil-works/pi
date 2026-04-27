@@ -7,8 +7,7 @@
 		"packages/web-ui/example",
 		"packages/coding-agent/examples/extensions/with-deps",
 		"packages/coding-agent/examples/extensions/custom-provider-anthropic",
-		"packages/coding-agent/examples/extensions/custom-provider-gitlab-duo",
-		"packages/coding-agent/examples/extensions/custom-provider-qwen-cli"
+		"packages/coding-agent/examples/extensions/custom-provider-gitlab-duo"
 	],
 	"scripts": {
 		"clean": "npm run clean --workspaces",
