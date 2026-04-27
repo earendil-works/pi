@@ -574,7 +574,13 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						cacheRead: m.cost?.cache_read || 0,
 						cacheWrite: m.cost?.cache_write || 0,
 					},
-					...(compat ? { compat } : {}),
+					// Fix #3779: opencode's minimax-m2.5-free does not support eager tool streaming or cache control
+					...(modelId === "minimax-m2.5-free" ? {
+						compat: {
+							supportsEagerToolInputStreaming: false,
+							supportsLongCacheRetention: false
+						}
+					} : compat ? { compat } : {}),
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});

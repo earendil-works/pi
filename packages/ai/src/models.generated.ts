@@ -7216,6 +7216,7 @@ export const MODELS = {
 			api: "anthropic-messages",
 			provider: "opencode",
 			baseUrl: "https://opencode.ai/zen",
+			compat: {"supportsEagerToolInputStreaming":false,"supportsLongCacheRetention":false},
 			reasoning: true,
 			input: ["text"],
 			cost: {
