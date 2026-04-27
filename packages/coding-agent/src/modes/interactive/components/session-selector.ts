@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, realpathSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import * as os from "node:os";
 import {
@@ -13,6 +13,7 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@mariozechner/pi-tui";
+import { canonicalizePath as _canonicalizePath } from "../../../../src/utils/paths.js";
 import { KeybindingsManager } from "../../../core/keybindings.js";
 import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.js";
 import { theme } from "../theme/theme.js";
@@ -49,11 +50,7 @@ function formatSessionDate(date: Date): string {
 
 function canonicalizePath(path: string | undefined): string | undefined {
 	if (!path) return path;
-	try {
-		return realpathSync(path);
-	} catch {
-		return path;
-	}
+	return _canonicalizePath(path);
 }
 
 class SessionSelectorHeader implements Component {

@@ -1,15 +1,6 @@
 import { type ChildProcess, type ChildProcessByStdio, spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-	existsSync,
-	mkdirSync,
-	readdirSync,
-	readFileSync,
-	realpathSync,
-	rmSync,
-	statSync,
-	writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import type { Readable } from "node:stream";
@@ -18,7 +9,7 @@ import ignore from "ignore";
 import { minimatch } from "minimatch";
 import { CONFIG_DIR_NAME } from "../config.js";
 import { type GitSource, parseGitUrl } from "../utils/git.js";
-import { isLocalPath } from "../utils/paths.js";
+import { canonicalizePath, isLocalPath } from "../utils/paths.js";
 import { isStdoutTakenOver } from "./output-guard.js";
 import type { PackageSource, SettingsManager } from "./settings-manager.js";
 
@@ -2298,14 +2289,7 @@ export class DefaultPackageManager implements PackageManager {
 
 			const seen = new Set<string>();
 			return resolved.filter((entry) => {
-				let canonicalPath: string;
-				try {
-					// Resolve symlink aliases to detect duplicate files.
-					canonicalPath = realpathSync(entry.path);
-				} catch {
-					// Fallback to raw path to match loadSkills() behavior.
-					canonicalPath = entry.path;
-				}
+				const canonicalPath = canonicalizePath(entry.path);
 				if (seen.has(canonicalPath)) return false;
 				seen.add(canonicalPath);
 				return true;

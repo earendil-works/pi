@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import chalk from "chalk";
@@ -8,7 +8,7 @@ import type { ResourceDiagnostic } from "./diagnostics.js";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.js";
 
-import { isLocalPath } from "../utils/paths.js";
+import { canonicalizePath, isLocalPath } from "../utils/paths.js";
 import { createEventBus, type EventBus } from "./event-bus.js";
 import { createExtensionRuntime, loadExtensionFromFactory, loadExtensions } from "./extensions/loader.js";
 import type { Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResult } from "./extensions/types.js";
@@ -664,12 +664,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		for (const p of [...primary, ...additional]) {
 			const resolved = this.resolveResourcePath(p);
-			let canonicalPath: string;
-			try {
-				canonicalPath = realpathSync(resolved);
-			} catch {
-				canonicalPath = resolved;
-			}
+			const canonicalPath = canonicalizePath(resolved);
 			if (seen.has(canonicalPath)) continue;
 			seen.add(canonicalPath);
 			merged.push(resolved);

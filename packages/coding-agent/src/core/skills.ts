@@ -1,9 +1,10 @@
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import ignore from "ignore";
 import { homedir } from "os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.js";
 import { parseFrontmatter } from "../utils/frontmatter.js";
+import { canonicalizePath } from "../utils/paths.js";
 import type { ResourceDiagnostic } from "./diagnostics.js";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.js";
 
@@ -416,12 +417,7 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 		allDiagnostics.push(...result.diagnostics);
 		for (const skill of result.skills) {
 			// Resolve symlinks to detect duplicate files
-			let realPath: string;
-			try {
-				realPath = realpathSync(skill.filePath);
-			} catch {
-				realPath = skill.filePath;
-			}
+			const realPath = canonicalizePath(skill.filePath);
 
 			// Skip silently if we've already loaded this exact file (via symlink)
 			if (realPathSet.has(realPath)) {
