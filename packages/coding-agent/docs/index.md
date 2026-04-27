@@ -23,38 +23,38 @@ need to read the docs yourself ;-)
 
 ## Start here
 
-- [Providers](providers.md) - subscription and API-key setup for built-in providers.
-- [Settings](settings.md) - global and project settings.
-- [Keybindings](keybindings.md) - default shortcuts and custom keybindings.
-- [Sessions](session.md) - session storage format and session files.
-- [Session tree](tree.md) - branching and navigating previous turns.
-- [Compaction](compaction.md) - context compaction and branch summarization.
+- [Providers](/docs/latest/providers) - subscription and API-key setup for built-in providers.
+- [Settings](/docs/latest/settings) - global and project settings.
+- [Keybindings](/docs/latest/keybindings) - default shortcuts and custom keybindings.
+- [Sessions](/docs/latest/session) - session storage format and session files.
+- [Session tree](/docs/latest/tree) - branching and navigating previous turns.
+- [Compaction](/docs/latest/compaction) - context compaction and branch summarization.
 
 ## Customization
 
-- [Extensions](extensions.md) - TypeScript modules for tools, commands, events, and custom UI.
-- [Skills](skills.md) - Agent Skills for reusable on-demand capabilities.
-- [Prompt templates](prompt-templates.md) - reusable prompts that expand from slash commands.
-- [Themes](themes.md) - built-in and custom terminal themes.
-- [Pi packages](packages.md) - bundle and share extensions, skills, prompts, and themes.
-- [Custom models](models.md) - add model entries for supported provider APIs.
-- [Custom providers](custom-provider.md) - implement custom APIs and OAuth flows.
+- [Extensions](/docs/latest/extensions) - TypeScript modules for tools, commands, events, and custom UI.
+- [Skills](/docs/latest/skills) - Agent Skills for reusable on-demand capabilities.
+- [Prompt templates](/docs/latest/prompt-templates) - reusable prompts that expand from slash commands.
+- [Themes](/docs/latest/themes) - built-in and custom terminal themes.
+- [Pi packages](/docs/latest/packages) - bundle and share extensions, skills, prompts, and themes.
+- [Custom models](/docs/latest/models) - add model entries for supported provider APIs.
+- [Custom providers](/docs/latest/custom-provider) - implement custom APIs and OAuth flows.
 
 ## Programmatic usage
 
-- [SDK](sdk.md) - embed pi in Node.js applications.
-- [RPC mode](rpc.md) - integrate over stdin/stdout JSONL.
-- [JSON event stream mode](json.md) - print mode with structured events.
-- [TUI components](tui.md) - build custom terminal UI for extensions.
+- [SDK](/docs/latest/sdk) - embed pi in Node.js applications.
+- [RPC mode](/docs/latest/rpc) - integrate over stdin/stdout JSONL.
+- [JSON event stream mode](/docs/latest/json) - print mode with structured events.
+- [TUI components](/docs/latest/tui) - build custom terminal UI for extensions.
 
 ## Platform setup
 
-- [Windows](windows.md)
-- [Termux on Android](termux.md)
-- [tmux](tmux.md)
-- [Terminal setup](terminal-setup.md)
-- [Shell aliases](shell-aliases.md)
+- [Windows](/docs/latest/windows)
+- [Termux on Android](/docs/latest/termux)
+- [tmux](/docs/latest/tmux)
+- [Terminal setup](/docs/latest/terminal-setup)
+- [Shell aliases](/docs/latest/shell-aliases)
 
 ## Development
 
-- [Development](development.md) - local setup, project structure, and debugging.
+- [Development](/docs/latest/development) - local setup, project structure, and debugging.
