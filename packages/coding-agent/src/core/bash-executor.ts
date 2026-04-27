@@ -110,15 +110,18 @@ export async function executeBashWithOperations(
 			signal: options?.signal,
 		});
 
-		if (tempFileStream) {
-			tempFileStream.end();
-		}
-
 		const fullOutput = outputChunks.join("");
 		const truncationResult = truncateTail(fullOutput);
 		if (truncationResult.truncated) {
 			ensureTempFile();
 		}
+
+		// Close temp file if it was opened (either during streaming or late truncation).
+		// Must be called AFTER ensureTempFile() to cover the late-open case.
+		if (tempFileStream) {
+			tempFileStream.end();
+		}
+
 		const cancelled = options?.signal?.aborted ?? false;
 
 		return {
@@ -129,16 +132,17 @@ export async function executeBashWithOperations(
 			fullOutputPath: tempFilePath,
 		};
 	} catch (err) {
-		if (tempFileStream) {
-			tempFileStream.end();
-		}
-
 		// Check if it was an abort
 		if (options?.signal?.aborted) {
 			const fullOutput = outputChunks.join("");
 			const truncationResult = truncateTail(fullOutput);
 			if (truncationResult.truncated) {
 				ensureTempFile();
+			}
+
+			// Close temp file if it was opened (either during streaming or late truncation).
+			if (tempFileStream) {
+				tempFileStream.end();
 			}
 			return {
 				output: truncationResult.truncated ? truncationResult.content : fullOutput,
