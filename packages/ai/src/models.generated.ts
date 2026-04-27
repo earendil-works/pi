@@ -15527,7 +15527,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: false,
 			input: ["text", "image"],
 			cost: {
@@ -15545,7 +15544,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: false,
 			input: ["text", "image"],
 			cost: {
@@ -15563,7 +15561,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: false,
 			input: ["text", "image"],
 			cost: {
@@ -15581,7 +15578,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: false,
 			input: ["text", "image"],
 			cost: {
@@ -15599,7 +15595,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: false,
 			input: ["text", "image"],
 			cost: {
@@ -15617,7 +15612,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: false,
 			input: ["text", "image"],
 			cost: {
@@ -15635,7 +15629,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -15653,7 +15646,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -15671,7 +15663,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -15689,7 +15680,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -15707,7 +15697,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -15725,7 +15714,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -15743,7 +15731,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -15761,7 +15748,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -15779,7 +15765,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -15797,7 +15782,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			compat: {"sendSessionAffinityHeaders":true},
 			reasoning: true,
 			input: ["text", "image"],
@@ -15816,7 +15800,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			compat: {"sendSessionAffinityHeaders":true},
 			reasoning: true,
 			input: ["text", "image"],
@@ -15835,7 +15818,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			compat: {"sendSessionAffinityHeaders":true},
 			reasoning: true,
 			input: ["text"],
@@ -15854,7 +15836,6 @@ export const MODELS = {
 			api: "openai-completions",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/compat",
-			headers: {"User-Agent":"pi-coding-agent"},
 			compat: {"sendSessionAffinityHeaders":true},
 			reasoning: true,
 			input: ["text"],
@@ -15873,7 +15854,6 @@ export const MODELS = {
 			api: "openai-responses",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: false,
 			input: ["text"],
 			cost: {
@@ -15891,7 +15871,6 @@ export const MODELS = {
 			api: "openai-responses",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: false,
 			input: ["text", "image"],
 			cost: {
@@ -15909,7 +15888,6 @@ export const MODELS = {
 			api: "openai-responses",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: false,
 			input: ["text", "image"],
 			cost: {
@@ -15927,7 +15905,6 @@ export const MODELS = {
 			api: "openai-responses",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: false,
 			input: ["text", "image"],
 			cost: {
@@ -15945,7 +15922,6 @@ export const MODELS = {
 			api: "openai-responses",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -15963,7 +15939,6 @@ export const MODELS = {
 			api: "openai-responses",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -15981,7 +15956,6 @@ export const MODELS = {
 			api: "openai-responses",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -15999,7 +15973,6 @@ export const MODELS = {
 			api: "openai-responses",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -16017,7 +15990,6 @@ export const MODELS = {
 			api: "openai-responses",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -16035,7 +16007,6 @@ export const MODELS = {
 			api: "openai-responses",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -16053,7 +16024,6 @@ export const MODELS = {
 			api: "openai-responses",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -16071,7 +16041,6 @@ export const MODELS = {
 			api: "openai-responses",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -16089,7 +16058,6 @@ export const MODELS = {
 			api: "openai-responses",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -16107,7 +16075,6 @@ export const MODELS = {
 			api: "openai-responses",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text"],
 			cost: {
@@ -16125,7 +16092,6 @@ export const MODELS = {
 			api: "openai-responses",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {
@@ -16143,7 +16109,6 @@ export const MODELS = {
 			api: "openai-responses",
 			provider: "cloudflare-ai-gateway",
 			baseUrl: "https://gateway.ai.cloudflare.com/v1/{CLOUDFLARE_ACCOUNT_ID}/{CLOUDFLARE_GATEWAY_ID}/openai",
-			headers: {"User-Agent":"pi-coding-agent"},
 			reasoning: true,
 			input: ["text", "image"],
 			cost: {

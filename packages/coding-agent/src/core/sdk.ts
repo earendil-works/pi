@@ -141,7 +141,12 @@ function getAttributionHeaders(
 		};
 	}
 
-	if (model.provider === "cloudflare-workers-ai" || model.baseUrl.includes("api.cloudflare.com")) {
+	if (
+		model.provider === "cloudflare-workers-ai" ||
+		model.provider === "cloudflare-ai-gateway" ||
+		model.baseUrl.includes("api.cloudflare.com") ||
+		model.baseUrl.includes("gateway.ai.cloudflare.com")
+	) {
 		return {
 			"User-Agent": "pi-coding-agent",
 		};

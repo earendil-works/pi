@@ -454,7 +454,6 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					},
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
-					headers: { ...CLOUDFLARE_STATIC_HEADERS },
 					...(compat ? { compat } : {}),
 				});
 			}
