@@ -439,6 +439,10 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					continue;
 				}
 
+				// workers-ai/* through the gateway forwards x-session-affinity to
+				// the underlying Workers AI runtime for prefix-cache routing.
+				const compat = upstream === "workers-ai" ? { sendSessionAffinityHeaders: true } : undefined;
+
 				models.push({
 					id,
 					name: m.name || id,
@@ -455,6 +459,8 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					},
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
+					headers: { ...CLOUDFLARE_STATIC_HEADERS },
+					...(compat ? { compat } : {}),
 				});
 			}
 		}
