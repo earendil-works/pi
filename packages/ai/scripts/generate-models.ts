@@ -1675,6 +1675,46 @@ async function generateModels() {
 		}));
 	allModels.push(...azureOpenAiModels);
 
+	// Volcengine models (Anthropic-compatible API)
+	allModels.push(
+		{
+			id: "kimi-k2.6",
+			name: "Kimi K2.6",
+			api: "anthropic-messages",
+			provider: "volcengine",
+			baseUrl: "https://ark.cn-beijing.volces.com/api/coding",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 4, output: 16, cacheRead: 0.8, cacheWrite: 0 },
+			contextWindow: 131072,
+			maxTokens: 65536,
+		},
+		{
+			id: "minimax-m2.7",
+			name: "MiniMax M2.7",
+			api: "anthropic-messages",
+			provider: "volcengine",
+			baseUrl: "https://ark.cn-beijing.volces.com/api/coding",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 1, output: 8, cacheRead: 0.2, cacheWrite: 0 },
+			contextWindow: 204800,
+			maxTokens: 131072,
+		},
+		{
+			id: "glm-5.1",
+			name: "GLM 5.1",
+			api: "anthropic-messages",
+			provider: "volcengine",
+			baseUrl: "https://ark.cn-beijing.volces.com/api/coding",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 2, output: 8, cacheRead: 0.4, cacheWrite: 0 },
+			contextWindow: 131072,
+			maxTokens: 65536,
+		},
+	);
+
 	// Group by provider and deduplicate by model ID
 	const providers: Record<string, Record<string, Model<any>>> = {};
 	for (const model of allModels) {

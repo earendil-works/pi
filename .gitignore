@@ -38,3 +38,9 @@ plans/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
 collect.sh
+
+
+# local settings
+bun.lock
+packages/*/bun.lock
+packages/coding-agent/.claude/

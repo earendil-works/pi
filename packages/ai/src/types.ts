@@ -42,7 +42,8 @@ export type KnownProvider =
 	| "opencode"
 	| "opencode-go"
 	| "kimi-coding"
-	| "cloudflare-workers-ai";
+	| "cloudflare-workers-ai"
+	| "volcengine";
 export type Provider = KnownProvider | string;
 
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh";
