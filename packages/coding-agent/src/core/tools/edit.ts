@@ -265,7 +265,9 @@ function buildEditCallComponent(
 		component.addChild(new Text(theme.fg("error", component.preview.error), 0, 0));
 	} else {
 		const rawPath = str(args?.file_path ?? args?.path);
-		component.addChild(createDiffText(component.preview.diff, { filePath: rawPath ?? undefined, invalidate }));
+		component.addChild(
+			createDiffText(component.preview.diff, { filePath: rawPath ?? undefined, invalidate, extraRightPadding: 1 }),
+		);
 	}
 	return component;
 }

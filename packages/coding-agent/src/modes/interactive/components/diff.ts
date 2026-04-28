@@ -23,6 +23,8 @@ export interface RenderDiffOptions {
 	filePath?: string;
 	/** Called when asynchronous syntax highlighter work completes. */
 	invalidate?: () => void;
+	/** Extra columns to fill when rendered inside a padded parent component. */
+	extraRightPadding?: number;
 }
 
 type RenderedDiffLine = {
@@ -37,7 +39,8 @@ export class DiffText implements Component {
 	) {}
 
 	render(width: number): string[] {
-		return renderDiffLines(this.diffText, this.options).flatMap((line) => renderFullWidthDiffLine(line, width));
+		const renderWidth = width + (this.options.extraRightPadding ?? 0);
+		return renderDiffLines(this.diffText, this.options).flatMap((line) => renderFullWidthDiffLine(line, renderWidth));
 	}
 
 	invalidate(): void {}
