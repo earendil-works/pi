@@ -67,6 +67,7 @@ export class ProcessTerminal implements Terminal {
 	private _kittyProtocolActive = false;
 	private _modifyOtherKeysActive = false;
 	private stdinBuffer?: StdinBuffer;
+	private exitHandler?: () => void;
 	private stdinDataHandler?: (data: string) => void;
 	private progressInterval?: ReturnType<typeof setInterval>;
 	private writeLogPath = (() => {
@@ -102,6 +103,11 @@ export class ProcessTerminal implements Terminal {
 
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		process.stdout.write("\x1b[?2004h");
+
+		// Safety net: restore terminal state on unexpected exit (e.g. SIGINT before
+		// stop() is called). The 'exit' event allows only synchronous operations.
+		this.exitHandler = () => this.emergencyRestore();
+		process.on("exit", this.exitHandler);
 
 		// Set up resize handler immediately
 		process.stdout.on("resize", this.resizeHandler);
@@ -269,6 +275,12 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	stop(): void {
+		// Remove the emergency exit handler since we're doing a clean shutdown
+		if (this.exitHandler) {
+			process.removeListener("exit", this.exitHandler);
+			this.exitHandler = undefined;
+		}
+
 		if (this.clearProgressInterval()) {
 			process.stdout.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
 		}
@@ -312,6 +324,34 @@ export class ProcessTerminal implements Terminal {
 		// Restore raw mode state
 		if (process.stdin.setRawMode) {
 			process.stdin.setRawMode(this.wasRaw);
+		}
+	}
+
+	/**
+	 * Emergency terminal restore for unexpected exits.
+	 * Called from the process 'exit' handler when stop() was never called.
+	 * Only synchronous operations are allowed in 'exit' handlers.
+	 */
+	private emergencyRestore(): void {
+		try {
+			// Disable Kitty keyboard protocol
+			if (this._kittyProtocolActive) {
+				process.stdout.write("\x1b[<u");
+			}
+			// Disable modifyOtherKeys
+			if (this._modifyOtherKeysActive) {
+				process.stdout.write("\x1b[>4;0m");
+			}
+			// Disable bracketed paste mode
+			process.stdout.write("\x1b[?2004l");
+			// Show cursor
+			process.stdout.write("\x1b[?25h");
+			// Restore raw mode
+			if (process.stdin.setRawMode) {
+				process.stdin.setRawMode(this.wasRaw);
+			}
+		} catch {
+			// Best effort - stdout may already be closed
 		}
 	}
 
