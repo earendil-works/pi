@@ -2617,6 +2617,7 @@ export class InteractiveMode {
 				this.onInputCallback(text);
 			}
 			this.editor.addToHistory?.(text);
+			this.editor.setText("");
 		};
 	}
 
