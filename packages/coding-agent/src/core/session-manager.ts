@@ -673,6 +673,7 @@ export class SessionManager {
 	private cwd: string;
 	private persist: boolean;
 	private flushed: boolean = false;
+	private persistedEntryCount: number = 0;
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
 	private labelsById: Map<string, string> = new Map();
@@ -720,6 +721,7 @@ export class SessionManager {
 
 			this._buildIndex();
 			this.flushed = true;
+			this.persistedEntryCount = this.fileEntries.length;
 		} else {
 			const explicitPath = this.sessionFile;
 			this.newSession();
@@ -743,6 +745,7 @@ export class SessionManager {
 		this.labelsById.clear();
 		this.leafId = null;
 		this.flushed = false;
+		this.persistedEntryCount = 0;
 
 		if (this.persist) {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
@@ -776,6 +779,8 @@ export class SessionManager {
 		if (!this.persist || !this.sessionFile) return;
 		const content = `${this.fileEntries.map((e) => JSON.stringify(e)).join("\n")}\n`;
 		writeFileSync(this.sessionFile, content);
+		this.flushed = true;
+		this.persistedEntryCount = this.fileEntries.length;
 	}
 
 	isPersisted(): boolean {
@@ -802,20 +807,20 @@ export class SessionManager {
 		if (!this.persist || !this.sessionFile) return;
 
 		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-		if (!hasAssistant) {
-			// Mark as not flushed so when assistant arrives, all entries get written
-			this.flushed = false;
+		if (!hasAssistant && !this.flushed) {
+			// Defer brand-new sessions until the first assistant response.
 			return;
 		}
 
 		if (!this.flushed) {
-			for (const e of this.fileEntries) {
+			for (const e of this.fileEntries.slice(this.persistedEntryCount)) {
 				appendFileSync(this.sessionFile, `${JSON.stringify(e)}\n`);
 			}
 			this.flushed = true;
 		} else {
 			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
 		}
+		this.persistedEntryCount = this.fileEntries.length;
 	}
 
 	private _appendEntry(entry: SessionEntry): void {
@@ -1074,18 +1079,23 @@ export class SessionManager {
 	 */
 	getTree(): SessionTreeNode[] {
 		const entries = this.getEntries();
+		const uniqueEntries: SessionEntry[] = [];
 		const nodeMap = new Map<string, SessionTreeNode>();
 		const roots: SessionTreeNode[] = [];
 
-		// Create nodes with resolved labels
+		// Create nodes with resolved labels. Duplicate ids can appear in files
+		// written by older persistence paths; keep the first entry so one corrupt
+		// id cannot make tree rendering revisit the same node repeatedly.
 		for (const entry of entries) {
+			if (nodeMap.has(entry.id)) continue;
+			uniqueEntries.push(entry);
 			const label = this.labelsById.get(entry.id);
 			const labelTimestamp = this.labelTimestampsById.get(entry.id);
 			nodeMap.set(entry.id, { entry, children: [], label, labelTimestamp });
 		}
 
 		// Build tree
-		for (const entry of entries) {
+		for (const entry of uniqueEntries) {
 			const node = nodeMap.get(entry.id)!;
 			if (entry.parentId === null || entry.parentId === entry.id) {
 				roots.push(node);
@@ -1226,15 +1236,13 @@ export class SessionManager {
 
 			// Only write the file now if it contains an assistant message.
 			// Otherwise defer to _persist(), which creates the file on the
-			// first assistant response, matching the newSession() contract
-			// and avoiding the duplicate-header bug when _persist()'s
-			// no-assistant guard later resets flushed to false.
+			// first assistant response, matching the newSession() contract.
 			const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
 			if (hasAssistant) {
 				this._rewriteFile();
-				this.flushed = true;
 			} else {
 				this.flushed = false;
+				this.persistedEntryCount = 0;
 			}
 
 			return newSessionFile;

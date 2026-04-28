@@ -1,9 +1,27 @@
-import { existsSync, mkdirSync, readFileSync, rmSync } from "fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { describe, expect, it } from "vitest";
 import { type CustomEntry, SessionManager } from "../../src/core/session-manager.js";
 import { assistantMsg, userMsg } from "../utilities.js";
+
+function writeSessionSnapshot(session: SessionManager): string {
+	const sessionFile = session.getSessionFile();
+	const header = session.getHeader();
+	if (!sessionFile || !header) throw new Error("expected persisted session with header");
+
+	const content = [header, ...session.getEntries()].map((entry) => JSON.stringify(entry)).join("\n");
+	writeFileSync(sessionFile, `${content}\n`, "utf8");
+	return sessionFile;
+}
+
+function parseSessionFile(file: string): any[] {
+	return readFileSync(file, "utf-8")
+		.trim()
+		.split("\n")
+		.filter(Boolean)
+		.map((line) => JSON.parse(line));
+}
 
 describe("SessionManager append and tree traversal", () => {
 	describe("append operations", () => {
@@ -273,6 +291,35 @@ describe("SessionManager append and tree traversal", () => {
 			const node3 = node2.children.find((c) => c.entry.id === id3)!;
 			expect(node3.children).toHaveLength(1); // id4
 		});
+
+		it("returns each entry id once when a session file contains duplicate entries", () => {
+			const tempDir = join(tmpdir(), `session-tree-duplicate-ids-${Date.now()}`);
+			mkdirSync(tempDir, { recursive: true });
+
+			try {
+				const session = SessionManager.create(tempDir, tempDir);
+				const rootId = session.appendMessage(userMsg("root"));
+				const childId = session.appendMessage(assistantMsg("child"));
+				const leafId = session.appendMessage(userMsg("leaf"));
+				const file = writeSessionSnapshot(session);
+
+				const [header, root, child, leaf] = parseSessionFile(file);
+				const duplicatedRecords = [header, root, child, root, child, leaf];
+				writeFileSync(file, `${duplicatedRecords.map((entry) => JSON.stringify(entry)).join("\n")}\n`);
+
+				const reopened = SessionManager.open(file, tempDir);
+				const tree = reopened.getTree();
+
+				expect(tree).toHaveLength(1);
+				expect(tree[0].entry.id).toBe(rootId);
+				expect(tree[0].children).toHaveLength(1);
+				expect(tree[0].children[0].entry.id).toBe(childId);
+				expect(tree[0].children[0].children).toHaveLength(1);
+				expect(tree[0].children[0].children[0].entry.id).toBe(leafId);
+			} finally {
+				rmSync(tempDir, { recursive: true, force: true });
+			}
+		});
 	});
 
 	describe("branch", () => {
@@ -498,6 +545,34 @@ describe("createBranchedSession", () => {
 			const entryIds = records
 				.filter((r) => r.type !== "session")
 				.map((r) => r.id)
+				.filter((id): id is string => typeof id === "string");
+			expect(new Set(entryIds).size).toBe(entryIds.length);
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
+	it("does not duplicate materialized entries when continuing a pre-assistant session", () => {
+		const tempDir = join(tmpdir(), `session-materialized-before-assistant-${Date.now()}`);
+		mkdirSync(tempDir, { recursive: true });
+
+		try {
+			const session = SessionManager.create(tempDir, tempDir);
+			session.appendSessionInfo("materialized child");
+			session.appendCustomEntry("managed-child", { slot: 1 });
+			const file = writeSessionSnapshot(session);
+
+			const reopened = SessionManager.open(file, tempDir);
+			reopened.appendModelChange("anthropic", "claude-sonnet-4");
+			reopened.appendMessage(userMsg("hello"));
+			reopened.appendMessage(assistantMsg("hi"));
+
+			const records = parseSessionFile(file);
+			expect(records.filter((record) => record.type === "session")).toHaveLength(1);
+
+			const entryIds = records
+				.filter((record) => record.type !== "session")
+				.map((record) => record.id)
 				.filter((id): id is string => typeof id === "string");
 			expect(new Set(entryIds).size).toBe(entryIds.length);
 		} finally {
