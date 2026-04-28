@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Changed startup and package update version checks to identify Pi with a `pi/<version>` user agent.
+- Changed Pi version checks to identify Pi with a `pi/<version>` user agent.
 
 ### Fixed
 

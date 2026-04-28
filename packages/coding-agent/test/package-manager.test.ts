@@ -4,10 +4,8 @@ import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { PassThrough } from "node:stream";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { VERSION } from "../src/config.js";
 import { DefaultPackageManager, type ProgressEvent, type ResolvedResource } from "../src/core/package-manager.js";
 import { SettingsManager } from "../src/core/settings-manager.js";
-import { getPiUserAgent } from "../src/utils/pi-user-agent.js";
 
 function normalizeForMatch(value: string): string {
 	return value.replace(/\\/g, "/");
@@ -1606,7 +1604,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 
 			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
 				"npm",
-				["view", "example", "version", "--json", `--user-agent=${getPiUserAgent(VERSION)}`],
+				["view", "example", "version", "--json"],
 				expect.objectContaining({ cwd: tempDir, timeoutMs: expect.any(Number) }),
 			);
 			expect(runCommandSpy).toHaveBeenCalledWith(
@@ -1629,7 +1627,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 
 			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
 				"npm",
-				["view", "example", "version", "--json", `--user-agent=${getPiUserAgent(VERSION)}`],
+				["view", "example", "version", "--json"],
 				expect.objectContaining({ cwd: tempDir, timeoutMs: expect.any(Number) }),
 			);
 			expect(runCommandSpy).not.toHaveBeenCalled();
@@ -1871,7 +1869,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			expect(runCommandCaptureSpy).toHaveBeenCalledTimes(1);
 			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
 				"npm",
-				["view", "example", "version", "--json", `--user-agent=${getPiUserAgent(VERSION)}`],
+				["view", "example", "version", "--json"],
 				expect.objectContaining({ cwd: tempDir, timeoutMs: expect.any(Number) }),
 			);
 		});
@@ -1892,17 +1890,7 @@ export default function(api) { api.registerTool({ name: "test", description: "te
 			expect(latest).toBe("1.2.3");
 			expect(runCommandCaptureSpy).toHaveBeenCalledWith(
 				"mise",
-				[
-					"exec",
-					"node@20",
-					"--",
-					"npm",
-					"view",
-					"@scope/pkg",
-					"version",
-					"--json",
-					`--user-agent=${getPiUserAgent(VERSION)}`,
-				],
+				["exec", "node@20", "--", "npm", "view", "@scope/pkg", "version", "--json"],
 				expect.objectContaining({ cwd: tempDir }),
 			);
 		});
