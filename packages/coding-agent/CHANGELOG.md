@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Replaced terminal syntax highlighting with Shiki for code blocks and built-in tool renderers.
+
 ### Fixed
 
 - Fixed Cloudflare Workers AI attribution headers to honor the install telemetry setting.

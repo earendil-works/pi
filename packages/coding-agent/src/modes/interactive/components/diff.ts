@@ -1,5 +1,4 @@
-import * as Diff from "diff";
-import { theme } from "../theme/theme.js";
+import { getLanguageFromPath, highlightCode, theme } from "../theme/theme.js";
 
 /**
  * Parse diff line to extract prefix, line number, and content.
@@ -18,130 +17,46 @@ function replaceTabs(text: string): string {
 	return text.replace(/\t/g, "   ");
 }
 
-/**
- * Compute word-level diff and render with inverse on changed parts.
- * Uses diffWords which groups whitespace with adjacent words for cleaner highlighting.
- * Strips leading whitespace from inverse to avoid highlighting indentation.
- */
-function renderIntraLineDiff(oldContent: string, newContent: string): { removedLine: string; addedLine: string } {
-	const wordDiff = Diff.diffWords(oldContent, newContent);
-
-	let removedLine = "";
-	let addedLine = "";
-	let isFirstRemoved = true;
-	let isFirstAdded = true;
-
-	for (const part of wordDiff) {
-		if (part.removed) {
-			let value = part.value;
-			// Strip leading whitespace from the first removed part
-			if (isFirstRemoved) {
-				const leadingWs = value.match(/^(\s*)/)?.[1] || "";
-				value = value.slice(leadingWs.length);
-				removedLine += leadingWs;
-				isFirstRemoved = false;
-			}
-			if (value) {
-				removedLine += theme.inverse(value);
-			}
-		} else if (part.added) {
-			let value = part.value;
-			// Strip leading whitespace from the first added part
-			if (isFirstAdded) {
-				const leadingWs = value.match(/^(\s*)/)?.[1] || "";
-				value = value.slice(leadingWs.length);
-				addedLine += leadingWs;
-				isFirstAdded = false;
-			}
-			if (value) {
-				addedLine += theme.inverse(value);
-			}
-		} else {
-			removedLine += part.value;
-			addedLine += part.value;
-		}
-	}
-
-	return { removedLine, addedLine };
-}
-
 export interface RenderDiffOptions {
-	/** File path (unused, kept for API compatibility) */
+	/** File path used to infer the syntax highlighting language. */
 	filePath?: string;
+	/** Called when asynchronous syntax highlighter work completes. */
+	invalidate?: () => void;
 }
 
 /**
- * Render a diff string with colored lines and intra-line change highlighting.
- * - Context lines: dim/gray
- * - Removed lines: red, with inverse on changed tokens
- * - Added lines: green, with inverse on changed tokens
+ * Render a diff string with colored markers and syntax-highlighted content.
+ * - Prefixes and line numbers keep diff colors.
+ * - Code content uses syntax highlighting when a language can be inferred.
+ * - Intra-line word emphasis is intentionally skipped for now.
  */
-export function renderDiff(diffText: string, _options: RenderDiffOptions = {}): string {
+export function renderDiff(diffText: string, options: RenderDiffOptions = {}): string {
 	const lines = diffText.split("\n");
-	const result: string[] = [];
+	const lang = options.filePath ? getLanguageFromPath(options.filePath) : undefined;
+	const highlightedContent = lang
+		? highlightCode(
+				lines
+					.map((line) => parseDiffLine(line)?.content ?? line)
+					.map(replaceTabs)
+					.join("\n"),
+				lang,
+				options.invalidate,
+			)
+		: undefined;
 
-	let i = 0;
-	while (i < lines.length) {
-		const line = lines[i];
-		const parsed = parseDiffLine(line);
+	return lines.map((line, index) => renderDiffLine(line, highlightedContent?.[index])).join("\n");
+}
 
-		if (!parsed) {
-			result.push(theme.fg("toolDiffContext", line));
-			i++;
-			continue;
-		}
+function renderDiffLine(line: string, highlightedContent: string | undefined): string {
+	const parsed = parseDiffLine(line);
+	if (!parsed) return theme.fg("toolDiffContext", line);
 
-		if (parsed.prefix === "-") {
-			// Collect consecutive removed lines
-			const removedLines: { lineNum: string; content: string }[] = [];
-			while (i < lines.length) {
-				const p = parseDiffLine(lines[i]);
-				if (!p || p.prefix !== "-") break;
-				removedLines.push({ lineNum: p.lineNum, content: p.content });
-				i++;
-			}
-
-			// Collect consecutive added lines
-			const addedLines: { lineNum: string; content: string }[] = [];
-			while (i < lines.length) {
-				const p = parseDiffLine(lines[i]);
-				if (!p || p.prefix !== "+") break;
-				addedLines.push({ lineNum: p.lineNum, content: p.content });
-				i++;
-			}
-
-			// Only do intra-line diffing when there's exactly one removed and one added line
-			// (indicating a single line modification). Otherwise, show lines as-is.
-			if (removedLines.length === 1 && addedLines.length === 1) {
-				const removed = removedLines[0];
-				const added = addedLines[0];
-
-				const { removedLine, addedLine } = renderIntraLineDiff(
-					replaceTabs(removed.content),
-					replaceTabs(added.content),
-				);
-
-				result.push(theme.fg("toolDiffRemoved", `-${removed.lineNum} ${removedLine}`));
-				result.push(theme.fg("toolDiffAdded", `+${added.lineNum} ${addedLine}`));
-			} else {
-				// Show all removed lines first, then all added lines
-				for (const removed of removedLines) {
-					result.push(theme.fg("toolDiffRemoved", `-${removed.lineNum} ${replaceTabs(removed.content)}`));
-				}
-				for (const added of addedLines) {
-					result.push(theme.fg("toolDiffAdded", `+${added.lineNum} ${replaceTabs(added.content)}`));
-				}
-			}
-		} else if (parsed.prefix === "+") {
-			// Standalone added line
-			result.push(theme.fg("toolDiffAdded", `+${parsed.lineNum} ${replaceTabs(parsed.content)}`));
-			i++;
-		} else {
-			// Context line
-			result.push(theme.fg("toolDiffContext", ` ${parsed.lineNum} ${replaceTabs(parsed.content)}`));
-			i++;
-		}
+	const content = highlightedContent ?? replaceTabs(parsed.content);
+	if (parsed.prefix === "-") {
+		return `${theme.fg("toolDiffRemoved", `-${parsed.lineNum} `)}${content}`;
 	}
-
-	return result.join("\n");
+	if (parsed.prefix === "+") {
+		return `${theme.fg("toolDiffAdded", `+${parsed.lineNum} `)}${content}`;
+	}
+	return `${theme.fg("toolDiffContext", ` ${parsed.lineNum} `)}${content}`;
 }

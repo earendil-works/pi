@@ -8,7 +8,7 @@ import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.js";
 import { truncateToVisualLines } from "../../modes/interactive/components/visual-truncate.js";
-import { theme } from "../../modes/interactive/theme/theme.js";
+import { highlightCode, theme } from "../../modes/interactive/theme/theme.js";
 import { waitForChildProcess } from "../../utils/child-process.js";
 import {
 	getShellConfig,
@@ -186,12 +186,15 @@ function formatDuration(ms: number): string {
 	return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function formatBashCall(args: { command?: string; timeout?: number } | undefined): string {
+function formatBashCall(args: { command?: string; timeout?: number } | undefined, invalidate?: () => void): string {
 	const command = str(args?.command);
 	const timeout = args?.timeout as number | undefined;
 	const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
-	const commandDisplay = command === null ? invalidArgText(theme) : command ? command : theme.fg("toolOutput", "...");
-	return theme.fg("toolTitle", theme.bold(`$ ${commandDisplay}`)) + timeoutSuffix;
+	if (command === null) return `${theme.fg("toolTitle", theme.bold("$"))} ${invalidArgText(theme)}${timeoutSuffix}`;
+	const commandDisplay = command
+		? highlightCode(command, "bash", invalidate).join("\n")
+		: theme.fg("toolOutput", "...");
+	return `${theme.fg("toolTitle", theme.bold("$"))} ${commandDisplay}${timeoutSuffix}`;
 }
 
 function rebuildBashResultRenderComponent(
@@ -412,7 +415,7 @@ export function createBashToolDefinition(
 				state.endedAt = undefined;
 			}
 			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatBashCall(args));
+			text.setText(formatBashCall(args, context.invalidate));
 			return text;
 		},
 		renderResult(result, options, _theme, context) {

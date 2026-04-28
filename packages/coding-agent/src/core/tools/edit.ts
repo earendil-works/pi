@@ -205,6 +205,7 @@ function formatEditResult(
 	result: EditToolResultLike,
 	theme: typeof import("../../modes/interactive/theme/theme.js").theme,
 	isError: boolean,
+	invalidate?: () => void,
 ): string | undefined {
 	const rawPath = str(args?.file_path ?? args?.path);
 	const previewDiff = preview && !("error" in preview) ? preview.diff : undefined;
@@ -222,7 +223,7 @@ function formatEditResult(
 
 	const resultDiff = result.details?.diff;
 	if (resultDiff && resultDiff !== previewDiff) {
-		return renderDiff(resultDiff, { filePath: rawPath ?? undefined });
+		return renderDiff(resultDiff, { filePath: rawPath ?? undefined, invalidate });
 	}
 
 	return undefined;
@@ -249,6 +250,7 @@ function buildEditCallComponent(
 	component: EditCallRenderComponent,
 	args: RenderableEditArgs | undefined,
 	theme: typeof import("../../modes/interactive/theme/theme.js").theme,
+	invalidate?: () => void,
 ): EditCallRenderComponent {
 	component.setBgFn(getEditHeaderBg(component.preview, component.settledError, theme));
 	component.clear();
@@ -258,8 +260,11 @@ function buildEditCallComponent(
 		return component;
 	}
 
+	const rawPath = str(args?.file_path ?? args?.path);
 	const body =
-		"error" in component.preview ? theme.fg("error", component.preview.error) : renderDiff(component.preview.diff);
+		"error" in component.preview
+			? theme.fg("error", component.preview.error)
+			: renderDiff(component.preview.diff, { filePath: rawPath ?? undefined, invalidate });
 	component.addChild(new Spacer(1));
 	component.addChild(new Text(body, 0, 0));
 	return component;
@@ -440,7 +445,7 @@ export function createEditToolDefinition(
 				});
 			}
 
-			return buildEditCallComponent(component, args, theme);
+			return buildEditCallComponent(component, args, theme, context.invalidate);
 		},
 		renderResult(result, _options, theme, context) {
 			const callComponent = context.state.callComponent;
@@ -469,7 +474,14 @@ export function createEditToolDefinition(
 				}
 			}
 
-			const output = formatEditResult(context.args, callComponent?.preview, typedResult, theme, context.isError);
+			const output = formatEditResult(
+				context.args,
+				callComponent?.preview,
+				typedResult,
+				theme,
+				context.isError,
+				context.invalidate,
+			);
 			const component = (context.lastComponent as Container | undefined) ?? new Container();
 			component.clear();
 			if (!output) {

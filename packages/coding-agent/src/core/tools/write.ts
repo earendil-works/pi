@@ -57,23 +57,27 @@ class WriteCallRenderComponent extends Text {
 
 const WRITE_PARTIAL_FULL_HIGHLIGHT_LINES = 50;
 
-function highlightSingleLine(line: string, lang: string): string {
-	const highlighted = highlightCode(line, lang);
+function highlightSingleLine(line: string, lang: string, invalidate?: () => void): string {
+	const highlighted = highlightCode(line, lang, invalidate);
 	return highlighted[0] ?? "";
 }
 
-function refreshWriteHighlightPrefix(cache: WriteHighlightCache): void {
+function refreshWriteHighlightPrefix(cache: WriteHighlightCache, invalidate?: () => void): void {
 	const prefixCount = Math.min(WRITE_PARTIAL_FULL_HIGHLIGHT_LINES, cache.normalizedLines.length);
 	if (prefixCount === 0) return;
 	const prefixSource = cache.normalizedLines.slice(0, prefixCount).join("\n");
-	const prefixHighlighted = highlightCode(prefixSource, cache.lang);
+	const prefixHighlighted = highlightCode(prefixSource, cache.lang, invalidate);
 	for (let i = 0; i < prefixCount; i++) {
 		cache.highlightedLines[i] =
-			prefixHighlighted[i] ?? highlightSingleLine(cache.normalizedLines[i] ?? "", cache.lang);
+			prefixHighlighted[i] ?? highlightSingleLine(cache.normalizedLines[i] ?? "", cache.lang, invalidate);
 	}
 }
 
-function rebuildWriteHighlightCacheFull(rawPath: string | null, fileContent: string): WriteHighlightCache | undefined {
+function rebuildWriteHighlightCacheFull(
+	rawPath: string | null,
+	fileContent: string,
+	invalidate?: () => void,
+): WriteHighlightCache | undefined {
 	const lang = rawPath ? getLanguageFromPath(rawPath) : undefined;
 	if (!lang) return undefined;
 	const displayContent = normalizeDisplayText(fileContent);
@@ -83,7 +87,7 @@ function rebuildWriteHighlightCacheFull(rawPath: string | null, fileContent: str
 		lang,
 		rawContent: fileContent,
 		normalizedLines: normalized.split("\n"),
-		highlightedLines: highlightCode(normalized, lang),
+		highlightedLines: highlightCode(normalized, lang, invalidate),
 	};
 }
 
@@ -91,12 +95,15 @@ function updateWriteHighlightCacheIncremental(
 	cache: WriteHighlightCache | undefined,
 	rawPath: string | null,
 	fileContent: string,
+	invalidate?: () => void,
 ): WriteHighlightCache | undefined {
 	const lang = rawPath ? getLanguageFromPath(rawPath) : undefined;
 	if (!lang) return undefined;
-	if (!cache) return rebuildWriteHighlightCacheFull(rawPath, fileContent);
-	if (cache.lang !== lang || cache.rawPath !== rawPath) return rebuildWriteHighlightCacheFull(rawPath, fileContent);
-	if (!fileContent.startsWith(cache.rawContent)) return rebuildWriteHighlightCacheFull(rawPath, fileContent);
+	if (!cache) return rebuildWriteHighlightCacheFull(rawPath, fileContent, invalidate);
+	if (cache.lang !== lang || cache.rawPath !== rawPath)
+		return rebuildWriteHighlightCacheFull(rawPath, fileContent, invalidate);
+	if (!fileContent.startsWith(cache.rawContent))
+		return rebuildWriteHighlightCacheFull(rawPath, fileContent, invalidate);
 	if (fileContent.length === cache.rawContent.length) return cache;
 
 	const deltaRaw = fileContent.slice(cache.rawContent.length);
@@ -111,12 +118,12 @@ function updateWriteHighlightCacheIncremental(
 	const segments = deltaNormalized.split("\n");
 	const lastIndex = cache.normalizedLines.length - 1;
 	cache.normalizedLines[lastIndex] += segments[0];
-	cache.highlightedLines[lastIndex] = highlightSingleLine(cache.normalizedLines[lastIndex], cache.lang);
+	cache.highlightedLines[lastIndex] = highlightSingleLine(cache.normalizedLines[lastIndex], cache.lang, invalidate);
 	for (let i = 1; i < segments.length; i++) {
 		cache.normalizedLines.push(segments[i]);
-		cache.highlightedLines.push(highlightSingleLine(segments[i], cache.lang));
+		cache.highlightedLines.push(highlightSingleLine(segments[i], cache.lang, invalidate));
 	}
-	refreshWriteHighlightPrefix(cache);
+	refreshWriteHighlightPrefix(cache, invalidate);
 	return cache;
 }
 
@@ -133,6 +140,7 @@ function formatWriteCall(
 	options: ToolRenderResultOptions,
 	theme: typeof import("../../modes/interactive/theme/theme.js").theme,
 	cache: WriteHighlightCache | undefined,
+	invalidate?: () => void,
 ): string {
 	const rawPath = str(args?.file_path ?? args?.path);
 	const fileContent = str(args?.content);
@@ -145,7 +153,7 @@ function formatWriteCall(
 	} else if (fileContent) {
 		const lang = rawPath ? getLanguageFromPath(rawPath) : undefined;
 		const renderedLines = lang
-			? (cache?.highlightedLines ?? highlightCode(replaceTabs(normalizeDisplayText(fileContent)), lang))
+			? (cache?.highlightedLines ?? highlightCode(replaceTabs(normalizeDisplayText(fileContent)), lang, invalidate))
 			: normalizeDisplayText(fileContent).split("\n");
 		const lines = trimTrailingEmptyLines(renderedLines);
 		const totalLines = lines.length;
@@ -247,8 +255,8 @@ export function createWriteToolDefinition(
 				(context.lastComponent as WriteCallRenderComponent | undefined) ?? new WriteCallRenderComponent();
 			if (fileContent !== null) {
 				component.cache = context.argsComplete
-					? rebuildWriteHighlightCacheFull(rawPath, fileContent)
-					: updateWriteHighlightCacheIncremental(component.cache, rawPath, fileContent);
+					? rebuildWriteHighlightCacheFull(rawPath, fileContent, context.invalidate)
+					: updateWriteHighlightCacheIncremental(component.cache, rawPath, fileContent, context.invalidate);
 			} else {
 				component.cache = undefined;
 			}
@@ -258,6 +266,7 @@ export function createWriteToolDefinition(
 					{ expanded: context.expanded, isPartial: context.isPartial },
 					theme,
 					component.cache,
+					context.invalidate,
 				),
 			);
 			return component;

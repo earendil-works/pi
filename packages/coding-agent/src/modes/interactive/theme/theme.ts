@@ -2,12 +2,12 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@mariozechner/pi-tui";
 import chalk from "chalk";
-import { highlight, supportsLanguage } from "cli-highlight";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 import { getCustomThemesDir, getThemesDir } from "../../../config.js";
 import type { SourceInfo } from "../../../core/source-info.js";
 import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.js";
+import { highlightCodeWithShiki } from "./syntax-highlighting.js";
 
 // ============================================================================
 // Types & Schema
@@ -945,62 +945,12 @@ export function getThemeExportColors(themeName?: string): {
 // TUI Helpers
 // ============================================================================
 
-type CliHighlightTheme = Record<string, (s: string) => string>;
-
-let cachedHighlightThemeFor: Theme | undefined;
-let cachedCliHighlightTheme: CliHighlightTheme | undefined;
-
-function buildCliHighlightTheme(t: Theme): CliHighlightTheme {
-	return {
-		keyword: (s: string) => t.fg("syntaxKeyword", s),
-		built_in: (s: string) => t.fg("syntaxType", s),
-		literal: (s: string) => t.fg("syntaxNumber", s),
-		number: (s: string) => t.fg("syntaxNumber", s),
-		string: (s: string) => t.fg("syntaxString", s),
-		comment: (s: string) => t.fg("syntaxComment", s),
-		function: (s: string) => t.fg("syntaxFunction", s),
-		title: (s: string) => t.fg("syntaxFunction", s),
-		class: (s: string) => t.fg("syntaxType", s),
-		type: (s: string) => t.fg("syntaxType", s),
-		attr: (s: string) => t.fg("syntaxVariable", s),
-		variable: (s: string) => t.fg("syntaxVariable", s),
-		params: (s: string) => t.fg("syntaxVariable", s),
-		operator: (s: string) => t.fg("syntaxOperator", s),
-		punctuation: (s: string) => t.fg("syntaxPunctuation", s),
-	};
-}
-
-function getCliHighlightTheme(t: Theme): CliHighlightTheme {
-	if (cachedHighlightThemeFor !== t || !cachedCliHighlightTheme) {
-		cachedHighlightThemeFor = t;
-		cachedCliHighlightTheme = buildCliHighlightTheme(t);
-	}
-	return cachedCliHighlightTheme;
-}
-
 /**
  * Highlight code with syntax coloring based on file extension or language.
  * Returns array of highlighted lines.
  */
-export function highlightCode(code: string, lang?: string): string[] {
-	// Validate language before highlighting to avoid stderr spam from cli-highlight
-	const validLang = lang && supportsLanguage(lang) ? lang : undefined;
-	// Skip highlighting when no valid language is specified. cli-highlight's
-	// auto-detection is unreliable and can misidentify prose as AppleScript,
-	// LiveCodeServer, etc., coloring random English words as keywords.
-	if (!validLang) {
-		return code.split("\n").map((line) => theme.fg("mdCodeBlock", line));
-	}
-	const opts = {
-		language: validLang,
-		ignoreIllegals: true,
-		theme: getCliHighlightTheme(theme),
-	};
-	try {
-		return highlight(code, opts).split("\n");
-	} catch {
-		return code.split("\n");
-	}
+export function highlightCode(code: string, lang?: string, invalidate?: () => void): string[] {
+	return highlightCodeWithShiki(code, lang, (line) => theme.fg("mdCodeBlock", line), invalidate);
 }
 
 /**
@@ -1090,26 +1040,7 @@ export function getMarkdownTheme(): MarkdownTheme {
 		italic: (text: string) => theme.italic(text),
 		underline: (text: string) => theme.underline(text),
 		strikethrough: (text: string) => chalk.strikethrough(text),
-		highlightCode: (code: string, lang?: string): string[] => {
-			// Validate language before highlighting to avoid stderr spam from cli-highlight
-			const validLang = lang && supportsLanguage(lang) ? lang : undefined;
-			// Skip highlighting when no valid language is specified. cli-highlight's
-			// auto-detection is unreliable and can misidentify prose as AppleScript,
-			// LiveCodeServer, etc., coloring random English words as keywords.
-			if (!validLang) {
-				return code.split("\n").map((line) => theme.fg("mdCodeBlock", line));
-			}
-			const opts = {
-				language: validLang,
-				ignoreIllegals: true,
-				theme: getCliHighlightTheme(theme),
-			};
-			try {
-				return highlight(code, opts).split("\n");
-			} catch {
-				return code.split("\n").map((line) => theme.fg("mdCodeBlock", line));
-			}
-		},
+		highlightCode: (code: string, lang?: string): string[] => highlightCode(code, lang),
 	};
 }
 

@@ -91,11 +91,12 @@ function formatReadResult(
 	options: ToolRenderResultOptions,
 	theme: typeof import("../../modes/interactive/theme/theme.js").theme,
 	showImages: boolean,
+	invalidate?: () => void,
 ): string {
 	const rawPath = str(args?.file_path ?? args?.path);
 	const output = getTextOutput(result as any, showImages);
 	const lang = rawPath ? getLanguageFromPath(rawPath) : undefined;
-	const renderedLines = lang ? highlightCode(replaceTabs(output), lang) : output.split("\n");
+	const renderedLines = lang ? highlightCode(replaceTabs(output), lang, invalidate) : output.split("\n");
 	const lines = trimTrailingEmptyLines(renderedLines);
 	const maxLines = options.expanded ? lines.length : 10;
 	const displayLines = lines.slice(0, maxLines);
@@ -262,7 +263,9 @@ export function createReadToolDefinition(
 		},
 		renderResult(result, options, theme, context) {
 			const text = (context.lastComponent as Text | undefined) ?? new Text("", 0, 0);
-			text.setText(formatReadResult(context.args, result as any, options, theme, context.showImages));
+			text.setText(
+				formatReadResult(context.args, result as any, options, theme, context.showImages, context.invalidate),
+			);
 			return text;
 		},
 	};
