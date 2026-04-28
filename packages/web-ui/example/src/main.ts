@@ -411,6 +411,30 @@ const renderApp = () => {
 	gridCols.push("1fr");
 	if (!rightSidebarCollapsed) gridCols.push("auto", `${rightSidebarWidth}px`);
 
+	// Calculate session stats for header indicator
+	let totalTokens = 0;
+	let totalCost = 0;
+	let contextWindow = 0;
+
+	if (agent) {
+		const msgs = agent.state.messages;
+		if (msgs) {
+			for (const m of msgs) {
+				if (m.role === "assistant" && m.usage) {
+					totalTokens += m.usage.totalTokens || 0;
+					totalCost += m.usage.cost?.total || 0;
+				}
+			}
+		}
+		if (agent.state.model && typeof agent.state.model.contextWindow === "number") {
+			contextWindow = agent.state.model.contextWindow;
+		}
+	}
+
+	const pct = contextWindow > 0 ? ((totalTokens / contextWindow) * 100).toFixed(1) : "0";
+	const tokenStr = totalTokens > 1000 ? `${(totalTokens / 1000).toFixed(1)}k` : `${totalTokens}`;
+	const contextStr = contextWindow > 1000 ? `${Math.round(contextWindow / 1000)}k` : `${contextWindow}`;
+
 	const appHtml = html`
 		<div class="app-layout ${currentTheme === "cyberpunk" ? "theme-cyberpunk" : ""}"
 			style="grid-template-columns: ${gridCols.join(" ")};"
@@ -652,6 +676,26 @@ const renderApp = () => {
 						}
 					</div>
 					<div class="flex items-center gap-2">
+						<!-- Cost/Context Indicator -->
+						${
+							totalTokens > 0
+								? html`
+								<div class="hidden sm:flex items-center gap-3 px-3 py-1.5 mr-2 bg-muted/30 border border-border/50 rounded-md text-[11px] font-mono text-muted-foreground whitespace-nowrap"
+									 title="Session Cost & Context Usage">
+									<div class="flex items-center gap-1.5">
+										<span class="text-foreground/70">CTX</span>
+										<span class="${Number(pct) > 80 ? "text-destructive font-bold" : "text-foreground"}">${pct}%</span>
+										<span class="opacity-60">(${tokenStr}/${contextStr})</span>
+									</div>
+									<div class="w-px h-3 bg-border/50"></div>
+									<div class="flex items-center gap-1.5">
+										<span class="text-foreground/70">CST</span>
+										<span class="text-foreground">$${totalCost > 0 ? totalCost.toFixed(4) : "0.00"}</span>
+									</div>
+								</div>
+								`
+								: ""
+						}
 						${Button({
 							variant: "ghost",
 							size: "sm",
@@ -863,15 +907,111 @@ async function initApp() {
 	});
 
 	document.addEventListener("compact-session", async () => {
-		if (!agent) return;
-		// Compaction is not yet wired in the web-ui agent - show notice
-		chatPanel.agentInterface?.dispatchEvent(
-			new CustomEvent("agent-notice", {
-				detail: { text: "⚡ /compact - coming soon" },
-				bubbles: true,
-				composed: true,
-			}),
-		);
+		if (!agent || !currentSessionId) return;
+
+		const messages = [...agent.state.messages];
+		// Need at least: 1 system + 6 old + 6 new = 13 messages to justify compaction
+		if (messages.length < 10) {
+			showNotice("⚠️ Session is too short to compact.");
+			return;
+		}
+
+		// Keep the last 6 messages (most recent context)
+		const recentMsgs = messages.slice(-6);
+		// The middle messages will be summarized (exclude recent ones by index)
+		const msgsToCompact = messages.slice(0, messages.length - 6);
+
+		if (msgsToCompact.length < 4) {
+			showNotice("⚠️ Not enough old messages to compact.");
+			return;
+		}
+
+		showNotice("⏳ Compacting session context...");
+
+		try {
+			const model = agent.state.model;
+			if (!model) throw new Error("No model selected");
+
+			// Flatten messages to plain text — avoids all API role-alternation issues
+			let transcript = "";
+			for (const m of msgsToCompact) {
+				const roleName = m.role.toUpperCase();
+				const anyMsg = m as any;
+				let text = "";
+				if (Array.isArray(anyMsg.content)) {
+					text = anyMsg.content
+						.filter((c: any) => c.type === "text")
+						.map((c: any) => c.text as string)
+						.join("");
+				} else if (typeof anyMsg.content === "string") {
+					text = anyMsg.content;
+				}
+				if (text.trim()) {
+					transcript += `[${roleName}]\n${text.trim()}\n\n`;
+				}
+			}
+
+			// Use the agent's own streamFn + apiKey resolver — already has proxy/auth configured
+			const apiKey = (await agent.getApiKey?.(model.provider)) ?? "";
+			const summarizationMessages: import("@mariozechner/pi-ai").Message[] = [
+				{
+					role: "user" as const,
+					content: `Please summarize the following chat transcript:\n\n<transcript>\n${transcript}\n</transcript>`,
+					timestamp: Date.now(),
+				},
+			];
+			const context: import("@mariozechner/pi-ai").Context = {
+				systemPrompt:
+					"You are an expert at summarizing technical and coding AI conversations. Produce a concise, dense summary of all important context, architectural decisions, completed tasks, and current state. Write it explicitly for another AI to read (e.g., 'User requested X. We implemented Y. Current state is Z.'). Do NOT include pleasantries.",
+				messages: summarizationMessages,
+			};
+
+			console.log(
+				`[Compaction] Sending transcript (${transcript.length} chars) to ${model.id} via agent.streamFn...`,
+			);
+			const streamResult = agent.streamFn(model, context, { apiKey });
+			// streamFn may return a stream or a Promise<stream>
+			const resolvedStream = streamResult instanceof Promise ? await streamResult : streamResult;
+			const summaryResult = await resolvedStream.result();
+
+			console.log("[Compaction] Result:", summaryResult);
+			if (summaryResult.stopReason === "error" || summaryResult.stopReason === "aborted") {
+				throw new Error(`Model returned ${summaryResult.stopReason}: ${(summaryResult as any).errorMessage ?? ""}`);
+			}
+
+			const summaryText = (summaryResult.content as any[])
+				.filter((c) => c.type === "text")
+				.map((c) => (c as any).text as string)
+				.join("");
+			if (!summaryText.trim()) {
+				throw new Error("Model returned empty summary");
+			}
+
+			// Reconstruct: compaction summary + last 6 messages
+			const summaryMsg = {
+				role: "user" as const,
+				content: `[Context compacted. Previous conversation summary:]\n\n<compaction>\n${summaryText}\n</compaction>`,
+				timestamp: Date.now(),
+			} satisfies import("@mariozechner/pi-ai").Message;
+
+			// Overwrite the agent's message array
+			const newMessages: AgentMessage[] = [summaryMsg as unknown as AgentMessage, ...recentMsgs];
+
+			// Mutate agent.state directly (Agent doesn't expose replaceMessages)
+			agent.state.messages = newMessages;
+
+			// Trigger a save so the UI sees the new sequence
+			await saveSession();
+			showNotice("✅ Session compacted successfully!");
+
+			// Force full reload to cleanly re-mount the UI with the shorter history
+			setTimeout(() => {
+				window.location.reload();
+			}, 1500);
+		} catch (err: any) {
+			console.error("Compaction failed:", err);
+			showNotice(`❌ Compaction failed: ${err.message}`);
+		}
 	});
 
 	document.addEventListener("export-session", async () => {
