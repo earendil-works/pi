@@ -39,16 +39,28 @@ const CACHE_LIMIT = envPositiveInteger("PI_HIGHLIGHT_CACHE_LIMIT", 192);
 let shikiHighlighter: Awaited<ReturnType<typeof createHighlighter>> | undefined;
 let shikiTheme = DEFAULT_SHIKI_THEME;
 let initializationPromise: Promise<void> | undefined;
+let initializationId = 0;
 const loadedLanguages = new Set<string>();
 const pendingLanguages = new Set<string>();
 const languageLoadCallbacks = new Map<string, Set<() => void>>();
+const initializationCallbacks = new Set<() => void>();
 const renderCache = new Map<string, string[]>();
 
 export function initializeSyntaxHighlighter(theme = DEFAULT_SHIKI_THEME, invalidate?: () => void): Promise<void> {
-	if (initializationPromise && shikiTheme === theme) return initializationPromise;
+	if (initializationPromise && shikiTheme === theme) {
+		if (invalidate) initializationCallbacks.add(invalidate);
+		return initializationPromise;
+	}
 	shikiTheme = theme;
+	initializationCallbacks.clear();
+	if (invalidate) initializationCallbacks.add(invalidate);
+	const requestId = ++initializationId;
 	initializationPromise = createHighlighter({ themes: [theme], langs: [...PRELOADED_SHIKI_LANGUAGES] })
 		.then((nextHighlighter) => {
+			if (requestId !== initializationId) {
+				nextHighlighter.dispose();
+				return;
+			}
 			const previousHighlighter = shikiHighlighter;
 			shikiHighlighter = nextHighlighter;
 			previousHighlighter?.dispose();
@@ -57,9 +69,14 @@ export function initializeSyntaxHighlighter(theme = DEFAULT_SHIKI_THEME, invalid
 			pendingLanguages.clear();
 			languageLoadCallbacks.clear();
 			for (const lang of PRELOADED_SHIKI_LANGUAGES) loadedLanguages.add(lang);
-			invalidate?.();
+			const callbacks = [...initializationCallbacks];
+			initializationCallbacks.clear();
+			callbacks.forEach((callback) => {
+				callback();
+			});
 		})
 		.catch(() => {
+			if (requestId !== initializationId) return;
 			shikiHighlighter = undefined;
 			initializationPromise = undefined;
 		});

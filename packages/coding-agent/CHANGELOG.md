@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Replaced terminal syntax highlighting with Shiki for code blocks and built-in tool renderers.
+- Replaced terminal syntax highlighting with Shiki for code blocks and built-in tool renderers, including theme-aware full-line highlights for edit diffs.
 
 ### Fixed
 

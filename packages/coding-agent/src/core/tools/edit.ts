@@ -1,9 +1,9 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Box, Container, Spacer, Text } from "@mariozechner/pi-tui";
+import { Box, type Component, Container, Spacer, Text } from "@mariozechner/pi-tui";
 import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
 import { type Static, Type } from "typebox";
-import { renderDiff } from "../../modes/interactive/components/diff.js";
+import { createDiffText } from "../../modes/interactive/components/diff.js";
 import type { ToolDefinition } from "../extensions/types.js";
 import {
 	applyEditsToNormalizedContent,
@@ -206,7 +206,7 @@ function formatEditResult(
 	theme: typeof import("../../modes/interactive/theme/theme.js").theme,
 	isError: boolean,
 	invalidate?: () => void,
-): string | undefined {
+): string | Component | undefined {
 	const rawPath = str(args?.file_path ?? args?.path);
 	const previewDiff = preview && !("error" in preview) ? preview.diff : undefined;
 	const previewError = preview && "error" in preview ? preview.error : undefined;
@@ -223,7 +223,7 @@ function formatEditResult(
 
 	const resultDiff = result.details?.diff;
 	if (resultDiff && resultDiff !== previewDiff) {
-		return renderDiff(resultDiff, { filePath: rawPath ?? undefined, invalidate });
+		return createDiffText(resultDiff, { filePath: rawPath ?? undefined, invalidate });
 	}
 
 	return undefined;
@@ -260,13 +260,13 @@ function buildEditCallComponent(
 		return component;
 	}
 
-	const rawPath = str(args?.file_path ?? args?.path);
-	const body =
-		"error" in component.preview
-			? theme.fg("error", component.preview.error)
-			: renderDiff(component.preview.diff, { filePath: rawPath ?? undefined, invalidate });
 	component.addChild(new Spacer(1));
-	component.addChild(new Text(body, 0, 0));
+	if ("error" in component.preview) {
+		component.addChild(new Text(theme.fg("error", component.preview.error), 0, 0));
+	} else {
+		const rawPath = str(args?.file_path ?? args?.path);
+		component.addChild(createDiffText(component.preview.diff, { filePath: rawPath ?? undefined, invalidate }));
+	}
 	return component;
 }
 
@@ -488,7 +488,7 @@ export function createEditToolDefinition(
 				return component;
 			}
 			component.addChild(new Spacer(1));
-			component.addChild(new Text(output, 1, 0));
+			component.addChild(typeof output === "string" ? new Text(output, 1, 0) : output);
 			return component;
 		},
 	};

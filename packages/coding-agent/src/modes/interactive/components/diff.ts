@@ -1,3 +1,4 @@
+import { type Component, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
 import { getLanguageFromPath, highlightCode, theme } from "../theme/theme.js";
 
 /**
@@ -24,6 +25,28 @@ export interface RenderDiffOptions {
 	invalidate?: () => void;
 }
 
+type RenderedDiffLine = {
+	text: string;
+	bg?: "toolDiffAddedBg" | "toolDiffRemovedBg";
+};
+
+export class DiffText implements Component {
+	constructor(
+		private readonly diffText: string,
+		private readonly options: RenderDiffOptions = {},
+	) {}
+
+	render(width: number): string[] {
+		return renderDiffLines(this.diffText, this.options).flatMap((line) => renderFullWidthDiffLine(line, width));
+	}
+
+	invalidate(): void {}
+}
+
+export function createDiffText(diffText: string, options: RenderDiffOptions = {}): DiffText {
+	return new DiffText(diffText, options);
+}
+
 /**
  * Render a diff string with colored markers and syntax-highlighted content.
  * - Prefixes and line numbers keep diff colors.
@@ -31,6 +54,12 @@ export interface RenderDiffOptions {
  * - Intra-line word emphasis is intentionally skipped for now.
  */
 export function renderDiff(diffText: string, options: RenderDiffOptions = {}): string {
+	return renderDiffLines(diffText, options)
+		.map((line) => line.text)
+		.join("\n");
+}
+
+function renderDiffLines(diffText: string, options: RenderDiffOptions): RenderedDiffLine[] {
 	const lines = diffText.split("\n");
 	const lang = options.filePath ? getLanguageFromPath(options.filePath) : undefined;
 	const highlightedContent = lang
@@ -44,19 +73,34 @@ export function renderDiff(diffText: string, options: RenderDiffOptions = {}): s
 			)
 		: undefined;
 
-	return lines.map((line, index) => renderDiffLine(line, highlightedContent?.[index])).join("\n");
+	return lines.map((line, index) => renderDiffLine(line, highlightedContent?.[index]));
 }
 
-function renderDiffLine(line: string, highlightedContent: string | undefined): string {
+function renderDiffLine(line: string, highlightedContent: string | undefined): RenderedDiffLine {
 	const parsed = parseDiffLine(line);
-	if (!parsed) return theme.fg("toolDiffContext", line);
+	if (!parsed) return { text: theme.fg("toolDiffContext", line) };
 
 	const content = highlightedContent ?? replaceTabs(parsed.content);
 	if (parsed.prefix === "-") {
-		return `${theme.fg("toolDiffRemoved", `-${parsed.lineNum} `)}${content}`;
+		return { text: `${theme.fg("toolDiffRemoved", `-${parsed.lineNum} `)}${content}`, bg: "toolDiffRemovedBg" };
 	}
 	if (parsed.prefix === "+") {
-		return `${theme.fg("toolDiffAdded", `+${parsed.lineNum} `)}${content}`;
+		return { text: `${theme.fg("toolDiffAdded", `+${parsed.lineNum} `)}${content}`, bg: "toolDiffAddedBg" };
 	}
-	return `${theme.fg("toolDiffContext", ` ${parsed.lineNum} `)}${content}`;
+	return { text: `${theme.fg("toolDiffContext", ` ${parsed.lineNum} `)}${content}` };
+}
+
+function renderFullWidthDiffLine(line: RenderedDiffLine, width: number): string[] {
+	if (width <= 0) return [];
+	const wrappedLines = wrapTextWithAnsi(line.text, width);
+	return wrappedLines.map((wrappedLine) => {
+		const paddedLine = padToWidth(wrappedLine, width);
+		return line.bg ? theme.bg(line.bg, paddedLine) : paddedLine;
+	});
+}
+
+function padToWidth(text: string, width: number): string {
+	const clipped = visibleWidth(text) > width ? truncateToWidth(text, width, "") : text;
+	const remaining = width - visibleWidth(clipped);
+	return remaining > 0 ? `${clipped}${" ".repeat(remaining)}` : clipped;
 }

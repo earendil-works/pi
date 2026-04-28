@@ -70,6 +70,8 @@
 				"toolDiffAdded",
 				"toolDiffRemoved",
 				"toolDiffContext",
+				"toolDiffAddedBg",
+				"toolDiffRemovedBg",
 				"syntaxComment",
 				"syntaxKeyword",
 				"syntaxFunction",
@@ -227,6 +229,14 @@
 				"toolDiffContext": {
 					"$ref": "#/$defs/colorValue",
 					"description": "Context lines in tool diffs"
+				},
+				"toolDiffAddedBg": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Background for added lines in tool diffs"
+				},
+				"toolDiffRemovedBg": {
+					"$ref": "#/$defs/colorValue",
+					"description": "Background for removed lines in tool diffs"
 				},
 				"syntaxComment": {
 					"$ref": "#/$defs/colorValue",

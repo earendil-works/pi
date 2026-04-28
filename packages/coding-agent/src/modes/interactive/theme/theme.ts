@@ -7,7 +7,7 @@ import { Compile } from "typebox/compile";
 import { getCustomThemesDir, getThemesDir } from "../../../config.js";
 import type { SourceInfo } from "../../../core/source-info.js";
 import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.js";
-import { highlightCodeWithShiki } from "./syntax-highlighting.js";
+import { highlightCodeWithShiki, initializeSyntaxHighlighter } from "./syntax-highlighting.js";
 
 // ============================================================================
 // Types & Schema
@@ -60,10 +60,12 @@ const ThemeJsonSchema = Type.Object({
 		mdQuoteBorder: ColorValueSchema,
 		mdHr: ColorValueSchema,
 		mdListBullet: ColorValueSchema,
-		// Tool Diffs (3 colors)
+		// Tool Diffs (5 colors)
 		toolDiffAdded: ColorValueSchema,
 		toolDiffRemoved: ColorValueSchema,
 		toolDiffContext: ColorValueSchema,
+		toolDiffAddedBg: ColorValueSchema,
+		toolDiffRemovedBg: ColorValueSchema,
 		// Syntax Highlighting (9 colors)
 		syntaxComment: ColorValueSchema,
 		syntaxKeyword: ColorValueSchema,
@@ -150,7 +152,9 @@ export type ThemeBg =
 	| "customMessageBg"
 	| "toolPendingBg"
 	| "toolSuccessBg"
-	| "toolErrorBg";
+	| "toolErrorBg"
+	| "toolDiffAddedBg"
+	| "toolDiffRemovedBg";
 
 type ColorMode = "truecolor" | "256color";
 
@@ -596,6 +600,8 @@ function createTheme(themeJson: ThemeJson, mode?: ColorMode, sourcePath?: string
 		"toolPendingBg",
 		"toolSuccessBg",
 		"toolErrorBg",
+		"toolDiffAddedBg",
+		"toolDiffRemovedBg",
 	]);
 	for (const [key, value] of Object.entries(resolvedColors)) {
 		if (bgColorKeys.has(key)) {
@@ -652,6 +658,14 @@ function getDefaultTheme(): string {
 	return detectTerminalBackground();
 }
 
+export function getSyntaxHighlightThemeName(themeName?: string): string {
+	return isLightTheme(themeName ?? currentThemeName) ? "github-light" : "github-dark";
+}
+
+function refreshSyntaxHighlighterTheme(): void {
+	void initializeSyntaxHighlighter(getSyntaxHighlightThemeName(), onThemeChangeCallback);
+}
+
 // ============================================================================
 // Global Theme Instance
 // ============================================================================
@@ -693,6 +707,7 @@ export function initTheme(themeName?: string, enableWatcher: boolean = false): v
 	currentThemeName = name;
 	try {
 		setGlobalTheme(loadTheme(name));
+		refreshSyntaxHighlighterTheme();
 		if (enableWatcher) {
 			startThemeWatcher();
 		}
@@ -700,6 +715,7 @@ export function initTheme(themeName?: string, enableWatcher: boolean = false): v
 		// Theme is invalid - fall back to dark theme silently
 		currentThemeName = "dark";
 		setGlobalTheme(loadTheme("dark"));
+		refreshSyntaxHighlighterTheme();
 		// Don't start watcher for fallback theme
 	}
 }
@@ -708,6 +724,7 @@ export function setTheme(name: string, enableWatcher: boolean = false): { succes
 	currentThemeName = name;
 	try {
 		setGlobalTheme(loadTheme(name));
+		refreshSyntaxHighlighterTheme();
 		if (enableWatcher) {
 			startThemeWatcher();
 		}
@@ -719,6 +736,7 @@ export function setTheme(name: string, enableWatcher: boolean = false): { succes
 		// Theme is invalid - fall back to dark theme
 		currentThemeName = "dark";
 		setGlobalTheme(loadTheme("dark"));
+		refreshSyntaxHighlighterTheme();
 		// Don't start watcher for fallback theme
 		return {
 			success: false,
@@ -730,6 +748,7 @@ export function setTheme(name: string, enableWatcher: boolean = false): { succes
 export function setThemeInstance(themeInstance: Theme): void {
 	setGlobalTheme(themeInstance);
 	currentThemeName = "<in-memory>";
+	refreshSyntaxHighlighterTheme();
 	stopThemeWatcher(); // Can't watch a direct instance
 	if (onThemeChangeCallback) {
 		onThemeChangeCallback();
