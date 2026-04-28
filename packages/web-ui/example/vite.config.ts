@@ -1,3 +1,4 @@
+import { fork } from "node:child_process";
 import {
 	appendFileSync,
 	existsSync,
@@ -12,6 +13,40 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import { defineConfig } from "vite";
+
+// ─── mcp bridge (child process) ──────────────────────────────────────────────
+// MCP SDK imports zod/v3 + zod/v4-mini in a way that breaks when esbuild
+// bundles vite.config.ts. Solution: spawn a separate CJS child process that
+// Node.js loads directly — no esbuild interference.
+
+let mcpBridgePort: number | null = null;
+const bridgePath = resolve(__dirname, "mcp-bridge.cjs");
+
+function spawnMcpBridge() {
+	const child = fork(bridgePath, [], {
+		silent: false,
+		stdio: ["ignore", "ignore", "pipe", "ipc"],
+	});
+	child.on("message", (msg: any) => {
+		if (msg?.port) {
+			mcpBridgePort = msg.port;
+			console.log(`[MCP] Bridge running on port ${mcpBridgePort}`);
+		}
+	});
+	child.on("exit", (code) => {
+		console.warn(`[MCP] Bridge exited (code ${code}), restarting in 2s...`);
+		mcpBridgePort = null;
+		setTimeout(spawnMcpBridge, 2000);
+	});
+}
+
+spawnMcpBridge();
+
+async function bridgeFetch(path: string, opts?: RequestInit): Promise<any> {
+	if (!mcpBridgePort) throw new Error("MCP bridge not ready");
+	const res = await fetch(`http://127.0.0.1:${mcpBridgePort}${path}`, opts);
+	return res.json();
+}
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
@@ -75,6 +110,7 @@ export default defineConfig({
 							{ name: "clear", description: "Clear chat (alias for /new)", source: "builtin" },
 							{ name: "resume", description: "Resume a past session", source: "builtin" },
 							{ name: "session", description: "Show session info and stats", source: "builtin" },
+							{ name: "mcp", description: "Manage Model Context Protocol servers", source: "builtin" },
 							{ name: "clone", description: "Duplicate current session", source: "builtin" },
 							{ name: "name", description: "Set session display name", source: "builtin" },
 							{ name: "export", description: "Export session as JSON", source: "builtin" },
@@ -113,6 +149,55 @@ export default defineConfig({
 						}
 						res.setHeader("Content-Type", "application/json");
 						res.end(JSON.stringify({ builtins, skills }));
+						return;
+					}
+					if (req.url === "/api/mcp/status") {
+						res.setHeader("Content-Type", "application/json");
+						bridgeFetch("/status")
+							.then((data) => res.end(JSON.stringify(data)))
+							.catch(() => res.end(JSON.stringify({})));
+						return;
+					}
+					if (req.url === "/api/mcp/tools") {
+						res.setHeader("Content-Type", "application/json");
+						bridgeFetch("/tools")
+							.then((data) => res.end(JSON.stringify(data)))
+							.catch(() => res.end(JSON.stringify([])));
+						return;
+					}
+					if (req.url?.startsWith("/api/mcp/reconnect")) {
+						const agentParam = new URL(req.url, "http://localhost").searchParams.get("agent") || "";
+						const bridgePath2 = agentParam ? `/reconnect?agent=${encodeURIComponent(agentParam)}` : "/reconnect";
+						bridgeFetch(bridgePath2)
+							.then((data) => {
+								res.setHeader("Content-Type", "application/json");
+								res.end(JSON.stringify(data));
+							})
+							.catch((e: any) => {
+								res.statusCode = 503;
+								res.end(JSON.stringify({ error: e.message }));
+							});
+						return;
+					}
+					if (req.url === "/api/mcp/execute" && req.method === "POST") {
+						let body = "";
+						req.on("data", (chunk) => {
+							body += chunk;
+						});
+						req.on("end", async () => {
+							try {
+								const result = await bridgeFetch("/execute", {
+									method: "POST",
+									headers: { "Content-Type": "application/json" },
+									body,
+								});
+								res.setHeader("Content-Type", "application/json");
+								res.end(JSON.stringify(result));
+							} catch (e: any) {
+								res.statusCode = 500;
+								res.end(JSON.stringify({ error: e.message }));
+							}
+						});
 						return;
 					}
 					if (req.url === "/api/agent/models") {
@@ -693,7 +778,8 @@ export default defineConfig({
 							// Inject Antigravity User-Agent for Google requests
 							// Browsers block this header, so we must inject it at the proxy level
 							if (targetUrl.includes("googleapis.com") || targetUrl.includes("localhost:51200")) {
-								requestHeaders["user-agent"] = "antigravity/1.21.9 darwin/arm64";
+								requestHeaders["user-agent"] =
+									`antigravity/${process.env.PI_AI_ANTIGRAVITY_VERSION || "1.107.0"} darwin/arm64`;
 								// Strip X-Goog-Api-Key as the rotator doesn't swap it and it causes 404s at Google
 								delete requestHeaders["x-goog-api-key"];
 								// Strip Origin and Referer to look like a native IDE request
@@ -707,6 +793,24 @@ export default defineConfig({
 							delete requestHeaders.origin;
 							delete requestHeaders.referer;
 							delete requestHeaders.host;
+
+							// Log tools count going to Gemini
+							if (targetUrl.includes("localhost:51200") && req.method === "POST") {
+								try {
+									const parsed = JSON.parse(body.toString());
+									const tools = parsed?.tools || [];
+									const fnDecls = tools.flatMap((t: any) => t.functionDeclarations || []);
+									console.log(`[proxy] → Gemini: ${fnDecls.length} tools, msgs: ${parsed?.contents?.length}`);
+									if (fnDecls.length > 0)
+										console.log(
+											`[proxy] tools: ${fnDecls
+												.map((f: any) => f.name)
+												.slice(0, 10)
+												.join(", ")}`,
+										);
+								} catch {}
+							}
+
 							const response = await fetch(targetUrl, {
 								method: req.method,
 								headers: requestHeaders,
@@ -718,6 +822,10 @@ export default defineConfig({
 								res.setHeader(key, value);
 							}
 							const resBody = await response.arrayBuffer();
+							if (response.status >= 400) {
+								console.error(`[proxy] ${response.status} from ${targetUrl.split("?")[0]}`);
+								console.error(`[proxy] Error body:`, Buffer.from(resBody).toString("utf-8").slice(0, 1000));
+							}
 							res.end(Buffer.from(resBody));
 						} catch (err) {
 							console.error(`[agent-proxy] Proxy error: ${err}`);

@@ -201,8 +201,92 @@ Available tools:
 - Artifacts: Create interactive HTML, SVG, Markdown, and text artifacts
 - bash: Execute shell commands locally
 - read/write/edit: Manage files on the local filesystem
+- MCP Tools: Remote tools provided by external servers (if any)
 
 Feel free to use these tools when needed to provide accurate and helpful responses. Always respect the user's instructions and the environment context.`;
+
+const reloadMcpTools = async (agentName?: string) => {
+	try {
+		// Tell the backend which agent is active so it loads the right mcp.json
+		if (agentName) {
+			await fetch(`/api/mcp/reconnect?agent=${encodeURIComponent(agentName)}`);
+		}
+		const mcpToolsRes = await fetch("/api/mcp/tools");
+		if (mcpToolsRes.ok) {
+			const tools = await mcpToolsRes.json();
+			const agentTools = [];
+
+			// pi-agent-core's google-shared.ts passes tool.parameters directly as
+			// `parametersJsonSchema` to Gemini — so we need valid JSON Schema, NOT TypeBox.
+			const sanitizeName = (n: string) => n.replace(/[^a-zA-Z0-9_]/g, "_").slice(0, 64);
+
+			const toJsonSchema = (inputSchema: any) => {
+				const props = inputSchema?.properties || {};
+				const required = inputSchema?.required || [];
+				const VALID = new Set(["string", "number", "integer", "boolean"]);
+				const properties: Record<string, any> = {};
+				for (const [key, prop] of Object.entries<any>(props)) {
+					const t = VALID.has(prop.type) ? prop.type : "string";
+					// Collect description from multiple possible locations
+					const desc = (prop.description || prop.title || prop["x-description"] || "").slice(0, 200);
+					properties[sanitizeName(key)] = { type: t, ...(desc ? { description: desc } : {}) };
+				}
+				const schema: any = { type: "object", properties };
+				if (required.length) schema.required = required.map(sanitizeName);
+				return schema;
+			};
+
+			for (const mcpTool of tools) {
+				const toolName = sanitizeName(`${mcpTool.serverName}_${mcpTool.name}`);
+				const parameters = toJsonSchema(mcpTool.inputSchema);
+
+				agentTools.push({
+					name: toolName,
+					description: `[MCP:${mcpTool.serverName}] ${(mcpTool.description || mcpTool.name).slice(0, 300)}`,
+					parameters,
+					execute: async (toolCallId: string, args: any) => {
+						try {
+							const res = await fetch("/api/mcp/execute", {
+								method: "POST",
+								body: JSON.stringify({ serverName: mcpTool.serverName, toolName: mcpTool.name, args }),
+							});
+							if (!res.ok) {
+								const err = await res.json();
+								throw new Error(err.error || "Unknown MCP execution error");
+							}
+							const result = await res.json();
+							let contentText = "";
+							if (result && Array.isArray(result.content)) {
+								contentText = result.content.map((c: any) => c.text || JSON.stringify(c)).join("\n");
+							} else {
+								contentText = JSON.stringify(result);
+							}
+							return { toolCallId, result: contentText || "(tool returned no output)" };
+						} catch (e: any) {
+							return { toolCallId, result: `Error executing MCP tool: ${e.message}`, isError: true };
+						}
+					},
+				} as unknown as import("@mariozechner/pi-agent-core").AgentTool<any, any>);
+			}
+			// Gemini hard limit: 64 tools per request. Core tools ~9 slots → cap MCP at 54.
+			const MAX_MCP_TOOLS = 54;
+			const cappedTools = agentTools.slice(0, MAX_MCP_TOOLS);
+			if (agentTools.length > MAX_MCP_TOOLS) {
+				console.warn(`[MCP] Capped ${agentTools.length} → ${MAX_MCP_TOOLS} tools (Gemini limit 64)`);
+			}
+			(window as any).__MCP_TOOLS = cappedTools;
+			console.log(`[MCP] Registered ${cappedTools.length} remote tools`);
+
+			// Only replace tools if agent exists and is NOT currently running
+			if (agent?.state) {
+				const coreTools = (agent.state.tools ?? []).filter((t) => !t.description?.includes("[MCP:"));
+				agent.state.tools = [...coreTools, ...cappedTools];
+			}
+		}
+	} catch (e) {
+		console.error("Failed to load MCP tools:", e);
+	}
+};
 
 const createAgent = async (initialState?: Partial<AgentState>) => {
 	if (agentUnsubscribe) {
@@ -220,6 +304,17 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 		// Custom transformer: convert custom messages to LLM-compatible format
 		convertToLlm: customConvertToLlm,
 	});
+
+	// Inject tools: base tools + any loaded MCP tools
+	const mcpTools = (window as any).__MCP_TOOLS || [];
+	agent.state.tools = [
+		createJavaScriptReplTool(),
+		remoteBashTool,
+		remoteReadTool,
+		remoteWriteTool,
+		remoteEditTool,
+		...mcpTools,
+	];
 
 	agentUnsubscribe = agent.subscribe((event: AgentEvent) => {
 		// Re-render on any event that might change the state
@@ -257,8 +352,10 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 			const replTool = createJavaScriptReplTool();
 			replTool.runtimeProvidersFactory = runtimeProvidersFactory;
 
-			// Inject the OS-level proxy tools
-			return [replTool, remoteBashTool, remoteReadTool, remoteWriteTool, remoteEditTool];
+			// Inject the OS-level proxy tools + any registered MCP tools
+			const mcpTools = (window as any).__MCP_TOOLS || [];
+			console.log(`[toolsFactory] injecting ${mcpTools.length} MCP tools`);
+			return [replTool, remoteBashTool, remoteReadTool, remoteWriteTool, remoteEditTool, ...mcpTools];
 		},
 	});
 };
@@ -509,6 +606,8 @@ const renderApp = () => {
 								}
 							}
 							remoteBackend.setAgentName(selectedAgentName);
+							// Load MCPs for the newly selected agent
+							await reloadMcpTools(selectedAgentName);
 							await refreshSessions();
 						}}
 					>
@@ -585,7 +684,7 @@ const renderApp = () => {
 							title: "Toggle Retro Theme",
 						})}
 					</div>
-					<div class="text-[10px] text-muted-foreground font-mono">v1.21.9</div>
+					<div class="text-[10px] text-muted-foreground font-mono">v1.107.0</div>
 				</div>
 			</div>
 			`
@@ -829,6 +928,9 @@ async function initApp() {
 	// Create ChatPanel
 	chatPanel = new ChatPanel();
 
+	// Inject MCP tools into the global tools array
+	await reloadMcpTools();
+
 	// Listen for slash command events dispatched by AgentInterface
 	document.addEventListener("new-session", () => {
 		newSession();
@@ -873,6 +975,56 @@ async function initApp() {
 		const msgCount = agent.state.messages.length;
 		const model = agent.state.model?.id || "unknown";
 		showNotice(`📊 Session: ${msgCount} messages | Model: ${model}`);
+	});
+
+	document.addEventListener("mcp-action", async (e: Event) => {
+		const action = (e as CustomEvent).detail.action;
+		if (action === "reconnect") {
+			showNotice("🔄 Reconnecting MCP servers...");
+			try {
+				await reloadMcpTools(selectedAgentName);
+				showNotice("✅ MCP servers reconnected");
+			} catch {
+				showNotice("❌ Failed to reconnect MCP servers");
+			}
+		} else {
+			// Status
+			try {
+				const res = await fetch("/api/mcp/status");
+				const status = await res.json();
+				const servers = Object.entries(status);
+				if (servers.length === 0) {
+					showNotice("🔌 No MCP servers configured.");
+					return;
+				}
+
+				let msg = "🔌 **MCP Servers Status**\n\n";
+				for (const [name, info] of servers) {
+					const s = info as any;
+					const icon = s.status === "connected" ? "🟢" : s.status === "error" ? "🔴" : "🟡";
+					const tools = s.tools?.length || 0;
+					msg += `${icon} **${name}** (${s.status}${tools > 0 ? `, ${tools} tools` : ""})\n`;
+					if (s.error) {
+						msg += `   ↳ _Error: ${s.error}_\n`;
+					}
+				}
+
+				// Inject as a standard assistant message so the Web UI renders it with markdown
+				const msgObj = {
+					role: "assistant",
+					content: [{ type: "text", text: msg }],
+					timestamp: Date.now(),
+				} as unknown as import("@mariozechner/pi-agent-core").AgentMessage;
+				agent.state.messages = [...agent.state.messages, msgObj];
+
+				// Force Lit element to request a re-render
+				if (chatPanel.agentInterface) {
+					chatPanel.agentInterface.requestUpdate();
+				}
+			} catch {
+				showNotice("❌ Failed to get MCP status");
+			}
+		}
 	});
 
 	document.addEventListener("auth-action", async (e: Event) => {

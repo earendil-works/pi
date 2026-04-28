@@ -288,6 +288,12 @@ export class AgentInterface extends LitElement {
 				this.dispatchEvent(new CustomEvent("show-session-stats", { bubbles: true, composed: true }));
 				return true;
 
+			case "mcp":
+				this.dispatchEvent(
+					new CustomEvent("mcp-action", { detail: { action: args || "status" }, bubbles: true, composed: true }),
+				);
+				return true;
+
 			case "login":
 			case "logout":
 				this.dispatchEvent(

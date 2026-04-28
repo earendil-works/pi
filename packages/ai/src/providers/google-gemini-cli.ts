@@ -78,7 +78,7 @@ const GEMINI_CLI_HEADERS = {
 };
 
 // Headers for Antigravity (sandbox endpoint) - requires specific User-Agent
-const DEFAULT_ANTIGRAVITY_VERSION = "1.21.9";
+const DEFAULT_ANTIGRAVITY_VERSION = "1.107.0";
 
 function getAntigravityHeaders() {
 	const version =
