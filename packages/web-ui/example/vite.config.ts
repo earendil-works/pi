@@ -68,6 +68,53 @@ export default defineConfig({
 						}
 						return;
 					}
+					if (req.url === "/api/agent/commands") {
+						// Return builtin slash commands + skills from ~/.pi/agent/skills/
+						const builtins = [
+							{ name: "new", description: "Start a new session", source: "builtin" },
+							{ name: "clear", description: "Clear chat (alias for /new)", source: "builtin" },
+							{ name: "resume", description: "Resume a past session", source: "builtin" },
+							{ name: "session", description: "Show session info and stats", source: "builtin" },
+							{ name: "clone", description: "Duplicate current session", source: "builtin" },
+							{ name: "name", description: "Set session display name", source: "builtin" },
+							{ name: "export", description: "Export session as JSON", source: "builtin" },
+							{ name: "compact", description: "Compact session context", source: "builtin" },
+							{ name: "model", description: "Select model", source: "builtin" },
+							{ name: "copy", description: "Copy last agent message to clipboard", source: "builtin" },
+							{ name: "login", description: "Configure provider authentication", source: "builtin" },
+							{ name: "logout", description: "Remove provider authentication", source: "builtin" },
+							{ name: "fork", description: "Fork from a previous message", source: "builtin" },
+							{ name: "tree", description: "Navigate session tree", source: "builtin" },
+							{ name: "share", description: "Share session as GitHub gist", source: "builtin" },
+							{ name: "settings", description: "Open settings menu", source: "builtin" },
+							{ name: "changelog", description: "Show changelog entries", source: "builtin" },
+							{ name: "hotkeys", description: "Show all keyboard shortcuts", source: "builtin" },
+							{ name: "reload", description: "Reload keybindings, extensions, skills", source: "builtin" },
+							{ name: "quit", description: "Quit pi", source: "builtin" },
+						];
+						// Discover skills from ~/.pi/agent/skills/
+						const skillsDir = join(homedir(), ".pi", "agent", "skills");
+						const skills: { name: string; description: string; source: string }[] = [];
+						if (existsSync(skillsDir)) {
+							const { readdirSync } = await import("node:fs");
+							for (const entry of readdirSync(skillsDir, { withFileTypes: true })) {
+								if (entry.isDirectory()) {
+									const skillMd = join(skillsDir, entry.name, "SKILL.md");
+									let description = "";
+									if (existsSync(skillMd)) {
+										const content = readFileSync(skillMd, "utf-8");
+										// Extract description from frontmatter if present
+										const descMatch = content.match(/^description:\s*(.+)$/m);
+										description = descMatch ? descMatch[1].trim() : "";
+									}
+									skills.push({ name: entry.name, description, source: "skill" });
+								}
+							}
+						}
+						res.setHeader("Content-Type", "application/json");
+						res.end(JSON.stringify({ builtins, skills }));
+						return;
+					}
 					if (req.url === "/api/agent/models") {
 						const path = join(homedir(), ".pi", "agent", "models.json");
 						if (existsSync(path)) {
@@ -76,6 +123,21 @@ export default defineConfig({
 						} else {
 							res.statusCode = 404;
 							res.end(JSON.stringify({ error: "models.json not found" }));
+						}
+						return;
+					}
+					if (req.url?.startsWith("/api/agent/skill/")) {
+						const skillName = decodeURIComponent(req.url.substring("/api/agent/skill/".length));
+						const skillPath = join(homedir(), ".pi", "agent", "skills", skillName, "SKILL.md");
+						if (existsSync(skillPath)) {
+							let content = readFileSync(skillPath, "utf-8");
+							// Strip frontmatter if present
+							content = content.replace(/^---[\s\S]*?---\n/, "").trim();
+							res.setHeader("Content-Type", "application/json");
+							res.end(JSON.stringify({ name: skillName, content }));
+						} else {
+							res.statusCode = 404;
+							res.end(JSON.stringify({ error: `Skill ${skillName} not found` }));
 						}
 						return;
 					}
@@ -642,9 +704,9 @@ export default defineConfig({
 							// For all proxied requests, strip Origin/Referer so self-hosted servers
 							// (Ollama, LM Studio, etc.) that have strict CORS allowlists don't reject them.
 							// The proxy itself is the effective client — CORS is irrelevant server-to-server.
-							delete requestHeaders["origin"];
-							delete requestHeaders["referer"];
-							delete requestHeaders["host"];
+							delete requestHeaders.origin;
+							delete requestHeaders.referer;
+							delete requestHeaders.host;
 							const response = await fetch(targetUrl, {
 								method: req.method,
 								headers: requestHeaders,

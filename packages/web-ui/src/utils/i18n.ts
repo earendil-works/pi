@@ -216,6 +216,9 @@ declare module "@mariozechner/mini-lit" {
 		"Specialized Agents": string;
 		"Recent Sessions": string;
 		"Close tab": string;
+		navigate: string;
+		select: string;
+		dismiss: string;
 	}
 }
 
@@ -450,6 +453,9 @@ export const translations = {
 		"Specialized Agents": "Specialized Agents",
 		"Recent Sessions": "Recent Sessions",
 		"Close tab": "Close tab",
+		navigate: "navigate",
+		select: "select",
+		dismiss: "dismiss",
 	},
 	de: {
 		...defaultGerman,
@@ -681,6 +687,9 @@ export const translations = {
 		"Specialized Agents": "Spezialisierte Agenten",
 		"Recent Sessions": "Aktuelle Sitzungen",
 		"Close tab": "Tab schließen",
+		navigate: "navigieren",
+		select: "auswählen",
+		dismiss: "schließen",
 	},
 };
 

@@ -11,6 +11,36 @@ import { i18n } from "../utils/i18n.js";
 import "./AttachmentTile.js";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 
+interface SlashCommand {
+	name: string;
+	description: string;
+	source: "builtin" | "skill" | string;
+}
+
+// Fetched once per page load — no-store ensures we bypass HTTP cache.
+let fetchPromise: Promise<SlashCommand[]> | null = null;
+async function fetchSlashCommands(): Promise<SlashCommand[]> {
+	if (fetchPromise) return fetchPromise;
+
+	fetchPromise = fetch("/api/agent/commands", { cache: "no-store" })
+		.then(async (res) => {
+			if (!res.ok) return [];
+			const data = (await res.json()) as { builtins: SlashCommand[]; skills: SlashCommand[] };
+			return [...data.builtins, ...data.skills.map((s) => ({ ...s, name: `skill:${s.name}` }))];
+		})
+		.catch(() => {
+			fetchPromise = null;
+			return [] as SlashCommand[];
+		});
+
+	return fetchPromise;
+}
+
+/** Call this to force the next popup open to re-fetch from the server. */
+export function invalidateSlashCommandCache() {
+	fetchPromise = null;
+}
+
 @customElement("message-editor")
 export class MessageEditor extends LitElement {
 	private _value = "";
@@ -47,21 +77,95 @@ export class MessageEditor extends LitElement {
 
 	@state() processingFiles = false;
 	@state() isDragging = false;
+	@state() private slashCommands: SlashCommand[] = [];
+	@state() private slashQuery = "";
+	@state() private slashActive = false;
+	@state() private slashIndex = 0;
 	private fileInputRef = createRef<HTMLInputElement>();
 
 	protected override createRenderRoot(): HTMLElement | DocumentFragment {
 		return this;
 	}
 
-	private handleTextareaInput = (e: Event) => {
+	private get slashFiltered(): SlashCommand[] {
+		if (!this.slashActive) return [];
+		const q = this.slashQuery.toLowerCase();
+		return this.slashCommands.filter(
+			(c) => c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q),
+		);
+	}
+
+	private handleTextareaInput = async (e: Event) => {
 		const textarea = e.target as HTMLTextAreaElement;
 		this.value = textarea.value;
 		this.onInput?.(this.value);
+
+		// Slash command detection: active when text starts with "/" and no spaces yet
+		if (this.value.startsWith("/") && !this.value.includes(" ") && !this.value.includes("\n")) {
+			// Ensure commands are loaded (only fetches once per page load)
+			if (!this.slashActive) {
+				const cmds = await fetchSlashCommands();
+				// Re-read this.value after the await — user may have typed more
+				if (this.value.startsWith("/") && !this.value.includes(" ") && !this.value.includes("\n")) {
+					this.slashCommands = cmds;
+					this.slashActive = true;
+					this.slashQuery = this.value.slice(1);
+					this.slashIndex = 0;
+				}
+				// If user typed a space or cleared while we were fetching, do nothing
+				return;
+			}
+			// Already active — just update the query filter synchronously
+			const newQuery = this.value.slice(1);
+			if (this.slashQuery !== newQuery) {
+				this.slashQuery = newQuery;
+				this.slashIndex = 0;
+			}
+		} else {
+			this.slashActive = false;
+		}
 	};
+
+	private selectSlashCommand(cmd: SlashCommand) {
+		this.value = `/${cmd.name} `;
+		this.slashActive = false;
+		// Sync to textarea DOM value and move cursor to end
+		const textarea = this.textareaRef.value;
+		if (textarea) {
+			textarea.value = this.value;
+			textarea.focus();
+			textarea.setSelectionRange(this.value.length, this.value.length);
+		}
+		this.onInput?.(this.value);
+	}
 
 	private handleKeyDown = (e: KeyboardEvent) => {
 		// Ignore key events during IME composition (e.g. CJK input)
 		if (e.isComposing || e.key === "Process") return;
+
+		// Slash palette navigation
+		if (this.slashActive && this.slashFiltered.length > 0) {
+			if (e.key === "ArrowDown") {
+				e.preventDefault();
+				this.slashIndex = (this.slashIndex + 1) % this.slashFiltered.length;
+				return;
+			}
+			if (e.key === "ArrowUp") {
+				e.preventDefault();
+				this.slashIndex = (this.slashIndex - 1 + this.slashFiltered.length) % this.slashFiltered.length;
+				return;
+			}
+			if (e.key === "Tab" || (e.key === "Enter" && this.slashActive)) {
+				e.preventDefault();
+				this.selectSlashCommand(this.slashFiltered[this.slashIndex]);
+				return;
+			}
+		}
+		if (e.key === "Escape" && this.slashActive) {
+			e.preventDefault();
+			this.slashActive = false;
+			return;
+		}
 
 		if (e.key === "Enter" && !e.shiftKey) {
 			e.preventDefault();
@@ -235,6 +339,14 @@ export class MessageEditor extends LitElement {
 		}
 	}
 
+	override updated(changedProps: Map<string, unknown>) {
+		// Scroll active slash command item into view when index changes
+		if (changedProps.has("slashIndex") && this.slashActive) {
+			const active = this.querySelector(`[data-slash-idx="${this.slashIndex}"]`);
+			active?.scrollIntoView({ block: "nearest" });
+		}
+	}
+
 	override render() {
 		// Check if current model supports thinking/reasoning
 		const model = this.currentModel;
@@ -272,6 +384,49 @@ export class MessageEditor extends LitElement {
 										></attachment-tile>
 									`,
 								)}
+							</div>
+						`
+						: ""
+				}
+
+				<!-- Slash command palette -->
+				${
+					this.slashActive && this.slashFiltered.length > 0
+						? html`
+							<div
+								class="absolute bottom-full left-0 right-0 mb-1 bg-card border border-border rounded-lg shadow-lg z-50 overflow-hidden"
+							>
+								<div class="max-h-64 overflow-y-auto">
+									${this.slashFiltered.map(
+										(cmd, i) => html`
+											<div
+												data-slash-idx=${i}
+												class="flex items-baseline gap-3 px-3 py-2 cursor-pointer text-sm transition-colors
+													${i === this.slashIndex ? "bg-accent text-accent-foreground" : "hover:bg-accent/50"}"
+												@mousedown=${(e: Event) => {
+													e.preventDefault();
+													this.selectSlashCommand(cmd);
+												}}
+												@mousemove=${() => {
+													this.slashIndex = i;
+												}}
+											>
+												<span class="font-mono font-medium text-primary shrink-0">/${cmd.name}</span>
+												<span class="text-muted-foreground truncate">${cmd.description}</span>
+												${
+													cmd.source === "skill"
+														? html`<span class="ml-auto text-xs text-muted-foreground shrink-0 opacity-60">skill</span>`
+														: ""
+												}
+											</div>
+										`,
+									)}
+								</div>
+								<div class="px-3 py-1.5 border-t border-border flex gap-3 text-xs text-muted-foreground bg-muted/30">
+									<span>↑↓ ${i18n("navigate")}</span>
+									<span>↵ / Tab ${i18n("select")}</span>
+									<span>Esc ${i18n("dismiss")}</span>
+								</div>
 							</div>
 						`
 						: ""

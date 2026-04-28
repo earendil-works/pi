@@ -80,6 +80,18 @@ let chatPanel: ChatPanel;
 let agentUnsubscribe: (() => void) | undefined;
 let availableAgents: string[] = [];
 let selectedAgentName: string | undefined;
+let noticeText = "";
+let noticeTimer: ReturnType<typeof setTimeout> | undefined;
+
+const showNotice = (text: string) => {
+	noticeText = text;
+	renderApp();
+	if (noticeTimer) clearTimeout(noticeTimer);
+	noticeTimer = setTimeout(() => {
+		noticeText = "";
+		renderApp();
+	}, 3000);
+};
 let currentTheme: "default" | "cyberpunk" = (localStorage.getItem("pi-theme") as any) || "default";
 
 const toggleTheme = () => {
@@ -563,6 +575,12 @@ const renderApp = () => {
 			<div class="main-content relative">
 				<!-- Header (Condensed) -->
 				<div class="flex items-center justify-between border-b border-border shrink-0 px-4 py-2 bg-background/80 backdrop-blur-md sticky top-0 z-10 ${currentTheme === "cyberpunk" ? "header-glow" : ""}">
+					<!-- Notice toast -->
+					${
+						noticeText
+							? html`<div class="absolute top-14 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-foreground text-background text-sm font-medium shadow-lg pointer-events-none animate-fade-in">${noticeText}</div>`
+							: ""
+					}
 					<div class="flex items-center gap-2 overflow-hidden">
 						${Button({
 							variant: "ghost",
@@ -578,7 +596,7 @@ const renderApp = () => {
 										${Input({
 											type: "text",
 											value: currentTitle,
-											className: "text-sm w-64",
+											className: "text-sm w-64 session-title-input",
 											onChange: async (e: Event) => {
 												const newTitle = (e.target as HTMLInputElement).value.trim();
 												if (newTitle && newTitle !== currentTitle && storage.sessions && currentSessionId) {
@@ -766,6 +784,118 @@ async function initApp() {
 
 	// Create ChatPanel
 	chatPanel = new ChatPanel();
+
+	// Listen for slash command events dispatched by AgentInterface
+	document.addEventListener("new-session", () => {
+		newSession();
+	});
+
+	document.addEventListener("resume-session", () => {
+		// Expand left sidebar and show sessions list so user can pick one
+		if (leftSidebarCollapsed) {
+			leftSidebarCollapsed = false;
+			storage.settings.set("layout.leftCollapsed", false);
+		}
+		renderApp();
+		// Scroll sessions panel into view after render
+		requestAnimationFrame(() => {
+			document.querySelector(".session-item")?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+		});
+	});
+
+	document.addEventListener("clone-session", async () => {
+		if (!currentSessionId || !storage.sessions) return;
+		try {
+			const sessionData = await storage.sessions.get(currentSessionId);
+			const origMeta = await storage.sessions.getMetadata(currentSessionId);
+			if (!sessionData || !origMeta) return;
+			const newId = crypto.randomUUID();
+			const now = new Date().toISOString();
+			const clonedData = { ...sessionData, id: newId, title: `${currentTitle} (Clone)` };
+			const clonedMeta = { ...origMeta, id: newId, title: clonedData.title, createdAt: now, lastModified: now };
+			await storage.sessions.save(clonedData, clonedMeta);
+			await refreshSessions();
+			const url = new URL(window.location.href);
+			url.searchParams.set("session", newId);
+			window.location.href = url.toString();
+		} catch (err) {
+			console.error("Clone failed:", err);
+			showNotice("❌ Failed to clone session");
+		}
+	});
+
+	document.addEventListener("show-session-stats", () => {
+		if (!agent || !currentSessionId) return;
+		const msgCount = agent.state.messages.length;
+		const model = agent.state.model?.id || "unknown";
+		showNotice(`📊 Session: ${msgCount} messages | Model: ${model}`);
+	});
+
+	document.addEventListener("auth-action", async (e: Event) => {
+		const action = (e as CustomEvent).detail.action;
+		const provider = agent?.state?.model?.provider;
+
+		if (action === "login") {
+			// Trigger the API key prompt dialog manually
+			if (provider && chatPanel?.agentInterface?.onApiKeyRequired) {
+				chatPanel.agentInterface.onApiKeyRequired(provider);
+			} else {
+				showNotice("⚠️ No model provider selected");
+			}
+		} else if (action === "logout") {
+			if (provider) {
+				await storage.providerKeys.delete(provider);
+				showNotice(`🔒 Logged out of ${provider}`);
+			}
+		}
+	});
+
+	document.addEventListener("rename-session", () => {
+		if (!currentSessionId) return;
+		isEditingTitle = true;
+		renderApp();
+		// Focus the title input after render
+		requestAnimationFrame(() => {
+			const input = document.querySelector<HTMLInputElement>(".session-title-input");
+			input?.focus();
+			input?.select();
+		});
+	});
+
+	document.addEventListener("compact-session", async () => {
+		if (!agent) return;
+		// Compaction is not yet wired in the web-ui agent - show notice
+		chatPanel.agentInterface?.dispatchEvent(
+			new CustomEvent("agent-notice", {
+				detail: { text: "⚡ /compact - coming soon" },
+				bubbles: true,
+				composed: true,
+			}),
+		);
+	});
+
+	document.addEventListener("export-session", async () => {
+		if (!currentSessionId || !storage.sessions) return;
+		try {
+			const sessionData = await storage.sessions.get(currentSessionId);
+			if (!sessionData) return;
+			const blob = new Blob([JSON.stringify(sessionData, null, 2)], { type: "application/json" });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement("a");
+			a.href = url;
+			a.download = `session-${currentSessionId.slice(0, 8)}.json`;
+			a.click();
+			URL.revokeObjectURL(url);
+		} catch (err) {
+			console.error("Export failed:", err);
+		}
+	});
+
+	document.addEventListener("agent-notice", (e: Event) => {
+		const { text } = (e as CustomEvent<{ text: string }>).detail;
+		// Show as a transient toast-style notice in the header area
+		showNotice(text);
+	});
 
 	// Sync with local agent configuration
 	try {

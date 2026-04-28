@@ -217,11 +217,151 @@ export class AgentInterface extends LitElement {
 		this._lastClientHeight = clientHeight;
 	};
 
+	/** Show a transient system notice in the chat (not sent to LLM). */
+	private _showNotice(text: string) {
+		// Dispatch a custom event so the parent (main.ts / ChatPanel) can show it,
+		// or fall back to a simple console log if nobody listens.
+		const handled = this.dispatchEvent(
+			new CustomEvent("agent-notice", { detail: { text }, bubbles: true, composed: true }),
+		);
+		if (!handled) console.info(`[slash] ${text}`);
+	}
+
+	/** Expand skill commands into full text */
+	private async _expandSkill(cmd: string, args: string): Promise<string | null> {
+		if (!cmd.startsWith("skill:")) return null;
+		const skillName = cmd.slice(6); // remove "skill:"
+		try {
+			const res = await fetch(`/api/agent/skill/${encodeURIComponent(skillName)}`);
+			if (!res.ok) {
+				this._showNotice(`❌ Skill not found: ${skillName}`);
+				return null;
+			}
+			const data = await res.json();
+			const skillBlock = `<skill name="${data.name}">\n${data.content}\n</skill>`;
+			return args ? `${skillBlock}\n\n${args}` : skillBlock;
+		} catch (err) {
+			console.error("Failed to load skill", err);
+			this._showNotice(`❌ Error loading skill: ${skillName}`);
+			return null;
+		}
+	}
+
+	/**
+	 * Handle a slash command locally. Returns true if the command was consumed,
+	 * false if it should fall through to the LLM.
+	 */
+	private async _handleSlashCommand(cmd: string, args: string): Promise<boolean> {
+		// Handle skill expansion natively
+		if (cmd.startsWith("skill:")) {
+			const expanded = await this._expandSkill(cmd, args);
+			if (expanded) {
+				// Send the expanded skill content as a normal message
+				this._messageEditor.value = "";
+				this._messageEditor.attachments = [];
+				await this.session?.prompt(expanded);
+			}
+			return true;
+		}
+
+		switch (cmd) {
+			case "model":
+				// Open the model selector dialog
+				this.onModelSelect?.();
+				return true;
+
+			case "new":
+			case "clear":
+				// Fire the same event as the "New Chat" button
+				this.dispatchEvent(new CustomEvent("new-session", { bubbles: true, composed: true }));
+				return true;
+
+			case "clone":
+				this.dispatchEvent(new CustomEvent("clone-session", { bubbles: true, composed: true }));
+				return true;
+
+			case "resume":
+				this.dispatchEvent(new CustomEvent("resume-session", { bubbles: true, composed: true }));
+				return true;
+
+			case "session":
+				this.dispatchEvent(new CustomEvent("show-session-stats", { bubbles: true, composed: true }));
+				return true;
+
+			case "login":
+			case "logout":
+				this.dispatchEvent(
+					new CustomEvent("auth-action", { detail: { action: cmd }, bubbles: true, composed: true }),
+				);
+				return true;
+
+			case "copy": {
+				// Copy last assistant text message to clipboard
+				const messages = this.session?.state.messages ?? [];
+				const last = [...messages].reverse().find((m) => m.role === "assistant");
+				const text = last?.content
+					.filter((c): c is { type: "text"; text: string } => c.type === "text")
+					.map((c) => c.text)
+					.join("");
+				if (text) {
+					await navigator.clipboard.writeText(text);
+					this._showNotice("✓ Last response copied to clipboard");
+				} else {
+					this._showNotice("No assistant message to copy");
+				}
+				return true;
+			}
+
+			case "compact":
+				this.dispatchEvent(new CustomEvent("compact-session", { bubbles: true, composed: true }));
+				return true;
+
+			case "export":
+				this.dispatchEvent(new CustomEvent("export-session", { bubbles: true, composed: true }));
+				return true;
+
+			case "name":
+				this.dispatchEvent(new CustomEvent("rename-session", { bubbles: true, composed: true }));
+				return true;
+
+			// Commands not yet implemented in web-ui — show notice instead of sending to LLM
+			case "fork":
+			case "tree":
+			case "share":
+			case "changelog":
+			case "hotkeys":
+			case "settings":
+			case "reload":
+			case "quit":
+			case "scoped-models":
+			case "import":
+				this._showNotice(`⚡ /${cmd} — coming soon in web-ui`);
+				return true;
+
+			default:
+				// Not a known builtin — could be a skill or unknown, let it through
+				return false;
+		}
+	}
+
 	public async sendMessage(input: string, attachments?: Attachment[]) {
 		if ((!input.trim() && attachments?.length === 0) || this.session?.state.isStreaming) return;
 		const session = this.session;
 		if (!session) throw new Error("No session set on AgentInterface");
 		if (!session.state.model) throw new Error("No model set on AgentInterface");
+
+		// Intercept slash commands — handle locally, never send to LLM
+		if (input.trim().startsWith("/")) {
+			const [rawCmd, ...rest] = input.trim().slice(1).split(" ");
+			const cmd = rawCmd.toLowerCase();
+			const args = rest.join(" ").trim();
+			const handled = await this._handleSlashCommand(cmd, args);
+			if (handled) {
+				this._messageEditor.value = "";
+				return;
+			}
+			// Unknown command — fall through and send as normal message
+		}
 
 		// Check if API key exists for the provider (only needed in direct mode)
 		const provider = session.state.model.provider;
