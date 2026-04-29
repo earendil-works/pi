@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { clearGlooTokenCache, loginGloo, refreshGlooToken } from "../src/utils/oauth/gloo.js";
+import type { OAuthPrompt } from "../src/utils/oauth/types.js";
 
 function jsonResponse(body: unknown, status: number = 200): Response {
 	return new Response(JSON.stringify(body), {
@@ -55,16 +56,21 @@ describe.sequential("Gloo OAuth", () => {
 		vi.stubGlobal("fetch", fetchMock);
 
 		const prompts = ["client-id", "client-secret", "servant-internal"];
+		const promptMetadata: OAuthPrompt[] = [];
 		const authUrls: string[] = [];
 		const progress: string[] = [];
 
 		const credentials = await loginGloo({
 			onAuth: (info) => authUrls.push(info.url),
-			onPrompt: async () => prompts.shift() ?? "",
+			onPrompt: async (prompt) => {
+				promptMetadata.push(prompt);
+				return prompts.shift() ?? "";
+			},
 			onProgress: (message) => progress.push(message),
 		});
 
 		expect(authUrls).toEqual(["https://studio.ai.gloo.com/api-credentials"]);
+		expect(promptMetadata.map((prompt) => prompt.secret ?? false)).toEqual([false, true, false]);
 		expect(progress.at(-1)).toBe("Gloo credentials validated.");
 		expect(credentials).toMatchObject({
 			clientId: "client-id",

@@ -35,6 +35,25 @@ describe("Input component", () => {
 	});
 
 	describe("render", () => {
+		it("masks rendered value without changing submitted value", () => {
+			const input = new Input();
+			let submitted: string | undefined;
+			input.masked = true;
+			input.focused = true;
+			input.onSubmit = (value) => {
+				submitted = value;
+			};
+
+			input.setValue("super-secret");
+			const [line] = input.render(80);
+			input.handleInput("\r");
+
+			assert.ok(line);
+			assert.strictEqual(line.match(/•/g)?.length, "super-secret".length);
+			assert.doesNotMatch(line, /super-secret/);
+			assert.strictEqual(submitted, "super-secret");
+		});
+
 		it("does not overflow with wide CJK and fullwidth text", () => {
 			const width = 93;
 			const cases = [

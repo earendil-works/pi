@@ -307,7 +307,7 @@ export async function loginGloo(callbacks: OAuthLoginCallbacks): Promise<GlooOAu
 		throw new Error("Gloo client_id is required");
 	}
 
-	const clientSecret = (await callbacks.onPrompt({ message: "Paste your Gloo client_secret:" })).trim();
+	const clientSecret = (await callbacks.onPrompt({ message: "Paste your Gloo client_secret:", secret: true })).trim();
 	if (!clientSecret) {
 		throw new Error("Gloo client_secret is required");
 	}

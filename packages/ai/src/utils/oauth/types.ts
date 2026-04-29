@@ -16,6 +16,8 @@ export type OAuthPrompt = {
 	message: string;
 	placeholder?: string;
 	allowEmpty?: boolean;
+	/** Mask user input while typing/pasting sensitive values such as client secrets. */
+	secret?: boolean;
 };
 
 export type OAuthAuthInfo = {
