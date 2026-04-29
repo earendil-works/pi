@@ -412,9 +412,7 @@ renderResult(result, options, theme, context) {
 | Borders | `border`, `borderAccent`, `borderMuted` |
 | Messages | `userMessageText`, `customMessageText`, `customMessageLabel` |
 | Tools | `toolTitle`, `toolOutput` |
-| Diffs | `toolDiffAdded`, `toolDiffRemoved`, `toolDiffContext` |
 | Markdown | `mdHeading`, `mdLink`, `mdLinkUrl`, `mdCode`, `mdCodeBlock`, `mdCodeBlockBorder`, `mdQuote`, `mdQuoteBorder`, `mdHr`, `mdListBullet` |
-| Syntax | `syntaxComment`, `syntaxKeyword`, `syntaxFunction`, `syntaxVariable`, `syntaxString`, `syntaxNumber`, `syntaxType`, `syntaxOperator`, `syntaxPunctuation` |
 | Thinking | `thinkingOff`, `thinkingMinimal`, `thinkingLow`, `thinkingMedium`, `thinkingHigh`, `thinkingXhigh` |
 | Modes | `bashMode` |
 
@@ -432,6 +430,15 @@ renderResult(result, options, theme, context) {
   const mdTheme = getMarkdownTheme();
   return new Markdown(result.details.markdown, 0, 0, mdTheme);
 }
+```
+
+**For edit diffs**, use `getDiffTheme()`. Diff colors are derived from the active Shiki `syntaxTheme`:
+
+```typescript
+import { getDiffTheme } from "@mariozechner/pi-coding-agent";
+
+const diffTheme = getDiffTheme();
+const added = diffTheme.addedLine(diffTheme.addedPrefix("+1 ") + "const value = true;");
 ```
 
 **For custom components**, define your own theme interface:

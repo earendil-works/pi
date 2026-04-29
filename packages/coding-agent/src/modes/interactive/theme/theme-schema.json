@@ -3,7 +3,11 @@
 	"title": "Pi Coding Agent Theme",
 	"description": "Theme schema for Pi coding agent",
 	"type": "object",
-	"required": ["name", "colors"],
+	"required": [
+		"name",
+		"syntaxTheme",
+		"colors"
+	],
 	"properties": {
 		"$schema": {
 			"type": "string",
@@ -12,6 +16,22 @@
 		"name": {
 			"type": "string",
 			"description": "Theme name"
+		},
+		"syntaxTheme": {
+			"description": "Shiki theme used for syntax highlighting. Use a bundled theme name or an inline Shiki theme object.",
+			"oneOf": [
+				{
+					"type": "string",
+					"enum": [
+						"github-dark",
+						"github-light"
+					],
+					"description": "Bundled Shiki syntax theme"
+				},
+				{
+					"$ref": "#/$defs/shikiTheme"
+				}
+			]
 		},
 		"vars": {
 			"type": "object",
@@ -67,20 +87,6 @@
 				"mdQuoteBorder",
 				"mdHr",
 				"mdListBullet",
-				"toolDiffAdded",
-				"toolDiffRemoved",
-				"toolDiffContext",
-				"toolDiffAddedBg",
-				"toolDiffRemovedBg",
-				"syntaxComment",
-				"syntaxKeyword",
-				"syntaxFunction",
-				"syntaxVariable",
-				"syntaxString",
-				"syntaxNumber",
-				"syntaxType",
-				"syntaxOperator",
-				"syntaxPunctuation",
 				"thinkingOff",
 				"thinkingMinimal",
 				"thinkingLow",
@@ -218,62 +224,6 @@
 					"$ref": "#/$defs/colorValue",
 					"description": "Markdown list bullets/numbers"
 				},
-				"toolDiffAdded": {
-					"$ref": "#/$defs/colorValue",
-					"description": "Added lines in tool diffs"
-				},
-				"toolDiffRemoved": {
-					"$ref": "#/$defs/colorValue",
-					"description": "Removed lines in tool diffs"
-				},
-				"toolDiffContext": {
-					"$ref": "#/$defs/colorValue",
-					"description": "Context lines in tool diffs"
-				},
-				"toolDiffAddedBg": {
-					"$ref": "#/$defs/colorValue",
-					"description": "Background for added lines in tool diffs"
-				},
-				"toolDiffRemovedBg": {
-					"$ref": "#/$defs/colorValue",
-					"description": "Background for removed lines in tool diffs"
-				},
-				"syntaxComment": {
-					"$ref": "#/$defs/colorValue",
-					"description": "Syntax highlighting: comments"
-				},
-				"syntaxKeyword": {
-					"$ref": "#/$defs/colorValue",
-					"description": "Syntax highlighting: keywords"
-				},
-				"syntaxFunction": {
-					"$ref": "#/$defs/colorValue",
-					"description": "Syntax highlighting: function names"
-				},
-				"syntaxVariable": {
-					"$ref": "#/$defs/colorValue",
-					"description": "Syntax highlighting: variable names"
-				},
-				"syntaxString": {
-					"$ref": "#/$defs/colorValue",
-					"description": "Syntax highlighting: string literals"
-				},
-				"syntaxNumber": {
-					"$ref": "#/$defs/colorValue",
-					"description": "Syntax highlighting: number literals"
-				},
-				"syntaxType": {
-					"$ref": "#/$defs/colorValue",
-					"description": "Syntax highlighting: type names"
-				},
-				"syntaxOperator": {
-					"$ref": "#/$defs/colorValue",
-					"description": "Syntax highlighting: operators"
-				},
-				"syntaxPunctuation": {
-					"$ref": "#/$defs/colorValue",
-					"description": "Syntax highlighting: punctuation"
-				},
 				"thinkingOff": {
 					"$ref": "#/$defs/colorValue",
 					"description": "Thinking level border: off"
@@ -340,6 +290,99 @@
 					"description": "256-color palette index (0-255)"
 				}
 			]
+		},
+		"shikiThemeSetting": {
+			"type": "object",
+			"required": [
+				"settings"
+			],
+			"properties": {
+				"scope": {
+					"oneOf": [
+						{
+							"type": "string"
+						},
+						{
+							"type": "array",
+							"items": {
+								"type": "string"
+							}
+						}
+					],
+					"description": "TextMate scope or scopes matched by this setting"
+				},
+				"settings": {
+					"type": "object",
+					"description": "Shiki/TextMate token style settings such as foreground, background, and fontStyle",
+					"additionalProperties": {
+						"type": "string"
+					}
+				}
+			},
+			"additionalProperties": true
+		},
+		"shikiTheme": {
+			"type": "object",
+			"required": [
+				"name",
+				"type"
+			],
+			"anyOf": [
+				{
+					"required": [
+						"settings"
+					]
+				},
+				{
+					"required": [
+						"tokenColors"
+					]
+				}
+			],
+			"properties": {
+				"name": {
+					"type": "string",
+					"description": "Unique Shiki theme name"
+				},
+				"type": {
+					"type": "string",
+					"enum": [
+						"dark",
+						"light"
+					],
+					"description": "Whether the syntax theme is optimized for dark or light backgrounds"
+				},
+				"fg": {
+					"type": "string",
+					"description": "Default foreground color"
+				},
+				"bg": {
+					"type": "string",
+					"description": "Default background color"
+				},
+				"colors": {
+					"type": "object",
+					"additionalProperties": {
+						"type": "string"
+					},
+					"description": "VS Code color map"
+				},
+				"settings": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/shikiThemeSetting"
+					},
+					"description": "TextMate token color rules"
+				},
+				"tokenColors": {
+					"type": "array",
+					"items": {
+						"$ref": "#/$defs/shikiThemeSetting"
+					},
+					"description": "Alternative TextMate token color rules"
+				}
+			},
+			"additionalProperties": true
 		}
 	}
 }

@@ -42,6 +42,8 @@
 		"@mariozechner/pi-agent-core": "^0.70.6",
 		"@mariozechner/pi-ai": "^0.70.6",
 		"@mariozechner/pi-tui": "^0.70.6",
+		"@shikijs/langs": "^4.0.2",
+		"@shikijs/themes": "^4.0.2",
 		"@silvia-odwyer/photon-node": "^0.3.4",
 		"chalk": "^5.5.0",
 		"diff": "^8.0.2",

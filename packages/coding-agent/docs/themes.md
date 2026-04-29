@@ -54,6 +54,7 @@ vim ~/.pi/agent/themes/my-theme.json
 {
   "$schema": "https://raw.githubusercontent.com/badlogic/pi-mono/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
   "name": "my-theme",
+  "syntaxTheme": "github-dark",
   "vars": {
     "primary": "#00aaff",
     "secondary": 242
@@ -91,18 +92,6 @@ vim ~/.pi/agent/themes/my-theme.json
     "mdQuoteBorder": "secondary",
     "mdHr": "secondary",
     "mdListBullet": "#00ffff",
-    "toolDiffAdded": "#00ff00",
-    "toolDiffRemoved": "#ff0000",
-    "toolDiffContext": "secondary",
-    "syntaxComment": "secondary",
-    "syntaxKeyword": "primary",
-    "syntaxFunction": "#00aaff",
-    "syntaxVariable": "#ffaa00",
-    "syntaxString": "#00ff00",
-    "syntaxNumber": "#ff00ff",
-    "syntaxType": "#00aaff",
-    "syntaxOperator": "primary",
-    "syntaxPunctuation": "secondary",
     "thinkingOff": "secondary",
     "thinkingMinimal": "primary",
     "thinkingLow": "#00aaff",
@@ -124,6 +113,7 @@ vim ~/.pi/agent/themes/my-theme.json
 {
   "$schema": "https://raw.githubusercontent.com/badlogic/pi-mono/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
   "name": "my-theme",
+  "syntaxTheme": "github-dark",
   "vars": {
     "blue": "#0066cc",
     "gray": 242
@@ -138,14 +128,15 @@ vim ~/.pi/agent/themes/my-theme.json
 ```
 
 - `name` is required and must be unique.
+- `syntaxTheme` is required and controls code syntax highlighting with Shiki.
 - `vars` is optional. Define reusable colors here, then reference them in `colors`.
-- `colors` must define all 51 required tokens.
+- `colors` must define all 39 required UI tokens.
 
 The `$schema` field enables editor auto-completion and validation.
 
 ## Color Tokens
 
-Every theme must define all 51 color tokens. There are no optional colors.
+Every theme must define `syntaxTheme` and all 39 UI color tokens. There are no optional UI colors.
 
 ### Core UI (11 colors)
 
@@ -194,27 +185,43 @@ Every theme must define all 51 color tokens. There are no optional colors.
 | `mdHr` | Horizontal rule |
 | `mdListBullet` | List bullets |
 
-### Tool Diffs (3 colors)
+### Syntax Highlighting
 
-| Token | Purpose |
-|-------|---------|
-| `toolDiffAdded` | Added lines |
-| `toolDiffRemoved` | Removed lines |
-| `toolDiffContext` | Context lines |
+Syntax highlighting is controlled by the required `syntaxTheme` field, not by Pi UI color tokens. `syntaxTheme` uses Shiki themes. Edit diff colors are also derived from `syntaxTheme` so added/removed/context lines fit the syntax palette.
 
-### Syntax Highlighting (9 colors)
+Bundled syntax themes:
 
-| Token | Purpose |
-|-------|---------|
-| `syntaxComment` | Comments |
-| `syntaxKeyword` | Keywords |
-| `syntaxFunction` | Function names |
-| `syntaxVariable` | Variables |
-| `syntaxString` | Strings |
-| `syntaxNumber` | Numbers |
-| `syntaxType` | Types |
-| `syntaxOperator` | Operators |
-| `syntaxPunctuation` | Punctuation |
+- `github-dark`
+- `github-light`
+
+Custom themes can also embed an inline Shiki theme object. Use either `settings` or `tokenColors` for TextMate token rules. For edit diffs, Pi reads standard VS Code/Shiki colors such as `diffEditor.insertedTextBackground`, `diffEditor.removedTextBackground`, `editorGutter.addedBackground`, and `editorGutter.deletedBackground` when present; otherwise it derives diff colors from `markup.inserted` and `markup.deleted` token colors.
+
+```json
+{
+  "syntaxTheme": {
+    "name": "my-syntax",
+    "type": "dark",
+    "fg": "#d4d4d4",
+    "bg": "#1e1e1e",
+    "colors": {
+      "diffEditor.insertedTextBackground": "#00ff0030",
+      "diffEditor.removedTextBackground": "#ff000030",
+      "editorGutter.addedBackground": "#00aa00",
+      "editorGutter.deletedBackground": "#aa0000"
+    },
+    "tokenColors": [
+      {
+        "scope": ["comment"],
+        "settings": { "foreground": "#6a9955" }
+      },
+      {
+        "scope": ["keyword"],
+        "settings": { "foreground": "#569cd6" }
+      }
+    ]
+  }
+}
+```
 
 ### Thinking Level Borders (6 colors)
 

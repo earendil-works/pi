@@ -12,7 +12,7 @@
         bytes[i] = binary.charCodeAt(i);
       }
       const data = JSON.parse(new TextDecoder('utf-8').decode(bytes));
-      const { header, entries, leafId: defaultLeafId, systemPrompt, tools, renderedTools } = data;
+      const { header, entries, leafId: defaultLeafId, systemPrompt, tools, renderedTools, highlightedCode = {} } = data;
 
       // ============================================================
       // URL PARAMETER HANDLING
@@ -783,13 +783,19 @@
       function getLanguageFromPath(filePath) {
         const ext = filePath.split('.').pop()?.toLowerCase();
         const extToLang = {
-          ts: 'typescript', tsx: 'typescript', js: 'javascript', jsx: 'javascript',
-          py: 'python', rb: 'ruby', rs: 'rust', go: 'go', java: 'java',
-          c: 'c', cpp: 'cpp', h: 'c', hpp: 'cpp', cs: 'csharp',
-          php: 'php', sh: 'bash', bash: 'bash', zsh: 'bash',
-          sql: 'sql', html: 'html', css: 'css', scss: 'scss',
-          json: 'json', yaml: 'yaml', yml: 'yaml', xml: 'xml',
-          md: 'markdown', dockerfile: 'dockerfile'
+          ts: 'typescript', tsx: 'tsx', js: 'javascript', jsx: 'jsx',
+          mjs: 'javascript', cjs: 'javascript', py: 'python', rb: 'ruby',
+          rs: 'rust', go: 'go', java: 'java', kt: 'kotlin', swift: 'swift',
+          c: 'c', h: 'c', cpp: 'cpp', cc: 'cpp', cxx: 'cpp', hpp: 'cpp',
+          cs: 'csharp', php: 'php', sh: 'bash', bash: 'bash', zsh: 'bash',
+          fish: 'fish', ps1: 'powershell', sql: 'sql', html: 'html', htm: 'html',
+          css: 'css', scss: 'scss', sass: 'sass', less: 'less', json: 'json',
+          yaml: 'yaml', yml: 'yaml', toml: 'toml', xml: 'xml', md: 'markdown',
+          markdown: 'markdown', dockerfile: 'dockerfile', makefile: 'makefile',
+          cmake: 'cmake', lua: 'lua', perl: 'perl', r: 'r', scala: 'scala',
+          clj: 'clojure', ex: 'elixir', exs: 'elixir', erl: 'erlang', hs: 'haskell',
+          ml: 'ocaml', vim: 'vim', graphql: 'graphql', proto: 'protobuf', tf: 'hcl',
+          hcl: 'hcl'
         };
         return extToLang[ext];
       }
@@ -805,6 +811,59 @@
         return null;
       }
 
+      function highlightKey(code, lang) {
+        return `${lang || ''}\u0000${code}`;
+      }
+
+      function highlightedCodeHtml(code, lang) {
+        if (!lang) return null;
+        return highlightedCode[highlightKey(replaceTabs(code), lang)] || null;
+      }
+
+      function codePreHtml(code, lang) {
+        const highlighted = highlightedCodeHtml(code, lang);
+        const content = highlighted || escapeHtml(replaceTabs(code));
+        return `<pre><code class="shiki">${content}</code></pre>`;
+      }
+
+      function parseDiffLine(line) {
+        const match = line.match(/^([+-\s])(\s*\d*)\s(.*)$/);
+        if (!match) return null;
+        return { prefix: match[1], lineNum: match[2], content: match[3] };
+      }
+
+      function diffContentCode(diffText) {
+        return diffText
+          .split('\n')
+          .map((line) => {
+            const parsed = parseDiffLine(line);
+            return replaceTabs(parsed ? parsed.content : line);
+          })
+          .join('\n');
+      }
+
+      function renderDiffHtml(diffText, lang) {
+        const diffLines = diffText.split('\n');
+        const highlighted = lang ? highlightedCodeHtml(diffContentCode(diffText), lang) : null;
+        const highlightedLines = highlighted ? highlighted.split('\n') : null;
+        let html = '<div class="tool-diff">';
+        for (let i = 0; i < diffLines.length; i++) {
+          const line = diffLines[i];
+          const parsed = parseDiffLine(line);
+          const prefix = parsed ? parsed.prefix : line.startsWith('+') ? '+' : line.startsWith('-') ? '-' : ' ';
+          const cls = prefix === '+' ? 'diff-added' : prefix === '-' ? 'diff-removed' : 'diff-context';
+          if (parsed) {
+            const prefixHtml = escapeHtml(`${parsed.prefix}${parsed.lineNum} `);
+            const contentHtml = highlightedLines?.[i] || escapeHtml(replaceTabs(parsed.content));
+            html += `<div class="${cls}"><span class="diff-prefix">${prefixHtml}</span><span class="diff-content">${contentHtml}</span></div>`;
+          } else {
+            html += `<div class="${cls}">${escapeHtml(replaceTabs(line))}</div>`;
+          }
+        }
+        html += '</div>';
+        return html;
+      }
+
       function formatExpandableOutput(text, maxLines, lang) {
         text = replaceTabs(text);
         const lines = text.split('\n');
@@ -812,29 +871,15 @@
         const remaining = lines.length - maxLines;
 
         if (lang) {
-          let highlighted;
-          try {
-            highlighted = hljs.highlight(text, { language: lang }).value;
-          } catch {
-            highlighted = escapeHtml(text);
-          }
-
           if (remaining > 0) {
             const previewCode = displayLines.join('\n');
-            let previewHighlighted;
-            try {
-              previewHighlighted = hljs.highlight(previewCode, { language: lang }).value;
-            } catch {
-              previewHighlighted = escapeHtml(previewCode);
-            }
-
             return `<div class="tool-output expandable" onclick="if(window.getSelection().toString())return;this.classList.toggle('expanded')">
-              <div class="output-preview"><pre><code class="hljs">${previewHighlighted}</code></pre>
+              <div class="output-preview">${codePreHtml(previewCode, lang)}
               <div class="expand-hint">... (${remaining} more lines)</div></div>
-              <div class="output-full"><pre><code class="hljs">${highlighted}</code></pre></div></div>`;
+              <div class="output-full">${codePreHtml(text, lang)}</div></div>`;
           }
 
-          return `<div class="tool-output"><pre><code class="hljs">${highlighted}</code></pre></div>`;
+          return `<div class="tool-output">${codePreHtml(text, lang)}</div>`;
         }
 
         // Plain text output
@@ -951,13 +996,8 @@
             html += `<div class="tool-header"><span class="tool-name">edit</span> <span class="tool-path">${filePath === null ? invalidArg : escapeHtml(shortenPath(filePath || ''))}</span></div>`;
 
             if (result?.details?.diff) {
-              const diffLines = result.details.diff.split('\n');
-              html += '<div class="tool-diff">';
-              for (const line of diffLines) {
-                const cls = line.match(/^\+/) ? 'diff-added' : line.match(/^-/) ? 'diff-removed' : 'diff-context';
-                html += `<div class="${cls}">${escapeHtml(replaceTabs(line))}</div>`;
-              }
-              html += '</div>';
+              const lang = filePath ? getLanguageFromPath(filePath) : null;
+              html += renderDiffHtml(result.details.diff, lang);
             } else if (result) {
               const output = getResultText().trim();
               if (output) html += `<div class="tool-output"><pre>${escapeHtml(output)}</pre></div>`;
@@ -1517,26 +1557,9 @@
             out += '>';
             return out;
           },
-          // Code blocks: syntax highlight, no HTML escaping
+          // Code blocks: syntax highlight via pre-rendered Shiki output when a language is provided.
           code(token) {
-            const code = token.text;
-            const lang = token.lang;
-            let highlighted;
-            if (lang && hljs.getLanguage(lang)) {
-              try {
-                highlighted = hljs.highlight(code, { language: lang }).value;
-              } catch {
-                highlighted = escapeHtml(code);
-              }
-            } else {
-              // Auto-detect language if not specified
-              try {
-                highlighted = hljs.highlightAuto(code).value;
-              } catch {
-                highlighted = escapeHtml(code);
-              }
-            }
-            return `<pre><code class="hljs">${highlighted}</code></pre>`;
+            return codePreHtml(token.text, token.lang);
           },
           // Inline code: escape HTML
           codespan(token) {

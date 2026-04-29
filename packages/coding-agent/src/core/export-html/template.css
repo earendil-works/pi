@@ -579,9 +579,19 @@
       white-space: pre;
     }
 
-    .diff-added { color: var(--toolDiffAdded); }
-    .diff-removed { color: var(--toolDiffRemoved); }
-    .diff-context { color: var(--toolDiffContext); }
+    .diff-added {
+      color: var(--diffAdded);
+      background: var(--diffAddedBg);
+    }
+
+    .diff-removed {
+      color: var(--diffRemoved);
+      background: var(--diffRemovedBg);
+    }
+
+    .diff-context { color: var(--diffContext); }
+    .diff-prefix { color: inherit; }
+    .diff-content { color: var(--text); }
 
     /* Model change */
     .model-change {
@@ -912,20 +922,7 @@
     }
 
     /* Syntax highlighting */
-    .hljs { background: transparent; color: var(--text); }
-    .hljs-comment, .hljs-quote { color: var(--syntaxComment); }
-    .hljs-keyword, .hljs-selector-tag { color: var(--syntaxKeyword); }
-    .hljs-number, .hljs-literal { color: var(--syntaxNumber); }
-    .hljs-string, .hljs-doctag { color: var(--syntaxString); }
-    /* Function names: hljs v11 uses .hljs-title.function_ compound class */
-    .hljs-function, .hljs-title, .hljs-title.function_, .hljs-section, .hljs-name { color: var(--syntaxFunction); }
-    /* Types: hljs v11 uses .hljs-title.class_ for class names */
-    .hljs-type, .hljs-class, .hljs-title.class_, .hljs-built_in { color: var(--syntaxType); }
-    .hljs-attr, .hljs-variable, .hljs-variable.language_, .hljs-params, .hljs-property { color: var(--syntaxVariable); }
-    .hljs-meta, .hljs-meta .hljs-keyword, .hljs-meta .hljs-string { color: var(--syntaxKeyword); }
-    .hljs-operator { color: var(--syntaxOperator); }
-    .hljs-punctuation { color: var(--syntaxPunctuation); }
-    .hljs-subst { color: var(--text); }
+    .shiki { background: transparent; color: var(--text); }
 
     /* Footer */
     .footer {

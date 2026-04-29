@@ -2,9 +2,13 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Changed theme syntax highlighting and edit diff colors to use required Shiki `syntaxTheme` entries instead of Pi `syntax*` and `toolDiff*` color tokens. Custom themes must add `syntaxTheme`; `syntaxComment`, `syntaxKeyword`, `syntaxFunction`, `syntaxVariable`, `syntaxString`, `syntaxNumber`, `syntaxType`, `syntaxOperator`, `syntaxPunctuation`, `toolDiffAdded`, `toolDiffRemoved`, `toolDiffContext`, `toolDiffAddedBg`, and `toolDiffRemovedBg` no longer control code or edit diff highlighting.
+
 ### Changed
 
-- Replaced terminal syntax highlighting with Shiki for code blocks and built-in tool renderers, including theme-aware full-line highlights for edit diffs.
+- Replaced terminal and HTML export syntax highlighting with Shiki for code blocks and built-in tool renderers, including theme-aware full-line highlights for edit diffs.
 
 ## [0.70.6] - 2026-04-28
 

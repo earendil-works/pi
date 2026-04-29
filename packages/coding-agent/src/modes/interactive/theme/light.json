@@ -1,6 +1,7 @@
 {
 	"$schema": "https://raw.githubusercontent.com/badlogic/pi-mono/main/packages/coding-agent/src/modes/interactive/theme/theme-schema.json",
 	"name": "light",
+	"syntaxTheme": "github-light",
 	"vars": {
 		"teal": "#5a8080",
 		"blue": "#547da7",
@@ -15,8 +16,6 @@
 		"toolPendingBg": "#e8e8f0",
 		"toolSuccessBg": "#e8f0e8",
 		"toolErrorBg": "#f0e8e8",
-		"toolDiffAddedBg": "#d8f2df",
-		"toolDiffRemovedBg": "#f8d9dc",
 		"customMsgBg": "#ede7f6"
 	},
 	"colors": {
@@ -31,7 +30,6 @@
 		"dim": "dimGray",
 		"text": "",
 		"thinkingText": "mediumGray",
-
 		"selectedBg": "selectedBg",
 		"userMessageBg": "userMsgBg",
 		"userMessageText": "",
@@ -43,7 +41,6 @@
 		"toolErrorBg": "toolErrorBg",
 		"toolTitle": "",
 		"toolOutput": "mediumGray",
-
 		"mdHeading": "yellow",
 		"mdLink": "blue",
 		"mdLinkUrl": "dimGray",
@@ -54,30 +51,12 @@
 		"mdQuoteBorder": "mediumGray",
 		"mdHr": "mediumGray",
 		"mdListBullet": "green",
-
-		"toolDiffAdded": "green",
-		"toolDiffRemoved": "red",
-		"toolDiffContext": "mediumGray",
-		"toolDiffAddedBg": "toolDiffAddedBg",
-		"toolDiffRemovedBg": "toolDiffRemovedBg",
-
-		"syntaxComment": "#008000",
-		"syntaxKeyword": "#0000FF",
-		"syntaxFunction": "#795E26",
-		"syntaxVariable": "#001080",
-		"syntaxString": "#A31515",
-		"syntaxNumber": "#098658",
-		"syntaxType": "#267F99",
-		"syntaxOperator": "#000000",
-		"syntaxPunctuation": "#000000",
-
 		"thinkingOff": "lightGray",
 		"thinkingMinimal": "#767676",
 		"thinkingLow": "blue",
 		"thinkingMedium": "teal",
 		"thinkingHigh": "#875f87",
 		"thinkingXhigh": "#8b008b",
-
 		"bashMode": "green"
 	},
 	"export": {

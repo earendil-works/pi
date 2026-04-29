@@ -1,5 +1,5 @@
 import { type Component, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@mariozechner/pi-tui";
-import { getLanguageFromPath, highlightCode, theme } from "../theme/theme.js";
+import { getDiffTheme, getLanguageFromPath, highlightCode } from "../theme/theme.js";
 
 /**
  * Parse diff line to extract prefix, line number, and content.
@@ -29,7 +29,7 @@ export interface RenderDiffOptions {
 
 type RenderedDiffLine = {
 	text: string;
-	bg?: "toolDiffAddedBg" | "toolDiffRemovedBg";
+	lineStyle?: (text: string) => string;
 };
 
 export class DiffText implements Component {
@@ -76,21 +76,26 @@ function renderDiffLines(diffText: string, options: RenderDiffOptions): Rendered
 			)
 		: undefined;
 
-	return lines.map((line, index) => renderDiffLine(line, highlightedContent?.[index]));
+	const diffTheme = getDiffTheme();
+	return lines.map((line, index) => renderDiffLine(line, highlightedContent?.[index], diffTheme));
 }
 
-function renderDiffLine(line: string, highlightedContent: string | undefined): RenderedDiffLine {
+function renderDiffLine(
+	line: string,
+	highlightedContent: string | undefined,
+	diffTheme: ReturnType<typeof getDiffTheme>,
+): RenderedDiffLine {
 	const parsed = parseDiffLine(line);
-	if (!parsed) return { text: theme.fg("toolDiffContext", line) };
+	if (!parsed) return { text: diffTheme.contextPrefix(line) };
 
 	const content = highlightedContent ?? replaceTabs(parsed.content);
 	if (parsed.prefix === "-") {
-		return { text: `${theme.fg("toolDiffRemoved", `-${parsed.lineNum} `)}${content}`, bg: "toolDiffRemovedBg" };
+		return { text: `${diffTheme.removedPrefix(`-${parsed.lineNum} `)}${content}`, lineStyle: diffTheme.removedLine };
 	}
 	if (parsed.prefix === "+") {
-		return { text: `${theme.fg("toolDiffAdded", `+${parsed.lineNum} `)}${content}`, bg: "toolDiffAddedBg" };
+		return { text: `${diffTheme.addedPrefix(`+${parsed.lineNum} `)}${content}`, lineStyle: diffTheme.addedLine };
 	}
-	return { text: `${theme.fg("toolDiffContext", ` ${parsed.lineNum} `)}${content}` };
+	return { text: `${diffTheme.contextPrefix(` ${parsed.lineNum} `)}${content}` };
 }
 
 function renderFullWidthDiffLine(line: RenderedDiffLine, width: number): string[] {
@@ -98,7 +103,7 @@ function renderFullWidthDiffLine(line: RenderedDiffLine, width: number): string[
 	const wrappedLines = wrapTextWithAnsi(line.text, width);
 	return wrappedLines.map((wrappedLine) => {
 		const paddedLine = padToWidth(wrappedLine, width);
-		return line.bg ? theme.bg(line.bg, paddedLine) : paddedLine;
+		return line.lineStyle ? line.lineStyle(paddedLine) : paddedLine;
 	});
 }
 

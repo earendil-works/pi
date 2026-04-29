@@ -214,8 +214,13 @@ function cmdTheme(themeName: string): void {
 	console.log("\n--- Markdown ---");
 	["mdHeading", "mdLink", "mdCode", "mdCodeBlock", "mdCodeBlockBorder", "mdQuote", "mdListBullet"].forEach(logColor);
 
-	console.log("\n--- Diff ---");
-	["toolDiffAdded", "toolDiffRemoved", "toolDiffContext"].forEach(logColor);
+	console.log("\n--- Diff (derived from syntaxTheme) ---");
+	const diffTheme = theme.getDiffTheme();
+	console.log("addedPrefix".padEnd(20), diffTheme.addedPrefix("Sample text"));
+	console.log("removedPrefix".padEnd(20), diffTheme.removedPrefix("Sample text"));
+	console.log("contextPrefix".padEnd(20), diffTheme.contextPrefix("Sample text"));
+	console.log("addedLine".padEnd(20), diffTheme.addedLine(" Sample "));
+	console.log("removedLine".padEnd(20), diffTheme.removedLine(" Sample "));
 
 	console.log("\n--- Thinking ---");
 	["thinkingOff", "thinkingMinimal", "thinkingLow", "thinkingMedium", "thinkingHigh"].forEach(logColor);

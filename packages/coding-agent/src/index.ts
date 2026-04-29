@@ -337,6 +337,8 @@ export {
 } from "./modes/interactive/components/index.js";
 // Theme utilities for custom tools and extensions
 export {
+	type DiffTheme,
+	getDiffTheme,
 	getLanguageFromPath,
 	getMarkdownTheme,
 	getSelectListTheme,

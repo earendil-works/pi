@@ -7,7 +7,12 @@ import { Compile } from "typebox/compile";
 import { getCustomThemesDir, getThemesDir } from "../../../config.js";
 import type { SourceInfo } from "../../../core/source-info.js";
 import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.js";
-import { highlightCodeWithShiki, initializeSyntaxHighlighter } from "./syntax-highlighting.js";
+import {
+	getSyntaxThemeDiffColors,
+	highlightCodeWithShiki,
+	type SyntaxThemeInput,
+	setSyntaxHighlightTheme,
+} from "./syntax-highlighting.js";
 
 // ============================================================================
 // Types & Schema
@@ -20,80 +25,122 @@ const ColorValueSchema = Type.Union([
 
 type ColorValue = Static<typeof ColorValueSchema>;
 
-const ThemeJsonSchema = Type.Object({
-	$schema: Type.Optional(Type.String()),
-	name: Type.String(),
-	vars: Type.Optional(Type.Record(Type.String(), ColorValueSchema)),
-	colors: Type.Object({
-		// Core UI (10 colors)
-		accent: ColorValueSchema,
-		border: ColorValueSchema,
-		borderAccent: ColorValueSchema,
-		borderMuted: ColorValueSchema,
-		success: ColorValueSchema,
-		error: ColorValueSchema,
-		warning: ColorValueSchema,
-		muted: ColorValueSchema,
-		dim: ColorValueSchema,
-		text: ColorValueSchema,
-		thinkingText: ColorValueSchema,
-		// Backgrounds & Content Text (11 colors)
-		selectedBg: ColorValueSchema,
-		userMessageBg: ColorValueSchema,
-		userMessageText: ColorValueSchema,
-		customMessageBg: ColorValueSchema,
-		customMessageText: ColorValueSchema,
-		customMessageLabel: ColorValueSchema,
-		toolPendingBg: ColorValueSchema,
-		toolSuccessBg: ColorValueSchema,
-		toolErrorBg: ColorValueSchema,
-		toolTitle: ColorValueSchema,
-		toolOutput: ColorValueSchema,
-		// Markdown (10 colors)
-		mdHeading: ColorValueSchema,
-		mdLink: ColorValueSchema,
-		mdLinkUrl: ColorValueSchema,
-		mdCode: ColorValueSchema,
-		mdCodeBlock: ColorValueSchema,
-		mdCodeBlockBorder: ColorValueSchema,
-		mdQuote: ColorValueSchema,
-		mdQuoteBorder: ColorValueSchema,
-		mdHr: ColorValueSchema,
-		mdListBullet: ColorValueSchema,
-		// Tool Diffs (5 colors)
-		toolDiffAdded: ColorValueSchema,
-		toolDiffRemoved: ColorValueSchema,
-		toolDiffContext: ColorValueSchema,
-		toolDiffAddedBg: ColorValueSchema,
-		toolDiffRemovedBg: ColorValueSchema,
-		// Syntax Highlighting (9 colors)
-		syntaxComment: ColorValueSchema,
-		syntaxKeyword: ColorValueSchema,
-		syntaxFunction: ColorValueSchema,
-		syntaxVariable: ColorValueSchema,
-		syntaxString: ColorValueSchema,
-		syntaxNumber: ColorValueSchema,
-		syntaxType: ColorValueSchema,
-		syntaxOperator: ColorValueSchema,
-		syntaxPunctuation: ColorValueSchema,
-		// Thinking Level Borders (6 colors)
-		thinkingOff: ColorValueSchema,
-		thinkingMinimal: ColorValueSchema,
-		thinkingLow: ColorValueSchema,
-		thinkingMedium: ColorValueSchema,
-		thinkingHigh: ColorValueSchema,
-		thinkingXhigh: ColorValueSchema,
-		// Bash Mode (1 color)
-		bashMode: ColorValueSchema,
-	}),
-	export: Type.Optional(
-		Type.Object({
-			pageBg: Type.Optional(ColorValueSchema),
-			cardBg: Type.Optional(ColorValueSchema),
-			infoBg: Type.Optional(ColorValueSchema),
-		}),
+const SyntaxThemeSettingSchema = Type.Object(
+	{
+		scope: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
+		settings: Type.Record(Type.String(), Type.String()),
+	},
+	{ additionalProperties: true },
+);
+
+const InlineSyntaxThemeBaseSchema = Type.Object(
+	{
+		name: Type.String(),
+		type: Type.Union([Type.Literal("dark"), Type.Literal("light")]),
+		fg: Type.Optional(Type.String()),
+		bg: Type.Optional(Type.String()),
+		colors: Type.Optional(Type.Record(Type.String(), Type.String())),
+	},
+	{ additionalProperties: true },
+);
+
+const InlineSyntaxThemeRulesSchema = Type.Union([
+	Type.Object(
+		{
+			settings: Type.Array(SyntaxThemeSettingSchema),
+			tokenColors: Type.Optional(Type.Array(SyntaxThemeSettingSchema)),
+		},
+		{ additionalProperties: true },
 	),
+	Type.Object(
+		{
+			settings: Type.Optional(Type.Array(SyntaxThemeSettingSchema)),
+			tokenColors: Type.Array(SyntaxThemeSettingSchema),
+		},
+		{ additionalProperties: true },
+	),
+]);
+
+const InlineSyntaxThemeSchema = Type.Intersect([InlineSyntaxThemeBaseSchema, InlineSyntaxThemeRulesSchema], {
+	additionalProperties: true,
 });
+
+const SyntaxThemeSchema = Type.Union([
+	Type.Literal("github-dark"),
+	Type.Literal("github-light"),
+	InlineSyntaxThemeSchema,
+]);
+
+type SyntaxThemeConfig = Static<typeof SyntaxThemeSchema>;
+
+const ThemeJsonSchema = Type.Object(
+	{
+		$schema: Type.Optional(Type.String()),
+		name: Type.String(),
+		syntaxTheme: SyntaxThemeSchema,
+		vars: Type.Optional(Type.Record(Type.String(), ColorValueSchema)),
+		colors: Type.Object(
+			{
+				// Core UI (11 colors)
+				accent: ColorValueSchema,
+				border: ColorValueSchema,
+				borderAccent: ColorValueSchema,
+				borderMuted: ColorValueSchema,
+				success: ColorValueSchema,
+				error: ColorValueSchema,
+				warning: ColorValueSchema,
+				muted: ColorValueSchema,
+				dim: ColorValueSchema,
+				text: ColorValueSchema,
+				thinkingText: ColorValueSchema,
+				// Backgrounds & Content Text (11 colors)
+				selectedBg: ColorValueSchema,
+				userMessageBg: ColorValueSchema,
+				userMessageText: ColorValueSchema,
+				customMessageBg: ColorValueSchema,
+				customMessageText: ColorValueSchema,
+				customMessageLabel: ColorValueSchema,
+				toolPendingBg: ColorValueSchema,
+				toolSuccessBg: ColorValueSchema,
+				toolErrorBg: ColorValueSchema,
+				toolTitle: ColorValueSchema,
+				toolOutput: ColorValueSchema,
+				// Markdown (10 colors)
+				mdHeading: ColorValueSchema,
+				mdLink: ColorValueSchema,
+				mdLinkUrl: ColorValueSchema,
+				mdCode: ColorValueSchema,
+				mdCodeBlock: ColorValueSchema,
+				mdCodeBlockBorder: ColorValueSchema,
+				mdQuote: ColorValueSchema,
+				mdQuoteBorder: ColorValueSchema,
+				mdHr: ColorValueSchema,
+				mdListBullet: ColorValueSchema,
+				// Thinking Level Borders (6 colors)
+				thinkingOff: ColorValueSchema,
+				thinkingMinimal: ColorValueSchema,
+				thinkingLow: ColorValueSchema,
+				thinkingMedium: ColorValueSchema,
+				thinkingHigh: ColorValueSchema,
+				thinkingXhigh: ColorValueSchema,
+				// Bash Mode (1 color)
+				bashMode: ColorValueSchema,
+			},
+			{ additionalProperties: false },
+		),
+		export: Type.Optional(
+			Type.Object(
+				{
+					pageBg: Type.Optional(ColorValueSchema),
+					cardBg: Type.Optional(ColorValueSchema),
+					infoBg: Type.Optional(ColorValueSchema),
+				},
+				{ additionalProperties: false },
+			),
+		),
+	},
+	{ additionalProperties: false },
+);
 
 type ThemeJson = Static<typeof ThemeJsonSchema>;
 
@@ -126,18 +173,6 @@ export type ThemeColor =
 	| "mdQuoteBorder"
 	| "mdHr"
 	| "mdListBullet"
-	| "toolDiffAdded"
-	| "toolDiffRemoved"
-	| "toolDiffContext"
-	| "syntaxComment"
-	| "syntaxKeyword"
-	| "syntaxFunction"
-	| "syntaxVariable"
-	| "syntaxString"
-	| "syntaxNumber"
-	| "syntaxType"
-	| "syntaxOperator"
-	| "syntaxPunctuation"
 	| "thinkingOff"
 	| "thinkingMinimal"
 	| "thinkingLow"
@@ -152,11 +187,19 @@ export type ThemeBg =
 	| "customMessageBg"
 	| "toolPendingBg"
 	| "toolSuccessBg"
-	| "toolErrorBg"
-	| "toolDiffAddedBg"
-	| "toolDiffRemovedBg";
+	| "toolErrorBg";
+
+export interface DiffTheme {
+	addedPrefix(text: string): string;
+	removedPrefix(text: string): string;
+	contextPrefix(text: string): string;
+	addedLine(text: string): string;
+	removedLine(text: string): string;
+}
 
 type ColorMode = "truecolor" | "256color";
+type DiffFgColor = "added" | "removed" | "context";
+type DiffBgColor = "added" | "removed";
 
 // ============================================================================
 // Color Utilities
@@ -350,18 +393,22 @@ export class Theme {
 	sourceInfo?: SourceInfo;
 	private fgColors: Map<ThemeColor, string>;
 	private bgColors: Map<ThemeBg, string>;
+	private diffFgColors: Map<DiffFgColor, string>;
+	private diffBgColors: Map<DiffBgColor, string>;
 	private mode: ColorMode;
+	private syntaxTheme: SyntaxThemeInput;
 
 	constructor(
 		fgColors: Record<ThemeColor, string | number>,
 		bgColors: Record<ThemeBg, string | number>,
 		mode: ColorMode,
-		options: { name?: string; sourcePath?: string; sourceInfo?: SourceInfo } = {},
+		options: { syntaxTheme: SyntaxThemeInput; name?: string; sourcePath?: string; sourceInfo?: SourceInfo },
 	) {
 		this.name = options.name;
 		this.sourcePath = options.sourcePath;
 		this.sourceInfo = options.sourceInfo;
 		this.mode = mode;
+		this.syntaxTheme = options.syntaxTheme;
 		this.fgColors = new Map();
 		for (const [key, value] of Object.entries(fgColors) as [ThemeColor, string | number][]) {
 			this.fgColors.set(key, fgAnsi(value, mode));
@@ -370,6 +417,16 @@ export class Theme {
 		for (const [key, value] of Object.entries(bgColors) as [ThemeBg, string | number][]) {
 			this.bgColors.set(key, bgAnsi(value, mode));
 		}
+		const diffColors = getSyntaxThemeDiffColors(options.syntaxTheme);
+		this.diffFgColors = new Map([
+			["added", fgAnsi(diffColors.added, mode)],
+			["removed", fgAnsi(diffColors.removed, mode)],
+			["context", fgAnsi(diffColors.context, mode)],
+		]);
+		this.diffBgColors = new Map([
+			["added", bgAnsi(diffColors.addedBg, mode)],
+			["removed", bgAnsi(diffColors.removedBg, mode)],
+		]);
 	}
 
 	fg(color: ThemeColor, text: string): string {
@@ -418,6 +475,37 @@ export class Theme {
 
 	getColorMode(): ColorMode {
 		return this.mode;
+	}
+
+	getSyntaxTheme(): SyntaxThemeInput {
+		return this.syntaxTheme;
+	}
+
+	getDiffTheme(): DiffTheme {
+		const added = this.getDiffFgAnsi("added");
+		const removed = this.getDiffFgAnsi("removed");
+		const context = this.getDiffFgAnsi("context");
+		const addedBg = this.getDiffBgAnsi("added");
+		const removedBg = this.getDiffBgAnsi("removed");
+		return {
+			addedPrefix: (text: string) => `${added}${text}\x1b[39m`,
+			removedPrefix: (text: string) => `${removed}${text}\x1b[39m`,
+			contextPrefix: (text: string) => `${context}${text}\x1b[39m`,
+			addedLine: (text: string) => `${addedBg}${text}\x1b[49m`,
+			removedLine: (text: string) => `${removedBg}${text}\x1b[49m`,
+		};
+	}
+
+	private getDiffFgAnsi(color: DiffFgColor): string {
+		const ansi = this.diffFgColors.get(color);
+		if (!ansi) throw new Error(`Unknown diff foreground color: ${color}`);
+		return ansi;
+	}
+
+	private getDiffBgAnsi(color: DiffBgColor): string {
+		const ansi = this.diffBgColors.get(color);
+		if (!ansi) throw new Error(`Unknown diff background color: ${color}`);
+		return ansi;
 	}
 
 	getThinkingBorderColor(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh"): (str: string) => string {
@@ -520,16 +608,25 @@ export function getAvailableThemesWithPaths(): ThemeInfo[] {
 function parseThemeJson(label: string, json: unknown): ThemeJson {
 	if (!validateThemeJson.Check(json)) {
 		const errors = Array.from(validateThemeJson.Errors(json));
+		const missingThemeFields = new Set<string>();
 		const missingColors = new Set<string>();
 		const otherErrors: string[] = [];
 
 		for (const error of errors) {
-			if (error.keyword === "required" && error.instancePath === "/colors") {
+			if (error.keyword === "required") {
 				const requiredProperties = (error.params as { requiredProperties?: string[] }).requiredProperties;
-				for (const requiredProperty of requiredProperties ?? []) {
-					missingColors.add(requiredProperty);
+				if (error.instancePath === "/colors") {
+					for (const requiredProperty of requiredProperties ?? []) {
+						missingColors.add(requiredProperty);
+					}
+					continue;
 				}
-				continue;
+				if (error.instancePath === "") {
+					for (const requiredProperty of requiredProperties ?? []) {
+						missingThemeFields.add(requiredProperty);
+					}
+					continue;
+				}
 			}
 
 			const path = error.instancePath || "/";
@@ -537,6 +634,13 @@ function parseThemeJson(label: string, json: unknown): ThemeJson {
 		}
 
 		let errorMessage = `Invalid theme "${label}":\n`;
+		if (missingThemeFields.size > 0) {
+			errorMessage += "\nMissing required theme fields:\n";
+			errorMessage += Array.from(missingThemeFields)
+				.sort()
+				.map((field) => `  - ${field}`)
+				.join("\n");
+		}
 		if (missingColors.size > 0) {
 			errorMessage += "\nMissing required color tokens:\n";
 			errorMessage += Array.from(missingColors)
@@ -588,6 +692,10 @@ function loadThemeJson(name: string): ThemeJson {
 	return parseThemeJsonContent(name, content);
 }
 
+function toSyntaxTheme(input: SyntaxThemeConfig): SyntaxThemeInput {
+	return input as SyntaxThemeInput;
+}
+
 function createTheme(themeJson: ThemeJson, mode?: ColorMode, sourcePath?: string): Theme {
 	const colorMode = mode ?? detectColorMode();
 	const resolvedColors = resolveThemeColors(themeJson.colors, themeJson.vars);
@@ -600,8 +708,6 @@ function createTheme(themeJson: ThemeJson, mode?: ColorMode, sourcePath?: string
 		"toolPendingBg",
 		"toolSuccessBg",
 		"toolErrorBg",
-		"toolDiffAddedBg",
-		"toolDiffRemovedBg",
 	]);
 	for (const [key, value] of Object.entries(resolvedColors)) {
 		if (bgColorKeys.has(key)) {
@@ -611,6 +717,7 @@ function createTheme(themeJson: ThemeJson, mode?: ColorMode, sourcePath?: string
 		}
 	}
 	return new Theme(fgColors, bgColors, colorMode, {
+		syntaxTheme: toSyntaxTheme(themeJson.syntaxTheme),
 		name: themeJson.name,
 		sourcePath,
 	});
@@ -658,12 +765,8 @@ function getDefaultTheme(): string {
 	return detectTerminalBackground();
 }
 
-export function getSyntaxHighlightThemeName(themeName?: string): string {
-	return isLightTheme(themeName ?? currentThemeName) ? "github-light" : "github-dark";
-}
-
 function refreshSyntaxHighlighterTheme(): void {
-	void initializeSyntaxHighlighter(getSyntaxHighlightThemeName(), onThemeChangeCallback);
+	setSyntaxHighlightTheme(theme.getSyntaxTheme());
 }
 
 // ============================================================================
@@ -799,6 +902,7 @@ function startThemeWatcher(): void {
 				const reloadedTheme = loadThemeFromPath(themeFile);
 				registeredThemes.set(watchedThemeName, reloadedTheme);
 				setGlobalTheme(reloadedTheme);
+				refreshSyntaxHighlighterTheme();
 				// Notify callback (to invalidate UI)
 				if (onThemeChangeCallback) {
 					onThemeChangeCallback();
@@ -930,6 +1034,31 @@ export function isLightTheme(themeName?: string): boolean {
  * Get explicit export colors from theme JSON, if specified.
  * Returns undefined for each color that isn't explicitly set.
  */
+export function getThemeSyntaxTheme(themeName?: string): SyntaxThemeInput {
+	if (!themeName && currentThemeName !== undefined) {
+		return theme.getSyntaxTheme();
+	}
+	const name = themeName ?? currentThemeName ?? getDefaultTheme();
+	try {
+		return loadTheme(name).getSyntaxTheme();
+	} catch {
+		return loadTheme("dark").getSyntaxTheme();
+	}
+}
+
+export function getResolvedThemeDiffColors(
+	themeName?: string,
+): Record<"diffAdded" | "diffRemoved" | "diffContext" | "diffAddedBg" | "diffRemovedBg", string> {
+	const diffColors = getSyntaxThemeDiffColors(getThemeSyntaxTheme(themeName));
+	return {
+		diffAdded: diffColors.added,
+		diffRemoved: diffColors.removed,
+		diffContext: diffColors.context,
+		diffAddedBg: diffColors.addedBg,
+		diffRemovedBg: diffColors.removedBg,
+	};
+}
+
 export function getThemeExportColors(themeName?: string): {
 	pageBg?: string;
 	cardBg?: string;
@@ -964,6 +1093,10 @@ export function getThemeExportColors(themeName?: string): {
 // TUI Helpers
 // ============================================================================
 
+export function getDiffTheme(): DiffTheme {
+	return theme.getDiffTheme();
+}
+
 /**
  * Highlight code with syntax coloring based on file extension or language.
  * Returns array of highlighted lines.
@@ -995,9 +1128,9 @@ export function getLanguageFromPath(filePath: string): string | undefined {
 
 	const extToLang: Record<string, string> = {
 		ts: "typescript",
-		tsx: "typescript",
+		tsx: "tsx",
 		js: "javascript",
-		jsx: "javascript",
+		jsx: "jsx",
 		mjs: "javascript",
 		cjs: "javascript",
 		py: "python",
