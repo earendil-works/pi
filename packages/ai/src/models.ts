@@ -1,9 +1,13 @@
 import { MODELS } from "./models.generated.js";
+import { MODELS_GLOO } from "./models.gloo.js";
 import type { Api, KnownProvider, Model, Usage } from "./types.js";
 
 const modelRegistry: Map<string, Map<string, Model<Api>>> = new Map();
 
-// Initialize registry from MODELS on module load
+// Initialize registry from MODELS on module load. MODELS_GLOO merges in
+// after the upstream-generated MODELS so the Gloo entries survive an
+// upstream regeneration (`npm run generate-models`) — the regen rewrites
+// models.generated.ts but never touches models.gloo.ts.
 for (const [provider, models] of Object.entries(MODELS)) {
 	const providerModels = new Map<string, Model<Api>>();
 	for (const [id, model] of Object.entries(models)) {
@@ -11,17 +15,28 @@ for (const [provider, models] of Object.entries(MODELS)) {
 	}
 	modelRegistry.set(provider, providerModels);
 }
+for (const [provider, models] of Object.entries(MODELS_GLOO)) {
+	const providerModels = modelRegistry.get(provider) ?? new Map<string, Model<Api>>();
+	for (const [id, model] of Object.entries(models)) {
+		providerModels.set(id, model as Model<Api>);
+	}
+	modelRegistry.set(provider, providerModels);
+}
+
+// Merged type-level catalog so getModel("gloo", "gloo-...") gets autocomplete
+// from the MODELS_GLOO file just like the auto-generated MODELS entries.
+type AllModels = typeof MODELS & typeof MODELS_GLOO;
 
 type ModelApi<
-	TProvider extends KnownProvider,
-	TModelId extends keyof (typeof MODELS)[TProvider],
-> = (typeof MODELS)[TProvider][TModelId] extends { api: infer TApi } ? (TApi extends Api ? TApi : never) : never;
+	TProvider extends keyof AllModels,
+	TModelId extends keyof AllModels[TProvider],
+> = AllModels[TProvider][TModelId] extends { api: infer TApi } ? (TApi extends Api ? TApi : never) : never;
 
-export function getModel<TProvider extends KnownProvider, TModelId extends keyof (typeof MODELS)[TProvider]>(
+export function getModel<TProvider extends keyof AllModels, TModelId extends keyof AllModels[TProvider]>(
 	provider: TProvider,
 	modelId: TModelId,
 ): Model<ModelApi<TProvider, TModelId>> {
-	const providerModels = modelRegistry.get(provider);
+	const providerModels = modelRegistry.get(provider as string);
 	return providerModels?.get(modelId as string) as Model<ModelApi<TProvider, TModelId>>;
 }
 
@@ -29,11 +44,11 @@ export function getProviders(): KnownProvider[] {
 	return Array.from(modelRegistry.keys()) as KnownProvider[];
 }
 
-export function getModels<TProvider extends KnownProvider>(
+export function getModels<TProvider extends keyof AllModels>(
 	provider: TProvider,
-): Model<ModelApi<TProvider, keyof (typeof MODELS)[TProvider]>>[] {
-	const models = modelRegistry.get(provider);
-	return models ? (Array.from(models.values()) as Model<ModelApi<TProvider, keyof (typeof MODELS)[TProvider]>>[]) : [];
+): Model<ModelApi<TProvider, keyof AllModels[TProvider]>>[] {
+	const models = modelRegistry.get(provider as string);
+	return models ? (Array.from(models.values()) as Model<ModelApi<TProvider, keyof AllModels[TProvider]>>[]) : [];
 }
 
 export function calculateCost<TApi extends Api>(model: Model<TApi>, usage: Usage): Usage["cost"] {

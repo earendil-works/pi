@@ -17,6 +17,12 @@ export type AuthSelectorProvider = {
 	authType: "oauth" | "api_key";
 };
 
+function getCredentialDisplayLabel(credential: unknown): string | undefined {
+	if (typeof credential !== "object" || credential === null || !("label" in credential)) return undefined;
+	const label = credential.label;
+	return typeof label === "string" && label.trim() ? label.trim() : undefined;
+}
+
 /**
  * Component that renders an auth provider selector
  */
@@ -150,7 +156,10 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 
 	private formatStatusIndicator(provider: AuthSelectorProvider): string {
 		const credential = this.authStorage.get(provider.id);
-		if (credential?.type === provider.authType) return theme.fg("success", " ✓ configured");
+		if (credential?.type === provider.authType) {
+			const label = getCredentialDisplayLabel(credential);
+			return theme.fg("success", label ? ` ✓ ${label} configured` : " ✓ configured");
+		}
 		if (credential) {
 			const label = credential.type === "oauth" ? "subscription configured" : "API key configured";
 			return theme.fg("muted", " • ") + theme.fg("warning", label);

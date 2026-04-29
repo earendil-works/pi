@@ -62,6 +62,32 @@ describe("OAuthSelectorComponent", () => {
 		expect(output).toContain("subscription configured");
 	});
 
+	it("shows a stored OAuth credential label when present", () => {
+		const authStorage = AuthStorage.inMemory({
+			gloo: {
+				type: "oauth",
+				access: "access-token",
+				refresh: "client-secret",
+				expires: Date.now() + 60_000,
+				clientId: "client-id",
+				baseUrl: "https://platform.ai.gloo.com",
+				label: "servant-internal",
+			},
+		});
+		const selector = new OAuthSelectorComponent(
+			"login",
+			authStorage,
+			[{ id: "gloo", name: "Gloo AI", authType: "oauth" }],
+			() => {},
+			() => {},
+		);
+
+		const output = stripAnsi(selector.render(120).join("\n"));
+
+		expect(output).toContain("Gloo AI");
+		expect(output).toContain("servant-internal configured");
+	});
+
 	it("shows environment API key auth as configured", () => {
 		process.env.OPENAI_API_KEY = "test-openai-key";
 		const authStorage = AuthStorage.inMemory();

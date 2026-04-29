@@ -98,6 +98,16 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		return ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"];
 	}
 
+	// Gloo AI uses OAuth2 client_credentials. The actual bearer is minted at
+	// request time by providers/gloo.ts via getGlooAccessToken; this entry
+	// just lets findEnvKeys() report whether the provider is configured.
+	// getEnvApiKey("gloo") deliberately returns the sentinel "<authenticated>"
+	// (handled below) so downstream code that gates on "is the key non-empty"
+	// keeps working — but no caller should treat it as a usable bearer.
+	if (provider === "gloo") {
+		return ["GLOO_CLIENT_ID", "GLOO_CLIENT_SECRET"];
+	}
+
 	const envMap: Record<string, string> = {
 		openai: "OPENAI_API_KEY",
 		"azure-openai-responses": "AZURE_OPENAI_API_KEY",
@@ -139,6 +149,14 @@ export function findEnvKeys(provider: string): string[] | undefined {
 	if (!envVars) return undefined;
 
 	const found = envVars.filter((envVar) => !!process.env[envVar] || !!getProcEnv(envVar));
+
+	// Gloo AI requires *both* env vars to be set (client_id + client_secret).
+	// A half-configured state is worse than unconfigured — it would make the
+	// provider show as available, then fail at first request.
+	if (provider === "gloo" && found.length !== envVars.length) {
+		return undefined;
+	}
+
 	return found.length > 0 ? found : undefined;
 }
 
@@ -150,6 +168,15 @@ export function findEnvKeys(provider: string): string[] | undefined {
 export function getEnvApiKey(provider: KnownProvider): string | undefined;
 export function getEnvApiKey(provider: string): string | undefined;
 export function getEnvApiKey(provider: string): string | undefined {
+	// Gloo AI: bearer is minted at request time by providers/gloo.ts via
+	// OAuth2 client_credentials. Do NOT return the raw client_id here — it
+	// would be sent as `Bearer <client_id>` and rejected. Sentinel matches
+	// the google-vertex/amazon-bedrock pattern for auth-by-other-means.
+	if (provider === "gloo") {
+		const envKeys = findEnvKeys("gloo");
+		return envKeys && envKeys.length === 2 ? "<authenticated>" : undefined;
+	}
+
 	const envKeys = findEnvKeys(provider);
 	if (envKeys?.[0]) {
 		return process.env[envKeys[0]] || getProcEnv(envKeys[0]);

@@ -10,7 +10,8 @@ packages/*/dist-firefox/
 *.cpuprofile
 
 # Environment
-.env
+.env*
+!.env.example
 
 # Editor files
 .vscode/

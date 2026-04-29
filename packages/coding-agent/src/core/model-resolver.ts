@@ -38,6 +38,9 @@ export const defaultModelPerProvider: Record<KnownProvider, string> = {
 	"opencode-go": "kimi-k2.6",
 	"kimi-coding": "kimi-for-coding",
 	"cloudflare-workers-ai": "@cf/moonshotai/kimi-k2.6",
+	// Gloo AI defaults to Sonnet 4.6 — Anthropic-quality reasoning, fast,
+	// and on the Bedrock-direct tier so latency is competitive.
+	gloo: "gloo-anthropic-claude-sonnet-4.6",
 };
 
 export interface ScopedModel {

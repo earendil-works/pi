@@ -12,7 +12,11 @@ export type KnownApi =
 	| "bedrock-converse-stream"
 	| "google-generative-ai"
 	| "google-gemini-cli"
-	| "google-vertex";
+	| "google-vertex"
+	// Gloo AI — OpenAI-compatible wire format with OAuth2 client_credentials
+	// auth resolved at request time. Routed through a thin wrapper around
+	// the openai-completions stream that injects a fresh bearer token.
+	| "gloo-openai-completions";
 
 export type Api = KnownApi | (string & {});
 
@@ -42,7 +46,8 @@ export type KnownProvider =
 	| "opencode"
 	| "opencode-go"
 	| "kimi-coding"
-	| "cloudflare-workers-ai";
+	| "cloudflare-workers-ai"
+	| "gloo";
 export type Provider = KnownProvider | string;
 
 export type ThinkingLevel = "minimal" | "low" | "medium" | "high" | "xhigh";

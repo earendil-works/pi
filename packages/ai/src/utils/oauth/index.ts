@@ -19,6 +19,16 @@ export {
 	normalizeDomain,
 	refreshGitHubCopilotToken,
 } from "./github-copilot.js";
+export type { GlooOAuthCredentials, GlooTokenCache, GlooTokenOptions } from "./gloo.js";
+// Gloo AI (OAuth2 client_credentials — non-interactive, no PKCE)
+export {
+	clearGlooTokenCache,
+	getGlooAccessToken,
+	getGlooTokenCache,
+	glooOAuthProvider,
+	loginGloo,
+	refreshGlooToken,
+} from "./gloo.js";
 // Google Antigravity
 export { antigravityOAuthProvider, loginAntigravity, refreshAntigravityToken } from "./google-antigravity.js";
 // Google Gemini CLI
@@ -34,6 +44,7 @@ export * from "./types.js";
 
 import { anthropicOAuthProvider } from "./anthropic.js";
 import { githubCopilotOAuthProvider } from "./github-copilot.js";
+import { glooOAuthProvider } from "./gloo.js";
 import { antigravityOAuthProvider } from "./google-antigravity.js";
 import { geminiCliOAuthProvider } from "./google-gemini-cli.js";
 import { openaiCodexOAuthProvider } from "./openai-codex.js";
@@ -45,6 +56,7 @@ const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
 	geminiCliOAuthProvider,
 	antigravityOAuthProvider,
 	openaiCodexOAuthProvider,
+	glooOAuthProvider,
 ];
 
 const oauthProviderRegistry = new Map<string, OAuthProviderInterface>(

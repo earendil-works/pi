@@ -13,6 +13,7 @@ import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import type { BedrockOptions } from "./amazon-bedrock.js";
 import type { AnthropicOptions } from "./anthropic.js";
 import type { AzureOpenAIResponsesOptions } from "./azure-openai-responses.js";
+import type { GlooOptions } from "./gloo.js";
 import type { GoogleOptions } from "./google.js";
 import type { GoogleGeminiCliOptions } from "./google-gemini-cli.js";
 import type { GoogleVertexOptions } from "./google-vertex.js";
@@ -79,6 +80,11 @@ interface OpenAIResponsesProviderModule {
 	streamSimpleOpenAIResponses: StreamFunction<"openai-responses", SimpleStreamOptions>;
 }
 
+interface GlooProviderModule {
+	streamGloo: StreamFunction<"gloo-openai-completions", GlooOptions>;
+	streamSimpleGloo: StreamFunction<"gloo-openai-completions", SimpleStreamOptions>;
+}
+
 interface BedrockProviderModule {
 	streamBedrock: (
 		model: Model<"bedrock-converse-stream">,
@@ -120,6 +126,9 @@ let openAICompletionsProviderModulePromise:
 	| undefined;
 let openAIResponsesProviderModulePromise:
 	| Promise<LazyProviderModule<"openai-responses", OpenAIResponsesOptions, SimpleStreamOptions>>
+	| undefined;
+let glooProviderModulePromise:
+	| Promise<LazyProviderModule<"gloo-openai-completions", GlooOptions, SimpleStreamOptions>>
 	| undefined;
 let bedrockProviderModuleOverride:
 	| LazyProviderModule<"bedrock-converse-stream", BedrockOptions, SimpleStreamOptions>
@@ -326,6 +335,19 @@ function loadOpenAIResponsesProviderModule(): Promise<
 	return openAIResponsesProviderModulePromise;
 }
 
+function loadGlooProviderModule(): Promise<
+	LazyProviderModule<"gloo-openai-completions", GlooOptions, SimpleStreamOptions>
+> {
+	glooProviderModulePromise ||= import("./gloo.js").then((module) => {
+		const provider = module as GlooProviderModule;
+		return {
+			stream: provider.streamGloo,
+			streamSimple: provider.streamSimpleGloo,
+		};
+	});
+	return glooProviderModulePromise;
+}
+
 function loadBedrockProviderModule(): Promise<
 	LazyProviderModule<"bedrock-converse-stream", BedrockOptions, SimpleStreamOptions>
 > {
@@ -360,6 +382,8 @@ export const streamOpenAICompletions = createLazyStream(loadOpenAICompletionsPro
 export const streamSimpleOpenAICompletions = createLazySimpleStream(loadOpenAICompletionsProviderModule);
 export const streamOpenAIResponses = createLazyStream(loadOpenAIResponsesProviderModule);
 export const streamSimpleOpenAIResponses = createLazySimpleStream(loadOpenAIResponsesProviderModule);
+export const streamGloo = createLazyStream(loadGlooProviderModule);
+export const streamSimpleGloo = createLazySimpleStream(loadGlooProviderModule);
 const streamBedrockLazy = createLazyStream(loadBedrockProviderModule);
 const streamSimpleBedrockLazy = createLazySimpleStream(loadBedrockProviderModule);
 
@@ -422,6 +446,12 @@ export function registerBuiltInApiProviders(): void {
 		api: "bedrock-converse-stream",
 		stream: streamBedrockLazy,
 		streamSimple: streamSimpleBedrockLazy,
+	});
+
+	registerApiProvider({
+		api: "gloo-openai-completions",
+		stream: streamGloo,
+		streamSimple: streamSimpleGloo,
 	});
 }
 

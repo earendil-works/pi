@@ -46,6 +46,10 @@
 			"types": "./dist/providers/openai-responses.d.ts",
 			"import": "./dist/providers/openai-responses.js"
 		},
+		"./gloo": {
+			"types": "./dist/providers/gloo.d.ts",
+			"import": "./dist/providers/gloo.js"
+		},
 		"./oauth": {
 			"types": "./dist/oauth.d.ts",
 			"import": "./dist/oauth.js"
@@ -69,6 +73,7 @@
 		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
 		"dev:tsc": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
 		"test": "vitest --run",
+		"verify:gloo": "npx tsx scripts/verify-gloo.ts",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
