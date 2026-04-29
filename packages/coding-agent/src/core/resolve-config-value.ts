@@ -11,10 +11,15 @@ const commandResultCache = new Map<string, string | undefined>();
 
 /**
  * Resolve a config value (API key, header value, etc.) to an actual value.
+ * - If starts with "!!", executes the rest as a shell command and uses stdout (never cached)
  * - If starts with "!", executes the rest as a shell command and uses stdout (cached)
  * - Otherwise checks environment variable first, then treats as literal (not cached)
  */
 export function resolveConfigValue(config: string): string | undefined {
+	if (config.startsWith("!!")) {
+		// Double-bang: never cache, always execute fresh (for short-lived tokens)
+		return executeCommandUncached(config.slice(1));
+	}
 	if (config.startsWith("!")) {
 		return executeCommand(config);
 	}
@@ -86,9 +91,15 @@ function executeCommand(commandConfig: string): string | undefined {
 }
 
 /**
- * Resolve all header values using the same resolution logic as API keys.
+ * Resolve a config value without caching (always executes commands fresh).
+ * - If starts with "!!" or "!", executes the rest as a shell command
+ * - Otherwise checks environment variable first, then treats as literal
  */
 export function resolveConfigValueUncached(config: string): string | undefined {
+	if (config.startsWith("!!")) {
+		// Double-bang: strip both and execute (same as single-bang in uncached context)
+		return executeCommandUncached(config.slice(1));
+	}
 	if (config.startsWith("!")) {
 		return executeCommandUncached(config);
 	}
@@ -100,6 +111,10 @@ export function resolveConfigValueOrThrow(config: string, description: string): 
 	const resolvedValue = resolveConfigValueUncached(config);
 	if (resolvedValue !== undefined) {
 		return resolvedValue;
+	}
+
+	if (config.startsWith("!!")) {
+		throw new Error(`Failed to resolve ${description} from shell command: ${config.slice(2)}`);
 	}
 
 	if (config.startsWith("!")) {

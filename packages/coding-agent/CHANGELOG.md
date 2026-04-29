@@ -12,6 +12,7 @@
 ### Added
 
 - Added Cloudflare Workers AI as a built-in provider with `CLOUDFLARE_API_KEY`/`CLOUDFLARE_ACCOUNT_ID` setup, default model resolution, `/login` support, and provider documentation ([#3851](https://github.com/badlogic/pi-mono/pull/3851) by [@mchenco](https://github.com/mchenco)).
+- Added `!!` (double-bang) syntax for API key commands that should never be cached, useful for short-lived tokens like cloud provider access tokens. Use `"apiKey": "!!gcloud auth print-access-token"` to execute the command fresh on every request.
 
 ### Changed
 

@@ -295,6 +295,74 @@ describe("AuthStorage", () => {
 					}
 				}
 			});
+
+			test("apiKey with !! prefix is never cached (executes every time)", async () => {
+				const counterFile = join(tempDir, "counter");
+				writeFileSync(counterFile, "0");
+
+				const counterPath = toShPath(counterFile);
+				const command = `!!sh -c 'count=$(cat "${counterPath}"); echo $((count + 1)) > "${counterPath}"; echo "key-value"'`;
+				writeAuthJson({
+					anthropic: { type: "api_key", key: command },
+				});
+
+				authStorage = AuthStorage.create(authJsonPath);
+
+				// Call multiple times - command should run each time
+				await authStorage.getApiKey("anthropic");
+				await authStorage.getApiKey("anthropic");
+				await authStorage.getApiKey("anthropic");
+
+				// Command should have run three times (not cached)
+				const count = parseInt(readFileSync(counterFile, "utf-8").trim(), 10);
+				expect(count).toBe(3);
+			});
+
+			test("apiKey with !! prefix is not cached across AuthStorage instances", async () => {
+				const counterFile = join(tempDir, "counter");
+				writeFileSync(counterFile, "0");
+
+				const counterPath = toShPath(counterFile);
+				const command = `!!sh -c 'count=$(cat "${counterPath}"); echo $((count + 1)) > "${counterPath}"; echo "key-value"'`;
+				writeAuthJson({
+					anthropic: { type: "api_key", key: command },
+				});
+
+				// Create multiple AuthStorage instances
+				const storage1 = AuthStorage.create(authJsonPath);
+				await storage1.getApiKey("anthropic");
+
+				const storage2 = AuthStorage.create(authJsonPath);
+				await storage2.getApiKey("anthropic");
+
+				// Command should have run twice (once per call, not cached)
+				const count = parseInt(readFileSync(counterFile, "utf-8").trim(), 10);
+				expect(count).toBe(2);
+			});
+
+			test("apiKey with !! prefix retries on failure (not cached)", async () => {
+				const counterFile = join(tempDir, "counter");
+				writeFileSync(counterFile, "0");
+
+				const counterPath = toShPath(counterFile);
+				const command = `!!sh -c 'count=$(cat "${counterPath}"); echo $((count + 1)) > "${counterPath}"; exit 1'`;
+				writeAuthJson({
+					anthropic: { type: "api_key", key: command },
+				});
+
+				authStorage = AuthStorage.create(authJsonPath);
+
+				// Call multiple times - all should return undefined but command runs each time
+				const key1 = await authStorage.getApiKey("anthropic");
+				const key2 = await authStorage.getApiKey("anthropic");
+
+				expect(key1).toBeUndefined();
+				expect(key2).toBeUndefined();
+
+				// Command should have run twice (failures not cached with !!)
+				const count = parseInt(readFileSync(counterFile, "utf-8").trim(), 10);
+				expect(count).toBe(2);
+			});
 		});
 	});
 

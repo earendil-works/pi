@@ -143,12 +143,17 @@ Set `api` at provider level (default for all models) or model level (override pe
 
 ### Value Resolution
 
-The `apiKey` and `headers` fields support three formats:
+The `apiKey` and `headers` fields support these formats:
 
-- **Shell command:** `"!command"` executes and uses stdout
+- **Shell command (cached):** `"!command"` executes and caches stdout for process lifetime
   ```json
   "apiKey": "!security find-generic-password -ws 'anthropic'"
   "apiKey": "!op read 'op://vault/item/credential'"
+  ```
+- **Shell command (never cached):** `"!!command"` executes on every request (for short-lived tokens)
+  ```json
+  "apiKey": "!!gcloud auth print-access-token"
+  "apiKey": "!!aws sts get-session-token --query 'Credentials.SessionToken' --output text"
   ```
 - **Environment variable:** Uses the value of the named variable
   ```json
@@ -159,7 +164,11 @@ The `apiKey` and `headers` fields support three formats:
   "apiKey": "sk-..."
   ```
 
-For `models.json`, shell commands are resolved at request time. pi intentionally does not apply built-in TTL, stale reuse, or recovery logic for arbitrary commands. Different commands need different caching and failure strategies, and pi cannot infer the right one.
+Use `!!` (double-bang) for credentials that expire quickly (e.g., cloud provider tokens with short TTLs). The command runs fresh on every API request.
+
+Use `!` (single-bang) for credentials that are stable for the session (e.g., keychain lookups, 1Password reads). The result is cached for the process lifetime.
+
+For `models.json`, both `!` and `!!` commands are resolved at request time. pi intentionally does not apply built-in TTL, stale reuse, or recovery logic for arbitrary commands. Different commands need different caching and failure strategies, and pi cannot infer the right one.
 
 If your command is slow, expensive, rate-limited, or should keep using a previous value on transient failures, wrap it in your own script or command that implements the caching or TTL behavior you want.
 

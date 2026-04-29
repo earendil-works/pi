@@ -1081,6 +1081,17 @@ describe("ModelRegistry", () => {
 			expect(apiKey).toBe("test-api-key-from-command");
 		});
 
+		test("apiKey with !! prefix executes command and uses stdout (never cached)", async () => {
+			writeRawModelsJson({
+				"custom-provider": providerWithApiKey("!!echo test-api-key-from-command"),
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const apiKey = await registry.getApiKeyForProvider("custom-provider");
+
+			expect(apiKey).toBe("test-api-key-from-command");
+		});
+
 		test("apiKey with ! prefix trims whitespace from command output", async () => {
 			writeRawModelsJson({
 				"custom-provider": providerWithApiKey("!echo '  spaced-key  '"),
@@ -1314,6 +1325,25 @@ describe("ModelRegistry", () => {
 					configured: true,
 					source: "models_json_command",
 				});
+				expect(readFileSync(counterFile, "utf-8")).toBe("0");
+			});
+
+			test("provider auth status reports !! command apiKey values as models_json_command", () => {
+				const counterFile = join(tempDir, "status-counter");
+				writeFileSync(counterFile, "0");
+				const counterPath = toShPath(counterFile);
+				const command = `!!sh -c 'echo 1 > "${counterPath}"; echo key-value'`;
+				writeRawModelsJson({
+					"custom-provider": providerWithApiKey(command),
+				});
+
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+				expect(registry.getProviderAuthStatus("custom-provider")).toEqual({
+					configured: true,
+					source: "models_json_command",
+				});
+				// Command should not be executed for status check
 				expect(readFileSync(counterFile, "utf-8")).toBe("0");
 			});
 

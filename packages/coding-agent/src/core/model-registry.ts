@@ -716,6 +716,7 @@ export class ModelRegistry {
 			return authStatus;
 		}
 
+		// Both "!" (cached) and "!!" (uncached) are command-based
 		if (providerApiKey.startsWith("!")) {
 			return { configured: true, source: "models_json_command" };
 		}
