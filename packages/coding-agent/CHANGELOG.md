@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `--profile` and `PI_PROFILE` support for isolated Pi config, auth, sessions, models, and extensions.
+
 ## [0.70.6] - 2026-04-28
 
 ### New Features

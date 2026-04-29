@@ -349,6 +349,10 @@ export function getAgentDir(): string {
 		if (envDir.startsWith("~/")) return homedir() + envDir.slice(1);
 		return envDir;
 	}
+	const profile = process.env.PI_PROFILE;
+	if (profile) {
+		return join(homedir(), CONFIG_DIR_NAME, "profiles", profile, "agent");
+	}
 	return join(homedir(), CONFIG_DIR_NAME, "agent");
 }
 
