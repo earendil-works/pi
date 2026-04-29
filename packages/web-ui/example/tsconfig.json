@@ -6,10 +6,10 @@
 		"moduleResolution": "bundler",
 		"paths": {
 			"*": ["./*"],
-			"@mariozechner/pi-agent-core": ["../../agent/dist/index.d.ts"],
-			"@mariozechner/pi-ai": ["../../ai/dist/index.d.ts"],
-			"@mariozechner/pi-tui": ["../../tui/dist/index.d.ts"],
-			"@mariozechner/pi-web-ui": ["../dist/index.d.ts"]
+			"@mariozechner/pi-agent-core": ["../../agent/src/index.ts"],
+			"@mariozechner/pi-ai": ["../../ai/src/index.ts"],
+			"@mariozechner/pi-tui": ["../../tui/src/index.ts"],
+			"@mariozechner/pi-web-ui": ["../src/index.ts"]
 		},
 		"strict": true,
 		"skipLibCheck": true,
