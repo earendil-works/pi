@@ -23,6 +23,7 @@ export class Input implements Component, Focusable {
 
 	/** Focusable interface - set by TUI when focus changes */
 	focused: boolean = false;
+	terminalFocused: boolean = true;
 
 	// Bracketed paste mode buffering
 	private pasteBuffer: string = "";
@@ -431,6 +432,10 @@ export class Input implements Component, Focusable {
 		// No cached state to invalidate currently
 	}
 
+	setTerminalFocused(focused: boolean): void {
+		this.terminalFocused = focused;
+	}
+
 	render(width: number): string[] {
 		// Calculate visible window
 		const prompt = "> ";
@@ -490,7 +495,7 @@ export class Input implements Component, Focusable {
 		const marker = this.focused ? CURSOR_MARKER : "";
 
 		// Use inverse video to show cursor
-		const cursorChar = `\x1b[7m${atCursor}\x1b[27m`; // ESC[7m = reverse video, ESC[27m = normal
+		const cursorChar = this.terminalFocused ? `\x1b[7m${atCursor}\x1b[27m` : atCursor;
 		const textWithCursor = beforeCursor + marker + cursorChar + afterCursor;
 
 		// Calculate visual width

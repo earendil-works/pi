@@ -305,6 +305,10 @@ class SessionList implements Component, Focusable {
 		this.searchInput.focused = value;
 	}
 
+	setTerminalFocused(focused: boolean): void {
+		this.searchInput.setTerminalFocused(focused);
+	}
+
 	constructor(
 		sessions: SessionInfo[],
 		showCwd: boolean,

@@ -38,6 +38,11 @@ export interface Component {
 	 * Called when theme changes or when component needs to re-render from scratch.
 	 */
 	invalidate(): void;
+
+	/**
+	 * Optional notification when the terminal window gains or loses focus.
+	 */
+	setTerminalFocused?(focused: boolean): void;
 }
 
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
@@ -177,8 +182,10 @@ export interface OverlayHandle {
  */
 export class Container implements Component {
 	children: Component[] = [];
+	private childTerminalFocused = true;
 
 	addChild(component: Component): void {
+		component.setTerminalFocused?.(this.childTerminalFocused);
 		this.children.push(component);
 	}
 
@@ -196,6 +203,13 @@ export class Container implements Component {
 	invalidate(): void {
 		for (const child of this.children) {
 			child.invalidate?.();
+		}
+	}
+
+	setTerminalFocused(focused: boolean): void {
+		this.childTerminalFocused = focused;
+		for (const child of this.children) {
+			child.setTerminalFocused?.(focused);
 		}
 	}
 
@@ -236,6 +250,7 @@ export class TUI extends Container {
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	private fullRedrawCount = 0;
 	private stopped = false;
+	private terminalFocused = true;
 
 	// Overlay stack for modal components rendered on top of base content
 	private focusOrderCounter = 0;
@@ -285,6 +300,26 @@ export class TUI extends Container {
 		this.clearOnShrink = enabled;
 	}
 
+	private handleTerminalFocusReport(focused: boolean): void {
+		if (this.terminalFocused === focused) return;
+		this.terminalFocused = focused;
+		this.setTerminalFocusedForAll(focused);
+		this.requestRender();
+	}
+
+	private setTerminalFocusedForAll(focused: boolean): void {
+		for (const child of this.children) {
+			this.setTerminalFocusedForComponent(child, focused);
+		}
+		for (const overlay of this.overlayStack) {
+			this.setTerminalFocusedForComponent(overlay.component, focused);
+		}
+	}
+
+	private setTerminalFocusedForComponent(component: Component, focused: boolean): void {
+		component.setTerminalFocused?.(focused);
+	}
+
 	setFocus(component: Component | null): void {
 		// Clear focused flag on old component
 		if (isFocusable(this.focusedComponent)) {
@@ -296,6 +331,7 @@ export class TUI extends Container {
 		// Set focused flag on new component
 		if (isFocusable(component)) {
 			component.focused = true;
+			this.setTerminalFocusedForComponent(component, this.terminalFocused);
 		}
 	}
 
@@ -417,6 +453,8 @@ export class TUI extends Container {
 
 	start(): void {
 		this.stopped = false;
+		this.terminalFocused = true;
+		this.setTerminalFocusedForAll(true);
 		this.terminal.start(
 			(data) => this.handleInput(data),
 			() => this.requestRender(),
@@ -449,6 +487,8 @@ export class TUI extends Container {
 
 	stop(): void {
 		this.stopped = true;
+		this.terminalFocused = true;
+		this.setTerminalFocusedForAll(true);
 		if (this.renderTimer) {
 			clearTimeout(this.renderTimer);
 			this.renderTimer = undefined;
@@ -519,6 +559,11 @@ export class TUI extends Container {
 	}
 
 	private handleInput(data: string): void {
+		if (data === "\x1b[I" || data === "\x1b[O") {
+			this.handleTerminalFocusReport(data === "\x1b[I");
+			return;
+		}
+
 		if (this.inputListeners.size > 0) {
 			let current = data;
 			for (const listener of this.inputListeners) {
@@ -1234,7 +1279,7 @@ export class TUI extends Container {
 		}
 
 		this.hardwareCursorRow = targetRow;
-		if (this.showHardwareCursor) {
+		if (this.showHardwareCursor || !this.terminalFocused) {
 			this.terminal.showCursor();
 		} else {
 			this.terminal.hideCursor();

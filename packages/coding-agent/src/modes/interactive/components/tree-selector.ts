@@ -1088,6 +1088,10 @@ class LabelInput implements Component, Focusable {
 		this.input.focused = value;
 	}
 
+	setTerminalFocused(focused: boolean): void {
+		this.input.setTerminalFocused(focused);
+	}
+
 	constructor(entryId: string, currentLabel: string | undefined) {
 		this.entryId = entryId;
 		this.input = new Input();

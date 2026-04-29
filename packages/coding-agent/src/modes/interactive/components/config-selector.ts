@@ -196,6 +196,10 @@ class ResourceList implements Component, Focusable {
 		this.searchInput.focused = value;
 	}
 
+	setTerminalFocused(focused: boolean): void {
+		this.searchInput.setTerminalFocused(focused);
+	}
+
 	constructor(groups: ResourceGroup[], settingsManager: SettingsManager, cwd: string, agentDir: string) {
 		this.groups = groups;
 		this.settingsManager = settingsManager;

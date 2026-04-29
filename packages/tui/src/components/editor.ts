@@ -223,6 +223,7 @@ export class Editor implements Component, Focusable {
 
 	/** Focusable interface - set by TUI when focus changes */
 	focused: boolean = false;
+	terminalFocused: boolean = true;
 
 	protected tui: TUI;
 	private theme: EditorTheme;
@@ -406,6 +407,10 @@ export class Editor implements Component, Focusable {
 		// No cached state to invalidate currently
 	}
 
+	setTerminalFocused(focused: boolean): void {
+		this.terminalFocused = focused;
+	}
+
 	render(width: number): string[] {
 		const maxPadding = Math.max(0, Math.floor((width - 1) / 2));
 		const paddingX = Math.min(this.paddingX, maxPadding);
@@ -485,12 +490,12 @@ export class Editor implements Component, Focusable {
 					const afterGraphemes = [...this.segment(after)];
 					const firstGrapheme = afterGraphemes[0]?.segment || "";
 					const restAfter = after.slice(firstGrapheme.length);
-					const cursor = `\x1b[7m${firstGrapheme}\x1b[0m`;
+					const cursor = this.terminalFocused ? `\x1b[7m${firstGrapheme}\x1b[0m` : firstGrapheme;
 					displayText = before + marker + cursor + restAfter;
 					// lineVisibleWidth stays the same - we're replacing, not adding
 				} else {
 					// Cursor is at the end - add highlighted space
-					const cursor = "\x1b[7m \x1b[0m";
+					const cursor = this.terminalFocused ? "\x1b[7m \x1b[0m" : " ";
 					displayText = before + marker + cursor;
 					lineVisibleWidth = lineVisibleWidth + 1;
 					// If cursor overflows content width into the padding, flag it

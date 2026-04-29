@@ -78,6 +78,11 @@ export class SettingsList implements Component {
 		this.submenuComponent?.invalidate?.();
 	}
 
+	setTerminalFocused(focused: boolean): void {
+		this.searchInput?.setTerminalFocused(focused);
+		this.submenuComponent?.setTerminalFocused?.(focused);
+	}
+
 	render(width: number): string[] {
 		// If submenu is active, render it instead
 		if (this.submenuComponent) {
