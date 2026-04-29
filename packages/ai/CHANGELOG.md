@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Deduplicated `resolveCacheRetention` function across Anthropic, OpenAI completions, OpenAI responses, and Bedrock providers into a shared utility.
+
 ## [0.70.6] - 2026-04-28
 
 ### Added
