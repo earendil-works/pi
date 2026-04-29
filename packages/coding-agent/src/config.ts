@@ -121,7 +121,7 @@ function getGlobalPackageRoots(method: InstallMethod): string[] {
 			const bunBin = readCommandOutput("bun", ["pm", "bin", "-g"]);
 			const roots = [join(homedir(), ".bun", "install", "global", "node_modules")];
 			if (bunBin) {
-				roots.push(join(dirname(dirname(bunBin)), "install", "global", "node_modules"));
+				roots.push(join(dirname(bunBin), "install", "global", "node_modules"));
 			}
 			return roots;
 		}
