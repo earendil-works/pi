@@ -207,6 +207,9 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 				// OpenAI documents ChatCompletionChunk.id as the unique chat completion identifier,
 				// and each chunk in a streamed completion carries the same id.
 				output.responseId ||= chunk.id;
+				if (typeof chunk.model === "string" && chunk.model.length > 0 && chunk.model !== model.id) {
+					output.responseModel ||= chunk.model;
+				}
 				if (chunk.usage) {
 					output.usage = parseChunkUsage(chunk.usage, model);
 				}
