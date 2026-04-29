@@ -71,6 +71,8 @@ const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-haiku-4.5",
 	"github-copilot:claude-sonnet-4",
 	"github-copilot:claude-sonnet-4.5",
+	"opencode:minimax-m2.5-free",
+	"opencode-go:minimax-m2.5-free",
 ]);
 
 function getAnthropicMessagesCompat(provider: string, modelId: string): AnthropicMessagesCompat | undefined {
@@ -588,6 +590,10 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl = `${variant.basePath}/v1`;
 				}
 
+				const anthropicCompat = api === "anthropic-messages"
+					? getAnthropicMessagesCompat(variant.provider, modelId)
+					: undefined;
+
 				models.push({
 					id: modelId,
 					name: m.name || modelId,
@@ -603,6 +609,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 						cacheWrite: m.cost?.cache_write || 0,
 					},
 					...(compat ? { compat } : {}),
+					...(anthropicCompat ? { compat: anthropicCompat } : {}),
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
 				});
