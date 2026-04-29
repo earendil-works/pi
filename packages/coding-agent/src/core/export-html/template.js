@@ -634,13 +634,13 @@
               if (toolCall) {
                 return labelHtml + `<span class="tree-role-tool">${escapeHtml(formatToolCall(toolCall.name, toolCall.arguments))}</span>`;
               }
-              return labelHtml + `<span class="tree-role-tool">[${msg.toolName || 'tool'}]</span>`;
+              return labelHtml + `<span class="tree-role-tool">[${escapeHtml(msg.toolName || 'tool')}]</span>`;
             }
             if (msg.role === 'bashExecution') {
               const cmd = truncate(normalize(msg.command || ''));
               return labelHtml + `<span class="tree-role-tool">[bash]:</span> ${escapeHtml(cmd)}`;
             }
-            return labelHtml + `<span class="tree-muted">[${msg.role}]</span>`;
+            return labelHtml + `<span class="tree-muted">[${escapeHtml(msg.role)}]</span>`;
           }
           case 'compaction':
             return labelHtml + `<span class="tree-compaction">[compaction: ${Math.round(entry.tokensBefore/1000)}k tokens]</span>`;
@@ -653,11 +653,11 @@
             return labelHtml + `<span class="tree-custom">[${escapeHtml(entry.customType)}]:</span> ${escapeHtml(truncate(normalize(content)))}`;
           }
           case 'model_change':
-            return labelHtml + `<span class="tree-muted">[model: ${entry.modelId}]</span>`;
+            return labelHtml + `<span class="tree-muted">[model: ${escapeHtml(entry.modelId)}]</span>`;
           case 'thinking_level_change':
-            return labelHtml + `<span class="tree-muted">[thinking: ${entry.thinkingLevel}]</span>`;
+            return labelHtml + `<span class="tree-muted">[thinking: ${escapeHtml(entry.thinkingLevel)}]</span>`;
           default:
-            return labelHtml + `<span class="tree-muted">[${entry.type}]</span>`;
+            return labelHtml + `<span class="tree-muted">[${escapeHtml(entry.type)}]</span>`;
         }
       }
 
@@ -1122,7 +1122,7 @@
        * Render the copy-link button HTML for a message.
        */
       function renderCopyLinkButton(entryId) {
-        return `<button class="copy-link-btn" data-entry-id="${entryId}" title="Copy link to this message">
+        return `<button class="copy-link-btn" data-entry-id="${escapeHtml(entryId)}" title="Copy link to this message">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
             <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
@@ -1133,14 +1133,14 @@
       function renderEntry(entry) {
         const ts = formatTimestamp(entry.timestamp);
         const tsHtml = ts ? `<div class="message-timestamp">${ts}</div>` : '';
-        const entryId = `entry-${entry.id}`;
+        const entryDomId = `entry-${escapeHtml(entry.id)}`;
         const copyBtnHtml = renderCopyLinkButton(entry.id);
 
         if (entry.type === 'message') {
           const msg = entry.message;
 
           if (msg.role === 'user') {
-            let html = `<div class="user-message" id="${entryId}">${copyBtnHtml}${tsHtml}`;
+            let html = `<div class="user-message" id="${entryDomId}">${copyBtnHtml}${tsHtml}`;
             const content = msg.content;
 
             if (Array.isArray(content)) {
@@ -1164,7 +1164,7 @@
           }
 
           if (msg.role === 'assistant') {
-            let html = `<div class="assistant-message" id="${entryId}">${copyBtnHtml}${tsHtml}`;
+            let html = `<div class="assistant-message" id="${entryDomId}">${copyBtnHtml}${tsHtml}`;
 
             for (const block of msg.content) {
               if (block.type === 'text' && block.text.trim()) {
@@ -1195,7 +1195,7 @@
 
           if (msg.role === 'bashExecution') {
             const isError = msg.cancelled || (msg.exitCode !== 0 && msg.exitCode !== null);
-            let html = `<div class="tool-execution ${isError ? 'error' : 'success'}" id="${entryId}">${tsHtml}`;
+            let html = `<div class="tool-execution ${isError ? 'error' : 'success'}" id="${entryDomId}">${tsHtml}`;
             html += `<div class="tool-command">$ ${escapeHtml(msg.command)}</div>`;
             if (msg.output) html += formatExpandableOutput(msg.output, 10);
             if (msg.cancelled) {
@@ -1211,11 +1211,11 @@
         }
 
         if (entry.type === 'model_change') {
-          return `<div class="model-change" id="${entryId}">${tsHtml}Switched to model: <span class="model-name">${escapeHtml(entry.provider)}/${escapeHtml(entry.modelId)}</span></div>`;
+          return `<div class="model-change" id="${entryDomId}">${tsHtml}Switched to model: <span class="model-name">${escapeHtml(entry.provider)}/${escapeHtml(entry.modelId)}</span></div>`;
         }
 
         if (entry.type === 'compaction') {
-          return `<div class="compaction" id="${entryId}" onclick="if(window.getSelection().toString())return;this.classList.toggle('expanded')">
+          return `<div class="compaction" id="${entryDomId}" onclick="if(window.getSelection().toString())return;this.classList.toggle('expanded')">
             <div class="compaction-label">[compaction]</div>
             <div class="compaction-collapsed">Compacted from ${entry.tokensBefore.toLocaleString()} tokens</div>
             <div class="compaction-content"><strong>Compacted from ${entry.tokensBefore.toLocaleString()} tokens</strong>\n\n${escapeHtml(entry.summary)}</div>
@@ -1223,14 +1223,14 @@
         }
 
         if (entry.type === 'branch_summary') {
-          return `<div class="branch-summary" id="${entryId}">${tsHtml}
+          return `<div class="branch-summary" id="${entryDomId}">${tsHtml}
             <div class="branch-summary-header">Branch Summary</div>
             <div class="markdown-content">${safeMarkedParse(entry.summary)}</div>
           </div>`;
         }
 
         if (entry.type === 'custom_message' && entry.display) {
-          return `<div class="hook-message" id="${entryId}">${tsHtml}
+          return `<div class="hook-message" id="${entryDomId}">${tsHtml}
             <div class="hook-type">[${escapeHtml(entry.customType)}]</div>
             <div class="markdown-content">${safeMarkedParse(typeof entry.content === 'string' ? entry.content : JSON.stringify(entry.content))}</div>
           </div>`;
@@ -1316,7 +1316,7 @@
             </div>
             <div class="header-info">
               <div class="info-item"><span class="info-label">Date:</span><span class="info-value">${header?.timestamp ? new Date(header.timestamp).toLocaleString() : 'unknown'}</span></div>
-              <div class="info-item"><span class="info-label">Models:</span><span class="info-value">${globalStats.models.join(', ') || 'unknown'}</span></div>
+              <div class="info-item"><span class="info-label">Models:</span><span class="info-value">${escapeHtml(globalStats.models.join(', ') || 'unknown')}</span></div>
               <div class="info-item"><span class="info-label">Messages:</span><span class="info-value">${msgParts.join(', ') || '0'}</span></div>
               <div class="info-item"><span class="info-label">Tool Calls:</span><span class="info-value">${globalStats.toolCalls}</span></div>
               <div class="info-item"><span class="info-label">Tokens:</span><span class="info-value">${tokenParts.join(' ') || '0'}</span></div>

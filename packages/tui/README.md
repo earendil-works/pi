@@ -16,7 +16,7 @@ Minimal terminal UI framework with differential rendering and synchronized outpu
 ## Quick Start
 
 ```typescript
-import { TUI, Text, Editor, ProcessTerminal } from "@mariozechner/pi-tui";
+import { TUI, Text, Editor, ProcessTerminal, matchesKey } from "@mariozechner/pi-tui";
 
 // Create terminal
 const terminal = new ProcessTerminal();
@@ -27,12 +27,24 @@ const tui = new TUI(terminal);
 // Add components
 tui.addChild(new Text("Welcome to my app!"));
 
+import { defaultEditorTheme as editorTheme } from './test/test-themes.ts';
 const editor = new Editor(tui, editorTheme);
 editor.onSubmit = (text) => {
   console.log("Submitted:", text);
   tui.addChild(new Text(`You said: ${text}`));
 };
 tui.addChild(editor);
+
+// Focus the editor so it receives keyboard input
+tui.setFocus(editor);
+
+// In raw mode Ctrl+C doesn't send SIGINT — intercept it here to allow exit
+tui.addInputListener((data) => {
+  if (matchesKey(data, 'ctrl+c')) {
+    tui.stop();
+    process.exit(0);
+  }
+});
 
 // Start
 tui.start();

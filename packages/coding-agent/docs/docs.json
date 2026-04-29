@@ -8,6 +8,14 @@
           "path": "index.md"
         },
         {
+          "title": "Quickstart",
+          "path": "quickstart.md"
+        },
+        {
+          "title": "Using Pi",
+          "path": "usage.md"
+        },
+        {
           "title": "Providers",
           "path": "providers.md"
         },
@@ -21,11 +29,7 @@
         },
         {
           "title": "Sessions",
-          "path": "session.md"
-        },
-        {
-          "title": "Session Tree",
-          "path": "tree.md"
+          "path": "sessions.md"
         },
         {
           "title": "Compaction",
@@ -63,6 +67,15 @@
         {
           "title": "Custom Providers",
           "path": "custom-provider.md"
+        }
+      ]
+    },
+    {
+      "title": "Reference",
+      "items": [
+        {
+          "title": "Session Format",
+          "path": "session-format.md"
         }
       ]
     },
@@ -120,6 +133,16 @@
           "path": "development.md"
         }
       ]
+    }
+  ],
+  "redirects": [
+    {
+      "from": "session.md",
+      "to": "session-format.md"
+    },
+    {
+      "from": "tree.md",
+      "to": "sessions.md"
     }
   ]
 }

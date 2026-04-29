@@ -31,6 +31,7 @@ pi list                     # show installed packages from settings
 pi update                   # update pi and all non-pinned packages
 pi update --extensions      # update all non-pinned packages only
 pi update --self            # update pi only
+pi update --self --force    # reinstall pi even if current
 pi update npm:@foo/bar      # update one package
 pi update --extension npm:@foo/bar
 ```

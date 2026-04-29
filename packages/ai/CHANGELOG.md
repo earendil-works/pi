@@ -2,9 +2,16 @@
 
 ## [Unreleased]
 
+## [0.70.6] - 2026-04-28
+
+### Added
+
+- Added Cloudflare Workers AI as a built-in provider with model catalog generation, `CLOUDFLARE_API_KEY`/`CLOUDFLARE_ACCOUNT_ID` authentication, and OpenAI-compatible streaming support ([#3851](https://github.com/badlogic/pi-mono/pull/3851) by [@mchenco](https://github.com/mchenco)).
+
 ### Fixed
 
 - Removed generated Cloudflare Workers AI `User-Agent` model headers so attribution can be controlled by callers.
+- Fixed Bedrock inference profile capability checks by normalizing profile ARNs to the underlying model name.
 
 ## [0.70.5] - 2026-04-27
 

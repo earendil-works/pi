@@ -350,7 +350,7 @@ pi.on("resources_discover", async (event, _ctx) => {
 
 ### Session Events
 
-See [session.md](session.md) for session storage internals and the SessionManager API.
+See [Session Format](session-format.md) for session storage internals and the SessionManager API.
 
 #### session_start
 
@@ -429,7 +429,7 @@ pi.on("session_compact", async (event, ctx) => {
 
 #### session_before_tree / session_tree
 
-Fired on `/tree` navigation. See [tree.md](tree.md) for tree navigation concepts.
+Fired on `/tree` navigation. See [Sessions](sessions.md) for tree navigation concepts.
 
 ```typescript
 pi.on("session_before_tree", async (event, ctx) => {
@@ -569,7 +569,7 @@ pi.on("tool_execution_end", async (event, ctx) => {
 
 #### context
 
-Fired before each LLM call. Modify messages non-destructively. See [session.md](session.md) for message types.
+Fired before each LLM call. Modify messages non-destructively. See [Session Format](session-format.md) for message types.
 
 ```typescript
 pi.on("context", async (event, ctx) => {
@@ -833,7 +833,7 @@ Current working directory.
 
 ### ctx.sessionManager
 
-Read-only access to session state. See [session.md](session.md) for the full SessionManager API and entry types.
+Read-only access to session state. See [Session Format](session-format.md) for the full SessionManager API and entry types.
 
 For `tool_call`, this state is synchronized through the current assistant message before handlers run. In parallel tool execution mode it is still not guaranteed to include sibling tool results from the same assistant message.
 
