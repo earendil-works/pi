@@ -1096,6 +1096,12 @@ async function generateModels() {
 			candidate.compat = {
 				...candidate.compat,
 				requiresReasoningContentOnAssistantMessages: true,
+				reasoningEffortMap: deepseekCompat.reasoningEffortMap,
+				// Set deepseek thinking format for all providers except OpenRouter
+				// (OpenRouter normalizes reasoning via its own reason: { effort } format)
+				...(candidate.provider !== "openrouter" && {
+					thinkingFormat: deepseekCompat.thinkingFormat,
+				}),
 			};
 		}
 	}
