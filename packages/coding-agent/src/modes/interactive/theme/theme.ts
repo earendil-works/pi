@@ -969,7 +969,21 @@ export function getThemeExportColors(themeName?: string): {
  * Returns array of highlighted lines.
  */
 export function highlightCode(code: string, lang?: string, invalidate?: () => void): string[] {
-	return highlightCodeWithShiki(code, lang, (line) => theme.fg("mdCodeBlock", line), invalidate);
+	const colorMode = theme.getColorMode();
+	return highlightCodeWithShiki(
+		code,
+		lang,
+		(line) => theme.fg("mdCodeBlock", line),
+		(hexColor) => {
+			try {
+				return fgAnsi(hexColor, colorMode);
+			} catch {
+				return "";
+			}
+		},
+		colorMode,
+		invalidate,
+	);
 }
 
 /**
@@ -1043,7 +1057,7 @@ export function getLanguageFromPath(filePath: string): string | undefined {
 	return extToLang[ext];
 }
 
-export function getMarkdownTheme(): MarkdownTheme {
+export function getMarkdownTheme(invalidate?: () => void): MarkdownTheme {
 	return {
 		heading: (text: string) => theme.fg("mdHeading", text),
 		link: (text: string) => theme.fg("mdLink", text),
@@ -1059,7 +1073,17 @@ export function getMarkdownTheme(): MarkdownTheme {
 		italic: (text: string) => theme.italic(text),
 		underline: (text: string) => theme.underline(text),
 		strikethrough: (text: string) => chalk.strikethrough(text),
-		highlightCode: (code: string, lang?: string): string[] => highlightCode(code, lang),
+		highlightCode: (code: string, lang?: string, componentInvalidate?: () => void): string[] =>
+			highlightCode(
+				code,
+				lang,
+				componentInvalidate || invalidate
+					? () => {
+							componentInvalidate?.();
+							invalidate?.();
+						}
+					: undefined,
+			),
 	};
 }
 

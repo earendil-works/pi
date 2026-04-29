@@ -898,7 +898,7 @@ export class InteractiveMode {
 
 	private getMarkdownThemeWithSettings(): MarkdownTheme {
 		return {
-			...getMarkdownTheme(),
+			...getMarkdownTheme(() => this.ui.requestRender()),
 			codeBlockIndent: this.settingsManager.getCodeBlockIndent(),
 		};
 	}

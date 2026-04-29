@@ -45,6 +45,7 @@ const pendingLanguages = new Set<string>();
 const languageLoadCallbacks = new Map<string, Set<() => void>>();
 const initializationCallbacks = new Set<() => void>();
 const renderCache = new Map<string, string[]>();
+type TokenColorToAnsi = (hexColor: string) => string;
 
 export function initializeSyntaxHighlighter(theme = DEFAULT_SHIKI_THEME, invalidate?: () => void): Promise<void> {
 	if (initializationPromise && shikiTheme === theme) {
@@ -87,31 +88,42 @@ export function highlightCodeWithShiki(
 	code: string,
 	lang: string | undefined,
 	fallbackColor: (text: string) => string,
+	tokenColorToAnsi: TokenColorToAnsi,
+	tokenColorCacheKey: string,
 	invalidate?: () => void,
 ): string[] {
 	const normalized = code.replace(/\t/g, "   ");
 	const plain = () => normalized.split("\n").map((line) => fallbackColor(escapeControlChars(line)));
 	if (!lang || shouldSkipHighlight(normalized)) return plain();
-	if (!shikiHighlighter && !initializationPromise) void initializeSyntaxHighlighter(undefined, invalidate);
-	return renderWithShiki(normalized, lang, invalidate) ?? plain();
+	if (!shikiHighlighter) {
+		void initializeSyntaxHighlighter(shikiTheme, invalidate);
+		return plain();
+	}
+	return renderWithShiki(normalized, lang, tokenColorToAnsi, tokenColorCacheKey, invalidate) ?? plain();
 }
 
-export function renderWithShiki(code: string, lang: string | undefined, invalidate?: () => void): string[] | undefined {
+export function renderWithShiki(
+	code: string,
+	lang: string | undefined,
+	tokenColorToAnsi: TokenColorToAnsi,
+	tokenColorCacheKey: string,
+	invalidate?: () => void,
+): string[] | undefined {
 	if (!shikiHighlighter || !lang || shouldSkipHighlight(code)) return undefined;
 	const shikiLang = normalizeShikiLanguage(lang);
-	const cacheKey = `${shikiTheme}\0${shikiLang}\0${code}`;
+	const cacheKey = `${shikiTheme}\0${tokenColorCacheKey}\0${shikiLang}\0${code}`;
 	const cached = renderCache.get(cacheKey);
 	if (cached) {
 		renderCache.delete(cacheKey);
 		renderCache.set(cacheKey, cached);
-		return cached;
+		return [...cached];
 	}
 	try {
 		if (!loadedLanguages.has(shikiLang)) requestLanguageLoad(shikiLang, invalidate);
 		const tokens = shikiHighlighter.codeToTokensBase(code, { lang: shikiLang as never, theme: shikiTheme as never });
-		const rendered = tokens.map((line) => normalizeShikiContrast(line.map((token) => ansiFromToken(token)).join("")));
+		const rendered = tokens.map((line) => line.map((token) => ansiFromToken(token, tokenColorToAnsi)).join(""));
 		cacheRendered(cacheKey, rendered);
-		return rendered;
+		return [...rendered];
 	} catch {
 		return undefined;
 	}
@@ -139,7 +151,7 @@ export function normalizeShikiLanguage(lang: string): string {
 }
 
 function cacheRendered(key: string, value: string[]): void {
-	renderCache.set(key, value);
+	renderCache.set(key, [...value]);
 	while (renderCache.size > CACHE_LIMIT) {
 		const first = renderCache.keys().next().value;
 		if (typeof first !== "string") break;
@@ -176,24 +188,15 @@ function envPositiveInteger(name: string, fallback: number): number {
 	return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-function normalizeShikiContrast(ansi: string): string {
-	return ansi.replace(/\x1b\[([0-9;]*)m/g, (seq, params: string) =>
-		isLowContrastFg(params) ? "\x1b[38;2;139;148;158m" : seq,
-	);
-}
-
-function isLowContrastFg(params: string): boolean {
-	if (params === "30" || params === "90" || params === "38;5;0" || params === "38;5;8") return true;
-	if (!params.startsWith("38;2;")) return false;
-	const [, , r, g, b] = params.split(";").map(Number);
-	if (![r, g, b].every(Number.isFinite)) return false;
-	const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-	return luminance < 72;
-}
-
-function ansiFromToken(token: { content: string; color?: string; fontStyle?: number }, forceUnderline = false): string {
-	let open = token.color ? ansiFg(token.color) : "";
-	let close = token.color ? "\x1b[39m" : "";
+function ansiFromToken(
+	token: { content: string; color?: string; fontStyle?: number },
+	tokenColorToAnsi: TokenColorToAnsi,
+	forceUnderline = false,
+): string {
+	const tokenColor = token.color ? normalizeTokenColor(token.color) : undefined;
+	const colorAnsi = tokenColor ? tokenColorToAnsi(tokenColor) : "";
+	let open = colorAnsi;
+	let close = colorAnsi ? "\x1b[39m" : "";
 	const fontStyle = token.fontStyle ?? 0;
 	if (fontStyle & 2) {
 		open += "\x1b[1m";
@@ -210,16 +213,9 @@ function ansiFromToken(token: { content: string; color?: string; fontStyle?: num
 	return open + escapeControlChars(token.content) + close;
 }
 
-const ansiFgCache = new Map<string, string>();
-
-function ansiFg(hex: string): string {
-	const cached = ansiFgCache.get(hex);
-	if (cached !== undefined) return cached;
+function normalizeTokenColor(hex: string): string | undefined {
 	const clean = hex.replace(/^#/, "").slice(0, 6);
-	const n = Number.parseInt(clean, 16);
-	const ansi = Number.isFinite(n) ? `\x1b[38;2;${(n >> 16) & 255};${(n >> 8) & 255};${n & 255}m` : "";
-	ansiFgCache.set(hex, ansi);
-	return ansi;
+	return /^[0-9a-f]{6}$/i.test(clean) ? `#${clean}` : undefined;
 }
 
 function escapeControlChars(text: string): string {

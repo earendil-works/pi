@@ -65,7 +65,7 @@ export interface MarkdownTheme {
 	italic: (text: string) => string;
 	strikethrough: (text: string) => string;
 	underline: (text: string) => string;
-	highlightCode?: (code: string, lang?: string) => string[];
+	highlightCode?: (code: string, lang?: string, invalidate?: () => void) => string[];
 	/** Prefix applied to each rendered code block line (default: "  ") */
 	codeBlockIndent?: string;
 }
@@ -335,7 +335,7 @@ export class Markdown implements Component {
 				const indent = this.theme.codeBlockIndent ?? "  ";
 				lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
 				if (this.theme.highlightCode) {
-					const highlightedLines = this.theme.highlightCode(token.text, token.lang);
+					const highlightedLines = this.theme.highlightCode(token.text, token.lang, () => this.invalidate());
 					for (const hlLine of highlightedLines) {
 						lines.push(`${indent}${hlLine}`);
 					}
@@ -624,7 +624,7 @@ export class Markdown implements Component {
 				const indent = this.theme.codeBlockIndent ?? "  ";
 				lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
 				if (this.theme.highlightCode) {
-					const highlightedLines = this.theme.highlightCode(token.text, token.lang);
+					const highlightedLines = this.theme.highlightCode(token.text, token.lang, () => this.invalidate());
 					for (const hlLine of highlightedLines) {
 						lines.push(`${indent}${hlLine}`);
 					}
