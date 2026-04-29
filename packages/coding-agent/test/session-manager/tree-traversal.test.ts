@@ -580,6 +580,54 @@ describe("createBranchedSession", () => {
 		}
 	});
 
+	it("does not duplicate migrated pre-assistant entries when the first assistant is appended", () => {
+		const tempDir = join(tmpdir(), `session-migrated-before-assistant-${Date.now()}`);
+		mkdirSync(tempDir, { recursive: true });
+		const file = join(tempDir, "legacy-session.jsonl");
+
+		try {
+			writeFileSync(
+				file,
+				`${[
+					JSON.stringify({
+						type: "session",
+						id: "legacy-session",
+						timestamp: new Date().toISOString(),
+						cwd: tempDir,
+					}),
+					JSON.stringify({
+						type: "message",
+						timestamp: new Date().toISOString(),
+						message: userMsg("legacy user message"),
+					}),
+				].join("\n")}\n`,
+			);
+
+			const migrated = SessionManager.open(file, tempDir);
+			const migratedRecords = parseSessionFile(file);
+			const migratedEntryIds = migratedRecords
+				.filter((record) => record.type !== "session")
+				.map((record) => record.id)
+				.filter((id): id is string => typeof id === "string");
+			expect(migratedEntryIds).toHaveLength(1);
+
+			migrated.appendModelChange("anthropic", "claude-sonnet-4");
+			migrated.appendMessage(userMsg("new user message"));
+			migrated.appendMessage(assistantMsg("new assistant message"));
+
+			const records = parseSessionFile(file);
+			expect(records.filter((record) => record.type === "session")).toHaveLength(1);
+
+			const entryIds = records
+				.filter((record) => record.type !== "session")
+				.map((record) => record.id)
+				.filter((id): id is string => typeof id === "string");
+			expect(new Set(entryIds).size).toBe(entryIds.length);
+		} finally {
+			rmSync(tempDir, { recursive: true, force: true });
+		}
+	});
+
 	it("writes file immediately when forking from a point with assistant messages", () => {
 		const tempDir = join(tmpdir(), `session-fork-with-assistant-${Date.now()}`);
 		mkdirSync(tempDir, { recursive: true });
