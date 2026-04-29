@@ -185,6 +185,7 @@ const API_KEY_LOGIN_PROVIDERS: Record<string, string> = {
 	"azure-openai-responses": "Azure OpenAI Responses",
 	cerebras: "Cerebras",
 	"cloudflare-workers-ai": "Cloudflare Workers AI",
+	"cloudflare-ai-gateway": "Cloudflare AI Gateway",
 	deepseek: "DeepSeek",
 	fireworks: "Fireworks",
 	google: "Google Gemini",

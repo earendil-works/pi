@@ -1023,7 +1023,11 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 	const baseUrl = model.baseUrl;
 
 	const isZai = provider === "zai" || baseUrl.includes("api.z.ai");
-	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || baseUrl.includes("api.cloudflare.com");
+	const isCloudflare =
+		provider === "cloudflare-workers-ai" ||
+		provider === "cloudflare-ai-gateway" ||
+		baseUrl.includes("api.cloudflare.com") ||
+		baseUrl.includes("gateway.ai.cloudflare.com");
 
 	const isNonStandard =
 		provider === "cerebras" ||
@@ -1035,7 +1039,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		isZai ||
 		provider === "opencode" ||
 		baseUrl.includes("opencode.ai") ||
-		isCloudflareWorkersAI;
+		isCloudflare;
 
 	const useMaxTokens = baseUrl.includes("chutes.ai");
 

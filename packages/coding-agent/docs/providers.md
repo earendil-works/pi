@@ -62,6 +62,7 @@ pi
 | Groq | `GROQ_API_KEY` | `groq` |
 | Cerebras | `CEREBRAS_API_KEY` | `cerebras` |
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`) | `cloudflare-workers-ai` |
+| Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`, optional `CLOUDFLARE_AI_GATEWAY_ID`) | `cloudflare-ai-gateway` |
 | xAI | `XAI_API_KEY` | `xai` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |
@@ -184,6 +185,17 @@ pi --provider cloudflare-workers-ai --model "@cf/moonshotai/kimi-k2.6"
 ```
 
 Pi automatically sets `x-session-affinity` for [prefix caching](https://developers.cloudflare.com/workers-ai/features/prompt-caching/) discounts.
+
+### Cloudflare AI Gateway
+
+Cloudflare AI Gateway uses the OpenAI-compatible `/compat` endpoint and routes model ids such as `workers-ai/@cf/...` through a gateway. `CLOUDFLARE_AI_GATEWAY_ID` defaults to Cloudflare's automatically-created `default` gateway.
+
+```bash
+export CLOUDFLARE_API_KEY=...           # or use /login
+export CLOUDFLARE_ACCOUNT_ID=...
+export CLOUDFLARE_AI_GATEWAY_ID=default # optional
+pi --provider cloudflare-ai-gateway --model "workers-ai/@cf/moonshotai/kimi-k2.6"
+```
 
 ### Google Vertex AI
 

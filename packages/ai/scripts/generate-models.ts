@@ -3,7 +3,7 @@
 import { writeFileSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
-import { CLOUDFLARE_WORKERS_AI_BASE_URL } from "../src/providers/cloudflare.js";
+import { CLOUDFLARE_AI_GATEWAY_BASE_URL, CLOUDFLARE_WORKERS_AI_BASE_URL } from "../src/providers/cloudflare.js";
 import {
 	Api,
 	type AnthropicMessagesCompat,
@@ -62,6 +62,10 @@ const COPILOT_STATIC_HEADERS = {
 
 const KIMI_STATIC_HEADERS = {
 	"User-Agent": "KimiCLI/1.5",
+} as const;
+
+const CLOUDFLARE_STATIC_HEADERS = {
+	"User-Agent": "pi-coding-agent",
 } as const;
 
 const AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1";
@@ -377,18 +381,15 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 			}
 		}
 
-		// Process Cloudflare Workers AI models
+		// Process Cloudflare Workers AI models and their AI Gateway equivalents.
 		if (data["cloudflare-workers-ai"]?.models) {
 			for (const [modelId, model] of Object.entries(data["cloudflare-workers-ai"].models)) {
 				const m = model as ModelsDevModel;
 				if (m.tool_call !== true) continue;
 
-				models.push({
-					id: modelId,
+				const cloudflareWorkerModel: Omit<Model<"openai-completions">, "id" | "provider" | "baseUrl"> = {
 					name: m.name || modelId,
 					api: "openai-completions",
-					provider: "cloudflare-workers-ai",
-					baseUrl: CLOUDFLARE_WORKERS_AI_BASE_URL,
 					reasoning: m.reasoning === true,
 					input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
 					cost: {
@@ -399,7 +400,22 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					},
 					contextWindow: m.limit?.context || 4096,
 					maxTokens: m.limit?.output || 4096,
+					headers: { ...CLOUDFLARE_STATIC_HEADERS },
 					compat: { sendSessionAffinityHeaders: true },
+				};
+
+				models.push({
+					id: modelId,
+					provider: "cloudflare-workers-ai",
+					baseUrl: CLOUDFLARE_WORKERS_AI_BASE_URL,
+					...cloudflareWorkerModel,
+				});
+
+				models.push({
+					id: `workers-ai/${modelId}`,
+					provider: "cloudflare-ai-gateway",
+					baseUrl: CLOUDFLARE_AI_GATEWAY_BASE_URL,
+					...cloudflareWorkerModel,
 				});
 			}
 		}

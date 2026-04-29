@@ -58,6 +58,7 @@ Unified LLM API with automatic model discovery, provider configuration, token an
 - **Groq**
 - **Cerebras**
 - **Cloudflare Workers AI**
+- **Cloudflare AI Gateway**
 - **xAI**
 - **OpenRouter**
 - **Vercel AI Gateway**
@@ -845,7 +846,7 @@ const ollamaReasoningModel: Model<'openai-completions'> = {
 
 ### OpenAI Compatibility Settings
 
-The `openai-completions` API is implemented by many providers with minor differences. By default, the library auto-detects compatibility settings based on `baseUrl` for a small set of known OpenAI-compatible providers (Cerebras, xAI, Chutes, DeepSeek, zAi, OpenCode, Cloudflare Workers AI, etc.). For custom proxies or unknown endpoints, you can override these settings via the `compat` field. For `openai-responses` models, the compat field only supports Responses-specific flags.
+The `openai-completions` API is implemented by many providers with minor differences. By default, the library auto-detects compatibility settings based on `baseUrl` for a small set of known OpenAI-compatible providers (Cerebras, xAI, Chutes, DeepSeek, zAi, OpenCode, Cloudflare Workers AI / AI Gateway, etc.). For custom proxies or unknown endpoints, you can override these settings via the `compat` field. For `openai-responses` models, the compat field only supports Responses-specific flags.
 
 ```typescript
 interface OpenAICompletionsCompat {
@@ -1030,6 +1031,7 @@ In Node.js environments, you can set environment variables to avoid passing API 
 | Groq | `GROQ_API_KEY` |
 | Cerebras | `CEREBRAS_API_KEY` |
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` |
+| Cloudflare AI Gateway | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` (+ optional `CLOUDFLARE_AI_GATEWAY_ID`) |
 | xAI | `XAI_API_KEY` |
 | Fireworks | `FIREWORKS_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
