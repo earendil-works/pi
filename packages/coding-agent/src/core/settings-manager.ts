@@ -104,6 +104,7 @@ export interface Settings {
 	doubleEscapeAction?: "fork" | "tree" | "none"; // Action for double-escape with empty editor (default: "tree")
 	treeFilterMode?: "default" | "no-tools" | "user-only" | "labeled-only" | "all"; // Default filter when opening /tree
 	thinkingBudgets?: ThinkingBudgetsSettings; // Custom token budgets for thinking levels
+	paddingX?: number; // Horizontal padding for entire UI in characters (default: 0)
 	editorPaddingX?: number; // Horizontal padding for input editor (default: 0)
 	autocompleteMaxVisible?: number; // Max visible items in autocomplete dropdown (default: 5)
 	showHardwareCursor?: boolean; // Show terminal cursor while still positioning it for IME
@@ -1038,6 +1039,16 @@ export class SettingsManager {
 	setEditorPaddingX(padding: number): void {
 		this.globalSettings.editorPaddingX = Math.max(0, Math.min(3, Math.floor(padding)));
 		this.markModified("editorPaddingX");
+		this.save();
+	}
+
+	getPaddingX(): number {
+		return this.settings.paddingX ?? 0;
+	}
+
+	setPaddingX(padding: number): void {
+		this.globalSettings.paddingX = Math.max(0, Math.min(10, Math.floor(padding)));
+		this.markModified("paddingX");
 		this.save();
 	}
 

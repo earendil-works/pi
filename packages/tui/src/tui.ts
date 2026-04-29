@@ -232,6 +232,7 @@ export class TUI extends Container {
 	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
 	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
 	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1"; // Clear empty rows when content shrinks (default: off)
+	private paddingX = 0; // Horizontal padding for entire UI in characters
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
 	private fullRedrawCount = 0;
@@ -283,6 +284,19 @@ export class TUI extends Container {
 	 */
 	setClearOnShrink(enabled: boolean): void {
 		this.clearOnShrink = enabled;
+	}
+
+	getPaddingX(): number {
+		return this.paddingX;
+	}
+
+	/**
+	 * Set horizontal padding (in characters) for the entire UI.
+	 * Content is rendered narrower and padded with spaces on both sides.
+	 */
+	setPaddingX(padding: number): void {
+		this.paddingX = Math.max(0, Math.min(10, Math.floor(padding)));
+		this.requestRender();
 	}
 
 	setFocus(component: Component | null): void {
@@ -901,8 +915,9 @@ export class TUI extends Container {
 			return targetScreenRow - currentScreenRow;
 		};
 
-		// Render all components to get new lines
-		let newLines = this.render(width);
+		// Render all components to get new lines (with reduced width for padding)
+		const effectiveWidth = width - this.paddingX * 2;
+		let newLines = effectiveWidth > 0 ? this.render(effectiveWidth) : this.render(width);
 
 		// Composite overlays into the rendered lines (before differential compare)
 		if (this.overlayStack.length > 0) {
@@ -913,6 +928,21 @@ export class TUI extends Container {
 		const cursorPos = this.extractCursorPosition(newLines, height);
 
 		newLines = this.applyLineResets(newLines);
+
+		// Apply horizontal padding to all lines
+		if (this.paddingX > 0) {
+			const pad = " ".repeat(this.paddingX);
+			for (let i = 0; i < newLines.length; i++) {
+				const line = newLines[i];
+				if (!isImageLine(line)) {
+					newLines[i] = pad + line + pad;
+				}
+			}
+			// Adjust cursor position for padding offset
+			if (cursorPos) {
+				cursorPos.col += this.paddingX;
+			}
+		}
 
 		// Helper to clear scrollback and viewport and render all new lines
 		const fullRender = (clear: boolean): void => {
