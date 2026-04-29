@@ -14,7 +14,12 @@
 
 import { complete, type Message } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, SessionEntry } from "@mariozechner/pi-coding-agent";
-import { BorderedLoader, convertToLlm, serializeConversation } from "@mariozechner/pi-coding-agent";
+import {
+	BorderedLoader,
+	buildSessionContext,
+	convertToLlm,
+	serializeConversation,
+} from "@mariozechner/pi-coding-agent";
 
 const SYSTEM_PROMPT = `You are a context transfer assistant. Given a conversation history and the user's goal for a new thread, generate a focused prompt that:
 
@@ -38,6 +43,22 @@ Files involved:
 ## Task
 [Clear description of what to do next based on user's goal]`;
 
+type HandoffSessionManager = {
+	getEntries(): SessionEntry[];
+	getLeafId(): string | null;
+};
+
+export function buildHandoffConversation(sessionManager: HandoffSessionManager): {
+	messageCount: number;
+	text: string;
+} {
+	const messages = buildSessionContext(sessionManager.getEntries(), sessionManager.getLeafId()).messages;
+	return {
+		messageCount: messages.length,
+		text: serializeConversation(convertToLlm(messages)),
+	};
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("handoff", {
 		description: "Transfer context to a new focused session",
@@ -58,20 +79,15 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			// Gather conversation context from current branch
-			const branch = ctx.sessionManager.getBranch();
-			const messages = branch
-				.filter((entry): entry is SessionEntry & { type: "message" } => entry.type === "message")
-				.map((entry) => entry.message);
+			// Gather canonical compacted conversation context from the current session.
+			const conversation = buildHandoffConversation(ctx.sessionManager);
 
-			if (messages.length === 0) {
+			if (conversation.messageCount === 0) {
 				ctx.ui.notify("No conversation to hand off", "error");
 				return;
 			}
 
-			// Convert to LLM format and serialize
-			const llmMessages = convertToLlm(messages);
-			const conversationText = serializeConversation(llmMessages);
+			const conversationText = conversation.text;
 			const currentSessionFile = ctx.sessionManager.getSessionFile();
 
 			// Generate the handoff prompt with loader UI
