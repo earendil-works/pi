@@ -481,6 +481,85 @@ describe("Markdown component", () => {
 				`Expected table to end without a blank line: ${JSON.stringify(plainLines)}`,
 			);
 		});
+
+		it("should render <br> inside table cells as a line break, not raw text", () => {
+			// GFM forbids real newlines inside table cells, so LLMs commonly emit <br>
+			// to express cell-internal line breaks. marked tokenizes <br> as inline
+			// html, which would otherwise leak as raw text into the cell.
+			const markdown = new Markdown(
+				`| Step | Detail |
+| --- | --- |
+| 1 | first<br>second<br>third |`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+
+			assert.ok(
+				plainLines.every((line) => !line.includes("<br>")),
+				`Expected no raw <br> in output: ${JSON.stringify(plainLines)}`,
+			);
+			const cellRows = plainLines.filter((line) => /│/.test(line));
+			assert.ok(
+				cellRows.some((line) => line.includes("first")),
+				"Expected cell line containing 'first'",
+			);
+			assert.ok(
+				cellRows.some((line) => line.includes("second") && !line.includes("first")),
+				"Expected 'second' on its own row inside the cell",
+			);
+			assert.ok(
+				cellRows.some((line) => line.includes("third") && !line.includes("second")),
+				"Expected 'third' on its own row inside the cell",
+			);
+		});
+
+		it("should treat <br/> and <br /> the same as <br>", () => {
+			const markdown = new Markdown(
+				`| a | b |
+| --- | --- |
+| x | one<br/>two<br />three |`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+
+			assert.ok(
+				plainLines.every((line) => !/<br\s*\/?>/i.test(line)),
+				`Expected no raw <br/> variants: ${JSON.stringify(plainLines)}`,
+			);
+			const cellRows = plainLines.filter((line) => /│/.test(line));
+			assert.ok(cellRows.some((line) => line.includes("one")));
+			assert.ok(cellRows.some((line) => line.includes("two") && !line.includes("one")));
+			assert.ok(cellRows.some((line) => line.includes("three") && !line.includes("two")));
+		});
+
+		it("should preserve other inline HTML as raw text (regression)", () => {
+			// Only <br>/<br/>/<br /> get the newline treatment. Any other inline html
+			// (kbd, span, etc.) must continue to render as raw text per existing behavior.
+			const markdown = new Markdown(
+				`| key | meaning |
+| --- | --- |
+| <kbd>Esc</kbd> | exit |`,
+				0,
+				0,
+				defaultMarkdownTheme,
+			);
+
+			const lines = markdown.render(80);
+			const plainLines = lines.map((line) => line.replace(/\x1b\[[0-9;]*m/g, ""));
+
+			assert.ok(
+				plainLines.some((line) => line.includes("<kbd>Esc</kbd>")),
+				`Expected <kbd> tags preserved as raw text: ${JSON.stringify(plainLines)}`,
+			);
+		});
 	});
 
 	describe("Combined features", () => {

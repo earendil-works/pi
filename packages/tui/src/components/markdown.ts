@@ -519,9 +519,17 @@ export class Markdown implements Component {
 				}
 
 				case "html":
-					// Render inline HTML as plain text
+					// marked tokenizes literal <br>/<br/>/<br /> as inline html, not br.
+					// Without special-casing, those tags leak as raw text into the output
+					// (most visibly inside table cells, where GFM forbids real newlines so
+					// LLMs commonly use <br> for cell line breaks). Map to "\n" so it shares
+					// the case "br" path; cell wrapping already handles \n via wrapTextWithAnsi.
 					if ("raw" in token && typeof token.raw === "string") {
-						result += applyTextWithNewlines(token.raw);
+						if (/^<br\s*\/?>$/i.test(token.raw)) {
+							result += "\n";
+						} else {
+							result += applyTextWithNewlines(token.raw);
+						}
 					}
 					break;
 
