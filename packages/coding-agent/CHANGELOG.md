@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added four official local-LLM provider extensions under `packages/coding-agent/examples/extensions/custom-provider-{llamacpp,lmstudio,vllm,ollama}/`. Each is an async-factory extension that probes its engine's model endpoint at startup and registers the discovered models with curated context-window/max-tokens defaults; LM Studio and Ollama also set the `compat` flags those engines need ([#3357](https://github.com/badlogic/pi-mono/issues/3357)).
+
 ## [0.70.6] - 2026-04-28
 
 ### New Features

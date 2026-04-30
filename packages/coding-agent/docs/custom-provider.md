@@ -14,6 +14,10 @@ See these complete provider examples:
 - [`examples/extensions/custom-provider-anthropic/`](../examples/extensions/custom-provider-anthropic/)
 - [`examples/extensions/custom-provider-gitlab-duo/`](../examples/extensions/custom-provider-gitlab-duo/)
 - [`examples/extensions/custom-provider-qwen-cli/`](../examples/extensions/custom-provider-qwen-cli/)
+- [`examples/extensions/custom-provider-llamacpp/`](../examples/extensions/custom-provider-llamacpp/) — local llama.cpp, async dynamic model discovery
+- [`examples/extensions/custom-provider-lmstudio/`](../examples/extensions/custom-provider-lmstudio/) — local LM Studio, async dynamic model discovery
+- [`examples/extensions/custom-provider-vllm/`](../examples/extensions/custom-provider-vllm/) — local or remote vLLM, reads `max_model_len` from `/v1/models`
+- [`examples/extensions/custom-provider-ollama/`](../examples/extensions/custom-provider-ollama/) — local Ollama via the OpenAI-compat shim, with native `/api/tags` discovery
 
 ## Table of Contents
 

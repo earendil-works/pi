@@ -126,6 +126,10 @@ cp permission-gate.ts ~/.pi/agent/extensions/
 | `custom-provider-anthropic/` | Custom Anthropic provider with OAuth support and custom streaming implementation |
 | `custom-provider-gitlab-duo/` | GitLab Duo provider using pi-ai's built-in Anthropic/OpenAI streaming via proxy |
 | `custom-provider-qwen-cli/` | Qwen CLI provider with OAuth device flow and OpenAI-compatible models |
+| `custom-provider-llamacpp/` | llama.cpp provider; async factory probes `{baseUrl}/models` and registers discovered models with curated context-window defaults |
+| `custom-provider-lmstudio/` | LM Studio provider; tries the enriched `/api/v0/models` endpoint, falls back to `/v1/models`, sets the `compat` flags LM Studio needs |
+| `custom-provider-vllm/` | vLLM provider; reads `max_model_len` from `/v1/models` to populate per-model context windows; pairs with `@mariozechner/pi-pods` |
+| `custom-provider-ollama/` | Ollama provider; probes native `/api/tags` and serves traffic through the OpenAI-compat shim at `/v1` (tool-calling caveats documented inline) |
 
 ### External Dependencies
 
