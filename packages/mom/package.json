@@ -4,7 +4,7 @@
 	"description": "Slack bot that delegates messages to the pi coding agent",
 	"type": "module",
 	"bin": {
-		"mom": "dist/main.js"
+		"pi-mom": "dist/main.js"
 	},
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
