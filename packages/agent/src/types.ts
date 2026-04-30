@@ -49,6 +49,9 @@ export type ToolExecutionMode = "sequential" | "parallel";
  */
 export type QueueMode = "all" | "one-at-a-time";
 
+/** Where a durable tool boundary should be executed. */
+export type ToolExecutionPlacement = "sandbox" | "control_plane" | "external";
+
 /** A single tool call content block emitted by an assistant message. */
 export type AgentToolCall = Extract<AssistantMessage["content"][number], { type: "toolCall" }>;
 
@@ -406,6 +409,8 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 	 * If omitted, the default execution mode applies.
 	 */
 	executionMode?: ToolExecutionMode;
+	/** Durable execution placement. Defaults to "sandbox" for local tools. */
+	execution?: ToolExecutionPlacement;
 }
 
 /** Context snapshot passed into the low-level agent loop. */
@@ -425,6 +430,75 @@ export interface AgentContext {
  * listeners for that event are still part of run settlement. The agent becomes
  * idle only after those listeners finish.
  */
+export interface SerializedAgentError {
+	message: string;
+	name?: string;
+	stack?: string;
+}
+
+export interface AgentProviderRequest {
+	model: Model<any>;
+	context: Context;
+	options: Omit<SimpleStreamOptions, "signal" | "onPayload" | "onResponse">;
+}
+
+export type AgentSteppableNextAction =
+	| { type: "call_llm"; callId: string; request: AgentProviderRequest }
+	| {
+			type: "call_tool";
+			callId: string;
+			toolCallId: string;
+			tool: string;
+			execution: ToolExecutionPlacement;
+			input: unknown;
+	  }
+	| { type: "wait_for_user" }
+	| { type: "error"; error: SerializedAgentError };
+
+export type AgentSteppableInput =
+	| { type: "user_message"; message: AgentMessage }
+	| { type: "llm_result"; callId: string; message: AssistantMessage }
+	| { type: "llm_error"; callId: string; error: SerializedAgentError }
+	| { type: "tool_result"; callId: string; result: AgentToolResult<unknown>; isError?: boolean }
+	| { type: "tool_error"; callId: string; error: SerializedAgentError }
+	| { type: "resume" };
+
+export interface AgentSteppableSnapshot {
+	schemaVersion: 1;
+	phase: "waiting_for_user" | "awaiting_llm" | "awaiting_tool" | "error";
+	systemPrompt: string;
+	model: Model<any>;
+	thinkingLevel: ThinkingLevel;
+	messages: AgentMessage[];
+	newMessages: AgentMessage[];
+	callSeq: number;
+	pendingAction?: AgentSteppableNextAction;
+	pendingTool?: {
+		callId: string;
+		toolCallId: string;
+		toolName: string;
+		rawArguments: unknown;
+		args: unknown;
+		execution: ToolExecutionPlacement;
+	};
+	pendingToolCalls: AgentToolCall[];
+	completedToolResults: ToolResultMessage[];
+	currentAssistantMessage?: AssistantMessage;
+	toolBatchTerminated: boolean;
+	error?: SerializedAgentError;
+}
+
+export interface AgentSteppableResult {
+	state: AgentSteppableSnapshot;
+	events: AgentEvent[];
+	nextAction: AgentSteppableNextAction;
+}
+
+export interface AgentSteppableToolExecutionResult {
+	result: AgentToolResult<unknown>;
+	isError: boolean;
+}
+
 export type AgentEvent =
 	// Agent lifecycle
 	| { type: "agent_start" }

@@ -20,6 +20,10 @@ import type {
 	AgentEvent,
 	AgentMessage,
 	AgentState,
+	AgentSteppableInput,
+	AgentSteppableResult,
+	AgentSteppableSnapshot,
+	AgentSteppableToolExecutionResult,
 	AgentTool,
 	PrepareNextTurnContext,
 	ThinkingLevel,
@@ -862,6 +866,26 @@ export class AgentSession {
 	/** Full agent state */
 	get state(): AgentState {
 		return this.agent.state;
+	}
+
+	/** Advance this session using the steppable agent protocol. */
+	advance(input: AgentSteppableInput): Promise<AgentSteppableResult> {
+		return this.agent.advance(input);
+	}
+
+	/** Return the latest JSON-serializable steppable snapshot. */
+	snapshot(): AgentSteppableSnapshot {
+		return this.agent.snapshot();
+	}
+
+	/** Restore a JSON-serializable steppable snapshot into this session runtime. */
+	restore(snapshot: AgentSteppableSnapshot): void {
+		this.agent.restore(snapshot);
+	}
+
+	/** Execute the pending sandbox tool for a steppable boundary. */
+	executeTool(callId: string): Promise<AgentSteppableToolExecutionResult> {
+		return this.agent.executeTool(callId);
 	}
 
 	/** Current model (may be undefined if not yet selected) */

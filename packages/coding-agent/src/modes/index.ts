@@ -14,3 +14,5 @@ export type {
 	RpcResponse,
 	RpcSessionState,
 } from "./rpc/rpc-types.ts";
+export { runSteppableRpcMode } from "./steppable-rpc/steppable-rpc-mode.ts";
+export type { SteppableRpcCommand, SteppableRpcResponse } from "./steppable-rpc/steppable-rpc-types.ts";

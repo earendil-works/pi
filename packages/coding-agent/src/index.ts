@@ -206,6 +206,8 @@ export {
 	type CreateAgentSessionRuntimeFactory,
 	type CreateAgentSessionRuntimeResult,
 	type CreateAgentSessionServicesOptions,
+	type CreateSteppableSessionOptions,
+	type CreateSteppableSessionResult,
 	// Factory
 	createAgentSession,
 	createAgentSessionFromServices,
@@ -220,8 +222,10 @@ export {
 	createLsTool,
 	createReadOnlyTools,
 	createReadTool,
+	createSteppableSession,
 	createWriteTool,
 	type PromptTemplate,
+	type SteppableSession,
 } from "./core/sdk.ts";
 export {
 	type BranchSummaryEntry,
@@ -348,6 +352,9 @@ export {
 	type RpcSessionState,
 	runPrintMode,
 	runRpcMode,
+	runSteppableRpcMode,
+	type SteppableRpcCommand,
+	type SteppableRpcResponse,
 } from "./modes/index.ts";
 // UI components for extensions
 export {

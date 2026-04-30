@@ -1,11 +1,15 @@
-import type {
-	ImageContent,
-	Message,
-	Model,
-	SimpleStreamOptions,
-	TextContent,
-	ThinkingBudgets,
-	Transport,
+import {
+	type AssistantMessage,
+	type Context,
+	type ImageContent,
+	type Message,
+	type Model,
+	type SimpleStreamOptions,
+	type TextContent,
+	type ThinkingBudgets,
+	type ToolResultMessage,
+	type Transport,
+	validateToolArguments,
 } from "@earendil-works/pi-ai";
 import { runAgentLoop, runAgentLoopContinue } from "./agent-loop.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
@@ -17,12 +21,21 @@ import type {
 	AgentLoopConfig,
 	AgentLoopTurnUpdate,
 	AgentMessage,
+	AgentProviderRequest,
 	AgentState,
+	AgentSteppableInput,
+	AgentSteppableNextAction,
+	AgentSteppableResult,
+	AgentSteppableSnapshot,
+	AgentSteppableToolExecutionResult,
 	AgentTool,
+	AgentToolCall,
+	AgentToolResult,
 	BeforeToolCallContext,
 	BeforeToolCallResult,
 	PrepareNextTurnContext,
 	QueueMode,
+	SerializedAgentError,
 	ShouldStopAfterTurnContext,
 	StreamFn,
 	ToolExecutionMode,
@@ -202,6 +215,15 @@ export class Agent {
 		signal?: AbortSignal,
 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
 	private activeRun?: ActiveRun;
+	private steppable: Omit<AgentSteppableSnapshot, "systemPrompt" | "model" | "thinkingLevel" | "messages"> = {
+		schemaVersion: 1,
+		phase: "waiting_for_user",
+		newMessages: [],
+		callSeq: 1,
+		pendingToolCalls: [],
+		completedToolResults: [],
+		toolBatchTerminated: false,
+	};
 	/** Session identifier forwarded to providers for cache-aware backends. */
 	public sessionId?: string;
 	/** Optional per-level thinking token budgets forwarded to the stream function. */
@@ -385,6 +407,409 @@ export class Agent {
 		}
 
 		await this.runContinuation();
+	}
+
+	async advance(input: AgentSteppableInput): Promise<AgentSteppableResult> {
+		const events: AgentEvent[] = [];
+		const emit = async (event: AgentEvent) => {
+			events.push(event);
+			await this.processEvents(event);
+		};
+
+		try {
+			if (input.type === "resume") {
+				return this.runUntilBoundary(events, emit);
+			}
+
+			if (input.type === "user_message") {
+				this.assertWaitingForUser();
+				this.steppable.newMessages = [input.message];
+				this.steppable.currentAssistantMessage = undefined;
+				this.steppable.completedToolResults = [];
+				this.steppable.toolBatchTerminated = false;
+				await emit({ type: "agent_start" });
+				await emit({ type: "turn_start" });
+				await emit({ type: "message_start", message: input.message });
+				await emit({ type: "message_end", message: input.message });
+				return this.yieldLlm(events);
+			}
+
+			if (input.type === "llm_result" || input.type === "llm_error") {
+				this.assertPending(input.callId, "call_llm");
+				this.steppable.pendingAction = undefined;
+				this.steppable.phase = "waiting_for_user";
+
+				const message =
+					input.type === "llm_result" ? input.message : this.createAssistantErrorMessage(input.error.message);
+				await emit({ type: "message_start", message });
+				await emit({ type: "message_end", message });
+				this.steppable.currentAssistantMessage = message;
+				this.steppable.newMessages.push(message);
+
+				if (message.stopReason === "error" || message.stopReason === "aborted" || input.type === "llm_error") {
+					await emit({ type: "turn_end", message, toolResults: [] });
+					await emit({ type: "agent_end", messages: this.steppable.newMessages });
+					this.steppable.currentAssistantMessage = undefined;
+					return this.result(events, { type: "wait_for_user" });
+				}
+
+				this.steppable.pendingToolCalls = message.content.filter((content) => content.type === "toolCall");
+				this.steppable.completedToolResults = [];
+				this.steppable.toolBatchTerminated = false;
+				return this.runUntilBoundary(events, emit);
+			}
+
+			if (input.type === "tool_result" || input.type === "tool_error") {
+				this.assertPending(input.callId, "call_tool");
+				const pendingTool = this.steppable.pendingTool;
+				const assistantMessage = this.steppable.currentAssistantMessage;
+				if (!pendingTool || !assistantMessage) throw new Error("Missing pending tool state");
+				this.steppable.pendingAction = undefined;
+				this.steppable.pendingTool = undefined;
+				const rawResult = input.type === "tool_result" ? input.result : createErrorToolResult(input.error.message);
+				const rawIsError = input.type === "tool_result" ? (input.isError ?? false) : true;
+				const finalized = await this.finalizeToolResult(assistantMessage, pendingTool, rawResult, rawIsError);
+				await emit({
+					type: "tool_execution_end",
+					toolCallId: pendingTool.toolCallId,
+					toolName: pendingTool.toolName,
+					result: finalized.result,
+					isError: finalized.isError,
+				});
+				const toolMessage = createToolResultMessage(pendingTool, finalized.result, finalized.isError);
+				await emit({ type: "message_start", message: toolMessage });
+				await emit({ type: "message_end", message: toolMessage });
+				this.steppable.newMessages.push(toolMessage);
+				const allPreviousTerminated =
+					this.steppable.completedToolResults.length === 0 || this.steppable.toolBatchTerminated;
+				this.steppable.completedToolResults.push(toolMessage);
+				this.steppable.toolBatchTerminated = allPreviousTerminated && finalized.result.terminate === true;
+				return this.runUntilBoundary(events, emit);
+			}
+		} catch (error) {
+			const serialized = serializeError(error);
+			this.steppable.phase = "error";
+			this.steppable.error = serialized;
+			return this.result(events, { type: "error", error: serialized });
+		}
+		const serialized = { message: `Unsupported steppable input ${(input as { type: string }).type}` };
+		this.steppable.phase = "error";
+		this.steppable.error = serialized;
+		return this.result(events, { type: "error", error: serialized });
+	}
+
+	async executeTool(callId: string): Promise<AgentSteppableToolExecutionResult> {
+		const action = this.steppable.pendingAction;
+		const pendingTool = this.steppable.pendingTool;
+		if (!action || action.type !== "call_tool" || action.callId !== callId || !pendingTool) {
+			throw new Error(`No pending sandbox tool call for ${callId}`);
+		}
+		if (action.execution !== "sandbox") {
+			throw new Error(`Cannot execute ${action.execution} tool in sandbox`);
+		}
+		const tool = this._state.tools.find((candidate) => candidate.name === pendingTool.toolName);
+		if (!tool) {
+			return { result: createErrorToolResult(`Tool ${pendingTool.toolName} not found`), isError: true };
+		}
+		try {
+			const result = await tool.execute(
+				pendingTool.toolCallId,
+				pendingTool.args as never,
+				undefined,
+				(partialResult) => {
+					void this.processEvents({
+						type: "tool_execution_update",
+						toolCallId: pendingTool.toolCallId,
+						toolName: pendingTool.toolName,
+						args: pendingTool.args,
+						partialResult,
+					});
+				},
+			);
+			return { result, isError: false };
+		} catch (error) {
+			return {
+				result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+				isError: true,
+			};
+		}
+	}
+
+	snapshot(): AgentSteppableSnapshot {
+		return {
+			...this.steppable,
+			schemaVersion: 1,
+			systemPrompt: this._state.systemPrompt,
+			model: this._state.model,
+			thinkingLevel: this._state.thinkingLevel,
+			messages: this._state.messages.slice(),
+			newMessages: this.steppable.newMessages.slice(),
+			pendingToolCalls: this.steppable.pendingToolCalls.slice(),
+			completedToolResults: this.steppable.completedToolResults.slice(),
+		};
+	}
+
+	restore(snapshot: AgentSteppableSnapshot): void {
+		if (snapshot.schemaVersion !== 1)
+			throw new Error(`Unsupported steppable snapshot version ${snapshot.schemaVersion}`);
+		this._state.systemPrompt = snapshot.systemPrompt;
+		this._state.model = snapshot.model;
+		this._state.thinkingLevel = snapshot.thinkingLevel;
+		this._state.messages = snapshot.messages;
+		this.steppable = {
+			schemaVersion: 1,
+			phase: snapshot.phase,
+			newMessages: snapshot.newMessages.slice(),
+			callSeq: snapshot.callSeq,
+			pendingAction: snapshot.pendingAction,
+			pendingTool: snapshot.pendingTool,
+			pendingToolCalls: snapshot.pendingToolCalls.slice(),
+			completedToolResults: snapshot.completedToolResults.slice(),
+			currentAssistantMessage: snapshot.currentAssistantMessage,
+			toolBatchTerminated: snapshot.toolBatchTerminated,
+			error: snapshot.error,
+		};
+	}
+
+	private async runUntilBoundary(
+		events: AgentEvent[],
+		emit: (event: AgentEvent) => Promise<void>,
+	): Promise<AgentSteppableResult> {
+		if (this.steppable.pendingAction) return this.result(events, this.steppable.pendingAction);
+		if (this.steppable.phase === "waiting_for_user" && !this.steppable.currentAssistantMessage) {
+			return this.result(events, { type: "wait_for_user" });
+		}
+		if (this.steppable.phase === "awaiting_llm") return this.yieldLlm(events);
+		if (this.steppable.phase === "awaiting_tool") return this.yieldNextTool(events, emit);
+		if (this.steppable.pendingToolCalls.length > 0) return this.yieldNextTool(events, emit);
+
+		const assistantMessage = this.steppable.currentAssistantMessage;
+		if (assistantMessage) {
+			await emit({ type: "turn_end", message: assistantMessage, toolResults: this.steppable.completedToolResults });
+			if (!this.steppable.toolBatchTerminated && this.steppable.completedToolResults.length > 0) {
+				await emit({ type: "turn_start" });
+				return this.yieldLlm(events);
+			}
+		}
+
+		this.steppable.phase = "waiting_for_user";
+		this.steppable.currentAssistantMessage = undefined;
+		await emit({ type: "agent_end", messages: this.steppable.newMessages });
+		return this.result(events, { type: "wait_for_user" });
+	}
+
+	private async yieldLlm(events: AgentEvent[]): Promise<AgentSteppableResult> {
+		const request = await this.createProviderRequest();
+		const action: AgentSteppableNextAction = {
+			type: "call_llm",
+			callId: this.nextCallId("llm"),
+			request,
+		};
+		this.steppable.pendingAction = action;
+		this.steppable.phase = "awaiting_llm";
+		return this.result(events, action);
+	}
+
+	private async yieldNextTool(
+		events: AgentEvent[],
+		emit: (event: AgentEvent) => Promise<void>,
+	): Promise<AgentSteppableResult> {
+		const assistantMessage = this.steppable.currentAssistantMessage;
+		if (!assistantMessage) throw new Error("Missing assistant message for tool call");
+
+		while (this.steppable.pendingToolCalls.length > 0) {
+			const toolCall = this.steppable.pendingToolCalls.shift();
+			if (!toolCall) break;
+			await emit({
+				type: "tool_execution_start",
+				toolCallId: toolCall.id,
+				toolName: toolCall.name,
+				args: toolCall.arguments,
+			});
+			const prepared = await this.prepareSteppableToolCall(assistantMessage, toolCall);
+			if ("type" in prepared) {
+				await emit({
+					type: "tool_execution_end",
+					toolCallId: toolCall.id,
+					toolName: toolCall.name,
+					result: prepared.result,
+					isError: prepared.isError,
+				});
+				const toolMessage = createToolResultMessage(
+					{ toolCallId: toolCall.id, toolName: toolCall.name },
+					prepared.result,
+					prepared.isError,
+				);
+				await emit({ type: "message_start", message: toolMessage });
+				await emit({ type: "message_end", message: toolMessage });
+				this.steppable.newMessages.push(toolMessage);
+				const allPreviousTerminated =
+					this.steppable.completedToolResults.length === 0 || this.steppable.toolBatchTerminated;
+				this.steppable.completedToolResults.push(toolMessage);
+				this.steppable.toolBatchTerminated = allPreviousTerminated && prepared.result.terminate === true;
+				continue;
+			}
+
+			const action: AgentSteppableNextAction = {
+				type: "call_tool",
+				callId: prepared.callId,
+				toolCallId: prepared.toolCallId,
+				tool: prepared.toolName,
+				execution: prepared.execution,
+				input: prepared.args,
+			};
+			this.steppable.pendingTool = prepared;
+			this.steppable.pendingAction = action;
+			this.steppable.phase = "awaiting_tool";
+			return this.result(events, action);
+		}
+
+		this.steppable.phase = "waiting_for_user";
+		return this.runUntilBoundary(events, emit);
+	}
+
+	private async prepareSteppableToolCall(
+		assistantMessage: AssistantMessage,
+		toolCall: AgentToolCall,
+	): Promise<
+		| { type: "immediate"; result: AgentToolResult<unknown>; isError: boolean }
+		| NonNullable<AgentSteppableSnapshot["pendingTool"]>
+	> {
+		const tool = this._state.tools.find((candidate) => candidate.name === toolCall.name);
+		if (!tool)
+			return { type: "immediate", result: createErrorToolResult(`Tool ${toolCall.name} not found`), isError: true };
+		try {
+			const preparedArguments = tool.prepareArguments
+				? tool.prepareArguments(toolCall.arguments)
+				: toolCall.arguments;
+			const preparedToolCall = { ...toolCall, arguments: preparedArguments as Record<string, unknown> };
+			const args = validateToolArguments(tool, preparedToolCall);
+			if (this.beforeToolCall) {
+				const beforeResult = await this.beforeToolCall({
+					assistantMessage,
+					toolCall,
+					args,
+					context: this.createContextSnapshot(),
+				});
+				if (beforeResult?.block) {
+					return {
+						type: "immediate",
+						result: createErrorToolResult(beforeResult.reason || "Tool execution was blocked"),
+						isError: true,
+					};
+				}
+			}
+			return {
+				callId: this.nextCallId("tool"),
+				toolCallId: toolCall.id,
+				toolName: toolCall.name,
+				rawArguments: toolCall.arguments,
+				args,
+				execution: tool.execution ?? "sandbox",
+			};
+		} catch (error) {
+			return {
+				type: "immediate",
+				result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+				isError: true,
+			};
+		}
+	}
+
+	private async finalizeToolResult(
+		assistantMessage: AssistantMessage,
+		pendingTool: NonNullable<AgentSteppableSnapshot["pendingTool"]>,
+		result: AgentToolResult<unknown>,
+		isError: boolean,
+	): Promise<{ result: AgentToolResult<unknown>; isError: boolean }> {
+		if (!this.afterToolCall) return { result, isError };
+		try {
+			const toolCall = {
+				id: pendingTool.toolCallId,
+				name: pendingTool.toolName,
+				arguments: pendingTool.rawArguments,
+				type: "toolCall",
+			} as AgentToolCall;
+			const afterResult = await this.afterToolCall({
+				assistantMessage,
+				toolCall,
+				args: pendingTool.args,
+				result,
+				isError,
+				context: this.createContextSnapshot(),
+			});
+			if (!afterResult) return { result, isError };
+			return {
+				result: {
+					content: afterResult.content ?? result.content,
+					details: afterResult.details ?? result.details,
+					terminate: afterResult.terminate ?? result.terminate,
+				},
+				isError: afterResult.isError ?? isError,
+			};
+		} catch (error) {
+			return {
+				result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+				isError: true,
+			};
+		}
+	}
+
+	private async createProviderRequest(): Promise<AgentProviderRequest> {
+		let messages = this._state.messages;
+		if (this.transformContext) messages = await this.transformContext(messages);
+		const llmMessages = await this.convertToLlm(messages);
+		const context: Context = {
+			systemPrompt: this._state.systemPrompt,
+			messages: llmMessages,
+			tools: this._state.tools,
+		};
+		return {
+			model: this._state.model,
+			context,
+			options: {
+				reasoning: this._state.thinkingLevel === "off" ? undefined : this._state.thinkingLevel,
+				sessionId: this.sessionId,
+				transport: this.transport,
+				thinkingBudgets: this.thinkingBudgets,
+				maxRetryDelayMs: this.maxRetryDelayMs,
+			},
+		};
+	}
+
+	private result(events: AgentEvent[], nextAction: AgentSteppableNextAction): AgentSteppableResult {
+		return { state: this.snapshot(), events, nextAction };
+	}
+
+	private assertWaitingForUser(): void {
+		if (this.steppable.pendingAction || this.steppable.phase !== "waiting_for_user") {
+			throw new Error("Cannot accept user_message while session is not waiting for user");
+		}
+	}
+
+	private assertPending(callId: string, type: "call_llm" | "call_tool"): void {
+		const action = this.steppable.pendingAction;
+		if (!action || action.type !== type || action.callId !== callId) {
+			throw new Error(`Unexpected ${type} result for ${callId}`);
+		}
+	}
+
+	private nextCallId(prefix: "llm" | "tool"): string {
+		return `${prefix}_${this.steppable.callSeq++}`;
+	}
+
+	private createAssistantErrorMessage(message: string): AssistantMessage {
+		return {
+			role: "assistant",
+			content: [{ type: "text", text: "" }],
+			api: this._state.model.api,
+			provider: this._state.model.provider,
+			model: this._state.model.id,
+			usage: EMPTY_USAGE,
+			stopReason: "error",
+			errorMessage: message,
+			timestamp: Date.now(),
+		};
 	}
 
 	private normalizePromptInput(
@@ -581,12 +1006,36 @@ export class Agent {
 				break;
 		}
 
-		const signal = this.activeRun?.abortController.signal;
-		if (!signal) {
-			throw new Error("Agent listener invoked outside active run");
-		}
+		const signal = this.activeRun?.abortController.signal ?? new AbortController().signal;
 		for (const listener of this.listeners) {
 			await listener(event, signal);
 		}
 	}
+}
+
+function createErrorToolResult(message: string): AgentToolResult<unknown> {
+	return { content: [{ type: "text", text: message }], details: {} };
+}
+
+function createToolResultMessage(
+	pendingTool: Pick<NonNullable<AgentSteppableSnapshot["pendingTool"]>, "toolCallId" | "toolName">,
+	result: AgentToolResult<unknown>,
+	isError: boolean,
+): ToolResultMessage {
+	return {
+		role: "toolResult",
+		toolCallId: pendingTool.toolCallId,
+		toolName: pendingTool.toolName,
+		content: result.content,
+		details: result.details,
+		isError,
+		timestamp: Date.now(),
+	};
+}
+
+function serializeError(error: unknown): SerializedAgentError {
+	if (error instanceof Error) {
+		return { message: error.message, name: error.name, stack: error.stack };
+	}
+	return { message: String(error) };
 }
