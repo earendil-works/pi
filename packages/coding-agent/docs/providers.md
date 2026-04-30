@@ -44,12 +44,16 @@ Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json`
 
 ### Environment Variables or Auth File
 
-Use `/login` in interactive mode and select a provider to store an API key in `auth.json`, or set credentials via environment variable:
+Use `/login` in interactive mode and select a provider to store an API key in `auth.json`, set provider-specific credentials via environment variable, or pass full auth JSON via `PI_CODING_AGENT_AUTH_JSON`:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 pi
+
+PI_CODING_AGENT_AUTH_JSON='{"anthropic":{"type":"api_key","key":"sk-ant-..."}}' pi
 ```
+
+When `PI_CODING_AGENT_AUTH_JSON` is set, pi loads it into memory, deletes the environment variable during startup, and does not read or write `auth.json` for that process.
 
 | Provider | Environment Variable | `auth.json` key |
 |----------|----------------------|------------------|
@@ -91,7 +95,7 @@ Store credentials in `~/.pi/agent/auth.json`:
 }
 ```
 
-The file is created with `0600` permissions (user read/write only). Auth file credentials take priority over environment variables.
+The file is created with `0600` permissions (user read/write only). Auth file credentials take priority over provider-specific environment variables. `PI_CODING_AGENT_AUTH_JSON` replaces the auth file for the process and is not persisted.
 
 ### Key Resolution
 
@@ -208,6 +212,6 @@ Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
 When resolving credentials for a provider:
 
 1. CLI `--api-key` flag
-2. `auth.json` entry (API key or OAuth token)
-3. Environment variable
+2. `auth.json` entry, or in-memory `PI_CODING_AGENT_AUTH_JSON` entry (API key or OAuth token)
+3. Provider-specific environment variable
 4. Custom provider keys from `models.json`

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { registerOAuthProvider } from "@mariozechner/pi-ai/oauth";
 import lockfile from "proper-lockfile";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
-import { AuthStorage } from "../src/core/auth-storage.js";
+import { AuthStorage, PI_CODING_AGENT_AUTH_JSON_ENV } from "../src/core/auth-storage.js";
 import { clearConfigValueCache } from "../src/core/resolve-config-value.js";
 
 describe("AuthStorage", () => {
@@ -19,6 +19,7 @@ describe("AuthStorage", () => {
 	});
 
 	afterEach(() => {
+		delete process.env[PI_CODING_AGENT_AUTH_JSON_ENV];
 		if (tempDir && existsSync(tempDir)) {
 			rmSync(tempDir, { recursive: true });
 		}
@@ -33,6 +34,47 @@ describe("AuthStorage", () => {
 	function toShPath(value: string): string {
 		return value.replace(/\\/g, "/").replace(/"/g, '\\"');
 	}
+
+	describe("PI_CODING_AGENT_AUTH_JSON", () => {
+		test("loads credentials from env JSON and deletes the env var", async () => {
+			process.env[PI_CODING_AGENT_AUTH_JSON_ENV] = JSON.stringify({
+				anthropic: { type: "api_key", key: "sk-ant-env-json" },
+			});
+
+			authStorage = AuthStorage.create(authJsonPath);
+
+			expect(process.env[PI_CODING_AGENT_AUTH_JSON_ENV]).toBeUndefined();
+			await expect(authStorage.getApiKey("anthropic")).resolves.toBe("sk-ant-env-json");
+			expect(existsSync(authJsonPath)).toBe(false);
+		});
+
+		test("deletes env var and does not fall back to auth file when env JSON is invalid", async () => {
+			writeAuthJson({
+				anthropic: { type: "api_key", key: "sk-ant-file" },
+			});
+			process.env[PI_CODING_AGENT_AUTH_JSON_ENV] = "{";
+
+			authStorage = AuthStorage.create(authJsonPath);
+
+			expect(process.env[PI_CODING_AGENT_AUTH_JSON_ENV]).toBeUndefined();
+			await expect(authStorage.getApiKey("anthropic")).resolves.toBeUndefined();
+			expect(authStorage.drainErrors()).toHaveLength(1);
+			expect(readFileSync(authJsonPath, "utf-8")).toBe(
+				JSON.stringify({ anthropic: { type: "api_key", key: "sk-ant-file" } }),
+			);
+		});
+
+		test("does not persist credential changes to auth.json when env JSON is set", () => {
+			process.env[PI_CODING_AGENT_AUTH_JSON_ENV] = JSON.stringify({});
+
+			authStorage = AuthStorage.create(authJsonPath);
+			authStorage.set("openai", { type: "api_key", key: "sk-openai-env-json" });
+
+			expect(process.env[PI_CODING_AGENT_AUTH_JSON_ENV]).toBeUndefined();
+			expect(authStorage.get("openai")).toEqual({ type: "api_key", key: "sk-openai-env-json" });
+			expect(existsSync(authJsonPath)).toBe(false);
+		});
+	});
 
 	describe("API key resolution", () => {
 		test("literal API key is returned directly", async () => {

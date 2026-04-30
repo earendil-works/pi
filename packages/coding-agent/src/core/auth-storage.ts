@@ -33,6 +33,8 @@ export type AuthCredential = ApiKeyCredential | OAuthCredential;
 
 export type AuthStorageData = Record<string, AuthCredential>;
 
+export const PI_CODING_AGENT_AUTH_JSON_ENV = "PI_CODING_AGENT_AUTH_JSON";
+
 export type AuthStatus = {
 	configured: boolean;
 	source?: "stored" | "runtime" | "environment" | "fallback" | "models_json_key" | "models_json_command";
@@ -200,6 +202,14 @@ export class AuthStorage {
 	}
 
 	static create(authPath?: string): AuthStorage {
+		const authJson = process.env[PI_CODING_AGENT_AUTH_JSON_ENV];
+		if (authJson !== undefined) {
+			delete process.env[PI_CODING_AGENT_AUTH_JSON_ENV];
+			const storage = new InMemoryAuthStorageBackend();
+			storage.withLock(() => ({ result: undefined, next: authJson }));
+			return new AuthStorage(storage);
+		}
+
 		return new AuthStorage(new FileAuthStorageBackend(authPath ?? join(getAgentDir(), "auth.json")));
 	}
 
