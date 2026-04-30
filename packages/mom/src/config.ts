@@ -24,6 +24,12 @@ export interface MomRuntimeConfig {
 	slackFullToolThreadDump: boolean;
 	/** 0 = unlimited parallel conversations per Slack channel */
 	maxConversationsPerChannel: number;
+	/**
+	 * After each Slack-triggered run, enqueue up to this many synthetic “continue” user
+	 * messages so the agent keeps going when the model stops early (text-only, no tools).
+	 * 0 = disabled (default).
+	 */
+	maxAutoContinueRounds: number;
 }
 
 let cached: MomRuntimeConfig | null = null;
@@ -44,7 +50,7 @@ export function buildMomConfig(): MomRuntimeConfig {
 	const quiet = parseBool(process.env.MOM_SLACK_QUIET, false);
 	return {
 		llmProvider: process.env.MOM_LLM_PROVIDER?.trim() || "anthropic",
-		llmModelId: process.env.MOM_LLM_MODEL?.trim() || "claude-sonnet-4-5",
+		llmModelId: process.env.MOM_LLM_MODEL?.trim() || "claude-sonnet-4-6",
 		slackReplyInUserThread: parseBool(process.env.MOM_SLACK_REPLY_IN_USER_THREAD, false),
 		trackThreads: parseBool(process.env.MOM_TRACK_THREADS, false),
 		slackStatusReactions: parseBool(process.env.MOM_SLACK_STATUS_REACTIONS, false),
@@ -61,6 +67,7 @@ export function buildMomConfig(): MomRuntimeConfig {
 		slackPostRetryNotice: quiet ? false : parseBool(process.env.MOM_SLACK_POST_RETRY_NOTICE, true),
 		slackFullToolThreadDump: parseBool(process.env.MOM_SLACK_FULL_TOOL_RESULTS, false),
 		maxConversationsPerChannel: parseNonNegInt(process.env.MOM_MAX_CONVERSATIONS, 0),
+		maxAutoContinueRounds: parseNonNegInt(process.env.MOM_MAX_AUTO_CONTINUE, 0),
 	};
 }
 

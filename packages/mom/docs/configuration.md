@@ -1,6 +1,6 @@
 # Mom runtime configuration
 
-All variables are optional unless noted. **Unset values preserve the original upstream behavior** (verbose Slack tool output, Anthropic + `claude-sonnet-4-5`, no tracked threads, etc.).
+All variables are optional unless noted. **Unset values preserve the original upstream behavior** (verbose Slack tool output, Anthropic + `claude-sonnet-4-6`, no tracked threads, etc.).
 
 ## Required for the bot
 
@@ -12,7 +12,7 @@ All variables are optional unless noted. **Unset values preserve the original up
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MOM_LLM_PROVIDER` | `anthropic` | Provider id for `@mariozechner/pi-ai` (e.g. `anthropic`, `github-copilot`). |
-| `MOM_LLM_MODEL` | `claude-sonnet-4-5` | Model id for that provider. |
+| `MOM_LLM_MODEL` | `claude-sonnet-4-6` | Model id for that provider. |
 
 Auth: `~/.pi/mom/auth.json` (via `/login` in the pi tooling) or provider env keys as documented upstream.
 

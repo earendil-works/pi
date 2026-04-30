@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync } from "fs";
+import { homedir } from "os";
 import { join, resolve } from "path";
 import { type AgentRunner, getOrCreateRunner } from "./agent.js";
 import { getMomConfig, initMomConfig } from "./config.js";
@@ -431,6 +432,9 @@ const handler: MomHandler = {
 
 		let threadStatusTs: string | null = null;
 		let stopped = false;
+		let slackCtx: ReturnType<typeof createSlackContext> | null = null;
+		let runError: string | undefined;
+		let runResult: Awaited<ReturnType<AgentRunner["run"]>> | undefined;
 
 		try {
 			if (!isEvent && cfg.voiceTranscription) {
@@ -456,15 +460,15 @@ const handler: MomHandler = {
 			}
 
 			// Create context adapter
-			const ctx = createSlackContext(event, slack, state, sessionThreadRoot, isEvent);
+			slackCtx = createSlackContext(event, slack, state, sessionThreadRoot, isEvent);
 
 			// Run the agent
-			await ctx.setTyping(true);
-			await ctx.setWorking(true);
-			const result = await state.runner.run(ctx as any, state.store);
-			await ctx.setWorking(false);
+			await slackCtx.setTyping(true);
+			await slackCtx.setWorking(true);
+			runResult = await state.runner.run(slackCtx as any, state.store);
+			await slackCtx.setWorking(false);
 
-			if (result.stopReason === "aborted" && state.stopRequested) {
+			if (runResult.stopReason === "aborted" && state.stopRequested) {
 				stopped = true;
 				if (state.stopMessageTs) {
 					await slack.updateMessage(event.channel, state.stopMessageTs, "_Stopped_");
@@ -479,20 +483,48 @@ const handler: MomHandler = {
 				}
 			}
 		} catch (err) {
-			log.logWarning(`[${event.channel}] Run error`, err instanceof Error ? err.message : String(err));
+			runError = err instanceof Error ? err.message : String(err);
+			log.logWarning(`[${event.channel}] Run error`, runError);
+			if (slackCtx) {
+				try {
+					await slackCtx.setWorking(false);
+					const safe = runError.replace(/```/g, "'''");
+					const mainSnippet = safe.length > 1200 ? `${safe.slice(0, 1180)}…` : safe;
+					await slackCtx.replaceMessage(`_Run failed:_\n\`\`\`\n${mainSnippet}\n\`\`\``);
+					const threadSnippet = safe.length > 12000 ? `${safe.slice(0, 11800)}…` : safe;
+					await slackCtx.respondInThread(`_Full error:_\n\`\`\`\n${threadSnippet}\n\`\`\``);
+				} catch (postErr) {
+					log.logWarning(
+						"Failed to post run error to Slack",
+						postErr instanceof Error ? postErr.message : String(postErr),
+					);
+				}
+			}
 		} finally {
 			if (!isEvent) {
 				if (cfg.slackStatusReactions) {
 					await slack.removeReaction(event.channel, event.ts, "hourglass_flowing_sand");
-					await slack.addReaction(event.channel, event.ts, stopped ? "x" : "white_check_mark");
+					const failed = !!runError;
+					if (stopped || failed) {
+						await slack.addReaction(event.channel, event.ts, "x");
+					} else if (runResult?.usedAnyTool) {
+						await slack.addReaction(event.channel, event.ts, "white_check_mark");
+					} else {
+						await slack.addReaction(event.channel, event.ts, "information_source");
+					}
 				}
 				if (threadStatusTs && cfg.slackStatusThreadMessage) {
 					try {
-						await slack.updateMessage(
-							event.channel,
-							threadStatusTs,
-							stopped ? "_Stopped :x:_" : "_Done :white_check_mark:_",
-						);
+						const line = stopped
+							? "_Stopped :x:_"
+							: runError
+								? "_Failed :x:_"
+								: runResult?.usedAnyTool
+									? "_Done :white_check_mark:_"
+									: cfg.maxAutoContinueRounds > 0
+										? `_No tools after ${cfg.maxAutoContinueRounds} auto-continue nudge(s). If bash should find pipenv, ensure Mom’s PATH includes ${homedir()}/.local/bin (e.g. systemd Environment=PATH); otherwise the model may be declining tools._`
+										: "_Finished (no tools ran — reply may be plan-only; ask again or set MOM_MAX_AUTO_CONTINUE)._";
+						await slack.updateMessage(event.channel, threadStatusTs, line);
 					} catch (err) {
 						log.logWarning("Failed to update thread status", err instanceof Error ? err.message : String(err));
 					}

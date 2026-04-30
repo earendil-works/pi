@@ -1,0 +1,10 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		"noEmit": true,
+		"rootDir": ".",
+		"types": ["node"]
+	},
+	"include": ["e2e/**/*.ts", "playwright.config.ts"],
+	"exclude": ["node_modules", "dist"]
+}

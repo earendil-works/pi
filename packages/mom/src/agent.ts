@@ -37,7 +37,7 @@ export interface AgentRunner {
 		ctx: SlackContext,
 		store: ChannelStore,
 		pendingMessages?: PendingMessage[],
-	): Promise<{ stopReason: string; errorMessage?: string }>;
+	): Promise<{ stopReason: string; errorMessage?: string; usedAnyTool: boolean }>;
 	abort(): void;
 }
 
@@ -85,6 +85,19 @@ function getMemory(channelDir: string): string {
 			}
 		} catch (error) {
 			log.logWarning("Failed to read workspace memory", `${workspaceMemoryPath}: ${error}`);
+		}
+	}
+
+	// SYSTEM.md: environment log + mandatory agent rules (same dir as MEMORY.md)
+	const workspaceSystemPath = join(channelDir, "..", "SYSTEM.md");
+	if (existsSync(workspaceSystemPath)) {
+		try {
+			const content = readFileSync(workspaceSystemPath, "utf-8").trim();
+			if (content) {
+				parts.push(`### Workspace SYSTEM.md\n${content}`);
+			}
+		} catch (error) {
+			log.logWarning("Failed to read workspace SYSTEM.md", `${workspaceSystemPath}: ${error}`);
 		}
 	}
 
@@ -179,6 +192,14 @@ function buildSystemPrompt(
 - For current date/time, use: date
 - You have access to previous conversation context including tool results from prior turns.
 - For older history beyond your context, search log.jsonl (contains user messages and your final responses, but not tool results).
+
+## One Slack message = finish the job (mandatory)
+Each Slack user message is one request you should drive to completion in this run (the user should not have to ping you again to continue).
+- Prefer tools (bash, read, write, edit, attach) until the work is done or you hit a hard blocker.
+- Do not stop after only a plan, outline, or “next I would…” unless you are blocked (missing access, unsafe action needing explicit confirmation, truly ambiguous requirement).
+- If blocked, say what blocks you in one concise reply. If you still have executable steps, keep using tools instead of text-only handoff.
+- **Not a blocker:** needing to run a shell command you can run (e.g. \`pipenv install\`, \`python …\`). Those are next steps—use bash, do not describe them as “bloqueur” / “blocker” in place of tool calls.
+- **No hollow intent:** do not answer with only future tense or process filler in a turn that has **no** tool calls—e.g. “Je continue”, “Je le fais maintenant”, “I’ll run it now”, “Working on it”. In that case you must call tools first, or (if the work is already done) paste the **actual** results/summary—not promises.
 
 ## Slack Formatting (mrkdwn, NOT Markdown)
 Bold: *text*, Italic: _text_, Code: \`code\`, Block: \`\`\`code\`\`\`, Links: <url|text>
@@ -357,6 +378,142 @@ function truncate(text: string, maxLen: number): string {
 	return `${text.substring(0, maxLen - 3)}...`;
 }
 
+/** When the last assistant turn has thinking blocks but no `text`, Slack would otherwise stay on `_Thinking_`. */
+function extractThinkingFromAssistantMessage(
+	message: { content?: Array<{ type: string; thinking?: string }> } | undefined,
+): string {
+	if (!message?.content) return "";
+	const parts: string[] = [];
+	for (const part of message.content) {
+		if (part.type === "thinking" && typeof part.thinking === "string") {
+			parts.push(part.thinking);
+		}
+	}
+	return parts.join("\n\n");
+}
+
+/**
+ * Models sometimes emit the same user-visible paragraph twice as separate `text` content parts.
+ * Consecutive duplicates (after trim) are merged so Slack does not show the block twice.
+ */
+function joinVisibleAssistantTextParts(parts: string[]): string {
+	const kept: string[] = [];
+	for (const raw of parts) {
+		const normalized = raw.replace(/\r\n/g, "\n");
+		const sig = normalized.trim();
+		if (!sig) continue;
+		const prevSig = kept.length > 0 ? kept[kept.length - 1].replace(/\r\n/g, "\n").trim() : "";
+		if (sig === prevSig) continue;
+		kept.push(normalized);
+	}
+	return kept.join("\n");
+}
+
+const DEDUPE_PARAGRAPH_MIN_CHARS = 28;
+const DEDUPE_LINE_MIN_CHARS = 44;
+
+/**
+ * Remove repeated paragraphs (models often paste the same block twice with a blank line between)
+ * and consecutive duplicate long lines. Skips indented lines so fenced-style bodies are not mangled.
+ */
+function dedupeRepeatedAssistantText(text: string): string {
+	let t = text.replace(/\r\n/g, "\n").trim();
+	if (!t) return "";
+
+	const blocks = t.split(/\n{2,}/);
+	const seenBlock = new Set<string>();
+	const paraOut: string[] = [];
+	for (const raw of blocks) {
+		const trimmed = raw.trim();
+		if (!trimmed) continue;
+		const key = trimmed.replace(/\s+/g, " ").toLowerCase();
+		if (key.length >= DEDUPE_PARAGRAPH_MIN_CHARS && seenBlock.has(key)) continue;
+		if (key.length >= DEDUPE_PARAGRAPH_MIN_CHARS) seenBlock.add(key);
+		paraOut.push(trimmed);
+	}
+	t = paraOut.join("\n\n");
+
+	const lines = t.split("\n");
+	const lineOut: string[] = [];
+	let prevLineKey = "";
+	for (const line of lines) {
+		if (/^( {4,}|\t)/.test(line)) {
+			lineOut.push(line);
+			prevLineKey = "";
+			continue;
+		}
+		const k = line.trim().replace(/\s+/g, " ").toLowerCase();
+		if (k.length >= DEDUPE_LINE_MIN_CHARS && k === prevLineKey) continue;
+		lineOut.push(line);
+		prevLineKey = k.length >= DEDUPE_LINE_MIN_CHARS ? k : "";
+	}
+	return lineOut.join("\n");
+}
+
+function mergeAssistantTextPartsForSlack(parts: string[]): string {
+	return dedupeRepeatedAssistantText(joinVisibleAssistantTextParts(parts));
+}
+
+function mergedAssistantVisibleTextForMessage(m: { role: string; content?: unknown }): string {
+	if (m.role !== "assistant" || !Array.isArray(m.content)) {
+		return "";
+	}
+	const textParts: string[] = [];
+	for (const part of m.content) {
+		if (
+			part &&
+			typeof part === "object" &&
+			"type" in part &&
+			(part as { type: string }).type === "text" &&
+			"text" in part &&
+			typeof (part as { text: unknown }).text === "string"
+		) {
+			textParts.push((part as { text: string }).text);
+		}
+	}
+	return mergeAssistantTextPartsForSlack(textParts);
+}
+
+/**
+ * True if any assistant message after the last user message is a [SILENT] reply.
+ * Handles multi-turn runs where the last assistant block is tool-only but an earlier block said `[SILENT]`.
+ */
+function trailingAssistantBlockHasSilentMarker(messages: ReadonlyArray<{ role: string; content?: unknown }>): boolean {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const row = messages[i];
+		if (row.role === "user") {
+			break;
+		}
+		if (row.role !== "assistant") {
+			continue;
+		}
+		const merged = mergedAssistantVisibleTextForMessage(row).trim();
+		if (!merged) {
+			continue;
+		}
+		if (merged === "[SILENT]" || merged.startsWith("[SILENT]")) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/** Newest assistant message with a non-empty `text` part (avoids tool-only last turns hiding earlier visible text). */
+function latestAssistantVisibleText(messages: ReadonlyArray<{ role: string; content?: unknown }>): string {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i];
+		if (m.role !== "assistant") continue;
+		const merged = mergedAssistantVisibleTextForMessage(m);
+		if (merged.trim()) {
+			return merged;
+		}
+	}
+	return "";
+}
+
+const SLACK_AUTO_CONTINUE_NUDGE =
+	"[Same Slack request — the user did not send another message] Continue with tools (bash/read/write/edit) until the request is done. Do not send text-only “Je continue” / “I’m doing it now” / similar with no tools. Do not reply in text-only “blocker” / “bloqueur” for work you can still run yourself. Text-only is allowed only for real results, a genuine hard blocker after a tool failed (paste the error), or impossible/unsafe requests.";
+
 function extractToolResultText(result: unknown): string {
 	if (typeof result === "string") {
 		return result;
@@ -532,6 +689,7 @@ function createRunner(
 		},
 		stopReason: "stop",
 		errorMessage: undefined as string | undefined,
+		usedAnyTool: false,
 	};
 
 	// Subscribe to events ONCE
@@ -543,6 +701,7 @@ function createRunner(
 
 		if (event.type === "tool_execution_start") {
 			const agentEvent = event as AgentEvent & { type: "tool_execution_start" };
+			runState.usedAnyTool = true;
 			const args = agentEvent.args as { label?: string };
 			const label = args.label || agentEvent.toolName;
 
@@ -644,7 +803,7 @@ function createRunner(
 					}
 				}
 
-				const text = textParts.join("\n");
+				const text = mergeAssistantTextPartsForSlack(textParts);
 
 				for (const thinking of thinkingParts) {
 					log.logThinking(logCtx, thinking);
@@ -707,7 +866,7 @@ function createRunner(
 			ctx: SlackContext,
 			_store: ChannelStore,
 			_pendingMessages?: PendingMessage[],
-		): Promise<{ stopReason: string; errorMessage?: string }> {
+		): Promise<{ stopReason: string; errorMessage?: string; usedAnyTool: boolean }> {
 			// Ensure channel directory exists
 			await mkdir(channelDir, { recursive: true });
 
@@ -763,6 +922,7 @@ function createRunner(
 			};
 			runState.stopReason = "stop";
 			runState.errorMessage = undefined;
+			runState.usedAnyTool = false;
 
 			// Create queue for this run
 			let queueChain = Promise.resolve();
@@ -853,6 +1013,23 @@ function createRunner(
 
 			await session.prompt(userMessage, imageAttachments.length > 0 ? { images: imageAttachments } : undefined);
 
+			for (let round = 0; round < cfg.maxAutoContinueRounds; round++) {
+				if (runState.stopReason === "error" || runState.stopReason === "aborted") {
+					break;
+				}
+				if (runState.usedAnyTool) {
+					break;
+				}
+				try {
+					await session.followUp(SLACK_AUTO_CONTINUE_NUDGE);
+					await session.agent.continue();
+				} catch (err) {
+					const errMsg = err instanceof Error ? err.message : String(err);
+					log.logWarning("MOM_MAX_AUTO_CONTINUE: continue failed", errMsg);
+					break;
+				}
+			}
+
 			// Wait for queued messages
 			await queueChain;
 
@@ -869,14 +1046,14 @@ function createRunner(
 				// Final message update
 				const messages = session.messages;
 				const lastAssistant = messages.filter((m) => m.role === "assistant").pop();
-				const finalText =
-					lastAssistant?.content
-						.filter((c): c is { type: "text"; text: string } => c.type === "text")
-						.map((c) => c.text)
-						.join("\n") || "";
+				const finalText = latestAssistantVisibleText(messages);
 
 				// Check for [SILENT] marker - delete message and thread instead of posting
-				if (finalText.trim() === "[SILENT]" || finalText.trim().startsWith("[SILENT]")) {
+				const silent =
+					trailingAssistantBlockHasSilentMarker(messages) ||
+					finalText.trim() === "[SILENT]" ||
+					finalText.trim().startsWith("[SILENT]");
+				if (silent) {
 					try {
 						await ctx.deleteMessage();
 						log.logInfo("Silent response - deleted message and thread");
@@ -894,6 +1071,24 @@ function createRunner(
 					} catch (err) {
 						const errMsg = err instanceof Error ? err.message : String(err);
 						log.logWarning("Failed to replace message with final text", errMsg);
+					}
+				} else {
+					const thinkingFallback = extractThinkingFromAssistantMessage(lastAssistant);
+					try {
+						if (thinkingFallback.trim()) {
+							const mainText =
+								thinkingFallback.length > SLACK_MAX_LENGTH
+									? `${thinkingFallback.substring(0, SLACK_MAX_LENGTH - 50)}\n\n_(truncated)_`
+									: thinkingFallback;
+							await ctx.replaceMessage(mainText);
+						} else {
+							await ctx.replaceMessage(
+								"_No text in the model’s last reply (tools only or internal reasoning). Check the thread for tool output._",
+							);
+						}
+					} catch (err) {
+						const errMsg = err instanceof Error ? err.message : String(err);
+						log.logWarning("Failed to replace placeholder main message", errMsg);
 					}
 				}
 			}
@@ -927,7 +1122,11 @@ function createRunner(
 			runState.logCtx = null;
 			runState.queue = null;
 
-			return { stopReason: runState.stopReason, errorMessage: runState.errorMessage };
+			return {
+				stopReason: runState.stopReason,
+				errorMessage: runState.errorMessage,
+				usedAnyTool: runState.usedAnyTool,
+			};
 		},
 
 		abort(): void {

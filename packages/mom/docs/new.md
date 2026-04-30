@@ -269,7 +269,7 @@ Messages stored as received from platform:
 Same format as current (coding-agent compatible):
 
 ```jsonl
-{"type":"session","id":"uuid","timestamp":"...","provider":"anthropic","modelId":"claude-sonnet-4-5"}
+{"type":"session","id":"uuid","timestamp":"...","provider":"anthropic","modelId":"claude-sonnet-4-6"}
 {"type":"message","timestamp":"...","message":{"role":"user","content":"[mario]: what's the weather?"}}
 {"type":"message","timestamp":"...","message":{"role":"assistant","content":[{"type":"text","text":"The weather is sunny!"}]}}
 ```

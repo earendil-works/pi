@@ -141,7 +141,7 @@ Mom is a Node.js app that runs on your host machine. She connects to Slack via S
 5. Mom's direct reply is stored in `log.jsonl`, while details like tool call results are kept in `context.jsonl` which she'll see and thus "remember" on subsequent requests
 
 **Context Management:**
-- Mom has limited context depending on the LLM model used. E.g. Claude Opus or Sonnet 4.5 can process a maximum of 200k tokens
+- Mom has limited context depending on the LLM model used. The default Anthropic model (Sonnet 4.6) supports a large context window; older models may cap around 200k tokens
 - When the context exceeds the LLM's context window size, mom compacts the context: keeps recent messages and tool results in full, summarizes older ones
 - For older history beyond context, mom can grep `log.jsonl` for infinite searchable history
 
