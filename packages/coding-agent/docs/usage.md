@@ -260,6 +260,7 @@ pi --tools read,grep,find,ls -p "Review the code"
 | Variable | Description |
 |----------|-------------|
 | `PI_CODING_AGENT_DIR` | Override config directory; default is `~/.pi/agent` |
+| `PI_CODING_AGENT_SESSION_DIR` | Override session storage directory (same as `--session-dir`; legacy alias: `PI_AGENT_SESSION_DIR`) |
 | `PI_PACKAGE_DIR` | Override package directory, useful for Nix/Guix store paths |
 | `PI_OFFLINE` | Disable startup network operations, including update checks, package update checks, and install/update telemetry |
 | `PI_SKIP_VERSION_CHECK` | Skip the Pi version update check at startup. This prevents the `pi.dev` latest-version request |

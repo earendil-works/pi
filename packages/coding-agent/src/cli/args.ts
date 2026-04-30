@@ -4,7 +4,7 @@
 
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import chalk from "chalk";
-import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR } from "../config.js";
+import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_CODING_AGENT_SESSION_DIR } from "../config.js";
 import type { ExtensionFlag } from "../core/extensions/types.js";
 
 export type Mode = "text" | "json" | "rpc";
@@ -324,7 +324,8 @@ ${chalk.bold("Environment Variables:")}
   AWS_SECRET_ACCESS_KEY            - AWS secret key for Amazon Bedrock
   AWS_BEARER_TOKEN_BEDROCK         - Bedrock API key (bearer token)
   AWS_REGION                       - AWS region for Amazon Bedrock (e.g., us-east-1)
-  ${ENV_AGENT_DIR.padEnd(32)} - Session storage directory (default: ~/${CONFIG_DIR_NAME}/agent)
+  ${ENV_AGENT_DIR.padEnd(32)} - Config directory (default: ~/${CONFIG_DIR_NAME}/agent)
+  ${ENV_CODING_AGENT_SESSION_DIR.padEnd(32)} - Session storage directory (same as --session-dir)
   PI_PACKAGE_DIR                   - Override package directory (for Nix/Guix store paths)
   PI_OFFLINE                       - Disable startup network operations when set to 1/true/yes
   PI_TELEMETRY                     - Override install telemetry when set to 1/true/yes or 0/false/no
