@@ -2222,10 +2222,24 @@ export class DefaultPackageManager implements PackageManager {
 		);
 		addResources(
 			"skills",
-			[...collectAutoSkillEntries(userDirs.skills, "pi"), ...collectAutoSkillEntries(userAgentsSkillsDir, "agents")],
+			collectAutoSkillEntries(userDirs.skills, "pi"),
 			userMetadata,
 			userOverrides.skills,
 			globalBaseDir,
+		);
+
+		const userAgentsMetadata: PathMetadata = {
+			source: "auto",
+			scope: "user",
+			origin: "top-level",
+			baseDir: join(getHomeDir(), ".agents"),
+		};
+		addResources(
+			"skills",
+			collectAutoSkillEntries(userAgentsSkillsDir, "agents"),
+			userAgentsMetadata,
+			userOverrides.skills,
+			join(getHomeDir(), ".agents"),
 		);
 		addResources(
 			"prompts",
