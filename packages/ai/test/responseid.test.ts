@@ -7,13 +7,8 @@ import { resolveApiKey } from "./oauth.js";
 
 type StreamOptionsWithExtras = StreamOptions & Record<string, unknown>;
 
-const oauthTokens = await Promise.all([
-	resolveApiKey("github-copilot"),
-	resolveApiKey("google-gemini-cli"),
-	resolveApiKey("google-antigravity"),
-	resolveApiKey("openai-codex"),
-]);
-const [githubCopilotToken, geminiCliToken, antigravityToken, openaiCodexToken] = oauthTokens;
+const oauthTokens = await Promise.all([resolveApiKey("github-copilot"), resolveApiKey("openai-codex")]);
+const [githubCopilotToken, openaiCodexToken] = oauthTokens;
 
 async function expectResponseId<TApi extends Api>(model: Model<TApi>, options: StreamOptionsWithExtras = {}) {
 	const context: Context = {
@@ -115,25 +110,6 @@ describe("responseId E2E Tests", () => {
 				await expectResponseId(llm, { apiKey: githubCopilotToken });
 			},
 		);
-	});
-
-	describe("Google Gemini CLI Provider", () => {
-		it.skipIf(!geminiCliToken)("should expose responseId", { retry: 3, timeout: 30000 }, async () => {
-			const llm = getModel("google-gemini-cli", "gemini-2.5-flash");
-			await expectResponseId(llm, { apiKey: geminiCliToken });
-		});
-	});
-
-	describe("Google Antigravity Provider", () => {
-		it.skipIf(!antigravityToken)("Gemini path should expose responseId", { retry: 3, timeout: 30000 }, async () => {
-			const llm = getModel("google-antigravity", "gemini-3.1-pro-high");
-			await expectResponseId(llm, { apiKey: antigravityToken });
-		});
-
-		it.skipIf(!antigravityToken)("Claude path should expose responseId", { retry: 3, timeout: 30000 }, async () => {
-			const llm = getModel("google-antigravity", "claude-sonnet-4-6");
-			await expectResponseId(llm, { apiKey: antigravityToken });
-		});
 	});
 
 	describe("OpenAI Codex Provider", () => {

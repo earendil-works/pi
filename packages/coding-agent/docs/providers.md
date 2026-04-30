@@ -18,8 +18,6 @@ Use `/login` in interactive mode, then select a provider:
 - Claude Pro/Max
 - ChatGPT Plus/Pro (Codex)
 - GitHub Copilot
-- Google Gemini CLI
-- Google Antigravity
 
 Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired.
 
@@ -30,8 +28,6 @@ Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json`
 
 ### Google Providers
 
-- **Gemini CLI**: Standard Gemini models via Cloud Code Assist
-- **Antigravity**: Sandbox with Gemini 3, Claude, and GPT-OSS models
 - Both free with any Google account, subject to rate limits
 - For paid Cloud Code Assist: set `GOOGLE_CLOUD_PROJECT` env var
 

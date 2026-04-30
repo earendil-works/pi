@@ -841,6 +841,56 @@ describe("ModelRegistry", () => {
 	});
 
 	describe("dynamic provider lifecycle", () => {
+		test("getProviderDisplayName resolves registered, OAuth, built-in, and fallback names", () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+			expect(registry.getProviderDisplayName("openai")).toBe("OpenAI");
+			expect(registry.getProviderDisplayName("github-copilot")).toBe("GitHub Copilot");
+			expect(registry.getProviderDisplayName("unknown-provider")).toBe("unknown-provider");
+
+			registry.registerProvider("named-provider", {
+				name: "Named Provider",
+				baseUrl: "https://provider.test/v1",
+				apiKey: "TEST_KEY",
+				api: "openai-completions",
+				models: [
+					{
+						id: "demo-model",
+						name: "Demo Model",
+						reasoning: false,
+						input: ["text"],
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+						contextWindow: 128000,
+						maxTokens: 4096,
+					},
+				],
+			});
+			expect(registry.getProviderDisplayName("named-provider")).toBe("Named Provider");
+
+			registry.registerProvider("oauth-provider", {
+				baseUrl: "https://provider.test/v1",
+				api: "openai-completions",
+				oauth: {
+					name: "OAuth Provider",
+					login: async () => ({ access: "access", refresh: "refresh", expires: Date.now() + 60_000 }),
+					refreshToken: async (credentials) => credentials,
+					getApiKey: (credentials) => credentials.access,
+				},
+				models: [
+					{
+						id: "demo-model",
+						name: "Demo Model",
+						reasoning: false,
+						input: ["text"],
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+						contextWindow: 128000,
+						maxTokens: 4096,
+					},
+				],
+			});
+			expect(registry.getProviderDisplayName("oauth-provider")).toBe("OAuth Provider");
+		});
+
 		test("failed registerProvider does not persist invalid streamSimple config", () => {
 			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
 

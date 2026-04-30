@@ -10,7 +10,7 @@ Install pi with npm:
 npm install -g @mariozechner/pi-coding-agent
 ```
 
-And run it:
+Then run it in a project directory:
 
 ```bash
 pi
@@ -18,16 +18,16 @@ pi
 
 Authenticate with `/login` for subscription providers, or set an API key such as `ANTHROPIC_API_KEY` before starting pi.
 
-Once you are signed in, you can ask pi about itself and it will answer you.  No
-need to read the docs yourself ;-)
+For the full first-run flow, see [Quickstart](quickstart.md).
 
 ## Start here
 
+- [Quickstart](quickstart.md) - install, authenticate, and run a first session.
+- [Using Pi](usage.md) - interactive mode, slash commands, context files, and CLI reference.
 - [Providers](providers.md) - subscription and API-key setup for built-in providers.
 - [Settings](settings.md) - global and project settings.
 - [Keybindings](keybindings.md) - default shortcuts and custom keybindings.
-- [Sessions](session.md) - session storage format and session files.
-- [Session tree](tree.md) - branching and navigating previous turns.
+- [Sessions](sessions.md) - session management, branching, and tree navigation.
 - [Compaction](compaction.md) - context compaction and branch summarization.
 
 ## Customization
@@ -46,6 +46,10 @@ need to read the docs yourself ;-)
 - [RPC mode](rpc.md) - integrate over stdin/stdout JSONL.
 - [JSON event stream mode](json.md) - print mode with structured events.
 - [TUI components](tui.md) - build custom terminal UI for extensions.
+
+## Reference
+
+- [Session format](session-format.md) - JSONL session file format, entry types, and SessionManager API.
 
 ## Platform setup
 

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { convertMessages } from "../src/providers/google-shared.js";
 import type { Context, Model } from "../src/types.js";
 
-function makeModel<TApi extends "google-generative-ai" | "google-gemini-cli">(
+function makeModel<TApi extends "google-generative-ai">(
 	api: TApi,
 	provider: Model<TApi>["provider"],
 	id: string,
@@ -98,27 +98,5 @@ describe("google-shared image tool result routing", () => {
 		expect(imageResponse).toBeTruthy();
 		expect(imageResponse?.parts).toHaveLength(1);
 		expect(imageResponse?.parts?.[0]?.inlineData).toBeTruthy();
-	});
-
-	it("nests image tool results for non-Gemini models on Antigravity / Cloud Code Assist", () => {
-		const model = makeModel("google-gemini-cli", "google-antigravity", "claude-sonnet-4-6");
-		const contents = convertMessages(model, makeContext(model));
-
-		expect(contents).toHaveLength(3);
-		const toolResultTurn = contents[2];
-		expect(toolResultTurn.parts).toHaveLength(3);
-		const imageResponse = toolResultTurn.parts?.[1]?.functionResponse;
-		expect(imageResponse).toBeTruthy();
-		expect(imageResponse?.parts).toHaveLength(1);
-		expect(imageResponse?.parts?.[0]?.inlineData).toBeTruthy();
-	});
-
-	it("keeps separate synthetic image turn for Gemini 2.x Cloud Code Assist models", () => {
-		const model = makeModel("google-gemini-cli", "google-gemini-cli", "gemini-2.5-flash");
-		const contents = convertMessages(model, makeContext(model));
-
-		expect(contents).toHaveLength(5);
-		expect(contents[3].parts?.[0]?.text).toBe("Tool result image:");
-		expect(contents[3].parts?.[1]?.inlineData).toBeTruthy();
 	});
 });

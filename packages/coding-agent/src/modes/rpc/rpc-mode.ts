@@ -271,6 +271,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			// Custom editor components not supported in RPC mode
 		},
 
+		getEditorComponent() {
+			// Custom editor components not supported in RPC mode
+			return undefined;
+		},
+
 		get theme() {
 			return theme;
 		},

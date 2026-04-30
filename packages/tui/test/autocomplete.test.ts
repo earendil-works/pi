@@ -365,7 +365,7 @@ describe("CombinedAutocompleteProvider", () => {
 				dirs: ["packages/coding-agent/examples/extensions/plan-mode"],
 				files: {
 					"packages/coding-agent/examples/extensions/plan-mode/README.md": "readme",
-					"packages/pods/docs/plan.md": "plan",
+					"packages/web-ui/docs/plan.md": "plan",
 				},
 			};
 			setupFolder(normalBaseDir, structure);
@@ -385,7 +385,7 @@ describe("CombinedAutocompleteProvider", () => {
 			assert.ok(
 				normalize(normalResult).includes("plan-mode/ :: packages/coding-agent/examples/extensions/plan-mode"),
 			);
-			assert.ok(normalize(normalResult).includes("plan.md :: packages/pods/docs/plan.md"));
+			assert.ok(normalize(normalResult).includes("plan.md :: packages/web-ui/docs/plan.md"));
 		});
 
 		test("continues autocomplete inside quoted @ paths", async () => {

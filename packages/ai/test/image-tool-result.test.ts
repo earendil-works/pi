@@ -16,11 +16,9 @@ import { resolveApiKey } from "./oauth.js";
 const oauthTokens = await Promise.all([
 	resolveApiKey("anthropic"),
 	resolveApiKey("github-copilot"),
-	resolveApiKey("google-gemini-cli"),
-	resolveApiKey("google-antigravity"),
 	resolveApiKey("openai-codex"),
 ]);
-const [anthropicOAuthToken, githubCopilotToken, geminiCliToken, antigravityToken, openaiCodexToken] = oauthTokens;
+const [anthropicOAuthToken, githubCopilotToken, openaiCodexToken] = oauthTokens;
 
 /**
  * Test that tool results containing only images work correctly across all providers.
@@ -396,67 +394,6 @@ describe("Tool Results with Images", () => {
 				await handleToolWithTextAndImageResult(llm, { apiKey: githubCopilotToken });
 			},
 		);
-	});
-
-	describe("Google Gemini CLI Provider", () => {
-		it.skipIf(!geminiCliToken)(
-			"gemini-2.5-flash - should handle tool result with only image",
-			{ retry: 3, timeout: 30000 },
-			async () => {
-				const llm = getModel("google-gemini-cli", "gemini-2.5-flash");
-				await handleToolWithImageResult(llm, { apiKey: geminiCliToken });
-			},
-		);
-
-		it.skipIf(!geminiCliToken)(
-			"gemini-2.5-flash - should handle tool result with text and image",
-			{ retry: 3, timeout: 30000 },
-			async () => {
-				const llm = getModel("google-gemini-cli", "gemini-2.5-flash");
-				await handleToolWithTextAndImageResult(llm, { apiKey: geminiCliToken });
-			},
-		);
-	});
-
-	describe("Google Antigravity Provider", () => {
-		it.skipIf(!antigravityToken)(
-			"gemini-3-flash - should handle tool result with only image",
-			{ retry: 3, timeout: 30000 },
-			async () => {
-				const llm = getModel("google-antigravity", "gemini-3-flash");
-				await handleToolWithImageResult(llm, { apiKey: antigravityToken });
-			},
-		);
-
-		it.skipIf(!antigravityToken)(
-			"gemini-3-flash - should handle tool result with text and image",
-			{ retry: 3, timeout: 30000 },
-			async () => {
-				const llm = getModel("google-antigravity", "gemini-3-flash");
-				await handleToolWithTextAndImageResult(llm, { apiKey: antigravityToken });
-			},
-		);
-
-		/** These two don't work, the model simply won't call the tool, works in pi
-		it.skipIf(!antigravityToken)(
-			"claude-sonnet-4-5 - should handle tool result with only image",
-			{ retry: 3, timeout: 30000 },
-			async () => {
-				const llm = getModel("google-antigravity", "claude-sonnet-4-5");
-				await handleToolWithImageResult(llm, { apiKey: antigravityToken });
-			},
-		);
-
-		it.skipIf(!antigravityToken)(
-			"claude-sonnet-4-5 - should handle tool result with text and image",
-			{ retry: 3, timeout: 30000 },
-			async () => {
-				const llm = getModel("google-antigravity", "claude-sonnet-4-5");
-				await handleToolWithTextAndImageResult(llm, { apiKey: antigravityToken });
-			},
-		);**/
-
-		// Note: gpt-oss-120b-medium does not support images, so not tested here
 	});
 
 	describe("OpenAI Codex Provider", () => {

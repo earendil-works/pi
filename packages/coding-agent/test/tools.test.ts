@@ -1,9 +1,10 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { executeBashWithOperations } from "../src/core/bash-executor.js";
 import { createBashTool, createLocalBashOperations } from "../src/core/tools/bash.js";
+import { computeEditsDiff } from "../src/core/tools/edit-diff.js";
 import {
 	createEditTool,
 	createFindTool,
@@ -253,6 +254,17 @@ describe("Coding Agent Tools", () => {
 			).rejects.toThrow(/Could not find the exact text/);
 		});
 
+		it("should include ENOENT when the edit target does not exist", async () => {
+			const missingFile = join(testDir, "missing.txt");
+
+			await expect(
+				editTool.execute("test-call-6b", {
+					path: missingFile,
+					edits: [{ oldText: "hello", newText: "world" }],
+				}),
+			).rejects.toThrow(`Could not edit file: ${missingFile}. Error code: ENOENT.`);
+		});
+
 		it("should fail if text appears multiple times", async () => {
 			const testFile = join(testDir, "edit-test.txt");
 			const originalContent = "foo foo foo";
@@ -365,6 +377,55 @@ describe("Coding Agent Tools", () => {
 			).rejects.toThrow(/Could not find/);
 
 			expect(readFileSync(testFile, "utf-8")).toBe(originalContent);
+		});
+
+		it("should include EACCES for read-only files", async () => {
+			const testFile = join(testDir, "edit-readonly.txt");
+			writeFileSync(testFile, "hello\n");
+			chmodSync(testFile, 0o444);
+
+			await expect(
+				editTool.execute("test-call-14", {
+					path: testFile,
+					edits: [{ oldText: "hello", newText: "world" }],
+				}),
+			).rejects.toThrow(`Could not edit file: ${testFile}. Error code: EACCES.`);
+		});
+
+		it("should include the original error message for unknown edit access errors", async () => {
+			const genericFailureTool = createEditTool(testDir, {
+				operations: {
+					access: async () => {
+						throw new Error("disk offline");
+					},
+					readFile: async () => Buffer.from("hello\n", "utf-8"),
+					writeFile: async () => {},
+				},
+			});
+
+			await expect(
+				genericFailureTool.execute("test-call-16", {
+					path: "broken.txt",
+					edits: [{ oldText: "hello", newText: "world" }],
+				}),
+			).rejects.toThrow("Could not edit file: broken.txt. Error: disk offline.");
+		});
+
+		it("should include ENOENT in diff preview for missing files", async () => {
+			const missingFile = join(testDir, "missing-preview.txt");
+			const result = await computeEditsDiff(missingFile, [{ oldText: "hello", newText: "world" }], testDir);
+
+			expect(result).toEqual({ error: `Could not edit file: ${missingFile}. Error code: ENOENT.` });
+		});
+
+		it("should include EACCES in diff preview for unreadable files", async () => {
+			const unreadableFile = join(testDir, "unreadable-preview.txt");
+			writeFileSync(unreadableFile, "hello\n");
+			chmodSync(unreadableFile, 0o222);
+
+			const result = await computeEditsDiff(unreadableFile, [{ oldText: "hello", newText: "world" }], testDir);
+
+			expect(result).toEqual({ error: `Could not edit file: ${unreadableFile}. Error code: EACCES.` });
 		});
 	});
 
@@ -556,6 +617,23 @@ describe("Coding Agent Tools", () => {
 			// Ensure second match is not present
 			expect(output).not.toContain("match two");
 		});
+
+		it("should treat flag-like patterns as search text", async () => {
+			const marker = join(testDir, "grep-injection-marker");
+			const payload = join(testDir, "payload.sh");
+			const testFile = join(testDir, "target.txt");
+			writeFileSync(payload, `#!/bin/sh\necho executed > ${marker}\ncat "$1"\n`);
+			chmodSync(payload, 0o755);
+			writeFileSync(testFile, "target\n");
+
+			const result = await grepTool.execute("test-call-grep-injection", {
+				pattern: `--pre=${payload}`,
+				path: testDir,
+			});
+
+			expect(getTextOutput(result)).toContain("No matches found");
+			expect(existsSync(marker)).toBe(false);
+		});
 	});
 
 	describe("find tool", () => {
@@ -601,6 +679,15 @@ describe("Coding Agent Tools", () => {
 					path: testDir,
 				}),
 			).rejects.toThrow(/error parsing glob|fd exited with code 1|fd error/i);
+		});
+
+		it("should treat flag-like patterns as search text", async () => {
+			const result = await findTool.execute("test-call-find-flag-pattern", {
+				pattern: "--help",
+				path: testDir,
+			});
+
+			expect(getTextOutput(result)).toContain("No files found matching pattern");
 		});
 	});
 

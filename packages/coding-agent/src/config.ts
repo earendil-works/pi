@@ -1,5 +1,5 @@
 import { spawnSync } from "child_process";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, realpathSync } from "fs";
 import { homedir } from "os";
 import { dirname, join, resolve, sep } from "path";
 import { fileURLToPath } from "url";
@@ -94,6 +94,9 @@ function readCommandOutput(command: string, args: string[]): string | undefined 
 		encoding: "utf-8",
 		stdio: ["ignore", "pipe", "ignore"],
 		timeout: 2000,
+		// Windows package managers are commonly .cmd shims. Use the shell so Node can execute them;
+		// command and args are fixed literals from getGlobalPackageRoots(), not user input.
+		shell: process.platform === "win32",
 	});
 	if (result.status !== 0) return undefined;
 	const stdout = result.stdout.trim();
@@ -128,18 +131,32 @@ function getGlobalPackageRoots(method: InstallMethod): string[] {
 	}
 }
 
-function isManagedByGlobalPackageManager(method: InstallMethod): boolean {
-	let packageDir = resolve(getPackageDir());
+function normalizeExistingPathForComparison(path: string): string | undefined {
+	const resolvedPath = resolve(path);
+	if (!existsSync(resolvedPath)) {
+		return undefined;
+	}
+	let normalizedPath: string;
+	try {
+		normalizedPath = realpathSync(resolvedPath);
+	} catch {
+		return undefined;
+	}
 	if (process.platform === "win32") {
-		packageDir = packageDir.toLowerCase();
+		normalizedPath = normalizedPath.toLowerCase();
+	}
+	return normalizedPath;
+}
+
+function isManagedByGlobalPackageManager(method: InstallMethod): boolean {
+	const packageDir = normalizeExistingPathForComparison(getPackageDir());
+	if (!packageDir) {
+		return false;
 	}
 	return getGlobalPackageRoots(method).some((root) => {
-		let normalizedRoot = resolve(root);
-		if (process.platform === "win32") {
-			normalizedRoot = normalizedRoot.toLowerCase();
-		}
+		const normalizedRoot = normalizeExistingPathForComparison(root);
 		return (
-			existsSync(normalizedRoot) &&
+			normalizedRoot !== undefined &&
 			(packageDir === normalizedRoot ||
 				packageDir.startsWith(normalizedRoot.endsWith(sep) ? normalizedRoot : `${normalizedRoot}${sep}`))
 		);
@@ -310,6 +327,13 @@ export const VERSION: string = pkg.version || "0.0.0";
 
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
+export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
+
+export function expandTildePath(path: string): string {
+	if (path === "~") return homedir();
+	if (path.startsWith("~/")) return homedir() + path.slice(1);
+	return path;
+}
 
 const DEFAULT_SHARE_VIEWER_URL = "https://pi.dev/session/";
 
@@ -327,10 +351,7 @@ export function getShareViewerUrl(gistId: string): string {
 export function getAgentDir(): string {
 	const envDir = process.env[ENV_AGENT_DIR];
 	if (envDir) {
-		// Expand tilde to home directory
-		if (envDir === "~") return homedir();
-		if (envDir.startsWith("~/")) return homedir() + envDir.slice(1);
-		return envDir;
+		return expandTildePath(envDir);
 	}
 	return join(homedir(), CONFIG_DIR_NAME, "agent");
 }

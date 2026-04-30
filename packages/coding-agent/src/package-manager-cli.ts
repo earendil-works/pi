@@ -7,9 +7,11 @@ import {
 	getSelfUpdateCommand,
 	getSelfUpdateUnavailableInstruction,
 	PACKAGE_NAME,
+	VERSION,
 } from "./config.js";
 import { DefaultPackageManager } from "./core/package-manager.js";
 import { SettingsManager } from "./core/settings-manager.js";
+import { getLatestPiVersion, isNewerPackageVersion } from "./utils/version-check.js";
 
 export type PackageCommand = "install" | "remove" | "update" | "list";
 
@@ -20,6 +22,7 @@ interface PackageCommandOptions {
 	source?: string;
 	updateTarget?: UpdateTarget;
 	local: boolean;
+	force: boolean;
 	help: boolean;
 	invalidOption?: string;
 	invalidArgument?: string;
@@ -44,7 +47,7 @@ function getPackageCommandUsage(command: PackageCommand): string {
 		case "remove":
 			return `${APP_NAME} remove <source> [-l]`;
 		case "update":
-			return `${APP_NAME} update [source|self|pi] [--self] [--extensions] [--extension <source>]`;
+			return `${APP_NAME} update [source|self|pi] [--self] [--extensions] [--extension <source>] [--force]`;
 		case "list":
 			return `${APP_NAME} list`;
 	}
@@ -97,6 +100,7 @@ Options:
   --self                  Update pi only
   --extensions            Update installed packages only
   --extension <source>    Update one package only
+  --force                 Reinstall pi even if the current version is latest
 
 Short forms:
   ${APP_NAME} update                Update pi and all extensions
@@ -128,6 +132,7 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 	}
 
 	let local = false;
+	let force = false;
 	let help = false;
 	let invalidOption: string | undefined;
 	let invalidArgument: string | undefined;
@@ -166,6 +171,15 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 		if (arg === "--extensions") {
 			if (command === "update") {
 				extensionsFlag = true;
+			} else {
+				invalidOption = invalidOption ?? arg;
+			}
+			continue;
+		}
+
+		if (arg === "--force") {
+			if (command === "update") {
+				force = true;
 			} else {
 				invalidOption = invalidOption ?? arg;
 			}
@@ -240,6 +254,7 @@ function parsePackageCommand(args: string[]): PackageCommandOptions | undefined 
 		source,
 		updateTarget,
 		local,
+		force,
 		help,
 		invalidOption,
 		invalidArgument,
@@ -271,6 +286,32 @@ function printSelfUpdateUnavailable(): void {
 	}
 }
 
+function printSelfUpdateFallback(): void {
+	const command = getSelfUpdateCommand(PACKAGE_NAME);
+	if (!command) return;
+	console.error(chalk.dim(`If this keeps failing, run this command yourself: ${command.display}`));
+}
+
+async function shouldRunSelfUpdate(force: boolean): Promise<boolean> {
+	if (force) {
+		return true;
+	}
+
+	let latestVersion: string | undefined;
+	try {
+		latestVersion = await getLatestPiVersion(VERSION);
+	} catch {
+		return true;
+	}
+
+	if (!latestVersion || isNewerPackageVersion(latestVersion, VERSION)) {
+		return true;
+	}
+
+	console.log(chalk.green(`${APP_NAME} is already up to date (v${VERSION})`));
+	return false;
+}
+
 async function runSelfUpdate(): Promise<void> {
 	const command = getSelfUpdateCommand(PACKAGE_NAME);
 	if (!command) {
@@ -281,7 +322,9 @@ async function runSelfUpdate(): Promise<void> {
 
 	console.log(chalk.dim(`Updating ${APP_NAME} with ${command.display}...`));
 	await new Promise<void>((resolve, reject) => {
-		const child = spawn(command.command, command.args, { stdio: "inherit" });
+		// Windows package managers are commonly .cmd shims. Use the shell so Node can execute them;
+		// command and args come from getSelfUpdateCommandForMethod(), not user input.
+		const child = spawn(command.command, command.args, { stdio: "inherit", shell: process.platform === "win32" });
 		child.on("error", (error) => {
 			reject(error);
 		});
@@ -451,7 +494,18 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 				}
 				if (updateTargetIncludesSelf(target)) {
 					if (canSelfUpdate()) {
-						await runSelfUpdate();
+						if (!(await shouldRunSelfUpdate(options.force))) {
+							return true;
+						}
+						try {
+							await runSelfUpdate();
+						} catch (error: unknown) {
+							const message = error instanceof Error ? error.message : "Unknown package command error";
+							console.error(chalk.red(`Error: ${message}`));
+							printSelfUpdateFallback();
+							process.exitCode = 1;
+							return true;
+						}
 						console.log(chalk.green(`Updated ${APP_NAME}`));
 					} else {
 						printSelfUpdateUnavailable();

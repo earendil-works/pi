@@ -626,6 +626,18 @@ describe("Editor component", () => {
 			}
 		});
 
+		it("renders isolated Thai and Lao AM clusters without width drift", () => {
+			for (const text of ["ำabc", "ຳabc"]) {
+				const editor = new Editor(createTestTUI(), defaultEditorTheme);
+				const width = 8;
+				editor.setText(text);
+
+				for (const line of editor.render(width)) {
+					assert.strictEqual(visibleWidth(line), width, `line width drift for ${JSON.stringify(text)}: ${line}`);
+				}
+			}
+		});
+
 		it("wraps CJK characters correctly (each is 2 columns wide)", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			const width = 10 + 1; // +1 col reserved for cursor

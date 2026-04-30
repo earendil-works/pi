@@ -120,6 +120,7 @@ export type AgentSessionEvent =
 	  }
 	| { type: "compaction_start"; reason: "manual" | "threshold" | "overflow" }
 	| { type: "session_info_changed"; name: string | undefined }
+	| { type: "thinking_level_changed"; level: ThinkingLevel }
 	| {
 			type: "compaction_end";
 			reason: "manual" | "threshold" | "overflow";
@@ -610,6 +611,22 @@ export class AgentSession {
 		return undefined;
 	}
 
+	private _replaceMessageInPlace(target: AgentMessage, replacement: AgentMessage): void {
+		// Agent-core stores the finalized message object in its state before emitting message_end.
+		// SessionManager persistence happens later in _processAgentEvent() with event.message.
+		// Mutating this object in place keeps agent state, later turn/agent events, listeners,
+		// and the eventual SessionManager.appendMessage(event.message) persistence in sync.
+		if (target === replacement) {
+			return;
+		}
+
+		const targetRecord = target as unknown as Record<string, unknown>;
+		for (const key of Object.keys(targetRecord)) {
+			delete targetRecord[key];
+		}
+		Object.assign(targetRecord, replacement);
+	}
+
 	/** Emit extension events based on agent events */
 	private async _emitExtensionEvent(event: AgentEvent): Promise<void> {
 		if (event.type === "agent_start") {
@@ -651,7 +668,10 @@ export class AgentSession {
 				type: "message_end",
 				message: event.message,
 			};
-			await this._extensionRunner.emit(extensionEvent);
+			const replacement = await this._extensionRunner.emitMessageEnd(extensionEvent);
+			if (replacement) {
+				this._replaceMessageInPlace(event.message, replacement);
+			}
 		} else if (event.type === "tool_execution_start") {
 			const extensionEvent: ToolExecutionStartEvent = {
 				type: "tool_execution_start",
@@ -1486,7 +1506,8 @@ export class AgentSession {
 		const effectiveLevel = availableLevels.includes(level) ? level : this._clampThinkingLevel(level, availableLevels);
 
 		// Only persist if actually changing
-		const isChanging = effectiveLevel !== this.agent.state.thinkingLevel;
+		const previousLevel = this.agent.state.thinkingLevel;
+		const isChanging = effectiveLevel !== previousLevel;
 
 		this.agent.state.thinkingLevel = effectiveLevel;
 
@@ -1495,6 +1516,12 @@ export class AgentSession {
 			if (this.supportsThinking() || effectiveLevel !== "off") {
 				this.settingsManager.setDefaultThinkingLevel(effectiveLevel);
 			}
+			this._emit({ type: "thinking_level_changed", level: effectiveLevel });
+			void this._extensionRunner.emit({
+				type: "thinking_level_select",
+				level: effectiveLevel,
+				previousLevel,
+			});
 		}
 	}
 

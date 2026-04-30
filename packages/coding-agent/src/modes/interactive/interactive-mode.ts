@@ -20,7 +20,6 @@ import type {
 	AutocompleteItem,
 	AutocompleteProvider,
 	EditorComponent,
-	EditorTheme,
 	Keybinding,
 	KeyId,
 	MarkdownTheme,
@@ -60,6 +59,7 @@ import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../.
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.js";
 import type {
 	AutocompleteProviderFactory,
+	EditorFactory,
 	ExtensionCommandContext,
 	ExtensionContext,
 	ExtensionRunner,
@@ -72,6 +72,7 @@ import { type AppKeybinding, KeybindingsManager } from "../../core/keybindings.j
 import { createCompactionSummaryMessage } from "../../core/messages.js";
 import { defaultModelPerProvider, findExactModelReferenceMatch, resolveModelScope } from "../../core/model-resolver.js";
 import { DefaultPackageManager } from "../../core/package-manager.js";
+import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../core/provider-display-names.js";
 import type { ResourceDiagnostic } from "../../core/resource-loader.js";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.js";
 import { type SessionContext, SessionManager } from "../../core/session-manager.js";
@@ -83,8 +84,10 @@ import { getChangelogPath, getNewEntries, parseChangelog } from "../../utils/cha
 import { copyToClipboard } from "../../utils/clipboard.js";
 import { extensionForImageMimeType, readClipboardImage } from "../../utils/clipboard-image.js";
 import { parseGitUrl } from "../../utils/git.js";
+import { getPiUserAgent } from "../../utils/pi-user-agent.js";
 import { killTrackedDetachedChildren } from "../../utils/shell.js";
 import { ensureTool } from "../../utils/tools-manager.js";
+import { checkForNewPiVersion } from "../../utils/version-check.js";
 import { ArminComponent } from "./components/armin.js";
 import { AssistantMessageComponent } from "./components/assistant-message.js";
 import { BashExecutionComponent } from "./components/bash-execution.js";
@@ -177,33 +180,6 @@ function hasDefaultModelProvider(providerId: string): providerId is keyof typeof
 
 const BEDROCK_PROVIDER_ID = "amazon-bedrock";
 
-const API_KEY_LOGIN_PROVIDERS: Record<string, string> = {
-	anthropic: "Anthropic",
-	[BEDROCK_PROVIDER_ID]: "Amazon Bedrock",
-	"azure-openai-responses": "Azure OpenAI Responses",
-	cerebras: "Cerebras",
-	"cloudflare-ai-gateway": "Cloudflare AI Gateway",
-	"cloudflare-workers-ai": "Cloudflare Workers AI",
-	deepseek: "DeepSeek",
-	fireworks: "Fireworks",
-	google: "Google Gemini",
-	"google-vertex": "Google Vertex AI",
-	groq: "Groq",
-	huggingface: "Hugging Face",
-	"kimi-coding": "Kimi For Coding",
-	mistral: "Mistral",
-	minimax: "MiniMax",
-	"minimax-cn": "MiniMax (China)",
-	opencode: "OpenCode Zen",
-	"opencode-go": "OpenCode Go",
-	openai: "OpenAI",
-	openrouter: "OpenRouter",
-	"vercel-ai-gateway": "Vercel AI Gateway",
-	xai: "xAI",
-	zai: "ZAI",
-};
-
-const BUILT_IN_API_KEY_LOGIN_PROVIDERS = new Set(Object.keys(API_KEY_LOGIN_PROVIDERS));
 const BUILT_IN_MODEL_PROVIDERS = new Set<string>(getProviders());
 
 export function isApiKeyLoginProvider(
@@ -211,17 +187,13 @@ export function isApiKeyLoginProvider(
 	oauthProviderIds: ReadonlySet<string>,
 	builtInProviderIds: ReadonlySet<string> = BUILT_IN_MODEL_PROVIDERS,
 ): boolean {
-	if (BUILT_IN_API_KEY_LOGIN_PROVIDERS.has(providerId)) {
+	if (BUILT_IN_PROVIDER_DISPLAY_NAMES[providerId]) {
 		return true;
 	}
 	if (builtInProviderIds.has(providerId)) {
 		return false;
 	}
 	return !oauthProviderIds.has(providerId);
-}
-
-export function getApiKeyProviderDisplayName(providerId: string): string {
-	return API_KEY_LOGIN_PROVIDERS[providerId] ?? providerId;
 }
 
 /**
@@ -250,6 +222,7 @@ export class InteractiveMode {
 	private statusContainer: Container;
 	private defaultEditor: CustomEditor;
 	private editor: EditorComponent;
+	private editorComponentFactory: EditorFactory | undefined;
 	private autocompleteProvider: AutocompleteProvider | undefined;
 	private autocompleteProviderWrappers: AutocompleteProviderFactory[] = [];
 	private fdPath: string | undefined;
@@ -709,7 +682,7 @@ export class InteractiveMode {
 		await this.init();
 
 		// Start version check asynchronously
-		this.checkForNewVersion().then((newVersion) => {
+		checkForNewPiVersion(this.version).then((newVersion) => {
 			if (newVersion) {
 				this.showNewVersionNotification(newVersion);
 			}
@@ -777,31 +750,6 @@ export class InteractiveMode {
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
 			}
-		}
-	}
-
-	/**
-	 * Check npm registry for a newer version.
-	 */
-	private async checkForNewVersion(): Promise<string | undefined> {
-		if (process.env.PI_SKIP_VERSION_CHECK || process.env.PI_OFFLINE) return undefined;
-
-		try {
-			const response = await fetch("https://registry.npmjs.org/@mariozechner/pi-coding-agent/latest", {
-				signal: AbortSignal.timeout(10000),
-			});
-			if (!response.ok) return undefined;
-
-			const data = (await response.json()) as { version?: string };
-			const latestVersion = data.version;
-
-			if (latestVersion && latestVersion !== this.version) {
-				return latestVersion;
-			}
-
-			return undefined;
-		} catch {
-			return undefined;
 		}
 	}
 
@@ -910,7 +858,10 @@ export class InteractiveMode {
 			return;
 		}
 
-		void fetch(`https://pi.dev/install?version=${encodeURIComponent(version)}`, {
+		void fetch(`https://pi.dev/api/report-install?version=${encodeURIComponent(version)}`, {
+			headers: {
+				"User-Agent": getPiUserAgent(version),
+			},
 			signal: AbortSignal.timeout(5000),
 		})
 			.then(() => undefined)
@@ -2006,6 +1957,7 @@ export class InteractiveMode {
 				this.setupAutocompleteProvider();
 			},
 			setEditorComponent: (factory) => this.setCustomEditorComponent(factory),
+			getEditorComponent: () => this.editorComponentFactory,
 			get theme() {
 				return theme;
 			},
@@ -2203,9 +2155,9 @@ export class InteractiveMode {
 	 * Set a custom editor component from an extension.
 	 * Pass undefined to restore the default editor.
 	 */
-	private setCustomEditorComponent(
-		factory: ((tui: TUI, theme: EditorTheme, keybindings: KeybindingsManager) => EditorComponent) | undefined,
-	): void {
+	private setCustomEditorComponent(factory: EditorFactory | undefined): void {
+		this.editorComponentFactory = factory;
+
 		// Save text from current editor before switching
 		const currentText = this.editor.getText();
 
@@ -2704,6 +2656,11 @@ export class InteractiveMode {
 				this.updateTerminalTitle();
 				this.footer.invalidate();
 				this.ui.requestRender();
+				break;
+
+			case "thinking_level_changed":
+				this.footer.invalidate();
+				this.updateEditorBorderColor();
 				break;
 
 			case "message_start":
@@ -3363,6 +3320,7 @@ export class InteractiveMode {
 		}
 		// If not streaming, Alt+Enter acts like regular Enter (trigger onSubmit)
 		else if (this.editor.onSubmit) {
+			this.editor.setText("");
 			this.editor.onSubmit(text);
 		}
 	}
@@ -4392,7 +4350,7 @@ export class InteractiveMode {
 			}
 			options.push({
 				id: providerId,
-				name: getApiKeyProviderDisplayName(providerId),
+				name: this.session.modelRegistry.getProviderDisplayName(providerId),
 				authType: "api_key",
 			});
 		}
@@ -4403,7 +4361,6 @@ export class InteractiveMode {
 
 	private getLogoutProviderOptions(): AuthSelectorProvider[] {
 		const authStorage = this.session.modelRegistry.authStorage;
-		const oauthNameById = new Map(authStorage.getOAuthProviders().map((provider) => [provider.id, provider.name]));
 		const options: AuthSelectorProvider[] = [];
 
 		for (const providerId of authStorage.list()) {
@@ -4413,10 +4370,7 @@ export class InteractiveMode {
 			}
 			options.push({
 				id: providerId,
-				name:
-					credential.type === "oauth"
-						? (oauthNameById.get(providerId) ?? providerId)
-						: getApiKeyProviderDisplayName(providerId),
+				name: this.session.modelRegistry.getProviderDisplayName(providerId),
 				authType: credential.type,
 			});
 		}

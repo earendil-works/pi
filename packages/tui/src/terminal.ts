@@ -327,11 +327,11 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	get columns(): number {
-		return process.stdout.columns || 80;
+		return process.stdout.columns || Number(process.env.COLUMNS) || 80;
 	}
 
 	get rows(): number {
-		return process.stdout.rows || 24;
+		return process.stdout.rows || Number(process.env.LINES) || 24;
 	}
 
 	moveBy(lines: number): void {

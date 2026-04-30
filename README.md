@@ -1,6 +1,10 @@
 <p align="center">
   <a href="https://pi.dev">
-    <img src="https://pi.dev/logo.svg" alt="pi logo" width="128">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset="https://pi.dev/logo.svg">
+      <source media="(prefers-color-scheme: light)" srcset="https://huggingface.co/buckets/julien-c/my-training-bucket/resolve/pi-logo-dark.svg">
+      <img alt="pi logo" src="https://pi.dev/logo.svg" width="128">
+    </picture>
   </a>
 </p>
 <p align="center">
@@ -21,7 +25,7 @@
 
 > **Looking for the pi coding agent?** See **[packages/coding-agent](packages/coding-agent)** for installation and usage.
 
-Tools for building AI agents and managing LLM deployments.
+Tools for building AI agents.
 
 ## Share your OSS coding agent sessions
 
@@ -46,10 +50,12 @@ I regularly publish my own `pi-mono` work sessions here:
 | **[@mariozechner/pi-ai](packages/ai)** | Unified multi-provider LLM API (OpenAI, Anthropic, Google, etc.) |
 | **[@mariozechner/pi-agent-core](packages/agent)** | Agent runtime with tool calling and state management |
 | **[@mariozechner/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
-| **[@mariozechner/pi-mom](packages/mom)** | Slack bot that delegates messages to the pi coding agent |
 | **[@mariozechner/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
 | **[@mariozechner/pi-web-ui](packages/web-ui)** | Web components for AI chat interfaces |
-| **[@mariozechner/pi-pods](packages/pods)** | CLI for managing vLLM deployments on GPU pods |
+
+## Chat bot workflows
+
+For Slack/chat automation, see [earendil-works/pi-chat](https://github.com/earendil-works/pi-chat).
 
 ## Contributing
 

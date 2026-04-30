@@ -587,7 +587,7 @@ function buildToolResultText(text: string, hasImages: boolean, supportsImages: b
 }
 
 function usesReasoningEffort(model: Model<"mistral-conversations">): boolean {
-	return model.id === "mistral-small-2603" || model.id === "mistral-small-latest";
+	return model.id === "mistral-small-2603" || model.id === "mistral-small-latest" || model.id === "mistral-medium-3.5";
 }
 
 function usesPromptModeReasoning(model: Model<"mistral-conversations">): boolean {

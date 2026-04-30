@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `ProcessTerminal` to fall back to `COLUMNS` and `LINES` before defaulting to 80x24 dimensions ([#4004](https://github.com/badlogic/pi-mono/issues/4004))
+- Fixed editor rendering artifacts for Thai Sara Am and Lao AM vowel characters ([#3904](https://github.com/badlogic/pi-mono/issues/3904))
+
+## [0.70.6] - 2026-04-28
+
 ## [0.70.5] - 2026-04-27
 
 ## [0.70.4] - 2026-04-27

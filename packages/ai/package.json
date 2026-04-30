@@ -1,6 +1,6 @@
 {
 	"name": "@mariozechner/pi-ai",
-	"version": "0.70.5",
+	"version": "0.70.6",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",
 	"main": "./dist/index.js",
@@ -21,10 +21,6 @@
 		"./google": {
 			"types": "./dist/providers/google.d.ts",
 			"import": "./dist/providers/google.js"
-		},
-		"./google-gemini-cli": {
-			"types": "./dist/providers/google-gemini-cli.d.ts",
-			"import": "./dist/providers/google-gemini-cli.js"
 		},
 		"./google-vertex": {
 			"types": "./dist/providers/google-vertex.d.ts",
@@ -72,7 +68,7 @@
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
-		"@anthropic-ai/sdk": "^0.90.0",
+		"@anthropic-ai/sdk": "^0.91.1",
 		"@aws-sdk/client-bedrock-runtime": "^3.1030.0",
 		"@google/genai": "^1.40.0",
 		"@mistralai/mistralai": "^2.2.0",

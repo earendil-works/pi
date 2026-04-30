@@ -26,6 +26,7 @@ import { Compile } from "typebox/compile";
 import type { TLocalizedValidationError } from "typebox/error";
 import { getAgentDir } from "../config.js";
 import type { AuthStatus, AuthStorage } from "./auth-storage.js";
+import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "./provider-display-names.js";
 import {
 	clearConfigValueCache,
 	resolveConfigValueOrThrow,
@@ -177,6 +178,7 @@ const ModelOverrideSchema = Type.Object({
 type ModelOverride = Static<typeof ModelOverrideSchema>;
 
 const ProviderConfigSchema = Type.Object({
+	name: Type.Optional(Type.String({ minLength: 1 })),
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
 	apiKey: Type.Optional(Type.String({ minLength: 1 })),
 	api: Type.Optional(Type.String({ minLength: 1 })),
@@ -728,6 +730,22 @@ export class ModelRegistry {
 	}
 
 	/**
+	 * Get display name for a provider.
+	 */
+	getProviderDisplayName(provider: string): string {
+		const registeredProvider = this.registeredProviders.get(provider);
+		const oauthProvider = this.authStorage.getOAuthProviders().find((p) => p.id === provider);
+
+		return (
+			registeredProvider?.name ??
+			registeredProvider?.oauth?.name ??
+			oauthProvider?.name ??
+			BUILT_IN_PROVIDER_DISPLAY_NAMES[provider] ??
+			provider
+		);
+	}
+
+	/**
 	 * Get API key for a provider.
 	 */
 	async getApiKeyForProvider(provider: string): Promise<string | undefined> {
@@ -893,6 +911,7 @@ export class ModelRegistry {
  * Input type for registerProvider API.
  */
 export interface ProviderConfigInput {
+	name?: string;
 	baseUrl?: string;
 	apiKey?: string;
 	api?: Api;

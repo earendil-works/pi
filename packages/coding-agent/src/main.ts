@@ -15,7 +15,7 @@ import { processFileArguments } from "./cli/file-processor.js";
 import { buildInitialMessage } from "./cli/initial-message.js";
 import { listModels } from "./cli/list-models.js";
 import { selectSession } from "./cli/session-picker.js";
-import { getAgentDir, VERSION } from "./config.js";
+import { ENV_SESSION_DIR, expandTildePath, getAgentDir, VERSION } from "./config.js";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.js";
 import {
 	type AgentSessionRuntimeDiagnostic,
@@ -493,7 +493,11 @@ export async function main(args: string[], options?: MainOptions) {
 	// settings, resources, provider registrations, and models must be resolved only after
 	// the target session cwd is known. The startup-cwd settings manager is used only for
 	// sessionDir lookup during session selection.
-	const sessionDir = parsed.sessionDir ?? startupSettingsManager.getSessionDir();
+	const envSessionDir = process.env[ENV_SESSION_DIR];
+	const sessionDir =
+		parsed.sessionDir ??
+		(envSessionDir ? expandTildePath(envSessionDir) : undefined) ??
+		startupSettingsManager.getSessionDir();
 	let sessionManager = await createSessionManager(parsed, cwd, sessionDir, startupSettingsManager);
 	const missingSessionCwdIssue = getMissingSessionCwdIssue(sessionManager, cwd);
 	if (missingSessionCwdIssue) {

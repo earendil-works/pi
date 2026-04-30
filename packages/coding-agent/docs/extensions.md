@@ -40,6 +40,7 @@ See [examples/extensions/](../examples/extensions/) for working implementations.
   - [Resource Events](#resource-events)
   - [Session Events](#session-events)
   - [Agent Events](#agent-events)
+  - [Model Events](#model-events)
   - [Tool Events](#tool-events)
 - [ExtensionContext](#extensioncontext)
 - [ExtensionCommandContext](#extensioncommandcontext)
@@ -323,7 +324,11 @@ user sends another prompt ◄─────────────────
   └─► session_tree
 
 /model or Ctrl+P (model selection/cycling)
+  ├─► thinking_level_select (if model change changes/clamps thinking level)
   └─► model_select
+
+thinking level changes (settings, keybinding, pi.setThinkingLevel())
+  └─► thinking_level_select
 
 exit (Ctrl+C, Ctrl+D, SIGHUP, SIGTERM)
   └─► session_shutdown
@@ -350,7 +355,7 @@ pi.on("resources_discover", async (event, _ctx) => {
 
 ### Session Events
 
-See [session.md](session.md) for session storage internals and the SessionManager API.
+See [Session Format](session-format.md) for session storage internals and the SessionManager API.
 
 #### session_start
 
@@ -429,7 +434,7 @@ pi.on("session_compact", async (event, ctx) => {
 
 #### session_before_tree / session_tree
 
-Fired on `/tree` navigation. See [tree.md](tree.md) for tree navigation concepts.
+Fired on `/tree` navigation. See [Sessions](sessions.md) for tree navigation concepts.
 
 ```typescript
 pi.on("session_before_tree", async (event, ctx) => {
@@ -527,6 +532,7 @@ Fired for message lifecycle updates.
 
 - `message_start` and `message_end` fire for user, assistant, and toolResult messages.
 - `message_update` fires for assistant streaming updates.
+- `message_end` handlers can return `{ message }` to replace the finalized message. The replacement must keep the same `role`.
 
 ```typescript
 pi.on("message_start", async (event, ctx) => {
@@ -539,7 +545,20 @@ pi.on("message_update", async (event, ctx) => {
 });
 
 pi.on("message_end", async (event, ctx) => {
-  // event.message
+  if (event.message.role !== "assistant") return;
+
+  return {
+    message: {
+      ...event.message,
+      usage: {
+        ...event.message.usage,
+        cost: {
+          ...event.message.usage.cost,
+          total: 0.123,
+        },
+      },
+    },
+  };
 });
 ```
 
@@ -569,7 +588,7 @@ pi.on("tool_execution_end", async (event, ctx) => {
 
 #### context
 
-Fired before each LLM call. Modify messages non-destructively. See [session.md](session.md) for message types.
+Fired before each LLM call. Modify messages non-destructively. See [Session Format](session-format.md) for message types.
 
 ```typescript
 pi.on("context", async (event, ctx) => {
@@ -634,6 +653,21 @@ pi.on("model_select", async (event, ctx) => {
 ```
 
 Use this to update UI elements (status bars, footers) or perform model-specific initialization when the active model changes.
+
+#### thinking_level_select
+
+Fired when the thinking level changes. This is notification-only; handler return values are ignored.
+
+```typescript
+pi.on("thinking_level_select", async (event, ctx) => {
+  // event.level - newly selected thinking level
+  // event.previousLevel - previous thinking level
+
+  ctx.ui.setStatus("thinking", `thinking: ${event.level}`);
+});
+```
+
+Use this to update extension UI when `pi.setThinkingLevel()`, model changes, or built-in thinking-level controls change the active thinking level.
 
 ### Tool Events
 
@@ -833,7 +867,7 @@ Current working directory.
 
 ### ctx.sessionManager
 
-Read-only access to session state. See [session.md](session.md) for the full SessionManager API and entry types.
+Read-only access to session state. See [Session Format](session-format.md) for the full SessionManager API and entry types.
 
 For `tool_call`, this state is synchronized through the current assistant message before handlers run. In parallel tool execution mode it is still not guaranteed to include sibling tool results from the same assistant message.
 
@@ -1488,7 +1522,7 @@ if (model) {
 
 ### pi.getThinkingLevel() / pi.setThinkingLevel(level)
 
-Get or set the thinking level. Level is clamped to model capabilities (non-reasoning models always use "off").
+Get or set the thinking level. Level is clamped to model capabilities (non-reasoning models always use "off"). Changes emit `thinking_level_select`.
 
 ```typescript
 const current = pi.getThinkingLevel();  // "off" | "minimal" | "low" | "medium" | "high" | "xhigh"
@@ -1515,6 +1549,7 @@ If you need to discover models from a remote endpoint, prefer an async extension
 ```typescript
 // Register a new provider with custom models
 pi.registerProvider("my-proxy", {
+  name: "My Proxy",
   baseUrl: "https://proxy.example.com",
   apiKey: "PROXY_API_KEY",  // env var name or literal
   api: "anthropic-messages",
@@ -1561,6 +1596,7 @@ pi.registerProvider("corporate-ai", {
 ```
 
 **Config options:**
+- `name` - Display name for the provider in UI such as `/login`.
 - `baseUrl` - API endpoint URL. Required when defining models.
 - `apiKey` - API key or environment variable name. Required when defining models (unless `oauth` provided).
 - `api` - API type: `"anthropic-messages"`, `"openai-completions"`, `"openai-responses"`, etc.
@@ -2225,6 +2261,10 @@ ctx.ui.setToolsExpanded(wasExpanded);
 
 // Custom editor (vim mode, emacs mode, etc.)
 ctx.ui.setEditorComponent((tui, theme, keybindings) => new VimEditor(tui, theme, keybindings));
+const currentEditor = ctx.ui.getEditorComponent();
+ctx.ui.setEditorComponent((tui, theme, keybindings) =>
+  new WrappedEditor(tui, theme, keybindings, currentEditor?.(tui, theme, keybindings))
+);
 ctx.ui.setEditorComponent(undefined);  // Restore default editor
 
 // Theme management (see themes.md for creating themes)
@@ -2379,7 +2419,17 @@ export default function (pi: ExtensionAPI) {
 - Extend `CustomEditor` (not base `Editor`) to get app keybindings (escape to abort, ctrl+d, model switching)
 - Call `super.handleInput(data)` for keys you don't handle
 - Factory receives `theme` and `keybindings` from the app
+- Use `ctx.ui.getEditorComponent()` before `setEditorComponent()` to wrap the previously configured custom editor
 - Pass `undefined` to restore default: `ctx.ui.setEditorComponent(undefined)`
+
+To compose with another extension that already replaced the editor, capture the previous factory before setting yours:
+
+```typescript
+const previous = ctx.ui.getEditorComponent();
+ctx.ui.setEditorComponent((tui, theme, keybindings) =>
+  new MyEditor(tui, theme, keybindings, { base: previous?.(tui, theme, keybindings) })
+);
+```
 
 See [tui.md](tui.md) Pattern 7 for a complete example with mode indicator.
 
@@ -2541,7 +2591,6 @@ All examples in [examples/extensions/](../examples/extensions/).
 | `session-name.ts` | Name sessions for selector | `setSessionName`, `getSessionName` |
 | `bookmark.ts` | Bookmark entries for /tree | `setLabel` |
 | **Misc** |||
-| `antigravity-image-gen.ts` | Image generation tool | `registerTool`, Google Antigravity |
 | `inline-bash.ts` | Inline bash in tool calls | `on("tool_call")` |
 | `bash-spawn-hook.ts` | Adjust bash command, cwd, and env before execution | `createBashTool`, `spawnHook` |
 | `with-deps/` | Extension with npm dependencies | Package structure with `package.json` |

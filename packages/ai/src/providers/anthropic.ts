@@ -384,6 +384,9 @@ async function* iterateAnthropicEvents(
 		throw new Error("Attempted to iterate over an Anthropic response with no body");
 	}
 
+	let sawMessageStart = false;
+	let sawMessageEnd = false;
+
 	for await (const sse of iterateSseMessages(response.body, signal)) {
 		if (sse.event === "error") {
 			throw new Error(sse.data);
@@ -394,13 +397,23 @@ async function* iterateAnthropicEvents(
 		}
 
 		try {
-			yield parseJsonWithRepair<RawMessageStreamEvent>(sse.data);
+			const event = parseJsonWithRepair<RawMessageStreamEvent>(sse.data);
+			if (event.type === "message_start") {
+				sawMessageStart = true;
+			} else if (event.type === "message_stop") {
+				sawMessageEnd = true;
+			}
+			yield event;
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			throw new Error(
 				`Could not parse Anthropic SSE event ${sse.event}: ${message}; data=${sse.data}; raw=${sse.raw.join("\\n")}`,
 			);
 		}
+	}
+
+	if (sawMessageStart && !sawMessageEnd) {
+		throw new Error("Anthropic stream ended before message_stop");
 	}
 }
 

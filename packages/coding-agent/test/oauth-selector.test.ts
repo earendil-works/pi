@@ -3,8 +3,9 @@ import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.js";
 import { KeybindingsManager } from "../src/core/keybindings.js";
+import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../src/core/provider-display-names.js";
 import { OAuthSelectorComponent } from "../src/modes/interactive/components/oauth-selector.js";
-import { getApiKeyProviderDisplayName, isApiKeyLoginProvider } from "../src/modes/interactive/interactive-mode.js";
+import { isApiKeyLoginProvider } from "../src/modes/interactive/interactive-mode.js";
 import { initTheme } from "../src/modes/interactive/theme/theme.js";
 
 const originalOpenAiApiKey = process.env.OPENAI_API_KEY;
@@ -31,7 +32,7 @@ describe("OAuthSelectorComponent", () => {
 		const builtInProviderIds = new Set(["anthropic", "github-copilot", "amazon-bedrock", "openai"]);
 
 		expect(isApiKeyLoginProvider("anthropic", oauthProviderIds, builtInProviderIds)).toBe(true);
-		expect(getApiKeyProviderDisplayName("anthropic")).toBe("Anthropic");
+		expect(BUILT_IN_PROVIDER_DISPLAY_NAMES.anthropic).toBe("Anthropic");
 		expect(isApiKeyLoginProvider("openai", oauthProviderIds, builtInProviderIds)).toBe(true);
 		expect(isApiKeyLoginProvider("github-copilot", oauthProviderIds, builtInProviderIds)).toBe(false);
 		expect(isApiKeyLoginProvider("amazon-bedrock", oauthProviderIds, builtInProviderIds)).toBe(true);

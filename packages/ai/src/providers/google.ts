@@ -22,7 +22,7 @@ import type {
 } from "../types.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.js";
-import type { GoogleThinkingLevel } from "./google-gemini-cli.js";
+import type { GoogleThinkingLevel } from "./google-shared.js";
 import {
 	convertMessages,
 	convertTools,

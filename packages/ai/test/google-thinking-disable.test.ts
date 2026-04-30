@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import { getModel } from "../src/models.js";
 import { streamSimple } from "../src/stream.js";
 import type { Api, Context, Model, SimpleStreamOptions } from "../src/types.js";
-import { resolveApiKey } from "./oauth.js";
 
 type SimpleOptionsWithExtras = SimpleStreamOptions & Record<string, unknown>;
 
@@ -19,9 +18,6 @@ interface DisableExpectations {
 	minPongs?: number;
 	maxOutputTokens?: number;
 }
-
-const oauthTokens = await Promise.all([resolveApiKey("google-gemini-cli"), resolveApiKey("google-antigravity")]);
-const [geminiCliToken, antigravityToken] = oauthTokens;
 
 function makeContext(): Context {
 	return {
@@ -144,24 +140,6 @@ describe("Google Vertex thinking disable E2E", () => {
 	it.skipIf(!vertexOptions)("disables thinking for Gemini 3.x", { retry: 2, timeout: 30000 }, async () => {
 		await expectThinkingDisabledE2E(getModel("google-vertex", "gemini-3-flash-preview"), {
 			requestOptions: vertexOptions,
-		});
-	});
-});
-
-describe("Google Gemini CLI thinking disable E2E", () => {
-	it.skipIf(!geminiCliToken)("disables thinking for Gemini 2.5", { retry: 2, timeout: 30000 }, async () => {
-		await expectThinkingDisabledE2E(getModel("google-gemini-cli", "gemini-2.5-flash"), {
-			requestOptions: { apiKey: geminiCliToken! },
-			maxOutputTokens: 100,
-		});
-	});
-});
-
-describe("Google Antigravity thinking disable E2E", () => {
-	it.skipIf(!antigravityToken)("disables thinking for Gemini 3.x", { retry: 2, timeout: 30000 }, async () => {
-		await expectThinkingDisabledE2E(getModel("google-antigravity", "gemini-3-flash"), {
-			requestOptions: { apiKey: antigravityToken! },
-			maxOutputTokens: 100,
 		});
 	});
 });

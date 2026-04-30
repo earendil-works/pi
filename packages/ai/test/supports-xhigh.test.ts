@@ -26,6 +26,24 @@ describe("supportsXhigh", () => {
 		expect(supportsXhigh(model!)).toBe(true);
 	});
 
+	it("returns true for DeepSeek V4 Flash on the DeepSeek provider", () => {
+		const model = getModel("deepseek", "deepseek-v4-flash");
+		expect(model).toBeDefined();
+		expect(supportsXhigh(model!)).toBe(true);
+	});
+
+	it("returns true for DeepSeek V4 Flash on opencode-go", () => {
+		const model = getModel("opencode-go", "deepseek-v4-flash");
+		expect(model).toBeDefined();
+		expect(supportsXhigh(model!)).toBe(true);
+	});
+
+	it("returns true for DeepSeek V4 Flash on OpenRouter", () => {
+		const model = getModel("openrouter", "deepseek/deepseek-v4-flash");
+		expect(model).toBeDefined();
+		expect(supportsXhigh(model!)).toBe(true);
+	});
+
 	it("returns true for OpenRouter Opus 4.6 (openai-completions API)", () => {
 		const model = getModel("openrouter", "anthropic/claude-opus-4.6");
 		expect(model).toBeDefined();

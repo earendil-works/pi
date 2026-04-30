@@ -246,7 +246,7 @@ export function createFindToolDefinition(
 								effectivePattern = `**/${pattern}`;
 							}
 						}
-						args.push(effectivePattern, searchPath);
+						args.push("--", effectivePattern, searchPath);
 
 						const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "pipe"] });
 						const rl = createInterface({ input: child.stdout });
