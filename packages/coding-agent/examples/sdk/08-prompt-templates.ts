@@ -8,6 +8,7 @@ import {
 	createAgentSession,
 	createSyntheticSourceInfo,
 	DefaultResourceLoader,
+	getAgentDir,
 	type PromptTemplate,
 	SessionManager,
 } from "@mariozechner/pi-coding-agent";
@@ -26,6 +27,8 @@ const deployTemplate: PromptTemplate = {
 };
 
 const loader = new DefaultResourceLoader({
+	cwd: process.cwd(),
+	agentDir: getAgentDir(),
 	promptsOverride: (current) => ({
 		prompts: [...current.prompts, deployTemplate],
 		diagnostics: current.diagnostics,

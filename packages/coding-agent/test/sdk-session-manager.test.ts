@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getModel } from "@mariozechner/pi-ai";
@@ -60,6 +60,35 @@ describe("createAgentSession session manager defaults", () => {
 
 		expect(session.sessionManager).toBe(sessionManager);
 		expect(session.sessionManager.isPersisted()).toBe(false);
+
+		session.dispose();
+	});
+
+	it("derives cwd from an explicit sessionManager when cwd is omitted", async () => {
+		const model = getModel("anthropic", "claude-sonnet-4-5");
+		expect(model).toBeTruthy();
+
+		const sessionCwd = join(tempDir, "session-project");
+		mkdirSync(sessionCwd, { recursive: true });
+		const sessionManager = SessionManager.inMemory(sessionCwd);
+		const { session } = await createAgentSession({
+			agentDir,
+			model: model!,
+			sessionManager,
+		});
+
+		expect(session.sessionManager).toBe(sessionManager);
+		expect(session.systemPrompt).toContain(`Current working directory: ${sessionCwd}`);
+
+		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash");
+		expect(bashTool).toBeTruthy();
+		const result = await bashTool!.execute("test", { command: "pwd" });
+		const output = result.content
+			.filter((item): item is { type: "text"; text: string } => item.type === "text")
+			.map((item) => item.text)
+			.join("");
+
+		expect(realpathSync(output.trim())).toBe(realpathSync(sessionCwd));
 
 		session.dispose();
 	});

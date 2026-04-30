@@ -1,5 +1,6 @@
 ---
 description: Finish the current task end-to-end with changelog, commit, and push
+argument-hint: "[instructions]"
 ---
 Wrap it.
 

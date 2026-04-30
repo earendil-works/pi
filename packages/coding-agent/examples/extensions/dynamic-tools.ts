@@ -8,7 +8,7 @@
  */
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 const ECHO_PARAMS = Type.Object({
 	message: Type.String({ description: "Message to echo" }),
@@ -35,7 +35,7 @@ export default function dynamicToolsExtension(pi: ExtensionAPI) {
 			label,
 			description: `Echo a message with prefix: ${prefix}`,
 			promptSnippet: `Echo back user-provided text with ${prefix.trim()} prefix`,
-			promptGuidelines: ["Use this tool when the user asks for exact echo output."],
+			promptGuidelines: ["Use echo_session when the user asks for exact echo output."],
 			parameters: ECHO_PARAMS,
 			async execute(_toolCallId, params) {
 				return {

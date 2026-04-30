@@ -4,13 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import { Container, Text, truncateToWidth } from "@mariozechner/pi-tui";
-import { type Static, Type } from "@sinclair/typebox";
 import { spawn } from "child_process";
+import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.js";
 import { truncateToVisualLines } from "../../modes/interactive/components/visual-truncate.js";
 import { theme } from "../../modes/interactive/theme/theme.js";
 import { waitForChildProcess } from "../../utils/child-process.js";
-import { getShellConfig, getShellEnv, killProcessTree } from "../../utils/shell.js";
+import {
+	getShellConfig,
+	getShellEnv,
+	killProcessTree,
+	trackDetachedChildPid,
+	untrackDetachedChildPid,
+} from "../../utils/shell.js";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.js";
 import { getTextOutput, invalidArgText, str } from "./render-utils.js";
 import { wrapToolDefinition } from "./tool-definition-wrapper.js";
@@ -66,11 +72,11 @@ export interface BashOperations {
  * This is useful for extensions that intercept user_bash and still want pi's
  * standard local shell behavior while wrapping or rewriting commands.
  */
-export function createLocalBashOperations(): BashOperations {
+export function createLocalBashOperations(options?: { shellPath?: string }): BashOperations {
 	return {
 		exec: (command, cwd, { onData, signal, timeout, env }) => {
 			return new Promise((resolve, reject) => {
-				const { shell, args } = getShellConfig();
+				const { shell, args } = getShellConfig(options?.shellPath);
 				if (!existsSync(cwd)) {
 					reject(new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`));
 					return;
@@ -81,6 +87,7 @@ export function createLocalBashOperations(): BashOperations {
 					env: env ?? getShellEnv(),
 					stdio: ["ignore", "pipe", "pipe"],
 				});
+				if (child.pid) trackDetachedChildPid(child.pid);
 				let timedOut = false;
 				let timeoutHandle: NodeJS.Timeout | undefined;
 				// Set timeout if provided.
@@ -105,6 +112,7 @@ export function createLocalBashOperations(): BashOperations {
 				// on inherited stdio handles held by detached descendants.
 				waitForChildProcess(child)
 					.then((code) => {
+						if (child.pid) untrackDetachedChildPid(child.pid);
 						if (timeoutHandle) clearTimeout(timeoutHandle);
 						if (signal) signal.removeEventListener("abort", onAbort);
 						if (signal?.aborted) {
@@ -118,6 +126,7 @@ export function createLocalBashOperations(): BashOperations {
 						resolve({ exitCode: code });
 					})
 					.catch((err) => {
+						if (child.pid) untrackDetachedChildPid(child.pid);
 						if (timeoutHandle) clearTimeout(timeoutHandle);
 						if (signal) signal.removeEventListener("abort", onAbort);
 						reject(err);
@@ -145,6 +154,8 @@ export interface BashToolOptions {
 	operations?: BashOperations;
 	/** Command prefix prepended to every command (for example shell setup commands) */
 	commandPrefix?: string;
+	/** Optional explicit shell path from settings */
+	shellPath?: string;
 	/** Hook to adjust command, cwd, or env before execution */
 	spawnHook?: BashSpawnHook;
 }
@@ -263,7 +274,7 @@ export function createBashToolDefinition(
 	cwd: string,
 	options?: BashToolOptions,
 ): ToolDefinition<typeof bashSchema, BashToolDetails | undefined, BashRenderState> {
-	const ops = options?.operations ?? createLocalBashOperations();
+	const ops = options?.operations ?? createLocalBashOperations({ shellPath: options?.shellPath });
 	const commandPrefix = options?.commandPrefix;
 	const spawnHook = options?.spawnHook;
 	return {
@@ -292,14 +303,18 @@ export function createBashToolDefinition(
 				let chunksBytes = 0;
 				const maxChunksBytes = DEFAULT_MAX_BYTES * 2;
 
+				const ensureTempFile = () => {
+					if (tempFilePath) return;
+					tempFilePath = getTempFilePath();
+					tempFileStream = createWriteStream(tempFilePath);
+					for (const chunk of chunks) tempFileStream.write(chunk);
+				};
+
 				const handleData = (data: Buffer) => {
 					totalBytes += data.length;
 					// Start writing to a temp file once output exceeds the in-memory threshold.
-					if (totalBytes > DEFAULT_MAX_BYTES && !tempFilePath) {
-						tempFilePath = getTempFilePath();
-						tempFileStream = createWriteStream(tempFilePath);
-						// Write all buffered chunks to the file.
-						for (const chunk of chunks) tempFileStream.write(chunk);
+					if (totalBytes > DEFAULT_MAX_BYTES) {
+						ensureTempFile();
 					}
 					// Write to temp file if we have one.
 					if (tempFileStream) tempFileStream.write(data);
@@ -316,6 +331,9 @@ export function createBashToolDefinition(
 						const fullBuffer = Buffer.concat(chunks);
 						const fullText = fullBuffer.toString("utf-8");
 						const truncation = truncateTail(fullText);
+						if (truncation.truncated) {
+							ensureTempFile();
+						}
 						onUpdate({
 							content: [{ type: "text", text: truncation.content || "" }],
 							details: {
@@ -333,13 +351,16 @@ export function createBashToolDefinition(
 					env: spawnContext.env,
 				})
 					.then(({ exitCode }) => {
-						// Close temp file stream before building the final result.
-						if (tempFileStream) tempFileStream.end();
 						// Combine the rolling buffer chunks.
 						const fullBuffer = Buffer.concat(chunks);
 						const fullOutput = fullBuffer.toString("utf-8");
 						// Apply tail truncation for the final display payload.
 						const truncation = truncateTail(fullOutput);
+						if (truncation.truncated) {
+							ensureTempFile();
+						}
+						// Close temp file stream before building the final result.
+						if (tempFileStream) tempFileStream.end();
 						let outputText = truncation.content || "(no output)";
 						let details: BashToolDetails | undefined;
 						if (truncation.truncated) {
@@ -425,7 +446,3 @@ export function createBashToolDefinition(
 export function createBashTool(cwd: string, options?: BashToolOptions): AgentTool<typeof bashSchema> {
 	return wrapToolDefinition(createBashToolDefinition(cwd, options));
 }
-
-/** Default bash tool using process.cwd() for backwards compatibility. */
-export const bashToolDefinition = createBashToolDefinition(process.cwd());
-export const bashTool = createBashTool(process.cwd());

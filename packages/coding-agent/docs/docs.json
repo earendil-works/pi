@@ -1,0 +1,148 @@
+{
+  "navigation": [
+    {
+      "title": "Start here",
+      "items": [
+        {
+          "title": "Overview",
+          "path": "index.md"
+        },
+        {
+          "title": "Quickstart",
+          "path": "quickstart.md"
+        },
+        {
+          "title": "Using Pi",
+          "path": "usage.md"
+        },
+        {
+          "title": "Providers",
+          "path": "providers.md"
+        },
+        {
+          "title": "Settings",
+          "path": "settings.md"
+        },
+        {
+          "title": "Keybindings",
+          "path": "keybindings.md"
+        },
+        {
+          "title": "Sessions",
+          "path": "sessions.md"
+        },
+        {
+          "title": "Compaction",
+          "path": "compaction.md"
+        }
+      ]
+    },
+    {
+      "title": "Customization",
+      "items": [
+        {
+          "title": "Extensions",
+          "path": "extensions.md"
+        },
+        {
+          "title": "Skills",
+          "path": "skills.md"
+        },
+        {
+          "title": "Prompt Templates",
+          "path": "prompt-templates.md"
+        },
+        {
+          "title": "Themes",
+          "path": "themes.md"
+        },
+        {
+          "title": "Pi Packages",
+          "path": "packages.md"
+        },
+        {
+          "title": "Custom Models",
+          "path": "models.md"
+        },
+        {
+          "title": "Custom Providers",
+          "path": "custom-provider.md"
+        }
+      ]
+    },
+    {
+      "title": "Reference",
+      "items": [
+        {
+          "title": "Session Format",
+          "path": "session-format.md"
+        }
+      ]
+    },
+    {
+      "title": "Programmatic Usage",
+      "items": [
+        {
+          "title": "SDK",
+          "path": "sdk.md"
+        },
+        {
+          "title": "RPC Mode",
+          "path": "rpc.md"
+        },
+        {
+          "title": "JSON Event Stream Mode",
+          "path": "json.md"
+        },
+        {
+          "title": "TUI Components",
+          "path": "tui.md"
+        }
+      ]
+    },
+    {
+      "title": "Platform Setup",
+      "items": [
+        {
+          "title": "Windows",
+          "path": "windows.md"
+        },
+        {
+          "title": "Termux on Android",
+          "path": "termux.md"
+        },
+        {
+          "title": "tmux",
+          "path": "tmux.md"
+        },
+        {
+          "title": "Terminal Setup",
+          "path": "terminal-setup.md"
+        },
+        {
+          "title": "Shell Aliases",
+          "path": "shell-aliases.md"
+        }
+      ]
+    },
+    {
+      "title": "Development",
+      "items": [
+        {
+          "title": "Development",
+          "path": "development.md"
+        }
+      ]
+    }
+  ],
+  "redirects": [
+    {
+      "from": "session.md",
+      "to": "session-format.md"
+    },
+    {
+      "from": "tree.md",
+      "to": "sessions.md"
+    }
+  ]
+}

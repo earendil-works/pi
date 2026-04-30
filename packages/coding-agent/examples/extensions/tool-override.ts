@@ -22,10 +22,10 @@
 
 import type { TextContent } from "@mariozechner/pi-ai";
 import { type ExtensionAPI, getAgentDir, withFileMutationQueue } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
 import { constants, readFileSync } from "fs";
 import { access, appendFile, readFile } from "fs/promises";
 import { join, resolve } from "path";
+import { Type } from "typebox";
 
 const LOG_FILE = join(getAgentDir(), "read-access.log");
 

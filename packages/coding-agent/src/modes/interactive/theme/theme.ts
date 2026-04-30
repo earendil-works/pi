@@ -1,12 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { EditorTheme, MarkdownTheme, SelectListTheme } from "@mariozechner/pi-tui";
-import { type Static, Type } from "@sinclair/typebox";
-import { TypeCompiler } from "@sinclair/typebox/compiler";
 import chalk from "chalk";
 import { highlight, supportsLanguage } from "cli-highlight";
+import { type Static, Type } from "typebox";
+import { Compile } from "typebox/compile";
 import { getCustomThemesDir, getThemesDir } from "../../../config.js";
 import type { SourceInfo } from "../../../core/source-info.js";
+import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.js";
 
 // ============================================================================
 // Types & Schema
@@ -94,7 +95,7 @@ const ThemeJsonSchema = Type.Object({
 
 type ThemeJson = Static<typeof ThemeJsonSchema>;
 
-const validateThemeJson = TypeCompiler.Compile(ThemeJsonSchema);
+const validateThemeJson = Compile(ThemeJsonSchema);
 
 export type ThemeColor =
 	| "accent"
@@ -515,23 +516,29 @@ export function getAvailableThemesWithPaths(): ThemeInfo[] {
 function parseThemeJson(label: string, json: unknown): ThemeJson {
 	if (!validateThemeJson.Check(json)) {
 		const errors = Array.from(validateThemeJson.Errors(json));
-		const missingColors: string[] = [];
+		const missingColors = new Set<string>();
 		const otherErrors: string[] = [];
 
-		for (const e of errors) {
-			// Check for missing required color properties
-			const match = e.path.match(/^\/colors\/(\w+)$/);
-			if (match && e.message.includes("Required")) {
-				missingColors.push(match[1]);
-			} else {
-				otherErrors.push(`  - ${e.path}: ${e.message}`);
+		for (const error of errors) {
+			if (error.keyword === "required" && error.instancePath === "/colors") {
+				const requiredProperties = (error.params as { requiredProperties?: string[] }).requiredProperties;
+				for (const requiredProperty of requiredProperties ?? []) {
+					missingColors.add(requiredProperty);
+				}
+				continue;
 			}
+
+			const path = error.instancePath || "/";
+			otherErrors.push(`  - ${path}: ${error.message}`);
 		}
 
 		let errorMessage = `Invalid theme "${label}":\n`;
-		if (missingColors.length > 0) {
+		if (missingColors.size > 0) {
 			errorMessage += "\nMissing required color tokens:\n";
-			errorMessage += missingColors.map((c) => `  - ${c}`).join("\n");
+			errorMessage += Array.from(missingColors)
+				.sort()
+				.map((color) => `  - ${color}`)
+				.join("\n");
 			errorMessage += '\n\nPlease add these colors to your theme\'s "colors" object.';
 			errorMessage += "\nSee the built-in themes (dark.json, light.json) for reference values.";
 		}
@@ -783,32 +790,27 @@ function startThemeWatcher(): void {
 		}, 100);
 	};
 
-	try {
-		themeWatcher = fs.watch(customThemesDir, (_eventType, filename) => {
-			if (currentThemeName !== watchedThemeName) {
-				return;
-			}
-			if (!filename) {
+	themeWatcher =
+		watchWithErrorHandler(
+			customThemesDir,
+			(_eventType, filename) => {
+				if (currentThemeName !== watchedThemeName) {
+					return;
+				}
+				if (!filename) {
+					scheduleReload();
+					return;
+				}
+				if (filename !== watchedFileName) {
+					return;
+				}
 				scheduleReload();
-				return;
-			}
-			const changedFile = String(filename);
-			if (changedFile !== watchedFileName) {
-				return;
-			}
-			scheduleReload();
-		});
-		themeWatcher.on("error", () => {
-			try {
-				themeWatcher?.close();
-			} catch {
-				/* ignore */
-			}
-			themeWatcher = undefined;
-		});
-	} catch (_error) {
-		// Ignore errors starting watcher
-	}
+			},
+			() => {
+				closeWatcher(themeWatcher);
+				themeWatcher = undefined;
+			},
+		) ?? undefined;
 }
 
 export function stopThemeWatcher(): void {
@@ -816,10 +818,8 @@ export function stopThemeWatcher(): void {
 		clearTimeout(themeReloadTimer);
 		themeReloadTimer = undefined;
 	}
-	if (themeWatcher) {
-		themeWatcher.close();
-		themeWatcher = undefined;
-	}
+	closeWatcher(themeWatcher);
+	themeWatcher = undefined;
 }
 
 // ============================================================================

@@ -2,6 +2,8 @@ import {
 	type GenerateContentConfig,
 	type GenerateContentParameters,
 	GoogleGenAI,
+	type HttpOptions,
+	ResourceScope,
 	type ThinkingConfig,
 	ThinkingLevel,
 } from "@google/genai";
@@ -45,6 +47,7 @@ export interface GoogleVertexOptions extends StreamOptions {
 }
 
 const API_VERSION = "v1";
+const GCP_VERTEX_CREDENTIALS_MARKER = "gcp-vertex-credentials";
 
 const THINKING_LEVEL_MAP: Record<GoogleThinkingLevel, ThinkingLevel> = {
 	THINKING_LEVEL_UNSPECIFIED: ThinkingLevel.THINKING_LEVEL_UNSPECIFIED,
@@ -330,20 +333,12 @@ function createClient(
 	location: string,
 	optionsHeaders?: Record<string, string>,
 ): GoogleGenAI {
-	const httpOptions: { headers?: Record<string, string> } = {};
-
-	if (model.headers || optionsHeaders) {
-		httpOptions.headers = { ...model.headers, ...optionsHeaders };
-	}
-
-	const hasHttpOptions = Object.values(httpOptions).some(Boolean);
-
 	return new GoogleGenAI({
 		vertexai: true,
 		project,
 		location,
 		apiVersion: API_VERSION,
-		httpOptions: hasHttpOptions ? httpOptions : undefined,
+		httpOptions: buildHttpOptions(model, optionsHeaders),
 	});
 }
 
@@ -352,25 +347,55 @@ function createClientWithApiKey(
 	apiKey: string,
 	optionsHeaders?: Record<string, string>,
 ): GoogleGenAI {
-	const httpOptions: { headers?: Record<string, string> } = {};
+	return new GoogleGenAI({
+		vertexai: true,
+		apiKey,
+		apiVersion: API_VERSION,
+		httpOptions: buildHttpOptions(model, optionsHeaders),
+	});
+}
+
+function buildHttpOptions(
+	model: Model<"google-vertex">,
+	optionsHeaders?: Record<string, string>,
+): HttpOptions | undefined {
+	const httpOptions: HttpOptions = {};
+	const baseUrl = resolveCustomBaseUrl(model.baseUrl);
+	if (baseUrl) {
+		httpOptions.baseUrl = baseUrl;
+		httpOptions.baseUrlResourceScope = ResourceScope.COLLECTION;
+		if (baseUrlIncludesApiVersion(baseUrl)) {
+			httpOptions.apiVersion = "";
+		}
+	}
 
 	if (model.headers || optionsHeaders) {
 		httpOptions.headers = { ...model.headers, ...optionsHeaders };
 	}
 
-	const hasHttpOptions = Object.values(httpOptions).some(Boolean);
+	return Object.keys(httpOptions).length > 0 ? httpOptions : undefined;
+}
 
-	return new GoogleGenAI({
-		vertexai: true,
-		apiKey,
-		apiVersion: API_VERSION,
-		httpOptions: hasHttpOptions ? httpOptions : undefined,
-	});
+function resolveCustomBaseUrl(baseUrl: string): string | undefined {
+	const trimmed = baseUrl.trim();
+	if (!trimmed || trimmed.includes("{location}")) {
+		return undefined;
+	}
+	return trimmed;
+}
+
+function baseUrlIncludesApiVersion(baseUrl: string): boolean {
+	try {
+		const url = new URL(baseUrl);
+		return url.pathname.split("/").some((part) => /^v\d+(?:beta\d*)?$/.test(part));
+	} catch {
+		return /(?:^|\/)v\d+(?:beta\d*)?(?:\/|$)/.test(baseUrl);
+	}
 }
 
 function resolveApiKey(options?: GoogleVertexOptions): string | undefined {
 	const apiKey = options?.apiKey?.trim() || process.env.GOOGLE_CLOUD_API_KEY?.trim();
-	if (!apiKey || isPlaceholderApiKey(apiKey)) {
+	if (!apiKey || apiKey === GCP_VERTEX_CREDENTIALS_MARKER || isPlaceholderApiKey(apiKey)) {
 		return undefined;
 	}
 	return apiKey;

@@ -435,6 +435,7 @@ export function registerFauxProvider(options: RegisterFauxProviderOptions = {}):
 
 		queueMicrotask(async () => {
 			try {
+				await streamOptions?.onResponse?.({ status: 200, headers: {} }, requestModel);
 				if (!step) {
 					let message = createErrorMessage(
 						new Error("No more faux responses queued"),

@@ -8,14 +8,38 @@ describe("supportsXhigh", () => {
 		expect(supportsXhigh(model!)).toBe(true);
 	});
 
+	it("returns true for Anthropic Opus 4.7 on anthropic-messages API", () => {
+		const model = getModel("anthropic", "claude-opus-4-7");
+		expect(model).toBeDefined();
+		expect(supportsXhigh(model!)).toBe(true);
+	});
+
 	it("returns false for non-Opus Anthropic models", () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5");
 		expect(model).toBeDefined();
 		expect(supportsXhigh(model!)).toBe(false);
 	});
 
-	it("returns true for GPT-5.4 models", () => {
-		const model = getModel("openai-codex", "gpt-5.4");
+	it.each(["gpt-5.4", "gpt-5.5"] as const)("returns true for %s models", (modelId) => {
+		const model = getModel("openai-codex", modelId);
+		expect(model).toBeDefined();
+		expect(supportsXhigh(model!)).toBe(true);
+	});
+
+	it("returns true for DeepSeek V4 Flash on the DeepSeek provider", () => {
+		const model = getModel("deepseek", "deepseek-v4-flash");
+		expect(model).toBeDefined();
+		expect(supportsXhigh(model!)).toBe(true);
+	});
+
+	it("returns true for DeepSeek V4 Flash on opencode-go", () => {
+		const model = getModel("opencode-go", "deepseek-v4-flash");
+		expect(model).toBeDefined();
+		expect(supportsXhigh(model!)).toBe(true);
+	});
+
+	it("returns true for DeepSeek V4 Flash on OpenRouter", () => {
+		const model = getModel("openrouter", "deepseek/deepseek-v4-flash");
 		expect(model).toBeDefined();
 		expect(supportsXhigh(model!)).toBe(true);
 	});

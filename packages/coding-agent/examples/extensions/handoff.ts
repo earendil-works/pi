@@ -12,6 +12,7 @@
  * The generated prompt appears as a draft in the editor for review/editing.
  */
 
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import { complete, type Message } from "@mariozechner/pi-ai";
 import type { ExtensionAPI, SessionEntry } from "@mariozechner/pi-coding-agent";
 import { BorderedLoader, convertToLlm, serializeConversation } from "@mariozechner/pi-coding-agent";
@@ -38,6 +39,44 @@ Files involved:
 ## Task
 [Clear description of what to do next based on user's goal]`;
 
+function entryToMessage(entry: SessionEntry): AgentMessage | undefined {
+	if (entry.type === "message") {
+		return entry.message;
+	}
+	if (entry.type === "compaction") {
+		return {
+			role: "compactionSummary",
+			summary: entry.summary,
+			tokensBefore: entry.tokensBefore,
+			timestamp: new Date(entry.timestamp).getTime(),
+		};
+	}
+	return undefined;
+}
+
+function getHandoffMessages(branch: SessionEntry[]): AgentMessage[] {
+	let compactionIndex = -1;
+	for (let i = branch.length - 1; i >= 0; i--) {
+		if (branch[i].type === "compaction") {
+			compactionIndex = i;
+			break;
+		}
+	}
+	if (compactionIndex < 0) {
+		return branch.map(entryToMessage).filter((message) => message !== undefined);
+	}
+
+	const compaction = branch[compactionIndex];
+	const firstKeptIndex =
+		compaction.type === "compaction" ? branch.findIndex((entry) => entry.id === compaction.firstKeptEntryId) : -1;
+	const compactedBranch = [
+		compaction,
+		...(firstKeptIndex >= 0 ? branch.slice(firstKeptIndex, compactionIndex) : []),
+		...branch.slice(compactionIndex + 1),
+	];
+	return compactedBranch.map(entryToMessage).filter((message) => message !== undefined);
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerCommand("handoff", {
 		description: "Transfer context to a new focused session",
@@ -58,11 +97,9 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			// Gather conversation context from current branch
-			const branch = ctx.sessionManager.getBranch();
-			const messages = branch
-				.filter((entry): entry is SessionEntry & { type: "message" } => entry.type === "message")
-				.map((entry) => entry.message);
+			// Gather conversation context from current branch. If the branch was compacted,
+			// include the compaction summary plus entries from firstKeptEntryId onward.
+			const messages = getHandoffMessages(ctx.sessionManager.getBranch());
 
 			if (messages.length === 0) {
 				ctx.ui.notify("No conversation to hand off", "error");
@@ -135,19 +172,20 @@ export default function (pi: ExtensionAPI) {
 				return;
 			}
 
-			// Create new session with parent tracking
+			// Create new session with parent tracking. Use the replacement-session
+			// context for post-switch UI work; the original ctx is stale after a
+			// successful session replacement.
 			const newSessionResult = await ctx.newSession({
 				parentSession: currentSessionFile,
+				withSession: async (replacementCtx) => {
+					replacementCtx.ui.setEditorText(editedPrompt);
+					replacementCtx.ui.notify("Handoff ready. Submit when ready.", "info");
+				},
 			});
 
 			if (newSessionResult.cancelled) {
 				ctx.ui.notify("New session cancelled", "info");
-				return;
 			}
-
-			// Set the edited prompt in the main editor for submission
-			ctx.ui.setEditorText(editedPrompt);
-			ctx.ui.notify("Handoff ready. Submit when ready.", "info");
 		},
 	});
 }

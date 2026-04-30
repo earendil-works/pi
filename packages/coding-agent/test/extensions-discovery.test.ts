@@ -28,7 +28,7 @@ describe("extensions discovery", () => {
 	`;
 
 	const extensionCodeWithTool = (toolName: string) => `
-		import { Type } from "@sinclair/typebox";
+		import { Type } from "typebox";
 		export default function(pi) {
 			pi.registerTool({
 				name: "${toolName}",

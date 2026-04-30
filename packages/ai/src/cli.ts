@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
+import { createInterface } from "node:readline";
 import { existsSync, readFileSync, writeFileSync } from "fs";
-import { createInterface } from "readline";
 import { getOAuthProvider, getOAuthProviders } from "./utils/oauth/index.js";
 import type { OAuthCredentials, OAuthProviderId } from "./utils/oauth/types.js";
 

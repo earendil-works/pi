@@ -262,9 +262,23 @@
       margin-bottom: var(--line-height);
       display: flex;
       align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
       gap: 12px;
     }
 
+    .help-hint {
+      flex: 1 1 240px;
+    }
+
+    .help-actions {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .header-toggle-btn,
     .download-json-btn {
       font-size: 10px;
       padding: 2px 8px;
@@ -276,6 +290,7 @@
       font-family: inherit;
     }
 
+    .header-toggle-btn:hover,
     .download-json-btn:hover {
       background: var(--hover);
       border-color: var(--borderAccent);
@@ -490,11 +505,17 @@
     }
 
     .tool-output > div,
-    .output-preview,
-    .output-full {
+    .output-preview > div,
+    .output-full > div {
       margin: 0;
       padding: 0;
       line-height: var(--line-height);
+    }
+
+    .tool-output > div:not(.output-preview):not(.output-full),
+    .output-preview > div:not(.expand-hint),
+    .output-full > div:not(.expand-hint) {
+      white-space: pre-wrap;
     }
 
     .tool-output pre {
@@ -534,7 +555,7 @@
     }
 
     .ansi-line {
-      white-space: pre-wrap;
+      white-space: pre;
     }
 
     .tool-images {

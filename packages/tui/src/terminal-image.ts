@@ -42,6 +42,16 @@ export function detectCapabilities(): TerminalCapabilities {
 	const term = process.env.TERM?.toLowerCase() || "";
 	const colorTerm = process.env.COLORTERM?.toLowerCase() || "";
 
+	// tmux and screen swallow OSC 8 by default (passthrough is opt-in and wraps
+	// sequences differently). Force hyperlinks off whenever we detect them, even
+	// when the outer terminal would otherwise support OSC 8. Image protocols are
+	// also unreliable under tmux/screen, so leave `images: null` for safety.
+	const inTmuxOrScreen = !!process.env.TMUX || term.startsWith("tmux") || term.startsWith("screen");
+	if (inTmuxOrScreen) {
+		const trueColor = colorTerm === "truecolor" || colorTerm === "24bit";
+		return { images: null, trueColor, hyperlinks: false };
+	}
+
 	if (process.env.KITTY_WINDOW_ID || termProgram === "kitty") {
 		return { images: "kitty", trueColor: true, hyperlinks: true };
 	}
@@ -66,8 +76,12 @@ export function detectCapabilities(): TerminalCapabilities {
 		return { images: null, trueColor: true, hyperlinks: true };
 	}
 
+	// Unknown terminal: be conservative. OSC 8 is rendered invisibly as "just
+	// text" on terminals that swallow it, which means the URL disappears from
+	// the rendered output. Default to the legacy `text (url)` behavior unless we
+	// have positively identified a hyperlink-capable terminal above.
 	const trueColor = colorTerm === "truecolor" || colorTerm === "24bit";
-	return { images: null, trueColor, hyperlinks: true };
+	return { images: null, trueColor, hyperlinks: false };
 }
 
 export function getCapabilities(): TerminalCapabilities {
@@ -79,6 +93,11 @@ export function getCapabilities(): TerminalCapabilities {
 
 export function resetCapabilitiesCache(): void {
 	cachedCapabilities = null;
+}
+
+/** Override the cached capabilities. Useful in tests to exercise both code paths. */
+export function setCapabilities(caps: TerminalCapabilities): void {
+	cachedCapabilities = caps;
 }
 
 const KITTY_PREFIX = "\x1b_G";
@@ -370,6 +389,20 @@ export function renderImage(
 	}
 
 	return null;
+}
+
+/**
+ * Wrap text in an OSC 8 hyperlink sequence.
+ * The text is rendered as a clickable hyperlink in terminals that support OSC 8
+ * (Ghostty, Kitty, WezTerm, iTerm2, VSCode, and others).
+ * In terminals that do not support OSC 8, the escape sequences are ignored
+ * and only the plain text is displayed.
+ *
+ * @param text - The visible text to display
+ * @param url - The URL to link to
+ */
+export function hyperlink(text: string, url: string): string {
+	return `\x1b]8;;${url}\x1b\\${text}\x1b]8;;\x1b\\`;
 }
 
 export function imageFallback(mimeType: string, dimensions?: ImageDimensions, filename?: string): string {

@@ -116,11 +116,10 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 						};
 					}
 				});
-				const filteredParts = !model.input.includes("image") ? parts.filter((p) => p.text !== undefined) : parts;
-				if (filteredParts.length === 0) continue;
+				if (parts.length === 0) continue;
 				contents.push({
 					role: "user",
-					parts: filteredParts,
+					parts,
 				});
 			}
 		} else if (msg.role === "assistant") {
@@ -239,6 +238,33 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 	return contents;
 }
 
+const JSON_SCHEMA_META_DECLARATIONS = new Set([
+	"$schema",
+	"$id",
+	"$anchor",
+	"$dynamicAnchor",
+	"$vocabulary",
+	"$comment",
+	"$defs",
+	"definitions", // pre-draft-2019-09 equivalent of $defs
+]);
+
+/**
+ * Strip meta-declarations from a schema obj
+ */
+function sanitizeForOpenApi(schema: unknown): unknown {
+	if (typeof schema !== "object" || schema === null || Array.isArray(schema)) {
+		return schema;
+	}
+
+	const result: Record<string, unknown> = {};
+	for (const [key, value] of Object.entries(schema)) {
+		if (JSON_SCHEMA_META_DECLARATIONS.has(key)) continue;
+		result[key] = sanitizeForOpenApi(value);
+	}
+	return result;
+}
+
 /**
  * Convert tools to Gemini function declarations format.
  *
@@ -257,7 +283,9 @@ export function convertTools(
 			functionDeclarations: tools.map((tool) => ({
 				name: tool.name,
 				description: tool.description,
-				...(useParameters ? { parameters: tool.parameters } : { parametersJsonSchema: tool.parameters }),
+				...(useParameters
+					? { parameters: sanitizeForOpenApi(tool.parameters as unknown) }
+					: { parametersJsonSchema: tool.parameters }),
 			})),
 		},
 	];

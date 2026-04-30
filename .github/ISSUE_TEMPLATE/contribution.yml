@@ -6,7 +6,9 @@ body:
     attributes:
       value: |
         **Before you start:** Read [CONTRIBUTING.md](https://github.com/badlogic/pi-mono/blob/main/CONTRIBUTING.md).
-        
+
+        New issues from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. Issues that do not meet the quality bar in [CONTRIBUTING.md](https://github.com/badlogic/pi-mono/blob/main/CONTRIBUTING.md) will not be reopened or receive a reply.
+
         Keep this short. If it doesn't fit on one screen, it's too long. Write in your own voice.
 
   - type: textarea

@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { homedir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SettingsManager } from "../src/core/settings-manager.js";
@@ -307,6 +308,12 @@ describe("SettingsManager", () => {
 			writeFileSync(join(projectDir, ".pi", "settings.json"), JSON.stringify({ sessionDir: "./sessions" }));
 			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getSessionDir()).toBe("./sessions");
+		});
+
+		it("should expand ~ in sessionDir", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ sessionDir: "~/sessions" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getSessionDir()).toBe(join(homedir(), "sessions"));
 		});
 	});
 });

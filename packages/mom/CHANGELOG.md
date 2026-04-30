@@ -10,6 +10,62 @@
 
 - Default Slack tool threads are compact: `read` omits file body (one line); other tools truncate long results. Set `MOM_SLACK_FULL_TOOL_RESULTS=1` for the previous verbose dumps.
 
+### Sync
+
+- Merged upstream `badlogic/pi-mono` `main` at [`156a9052`](https://github.com/badlogic/pi-mono/commit/156a9052) (2026-04-30).
+
+## [0.70.6] - 2026-04-28
+
+## [0.70.5] - 2026-04-27
+
+## [0.70.4] - 2026-04-27
+
+## [0.70.3] - 2026-04-27
+
+## [0.70.2] - 2026-04-24
+
+## [0.70.1] - 2026-04-24
+
+## [0.70.0] - 2026-04-23
+
+### Fixed
+
+- Fixed Mom event-directory `fs.watch` error handling to retry after transient watcher failures such as `EMFILE`, avoiding startup crashes ([#3564](https://github.com/badlogic/pi-mono/issues/3564))
+
+## [0.69.0] - 2026-04-22
+
+### Breaking Changes
+
+- Migrated Mom's TypeBox-based tool examples and runtime dependency from `@sinclair/typebox` 0.34.x to `typebox` 1.x. Install and import from `typebox` instead of `@sinclair/typebox` when authoring Mom tools and integrations ([#3112](https://github.com/badlogic/pi-mono/issues/3112))
+
+## [0.68.1] - 2026-04-22
+
+## [0.68.0] - 2026-04-20
+
+## [0.67.68] - 2026-04-17
+
+## [0.67.67] - 2026-04-17
+
+## [0.67.6] - 2026-04-16
+
+## [0.67.5] - 2026-04-16
+
+## [0.67.4] - 2026-04-16
+
+## [0.67.3] - 2026-04-15
+
+## [0.67.2] - 2026-04-14
+
+## [0.67.1] - 2026-04-13
+
+## [0.67.0] - 2026-04-13
+
+## [0.66.1] - 2026-04-08
+
+## [0.66.0] - 2026-04-08
+
+## [0.65.2] - 2026-04-06
+
 ## [0.65.1] - 2026-04-05
 
 ### Added

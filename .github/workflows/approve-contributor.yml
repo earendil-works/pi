@@ -17,20 +17,26 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
 
-      - name: Add contributor to approved list
+      - name: Update contributor approval
         id: update
         uses: actions/github-script@v7
         with:
           script: |
             const fs = require('fs');
 
+            const APPROVED_FILE = '.github/APPROVED_CONTRIBUTORS';
+            const VALID_CAPABILITIES = new Set(['issue', 'pr']);
             const issueAuthor = context.payload.issue.user.login;
             const commenter = context.payload.comment.user.login;
-            const commentBody = context.payload.comment.body || '';
-            const approvedFile = '.github/APPROVED_CONTRIBUTORS';
+            const commentBody = (context.payload.comment.body || '').trim();
 
-            if (!/^\s*lgtm\b/i.test(commentBody)) {
-              console.log('Comment does not match lgtm');
+            let targetCapability;
+            if (/\blgtmi\b/i.test(commentBody)) {
+              targetCapability = 'issue';
+            } else if (/\blgtm\b/i.test(commentBody)) {
+              targetCapability = 'pr';
+            } else {
+              console.log('Comment does not match lgtm or lgtmi');
               core.setOutput('status', 'skipped');
               return;
             }
@@ -39,46 +45,98 @@ jobs:
               const { data: permissionLevel } = await github.rest.repos.getCollaboratorPermissionLevel({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                username: commenter
+                username: commenter,
               });
 
-              if (!['admin', 'write'].includes(permissionLevel.permission)) {
+              if (!['admin', 'maintain', 'write'].includes(permissionLevel.permission)) {
                 console.log(`${commenter} does not have write access`);
                 core.setOutput('status', 'skipped');
                 return;
               }
-            } catch (error) {
+            } catch {
               console.log(`${commenter} does not have collaborator access`);
               core.setOutput('status', 'skipped');
               return;
             }
 
-            let content = fs.readFileSync(approvedFile, 'utf8');
-            const approvedList = content
-              .split('\n')
-              .map(line => line.trim().toLowerCase())
-              .filter(line => line && !line.startsWith('#'));
+            function parseApprovedUsers(content) {
+              const lines = content.split('\n');
+              const entries = [];
+              const users = new Map();
 
-            if (approvedList.includes(issueAuthor.toLowerCase())) {
-              console.log(`${issueAuthor} is already approved`);
+              for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed || trimmed.startsWith('#')) {
+                  entries.push({ type: 'other', line });
+                  continue;
+                }
+
+                const parts = trimmed.split(/\s+/);
+                if (parts.length !== 2) {
+                  console.log(`Skipping malformed line: ${line}`);
+                  entries.push({ type: 'other', line });
+                  continue;
+                }
+
+                const [username, capability] = parts;
+                const normalizedCapability = capability.toLowerCase();
+                if (!VALID_CAPABILITIES.has(normalizedCapability)) {
+                  console.log(`Skipping line with invalid capability: ${line}`);
+                  entries.push({ type: 'other', line });
+                  continue;
+                }
+
+                const normalizedUser = username.toLowerCase();
+                const entry = { type: 'user', username, normalizedUser, capability: normalizedCapability };
+                entries.push(entry);
+                users.set(normalizedUser, entry);
+              }
+
+              return { entries, users };
+            }
+
+            function stringifyApprovedUsers(entries) {
+              const normalizedEntries = [...entries];
+
+              while (normalizedEntries.length > 0) {
+                const lastEntry = normalizedEntries[normalizedEntries.length - 1];
+                if (lastEntry.type !== 'other' || lastEntry.line.trim() !== '') {
+                  break;
+                }
+                normalizedEntries.pop();
+              }
+
+              return `${normalizedEntries
+                .map((entry) => (entry.type === 'user' ? `${entry.username} ${entry.capability}` : entry.line))
+                .join('\n')}\n`;
+            }
+
+            const content = fs.readFileSync(APPROVED_FILE, 'utf8');
+            const { entries, users } = parseApprovedUsers(content);
+            const normalizedAuthor = issueAuthor.toLowerCase();
+            const existingEntry = users.get(normalizedAuthor);
+            const existingCapability = existingEntry?.capability ?? null;
+
+            if (existingCapability === 'pr' || existingCapability === targetCapability) {
               core.setOutput('status', 'already');
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: `@${issueAuthor} is already in the approved contributors list.`
-              });
+              core.setOutput('capability', existingCapability);
+              console.log(`${issueAuthor} is already approved for ${existingCapability}`);
               return;
             }
 
-            content = content.trimEnd() + '\n' + issueAuthor + '\n';
-            fs.writeFileSync(approvedFile, content);
+            if (existingEntry) {
+              existingEntry.capability = targetCapability;
+            } else {
+              entries.push({ type: 'user', username: issueAuthor, normalizedUser: normalizedAuthor, capability: targetCapability });
+            }
 
-            console.log(`Added ${issueAuthor} to approved contributors`);
-            core.setOutput('status', 'added');
+            fs.writeFileSync(APPROVED_FILE, stringifyApprovedUsers(entries));
+            core.setOutput('status', existingCapability ? 'updated' : 'added');
+            core.setOutput('capability', targetCapability);
+            console.log(`Set ${issueAuthor} capability to ${targetCapability}`);
 
       - name: Commit and push
-        if: steps.update.outputs.status == 'added'
+        if: steps.update.outputs.status == 'added' || steps.update.outputs.status == 'updated'
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -87,14 +145,35 @@ jobs:
           git push
 
       - name: Comment on issue
-        if: steps.update.outputs.status == 'added'
+        if: steps.update.outputs.status == 'added' || steps.update.outputs.status == 'updated' || steps.update.outputs.status == 'already'
         uses: actions/github-script@v7
         with:
           script: |
             const issueAuthor = context.payload.issue.user.login;
+            const capability = '${{ steps.update.outputs.capability }}';
+            const defaultBranch = context.payload.repository.default_branch;
+            let body;
+
+            if ('${{ steps.update.outputs.status }}' === 'already') {
+              body = `@${issueAuthor} is already approved.`;
+            } else if (capability === 'issue') {
+              body = [
+                `@${issueAuthor} approved for issues. Your future issues will not be auto-closed. PRs still require \`lgtm\`.`,
+                '',
+                `See [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md).`,
+              ].join('\n');
+            } else {
+              body = [
+                `@${issueAuthor} approved for issues and PRs. Your future issues and PRs will not be auto-closed.`,
+                '',
+                `See [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md).`,
+              ].join('\n');
+            }
+
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: `@${issueAuthor} has been added to the approved contributors list. You can now submit PRs. Thanks for contributing!`
+              body,
             });
+

@@ -1,12 +1,12 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Api, Context, Model, OpenAICompletionsCompat } from "@mariozechner/pi-ai";
+import type { AnthropicMessagesCompat, Api, Context, Model, OpenAICompletionsCompat } from "@mariozechner/pi-ai";
 import { getApiProvider } from "@mariozechner/pi-ai";
 import { getOAuthProvider } from "@mariozechner/pi-ai/oauth";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.js";
-import { clearApiKeyCache, ModelRegistry } from "../src/core/model-registry.js";
+import { clearApiKeyCache, ModelRegistry, type ProviderConfigInput } from "../src/core/model-registry.js";
 
 describe("ModelRegistry", () => {
 	let tempDir: string;
@@ -32,11 +32,11 @@ describe("ModelRegistry", () => {
 		baseUrl: string,
 		models: Array<{ id: string; name?: string }>,
 		api: string = "anthropic-messages",
-	) {
+	): ProviderConfigInput {
 		return {
 			baseUrl,
 			apiKey: "TEST_KEY",
-			api,
+			api: api as Api,
 			models: models.map((m) => ({
 				id: m.id,
 				name: m.name ?? m.id,
@@ -135,6 +135,28 @@ describe("ModelRegistry", () => {
 			}
 		});
 
+		test("headers-only override resolves at request time", async () => {
+			writeRawModelsJson({
+				anthropic: {
+					headers: {
+						"X-Custom-Header": "custom-value",
+					},
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			expect(registry.getError()).toBeUndefined();
+			const anthropicModels = getModelsForProvider(registry, "anthropic");
+
+			for (const model of anthropicModels) {
+				const auth = await registry.getApiKeyAndHeaders(model);
+				expect(auth.ok).toBe(true);
+				if (auth.ok) {
+					expect(auth.headers?.["X-Custom-Header"]).toBe("custom-value");
+				}
+			}
+		});
+
 		test("baseUrl-only override does not affect other providers", () => {
 			writeRawModelsJson({
 				anthropic: overrideConfig("https://my-proxy.example.com/v1"),
@@ -192,6 +214,49 @@ describe("ModelRegistry", () => {
 	});
 
 	describe("custom models merge behavior", () => {
+		test("built-in provider custom models inherit api and baseUrl without explicit fields", () => {
+			// Built-in providers already have api/baseUrl on every model, and auth
+			// comes from env vars / auth storage. No need to specify them.
+			writeRawModelsJson({
+				openrouter: {
+					models: [
+						{
+							id: "fake-provider/fake-model",
+							name: "Fake model",
+							reasoning: true,
+							input: ["text"],
+						},
+					],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			expect(registry.getError()).toBeUndefined();
+
+			const model = registry.find("openrouter", "fake-provider/fake-model");
+			expect(model).toBeDefined();
+			expect(model?.api).toBe("openai-completions");
+			expect(model?.baseUrl).toBe("https://openrouter.ai/api/v1");
+		});
+
+		test("non-built-in provider custom models still require baseUrl and apiKey", () => {
+			writeRawModelsJson({
+				"my-custom-provider": {
+					models: [
+						{
+							id: "my-model",
+							api: "openai-completions",
+							reasoning: false,
+							input: ["text"],
+						},
+					],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			expect(registry.getError()).toContain("baseUrl");
+		});
+
 		test("custom provider with same name as built-in merges with built-in models", () => {
 			writeModelsJson({
 				anthropic: providerConfig("https://my-proxy.example.com/v1", [{ id: "claude-custom" }]),
@@ -331,7 +396,7 @@ describe("ModelRegistry", () => {
 			}
 		});
 
-		test("compat schema accepts reasoningEffortMap and supportsStrictMode", () => {
+		test("compat schema accepts reasoningEffortMap, supportsStrictMode, and cacheControlFormat", () => {
 			writeRawModelsJson({
 				demo: {
 					baseUrl: "https://example.com/v1",
@@ -351,6 +416,7 @@ describe("ModelRegistry", () => {
 									high: "max",
 								},
 								supportsStrictMode: false,
+								cacheControlFormat: "anthropic",
 							},
 						},
 					],
@@ -363,6 +429,65 @@ describe("ModelRegistry", () => {
 			expect(registry.getError()).toBeUndefined();
 			expect(compat?.reasoningEffortMap).toEqual({ minimal: "default", high: "max" });
 			expect(compat?.supportsStrictMode).toBe(false);
+			expect(compat?.cacheControlFormat).toBe("anthropic");
+		});
+
+		test("compat schema accepts Anthropic eager tool input streaming flag", () => {
+			writeRawModelsJson({
+				demo: {
+					baseUrl: "https://example.com",
+					apiKey: "DEMO_KEY",
+					api: "anthropic-messages",
+					compat: {
+						supportsEagerToolInputStreaming: false,
+					},
+					models: [
+						{
+							id: "demo-model",
+							reasoning: true,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 1000,
+							maxTokens: 100,
+						},
+					],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const compat = registry.find("demo", "demo-model")?.compat as AnthropicMessagesCompat | undefined;
+
+			expect(registry.getError()).toBeUndefined();
+			expect(compat?.supportsEagerToolInputStreaming).toBe(false);
+		});
+
+		test("compat schema accepts long cache retention flag", () => {
+			writeRawModelsJson({
+				demo: {
+					baseUrl: "https://example.com",
+					apiKey: "DEMO_KEY",
+					api: "anthropic-messages",
+					compat: {
+						supportsLongCacheRetention: false,
+					},
+					models: [
+						{
+							id: "demo-model",
+							reasoning: true,
+							input: ["text"],
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+							contextWindow: 1000,
+							maxTokens: 100,
+						},
+					],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const compat = registry.find("demo", "demo-model")?.compat as AnthropicMessagesCompat | undefined;
+
+			expect(registry.getError()).toBeUndefined();
+			expect(compat?.supportsLongCacheRetention).toBe(false);
 		});
 
 		test("model-level baseUrl overrides provider-level baseUrl for custom models", () => {
@@ -716,6 +841,56 @@ describe("ModelRegistry", () => {
 	});
 
 	describe("dynamic provider lifecycle", () => {
+		test("getProviderDisplayName resolves registered, OAuth, built-in, and fallback names", () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+			expect(registry.getProviderDisplayName("openai")).toBe("OpenAI");
+			expect(registry.getProviderDisplayName("github-copilot")).toBe("GitHub Copilot");
+			expect(registry.getProviderDisplayName("unknown-provider")).toBe("unknown-provider");
+
+			registry.registerProvider("named-provider", {
+				name: "Named Provider",
+				baseUrl: "https://provider.test/v1",
+				apiKey: "TEST_KEY",
+				api: "openai-completions",
+				models: [
+					{
+						id: "demo-model",
+						name: "Demo Model",
+						reasoning: false,
+						input: ["text"],
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+						contextWindow: 128000,
+						maxTokens: 4096,
+					},
+				],
+			});
+			expect(registry.getProviderDisplayName("named-provider")).toBe("Named Provider");
+
+			registry.registerProvider("oauth-provider", {
+				baseUrl: "https://provider.test/v1",
+				api: "openai-completions",
+				oauth: {
+					name: "OAuth Provider",
+					login: async () => ({ access: "access", refresh: "refresh", expires: Date.now() + 60_000 }),
+					refreshToken: async (credentials) => credentials,
+					getApiKey: (credentials) => credentials.access,
+				},
+				models: [
+					{
+						id: "demo-model",
+						name: "Demo Model",
+						reasoning: false,
+						input: ["text"],
+						cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+						contextWindow: 128000,
+						maxTokens: 4096,
+					},
+				],
+			});
+			expect(registry.getProviderDisplayName("oauth-provider")).toBe("OAuth Provider");
+		});
+
 		test("failed registerProvider does not persist invalid streamSimple config", () => {
 			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
 
@@ -826,6 +1001,101 @@ describe("ModelRegistry", () => {
 					error instanceof Error && error.message === "custom streamSimple override";
 			}
 			expect(threwCustomOverrideAfterUnregister).toBe(false);
+		});
+
+		describe("dynamic provider override persistence", () => {
+			test("baseUrl-only override keeps built-in provider models after refresh", () => {
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+				registry.registerProvider("anthropic", { baseUrl: "https://proxy.test/anthropic" });
+				registry.refresh();
+
+				const anthropicModels = getModelsForProvider(registry, "anthropic");
+				expect(anthropicModels.length).toBeGreaterThan(1);
+				expect(anthropicModels.every((m) => m.baseUrl === "https://proxy.test/anthropic")).toBe(true);
+			});
+
+			test("models-only override replaces built-in provider models after refresh", () => {
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+				registry.registerProvider("anthropic", {
+					...providerConfig("https://custom.test/anthropic", [{ id: "custom-claude" }], "anthropic-messages"),
+					baseUrl: "https://custom.test/anthropic",
+				});
+				registry.refresh();
+
+				expect(getModelsForProvider(registry, "anthropic").map((m) => m.id)).toEqual(["custom-claude"]);
+				expect(registry.find("anthropic", "custom-claude")?.baseUrl).toBe("https://custom.test/anthropic");
+			});
+
+			test("models plus baseUrl override replaces built-in provider models after refresh", () => {
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+				registry.registerProvider("anthropic", {
+					...providerConfig("https://custom.test/anthropic", [{ id: "custom-claude" }], "anthropic-messages"),
+					baseUrl: "https://custom.test/anthropic",
+				});
+				registry.registerProvider("anthropic", { baseUrl: "https://proxy.test/anthropic" });
+				registry.refresh();
+
+				expect(getModelsForProvider(registry, "anthropic").map((m) => m.id)).toEqual(["custom-claude"]);
+				expect(registry.find("anthropic", "custom-claude")?.baseUrl).toBe("https://proxy.test/anthropic");
+			});
+
+			test("models-only custom provider registration survives refresh", () => {
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+				registry.registerProvider(
+					"custom-provider",
+					providerConfig("https://custom.test/v1", [{ id: "custom-a" }, { id: "custom-b" }], "openai-completions"),
+				);
+				registry.refresh();
+
+				expect(getModelsForProvider(registry, "custom-provider").map((m) => m.id)).toEqual([
+					"custom-a",
+					"custom-b",
+				]);
+			});
+
+			test("baseUrl-only override keeps custom provider models after refresh", () => {
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+				registry.registerProvider(
+					"custom-provider",
+					providerConfig("https://custom.test/v1", [{ id: "custom-a" }, { id: "custom-b" }], "openai-completions"),
+				);
+				registry.registerProvider("custom-provider", { baseUrl: "https://proxy.test/custom" });
+				registry.refresh();
+
+				expect(getModelsForProvider(registry, "custom-provider").map((m) => m.id)).toEqual([
+					"custom-a",
+					"custom-b",
+				]);
+				expect(
+					getModelsForProvider(registry, "custom-provider").every(
+						(m) => m.baseUrl === "https://proxy.test/custom",
+					),
+				).toBe(true);
+			});
+
+			test("headers-only override keeps custom provider models after refresh", async () => {
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+				registry.registerProvider(
+					"custom-provider",
+					providerConfig("https://custom.test/v1", [{ id: "custom-a" }, { id: "custom-b" }], "openai-completions"),
+				);
+				registry.registerProvider("custom-provider", { headers: { "x-proxy": "enabled" } });
+				registry.refresh();
+
+				const models = getModelsForProvider(registry, "custom-provider");
+				expect(models.map((m) => m.id)).toEqual(["custom-a", "custom-b"]);
+				expect(models.every((m) => m.baseUrl === "https://custom.test/v1")).toBe(true);
+				expect(await registry.getApiKeyAndHeaders(models[0])).toMatchObject({
+					ok: true,
+					headers: { "x-proxy": "enabled" },
+				});
+			});
 		});
 	});
 
@@ -1037,6 +1307,64 @@ describe("ModelRegistry", () => {
 
 				const count = parseInt(readFileSync(counterFile, "utf-8").trim(), 10);
 				expect(count).toBe(2);
+			});
+
+			test("provider auth status reports apiKey environment variables from models.json", () => {
+				const envVarName = "TEST_API_KEY_STATUS_TEST_98765";
+				const originalEnv = process.env[envVarName];
+
+				try {
+					process.env[envVarName] = "status-test-key";
+
+					writeRawModelsJson({
+						"custom-provider": providerWithApiKey(envVarName),
+					});
+
+					const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+					expect(registry.getProviderAuthStatus("custom-provider")).toEqual({
+						configured: true,
+						source: "environment",
+						label: envVarName,
+					});
+				} finally {
+					if (originalEnv === undefined) {
+						delete process.env[envVarName];
+					} else {
+						process.env[envVarName] = originalEnv;
+					}
+				}
+			});
+
+			test("provider auth status reports non-env apiKey values from models.json as a config key", () => {
+				writeRawModelsJson({
+					"custom-provider": providerWithApiKey("literal_api_key_value"),
+				});
+
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+				expect(registry.getProviderAuthStatus("custom-provider")).toEqual({
+					configured: true,
+					source: "models_json_key",
+				});
+			});
+
+			test("provider auth status reports command apiKey values from models.json without executing them", () => {
+				const counterFile = join(tempDir, "status-counter");
+				writeFileSync(counterFile, "0");
+				const counterPath = toShPath(counterFile);
+				const command = `!sh -c 'echo 1 > "${counterPath}"; echo key-value'`;
+				writeRawModelsJson({
+					"custom-provider": providerWithApiKey(command),
+				});
+
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+				expect(registry.getProviderAuthStatus("custom-provider")).toEqual({
+					configured: true,
+					source: "models_json_command",
+				});
+				expect(readFileSync(counterFile, "utf-8")).toBe("0");
 			});
 
 			test("environment variables are not cached (changes are picked up)", async () => {

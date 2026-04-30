@@ -431,6 +431,26 @@ describe("AuthStorage", () => {
 		});
 	});
 
+	describe("auth status", () => {
+		test("does not expose stored API keys or OAuth tokens", () => {
+			authStorage = AuthStorage.inMemory({
+				anthropic: { type: "api_key", key: "secret-api-key" },
+				openai: {
+					type: "oauth",
+					access: "secret-access-token",
+					refresh: "secret-refresh-token",
+					expires: Date.now() + 1000,
+				},
+			});
+
+			expect(authStorage.getAuthStatus("anthropic")).toEqual({ configured: true, source: "stored" });
+			expect(authStorage.getAuthStatus("openai")).toEqual({ configured: true, source: "stored" });
+			expect(JSON.stringify(authStorage.getAuthStatus("anthropic"))).not.toContain("secret-api-key");
+			expect(JSON.stringify(authStorage.getAuthStatus("openai"))).not.toContain("secret-access-token");
+			expect(JSON.stringify(authStorage.getAuthStatus("openai"))).not.toContain("secret-refresh-token");
+		});
+	});
+
 	describe("runtime overrides", () => {
 		test("runtime override takes priority over auth.json", async () => {
 			writeAuthJson({

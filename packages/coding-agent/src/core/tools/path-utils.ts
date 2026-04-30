@@ -9,7 +9,7 @@ function normalizeUnicodeSpaces(str: string): string {
 }
 
 function tryMacOSScreenshotPath(filePath: string): string {
-	return filePath.replace(/ (AM|PM)\./g, `${NARROW_NO_BREAK_SPACE}$1.`);
+	return filePath.replace(/ (AM|PM)\./gi, `${NARROW_NO_BREAK_SPACE}$1.`);
 }
 
 function tryNFDVariant(filePath: string): string {

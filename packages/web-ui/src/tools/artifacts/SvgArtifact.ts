@@ -13,11 +13,17 @@ export class SvgArtifact extends ArtifactElement {
 	@property() override filename = "";
 
 	private _content = "";
+	@state() private previewUrl = "";
+
 	override get content(): string {
 		return this._content;
 	}
 	override set content(value: string) {
+		if (this._content === value) {
+			return;
+		}
 		this._content = value;
+		this.updatePreviewUrl();
 		this.requestUpdate();
 	}
 
@@ -29,6 +35,21 @@ export class SvgArtifact extends ArtifactElement {
 
 	private setViewMode(mode: "preview" | "code") {
 		this.viewMode = mode;
+	}
+
+	private revokePreviewUrl() {
+		if (this.previewUrl) {
+			URL.revokeObjectURL(this.previewUrl);
+			this.previewUrl = "";
+		}
+	}
+
+	private updatePreviewUrl() {
+		this.revokePreviewUrl();
+		if (!this._content) {
+			return;
+		}
+		this.previewUrl = URL.createObjectURL(new Blob([this._content], { type: "image/svg+xml" }));
 	}
 
 	public getHeaderButtons() {
@@ -52,14 +73,34 @@ export class SvgArtifact extends ArtifactElement {
 		`;
 	}
 
+	override connectedCallback() {
+		super.connectedCallback();
+		if (this._content && !this.previewUrl) {
+			this.updatePreviewUrl();
+		}
+	}
+
+	override disconnectedCallback() {
+		super.disconnectedCallback();
+		this.revokePreviewUrl();
+	}
+
 	override render() {
 		return html`
 			<div class="h-full flex flex-col">
 				<div class="flex-1 overflow-auto">
 					${
 						this.viewMode === "preview"
-							? html`<div class="h-full flex items-center justify-center">
-								${unsafeHTML(this.content.replace(/<svg(\s|>)/i, (_m, p1) => `<svg class="w-full h-full"${p1}`))}
+							? html`<div class="h-full flex items-center justify-center p-4">
+								${
+									this.previewUrl
+										? html`<img
+												class="max-w-full max-h-full w-full h-full object-contain"
+												src="${this.previewUrl}"
+												alt="${this.filename}"
+											/>`
+										: ""
+								}
 							</div>`
 							: html`<pre class="m-0 p-4 text-xs"><code class="hljs language-xml">${unsafeHTML(
 									hljs.highlight(this.content, { language: "xml", ignoreIllegals: true }).value,

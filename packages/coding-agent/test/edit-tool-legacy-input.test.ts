@@ -88,3 +88,29 @@ describe("edit tool prepareArguments", () => {
 		expect(await readFile(filePath, "utf8")).toBe("after\n");
 	});
 });
+
+describe("edit tool stringified edits", () => {
+	it("parses edits from a JSON string", () => {
+		const definition = createEditToolDefinition(process.cwd());
+		const prepared = definition.prepareArguments!({
+			path: "file.txt",
+			edits: JSON.stringify([{ oldText: "a", newText: "b" }]),
+		});
+		expect(prepared).toEqual({
+			path: "file.txt",
+			edits: [{ oldText: "a", newText: "b" }],
+		});
+	});
+
+	it("leaves edits alone when the string is not valid JSON", () => {
+		const definition = createEditToolDefinition(process.cwd());
+		const prepared = definition.prepareArguments!({
+			path: "file.txt",
+			edits: "not json",
+		});
+		expect(prepared).toEqual({
+			path: "file.txt",
+			edits: "not json",
+		});
+	});
+});

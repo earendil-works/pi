@@ -22,6 +22,7 @@ interface ToolConfig {
 	name: string;
 	repo: string; // GitHub repo (e.g., "sharkdp/fd")
 	binaryName: string; // Name of the binary inside the archive
+	systemBinaryNames?: string[]; // Alternative system command names to try before downloading
 	tagPrefix: string; // Prefix for tags (e.g., "v" for v1.0.0, "" for 1.0.0)
 	getAssetName: (version: string, plat: string, architecture: string) => string | null;
 }
@@ -31,6 +32,7 @@ const TOOLS: Record<string, ToolConfig> = {
 		name: "fd",
 		repo: "sharkdp/fd",
 		binaryName: "fd",
+		systemBinaryNames: ["fd", "fdfind"],
 		tagPrefix: "v",
 		getAssetName: (version, plat, architecture) => {
 			if (plat === "darwin") {
@@ -92,8 +94,11 @@ export function getToolPath(tool: "fd" | "rg"): string | null {
 	}
 
 	// Check system PATH - if found, just return the command name (it's in PATH)
-	if (commandExists(config.binaryName)) {
-		return config.binaryName;
+	const systemBinaryNames = config.systemBinaryNames ?? [config.binaryName];
+	for (const systemBinaryName of systemBinaryNames) {
+		if (commandExists(systemBinaryName)) {
+			return systemBinaryName;
+		}
 	}
 
 	return null;

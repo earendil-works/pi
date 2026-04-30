@@ -100,6 +100,8 @@ export class VirtualTerminal implements Terminal {
 		this.xterm.write(`\x1b]0;${title}\x07`);
 	}
 
+	setProgress(_active: boolean): void {}
+
 	// Test-specific methods not in Terminal interface
 
 	/**
@@ -205,5 +207,12 @@ export class VirtualTerminal implements Terminal {
 			x: buffer.cursorX,
 			y: buffer.cursorY,
 		};
+	}
+
+	/** Wait for TUI's throttled render pipeline to settle. */
+	async waitForRender(): Promise<void> {
+		await new Promise<void>((resolve) => process.nextTick(resolve));
+		await new Promise<void>((resolve) => setTimeout(resolve, 20));
+		await this.flush();
 	}
 }

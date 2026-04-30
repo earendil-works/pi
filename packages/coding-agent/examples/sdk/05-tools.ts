@@ -1,56 +1,44 @@
 /**
  * Tools Configuration
  *
- * Use built-in tool sets or individual tools.
+ * Use tool names to choose which built-in tools are enabled.
  *
- * IMPORTANT: When using a custom `cwd`, you must use the tool factory functions
- * (createCodingTools, createReadOnlyTools, createReadTool, etc.) to ensure
- * tools resolve paths relative to your cwd, not process.cwd().
+ * Tool names are matched against all available tools. If you use a custom `cwd`,
+ * createAgentSession() applies that cwd when it builds the actual built-in tools.
  *
- * For custom tools, see 06-extensions.ts - custom tools are now registered
- * via the extensions system using pi.registerTool().
+ * For custom tools, see 06-extensions.ts - custom tools are registered via the
+ * extensions system using pi.registerTool().
  */
 
-import {
-	bashTool,
-	createAgentSession,
-	createBashTool,
-	createCodingTools,
-	createGrepTool,
-	createReadTool,
-	grepTool,
-	readOnlyTools,
-	readTool,
-	SessionManager,
-} from "@mariozechner/pi-coding-agent";
+import { createAgentSession, SessionManager } from "@mariozechner/pi-coding-agent";
 
-// Read-only mode (no edit/write) - uses process.cwd()
+// Read-only mode (no edit/write)
 await createAgentSession({
-	tools: readOnlyTools,
+	tools: ["read", "grep", "find", "ls"],
 	sessionManager: SessionManager.inMemory(),
 });
 console.log("Read-only session created");
 
-// Custom tool selection - uses process.cwd()
+// Custom tool selection
 await createAgentSession({
-	tools: [readTool, bashTool, grepTool],
+	tools: ["read", "bash", "grep"],
 	sessionManager: SessionManager.inMemory(),
 });
 console.log("Custom tools session created");
 
-// With custom cwd - MUST use factory functions!
+// With custom cwd
 const customCwd = "/path/to/project";
 await createAgentSession({
 	cwd: customCwd,
-	tools: createCodingTools(customCwd), // Tools resolve paths relative to customCwd
-	sessionManager: SessionManager.inMemory(),
+	tools: ["read", "bash", "edit", "write"],
+	sessionManager: SessionManager.inMemory(customCwd),
 });
 console.log("Custom cwd session created");
 
 // Or pick specific tools for custom cwd
 await createAgentSession({
 	cwd: customCwd,
-	tools: [createReadTool(customCwd), createBashTool(customCwd), createGrepTool(customCwd)],
-	sessionManager: SessionManager.inMemory(),
+	tools: ["read", "bash", "grep"],
+	sessionManager: SessionManager.inMemory(customCwd),
 });
 console.log("Specific tools with custom cwd session created");

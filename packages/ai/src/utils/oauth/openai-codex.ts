@@ -21,6 +21,7 @@ import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.js";
 import { generatePKCE } from "./pkce.js";
 import type { OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, OAuthProviderInterface } from "./types.js";
 
+const CALLBACK_HOST = process.env.PI_OAUTH_CALLBACK_HOST || "127.0.0.1";
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize";
 const TOKEN_URL = "https://auth.openai.com/oauth/token";
@@ -248,7 +249,7 @@ function startLocalOAuthServer(state: string): Promise<OAuthServerInfo> {
 
 	return new Promise((resolve) => {
 		server
-			.listen(1455, "127.0.0.1", () => {
+			.listen(1455, CALLBACK_HOST, () => {
 				resolve({
 					close: () => server.close(),
 					cancelWait: () => {
@@ -259,7 +260,7 @@ function startLocalOAuthServer(state: string): Promise<OAuthServerInfo> {
 			})
 			.on("error", (err: NodeJS.ErrnoException) => {
 				console.error(
-					"[openai-codex] Failed to bind http://127.0.0.1:1455 (",
+					`[openai-codex] Failed to bind http://${CALLBACK_HOST}:1455 (`,
 					err.code,
 					") Falling back to manual paste.",
 				);

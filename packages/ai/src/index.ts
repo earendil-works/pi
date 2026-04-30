@@ -1,11 +1,11 @@
-export type { Static, TSchema } from "@sinclair/typebox";
-export { Type } from "@sinclair/typebox";
+export type { Static, TSchema } from "typebox";
+export { Type } from "typebox";
 
 export * from "./api-registry.js";
 export * from "./env-api-keys.js";
 export * from "./models.js";
-export type { BedrockOptions } from "./providers/amazon-bedrock.js";
-export type { AnthropicOptions } from "./providers/anthropic.js";
+export type { BedrockOptions, BedrockThinkingDisplay } from "./providers/amazon-bedrock.js";
+export type { AnthropicEffort, AnthropicOptions, AnthropicThinkingDisplay } from "./providers/anthropic.js";
 export type { AzureOpenAIResponsesOptions } from "./providers/azure-openai-responses.js";
 export * from "./providers/faux.js";
 export type { GoogleOptions } from "./providers/google.js";
