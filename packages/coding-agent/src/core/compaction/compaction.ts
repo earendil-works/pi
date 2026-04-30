@@ -18,6 +18,7 @@ import { buildSessionContext, type CompactionEntry, type SessionEntry } from "..
 import {
 	computeFileLists,
 	createFileOps,
+	extractAndCompressSkillBlocks,
 	extractFileOpsFromMessage,
 	type FileOperations,
 	formatFileOperations,
@@ -453,6 +454,10 @@ export function findCutPoint(
 
 const SUMMARIZATION_PROMPT = `The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the work.
 
+## Skills Invoked
+[List of skill names invoked in this conversation, if any]
+[Note: Full skill content was compressed — reload with /skill:<name> if needed]
+
 Use this EXACT format:
 
 ## Goal
@@ -502,6 +507,10 @@ Use this EXACT format:
 ## Constraints & Preferences
 - [Preserve existing, add new ones discovered]
 
+## Skills Invoked
+[Skills invoked in the new messages, if any]
+[Note: Reload with /skill:<name> if needed]
+
 ## Progress
 ### Done
 - [x] [Include previously done items AND newly completed items]
@@ -545,13 +554,25 @@ export async function generateSummary(
 		basePrompt = `${basePrompt}\n\nAdditional focus: ${customInstructions}`;
 	}
 
+	// Compress skill blocks before serialization to save tokens
+	// Skill blocks (<skill name="...">) can be 500-2500 tokens each
+	// We extract their names and replace full content with a compressed marker
+	const { compressedMessages, skillNames } = extractAndCompressSkillBlocks(currentMessages);
+
 	// Serialize conversation to text so model doesn't try to continue it
 	// Convert to LLM messages first (handles custom types like bashExecution, custom, etc.)
-	const llmMessages = convertToLlm(currentMessages);
-	const conversationText = serializeConversation(llmMessages);
+	const llmMessages = convertToLlm(compressedMessages);
+	const conversationText = serializeConversation(llmMessages, { compressSkillBlocks: false }); // Already compressed
 
 	// Build the prompt with conversation wrapped in tags
 	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
+
+	// Include skill names in the prompt if any skills were invoked
+	if (skillNames.length > 0) {
+		const skillList = skillNames.map((n) => `/skill:${n}`).join(", ");
+		promptText += `<skills-invoked>\n${skillList}\n</skills-invoked>\n\n`;
+	}
+
 	if (previousSummary) {
 		promptText += `<previous-summary>\n${previousSummary}\n</previous-summary>\n\n`;
 	}
@@ -795,9 +816,18 @@ async function generateTurnPrefixSummary(
 	signal?: AbortSignal,
 ): Promise<string> {
 	const maxTokens = Math.floor(0.5 * reserveTokens); // Smaller budget for turn prefix
-	const llmMessages = convertToLlm(messages);
-	const conversationText = serializeConversation(llmMessages);
-	const promptText = `<conversation>\n${conversationText}\n</conversation>\n\n${TURN_PREFIX_SUMMARIZATION_PROMPT}`;
+
+	// Compress skill blocks before serialization
+	const { compressedMessages, skillNames } = extractAndCompressSkillBlocks(messages);
+	const llmMessages = convertToLlm(compressedMessages);
+	const conversationText = serializeConversation(llmMessages, { compressSkillBlocks: false }); // Already compressed
+
+	let promptText = `<conversation>\n${conversationText}\n</conversation>\n\n`;
+	if (skillNames.length > 0) {
+		const skillList = skillNames.map((n) => `/skill:${n}`).join(", ");
+		promptText += `<skills-invoked>\n${skillList}\n</skills-invoked>\n\n`;
+	}
+	promptText += TURN_PREFIX_SUMMARIZATION_PROMPT;
 	const summarizationMessages = [
 		{
 			role: "user" as const,
