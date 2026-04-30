@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { type AutocompleteProvider, CombinedAutocompleteProvider } from "../src/autocomplete.js";
 import { Editor, wordWrapLine } from "../src/components/editor.js";
+import { isKittyProtocolActive, setKittyProtocolActive } from "../src/keys.js";
 import { TUI } from "../src/tui.js";
 import { visibleWidth } from "../src/utils.js";
 import { defaultEditorTheme } from "./test-themes.js";
@@ -11,6 +12,31 @@ import { VirtualTerminal } from "./virtual-terminal.js";
 /** Create a TUI with a virtual terminal for testing */
 function createTestTUI(cols = 80, rows = 24): TUI {
 	return new TUI(new VirtualTerminal(cols, rows));
+}
+
+function withEnvVars(vars: Record<string, string | undefined>, fn: () => void): void {
+	const previous = new Map<string, string | undefined>();
+
+	for (const [name, value] of Object.entries(vars)) {
+		previous.set(name, process.env[name]);
+		if (value === undefined) {
+			delete process.env[name];
+		} else {
+			process.env[name] = value;
+		}
+	}
+
+	try {
+		fn();
+	} finally {
+		for (const [name, value] of previous) {
+			if (value === undefined) {
+				delete process.env[name];
+			} else {
+				process.env[name] = value;
+			}
+		}
+	}
 }
 
 /** Standard applyCompletion that replaces prefix with item.value */
@@ -363,6 +389,28 @@ describe("Editor component", () => {
 			editor.handleInput("\r");
 			// Only the last backslash is removed, newline inserted
 			assert.strictEqual(editor.getText(), "\\\\\n");
+		});
+	});
+
+	describe("Shift+Enter handling", () => {
+		it("inserts a newline for SS3 M in known terminals", () => {
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			let submitted = false;
+			editor.onSubmit = () => {
+				submitted = true;
+			};
+
+			const previousKitty = isKittyProtocolActive();
+			try {
+				withEnvVars({ KONSOLE_VERSION: undefined, TERM_PROGRAM: "WezTerm", WEZTERM_PANE: "4" }, () => {
+					setKittyProtocolActive(false);
+					editor.handleInput("\x1bOM");
+					assert.strictEqual(editor.getText(), "\n");
+					assert.strictEqual(submitted, false);
+				});
+			} finally {
+				setKittyProtocolActive(previousKitty);
+			}
 		});
 	});
 

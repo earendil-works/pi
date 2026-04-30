@@ -719,6 +719,19 @@ function isWindowsTerminalSession(): boolean {
 }
 
 /**
+ * Some terminals reuse SS3 M (\x1bOM) for Shift+Enter without Kitty support.
+ * Detect the ones we know about so Enter can stay Enter everywhere else.
+ */
+function isLegacyShiftEnterTerminal(): boolean {
+	return (
+		Boolean(process.env.KONSOLE_VERSION) ||
+		process.env.TERM_PROGRAM === "Apple_Terminal" ||
+		process.env.TERM_PROGRAM === "WezTerm" ||
+		Boolean(process.env.WEZTERM_PANE)
+	);
+}
+
+/**
  * Raw 0x08 (BS) is ambiguous in legacy terminals.
  *
  * - Windows Terminal uses it for Ctrl+Backspace.
@@ -889,6 +902,10 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 				if (matchesModifyOtherKeys(data, CODEPOINTS.enter, MODIFIERS.shift)) {
 					return true;
 				}
+				// Legacy SS3 M mappings used by some terminals for Shift+Enter.
+				if (data === "\x1bOM" && isLegacyShiftEnterTerminal()) {
+					return true;
+				}
 				// When Kitty protocol is active, legacy sequences are custom terminal mappings
 				// \x1b\r = Kitty's "map shift+enter send_text all \e\r"
 				// \n = Ghostty's "keybind = shift+enter=text:\n"
@@ -920,7 +937,7 @@ export function matchesKey(data: string, keyId: KeyId): boolean {
 				return (
 					data === "\r" ||
 					(!_kittyProtocolActive && data === "\n") ||
-					data === "\x1bOM" || // SS3 M (numpad enter in some terminals)
+					(data === "\x1bOM" && !isLegacyShiftEnterTerminal()) || // SS3 M (numpad enter in some terminals)
 					matchesKittySequence(data, CODEPOINTS.enter, 0) ||
 					matchesKittySequence(data, CODEPOINTS.kpEnter, 0)
 				);
@@ -1266,6 +1283,7 @@ export function parseKey(data: string): string | undefined {
 	if (_kittyProtocolActive) {
 		if (data === "\x1b\r" || data === "\n") return "shift+enter";
 	}
+	if (data === "\x1bOM" && isLegacyShiftEnterTerminal()) return "shift+enter";
 
 	const legacySequenceKeyId = LEGACY_SEQUENCE_KEY_IDS[data];
 	if (legacySequenceKeyId) return legacySequenceKeyId;
@@ -1280,7 +1298,13 @@ export function parseKey(data: string): string | undefined {
 	if (data === "\x1b\x1d") return "ctrl+alt+]";
 	if (data === "\x1b\x1f") return "ctrl+alt+-";
 	if (data === "\t") return "tab";
-	if (data === "\r" || (!_kittyProtocolActive && data === "\n") || data === "\x1bOM") return "enter";
+	if (
+		data === "\r" ||
+		(!_kittyProtocolActive && data === "\n") ||
+		(data === "\x1bOM" && !isLegacyShiftEnterTerminal())
+	) {
+		return "enter";
+	}
 	if (data === "\x00") return "ctrl+space";
 	if (data === " ") return "space";
 	if (data === "\x7f") return "backspace";

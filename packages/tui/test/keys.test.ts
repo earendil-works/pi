@@ -327,6 +327,36 @@ describe("matchesKey", () => {
 			setKittyProtocolActive(false);
 		});
 
+		it("should treat SS3 M as shift+enter in known terminals", () => {
+			withEnvVars({ KONSOLE_VERSION: undefined, TERM_PROGRAM: undefined, WEZTERM_PANE: undefined }, () => {
+				setKittyProtocolActive(false);
+				assert.strictEqual(matchesKey("\x1bOM", "shift+enter"), false);
+				assert.strictEqual(matchesKey("\x1bOM", "enter"), true);
+				assert.strictEqual(parseKey("\x1bOM"), "enter");
+			});
+
+			withEnvVars({ KONSOLE_VERSION: "24.08.0", TERM_PROGRAM: undefined, WEZTERM_PANE: undefined }, () => {
+				setKittyProtocolActive(false);
+				assert.strictEqual(matchesKey("\x1bOM", "shift+enter"), true);
+				assert.strictEqual(matchesKey("\x1bOM", "enter"), false);
+				assert.strictEqual(parseKey("\x1bOM"), "shift+enter");
+			});
+
+			withEnvVars({ TERM_PROGRAM: "Apple_Terminal", KONSOLE_VERSION: undefined, WEZTERM_PANE: undefined }, () => {
+				setKittyProtocolActive(false);
+				assert.strictEqual(matchesKey("\x1bOM", "shift+enter"), true);
+				assert.strictEqual(matchesKey("\x1bOM", "enter"), false);
+				assert.strictEqual(parseKey("\x1bOM"), "shift+enter");
+			});
+
+			withEnvVars({ TERM_PROGRAM: "WezTerm", KONSOLE_VERSION: undefined, WEZTERM_PANE: undefined }, () => {
+				setKittyProtocolActive(false);
+				assert.strictEqual(matchesKey("\x1bOM", "shift+enter"), true);
+				assert.strictEqual(matchesKey("\x1bOM", "enter"), false);
+				assert.strictEqual(parseKey("\x1bOM"), "shift+enter");
+			});
+		});
+
 		it("should parse ctrl+space", () => {
 			setKittyProtocolActive(false);
 			assert.strictEqual(matchesKey("\x00", "ctrl+space"), true);

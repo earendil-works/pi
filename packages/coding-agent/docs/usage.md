@@ -21,7 +21,7 @@ The editor can be replaced temporarily by built-in UI such as `/settings` or by 
 |---------|-----|
 | File reference | Type `@` to fuzzy-search project files |
 | Path completion | Press Tab to complete paths |
-| Multi-line input | Shift+Enter, or Ctrl+Enter on Windows Terminal |
+| Multi-line input | Shift+Enter, or Ctrl+Enter on Windows Terminal; see [Terminal setup](terminal-setup.md) |
 | Images | Paste with Ctrl+V, Alt+V on Windows, or drag into the terminal |
 | Shell command | `!command` runs and sends output to the model |
 | Hidden shell command | `!!command` runs without sending output to the model |

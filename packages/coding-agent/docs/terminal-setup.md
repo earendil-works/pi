@@ -43,6 +43,20 @@ config.enable_kitty_keyboard = true
 return config
 ```
 
+Without `enable_kitty_keyboard = true`, Shift+Enter can be indistinguishable from plain Enter.
+
+## macOS Terminal.app
+
+Terminal.app does not enable Kitty keyboard reporting by default. If Shift+Enter still submits the message, add a key mapping in **Settings → Profiles → Keyboard** that sends `\e[13;2u` for **Shift+Return**.
+
+Pi recognizes that sequence out of the box. If you prefer not to customize Terminal.app, bind `ctrl+j` to `newLine` in `~/.pi/agent/keybindings.json`:
+
+```json
+{
+  "newLine": ["shift+enter", "ctrl+j"]
+}
+```
+
 ## VS Code (Integrated Terminal)
 
 `keybindings.json` locations:

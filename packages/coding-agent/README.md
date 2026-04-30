@@ -154,7 +154,7 @@ The editor can be temporarily replaced by other UI, like built-in `/settings` or
 |---------|-----|
 | File reference | Type `@` to fuzzy-search project files |
 | Path completion | Tab to complete paths |
-| Multi-line | Shift+Enter (or Ctrl+Enter on Windows Terminal) |
+| Multi-line | Shift+Enter (or Ctrl+Enter on Windows Terminal; see docs/terminal-setup.md) |
 | Images | Ctrl+V to paste (Alt+V on Windows), or drag onto terminal |
 | Bash commands | `!command` runs and sends output to LLM, `!!command` runs without sending |
 
