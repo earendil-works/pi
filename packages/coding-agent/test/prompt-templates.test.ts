@@ -8,8 +8,12 @@
  * - Edge cases and integration between parsing and substitution
  */
 
-import { describe, expect, test } from "vitest";
-import { parseCommandArgs, substituteArgs } from "../src/core/prompt-templates.js";
+import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
+import { afterAll, describe, expect, test } from "vitest";
+import { getAgentDir } from "../src/config.js";
+import { loadPromptTemplates, parseCommandArgs, substituteArgs } from "../src/core/prompt-templates.js";
 
 // ============================================================================
 // substituteArgs
@@ -377,5 +381,135 @@ describe("parseCommandArgs + substituteArgs integration", () => {
 		const template1 = "Implement: $@";
 		const template2 = "Implement: $ARGUMENTS";
 		expect(substituteArgs(template1, args)).toBe(substituteArgs(template2, args));
+	});
+});
+
+// ============================================================================
+// loadPromptTemplates - argument-hint frontmatter
+// ============================================================================
+
+describe("loadPromptTemplates - argument-hint", () => {
+	const testDir = join(tmpdir(), `pi-test-prompts-${Date.now()}`);
+
+	function writeTemplate(name: string, content: string) {
+		mkdirSync(testDir, { recursive: true });
+		writeFileSync(join(testDir, `${name}.md`), content);
+	}
+
+	test("should parse required argument-hint from frontmatter", () => {
+		writeTemplate(
+			"pr",
+			`---
+description: Review PRs from URLs with structured issue and code analysis
+argument-hint: "<PR-URL>"
+---
+You are given one or more GitHub PR URLs: $@`,
+		);
+
+		const templates = loadPromptTemplates({
+			cwd: process.cwd(),
+			agentDir: getAgentDir(),
+			promptPaths: [testDir],
+			includeDefaults: false,
+		});
+
+		const pr = templates.find((t) => t.name === "pr");
+		expect(pr).toBeDefined();
+		expect(pr!.argumentHint).toBe("<PR-URL>");
+		expect(pr!.description).toBe("Review PRs from URLs with structured issue and code analysis");
+	});
+
+	test("should parse optional argument-hint from frontmatter", () => {
+		writeTemplate(
+			"wr",
+			`---
+description: Finish the current task end-to-end with changelog, commit, and push
+argument-hint: "[instructions]"
+---
+Wrap it. Additional instructions: $ARGUMENTS`,
+		);
+
+		const templates = loadPromptTemplates({
+			cwd: process.cwd(),
+			agentDir: getAgentDir(),
+			promptPaths: [testDir],
+			includeDefaults: false,
+		});
+
+		const wr = templates.find((t) => t.name === "wr");
+		expect(wr).toBeDefined();
+		expect(wr!.argumentHint).toBe("[instructions]");
+		expect(wr!.description).toBe("Finish the current task end-to-end with changelog, commit, and push");
+	});
+
+	test("should leave argumentHint undefined when not specified", () => {
+		writeTemplate(
+			"cl",
+			`---
+description: Audit changelog entries before release
+---
+Audit changelog entries for all commits since the last release.`,
+		);
+
+		const templates = loadPromptTemplates({
+			cwd: process.cwd(),
+			agentDir: getAgentDir(),
+			promptPaths: [testDir],
+			includeDefaults: false,
+		});
+
+		const cl = templates.find((t) => t.name === "cl");
+		expect(cl).toBeDefined();
+		expect(cl!.argumentHint).toBeUndefined();
+	});
+
+	test("should ignore empty argument-hint", () => {
+		writeTemplate(
+			"empty-hint",
+			`---
+description: A command with empty hint
+argument-hint: ""
+---
+Do something`,
+		);
+
+		const templates = loadPromptTemplates({
+			cwd: process.cwd(),
+			agentDir: getAgentDir(),
+			promptPaths: [testDir],
+			includeDefaults: false,
+		});
+
+		const tmpl = templates.find((t) => t.name === "empty-hint");
+		expect(tmpl).toBeDefined();
+		expect(tmpl!.argumentHint).toBeUndefined();
+	});
+
+	test("should preserve argument-hint with special characters", () => {
+		writeTemplate(
+			"is",
+			`---
+description: Analyze GitHub issues (bugs or feature requests)
+argument-hint: "<issue>"
+---
+Analyze GitHub issue(s): $ARGUMENTS`,
+		);
+
+		const templates = loadPromptTemplates({
+			cwd: process.cwd(),
+			agentDir: getAgentDir(),
+			promptPaths: [testDir],
+			includeDefaults: false,
+		});
+
+		const is = templates.find((t) => t.name === "is");
+		expect(is).toBeDefined();
+		expect(is!.argumentHint).toBe("<issue>");
+	});
+
+	afterAll(() => {
+		try {
+			rmSync(testDir, { recursive: true, force: true });
+		} catch {}
 	});
 });

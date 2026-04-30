@@ -204,9 +204,25 @@ describe("StdinBuffer", () => {
 			assert.deepStrictEqual(emittedSequences, ["a", "\x1b[97;1:3u"]);
 		});
 
-		it("should handle Kitty sequence followed by plain characters", () => {
-			processInput("\x1b[97ua");
-			assert.deepStrictEqual(emittedSequences, ["\x1b[97u", "a"]);
+		it("should drop raw duplicate character after matching Kitty printable sequence", () => {
+			processInput("\x1b[224uà");
+			assert.deepStrictEqual(emittedSequences, ["\x1b[224u"]);
+		});
+
+		it("should drop raw duplicate character after matching Kitty printable sequence across chunks", () => {
+			processInput("\x1b[64u");
+			processInput("@");
+			assert.deepStrictEqual(emittedSequences, ["\x1b[64u"]);
+		});
+
+		it("should keep non-matching plain character after Kitty printable sequence", () => {
+			processInput("\x1b[97ub");
+			assert.deepStrictEqual(emittedSequences, ["\x1b[97u", "b"]);
+		});
+
+		it("should keep raw character after modified Kitty printable sequence", () => {
+			processInput("\x1b[64;3u@");
+			assert.deepStrictEqual(emittedSequences, ["\x1b[64;3u", "@"]);
 		});
 
 		it("should handle rapid typing simulation with Kitty protocol", () => {

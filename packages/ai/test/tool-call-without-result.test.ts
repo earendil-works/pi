@@ -1,4 +1,4 @@
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { getModel } from "../src/models.js";
 import { complete } from "../src/stream.js";
@@ -137,7 +137,7 @@ describe("Tool Call Without Result Tests", () => {
 	});
 
 	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic Provider", () => {
-		const model = getModel("anthropic", "claude-3-5-haiku-20241022");
+		const model = getModel("anthropic", "claude-haiku-4-5");
 
 		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
 			await testToolCallWithoutResult(model);
@@ -168,6 +168,21 @@ describe("Tool Call Without Result Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.CLOUDFLARE_API_KEY || !process.env.CLOUDFLARE_ACCOUNT_ID)(
+		"Cloudflare Workers AI Provider",
+		() => {
+			const model = getModel("cloudflare-workers-ai", "@cf/moonshotai/kimi-k2.6");
+
+			it(
+				"should filter out tool calls without corresponding tool results",
+				{ retry: 3, timeout: 30000 },
+				async () => {
+					await testToolCallWithoutResult(model);
+				},
+			);
+		},
+	);
+
 	describe.skipIf(!process.env.HF_TOKEN)("Hugging Face Provider", () => {
 		const model = getModel("huggingface", "moonshotai/Kimi-K2.5");
 
@@ -177,7 +192,7 @@ describe("Tool Call Without Result Tests", () => {
 	});
 
 	describe.skipIf(!process.env.ZAI_API_KEY)("zAI Provider", () => {
-		const model = getModel("zai", "glm-4.5-flash");
+		const model = getModel("zai", "glm-4.5-air");
 
 		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
 			await testToolCallWithoutResult(model);
@@ -229,7 +244,7 @@ describe("Tool Call Without Result Tests", () => {
 	// =========================================================================
 
 	describe("Anthropic OAuth Provider", () => {
-		const model = getModel("anthropic", "claude-3-5-haiku-20241022");
+		const model = getModel("anthropic", "claude-haiku-4-5");
 
 		it.skipIf(!anthropicOAuthToken)(
 			"should filter out tool calls without corresponding tool results",

@@ -26,6 +26,8 @@
 	"files": {
 		"includes": [
 			"packages/*/src/**/*.ts",
+			"packages/mom/e2e/**/*.ts",
+			"packages/mom/playwright.config.ts",
 			"packages/*/test/**/*.ts",
 			"packages/coding-agent/examples/**/*.ts",
 			"packages/web-ui/src/**/*.ts",

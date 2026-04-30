@@ -1,1 +1,9 @@
 data/
+
+# Playwright (sessions contain secrets — never commit)
+playwright-report/
+test-results/
+blob-report/
+playwright/.cache/
+*.storage.json
+playwright/.auth/

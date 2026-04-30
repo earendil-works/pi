@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import { homedir } from "os";
 import { basename, dirname, isAbsolute, join, resolve, sep } from "path";
-import { CONFIG_DIR_NAME, getPromptsDir } from "../config.js";
+import { CONFIG_DIR_NAME } from "../config.js";
 import { parseFrontmatter } from "../utils/frontmatter.js";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.js";
 
@@ -11,6 +11,7 @@ import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.js";
 export interface PromptTemplate {
 	name: string;
 	description: string;
+	argumentHint?: string;
 	content: string;
 	sourceInfo: SourceInfo;
 	filePath: string; // Absolute path to the template file
@@ -121,6 +122,7 @@ function loadTemplateFromFile(filePath: string, sourceInfo: SourceInfo): PromptT
 		return {
 			name,
 			description,
+			...(frontmatter["argument-hint"] && { argumentHint: frontmatter["argument-hint"] }),
 			content: body,
 			sourceInfo,
 			filePath,
@@ -173,14 +175,14 @@ function loadTemplatesFromDir(dir: string, getSourceInfo: (filePath: string) => 
 }
 
 export interface LoadPromptTemplatesOptions {
-	/** Working directory for project-local templates. Default: process.cwd() */
-	cwd?: string;
-	/** Agent config directory for global templates. Default: from getPromptsDir() */
-	agentDir?: string;
-	/** Explicit prompt template paths (files or directories) */
-	promptPaths?: string[];
-	/** Include default prompt directories. Default: true */
-	includeDefaults?: boolean;
+	/** Working directory for project-local templates. */
+	cwd: string;
+	/** Agent config directory for global templates. */
+	agentDir: string;
+	/** Explicit prompt template paths (files or directories). */
+	promptPaths: string[];
+	/** Include default prompt directories. */
+	includeDefaults: boolean;
 }
 
 function normalizePath(input: string): string {
@@ -202,11 +204,11 @@ function resolvePromptPath(p: string, cwd: string): string {
  * 2. Project: cwd/{CONFIG_DIR_NAME}/prompts/
  * 3. Explicit prompt paths
  */
-export function loadPromptTemplates(options: LoadPromptTemplatesOptions = {}): PromptTemplate[] {
-	const resolvedCwd = options.cwd ?? process.cwd();
-	const resolvedAgentDir = options.agentDir ?? getPromptsDir();
-	const promptPaths = options.promptPaths ?? [];
-	const includeDefaults = options.includeDefaults ?? true;
+export function loadPromptTemplates(options: LoadPromptTemplatesOptions): PromptTemplate[] {
+	const resolvedCwd = options.cwd;
+	const resolvedAgentDir = options.agentDir;
+	const promptPaths = options.promptPaths;
+	const includeDefaults = options.includeDefaults;
 
 	const templates: PromptTemplate[] = [];
 

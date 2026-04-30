@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { executeBash } from "../src/core/bash-executor.js";
-import { createBashTool } from "../src/core/tools/bash.js";
+import { executeBashWithOperations } from "../src/core/bash-executor.js";
+import { createBashTool, createLocalBashOperations } from "../src/core/tools/bash.js";
 
 function toBashSingleQuotedArg(value: string): string {
 	return `'${value.replace(/\\/g, "/").replace(/'/g, `'"'"'`)}'`;
@@ -87,9 +87,15 @@ describe.skipIf(process.platform !== "win32")("Windows child-process close handl
 		const controller = new AbortController();
 
 		try {
-			const result = await withTimeout(executeBash(command, { signal: controller.signal }), 3000, () => {
-				controller.abort();
-			});
+			const result = await withTimeout(
+				executeBashWithOperations(command, process.cwd(), createLocalBashOperations(), {
+					signal: controller.signal,
+				}),
+				3000,
+				() => {
+					controller.abort();
+				},
+			);
 
 			expect(result.output).toContain("child-exiting");
 			expect(result.exitCode).toBe(0);

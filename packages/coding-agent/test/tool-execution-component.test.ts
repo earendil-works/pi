@@ -1,6 +1,6 @@
 import { Text, type TUI } from "@mariozechner/pi-tui";
-import { Type } from "@sinclair/typebox";
 import stripAnsi from "strip-ansi";
+import { Type } from "typebox";
 import { beforeAll, describe, expect, test } from "vitest";
 import type { ToolDefinition } from "../src/core/extensions/types.js";
 import { type BashOperations, createBashToolDefinition } from "../src/core/tools/bash.js";
@@ -40,7 +40,15 @@ describe("ToolExecutionComponent parity", () => {
 			renderResult: () => new Text("custom result", 0, 0),
 		};
 
-		const component = new ToolExecutionComponent("custom_tool", "tool-1", {}, {}, toolDefinition, createFakeTui());
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-1",
+			{},
+			{},
+			toolDefinition,
+			createFakeTui(),
+			process.cwd(),
+		);
 		expect(stripAnsi(component.render(120).join("\n"))).toContain("custom call");
 
 		component.updateResult(
@@ -69,6 +77,7 @@ describe("ToolExecutionComponent parity", () => {
 			{},
 			overrideDefinition,
 			createFakeTui(),
+			process.cwd(),
 		);
 		component.updateResult({ content: [], details: { diff: "+1 after", firstChangedLine: 1 }, isError: false });
 		const rendered = stripAnsi(component.render(120).join("\n"));
@@ -85,6 +94,7 @@ describe("ToolExecutionComponent parity", () => {
 			{},
 			undefined,
 			createFakeTui(),
+			process.cwd(),
 		);
 		const rendered = stripAnsi(component.render(120).join("\n"));
 		expect(rendered).toContain("read");
@@ -119,6 +129,7 @@ describe("ToolExecutionComponent parity", () => {
 			{},
 			createReadToolDefinition(process.cwd()),
 			createFakeTui(),
+			process.cwd(),
 		);
 		component.updateResult({ content: [{ type: "text", text: "hello" }], details: undefined, isError: false }, false);
 		const rendered = stripAnsi(component.render(120).join("\n"));
@@ -138,6 +149,7 @@ describe("ToolExecutionComponent parity", () => {
 			{},
 			overrideDefinition,
 			createFakeTui(),
+			process.cwd(),
 		);
 		component.updateResult({ content: [{ type: "text", text: "hello" }], details: undefined, isError: false }, false);
 		const rendered = stripAnsi(component.render(120).join("\n"));
@@ -158,6 +170,7 @@ describe("ToolExecutionComponent parity", () => {
 			{},
 			overrideDefinition,
 			createFakeTui(),
+			process.cwd(),
 		);
 		component.updateResult({ content: [{ type: "text", text: "hello" }], details: undefined, isError: false }, false);
 		const rendered = stripAnsi(component.render(120).join("\n"));
@@ -179,6 +192,7 @@ describe("ToolExecutionComponent parity", () => {
 				renderResult: () => new Text("override result", 0, 0),
 			},
 			createFakeTui(),
+			process.cwd(),
 		);
 		component.updateResult({ content: [{ type: "text", text: "hello" }], details: undefined, isError: false }, false);
 		const rendered = stripAnsi(component.render(120).join("\n"));
@@ -201,6 +215,7 @@ describe("ToolExecutionComponent parity", () => {
 				renderResult: () => new Text("wrapped override result", 0, 0),
 			},
 			createFakeTui(),
+			process.cwd(),
 		);
 		component.updateResult({ content: [{ type: "text", text: "hello" }], details: undefined, isError: false }, false);
 		const rendered = stripAnsi(component.render(120).join("\n"));
@@ -221,7 +236,15 @@ describe("ToolExecutionComponent parity", () => {
 			},
 		};
 
-		const component = new ToolExecutionComponent("custom_tool", "tool-5", {}, {}, toolDefinition, createFakeTui());
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-5",
+			{},
+			{},
+			toolDefinition,
+			createFakeTui(),
+			process.cwd(),
+		);
 		component.updateResult({ content: [{ type: "text", text: "done" }], details: {}, isError: false }, false);
 		const rendered = stripAnsi(component.render(120).join("\n"));
 		expect(rendered).toContain("custom call shared-token");
@@ -243,6 +266,7 @@ describe("ToolExecutionComponent parity", () => {
 			{},
 			toolDefinition,
 			createFakeTui(),
+			process.cwd(),
 		);
 		component.updateResult({ content: [{ type: "text", text: "done" }], details: {}, isError: false }, false);
 		const rendered = stripAnsi(component.render(120).join("\n"));
@@ -261,6 +285,7 @@ describe("ToolExecutionComponent parity", () => {
 			{},
 			toolDefinition,
 			createFakeTui(),
+			process.cwd(),
 		);
 		component.updateResult({ content: [{ type: "text", text: "done" }], details: {}, isError: false }, false);
 		const rendered = stripAnsi(component.render(120).join("\n"));
@@ -276,6 +301,7 @@ describe("ToolExecutionComponent parity", () => {
 			{},
 			createWriteToolDefinition(process.cwd()),
 			createFakeTui(),
+			process.cwd(),
 		);
 		const rendered = stripAnsi(component.render(120).join("\n"));
 		expect(rendered).toContain("one");
@@ -291,6 +317,7 @@ describe("ToolExecutionComponent parity", () => {
 			{},
 			createReadToolDefinition(process.cwd()),
 			createFakeTui(),
+			process.cwd(),
 		);
 		component.updateResult(
 			{ content: [{ type: "text", text: "one\ntwo\n" }], details: undefined, isError: false },

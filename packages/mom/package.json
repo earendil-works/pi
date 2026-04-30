@@ -1,6 +1,6 @@
 {
 	"name": "@mariozechner/pi-mom",
-	"version": "0.65.1",
+	"version": "0.70.6",
 	"description": "Slack bot that delegates messages to the pi coding agent",
 	"type": "module",
 	"bin": {
@@ -10,27 +10,37 @@
 	"types": "./dist/index.d.ts",
 	"files": [
 		"dist",
-		"CHANGELOG.md"
+		"CHANGELOG.md",
+		"docs"
 	],
 	"scripts": {
 		"clean": "shx rm -rf dist",
 		"build": "tsgo -p tsconfig.build.json && shx chmod +x dist/main.js",
+		"check": "tsgo --noEmit -p tsconfig.build.json && tsgo --noEmit -p tsconfig.e2e.json",
 		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
+		"playwright:install": "playwright install chromium",
+		"playwright:ui": "sh -c 'playwright test --ui --ui-host \"${PLAYWRIGHT_UI_HOST:-localhost}\" --ui-port \"${PLAYWRIGHT_UI_PORT:-9323}\"'",
+		"playwright:open": "playwright open",
+		"playwright:linkedin-login": "sh -c 'mkdir -p playwright/.auth && playwright open --save-storage playwright/.auth/linkedin.storage.json https://www.linkedin.com/login'",
+		"playwright:cdp": "node ./scripts/playwright-cdp-server.mjs",
+		"test:e2e": "playwright test",
 		"prepublishOnly": "npm run clean && npm run build"
 	},
 	"dependencies": {
 		"@anthropic-ai/sandbox-runtime": "^0.0.16",
-		"@mariozechner/pi-agent-core": "^0.65.1",
-		"@mariozechner/pi-ai": "^0.65.1",
-		"@mariozechner/pi-coding-agent": "^0.65.1",
-		"@sinclair/typebox": "^0.34.0",
+		"@mariozechner/pi-agent-core": "^0.70.6",
+		"@mariozechner/pi-ai": "^0.70.6",
+		"@mariozechner/pi-coding-agent": "^0.70.6",
+		"typebox": "^1.1.24",
 		"@slack/socket-mode": "^2.0.0",
 		"@slack/web-api": "^7.0.0",
 		"chalk": "^5.6.2",
 		"croner": "^9.1.0",
-		"diff": "^8.0.2"
+		"diff": "^8.0.2",
+		"openai": "^6.26.0"
 	},
 	"devDependencies": {
+		"@playwright/test": "^1.52.0",
 		"@types/diff": "^7.0.2",
 		"@types/node": "^24.3.0",
 		"typescript": "^5.7.3"

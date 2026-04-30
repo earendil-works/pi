@@ -25,10 +25,10 @@ import {
 	withFileMutationQueue,
 } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
-import { Type } from "@sinclair/typebox";
 import { execSync } from "child_process";
 import { tmpdir } from "os";
 import { join } from "path";
+import { Type } from "typebox";
 
 const RgParams = Type.Object({
 	pattern: Type.String({ description: "Search pattern (regex)" }),

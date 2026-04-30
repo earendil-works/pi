@@ -85,7 +85,7 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `ctrl+1
 | `app.interrupt` | `escape` | Cancel / abort |
 | `app.clear` | `ctrl+c` | Clear editor |
 | `app.exit` | `ctrl+d` | Exit (when editor empty) |
-| `app.suspend` | `ctrl+z` | Suspend to background |
+| `app.suspend` | `ctrl+z` (none on Windows) | Suspend to background |
 | `app.editor.external` | `ctrl+g` | Open in external editor (`$VISUAL` or `$EDITOR`) |
 | `app.clipboard.pasteImage` | `ctrl+v` (`alt+v` on Windows) | Paste image from clipboard |
 
@@ -130,6 +130,26 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `ctrl+1
 | `app.tree.unfoldOrDown` | `ctrl+right`, `alt+right` | Unfold current branch segment, or jump to the next segment start or branch end |
 | `app.tree.editLabel` | `shift+l` | Edit the label on the selected tree node |
 | `app.tree.toggleLabelTimestamp` | `shift+t` | Toggle label timestamps in the tree |
+| `app.tree.filter.default` | `ctrl+d` | Set tree filter to default view |
+| `app.tree.filter.noTools` | `ctrl+t` | Toggle tree filter that hides tool results |
+| `app.tree.filter.userOnly` | `ctrl+u` | Toggle tree filter that shows only user messages |
+| `app.tree.filter.labeledOnly` | `ctrl+l` | Toggle tree filter that shows only labeled entries |
+| `app.tree.filter.all` | `ctrl+a` | Toggle tree filter that shows all entries |
+| `app.tree.filter.cycleForward` | `ctrl+o` | Cycle tree filter forward |
+| `app.tree.filter.cycleBackward` | `shift+ctrl+o` | Cycle tree filter backward |
+
+### Scoped Models Selector
+
+Used inside the scoped models selector (opened via `/scoped-models`).
+
+| Keybinding id | Default | Description |
+|--------|---------|-------------|
+| `app.models.save` | `ctrl+s` | Save current model selection to settings |
+| `app.models.enableAll` | `ctrl+a` | Enable all models (or all matching the current search) |
+| `app.models.clearAll` | `ctrl+x` | Clear all models (or all matching the current search) |
+| `app.models.toggleProvider` | `ctrl+p` | Toggle all models for the current provider |
+| `app.models.reorderUp` | `alt+up` | Move the selected model up in the cycle order |
+| `app.models.reorderDown` | `alt+down` | Move the selected model down in the cycle order |
 
 ## Custom Configuration
 
@@ -144,6 +164,8 @@ Create `~/.pi/agent/keybindings.json`:
 ```
 
 Each action can have a single key or an array of keys. User config overrides defaults.
+
+On native Windows, `app.suspend` has no default binding because Windows terminals do not support Unix job control. If you bind it manually, pi shows a status message instead of suspending. In WSL, the normal Linux `ctrl+z`/`fg` behavior still applies.
 
 ### Emacs Example
 

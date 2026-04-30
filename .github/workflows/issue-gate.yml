@@ -1,0 +1,135 @@
+name: Issue Gate
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  check-contributor:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Check issue author
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const APPROVED_FILE = '.github/APPROVED_CONTRIBUTORS';
+            const VALID_CAPABILITIES = new Set(['issue', 'pr']);
+            const issueAuthor = context.payload.issue.user.login;
+            const defaultBranch = context.payload.repository.default_branch;
+            const issueCreatedDay = new Date(context.payload.issue.created_at).getUTCDay();
+            const isFridayThroughSunday = issueCreatedDay === 5 || issueCreatedDay === 6 || issueCreatedDay === 0;
+
+            if (issueAuthor.endsWith('[bot]') || issueAuthor === 'dependabot[bot]') {
+              console.log(`Skipping bot: ${issueAuthor}`);
+              return;
+            }
+
+            async function getPermission(username) {
+              try {
+                const { data: permissionLevel } = await github.rest.repos.getCollaboratorPermissionLevel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  username,
+                });
+                return permissionLevel.permission;
+              } catch {
+                return null;
+              }
+            }
+
+            async function getTextFile(path) {
+              const { data: fileContent } = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path,
+                ref: defaultBranch,
+              });
+
+              if (!('content' in fileContent) || typeof fileContent.content !== 'string') {
+                throw new Error(`Expected file content for ${path}`);
+              }
+
+              return Buffer.from(fileContent.content, 'base64').toString('utf8');
+            }
+
+            function parseApprovedUsers(content) {
+              const users = new Map();
+
+              for (const rawLine of content.split('\n')) {
+                const line = rawLine.trim();
+                if (!line || line.startsWith('#')) continue;
+
+                const parts = line.split(/\s+/);
+                if (parts.length !== 2) {
+                  console.log(`Skipping malformed line: ${rawLine}`);
+                  continue;
+                }
+
+                const [username, capability] = parts;
+                const normalizedCapability = capability.toLowerCase();
+                if (!VALID_CAPABILITIES.has(normalizedCapability)) {
+                  console.log(`Skipping line with invalid capability: ${rawLine}`);
+                  continue;
+                }
+
+                users.set(username.toLowerCase(), normalizedCapability);
+              }
+
+              return users;
+            }
+
+            const permission = await getPermission(issueAuthor);
+            if (['admin', 'maintain', 'write'].includes(permission)) {
+              console.log(`${issueAuthor} is a collaborator with ${permission} access`);
+              return;
+            }
+
+            const approvedContent = await getTextFile(APPROVED_FILE);
+            const approvedUsers = parseApprovedUsers(approvedContent);
+            const capability = approvedUsers.get(issueAuthor.toLowerCase());
+
+            if (capability === 'issue' || capability === 'pr') {
+              console.log(`${issueAuthor} is approved for ${capability}`);
+              return;
+            }
+
+            const message = [
+              'This issue was auto-closed. All issues from new contributors are auto-closed by default.',
+              ...(isFridayThroughSunday
+                ? [
+                    'Issues submitted Friday through Sunday are not reviewed. If this is urgent, ask on Discord: https://discord.com/invite/3cU7Bz4UPx',
+                  ]
+                : []),
+              '',
+              `Maintainers review auto-closed issues daily and reopen worthwhile ones. Issues that do not meet the quality bar in [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md) will not be reopened or receive a reply.`,
+              '',
+              'If a maintainer replies `lgtmi` on one of your issues, your future issues will stay open. If a maintainer replies `lgtm`, your future issues and PRs will stay open.',
+              '',
+              `See [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md).`,
+            ].join('\n');
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: message,
+            });
+
+            if (isFridayThroughSunday) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                labels: ['closed-because-weekend'],
+              });
+            }
+
+            await github.rest.issues.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              state: 'closed',
+            });

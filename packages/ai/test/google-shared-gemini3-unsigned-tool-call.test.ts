@@ -39,7 +39,7 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 					],
 					api: "google-gemini-cli",
 					provider: "google-antigravity",
-					model: "claude-sonnet-4-20250514",
+					model: "claude-sonnet-4-6",
 					usage: {
 						input: 0,
 						output: 0,
@@ -146,7 +146,7 @@ describe("google-shared convertMessages — Gemini 3 unsigned tool calls", () =>
 					],
 					api: "google-gemini-cli",
 					provider: "google-antigravity",
-					model: "claude-sonnet-4-20250514",
+					model: "claude-sonnet-4-6",
 					usage: {
 						input: 0,
 						output: 0,

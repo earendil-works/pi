@@ -1,9 +1,10 @@
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "fs";
 import ignore from "ignore";
 import { homedir } from "os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "path";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.js";
 import { parseFrontmatter } from "../utils/frontmatter.js";
+import { canonicalizePath } from "../utils/paths.js";
 import type { ResourceDiagnostic } from "./diagnostics.js";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.js";
 
@@ -374,14 +375,14 @@ function escapeXml(str: string): string {
 }
 
 export interface LoadSkillsOptions {
-	/** Working directory for project-local skills. Default: process.cwd() */
-	cwd?: string;
-	/** Agent config directory for global skills. Default: ~/.pi/agent */
-	agentDir?: string;
+	/** Working directory for project-local skills. */
+	cwd: string;
+	/** Agent config directory for global skills. */
+	agentDir: string;
 	/** Explicit skill paths (files or directories) */
-	skillPaths?: string[];
-	/** Include default skills directories. Default: true */
-	includeDefaults?: boolean;
+	skillPaths: string[];
+	/** Include default skills directories. */
+	includeDefaults: boolean;
 }
 
 function normalizePath(input: string): string {
@@ -401,8 +402,8 @@ function resolveSkillPath(p: string, cwd: string): string {
  * Load skills from all configured locations.
  * Returns skills and any validation diagnostics.
  */
-export function loadSkills(options: LoadSkillsOptions = {}): LoadSkillsResult {
-	const { cwd = process.cwd(), agentDir, skillPaths = [], includeDefaults = true } = options;
+export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
+	const { cwd, agentDir, skillPaths, includeDefaults } = options;
 
 	// Resolve agentDir - if not provided, use default from config
 	const resolvedAgentDir = agentDir ?? getAgentDir();
@@ -416,12 +417,7 @@ export function loadSkills(options: LoadSkillsOptions = {}): LoadSkillsResult {
 		allDiagnostics.push(...result.diagnostics);
 		for (const skill of result.skills) {
 			// Resolve symlinks to detect duplicate files
-			let realPath: string;
-			try {
-				realPath = realpathSync(skill.filePath);
-			} catch {
-				realPath = skill.filePath;
-			}
+			const realPath = canonicalizePath(skill.filePath);
 
 			// Skip silently if we've already loaded this exact file (via symlink)
 			if (realPathSet.has(realPath)) {

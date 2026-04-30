@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -156,6 +156,36 @@ Project skill`,
 			expect(theme?.sourcePath).toBe(projectThemePath);
 		});
 
+		it("should load symlinked user and project extensions once", async () => {
+			const sharedExtDir = join(tempDir, "shared-extensions");
+			mkdirSync(sharedExtDir, { recursive: true });
+			writeFileSync(
+				join(sharedExtDir, "shared.ts"),
+				`export default function(pi) {
+	pi.registerCommand("shared", {
+		description: "shared command",
+		handler: async () => {},
+	});
+}`,
+			);
+
+			mkdirSync(agentDir, { recursive: true });
+			mkdirSync(join(cwd, ".pi"), { recursive: true });
+			symlinkSync(sharedExtDir, join(agentDir, "extensions"), "dir");
+			symlinkSync(sharedExtDir, join(cwd, ".pi", "extensions"), "dir");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			const extensionsResult = loader.getExtensions();
+			expect(extensionsResult.extensions).toHaveLength(1);
+			expect(extensionsResult.errors).toEqual([]);
+
+			// mergePaths processes project paths before user paths, so the project
+			// alias is the canonical survivor.
+			expect(extensionsResult.extensions[0].path).toBe(join(cwd, ".pi", "extensions", "shared.ts"));
+		});
+
 		it("should keep both extensions loaded when command names collide", async () => {
 			const userExtDir = join(agentDir, "extensions");
 			const projectExtDir = join(cwd, ".pi", "extensions");
@@ -274,6 +304,17 @@ Content`,
 
 			const { agentsFiles } = loader.getAgentsFiles();
 			expect(agentsFiles.some((f) => f.path.includes("AGENTS.md"))).toBe(true);
+		});
+
+		it("should skip AGENTS.md and CLAUDE.md discovery when noContextFiles is true", async () => {
+			writeFileSync(join(cwd, "AGENTS.md"), "# Project Guidelines\n\nBe helpful.");
+			writeFileSync(join(cwd, "CLAUDE.md"), "# Claude Guidelines\n\nBe helpful.");
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir, noContextFiles: true });
+			await loader.reload();
+
+			const { agentsFiles } = loader.getAgentsFiles();
+			expect(agentsFiles).toEqual([]);
 		});
 
 		it("should discover SYSTEM.md from cwd/.pi", async () => {
@@ -460,7 +501,7 @@ Content`,
 				join(ext1Dir, "index.ts"),
 				`
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 export default function(pi: ExtensionAPI) {
   pi.registerTool({
     name: "duplicate-tool",
@@ -475,7 +516,7 @@ export default function(pi: ExtensionAPI) {
 				join(ext2Dir, "index.ts"),
 				`
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 export default function(pi: ExtensionAPI) {
   pi.registerTool({
     name: "duplicate-tool",
@@ -502,7 +543,7 @@ export default function(pi: ExtensionAPI) {
 				join(globalExtDir, "global.ts"),
 				`
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 export default function(pi: ExtensionAPI) {
   pi.registerTool({
     name: "duplicate-tool",
@@ -521,7 +562,7 @@ export default function(pi: ExtensionAPI) {
 				explicitExtPath,
 				`
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 export default function(pi: ExtensionAPI) {
   pi.registerTool({
     name: "duplicate-tool",

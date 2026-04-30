@@ -2,7 +2,10 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { streamOpenAICodexResponses } from "../src/providers/openai-codex-responses.js";
+import {
+	streamOpenAICodexResponses,
+	streamSimpleOpenAICodexResponses,
+} from "../src/providers/openai-codex-responses.js";
 import type { Context, Model } from "../src/types.js";
 
 const originalFetch = global.fetch;
@@ -303,7 +306,7 @@ describe("openai-codex streaming", () => {
 		expect(result.stopReason).toBe("length");
 	});
 
-	it("sets conversation_id/session_id headers and prompt_cache_key when sessionId is provided", async () => {
+	it("sets session_id/x-client-request-id headers and prompt_cache_key when sessionId is provided", async () => {
 		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
 		process.env.PI_CODING_AGENT_DIR = tempDir;
 
@@ -364,13 +367,12 @@ describe("openai-codex streaming", () => {
 			if (url === "https://chatgpt.com/backend-api/codex/responses") {
 				const headers = init?.headers instanceof Headers ? init.headers : undefined;
 				// Verify sessionId is set in headers
-				expect(headers?.get("conversation_id")).toBe(sessionId);
 				expect(headers?.get("session_id")).toBe(sessionId);
+				expect(headers?.get("x-client-request-id")).toBe(sessionId);
 
 				// Verify sessionId is set in request body as prompt_cache_key
 				const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
 				expect(body?.prompt_cache_key).toBe(sessionId);
-				expect(body?.prompt_cache_retention).toBe("in-memory");
 
 				return new Response(stream, {
 					status: 200,
@@ -404,7 +406,62 @@ describe("openai-codex streaming", () => {
 		await streamResult.result();
 	});
 
-	it.each(["gpt-5.3-codex", "gpt-5.4"])("clamps %s minimal reasoning effort to low", async (modelId) => {
+	it("preserves gpt-5.5 xhigh reasoning effort from simple options", async () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
+		process.env.PI_CODING_AGENT_DIR = tempDir;
+		const token = mockToken();
+		const sse = buildSSEPayload({ status: "completed" });
+		const encoder = new TextEncoder();
+		const stream = new ReadableStream<Uint8Array>({
+			start(controller) {
+				controller.enqueue(encoder.encode(sse));
+				controller.close();
+			},
+		});
+		let requestedReasoning: unknown;
+
+		global.fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+			const url = typeof input === "string" ? input : input.toString();
+			if (url === "https://api.github.com/repos/openai/codex/releases/latest") {
+				return new Response(JSON.stringify({ tag_name: "rust-v0.0.0" }), { status: 200 });
+			}
+			if (url.startsWith("https://raw.githubusercontent.com/openai/codex/")) {
+				return new Response("PROMPT", { status: 200, headers: { etag: '"etag"' } });
+			}
+			if (url === "https://chatgpt.com/backend-api/codex/responses") {
+				const body = typeof init?.body === "string" ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+				requestedReasoning = body?.reasoning;
+				return new Response(stream, {
+					status: 200,
+					headers: { "content-type": "text/event-stream" },
+				});
+			}
+			return new Response("not found", { status: 404 });
+		}) as typeof fetch;
+
+		const model: Model<"openai-codex-responses"> = {
+			id: "gpt-5.5",
+			name: "GPT-5.5",
+			api: "openai-codex-responses",
+			provider: "openai-codex",
+			baseUrl: "https://chatgpt.com/backend-api",
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 400000,
+			maxTokens: 128000,
+		};
+		const context: Context = {
+			systemPrompt: "You are a helpful assistant.",
+			messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+		};
+
+		await streamSimpleOpenAICodexResponses(model, context, { apiKey: token, reasoning: "xhigh" }).result();
+
+		expect(requestedReasoning).toEqual({ effort: "xhigh", summary: "auto" });
+	});
+
+	it.each(["gpt-5.3-codex", "gpt-5.4", "gpt-5.5"])("clamps %s minimal reasoning effort to low", async (modelId) => {
 		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
 		process.env.PI_CODING_AGENT_DIR = tempDir;
 
@@ -500,7 +557,101 @@ describe("openai-codex streaming", () => {
 		await streamResult.result();
 	});
 
-	it("does not set conversation_id/session_id headers when sessionId is not provided", async () => {
+	it.each([
+		["gpt-5.1-codex", "flex", 0.5],
+		["gpt-5.1-codex", "priority", 2],
+		["gpt-5.5", "flex", 0.5],
+		["gpt-5.5", "priority", 2.5],
+	] as const)(
+		"uses the client-sent %s service tier for %s when Codex echoes default",
+		async (modelId, serviceTier, multiplier) => {
+			const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
+			process.env.PI_CODING_AGENT_DIR = tempDir;
+			const token = mockToken();
+			const sse = `${[
+				`data: ${JSON.stringify({
+					type: "response.output_item.added",
+					item: { type: "message", id: "msg_1", role: "assistant", status: "in_progress", content: [] },
+				})}`,
+				`data: ${JSON.stringify({ type: "response.content_part.added", part: { type: "output_text", text: "" } })}`,
+				`data: ${JSON.stringify({ type: "response.output_text.delta", delta: "Hello" })}`,
+				`data: ${JSON.stringify({
+					type: "response.output_item.done",
+					item: {
+						type: "message",
+						id: "msg_1",
+						role: "assistant",
+						status: "completed",
+						content: [{ type: "output_text", text: "Hello" }],
+					},
+				})}`,
+				`data: ${JSON.stringify({
+					type: "response.completed",
+					response: {
+						status: "completed",
+						service_tier: "default",
+						usage: {
+							input_tokens: 1000000,
+							output_tokens: 1000000,
+							total_tokens: 2000000,
+							input_tokens_details: { cached_tokens: 0 },
+						},
+					},
+				})}`,
+			].join("\n\n")}\n\n`;
+
+			const encoder = new TextEncoder();
+			const stream = new ReadableStream<Uint8Array>({
+				start(controller) {
+					controller.enqueue(encoder.encode(sse));
+					controller.close();
+				},
+			});
+
+			global.fetch = vi.fn(async (input: string | URL) => {
+				const url = typeof input === "string" ? input : input.toString();
+				if (url === "https://api.github.com/repos/openai/codex/releases/latest") {
+					return new Response(JSON.stringify({ tag_name: "rust-v0.0.0" }), { status: 200 });
+				}
+				if (url.startsWith("https://raw.githubusercontent.com/openai/codex/")) {
+					return new Response("PROMPT", { status: 200, headers: { etag: '"etag"' } });
+				}
+				if (url === "https://chatgpt.com/backend-api/codex/responses") {
+					return new Response(stream, {
+						status: 200,
+						headers: { "content-type": "text/event-stream" },
+					});
+				}
+				return new Response("not found", { status: 404 });
+			}) as typeof fetch;
+
+			const model: Model<"openai-codex-responses"> = {
+				id: modelId,
+				name: modelId === "gpt-5.5" ? "GPT-5.5" : "GPT-5.1 Codex",
+				api: "openai-codex-responses",
+				provider: "openai-codex",
+				baseUrl: "https://chatgpt.com/backend-api",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 400000,
+				maxTokens: 128000,
+			};
+
+			const context: Context = {
+				systemPrompt: "You are a helpful assistant.",
+				messages: [{ role: "user", content: "Say hello", timestamp: Date.now() }],
+			};
+
+			const result = await streamOpenAICodexResponses(model, context, { apiKey: token, serviceTier }).result();
+
+			expect(result.usage.cost.input).toBe(1 * multiplier);
+			expect(result.usage.cost.output).toBe(2 * multiplier);
+			expect(result.usage.cost.total).toBe(3 * multiplier);
+		},
+	);
+
+	it("does not set session_id/x-client-request-id headers when sessionId is not provided", async () => {
 		const tempDir = mkdtempSync(join(tmpdir(), "pi-codex-stream-"));
 		process.env.PI_CODING_AGENT_DIR = tempDir;
 
@@ -560,8 +711,8 @@ describe("openai-codex streaming", () => {
 			if (url === "https://chatgpt.com/backend-api/codex/responses") {
 				const headers = init?.headers instanceof Headers ? init.headers : undefined;
 				// Verify headers are not set when sessionId is not provided
-				expect(headers?.has("conversation_id")).toBe(false);
 				expect(headers?.has("session_id")).toBe(false);
+				expect(headers?.has("x-client-request-id")).toBe(false);
 
 				return new Response(stream, {
 					status: 200,

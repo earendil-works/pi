@@ -1,13 +1,20 @@
 #!/usr/bin/env node
 
+import { existsSync } from "fs";
+import { homedir } from "os";
 import { join, resolve } from "path";
 import { type AgentRunner, getOrCreateRunner } from "./agent.js";
+import { getMomConfig, initMomConfig } from "./config.js";
+import { getConversationKey, getSessionThreadRoot } from "./conversation.js";
 import { downloadChannel } from "./download.js";
 import { createEventsWatcher } from "./events.js";
 import * as log from "./log.js";
 import { parseSandboxArg, type SandboxConfig, validateSandbox } from "./sandbox.js";
 import { type MomHandler, type SlackBot, SlackBot as SlackBotClass, type SlackEvent } from "./slack.js";
 import { ChannelStore } from "./store.js";
+import { TrackedThreadsManager } from "./tracked-threads.js";
+import { isProbablyAudioFile, transcribeAudio, updateLoggedMessageText } from "./voice.js";
+import { loadWorkspaceDotKeys } from "./workspace-secrets.js";
 
 // ============================================================================
 // Config
@@ -71,6 +78,8 @@ if (!parsedArgs.workingDir) {
 
 const { workingDir, sandbox } = { workingDir: parsedArgs.workingDir, sandbox: parsedArgs.sandbox };
 
+loadWorkspaceDotKeys(workingDir);
+
 if (!MOM_SLACK_APP_TOKEN || !MOM_SLACK_BOT_TOKEN) {
 	console.error("Missing env: MOM_SLACK_APP_TOKEN, MOM_SLACK_BOT_TOKEN");
 	process.exit(1);
@@ -78,11 +87,16 @@ if (!MOM_SLACK_APP_TOKEN || !MOM_SLACK_BOT_TOKEN) {
 
 await validateSandbox(sandbox);
 
+initMomConfig();
+const momConfig = getMomConfig();
+const trackedThreads = momConfig.trackThreads ? new TrackedThreadsManager(workingDir) : null;
+trackedThreads?.load();
+
 // ============================================================================
-// State (per channel)
+// State (per Slack conversation = channel + thread root)
 // ============================================================================
 
-interface ChannelState {
+interface ConversationState {
 	running: boolean;
 	runner: AgentRunner;
 	store: ChannelStore;
@@ -90,19 +104,33 @@ interface ChannelState {
 	stopMessageTs?: string;
 }
 
-const channelStates = new Map<string, ChannelState>();
+const conversationStates = new Map<string, ConversationState>();
+const channelStores = new Map<string, ChannelStore>();
 
-function getState(channelId: string): ChannelState {
-	let state = channelStates.get(channelId);
+function getChannelStore(channelId: string): ChannelStore {
+	let store = channelStores.get(channelId);
+	if (!store) {
+		store = new ChannelStore({ workingDir, botToken: MOM_SLACK_BOT_TOKEN! });
+		channelStores.set(channelId, store);
+	}
+	return store;
+}
+
+function getConversationState(
+	conversationKey: string,
+	channelId: string,
+	sessionThreadRoot: string,
+): ConversationState {
+	let state = conversationStates.get(conversationKey);
 	if (!state) {
 		const channelDir = join(workingDir, channelId);
 		state = {
 			running: false,
-			runner: getOrCreateRunner(sandbox, channelId, channelDir),
-			store: new ChannelStore({ workingDir, botToken: MOM_SLACK_BOT_TOKEN! }),
+			runner: getOrCreateRunner(sandbox, channelId, channelDir, sessionThreadRoot),
+			store: getChannelStore(channelId),
 			stopRequested: false,
 		};
-		channelStates.set(channelId, state);
+		conversationStates.set(conversationKey, state);
 	}
 	return state;
 }
@@ -111,18 +139,34 @@ function getState(channelId: string): ChannelState {
 // Create SlackContext adapter
 // ============================================================================
 
-function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelState, isEvent?: boolean) {
+function createSlackContext(
+	event: SlackEvent,
+	slack: SlackBot,
+	state: ConversationState,
+	threadRootForLog: string,
+	isEvent?: boolean,
+) {
 	let messageTs: string | null = null;
 	const threadMessageTs: string[] = [];
 	let accumulatedText = "";
 	let isWorking = true;
 	const workingIndicator = " ...";
+	let lastDisplayText = "";
 	let updatePromise = Promise.resolve();
 
 	const user = slack.getUser(event.user);
+	const cfg = getMomConfig();
+	const threadRoot = !isEvent && cfg.slackReplyInUserThread ? (event.threadTs ?? event.ts) : null;
 
 	// Extract event filename for status message
 	const eventFilename = isEvent ? event.text.match(/^\[EVENT:([^:]+):/)?.[1] : undefined;
+
+	async function postMainOrThread(text: string): Promise<string> {
+		if (threadRoot) {
+			return slack.postInThread(event.channel, threadRoot, text);
+		}
+		return slack.postMessage(event.channel, text);
+	}
 
 	return {
 		message: {
@@ -154,14 +198,19 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 
 					const displayText = isWorking ? accumulatedText + workingIndicator : accumulatedText;
 
+					if (displayText === lastDisplayText) {
+						return;
+					}
+
 					if (messageTs) {
 						await slack.updateMessage(event.channel, messageTs, displayText);
 					} else {
-						messageTs = await slack.postMessage(event.channel, displayText);
+						messageTs = await postMainOrThread(displayText);
 					}
+					lastDisplayText = displayText;
 
 					if (shouldLog && messageTs) {
-						slack.logBotResponse(event.channel, text, messageTs);
+						slack.logBotResponse(event.channel, text, messageTs, threadRootForLog);
 					}
 				} catch (err) {
 					log.logWarning("Slack respond error", err instanceof Error ? err.message : String(err));
@@ -184,11 +233,16 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 
 					const displayText = isWorking ? accumulatedText + workingIndicator : accumulatedText;
 
+					if (displayText === lastDisplayText) {
+						return;
+					}
+
 					if (messageTs) {
 						await slack.updateMessage(event.channel, messageTs, displayText);
 					} else {
-						messageTs = await slack.postMessage(event.channel, displayText);
+						messageTs = await postMainOrThread(displayText);
 					}
+					lastDisplayText = displayText;
 				} catch (err) {
 					log.logWarning("Slack replaceMessage error", err instanceof Error ? err.message : String(err));
 				}
@@ -223,7 +277,9 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 					try {
 						if (!messageTs) {
 							accumulatedText = eventFilename ? `_Starting event: ${eventFilename}_` : "_Thinking_";
-							messageTs = await slack.postMessage(event.channel, accumulatedText + workingIndicator);
+							const displayText = accumulatedText + workingIndicator;
+							messageTs = await postMainOrThread(displayText);
+							lastDisplayText = displayText;
 						}
 					} catch (err) {
 						log.logWarning("Slack setTyping error", err instanceof Error ? err.message : String(err));
@@ -243,7 +299,10 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 					isWorking = working;
 					if (messageTs) {
 						const displayText = isWorking ? accumulatedText + workingIndicator : accumulatedText;
-						await slack.updateMessage(event.channel, messageTs, displayText);
+						if (displayText !== lastDisplayText) {
+							await slack.updateMessage(event.channel, messageTs, displayText);
+							lastDisplayText = displayText;
+						}
 					}
 				} catch (err) {
 					log.logWarning("Slack setWorking error", err instanceof Error ? err.message : String(err));
@@ -267,6 +326,7 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 				if (messageTs) {
 					await slack.deleteMessage(event.channel, messageTs);
 					messageTs = null;
+					lastDisplayText = "";
 				}
 			});
 			await updatePromise;
@@ -274,30 +334,95 @@ function createSlackContext(event: SlackEvent, slack: SlackBot, state: ChannelSt
 	};
 }
 
+async function maybeTranscribeVoiceAttachments(event: SlackEvent, channelDir: string): Promise<void> {
+	const files = event.files;
+	if (!files?.length) return;
+
+	const audioFiles = files.filter(isProbablyAudioFile);
+	if (audioFiles.length === 0) return;
+
+	log.logInfo(`[${event.channel}] Found ${audioFiles.length} audio file(s), transcribing...`);
+	const transcriptions: string[] = [];
+
+	for (const audioFile of audioFiles) {
+		const tsMs = Math.floor(parseFloat(event.ts) * 1000);
+		const sanitized = (audioFile.name || audioFile.title || "audio").replace(/[^a-zA-Z0-9._-]/g, "_");
+		const filename = `${tsMs}_${sanitized}`;
+		const audioPath = join(channelDir, "attachments", filename);
+
+		let attempts = 0;
+		while (!existsSync(audioPath) && attempts < 20) {
+			await new Promise((r) => setTimeout(r, 500));
+			attempts++;
+		}
+
+		if (existsSync(audioPath)) {
+			const t = await transcribeAudio(audioPath, audioFile.name || audioFile.title || "audio");
+			transcriptions.push(t);
+		} else {
+			transcriptions.push(`[Voice message: ${audioFile.name || "audio"}] (file not downloaded yet)`);
+		}
+	}
+
+	const transcriptionText = transcriptions.join("\n\n");
+	const newText = event.text ? `${event.text}\n\n${transcriptionText}` : transcriptionText;
+	updateLoggedMessageText(channelDir, event.ts, newText);
+	event.text = newText;
+}
+
 // ============================================================================
 // Handler
 // ============================================================================
 
 const handler: MomHandler = {
-	isRunning(channelId: string): boolean {
-		const state = channelStates.get(channelId);
+	isRunning(conversationKey: string): boolean {
+		const state = conversationStates.get(conversationKey);
 		return state?.running ?? false;
 	},
 
-	async handleStop(channelId: string, slack: SlackBot): Promise<void> {
-		const state = channelStates.get(channelId);
+	countRunningConversationsInChannel(channelId: string): number {
+		const prefix = `${channelId}:`;
+		let n = 0;
+		for (const [key, state] of conversationStates) {
+			if (key.startsWith(prefix) && state.running) {
+				n++;
+			}
+		}
+		return n;
+	},
+
+	isTrackedThread(channelId: string, threadTs: string): boolean {
+		return trackedThreads?.isTracked(channelId, threadTs) ?? false;
+	},
+
+	async handleStop(
+		conversationKey: string,
+		slack: SlackBot,
+		replyTarget: { channel: string; threadTs?: string },
+	): Promise<void> {
+		const state = conversationStates.get(conversationKey);
 		if (state?.running) {
 			state.stopRequested = true;
 			state.runner.abort();
-			const ts = await slack.postMessage(channelId, "_Stopping..._");
-			state.stopMessageTs = ts; // Save for updating later
+			const ts = replyTarget.threadTs
+				? await slack.postInThread(replyTarget.channel, replyTarget.threadTs, "_Stopping..._")
+				: await slack.postMessage(replyTarget.channel, "_Stopping..._");
+			state.stopMessageTs = ts;
 		} else {
-			await slack.postMessage(channelId, "_Nothing running_");
+			if (replyTarget.threadTs) {
+				await slack.postInThread(replyTarget.channel, replyTarget.threadTs, "_Nothing running_");
+			} else {
+				await slack.postMessage(replyTarget.channel, "_Nothing running_");
+			}
 		}
 	},
 
 	async handleEvent(event: SlackEvent, slack: SlackBot, isEvent?: boolean): Promise<void> {
-		const state = getState(event.channel);
+		const sessionThreadRoot = getSessionThreadRoot(event);
+		const conversationKey = getConversationKey(event.channel, sessionThreadRoot);
+		const state = getConversationState(conversationKey, event.channel, sessionThreadRoot);
+		const cfg = getMomConfig();
+		const channelDir = join(workingDir, event.channel);
 
 		// Start run
 		state.running = true;
@@ -305,27 +430,106 @@ const handler: MomHandler = {
 
 		log.logInfo(`[${event.channel}] Starting run: ${event.text.substring(0, 50)}`);
 
+		let threadStatusTs: string | null = null;
+		let stopped = false;
+		let slackCtx: ReturnType<typeof createSlackContext> | null = null;
+		let runError: string | undefined;
+		let runResult: Awaited<ReturnType<AgentRunner["run"]>> | undefined;
+
 		try {
+			if (!isEvent && cfg.voiceTranscription) {
+				await maybeTranscribeVoiceAttachments(event, channelDir);
+			}
+
+			if (!isEvent && trackedThreads) {
+				const root = event.threadTs ?? event.ts;
+				trackedThreads.track(event.channel, root);
+			}
+
+			if (!isEvent && cfg.slackStatusReactions) {
+				await slack.addReaction(event.channel, event.ts, "hourglass_flowing_sand");
+			}
+
+			if (!isEvent && cfg.slackStatusThreadMessage) {
+				try {
+					const parentTs = event.threadTs ?? event.ts;
+					threadStatusTs = await slack.postInThread(event.channel, parentTs, "_On it! :hourglass_flowing_sand:_");
+				} catch (err) {
+					log.logWarning("Failed to post thread status", err instanceof Error ? err.message : String(err));
+				}
+			}
+
 			// Create context adapter
-			const ctx = createSlackContext(event, slack, state, isEvent);
+			slackCtx = createSlackContext(event, slack, state, sessionThreadRoot, isEvent);
 
 			// Run the agent
-			await ctx.setTyping(true);
-			await ctx.setWorking(true);
-			const result = await state.runner.run(ctx as any, state.store);
-			await ctx.setWorking(false);
+			await slackCtx.setTyping(true);
+			await slackCtx.setWorking(true);
+			runResult = await state.runner.run(slackCtx as any, state.store);
+			await slackCtx.setWorking(false);
 
-			if (result.stopReason === "aborted" && state.stopRequested) {
+			if (runResult.stopReason === "aborted" && state.stopRequested) {
+				stopped = true;
 				if (state.stopMessageTs) {
 					await slack.updateMessage(event.channel, state.stopMessageTs, "_Stopped_");
 					state.stopMessageTs = undefined;
 				} else {
-					await slack.postMessage(event.channel, "_Stopped_");
+					const parentTs = event.threadTs;
+					if (parentTs) {
+						await slack.postInThread(event.channel, parentTs, "_Stopped_");
+					} else {
+						await slack.postMessage(event.channel, "_Stopped_");
+					}
 				}
 			}
 		} catch (err) {
-			log.logWarning(`[${event.channel}] Run error`, err instanceof Error ? err.message : String(err));
+			runError = err instanceof Error ? err.message : String(err);
+			log.logWarning(`[${event.channel}] Run error`, runError);
+			if (slackCtx) {
+				try {
+					await slackCtx.setWorking(false);
+					const safe = runError.replace(/```/g, "'''");
+					const mainSnippet = safe.length > 1200 ? `${safe.slice(0, 1180)}…` : safe;
+					await slackCtx.replaceMessage(`_Run failed:_\n\`\`\`\n${mainSnippet}\n\`\`\``);
+					const threadSnippet = safe.length > 12000 ? `${safe.slice(0, 11800)}…` : safe;
+					await slackCtx.respondInThread(`_Full error:_\n\`\`\`\n${threadSnippet}\n\`\`\``);
+				} catch (postErr) {
+					log.logWarning(
+						"Failed to post run error to Slack",
+						postErr instanceof Error ? postErr.message : String(postErr),
+					);
+				}
+			}
 		} finally {
+			if (!isEvent) {
+				if (cfg.slackStatusReactions) {
+					await slack.removeReaction(event.channel, event.ts, "hourglass_flowing_sand");
+					const failed = !!runError;
+					if (stopped || failed) {
+						await slack.addReaction(event.channel, event.ts, "x");
+					} else if (runResult?.usedAnyTool) {
+						await slack.addReaction(event.channel, event.ts, "white_check_mark");
+					} else {
+						await slack.addReaction(event.channel, event.ts, "information_source");
+					}
+				}
+				if (threadStatusTs && cfg.slackStatusThreadMessage) {
+					try {
+						const line = stopped
+							? "_Stopped :x:_"
+							: runError
+								? "_Failed :x:_"
+								: runResult?.usedAnyTool
+									? "_Done :white_check_mark:_"
+									: cfg.maxAutoContinueRounds > 0
+										? `_No tools after ${cfg.maxAutoContinueRounds} auto-continue nudge(s). If bash should find pipenv, ensure Mom’s PATH includes ${homedir()}/.local/bin (e.g. systemd Environment=PATH); otherwise the model may be declining tools._`
+										: "_Finished (no tools ran — reply may be plan-only; ask again or set MOM_MAX_AUTO_CONTINUE)._";
+						await slack.updateMessage(event.channel, threadStatusTs, line);
+					} catch (err) {
+						log.logWarning("Failed to update thread status", err instanceof Error ? err.message : String(err));
+					}
+				}
+			}
 			state.running = false;
 		}
 	},

@@ -6,7 +6,7 @@
 
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Editor, type EditorTheme, Key, matchesKey, Text, truncateToWidth } from "@mariozechner/pi-tui";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 interface OptionWithDesc {
 	label: string;

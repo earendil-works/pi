@@ -100,8 +100,8 @@ function logResult(result: OverflowResult) {
 
 describe("Context overflow error handling", () => {
 	describe.skipIf(!process.env.ANTHROPIC_API_KEY)("Anthropic (API Key)", () => {
-		it("claude-3-5-haiku - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("anthropic", "claude-3-5-haiku-20241022");
+		it("claude-haiku-4-5 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("anthropic", "claude-haiku-4-5");
 			const result = await testContextOverflow(model, process.env.ANTHROPIC_API_KEY!);
 			logResult(result);
 
@@ -113,7 +113,7 @@ describe("Context overflow error handling", () => {
 
 	describe.skipIf(!process.env.ANTHROPIC_OAUTH_TOKEN)("Anthropic (OAuth)", () => {
 		it("claude-sonnet-4 - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("anthropic", "claude-sonnet-4-20250514");
+			const model = getModel("anthropic", "claude-sonnet-4-6");
 			const result = await testContextOverflow(model, process.env.ANTHROPIC_OAUTH_TOKEN!);
 			logResult(result);
 
@@ -389,8 +389,8 @@ describe("Context overflow error handling", () => {
 	// =============================================================================
 
 	describe.skipIf(!process.env.ZAI_API_KEY)("z.ai", () => {
-		it("glm-4.5-flash - should detect overflow via isContextOverflow when z.ai reports it", async () => {
-			const model = getModel("zai", "glm-4.5-flash");
+		it("glm-4.5-air - should detect overflow via isContextOverflow when z.ai reports it", async () => {
+			const model = getModel("zai", "glm-4.5-air");
 			const result = await testContextOverflow(model, process.env.ZAI_API_KEY!);
 			logResult(result);
 
@@ -527,8 +527,8 @@ describe("Context overflow error handling", () => {
 		}, 120000);
 
 		// Meta/Llama backend
-		it("meta-llama/llama-4-maverick via OpenRouter - should detect overflow via isContextOverflow", async () => {
-			const model = getModel("openrouter", "meta-llama/llama-4-maverick");
+		it("meta-llama/llama-4-scout via OpenRouter - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("openrouter", "meta-llama/llama-4-scout");
 			const result = await testContextOverflow(model, process.env.OPENROUTER_API_KEY!);
 			logResult(result);
 

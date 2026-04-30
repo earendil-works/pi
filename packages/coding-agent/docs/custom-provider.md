@@ -41,6 +41,7 @@ export default function (pi: ExtensionAPI) {
 
   // Register new provider with models
   pi.registerProvider("my-provider", {
+    name: "My Provider",
     baseUrl: "https://api.example.com",
     apiKey: "MY_API_KEY",
     api: "openai-completions",
@@ -58,6 +59,8 @@ export default function (pi: ExtensionAPI) {
   });
 }
 ```
+
+The extension factory can also be `async`. For dynamic model discovery, fetch and register models in the factory instead of `session_start`. pi waits for the factory before startup continues, so the provider is available during interactive startup and to `pi --list-models`.
 
 ## Override Existing Provider
 
@@ -90,6 +93,41 @@ When only `baseUrl` and/or `headers` are provided (no `models`), all existing mo
 ## Register New Provider
 
 To add a completely new provider, specify `models` along with the required configuration.
+
+If the model list comes from a remote endpoint, use an async extension factory:
+
+```typescript
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+
+export default async function (pi: ExtensionAPI) {
+  const response = await fetch("http://localhost:1234/v1/models");
+  const payload = (await response.json()) as {
+    data: Array<{
+      id: string;
+      name?: string;
+      context_window?: number;
+      max_tokens?: number;
+    }>;
+  };
+
+  pi.registerProvider("local-openai", {
+    baseUrl: "http://localhost:1234/v1",
+    apiKey: "LOCAL_OPENAI_API_KEY",
+    api: "openai-completions",
+    models: payload.data.map((model) => ({
+      id: model.id,
+      name: model.name ?? model.id,
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: model.context_window ?? 128000,
+      maxTokens: model.max_tokens ?? 4096,
+    })),
+  });
+}
+```
+
+This registers the fetched models before startup finishes.
 
 ```typescript
 pi.registerProvider("my-llm", {
@@ -183,12 +221,14 @@ models: [{
     },
       maxTokensField: "max_tokens",      // instead of "max_completion_tokens"
       requiresToolResultName: true,      // tool results need name field
-      thinkingFormat: "qwen"            // top-level enable_thinking: true
+      thinkingFormat: "qwen",           // top-level enable_thinking: true
+      cacheControlFormat: "anthropic"   // Anthropic-style cache_control markers
     }
   }]
 ```
 
 Use `qwen-chat-template` instead for local Qwen-compatible servers that read `chat_template_kwargs.enable_thinking`.
+Use `cacheControlFormat: "anthropic"` for OpenAI-compatible providers that expose Anthropic-style prompt caching via `cache_control` on the system prompt, last tool definition, and last user/assistant text content.
 
 > Migration note: Mistral moved from `openai-completions` to `mistral-conversations`.
 > Use `mistral-conversations` for native Mistral models.
@@ -505,6 +545,9 @@ Run tests with your provider/model pairs to verify compatibility.
 
 ```typescript
 interface ProviderConfig {
+  /** Display name for the provider in UI such as /login. */
+  name?: string;
+
   /** API endpoint URL. Required when defining models. */
   baseUrl?: string;
 
@@ -588,9 +631,12 @@ interface ProviderModelConfig {
     requiresToolResultName?: boolean;
     requiresAssistantAfterToolResult?: boolean;
     requiresThinkingAsText?: boolean;
-    thinkingFormat?: "openai" | "zai" | "qwen" | "qwen-chat-template";
+    requiresReasoningContentOnAssistantMessages?: boolean;
+    thinkingFormat?: "openai" | "deepseek" | "zai" | "qwen" | "qwen-chat-template";
+    cacheControlFormat?: "anthropic";
   };
 }
 ```
 
-`qwen` is for DashScope-style top-level `enable_thinking`. Use `qwen-chat-template` for local Qwen-compatible servers that read `chat_template_kwargs.enable_thinking`.
+`deepseek` sends `thinking: { type: "enabled" | "disabled" }` and `reasoning_effort` when enabled. `qwen` is for DashScope-style top-level `enable_thinking`. Use `qwen-chat-template` for local Qwen-compatible servers that read `chat_template_kwargs.enable_thinking`.
+`cacheControlFormat: "anthropic"` applies Anthropic-style `cache_control` markers to the system prompt, last tool definition, and last user/assistant text content.

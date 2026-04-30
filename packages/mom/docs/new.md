@@ -269,7 +269,7 @@ Messages stored as received from platform:
 Same format as current (coding-agent compatible):
 
 ```jsonl
-{"type":"session","id":"uuid","timestamp":"...","provider":"anthropic","modelId":"claude-sonnet-4-5"}
+{"type":"session","id":"uuid","timestamp":"...","provider":"anthropic","modelId":"claude-sonnet-4-6"}
 {"type":"message","timestamp":"...","message":{"role":"user","content":"[mario]: what's the weather?"}}
 {"type":"message","timestamp":"...","message":{"role":"assistant","content":[{"type":"text","text":"The weather is sunny!"}]}}
 ```
@@ -646,7 +646,7 @@ Mom runs bash commands inside a sandbox (Docker container), but sometimes you ne
 ```typescript
 // data/tools/gmail/index.ts
 import type { MomCustomTool, ToolAPI } from "@mariozechner/pi-mom";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { StringEnum } from "@mariozechner/pi-ai";
 
 const tool: MomCustomTool = {
@@ -691,7 +691,7 @@ export default tool;
 ### MomCustomTool Type
 
 ```typescript
-import type { TSchema, Static } from "@sinclair/typebox";
+import type { TSchema, Static } from "typebox";
 
 export interface MomToolResult<TDetails = any> {
   content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;
@@ -798,7 +798,7 @@ async function loadCustomTools(dataDir: string): Promise<LoadedTool[]> {
 Mom has a single `invoke_tool` tool that dispatches to custom tools:
 
 ```typescript
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 
 function createInvokeToolTool(loadedTools: LoadedTool[]): AgentTool {
   const toolMap = new Map(loadedTools.map(t => [t.tool.name, t.tool]));
@@ -889,7 +889,7 @@ function schemaToSimpleJson(schema: TSchema): object {
 ```typescript
 // data/tools/gmail/index.ts
 import type { MomCustomTool, ToolAPI } from "@mariozechner/pi-mom";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { StringEnum } from "@mariozechner/pi-ai";
 import Imap from "imap";
 import nodemailer from "nodemailer";

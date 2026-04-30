@@ -26,6 +26,8 @@ interface LogMessage {
 	userName?: string;
 	text?: string;
 	isBot?: boolean;
+	/** Slack thread root (thread_ts or message ts); omitted on legacy lines */
+	threadRoot?: string;
 }
 
 /**
@@ -37,12 +39,14 @@ interface LogMessage {
  * @param sessionManager - The SessionManager to sync to
  * @param channelDir - Path to channel directory containing log.jsonl
  * @param excludeSlackTs - Slack timestamp of current message (will be added via prompt(), not sync)
+ * @param threadRootFilter - Only sync user lines whose log threadRoot matches; legacy lines without threadRoot are skipped
  * @returns Number of messages synced
  */
 export function syncLogToSessionManager(
 	sessionManager: SessionManager,
 	channelDir: string,
 	excludeSlackTs?: string,
+	threadRootFilter?: string,
 ): number {
 	const logFile = join(channelDir, "log.jsonl");
 
@@ -108,6 +112,16 @@ export function syncLogToSessionManager(
 
 			// Skip bot messages - added through agent flow
 			if (logMsg.isBot) continue;
+
+			// Per-conversation sessions: only pull log lines tagged for this Slack thread; skip legacy untagged rows
+			if (threadRootFilter !== undefined) {
+				if (logMsg.threadRoot === undefined) {
+					continue;
+				}
+				if (logMsg.threadRoot !== threadRootFilter) {
+					continue;
+				}
+			}
 
 			// Build the message text as it would appear in context
 			const messageText = `[${logMsg.userName || logMsg.user || "unknown"}]: ${logMsg.text || ""}`;

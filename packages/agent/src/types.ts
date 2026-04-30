@@ -10,7 +10,7 @@ import type {
 	Tool,
 	ToolResultMessage,
 } from "@mariozechner/pi-ai";
-import type { Static, TSchema } from "@sinclair/typebox";
+import type { Static, TSchema } from "typebox";
 
 /**
  * Stream function used by the agent loop.
@@ -30,7 +30,8 @@ export type StreamFn = (
  *
  * - "sequential": each tool call is prepared, executed, and finalized before the next one starts.
  * - "parallel": tool calls are prepared sequentially, then allowed tools execute concurrently.
- *   Final tool results are still emitted in assistant source order.
+ *   `tool_execution_end` is emitted in tool completion order after each tool is finalized,
+ *   while tool-result message artifacts are emitted later in assistant source order.
  */
 export type ToolExecutionMode = "sequential" | "parallel";
 
@@ -55,6 +56,7 @@ export interface BeforeToolCallResult {
  * - `content`: if provided, replaces the tool result content array in full
  * - `details`: if provided, replaces the tool result details value in full
  * - `isError`: if provided, replaces the tool result error flag
+ * - `terminate`: if provided, replaces the early-termination hint
  *
  * Omitted fields keep the original executed tool result values.
  * There is no deep merge for `content` or `details`.
@@ -63,6 +65,11 @@ export interface AfterToolCallResult {
 	content?: (TextContent | ImageContent)[];
 	details?: unknown;
 	isError?: boolean;
+	/**
+	 * Hint that the agent should stop after the current tool batch.
+	 * Early termination only happens when every finalized tool result in the batch sets this to true.
+	 */
+	terminate?: boolean;
 }
 
 /** Context passed to `beforeToolCall`. */
@@ -185,7 +192,9 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	/**
 	 * Tool execution mode.
 	 * - "sequential": execute tool calls one by one
-	 * - "parallel": preflight tool calls sequentially, then execute allowed tools concurrently
+	 * - "parallel": preflight tool calls sequentially, then execute allowed tools concurrently;
+	 *   emit `tool_execution_end` in tool completion order after each tool is finalized,
+	 *   then emit tool-result message artifacts later in assistant source order
 	 *
 	 * Default: "parallel"
 	 */
@@ -200,12 +209,13 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
 
 	/**
-	 * Called after a tool finishes executing, before final tool events are emitted.
+	 * Called after a tool finishes executing, before `tool_execution_end` and tool-result message events are emitted.
 	 *
 	 * Return an `AfterToolCallResult` to override parts of the executed tool result:
 	 * - `content` replaces the full content array
 	 * - `details` replaces the full details payload
 	 * - `isError` replaces the error flag
+	 * - `terminate` replaces the early-termination hint
 	 *
 	 * Any omitted fields keep their original values. No deep merge is performed.
 	 * The hook receives the agent abort signal and is responsible for honoring it.
@@ -215,7 +225,8 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 
 /**
  * Thinking/reasoning level for models that support it.
- * Note: "xhigh" is only supported by OpenAI gpt-5.1-codex-max, gpt-5.2, gpt-5.2-codex, gpt-5.3, and gpt-5.3-codex models.
+ * Note: "xhigh" is only supported by selected model families. Use supportsXhigh() from @mariozechner/pi-ai
+ * to detect support for a concrete model.
  */
 export type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
@@ -283,6 +294,11 @@ export interface AgentToolResult<T> {
 	content: (TextContent | ImageContent)[];
 	/** Arbitrary structured details for logs or UI rendering. */
 	details: T;
+	/**
+	 * Hint that the agent should stop after the current tool batch.
+	 * Early termination only happens when every finalized tool result in the batch sets this to true.
+	 */
+	terminate?: boolean;
 }
 
 /** Callback used by tools to stream partial execution updates. */
@@ -304,6 +320,14 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 		signal?: AbortSignal,
 		onUpdate?: AgentToolUpdateCallback<TDetails>,
 	) => Promise<AgentToolResult<TDetails>>;
+	/**
+	 * Per-tool execution mode override.
+	 * - "sequential": this tool must execute one at a time with other tool calls.
+	 * - "parallel": this tool can execute concurrently with other tool calls.
+	 *
+	 * If omitted, the default execution mode applies.
+	 */
+	executionMode?: ToolExecutionMode;
 }
 
 /** Context snapshot passed into the low-level agent loop. */

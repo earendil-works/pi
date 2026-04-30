@@ -106,7 +106,7 @@ my-skill/
 
 ### SKILL.md Format
 
-```markdown
+````markdown
 ---
 name: my-skill
 description: What this skill does and when to use it. Be specific.
@@ -117,16 +117,16 @@ description: What this skill does and when to use it. Be specific.
 ## Setup
 
 Run once before first use:
-\`\`\`bash
+```bash
 cd /path/to/skill && npm install
-\`\`\`
+```
 
 ## Usage
 
-\`\`\`bash
+```bash
 ./scripts/process.sh <input>
-\`\`\`
 ```
+````
 
 Use relative paths from the skill directory:
 
@@ -198,7 +198,7 @@ brave-search/
 ```
 
 **SKILL.md:**
-```markdown
+````markdown
 ---
 name: brave-search
 description: Web search and content extraction via Brave Search API. Use for searching documentation, facts, or any web content.
@@ -208,23 +208,23 @@ description: Web search and content extraction via Brave Search API. Use for sea
 
 ## Setup
 
-\`\`\`bash
+```bash
 cd /path/to/brave-search && npm install
-\`\`\`
+```
 
 ## Search
 
-\`\`\`bash
+```bash
 ./search.js "query"              # Basic search
 ./search.js "query" --content    # Include page content
-\`\`\`
+```
 
 ## Extract Page Content
 
-\`\`\`bash
+```bash
 ./content.js https://example.com
-\`\`\`
 ```
+````
 
 ## Skill Repositories
 

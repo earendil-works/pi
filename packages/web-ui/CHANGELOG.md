@@ -2,6 +2,58 @@
 
 ## [Unreleased]
 
+## [0.70.6] - 2026-04-28
+
+## [0.70.5] - 2026-04-27
+
+## [0.70.4] - 2026-04-27
+
+## [0.70.3] - 2026-04-27
+
+## [0.70.2] - 2026-04-24
+
+## [0.70.1] - 2026-04-24
+
+## [0.70.0] - 2026-04-23
+
+## [0.69.0] - 2026-04-22
+
+### Breaking Changes
+
+- Migrated the web UI's TypeBox-based tool definitions and runtime dependency from `@sinclair/typebox` 0.34.x to `typebox` 1.x. Install and import from `typebox` instead of `@sinclair/typebox` when embedding or extending `@mariozechner/pi-web-ui` with shared TypeBox schemas ([#3112](https://github.com/badlogic/pi-mono/issues/3112))
+
+### Fixed
+
+- Render SVG artifact previews through a blob-backed image instead of injecting untrusted SVG markup into the page DOM ([#3552](https://github.com/badlogic/pi-mono/issues/3552))
+
+## [0.68.1] - 2026-04-22
+
+## [0.68.0] - 2026-04-20
+
+## [0.67.68] - 2026-04-17
+
+## [0.67.67] - 2026-04-17
+
+## [0.67.6] - 2026-04-16
+
+## [0.67.5] - 2026-04-16
+
+## [0.67.4] - 2026-04-16
+
+## [0.67.3] - 2026-04-15
+
+## [0.67.2] - 2026-04-14
+
+## [0.67.1] - 2026-04-13
+
+## [0.67.0] - 2026-04-13
+
+## [0.66.1] - 2026-04-08
+
+## [0.66.0] - 2026-04-08
+
+## [0.65.2] - 2026-04-06
+
 ## [0.65.1] - 2026-04-05
 
 ## [0.65.0] - 2026-04-03

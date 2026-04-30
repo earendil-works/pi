@@ -32,6 +32,9 @@ jobs:
               return;
             }
 
+            const APPROVED_FILE = '.github/APPROVED_CONTRIBUTORS';
+            const VALID_CAPABILITIES = new Set(['issue', 'pr']);
+
             // --- Check APPROVED_CONTRIBUTORS ---
             async function getTextFile(path) {
               const { data } = await github.rest.repos.getContent({
@@ -47,12 +50,23 @@ jobs:
             }
 
             try {
-              const content = await getTextFile('.github/APPROVED_CONTRIBUTORS');
-              const approved = content
-                .split('\n')
-                .map(l => l.trim().toLowerCase())
-                .filter(l => l && !l.startsWith('#'));
-              if (approved.includes(author.toLowerCase())) {
+              const content = await getTextFile(APPROVED_FILE);
+              const approved = new Map();
+              for (const rawLine of content.split('\n')) {
+                const line = rawLine.trim();
+                if (!line || line.startsWith('#')) continue;
+
+                const parts = line.split(/\s+/);
+                if (parts.length !== 2) continue;
+
+                const [username, capability] = parts;
+                const normalizedCapability = capability.toLowerCase();
+                if (!VALID_CAPABILITIES.has(normalizedCapability)) continue;
+
+                approved.set(username.toLowerCase(), normalizedCapability);
+              }
+
+              if (approved.has(author.toLowerCase())) {
                 console.log(`${author} is in APPROVED_CONTRIBUTORS, passing`);
                 return;
               }

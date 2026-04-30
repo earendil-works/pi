@@ -8,6 +8,7 @@ describe("buildSystemPrompt", () => {
 				selectedTools: [],
 				contextFiles: [],
 				skills: [],
+				cwd: process.cwd(),
 			});
 
 			expect(prompt).toContain("Available tools:\n(none)");
@@ -18,6 +19,7 @@ describe("buildSystemPrompt", () => {
 				selectedTools: [],
 				contextFiles: [],
 				skills: [],
+				cwd: process.cwd(),
 			});
 
 			expect(prompt).toContain("Show file paths clearly");
@@ -35,6 +37,7 @@ describe("buildSystemPrompt", () => {
 				},
 				contextFiles: [],
 				skills: [],
+				cwd: process.cwd(),
 			});
 
 			expect(prompt).toContain("- read:");
@@ -53,6 +56,7 @@ describe("buildSystemPrompt", () => {
 				},
 				contextFiles: [],
 				skills: [],
+				cwd: process.cwd(),
 			});
 
 			expect(prompt).toContain("- dynamic_tool: Run dynamic test behavior");
@@ -63,6 +67,7 @@ describe("buildSystemPrompt", () => {
 				selectedTools: ["read", "dynamic_tool"],
 				contextFiles: [],
 				skills: [],
+				cwd: process.cwd(),
 			});
 
 			expect(prompt).not.toContain("dynamic_tool");
@@ -76,6 +81,7 @@ describe("buildSystemPrompt", () => {
 				promptGuidelines: ["Use dynamic_tool for project summaries."],
 				contextFiles: [],
 				skills: [],
+				cwd: process.cwd(),
 			});
 
 			expect(prompt).toContain("- Use dynamic_tool for project summaries.");
@@ -87,6 +93,7 @@ describe("buildSystemPrompt", () => {
 				promptGuidelines: ["Use dynamic_tool for summaries.", "  Use dynamic_tool for summaries.  ", "   "],
 				contextFiles: [],
 				skills: [],
+				cwd: process.cwd(),
 			});
 
 			expect(prompt.match(/- Use dynamic_tool for summaries\./g)).toHaveLength(1);

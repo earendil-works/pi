@@ -159,6 +159,7 @@ const runtime = await createAgentSessionRuntime(createRuntime, {
 - `newSession()`
 - `switchSession()`
 - `fork()`
+- clone flows via `fork(entryId, { position: "at" })`
 - `importFromJsonl()`
 
 Important behavior:
@@ -182,6 +183,25 @@ unsubscribe = session.subscribe(() => {});
 
 ### Prompting and Message Queueing
 
+`PromptOptions` controls prompt expansion, queueing behavior while streaming, and prompt preflight notifications:
+
+```typescript
+interface PromptOptions {
+  expandPromptTemplates?: boolean;
+  images?: ImageContent[];
+  streamingBehavior?: "steer" | "followUp";
+  source?: InputSource;
+  preflightResult?: (success: boolean) => void;
+}
+```
+
+`preflightResult` is called once per `prompt()` invocation:
+
+- `true` when the prompt was accepted, queued, or handled immediately
+- `false` when prompt preflight rejected before acceptance
+
+It fires before `prompt()` resolves. `prompt()` still resolves only after the full accepted run finishes, including retries. Failures after acceptance are reported through the normal event and message stream, not through `preflightResult(false)`.
+
 The `prompt()` method handles prompt templates, extension commands, and message sending:
 
 ```typescript
@@ -200,8 +220,10 @@ await session.prompt("After you're done, also check X", { streamingBehavior: "fo
 
 **Behavior:**
 - **Extension commands** (e.g., `/mycommand`): Execute immediately, even during streaming. They manage their own LLM interaction via `pi.sendMessage()`.
-- **File-based prompt templates** (from `.md` files): Expanded to their content before sending/queueing.
+- **File-based prompt templates** (from `.md` files): Expanded to their content before sending or queueing.
 - **During streaming without `streamingBehavior`**: Throws an error. Use `steer()` or `followUp()` directly, or specify the option.
+- **`preflightResult(true)`**: Means the prompt was accepted, queued, or handled immediately.
+- **`preflightResult(false)`**: Means preflight rejected before acceptance.
 
 For explicit queueing during streaming:
 
@@ -507,7 +529,7 @@ const { session } = await createAgentSession({
 ### Custom Tools
 
 ```typescript
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { createAgentSession, defineTool } from "@mariozechner/pi-coding-agent";
 
 // Inline custom tool
@@ -697,7 +719,7 @@ const { session: opened } = await createAgentSession({
 const currentProjectSessions = await SessionManager.list(process.cwd());
 const allSessions = await SessionManager.listAll(process.cwd());
 
-// Session replacement API for /new, /resume, /fork, and import flows.
+// Session replacement API for /new, /resume, /fork, /clone, and import flows.
 const createRuntime: CreateAgentSessionRuntimeFactory = async ({ cwd, sessionManager, sessionStartEvent }) => {
   const services = await createAgentSessionServices({ cwd });
   return {
@@ -723,8 +745,11 @@ await runtime.newSession();
 // Replace the active session with another saved session
 await runtime.switchSession("/path/to/session.jsonl");
 
-// Replace the active session with a fork from a specific entry
+// Replace the active session with a fork from a specific user entry
 await runtime.fork("entry-id");
+
+// Clone the active path through a specific entry
+await runtime.fork("entry-id", { position: "at" });
 ```
 
 **SessionManager tree API:**
@@ -754,7 +779,7 @@ sm.branchWithSummary(id, "Summary...");  // Branch with context summary
 sm.createBranchedSession(leafId);       // Extract path to new file
 ```
 
-> See [examples/sdk/11-sessions.ts](../examples/sdk/11-sessions.ts) and [docs/session.md](session.md)
+> See [examples/sdk/11-sessions.ts](../examples/sdk/11-sessions.ts) and [Session Format](session-format.md)
 
 ### Settings Management
 
@@ -857,7 +882,7 @@ interface LoadExtensionsResult {
 
 ```typescript
 import { getModel } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import {
   AuthStorage,
   bashTool,

@@ -12,6 +12,7 @@ import {
 } from "@mariozechner/pi-tui";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
+import { keyText } from "./keybinding-hints.js";
 
 // EnabledIds: null = all enabled (no filter), string[] = explicit ordered list
 type EnabledIds = string[] | null;
@@ -45,8 +46,9 @@ function clearAll(enabledIds: EnabledIds, allIds: string[], targetIds?: string[]
 	return enabledIds.filter((id) => !targets.has(id));
 }
 
-function move(enabledIds: EnabledIds, allIds: string[], id: string, delta: number): EnabledIds {
-	const list = enabledIds ?? [...allIds];
+function move(enabledIds: EnabledIds, id: string, delta: number): EnabledIds {
+	if (enabledIds === null) return null;
+	const list = [...enabledIds];
 	const index = list.indexOf(id);
 	if (index < 0) return list;
 	const newIndex = index + delta;
@@ -70,22 +72,14 @@ interface ModelItem {
 
 export interface ModelsConfig {
 	allModels: Model<any>[];
-	enabledModelIds: Set<string>;
-	/** true if enabledModels setting is defined (empty = all enabled) */
-	hasEnabledModelsFilter: boolean;
+	enabledModelIds: string[] | null;
 }
 
 export interface ModelsCallbacks {
-	/** Called when a model is toggled (session-only, no persist) */
-	onModelToggle: (modelId: string, enabled: boolean) => void;
+	/** Called whenever the enabled model set or order changes (session-only, no persist) */
+	onChange: (enabledModelIds: string[] | null) => void | Promise<void>;
 	/** Called when user wants to persist current selection to settings */
-	onPersist: (enabledModelIds: string[]) => void;
-	/** Called when user enables all models. Returns list of all model IDs. */
-	onEnableAll: (allModelIds: string[]) => void;
-	/** Called when user clears all models */
-	onClearAll: () => void;
-	/** Called when user toggles all models for a provider. Returns affected model IDs. */
-	onToggleProvider: (provider: string, modelIds: string[], enabled: boolean) => void;
+	onPersist: (enabledModelIds: string[] | null) => void | Promise<void>;
 	onCancel: () => void;
 }
 
@@ -113,7 +107,7 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 	private listContainer: Container;
 	private footerText: Text;
 	private callbacks: ModelsCallbacks;
-	private maxVisible = 15;
+	private maxVisible = 8;
 	private isDirty = false;
 
 	constructor(config: ModelsConfig, callbacks: ModelsCallbacks) {
@@ -126,14 +120,16 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 			this.allIds.push(fullId);
 		}
 
-		this.enabledIds = config.hasEnabledModelsFilter ? [...config.enabledModelIds] : null;
+		this.enabledIds = config.enabledModelIds === null ? null : [...config.enabledModelIds];
 		this.filteredItems = this.buildItems();
 
 		// Header
 		this.addChild(new DynamicBorder());
 		this.addChild(new Spacer(1));
 		this.addChild(new Text(theme.fg("accent", theme.bold("Model Configuration")), 0, 0));
-		this.addChild(new Text(theme.fg("muted", "Session-only. Ctrl+S to save to settings."), 0, 0));
+		this.addChild(
+			new Text(theme.fg("muted", `Session-only. ${keyText("app.models.save")} to save to settings.`), 0, 0),
+		);
 		this.addChild(new Spacer(1));
 
 		// Search input
@@ -169,7 +165,15 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		const enabledCount = this.enabledIds?.length ?? this.allIds.length;
 		const allEnabled = this.enabledIds === null;
 		const countText = allEnabled ? "all enabled" : `${enabledCount}/${this.allIds.length} enabled`;
-		const parts = ["Enter toggle", "^A all", "^X clear", "^P provider", "Alt+↑↓ reorder", "^S save", countText];
+		const parts = [
+			`${keyText("tui.select.confirm")} toggle`,
+			`${keyText("app.models.enableAll")} all`,
+			`${keyText("app.models.clearAll")} clear`,
+			`${keyText("app.models.toggleProvider")} provider`,
+			`${keyText("app.models.reorderUp")}/${keyText("app.models.reorderDown")} reorder`,
+			`${keyText("app.models.save")} save`,
+			countText,
+		];
 		return this.isDirty
 			? theme.fg("dim", `  ${parts.join(" · ")} `) + theme.fg("warning", "(unsaved)")
 			: theme.fg("dim", `  ${parts.join(" · ")}`);
@@ -182,6 +186,10 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 		this.selectedIndex = Math.min(this.selectedIndex, Math.max(0, this.filteredItems.length - 1));
 		this.updateList();
 		this.footerText.setText(this.getFooterText());
+	}
+
+	private notifyChange(): void {
+		this.callbacks.onChange(this.enabledIds === null ? null : [...this.enabledIds]);
 	}
 
 	private updateList(): void {
@@ -240,61 +248,62 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 			return;
 		}
 
-		// Alt+Up/Down - Reorder enabled models
-		if (matchesKey(data, Key.alt("up")) || matchesKey(data, Key.alt("down"))) {
+		// Reorder enabled models
+		const reorderUp = kb.matches(data, "app.models.reorderUp");
+		const reorderDown = kb.matches(data, "app.models.reorderDown");
+		if (reorderUp || reorderDown) {
+			if (this.enabledIds === null) return;
 			const item = this.filteredItems[this.selectedIndex];
 			if (item && isEnabled(this.enabledIds, item.fullId)) {
-				const delta = matchesKey(data, Key.alt("up")) ? -1 : 1;
-				const enabledList = this.enabledIds ?? this.allIds;
-				const currentIndex = enabledList.indexOf(item.fullId);
+				const delta = reorderUp ? -1 : 1;
+				const currentIndex = this.enabledIds.indexOf(item.fullId);
 				const newIndex = currentIndex + delta;
 				// Only move if within bounds
-				if (newIndex >= 0 && newIndex < enabledList.length) {
-					this.enabledIds = move(this.enabledIds, this.allIds, item.fullId, delta);
+				if (newIndex >= 0 && newIndex < this.enabledIds.length) {
+					this.enabledIds = move(this.enabledIds, item.fullId, delta);
 					this.isDirty = true;
 					this.selectedIndex += delta;
 					this.refresh();
+					this.notifyChange();
 				}
 			}
 			return;
 		}
 
 		// Toggle on Enter
-		if (matchesKey(data, Key.enter)) {
+		if (kb.matches(data, "tui.select.confirm")) {
 			const item = this.filteredItems[this.selectedIndex];
 			if (item) {
-				const wasAllEnabled = this.enabledIds === null;
 				this.enabledIds = toggle(this.enabledIds, item.fullId);
 				this.isDirty = true;
-				if (wasAllEnabled) this.callbacks.onClearAll();
-				this.callbacks.onModelToggle(item.fullId, isEnabled(this.enabledIds, item.fullId));
 				this.refresh();
+				this.notifyChange();
 			}
 			return;
 		}
 
-		// Ctrl+A - Enable all (filtered if search active, otherwise all)
-		if (matchesKey(data, Key.ctrl("a"))) {
+		// Enable all (filtered if search active, otherwise all)
+		if (kb.matches(data, "app.models.enableAll")) {
 			const targetIds = this.searchInput.getValue() ? this.filteredItems.map((i) => i.fullId) : undefined;
 			this.enabledIds = enableAll(this.enabledIds, this.allIds, targetIds);
 			this.isDirty = true;
-			this.callbacks.onEnableAll(targetIds ?? this.allIds);
 			this.refresh();
+			this.notifyChange();
 			return;
 		}
 
-		// Ctrl+X - Clear all (filtered if search active, otherwise all)
-		if (matchesKey(data, Key.ctrl("x"))) {
+		// Clear all (filtered if search active, otherwise all)
+		if (kb.matches(data, "app.models.clearAll")) {
 			const targetIds = this.searchInput.getValue() ? this.filteredItems.map((i) => i.fullId) : undefined;
 			this.enabledIds = clearAll(this.enabledIds, this.allIds, targetIds);
 			this.isDirty = true;
-			this.callbacks.onClearAll();
 			this.refresh();
+			this.notifyChange();
 			return;
 		}
 
-		// Ctrl+P - Toggle provider of current item
-		if (matchesKey(data, Key.ctrl("p"))) {
+		// Toggle provider of current item
+		if (kb.matches(data, "app.models.toggleProvider")) {
 			const item = this.filteredItems[this.selectedIndex];
 			if (item) {
 				const provider = item.model.provider;
@@ -304,15 +313,15 @@ export class ScopedModelsSelectorComponent extends Container implements Focusabl
 					? clearAll(this.enabledIds, this.allIds, providerIds)
 					: enableAll(this.enabledIds, this.allIds, providerIds);
 				this.isDirty = true;
-				this.callbacks.onToggleProvider(provider, providerIds, !allEnabled);
 				this.refresh();
+				this.notifyChange();
 			}
 			return;
 		}
 
-		// Ctrl+S - Save/persist to settings
-		if (matchesKey(data, Key.ctrl("s"))) {
-			this.callbacks.onPersist(this.enabledIds ?? [...this.allIds]);
+		// Save/persist to settings
+		if (kb.matches(data, "app.models.save")) {
+			this.callbacks.onPersist(this.enabledIds === null ? null : [...this.enabledIds]);
 			this.isDirty = false;
 			this.footerText.setText(this.getFooterText());
 			return;

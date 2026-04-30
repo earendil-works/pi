@@ -1,4 +1,4 @@
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { getModel } from "../src/models.js";
 import { streamSimple } from "../src/stream.js";
@@ -24,9 +24,9 @@ vi.mock("openai", () => {
 	class FakeOpenAI {
 		chat = {
 			completions: {
-				create: async (params: unknown) => {
+				create: (params: unknown) => {
 					mockState.lastParams = params;
-					return {
+					const stream = {
 						async *[Symbol.asyncIterator]() {
 							const chunks = mockState.chunks ?? [
 								{
@@ -44,6 +44,17 @@ vi.mock("openai", () => {
 							}
 						},
 					};
+					const promise = Promise.resolve(stream) as Promise<typeof stream> & {
+						withResponse: () => Promise<{
+							data: typeof stream;
+							response: { status: number; headers: Headers };
+						}>;
+					};
+					promise.withResponse = async () => ({
+						data: stream,
+						response: { status: 200, headers: new Headers() },
+					});
+					return promise;
 				},
 			},
 		};
@@ -201,7 +212,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("enables tool_stream for supported z.ai models with tools", async () => {
-		const model = getModel("zai", "glm-5")!;
+		const model = getModel("zai", "glm-5.1")!;
 		const tools: Tool[] = [
 			{
 				name: "ping",
@@ -238,10 +249,10 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("stores z.ai tool_stream support in model compat metadata", () => {
-		expect(getModel("zai", "glm-5")?.compat?.zaiToolStream).toBe(true);
+		expect(getModel("zai", "glm-5.1")?.compat?.zaiToolStream).toBe(true);
 		expect(getModel("zai", "glm-4.7")?.compat?.zaiToolStream).toBe(true);
-		expect(getModel("zai", "glm-4.7-flash")?.compat?.zaiToolStream).toBe(true);
-		expect(getModel("zai", "glm-4.6v")?.compat?.zaiToolStream).toBe(true);
+		expect(getModel("zai", "glm-4.7")?.compat?.zaiToolStream).toBe(true);
+		expect(getModel("zai", "glm-5-turbo")?.compat?.zaiToolStream).toBe(true);
 		expect(getModel("zai", "glm-4.5-air")?.compat?.zaiToolStream).toBeUndefined();
 	});
 
@@ -327,7 +338,7 @@ describe("openai-completions tool_choice", () => {
 	});
 
 	it("omits tool_stream when no tools are provided", async () => {
-		const model = getModel("zai", "glm-5")!;
+		const model = getModel("zai", "glm-5.1")!;
 		let payload: unknown;
 
 		await streamSimple(
@@ -369,7 +380,7 @@ describe("openai-completions tool_choice", () => {
 			},
 		];
 
-		const model = getModel("zai", "glm-5")!;
+		const model = getModel("zai", "glm-5.1")!;
 		const response = await streamSimple(
 			model,
 			{
@@ -428,6 +439,152 @@ describe("openai-completions tool_choice", () => {
 		expect(response.responseId).toBe("chatcmpl-test");
 		expect(response.usage.totalTokens).toBe(4);
 		expect(response.content).toEqual([{ type: "text", text: "OK" }]);
+	});
+
+	it("coalesces tool call deltas by stable index when provider mutates ids mid-stream", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-kimi-bad-stream",
+				choices: [
+					{
+						delta: {
+							tool_calls: [
+								{
+									index: 0,
+									id: "functions.read:0",
+									type: "function",
+									function: { name: "read", arguments: "" },
+								},
+							],
+						},
+						finish_reason: null,
+					},
+				],
+			},
+			{
+				id: "chatcmpl-kimi-bad-stream",
+				choices: [
+					{
+						delta: {
+							tool_calls: [
+								{
+									index: 0,
+									id: "chatcmpl-tool-a",
+									type: "function",
+									function: { name: null, arguments: '{"path":"README' },
+								},
+							],
+						},
+						finish_reason: null,
+					},
+				],
+			},
+			{
+				id: "chatcmpl-kimi-bad-stream",
+				choices: [
+					{
+						delta: {
+							tool_calls: [
+								{
+									index: 0,
+									id: "chatcmpl-tool-b",
+									type: "function",
+									function: { name: null, arguments: '.md"}' },
+								},
+							],
+						},
+						finish_reason: "tool_calls",
+					},
+				],
+				usage: {
+					prompt_tokens: 10,
+					completion_tokens: 5,
+					prompt_tokens_details: { cached_tokens: 0 },
+					completion_tokens_details: { reasoning_tokens: 0 },
+				},
+			},
+		];
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const tool: Tool = {
+			name: "read",
+			description: "Read a file",
+			parameters: Type.Object({
+				path: Type.String(),
+			}),
+		};
+		const s = streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Read README.md",
+						timestamp: Date.now(),
+					},
+				],
+				tools: [tool],
+			},
+			{ apiKey: "test" },
+		);
+
+		const toolCallContentIndexes: number[] = [];
+		for await (const event of s) {
+			if (event.type === "toolcall_start" || event.type === "toolcall_delta" || event.type === "toolcall_end") {
+				toolCallContentIndexes.push(event.contentIndex);
+			}
+		}
+
+		const response = await s.result();
+		expect(response.stopReason).toBe("toolUse");
+		expect(toolCallContentIndexes).toEqual([0, 0, 0, 0, 0]);
+		expect(response.content).toHaveLength(1);
+		const toolCall = response.content[0];
+		expect(toolCall.type).toBe("toolCall");
+		if (toolCall.type !== "toolCall") {
+			throw new Error("Expected toolCall content");
+		}
+		expect(toolCall.id).toBe("functions.read:0");
+		expect(toolCall.name).toBe("read");
+		expect(toolCall.arguments).toEqual({ path: "README.md" });
+		expect(toolCall).not.toHaveProperty("streamIndex");
+		expect(toolCall).not.toHaveProperty("partialArgs");
+	});
+
+	it("does not double-count reasoning tokens in completion usage", async () => {
+		mockState.chunks = [
+			{
+				id: "chatcmpl-reasoning-usage",
+				choices: [{ delta: {}, finish_reason: "stop" }],
+				usage: {
+					prompt_tokens: 10,
+					completion_tokens: 33,
+					prompt_tokens_details: { cached_tokens: 0 },
+					completion_tokens_details: { reasoning_tokens: 21 },
+				},
+			},
+		];
+
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = { ...baseModel, api: "openai-completions" } as const;
+		const response = await streamSimple(
+			model,
+			{
+				messages: [
+					{
+						role: "user",
+						content: "Use reasoning.",
+						timestamp: Date.now(),
+					},
+				],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		expect(response.usage.input).toBe(10);
+		expect(response.usage.output).toBe(33);
+		expect(response.usage.totalTokens).toBe(43);
 	});
 
 	it("preserves prompt_tokens_details.cache_write_tokens from chunk usage", async () => {

@@ -39,6 +39,19 @@ export interface AppKeybindings {
 	"app.session.rename": true;
 	"app.session.delete": true;
 	"app.session.deleteNoninvasive": true;
+	"app.models.save": true;
+	"app.models.enableAll": true;
+	"app.models.clearAll": true;
+	"app.models.toggleProvider": true;
+	"app.models.reorderUp": true;
+	"app.models.reorderDown": true;
+	"app.tree.filter.default": true;
+	"app.tree.filter.noTools": true;
+	"app.tree.filter.userOnly": true;
+	"app.tree.filter.labeledOnly": true;
+	"app.tree.filter.all": true;
+	"app.tree.filter.cycleForward": true;
+	"app.tree.filter.cycleBackward": true;
 }
 
 export type AppKeybinding = keyof AppKeybindings;
@@ -52,7 +65,10 @@ export const KEYBINDINGS = {
 	"app.interrupt": { defaultKeys: "escape", description: "Cancel or abort" },
 	"app.clear": { defaultKeys: "ctrl+c", description: "Clear editor" },
 	"app.exit": { defaultKeys: "ctrl+d", description: "Exit when editor is empty" },
-	"app.suspend": { defaultKeys: "ctrl+z", description: "Suspend to background" },
+	"app.suspend": {
+		defaultKeys: process.platform === "win32" ? [] : "ctrl+z",
+		description: "Suspend to background",
+	},
 	"app.thinking.cycle": {
 		defaultKeys: "shift+tab",
 		description: "Cycle thinking level",
@@ -130,6 +146,58 @@ export const KEYBINDINGS = {
 	"app.session.deleteNoninvasive": {
 		defaultKeys: "ctrl+backspace",
 		description: "Delete session when query is empty",
+	},
+	"app.models.save": {
+		defaultKeys: "ctrl+s",
+		description: "Save model selection",
+	},
+	"app.models.enableAll": {
+		defaultKeys: "ctrl+a",
+		description: "Enable all models",
+	},
+	"app.models.clearAll": {
+		defaultKeys: "ctrl+x",
+		description: "Clear all models",
+	},
+	"app.models.toggleProvider": {
+		defaultKeys: "ctrl+p",
+		description: "Toggle all models for provider",
+	},
+	"app.models.reorderUp": {
+		defaultKeys: "alt+up",
+		description: "Move model up in order",
+	},
+	"app.models.reorderDown": {
+		defaultKeys: "alt+down",
+		description: "Move model down in order",
+	},
+	"app.tree.filter.default": {
+		defaultKeys: "ctrl+d",
+		description: "Tree filter: default view",
+	},
+	"app.tree.filter.noTools": {
+		defaultKeys: "ctrl+t",
+		description: "Tree filter: hide tool results",
+	},
+	"app.tree.filter.userOnly": {
+		defaultKeys: "ctrl+u",
+		description: "Tree filter: user messages only",
+	},
+	"app.tree.filter.labeledOnly": {
+		defaultKeys: "ctrl+l",
+		description: "Tree filter: labeled entries only",
+	},
+	"app.tree.filter.all": {
+		defaultKeys: "ctrl+a",
+		description: "Tree filter: show all entries",
+	},
+	"app.tree.filter.cycleForward": {
+		defaultKeys: "ctrl+o",
+		description: "Tree filter: cycle forward",
+	},
+	"app.tree.filter.cycleBackward": {
+		defaultKeys: "shift+ctrl+o",
+		description: "Tree filter: cycle backward",
 	},
 } as const satisfies KeybindingDefinitions;
 

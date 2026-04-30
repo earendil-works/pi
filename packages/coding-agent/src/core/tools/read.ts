@@ -1,9 +1,9 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import type { ImageContent, TextContent } from "@mariozechner/pi-ai";
+import type { Api, ImageContent, Model, TextContent } from "@mariozechner/pi-ai";
 import { Text } from "@mariozechner/pi-tui";
-import { type Static, Type } from "@sinclair/typebox";
 import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
+import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.js";
 import { getLanguageFromPath, highlightCode } from "../../modes/interactive/theme/theme.js";
 import { formatDimensionNote, resizeImage } from "../../utils/image-resize.js";
@@ -78,6 +78,13 @@ function trimTrailingEmptyLines(lines: string[]): string[] {
 	return lines.slice(0, end);
 }
 
+function getNonVisionImageNote(model: Model<Api> | undefined): string | undefined {
+	if (!model || model.input.includes("image")) {
+		return undefined;
+	}
+	return "[Current model does not support images. The image will be omitted from this request.]";
+}
+
 function formatReadResult(
 	args: { path?: string; file_path?: string; offset?: number; limit?: number } | undefined,
 	result: { content: (TextContent | ImageContent)[]; details?: ReadToolDetails },
@@ -129,7 +136,7 @@ export function createReadToolDefinition(
 			{ path, offset, limit }: { path: string; offset?: number; limit?: number },
 			signal?: AbortSignal,
 			_onUpdate?,
-			_ctx?,
+			ctx?,
 		) {
 			const absolutePath = resolveReadPath(path, cwd);
 			return new Promise<{ content: (TextContent | ImageContent)[]; details: ReadToolDetails | undefined }>(
@@ -153,6 +160,7 @@ export function createReadToolDefinition(
 							const mimeType = ops.detectImageMimeType ? await ops.detectImageMimeType(absolutePath) : undefined;
 							let content: (TextContent | ImageContent)[];
 							let details: ReadToolDetails | undefined;
+							const nonVisionImageNote = getNonVisionImageNote(ctx?.model);
 							if (mimeType) {
 								// Read image as binary.
 								const buffer = await ops.readFile(absolutePath);
@@ -161,24 +169,24 @@ export function createReadToolDefinition(
 									// Resize image if needed before sending it back to the model.
 									const resized = await resizeImage({ type: "image", data: base64, mimeType });
 									if (!resized) {
-										content = [
-											{
-												type: "text",
-												text: `Read image file [${mimeType}]\n[Image omitted: could not be resized below the inline image size limit.]`,
-											},
-										];
+										let textNote = `Read image file [${mimeType}]\n[Image omitted: could not be resized below the inline image size limit.]`;
+										if (nonVisionImageNote) textNote += `\n${nonVisionImageNote}`;
+										content = [{ type: "text", text: textNote }];
 									} else {
 										const dimensionNote = formatDimensionNote(resized);
 										let textNote = `Read image file [${resized.mimeType}]`;
 										if (dimensionNote) textNote += `\n${dimensionNote}`;
+										if (nonVisionImageNote) textNote += `\n${nonVisionImageNote}`;
 										content = [
 											{ type: "text", text: textNote },
 											{ type: "image", data: resized.data, mimeType: resized.mimeType },
 										];
 									}
 								} else {
+									let textNote = `Read image file [${mimeType}]`;
+									if (nonVisionImageNote) textNote += `\n${nonVisionImageNote}`;
 									content = [
-										{ type: "text", text: `Read image file [${mimeType}]` },
+										{ type: "text", text: textNote },
 										{ type: "image", data: base64, mimeType },
 									];
 								}
@@ -263,7 +271,3 @@ export function createReadToolDefinition(
 export function createReadTool(cwd: string, options?: ReadToolOptions): AgentTool<typeof readSchema> {
 	return wrapToolDefinition(createReadToolDefinition(cwd, options));
 }
-
-/** Default read tool using process.cwd() for backwards compatibility. */
-export const readToolDefinition = createReadToolDefinition(process.cwd());
-export const readTool = createReadTool(process.cwd());

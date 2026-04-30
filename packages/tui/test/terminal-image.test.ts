@@ -4,7 +4,38 @@
 
 import assert from "node:assert";
 import { describe, it } from "node:test";
-import { isImageLine } from "../src/terminal-image.js";
+import { detectCapabilities, hyperlink, isImageLine } from "../src/terminal-image.js";
+
+const ENV_KEYS = [
+	"TERM",
+	"TERM_PROGRAM",
+	"COLORTERM",
+	"TMUX",
+	"KITTY_WINDOW_ID",
+	"GHOSTTY_RESOURCES_DIR",
+	"WEZTERM_PANE",
+	"ITERM_SESSION_ID",
+] as const;
+
+function withEnv(overrides: Record<string, string | undefined>, fn: () => void): void {
+	const saved: Record<string, string | undefined> = {};
+	for (const key of ENV_KEYS) {
+		saved[key] = process.env[key];
+		delete process.env[key];
+	}
+	try {
+		for (const [k, v] of Object.entries(overrides)) {
+			if (v === undefined) delete process.env[k];
+			else process.env[k] = v;
+		}
+		fn();
+	} finally {
+		for (const key of ENV_KEYS) {
+			if (saved[key] === undefined) delete process.env[key];
+			else process.env[key] = saved[key];
+		}
+	}
+}
 
 describe("isImageLine", () => {
 	describe("iTerm2 image protocol", () => {
@@ -149,5 +180,100 @@ describe("isImageLine", () => {
 			const filePathLine = "/path/to/File_1337_backup/image.jpg";
 			assert.strictEqual(isImageLine(filePathLine), false);
 		});
+	});
+});
+
+describe("detectCapabilities", () => {
+	it("defaults to hyperlinks: false for unknown terminals", () => {
+		withEnv({}, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.hyperlinks, false);
+			assert.strictEqual(caps.images, null);
+		});
+	});
+
+	it("forces hyperlinks: false under tmux even if outer terminal supports OSC 8", () => {
+		withEnv({ TMUX: "/tmp/tmux-1000/default,1234,0", TERM_PROGRAM: "ghostty" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.hyperlinks, false);
+			assert.strictEqual(caps.images, null);
+		});
+	});
+
+	it("forces hyperlinks: false when TERM starts with 'tmux'", () => {
+		withEnv({ TERM: "tmux-256color", TERM_PROGRAM: "iterm.app" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.hyperlinks, false);
+			assert.strictEqual(caps.images, null);
+		});
+	});
+
+	it("forces hyperlinks: false when TERM starts with 'screen'", () => {
+		withEnv({ TERM: "screen-256color" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.hyperlinks, false);
+			assert.strictEqual(caps.images, null);
+		});
+	});
+
+	it("enables hyperlinks for Ghostty", () => {
+		withEnv({ TERM_PROGRAM: "ghostty" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.hyperlinks, true);
+		});
+	});
+
+	it("enables hyperlinks for Kitty", () => {
+		withEnv({ KITTY_WINDOW_ID: "1" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.hyperlinks, true);
+		});
+	});
+
+	it("enables hyperlinks for WezTerm", () => {
+		withEnv({ WEZTERM_PANE: "0" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.hyperlinks, true);
+		});
+	});
+
+	it("enables hyperlinks for iTerm2", () => {
+		withEnv({ TERM_PROGRAM: "iterm.app" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.hyperlinks, true);
+		});
+	});
+
+	it("enables hyperlinks for VSCode", () => {
+		withEnv({ TERM_PROGRAM: "vscode" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.hyperlinks, true);
+		});
+	});
+});
+
+describe("hyperlink", () => {
+	it("wraps text in OSC 8 open and close sequences", () => {
+		const result = hyperlink("click me", "https://example.com");
+		assert.strictEqual(result, "\x1b]8;;https://example.com\x1b\\click me\x1b]8;;\x1b\\");
+	});
+
+	it("preserves ANSI styling inside the hyperlink", () => {
+		const styled = "\x1b[4m\x1b[34mclick me\x1b[0m";
+		const result = hyperlink(styled, "https://example.com");
+		assert.ok(result.startsWith("\x1b]8;;https://example.com\x1b\\"));
+		assert.ok(result.includes(styled));
+		assert.ok(result.endsWith("\x1b]8;;\x1b\\"));
+	});
+
+	it("works with empty text", () => {
+		const result = hyperlink("", "https://example.com");
+		assert.strictEqual(result, "\x1b]8;;https://example.com\x1b\\\x1b]8;;\x1b\\");
+	});
+
+	it("works with file:// URIs", () => {
+		const result = hyperlink("README.md", "file:///home/user/README.md");
+		assert.ok(result.includes("file:///home/user/README.md"));
+		assert.ok(result.includes("README.md"));
 	});
 });

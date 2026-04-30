@@ -1,5 +1,5 @@
 import { Agent, type AgentEvent } from "@mariozechner/pi-agent-core";
-import { getModel, type ImageContent } from "@mariozechner/pi-ai";
+import { getModel, type ImageContent, type KnownProvider } from "@mariozechner/pi-ai";
 import {
 	AgentSession,
 	AuthStorage,
@@ -12,19 +12,18 @@ import {
 	SessionManager,
 	type Skill,
 } from "@mariozechner/pi-coding-agent";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, mkdirSync, readFileSync } from "fs";
 import { mkdir, writeFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
+import { getMomConfig } from "./config.js";
 import { createMomSettingsManager, syncLogToSessionManager } from "./context.js";
+import { runnerCacheKey, sanitizeSessionDirSegment } from "./conversation.js";
 import * as log from "./log.js";
 import { createExecutor, type SandboxConfig } from "./sandbox.js";
 import type { ChannelInfo, SlackContext, UserInfo } from "./slack.js";
 import type { ChannelStore } from "./store.js";
 import { createMomTools, setUploadFunction } from "./tools/index.js";
-
-// Hardcoded model for now - TODO: make configurable (issue #63)
-const model = getModel("anthropic", "claude-sonnet-4-5");
 
 export interface PendingMessage {
 	userName: string;
@@ -38,16 +37,23 @@ export interface AgentRunner {
 		ctx: SlackContext,
 		store: ChannelStore,
 		pendingMessages?: PendingMessage[],
-	): Promise<{ stopReason: string; errorMessage?: string }>;
+	): Promise<{ stopReason: string; errorMessage?: string; usedAnyTool: boolean }>;
 	abort(): void;
 }
 
-async function getAnthropicApiKey(authStorage: AuthStorage): Promise<string> {
-	const key = await authStorage.getApiKey("anthropic");
+async function resolveLlmApiKey(authStorage: AuthStorage, provider: string): Promise<string> {
+	const key = await authStorage.getApiKey(provider);
 	if (!key) {
+		if (provider === "github-copilot") {
+			throw new Error(
+				"No API key found for github-copilot.\n\n" +
+					"Use /login to authenticate with GitHub Copilot and link to auth.json from " +
+					join(homedir(), ".pi", "mom", "auth.json"),
+			);
+		}
 		throw new Error(
-			"No API key found for anthropic.\n\n" +
-				"Set an API key environment variable, or use /login with Anthropic and link to auth.json from " +
+			`No API key found for ${provider}.\n\n` +
+				"Set an API key environment variable, or use /login and link to auth.json from " +
 				join(homedir(), ".pi", "mom", "auth.json"),
 		);
 	}
@@ -79,6 +85,19 @@ function getMemory(channelDir: string): string {
 			}
 		} catch (error) {
 			log.logWarning("Failed to read workspace memory", `${workspaceMemoryPath}: ${error}`);
+		}
+	}
+
+	// SYSTEM.md: environment log + mandatory agent rules (same dir as MEMORY.md)
+	const workspaceSystemPath = join(channelDir, "..", "SYSTEM.md");
+	if (existsSync(workspaceSystemPath)) {
+		try {
+			const content = readFileSync(workspaceSystemPath, "utf-8").trim();
+			if (content) {
+				parts.push(`### Workspace SYSTEM.md\n${content}`);
+			}
+		} catch (error) {
+			log.logWarning("Failed to read workspace SYSTEM.md", `${workspaceSystemPath}: ${error}`);
 		}
 	}
 
@@ -167,12 +186,20 @@ function buildSystemPrompt(
 - Bash working directory: ${process.cwd()}
 - Be careful with system modifications`;
 
-	return `You are mom, a Slack bot assistant. Be concise. No emojis.
+	return `You are mom, a Slack bot assistant. Be concise. You may use Unicode emoji or Slack-style names like :smile: when it improves clarity or tone.
 
 ## Context
 - For current date/time, use: date
 - You have access to previous conversation context including tool results from prior turns.
 - For older history beyond your context, search log.jsonl (contains user messages and your final responses, but not tool results).
+
+## One Slack message = finish the job (mandatory)
+Each Slack user message is one request you should drive to completion in this run (the user should not have to ping you again to continue).
+- Prefer tools (bash, read, write, edit, attach) until the work is done or you hit a hard blocker.
+- Do not stop after only a plan, outline, or “next I would…” unless you are blocked (missing access, unsafe action needing explicit confirmation, truly ambiguous requirement).
+- If blocked, say what blocks you in one concise reply. If you still have executable steps, keep using tools instead of text-only handoff.
+- **Not a blocker:** needing to run a shell command you can run (e.g. \`pipenv install\`, \`python …\`). Those are next steps—use bash, do not describe them as “bloqueur” / “blocker” in place of tool calls.
+- **No hollow intent:** do not answer with only future tense or process filler in a turn that has **no** tool calls—e.g. “Je continue”, “Je le fais maintenant”, “I’ll run it now”, “Working on it”. In that case you must call tools first, or (if the work is already done) paste the **actual** results/summary—not promises.
 
 ## Slack Formatting (mrkdwn, NOT Markdown)
 Bold: *text*, Italic: _text_, Code: \`code\`, Block: \`\`\`code\`\`\`, Links: <url|text>
@@ -195,6 +222,8 @@ ${workspacePath}/
 └── ${channelId}/                # This channel
     ├── MEMORY.md                # Channel-specific memory
     ├── log.jsonl                # Message history (no tool results)
+    ├── .mom-sessions/           # LLM session files (one subfolder per Slack thread)
+    │   └── <thread-id>/         # context.jsonl + last_prompt for that conversation
     ├── attachments/             # User-shared files
     ├── scratch/                 # Your working directory
     └── skills/                  # Channel-specific tools
@@ -292,6 +321,22 @@ Update when you learn something important or when asked to remember something.
 ### Current Memory
 ${memory}
 
+## Agent memory registry (MongoDB)
+When a conversation concerns a **specific repo or project directory** (your shell cwd, a path under \`scratch/\`, or a cloned checkout), keep the cloud registry in sync:
+
+- **Database** \`agent_memory\`, collection \`projects\`. Connection string: environment variable \`AGENT_MEMORY_MONGODB_URI\` (loaded from \`.keys\` at mom startup if present — **never** paste the URI into Slack or MEMORY.md).
+- **Business id**: field \`name\` (unique per project). If unsure, use the git repo root directory name plus \`host_machine\`.
+- **Required on insert/update**: \`description\`, \`local_path\` (absolute), \`updated_at\`, and \`embedding_stale: true\` whenever **name, description, tech_stack, keywords, status, or notes** change.
+- **Never** set or compute the \`embedding\` field; a **local worker** on the host refreshes embeddings when \`embedding_stale\` is true.
+- **Semantic search on projects**: use the packaged CLI (same Atlas + embed setup as mom-p2p). With env \`AGENT_MEMORY_MONGODB_URI\`, \`AGENT_MEMORY_VECTOR_INDEX\`, \`MOM_P2P_QUERY_EMBED_CMD\`, \`EMBEDDING_MODEL\`, \`EMBEDDING_DIM\` loaded (e.g. from \`.keys\`), run:  
+  \`echo '{"query":"describe the project in natural language"}' | node <path-to-pi-mono-p2p>/packages/mom/dist/cli/agent-memory-search.js\`  
+  Stdout is JSON \`{ "matches": [ { "name", "local_path", "repo_url", "score" }, ... ] }\`. Alternatively \`MOM_P2P_AGENT_MEMORY_SEARCH_URL\` / \`SEARCH_CMD\` if you run a small HTTP or shell wrapper.
+- You do **not** load the embedding model inside the LLM; the **embed command** or external service does.
+- Set \`owner_agent\` to a stable label such as \`pi-mom\`.
+- On reads, exclude vectors if helpful: projection \`{ embedding: 0 }\`.
+
+Use \`mongosh\`, the CLI above, or any Mongo client from **bash** to upsert/query.
+
 ## System Configuration Log
 Maintain ${workspacePath}/SYSTEM.md to log all environment modifications:
 - Installed packages (apk add, npm install, pip install)
@@ -332,6 +377,142 @@ function truncate(text: string, maxLen: number): string {
 	if (text.length <= maxLen) return text;
 	return `${text.substring(0, maxLen - 3)}...`;
 }
+
+/** When the last assistant turn has thinking blocks but no `text`, Slack would otherwise stay on `_Thinking_`. */
+function extractThinkingFromAssistantMessage(
+	message: { content?: Array<{ type: string; thinking?: string }> } | undefined,
+): string {
+	if (!message?.content) return "";
+	const parts: string[] = [];
+	for (const part of message.content) {
+		if (part.type === "thinking" && typeof part.thinking === "string") {
+			parts.push(part.thinking);
+		}
+	}
+	return parts.join("\n\n");
+}
+
+/**
+ * Models sometimes emit the same user-visible paragraph twice as separate `text` content parts.
+ * Consecutive duplicates (after trim) are merged so Slack does not show the block twice.
+ */
+function joinVisibleAssistantTextParts(parts: string[]): string {
+	const kept: string[] = [];
+	for (const raw of parts) {
+		const normalized = raw.replace(/\r\n/g, "\n");
+		const sig = normalized.trim();
+		if (!sig) continue;
+		const prevSig = kept.length > 0 ? kept[kept.length - 1].replace(/\r\n/g, "\n").trim() : "";
+		if (sig === prevSig) continue;
+		kept.push(normalized);
+	}
+	return kept.join("\n");
+}
+
+const DEDUPE_PARAGRAPH_MIN_CHARS = 28;
+const DEDUPE_LINE_MIN_CHARS = 44;
+
+/**
+ * Remove repeated paragraphs (models often paste the same block twice with a blank line between)
+ * and consecutive duplicate long lines. Skips indented lines so fenced-style bodies are not mangled.
+ */
+function dedupeRepeatedAssistantText(text: string): string {
+	let t = text.replace(/\r\n/g, "\n").trim();
+	if (!t) return "";
+
+	const blocks = t.split(/\n{2,}/);
+	const seenBlock = new Set<string>();
+	const paraOut: string[] = [];
+	for (const raw of blocks) {
+		const trimmed = raw.trim();
+		if (!trimmed) continue;
+		const key = trimmed.replace(/\s+/g, " ").toLowerCase();
+		if (key.length >= DEDUPE_PARAGRAPH_MIN_CHARS && seenBlock.has(key)) continue;
+		if (key.length >= DEDUPE_PARAGRAPH_MIN_CHARS) seenBlock.add(key);
+		paraOut.push(trimmed);
+	}
+	t = paraOut.join("\n\n");
+
+	const lines = t.split("\n");
+	const lineOut: string[] = [];
+	let prevLineKey = "";
+	for (const line of lines) {
+		if (/^( {4,}|\t)/.test(line)) {
+			lineOut.push(line);
+			prevLineKey = "";
+			continue;
+		}
+		const k = line.trim().replace(/\s+/g, " ").toLowerCase();
+		if (k.length >= DEDUPE_LINE_MIN_CHARS && k === prevLineKey) continue;
+		lineOut.push(line);
+		prevLineKey = k.length >= DEDUPE_LINE_MIN_CHARS ? k : "";
+	}
+	return lineOut.join("\n");
+}
+
+function mergeAssistantTextPartsForSlack(parts: string[]): string {
+	return dedupeRepeatedAssistantText(joinVisibleAssistantTextParts(parts));
+}
+
+function mergedAssistantVisibleTextForMessage(m: { role: string; content?: unknown }): string {
+	if (m.role !== "assistant" || !Array.isArray(m.content)) {
+		return "";
+	}
+	const textParts: string[] = [];
+	for (const part of m.content) {
+		if (
+			part &&
+			typeof part === "object" &&
+			"type" in part &&
+			(part as { type: string }).type === "text" &&
+			"text" in part &&
+			typeof (part as { text: unknown }).text === "string"
+		) {
+			textParts.push((part as { text: string }).text);
+		}
+	}
+	return mergeAssistantTextPartsForSlack(textParts);
+}
+
+/**
+ * True if any assistant message after the last user message is a [SILENT] reply.
+ * Handles multi-turn runs where the last assistant block is tool-only but an earlier block said `[SILENT]`.
+ */
+function trailingAssistantBlockHasSilentMarker(messages: ReadonlyArray<{ role: string; content?: unknown }>): boolean {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const row = messages[i];
+		if (row.role === "user") {
+			break;
+		}
+		if (row.role !== "assistant") {
+			continue;
+		}
+		const merged = mergedAssistantVisibleTextForMessage(row).trim();
+		if (!merged) {
+			continue;
+		}
+		if (merged === "[SILENT]" || merged.startsWith("[SILENT]")) {
+			return true;
+		}
+	}
+	return false;
+}
+
+/** Newest assistant message with a non-empty `text` part (avoids tool-only last turns hiding earlier visible text). */
+function latestAssistantVisibleText(messages: ReadonlyArray<{ role: string; content?: unknown }>): string {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const m = messages[i];
+		if (m.role !== "assistant") continue;
+		const merged = mergedAssistantVisibleTextForMessage(m);
+		if (merged.trim()) {
+			return merged;
+		}
+	}
+	return "";
+}
+
+const SLACK_AUTO_CONTINUE_NUDGE =
+	"[Same Slack request — the user did not send another message] Continue with tools (bash/read/write/edit) until the request is done. Do not send text-only “Je continue” / “I’m doing it now” / similar with no tools. Do not reply in text-only “blocker” / “bloqueur” for work you can still run yourself. Text-only is allowed only for real results, a genuine hard blocker after a tool failed (paste the error), or impossible/unsafe requests.";
 
 function extractToolResultText(result: unknown): string {
 	if (typeof result === "string") {
@@ -388,29 +569,45 @@ function formatToolArgsForSlack(_toolName: string, args: Record<string, unknown>
 	return lines.join("\n");
 }
 
-// Cache runners per channel
+// Cache runners per Slack conversation (channel + thread root)
 const channelRunners = new Map<string, AgentRunner>();
 
 /**
- * Get or create an AgentRunner for a channel.
- * Runners are cached - one per channel, persistent across messages.
+ * Get or create an AgentRunner for a Slack conversation (channel + thread/session root).
  */
-export function getOrCreateRunner(sandboxConfig: SandboxConfig, channelId: string, channelDir: string): AgentRunner {
-	const existing = channelRunners.get(channelId);
+export function getOrCreateRunner(
+	sandboxConfig: SandboxConfig,
+	channelId: string,
+	channelDir: string,
+	sessionThreadRoot: string,
+): AgentRunner {
+	const key = runnerCacheKey(channelId, sessionThreadRoot);
+	const existing = channelRunners.get(key);
 	if (existing) return existing;
 
-	const runner = createRunner(sandboxConfig, channelId, channelDir);
-	channelRunners.set(channelId, runner);
+	const runner = createRunner(sandboxConfig, channelId, channelDir, sessionThreadRoot);
+	channelRunners.set(key, runner);
 	return runner;
 }
 
 /**
- * Create a new AgentRunner for a channel.
+ * Create a new AgentRunner for a conversation.
  * Sets up the session and subscribes to events once.
  */
-function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDir: string): AgentRunner {
+function createRunner(
+	sandboxConfig: SandboxConfig,
+	channelId: string,
+	channelDir: string,
+	sessionThreadRoot: string,
+): AgentRunner {
+	const cfg = getMomConfig();
+	const model = getModel(cfg.llmProvider as KnownProvider, cfg.llmModelId as never);
+
 	const executor = createExecutor(sandboxConfig);
 	const workspacePath = executor.getWorkspacePath(channelDir.replace(`/${channelId}`, ""));
+
+	const sessionDir = join(channelDir, ".mom-sessions", sanitizeSessionDirSegment(sessionThreadRoot));
+	mkdirSync(sessionDir, { recursive: true });
 
 	// Create tools
 	const tools = createMomTools(executor);
@@ -420,9 +617,8 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 	const skills = loadMomSkills(channelDir, workspacePath);
 	const systemPrompt = buildSystemPrompt(workspacePath, channelId, memory, sandboxConfig, [], [], skills);
 
-	// Create session manager and settings manager
-	// Use a fixed context.jsonl file per channel (not timestamped like coding-agent)
-	const contextFile = join(channelDir, "context.jsonl");
+	// Create session manager and settings manager — context.jsonl per Slack thread / conversation
+	const contextFile = join(sessionDir, "context.jsonl");
 	const sessionManager = SessionManager.open(contextFile, channelDir);
 	const settingsManager = createMomSettingsManager(join(channelDir, ".."));
 
@@ -440,7 +636,7 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 			tools,
 		},
 		convertToLlm,
-		getApiKey: async () => getAnthropicApiKey(authStorage),
+		getApiKey: async () => resolveLlmApiKey(authStorage, cfg.llmProvider),
 	});
 
 	// Load existing messages
@@ -493,6 +689,7 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 		},
 		stopReason: "stop",
 		errorMessage: undefined as string | undefined,
+		usedAnyTool: false,
 	};
 
 	// Subscribe to events ONCE
@@ -504,6 +701,7 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 
 		if (event.type === "tool_execution_start") {
 			const agentEvent = event as AgentEvent & { type: "tool_execution_start" };
+			runState.usedAnyTool = true;
 			const args = agentEvent.args as { label?: string };
 			const label = args.label || agentEvent.toolName;
 
@@ -514,7 +712,9 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 			});
 
 			log.logToolStart(logCtx, agentEvent.toolName, label, agentEvent.args as Record<string, unknown>);
-			queue.enqueue(() => ctx.respond(`_→ ${label}_`, false), "tool label");
+			if (cfg.slackPostToolStartLabel) {
+				queue.enqueue(() => ctx.respond(`_→ ${label}_`, false), "tool label");
+			}
 		} else if (event.type === "tool_execution_end") {
 			const agentEvent = event as AgentEvent & { type: "tool_execution_end" };
 			const resultStr = extractToolResultText(agentEvent.result);
@@ -535,15 +735,32 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 				? formatToolArgsForSlack(agentEvent.toolName, pending.args as Record<string, unknown>)
 				: "(args not found)";
 			const duration = (durationMs / 1000).toFixed(1);
-			let threadMessage = `*${agentEvent.isError ? "✗" : "✓"} ${agentEvent.toolName}*`;
-			if (label) threadMessage += `: ${label}`;
-			threadMessage += ` (${duration}s)\n`;
-			if (argsFormatted) threadMessage += `\`\`\`\n${argsFormatted}\n\`\`\`\n`;
-			threadMessage += `*Result:*\n\`\`\`\n${resultStr}\n\`\`\``;
+			const maxResultChars = 1800;
+			let threadMessage: string;
+			if (cfg.slackFullToolThreadDump) {
+				threadMessage = `*${agentEvent.isError ? "✗" : "✓"} ${agentEvent.toolName}*`;
+				if (label) threadMessage += `: ${label}`;
+				threadMessage += ` (${duration}s)\n`;
+				if (argsFormatted) threadMessage += `\`\`\`\n${argsFormatted}\n\`\`\`\n`;
+				threadMessage += `*Result:*\n\`\`\`\n${resultStr}\n\`\`\``;
+			} else if (agentEvent.toolName === "read" && !agentEvent.isError) {
+				const pathHint = argsFormatted.replace(/\n/g, " ").trim() || "file";
+				threadMessage = `_✓ read_ \`${pathHint}\` _(${duration}s)_`;
+			} else {
+				const shortResult =
+					resultStr.length > maxResultChars ? `${resultStr.slice(0, maxResultChars)}\n\n_(truncated)_` : resultStr;
+				threadMessage = `*${agentEvent.isError ? "✗" : "✓"} ${agentEvent.toolName}*`;
+				if (label) threadMessage += `: ${label}`;
+				threadMessage += ` (${duration}s)`;
+				if (argsFormatted) threadMessage += `\n\`\`\`${argsFormatted}\`\`\``;
+				threadMessage += `\n\`\`\`\n${shortResult}\n\`\`\``;
+			}
 
-			queue.enqueueMessage(threadMessage, "thread", "tool result thread", false);
+			if (cfg.slackPostToolResultToThread) {
+				queue.enqueueMessage(threadMessage, "thread", "tool result thread", false);
+			}
 
-			if (agentEvent.isError) {
+			if (agentEvent.isError && cfg.slackPostToolErrorToChannel) {
 				queue.enqueue(() => ctx.respond(`_Error: ${truncate(resultStr, 200)}_`, false), "tool error");
 			}
 		} else if (event.type === "message_start") {
@@ -586,23 +803,29 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 					}
 				}
 
-				const text = textParts.join("\n");
+				const text = mergeAssistantTextPartsForSlack(textParts);
 
 				for (const thinking of thinkingParts) {
 					log.logThinking(logCtx, thinking);
-					queue.enqueueMessage(`_${thinking}_`, "main", "thinking main");
-					queue.enqueueMessage(`_${thinking}_`, "thread", "thinking thread", false);
+					if (cfg.slackPostThinkingToSlack) {
+						queue.enqueueMessage(`_${thinking}_`, "main", "thinking main");
+						queue.enqueueMessage(`_${thinking}_`, "thread", "thinking thread", false);
+					}
 				}
 
 				if (text.trim()) {
 					log.logResponse(logCtx, text);
 					queue.enqueueMessage(text, "main", "response main");
-					queue.enqueueMessage(text, "thread", "response thread", false);
+					if (cfg.slackMirrorAssistantToThread) {
+						queue.enqueueMessage(text, "thread", "response thread", false);
+					}
 				}
 			}
 		} else if (event.type === "compaction_start") {
 			log.logInfo(`Compaction started (reason: ${event.reason})`);
-			queue.enqueue(() => ctx.respond("_Compacting context..._", false), "compaction start");
+			if (cfg.slackPostCompactionNotice) {
+				queue.enqueue(() => ctx.respond("_Compacting context..._", false), "compaction start");
+			}
 		} else if (event.type === "compaction_end") {
 			if (event.result) {
 				log.logInfo(`Compaction complete: ${event.result.tokensBefore} tokens compacted`);
@@ -612,10 +835,12 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 		} else if (event.type === "auto_retry_start") {
 			const retryEvent = event as any;
 			log.logWarning(`Retrying (${retryEvent.attempt}/${retryEvent.maxAttempts})`, retryEvent.errorMessage);
-			queue.enqueue(
-				() => ctx.respond(`_Retrying (${retryEvent.attempt}/${retryEvent.maxAttempts})..._`, false),
-				"retry",
-			);
+			if (cfg.slackPostRetryNotice) {
+				queue.enqueue(
+					() => ctx.respond(`_Retrying (${retryEvent.attempt}/${retryEvent.maxAttempts})..._`, false),
+					"retry",
+				);
+			}
 		}
 	});
 
@@ -641,13 +866,13 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 			ctx: SlackContext,
 			_store: ChannelStore,
 			_pendingMessages?: PendingMessage[],
-		): Promise<{ stopReason: string; errorMessage?: string }> {
+		): Promise<{ stopReason: string; errorMessage?: string; usedAnyTool: boolean }> {
 			// Ensure channel directory exists
 			await mkdir(channelDir, { recursive: true });
 
 			// Sync messages from log.jsonl that arrived while we were offline or busy
 			// Exclude the current message (it will be added via prompt())
-			const syncedCount = syncLogToSessionManager(sessionManager, channelDir, ctx.message.ts);
+			const syncedCount = syncLogToSessionManager(sessionManager, channelDir, ctx.message.ts, sessionThreadRoot);
 			if (syncedCount > 0) {
 				log.logInfo(`[${channelId}] Synced ${syncedCount} messages from log.jsonl`);
 			}
@@ -697,9 +922,11 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 			};
 			runState.stopReason = "stop";
 			runState.errorMessage = undefined;
+			runState.usedAnyTool = false;
 
 			// Create queue for this run
 			let queueChain = Promise.resolve();
+			const lastQueuedByTarget = new Map<string, string>();
 			runState.queue = {
 				enqueue(fn: () => Promise<void>, errorContext: string): void {
 					queueChain = queueChain.then(async () => {
@@ -717,6 +944,13 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 					});
 				},
 				enqueueMessage(text: string, target: "main" | "thread", errorContext: string, doLog = true): void {
+					if (cfg.slackDedupeMessages) {
+						const dedupeKey = `${target}:${text}`;
+						if (lastQueuedByTarget.get(target) === dedupeKey) {
+							return;
+						}
+						lastQueuedByTarget.set(target, dedupeKey);
+					}
 					const parts = splitForSlack(text);
 					for (const part of parts) {
 						this.enqueue(
@@ -775,9 +1009,26 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 				newUserMessage: userMessage,
 				imageAttachmentCount: imageAttachments.length,
 			};
-			await writeFile(join(channelDir, "last_prompt.jsonl"), JSON.stringify(debugContext, null, 2));
+			await writeFile(join(sessionDir, "last_prompt.jsonl"), JSON.stringify(debugContext, null, 2));
 
 			await session.prompt(userMessage, imageAttachments.length > 0 ? { images: imageAttachments } : undefined);
+
+			for (let round = 0; round < cfg.maxAutoContinueRounds; round++) {
+				if (runState.stopReason === "error" || runState.stopReason === "aborted") {
+					break;
+				}
+				if (runState.usedAnyTool) {
+					break;
+				}
+				try {
+					await session.followUp(SLACK_AUTO_CONTINUE_NUDGE);
+					await session.agent.continue();
+				} catch (err) {
+					const errMsg = err instanceof Error ? err.message : String(err);
+					log.logWarning("MOM_MAX_AUTO_CONTINUE: continue failed", errMsg);
+					break;
+				}
+			}
 
 			// Wait for queued messages
 			await queueChain;
@@ -795,14 +1046,14 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 				// Final message update
 				const messages = session.messages;
 				const lastAssistant = messages.filter((m) => m.role === "assistant").pop();
-				const finalText =
-					lastAssistant?.content
-						.filter((c): c is { type: "text"; text: string } => c.type === "text")
-						.map((c) => c.text)
-						.join("\n") || "";
+				const finalText = latestAssistantVisibleText(messages);
 
 				// Check for [SILENT] marker - delete message and thread instead of posting
-				if (finalText.trim() === "[SILENT]" || finalText.trim().startsWith("[SILENT]")) {
+				const silent =
+					trailingAssistantBlockHasSilentMarker(messages) ||
+					finalText.trim() === "[SILENT]" ||
+					finalText.trim().startsWith("[SILENT]");
+				if (silent) {
 					try {
 						await ctx.deleteMessage();
 						log.logInfo("Silent response - deleted message and thread");
@@ -820,6 +1071,24 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 					} catch (err) {
 						const errMsg = err instanceof Error ? err.message : String(err);
 						log.logWarning("Failed to replace message with final text", errMsg);
+					}
+				} else {
+					const thinkingFallback = extractThinkingFromAssistantMessage(lastAssistant);
+					try {
+						if (thinkingFallback.trim()) {
+							const mainText =
+								thinkingFallback.length > SLACK_MAX_LENGTH
+									? `${thinkingFallback.substring(0, SLACK_MAX_LENGTH - 50)}\n\n_(truncated)_`
+									: thinkingFallback;
+							await ctx.replaceMessage(mainText);
+						} else {
+							await ctx.replaceMessage(
+								"_No text in the model’s last reply (tools only or internal reasoning). Check the thread for tool output._",
+							);
+						}
+					} catch (err) {
+						const errMsg = err instanceof Error ? err.message : String(err);
+						log.logWarning("Failed to replace placeholder main message", errMsg);
 					}
 				}
 			}
@@ -842,8 +1111,10 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 				const contextWindow = model.contextWindow || 200000;
 
 				const summary = log.logUsageSummary(runState.logCtx!, runState.totalUsage, contextTokens, contextWindow);
-				runState.queue.enqueue(() => ctx.respondInThread(summary), "usage summary");
-				await queueChain;
+				if (cfg.slackPostUsageSummaryToThread) {
+					runState.queue.enqueue(() => ctx.respondInThread(summary), "usage summary");
+					await queueChain;
+				}
 			}
 
 			// Clear run state
@@ -851,7 +1122,11 @@ function createRunner(sandboxConfig: SandboxConfig, channelId: string, channelDi
 			runState.logCtx = null;
 			runState.queue = null;
 
-			return { stopReason: runState.stopReason, errorMessage: runState.errorMessage };
+			return {
+				stopReason: runState.stopReason,
+				errorMessage: runState.errorMessage,
+				usedAnyTool: runState.usedAnyTool,
+			};
 		},
 
 		abort(): void {

@@ -4,6 +4,8 @@
 
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { fuzzyFilter } from "@mariozechner/pi-tui";
+import chalk from "chalk";
+import { formatNoModelsAvailableMessage } from "../core/auth-guidance.js";
 import type { ModelRegistry } from "../core/model-registry.js";
 
 /**
@@ -25,10 +27,15 @@ function formatTokenCount(count: number): string {
  * List available models, optionally filtered by search pattern
  */
 export async function listModels(modelRegistry: ModelRegistry, searchPattern?: string): Promise<void> {
+	const loadError = modelRegistry.getError();
+	if (loadError) {
+		console.error(chalk.yellow(`Warning: errors loading models.json:\n${loadError}`));
+	}
+
 	const models = modelRegistry.getAvailable();
 
 	if (models.length === 0) {
-		console.log("No models available. Set API keys in environment variables.");
+		console.log(formatNoModelsAvailableMessage());
 		return;
 	}
 

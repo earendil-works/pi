@@ -2,13 +2,13 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve, sep } from "node:path";
 import chalk from "chalk";
-import { CONFIG_DIR_NAME, getAgentDir } from "../config.js";
+import { CONFIG_DIR_NAME } from "../config.js";
 import { loadThemeFromPath, type Theme } from "../modes/interactive/theme/theme.js";
 import type { ResourceDiagnostic } from "./diagnostics.js";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.js";
 
-import { isLocalPath } from "../utils/paths.js";
+import { canonicalizePath, isLocalPath } from "../utils/paths.js";
 import { createEventBus, type EventBus } from "./event-bus.js";
 import { createExtensionRuntime, loadExtensionFromFactory, loadExtensions } from "./extensions/loader.js";
 import type { Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResult } from "./extensions/types.js";
@@ -56,7 +56,7 @@ function resolvePromptInput(input: string | undefined, description: string): str
 }
 
 function loadContextFileFromDir(dir: string): { path: string; content: string } | null {
-	const candidates = ["AGENTS.md", "CLAUDE.md"];
+	const candidates = ["AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"];
 	for (const filename of candidates) {
 		const filePath = join(dir, filename);
 		if (existsSync(filePath)) {
@@ -73,11 +73,12 @@ function loadContextFileFromDir(dir: string): { path: string; content: string } 
 	return null;
 }
 
-function loadProjectContextFiles(
-	options: { cwd?: string; agentDir?: string } = {},
-): Array<{ path: string; content: string }> {
-	const resolvedCwd = options.cwd ?? process.cwd();
-	const resolvedAgentDir = options.agentDir ?? getAgentDir();
+export function loadProjectContextFiles(options: {
+	cwd: string;
+	agentDir: string;
+}): Array<{ path: string; content: string }> {
+	const resolvedCwd = options.cwd;
+	const resolvedAgentDir = options.agentDir;
 
 	const contextFiles: Array<{ path: string; content: string }> = [];
 	const seenPaths = new Set<string>();
@@ -113,8 +114,8 @@ function loadProjectContextFiles(
 }
 
 export interface DefaultResourceLoaderOptions {
-	cwd?: string;
-	agentDir?: string;
+	cwd: string;
+	agentDir: string;
 	settingsManager?: SettingsManager;
 	eventBus?: EventBus;
 	additionalExtensionPaths?: string[];
@@ -126,8 +127,9 @@ export interface DefaultResourceLoaderOptions {
 	noSkills?: boolean;
 	noPromptTemplates?: boolean;
 	noThemes?: boolean;
+	noContextFiles?: boolean;
 	systemPrompt?: string;
-	appendSystemPrompt?: string;
+	appendSystemPrompt?: string[];
 	extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
 	skillsOverride?: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
 		skills: Skill[];
@@ -163,8 +165,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private noSkills: boolean;
 	private noPromptTemplates: boolean;
 	private noThemes: boolean;
+	private noContextFiles: boolean;
 	private systemPromptSource?: string;
-	private appendSystemPromptSource?: string;
+	private appendSystemPromptSource?: string[];
 	private extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
 	private skillsOverride?: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
 		skills: Skill[];
@@ -202,8 +205,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private lastThemePaths: string[];
 
 	constructor(options: DefaultResourceLoaderOptions) {
-		this.cwd = options.cwd ?? process.cwd();
-		this.agentDir = options.agentDir ?? getAgentDir();
+		this.cwd = options.cwd;
+		this.agentDir = options.agentDir;
 		this.settingsManager = options.settingsManager ?? SettingsManager.create(this.cwd, this.agentDir);
 		this.eventBus = options.eventBus ?? createEventBus();
 		this.packageManager = new DefaultPackageManager({
@@ -220,6 +223,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.noSkills = options.noSkills ?? false;
 		this.noPromptTemplates = options.noPromptTemplates ?? false;
 		this.noThemes = options.noThemes ?? false;
+		this.noContextFiles = options.noContextFiles ?? false;
 		this.systemPromptSource = options.systemPrompt;
 		this.appendSystemPromptSource = options.appendSystemPrompt;
 		this.extensionsOverride = options.extensionsOverride;
@@ -448,7 +452,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 			}
 		}
 
-		const agentsFiles = { agentsFiles: loadProjectContextFiles({ cwd: this.cwd, agentDir: this.agentDir }) };
+		const agentsFiles = {
+			agentsFiles: this.noContextFiles ? [] : loadProjectContextFiles({ cwd: this.cwd, agentDir: this.agentDir }),
+		};
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
 		this.agentsFiles = resolvedAgentsFiles.agentsFiles;
 
@@ -458,9 +464,12 @@ export class DefaultResourceLoader implements ResourceLoader {
 		);
 		this.systemPrompt = this.systemPromptOverride ? this.systemPromptOverride(baseSystemPrompt) : baseSystemPrompt;
 
-		const appendSource = this.appendSystemPromptSource ?? this.discoverAppendSystemPromptFile();
-		const resolvedAppend = resolvePromptInput(appendSource, "append system prompt");
-		const baseAppend = resolvedAppend ? [resolvedAppend] : [];
+		const appendSources =
+			this.appendSystemPromptSource ??
+			(this.discoverAppendSystemPromptFile() ? [this.discoverAppendSystemPromptFile()!] : []);
+		const baseAppend = appendSources
+			.map((s) => resolvePromptInput(s, "append system prompt"))
+			.filter((s): s is string => s !== undefined);
 		this.appendSystemPrompt = this.appendSystemPromptOverride
 			? this.appendSystemPromptOverride(baseAppend)
 			: baseAppend;
@@ -655,8 +664,9 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		for (const p of [...primary, ...additional]) {
 			const resolved = this.resolveResourcePath(p);
-			if (seen.has(resolved)) continue;
-			seen.add(resolved);
+			const canonicalPath = canonicalizePath(resolved);
+			if (seen.has(canonicalPath)) continue;
+			seen.add(canonicalPath);
 			merged.push(resolved);
 		}
 

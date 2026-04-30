@@ -41,6 +41,20 @@ export interface ToolHtmlRenderer {
  * The renderer looks up tool definitions and invokes their renderCall/renderResult
  * methods, converting the resulting TUI Component output (ANSI) to HTML.
  */
+const ANSI_ESCAPE_REGEX = /\x1b\[[\d;]*m/g;
+
+function isBlankRenderedLine(line: string): boolean {
+	return line.replace(ANSI_ESCAPE_REGEX, "").trim().length === 0;
+}
+
+function trimRenderedResultLines(lines: string[]): string[] {
+	let start = 0;
+	let end = lines.length;
+	while (start < end && isBlankRenderedLine(lines[start])) start++;
+	while (end > start && isBlankRenderedLine(lines[end - 1])) end--;
+	return lines.slice(start, end);
+}
+
 export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRenderer {
 	const { getToolDefinition, theme, cwd, width = 100 } = deps;
 
@@ -133,7 +147,7 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 					createRenderContext(toolCallId, renderedResultComponents.get(toolCallId), false, false, isError),
 				);
 				renderedResultComponents.set(toolCallId, collapsedComponent);
-				const collapsed = ansiLinesToHtml(collapsedComponent.render(width));
+				const collapsed = ansiLinesToHtml(trimRenderedResultLines(collapsedComponent.render(width)));
 
 				// Render expanded
 				const expandedComponent = toolDef.renderResult(
@@ -143,7 +157,7 @@ export function createToolHtmlRenderer(deps: ToolHtmlRendererDeps): ToolHtmlRend
 					createRenderContext(toolCallId, renderedResultComponents.get(toolCallId), true, false, isError),
 				);
 				renderedResultComponents.set(toolCallId, expandedComponent);
-				const expanded = ansiLinesToHtml(expandedComponent.render(width));
+				const expanded = ansiLinesToHtml(trimRenderedResultLines(expandedComponent.render(width)));
 
 				return {
 					...(collapsed && collapsed !== expanded ? { collapsed } : {}),

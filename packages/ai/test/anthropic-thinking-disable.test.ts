@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { getModel } from "../src/models.js";
 import { streamSimple } from "../src/stream.js";
-import type { Context, Model } from "../src/types.js";
+import type { Context, Model, SimpleStreamOptions } from "../src/types.js";
 
 interface AnthropicThinkingPayload {
-	thinking?: { type: string; budget_tokens?: number };
+	thinking?: { type: string; budget_tokens?: number; display?: string };
 	output_config?: { effort?: string };
 }
 
@@ -14,7 +14,10 @@ function makePayloadCaptureContext(): Context {
 	};
 }
 
-async function capturePayload(model: Model<"anthropic-messages">): Promise<AnthropicThinkingPayload> {
+async function capturePayload(
+	model: Model<"anthropic-messages">,
+	options?: SimpleStreamOptions,
+): Promise<AnthropicThinkingPayload> {
 	let capturedPayload: AnthropicThinkingPayload | undefined;
 	const payloadCaptureModel: Model<"anthropic-messages"> = {
 		...model,
@@ -22,6 +25,7 @@ async function capturePayload(model: Model<"anthropic-messages">): Promise<Anthr
 	};
 
 	const s = streamSimple(payloadCaptureModel, makePayloadCaptureContext(), {
+		...options,
 		apiKey: "fake-key",
 		onPayload: (payload) => {
 			capturedPayload = payload as AnthropicThinkingPayload;
@@ -112,6 +116,27 @@ describe("Anthropic thinking disable payload", () => {
 
 		expect(payload.thinking).toEqual({ type: "disabled" });
 		expect(payload.output_config).toBeUndefined();
+	});
+
+	it("sends thinking.type=disabled for Claude Opus 4.7 when thinking is off", async () => {
+		const payload = await capturePayload(getModel("anthropic", "claude-opus-4-7"));
+
+		expect(payload.thinking).toEqual({ type: "disabled" });
+		expect(payload.output_config).toBeUndefined();
+	});
+
+	it("uses adaptive thinking for Claude Opus 4.7 when reasoning is enabled", async () => {
+		const payload = await capturePayload(getModel("anthropic", "claude-opus-4-7"), { reasoning: "high" });
+
+		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(payload.output_config).toEqual({ effort: "high" });
+	});
+
+	it("maps xhigh reasoning to effort=xhigh for Claude Opus 4.7", async () => {
+		const payload = await capturePayload(getModel("anthropic", "claude-opus-4-7"), { reasoning: "xhigh" });
+
+		expect(payload.thinking).toEqual({ type: "adaptive", display: "summarized" });
+		expect(payload.output_config).toEqual({ effort: "xhigh" });
 	});
 });
 

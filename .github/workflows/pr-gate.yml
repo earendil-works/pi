@@ -16,6 +16,8 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
+            const APPROVED_FILE = '.github/APPROVED_CONTRIBUTORS';
+            const VALID_CAPABILITIES = new Set(['issue', 'pr']);
             const prAuthor = context.payload.pull_request.user.login;
             const defaultBranch = context.payload.repository.default_branch;
 
@@ -52,6 +54,32 @@ jobs:
               return Buffer.from(fileContent.content, 'base64').toString('utf8');
             }
 
+            function parseApprovedUsers(content) {
+              const users = new Map();
+
+              for (const rawLine of content.split('\n')) {
+                const line = rawLine.trim();
+                if (!line || line.startsWith('#')) continue;
+
+                const parts = line.split(/\s+/);
+                if (parts.length !== 2) {
+                  console.log(`Skipping malformed line: ${rawLine}`);
+                  continue;
+                }
+
+                const [username, capability] = parts;
+                const normalizedCapability = capability.toLowerCase();
+                if (!VALID_CAPABILITIES.has(normalizedCapability)) {
+                  console.log(`Skipping line with invalid capability: ${rawLine}`);
+                  continue;
+                }
+
+                users.set(username.toLowerCase(), normalizedCapability);
+              }
+
+              return users;
+            }
+
             async function closePullRequest(message) {
               await github.rest.issues.createComment({
                 owner: context.repo.owner,
@@ -74,31 +102,25 @@ jobs:
               return;
             }
 
-            const approvedContent = await getTextFile('.github/APPROVED_CONTRIBUTORS');
-            const approvedList = approvedContent
-              .split('\n')
-              .map(line => line.trim().toLowerCase())
-              .filter(line => line && !line.startsWith('#'));
-            const isApprovedContributor = approvedList.includes(prAuthor.toLowerCase());
+            const approvedContent = await getTextFile(APPROVED_FILE);
+            const approvedUsers = parseApprovedUsers(approvedContent);
+            const capability = approvedUsers.get(prAuthor.toLowerCase());
 
-            if (isApprovedContributor) {
-              console.log(`${prAuthor} is in the approved contributors list`);
+            if (capability === 'pr') {
+              console.log(`${prAuthor} is approved for PRs`);
               return;
             }
 
             console.log(`${prAuthor} is not approved, closing PR`);
 
             const message = [
-              `Hi @${prAuthor}, thanks for your interest in contributing!`,
+              'This PR was auto-closed. Only contributors approved with `lgtm` can open PRs. Open an issue first.',
               '',
-              'We ask new contributors to open an issue first before submitting a PR. This helps us discuss the approach and avoid wasted effort.',
+              `Maintainers review auto-closed issues daily. Issues that do not meet the quality bar in [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md) will not be reopened or receive a reply.`,
               '',
-              '**Next steps:**',
-              '1. Open an issue describing what you want to change and why (keep it concise, write in your human voice, AI slop will be closed)',
-              '2. Once a maintainer approves with `lgtm`, you\'ll be added to the approved contributors list',
-              '3. Then you can submit your PR',
+              'If a maintainer replies `lgtmi`, your future issues will stay open. If a maintainer replies `lgtm`, your future issues and PRs will stay open.',
               '',
-              `This PR will be closed automatically. See https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md for more details.`,
+              `See [CONTRIBUTING.md](https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${defaultBranch}/CONTRIBUTING.md).`,
             ].join('\n');
 
             await closePullRequest(message);

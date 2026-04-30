@@ -6,7 +6,7 @@ import {
 	type Model,
 	type UserMessage,
 } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { agentLoop, agentLoopContinue } from "../src/agent-loop.js";
 import type { AgentContext, AgentEvent, AgentLoopConfig, AgentMessage, AgentTool } from "../src/types.js";
@@ -449,7 +449,7 @@ describe("agentLoop with AgentMessage", () => {
 		expect(executed).toEqual([[{ oldText: "before", newText: "after" }]]);
 	});
 
-	it("should execute tool calls in parallel and emit tool results in source order", async () => {
+	it("should emit tool_execution_end in completion order but persist tool results in source order", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		let firstResolved = false;
 		let parallelObserved = false;
@@ -519,15 +519,29 @@ describe("agentLoop with AgentMessage", () => {
 			events.push(event);
 		}
 
+		const toolExecutionEndIds = events.flatMap((event) => {
+			if (event.type !== "tool_execution_end") {
+				return [];
+			}
+			return [event.toolCallId];
+		});
 		const toolResultIds = events.flatMap((event) => {
 			if (event.type !== "message_end" || event.message.role !== "toolResult") {
 				return [];
 			}
 			return [event.message.toolCallId];
 		});
+		const turnToolResultIds = events.flatMap((event) => {
+			if (event.type !== "turn_end") {
+				return [];
+			}
+			return event.toolResults.map((toolResult) => toolResult.toolCallId);
+		});
 
 		expect(parallelObserved).toBe(true);
+		expect(toolExecutionEndIds).toEqual(["tool-2", "tool-1"]);
 		expect(toolResultIds).toEqual(["tool-1", "tool-2"]);
+		expect(turnToolResultIds).toEqual(["tool-1", "tool-2"]);
 	});
 
 	it("should inject queued messages after all tool calls complete", async () => {
@@ -634,6 +648,415 @@ describe("agentLoop with AgentMessage", () => {
 
 		// Interrupt message should be in context when second LLM call is made
 		expect(sawInterruptInContext).toBe(true);
+	});
+
+	it("should force sequential execution when a tool has executionMode=sequential even with default parallel config", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		let firstResolved = false;
+		let parallelObserved = false;
+		let releaseFirst: (() => void) | undefined;
+		const firstDone = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
+		});
+
+		const slowTool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "slow",
+			label: "Slow",
+			description: "Slow tool",
+			parameters: toolSchema,
+			executionMode: "sequential",
+			async execute(_toolCallId, params) {
+				if (params.value === "first") {
+					await firstDone;
+					firstResolved = true;
+				}
+				if (params.value === "second" && !firstResolved) {
+					parallelObserved = true;
+				}
+				return {
+					content: [{ type: "text", text: `slow: ${params.value}` }],
+					details: { value: params.value },
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [slowTool],
+		};
+
+		const userPrompt: AgentMessage = createUserMessage("run both");
+		// config is parallel (default), but tool forces sequential
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let callIndex = 0;
+		const stream = agentLoop([userPrompt], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					const message = createAssistantMessage(
+						[
+							{ type: "toolCall", id: "tool-1", name: "slow", arguments: { value: "first" } },
+							{ type: "toolCall", id: "tool-2", name: "slow", arguments: { value: "second" } },
+						],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+					setTimeout(() => releaseFirst?.(), 20);
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		const events: AgentEvent[] = [];
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		// With sequential execution, second tool should NOT start before first finishes
+		expect(parallelObserved).toBe(false);
+
+		const toolResultIds = events.flatMap((event) => {
+			if (event.type !== "message_end" || event.message.role !== "toolResult") {
+				return [];
+			}
+			return [event.message.toolCallId];
+		});
+		expect(toolResultIds).toEqual(["tool-1", "tool-2"]);
+	});
+
+	it("should force sequential execution when one of multiple tools has executionMode=sequential", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		const executionOrder: string[] = [];
+		let releaseSlow: (() => void) | undefined;
+		const slowDone = new Promise<void>((resolve) => {
+			releaseSlow = resolve;
+		});
+
+		const slowTool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "slow",
+			label: "Slow",
+			description: "Slow tool",
+			parameters: toolSchema,
+			executionMode: "sequential",
+			async execute(_toolCallId, params) {
+				executionOrder.push(`slow:${params.value}`);
+				if (params.value === "a") {
+					await slowDone;
+				}
+				return {
+					content: [{ type: "text", text: `slow: ${params.value}` }],
+					details: { value: params.value },
+				};
+			},
+		};
+
+		const fastTool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "fast",
+			label: "Fast",
+			description: "Fast tool",
+			parameters: toolSchema,
+			// no executionMode = defaults to parallel
+			async execute(_toolCallId, params) {
+				executionOrder.push(`fast:${params.value}`);
+				return {
+					content: [{ type: "text", text: `fast: ${params.value}` }],
+					details: { value: params.value },
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [slowTool, fastTool],
+		};
+
+		const userPrompt: AgentMessage = createUserMessage("run both");
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			// parallel by default, but slowTool forces sequential
+		};
+
+		let callIndex = 0;
+		const stream = agentLoop([userPrompt], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					const message = createAssistantMessage(
+						[
+							{ type: "toolCall", id: "tool-1", name: "slow", arguments: { value: "a" } },
+							{ type: "toolCall", id: "tool-2", name: "fast", arguments: { value: "b" } },
+						],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+					setTimeout(() => releaseSlow?.(), 20);
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		const events: AgentEvent[] = [];
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		// Fast tool should NOT run before slow tool finishes
+		expect(executionOrder[0]).toBe("slow:a");
+		expect(executionOrder).toContain("fast:b");
+	});
+
+	it("should allow parallel execution when all tools have executionMode=parallel", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		let firstResolved = false;
+		let parallelObserved = false;
+		let releaseFirst: (() => void) | undefined;
+		const firstDone = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
+		});
+
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			executionMode: "parallel",
+			async execute(_toolCallId, params) {
+				if (params.value === "first") {
+					await firstDone;
+					firstResolved = true;
+				}
+				if (params.value === "second" && !firstResolved) {
+					parallelObserved = true;
+				}
+				return {
+					content: [{ type: "text", text: `echoed: ${params.value}` }],
+					details: { value: params.value },
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+
+		const userPrompt: AgentMessage = createUserMessage("echo both");
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let callIndex = 0;
+		const stream = agentLoop([userPrompt], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					const message = createAssistantMessage(
+						[
+							{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "first" } },
+							{ type: "toolCall", id: "tool-2", name: "echo", arguments: { value: "second" } },
+						],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+					setTimeout(() => releaseFirst?.(), 20);
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		const events: AgentEvent[] = [];
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		// With executionMode=parallel, second tool should start before first finishes
+		expect(parallelObserved).toBe(true);
+	});
+
+	it("should stop after a tool batch when every tool result sets terminate=true", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				return {
+					content: [{ type: "text", text: `echoed: ${params.value}` }],
+					details: { value: params.value },
+					terminate: true,
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+		};
+
+		let llmCalls = 0;
+		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, () => {
+			llmCalls++;
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				const message = createAssistantMessage(
+					[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+					"toolUse",
+				);
+				mockStream.push({ type: "done", reason: "toolUse", message });
+			});
+			return mockStream;
+		});
+
+		const events: AgentEvent[] = [];
+		for await (const event of stream) {
+			events.push(event);
+		}
+
+		const messages = await stream.result();
+		expect(llmCalls).toBe(1);
+		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
+		expect(events.filter((event) => event.type === "turn_end")).toHaveLength(1);
+	});
+
+	it("should continue after parallel tool calls when not all tool results terminate", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				return {
+					content: [{ type: "text", text: `echoed: ${params.value}` }],
+					details: { value: params.value },
+					terminate: params.value === "first",
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			toolExecution: "parallel",
+		};
+
+		let callIndex = 0;
+		const stream = agentLoop([createUserMessage("echo both")], context, config, undefined, () => {
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				if (callIndex === 0) {
+					const message = createAssistantMessage(
+						[
+							{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "first" } },
+							{ type: "toolCall", id: "tool-2", name: "echo", arguments: { value: "second" } },
+						],
+						"toolUse",
+					);
+					mockStream.push({ type: "done", reason: "toolUse", message });
+				} else {
+					const message = createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: "stop", message });
+				}
+				callIndex++;
+			});
+			return mockStream;
+		});
+
+		for await (const _event of stream) {
+			// consume
+		}
+
+		const messages = await stream.result();
+		expect(callIndex).toBe(2);
+		expect(messages.map((message) => message.role)).toEqual([
+			"user",
+			"assistant",
+			"toolResult",
+			"toolResult",
+			"assistant",
+		]);
+	});
+
+	it("should allow afterToolCall to mark a tool batch as terminating", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params) {
+				return {
+					content: [{ type: "text", text: `echoed: ${params.value}` }],
+					details: { value: params.value },
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
+
+		const config: AgentLoopConfig = {
+			model: createModel(),
+			convertToLlm: identityConverter,
+			afterToolCall: async () => ({ terminate: true }),
+		};
+
+		let llmCalls = 0;
+		const stream = agentLoop([createUserMessage("echo something")], context, config, undefined, () => {
+			llmCalls++;
+			const mockStream = new MockAssistantStream();
+			queueMicrotask(() => {
+				const message = createAssistantMessage(
+					[{ type: "toolCall", id: "tool-1", name: "echo", arguments: { value: "hello" } }],
+					"toolUse",
+				);
+				mockStream.push({ type: "done", reason: "toolUse", message });
+			});
+			return mockStream;
+		});
+
+		for await (const _event of stream) {
+			// consume
+		}
+
+		expect(llmCalls).toBe(1);
 	});
 });
 

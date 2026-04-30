@@ -14,13 +14,14 @@ import {
 	type ImageContent,
 	type TextContent,
 } from "@mariozechner/pi-ai";
-import { Type } from "@sinclair/typebox";
+import { Type } from "typebox";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AgentSession } from "../src/core/agent-session.js";
 import { AuthStorage } from "../src/core/auth-storage.js";
 import { ModelRegistry } from "../src/core/model-registry.js";
 import { SessionManager } from "../src/core/session-manager.js";
 import { SettingsManager } from "../src/core/settings-manager.js";
+import type { BuildSystemPromptOptions } from "../src/core/system-prompt.js";
 import { createTestExtensionsResult, createTestResourceLoader } from "./utilities.js";
 
 // Mock stream that mimics AssistantMessageEventStream
@@ -443,7 +444,13 @@ describe("AgentSession concurrent prompt guard", () => {
 					images: unknown,
 					source: "interactive" | "rpc" | "extension",
 				) => Promise<{ action: "continue" }>;
-				emitBeforeAgentStart: (prompt: string, images: unknown, systemPrompt: string) => Promise<undefined>;
+				emitBeforeAgentStart: (
+					prompt: string,
+					images: unknown,
+					systemPrompt: string,
+					systemPromptOptions: BuildSystemPromptOptions,
+				) => Promise<undefined>;
+				invalidate: (message?: string) => void;
 			};
 		};
 		sessionWithRunner._extensionRunner = {
@@ -460,6 +467,7 @@ describe("AgentSession concurrent prompt guard", () => {
 			},
 			emitInput: async () => ({ action: "continue" }),
 			emitBeforeAgentStart: async () => undefined,
+			invalidate: () => {},
 		};
 
 		await session.prompt("hi");
@@ -578,7 +586,13 @@ describe("AgentSession concurrent prompt guard", () => {
 					images: unknown,
 					source: "interactive" | "rpc" | "extension",
 				) => Promise<{ action: "continue" }>;
-				emitBeforeAgentStart: (prompt: string, images: unknown, systemPrompt: string) => Promise<undefined>;
+				emitBeforeAgentStart: (
+					prompt: string,
+					images: unknown,
+					systemPrompt: string,
+					systemPromptOptions: BuildSystemPromptOptions,
+				) => Promise<undefined>;
+				invalidate: (message?: string) => void;
 			};
 		};
 		sessionWithRunner._extensionRunner = {
@@ -590,6 +604,7 @@ describe("AgentSession concurrent prompt guard", () => {
 			},
 			emitInput: async () => ({ action: "continue" }),
 			emitBeforeAgentStart: async () => undefined,
+			invalidate: () => {},
 		};
 
 		await session.prompt("hi");

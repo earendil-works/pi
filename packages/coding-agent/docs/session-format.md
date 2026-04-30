@@ -191,7 +191,7 @@ First line of the file. Metadata only, not part of the tree (no `id`/`parentId`)
 {"type":"session","version":3,"id":"uuid","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/path/to/project"}
 ```
 
-For sessions with a parent (created via `/fork` or `newSession({ parentSession })`):
+For sessions with a parent (created via `/fork`, `/clone`, or `newSession({ parentSession })`):
 
 ```json
 {"type":"session","version":3,"id":"uuid","timestamp":"2024-12-03T14:00:00.000Z","cwd":"/path/to/project","parentSession":"/path/to/original/session.jsonl"}

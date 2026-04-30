@@ -1,6 +1,6 @@
 import type { AgentTool } from "@mariozechner/pi-agent-core";
-import { Type } from "@sinclair/typebox";
 import { basename, resolve as resolvePath } from "path";
+import { Type } from "typebox";
 
 // This will be set by the agent before running
 let uploadFn: ((filePath: string, title?: string) => Promise<void>) | null = null;

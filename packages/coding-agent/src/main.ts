@@ -6,24 +6,26 @@
  */
 
 import { resolve } from "node:path";
+import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual, supportsXhigh } from "@mariozechner/pi-ai";
 import { ProcessTerminal, setKeybindings, TUI } from "@mariozechner/pi-tui";
 import chalk from "chalk";
-import { createInterface } from "readline";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.js";
 import { processFileArguments } from "./cli/file-processor.js";
 import { buildInitialMessage } from "./cli/initial-message.js";
 import { listModels } from "./cli/list-models.js";
 import { selectSession } from "./cli/session-picker.js";
-import { getAgentDir, getModelsPath, VERSION } from "./config.js";
+import { getAgentDir, VERSION } from "./config.js";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.js";
 import {
 	type AgentSessionRuntimeDiagnostic,
 	createAgentSessionFromServices,
 	createAgentSessionServices,
 } from "./core/agent-session-services.js";
+import { formatNoModelsAvailableMessage } from "./core/auth-guidance.js";
 import { AuthStorage } from "./core/auth-storage.js";
 import { exportFromFile } from "./core/export-html/index.js";
+import type { ExtensionFactory } from "./core/extensions/types.js";
 import { KeybindingsManager } from "./core/keybindings.js";
 import type { ModelRegistry } from "./core/model-registry.js";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.js";
@@ -38,7 +40,6 @@ import {
 import { SessionManager } from "./core/session-manager.js";
 import { SettingsManager } from "./core/settings-manager.js";
 import { printTimings, resetTimings, time } from "./core/timings.js";
-import { allTools } from "./core/tools/index.js";
 import { runMigrations, showDeprecationWarnings } from "./migrations.js";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.js";
 import { ExtensionSelectorComponent } from "./modes/interactive/components/extension-selector.js";
@@ -366,15 +367,12 @@ function buildSessionOptions(
 
 	// Tools
 	if (parsed.noTools) {
-		// --no-tools: start with no built-in tools
-		// --tools can still add specific ones back
-		if (parsed.tools && parsed.tools.length > 0) {
-			options.tools = parsed.tools.map((name) => allTools[name]);
-		} else {
-			options.tools = [];
-		}
-	} else if (parsed.tools) {
-		options.tools = parsed.tools.map((name) => allTools[name]);
+		options.noTools = "all";
+	} else if (parsed.noBuiltinTools) {
+		options.noTools = "builtin";
+	}
+	if (parsed.tools) {
+		options.tools = [...parsed.tools];
 	}
 
 	return { options, cliThinkingFromModel, diagnostics };
@@ -418,7 +416,11 @@ async function promptForMissingSessionCwd(
 	});
 }
 
-export async function main(args: string[]) {
+export interface MainOptions {
+	extensionFactories?: ExtensionFactory[];
+}
+
+export async function main(args: string[], options?: MainOptions) {
 	resetTimings();
 	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.PI_OFFLINE);
 	if (offlineMode) {
@@ -533,8 +535,10 @@ export async function main(args: string[]) {
 				noSkills: parsed.noSkills,
 				noPromptTemplates: parsed.noPromptTemplates,
 				noThemes: parsed.noThemes,
+				noContextFiles: parsed.noContextFiles,
 				systemPrompt: parsed.systemPrompt,
 				appendSystemPrompt: parsed.appendSystemPrompt,
+				extensionFactories: options?.extensionFactories,
 			},
 		});
 		const { settingsManager, modelRegistry, resourceLoader } = services;
@@ -582,6 +586,7 @@ export async function main(args: string[]) {
 			thinkingLevel: sessionOptions.thinkingLevel,
 			scopedModels: sessionOptions.scopedModels,
 			tools: sessionOptions.tools,
+			noTools: sessionOptions.noTools,
 			customTools: sessionOptions.customTools,
 		});
 		const cliThinkingOverride = parsed.thinking !== undefined || cliThinkingFromModel;
@@ -659,10 +664,7 @@ export async function main(args: string[]) {
 	time("createAgentSession");
 
 	if (appMode !== "interactive" && !session.model) {
-		console.error(chalk.red("No models available."));
-		console.error(chalk.yellow("\nSet an API key environment variable:"));
-		console.error("  ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, etc.");
-		console.error(chalk.yellow(`\nOr create ${getModelsPath()}`));
+		console.error(chalk.red(formatNoModelsAvailableMessage()));
 		process.exit(1);
 	}
 

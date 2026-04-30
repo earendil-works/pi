@@ -10,7 +10,7 @@
  * via `tool_call` input mutation without replacing the tool.
  *
  * Config files (merged, project takes precedence):
- * - ~/.pi/agent/sandbox.json (global)
+ * - ~/.pi/agent/extensions/sandbox.json (global)
  * - <cwd>/.pi/sandbox.json (project-local)
  *
  * Example .pi/sandbox.json:

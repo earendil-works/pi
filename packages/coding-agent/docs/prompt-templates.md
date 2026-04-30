@@ -30,6 +30,27 @@ Review the staged changes (`git diff --cached`). Focus on:
 
 - The filename becomes the command name. `review.md` becomes `/review`.
 - `description` is optional. If missing, the first non-empty line is used.
+- `argument-hint` is optional. When set, the hint is displayed before the description in the autocomplete dropdown.
+
+### Argument Hints
+
+Use `argument-hint` in frontmatter to show expected arguments in autocomplete. Use `<angle brackets>` for required arguments and `[square brackets]` for optional ones:
+
+```markdown
+---
+description: Review PRs from URLs with structured issue and code analysis
+argument-hint: "<PR-URL>"
+---
+```
+
+This renders in the autocomplete dropdown as:
+
+```
+→ pr   <PR-URL>       — Review PRs from URLs with structured issue and code analysis
+  is   <issue>        — Analyze GitHub issues (bugs or feature requests)
+  wr   [instructions] — Finish the current task end-to-end
+  cl   — Audit changelog entries before release
+```
 
 ## Usage
 

@@ -11,4 +11,8 @@ export default function (pi: ExtensionAPI) {
 		// Optional: replace the payload instead of only logging it.
 		// return { ...event.payload, temperature: 0 };
 	});
+
+	pi.on("after_provider_response", (event) => {
+		appendFileSync(logFile, `[${event.status}] ${JSON.stringify(event.headers)}\n\n`, "utf8");
+	});
 }

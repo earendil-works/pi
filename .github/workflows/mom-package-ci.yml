@@ -1,0 +1,42 @@
+name: mom-package-ci
+
+on:
+  push:
+    paths:
+      - "packages/mom/**"
+      - ".github/workflows/mom-package-ci.yml"
+  pull_request:
+    paths:
+      - "packages/mom/**"
+      - ".github/workflows/mom-package-ci.yml"
+
+concurrency:
+  group: mom-package-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-mom-chain:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build workspaces required by mom
+        run: |
+          npm run build --workspace=@mariozechner/pi-tui
+          npm run build --workspace=@mariozechner/pi-ai
+          npm run build --workspace=@mariozechner/pi-agent-core
+          npm run build --workspace=@mariozechner/pi-coding-agent
+          npm run build --workspace=@mariozechner/pi-mom
+
+      - name: Typecheck mom package
+        run: npm run check --workspace=@mariozechner/pi-mom
