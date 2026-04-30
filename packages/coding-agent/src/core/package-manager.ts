@@ -1843,8 +1843,13 @@ export class DefaultPackageManager implements PackageManager {
 		if (this.globalNpmRoot && this.globalNpmRootCommandKey === commandKey) {
 			return this.globalNpmRoot;
 		}
-		const result = this.runNpmCommandSync(["root", "-g"]);
-		this.globalNpmRoot = result.trim();
+		const isBunPackageManager = npmCommand.command === "bun";
+		if (isBunPackageManager) {
+			const binDir = this.runNpmCommandSync(["pm", "bin", "-g"]).trim();
+			this.globalNpmRoot = join(dirname(binDir), "install", "global", "node_modules");
+		} else {
+			this.globalNpmRoot = this.runNpmCommandSync(["root", "-g"]).trim();
+		}
 		this.globalNpmRootCommandKey = commandKey;
 		return this.globalNpmRoot;
 	}
