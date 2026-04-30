@@ -25,6 +25,7 @@ See these complete provider examples:
 - [Quick Reference](#quick-reference)
 - [Override Existing Provider](#override-existing-provider)
 - [Register New Provider](#register-new-provider)
+- [Dynamic Model Discovery](#dynamic-model-discovery)
 - [Unregister Provider](#unregister-provider)
 - [OAuth Support](#oauth-support)
 - [Custom Streaming API](#custom-streaming-api)
@@ -157,6 +158,68 @@ pi.registerProvider("my-llm", {
 ```
 
 When `models` is provided, it **replaces** all existing models for that provider.
+
+## Dynamic Model Discovery
+
+When the model list lives behind an HTTP endpoint (typical for local engines like llama.cpp / LM Studio / vLLM / Ollama), use an **async default factory** to fetch and register models at startup. pi awaits the factory before `session_start`, before `resources_discover`, and before flushing queued provider registrations, so the discovered models are available both to interactive startup and to `pi --list-models`.
+
+```typescript
+import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+
+export default async function (pi: ExtensionAPI) {
+  const baseUrl = process.env.LOCAL_OPENAI_BASE_URL ?? "http://localhost:1234/v1";
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2000);
+  let entries: Array<{ id: string }> = [];
+  let probeError: string | undefined;
+
+  try {
+    const res = await fetch(`${baseUrl}/models`, { signal: controller.signal });
+    if (res.ok) {
+      const payload = (await res.json()) as { data?: Array<{ id: string }> };
+      entries = payload.data ?? [];
+    } else {
+      probeError = `HTTP ${res.status} ${res.statusText}`;
+    }
+  } catch (error) {
+    probeError = error instanceof Error ? error.message : String(error);
+  } finally {
+    clearTimeout(timer);
+  }
+
+  pi.registerProvider("local-openai", {
+    baseUrl,
+    apiKey: "none",
+    api: "openai-completions",
+    models: entries.map((m) => ({
+      id: m.id,
+      name: m.id,
+      reasoning: false,
+      input: ["text"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 32768,
+      maxTokens: 4096,
+    })),
+  });
+
+  if (probeError) {
+    pi.on("session_start", async (_event, ctx) => {
+      ctx.ui.notify(`local-openai: ${baseUrl} unreachable (${probeError}).`, "warning");
+    });
+  }
+}
+```
+
+**Lifecycle expectations:**
+
+- The async factory runs **once per pi startup**, not per request. Users `/reload` after starting their local server.
+- `{baseUrl}/models` typically lacks `contextWindow`, `maxTokens`, `cost`, and `reasoning`. Fill them with curated defaults for the engine you target; let users override via `~/.pi/agent/models.json`.
+- Always register the provider, even when the probe fails. An empty `models` array is a valid state and gives the user a place to land. Surface the failure reason via `ctx.ui.notify` from a `session_start` handler.
+- Wrap the probe in an `AbortController` with a short timeout (~2s). A laggy localhost should not block pi from starting.
+
+The four official local-LLM extensions
+(`custom-provider-{llamacpp,lmstudio,vllm,ollama}` under `examples/extensions/`)
+follow this pattern; copy the one closest to your engine as a starting point.
 
 ## Unregister Provider
 

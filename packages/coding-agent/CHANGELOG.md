@@ -5,6 +5,7 @@
 ### Added
 
 - Added four official local-LLM provider extensions under `packages/coding-agent/examples/extensions/custom-provider-{llamacpp,lmstudio,vllm,ollama}/`. Each is an async-factory extension that probes its engine's model endpoint at startup and registers the discovered models with curated context-window/max-tokens defaults; LM Studio and Ollama also set the `compat` flags those engines need ([#3357](https://github.com/badlogic/pi-mono/issues/3357)).
+- Added a "Dynamic Model Discovery" section to [docs/custom-provider.md](docs/custom-provider.md) and a pointer at the top of [docs/models.md](docs/models.md), so users no longer have to hand-list model ids for OpenAI-compatible local servers ([#3469](https://github.com/badlogic/pi-mono/issues/3469)).
 
 ## [0.70.6] - 2026-04-28
 

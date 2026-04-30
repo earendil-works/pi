@@ -2,6 +2,8 @@
 
 Add custom providers and models (Ollama, vLLM, LM Studio, proxies) via `~/.pi/agent/models.json`.
 
+> **Don't want to hand-list every model id?** For llama.cpp, LM Studio, vLLM, and Ollama there are official extensions that probe `{baseUrl}/models` (or the engine's native equivalent) at startup and register the discovered models for you. See the [Dynamic Model Discovery](custom-provider.md#dynamic-model-discovery) section in the custom-provider docs and the four examples under `packages/coding-agent/examples/extensions/custom-provider-{llamacpp,lmstudio,vllm,ollama}/`.
+
 ## Table of Contents
 
 - [Minimal Example](#minimal-example)
