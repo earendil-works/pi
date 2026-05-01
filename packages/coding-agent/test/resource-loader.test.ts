@@ -477,6 +477,37 @@ Content`,
 			expect(skills[0].name).toBe("injected");
 		});
 
+		it("should apply extension skills overrides", async () => {
+			const skillDir = join(agentDir, "skills", "base");
+			mkdirSync(skillDir, { recursive: true });
+			writeFileSync(
+				join(skillDir, "SKILL.md"),
+				`---
+name: base
+description: Base skill
+---
+Content`,
+			);
+
+			const loader = new DefaultResourceLoader({
+				cwd,
+				agentDir,
+				extensionFactories: [
+					(pi) => {
+						pi.registerSkillsOverride(({ skills, diagnostics }) => ({
+							skills: skills.map((skill) => ({ ...skill, description: "Overridden skill" })),
+							diagnostics,
+						}));
+					},
+				],
+			});
+			await loader.reload();
+
+			const { skills } = loader.getSkills();
+			expect(skills).toHaveLength(1);
+			expect(skills[0].description).toBe("Overridden skill");
+		});
+
 		it("should apply systemPromptOverride", async () => {
 			const loader = new DefaultResourceLoader({
 				cwd,

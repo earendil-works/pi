@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `pi.registerSkillsOverride()` so extensions can transform discovered skills and diagnostics before skill commands and prompt context are built.
+
 ## [0.71.1] - 2026-05-01
 
 ### Added

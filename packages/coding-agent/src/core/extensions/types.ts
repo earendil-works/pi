@@ -43,6 +43,7 @@ import type { Static, TSchema } from "typebox";
 import type { Theme } from "../../modes/interactive/theme/theme.js";
 import type { BashResult } from "../bash-executor.js";
 import type { CompactionPreparation, CompactionResult } from "../compaction/index.js";
+import type { ResourceDiagnostic } from "../diagnostics.js";
 import type { EventBus } from "../event-bus.js";
 import type { ExecOptions, ExecResult } from "../exec.js";
 import type { ReadonlyFooterDataProvider } from "../footer-data-provider.js";
@@ -56,6 +57,7 @@ import type {
 	SessionEntry,
 	SessionManager,
 } from "../session-manager.js";
+import type { Skill } from "../skills.js";
 import type { SlashCommandInfo } from "../slash-commands.js";
 import type { SourceInfo } from "../source-info.js";
 import type { BuildSystemPromptOptions } from "../system-prompt.js";
@@ -504,6 +506,11 @@ export interface ResourcesDiscoverResult {
 	promptPaths?: string[];
 	themePaths?: string[];
 }
+
+export type SkillsOverride = (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
+	skills: Skill[];
+	diagnostics: ResourceDiagnostic[];
+};
 
 // ============================================================================
 // Session Events
@@ -1141,6 +1148,12 @@ export interface ExtensionAPI {
 	/** Register a custom command. */
 	registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void;
 
+	/**
+	 * Transform loaded skills and diagnostics before they are used for prompts and commands.
+	 * Runs during resource loading after skill discovery and before resource diagnostics are reported.
+	 */
+	registerSkillsOverride(override: SkillsOverride): void;
+
 	/** Register a keyboard shortcut. */
 	registerShortcut(
 		shortcut: KeyId,
@@ -1541,6 +1554,7 @@ export interface Extension {
 	commands: Map<string, RegisteredCommand>;
 	flags: Map<string, ExtensionFlag>;
 	shortcuts: Map<KeyId, ExtensionShortcut>;
+	skillsOverrides?: SkillsOverride[];
 }
 
 /** Result of loading extensions. */

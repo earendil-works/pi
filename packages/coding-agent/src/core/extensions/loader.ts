@@ -217,6 +217,12 @@ function createExtensionAPI(
 			});
 		},
 
+		registerSkillsOverride(override): void {
+			runtime.assertActive();
+			extension.skillsOverrides ??= [];
+			extension.skillsOverrides.push(override);
+		},
+
 		registerShortcut(
 			shortcut: KeyId,
 			options: {
@@ -372,6 +378,7 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		commands: new Map(),
 		flags: new Map(),
 		shortcuts: new Map(),
+		skillsOverrides: [],
 	};
 }
 

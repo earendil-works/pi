@@ -353,6 +353,21 @@ pi.on("resources_discover", async (event, _ctx) => {
 });
 ```
 
+#### registerSkillsOverride
+
+Extensions can transform loaded skills and diagnostics before Pi builds skill commands and prompt context. Overrides run during resource loading, after skill discovery. Multiple overrides are chained in extension load order.
+
+```typescript
+pi.registerSkillsOverride(({ skills, diagnostics }) => {
+  return {
+    skills: skills.filter((skill) => skill.name !== "experimental"),
+    diagnostics,
+  };
+});
+```
+
+Use this for narrow resource normalization, such as suppressing diagnostics for duplicate skill entries that point at identical content. Prefer leaving real conflicts visible.
+
 ### Session Events
 
 See [Session Format](session-format.md) for session storage internals and the SessionManager API.
