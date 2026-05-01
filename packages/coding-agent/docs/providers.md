@@ -62,6 +62,7 @@ pi
 | Groq | `GROQ_API_KEY` | `groq` |
 | Cerebras | `CEREBRAS_API_KEY` | `cerebras` |
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` (+ `CLOUDFLARE_ACCOUNT_ID`) | `cloudflare-workers-ai` |
+| DigitalOcean | `DIGITALOCEAN_TOKEN` or `MODEL_ACCESS_KEY` | `digitalocean` |
 | xAI | `XAI_API_KEY` | `xai` |
 | OpenRouter | `OPENROUTER_API_KEY` | `openrouter` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `vercel-ai-gateway` |
@@ -171,6 +172,15 @@ export AWS_BEDROCK_SKIP_AUTH=1
 
 # Set if your proxy only supports HTTP/1.1
 export AWS_BEDROCK_FORCE_HTTP1=1
+```
+
+### DigitalOcean
+
+`DIGITALOCEAN_TOKEN` (preferred) or `MODEL_ACCESS_KEY` (DO's own docs use this name) can be set via `/login`.
+
+```bash
+export DIGITALOCEAN_TOKEN=...  # or MODEL_ACCESS_KEY=... or use /login
+pi --provider digitalocean --model llama3.3-70b-instruct
 ```
 
 ### Cloudflare Workers AI

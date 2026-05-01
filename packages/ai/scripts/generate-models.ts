@@ -1733,6 +1733,95 @@ async function generateModels() {
 	];
 	allModels.push(...vertexModels);
 
+	// All DO models use the OpenAI-compatible chat completions endpoint.
+	// Model IDs sourced from https://inference.do-ai.run/v1/models.
+	// Claude models use "anthropic-" prefix; OpenAI models use "openai-" prefix.
+	const DIGITALOCEAN_BASE_URL = "https://inference.do-ai.run/v1";
+	const digitaloceanCompat: OpenAICompletionsCompat = {
+		supportsStore: false,
+		supportsDeveloperRole: false,
+		supportsReasoningEffort: false,
+		maxTokensField: "max_tokens",
+		supportsStrictMode: false,
+		supportsUsageInStreaming: true,
+	};
+	const do_ = (
+		id: string,
+		name: string,
+		reasoning: boolean,
+		input: Array<"text" | "image">,
+		cost: { input: number; output: number },
+		contextWindow: number,
+		maxTokens: number,
+	): Model<"openai-completions"> => ({
+		id,
+		name,
+		api: "openai-completions",
+		provider: "digitalocean",
+		baseUrl: DIGITALOCEAN_BASE_URL,
+		reasoning,
+		input,
+		cost: { ...cost, cacheRead: 0, cacheWrite: 0 },
+		contextWindow,
+		maxTokens,
+		compat: digitaloceanCompat,
+	});
+	const T: Array<"text"> = ["text"];
+	const TI: Array<"text" | "image"> = ["text", "image"];
+	const digitaloceanModels: Model<"openai-completions">[] = [
+		// --- Llama ---
+		do_("llama3.3-70b-instruct", "Llama 3.3 70B Instruct", false, T, { input: 0.72, output: 0.88 }, 131072, 8192),
+		do_("llama-4-maverick", "Llama 4 Maverick", false, T, { input: 0.4, output: 0.4 }, 1000000, 32768),
+		// --- Anthropic (DO uses "anthropic-" prefix) ---
+		do_("anthropic-claude-haiku-4.5", "Claude Haiku 4.5 (DigitalOcean)", false, T, { input: 1, output: 5 }, 200000, 64000),
+		do_("anthropic-claude-sonnet-4", "Claude Sonnet 4 (DigitalOcean)", false, T, { input: 3, output: 15 }, 200000, 64000),
+		do_("anthropic-claude-4.5-sonnet", "Claude Sonnet 4.5 (DigitalOcean)", false, T, { input: 3, output: 15 }, 200000, 64000),
+		do_("anthropic-claude-4.6-sonnet", "Claude Sonnet 4.6 (DigitalOcean)", false, T, { input: 3, output: 15 }, 200000, 64000),
+		do_("anthropic-claude-opus-4", "Claude Opus 4 (DigitalOcean)", false, T, { input: 5, output: 25 }, 200000, 64000),
+		do_("anthropic-claude-4.1-opus", "Claude Opus 4.1 (DigitalOcean)", false, T, { input: 5, output: 25 }, 200000, 64000),
+		do_("anthropic-claude-opus-4.5", "Claude Opus 4.5 (DigitalOcean)", false, T, { input: 5, output: 25 }, 200000, 64000),
+		do_("anthropic-claude-opus-4.6", "Claude Opus 4.6 (DigitalOcean)", false, T, { input: 5, output: 25 }, 200000, 64000),
+		do_("anthropic-claude-opus-4.7", "Claude Opus 4.7 (DigitalOcean)", false, T, { input: 15, output: 75 }, 200000, 64000),
+		// --- OpenAI (DO uses "openai-" prefix) ---
+		do_("openai-gpt-4o-mini", "GPT-4o mini (DigitalOcean)", false, TI, { input: 0.15, output: 0.6 }, 128000, 16384),
+		do_("openai-gpt-4o", "GPT-4o (DigitalOcean)", false, TI, { input: 2.5, output: 10 }, 128000, 16384),
+		do_("openai-gpt-4.1", "GPT-4.1 (DigitalOcean)", false, TI, { input: 2, output: 8 }, 1047576, 32768),
+		do_("openai-gpt-5", "GPT-5 (DigitalOcean)", true, TI, { input: 1.25, output: 10 }, 400000, 128000),
+		do_("openai-gpt-5-mini", "GPT-5 mini (DigitalOcean)", true, TI, { input: 0.25, output: 2 }, 400000, 128000),
+		do_("openai-gpt-5-nano", "GPT-5 nano (DigitalOcean)", true, TI, { input: 0.05, output: 0.4 }, 400000, 128000),
+		do_("openai-gpt-5.1-codex-max", "GPT-5.1 Codex Max (DigitalOcean)", true, TI, { input: 1.25, output: 10 }, 400000, 128000),
+		do_("openai-gpt-5.2", "GPT-5.2 (DigitalOcean)", true, TI, { input: 1.75, output: 14 }, 400000, 128000),
+		do_("openai-gpt-5.2-pro", "GPT-5.2 Pro (DigitalOcean)", true, TI, { input: 21, output: 168 }, 400000, 128000),
+		do_("openai-gpt-5.3-codex", "GPT-5.3 Codex (DigitalOcean)", true, TI, { input: 1.75, output: 14 }, 400000, 128000),
+		do_("openai-gpt-5.4", "GPT-5.4 (DigitalOcean)", true, TI, { input: 2.5, output: 15 }, 272000, 128000),
+		do_("openai-gpt-5.4-mini", "GPT-5.4 mini (DigitalOcean)", true, TI, { input: 0.75, output: 4.5 }, 400000, 128000),
+		do_("openai-gpt-5.4-nano", "GPT-5.4 nano (DigitalOcean)", true, TI, { input: 0.2, output: 1.25 }, 400000, 128000),
+		do_("openai-gpt-5.4-pro", "GPT-5.4 Pro (DigitalOcean)", true, TI, { input: 30, output: 180 }, 1050000, 128000),
+		do_("openai-gpt-5.5", "GPT-5.5 (DigitalOcean)", true, TI, { input: 5, output: 30 }, 272000, 128000),
+		do_("openai-gpt-oss-120b", "GPT-OSS 120B (DigitalOcean)", false, T, { input: 0.15, output: 0.6 }, 128000, 4096),
+		do_("openai-gpt-oss-20b", "GPT-OSS 20B (DigitalOcean)", false, T, { input: 0.07, output: 0.3 }, 128000, 4096),
+		do_("openai-o1", "o1 (DigitalOcean)", true, TI, { input: 15, output: 60 }, 200000, 100000),
+		do_("openai-o3", "o3 (DigitalOcean)", true, TI, { input: 2, output: 8 }, 200000, 100000),
+		do_("openai-o3-mini", "o3-mini (DigitalOcean)", true, T, { input: 1.1, output: 4.4 }, 200000, 100000),
+		// --- Open-source / community ---
+		do_("alibaba-qwen3-32b", "Qwen3 32B (DigitalOcean)", false, T, { input: 0.4, output: 1.2 }, 32768, 8192),
+		do_("qwen3-coder-flash", "Qwen3 Coder Flash (DigitalOcean)", false, T, { input: 0.3, output: 0.9 }, 32768, 8192),
+		do_("qwen3.5-397b-a17b", "Qwen3.5 397B A17B (DigitalOcean)", false, T, { input: 0.2, output: 0.6 }, 32768, 8192),
+		do_("deepseek-r1-distill-llama-70b", "DeepSeek R1 Distill Llama 70B (DigitalOcean)", true, T, { input: 0.5, output: 2 }, 64000, 8192),
+		do_("deepseek-3.2", "DeepSeek 3.2 (DigitalOcean)", false, T, { input: 0.27, output: 1.1 }, 128000, 8192),
+		do_("deepseek-v4-pro", "DeepSeek V4 Pro (DigitalOcean)", false, T, { input: 0.5, output: 2 }, 128000, 8192),
+		do_("kimi-k2.5", "Kimi K2.5 (DigitalOcean)", false, T, { input: 0.14, output: 0.6 }, 128000, 8192),
+		do_("minimax-m2.5", "MiniMax M2.5 (DigitalOcean)", false, T, { input: 0.4, output: 1.2 }, 1000000, 8192),
+		do_("glm-5", "GLM-5 (DigitalOcean)", false, T, { input: 0, output: 0 }, 128000, 8192),
+		do_("gemma-4-31B-it", "Gemma 4 31B (DigitalOcean)", false, T, { input: 0.3, output: 0.9 }, 128000, 8192),
+		do_("arcee-trinity-large-thinking", "Arcee Trinity Large Thinking (DigitalOcean)", true, T, { input: 0, output: 0 }, 32768, 8192),
+		do_("mistral-3-14B", "Mistral 3 14B (DigitalOcean)", false, T, { input: 0.1, output: 0.3 }, 128000, 8192),
+		do_("nvidia-nemotron-3-super-120b", "NVIDIA Nemotron 3 Super 120B (DigitalOcean)", false, T, { input: 0.4, output: 1.5 }, 128000, 8192),
+		do_("nemotron-3-nano-omni", "NVIDIA Nemotron Nano Omni (DigitalOcean)", false, TI, { input: 0, output: 0 }, 32768, 8192),
+		do_("nemotron-nano-12b-v2-vl", "NVIDIA Nemotron Nano 12B VL (DigitalOcean)", false, TI, { input: 0, output: 0 }, 32768, 8192),
+	];
+	allModels.push(...digitaloceanModels);
+
 	const azureOpenAiModels: Model<Api>[] = allModels
 		.filter((model) => model.provider === "openai" && model.api === "openai-responses")
 		.map((model) => ({

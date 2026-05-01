@@ -242,6 +242,21 @@ describe("AI Providers Abort Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.DIGITALOCEAN_TOKEN && !process.env.MODEL_ACCESS_KEY)(
+		"DigitalOcean Provider Abort",
+		() => {
+			const llm = getModel("digitalocean", "llama3.3-70b-instruct");
+
+			it("should abort mid-stream", { retry: 3 }, async () => {
+				await testAbortSignal(llm);
+			});
+
+			it("should handle immediate abort", { retry: 3 }, async () => {
+				await testImmediateAbort(llm);
+			});
+		},
+	);
+
 	describe.skipIf(!hasBedrockCredentials())("Amazon Bedrock Provider Abort", () => {
 		const llm = getModel("amazon-bedrock", "global.anthropic.claude-sonnet-4-5-20250929-v1:0");
 

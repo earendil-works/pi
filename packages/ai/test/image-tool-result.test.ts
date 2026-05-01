@@ -336,6 +336,21 @@ describe("Tool Results with Images", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.DIGITALOCEAN_TOKEN && !process.env.MODEL_ACCESS_KEY)(
+		"DigitalOcean Provider (anthropic-claude-4.6-sonnet via OpenAI Completions)",
+		() => {
+			const llm = getModel("digitalocean", "anthropic-claude-4.6-sonnet");
+
+			it("should handle tool result with only image", { retry: 3, timeout: 30000 }, async () => {
+				await handleToolWithImageResult(llm);
+			});
+
+			it("should handle tool result with text and image", { retry: 3, timeout: 30000 }, async () => {
+				await handleToolWithTextAndImageResult(llm);
+			});
+		},
+	);
+
 	// =========================================================================
 	// OAuth-based providers (credentials from ~/.pi/agent/oauth.json)
 	// =========================================================================

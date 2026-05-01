@@ -317,6 +317,8 @@ ${chalk.bold("Environment Variables:")}
   MOONSHOT_API_KEY                 - Moonshot AI API key
   OPENCODE_API_KEY                 - OpenCode Zen/OpenCode Go API key
   KIMI_API_KEY                     - Kimi For Coding API key
+  DIGITALOCEAN_TOKEN               - DigitalOcean serverless inference API key (preferred)
+  MODEL_ACCESS_KEY                 - DigitalOcean serverless inference API key (alias)
   CLOUDFLARE_API_KEY               - Cloudflare API token (Workers AI)
   CLOUDFLARE_ACCOUNT_ID            - Cloudflare account id (required for Workers AI)
   AWS_PROFILE                      - AWS profile for Amazon Bedrock

@@ -98,6 +98,11 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		return ["ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"];
 	}
 
+	// DIGITALOCEAN_TOKEN is the preferred name; MODEL_ACCESS_KEY is the name used in DO's own docs
+	if (provider === "digitalocean") {
+		return ["DIGITALOCEAN_TOKEN", "MODEL_ACCESS_KEY"];
+	}
+
 	const envMap: Record<string, string> = {
 		openai: "OPENAI_API_KEY",
 		"azure-openai-responses": "AZURE_OPENAI_API_KEY",

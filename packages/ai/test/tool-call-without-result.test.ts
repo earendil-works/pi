@@ -168,6 +168,14 @@ describe("Tool Call Without Result Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.DIGITALOCEAN_TOKEN && !process.env.MODEL_ACCESS_KEY)("DigitalOcean Provider", () => {
+		const model = getModel("digitalocean", "llama3.3-70b-instruct");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
 	describe.skipIf(!process.env.CLOUDFLARE_API_KEY || !process.env.CLOUDFLARE_ACCOUNT_ID)(
 		"Cloudflare Workers AI Provider",
 		() => {

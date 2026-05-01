@@ -50,6 +50,8 @@ if [[ "$NO_ENV" == "true" ]]; then
   unset AZURE_OPENAI_API_KEY
   unset AZURE_OPENAI_BASE_URL
   unset AZURE_OPENAI_RESOURCE_NAME
+  unset DIGITALOCEAN_TOKEN
+  unset MODEL_ACCESS_KEY
   echo "Running without API keys..."
 fi
 

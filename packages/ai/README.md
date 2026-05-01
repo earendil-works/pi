@@ -58,6 +58,7 @@ Unified LLM API with automatic model discovery, provider configuration, token an
 - **Groq**
 - **Cerebras**
 - **Cloudflare Workers AI**
+- **DigitalOcean** (serverless inference)
 - **xAI**
 - **OpenRouter**
 - **Vercel AI Gateway**
@@ -1030,6 +1031,7 @@ In Node.js environments, you can set environment variables to avoid passing API 
 | Groq | `GROQ_API_KEY` |
 | Cerebras | `CEREBRAS_API_KEY` |
 | Cloudflare Workers AI | `CLOUDFLARE_API_KEY` + `CLOUDFLARE_ACCOUNT_ID` |
+| DigitalOcean | `DIGITALOCEAN_TOKEN` or `MODEL_ACCESS_KEY` |
 | xAI | `XAI_API_KEY` |
 | Fireworks | `FIREWORKS_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |

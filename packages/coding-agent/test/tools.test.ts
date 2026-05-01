@@ -262,7 +262,7 @@ describe("Coding Agent Tools", () => {
 					path: missingFile,
 					edits: [{ oldText: "hello", newText: "world" }],
 				}),
-			).rejects.toThrow(`Could not write file: ${missingFile}. Error code: ENOENT.`);
+			).rejects.toThrow(`Could not edit file: ${missingFile}. Error code: ENOENT.`);
 		});
 
 		it("should fail if text appears multiple times", async () => {
@@ -389,7 +389,7 @@ describe("Coding Agent Tools", () => {
 					path: testFile,
 					edits: [{ oldText: "hello", newText: "world" }],
 				}),
-			).rejects.toThrow(`Could not write file: ${testFile}. Error code: EACCES.`);
+			).rejects.toThrow(`Could not edit file: ${testFile}. Error code: EACCES.`);
 		});
 
 		it("should include the original error message for unknown edit access errors", async () => {
@@ -408,14 +408,14 @@ describe("Coding Agent Tools", () => {
 					path: "broken.txt",
 					edits: [{ oldText: "hello", newText: "world" }],
 				}),
-			).rejects.toThrow("Could not write file: broken.txt. Error: disk offline.");
+			).rejects.toThrow("Could not edit file: broken.txt. Error: disk offline.");
 		});
 
 		it("should include ENOENT in diff preview for missing files", async () => {
 			const missingFile = join(testDir, "missing-preview.txt");
 			const result = await computeEditsDiff(missingFile, [{ oldText: "hello", newText: "world" }], testDir);
 
-			expect(result).toEqual({ error: `Could not write file: ${missingFile}. Error code: ENOENT.` });
+			expect(result).toEqual({ error: `Could not edit file: ${missingFile}. Error code: ENOENT.` });
 		});
 
 		it("should include EACCES in diff preview for unreadable files", async () => {
@@ -425,7 +425,7 @@ describe("Coding Agent Tools", () => {
 
 			const result = await computeEditsDiff(unreadableFile, [{ oldText: "hello", newText: "world" }], testDir);
 
-			expect(result).toEqual({ error: `Could not write file: ${unreadableFile}. Error code: EACCES.` });
+			expect(result).toEqual({ error: `Could not edit file: ${unreadableFile}. Error code: EACCES.` });
 		});
 	});
 

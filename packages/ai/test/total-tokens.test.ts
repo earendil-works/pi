@@ -307,6 +307,31 @@ describe("totalTokens field", () => {
 	});
 
 	// =========================================================================
+	// DigitalOcean
+	// =========================================================================
+
+	describe.skipIf(!process.env.DIGITALOCEAN_TOKEN && !process.env.MODEL_ACCESS_KEY)("DigitalOcean", () => {
+		it(
+			"llama3.3-70b-instruct - should return totalTokens equal to sum of components",
+			{ retry: 3, timeout: 60000 },
+			async () => {
+				const llm = getModel("digitalocean", "llama3.3-70b-instruct");
+
+				console.log(`\nDigitalOcean / ${llm.id}:`);
+				const { first, second } = await testTotalTokensWithCache(llm, {
+					apiKey: process.env.DIGITALOCEAN_TOKEN ?? process.env.MODEL_ACCESS_KEY,
+				});
+
+				logUsage("First request", first);
+				logUsage("Second request", second);
+
+				assertTotalTokensEqualsComponents(first);
+				assertTotalTokensEqualsComponents(second);
+			},
+		);
+	});
+
+	// =========================================================================
 	// Cloudflare Workers AI
 	// =========================================================================
 

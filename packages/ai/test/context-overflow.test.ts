@@ -367,6 +367,24 @@ describe("Context overflow error handling", () => {
 	});
 
 	// =============================================================================
+	// DigitalOcean
+	// =============================================================================
+
+	describe.skipIf(!process.env.DIGITALOCEAN_TOKEN && !process.env.MODEL_ACCESS_KEY)("DigitalOcean", () => {
+		it("llama3.3-70b-instruct - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("digitalocean", "llama3.3-70b-instruct");
+			const result = await testContextOverflow(
+				model,
+				(process.env.DIGITALOCEAN_TOKEN ?? process.env.MODEL_ACCESS_KEY)!,
+			);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	// =============================================================================
 	// Hugging Face
 	// Uses OpenAI-compatible Inference Router
 	// =============================================================================

@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added DigitalOcean as a built-in provider with Llama (OpenAI-compatible) and Claude (Anthropic-compatible) model support at `https://inference.do-ai.run`, authenticated via `DIGITALOCEAN_TOKEN`.
 - Added `AssistantMessage.responseModel` on the openai-completions path: surfaces the concrete `chunk.model` when it differs from the requested id (e.g. OpenRouter `auto` -> `anthropic/...`).
 
 ### Fixed
