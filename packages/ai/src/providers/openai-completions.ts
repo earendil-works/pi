@@ -517,14 +517,16 @@ function buildParams(
 		params.temperature = options.temperature;
 	}
 
-	if (context.tools && context.tools.length > 0) {
-		params.tools = convertTools(context.tools, compat);
-		if (compat.zaiToolStream) {
-			(params as any).tool_stream = true;
+	if (compat.supportsTools !== false) {
+		if (context.tools && context.tools.length > 0) {
+			params.tools = convertTools(context.tools, compat);
+			if (compat.zaiToolStream) {
+				(params as any).tool_stream = true;
+			}
+		} else if (hasToolHistory(context.messages)) {
+			// Anthropic (via LiteLLM/proxy) requires tools param when conversation has tool_calls/tool_results
+			params.tools = [];
 		}
-	} else if (hasToolHistory(context.messages)) {
-		// Anthropic (via LiteLLM/proxy) requires tools param when conversation has tool_calls/tool_results
-		params.tools = [];
 	}
 
 	if (cacheControl) {
@@ -1103,6 +1105,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		cacheControlFormat,
 		sendSessionAffinityHeaders: false,
 		supportsLongCacheRetention: !(isCloudflareWorkersAI || isCloudflareAiGateway),
+		supportsTools: true,
 	};
 }
 
@@ -1136,5 +1139,6 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		cacheControlFormat: model.compat.cacheControlFormat ?? detected.cacheControlFormat,
 		sendSessionAffinityHeaders: model.compat.sendSessionAffinityHeaders ?? detected.sendSessionAffinityHeaders,
 		supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention,
+		supportsTools: model.compat.supportsTools ?? detected.supportsTools,
 	};
 }

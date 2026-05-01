@@ -313,6 +313,8 @@ export interface OpenAICompletionsCompat {
 	sendSessionAffinityHeaders?: boolean;
 	/** Whether the provider supports long prompt cache retention (`prompt_cache_retention: "24h"` or Anthropic-style `cache_control.ttl: "1h"`, depending on format). Default: true. */
 	supportsLongCacheRetention?: boolean;
+	/** Whether the model accepts a `tools` payload at all. When false, both populated tool lists and the empty-`tools: []` tool-history compatibility fallback are suppressed, so chat-only OpenAI-compatible providers don't reject the request. Default: true. */
+	supportsTools?: boolean;
 }
 
 /** Compatibility settings for OpenAI Responses APIs. */
