@@ -210,6 +210,7 @@ export class Input implements Component, Focusable {
 	}
 
 	private insertCharacter(char: string): void {
+		char = char.normalize("NFC");
 		// Undo coalescing: consecutive word chars coalesce into one undo unit
 		if (isWhitespaceChar(char) || this.lastAction !== "type-word") {
 			this.pushUndo();
@@ -249,7 +250,10 @@ export class Input implements Component, Focusable {
 		if (this.cursor === 0) return;
 		this.pushUndo();
 		const deletedText = this.value.slice(0, this.cursor);
-		this.killRing.push(deletedText, { prepend: true, accumulate: this.lastAction === "kill" });
+		this.killRing.push(deletedText, {
+			prepend: true,
+			accumulate: this.lastAction === "kill",
+		});
 		this.lastAction = "kill";
 		this.value = this.value.slice(this.cursor);
 		this.cursor = 0;
@@ -259,7 +263,10 @@ export class Input implements Component, Focusable {
 		if (this.cursor >= this.value.length) return;
 		this.pushUndo();
 		const deletedText = this.value.slice(this.cursor);
-		this.killRing.push(deletedText, { prepend: false, accumulate: this.lastAction === "kill" });
+		this.killRing.push(deletedText, {
+			prepend: false,
+			accumulate: this.lastAction === "kill",
+		});
 		this.lastAction = "kill";
 		this.value = this.value.slice(0, this.cursor);
 	}

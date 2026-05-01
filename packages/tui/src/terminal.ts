@@ -192,6 +192,18 @@ export class ProcessTerminal implements Terminal {
 	private queryAndEnableKittyProtocol(): void {
 		this.setupStdinBuffer();
 		process.stdin.on("data", this.stdinDataHandler!);
+
+		// VSCode's xterm.js Kitty protocol handling is broken for IME/dead key
+		// composition. When Kitty is active, dead keys are sent as literals and
+		// the following letter is sent only as a release event (which pi ignores),
+		// breaking accented characters entirely. Fall back to modifyOtherKeys mode 2.
+		const isVSCode = process.env.TERM_PROGRAM === "vscode";
+		if (isVSCode) {
+			process.stdout.write("\x1b[>4;2m");
+			this._modifyOtherKeysActive = true;
+			return;
+		}
+
 		process.stdout.write("\x1b[?u");
 		setTimeout(() => {
 			if (!this._kittyProtocolActive && !this._modifyOtherKeysActive) {

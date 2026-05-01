@@ -189,7 +189,10 @@ function parseUnmodifiedKittyPrintableCodepoint(sequence: string): number | unde
 	return codepoint >= 32 ? codepoint : undefined;
 }
 
-function extractCompleteSequences(buffer: string): { sequences: string[]; remainder: string } {
+function extractCompleteSequences(buffer: string): {
+	sequences: string[];
+	remainder: string;
+} {
 	const sequences: string[] = [];
 	let pos = 0;
 
@@ -222,9 +225,28 @@ function extractCompleteSequences(buffer: string): { sequences: string[]; remain
 				return { sequences, remainder: remaining };
 			}
 		} else {
-			// Not an escape sequence - take a single character
-			sequences.push(remaining[0]!);
-			pos++;
+			// Not an escape sequence - take a grapheme cluster (base char + combining marks)
+			// This prevents splitting NFD Vietnamese/french/german characters with
+			// combining diacritical marks into separate input events.
+			let end = 1;
+			while (pos + end < buffer.length) {
+				const next = buffer[pos + end];
+				if (next === "\x1b") break;
+				const cp = buffer.codePointAt(pos + end);
+				if (
+					(cp! >= 0x0300 && cp! <= 0x036f) || // Combining Diacritical Marks
+					(cp! >= 0x1ab0 && cp! <= 0x1aff) || // Combining Diacritical Marks Extended
+					(cp! >= 0x1dc0 && cp! <= 0x1dff) || // Combining Diacritical Marks Supplement
+					(cp! >= 0x20d0 && cp! <= 0x20ff) || // Combining Diacritical Marks for Symbols
+					(cp! >= 0xfe20 && cp! <= 0xfe2f) // Combining Half Marks
+				) {
+					end++;
+				} else {
+					break;
+				}
+			}
+			sequences.push(buffer.slice(pos, pos + end));
+			pos += end;
 		}
 	}
 

@@ -131,7 +131,11 @@ export function wordWrapLine(line: string, maxWidth: number, preSegmented?: Intl
 			if (wrapOppIndex >= 0 && currentWidth - wrapOppWidth + gWidth <= maxWidth) {
 				// Backtrack to last wrap opportunity (the remaining content
 				// plus the current grapheme still fits within maxWidth).
-				chunks.push({ text: line.slice(chunkStart, wrapOppIndex), startIndex: chunkStart, endIndex: wrapOppIndex });
+				chunks.push({
+					text: line.slice(chunkStart, wrapOppIndex),
+					startIndex: chunkStart,
+					endIndex: wrapOppIndex,
+				});
 				chunkStart = wrapOppIndex;
 				currentWidth -= wrapOppWidth;
 			} else if (chunkStart < charIndex) {
@@ -140,7 +144,11 @@ export function wordWrapLine(line: string, maxWidth: number, preSegmented?: Intl
 				// boundary wouldn't help because the remaining content plus
 				// the current grapheme (e.g. a wide character) still exceeds
 				// maxWidth.
-				chunks.push({ text: line.slice(chunkStart, charIndex), startIndex: chunkStart, endIndex: charIndex });
+				chunks.push({
+					text: line.slice(chunkStart, charIndex),
+					startIndex: chunkStart,
+					endIndex: charIndex,
+				});
 				chunkStart = charIndex;
 				currentWidth = 0;
 			}
@@ -156,7 +164,11 @@ export function wordWrapLine(line: string, maxWidth: number, preSegmented?: Intl
 			const subChunks = wordWrapLine(grapheme, maxWidth);
 			for (let j = 0; j < subChunks.length - 1; j++) {
 				const sc = subChunks[j]!;
-				chunks.push({ text: sc.text, startIndex: charIndex + sc.startIndex, endIndex: charIndex + sc.endIndex });
+				chunks.push({
+					text: sc.text,
+					startIndex: charIndex + sc.startIndex,
+					endIndex: charIndex + sc.endIndex,
+				});
 			}
 			const last = subChunks[subChunks.length - 1]!;
 			chunkStart = charIndex + last.startIndex;
@@ -179,7 +191,11 @@ export function wordWrapLine(line: string, maxWidth: number, preSegmented?: Intl
 	}
 
 	// Push final chunk.
-	chunks.push({ text: line.slice(chunkStart), startIndex: chunkStart, endIndex: line.length });
+	chunks.push({
+		text: line.slice(chunkStart),
+		startIndex: chunkStart,
+		endIndex: line.length,
+	});
 
 	return chunks;
 }
@@ -969,7 +985,7 @@ export class Editor implements Component, Focusable {
 	 * - Expand tabs to 4 spaces
 	 */
 	private normalizeText(text: string): string {
-		return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\t/g, "    ");
+		return text.replace(/\r\n/g, "\n").replace(/\r/g, "\n").replace(/\t/g, "    ").normalize("NFC");
 	}
 
 	/**
@@ -1022,6 +1038,7 @@ export class Editor implements Component, Focusable {
 
 	// All the editor methods from before...
 	private insertCharacter(char: string, skipUndoCoalescing?: boolean): void {
+		char = char.normalize("NFC");
 		this.historyIndex = -1; // Exit history browsing mode
 
 		// Undo coalescing (fish-style):
@@ -1273,7 +1290,11 @@ export class Editor implements Component, Focusable {
 	 * Shared by moveCursor() and pageScroll().
 	 */
 	private moveToVisualLine(
-		visualLines: Array<{ logicalLine: number; startCol: number; length: number }>,
+		visualLines: Array<{
+			logicalLine: number;
+			startCol: number;
+			length: number;
+		}>,
 		currentVisualLine: number,
 		targetVisualLine: number,
 	): void {
@@ -1428,7 +1449,10 @@ export class Editor implements Component, Focusable {
 
 			// Calculate text to be deleted and save to kill ring (backward deletion = prepend)
 			const deletedText = currentLine.slice(0, this.state.cursorCol);
-			this.killRing.push(deletedText, { prepend: true, accumulate: this.lastAction === "kill" });
+			this.killRing.push(deletedText, {
+				prepend: true,
+				accumulate: this.lastAction === "kill",
+			});
 			this.lastAction = "kill";
 
 			// Delete from start of line up to cursor
@@ -1438,7 +1462,10 @@ export class Editor implements Component, Focusable {
 			this.pushUndoSnapshot();
 
 			// At start of line - merge with previous line, treating newline as deleted text
-			this.killRing.push("\n", { prepend: true, accumulate: this.lastAction === "kill" });
+			this.killRing.push("\n", {
+				prepend: true,
+				accumulate: this.lastAction === "kill",
+			});
 			this.lastAction = "kill";
 
 			const previousLine = this.state.lines[this.state.cursorLine - 1] || "";
@@ -1463,7 +1490,10 @@ export class Editor implements Component, Focusable {
 
 			// Calculate text to be deleted and save to kill ring (forward deletion = append)
 			const deletedText = currentLine.slice(this.state.cursorCol);
-			this.killRing.push(deletedText, { prepend: false, accumulate: this.lastAction === "kill" });
+			this.killRing.push(deletedText, {
+				prepend: false,
+				accumulate: this.lastAction === "kill",
+			});
 			this.lastAction = "kill";
 
 			// Delete from cursor to end of line
@@ -1472,7 +1502,10 @@ export class Editor implements Component, Focusable {
 			this.pushUndoSnapshot();
 
 			// At end of line - merge with next line, treating newline as deleted text
-			this.killRing.push("\n", { prepend: false, accumulate: this.lastAction === "kill" });
+			this.killRing.push("\n", {
+				prepend: false,
+				accumulate: this.lastAction === "kill",
+			});
 			this.lastAction = "kill";
 
 			const nextLine = this.state.lines[this.state.cursorLine + 1] || "";
@@ -1496,7 +1529,10 @@ export class Editor implements Component, Focusable {
 				this.pushUndoSnapshot();
 
 				// Treat newline as deleted text (backward deletion = prepend)
-				this.killRing.push("\n", { prepend: true, accumulate: this.lastAction === "kill" });
+				this.killRing.push("\n", {
+					prepend: true,
+					accumulate: this.lastAction === "kill",
+				});
 				this.lastAction = "kill";
 
 				const previousLine = this.state.lines[this.state.cursorLine - 1] || "";
@@ -1541,7 +1577,10 @@ export class Editor implements Component, Focusable {
 				this.pushUndoSnapshot();
 
 				// Treat newline as deleted text (forward deletion = append)
-				this.killRing.push("\n", { prepend: false, accumulate: this.lastAction === "kill" });
+				this.killRing.push("\n", {
+					prepend: false,
+					accumulate: this.lastAction === "kill",
+				});
 				this.lastAction = "kill";
 
 				const nextLine = this.state.lines[this.state.cursorLine + 1] || "";
@@ -1630,7 +1669,11 @@ export class Editor implements Component, Focusable {
 	 * - length: length of this visual line segment
 	 */
 	private buildVisualLineMap(width: number): Array<{ logicalLine: number; startCol: number; length: number }> {
-		const visualLines: Array<{ logicalLine: number; startCol: number; length: number }> = [];
+		const visualLines: Array<{
+			logicalLine: number;
+			startCol: number;
+			length: number;
+		}> = [];
 
 		for (let i = 0; i < this.state.lines.length; i++) {
 			const line = this.state.lines[i] || "";
@@ -1660,7 +1703,11 @@ export class Editor implements Component, Focusable {
 	 * Find the visual line index that contains the given logical position.
 	 */
 	private findVisualLineAt(
-		visualLines: Array<{ logicalLine: number; startCol: number; length: number }>,
+		visualLines: Array<{
+			logicalLine: number;
+			startCol: number;
+			length: number;
+		}>,
 		line: number,
 		col: number,
 	): number {
@@ -1682,7 +1729,11 @@ export class Editor implements Component, Focusable {
 	 * Find the visual line index for the current cursor position.
 	 */
 	private findCurrentVisualLine(
-		visualLines: Array<{ logicalLine: number; startCol: number; length: number }>,
+		visualLines: Array<{
+			logicalLine: number;
+			startCol: number;
+			length: number;
+		}>,
 	): number {
 		return this.findVisualLineAt(visualLines, this.state.cursorLine, this.state.cursorCol);
 	}
@@ -2287,6 +2338,9 @@ export class Editor implements Component, Focusable {
 
 	private updateAutocomplete(): void {
 		if (!this.autocompleteState || !this.autocompleteProvider) return;
-		this.requestAutocomplete({ force: this.autocompleteState === "force", explicitTab: false });
+		this.requestAutocomplete({
+			force: this.autocompleteState === "force",
+			explicitTab: false,
+		});
 	}
 }
