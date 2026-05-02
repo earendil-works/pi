@@ -208,6 +208,27 @@ function createExtensionAPI(
 			runtime.refreshTools();
 		},
 
+		unregisterTool(name: string): boolean {
+			runtime.assertActive();
+			const removed = extension.tools.delete(name);
+			if (removed) {
+				runtime.refreshTools();
+			}
+			return removed;
+		},
+
+		replaceTools(tools: readonly ToolDefinition[]): void {
+			runtime.assertActive();
+			extension.tools.clear();
+			for (const tool of tools) {
+				extension.tools.set(tool.name, {
+					definition: tool,
+					sourceInfo: extension.sourceInfo,
+				});
+			}
+			runtime.refreshTools();
+		},
+
 		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {
 			runtime.assertActive();
 			extension.commands.set(name, {

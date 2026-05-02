@@ -1134,6 +1134,12 @@ export interface ExtensionAPI {
 		tool: ToolDefinition<TParams, TDetails, TState>,
 	): void;
 
+	/** Unregister a tool previously registered by this extension. Returns true when a tool was removed. */
+	unregisterTool(name: string): boolean;
+
+	/** Replace all tools currently registered by this extension and refresh the active session registry once. */
+	replaceTools<TTools extends readonly ToolDefinition<any, any, any>[]>(tools: TTools): void;
+
 	// =========================================================================
 	// Command, Shortcut, Flag Registration
 	// =========================================================================

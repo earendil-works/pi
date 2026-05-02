@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `pi.unregisterTool()` and `pi.replaceTools()` so extensions can remove or atomically replace their own registered tools at runtime without requiring `/reload`.
+
 ## [0.72.0] - 2026-05-01
 
 ### New Features

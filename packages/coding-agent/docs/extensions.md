@@ -1265,6 +1265,33 @@ pi.registerTool({
 });
 ```
 
+### pi.unregisterTool(name)
+
+Remove a custom tool previously registered by the current extension. Returns `true` when the tool existed and was removed, or `false` when the current extension had no tool with that name.
+
+`pi.unregisterTool()` works after startup as well as during extension load. When it removes a tool after startup, pi refreshes the current session registry immediately. Removed tools disappear from `pi.getAllTools()`, are dropped from the active tool set, and are no longer callable without requiring `/reload`.
+
+```typescript
+pi.registerCommand("disable-my-tool", {
+  handler: async () => {
+    pi.unregisterTool("my_tool");
+  },
+});
+```
+
+### pi.replaceTools(definitions)
+
+Replace all custom tools owned by the current extension in one refresh. This is useful for extensions that mirror an external tool catalog and need to hot-swap the whole set when that catalog changes.
+
+`pi.replaceTools()` only replaces tools registered by the current extension. It does not remove built-in tools, SDK custom tools, or tools registered by other extensions.
+
+```typescript
+pi.on("session_start", async () => {
+  const tools = await loadExternalToolCatalog();
+  pi.replaceTools(tools);
+});
+```
+
 ### pi.sendMessage(message, options?)
 
 Inject a custom message into the session.

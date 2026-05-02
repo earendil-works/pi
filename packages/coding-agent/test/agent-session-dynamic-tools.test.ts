@@ -91,6 +91,148 @@ describe("AgentSession dynamic tool registration", () => {
 		session.dispose();
 	});
 
+	it("unregisters dynamic tools and removes them from the active session registry", async () => {
+		let removed: boolean | undefined;
+		let removedAgain: boolean | undefined;
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_start", () => {
+						pi.registerTool({
+							name: "dynamic_tool",
+							label: "Dynamic Tool",
+							description: "Tool registered from session_start",
+							promptSnippet: "Run dynamic test behavior",
+							promptGuidelines: ["Use dynamic_tool when the user asks for dynamic behavior tests."],
+							parameters: Type.Object({}),
+							execute: async () => ({
+								content: [{ type: "text", text: "ok" }],
+								details: {},
+							}),
+						});
+					});
+					pi.registerCommand("remove-dynamic-tool", {
+						handler: async () => {
+							removed = pi.unregisterTool("dynamic_tool");
+							removedAgain = pi.unregisterTool("dynamic_tool");
+						},
+					});
+				},
+			],
+		});
+		await resourceLoader.reload();
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+
+		await session.bindExtensions({});
+		expect(session.getAllTools().map((tool) => tool.name)).toContain("dynamic_tool");
+		expect(session.getActiveToolNames()).toContain("dynamic_tool");
+		expect(session.systemPrompt).toContain("- dynamic_tool: Run dynamic test behavior");
+
+		await session.extensionRunner
+			.getCommand("remove-dynamic-tool")
+			?.handler("", session.extensionRunner.createCommandContext());
+
+		expect(removed).toBe(true);
+		expect(removedAgain).toBe(false);
+		expect(session.getAllTools().map((tool) => tool.name)).not.toContain("dynamic_tool");
+		expect(session.getActiveToolNames()).not.toContain("dynamic_tool");
+		expect(session.systemPrompt).not.toContain("dynamic_tool");
+
+		session.dispose();
+	});
+
+	it("replaces dynamic tools and activates newly registered replacements", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const sessionManager = SessionManager.inMemory();
+
+		const resourceLoader = new DefaultResourceLoader({
+			cwd: tempDir,
+			agentDir,
+			settingsManager,
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_start", () => {
+						pi.registerTool({
+							name: "old_dynamic_tool",
+							label: "Old Dynamic Tool",
+							description: "Original dynamic tool",
+							promptSnippet: "Run old dynamic behavior",
+							promptGuidelines: ["Use old_dynamic_tool before the replacement is installed."],
+							parameters: Type.Object({}),
+							execute: async () => ({
+								content: [{ type: "text", text: "old" }],
+								details: {},
+							}),
+						});
+					});
+					pi.registerCommand("replace-dynamic-tools", {
+						handler: async () => {
+							pi.replaceTools([
+								{
+									name: "new_dynamic_tool",
+									label: "New Dynamic Tool",
+									description: "Replacement dynamic tool",
+									promptSnippet: "Run new dynamic behavior",
+									promptGuidelines: ["Use new_dynamic_tool after the replacement is installed."],
+									parameters: Type.Object({}),
+									execute: async () => ({
+										content: [{ type: "text", text: "new" }],
+										details: {},
+									}),
+								},
+							]);
+						},
+					});
+				},
+			],
+		});
+		await resourceLoader.reload();
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager,
+			resourceLoader,
+		});
+
+		await session.bindExtensions({});
+		expect(session.getAllTools().map((tool) => tool.name)).toContain("old_dynamic_tool");
+		expect(session.getActiveToolNames()).toContain("old_dynamic_tool");
+		expect(session.systemPrompt).toContain("- old_dynamic_tool: Run old dynamic behavior");
+
+		await session.extensionRunner
+			.getCommand("replace-dynamic-tools")
+			?.handler("", session.extensionRunner.createCommandContext());
+
+		const allToolNames = session.getAllTools().map((tool) => tool.name);
+		expect(allToolNames).not.toContain("old_dynamic_tool");
+		expect(allToolNames).toContain("new_dynamic_tool");
+		expect(session.getActiveToolNames()).not.toContain("old_dynamic_tool");
+		expect(session.getActiveToolNames()).toContain("new_dynamic_tool");
+		expect(session.getActiveToolNames()).toContain("read");
+		expect(session.systemPrompt).not.toContain("old_dynamic_tool");
+		expect(session.systemPrompt).toContain("- new_dynamic_tool: Run new dynamic behavior");
+		expect(session.systemPrompt).toContain("Use new_dynamic_tool after the replacement is installed.");
+
+		session.dispose();
+	});
+
 	it("returns source metadata for SDK custom tools", async () => {
 		const settingsManager = SettingsManager.create(tempDir, agentDir);
 		const sessionManager = SessionManager.inMemory();
