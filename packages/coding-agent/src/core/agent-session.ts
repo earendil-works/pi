@@ -1388,6 +1388,13 @@ export class AgentSession {
 		await this.agent.waitForIdle();
 	}
 
+	/**
+	 * Request that the current or next run stop after the active turn completes.
+	 */
+	stopAfterTurn(): void {
+		this.agent.stopAfterTurn();
+	}
+
 	// =========================================================================
 	// Model Management
 	// =========================================================================
