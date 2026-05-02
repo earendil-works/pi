@@ -724,6 +724,26 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					baseUrl = `${variant.basePath}/v1`;
 				}
 
+				// Fix known mismatches between models.dev npm data and actual
+				// OpenCode Go endpoint behaviour. models.dev reports these models
+				// as @ai-sdk/anthropic, but the OpenCode Go endpoints either don't
+				// accept Anthropic SDK auth (MiniMax M2.7) or are served through
+				// the OpenAI-compatible /v1/chat/completions path (Qwen 3.5/3.6).
+				// Switch them to openai-completions so requests use Bearer auth
+				// and the standard /v1/chat/completions endpoint.
+				if (variant.provider === "opencode-go") {
+					if (modelId === "minimax-m2.7") {
+						api = "openai-completions";
+						baseUrl = `${variant.basePath}/v1`;
+					}
+					if (modelId === "qwen3.5-plus" || modelId === "qwen3.6-plus") {
+						api = "openai-completions";
+						baseUrl = `${variant.basePath}/v1`;
+						// Qwen/DashScope uses enable_thinking at the top level.
+						compat = { ...(compat ?? {}), thinkingFormat: "qwen" };
+					}
+				}
+
 				models.push({
 					id: modelId,
 					name: m.name || modelId,
