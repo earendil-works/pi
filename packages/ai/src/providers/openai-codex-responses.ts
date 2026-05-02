@@ -376,14 +376,19 @@ async function* mapCodexEvents(events: AsyncIterable<Record<string, unknown>>): 
 		if (!type) continue;
 
 		if (type === "error") {
-			const code = (event as { code?: string }).code || "";
-			const message = (event as { message?: string }).message || "";
-			throw new Error(`Codex error: ${message || code || JSON.stringify(event)}`);
+			throw new Error(formatCodexStreamError(event));
 		}
 
 		if (type === "response.failed") {
-			const msg = (event as { response?: { error?: { message?: string } } }).response?.error?.message;
-			throw new Error(msg || "Codex response failed");
+			const response = (event as { response?: { error?: CodexErrorPayload; request_id?: string } }).response;
+			throw new Error(
+				formatCodexErrorMessage({
+					code: response?.error?.code || response?.error?.type,
+					message: response?.error?.message,
+					requestId: response?.error?.request_id || response?.request_id || stringValue(event.request_id),
+					fallback: "Codex response failed",
+				}),
+			);
 		}
 
 		if (type === "response.done" || type === "response.completed" || type === "response.incomplete") {
@@ -821,6 +826,52 @@ async function processWebSocketStream(
 // ============================================================================
 // Error Handling
 // ============================================================================
+
+type CodexErrorPayload = {
+	type?: string;
+	code?: string;
+	message?: string;
+	request_id?: string;
+	requestId?: string;
+};
+
+function stringValue(value: unknown): string | undefined {
+	return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function formatCodexErrorMessage({
+	code,
+	message,
+	requestId,
+	fallback = "Codex request failed",
+}: {
+	code?: string;
+	message?: string;
+	requestId?: string;
+	fallback?: string;
+}): string {
+	const text = `${code || ""} ${message || ""}`;
+	const transient = /server_error|rate_limit_exceeded|overloaded|service.?unavailable/i.test(text);
+	const parts = [transient ? "Codex transient error" : "Codex error"];
+	if (code) parts.push(`(${code})`);
+	parts.push(message || fallback);
+	if (requestId) parts.push(`Request ID: ${requestId}.`);
+	if (transient) {
+		parts.push("This is a server-side ChatGPT/Codex failure; retry the turn, or switch models if it persists.");
+	}
+	return parts.join(" ").trim();
+}
+
+function formatCodexStreamError(event: Record<string, unknown>): string {
+	const nested = event.error && typeof event.error === "object" ? (event.error as CodexErrorPayload) : undefined;
+	return formatCodexErrorMessage({
+		code: stringValue(event.code) || nested?.code || nested?.type,
+		message: stringValue(event.message) || nested?.message,
+		requestId:
+			stringValue(event.request_id) || stringValue(event.requestId) || nested?.request_id || nested?.requestId,
+		fallback: JSON.stringify(event),
+	});
+}
 
 async function parseErrorResponse(response: Response): Promise<{ message: string; friendlyMessage?: string }> {
 	const raw = await response.text();
