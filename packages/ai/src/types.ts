@@ -215,7 +215,7 @@ export interface UserMessage {
 
 export interface AssistantMessage {
 	role: "assistant";
-	content: (TextContent | ThinkingContent | ToolCall)[];
+	content: (TextContent | ThinkingContent | ToolCall | ImageContent)[];
 	api: Api;
 	provider: Provider;
 	model: string;

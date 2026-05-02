@@ -428,7 +428,22 @@ export async function processResponsesStream<TApi extends Api>(
 		} else if (event.type === "response.output_item.done") {
 			const item = event.item;
 
-			if (item.type === "reasoning" && currentBlock?.type === "thinking") {
+			if (item.type === "image_generation_call") {
+				const result = item.result ?? "";
+				let imageData = result;
+				let mimeType = "image/png";
+				const dataUrlMatch = /^data:([^;]+);base64,(.+)$/i.exec(result);
+				if (dataUrlMatch) {
+					mimeType = dataUrlMatch[1] ?? mimeType;
+					imageData = dataUrlMatch[2] ?? imageData;
+				}
+
+				output.content.push({ type: "image", data: imageData, mimeType });
+				const revisedPrompt = (item as { revised_prompt?: string }).revised_prompt;
+				if (revisedPrompt?.trim()) {
+					output.content.push({ type: "text", text: revisedPrompt });
+				}
+			} else if (item.type === "reasoning" && currentBlock?.type === "thinking") {
 				currentBlock.thinking = item.summary?.map((s) => s.text).join("\n\n") || "";
 				currentBlock.thinkingSignature = JSON.stringify(item);
 				stream.push({

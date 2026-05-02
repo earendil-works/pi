@@ -147,7 +147,7 @@ function contentToText(content: string | Array<TextContent | ImageContent>): str
 		.join("\n");
 }
 
-function assistantContentToText(content: Array<TextContent | ThinkingContent | ToolCall>): string {
+function assistantContentToText(content: Array<TextContent | ThinkingContent | ToolCall | ImageContent>): string {
 	return content
 		.map((block) => {
 			if (block.type === "text") {
@@ -155,6 +155,9 @@ function assistantContentToText(content: Array<TextContent | ThinkingContent | T
 			}
 			if (block.type === "thinking") {
 				return block.thinking;
+			}
+			if (block.type === "image") {
+				return `[image:${block.mimeType}:${block.data.length}]`;
 			}
 			return `${block.name}:${JSON.stringify(block.arguments)}`;
 		})
@@ -359,6 +362,11 @@ async function streamWithDeltas(
 				stream.push({ type: "text_delta", contentIndex: index, delta: chunk, partial: { ...partial } });
 			}
 			stream.push({ type: "text_end", contentIndex: index, content: block.text, partial: { ...partial } });
+			continue;
+		}
+
+		if (block.type === "image") {
+			partial.content = [...partial.content, block];
 			continue;
 		}
 

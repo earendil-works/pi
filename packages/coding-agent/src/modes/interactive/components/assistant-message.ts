@@ -1,5 +1,15 @@
 import type { AssistantMessage } from "@mariozechner/pi-ai";
-import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@mariozechner/pi-tui";
+import {
+	Container,
+	getCapabilities,
+	getImageDimensions,
+	Image,
+	imageFallback,
+	Markdown,
+	type MarkdownTheme,
+	Spacer,
+	Text,
+} from "@mariozechner/pi-tui";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -16,18 +26,24 @@ export class AssistantMessageComponent extends Container {
 	private hiddenThinkingLabel: string;
 	private lastMessage?: AssistantMessage;
 	private hasToolCalls = false;
+	private showImages: boolean;
+	private imageWidthCells?: number;
 
 	constructor(
 		message?: AssistantMessage,
 		hideThinkingBlock = false,
 		markdownTheme: MarkdownTheme = getMarkdownTheme(),
 		hiddenThinkingLabel = "Thinking...",
+		showImages = true,
+		imageWidthCells?: number,
 	) {
 		super();
 
 		this.hideThinkingBlock = hideThinkingBlock;
 		this.markdownTheme = markdownTheme;
 		this.hiddenThinkingLabel = hiddenThinkingLabel;
+		this.showImages = showImages;
+		this.imageWidthCells = imageWidthCells;
 
 		// Container for text/thinking content
 		this.contentContainer = new Container();
@@ -59,6 +75,20 @@ export class AssistantMessageComponent extends Container {
 		}
 	}
 
+	setShowImages(show: boolean): void {
+		this.showImages = show;
+		if (this.lastMessage) {
+			this.updateContent(this.lastMessage);
+		}
+	}
+
+	setImageWidthCells(width: number): void {
+		this.imageWidthCells = width;
+		if (this.lastMessage) {
+			this.updateContent(this.lastMessage);
+		}
+	}
+
 	override render(width: number): string[] {
 		const lines = super.render(width);
 		if (this.hasToolCalls || lines.length === 0) {
@@ -77,7 +107,10 @@ export class AssistantMessageComponent extends Container {
 		this.contentContainer.clear();
 
 		const hasVisibleContent = message.content.some(
-			(c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),
+			(c) =>
+				(c.type === "text" && c.text.trim()) ||
+				(c.type === "thinking" && c.thinking.trim()) ||
+				(c.type === "image" && c.data.trim()),
 		);
 
 		if (hasVisibleContent) {
@@ -96,7 +129,12 @@ export class AssistantMessageComponent extends Container {
 				// This avoids a superfluous blank line before separately-rendered tool execution blocks.
 				const hasVisibleContentAfter = message.content
 					.slice(i + 1)
-					.some((c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()));
+					.some(
+						(c) =>
+							(c.type === "text" && c.text.trim()) ||
+							(c.type === "thinking" && c.thinking.trim()) ||
+							(c.type === "image" && c.data.trim()),
+					);
 
 				if (this.hideThinkingBlock) {
 					// Show static thinking label when hidden
@@ -117,6 +155,24 @@ export class AssistantMessageComponent extends Container {
 					if (hasVisibleContentAfter) {
 						this.contentContainer.addChild(new Spacer(1));
 					}
+				}
+			} else if (content.type === "image" && content.data.trim()) {
+				const caps = getCapabilities();
+				if (caps.images && this.showImages) {
+					this.contentContainer.addChild(
+						new Image(
+							content.data,
+							content.mimeType,
+							{ fallbackColor: (s: string) => theme.fg("toolOutput", s) },
+							{ maxWidthCells: this.imageWidthCells },
+						),
+					);
+				} else {
+					const fallback = imageFallback(
+						content.mimeType,
+						getImageDimensions(content.data, content.mimeType) ?? undefined,
+					);
+					this.contentContainer.addChild(new Text(theme.fg("thinkingText", fallback), 1, 0));
 				}
 			}
 		}

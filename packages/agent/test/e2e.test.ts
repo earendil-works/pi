@@ -23,10 +23,7 @@ function createFauxRegistration(options: Parameters<typeof registerFauxProvider>
 }
 
 function getTextContent(message: AssistantMessage | ToolResultMessage): string {
-	return message.content
-		.filter((block) => block.type === "text")
-		.map((block) => block.text)
-		.join("\n");
+	return message.content.flatMap((block) => (block.type === "text" ? [block.text] : [])).join("\n");
 }
 
 afterEach(() => {

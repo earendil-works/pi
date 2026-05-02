@@ -342,8 +342,11 @@ function buildRequestBody(
 		body.service_tier = options.serviceTier;
 	}
 
-	if (context.tools && context.tools.length > 0) {
-		body.tools = convertResponsesTools(context.tools, { strict: null });
+	const functionTools =
+		context.tools && context.tools.length > 0 ? convertResponsesTools(context.tools, { strict: null }) : [];
+	const tools: OpenAITool[] = [...functionTools, { type: "image_generation" }];
+	if (tools.length > 0) {
+		body.tools = tools;
 	}
 
 	if (options?.reasoningEffort !== undefined) {

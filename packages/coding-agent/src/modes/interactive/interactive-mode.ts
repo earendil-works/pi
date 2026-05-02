@@ -2677,6 +2677,8 @@ export class InteractiveMode {
 						this.hideThinkingBlock,
 						this.getMarkdownThemeWithSettings(),
 						this.hiddenThinkingLabel,
+						this.settingsManager.getShowImages(),
+						this.settingsManager.getImageWidthCells(),
 					);
 					this.streamingMessage = event.message;
 					this.chatContainer.addChild(this.streamingComponent);
@@ -3064,6 +3066,8 @@ export class InteractiveMode {
 					this.hideThinkingBlock,
 					this.getMarkdownThemeWithSettings(),
 					this.hiddenThinkingLabel,
+					this.settingsManager.getShowImages(),
+					this.settingsManager.getImageWidthCells(),
 				);
 				this.chatContainer.addChild(assistantComponent);
 				break;
@@ -3761,12 +3765,18 @@ export class InteractiveMode {
 							if (child instanceof ToolExecutionComponent) {
 								child.setShowImages(enabled);
 							}
+							if (child instanceof AssistantMessageComponent) {
+								child.setShowImages(enabled);
+							}
 						}
 					},
 					onImageWidthCellsChange: (width) => {
 						this.settingsManager.setImageWidthCells(width);
 						for (const child of this.chatContainer.children) {
 							if (child instanceof ToolExecutionComponent) {
+								child.setImageWidthCells(width);
+							}
+							if (child instanceof AssistantMessageComponent) {
 								child.setImageWidthCells(width);
 							}
 						}

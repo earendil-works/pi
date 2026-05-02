@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
+import type { Tool as OpenAITool, ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
 import { getEnvApiKey } from "../env-api-keys.js";
 import { clampThinkingLevel } from "../models.js";
 import type {
@@ -241,8 +241,13 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 		params.service_tier = options.serviceTier;
 	}
 
-	if (context.tools && context.tools.length > 0) {
-		params.tools = convertResponsesTools(context.tools);
+	const functionTools = context.tools && context.tools.length > 0 ? convertResponsesTools(context.tools) : [];
+	const tools: OpenAITool[] = [...functionTools];
+	if (model.provider === "openai" || model.provider === "openai-codex") {
+		tools.push({ type: "image_generation" });
+	}
+	if (tools.length > 0) {
+		params.tools = tools;
 	}
 
 	if (model.reasoning) {
