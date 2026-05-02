@@ -6,6 +6,7 @@ export function buildBaseOptions(model: Model<Api>, options?: SimpleStreamOption
 		maxTokens: options?.maxTokens ?? (model.maxTokens > 0 ? Math.min(model.maxTokens, 32000) : undefined),
 		signal: options?.signal,
 		apiKey: apiKey || options?.apiKey,
+		transport: options?.transport,
 		cacheRetention: options?.cacheRetention,
 		sessionId: options?.sessionId,
 		headers: options?.headers,
