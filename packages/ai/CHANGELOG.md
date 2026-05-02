@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `streamSimple()` provider option forwarding to preserve `transport`, allowing transport preferences such as WebSocket to reach provider implementations ([#4083](https://github.com/badlogic/pi-mono/issues/4083)).
+
 ## [0.72.0] - 2026-05-01
 
 ### Breaking Changes
