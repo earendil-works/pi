@@ -70,6 +70,9 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 
 	const rebindSession = async (): Promise<void> => {
 		session = runtimeHost.session;
+		// Print mode is single-shot: do not keep provider-side session caches
+		// such as cached WebSockets alive after the process has finished.
+		session.agent.sessionId = undefined;
 		await session.bindExtensions({
 			commandContextActions: {
 				waitForIdle: () => session.agent.waitForIdle(),
