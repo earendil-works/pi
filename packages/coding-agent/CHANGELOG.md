@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `/model -` toggles back to the previously used model ([#4135](https://github.com/badlogic/pi-mono/issues/4135))
+
 ### Changed
 
 - Changed `read` tool rendering to collapse Pi documentation, AGENTS/CLAUDE context files, and `SKILL.md` contents by default in interactive output.

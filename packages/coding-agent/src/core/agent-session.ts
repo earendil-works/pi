@@ -246,6 +246,7 @@ export class AgentSession {
 	readonly settingsManager: SettingsManager;
 
 	private _scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	private _previousModel: Model<any> | undefined;
 
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
@@ -879,6 +880,11 @@ export class AgentSession {
 		return this._scopedModels;
 	}
 
+	/** Previously used model (for /model - toggle) */
+	get previousModel(): Model<any> | undefined {
+		return this._previousModel;
+	}
+
 	/** Update scoped models for cycling */
 	setScopedModels(scopedModels: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>): void {
 		this._scopedModels = scopedModels;
@@ -1417,6 +1423,7 @@ export class AgentSession {
 		}
 
 		const previousModel = this.model;
+		this._previousModel = previousModel;
 		const thinkingLevel = this._getThinkingLevelForModelSwitch();
 		this.agent.state.model = model;
 		this.sessionManager.appendModelChange(model.provider, model.id);
@@ -1446,6 +1453,7 @@ export class AgentSession {
 		if (scopedModels.length <= 1) return undefined;
 
 		const currentModel = this.model;
+		this._previousModel = currentModel;
 		let currentIndex = scopedModels.findIndex((sm) => modelsAreEqual(sm.model, currentModel));
 
 		if (currentIndex === -1) currentIndex = 0;
@@ -1475,6 +1483,7 @@ export class AgentSession {
 		if (availableModels.length <= 1) return undefined;
 
 		const currentModel = this.model;
+		this._previousModel = currentModel;
 		let currentIndex = availableModels.findIndex((m) => modelsAreEqual(m, currentModel));
 
 		if (currentIndex === -1) currentIndex = 0;

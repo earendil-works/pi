@@ -441,25 +441,40 @@ export class InteractiveMode {
 						? this.session.scopedModels.map((s) => s.model)
 						: this.session.modelRegistry.getAvailable();
 
-				if (models.length === 0) return null;
+				const prevModel = this.session.previousModel;
 
-				// Create items with provider/id format
-				const items = models.map((m) => ({
-					id: m.id,
-					provider: m.provider,
-					label: `${m.provider}/${m.id}`,
-				}));
+				// Build items: previous-model dash toggle + available models
+				const items: Array<{ id: string; provider: string; label: string }> = [];
+
+				if (prevModel && (prefix === "" || prefix === "-")) {
+					items.push({ id: "-", provider: "previous", label: "-" });
+				}
+
+				for (const m of models) {
+					items.push({ id: m.id, provider: m.provider, label: `${m.provider}/${m.id}` });
+				}
+
+				if (items.length === 0) return null;
 
 				// Fuzzy filter by model ID + provider (allows "opus anthropic" to match)
 				const filtered = fuzzyFilter(items, prefix, (item) => `${item.id} ${item.provider}`);
 
 				if (filtered.length === 0) return null;
 
-				return filtered.map((item) => ({
-					value: item.label,
-					label: item.id,
-					description: item.provider,
-				}));
+				return filtered.map((item) => {
+					if (item.id === "-") {
+						return {
+							value: "-",
+							label: "-",
+							description: `previously: ${prevModel!.provider}/${prevModel!.id}`,
+						};
+					}
+					return {
+						value: item.label,
+						label: item.id,
+						description: item.provider,
+					};
+				});
 			};
 		}
 
@@ -3878,6 +3893,25 @@ export class InteractiveMode {
 	private async handleModelCommand(searchTerm?: string): Promise<void> {
 		if (!searchTerm) {
 			this.showModelSelector();
+			return;
+		}
+
+		if (searchTerm === "-") {
+			const prev = this.session.previousModel;
+			if (!prev) {
+				this.showStatus("No previously used model");
+				return;
+			}
+			try {
+				await this.session.setModel(prev);
+				this.footer.invalidate();
+				this.updateEditorBorderColor();
+				this.showStatus(`Model: ${prev.id}`);
+				void this.maybeWarnAboutAnthropicSubscriptionAuth(prev);
+				this.checkDaxnutsEasterEgg(prev);
+			} catch (error) {
+				this.showError(error instanceof Error ? error.message : String(error));
+			}
 			return;
 		}
 
