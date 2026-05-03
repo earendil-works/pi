@@ -212,7 +212,6 @@ export function streamProxy(model: Model<any>, context: Context, options: ProxyS
 
 			stream.end();
 		} catch (error) {
-			// TODO(diagnostics): consider emitting diagnostics for proxy transport failures.
 			const errorMessage = error instanceof Error ? error.message : String(error);
 			const reason = options.signal?.aborted ? "aborted" : "error";
 			partial.stopReason = reason;

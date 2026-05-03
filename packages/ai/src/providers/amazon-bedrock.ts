@@ -263,7 +263,6 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
-			// TODO(diagnostics): consider emitting diagnostics for Bedrock stream failures.
 			for (const block of output.content) {
 				delete (block as Block).index;
 				// partialJson is only a streaming scratch buffer; never persist it.

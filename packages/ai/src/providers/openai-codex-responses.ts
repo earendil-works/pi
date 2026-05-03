@@ -300,7 +300,6 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 			stream.push({ type: "done", reason: output.stopReason as "stop" | "length" | "toolUse", message: output });
 			stream.end();
 		} catch (error) {
-			// TODO(diagnostics): consider emitting diagnostics for unrecovered HTTP/SSE provider failures.
 			for (const block of output.content) {
 				// partialJson is only a streaming scratch buffer; never persist it.
 				delete (block as { partialJson?: string }).partialJson;
