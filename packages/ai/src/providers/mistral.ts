@@ -91,6 +91,7 @@ export const streamMistral: StreamFunction<"mistral-conversations", MistralOptio
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			// TODO(diagnostics): consider emitting diagnostics for Mistral stream failures.
 			for (const block of output.content) {
 				// partialArgs is only a streaming scratch buffer; never persist it.
 				delete (block as { partialArgs?: string }).partialArgs;
