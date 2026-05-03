@@ -54,6 +54,9 @@ function osc52Writes(): string[] {
 
 beforeEach(() => {
 	vi.unstubAllEnvs();
+	vi.stubEnv("SSH_CONNECTION", "");
+	vi.stubEnv("SSH_CLIENT", "");
+	vi.stubEnv("MOSH_CONNECTION", "");
 	stdoutWrites = [];
 	nativeResolved = false;
 	mocks.clipboard.setText.mockReset();

@@ -242,7 +242,7 @@ describe("openai-codex streaming", () => {
 		};
 
 		const result = await Promise.race([
-			streamOpenAICodexResponses(model, context, { apiKey: token }).result(),
+			streamOpenAICodexResponses(model, context, { apiKey: token, transport: "sse" }).result(),
 			new Promise<never>((_, reject) => {
 				setTimeout(() => reject(new Error("Timed out waiting for completed SSE stream")), 1000);
 			}),
@@ -301,7 +301,7 @@ describe("openai-codex streaming", () => {
 		};
 
 		const result = await Promise.race([
-			streamOpenAICodexResponses(model, context, { apiKey: token }).result(),
+			streamOpenAICodexResponses(model, context, { apiKey: token, transport: "sse" }).result(),
 			new Promise<never>((_, reject) => {
 				setTimeout(() => reject(new Error("Timed out waiting for incomplete SSE stream")), 1000);
 			}),
