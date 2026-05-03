@@ -95,6 +95,7 @@ export interface AgentOptions {
 	initialState?: Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>;
 	convertToLlm?: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
+	shouldStopAfterTurn?: AgentLoopConfig["shouldStopAfterTurn"];
 	streamFn?: StreamFn;
 	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 	onPayload?: SimpleStreamOptions["onPayload"];
@@ -163,6 +164,7 @@ export class Agent {
 
 	public convertToLlm: (messages: AgentMessage[]) => Message[] | Promise<Message[]>;
 	public transformContext?: (messages: AgentMessage[], signal?: AbortSignal) => Promise<AgentMessage[]>;
+	public shouldStopAfterTurn?: AgentLoopConfig["shouldStopAfterTurn"];
 	public streamFn: StreamFn;
 	public getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 	public onPayload?: SimpleStreamOptions["onPayload"];
@@ -176,6 +178,7 @@ export class Agent {
 		signal?: AbortSignal,
 	) => Promise<AfterToolCallResult | undefined>;
 	private activeRun?: ActiveRun;
+	private stopAfterTurnRequested = false;
 	/** Session identifier forwarded to providers for cache-aware backends. */
 	public sessionId?: string;
 	/** Optional per-level thinking token budgets forwarded to the stream function. */
@@ -191,6 +194,7 @@ export class Agent {
 		this._state = createMutableAgentState(options.initialState);
 		this.convertToLlm = options.convertToLlm ?? defaultConvertToLlm;
 		this.transformContext = options.transformContext;
+		this.shouldStopAfterTurn = options.shouldStopAfterTurn;
 		this.streamFn = options.streamFn ?? streamSimple;
 		this.getApiKey = options.getApiKey;
 		this.onPayload = options.onPayload;
@@ -287,6 +291,11 @@ export class Agent {
 	/** Abort the current run, if one is active. */
 	abort(): void {
 		this.activeRun?.abortController.abort();
+	}
+
+	/** Request that the current or next run stop after the active turn completes. */
+	stopAfterTurn(): void {
+		this.stopAfterTurnRequested = true;
 	}
 
 	/**
@@ -421,6 +430,13 @@ export class Agent {
 			toolExecution: this.toolExecution,
 			beforeToolCall: this.beforeToolCall,
 			afterToolCall: this.afterToolCall,
+			shouldStopAfterTurn: async (context) => {
+				if (this.stopAfterTurnRequested) {
+					return true;
+				}
+
+				return (await this.shouldStopAfterTurn?.(context)) ?? false;
+			},
 			convertToLlm: this.convertToLlm,
 			transformContext: this.transformContext,
 			getApiKey: this.getApiKey,
@@ -483,6 +499,7 @@ export class Agent {
 		this._state.pendingToolCalls = new Set<string>();
 		this.activeRun?.resolve();
 		this.activeRun = undefined;
+		this.stopAfterTurnRequested = false;
 	}
 
 	/**

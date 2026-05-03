@@ -211,6 +211,41 @@ describe("Agent", () => {
 		expect(receivedSignal?.aborted).toBe(true);
 	});
 
+	it("should stop after the current turn and leave follow-ups queued", async () => {
+		let llmCalls = 0;
+		const agent = new Agent({
+			streamFn: () => {
+				llmCalls += 1;
+				const stream = new MockAssistantStream();
+				queueMicrotask(() => {
+					stream.push({
+						type: "done",
+						reason: "stop",
+						message: createAssistantMessage(`response-${llmCalls}`),
+					});
+				});
+				return stream;
+			},
+		});
+
+		agent.followUp({
+			role: "user",
+			content: "continue later",
+			timestamp: Date.now(),
+		});
+		agent.stopAfterTurn();
+
+		await agent.prompt("hello");
+
+		expect(llmCalls).toBe(1);
+		expect(agent.hasQueuedMessages()).toBe(true);
+
+		await agent.continue();
+
+		expect(llmCalls).toBe(2);
+		expect(agent.hasQueuedMessages()).toBe(false);
+	});
+
 	it("should update state with mutators", () => {
 		const agent = new Agent();
 
