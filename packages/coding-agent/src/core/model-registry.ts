@@ -215,10 +215,9 @@ function formatValidationPath(error: TLocalizedValidationError): string {
 
 /** Strip `//` line comments and trailing commas from JSON, leaving string literals untouched. */
 function stripJsonComments(input: string): string {
-	return input.replace(
-		/"(?:\\.|[^"\\])*"|\/\/[^\n]*|,(\s*[}\]])/g,
-		(m, trailing) => trailing ?? (m[0] === '"' ? m : ""),
-	);
+	return input
+		.replace(/"(?:\\.|[^"\\])*"|\/\/[^\n]*/g, (m) => (m[0] === '"' ? m : ""))
+		.replace(/"(?:\\.|[^"\\])*"|,(\s*[}\]])/g, (m, tail) => tail ?? (m[0] === '"' ? m : ""));
 }
 
 /** Provider override config (baseUrl, compat) without request auth/headers */
