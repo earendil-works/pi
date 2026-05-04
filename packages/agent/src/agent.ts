@@ -64,7 +64,7 @@ type MutableAgentState = Omit<AgentState, "isStreaming" | "streamingMessage" | "
 function createMutableAgentState(
 	initialState?: Partial<Omit<AgentState, "pendingToolCalls" | "isStreaming" | "streamingMessage" | "errorMessage">>,
 ): MutableAgentState {
-	let tools = initialState?.tools?.slice() ?? [];
+	const tools = initialState?.tools?.slice() ?? [];
 	let messages = initialState?.messages?.slice() ?? [];
 
 	return {
@@ -75,7 +75,9 @@ function createMutableAgentState(
 			return tools;
 		},
 		set tools(nextTools: AgentTool<any>[]) {
-			tools = nextTools.slice();
+			if (tools === nextTools) return;
+			tools.length = 0;
+			tools.push(...nextTools);
 		},
 		get messages() {
 			return messages;
@@ -403,7 +405,7 @@ export class Agent {
 		return {
 			systemPrompt: this._state.systemPrompt,
 			messages: this._state.messages.slice(),
-			tools: this._state.tools.slice(),
+			tools: this._state.tools,
 		};
 	}
 
