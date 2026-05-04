@@ -1,0 +1,16 @@
+{
+  "name": "pi-extension-custom-provider-lmstudio",
+  "private": true,
+  "version": "0.70.6",
+  "type": "module",
+  "scripts": {
+    "clean": "echo 'nothing to clean'",
+    "build": "echo 'nothing to build'",
+    "check": "echo 'nothing to check'"
+  },
+  "pi": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
