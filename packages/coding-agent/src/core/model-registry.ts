@@ -213,6 +213,14 @@ function formatValidationPath(error: TLocalizedValidationError): string {
 	return path || "root";
 }
 
+/** Strip `//` line comments and trailing commas from JSON, leaving string literals untouched. */
+function stripJsonComments(input: string): string {
+	return input.replace(
+		/"(?:\\.|[^"\\])*"|\/\/[^\n]*|,(\s*[}\]])/g,
+		(m, trailing) => trailing ?? (m[0] === '"' ? m : ""),
+	);
+}
+
 /** Provider override config (baseUrl, compat) without request auth/headers */
 interface ProviderOverride {
 	baseUrl?: string;
@@ -450,7 +458,7 @@ export class ModelRegistry {
 
 		try {
 			const content = readFileSync(modelsJsonPath, "utf-8");
-			const parsed = JSON.parse(content) as unknown;
+			const parsed = JSON.parse(stripJsonComments(content)) as unknown;
 
 			if (!validateModelsConfig.Check(parsed)) {
 				const errors =
