@@ -33,6 +33,7 @@ if [[ "$NO_ENV" == "true" ]]; then
   unset COPILOT_GITHUB_TOKEN
   unset GH_TOKEN
   unset GITHUB_TOKEN
+  unset HF_TOKEN
   unset GOOGLE_APPLICATION_CREDENTIALS
   unset GOOGLE_CLOUD_PROJECT
   unset GCLOUD_PROJECT
