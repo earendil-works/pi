@@ -399,7 +399,20 @@ export class AgentSession {
 			}
 		};
 
-		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
+		this.agent.afterToolCall = async ({ toolCall, args, result, isError, context }) => {
+			// Sync dynamically registered tools into the running agent loop context.
+			// When an extension calls pi.registerTool() during tool execution (e.g. MCP
+			// lazy-load), _refreshToolRegistry updates agent.state but the loop's context
+			// snapshot is stale. The agent-core passes context as a mutable reference, so
+			// patching it here makes new tools visible to subsequent turns in the same loop.
+			if (context) {
+				const liveTools = this.agent.state.tools;
+				if (liveTools.length !== context.tools?.length) {
+					context.tools = liveTools.slice();
+					context.systemPrompt = this.agent.state.systemPrompt;
+				}
+			}
+
 			const runner = this._extensionRunner;
 			if (!runner.hasHandlers("tool_result")) {
 				return undefined;
