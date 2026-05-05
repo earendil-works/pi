@@ -47,7 +47,7 @@ npm install @mariozechner/pi-mom
    - `im:read`
    - `im:write`
    - `users:read`
-   - `reactions:write` (optional — for `MOM_SLACK_STATUS_REACTIONS`)
+   - `reactions:write` (**required** for emoji reactions on the user message unless you set `MOM_SLACK_STATUS_REACTIONS=0`)
 5. **Subscribe to Bot Events** (Event Subscriptions):
    - `app_mention`
    - `message.channels`

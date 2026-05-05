@@ -24,7 +24,7 @@ You need **TWO tokens**:
 1. Go to https://api.slack.com/apps
 2. Create app → "From scratch"
 3. Click "OAuth & Permissions" in sidebar
-4. Add **Bot Token Scopes** (all 16):
+4. Add **Bot Token Scopes** (all 17 below; omit `reactions:write` only if you disable `MOM_SLACK_STATUS_REACTIONS`):
    ```
    app_mentions:read
    channels:history
@@ -41,6 +41,7 @@ You need **TWO tokens**:
    mpim:history
    mpim:read
    mpim:write
+   reactions:write
    users:read
    ```
 5. Click "Install to Workspace" at top

@@ -1,6 +1,9 @@
 /**
  * Runtime configuration from environment variables.
- * Defaults preserve upstream @mariozechner/pi-mom behavior when unset.
+ * Slack thread/conversation UX (replies in thread, tracked threads, status reactions/messages)
+ * defaults to on so deployments match typical pi-mom-custom-style setups without extra exports.
+ * Set each var to false/0 to disable, or set MOM_SLACK_LEGACY_THREAD_UX=1 to restore the old
+ * upstream defaults for all four flags at once (unless you override a var explicitly).
  */
 
 export interface MomRuntimeConfig {
@@ -48,13 +51,15 @@ function parseNonNegInt(v: string | undefined, defaultVal: number): number {
 
 export function buildMomConfig(): MomRuntimeConfig {
 	const quiet = parseBool(process.env.MOM_SLACK_QUIET, false);
+	const legacyThreadUx = parseBool(process.env.MOM_SLACK_LEGACY_THREAD_UX, false);
+	const threadUxDefault = !legacyThreadUx;
 	return {
 		llmProvider: process.env.MOM_LLM_PROVIDER?.trim() || "anthropic",
 		llmModelId: process.env.MOM_LLM_MODEL?.trim() || "claude-sonnet-4-6",
-		slackReplyInUserThread: parseBool(process.env.MOM_SLACK_REPLY_IN_USER_THREAD, false),
-		trackThreads: parseBool(process.env.MOM_TRACK_THREADS, false),
-		slackStatusReactions: parseBool(process.env.MOM_SLACK_STATUS_REACTIONS, false),
-		slackStatusThreadMessage: parseBool(process.env.MOM_SLACK_STATUS_THREAD_MESSAGE, false),
+		slackReplyInUserThread: parseBool(process.env.MOM_SLACK_REPLY_IN_USER_THREAD, threadUxDefault),
+		trackThreads: parseBool(process.env.MOM_TRACK_THREADS, threadUxDefault),
+		slackStatusReactions: parseBool(process.env.MOM_SLACK_STATUS_REACTIONS, threadUxDefault),
+		slackStatusThreadMessage: parseBool(process.env.MOM_SLACK_STATUS_THREAD_MESSAGE, threadUxDefault),
 		voiceTranscription: parseBool(process.env.MOM_VOICE_TRANSCRIPTION, false),
 		slackPostToolStartLabel: quiet ? false : parseBool(process.env.MOM_SLACK_POST_TOOL_LABELS, true),
 		slackPostToolResultToThread: quiet ? false : parseBool(process.env.MOM_SLACK_POST_TOOL_RESULTS, true),

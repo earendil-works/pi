@@ -2,12 +2,9 @@
 
 ## [Unreleased]
 
-### Fixed
-
-- Deduplicate `app_mention` vs `message` for the same Slack message (`channel:ts` claim) so @mentions do not run the agent twice.
-
 ### Changed
 
+- Slack conversation UX enabled by default: reply in user thread, tracked threads (`tracked-threads.json`), status reactions (`hourglass_flowing_sand` → done/error), and thread status line (“On it” / “Done”). Set `MOM_SLACK_LEGACY_THREAD_UX=1` or set individual `MOM_*` flags to `0` to restore the previous upstream defaults.
 - Default Slack tool threads are compact: `read` omits file body (one line); other tools truncate long results. Set `MOM_SLACK_FULL_TOOL_RESULTS=1` for the previous verbose dumps.
 
 ### Sync
