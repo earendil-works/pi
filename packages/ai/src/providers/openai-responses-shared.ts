@@ -339,6 +339,18 @@ export async function processResponsesStream<TApi extends Api>(
 					});
 				}
 			}
+		} else if (event.type === "response.reasoning_text.done") {
+			// Some OpenAI-compatible providers (e.g. LM Studio) deliver reasoning as a
+			// single completed event instead of the standard output_item.added →
+			// reasoning_summary_text.delta → output_item.done sequence.
+			const text = event.text as string | undefined;
+			if (text) {
+				const thinkingBlock = { type: "thinking" as const, thinking: text };
+				output.content.unshift(thinkingBlock);
+				stream.push({ type: "thinking_start", contentIndex: 0, partial: output });
+				stream.push({ type: "thinking_delta", contentIndex: 0, delta: text, partial: output });
+				stream.push({ type: "thinking_end", contentIndex: 0, content: text, partial: output });
+			}
 		} else if (event.type === "response.reasoning_summary_part.done") {
 			if (currentItem?.type === "reasoning" && currentBlock?.type === "thinking") {
 				currentItem.summary = currentItem.summary || [];
