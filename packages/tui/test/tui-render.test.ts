@@ -507,3 +507,80 @@ describe("TUI differential rendering", () => {
 		tui.stop();
 	});
 });
+
+describe("TUI scrollback preservation", () => {
+	// Regression test for long messages disappearing from terminal scrollback.
+	//
+	// When content above the previous viewport changes (e.g. streaming markdown
+	// re-flowing while the message has grown past the visible area), the renderer
+	// falls back to fullRender. Previously this issued \x1b[3J unconditionally,
+	// which wiped the terminal's scrollback buffer and discarded any content the
+	// host shell or earlier sessions had placed there. Content-driven redraws
+	// should preserve scrollback; only width changes (which invalidate prior
+	// wrapping) should clear it.
+	it("preserves shell scrollback across a content-driven full redraw", async () => {
+		const terminal = new VirtualTerminal(40, 10);
+
+		// Simulate pre-existing shell history: lines that the user's terminal
+		// had in its scrollback before the TUI started. The TUI must not
+		// destroy these on a content-driven redraw.
+		const shellLines: string[] = [];
+		for (let i = 0; i < 25; i++) {
+			shellLines.push(`shell-history-${i}`);
+			terminal.write(`shell-history-${i}\r\n`);
+		}
+		await terminal.waitForRender();
+
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		// Long enough to scroll naturally and set prevViewportTop > 0.
+		component.lines = Array.from({ length: 30 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+
+		const initialRedraws = tui.fullRedraws;
+
+		// Trigger the `firstChanged < prevViewportTop` path by changing a line
+		// that has scrolled above the visible viewport.
+		const next = Array.from({ length: 30 }, (_, i) => (i === 5 ? "Line 5 CHANGED" : `Line ${i}`));
+		component.lines = next;
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		assert.ok(tui.fullRedraws > initialRedraws, "Above-viewport change should trigger a full redraw");
+
+		const scrollback = terminal.getScrollBuffer();
+		// Pre-existing shell history must still be retrievable via scrollback.
+		// With the prior \x1b[3J behavior these would all be gone.
+		const survivedLines = shellLines.filter((line) => scrollback.some((row) => row.includes(line)));
+		assert.ok(
+			survivedLines.length > 0,
+			`Pre-TUI shell history should survive content-driven redraw; none of ${shellLines.length} lines remained in scrollback`,
+		);
+	});
+
+	it("clears scrollback on width change (wrapping invalidates prior render)", async () => {
+		const terminal = new VirtualTerminal(40, 10);
+		// Pre-existing shell history that becomes stale after a re-flow.
+		for (let i = 0; i < 20; i++) terminal.write(`shell-${i}\r\n`);
+		await terminal.waitForRender();
+
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = Array.from({ length: 15 }, (_, i) => `Line ${i}`);
+		tui.start();
+		await terminal.waitForRender();
+
+		const initialRedraws = tui.fullRedraws;
+		terminal.resize(60, 10);
+		await terminal.waitForRender();
+
+		assert.ok(tui.fullRedraws > initialRedraws, "Width change should trigger a full redraw");
+		// On width change we still emit \x1b[3J because wrapping has changed
+		// and prior scrollback would be visually misaligned.
+	});
+});

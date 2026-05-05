@@ -914,21 +914,40 @@ export class TUI extends Container {
 
 		newLines = this.applyLineResets(newLines);
 
-		// Helper to clear scrollback and viewport and render all new lines
-		const fullRender = (clear: boolean): void => {
+		// Helper to clear viewport (and optionally scrollback) and render new lines.
+		//
+		// `clear` modes:
+		//   false        - first render only; assumes a clean screen and writes everything.
+		//   true         - clear visible viewport (\x1b[2J\x1b[H) but PRESERVE scrollback.
+		//                  Only the last `height` lines of newLines are written so we don't
+		//                  duplicate content into scrollback that the natural-scroll path
+		//                  has already pushed there during prior renders. Use this for
+		//                  content-driven redraws (e.g. firstChanged above viewport).
+		//   "scrollback" - clear viewport AND scrollback (\x1b[2J\x1b[H\x1b[3J), then
+		//                  write all of newLines so the terminal scrolls them in fresh.
+		//                  Reserved for cases where existing scrollback would be visually
+		//                  wrong (e.g. width change re-flows wrapping).
+		const fullRender = (clear: boolean | "scrollback"): void => {
 			this.fullRedrawCount += 1;
 			let buffer = "\x1b[?2026h"; // Begin synchronized output
-			if (clear) buffer += "\x1b[2J\x1b[H\x1b[3J"; // Clear screen, home, then clear scrollback
-			for (let i = 0; i < newLines.length; i++) {
-				if (i > 0) buffer += "\r\n";
+			if (clear === "scrollback") {
+				buffer += "\x1b[2J\x1b[H\x1b[3J"; // Clear screen, home, then clear scrollback
+			} else if (clear === true) {
+				buffer += "\x1b[2J\x1b[H"; // Clear screen + home, preserve scrollback
+			}
+			// For viewport-only clear, write only what fits on screen so we don't push
+			// duplicate copies of earlier content into scrollback.
+			const startLine = clear === true ? Math.max(0, newLines.length - height) : 0;
+			for (let i = startLine; i < newLines.length; i++) {
+				if (i > startLine) buffer += "\r\n";
 				buffer += newLines[i];
 			}
 			buffer += "\x1b[?2026l"; // End synchronized output
 			this.terminal.write(buffer);
 			this.cursorRow = Math.max(0, newLines.length - 1);
 			this.hardwareCursorRow = this.cursorRow;
-			// Reset max lines when clearing, otherwise track growth
-			if (clear) {
+			// Reset max lines on scrollback wipe, otherwise track growth
+			if (clear === "scrollback") {
 				this.maxLinesRendered = newLines.length;
 			} else {
 				this.maxLinesRendered = Math.max(this.maxLinesRendered, newLines.length);
@@ -956,16 +975,18 @@ export class TUI extends Container {
 			return;
 		}
 
-		// Width changes always need a full re-render because wrapping changes.
+		// Width changes invalidate existing scrollback because wrapping changes,
+		// so this is one of the few cases where wiping scrollback is justified.
 		if (widthChanged) {
 			logRedraw(`terminal width changed (${this.previousWidth} -> ${width})`);
-			fullRender(true);
+			fullRender("scrollback");
 			return;
 		}
 
 		// Height changes normally need a full re-render to keep the visible viewport aligned,
 		// but Termux changes height when the software keyboard shows or hides.
 		// In that environment, a full redraw causes the entire history to replay on every toggle.
+		// Wrapping is unchanged on a height-only resize, so scrollback stays valid.
 		if (heightChanged && !isTermuxSession()) {
 			logRedraw(`terminal height changed (${this.previousHeight} -> ${height})`);
 			fullRender(true);
@@ -1035,6 +1056,8 @@ export class TUI extends Container {
 					fullRender(true);
 					return;
 				}
+				// (`fullRender(true)` for `targetRow < prevViewportTop` and `extraLines > height` above
+				//  preserves scrollback; wrapping has not changed, so prior scrollback is still valid.)
 				if (extraLines > 0) {
 					buffer += "\x1b[1B";
 				}
@@ -1060,6 +1083,11 @@ export class TUI extends Container {
 
 		// Differential rendering can only touch what was actually visible.
 		// If the first changed line is above the previous viewport, we need a full redraw.
+		// We clear the viewport but PRESERVE scrollback: the lines that scrolled out
+		// during prior renders are user-visible history. Earlier behavior wiped
+		// scrollback (\x1b[3J), causing long messages to vanish from the user's
+		// terminal entirely once any line above the viewport changed (e.g. streaming
+		// markdown re-flowing while the message extended past the viewport).
 		if (firstChanged < prevViewportTop) {
 			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
 			fullRender(true);
