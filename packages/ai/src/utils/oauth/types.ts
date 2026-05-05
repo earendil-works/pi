@@ -23,11 +23,23 @@ export type OAuthAuthInfo = {
 	instructions?: string;
 };
 
+export type OAuthSelectOption = {
+	id: string;
+	label: string;
+};
+
+export type OAuthSelectPrompt = {
+	message: string;
+	options: OAuthSelectOption[];
+};
+
 export interface OAuthLoginCallbacks {
 	onAuth: (info: OAuthAuthInfo) => void;
 	onPrompt: (prompt: OAuthPrompt) => Promise<string>;
 	onProgress?: (message: string) => void;
 	onManualCodeInput?: () => Promise<string>;
+	/** Show an interactive selector and return the selected option id, or undefined on cancel. */
+	onSelect?: (prompt: OAuthSelectPrompt) => Promise<string | undefined>;
 	signal?: AbortSignal;
 }
 
