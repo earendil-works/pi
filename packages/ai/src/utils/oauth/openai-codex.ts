@@ -17,7 +17,7 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 	});
 }
 
-import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.js";
+import { type OAuthPageBranding, oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.js";
 import { generatePKCE } from "./pkce.js";
 import type { OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, OAuthProviderInterface } from "./types.js";
 
@@ -199,7 +199,7 @@ type OAuthServerInfo = {
 	waitForCode: () => Promise<{ code: string } | null>;
 };
 
-function startLocalOAuthServer(state: string): Promise<OAuthServerInfo> {
+function startLocalOAuthServer(state: string, branding?: OAuthPageBranding): Promise<OAuthServerInfo> {
 	if (!_http) {
 		throw new Error("OpenAI Codex OAuth is only available in Node.js environments");
 	}
@@ -220,30 +220,30 @@ function startLocalOAuthServer(state: string): Promise<OAuthServerInfo> {
 			if (url.pathname !== "/auth/callback") {
 				res.statusCode = 404;
 				res.setHeader("Content-Type", "text/html; charset=utf-8");
-				res.end(oauthErrorHtml("Callback route not found."));
+				res.end(oauthErrorHtml("Callback route not found.", undefined, branding));
 				return;
 			}
 			if (url.searchParams.get("state") !== state) {
 				res.statusCode = 400;
 				res.setHeader("Content-Type", "text/html; charset=utf-8");
-				res.end(oauthErrorHtml("State mismatch."));
+				res.end(oauthErrorHtml("State mismatch.", undefined, branding));
 				return;
 			}
 			const code = url.searchParams.get("code");
 			if (!code) {
 				res.statusCode = 400;
 				res.setHeader("Content-Type", "text/html; charset=utf-8");
-				res.end(oauthErrorHtml("Missing authorization code."));
+				res.end(oauthErrorHtml("Missing authorization code.", undefined, branding));
 				return;
 			}
 			res.statusCode = 200;
 			res.setHeader("Content-Type", "text/html; charset=utf-8");
-			res.end(oauthSuccessHtml("OpenAI authentication completed. You can close this window."));
+			res.end(oauthSuccessHtml("OpenAI authentication completed. You can close this window.", branding));
 			settleWait?.({ code });
 		} catch {
 			res.statusCode = 500;
 			res.setHeader("Content-Type", "text/html; charset=utf-8");
-			res.end(oauthErrorHtml("Internal error while processing OAuth callback."));
+			res.end(oauthErrorHtml("Internal error while processing OAuth callback.", undefined, branding));
 		}
 	});
 
@@ -297,6 +297,10 @@ function getAccountId(accessToken: string): string | null {
  *                                    Races with browser callback - whichever completes first wins.
  *                                    Useful for showing paste input immediately alongside browser flow.
  * @param options.originator - OAuth originator parameter (defaults to "pi")
+ * @param options.branding - Optional branding for the localhost callback success/error
+ *                           pages. Lets the consumer app swap the default Pi logo +
+ *                           document title for their own. Absence keeps the historical
+ *                           Pi-branded behavior, preserving back-compat.
  */
 export async function loginOpenAICodex(options: {
 	onAuth: (info: { url: string; instructions?: string }) => void;
@@ -304,9 +308,10 @@ export async function loginOpenAICodex(options: {
 	onProgress?: (message: string) => void;
 	onManualCodeInput?: () => Promise<string>;
 	originator?: string;
+	branding?: OAuthPageBranding;
 }): Promise<OAuthCredentials> {
 	const { verifier, state, url } = await createAuthorizationFlow(options.originator);
-	const server = await startLocalOAuthServer(state);
+	const server = await startLocalOAuthServer(state, options.branding);
 
 	options.onAuth({ url, instructions: "A browser window should open. Complete login to finish." });
 

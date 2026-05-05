@@ -20,6 +20,12 @@ export {
 // OpenAI Codex (ChatGPT OAuth)
 export { loginOpenAICodex, openaiCodexOAuthProvider, refreshOpenAICodexToken } from "./openai-codex.js";
 
+// Branding overrides for the localhost callback success/error pages.
+// Consumer apps can pass `branding: { logoSvg, appName }` to the login*
+// functions so the page that shows after the OAuth redirect carries their
+// brand instead of the default Pi logo. See oauth-page.ts for the shape.
+export { type OAuthPageBranding } from "./oauth-page.js";
+
 export * from "./types.js";
 
 // ============================================================================

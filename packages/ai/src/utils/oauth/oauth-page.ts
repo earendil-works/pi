@@ -1,4 +1,29 @@
-const LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" aria-hidden="true"><path fill="#fff" fill-rule="evenodd" d="M165.29 165.29 H517.36 V400 H400 V517.36 H282.65 V634.72 H165.29 Z M282.65 282.65 V400 H400 V282.65 Z"/><path fill="#fff" d="M517.36 400 H634.72 V634.72 H517.36 Z"/></svg>`;
+/**
+ * Branding options for the OAuth callback success/error pages. Each
+ * OAuth flow that runs a local callback server (openai-codex,
+ * anthropic, github-copilot, etc.) accepts these so consumer apps
+ * can swap the default Pi logo/title for their own brand.
+ *
+ * All fields are optional — absence falls back to the historical
+ * Pi-branded behavior, preserving back-compat.
+ */
+export interface OAuthPageBranding {
+	/**
+	 * Inline SVG markup rendered at the top of the page (above the
+	 * heading). Should be a complete `<svg>...</svg>` string sized
+	 * around 64-128 pixels — the page CSS scales it to a 72×72 box.
+	 * Absence falls back to the bundled Pi logo.
+	 */
+	logoSvg?: string;
+	/**
+	 * Application name appended to the document `<title>` so users
+	 * see e.g. "Authentication successful — Claudio Pipe" instead
+	 * of the generic default. Absence keeps the plain default.
+	 */
+	appName?: string;
+}
+
+const DEFAULT_LOGO_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" aria-hidden="true"><path fill="#fff" fill-rule="evenodd" d="M165.29 165.29 H517.36 V400 H400 V517.36 H282.65 V634.72 H165.29 Z M282.65 282.65 V400 H400 V282.65 Z"/><path fill="#fff" d="M517.36 400 H634.72 V634.72 H517.36 Z"/></svg>`;
 
 function escapeHtml(value: string): string {
 	return value
@@ -9,11 +34,23 @@ function escapeHtml(value: string): string {
 		.replaceAll("'", "&#39;");
 }
 
-function renderPage(options: { title: string; heading: string; message: string; details?: string }): string {
-	const title = escapeHtml(options.title);
+function renderPage(options: {
+	title: string;
+	heading: string;
+	message: string;
+	details?: string;
+	branding?: OAuthPageBranding;
+}): string {
+	const appName = options.branding?.appName;
+	const fullTitle = appName ? `${options.title} — ${appName}` : options.title;
+	const title = escapeHtml(fullTitle);
 	const heading = escapeHtml(options.heading);
 	const message = escapeHtml(options.message);
 	const details = options.details ? escapeHtml(options.details) : undefined;
+	// `branding.logoSvg` is RAW SVG markup, intentionally NOT html-escaped
+	// — it's a trusted SVG string the consumer app supplied. Same handling
+	// the bundled DEFAULT_LOGO_SVG already gets.
+	const logoSvg = options.branding?.logoSvg ?? DEFAULT_LOGO_SVG;
 
 	return `<!doctype html>
 <html lang="en">
@@ -82,7 +119,7 @@ function renderPage(options: { title: string; heading: string; message: string; 
 </head>
 <body>
   <main>
-    <div class="logo">${LOGO_SVG}</div>
+    <div class="logo">${logoSvg}</div>
     <h1>${heading}</h1>
     <p>${message}</p>
     ${details ? `<div class="details">${details}</div>` : ""}
@@ -91,19 +128,21 @@ function renderPage(options: { title: string; heading: string; message: string; 
 </html>`;
 }
 
-export function oauthSuccessHtml(message: string): string {
+export function oauthSuccessHtml(message: string, branding?: OAuthPageBranding): string {
 	return renderPage({
 		title: "Authentication successful",
 		heading: "Authentication successful",
 		message,
+		...(branding ? { branding } : {}),
 	});
 }
 
-export function oauthErrorHtml(message: string, details?: string): string {
+export function oauthErrorHtml(message: string, details?: string, branding?: OAuthPageBranding): string {
 	return renderPage({
 		title: "Authentication failed",
 		heading: "Authentication failed",
 		message,
-		details,
+		...(details !== undefined ? { details } : {}),
+		...(branding ? { branding } : {}),
 	});
 }

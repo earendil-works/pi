@@ -6,7 +6,7 @@
  */
 
 import type { Server } from "node:http";
-import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.js";
+import { type OAuthPageBranding, oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.js";
 import { generatePKCE } from "./pkce.js";
 import type { OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, OAuthProviderInterface } from "./types.js";
 
@@ -95,7 +95,7 @@ function formatErrorDetails(error: unknown): string {
 	return String(error);
 }
 
-async function startCallbackServer(expectedState: string): Promise<CallbackServerInfo> {
+async function startCallbackServer(expectedState: string, branding?: OAuthPageBranding): Promise<CallbackServerInfo> {
 	const { createServer } = await getNodeApis();
 
 	return new Promise((resolve, reject) => {
@@ -114,7 +114,7 @@ async function startCallbackServer(expectedState: string): Promise<CallbackServe
 				const url = new URL(req.url || "", "http://localhost");
 				if (url.pathname !== CALLBACK_PATH) {
 					res.writeHead(404, { "Content-Type": "text/html; charset=utf-8" });
-					res.end(oauthErrorHtml("Callback route not found."));
+					res.end(oauthErrorHtml("Callback route not found.", undefined, branding));
 					return;
 				}
 
@@ -124,24 +124,24 @@ async function startCallbackServer(expectedState: string): Promise<CallbackServe
 
 				if (error) {
 					res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-					res.end(oauthErrorHtml("Anthropic authentication did not complete.", `Error: ${error}`));
+					res.end(oauthErrorHtml("Anthropic authentication did not complete.", `Error: ${error}`, branding));
 					return;
 				}
 
 				if (!code || !state) {
 					res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-					res.end(oauthErrorHtml("Missing code or state parameter."));
+					res.end(oauthErrorHtml("Missing code or state parameter.", undefined, branding));
 					return;
 				}
 
 				if (state !== expectedState) {
 					res.writeHead(400, { "Content-Type": "text/html; charset=utf-8" });
-					res.end(oauthErrorHtml("State mismatch."));
+					res.end(oauthErrorHtml("State mismatch.", undefined, branding));
 					return;
 				}
 
 				res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-				res.end(oauthSuccessHtml("Anthropic authentication completed. You can close this window."));
+				res.end(oauthSuccessHtml("Anthropic authentication completed. You can close this window.", branding));
 				settleWait?.({ code, state });
 			} catch {
 				res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
@@ -226,15 +226,21 @@ async function exchangeAuthorizationCode(
 
 /**
  * Login with Anthropic OAuth (authorization code + PKCE)
+ *
+ * @param options.branding - Optional branding for the localhost callback success/error
+ *                           pages. Lets the consumer app swap the default Pi logo + page
+ *                           title for their own. Absence keeps historical Pi-branded
+ *                           behavior, preserving back-compat.
  */
 export async function loginAnthropic(options: {
 	onAuth: (info: { url: string; instructions?: string }) => void;
 	onPrompt: (prompt: OAuthPrompt) => Promise<string>;
 	onProgress?: (message: string) => void;
 	onManualCodeInput?: () => Promise<string>;
+	branding?: OAuthPageBranding;
 }): Promise<OAuthCredentials> {
 	const { verifier, challenge } = await generatePKCE();
-	const server = await startCallbackServer(verifier);
+	const server = await startCallbackServer(verifier, options.branding);
 
 	let code: string | undefined;
 	let state: string | undefined;
