@@ -303,6 +303,11 @@ export interface OpenAICompletionsCompat {
 	requiresThinkingAsText?: boolean;
 	/** Whether all replayed assistant messages must include an empty reasoning_content field when reasoning is enabled. Default: auto-detected from URL. */
 	requiresReasoningContentOnAssistantMessages?: boolean;
+	/** Placeholder string used to fill `reasoning_content` on a replayed assistant message that
+	 * didn't carry one (only applies when `requiresReasoningContentOnAssistantMessages` is true).
+	 * Default: "" (empty string). Some providers (e.g. Moonshot K2.6) reject empty strings as
+	 * "missing" and require a non-empty placeholder like " ". */
+	reasoningContentFallback?: string;
 	/** Format for reasoning/thinking parameter. "openai" uses reasoning_effort, "openrouter" uses reasoning: { effort }, "deepseek" uses thinking: { type } plus reasoning_effort, "zai" uses top-level enable_thinking: boolean, "qwen" uses top-level enable_thinking: boolean, and "qwen-chat-template" uses chat_template_kwargs.enable_thinking. Default: "openai". */
 	thinkingFormat?: "openai" | "openrouter" | "deepseek" | "zai" | "qwen" | "qwen-chat-template";
 	/** OpenRouter-specific routing preferences. Only used when baseUrl points to OpenRouter. */
