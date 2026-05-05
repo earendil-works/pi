@@ -1605,9 +1605,18 @@ export class AgentSession {
 	/**
 	 * Manually compact the session context.
 	 * Aborts current agent operation first.
+	 * Throws if a compaction (manual, auto, or branch summary) is already
+	 * running — `abort()` only cancels agent work, not compaction, so a
+	 * concurrent re-entry would orphan the prior `_compactionAbortController`
+	 * and race on `sessionManager.appendCompaction()` / agent state writes.
+	 * Callers should check `isCompacting` first or be prepared to handle
+	 * the rejection.
 	 * @param customInstructions Optional instructions for the compaction summary
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
+		if (this.isCompacting) {
+			throw new Error("Compaction already in progress");
+		}
 		this._disconnectFromAgent();
 		await this.abort();
 		this._compactionAbortController = new AbortController();
