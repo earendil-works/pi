@@ -88,6 +88,18 @@ export class Markdown implements Component {
 	private cachedWidth?: number;
 	private cachedLines?: string[];
 
+	/**
+	 * Push all items from source into target without exceeding the call stack.
+	 * Using the spread operator (`push(...array)`) as function arguments has a
+	 * hard limit on argument count (~65k), which causes "Maximum call stack size
+	 * exceeded" when rendering large code blocks or prompts.
+	 */
+	private _pushAll(target: string[], source: string[]): void {
+		for (let i = 0; i < source.length; i++) {
+			target.push(source[i]);
+		}
+	}
+
 	constructor(
 		text: string,
 		paddingX: number,
@@ -145,7 +157,7 @@ export class Markdown implements Component {
 			const token = tokens[i];
 			const nextToken = tokens[i + 1];
 			const tokenLines = this.renderToken(token, contentWidth, nextToken?.type);
-			renderedLines.push(...tokenLines);
+			this._pushAll(renderedLines, tokenLines);
 		}
 
 		// Wrap lines (NO padding, NO background yet)
@@ -154,7 +166,7 @@ export class Markdown implements Component {
 			if (isImageLine(line)) {
 				wrappedLines.push(line);
 			} else {
-				wrappedLines.push(...wrapTextWithAnsi(line, contentWidth));
+				this._pushAll(wrappedLines, wrapTextWithAnsi(line, contentWidth));
 			}
 		}
 
@@ -191,7 +203,7 @@ export class Markdown implements Component {
 		}
 
 		// Combine top padding, content, and bottom padding
-		const result = [...emptyLines, ...contentLines, ...emptyLines];
+		const result = emptyLines.concat(contentLines, emptyLines);
 
 		// Update cache
 		this.cachedText = this.text;
@@ -355,7 +367,7 @@ export class Markdown implements Component {
 
 			case "list": {
 				const listLines = this.renderList(token as any, 0, styleContext);
-				lines.push(...listLines);
+				this._pushAll(lines, listLines);
 				// Don't add spacing after lists if a space token follows
 				// (the space token will handle it)
 				break;
@@ -363,7 +375,7 @@ export class Markdown implements Component {
 
 			case "table": {
 				const tableLines = this.renderTable(token as any, width, nextTokenType, styleContext);
-				lines.push(...tableLines);
+				this._pushAll(lines, tableLines);
 				break;
 			}
 
@@ -393,8 +405,8 @@ export class Markdown implements Component {
 				for (let i = 0; i < quoteTokens.length; i++) {
 					const quoteToken = quoteTokens[i];
 					const nextQuoteToken = quoteTokens[i + 1];
-					renderedQuoteLines.push(
-						...this.renderToken(quoteToken, quoteContentWidth, nextQuoteToken?.type, quoteInlineStyleContext),
+					this._pushAll(renderedQuoteLines,
+						this.renderToken(quoteToken, quoteContentWidth, nextQuoteToken?.type, quoteInlineStyleContext),
 					);
 				}
 
@@ -607,7 +619,7 @@ export class Markdown implements Component {
 				// Nested list - render with one additional indent level
 				// These lines will have their own indent, so we just add them as-is
 				const nestedLines = this.renderList(token as any, parentDepth + 1, styleContext);
-				lines.push(...nestedLines);
+				this._pushAll(lines, nestedLines);
 			} else if (token.type === "text") {
 				// Text content (may have inline tokens)
 				const text =
