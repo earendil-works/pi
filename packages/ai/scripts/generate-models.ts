@@ -120,7 +120,7 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 		(model.api === "openai-responses" || model.api === "azure-openai-responses") &&
 		model.id.startsWith("gpt-5")
 	) {
-		mergeThinkingLevelMap(model, { off: null });
+		mergeThinkingLevelMap(model, { off: null, minimal: null });
 	}
 	if (supportsOpenAiXhigh(model.id)) {
 		mergeThinkingLevelMap(model, { xhigh: "xhigh" });
