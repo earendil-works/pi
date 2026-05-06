@@ -301,6 +301,15 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		setToolsExpanded(_expanded: boolean) {
 			// Tool expansion not supported in RPC mode - no TUI
 		},
+
+		setMouseReporting(_enabled: boolean) {
+			// Mouse reporting requires a local TUI; not supported in RPC mode.
+		},
+
+		getRenderedLines(): string[] {
+			// No local terminal in RPC mode.
+			return [];
+		},
 	});
 
 	runtimeHost.setRebindSession(async () => {

@@ -102,6 +102,8 @@ export class VirtualTerminal implements Terminal {
 
 	setProgress(_active: boolean): void {}
 
+	setMouseReporting(_enabled: boolean): void {}
+
 	// Test-specific methods not in Terminal interface
 
 	/**

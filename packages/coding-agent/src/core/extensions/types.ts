@@ -272,6 +272,29 @@ export interface ExtensionUIContext {
 
 	/** Set tool output expansion state. */
 	setToolsExpanded(expanded: boolean): void;
+
+	/**
+	 * Enable or disable terminal mouse reporting (SGR 1006 with drag tracking).
+	 *
+	 * When enabled, mouse events arrive through `onTerminalInput` as raw SGR
+	 * sequences (`\x1b[<B;X;YM` for press/drag, `\x1b[<B;X;Ym` for release).
+	 * Extensions parse these to implement features like copy-on-select.
+	 *
+	 * No-op outside interactive mode. Enabling mouse reporting typically
+	 * suppresses native terminal text selection — leave it off unless an
+	 * extension actually needs mouse events.
+	 */
+	setMouseReporting(enabled: boolean): void;
+
+	/**
+	 * Snapshot of the lines most recently drawn to the terminal, with ANSI
+	 * escape codes stripped. Lines are post-wrap (terminal-cell coordinates),
+	 * so a mouse event at (col, row) maps to `lines[row - 1][col - 1]`.
+	 *
+	 * Returns an empty array outside interactive mode. The returned array is
+	 * a copy; mutating it has no effect on rendering.
+	 */
+	getRenderedLines(): string[];
 }
 
 // ============================================================================

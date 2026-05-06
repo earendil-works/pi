@@ -55,6 +55,13 @@ export interface Terminal {
 
 	// Progress indicator (OSC 9;4)
 	setProgress(active: boolean): void;
+
+	// Mouse reporting (SGR 1006 with button + drag tracking).
+	// When enabled, the terminal sends mouse press/drag/release events as
+	// `\x1b[<B;X;YM` / `\x1b[<B;X;Ym` sequences. These flow through to the
+	// regular input handler (and any addInputListener), so consumers can
+	// parse them without a dedicated callback.
+	setMouseReporting(enabled: boolean): void;
 }
 
 /**
@@ -66,6 +73,7 @@ export class ProcessTerminal implements Terminal {
 	private resizeHandler?: () => void;
 	private _kittyProtocolActive = false;
 	private _modifyOtherKeysActive = false;
+	private _mouseReportingActive = false;
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string) => void;
 	private progressInterval?: ReturnType<typeof setInterval>;
@@ -276,6 +284,12 @@ export class ProcessTerminal implements Terminal {
 		// Disable bracketed paste mode
 		process.stdout.write("\x1b[?2004l");
 
+		// Disable mouse reporting if it was enabled
+		if (this._mouseReportingActive) {
+			process.stdout.write("\x1b[?1006l\x1b[?1002l\x1b[?1000l");
+			this._mouseReportingActive = false;
+		}
+
 		// Disable Kitty keyboard protocol if not already done by drainInput()
 		if (this._kittyProtocolActive) {
 			process.stdout.write("\x1b[<u");
@@ -384,6 +398,17 @@ export class ProcessTerminal implements Terminal {
 			// OSC 9;4;0 - clear progress
 			process.stdout.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
 		}
+	}
+
+	setMouseReporting(enabled: boolean): void {
+		if (enabled === this._mouseReportingActive) return;
+		if (enabled) {
+			// ?1000 = button events, ?1002 = button + drag motion, ?1006 = SGR encoding
+			process.stdout.write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
+		} else {
+			process.stdout.write("\x1b[?1006l\x1b[?1002l\x1b[?1000l");
+		}
+		this._mouseReportingActive = enabled;
 	}
 
 	private clearProgressInterval(): boolean {

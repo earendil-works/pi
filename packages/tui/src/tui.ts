@@ -9,7 +9,14 @@ import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.js";
 import type { Terminal } from "./terminal.js";
 import { getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.js";
-import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.js";
+import {
+	extractAnsiCode,
+	extractSegments,
+	normalizeTerminalOutput,
+	sliceByColumn,
+	sliceWithWidth,
+	visibleWidth,
+} from "./utils.js";
 
 /**
  * Component interface - all components must implement this
@@ -66,6 +73,26 @@ export function isFocusable(component: Component | null): component is Component
  * TUI finds and strips this marker, then positions the hardware cursor there.
  */
 export const CURSOR_MARKER = "\x1b_pi:c\x07";
+
+/**
+ * Strip ANSI/OSC/APC escape sequences from a line.
+ * Used by TUI.getRenderedLines() to expose plain text snapshots to extensions.
+ */
+function stripAnsiCodes(line: string): string {
+	if (!line.includes("\x1b")) return line;
+	let out = "";
+	let i = 0;
+	while (i < line.length) {
+		const ansi = extractAnsiCode(line, i);
+		if (ansi) {
+			i += ansi.length;
+			continue;
+		}
+		out += line[i];
+		i++;
+	}
+	return out;
+}
 
 export { visibleWidth };
 
@@ -283,6 +310,33 @@ export class TUI extends Container {
 	 */
 	setClearOnShrink(enabled: boolean): void {
 		this.clearOnShrink = enabled;
+	}
+
+	/**
+	 * Enable or disable terminal mouse reporting (SGR 1006 with drag tracking).
+	 *
+	 * When enabled, mouse press/drag/release events arrive as `\x1b[<B;X;YM`
+	 * (press/drag) or `\x1b[<B;X;Ym` (release) sequences via the normal input
+	 * pipeline. Components and addInputListener subscribers receive them as
+	 * regular `data` strings — parse with the SGR mouse format.
+	 *
+	 * Note: enabling mouse reporting suppresses native terminal text selection
+	 * in most terminals (shift-drag typically passes through to native).
+	 */
+	setMouseReporting(enabled: boolean): void {
+		this.terminal.setMouseReporting(enabled);
+	}
+
+	/**
+	 * Returns a snapshot of the lines most recently drawn to the terminal,
+	 * with ANSI escape codes stripped. Useful for extensions that need to
+	 * read what is currently displayed (e.g. extracting text under a mouse
+	 * selection range).
+	 *
+	 * The returned array is a copy; mutating it does not affect rendering.
+	 */
+	getRenderedLines(): string[] {
+		return this.previousLines.map((line) => stripAnsiCodes(line));
 	}
 
 	setFocus(component: Component | null): void {
