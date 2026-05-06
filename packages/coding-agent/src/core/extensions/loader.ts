@@ -338,15 +338,28 @@ function createExtensionAPI(
 	return api;
 }
 
-async function loadExtensionModule(extensionPath: string) {
-	const jiti = createJiti(import.meta.url, {
-		moduleCache: false,
-		// In Bun binary: use virtualModules for bundled packages (no filesystem resolution)
-		// Also disable tryNative so jiti handles ALL imports (not just the entry point)
-		// In Node.js/dev: use aliases to resolve to node_modules paths
-		...(isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }),
-	});
+/**
+ * Shared jiti instance (lazy singleton).
+ * Extensions share module resolution cache, which avoids re-resolving common
+ * dependencies like @mariozechner/pi-agent-core on every load.
+ */
+let _jiti: ReturnType<typeof createJiti> | null = null;
 
+function getJiti(): ReturnType<typeof createJiti> {
+	if (!_jiti) {
+		_jiti = createJiti(import.meta.url, {
+			moduleCache: true,
+			// In Bun binary: use virtualModules for bundled packages (no filesystem resolution)
+			// Also disable tryNative so jiti handles ALL imports (not just the entry point)
+			// In Node.js/dev: use aliases to resolve to node_modules paths
+			...(isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }),
+		});
+	}
+	return _jiti;
+}
+
+async function loadExtensionModule(extensionPath: string) {
+	const jiti = getJiti();
 	const module = await jiti.import(extensionPath, { default: true });
 	const factory = module as ExtensionFactory;
 	return typeof factory !== "function" ? undefined : factory;
@@ -420,19 +433,24 @@ export async function loadExtensionFromFactory(
  * Load extensions from paths.
  */
 export async function loadExtensions(paths: string[], cwd: string, eventBus?: EventBus): Promise<LoadExtensionsResult> {
-	const extensions: Extension[] = [];
-	const errors: Array<{ path: string; error: string }> = [];
 	const resolvedEventBus = eventBus ?? createEventBus();
 	const runtime = createExtensionRuntime();
 
-	for (const extPath of paths) {
-		const { extension, error } = await loadExtension(extPath, cwd, resolvedEventBus, runtime);
+	// Load all extensions in parallel. Extensions don't depend on each other
+	// during load — they share the same runtime (stubs) and eventBus.
+	const results = await Promise.all(
+		paths.map((extPath) => loadExtension(extPath, cwd, resolvedEventBus, runtime)),
+	);
 
+	const extensions: Extension[] = [];
+	const errors: Array<{ path: string; error: string }> = [];
+
+	for (let i = 0; i < results.length; i++) {
+		const { extension, error } = results[i];
 		if (error) {
-			errors.push({ path: extPath, error });
+			errors.push({ path: paths[i], error });
 			continue;
 		}
-
 		if (extension) {
 			extensions.push(extension);
 		}
