@@ -1,0 +1,41 @@
+{
+	"name": "@mariozechner/pi-web-app",
+	"version": "0.73.0",
+	"private": true,
+	"description": "Next.js graphical interface for the pi coding agent harness",
+	"type": "module",
+	"scripts": {
+		"dev": "npm run build:deps && npm run dev:app",
+		"dev:app": "next dev",
+		"build": "npm run build:deps && npm run build:app",
+		"build:app": "next build",
+		"build:deps": "cd ../tui && npm run build && cd ../ai && npm run build && cd ../agent && npm run build && cd ../coding-agent && npm run build",
+		"start": "next start",
+		"check": "cd ../.. && biome check --write --error-on-warnings packages/web-app/app packages/web-app/components packages/web-app/lib && cd packages/web-app && tsgo --noEmit",
+		"clean": "shx rm -rf .next dist"
+	},
+	"dependencies": {
+		"@mariozechner/pi-agent-core": "file:../agent",
+		"@mariozechner/pi-ai": "file:../ai",
+		"@mariozechner/pi-coding-agent": "file:../coding-agent",
+		"@radix-ui/react-slot": "^1.2.3",
+		"class-variance-authority": "^0.7.1",
+		"clsx": "^2.1.1",
+		"lucide-react": "^0.544.0",
+		"next": "^16.0.3",
+		"react": "^19.2.0",
+		"react-dom": "^19.2.0",
+		"tailwind-merge": "^3.3.1"
+	},
+	"devDependencies": {
+		"@tailwindcss/postcss": "^4.1.17",
+		"@types/node": "^22.10.5",
+		"@types/react": "^19.2.7",
+		"@types/react-dom": "^19.2.3",
+		"tailwindcss": "^4.1.17",
+		"typescript": "^5.9.2"
+	},
+	"keywords": ["pi", "coding-agent", "nextjs", "shadcn", "magicui", "web-ui"],
+	"author": "Mario Zechner",
+	"license": "MIT"
+}

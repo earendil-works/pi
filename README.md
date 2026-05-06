@@ -52,6 +52,7 @@ I regularly publish my own `pi-mono` work sessions here:
 | **[@mariozechner/pi-coding-agent](packages/coding-agent)** | Interactive coding agent CLI |
 | **[@mariozechner/pi-tui](packages/tui)** | Terminal UI library with differential rendering |
 | **[@mariozechner/pi-web-ui](packages/web-ui)** | Web components for AI chat interfaces |
+| **[@mariozechner/pi-web-app](packages/web-app)** | Next.js graphical interface for the pi coding-agent harness |
 
 ## Chat bot workflows
 
@@ -71,7 +72,7 @@ npm run check        # Lint, format, and type check
 ./pi-test.sh         # Run pi from sources (can be run from any directory)
 ```
 
-> **Note:** `npm run check` requires `npm run build` to be run first. The web-ui package uses `tsc` which needs compiled `.d.ts` files from dependencies.
+The web app can target a project directory with `PI_WEB_CWD=/path/to/project npm run dev --workspace @mariozechner/pi-web-app`.
 
 ## License
 
