@@ -1,7 +1,7 @@
 /**
  * Extension loader - loads TypeScript extension modules using jiti.
  *
- * Uses @mariozechner/jiti fork with virtualModules support for compiled Bun binaries.
+ * Uses jiti with virtualModules support for compiled Bun binaries.
  */
 
 import * as fs from "node:fs";
@@ -9,12 +9,12 @@ import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createJiti } from "@mariozechner/jiti";
 import * as _bundledPiAgentCore from "@mariozechner/pi-agent-core";
 import * as _bundledPiAi from "@mariozechner/pi-ai";
 import * as _bundledPiAiOauth from "@mariozechner/pi-ai/oauth";
 import type { KeyId } from "@mariozechner/pi-tui";
 import * as _bundledPiTui from "@mariozechner/pi-tui";
+import { createJiti } from "jiti/static";
 // Static imports of packages that extensions may use.
 // These MUST be static so Bun bundles them into the compiled binary.
 // The virtualModules option then makes them available to extensions.

@@ -39,6 +39,7 @@
 		"@typescript/native-preview": "7.0.0-dev.20260120.1",
 		"concurrently": "^9.2.1",
 		"husky": "^9.1.7",
+		"jiti": "^2.7.0",
 		"tsx": "^4.20.3",
 		"typescript": "^5.9.2",
 		"shx": "^0.4.0"
@@ -48,7 +49,6 @@
 	},
 	"version": "0.0.3",
 	"dependencies": {
-		"@mariozechner/jiti": "^2.6.5",
 		"@mariozechner/pi-coding-agent": "^0.30.2",
 		"get-east-asian-width": "^1.4.0"
 	},
