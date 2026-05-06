@@ -1,7 +1,6 @@
 /**
  * Extension loader - loads TypeScript extension modules using jiti.
  *
- * Uses jiti with virtualModules support for compiled Bun binaries.
  */
 
 import * as fs from "node:fs";
