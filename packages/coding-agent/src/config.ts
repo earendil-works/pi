@@ -370,15 +370,29 @@ interface PackageJson {
 const pkg = JSON.parse(readFileSync(getPackageJsonPath(), "utf-8")) as PackageJson;
 
 const piConfigName: string | undefined = pkg.piConfig?.name;
+// Env overrides allow downstream branding wrappers (e.g. forge.pi) to flip
+// the displayed app name and config-dir without forking this package.
+const envAppName: string | undefined = process.env.PI_APP_NAME;
+const envConfigDir: string | undefined = process.env.PI_CONFIG_DIR_NAME;
 export const PACKAGE_NAME: string = pkg.name || "@mariozechner/pi-coding-agent";
-export const APP_NAME: string = piConfigName || "pi";
-export const APP_TITLE: string = piConfigName ? APP_NAME : "π";
-export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
-export const VERSION: string = pkg.version || "0.0.0";
+export const APP_NAME: string = envAppName || piConfigName || "pi";
+export const APP_TITLE: string = envAppName || piConfigName ? APP_NAME : "π";
+export const CONFIG_DIR_NAME: string = envConfigDir || pkg.piConfig?.configDir || ".pi";
+// Downstream branding wrappers may override the displayed version (e.g. a
+// forge.pi build wants its own semver, not pi-coding-agent's). Honor an env
+// override; fall back to the package's own version.
+export const VERSION: string = process.env.PI_VERSION_OVERRIDE || pkg.version || "0.0.0";
 
-// e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
-export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
-export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
+// e.g., PI_CODING_AGENT_DIR or FORGE_CODING_AGENT_DIR.
+// Derived from CONFIG_DIR_NAME (strip leading dot, uppercase, sanitize) so a
+// downstream wrapper that overrides PI_CONFIG_DIR_NAME=.forge automatically
+// gets FORGE_CODING_AGENT_DIR / FORGE_CODING_AGENT_SESSION_DIR without
+// touching APP_NAME (which can contain characters invalid in env-var names).
+const envPrefixSource: string = CONFIG_DIR_NAME.replace(/^\./, "")
+	.toUpperCase()
+	.replace(/[^A-Z0-9_]/g, "_");
+export const ENV_AGENT_DIR = `${envPrefixSource}_CODING_AGENT_DIR`;
+export const ENV_SESSION_DIR = `${envPrefixSource}_CODING_AGENT_SESSION_DIR`;
 
 export function expandTildePath(path: string): string {
 	if (path === "~") return homedir();
