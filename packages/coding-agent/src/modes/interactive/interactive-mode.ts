@@ -561,8 +561,14 @@ export class InteractiveMode {
 
 		this.registerSignalHandlers();
 
-		// Load changelog (only show new entries, skip for resumed sessions)
-		this.changelogMarkdown = this.getChangelogForDisplay();
+		// Load changelog (only show new entries, skip for resumed sessions).
+		// Downstream branding wrappers (e.g. forge.pi) own their own update
+		// communication; PI_SUPPRESS_UPSTREAM_NOTIFICATIONS=1 suppresses pi's
+		// changelog-on-startup along with the update banners.
+		this.changelogMarkdown =
+			process.env.PI_SUPPRESS_UPSTREAM_NOTIFICATIONS === "1"
+				? undefined
+				: this.getChangelogForDisplay();
 
 		// Ensure fd and rg are available (downloads if missing, adds to PATH via getBinDir)
 		// Both are needed: fd for autocomplete, rg for grep tool and bash commands
@@ -613,7 +619,7 @@ export class InteractiveMode {
 			);
 			const onboarding = theme.fg(
 				"dim",
-				`Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.`,
+				`${APP_NAME} can explain its own features and look up its docs. Ask it how to use or extend ${APP_NAME}.`,
 			);
 			this.builtInHeader = new ExpandableText(
 				() => `${logo}\n${compactInstructions}\n${compactOnboarding}\n\n${onboarding}`,
@@ -692,19 +698,28 @@ export class InteractiveMode {
 	async run(): Promise<void> {
 		await this.init();
 
+		// Downstream branding wrappers (e.g. forge.pi) own their own update
+		// path; suppress upstream-update notifications when they signal so via
+		// PI_SUPPRESS_UPSTREAM_NOTIFICATIONS. Default behavior unchanged.
+		const suppressUpstreamUpdates = process.env.PI_SUPPRESS_UPSTREAM_NOTIFICATIONS === "1";
+
 		// Start version check asynchronously
-		checkForNewPiVersion(this.version).then((newVersion) => {
-			if (newVersion) {
-				this.showNewVersionNotification(newVersion);
-			}
-		});
+		if (!suppressUpstreamUpdates) {
+			checkForNewPiVersion(this.version).then((newVersion) => {
+				if (newVersion) {
+					this.showNewVersionNotification(newVersion);
+				}
+			});
+		}
 
 		// Start package update check asynchronously
-		this.checkForPackageUpdates().then((updates) => {
-			if (updates.length > 0) {
-				this.showPackageUpdateNotification(updates);
-			}
-		});
+		if (!suppressUpstreamUpdates) {
+			this.checkForPackageUpdates().then((updates) => {
+				if (updates.length > 0) {
+					this.showPackageUpdateNotification(updates);
+				}
+			});
+		}
 
 		// Check tmux keyboard setup asynchronously
 		this.checkTmuxKeyboardSetup().then((warning) => {
