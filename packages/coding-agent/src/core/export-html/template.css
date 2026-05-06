@@ -204,6 +204,10 @@
       color: var(--accent);
     }
 
+    .tree-role-skill {
+      color: var(--customMessageLabel);
+    }
+
     .tree-role-assistant {
       color: var(--success);
     }
@@ -383,7 +387,8 @@
     }
 
     .user-message:hover .copy-link-btn,
-    .assistant-message:hover .copy-link-btn {
+    .assistant-message:hover .copy-link-btn,
+    .skill-user-entry:hover .copy-link-btn {
       opacity: 1;
     }
 
@@ -784,6 +789,45 @@
     .hook-type {
       color: var(--customMessageLabel);
       font-weight: bold;
+    }
+
+    /* Skill invocation - matches compaction style (clickable, collapsed by default) */
+    .skill-invocation {
+      background: var(--customMessageBg);
+      border-radius: 4px;
+      padding: var(--line-height);
+      cursor: pointer;
+    }
+
+    .skill-invocation-label {
+      color: var(--customMessageLabel);
+      font-weight: bold;
+    }
+
+    .skill-invocation-collapsed {
+      color: var(--customMessageText);
+    }
+
+    .skill-invocation-content {
+      display: none;
+      color: var(--customMessageText);
+      margin-top: var(--line-height);
+    }
+
+    .skill-invocation.expanded .skill-invocation-collapsed {
+      display: none;
+    }
+
+    .skill-invocation.expanded .skill-invocation-content {
+      display: block;
+    }
+
+    .skill-invocation + .user-message {
+      margin-top: var(--line-height);
+    }
+
+    .skill-user-entry {
+      position: relative;
     }
 
     /* Branch summary */

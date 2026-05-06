@@ -313,6 +313,22 @@
         return '';
       }
 
+      /**
+       * Parse a skill block from message text.
+       * Returns null if the text doesn't contain a skill block.
+       * Matches the format: <skill name="..." location="...">\n...\n</skill>\n\nuser message
+       */
+      function parseSkillBlock(text) {
+        const match = text.match(/^<skill name="([^"]+)" location="([^"]+)">\n([\s\S]*?)\n<\/skill>(?:\n\n([\s\S]+))?$/);
+        if (!match) return null;
+        return {
+          name: match[1],
+          location: match[2],
+          content: match[3],
+          userMessage: match[4]?.trim() || undefined,
+        };
+      }
+
       function getSearchableText(entry, label) {
         const parts = [];
         if (label) parts.push(label);
@@ -613,7 +629,16 @@
           case 'message': {
             const msg = entry.message;
             if (msg.role === 'user') {
-              const content = truncate(normalize(extractContent(msg.content)));
+              const rawContent = extractContent(msg.content);
+              const skillBlock = parseSkillBlock(rawContent);
+              if (skillBlock) {
+                let treeHtml = labelHtml + `<span class="tree-role-skill">skill:</span> ${escapeHtml(skillBlock.name)}`;
+                if (skillBlock.userMessage) {
+                  treeHtml += ` · <span class="tree-role-user">user:</span> ${escapeHtml(truncate(normalize(skillBlock.userMessage)))}`;
+                }
+                return treeHtml;
+              }
+              const content = truncate(normalize(rawContent));
               return labelHtml + `<span class="tree-role-user">user:</span> ${escapeHtml(content)}`;
             }
             if (msg.role === 'assistant') {
@@ -1140,8 +1165,46 @@
           const msg = entry.message;
 
           if (msg.role === 'user') {
-            let html = `<div class="user-message" id="${entryDomId}">${copyBtnHtml}${tsHtml}`;
             const content = msg.content;
+            const text = typeof content === 'string' ? content :
+              content.filter(c => c.type === 'text').map(c => c.text).join('\n');
+            const skillBlock = parseSkillBlock(text);
+
+            if (skillBlock) {
+              // Collect images from content array
+              const images = Array.isArray(content) ? content.filter(c => c.type === 'image') : [];
+              const hasUserContent = skillBlock.userMessage || images.length > 0;
+              let html = `<div class="skill-user-entry" id="${entryDomId}">${copyBtnHtml}${tsHtml}`;
+
+              // Skill invocation (collapsed by default, click to expand)
+              html += `<div class="skill-invocation" onclick="if(window.getSelection().toString())return;this.classList.toggle('expanded')">
+                <div class="skill-invocation-label">[skill] ${escapeHtml(skillBlock.name)}</div>
+                <div class="skill-invocation-collapsed">${escapeHtml(skillBlock.name)} (click to expand)</div>
+                <div class="skill-invocation-content markdown-content">${safeMarkedParse(skillBlock.content)}</div>
+              </div>`;
+
+              // User message (separate block if present)
+              if (hasUserContent) {
+                html += '<div class="user-message">';
+                if (images.length > 0) {
+                  html += '<div class="message-images">';
+                  for (const img of images) {
+                    html += `<img src="data:${escapeHtml(img.mimeType || 'image/png')};base64,${escapeHtml(img.data || '')}" class="message-image" />`;
+                  }
+                  html += '</div>';
+                }
+                if (skillBlock.userMessage) {
+                  html += `<div class="markdown-content">${safeMarkedParse(skillBlock.userMessage)}</div>`;
+                }
+                html += '</div>';
+              }
+
+              html += '</div>';
+              return html;
+            }
+
+            // No skill block - normal user message
+            let html = `<div class="user-message" id="${entryDomId}">${copyBtnHtml}${tsHtml}`;
 
             if (Array.isArray(content)) {
               const images = content.filter(c => c.type === 'image');
@@ -1154,8 +1217,6 @@
               }
             }
 
-            const text = typeof content === 'string' ? content :
-              content.filter(c => c.type === 'text').map(c => c.text).join('\n');
             if (text.trim()) {
               html += `<div class="markdown-content">${safeMarkedParse(text)}</div>`;
             }
@@ -1714,6 +1775,9 @@
           el.classList.toggle('expanded', toolOutputsExpanded);
         });
         document.querySelectorAll('.compaction').forEach(el => {
+          el.classList.toggle('expanded', toolOutputsExpanded);
+        });
+        document.querySelectorAll('.skill-invocation').forEach(el => {
           el.classList.toggle('expanded', toolOutputsExpanded);
         });
       };
