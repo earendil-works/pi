@@ -1237,6 +1237,30 @@ async function generateModels() {
 		});
 	}
 
+	// Add gpt-5.5-chat-latest — OpenAI announced the GPT-5.5 Instant chat alias
+	// on 2026-05-05 (https://openai.com/index/gpt-5-5-instant/) but per-token
+	// pricing isn't yet on https://openai.com/api/pricing/. Pricing here mirrors
+	// gpt-5.3-chat-latest as a placeholder; bump in a follow-up once published.
+	if (!allModels.some(m => m.provider === "openai" && m.id === "gpt-5.5-chat-latest")) {
+		allModels.push({
+			id: "gpt-5.5-chat-latest",
+			name: "GPT-5.5 Chat (latest)",
+			api: "openai-responses",
+			baseUrl: "https://api.openai.com/v1",
+			provider: "openai",
+			reasoning: false,
+			input: ["text", "image"],
+			cost: {
+				input: 1.75,
+				output: 14,
+				cacheRead: 0.175,
+				cacheWrite: 0,
+			},
+			contextWindow: 128000,
+			maxTokens: 16384,
+		});
+	}
+
 	// Add missing GitHub Copilot GPT-5.3 models until models.dev includes them.
 	const copilotBaseModel = allModels.find(
 		(m) => m.provider === "github-copilot" && m.id === "gpt-5.2-codex",
