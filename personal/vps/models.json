@@ -4,7 +4,7 @@
       "baseUrl": "https://api.infomaniak.com/2/ai/108471/openai/v1",
       "api": "openai-completions",
       "apiKey": "INFOMANIAK_API_KEY",
-      "authHeader": "Authorization: Bearer",
+      "authHeader": true,
       "compat": {
         "supportsDeveloperRole": false,
         "supportsReasoningEffort": false,
