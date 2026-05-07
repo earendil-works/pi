@@ -804,7 +804,9 @@ export class AgentSession {
 	getAllTools(): ToolInfo[] {
 		return Array.from(this._toolDefinitions.values()).map(({ definition, sourceInfo }) => ({
 			name: definition.name,
+			label: definition.label,
 			description: definition.description,
+			execute: definition.execute,
 			parameters: definition.parameters,
 			sourceInfo,
 		}));

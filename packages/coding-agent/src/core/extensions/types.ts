@@ -1423,7 +1423,7 @@ export type GetSessionNameHandler = () => string | undefined;
 export type GetActiveToolsHandler = () => string[];
 
 /** Tool info with name, description, parameter schema, and source metadata */
-export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters"> & {
+export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "label" | "parameters" | "execute"> & {
 	sourceInfo: SourceInfo;
 };
 
