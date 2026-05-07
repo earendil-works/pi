@@ -1,0 +1,12 @@
+{
+  "defaultProvider": "infomaniak",
+  "defaultModel": "moonshotai/Kimi-K2.6",
+  "lastChangelogVersion": "0.74.0",
+  "packages": [
+    "npm:pi-review-loop",
+    "npm:pi-finder-subagent",
+    "npm:pi-model-switch",
+    "npm:pi-secret-guard",
+    "npm:@tintinweb/pi-tasks"
+  ]
+}
