@@ -490,6 +490,33 @@ export async function processResponsesStream<TApi extends Api>(
 			if (response?.id) {
 				output.responseId = response.id;
 			}
+			// Backfill reasoning item fields (notably `encrypted_content`) from the
+			// final response.output[]. Some deployments - e.g. Azure OpenAI - only
+			// populate `encrypted_content` on the final item here rather than on the
+			// intermediate `response.output_item.done` event. Without this backfill,
+			// multi-turn replay under `store: false` fails with
+			// "Item with id 'rs_...' not found. Items are not persisted when
+			// `store` is set to false."
+			if (response?.output) {
+				for (const responseItem of response.output) {
+					if (responseItem.type !== "reasoning") continue;
+					const finalItem = responseItem as ResponseReasoningItem;
+					if (!finalItem.encrypted_content) continue;
+					for (const block of output.content) {
+						if (block.type !== "thinking" || !block.thinkingSignature) continue;
+						let stored: ResponseReasoningItem;
+						try {
+							stored = JSON.parse(block.thinkingSignature) as ResponseReasoningItem;
+						} catch {
+							continue;
+						}
+						if (stored.id !== finalItem.id) continue;
+						if (stored.encrypted_content) continue;
+						stored.encrypted_content = finalItem.encrypted_content;
+						block.thinkingSignature = JSON.stringify(stored);
+					}
+				}
+			}
 			if (response?.usage) {
 				const cachedTokens = response.usage.input_tokens_details?.cached_tokens || 0;
 				output.usage = {

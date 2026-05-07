@@ -48,6 +48,14 @@ export interface AzureOpenAIResponsesOptions extends StreamOptions {
 	azureResourceName?: string;
 	azureBaseUrl?: string;
 	azureDeploymentName?: string;
+	/**
+	 * Opt-in server-side persistence. When set, forwarded to Azure as the
+	 * `store` field. When unset (default), pi-ai does not send `store` and
+	 * lets the Azure deployment decide. Set to `true` if your deployment
+	 * requires server-stored state for multi-turn reasoning, or `false` to
+	 * match the OpenAI Responses provider default.
+	 */
+	store?: boolean;
 }
 
 /**
@@ -145,6 +153,7 @@ export const streamSimpleAzureOpenAIResponses: StreamFunction<"azure-openai-resp
 	return streamAzureOpenAIResponses(model, context, {
 		...base,
 		reasoningEffort,
+		store: options?.store,
 	} satisfies AzureOpenAIResponsesOptions);
 };
 
@@ -247,6 +256,10 @@ function buildParams(
 		stream: true,
 		prompt_cache_key: options?.sessionId,
 	};
+
+	if (options?.store !== undefined) {
+		params.store = options.store;
+	}
 
 	if (options?.maxTokens) {
 		params.max_output_tokens = options?.maxTokens;

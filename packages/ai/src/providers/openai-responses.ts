@@ -56,6 +56,12 @@ export interface OpenAIResponsesOptions extends StreamOptions {
 	reasoningEffort?: "minimal" | "low" | "medium" | "high" | "xhigh";
 	reasoningSummary?: "auto" | "detailed" | "concise" | null;
 	serviceTier?: ResponseCreateParamsStreaming["service_tier"];
+	/**
+	 * Opt-in server-side persistence. Default: `false` (pi-ai uses
+	 * `include: ["reasoning.encrypted_content"]` for multi-turn reasoning).
+	 * Set to `true` if you need `previous_response_id`-style lookups.
+	 */
+	store?: boolean;
 }
 
 /**
@@ -156,6 +162,7 @@ export const streamSimpleOpenAIResponses: StreamFunction<"openai-responses", Sim
 	return streamOpenAIResponses(model, context, {
 		...base,
 		reasoningEffort,
+		store: options?.store,
 	} satisfies OpenAIResponsesOptions);
 };
 
@@ -226,7 +233,7 @@ function buildParams(model: Model<"openai-responses">, context: Context, options
 		stream: true,
 		prompt_cache_key: cacheRetention === "none" ? undefined : options?.sessionId,
 		prompt_cache_retention: getPromptCacheRetention(compat, cacheRetention),
-		store: false,
+		store: options?.store ?? false,
 	};
 
 	if (options?.maxTokens) {

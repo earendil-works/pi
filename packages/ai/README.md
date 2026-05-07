@@ -1215,6 +1215,8 @@ const response = await complete(model, {
 
 **Azure OpenAI (Responses)**: Uses the Responses API only. Set `AZURE_OPENAI_API_KEY` and either `AZURE_OPENAI_BASE_URL` or `AZURE_OPENAI_RESOURCE_NAME`. `AZURE_OPENAI_BASE_URL` supports both `https://<resource>.openai.azure.com` and `https://<resource>.cognitiveservices.azure.com`; root endpoints are normalized to `.../openai/v1` automatically. Use `AZURE_OPENAI_API_VERSION` (defaults to `v1`) to override the API version if needed. Deployment names are treated as model IDs by default, override with `azureDeploymentName` or `AZURE_OPENAI_DEPLOYMENT_NAME_MAP` using comma-separated `model-id=deployment` pairs (for example `gpt-4o-mini=my-deployment,gpt-4o=prod`). Legacy deployment-based URLs are intentionally unsupported.
 
+Multi-turn reasoning contract: When a reasoning model is used, pi-ai sends `include: ["reasoning.encrypted_content"]` and captures each reasoning item (including its `encrypted_content`) from the stream so the next turn can replay it. If a deployment finalizes `encrypted_content` only on the `response.completed` event (rather than on intermediate `response.output_item.done` events), pi-ai backfills it automatically. You do not need to set `store: true` for multi-turn reasoning to work. If your deployment requires server-side persistence, pass `store: true` on `streamSimple` options or on `AzureOpenAIResponsesOptions`; pi-ai only sets the `store` field when you provide it explicitly.
+
 **GitHub Copilot**: If you get "The requested model is not supported" error, enable the model manually in VS Code: open Copilot Chat, click the model selector, select the model (warning icon), and click "Enable".
 
 ## Development

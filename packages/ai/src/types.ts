@@ -142,6 +142,18 @@ export interface SimpleStreamOptions extends StreamOptions {
 	reasoning?: ThinkingLevel;
 	/** Custom token budgets for thinking levels (token-based providers only) */
 	thinkingBudgets?: ThinkingBudgets;
+	/**
+	 * Opt-in server-side persistence for providers that expose a `store` flag
+	 * (OpenAI Responses and Azure OpenAI Responses). When `true`, the provider
+	 * sends `store: true` so reasoning items remain retrievable by id on
+	 * subsequent turns. When `false`, the provider sends `store: false` and
+	 * pi-ai relies on `reasoning.encrypted_content` for multi-turn continuity.
+	 * When unset, the provider keeps its current default (OpenAI Responses
+	 * defaults to `store: false`; Azure OpenAI Responses leaves the field
+	 * unset and lets the server decide).
+	 * Providers that do not support `store` ignore this option.
+	 */
+	store?: boolean;
 }
 
 // Generic StreamFunction with typed options.
