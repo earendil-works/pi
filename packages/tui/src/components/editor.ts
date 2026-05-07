@@ -744,6 +744,13 @@ export class Editor implements Component, Focusable {
 				return;
 			}
 
+			// Empty editor: Enter inserts newline instead of submitting
+			// (helps terminals that don't support Shift+Enter)
+			if (this.isEditorEmpty()) {
+				this.addNewLine();
+				return;
+			}
+
 			this.submitValue();
 			return;
 		}

@@ -100,6 +100,19 @@ export class ProcessTerminal implements Terminal {
 		process.stdin.setEncoding("utf8");
 		process.stdin.resume();
 
+		// Ensure Windows console uses UTF-8 codepage so ConPTY sends
+		// IME input as UTF-8 (not GBK/codepage-specific encoding).
+		// Without this, Chinese characters typed via IME arrive as
+		// wrong encoding bytes, corrupting the text in the Editor.
+		if (process.platform === "win32") {
+			try {
+				const { execSync } = require("child_process");
+				execSync("chcp 65001 > NUL", { stdio: "ignore" });
+			} catch {
+				// chcp 65001 may fail if console is unavailable
+			}
+		}
+
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		process.stdout.write("\x1b[?2004h");
 
@@ -218,6 +231,14 @@ export class ProcessTerminal implements Terminal {
 			const GetStdHandle = k32.func("void* __stdcall GetStdHandle(int)");
 			const GetConsoleMode = k32.func("bool __stdcall GetConsoleMode(void*, _Out_ uint32_t*)");
 			const SetConsoleMode = k32.func("bool __stdcall SetConsoleMode(void*, uint32_t)");
+			const SetConsoleCP = k32.func("bool __stdcall SetConsoleCP(uint32_t)");
+			const SetConsoleOutputCP = k32.func("bool __stdcall SetConsoleOutputCP(uint32_t)");
+
+			// Set console codepage to UTF-8 so ConPTY sends IME input as
+			// UTF-8 bytes instead of GBK/codepage-specific encoding.
+			const CP_UTF8 = 65001;
+			SetConsoleCP(CP_UTF8);
+			SetConsoleOutputCP(CP_UTF8);
 
 			const STD_INPUT_HANDLE = -10;
 			const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x0200;

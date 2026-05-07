@@ -254,7 +254,13 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 	private readonly timeoutMs: number;
 	private pasteMode: boolean = false;
 	private pasteBuffer: string = "";
-	private pendingKittyPrintableCodepoint: number | undefined;
+	private pendingDedupCodepoints: Map<number, number> = new Map();
+	private emittedRawCodepointsInBatch: Map<number, number> = new Map();
+
+	private clearDedupState(): void {
+		this.pendingDedupCodepoints.clear();
+		this.emittedRawCodepointsInBatch.clear();
+	}
 
 	constructor(options: StdinBufferOptions = {}) {
 		super();
@@ -267,6 +273,9 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 			clearTimeout(this.timeout);
 			this.timeout = null;
 		}
+
+		// Clear reverse-dedup state for this batch (batch-scoped)
+		this.emittedRawCodepointsInBatch.clear();
 
 		// Handle high-byte conversion (for compatibility with parseKeypress)
 		// If buffer has single byte > 127, convert to ESC + (byte - 128)
@@ -300,7 +309,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 
 				this.pasteMode = false;
 				this.pasteBuffer = "";
-				this.pendingKittyPrintableCodepoint = undefined;
+				this.clearDedupState();
 
 				this.emit("paste", pastedContent);
 
@@ -321,7 +330,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 				}
 			}
 
-			this.pendingKittyPrintableCodepoint = undefined;
+			this.clearDedupState();
 			this.buffer = this.buffer.slice(startIndex + BRACKETED_PASTE_START.length);
 			this.pasteMode = true;
 			this.pasteBuffer = this.buffer;
@@ -334,7 +343,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 
 				this.pasteMode = false;
 				this.pasteBuffer = "";
-				this.pendingKittyPrintableCodepoint = undefined;
+				this.clearDedupState();
 
 				this.emit("paste", pastedContent);
 
@@ -365,12 +374,41 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 
 	private emitDataSequence(sequence: string): void {
 		const rawCodepoint = sequence.length === 1 ? sequence.codePointAt(0) : undefined;
-		if (rawCodepoint !== undefined && rawCodepoint === this.pendingKittyPrintableCodepoint) {
-			this.pendingKittyPrintableCodepoint = undefined;
-			return;
+
+		// ---- Forward dedup: raw character matches pending CSI-u → suppress raw ----
+		if (rawCodepoint !== undefined) {
+			const count = this.pendingDedupCodepoints.get(rawCodepoint);
+			if (count !== undefined) {
+				if (count <= 1) {
+					this.pendingDedupCodepoints.delete(rawCodepoint);
+				} else {
+					this.pendingDedupCodepoints.set(rawCodepoint, count - 1);
+				}
+				// Raw character suppressed (corresponding CSI-u was already emitted)
+				return;
+			}
 		}
 
-		this.pendingKittyPrintableCodepoint = parseUnmodifiedKittyPrintableCodepoint(sequence);
+		const kittyCodepoint = parseUnmodifiedKittyPrintableCodepoint(sequence);
+
+		// ---- Reverse dedup: CSI-u matches already-emitted raw → suppress CSI-u ----
+		if (kittyCodepoint !== undefined) {
+			const rawCount = this.emittedRawCodepointsInBatch.get(kittyCodepoint) ?? 0;
+			if (rawCount > 0) {
+				// CSI-u suppressed (corresponding raw character was already emitted)
+				return;
+			}
+			// No match: record CSI-u codepoint for forward dedup (increment count)
+			const prev = this.pendingDedupCodepoints.get(kittyCodepoint) ?? 0;
+			this.pendingDedupCodepoints.set(kittyCodepoint, prev + 1);
+		}
+
+		// ---- Record emitted raw character for reverse dedup ----
+		if (rawCodepoint !== undefined) {
+			const prev = this.emittedRawCodepointsInBatch.get(rawCodepoint) ?? 0;
+			this.emittedRawCodepointsInBatch.set(rawCodepoint, prev + 1);
+		}
+
 		this.emit("data", sequence);
 	}
 
@@ -381,12 +419,13 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		}
 
 		if (this.buffer.length === 0) {
+			this.clearDedupState();
 			return [];
 		}
 
 		const sequences = [this.buffer];
 		this.buffer = "";
-		this.pendingKittyPrintableCodepoint = undefined;
+		this.clearDedupState();
 		return sequences;
 	}
 
@@ -398,7 +437,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
 		this.buffer = "";
 		this.pasteMode = false;
 		this.pasteBuffer = "";
-		this.pendingKittyPrintableCodepoint = undefined;
+		this.clearDedupState();
 	}
 
 	getBuffer(): string {
