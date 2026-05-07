@@ -12,6 +12,8 @@ export class VirtualTerminal implements Terminal {
 	private xterm: XtermTerminalType;
 	private inputHandler?: (data: string) => void;
 	private resizeHandler?: () => void;
+	private focusChangeHandler?: (focused: boolean) => void;
+	private _terminalFocused = true;
 	private _columns: number;
 	private _rows: number;
 
@@ -29,11 +31,18 @@ export class VirtualTerminal implements Terminal {
 		});
 	}
 
-	start(onInput: (data: string) => void, onResize: () => void): void {
+	get terminalFocused(): boolean {
+		return this._terminalFocused;
+	}
+
+	start(onInput: (data: string) => void, onResize: () => void, onFocusChange?: (focused: boolean) => void): void {
 		this.inputHandler = onInput;
 		this.resizeHandler = onResize;
-		// Enable bracketed paste mode for consistency with ProcessTerminal
+		this.focusChangeHandler = onFocusChange;
+		this._terminalFocused = true;
+		// Enable bracketed paste and focus reporting for consistency with ProcessTerminal
 		this.xterm.write("\x1b[?2004h");
+		this.xterm.write("\x1b[?1004h");
 	}
 
 	async drainInput(_maxMs?: number, _idleMs?: number): Promise<void> {
@@ -41,7 +50,9 @@ export class VirtualTerminal implements Terminal {
 	}
 
 	stop(): void {
-		// Disable bracketed paste mode
+		this._terminalFocused = true;
+		this.focusChangeHandler = undefined;
+		this.xterm.write("\x1b[?1004l");
 		this.xterm.write("\x1b[?2004l");
 		this.inputHandler = undefined;
 		this.resizeHandler = undefined;
@@ -76,11 +87,12 @@ export class VirtualTerminal implements Terminal {
 	}
 
 	hideCursor(): void {
-		this.xterm.write("\x1b[?25l");
+		this.write("\x1b[?25l");
 	}
 
 	showCursor(): void {
-		this.xterm.write("\x1b[?25h");
+		if (!this._terminalFocused) return;
+		this.write("\x1b[?25h");
 	}
 
 	clearLine(): void {
@@ -108,6 +120,13 @@ export class VirtualTerminal implements Terminal {
 	 * Simulate keyboard input
 	 */
 	sendInput(data: string): void {
+		if (data === "\x1b[I" || data === "\x1b[O") {
+			const focused = data === "\x1b[I";
+			this._terminalFocused = focused;
+			if (!focused) this.hideCursor();
+			this.focusChangeHandler?.(focused);
+			return;
+		}
 		if (this.inputHandler) {
 			this.inputHandler(data);
 		}

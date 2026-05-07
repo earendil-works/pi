@@ -15,7 +15,10 @@ const TERMINAL_PROGRESS_CLEAR_SEQUENCE = "\x1b]9;4;0;\x07";
  */
 export interface Terminal {
 	// Start the terminal with input and resize handlers
-	start(onInput: (data: string) => void, onResize: () => void): void;
+	start(onInput: (data: string) => void, onResize: () => void, onFocusChange?: (focused: boolean) => void): void;
+
+	// Whether the terminal window currently has OS focus (DECSET 1004)
+	get terminalFocused(): boolean;
 
 	// Stop the terminal and restore state
 	stop(): void;
@@ -68,6 +71,8 @@ export class ProcessTerminal implements Terminal {
 	private _modifyOtherKeysActive = false;
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string) => void;
+	private focusChangeHandler?: (focused: boolean) => void;
+	private _terminalFocused = true;
 	private progressInterval?: ReturnType<typeof setInterval>;
 	private writeLogPath = (() => {
 		const env = process.env.PI_TUI_WRITE_LOG || "";
@@ -88,9 +93,15 @@ export class ProcessTerminal implements Terminal {
 		return this._kittyProtocolActive;
 	}
 
-	start(onInput: (data: string) => void, onResize: () => void): void {
+	get terminalFocused(): boolean {
+		return this._terminalFocused;
+	}
+
+	start(onInput: (data: string) => void, onResize: () => void, onFocusChange?: (focused: boolean) => void): void {
 		this.inputHandler = onInput;
 		this.resizeHandler = onResize;
+		this.focusChangeHandler = onFocusChange;
+		this._terminalFocused = true;
 
 		// Save previous state and enable raw mode
 		this.wasRaw = process.stdin.isRaw || false;
@@ -102,6 +113,8 @@ export class ProcessTerminal implements Terminal {
 
 		// Enable bracketed paste mode - terminal will wrap pastes in \x1b[200~ ... \x1b[201~
 		process.stdout.write("\x1b[?2004h");
+		// Enable focus reporting - terminal sends \x1b[I on focus gain, \x1b[O on focus loss
+		process.stdout.write("\x1b[?1004h");
 
 		// Set up resize handler immediately
 		process.stdout.on("resize", this.resizeHandler);
@@ -140,6 +153,15 @@ export class ProcessTerminal implements Terminal {
 
 		// Forward individual sequences to the input handler
 		this.stdinBuffer.on("data", (sequence) => {
+			// Intercept focus reporting sequences before anything else
+			if (sequence === "\x1b[I" || sequence === "\x1b[O") {
+				const focused = sequence === "\x1b[I";
+				this._terminalFocused = focused;
+				if (!focused) this.hideCursor();
+				this.focusChangeHandler?.(focused);
+				return;
+			}
+
 			// Check for Kitty protocol response (only if not already enabled)
 			if (!this._kittyProtocolActive) {
 				const match = sequence.match(kittyResponsePattern);
@@ -273,6 +295,11 @@ export class ProcessTerminal implements Terminal {
 			process.stdout.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
 		}
 
+		// Restore focus state so showCursor() works during stop()
+		this._terminalFocused = true;
+		this.focusChangeHandler = undefined;
+		// Disable focus reporting
+		process.stdout.write("\x1b[?1004l");
 		// Disable bracketed paste mode
 		process.stdout.write("\x1b[?2004l");
 
@@ -350,6 +377,7 @@ export class ProcessTerminal implements Terminal {
 	}
 
 	showCursor(): void {
+		if (!this._terminalFocused) return;
 		process.stdout.write("\x1b[?25h");
 	}
 

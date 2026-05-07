@@ -9,7 +9,14 @@ import { performance } from "node:perf_hooks";
 import { isKeyRelease, matchesKey } from "./keys.js";
 import type { Terminal } from "./terminal.js";
 import { deleteKittyImage, getCapabilities, isImageLine, setCellDimensions } from "./terminal-image.js";
-import { extractSegments, normalizeTerminalOutput, sliceByColumn, sliceWithWidth, visibleWidth } from "./utils.js";
+import {
+	extractSegments,
+	getSegmenter,
+	normalizeTerminalOutput,
+	sliceByColumn,
+	sliceWithWidth,
+	visibleWidth,
+} from "./utils.js";
 
 const KITTY_SEQUENCE_PREFIX = "\x1b_G";
 
@@ -442,6 +449,7 @@ export class TUI extends Container {
 		this.stopped = false;
 		this.terminal.start(
 			(data) => this.handleInput(data),
+			() => this.requestRender(),
 			() => this.requestRender(),
 		);
 		this.terminal.hideCursor();
@@ -942,9 +950,17 @@ export class TUI extends Container {
 				const col = visibleWidth(beforeMarker);
 
 				// Strip marker from the line
-				lines[row] = line.slice(0, markerIndex) + line.slice(markerIndex + CURSOR_MARKER.length);
-
-				return { row, col };
+				const afterMarker = line.slice(markerIndex + CURSOR_MARKER.length);
+				if (this.terminal.terminalFocused) {
+					// Apply inverse video to the cursor grapheme
+					const firstSeg = [...getSegmenter().segment(afterMarker)][0];
+					const g = firstSeg?.segment ?? "";
+					lines[row] = `${line.slice(0, markerIndex)}\x1b[7m${g}\x1b[27m${afterMarker.slice(g.length)}`;
+					return { row, col };
+				}
+				// Terminal not focused: strip marker, leave char unstyled, suppress hardware cursor
+				lines[row] = line.slice(0, markerIndex) + afterMarker;
+				return null;
 			}
 		}
 		return null;

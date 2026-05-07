@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { stripVTControlCharacters } from "node:util";
 import { type AutocompleteProvider, CombinedAutocompleteProvider } from "../src/autocomplete.js";
 import { Editor, wordWrapLine } from "../src/components/editor.js";
-import { TUI } from "../src/tui.js";
+import { CURSOR_MARKER, TUI } from "../src/tui.js";
 import { visibleWidth } from "../src/utils.js";
 import { defaultEditorTheme } from "./test-themes.js";
 import { VirtualTerminal } from "./virtual-terminal.js";
@@ -676,15 +676,16 @@ describe("Editor component", () => {
 
 		it("renders cursor correctly on wide characters", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.focused = true;
 			const width = 20;
 
 			editor.setText("A✅B");
 			// Cursor should be at end (after B)
 			const lines = editor.render(width);
 
-			// The cursor (reverse video space) should be visible
+			// The cursor marker should be present (TUI applies reverse video during final render)
 			const contentLine = lines[1]!;
-			assert.ok(contentLine.includes("\x1b[7m"), "Should have reverse video cursor");
+			assert.ok(contentLine.includes(CURSOR_MARKER), "Should have cursor marker");
 
 			// Line should still be correct width
 			assert.strictEqual(visibleWidth(contentLine), width);
@@ -709,13 +710,14 @@ describe("Editor component", () => {
 			const width = 10;
 			for (const paddingX of [0, 1]) {
 				const editor = new Editor(createTestTUI(width + paddingX), defaultEditorTheme, { paddingX });
+				editor.focused = true;
 
 				// Type 9 chars → fills layoutWidth exactly, cursor at end on same line
 				for (const ch of "aaaaaaaaa") editor.handleInput(ch);
 				let lines = editor.render(width + paddingX);
 				let contentLines = lines.slice(1, -1);
 				assert.strictEqual(contentLines.length, 1, "Should be 1 content line before wrap");
-				assert.ok(contentLines[0]!.endsWith("\x1b[7m \x1b[0m"), "Cursor should be at end of line");
+				assert.ok(contentLines[0]!.includes(`${CURSOR_MARKER} `), "Cursor should be at end of line");
 
 				// Type 1 more → text wraps to second line
 				editor.handleInput("a");

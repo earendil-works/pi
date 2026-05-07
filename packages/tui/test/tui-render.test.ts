@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
+import { Input } from "../src/components/input.js";
 import { deleteKittyImage, encodeKitty } from "../src/terminal-image.js";
 import { type Component, TUI } from "../src/tui.js";
 import { VirtualTerminal } from "./virtual-terminal.js";
@@ -52,6 +53,16 @@ async function withEnv<T>(updates: Record<string, string | undefined>, run: () =
 			}
 		}
 	}
+}
+
+function getCellInverse(terminal: VirtualTerminal, row: number, col: number): number {
+	const xterm = (terminal as unknown as { xterm: XtermTerminalType }).xterm;
+	const buffer = xterm.buffer.active;
+	const line = buffer.getLine(buffer.viewportY + row);
+	assert.ok(line, `Missing buffer line at row ${row}`);
+	const cell = line.getCell(col);
+	assert.ok(cell, `Missing cell at row ${row} col ${col}`);
+	return cell.isInverse();
 }
 
 function getCellItalic(terminal: VirtualTerminal, row: number, col: number): number {
@@ -585,6 +596,63 @@ describe("TUI differential rendering", () => {
 			"Editor 1",
 			"Editor 2",
 		]);
+
+		tui.stop();
+	});
+});
+
+describe("TUI terminal focus reporting", () => {
+	it("suppresses inverse-video cursor and hardware cursor on blur", async () => {
+		const terminal = new VirtualTerminal(40, 10);
+		const tui = new TUI(terminal);
+		const input = new Input();
+		input.setValue("abc");
+		tui.addChild(input);
+		tui.setFocus(input);
+		tui.start();
+		await terminal.waitForRender();
+
+		// Components no longer embed inverse video — TUI injects it during render.
+		// Verify via the xterm viewport instead.
+		await terminal.flush();
+		assert.ok(terminal.terminalFocused, "terminal starts focused");
+		// Cursor cell should have inverse video attribute when focused
+		assert.ok(getCellInverse(terminal, 0, 2), "focused: cursor cell has inverse video");
+
+		terminal.sendInput("\x1b[O"); // blur
+		await terminal.waitForRender();
+
+		assert.ok(!terminal.terminalFocused, "terminal is not focused after blur");
+		assert.ok(!getCellInverse(terminal, 0, 2), "blurred: cursor cell has no inverse video");
+
+		terminal.sendInput("\x1b[I"); // focus
+		await terminal.waitForRender();
+
+		assert.ok(terminal.terminalFocused, "terminal is focused after focus event");
+		assert.ok(getCellInverse(terminal, 0, 2), "refocused: cursor cell has inverse video again");
+
+		tui.stop();
+	});
+
+	it("does not forward focus sequences to component handleInput", async () => {
+		const terminal = new VirtualTerminal(40, 10);
+		const tui = new TUI(terminal);
+		const received: string[] = [];
+		const component: Component = {
+			render: () => [],
+			handleInput: (d) => received.push(d),
+			invalidate: () => {},
+		};
+		tui.addChild(component);
+		tui.setFocus(component);
+		tui.start();
+		await terminal.waitForRender();
+
+		terminal.sendInput("\x1b[O");
+		terminal.sendInput("\x1b[I");
+		await terminal.waitForRender();
+
+		assert.deepStrictEqual(received, [], "focus sequences must not reach components");
 
 		tui.stop();
 	});
