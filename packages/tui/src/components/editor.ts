@@ -257,6 +257,14 @@ export class Editor implements Component, Focusable {
 	private pasteBuffer: string = "";
 	private isInPaste: boolean = false;
 
+	/**
+	 * Called when a bracketed paste arrives with empty content.
+	 * This typically means the user pressed Cmd+V (macOS) with an image
+	 * on the clipboard — the terminal sends a paste sequence but with no
+	 * text content. Consumers can use this hook to check for clipboard images.
+	 */
+	public onEmptyPaste?: () => void;
+
 	// Prompt history for up/down navigation
 	private history: string[] = [];
 	private historyIndex: number = -1; // -1 = not browsing, 0 = most recent, 1 = older, etc.
@@ -569,6 +577,10 @@ export class Editor implements Component, Focusable {
 				const pasteContent = this.pasteBuffer.substring(0, endIndex);
 				if (pasteContent.length > 0) {
 					this.handlePaste(pasteContent);
+				} else {
+					// Empty bracketed paste — likely Cmd+V with an image on the
+					// clipboard (terminal pastes nothing when clipboard has no text).
+					this.onEmptyPaste?.();
 				}
 				this.isInPaste = false;
 				const remaining = this.pasteBuffer.substring(endIndex + 6);

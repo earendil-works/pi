@@ -2208,6 +2208,9 @@ export class InteractiveMode {
 				if (!customEditor.onPasteImage) {
 					customEditor.onPasteImage = () => this.defaultEditor.onPasteImage?.();
 				}
+				if (!customEditor.onEmptyPaste) {
+					customEditor.onEmptyPaste = () => this.defaultEditor.onEmptyPaste?.();
+				}
 				if (!customEditor.onExtensionShortcut) {
 					customEditor.onExtensionShortcut = (data: string) => this.defaultEditor.onExtensionShortcut?.(data);
 				}
@@ -2408,6 +2411,11 @@ export class InteractiveMode {
 
 		// Handle clipboard image paste (triggered on Ctrl+V)
 		this.defaultEditor.onPasteImage = () => {
+			this.handleClipboardImagePaste();
+		};
+
+		// Handle empty bracketed paste (Cmd+V with image on clipboard)
+		this.defaultEditor.onEmptyPaste = () => {
 			this.handleClipboardImagePaste();
 		};
 	}
