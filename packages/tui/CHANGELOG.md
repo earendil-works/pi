@@ -5,6 +5,7 @@
 ### Fixed
 
 - Fixed over-wide changed TUI lines to truncate instead of crashing narrow terminals.
+- Added non-crashing diagnostics for residual over-wide rendered lines.
 
 ## [0.74.0] - 2026-05-07
 
