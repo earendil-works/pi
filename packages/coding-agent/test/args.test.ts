@@ -125,6 +125,35 @@ describe("parseArgs", () => {
 			expect(result.mode).toBe("rpc");
 		});
 
+		test("parses --mode worker-loop with all worker-loop flags", () => {
+			const result = parseArgs([
+				"--mode",
+				"worker-loop",
+				"--bus-socket",
+				"/tmp/boss-pi-message.sock",
+				"--agent-id",
+				"worker-7",
+				"--agent-type",
+				"reviewer",
+				"--project-id",
+				"proj-42",
+				"--repo-path",
+				"/workspace",
+				"--idle-ttl-ms",
+				"60000",
+				"--heartbeat-interval-ms",
+				"5000",
+			]);
+			expect(result.mode).toBe("worker-loop");
+			expect(result.workerLoop?.socketPath).toBe("/tmp/boss-pi-message.sock");
+			expect(result.workerLoop?.agentId).toBe("worker-7");
+			expect(result.workerLoop?.agentType).toBe("reviewer");
+			expect(result.workerLoop?.projectId).toBe("proj-42");
+			expect(result.workerLoop?.repoPath).toBe("/workspace");
+			expect(result.workerLoop?.idleTtlMs).toBe(60000);
+			expect(result.workerLoop?.heartbeatIntervalMs).toBe(5000);
+		});
+
 		test("parses --session", () => {
 			const result = parseArgs(["--session", "/path/to/session.jsonl"]);
 			expect(result.session).toBe("/path/to/session.jsonl");

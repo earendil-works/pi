@@ -41,7 +41,13 @@ import { SessionManager } from "./core/session-manager.js";
 import { SettingsManager } from "./core/settings-manager.js";
 import { printTimings, resetTimings, time } from "./core/timings.js";
 import { runMigrations, showDeprecationWarnings } from "./migrations.js";
-import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.js";
+import {
+	InteractiveMode,
+	runPrintMode,
+	runRpcMode,
+	runWorkerLoopMode,
+	validateWorkerLoopOptions,
+} from "./modes/index.js";
 import { ExtensionSelectorComponent } from "./modes/interactive/components/extension-selector.js";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.js";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.js";
@@ -93,9 +99,12 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 	return value === "1" || value.toLowerCase() === "true" || value.toLowerCase() === "yes";
 }
 
-type AppMode = "interactive" | "print" | "json" | "rpc";
+type AppMode = "interactive" | "print" | "json" | "rpc" | "worker-loop";
 
 function resolveAppMode(parsed: Args, stdinIsTTY: boolean): AppMode {
+	if (parsed.mode === "worker-loop") {
+		return "worker-loop";
+	}
 	if (parsed.mode === "rpc") {
 		return "rpc";
 	}
@@ -108,7 +117,7 @@ function resolveAppMode(parsed: Args, stdinIsTTY: boolean): AppMode {
 	return "interactive";
 }
 
-function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc"> {
+function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc" | "worker-loop"> {
 	return appMode === "json" ? "json" : "text";
 }
 
@@ -477,6 +486,11 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(1);
 	}
 
+	if (parsed.mode === "worker-loop" && parsed.fileArgs.length > 0) {
+		console.error(chalk.red("Error: @file arguments are not supported in worker-loop mode"));
+		process.exit(1);
+	}
+
 	validateForkFlags(parsed);
 
 	// Run migrations (pass cwd for project-local migrations)
@@ -627,9 +641,10 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(0);
 	}
 
-	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
+	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC,
+	// and for worker-loop mode which has no stdin protocol (the bus socket replaces it).
 	let stdinContent: string | undefined;
-	if (appMode !== "rpc") {
+	if (appMode !== "rpc" && appMode !== "worker-loop") {
 		stdinContent = await readPipedStdin();
 		if (stdinContent !== undefined && appMode === "interactive") {
 			appMode = "print";
@@ -659,7 +674,10 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 	time("createAgentSession");
 
-	if (appMode !== "interactive" && !session.model) {
+	// Worker-loop tolerates a missing model at startup — task envelopes may
+	// supply per-task models and the host typically pre-configures defaults
+	// via env vars. RPC and print modes still require one upfront.
+	if (appMode !== "interactive" && appMode !== "worker-loop" && !session.model) {
 		console.error(chalk.red(formatNoModelsAvailableMessage()));
 		process.exit(1);
 	}
@@ -670,7 +688,26 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(1);
 	}
 
-	if (appMode === "rpc") {
+	if (appMode === "worker-loop") {
+		const validated = validateWorkerLoopOptions({
+			socketPath: parsed.workerLoop?.socketPath,
+			agentId: parsed.workerLoop?.agentId,
+			agentType: parsed.workerLoop?.agentType,
+			projectId: parsed.workerLoop?.projectId,
+			repoPath: parsed.workerLoop?.repoPath ?? cwd,
+			idleTtlMs: parsed.workerLoop?.idleTtlMs,
+			heartbeatIntervalMs: parsed.workerLoop?.heartbeatIntervalMs,
+		});
+		if (!validated.ok) {
+			reportDiagnostics(validated.diagnostics);
+			process.exit(1);
+		}
+		printTimings();
+		const result = await runWorkerLoopMode(runtime, validated.options);
+		stopThemeWatcher();
+		restoreStdout();
+		process.exit(result.exitCode);
+	} else if (appMode === "rpc") {
 		printTimings();
 		await runRpcMode(runtime);
 	} else if (appMode === "interactive") {

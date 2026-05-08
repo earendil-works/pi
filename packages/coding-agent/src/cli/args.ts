@@ -7,7 +7,22 @@ import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.js";
 import type { ExtensionFlag } from "../core/extensions/types.js";
 
-export type Mode = "text" | "json" | "rpc";
+export type Mode = "text" | "json" | "rpc" | "worker-loop";
+
+/**
+ * Worker-loop CLI options. Populated only when `--mode worker-loop` is
+ * active. Defaults are applied later in `validateWorkerLoopOptions` so the
+ * parser only records what the user supplied.
+ */
+export interface WorkerLoopArgs {
+	socketPath?: string;
+	agentId?: string;
+	agentType?: string;
+	projectId?: string;
+	idleTtlMs?: number;
+	heartbeatIntervalMs?: number;
+	repoPath?: string;
+}
 
 export interface Args {
 	provider?: string;
@@ -21,6 +36,7 @@ export interface Args {
 	help?: boolean;
 	version?: boolean;
 	mode?: Mode;
+	workerLoop?: WorkerLoopArgs;
 	noSession?: boolean;
 	session?: string;
 	fork?: string;
@@ -73,9 +89,32 @@ export function parseArgs(args: string[]): Args {
 			result.version = true;
 		} else if (arg === "--mode" && i + 1 < args.length) {
 			const mode = args[++i];
-			if (mode === "text" || mode === "json" || mode === "rpc") {
+			if (mode === "text" || mode === "json" || mode === "rpc" || mode === "worker-loop") {
 				result.mode = mode;
 			}
+		} else if (arg === "--bus-socket" && i + 1 < args.length) {
+			result.workerLoop = result.workerLoop ?? {};
+			result.workerLoop.socketPath = args[++i];
+		} else if (arg === "--agent-id" && i + 1 < args.length) {
+			result.workerLoop = result.workerLoop ?? {};
+			result.workerLoop.agentId = args[++i];
+		} else if (arg === "--agent-type" && i + 1 < args.length) {
+			result.workerLoop = result.workerLoop ?? {};
+			result.workerLoop.agentType = args[++i];
+		} else if (arg === "--project-id" && i + 1 < args.length) {
+			result.workerLoop = result.workerLoop ?? {};
+			result.workerLoop.projectId = args[++i];
+		} else if (arg === "--idle-ttl-ms" && i + 1 < args.length) {
+			result.workerLoop = result.workerLoop ?? {};
+			const n = Number(args[++i]);
+			if (Number.isFinite(n)) result.workerLoop.idleTtlMs = n;
+		} else if (arg === "--heartbeat-interval-ms" && i + 1 < args.length) {
+			result.workerLoop = result.workerLoop ?? {};
+			const n = Number(args[++i]);
+			if (Number.isFinite(n)) result.workerLoop.heartbeatIntervalMs = n;
+		} else if (arg === "--repo-path" && i + 1 < args.length) {
+			result.workerLoop = result.workerLoop ?? {};
+			result.workerLoop.repoPath = args[++i];
 		} else if (arg === "--continue" || arg === "-c") {
 			result.continue = true;
 		} else if (arg === "--resume" || arg === "-r") {
@@ -219,7 +258,7 @@ ${chalk.bold("Options:")}
   --api-key <key>                API key (defaults to env vars)
   --system-prompt <text>         System prompt (default: coding assistant prompt)
   --append-system-prompt <text>  Append text or file contents to the system prompt (can be used multiple times)
-  --mode <mode>                  Output mode: text (default), json, or rpc
+  --mode <mode>                  Output mode: text (default), json, rpc, or worker-loop
   --print, -p                    Non-interactive mode: process prompt and exit
   --continue, -c                 Continue previous session
   --resume, -r                   Select a session to resume
@@ -247,6 +286,16 @@ ${chalk.bold("Options:")}
   --list-models [search]         List available models (with optional fuzzy search)
   --verbose                      Force verbose startup (overrides quietStartup setting)
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
+
+${chalk.bold("Worker-loop options (with --mode worker-loop):")}
+  --bus-socket <path>            Unix socket path for the host message bus (required)
+  --agent-id <id>                This worker's agent id (required)
+  --agent-type <type>            Worker role label (e.g. worker, reviewer, tester) (required)
+  --project-id <id>              Project id this worker belongs to (required)
+  --repo-path <path>             Repo path the worker operates on (required)
+  --idle-ttl-ms <ms>             Exit cleanly after this many ms with no task (default: 3600000)
+  --heartbeat-interval-ms <ms>   Heartbeat cadence (default: 10000)
+
   --help, -h                     Show this help
   --version, -v                  Show version number
 
