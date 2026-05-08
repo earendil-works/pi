@@ -1,0 +1,69 @@
+{
+  "providers": {
+    "infomaniak": {
+      "baseUrl": "https://api.infomaniak.com/2/ai/108471/openai/v1",
+      "api": "openai-completions",
+      "apiKey": "INFOMANIAK_API_KEY",
+      "authHeader": true,
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "maxTokensField": "max_tokens"
+      },
+      "models": [
+        {
+          "id": "moonshotai/Kimi-K2.6",
+          "name": "Kimi K2.6 (Coding, Reasoning)",
+          "contextWindow": 200000,
+          "maxTokens": 16384
+        },
+        {
+          "id": "Qwen/Qwen3.5-122B-A10B-FP8",
+          "name": "Qwen 3.5 122B (Reasoning, gross)",
+          "contextWindow": 131072,
+          "maxTokens": 16384
+        },
+        {
+          "id": "swiss-ai/Apertus-70B-Instruct-2509",
+          "name": "Apertus 70B (Swiss AI)",
+          "contextWindow": 32768,
+          "maxTokens": 8192
+        },
+        {
+          "id": "google/gemma-4-31B-it",
+          "name": "Gemma 4 31B (Allrounder)",
+          "contextWindow": 32768,
+          "maxTokens": 8192
+        },
+        {
+          "id": "mistralai/Ministral-3-14B-Instruct-2512",
+          "name": "Ministral 3 14B (kompakt, schnell)",
+          "contextWindow": 32768,
+          "maxTokens": 4096
+        }
+      ]
+    },
+    "llama-local": {
+      "baseUrl": "http://127.0.0.1:8080/v1",
+      "api": "openai-completions",
+      "apiKey": "local",
+      "compat": {
+        "supportsDeveloperRole": false,
+        "supportsReasoningEffort": false,
+        "supportsUsageInStreaming": false,
+        "maxTokensField": "max_tokens"
+      },
+      "models": [
+        {
+          "id": "qwen3.6-35b-a3b-local",
+          "name": "Qwen 3.6 35B-A3B (lokal, MoE, multimodal)",
+          "reasoning": false,
+          "input": ["text", "image"],
+          "contextWindow": 32768,
+          "maxTokens": 4096,
+          "cost": { "input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0 }
+        }
+      ]
+    }
+  }
+}
