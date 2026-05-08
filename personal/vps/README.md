@@ -1,15 +1,17 @@
 # Pi auf VPS — `personal/vps/`
 
-Dieser Ordner enthält die VPS-spezifische Pi-Konfiguration. Auf dem VPS sind die drei Config-Dateien per Symlink in `~/.pi/agent/` eingebunden, sodass `git pull` im Fork automatisch zur Konfig-Aktualisierung führt.
+Dieser Ordner enthält die VPS-spezifische Pi-Konfiguration. Auf dem VPS sind die Config-Dateien per Symlink in `~/.pi/agent/` eingebunden, sodass `git pull` im Fork automatisch zur Konfig-Aktualisierung führt.
+
+> **Geteilte Configs:** `models.json`, `aliases.json` und `.bashrc.snippet` liegen seit dem Laptop-Sync in [`personal/shared/`](../shared/) und sind hier als repo-interne Symlinks (`../shared/...`) eingebunden. Der lokale Symlink-Pfad bleibt für VPS-Setups unverändert (`~/pi/personal/vps/...`).
 
 ## Komponenten
 
 | Datei | Symlink-Ziel | Zweck |
 |---|---|---|
-| `models.json` | `~/.pi/agent/models.json` | Provider- und Modell-Definitionen |
-| `settings.json` | `~/.pi/agent/settings.json` | Default-Provider/Modell + Extension-Liste |
-| `aliases.json` | `~/.pi/agent/extensions/model-switch/aliases.json` | Aliase fuer `pi-model-switch` |
-| `.bashrc.snippet` | append in `~/.bashrc` | PATH, Key-Source, `PI_FINDER_MODELS` |
+| `models.json` → `../shared/models.json` | `~/.pi/agent/models.json` | Provider Infomaniak + `llama-local` (auf VPS inert) |
+| `settings.json` | `~/.pi/agent/settings.json` | Default-Provider/Modell + Extension-Liste, kein Voice-Block |
+| `aliases.json` → `../shared/aliases.json` | `~/.pi/agent/extensions/model-switch/aliases.json` | Aliase fuer `pi-model-switch` |
+| `.bashrc.snippet` → `../shared/.bashrc.snippet` | append in `~/.bashrc` | PATH, Key-Source, `PI_FINDER_MODELS` |
 
 ## Aktiver Modell-Katalog (Infomaniak, Stand 2026-05-07)
 
@@ -56,8 +58,10 @@ sudo -iu opipi bash -c '
   ln -sf ~/pi/packages/coding-agent/dist/cli.js ~/.npm-global/bin/pi
   chmod +x ~/pi/packages/coding-agent/dist/cli.js
 
-  # Extensions (separat auf npm)
-  ~/.npm-global/bin/npm install -g pi-review-loop pi-finder-subagent pi-model-switch pi-secret-guard @tintinweb/pi-tasks
+  # Extensions (separat auf npm) — synchroner Stack mit dem Laptop
+  pi install npm:pi-review-loop npm:pi-secret-guard npm:pi-finder-subagent \
+    npm:pi-model-switch npm:@tintinweb/pi-tasks npm:pi-subagents \
+    npm:pi-schedule-prompt npm:@joemccann/pi-pdf npm:@codexstar/pi-listen
 
   # Symlinks aufs Repo
   mkdir -p ~/.pi/agent ~/.pi/agent/extensions/model-switch

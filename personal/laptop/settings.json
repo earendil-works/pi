@@ -1,6 +1,7 @@
 {
   "defaultProvider": "infomaniak",
   "defaultModel": "moonshotai/Kimi-K2.6",
+  "defaultThinkingLevel": "medium",
   "lastChangelogVersion": "0.74.0",
   "packages": [
     "npm:pi-review-loop",
@@ -12,5 +13,19 @@
     "npm:pi-schedule-prompt",
     "npm:@joemccann/pi-pdf",
     "npm:@codexstar/pi-listen"
-  ]
+  ],
+  "voice": {
+    "version": 2,
+    "enabled": true,
+    "language": "de",
+    "scope": "global",
+    "backend": "local",
+    "localModel": "whisper-turbo",
+    "toggleShortcut": "ctrl+shift+v",
+    "onboarding": {
+      "completed": true,
+      "schemaVersion": 2,
+      "source": "migration"
+    }
+  }
 }
