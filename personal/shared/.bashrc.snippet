@@ -1,4 +1,5 @@
-# --- Pi VPS-Setup (verwaltet via personal/vps/.bashrc.snippet) ---
+# --- Pi Shared Setup (verwaltet via personal/shared/.bashrc.snippet) ---
+# Wird auf VPS und Laptop identisch gesourct.
 
 # User-Space npm-Globals
 export PATH="$HOME/.npm-global/bin:$PATH"
@@ -6,8 +7,11 @@ export PATH="$HOME/.npm-global/bin:$PATH"
 # Infomaniak API Key (chmod 600 in $HOME/.pi-keys/)
 [ -f "$HOME/.pi-keys/infomaniak.env" ] && set -a && source "$HOME/.pi-keys/infomaniak.env" && set +a
 
+# Gemini API Key (optional, fuer pi-Web-Search-Extensions; chmod 600)
+[ -f "$HOME/.pi-keys/gemini.env" ] && set -a && source "$HOME/.pi-keys/gemini.env" && set +a
+
 # pi-finder-subagent: Recherche an Qwen, Fallback auf Ministral —
 # Hauptmodell (Kimi) bleibt frei fuers Hauptgespraech.
 export PI_FINDER_MODELS="infomaniak/Qwen/Qwen3.5-122B-A10B-FP8,infomaniak/mistralai/Ministral-3-14B-Instruct-2512"
 
-# --- Ende Pi VPS-Setup ---
+# --- Ende Pi Shared Setup ---
