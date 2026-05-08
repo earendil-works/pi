@@ -1,1 +1,43 @@
 @import "@earendil-works/pi-web-ui/app.css";
+
+/*
+ * Mobile-UX-Fixes (siehe tests/mobile-audit-2026-05-09.md).
+ *
+ * pi-web-ui liefert ein VORKOMPILIERTES Tailwind-CSS-Bundle aus — nicht alle
+ * Tailwind-Utilities sind drin (z.B. min-h-11, w-32 fehlen). Daher hier
+ * plain CSS statt Tailwind-Klassen.
+ */
+
+/* B1 — Touch-Target 44 px fuer eigene Header-Buttons + Theme-Toggle. */
+.btn-touch,
+theme-toggle button {
+	min-height: 2.75rem;
+	min-width: 2.75rem;
+}
+
+/* B4 — Title-Input im Edit-Mode auf schmalen Screens nicht 256 px breit
+ * (verdraengt die rechten Header-Buttons). Ab 640 px wieder voll. */
+.title-input {
+	width: 8rem;
+}
+@media (min-width: 640px) {
+	.title-input {
+		width: 16rem;
+	}
+}
+
+/* B2 — pi-web-ui CustomProviderCard rendert Action-Buttons (Bearbeiten/Loeschen)
+ * rechts neben der Karte; auf < 640 px ragen sie aus dem Viewport. Hier auf
+ * Mobile vertikal stacken. Selektor zielt auf das Light-DOM des Custom-
+ * Elements custom-provider-card (createRenderRoot returns this). */
+@media (max-width: 640px) {
+	custom-provider-card > div > div {
+		flex-direction: column;
+		align-items: stretch;
+		gap: 0.5rem;
+	}
+	custom-provider-card > div > div > div:last-child {
+		justify-content: flex-end;
+	}
+}
+

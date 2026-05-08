@@ -329,6 +329,7 @@ const renderApp = () => {
 					${Button({
 						variant: "ghost",
 						size: "sm",
+						className: "btn-touch",
 						children: icon(History, "sm"),
 						onClick: () => {
 							SessionListDialog.open(
@@ -347,6 +348,7 @@ const renderApp = () => {
 					${Button({
 						variant: "ghost",
 						size: "sm",
+						className: "btn-touch",
 						children: icon(Plus, "sm"),
 						onClick: newSession,
 						title: "Neue Session",
@@ -359,7 +361,7 @@ const renderApp = () => {
 									${Input({
 										type: "text",
 										value: currentTitle,
-										className: "text-sm w-64",
+										className: "text-sm title-input",
 										onChange: async (e: Event) => {
 											const newTitle = (e.target as HTMLInputElement).value.trim();
 											if (newTitle && newTitle !== currentTitle && storage.sessions && currentSessionId) {
@@ -410,6 +412,7 @@ const renderApp = () => {
 					${Button({
 						variant: "ghost",
 						size: "sm",
+						className: "btn-touch",
 						children: icon(Settings, "sm"),
 						onClick: () => SettingsDialog.open([new ProvidersModelsTab(), new ProxyTab()]),
 						title: "Einstellungen",
