@@ -229,6 +229,7 @@ export {
 	type SkillFrontmatter,
 } from "./core/skills.js";
 export { createSyntheticSourceInfo } from "./core/source-info.js";
+export { type State, type StateError, StateManager } from "./core/state-manager.js";
 // Tools
 export {
 	type BashOperations,

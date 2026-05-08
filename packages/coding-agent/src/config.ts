@@ -474,6 +474,11 @@ export function getSettingsPath(): string {
 	return join(getAgentDir(), "settings.json");
 }
 
+/** Get path to Pi-owned local state.json */
+export function getStatePath(): string {
+	return join(getAgentDir(), "state.json");
+}
+
 /** Get path to tools directory */
 export function getToolsDir(): string {
 	return join(getAgentDir(), "tools");
