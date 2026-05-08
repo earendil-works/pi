@@ -40,7 +40,7 @@ import { icon } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Input } from "@mariozechner/mini-lit/dist/Input.js";
 import { customConvertToLlm, registerCustomMessageRenderers } from "./custom-messages.js";
-import { DEFAULT_MODEL, ensureInfomaniakProvider } from "./infomaniak-bootstrap.js";
+import { DEFAULT_MODEL, ensureInfomaniakProvider, isPlausibleKey } from "./infomaniak-bootstrap.js";
 
 // Custom Renderer für system-notification-Messages
 registerCustomMessageRenderers();
@@ -76,14 +76,33 @@ setAppStorage(storage);
 // Standard-createStreamFn würde shouldUseProxyForProvider("infomaniak") aufrufen
 // → false → kein Proxy → CORS-Fehler. Wir umgehen das, weil wir wissen, dass
 // docs.og-monschau.de → /api/proxy → api.infomaniak.com der einzige Pfad ist.
+//
+// Zusätzlich: API-Key auf Whitespace/Newlines prüfen (sonst wirft fetch einen
+// stillen TypeError beim Header-Aufbau, kein Request geht raus, kein Server-Log
+// — genau das ist beim ersten Live-Test passiert, weil ein Claude-Code-Bericht
+// per Strg+V im API-Key-Feld gelandet war).
 const proxiedStreamFn: StreamFn = async (model, context, options) => {
+	if (options?.apiKey) {
+		const key = options.apiKey;
+		if (key !== key.trim() || /[\r\n]/.test(key)) {
+			throw new Error(
+				"API-Key enthaelt Leerzeichen oder Zeilenumbrueche. Settings oeffnen, Custom Provider 'Infomaniak (Schweiz)' editieren und Key korrekt eintragen (kein Strg+V mit Mehrzeiligem).",
+			);
+		}
+	}
 	const enabled = await settings.get<boolean>("proxy.enabled");
 	const proxyUrl = await settings.get<string>("proxy.url");
 	let effectiveModel: Model<any> = model;
 	if (enabled && proxyUrl && model.baseUrl) {
+		// Wichtig: proxyUrl absolut machen. pi-ai ruft intern `new URL(baseUrl)`
+		// ohne Base-Argument auf — relative URLs crashen mit „Failed to construct
+		// 'URL': Invalid URL", noch bevor der fetch-Call rausgeht (Diagnose 2026-05-08).
+		const absProxyUrl = proxyUrl.startsWith("http")
+			? proxyUrl
+			: `${window.location.origin}${proxyUrl.startsWith("/") ? "" : "/"}${proxyUrl}`;
 		effectiveModel = {
 			...model,
-			baseUrl: `${proxyUrl}/?url=${encodeURIComponent(model.baseUrl)}`,
+			baseUrl: `${absProxyUrl}/?url=${encodeURIComponent(model.baseUrl)}`,
 		};
 	}
 	return streamSimple(effectiveModel, context, options);
@@ -201,22 +220,57 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 		},
 		streamFn: proxiedStreamFn,
 		convertToLlm: customConvertToLlm,
+		// Defense-in-Depth fuer den pi-web-ui-Bug: AgentInterface setzt zwar
+		// session.getApiKey selbst, falls nicht gesetzt — aber dort liest es nur
+		// providerKeys. Falls die Bootstrap-Migration mal haengt, kann der Custom-
+		// Provider-apiKey trotzdem als Fallback dienen.
+		getApiKey: async (provider: string) => {
+			const fromKeys = await providerKeys.get(provider);
+			if (isPlausibleKey(fromKeys)) return fromKeys;
+			const cp = await customProviders.get(provider);
+			if (cp?.apiKey && isPlausibleKey(cp.apiKey)) return cp.apiKey;
+			return undefined;
+		},
 	});
 
+	// Echte agent.subscribe-Event-Types (pi-agent-core 0.74):
+	//   agent_start, turn_start, message_start, message_update, message_end,
+	//   turn_end, agent_end
+	// "state-update" gibt es NICHT (war im Original-example main.ts auch dead code).
 	agentUnsubscribe = agent.subscribe((event: any) => {
-		if (event.type === "state-update") {
-			const messages = event.state.messages;
+		// Bei message_end / agent_end: Lit-Reactivity-Bug in pi-web-uis MessageList
+		// in Firefox umgehen. Symptom: messageList.messages-Property ist gesetzt
+		// (z.B. 2 Eintraege), aber das DOM rendert leer (height=0, kein assistant-
+		// element). Bei mehrfach-Block-Content (thinking + text) tritt es zuverlaessig
+		// auf. Manuelles requestUpdate() zwingt das Lit-Element zum Re-Render.
+		if (event?.type === "message_end" || event?.type === "agent_end") {
+			const ml = document.querySelector("message-list") as { requestUpdate?: () => void } | null;
+			if (ml && typeof ml.requestUpdate === "function") {
+				ml.requestUpdate();
+			}
+		}
+
+		// Header-State (Title, Session-ID) wird aus event.state oder agent.state
+		// gepflegt. Bei agent_end snapshot wir den finalen State und re-rendern
+		// den Header genau einmal.
+		if (event?.type === "agent_end") {
+			const messages = (agent.state.messages || []) as AgentMessage[];
+			let needsRender = false;
 			if (!currentTitle && shouldSaveSession(messages)) {
 				currentTitle = generateTitle(messages);
+				needsRender = true;
 			}
 			if (!currentSessionId && shouldSaveSession(messages)) {
 				currentSessionId = crypto.randomUUID();
 				updateUrl(currentSessionId);
+				needsRender = true;
 			}
 			if (currentSessionId) {
 				saveSession();
 			}
-			renderApp();
+			if (needsRender) {
+				renderApp();
+			}
 		}
 	});
 
@@ -383,7 +437,7 @@ async function initApp() {
 	);
 
 	// Auto-Provisionierung: Custom Provider „infomaniak" + Proxy-Defaults
-	await ensureInfomaniakProvider(customProviders, settings);
+	await ensureInfomaniakProvider(customProviders, providerKeys, settings);
 
 	chatPanel = new ChatPanel();
 

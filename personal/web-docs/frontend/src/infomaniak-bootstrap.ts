@@ -5,7 +5,11 @@
 
 import type { Model } from "@earendil-works/pi-ai";
 import type { CustomProvider } from "@earendil-works/pi-web-ui";
-import type { CustomProvidersStore, SettingsStore } from "@earendil-works/pi-web-ui";
+import type {
+	CustomProvidersStore,
+	ProviderKeysStore,
+	SettingsStore,
+} from "@earendil-works/pi-web-ui";
 
 const INFOMANIAK_BASE_URL = "https://api.infomaniak.com/2/ai/108471/openai/v1";
 const PROXY_URL_DEFAULT = "/api/proxy";
@@ -20,7 +24,12 @@ const INFOMANIAK_MODELS: Model<"openai-completions">[] = [
 		api: "openai-completions",
 		provider: "infomaniak",
 		baseUrl: INFOMANIAK_BASE_URL,
-		reasoning: false,
+		// Kimi K2.6 liefert bei Infomaniak konsistent einen thinking-Block neben
+		// dem text-Block. Wenn reasoning auf false stand, hat pi-web-ui den
+		// kompletten Message-Render abgewuergt und nur den thinking-Block
+		// waehrend des Streams gezeigt. Mit reasoning=true wird der Standard-
+		// thinking+text-Render-Pfad aktiv.
+		reasoning: true,
 		input: ["text"],
 		cost: { input: 0.3, output: 0.3, cacheRead: 0, cacheWrite: 0 },
 		contextWindow: 200000,
@@ -103,8 +112,74 @@ const INFOMANIAK_MODELS: Model<"openai-completions">[] = [
 
 export const DEFAULT_MODEL: Model<"openai-completions"> = INFOMANIAK_MODELS[0];
 
+/**
+ * Heuristik, ob ein String wie ein gültiger API-Key aussieht.
+ * Verwirft eindeutige Junk-Werte (Strg+V-Unfälle mit Mehrzeiligem,
+ * leere Strings, absurd lange Texte). Konservativ — hier wird nur
+ * offensichtlicher Müll abgewiesen, nicht semantisch geprüft.
+ */
+export function isPlausibleKey(key: string | null | undefined): key is string {
+	if (!key || typeof key !== "string") return false;
+	const trimmed = key.trim();
+	if (trimmed !== key) return false; // führender/abschließender Whitespace
+	if (/[\r\n]/.test(key)) return false; // Newlines (Strg+V-Unfall)
+	if (key.length < 16) return false; // zu kurz
+	if (key.length > 4096) return false; // unplausibel lang (Token sind <= ~2048 Zeichen)
+	return true;
+}
+
+/**
+ * Sync zwischen den zwei Storage-Slots, die pi-web-ui 0.74.0 ohne
+ * Sync-Mechanismus parallel pflegt:
+ * - CustomProviderDialog speichert den Key in `customProviders[id].apiKey`
+ * - AgentInterface.sendMessage / agent-loop liest aus `providerKeys.get(provider)`
+ *
+ * Diese Funktion gleicht beide ab und säubert Junk-Einträge:
+ * - Junk im customProvider.apiKey wird entfernt (UI zeigt dann „kein Key")
+ * - Plausibler Key wird in beide Slots geschrieben (Send-Logik findet ihn,
+ *   UI zeigt „Key konfiguriert")
+ *
+ * Idempotent — kann bei jedem App-Start laufen.
+ */
+export async function syncInfomaniakApiKey(
+	customProviders: CustomProvidersStore,
+	providerKeys: ProviderKeysStore,
+): Promise<void> {
+	const cp = await customProviders.get("infomaniak");
+	if (!cp) return; // ensureInfomaniakProvider sollte vorher gelaufen sein
+
+	const cpKey = cp.apiKey;
+	const pkKey = await providerKeys.get("infomaniak");
+
+	const cpPlausible = isPlausibleKey(cpKey);
+	const pkPlausible = isPlausibleKey(pkKey);
+
+	// Junk im Custom-Provider entfernen
+	if (cpKey && !cpPlausible) {
+		await customProviders.set({ ...cp, apiKey: undefined });
+	}
+
+	// Bevorzugter Key: was plausibel ist; wenn beide plausibel sind, gewinnt providerKeys
+	// (= ApiKeyPromptDialog hat Priorität, weil das der „offiziellere" Eingabe-Pfad ist)
+	const canonical = pkPlausible ? pkKey : cpPlausible ? cpKey : undefined;
+	if (!canonical) return;
+
+	// In beide Slots schreiben (idempotent: nur wenn Wert anders)
+	if (pkKey !== canonical) {
+		await providerKeys.set("infomaniak", canonical);
+	}
+	if (cp.apiKey !== canonical) {
+		// Re-Read, weil customProviders.set oben ggf. geändert hat
+		const fresh = await customProviders.get("infomaniak");
+		if (fresh) {
+			await customProviders.set({ ...fresh, apiKey: canonical });
+		}
+	}
+}
+
 export async function ensureInfomaniakProvider(
 	customProviders: CustomProvidersStore,
+	providerKeys: ProviderKeysStore,
 	settings: SettingsStore,
 ): Promise<void> {
 	// 1. CustomProvider „infomaniak" anlegen, falls nicht vorhanden
@@ -115,7 +190,6 @@ export async function ensureInfomaniakProvider(
 			name: "Infomaniak (Schweiz)",
 			type: "openai-completions",
 			baseUrl: INFOMANIAK_BASE_URL,
-			// apiKey wird per ProviderKeysStore beim ersten Senden abgefragt
 			models: INFOMANIAK_MODELS,
 		};
 		await customProviders.set(provider);
@@ -130,4 +204,8 @@ export async function ensureInfomaniakProvider(
 	if (proxyEnabled === null) {
 		await settings.set("proxy.enabled", true);
 	}
+
+	// 3. API-Key-Slots zwischen customProviders und providerKeys synchronisieren
+	//    + Junk-Werte aufräumen (siehe syncInfomaniakApiKey)
+	await syncInfomaniakApiKey(customProviders, providerKeys);
 }
