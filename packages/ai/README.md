@@ -16,6 +16,9 @@ Unified LLM API with automatic model discovery, provider configuration, token an
   - [Validating Tool Arguments](#validating-tool-arguments)
   - [Complete Event Reference](#complete-event-reference)
 - [Image Input](#image-input)
+- [Image Generation](#image-generation)
+  - [Basic Image Generation](#basic-image-generation)
+  - [Notes and Limitations](#notes-and-limitations)
 - [Thinking/Reasoning](#thinkingreasoning)
   - [Unified Interface](#unified-interface-streamsimplecompletesimple)
   - [Provider-Specific Options](#provider-specific-options-streamcomplete)
@@ -420,6 +423,70 @@ for (const block of response.content) {
   }
 }
 ```
+
+## Image Generation
+
+Image generation uses a separate API surface from text/chat generation. Use `getImageModel()` / `getImageModels()` / `getImageProviders()` to discover image-generation models, and `generateImages()` to get the final result.
+
+Do not use `stream()` or `complete()` for image generation. Image generation is a one-shot API: `generateImages()` waits for the provider response and returns the final `AssistantImages` result.
+
+### Basic Image Generation
+
+```typescript
+import { getImageModel, generateImages } from '@mariozechner/pi-ai';
+
+const model = getImageModel('openrouter', 'google/gemini-2.5-flash-image');
+
+const result = await generateImages(model, {
+  input: [{ type: 'text', text: 'Generate a red circle on a plain white background.' }]
+}, {
+  apiKey: process.env.OPENROUTER_API_KEY
+});
+
+for (const block of result.output) {
+  if (block.type === 'text') {
+    console.log(block.text);
+  } else if (block.type === 'image') {
+    console.log(block.mimeType);
+    console.log(block.data.substring(0, 32));
+  }
+}
+```
+
+Some models also support image input:
+
+```typescript
+import { readFileSync } from 'fs';
+
+const imageBuffer = readFileSync('input.png');
+const result = await generateImages(model, {
+  input: [
+    { type: 'text', text: 'Create a variation of this image with a blue background.' },
+    { type: 'image', data: imageBuffer.toString('base64'), mimeType: 'image/png' }
+  ]
+}, {
+  apiKey: process.env.OPENROUTER_API_KEY
+});
+```
+
+Check capabilities on the model metadata:
+
+```typescript
+console.log(model.input);   // ['text', 'image']
+console.log(model.output);  // ['image'] or ['image', 'text']
+```
+
+### Notes and Limitations
+
+- Use `getImageModel(...)`, not `getModel(...)`.
+- Use `generateImages()`, not `stream()` / `complete()`.
+- Image-generation models do not participate in tool calling.
+- Outputs are returned in `AssistantImages.output` and can include both base64-encoded `ImageContent` blocks and `TextContent` blocks.
+- Some models return only images, others return images plus text. Check `model.output`.
+- Some models accept image input, others are text-to-image only. Check `model.input`.
+- Like the streaming APIs, image generation supports options such as `apiKey`, `signal`, `headers`, `onPayload`, and `onResponse`, and results may include `stopReason`, `responseId`, and `usage`.
+- If you want a model to analyze images in a conversation or call tools, use the regular `stream()` / `complete()` APIs with a model that supports image input.
+- At the moment, image generation is available through only one provider, OpenRouter.
 
 ## Thinking/Reasoning
 
@@ -1251,10 +1318,11 @@ Create a new provider file (for example `amazon-bedrock.ts`) that exports:
 - Add credential detection in `env-api-keys.ts` for the new provider
 - Ensure `streamSimple` handles auth lookup via `getEnvApiKey()` or provider-specific auth
 
-#### 4. Model Generation (`scripts/generate-models.ts`)
+#### 4. Model Generation (`scripts/generate-models.ts`, `scripts/generate-image-models.ts`)
 
 - Add logic to fetch and parse models from the provider's source (e.g., models.dev API)
-- Map provider model data to the standardized `Model` interface
+- Map chat/tool-capable provider model data to the standardized `Model` interface via `scripts/generate-models.ts`
+- Map image-generation provider model data to the standardized `ImagesModel` interface via `scripts/generate-image-models.ts`
 - Handle provider-specific quirks (pricing format, capability flags, model ID transformations)
 
 #### 5. Tests (`test/`)

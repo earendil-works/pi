@@ -116,9 +116,9 @@ jobs:
 
             function buildRefactorGateMessage() {
               return [
-                'This issue was auto-closed. All issues will be closed until 2026-05-17 because the project is undergoing a large refactor.',
+                'This issue was auto-closed. All issues will be closed until 2026-05-17 while the project refactor is being completed.',
                 '',
-                `See the \`bigrefactor\` branch: https://github.com/${context.repo.owner}/${context.repo.repo}/tree/bigrefactor`,
+                `The refactor is happening on \`${defaultBranch}\`: https://github.com/${context.repo.owner}/${context.repo.repo}/tree/${defaultBranch}`,
                 '',
                 'Issues closed during this period will not be reviewed. The reason is that the refactor will not get done otherwise, because issue triage has been taking about 8 hours per day.',
                 '',
@@ -137,7 +137,21 @@ jobs:
 
             const labelsToAdd = [];
             if (isFridayThroughSunday) labelsToAdd.push('closed-because-weekend');
-            if (ISSUE_GATE_MESSAGE_MODE === 'refactor') labelsToAdd.push('closed-because-bigrefactor');
+            if (ISSUE_GATE_MESSAGE_MODE === 'refactor') labelsToAdd.push('closed-because-refactor');
+
+            if (labelsToAdd.includes('closed-because-refactor')) {
+              try {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: 'closed-because-refactor',
+                  color: '5319e7',
+                  description: 'Closed while the project refactor is in progress',
+                });
+              } catch (error) {
+                if (error.status !== 422) throw error;
+              }
+            }
 
             if (labelsToAdd.length > 0) {
               await github.rest.issues.addLabels({
