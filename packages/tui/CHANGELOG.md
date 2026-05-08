@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed over-wide changed TUI lines to truncate instead of crashing narrow terminals.
+
 ## [0.74.0] - 2026-05-07
 
 ## [0.73.1] - 2026-05-07

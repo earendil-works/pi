@@ -589,3 +589,25 @@ describe("TUI differential rendering", () => {
 		tui.stop();
 	});
 });
+
+describe("TUI over-wide changed line handling", () => {
+	it("truncates over-wide changed non-image lines instead of throwing", async () => {
+		const terminal = new VirtualTerminal(20, 8);
+		const tui = new TUI(terminal);
+		const component = new TestComponent();
+		tui.addChild(component);
+
+		component.lines = ["ok"];
+		tui.start();
+		await terminal.waitForRender();
+
+		component.lines = ["X".repeat(24)];
+		tui.requestRender();
+		await terminal.waitForRender();
+
+		const viewport = terminal.getViewport();
+		assert.strictEqual(viewport[0], "X".repeat(20));
+
+		tui.stop();
+	});
+});
