@@ -250,6 +250,22 @@ const createAgent = async (initialState?: Partial<AgentState>) => {
 			}
 		}
 
+		// pi-agent-core setzt state.isStreaming erst NACH allen agent_end-
+		// Listenern auf false (siehe agent.ts finishRun() im finally-Block).
+		// AgentInterface ruft aber synchron im agent_end-Listener requestUpdate()
+		// und sieht dabei noch isStreaming=true → MessageEditor rendert weiter
+		// den Stop-Button (Square) statt Send → keine zweite Eingabe moeglich.
+		// Mit queueMicrotask laeuft unser Re-Render NACH finishRun() und sieht
+		// das korrigierte isStreaming=false. (Diagnose 2026-05-09.)
+		if (event?.type === "agent_end") {
+			queueMicrotask(() => {
+				const ai = document.querySelector("agent-interface") as { requestUpdate?: () => void } | null;
+				if (ai && typeof ai.requestUpdate === "function") {
+					ai.requestUpdate();
+				}
+			});
+		}
+
 		// Header-State (Title, Session-ID) wird aus event.state oder agent.state
 		// gepflegt. Bei agent_end snapshot wir den finalen State und re-rendern
 		// den Header genau einmal.
