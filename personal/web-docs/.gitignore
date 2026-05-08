@@ -1,0 +1,8 @@
+# Build-Artefakte und Dependencies
+frontend/node_modules/
+frontend/dist/
+
+# Optionale lokale Overrides
+*.local
+.env
+.env.local

@@ -1,0 +1,35 @@
+[Unit]
+Description=Pi Web Docs oauth2-proxy (Google OAuth Login Gate)
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=opipi
+Group=opipi
+ExecStart=/usr/local/bin/oauth2-proxy --config /home/opipi/web-docs/deploy/oauth2-proxy/oauth2-proxy.cfg
+Restart=on-failure
+RestartSec=5
+
+# EnvironmentFile darf nicht von der Welt gelesen werden — enthält Client-Secret + Cookie-Secret
+EnvironmentFile=/etc/web-docs-oauth2-proxy.env
+
+# Hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

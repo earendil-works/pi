@@ -1,0 +1,26 @@
+{
+	"name": "pi-web-docs",
+	"version": "0.1.0",
+	"private": true,
+	"description": "Datenschutzkonformer Dokumenten-Chat im Browser, Backend Infomaniak Kimi K2.6 (CH)",
+	"type": "module",
+	"scripts": {
+		"dev": "vite",
+		"build": "vite build",
+		"preview": "vite preview",
+		"check": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@earendil-works/pi-agent-core": "^0.74.0",
+		"@earendil-works/pi-ai": "^0.74.0",
+		"@earendil-works/pi-web-ui": "^0.74.0",
+		"@mariozechner/mini-lit": "^0.2.0",
+		"@tailwindcss/vite": "^4.1.17",
+		"lit": "^3.3.1",
+		"lucide": "^0.544.0"
+	},
+	"devDependencies": {
+		"typescript": "^5.7.3",
+		"vite": "^7.1.6"
+	}
+}

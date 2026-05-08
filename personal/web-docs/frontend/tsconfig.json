@@ -1,0 +1,22 @@
+{
+	"compilerOptions": {
+		"target": "ES2022",
+		"module": "ESNext",
+		"moduleResolution": "bundler",
+		"lib": ["ES2022", "DOM", "DOM.Iterable"],
+		"jsx": "preserve",
+		"strict": true,
+		"noUnusedLocals": false,
+		"noUnusedParameters": false,
+		"noImplicitAny": true,
+		"esModuleInterop": true,
+		"allowSyntheticDefaultImports": true,
+		"resolveJsonModule": true,
+		"skipLibCheck": true,
+		"isolatedModules": true,
+		"noEmit": true,
+		"experimentalDecorators": true,
+		"useDefineForClassFields": false
+	},
+	"include": ["src/**/*.ts"]
+}

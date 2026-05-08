@@ -1,0 +1,42 @@
+[Unit]
+Description=Pi Web Docs CORS Proxy (Browser → Infomaniak)
+After=network.target
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=opipi
+Group=opipi
+WorkingDirectory=/home/opipi/web-docs/proxy
+ExecStart=/usr/bin/node /home/opipi/web-docs/proxy/server.js
+Restart=on-failure
+RestartSec=5
+
+# Environment
+Environment=PORT=8090
+Environment=HOST=127.0.0.1
+Environment=PROXY_ALLOWED_HOSTS=api.infomaniak.com
+Environment=NODE_ENV=production
+
+# Hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/opipi/web-docs/proxy
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=no
+SystemCallArchitectures=native
+
+# Logging: nur Stdout/Stderr in journal, keine Body-Logs (server.js loggt selbst nur Statuscodes)
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
