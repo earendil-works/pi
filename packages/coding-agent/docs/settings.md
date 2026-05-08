@@ -9,6 +9,8 @@ Pi uses JSON settings files with project settings overriding global settings.
 
 Edit directly or use `/settings` for common options.
 
+Pi-owned local bookkeeping is stored separately in `~/.pi/agent/state.json`. Do not edit or share `state.json` as user configuration.
+
 ## All Settings
 
 ### Model & Thinking

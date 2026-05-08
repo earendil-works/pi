@@ -39,6 +39,7 @@ import {
 } from "./core/session-cwd.js";
 import { SessionManager } from "./core/session-manager.js";
 import { SettingsManager } from "./core/settings-manager.js";
+import { StateManager } from "./core/state-manager.js";
 import { printTimings, resetTimings, time } from "./core/timings.js";
 import { runMigrations, showDeprecationWarnings } from "./migrations.js";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.js";
@@ -77,6 +78,13 @@ function collectSettingsDiagnostics(
 	return settingsManager.drainErrors().map(({ scope, error }) => ({
 		type: "warning",
 		message: `(${context}, ${scope} settings) ${error.message}`,
+	}));
+}
+
+function collectStateDiagnostics(stateManager: StateManager, context: string): AgentSessionRuntimeDiagnostic[] {
+	return stateManager.drainErrors().map(({ source, error }) => ({
+		type: "warning",
+		message: `(${context}, ${source === "state" ? "state" : "legacy settings migration"}) ${error.message}`,
 	}));
 }
 
@@ -485,6 +493,8 @@ export async function main(args: string[], options?: MainOptions) {
 
 	const cwd = process.cwd();
 	const agentDir = getAgentDir();
+	const startupStateManager = StateManager.create(agentDir);
+	reportDiagnostics(collectStateDiagnostics(startupStateManager, "startup session lookup"));
 	const startupSettingsManager = SettingsManager.create(cwd, agentDir);
 	reportDiagnostics(collectSettingsDiagnostics(startupSettingsManager, "startup session lookup"));
 
@@ -545,10 +555,11 @@ export async function main(args: string[], options?: MainOptions) {
 				extensionFactories: options?.extensionFactories,
 			},
 		});
-		const { settingsManager, modelRegistry, resourceLoader } = services;
+		const { settingsManager, stateManager, modelRegistry, resourceLoader } = services;
 		const diagnostics: AgentSessionRuntimeDiagnostic[] = [
 			...services.diagnostics,
 			...collectSettingsDiagnostics(settingsManager, "runtime creation"),
+			...collectStateDiagnostics(stateManager, "runtime creation"),
 			...resourceLoader.getExtensions().errors.map(({ path, error }) => ({
 				type: "error" as const,
 				message: `Failed to load extension "${path}": ${error}`,

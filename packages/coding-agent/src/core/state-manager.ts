@@ -16,6 +16,7 @@ export interface State {
 	lastChangelogVersion?: string;
 }
 
+/** Non-fatal state storage or legacy migration error collected for app-layer reporting. */
 export interface StateError {
 	source: "state" | "legacy-settings";
 	error: Error;
@@ -118,7 +119,13 @@ export class StateManager {
 		this.errors = [...initialErrors];
 	}
 
-	/** Create a StateManager backed by agentDir/state.json. */
+	/**
+	 * Create a StateManager backed by agentDir/state.json.
+	 *
+	 * During startup this migrates legacy changelog acknowledgement from
+	 * settings.json into state.json, then removes the legacy settings key once
+	 * state is authoritative so user settings stay clean and shareable.
+	 */
 	static create(agentDir: string = getAgentDir()): StateManager {
 		const storage = new FileStateStorage(join(agentDir, "state.json"));
 		const legacySettingsStorage = new FileStateStorage(join(agentDir, "settings.json"));

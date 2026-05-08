@@ -14,6 +14,7 @@ import type { ResourceLoader } from "./resource-loader.js";
 import { DefaultResourceLoader } from "./resource-loader.js";
 import { getDefaultSessionDir, SessionManager } from "./session-manager.js";
 import { SettingsManager } from "./settings-manager.js";
+import { StateManager } from "./state-manager.js";
 import { isInstallTelemetryEnabled } from "./telemetry.js";
 import { time } from "./timings.js";
 import {
@@ -75,6 +76,8 @@ export interface CreateAgentSessionOptions {
 
 	/** Settings manager. Default: SettingsManager.create(cwd, agentDir) */
 	settingsManager?: SettingsManager;
+	/** State manager. Default: StateManager.create(agentDir) */
+	stateManager?: StateManager;
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
 }
@@ -201,6 +204,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	const authStorage = options.authStorage ?? AuthStorage.create(authPath);
 	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, modelsPath);
 
+	const stateManager = options.stateManager ?? StateManager.create(agentDir);
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
 
@@ -393,6 +397,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		agent,
 		sessionManager,
 		settingsManager,
+		stateManager,
 		cwd,
 		scopedModels: options.scopedModels,
 		resourceLoader,

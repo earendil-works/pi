@@ -74,7 +74,6 @@ export type PackageSource =
 	  };
 
 export interface Settings {
-	lastChangelogVersion?: string;
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
@@ -561,16 +560,6 @@ export class SettingsManager {
 		const drained = [...this.errors];
 		this.errors = [];
 		return drained;
-	}
-
-	getLastChangelogVersion(): string | undefined {
-		return this.settings.lastChangelogVersion;
-	}
-
-	setLastChangelogVersion(version: string): void {
-		this.globalSettings.lastChangelogVersion = version;
-		this.markModified("lastChangelogVersion");
-		this.save();
 	}
 
 	getSessionDir(): string | undefined {

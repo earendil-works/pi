@@ -359,6 +359,7 @@ const { session } = await createAgentSession({
 - Global prompts (`prompts/`)
 - Global context file (`AGENTS.md`)
 - Settings (`settings.json`)
+- Local app state (`state.json`)
 - Custom models (`models.json`)
 - Credentials (`auth.json`)
 - Sessions (`sessions/`)
@@ -784,7 +785,7 @@ sm.createBranchedSession(leafId);       // Extract path to new file
 ### Settings Management
 
 ```typescript
-import { createAgentSession, SettingsManager, SessionManager } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, SettingsManager, StateManager, SessionManager } from "@earendil-works/pi-coding-agent";
 
 // Default: loads from files (global + project merged)
 const { session } = await createAgentSession({
@@ -802,6 +803,7 @@ const { session } = await createAgentSession({ settingsManager });
 // In-memory (no file I/O, for testing)
 const { session } = await createAgentSession({
   settingsManager: SettingsManager.inMemory({ compaction: { enabled: false } }),
+  stateManager: StateManager.inMemory(),
   sessionManager: SessionManager.inMemory(),
 });
 
@@ -831,6 +833,19 @@ Project overrides global. Nested objects merge keys. Setters modify global setti
 - `SettingsManager` does not print settings I/O errors. Use `settingsManager.drainErrors()` and report them in your app layer.
 
 > See [examples/sdk/10-settings.ts](../examples/sdk/10-settings.ts)
+
+### State Management
+
+`StateManager` stores Pi-owned local bookkeeping in `~/.pi/agent/state.json`. It is separate from `SettingsManager`; use settings for user preferences and state only for app-owned mutable runtime state.
+
+```typescript
+import { StateManager, createAgentSession } from "@earendil-works/pi-coding-agent";
+
+const stateManager = StateManager.inMemory({ lastChangelogVersion: "0.74.0" });
+const { session } = await createAgentSession({ stateManager });
+```
+
+Like settings, state setters enqueue writes asynchronously. Call `await stateManager.flush()` when tests or host applications need a durability boundary, and use `stateManager.drainErrors()` for app-layer reporting.
 
 ## ResourceLoader
 
@@ -1122,6 +1137,7 @@ defineTool
 // Session management
 SessionManager
 SettingsManager
+StateManager
 
 // Built-in tools (use process.cwd())
 codingTools

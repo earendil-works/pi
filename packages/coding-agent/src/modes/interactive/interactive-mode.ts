@@ -347,6 +347,9 @@ export class InteractiveMode {
 	private get settingsManager() {
 		return this.session.settingsManager;
 	}
+	private get stateManager() {
+		return this.session.stateManager;
+	}
 
 	constructor(
 		runtimeHost: AgentSessionRuntime,
@@ -842,20 +845,20 @@ export class InteractiveMode {
 			return undefined;
 		}
 
-		const lastVersion = this.settingsManager.getLastChangelogVersion();
+		const lastVersion = this.stateManager.getLastChangelogVersion();
 		const changelogPath = getChangelogPath();
 		const entries = parseChangelog(changelogPath);
 
 		if (!lastVersion) {
 			// Fresh install - record the version, send telemetry, don't show changelog
-			this.settingsManager.setLastChangelogVersion(VERSION);
+			this.stateManager.setLastChangelogVersion(VERSION);
 			this.reportInstallTelemetry(VERSION);
 			return undefined;
 		}
 
 		const newEntries = getNewEntries(entries, lastVersion);
 		if (newEntries.length > 0) {
-			this.settingsManager.setLastChangelogVersion(VERSION);
+			this.stateManager.setLastChangelogVersion(VERSION);
 			this.reportInstallTelemetry(VERSION);
 			return newEntries.map((e) => e.content).join("\n\n");
 		}
