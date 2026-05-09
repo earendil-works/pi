@@ -1,0 +1,16 @@
+{
+  "integration": "opencode",
+  "version": "0.8.8.dev0",
+  "installed_at": "2026-05-09T18:39:00.010798+00:00",
+  "files": {
+    ".opencode/command/speckit.analyze.md": "699032fdd49afe31d23c7191f3fe7bcb1d14b081fbc94c2287e6ba3a57574fda",
+    ".opencode/command/speckit.checklist.md": "d7d691689fe45427c868dcf18ade4df500f0c742a6c91923fefba405d6466dde",
+    ".opencode/command/speckit.clarify.md": "0cc766dcc5cab233ccdf3bc4cfb5759a6d7d1e13e29f611083046f818f5812bb",
+    ".opencode/command/speckit.constitution.md": "58d35eb026f56bb7364d91b8b0382d5dd1249ded6c1449a2b69546693afb85f7",
+    ".opencode/command/speckit.implement.md": "2acb475f761e5b65319c4e71847bd07b88c933b45da7be45e7801271f64fcd4d",
+    ".opencode/command/speckit.plan.md": "5b1e9c9b5a26a1877fe3b655a9350562cf5ee88788f9030e6b8a9dc1de88b347",
+    ".opencode/command/speckit.specify.md": "c7b1ab7ceafc42607e86dd6c0dab0b5cb74462a93a3cdd3b5e7173468cc88bdf",
+    ".opencode/command/speckit.tasks.md": "6b42e295fb67082392b4b62febf297c73655ea67cc9379cd5df80468e920cb4c",
+    ".opencode/command/speckit.taskstoissues.md": "e84794f7a839126defb364ca815352c5c2b2d20db2d6da399fa53e4ddbb7b3ee"
+  }
+}

@@ -245,3 +245,9 @@ git pull --rebase && git push
 ### User override
 
 If the user instructions conflict with rules set out here, ask for confirmation that they want to override the rules. Only then execute their instructions.
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan:
+`specs/001-dart-agent-package/plan.md`
+<!-- SPECKIT END -->

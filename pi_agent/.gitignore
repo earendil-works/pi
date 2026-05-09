@@ -1,0 +1,8 @@
+.dart_tool/
+build/
+.packages
+pubspec.lock
+*.g.dart
+.idea/
+.vscode/
+.DS_Store
