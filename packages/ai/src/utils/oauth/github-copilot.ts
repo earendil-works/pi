@@ -74,9 +74,16 @@ function getUrls(domain: string): {
 function getBaseUrlFromToken(token: string): string | null {
 	const match = token.match(/proxy-ep=([^;]+)/);
 	if (!match) return null;
+
 	const proxyHost = match[1];
-	// Convert proxy.xxx to api.xxx
-	const apiHost = proxyHost.replace(/^proxy\./, "api.");
+
+	// Convert:
+	// proxy.business.githubcopilot.com
+	// -> api.githubcopilot.com
+	const apiHost = proxyHost
+		.replace(/^proxy\./, "api.")
+		.replace(/^api\.business\./, "api.");
+
 	return `https://${apiHost}`;
 }
 
