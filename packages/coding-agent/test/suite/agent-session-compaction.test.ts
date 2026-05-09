@@ -1,10 +1,12 @@
-import { type AssistantMessage, fauxAssistantMessage, type Model } from "@earendil-works/pi-ai";
+import type { AgentTool } from "@earendil-works/pi-agent-core";
+import { type AssistantMessage, fauxAssistantMessage, fauxToolCall, type Model } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createHarness, type Harness } from "./harness.js";
+import { createHarness, getAssistantTexts, type Harness } from "./harness.js";
 
 type SessionWithCompactionInternals = {
-	_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<void>;
-	_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<void>;
+	_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<boolean>;
+	_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
 };
 
 function createUsage(totalTokens: number) {
@@ -39,6 +41,38 @@ function createAssistant(
 		model: model.id,
 		usage: createUsage(options.totalTokens ?? 0),
 	};
+}
+
+const echoToolSchema = Type.Object({ text: Type.String() });
+
+function createEchoTool(
+	toolRuns: string[],
+	options: { terminate?: boolean } = {},
+): AgentTool<typeof echoToolSchema, { text: string }> {
+	return {
+		name: "echo",
+		label: "Echo",
+		description: "Echo text",
+		parameters: echoToolSchema,
+		execute: async (_toolCallId, params) => {
+			toolRuns.push(params.text);
+			return {
+				content: [{ type: "text" as const, text: params.text }],
+				details: params,
+				terminate: options.terminate,
+			};
+		},
+	};
+}
+
+async function waitForCondition(condition: () => boolean, timeoutMs = 1000): Promise<void> {
+	const startedAt = Date.now();
+	while (!condition()) {
+		if (Date.now() - startedAt > timeoutMs) {
+			throw new Error("Timed out waiting for condition");
+		}
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
 }
 
 describe("AgentSession compaction characterization", () => {
@@ -158,6 +192,163 @@ describe("AgentSession compaction characterization", () => {
 		expect(continueSpy).toHaveBeenCalledTimes(1);
 	});
 
+	it("compacts between tool turns and resumes from the tool result", async () => {
+		const toolRuns: string[] = [];
+		const echoTool = createEchoTool(toolRuns);
+		let releaseTurnEnd: () => void = () => {};
+		let resolveTurnEndStarted: () => void = () => {};
+		const turnEndGate = new Promise<void>((resolve) => {
+			releaseTurnEnd = resolve;
+		});
+		const turnEndBlocked = new Promise<void>((resolve) => {
+			resolveTurnEndStarted = resolve;
+		});
+
+		const harness = await createHarness({
+			tools: [echoTool],
+			settings: { compaction: { reserveTokens: 128000, keepRecentTokens: 10 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("turn_end", async () => {
+						resolveTurnEndStarted();
+						await turnEndGate;
+					});
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "turn boundary compacted",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const model = harness.getModel();
+		const oldUser = {
+			role: "user" as const,
+			content: [{ type: "text" as const, text: "old seed history" }],
+			timestamp: Date.now() - 10_000,
+		};
+		const oldAssistant: AssistantMessage = {
+			...fauxAssistantMessage("old history that should be summarized away"),
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: createUsage(0),
+			timestamp: Date.now() - 9000,
+		};
+		harness.sessionManager.appendMessage(oldUser);
+		harness.sessionManager.appendMessage(oldAssistant);
+		harness.session.agent.state.messages = [oldUser, oldAssistant];
+
+		let compactionStarted = false;
+		harness.session.subscribe((event) => {
+			if (event.type === "compaction_start") {
+				compactionStarted = true;
+			}
+		});
+
+		let rolesSeenByContinuation: string[] = [];
+		let textSeenByContinuation = "";
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("echo", { text: "hello" }), { stopReason: "toolUse" }),
+			(context) => {
+				rolesSeenByContinuation = context.messages.map((message) => message.role);
+				textSeenByContinuation = JSON.stringify(context.messages);
+				return fauxAssistantMessage("continued after compaction");
+			},
+		]);
+
+		const promptPromise = harness.session.prompt("run the tool");
+		await turnEndBlocked;
+		await Promise.resolve();
+		expect(compactionStarted).toBe(false);
+		releaseTurnEnd();
+		await promptPromise;
+		expect(harness.getPendingResponseCount()).toBe(1);
+
+		await waitForCondition(() => harness.getPendingResponseCount() === 0);
+		await harness.session.agent.waitForIdle();
+
+		expect(toolRuns).toEqual(["hello"]);
+		expect(harness.getPendingResponseCount()).toBe(0);
+		expect(harness.eventsOfType("compaction_end").filter((event) => event.willRetry)).toHaveLength(1);
+		expect(harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction").length).toBeGreaterThan(
+			0,
+		);
+		expect(textSeenByContinuation).toContain("turn boundary compacted");
+		expect(rolesSeenByContinuation.at(-1)).toBe("toolResult");
+		expect(textSeenByContinuation).not.toContain("old seed history");
+		expect(textSeenByContinuation).not.toContain("old history that should be summarized away");
+		expect(getAssistantTexts(harness)).toContain("continued after compaction");
+	});
+
+	it("does not resume after turn-boundary compaction when a tool result terminates the batch", async () => {
+		const toolRuns: string[] = [];
+		const echoTool = createEchoTool(toolRuns, { terminate: true });
+		const harness = await createHarness({
+			tools: [echoTool],
+			settings: { compaction: { reserveTokens: 128000, keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "terminal tool compacted after stop",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+		const compactionEnded = new Promise<void>((resolve) => {
+			harness.session.subscribe((event) => {
+				if (event.type === "compaction_end") {
+					resolve();
+				}
+			});
+		});
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("echo", { text: "stop" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("should remain pending"),
+		]);
+
+		await harness.session.prompt("run terminal tool");
+		await compactionEnded;
+
+		expect(toolRuns).toEqual(["stop"]);
+		expect(harness.eventsOfType("compaction_end").filter((event) => event.willRetry)).toHaveLength(0);
+		expect(harness.getPendingResponseCount()).toBe(1);
+		expect(getAssistantTexts(harness)).not.toContain("should remain pending");
+	});
+
+	it("does not compact below threshold between tool turns", async () => {
+		const toolRuns: string[] = [];
+		const echoTool = createEchoTool(toolRuns);
+		const harness = await createHarness({
+			tools: [echoTool],
+			settings: { compaction: { enabled: true, reserveTokens: 1000 } },
+			models: [{ id: "faux-1", contextWindow: 200_000 }],
+		});
+		harnesses.push(harness);
+		harness.setResponses([
+			fauxAssistantMessage(fauxToolCall("echo", { text: "small" }), { stopReason: "toolUse" }),
+			fauxAssistantMessage("continued without compaction"),
+		]);
+
+		await harness.session.prompt("run small tool");
+
+		expect(toolRuns).toEqual(["small"]);
+		expect(harness.getPendingResponseCount()).toBe(0);
+		expect(harness.eventsOfType("compaction_end")).toHaveLength(0);
+		expect(getAssistantTexts(harness)).toContain("continued without compaction");
+	});
+
 	it("does not retry overflow recovery more than once", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
@@ -167,7 +358,7 @@ describe("AgentSession compaction characterization", () => {
 			errorMessage: "prompt is too long",
 			timestamp: Date.now(),
 		});
-		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue();
+		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
 		const compactionErrors: string[] = [];
 		harness.session.subscribe((event) => {
 			if (event.type === "compaction_end" && event.errorMessage) {
@@ -215,7 +406,7 @@ describe("AgentSession compaction characterization", () => {
 			timestamp: Date.now(),
 		});
 
-		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue();
+		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
 
 		await sessionInternals._checkCompaction(staleAssistant, false);
 
@@ -243,7 +434,7 @@ describe("AgentSession compaction characterization", () => {
 			errorAssistant,
 		];
 
-		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue();
+		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
 
 		await sessionInternals._checkCompaction(errorAssistant);
 
@@ -264,7 +455,7 @@ describe("AgentSession compaction characterization", () => {
 			errorAssistant,
 		];
 
-		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue();
+		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
 
 		await sessionInternals._checkCompaction(errorAssistant);
 
@@ -309,7 +500,7 @@ describe("AgentSession compaction characterization", () => {
 			errorAssistant,
 		];
 
-		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue();
+		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue(false);
 
 		await sessionInternals._checkCompaction(errorAssistant);
 
@@ -327,8 +518,8 @@ describe("AgentSession compaction characterization", () => {
 
 		const belowThresholdInternals = belowThresholdHarness.session as unknown as SessionWithCompactionInternals;
 		const disabledInternals = disabledHarness.session as unknown as SessionWithCompactionInternals;
-		const belowThresholdSpy = vi.spyOn(belowThresholdInternals, "_runAutoCompaction").mockResolvedValue();
-		const disabledSpy = vi.spyOn(disabledInternals, "_runAutoCompaction").mockResolvedValue();
+		const belowThresholdSpy = vi.spyOn(belowThresholdInternals, "_runAutoCompaction").mockResolvedValue(false);
+		const disabledSpy = vi.spyOn(disabledInternals, "_runAutoCompaction").mockResolvedValue(false);
 
 		await belowThresholdInternals._checkCompaction(
 			createAssistant(belowThresholdHarness, { stopReason: "stop", totalTokens: 1_000, timestamp: Date.now() }),

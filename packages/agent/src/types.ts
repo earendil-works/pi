@@ -106,6 +106,13 @@ export interface ShouldStopAfterTurnContext {
 	message: AssistantMessage;
 	/** Tool result messages passed to the preceding `turn_end` event. */
 	toolResults: ToolResultMessage[];
+	/**
+	 * Whether the loop would make another assistant call to consume these tool results.
+	 *
+	 * This is false when the turn has no tool results, or when every tool result requested
+	 * termination for the current tool batch.
+	 */
+	willContinueForToolResults: boolean;
 	/** Current agent context after the turn's assistant message and tool results have been appended. */
 	context: AgentContext;
 	/** Messages that this loop invocation will return if it exits at this point. Prompt runs include the initial prompt messages; continuation runs do not include pre-existing context messages. */

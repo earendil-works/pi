@@ -219,6 +219,7 @@ async function runLoop(
 				await config.shouldStopAfterTurn?.({
 					message,
 					toolResults,
+					willContinueForToolResults: hasMoreToolCalls && toolResults.length > 0,
 					context: currentContext,
 					newMessages,
 				})
