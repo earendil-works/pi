@@ -546,6 +546,9 @@ export async function main(args: string[], options?: MainOptions) {
 			},
 		});
 		const { settingsManager, modelRegistry, resourceLoader } = services;
+
+		// Discover real context windows from Ollama /api/show for models with default 128000
+		await modelRegistry.discoverContextWindows();
 		const diagnostics: AgentSessionRuntimeDiagnostic[] = [
 			...services.diagnostics,
 			...collectSettingsDiagnostics(settingsManager, "runtime creation"),

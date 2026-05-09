@@ -334,6 +334,8 @@ export class ModelRegistry {
 	private modelRequestHeaders: Map<string, Record<string, string>> = new Map();
 	private registeredProviders: Map<string, ProviderConfigInput> = new Map();
 	private loadError: string | undefined = undefined;
+	/** Model keys ("provider:id") whose contextWindow fell back to the 128000 default during parseModels. */
+	private modelsWithDefaultContextWindow: Set<string> = new Set();
 
 	private constructor(
 		readonly authStorage: AuthStorage,
@@ -356,6 +358,7 @@ export class ModelRegistry {
 	refresh(): void {
 		this.providerRequestConfigs.clear();
 		this.modelRequestHeaders.clear();
+		this.modelsWithDefaultContextWindow.clear();
 		this.loadError = undefined;
 
 		// Ensure dynamic API/OAuth registrations are rebuilt from current provider state.
@@ -603,10 +606,57 @@ export class ModelRegistry {
 					headers: undefined,
 					compat,
 				} as Model<Api>);
+
+				if (modelDef.contextWindow === undefined) {
+					this.modelsWithDefaultContextWindow.add(`${providerName}:${modelDef.id}`);
+				}
 			}
 		}
 
 		return models;
+	}
+
+	/**
+	 * Discover context windows from Ollama /api/show for models that used the 128000 default.
+	 *
+	 * For each model whose `contextWindow` was not explicitly set in models.json, queries the
+	 * Ollama `/api/show` endpoint (derived from the model's baseUrl) to read the real
+	 * `context_length` from model metadata. Silently skips providers that don't expose an
+	 * Ollama-compatible API or models whose lookups fail.
+	 */
+	async discoverContextWindows(): Promise<void> {
+		const candidates = this.models.filter((m) =>
+			this.modelsWithDefaultContextWindow.has(`${m.provider}:${m.id}`),
+		);
+		if (candidates.length === 0) return;
+
+		// Group by (derived) Ollama API base to avoid redundant host lookups
+		const byApiBase = new Map<string, Model<Api>[]>();
+		for (const model of candidates) {
+			const apiBase = deriveOllamaApiBase(model.baseUrl);
+			if (!apiBase) continue;
+			let group = byApiBase.get(apiBase);
+			if (!group) {
+				group = [];
+				byApiBase.set(apiBase, group);
+			}
+			group.push(model);
+		}
+
+		for (const [apiBase, models] of byApiBase) {
+			// Quick liveness check — skip the whole group if the host is unreachable
+			if (!(await probeOllamaHost(apiBase))) continue;
+
+			await Promise.all(
+				models.map(async (model) => {
+					const contextWindow = await queryOllamaContextWindow(apiBase, model.id);
+					if (contextWindow !== undefined) {
+						model.contextWindow = contextWindow;
+						this.modelsWithDefaultContextWindow.delete(`${model.provider}:${model.id}`);
+					}
+				}),
+			);
+		}
 	}
 
 	/**
@@ -950,4 +1000,58 @@ export interface ProviderConfigInput {
 		headers?: Record<string, string>;
 		compat?: Model<Api>["compat"];
 	}>;
+}
+
+/**
+ * Derive the Ollama native API base URL from an OpenAI-compat baseUrl.
+ * Returns undefined if the URL doesn't look like an Ollama endpoint.
+ */
+function deriveOllamaApiBase(baseUrl: string | undefined): string | undefined {
+	if (!baseUrl) return undefined;
+	// Ollama serves /v1 for OpenAI compat and /api/show for native queries.
+	const match = baseUrl.match(/^(https?:\/\/[^\/]+)\/v1\/?$/);
+	if (match) return match[1];
+	return undefined;
+}
+
+/**
+ * Probe whether a host responds to the Ollama /api/version endpoint.
+ */
+async function probeOllamaHost(apiBase: string): Promise<boolean> {
+	try {
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), 3000);
+		const res = await fetch(`${apiBase}/api/version`, { signal: controller.signal });
+		clearTimeout(timeout);
+		return res.ok;
+	} catch {
+		return false;
+	}
+}
+
+/**
+ * Query Ollama /api/show for a model and extract its context_length.
+ */
+async function queryOllamaContextWindow(apiBase: string, modelId: string): Promise<number | undefined> {
+	try {
+		const controller = new AbortController();
+		const timeout = setTimeout(() => controller.abort(), 5000);
+		const res = await fetch(`${apiBase}/api/show`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ name: modelId }),
+			signal: controller.signal,
+		});
+		clearTimeout(timeout);
+		if (!res.ok) return undefined;
+		const data = (await res.json()) as { model_info?: Record<string, unknown> };
+		const modelInfo = data.model_info ?? {};
+		const architecture = modelInfo["general.architecture"];
+		if (typeof architecture !== "string") return undefined;
+		const contextLength = modelInfo[`${architecture}.context_length`];
+		if (typeof contextLength === "number" && contextLength > 0) return contextLength;
+		return undefined;
+	} catch {
+		return undefined;
+	}
 }

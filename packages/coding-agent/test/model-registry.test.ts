@@ -1467,5 +1467,104 @@ describe("ModelRegistry", () => {
 				}
 			});
 		});
+
+	describe("discoverContextWindows", () => {
+		test("models without explicit contextWindow are discovered from Ollama", async () => {
+			const http = await import("node:http");
+
+			// Minimal Ollama mock using built-in http
+			const server = http.createServer((req, res) => {
+				const chunks: Buffer[] = [];
+				req.on("data", (chunk: Buffer) => chunks.push(chunk));
+				req.on("end", () => {
+					if (req.url === "/api/version") {
+						res.writeHead(200, { "Content-Type": "application/json" });
+						res.end(JSON.stringify({ version: "0.6.0" }));
+						return;
+					}
+					if (req.url === "/api/show" && req.method === "POST") {
+						const body = JSON.parse(Buffer.concat(chunks).toString());
+						const modelId = body.name;
+						const contextLengths: Record<string, number> = {
+							"test-model-a": 262144,
+							"test-model-b": 32768,
+						};
+						const arch = modelId.replace(/[^a-z0-9]/g, "");
+						res.writeHead(200, { "Content-Type": "application/json" });
+						res.end(JSON.stringify({
+							model_info: {
+								"general.architecture": arch,
+								[`${arch}.context_length`]: contextLengths[modelId] ?? 8192,
+							},
+						}));
+						return;
+					}
+					res.writeHead(404);
+					res.end();
+				});
+			});
+
+			await new Promise<void>((resolve) => server.listen(0, resolve));
+			const port = (server.address() as any).port;
+
+			try {
+				writeRawModelsJson({
+					"ollama-mock": {
+						api: "openai-completions",
+						apiKey: "mock",
+						baseUrl: `http://127.0.0.1:${port}/v1`,
+						models: [
+							{ id: "test-model-a" },
+							{ id: "test-model-b" },
+							{ id: "test-model-c", contextWindow: 131072 },
+						],
+					},
+				});
+
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+				expect(registry.find("ollama-mock", "test-model-a")?.contextWindow).toBe(128000);
+				expect(registry.find("ollama-mock", "test-model-b")?.contextWindow).toBe(128000);
+				expect(registry.find("ollama-mock", "test-model-c")?.contextWindow).toBe(131072);
+
+				await registry.discoverContextWindows();
+
+				expect(registry.find("ollama-mock", "test-model-a")?.contextWindow).toBe(262144);
+				expect(registry.find("ollama-mock", "test-model-b")?.contextWindow).toBe(32768);
+				expect(registry.find("ollama-mock", "test-model-c")?.contextWindow).toBe(131072);
+			} finally {
+				await new Promise<void>((resolve) => server.close(resolve));
+			}
+		});
+
+		test("silently skips unreachable Ollama hosts", async () => {
+			writeRawModelsJson({
+				"ollama-unreachable": {
+					api: "openai-completions",
+					apiKey: "mock",
+					baseUrl: "http://127.0.0.1:1/v1",
+					models: [{ id: "test-model" }],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			await registry.discoverContextWindows();
+			expect(registry.find("ollama-unreachable", "test-model")?.contextWindow).toBe(128000);
+		});
+
+		test("is a no-op when all models have explicit contextWindow", async () => {
+			writeRawModelsJson({
+				"ollama-explicit": {
+					api: "openai-completions",
+					apiKey: "mock",
+					baseUrl: "http://127.0.0.1:1/v1",
+					models: [{ id: "test-model", contextWindow: 65536 }],
+				},
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			await registry.discoverContextWindows();
+			expect(registry.find("ollama-explicit", "test-model")?.contextWindow).toBe(65536);
+		});
+	});
 	});
 });
