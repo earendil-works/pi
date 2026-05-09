@@ -849,6 +849,7 @@ function createClient(
 	// API key auth
 	const client = new Anthropic({
 		apiKey,
+		authToken: null,
 		baseURL: model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		defaultHeaders: mergeHeaders(
