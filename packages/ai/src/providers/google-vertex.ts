@@ -3,6 +3,7 @@ import {
 	type GenerateContentParameters,
 	GoogleGenAI,
 	type HttpOptions,
+	type HttpRetryOptions,
 	ResourceScope,
 	type ThinkingConfig,
 	ThinkingLevel,
@@ -444,6 +445,17 @@ function buildParams(
 		...(context.systemPrompt && { systemInstruction: sanitizeSurrogates(context.systemPrompt) }),
 		...(context.tools && context.tools.length > 0 && { tools: convertTools(context.tools) }),
 	};
+
+	const requestHttpOptions: HttpOptions = {};
+	if (options.timeoutMs !== undefined) {
+		requestHttpOptions.timeout = options.timeoutMs;
+	}
+	if (options.maxRetries !== undefined) {
+		requestHttpOptions.retryOptions = { attempts: options.maxRetries + 1 } satisfies HttpRetryOptions;
+	}
+	if (Object.keys(requestHttpOptions).length > 0) {
+		config.httpOptions = requestHttpOptions;
+	}
 
 	if (context.tools && context.tools.length > 0 && options.toolChoice) {
 		config.toolConfig = {
