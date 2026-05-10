@@ -402,7 +402,7 @@ export class AgentInterface extends LitElement {
 		const state = this.session.state;
 		const conversationFocusKey = getConversationFocusKey(session);
 		return html`
-			<div class="flex flex-col h-full bg-background text-foreground">
+			<div class="flex flex-col h-full text-foreground" style="background: red;">
 				<!-- Messages Area -->
 				<div class="flex-1 overflow-y-auto">
 					<div class="max-w-3xl mx-auto p-4 pb-0">${this.renderMessages()}</div>
