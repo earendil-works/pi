@@ -146,6 +146,7 @@ function App() {
   const [agentModal, setAgentModal] = useState<any>(null);
   const [commandModal, setCommandModal] = useState<any>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
   const activeTools = useRef<Record<string, string>>({});
   const activeAssistantId = useRef<string | null>(null);
   const activeThinkingId = useRef<string | null>(null);
@@ -439,6 +440,9 @@ function App() {
   }, [sidebarOpen]);
 
   function handleEvent(e: any) {
+    if (e.type === 'terminal_start' || e.type === 'terminal_output' || e.type === 'terminal_exit') {
+      window.dispatchEvent(new CustomEvent('pi-terminal-event', { detail: e }));
+    }
     if (e.type === 'agent_start') { resetStreamingRefs(); setBusyState(true); setStatus('thinking…'); }
     if (e.type === 'web_connected' && e.rpcBusy) { setBusyState(true); setStatus('thinking…'); loadState(); }
     if (e.type === 'agent_end') { finishThinking(); finishAssistant(); setBusyState(false); setStatus('ready'); setMessages(prev => prev.map(item => item.running ? { ...item, running: false } : item)); loadMessages(); loadProjects(); loadState(); setTimeout(drainPromptQueue, 150); }
@@ -620,13 +624,13 @@ function App() {
     <section className="relative flex h-screen min-w-0 flex-col">
       {view === 'chat' && <header className="fixed left-[290px] right-0 top-0 z-10 flex h-12 items-center justify-between border-b border-gray-100 bg-white/95 px-4 max-[820px]:left-0">
         <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-sm font-semibold">π Pi Web</h1></div>
-        <div className="flex items-center gap-3 text-xs text-gray-500"><span className="rounded-full bg-gray-100 px-3 py-1">{contextText}</span><span>{status}</span></div>
+        <div className="flex items-center gap-2 text-xs text-gray-500"><span className="rounded-full bg-gray-100 px-3 py-1">{contextText}</span><span>{status}</span><button type="button" className={'rounded-lg px-3 py-1 font-semibold ' + (terminalOpen ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200')} onClick={() => setTerminalOpen(!terminalOpen)}>Terminal</button></div>
       </header>}
       {view !== 'chat' && <header className="fixed left-[290px] right-0 top-0 z-10 flex h-12 items-center justify-between border-b border-gray-100 bg-white/95 px-4 max-[820px]:left-0">
         <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-sm font-semibold">{view === 'skills' ? 'Skills' : view === 'tools' ? 'Tools' : 'Agents'}</h1></div>
         <div className="text-xs text-gray-400">π Pi Web</div>
       </header>}
-      {view === 'chat' && <ChatView logRef={logRef} messages={messages} input={input} setInput={setInput} submitPrompt={submitPrompt} submitMessage={submitMessage} abortGeneration={abortGeneration} busy={busy} queuedPrompts={queuedPrompts} removeQueuedPrompt={(id: string) => setQueue(queuedPromptsRef.current.filter(item => item.id !== id))} models={models} commands={commands} state={state} loadState={loadState} focusKey={currentSessionPath} />}
+      {view === 'chat' && <ChatView logRef={logRef} messages={messages} input={input} setInput={setInput} submitPrompt={submitPrompt} submitMessage={submitMessage} abortGeneration={abortGeneration} busy={busy} queuedPrompts={queuedPrompts} removeQueuedPrompt={(id: string) => setQueue(queuedPromptsRef.current.filter(item => item.id !== id))} models={models} commands={commands} state={state} loadState={loadState} focusKey={(state?.cwd || '') + ':' + currentSessionPath} terminalOpen={terminalOpen} setTerminalOpen={setTerminalOpen} />}
       {view === 'skills' && <SkillsView skills={skills} reload={async () => { await loadSkills(); await loadCommands(); }} openModal={setSkillModal} />}
       {view === 'tools' && <ToolsView tools={[...builtinTools, ...tools]} openModal={setToolModal} saveTools={saveTools} customTools={tools} />}
       {view === 'agents' && <AgentsView builtinAgents={builtinAgents.map(agent => ({ ...agent, systemPrompt: mainSystemPrompt, skills: skills.map((skill: any) => skill.name), tools: [...builtinTools, ...tools].map((tool: any) => tool.name), ...(builtinAgentOverrides[agent.id] || {}) }))} customAgents={agents} openModal={setAgentModal} saveAgents={saveAgents} />}
@@ -663,7 +667,7 @@ function ProjectTree({ project, collapsed, icon, currentSessionPath, onToggle, o
     </div>)}
   </div>;
 }
-function ChatView({ logRef, messages, input, setInput, submitPrompt, submitMessage, abortGeneration, busy, queuedPrompts, removeQueuedPrompt, models, commands, state, loadState, focusKey }: any) {
+function ChatView({ logRef, messages, input, setInput, submitPrompt, submitMessage, abortGeneration, busy, queuedPrompts, removeQueuedPrompt, models, commands, state, loadState, focusKey, terminalOpen, setTerminalOpen }: any) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -790,12 +794,15 @@ function ChatView({ logRef, messages, input, setInput, submitPrompt, submitMessa
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
+  const terminalOffsetClass = terminalOpen ? 'min-[1000px]:pr-[420px]' : '';
+  const terminalFormClass = terminalOpen ? 'min-[1000px]:right-[420px]' : 'right-0';
   return <>
-    <main ref={logRef} onScroll={handleChatScroll} style={{ paddingBottom: composerHeight + 64 }} className="flex-1 overflow-y-auto px-6 pt-16 scrollbar-thin"><div className="mx-auto w-full max-w-6xl space-y-4">
+    <main ref={logRef} onScroll={handleChatScroll} style={{ paddingBottom: composerHeight + 64 }} className={'flex-1 overflow-y-auto px-6 pt-16 scrollbar-thin ' + terminalOffsetClass}><div className="mx-auto w-full max-w-6xl space-y-4">
       {renderStart > 0 && <div className="py-3 text-center text-xs text-gray-400">Scroll up to load older messages</div>}
       {messages.slice(renderStart).map((item: ChatItem) => <Message key={item.id} item={item} />)}
     </div></main>
-    <form ref={formRef} onSubmit={submitPrompt} className="fixed bottom-0 left-[290px] right-0 bg-gradient-to-t from-white via-white px-6 pb-4 pt-3 max-[820px]:left-0"><div className="mx-auto w-full max-w-6xl">
+    {terminalOpen && <TerminalPane focusKey={focusKey} onClose={() => setTerminalOpen(false)} />}
+    <form ref={formRef} onSubmit={submitPrompt} className={'fixed bottom-0 left-[290px] bg-gradient-to-t from-white via-white px-6 pb-4 pt-3 max-[820px]:left-0 ' + terminalFormClass}><div className="mx-auto w-full max-w-6xl">
       {showSuggestions && <div className="mb-2 max-h-64 overflow-auto rounded-2xl border border-gray-200 bg-white p-1.5 shadow-pi">
         {slashMatches.map((command: any, index: number) => <button key={command.name} type="button" className={'flex w-full items-baseline gap-3 rounded-xl px-3 py-2 text-left hover:bg-[#f2f4ff] ' + (index === selectedSuggestion ? 'bg-[#f2f4ff]' : '')} onMouseDown={ev => { ev.preventDefault(); runSuggestion(command); }}>
           <span className="min-w-36 font-bold text-piAccent">/{command.name}</span><span className="truncate text-xs text-gray-500">{command.description || command.source || ''}</span>
@@ -841,6 +848,85 @@ function ChatView({ logRef, messages, input, setInput, submitPrompt, submitMessa
       </div>
     </div></form>
   </>;
+}
+function TerminalPane({ focusKey, onClose }: any) {
+  const [cwd, setCwd] = useState('');
+  const [pid, setPid] = useState<number | null>(null);
+  const [running, setRunning] = useState(false);
+  const [output, setOutput] = useState('');
+  const [input, setInput] = useState('');
+  const outputRef = useRef<HTMLPreElement | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  function append(text: string) {
+    setOutput(prev => {
+      const next = prev + text;
+      return next.length > 200000 ? next.slice(-200000) : next;
+    });
+  }
+
+  async function start(restart = false) {
+    const res = await fetch(restart ? '/api/terminal/restart' : '/api/terminal/start', { method: 'POST' });
+    if (!res.ok) {
+      append('\nTerminal error: ' + await res.text() + '\n');
+      return;
+    }
+    const json = await res.json();
+    const data = json.data || {};
+    setCwd(data.cwd || '');
+    setPid(data.pid || null);
+    setRunning(!!data.running);
+    setOutput(data.buffer || '');
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  async function send(data: string) {
+    if (!data) return;
+    const res = await fetch('/api/terminal/input', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data }) });
+    if (!res.ok) append('\nTerminal error: ' + await res.text() + '\n');
+  }
+
+  function submitLine() {
+    const value = input;
+    setInput('');
+    send(value + '\n');
+  }
+
+  useEffect(() => { start(false); }, [focusKey]);
+  useEffect(() => {
+    const handler = (event: any) => {
+      const detail = event.detail || {};
+      if (detail.cwd && cwd && detail.cwd !== cwd) return;
+      if (detail.type === 'terminal_start') {
+        setCwd(detail.cwd || '');
+        setPid(detail.pid || null);
+        setRunning(true);
+      } else if (detail.type === 'terminal_output') {
+        append(detail.data || '');
+      } else if (detail.type === 'terminal_exit') {
+        setRunning(false);
+        append('\n[terminal exited code=' + detail.code + ' signal=' + detail.signal + ']\n');
+      }
+    };
+    window.addEventListener('pi-terminal-event', handler);
+    return () => window.removeEventListener('pi-terminal-event', handler);
+  }, [cwd]);
+  useEffect(() => { outputRef.current?.scrollTo({ top: outputRef.current.scrollHeight }); }, [output]);
+
+  return <aside className="fixed bottom-0 right-0 top-12 z-20 flex w-[420px] max-w-full flex-col border-l border-gray-200 bg-[#0b1020] text-gray-100 shadow-pi max-[999px]:left-0 max-[999px]:top-auto max-[999px]:h-[45vh] max-[999px]:w-full max-[999px]:border-l-0 max-[999px]:border-t">
+    <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/10 px-3">
+      <div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-gray-100">Terminal</div><div className="truncate font-mono text-[10px] text-gray-400">{cwd || 'starting'}{pid ? ' · pid ' + pid : ''}</div></div>
+      <span className={'rounded-full px-2 py-0.5 text-[10px] font-semibold ' + (running ? 'bg-green-400/15 text-green-200' : 'bg-gray-400/15 text-gray-300')}>{running ? 'Running' : 'Stopped'}</span>
+      <button type="button" className="rounded-lg bg-white/10 px-2 py-1 text-xs text-gray-100 hover:bg-white/15" onClick={() => start(true)}>Restart</button>
+      <button type="button" className="rounded-lg bg-white/10 px-2 py-1 text-xs text-gray-100 hover:bg-white/15" onClick={onClose}>Close</button>
+    </div>
+    <pre ref={outputRef} className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5 text-gray-100 scrollbar-thin">{output || 'Starting terminal…'}</pre>
+    <div className="flex shrink-0 items-center gap-2 border-t border-white/10 p-2">
+      <button type="button" className="rounded-md bg-white/10 px-2 py-1 font-mono text-xs text-gray-100 hover:bg-white/15" title="Send Ctrl+C" onClick={() => send('\u0003')}>^C</button>
+      <span className="font-mono text-xs text-gray-500">$</span>
+      <input ref={inputRef} className="min-w-0 flex-1 border-0 bg-transparent font-mono text-xs text-gray-100 outline-none placeholder:text-gray-600" value={input} disabled={!running} placeholder={running ? 'type command and press Enter' : 'terminal stopped'} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submitLine(); } }} />
+    </div>
+  </aside>;
 }
 function AttachmentPreview({ files, remove }: any) { return <div className="mb-2 flex flex-wrap gap-2">{files.map((file: any, index: number) => <div key={index} className="group relative overflow-hidden rounded-xl border border-gray-200 bg-gray-50">{String(file.type || '').startsWith('image/') && file.dataUrl ? <img src={file.dataUrl} className="h-20 w-20 object-cover" /> : <div className="flex h-20 w-40 items-center justify-center px-3 text-center text-xs text-gray-500">{file.name}</div>}<div className="absolute inset-x-0 bottom-0 truncate bg-black/55 px-2 py-1 text-[10px] text-white">{file.name}</div>{remove && <button type="button" className="absolute right-1 top-1 hidden rounded-full bg-black/60 px-1.5 text-xs text-white group-hover:block" onClick={() => remove(index)}>×</button>}</div>)}</div>; }
 function Message({ item }: { item: ChatItem }) {

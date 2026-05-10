@@ -266,6 +266,94 @@ function createRpc(rpcArgs, broadcast, cwd = process.cwd()) {
 	return { child, send, sendDetached, cwd };
 }
 
+function createTerminalManager(broadcast) {
+	const terminals = new Map();
+	const maxBufferLength = 200000;
+
+	function terminalKey(cwd) {
+		return path.resolve(cwd || process.cwd());
+	}
+
+	function terminalShell() {
+		if (process.env.SHELL) return process.env.SHELL;
+		return process.platform === "win32" ? "cmd.exe" : "/bin/sh";
+	}
+
+	function shellArgs(shell) {
+		if (process.platform === "win32") return [];
+		const base = path.basename(shell);
+		return base === "bash" || base === "zsh" || base === "fish" || base === "sh" ? ["-i"] : [];
+	}
+
+	function appendOutput(terminal, data) {
+		terminal.buffer += data;
+		if (terminal.buffer.length > maxBufferLength) terminal.buffer = terminal.buffer.slice(-maxBufferLength);
+		broadcast({ type: "terminal_output", cwd: terminal.cwd, data });
+	}
+
+	function ensure(cwd) {
+		const resolvedCwd = terminalKey(cwd);
+		const existing = terminals.get(resolvedCwd);
+		if (existing && !existing.exited) return existing;
+		const shell = terminalShell();
+		const child = spawn(shell, shellArgs(shell), {
+			cwd: resolvedCwd,
+			env: { ...process.env, TERM: process.env.TERM || "xterm-256color" },
+			stdio: ["pipe", "pipe", "pipe"],
+		});
+		const terminal = { cwd: resolvedCwd, child, buffer: "", exited: false, exitCode: null, signal: null };
+		terminals.set(resolvedCwd, terminal);
+		broadcast({ type: "terminal_start", cwd: resolvedCwd, pid: child.pid });
+		child.stdout.on("data", (chunk) => appendOutput(terminal, chunk.toString("utf8")));
+		child.stderr.on("data", (chunk) => appendOutput(terminal, chunk.toString("utf8")));
+		child.on("exit", (code, signal) => {
+			terminal.exited = true;
+			terminal.exitCode = code;
+			terminal.signal = signal;
+			broadcast({ type: "terminal_exit", cwd: resolvedCwd, code, signal });
+		});
+		child.on("error", (error) => {
+			appendOutput(terminal, `\r\nTerminal error: ${error instanceof Error ? error.message : String(error)}\r\n`);
+		});
+		return terminal;
+	}
+
+	function write(cwd, data) {
+		const terminal = ensure(cwd);
+		if (terminal.exited) throw new Error("Terminal is not running");
+		terminal.child.stdin.write(String(data || ""));
+		return terminal;
+	}
+
+	function stop(cwd) {
+		const resolvedCwd = terminalKey(cwd);
+		const terminal = terminals.get(resolvedCwd);
+		if (!terminal) return;
+		terminal.child.kill("SIGTERM");
+		terminals.delete(resolvedCwd);
+	}
+
+	function stopAll() {
+		for (const terminal of terminals.values()) terminal.child.kill("SIGTERM");
+		terminals.clear();
+	}
+
+	function state(cwd) {
+		const resolvedCwd = terminalKey(cwd);
+		const terminal = terminals.get(resolvedCwd);
+		return {
+			cwd: resolvedCwd,
+			running: !!terminal && !terminal.exited,
+			pid: terminal?.child?.pid ?? null,
+			buffer: terminal?.buffer ?? "",
+			exitCode: terminal?.exitCode ?? null,
+			signal: terminal?.signal ?? null,
+		};
+	}
+
+	return { ensure, write, stop, stopAll, state };
+}
+
 const html = String.raw`<!doctype html>
 <html lang="en">
 <head>
@@ -2006,7 +2094,9 @@ export async function runWebMode(args: string[] = []) {
 		const payload = `data: ${JSON.stringify(event)}\n\n`;
 		for (const res of clients) res.write(payload);
 	};
+	const terminalManager = createTerminalManager(broadcast);
 	let mainSystemPromptOverride = await readWebMainSystemPromptOverride();
+	let activeCwd = process.cwd();
 	let rpc = createRpc(opts.rpcArgs, broadcast, process.cwd());
 	const applyMainSystemPromptOverride = async (targetRpc = rpc) => {
 		if (mainSystemPromptOverride && mainSystemPromptOverride.trim()) {
@@ -2028,6 +2118,7 @@ export async function runWebMode(args: string[] = []) {
 			await rpc.send({ type: "new_session" });
 		}
 		await applyMainSystemPromptOverride(rpc);
+		activeCwd = resolvedCwd;
 		broadcast({ type: "project_opened", cwd: resolvedCwd });
 		return resolvedCwd;
 	};
@@ -2137,7 +2228,7 @@ export async function runWebMode(args: string[] = []) {
 							response = await rpc.send({ type: "clone" });
 						} else if (commandName === "reload") {
 							const previous = rpc;
-							rpc = createRpc(opts.rpcArgs, broadcast, rpc.cwd);
+							rpc = createRpc(opts.rpcArgs, broadcast, activeCwd);
 							previous.child.kill("SIGTERM");
 							await applyMainSystemPromptOverride(rpc);
 							response = { type: "response", command: "reload", success: true };
@@ -2252,16 +2343,88 @@ export async function runWebMode(args: string[] = []) {
 			try {
 				const sessions = await SessionManager.listAll();
 				res.writeHead(200, { "content-type": "application/json" });
-				res.end(JSON.stringify({ projects: groupSessionsByProject(sessions, rpc.cwd) }));
+				res.end(JSON.stringify({ projects: groupSessionsByProject(sessions, activeCwd) }));
 			} catch (error) {
 				res.writeHead(500, { "content-type": "text/plain" });
 				res.end(error instanceof Error ? error.message : String(error));
 			}
 			return;
 		}
+		if (req.method === "GET" && url.pathname === "/api/terminal/state") {
+			try {
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(JSON.stringify({ success: true, data: terminalManager.state(activeCwd) }));
+			} catch (error) {
+				res.writeHead(500, { "content-type": "text/plain" });
+				res.end(error instanceof Error ? error.message : String(error));
+			}
+			return;
+		}
+		if (req.method === "POST" && url.pathname === "/api/terminal/start") {
+			try {
+				const terminal = terminalManager.ensure(activeCwd);
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(
+					JSON.stringify({
+						success: true,
+						data: {
+							cwd: terminal.cwd,
+							pid: terminal.child.pid,
+							running: !terminal.exited,
+							buffer: terminal.buffer,
+						},
+					}),
+				);
+			} catch (error) {
+				res.writeHead(400, { "content-type": "text/plain" });
+				res.end(error instanceof Error ? error.message : String(error));
+			}
+			return;
+		}
+		if (req.method === "POST" && url.pathname === "/api/terminal/input") {
+			let body = "";
+			req.on("data", (chunk) => {
+				body += chunk;
+			});
+			req.on("end", async () => {
+				try {
+					const data = JSON.parse(body || "{}");
+					if (typeof data.data !== "string") throw new Error("Missing terminal input");
+					const terminal = terminalManager.write(activeCwd, data.data);
+					res.writeHead(200, { "content-type": "application/json" });
+					res.end(JSON.stringify({ success: true, data: { cwd: terminal.cwd, pid: terminal.child.pid } }));
+				} catch (error) {
+					res.writeHead(400, { "content-type": "text/plain" });
+					res.end(error instanceof Error ? error.message : String(error));
+				}
+			});
+			return;
+		}
+		if (req.method === "POST" && url.pathname === "/api/terminal/restart") {
+			try {
+				terminalManager.stop(activeCwd);
+				const terminal = terminalManager.ensure(activeCwd);
+				res.writeHead(200, { "content-type": "application/json" });
+				res.end(
+					JSON.stringify({
+						success: true,
+						data: {
+							cwd: terminal.cwd,
+							pid: terminal.child.pid,
+							running: !terminal.exited,
+							buffer: terminal.buffer,
+						},
+					}),
+				);
+			} catch (error) {
+				res.writeHead(400, { "content-type": "text/plain" });
+				res.end(error instanceof Error ? error.message : String(error));
+			}
+			return;
+		}
 		if (req.method === "GET" && url.pathname === "/api/browse") {
 			try {
-				const requested = url.searchParams.get("path") || rpc.cwd || process.cwd();
+				const requested = url.searchParams.get("path") || activeCwd || process.cwd();
 				const target = path.resolve(requested);
 				const stat = await fs.promises.stat(target);
 				if (!stat.isDirectory()) throw new Error(`Not a directory: ${target}`);
@@ -2488,6 +2651,11 @@ export async function runWebMode(args: string[] = []) {
 					} catch {}
 					response = response || (await rpc.send({ type: "switch_session", sessionPath: data.sessionPath }));
 					if (response.success) await applyMainSystemPromptOverride(rpc);
+					if (response.success) {
+						const sessions = await SessionManager.listAll();
+						const match = sessions.find((session) => session.path && path.resolve(session.path) === requested);
+						if (match?.cwd) activeCwd = path.resolve(match.cwd);
+					}
 					res.writeHead(response.success ? 200 : 400, { "content-type": "application/json" });
 					res.end(JSON.stringify(response));
 				} catch (error) {
@@ -2606,6 +2774,7 @@ export async function runWebMode(args: string[] = []) {
 
 	const shutdown = () => {
 		server.close();
+		terminalManager.stopAll();
 		rpc.child.kill("SIGTERM");
 	};
 	process.once("SIGINT", () => {
