@@ -16,6 +16,37 @@ import { createStreamFn } from "../utils/proxy-utils.js";
 import type { UserMessageWithAttachments } from "./Messages.js";
 import type { StreamingMessageContainer } from "./StreamingMessageContainer.js";
 
+function getMessageTextPreview(message: Agent["state"]["messages"][number] | undefined): string {
+	if (!message) return "";
+	if (!("content" in message)) return message.role;
+	const content = message.content;
+	if (typeof content === "string") return content.slice(0, 120);
+	if (!Array.isArray(content)) return message.role;
+	return content
+		.map((block) => {
+			if (block.type === "text") return block.text;
+			if (block.type === "toolCall") return `${block.name}:${block.id}`;
+			return block.type;
+		})
+		.join("|")
+		.slice(0, 120);
+}
+
+function getConversationFocusKey(session: Agent): string {
+	const messages = session.state.messages;
+	const first = messages[0];
+	const second = messages[1];
+	return [
+		session.state.model?.id ?? "",
+		session.state.thinkingLevel,
+		messages.length,
+		first?.role ?? "",
+		getMessageTextPreview(first),
+		second?.role ?? "",
+		getMessageTextPreview(second),
+	].join("\u0001");
+}
+
 @customElement("agent-interface")
 export class AgentInterface extends LitElement {
 	// Optional external session: when provided, this component becomes a view over the session
@@ -369,6 +400,7 @@ export class AgentInterface extends LitElement {
 
 		const session = this.session;
 		const state = this.session.state;
+		const conversationFocusKey = getConversationFocusKey(session);
 		return html`
 			<div class="flex flex-col h-full bg-background text-foreground">
 				<!-- Messages Area -->
@@ -380,7 +412,7 @@ export class AgentInterface extends LitElement {
 				<div class="shrink-0">
 					<div class="max-w-3xl mx-auto px-2">
 						<message-editor
-							.autoFocusKey=${this.session}
+							.autoFocusKey=${conversationFocusKey}
 							.isStreaming=${state.isStreaming}
 							.currentModel=${state.model}
 							.thinkingLevel=${state.thinkingLevel}

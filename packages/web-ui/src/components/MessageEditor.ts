@@ -238,6 +238,7 @@ export class MessageEditor extends LitElement {
 		requestAnimationFrame(() => this.focusInput());
 		setTimeout(() => this.focusInput(), 0);
 		setTimeout(() => this.focusInput(), 50);
+		setTimeout(() => this.focusInput(), 150);
 	}
 
 	override firstUpdated() {
