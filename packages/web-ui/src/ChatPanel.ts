@@ -14,18 +14,6 @@ import { i18n } from "./utils/i18n.js";
 
 const BREAKPOINT = 800; // px - switch between overlay and side-by-side
 
-function focusPromptTextarea() {
-	const promptTextareas = Array.from(document.querySelectorAll("message-editor textarea"));
-	const fallbackTextareas = Array.from(document.querySelectorAll("pi-chat-panel textarea, textarea"));
-	const textarea = [...promptTextareas, ...fallbackTextareas].find((element): element is HTMLTextAreaElement => {
-		return element instanceof HTMLTextAreaElement && !element.disabled && element.offsetParent !== null;
-	});
-
-	if (!textarea) return false;
-	textarea.focus({ preventScroll: true });
-	return document.activeElement === textarea;
-}
-
 @customElement("pi-chat-panel")
 export class ChatPanel extends LitElement {
 	@state() public agent?: Agent;
@@ -35,8 +23,6 @@ export class ChatPanel extends LitElement {
 	@state() private artifactCount = 0;
 	@state() private showArtifactsPanel = false;
 	@state() private windowWidth = 0;
-	private focusInputUntil = 0;
-	private focusInputTimer?: number;
 
 	private resizeHandler = () => {
 		this.windowWidth = window.innerWidth;
@@ -45,13 +31,6 @@ export class ChatPanel extends LitElement {
 
 	private focusPromptHandler = () => {
 		this.focusInput();
-	};
-
-	private focusInHandler = () => {
-		if (Date.now() >= this.focusInputUntil) return;
-		const active = document.activeElement;
-		if (active instanceof HTMLTextAreaElement && active.closest("message-editor")) return;
-		window.setTimeout(() => void this.focusInputOnce(), 0);
 	};
 
 	createRenderRoot() {
@@ -63,7 +42,6 @@ export class ChatPanel extends LitElement {
 		this.windowWidth = window.innerWidth; // Set initial width after connection
 		window.addEventListener("resize", this.resizeHandler);
 		window.addEventListener("pi-focus-prompt", this.focusPromptHandler);
-		window.addEventListener("focusin", this.focusInHandler);
 		this.style.display = "flex";
 		this.style.flexDirection = "column";
 		this.style.height = "100%";
@@ -79,37 +57,19 @@ export class ChatPanel extends LitElement {
 		super.disconnectedCallback();
 		window.removeEventListener("resize", this.resizeHandler);
 		window.removeEventListener("pi-focus-prompt", this.focusPromptHandler);
-		window.removeEventListener("focusin", this.focusInHandler);
-		if (this.focusInputTimer !== undefined) {
-			window.clearTimeout(this.focusInputTimer);
-			this.focusInputTimer = undefined;
-		}
 	}
 
-	public focusInput() {
-		this.focusInputUntil = Math.max(this.focusInputUntil, Date.now() + 2000);
-		if (this.focusInputTimer !== undefined) {
-			window.clearTimeout(this.focusInputTimer);
-		}
-
-		const focus = () => {
-			void this.focusInputOnce();
-			if (Date.now() < this.focusInputUntil) {
-				this.focusInputTimer = window.setTimeout(focus, 50);
-			} else {
-				this.focusInputTimer = undefined;
-			}
-		};
-
-		focus();
-	}
-
-	private async focusInputOnce() {
+	public async focusInput() {
 		if (!this.isConnected) return;
 		await this.updateComplete;
-		if (focusPromptTextarea()) return;
 		await this.agentInterface?.focusInput();
-		focusPromptTextarea();
+	}
+
+	private scheduleFocusInput() {
+		requestAnimationFrame(() => {
+			void this.focusInput();
+			window.setTimeout(() => void this.focusInput(), 0);
+		});
 	}
 
 	async setAgent(
@@ -212,7 +172,7 @@ export class ChatPanel extends LitElement {
 		this.artifactCount = this.artifactsPanel.artifacts.size;
 
 		this.requestUpdate();
-		this.focusInput();
+		this.scheduleFocusInput();
 	}
 
 	render() {

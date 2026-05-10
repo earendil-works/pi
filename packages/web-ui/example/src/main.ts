@@ -156,21 +156,10 @@ const updateUrl = (sessionId: string) => {
 };
 
 const focusPromptInput = () => {
-	const focus = () => {
-		chatPanel?.focusInput();
-		const textarea = document.querySelector("message-editor textarea");
-		if (textarea instanceof HTMLTextAreaElement) {
-			textarea.focus({ preventScroll: true });
-		}
-	};
-
-	focus();
-	requestAnimationFrame(focus);
-	setTimeout(focus, 0);
-	setTimeout(focus, 50);
-	setTimeout(focus, 150);
-	setTimeout(focus, 300);
-	setTimeout(focus, 600);
+	requestAnimationFrame(() => {
+		void chatPanel?.focusInput();
+		window.setTimeout(() => void chatPanel?.focusInput(), 0);
+	});
 };
 
 const createAgent = async (initialState?: Partial<AgentState>) => {
