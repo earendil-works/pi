@@ -35,6 +35,8 @@ export class ChatPanel extends LitElement {
 	@state() private artifactCount = 0;
 	@state() private showArtifactsPanel = false;
 	@state() private windowWidth = 0;
+	private focusInputUntil = 0;
+	private focusInputTimer?: number;
 
 	private resizeHandler = () => {
 		this.windowWidth = window.innerWidth;
@@ -43,6 +45,13 @@ export class ChatPanel extends LitElement {
 
 	private focusPromptHandler = () => {
 		this.focusInput();
+	};
+
+	private focusInHandler = () => {
+		if (Date.now() >= this.focusInputUntil) return;
+		const active = document.activeElement;
+		if (active instanceof HTMLTextAreaElement && active.closest("message-editor")) return;
+		window.setTimeout(() => void this.focusInputOnce(), 0);
 	};
 
 	createRenderRoot() {
@@ -54,6 +63,7 @@ export class ChatPanel extends LitElement {
 		this.windowWidth = window.innerWidth; // Set initial width after connection
 		window.addEventListener("resize", this.resizeHandler);
 		window.addEventListener("pi-focus-prompt", this.focusPromptHandler);
+		window.addEventListener("focusin", this.focusInHandler);
 		this.style.display = "flex";
 		this.style.flexDirection = "column";
 		this.style.height = "100%";
@@ -69,15 +79,25 @@ export class ChatPanel extends LitElement {
 		super.disconnectedCallback();
 		window.removeEventListener("resize", this.resizeHandler);
 		window.removeEventListener("pi-focus-prompt", this.focusPromptHandler);
+		window.removeEventListener("focusin", this.focusInHandler);
+		if (this.focusInputTimer !== undefined) {
+			window.clearTimeout(this.focusInputTimer);
+			this.focusInputTimer = undefined;
+		}
 	}
 
 	public focusInput() {
-		let attempts = 0;
+		this.focusInputUntil = Math.max(this.focusInputUntil, Date.now() + 2000);
+		if (this.focusInputTimer !== undefined) {
+			window.clearTimeout(this.focusInputTimer);
+		}
+
 		const focus = () => {
-			attempts++;
 			void this.focusInputOnce();
-			if (attempts < 20) {
-				setTimeout(focus, 50);
+			if (Date.now() < this.focusInputUntil) {
+				this.focusInputTimer = window.setTimeout(focus, 50);
+			} else {
+				this.focusInputTimer = undefined;
 			}
 		};
 
