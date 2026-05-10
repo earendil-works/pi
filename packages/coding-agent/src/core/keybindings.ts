@@ -15,6 +15,7 @@ export interface AppKeybindings {
 	"app.clear": true;
 	"app.exit": true;
 	"app.suspend": true;
+	"app.bash.background": true;
 	"app.thinking.cycle": true;
 	"app.model.cycleForward": true;
 	"app.model.cycleBackward": true;
@@ -68,6 +69,10 @@ export const KEYBINDINGS = {
 	"app.suspend": {
 		defaultKeys: process.platform === "win32" ? [] : "ctrl+z",
 		description: "Suspend to background",
+	},
+	"app.bash.background": {
+		defaultKeys: "ctrl+b",
+		description: "Background running bash command",
 	},
 	"app.thinking.cycle": {
 		defaultKeys: "shift+tab",
@@ -237,6 +242,7 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	clear: "app.clear",
 	exit: "app.exit",
 	suspend: "app.suspend",
+	backgroundBash: "app.bash.background",
 	cycleThinkingLevel: "app.thinking.cycle",
 	cycleModelForward: "app.model.cycleForward",
 	cycleModelBackward: "app.model.cycleBackward",

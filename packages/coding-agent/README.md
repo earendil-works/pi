@@ -162,7 +162,7 @@ The editor can be temporarily replaced by other UI, like built-in `/settings` or
 | Path completion | Tab to complete paths |
 | Multi-line | Shift+Enter (or Ctrl+Enter on Windows Terminal) |
 | Images | Ctrl+V to paste (Alt+V on Windows), or drag onto terminal |
-| Bash commands | `!command` runs and sends output to LLM, `!!command` runs without sending |
+| Bash commands | `!command` runs and sends output to LLM, `!!command` runs without sending, `Ctrl+B` backgrounds a running direct `!` command |
 
 Standard editing keybindings for delete word, undo, etc. See [docs/keybindings.md](docs/keybindings.md).
 
@@ -209,6 +209,7 @@ See `/hotkeys` for the full list. Customize via `~/.pi/agent/keybindings.json`. 
 | Shift+Tab | Cycle thinking level |
 | Ctrl+O | Collapse/expand tool output |
 | Ctrl+T | Collapse/expand thinking blocks |
+| Ctrl+B | Background the active direct `!` bash command |
 
 ### Message Queue
 
@@ -479,7 +480,7 @@ Pi is aggressively extensible so it doesn't have to dictate your workflow. Featu
 
 **No built-in to-dos.** They confuse models. Use a TODO.md file, or build your own with [extensions](#extensions).
 
-**No background bash.** Use tmux. Full observability, direct interaction.
+**Background direct bash.** Press `Ctrl+B` to detach a running direct `!` command and keep working while its output continues in the transcript. For agent tool calls or fully separate shells, use tmux.
 
 Read the [blog post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) for the full rationale.
 

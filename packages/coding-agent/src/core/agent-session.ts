@@ -275,7 +275,8 @@ export class AgentSession {
 	private _retryResolve: (() => void) | undefined = undefined;
 
 	// Bash execution state
-	private _bashAbortController: AbortController | undefined = undefined;
+	private _bashExecutionSequence = 0;
+	private _foregroundBashExecution: { id: number; abortController: AbortController } | undefined = undefined;
 	private _pendingBashMessages: BashExecutionMessage[] = [];
 
 	// Extension system
@@ -2561,7 +2562,9 @@ export class AgentSession {
 		onChunk?: (chunk: string) => void,
 		options?: { excludeFromContext?: boolean; operations?: BashOperations },
 	): Promise<BashResult> {
-		this._bashAbortController = new AbortController();
+		const executionId = ++this._bashExecutionSequence;
+		const abortController = new AbortController();
+		this._foregroundBashExecution = { id: executionId, abortController };
 
 		// Apply command prefix if configured (e.g., "shopt -s expand_aliases" for alias support)
 		const prefix = this.settingsManager.getShellCommandPrefix();
@@ -2575,14 +2578,16 @@ export class AgentSession {
 				options?.operations ?? createLocalBashOperations({ shellPath }),
 				{
 					onChunk,
-					signal: this._bashAbortController.signal,
+					signal: abortController.signal,
 				},
 			);
 
 			this.recordBashResult(command, result, options);
 			return result;
 		} finally {
-			this._bashAbortController = undefined;
+			if (this._foregroundBashExecution?.id === executionId) {
+				this._foregroundBashExecution = undefined;
+			}
 		}
 	}
 
@@ -2617,15 +2622,27 @@ export class AgentSession {
 	}
 
 	/**
+	 * Release the foreground bash lock without cancelling the running process.
+	 * This allows the UI to continue while the command finishes in the background.
+	 */
+	backgroundBash(): boolean {
+		if (!this._foregroundBashExecution) {
+			return false;
+		}
+		this._foregroundBashExecution = undefined;
+		return true;
+	}
+
+	/**
 	 * Cancel running bash command.
 	 */
 	abortBash(): void {
-		this._bashAbortController?.abort();
+		this._foregroundBashExecution?.abortController.abort();
 	}
 
 	/** Whether a bash command is currently running */
 	get isBashRunning(): boolean {
-		return this._bashAbortController !== undefined;
+		return this._foregroundBashExecution !== undefined;
 	}
 
 	/** Whether there are pending bash messages waiting to be flushed */

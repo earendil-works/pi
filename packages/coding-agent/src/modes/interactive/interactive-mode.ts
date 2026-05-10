@@ -291,6 +291,14 @@ export class InteractiveMode {
 
 	// Track current bash execution component
 	private bashComponent: BashExecutionComponent | undefined = undefined;
+	private foregroundBashExecution:
+		| {
+				command: string;
+				component: BashExecutionComponent;
+				backgrounded: boolean;
+				resolveBackgrounded: () => void;
+		  }
+		| undefined = undefined;
 
 	// Track pending bash components (shown in pending area, moved to chat on submit)
 	private pendingBashComponents: BashExecutionComponent[] = [];
@@ -2381,6 +2389,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.clear", () => this.handleCtrlC());
 		this.defaultEditor.onCtrlD = () => this.handleCtrlD();
 		this.defaultEditor.onAction("app.suspend", () => this.handleCtrlZ());
+		this.defaultEditor.onAction("app.bash.background", () => this.handleBackgroundBashAction());
 		this.defaultEditor.onAction("app.thinking.cycle", () => this.cycleThinkingLevel());
 		this.defaultEditor.onAction("app.model.cycleForward", () => this.cycleModel("forward"));
 		this.defaultEditor.onAction("app.model.cycleBackward", () => this.cycleModel("backward"));
@@ -5343,6 +5352,31 @@ export class InteractiveMode {
 		}
 	}
 
+	private handleBackgroundBashAction(): boolean {
+		const execution = this.foregroundBashExecution;
+		if (!execution) {
+			return false;
+		}
+		if (!this.session.backgroundBash()) {
+			return false;
+		}
+
+		execution.backgrounded = true;
+		execution.component.setBackgrounded();
+		execution.resolveBackgrounded();
+
+		if (this.bashComponent === execution.component) {
+			this.bashComponent = undefined;
+		}
+		if (this.foregroundBashExecution === execution) {
+			this.foregroundBashExecution = undefined;
+		}
+
+		this.showStatus(`Backgrounded bash: ${execution.command}`);
+		this.ui.requestRender();
+		return true;
+	}
+
 	private async handleBashCommand(command: string, excludeFromContext = false): Promise<void> {
 		const extensionRunner = this.session.extensionRunner;
 
@@ -5387,47 +5421,72 @@ export class InteractiveMode {
 
 		// Normal execution path (possibly with custom operations)
 		const isDeferred = this.session.isStreaming;
-		this.bashComponent = new BashExecutionComponent(command, this.ui, excludeFromContext);
+		const component = new BashExecutionComponent(command, this.ui, excludeFromContext);
+		this.bashComponent = component;
 
 		if (isDeferred) {
 			// Show in pending area when agent is streaming
-			this.pendingMessagesContainer.addChild(this.bashComponent);
-			this.pendingBashComponents.push(this.bashComponent);
+			this.pendingMessagesContainer.addChild(component);
+			this.pendingBashComponents.push(component);
 		} else {
 			// Show in chat immediately when agent is idle
-			this.chatContainer.addChild(this.bashComponent);
+			this.chatContainer.addChild(component);
 		}
 		this.ui.requestRender();
 
-		try {
-			const result = await this.session.executeBash(
-				command,
-				(chunk) => {
-					if (this.bashComponent) {
-						this.bashComponent.appendOutput(chunk);
-						this.ui.requestRender();
-					}
-				},
-				{ excludeFromContext, operations: eventResult?.operations },
-			);
+		let resolveBackgrounded = () => {};
+		const backgroundedPromise = new Promise<void>((resolve) => {
+			resolveBackgrounded = resolve;
+		});
+		const execution = {
+			command,
+			component,
+			backgrounded: false,
+			resolveBackgrounded,
+		};
+		this.foregroundBashExecution = execution;
 
-			if (this.bashComponent) {
-				this.bashComponent.setComplete(
+		const completionPromise = (async () => {
+			try {
+				const result = await this.session.executeBash(
+					command,
+					(chunk) => {
+						component.appendOutput(chunk);
+						this.ui.requestRender();
+					},
+					{ excludeFromContext, operations: eventResult?.operations },
+				);
+
+				component.setComplete(
 					result.exitCode,
 					result.cancelled,
 					result.truncated ? ({ truncated: true, content: result.output } as TruncationResult) : undefined,
 					result.fullOutputPath,
 				);
-			}
-		} catch (error) {
-			if (this.bashComponent) {
-				this.bashComponent.setComplete(undefined, false);
-			}
-			this.showError(`Bash command failed: ${error instanceof Error ? error.message : "Unknown error"}`);
-		}
 
-		this.bashComponent = undefined;
-		this.ui.requestRender();
+				if (execution.backgrounded) {
+					const status = result.cancelled
+						? `Background bash cancelled: ${command}`
+						: result.exitCode && result.exitCode !== 0
+							? `Background bash exited ${result.exitCode}: ${command}`
+							: `Background bash finished: ${command}`;
+					this.showStatus(status);
+				}
+			} catch (error) {
+				component.setComplete(undefined, false);
+				this.showError(`Bash command failed: ${error instanceof Error ? error.message : "Unknown error"}`);
+			} finally {
+				if (this.bashComponent === component) {
+					this.bashComponent = undefined;
+				}
+				if (this.foregroundBashExecution === execution) {
+					this.foregroundBashExecution = undefined;
+				}
+				this.ui.requestRender();
+			}
+		})();
+
+		await Promise.race([completionPromise, backgroundedPromise]);
 	}
 
 	private async handleCompactCommand(customInstructions?: string): Promise<void> {

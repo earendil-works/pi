@@ -21,7 +21,7 @@ const PREVIEW_LINES = 20;
 export class BashExecutionComponent extends Container {
 	private command: string;
 	private outputLines: string[] = [];
-	private status: "running" | "complete" | "cancelled" | "error" = "running";
+	private status: "running" | "backgrounded" | "complete" | "cancelled" | "error" = "running";
 	private exitCode: number | undefined = undefined;
 	private loader: Loader;
 	private truncationResult?: TruncationResult;
@@ -56,7 +56,7 @@ export class BashExecutionComponent extends Container {
 			ui,
 			(spinner) => theme.fg(colorKey, spinner),
 			(text) => theme.fg("muted", text),
-			`Running... (${keyText("tui.select.cancel")} to cancel)`, // Plain text for loader
+			`Running... (${keyText("tui.select.cancel")} to cancel, ${keyText("app.bash.background")} to background)`,
 		);
 		this.contentContainer.addChild(this.loader);
 
@@ -92,6 +92,15 @@ export class BashExecutionComponent extends Container {
 			this.outputLines.push(...newLines);
 		}
 
+		this.updateDisplay();
+	}
+
+	setBackgrounded(): void {
+		if (this.status !== "running") {
+			return;
+		}
+		this.status = "backgrounded";
+		this.loader.stop();
 		this.updateDisplay();
 	}
 
@@ -186,6 +195,8 @@ export class BashExecutionComponent extends Container {
 
 			if (this.status === "cancelled") {
 				statusParts.push(theme.fg("warning", "(cancelled)"));
+			} else if (this.status === "backgrounded") {
+				statusParts.push(theme.fg("muted", "Running in background"));
 			} else if (this.status === "error") {
 				statusParts.push(theme.fg("error", `(exit ${this.exitCode})`));
 			}

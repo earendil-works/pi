@@ -132,6 +132,59 @@ describe("AgentSession bash and persistence characterization", () => {
 		expect(harness.session.isBashRunning).toBe(false);
 	});
 
+	it("backgrounds one bash execution without clearing a newer foreground execution", async () => {
+		const harness = await createHarness();
+		harnesses.push(harness);
+
+		let releaseFirst: (() => void) | undefined;
+		let releaseSecond: (() => void) | undefined;
+
+		const firstOperations: BashOperations = {
+			exec: async (_command, _cwd, options) => {
+				return await new Promise<{ exitCode: number | null }>((resolve) => {
+					releaseFirst = () => {
+						options.onData(Buffer.from("first complete"));
+						resolve({ exitCode: 0 });
+					};
+				});
+			},
+		};
+
+		const secondOperations: BashOperations = {
+			exec: async (_command, _cwd, options) => {
+				return await new Promise<{ exitCode: number | null }>((resolve) => {
+					releaseSecond = () => {
+						options.onData(Buffer.from("second complete"));
+						resolve({ exitCode: 0 });
+					};
+				});
+			},
+		};
+
+		const firstPromise = harness.session.executeBash("first", undefined, { operations: firstOperations });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(harness.session.isBashRunning).toBe(true);
+
+		expect(harness.session.backgroundBash()).toBe(true);
+		expect(harness.session.isBashRunning).toBe(false);
+
+		const secondPromise = harness.session.executeBash("second", undefined, { operations: secondOperations });
+		await new Promise((resolve) => setTimeout(resolve, 0));
+		expect(harness.session.isBashRunning).toBe(true);
+
+		releaseFirst?.();
+		await firstPromise;
+		expect(harness.session.isBashRunning).toBe(true);
+
+		releaseSecond?.();
+		await secondPromise;
+		expect(harness.session.isBashRunning).toBe(false);
+
+		const bashMessages = harness.session.messages.filter((message) => message.role === "bashExecution");
+		expect(bashMessages).toHaveLength(2);
+		expect(bashMessages.map((message) => message.command)).toEqual(["first", "second"]);
+	});
+
 	it("persists user, assistant, toolResult, and custom messages in order", async () => {
 		const echoTool: AgentTool = {
 			name: "echo",
