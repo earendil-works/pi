@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pi Web</title>
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            piBg: '#f7f5ef',
+            piPanel: '#f7f5ef',
+            piHover: '#deddd8',
+            piActive: '#dfded9',
+            piText: '#333333',
+            piMuted: '#888888',
+            piAccent: '#6d5dfc'
+          },
+          boxShadow: {
+            pi: '0 18px 40px rgba(16,24,40,.16)',
+            modal: '0 24px 80px rgba(16,24,40,.28)'
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body { margin:0; background:#fff; color:#202124; font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    textarea, input, select, button { font: inherit; }
+    textarea { color:#202124; }
+    pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+    .scrollbar-thin::-webkit-scrollbar-thumb { background: #d0d5dd; border-radius: 999px; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="text/babel" data-presets="typescript,react" data-type="module" src="/web/app.tsx"></script>
+</body>
+</html>
