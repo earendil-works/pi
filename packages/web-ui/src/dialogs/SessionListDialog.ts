@@ -38,6 +38,7 @@ export class SessionListDialog extends DialogBase {
 			this.sessions = [];
 		} finally {
 			this.loading = false;
+			this.requestUpdate();
 		}
 	}
 

@@ -71,21 +71,25 @@ export class ChatPanel extends LitElement {
 		window.removeEventListener("pi-focus-prompt", this.focusPromptHandler);
 	}
 
-	public async focusInput() {
-		await this.updateComplete;
-
+	public focusInput() {
 		let attempts = 0;
 		const focus = () => {
 			attempts++;
-			if (!focusPromptTextarea()) {
-				this.agentInterface?.focusInput();
-			}
+			void this.focusInputOnce();
 			if (attempts < 20) {
 				setTimeout(focus, 50);
 			}
 		};
 
 		focus();
+	}
+
+	private async focusInputOnce() {
+		if (!this.isConnected) return;
+		await this.updateComplete;
+		if (focusPromptTextarea()) return;
+		await this.agentInterface?.focusInput();
+		focusPromptTextarea();
 	}
 
 	async setAgent(
@@ -106,11 +110,7 @@ export class ChatPanel extends LitElement {
 	) {
 		this.agent = agent;
 
-		// Keep AgentInterface mounted across conversation switches so the
-		// prompt editor DOM is not destroyed while focus is being moved.
-		if (!this.agentInterface) {
-			this.agentInterface = document.createElement("agent-interface") as AgentInterface;
-		}
+		this.agentInterface = document.createElement("agent-interface") as AgentInterface;
 		this.agentInterface.session = agent;
 		this.agentInterface.enableAttachments = true;
 		this.agentInterface.enableModelSelector = true;
@@ -192,7 +192,7 @@ export class ChatPanel extends LitElement {
 		this.artifactCount = this.artifactsPanel.artifacts.size;
 
 		this.requestUpdate();
-		await this.focusInput();
+		this.focusInput();
 	}
 
 	render() {

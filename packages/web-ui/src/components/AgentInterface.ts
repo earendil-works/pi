@@ -64,7 +64,9 @@ export class AgentInterface extends LitElement {
 	public async focusInput() {
 		await this.updateComplete;
 		const messageEditor = this._messageEditor ?? (this.querySelector("message-editor") as MessageEditor | null);
-		messageEditor?.focusInput();
+		if (!messageEditor) return;
+		await messageEditor.updateComplete;
+		messageEditor.focusInput();
 	}
 
 	protected override createRenderRoot(): HTMLElement | DocumentFragment {
