@@ -23,6 +23,59 @@ export interface PrintModeOptions {
 	initialMessage?: string;
 	/** Images to attach to the initial message */
 	initialImages?: ImageContent[];
+	/**
+	 * In JSON mode, omit the accumulated-state `partial` (and the wrapping
+	 * `message`) fields from `message_update` delta events. The default
+	 * JSON contract emits both, which makes each per-token line carry
+	 * every prior token of the assistant message — turning a streaming
+	 * NDJSON output into O(n²) growth. Setting this flag keeps only the
+	 * `type` and the per-token delta inside `assistantMessageEvent`.
+	 * Consolidated `*_end` and `message_end` events still carry full content.
+	 * Ignored when `mode` is not "json".
+	 */
+	jsonNoPartial?: boolean;
+}
+
+/**
+ * Streaming `assistantMessageEvent.type` values that carry an accumulated
+ * `partial: AssistantMessage` snapshot on every emit. Stripping this field
+ * (and the wrapping `message` on `message_update`) from JSON output for
+ * these event types is what `--json-no-partial` does.
+ */
+const PARTIAL_BEARING_DELTA_TYPES: ReadonlySet<string> = new Set(["text_delta", "thinking_delta", "toolcall_delta"]);
+
+interface MessageUpdateLikeEvent {
+	type: "message_update";
+	message?: unknown;
+	assistantMessageEvent?: { type?: unknown; partial?: unknown };
+}
+
+function isMessageUpdateEvent(event: unknown): event is MessageUpdateLikeEvent {
+	return typeof event === "object" && event !== null && (event as { type?: unknown }).type === "message_update";
+}
+
+/**
+ * Serializes a session event for `--mode json` output. When `jsonNoPartial`
+ * is true and the event is a `message_update` for an accumulated-state
+ * delta type (text_delta / thinking_delta / toolcall_delta), strip the
+ * `assistantMessageEvent.partial` field and the wrapping `message`.
+ */
+export function serializeJsonEvent(event: unknown, jsonNoPartial: boolean): string {
+	if (!jsonNoPartial || !isMessageUpdateEvent(event)) {
+		return JSON.stringify(event);
+	}
+	const inner = event.assistantMessageEvent;
+	const innerType = typeof inner?.type === "string" ? inner.type : "";
+	if (!PARTIAL_BEARING_DELTA_TYPES.has(innerType)) {
+		return JSON.stringify(event);
+	}
+	const { partial: _partial, ...innerStripped } = (inner ?? {}) as unknown as Record<string, unknown>;
+	const { message: _message, assistantMessageEvent: _ame, ...rest } = event as unknown as Record<string, unknown>;
+	return JSON.stringify({
+		...rest,
+		type: "message_update",
+		assistantMessageEvent: innerStripped,
+	});
 }
 
 /**
@@ -30,7 +83,7 @@ export interface PrintModeOptions {
  * Sends prompts to the agent and outputs the result.
  */
 export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: PrintModeOptions): Promise<number> {
-	const { mode, messages = [], initialMessage, initialImages } = options;
+	const { mode, messages = [], initialMessage, initialImages, jsonNoPartial = false } = options;
 	let exitCode = 0;
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
@@ -102,7 +155,7 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		unsubscribe?.();
 		unsubscribe = session.subscribe((event) => {
 			if (mode === "json") {
-				writeRawStdout(`${JSON.stringify(event)}\n`);
+				writeRawStdout(`${serializeJsonEvent(event, jsonNoPartial)}\n`);
 			}
 		});
 	};

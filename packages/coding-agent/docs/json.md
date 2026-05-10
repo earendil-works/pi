@@ -6,6 +6,21 @@ pi --mode json "Your prompt"
 
 Outputs all session events as JSON lines to stdout. Useful for integrating pi into other tools or custom UIs.
 
+## `--json-no-partial` (compact streaming)
+
+```bash
+pi --mode json --json-no-partial "Your prompt"
+```
+
+By default, every `message_update` event carries `assistantMessageEvent.partial` (the full accumulated `AssistantMessage` so far) AND `message` (the wrapping `AgentMessage`). For per-token streaming this means each NDJSON line includes every prior token of the assistant message — total log volume grows O(n²) with the number of tokens.
+
+`--json-no-partial` strips those two fields from `message_update` events whose inner type is `text_delta`, `thinking_delta`, or `toolcall_delta`. Each line becomes O(new content). Consolidated `*_end` and `message_end` events are unchanged, so consumers still get the full content at message/turn boundaries.
+
+When to use it:
+- Wrapping `pi` from another agent and persisting its NDJSON to disk.
+- Long thinking/streaming runs where the per-token partials would otherwise blow up log size.
+- Any consumer that only needs the incremental `delta` plus end-of-message content.
+
 ## Event Types
 
 Events are defined in [`AgentSessionEvent`](https://github.com/earendil-works/pi-mono/blob/main/packages/coding-agent/src/core/agent-session.ts#L102):

@@ -21,6 +21,7 @@ export interface Args {
 	help?: boolean;
 	version?: boolean;
 	mode?: Mode;
+	jsonNoPartial?: boolean;
 	noSession?: boolean;
 	session?: string;
 	fork?: string;
@@ -76,6 +77,8 @@ export function parseArgs(args: string[]): Args {
 			if (mode === "text" || mode === "json" || mode === "rpc") {
 				result.mode = mode;
 			}
+		} else if (arg === "--json-no-partial") {
+			result.jsonNoPartial = true;
 		} else if (arg === "--continue" || arg === "-c") {
 			result.continue = true;
 		} else if (arg === "--resume" || arg === "-r") {
@@ -220,6 +223,11 @@ ${chalk.bold("Options:")}
   --system-prompt <text>         System prompt (default: coding assistant prompt)
   --append-system-prompt <text>  Append text or file contents to the system prompt (can be used multiple times)
   --mode <mode>                  Output mode: text (default), json, or rpc
+  --json-no-partial              In --mode json, omit the redundant "partial" and "message"
+                                 accumulated-state fields from message_update delta events.
+                                 Each line shrinks from O(n) of all prior tokens to just the
+                                 incremental "delta" — turns O(n²) NDJSON growth into O(n).
+                                 Consolidated *_end / message_end events still carry full content.
   --print, -p                    Non-interactive mode: process prompt and exit
   --continue, -c                 Continue previous session
   --resume, -r                   Select a session to resume
