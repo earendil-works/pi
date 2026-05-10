@@ -155,6 +155,24 @@ const updateUrl = (sessionId: string) => {
 	window.history.replaceState({}, "", url);
 };
 
+const focusPromptInput = () => {
+	const focus = () => {
+		chatPanel?.focusInput();
+		const textarea = document.querySelector("message-editor textarea");
+		if (textarea instanceof HTMLTextAreaElement) {
+			textarea.focus({ preventScroll: true });
+		}
+	};
+
+	focus();
+	requestAnimationFrame(focus);
+	setTimeout(focus, 0);
+	setTimeout(focus, 50);
+	setTimeout(focus, 150);
+	setTimeout(focus, 300);
+	setTimeout(focus, 600);
+};
+
 const createAgent = async (initialState?: Partial<AgentState>) => {
 	if (agentUnsubscribe) {
 		agentUnsubscribe();
@@ -237,6 +255,7 @@ const loadSession = async (sessionId: string): Promise<boolean> => {
 
 	updateUrl(sessionId);
 	renderApp();
+	focusPromptInput();
 	return true;
 };
 

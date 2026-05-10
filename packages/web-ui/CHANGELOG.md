@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+
+- Focus the prompt input automatically when opening a conversation.
+
 ## [0.73.0] - 2026-05-04
 
 ## [0.72.1] - 2026-05-02

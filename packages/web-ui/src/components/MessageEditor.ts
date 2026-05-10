@@ -2,7 +2,7 @@ import { icon } from "@mariozechner/mini-lit";
 import { Button } from "@mariozechner/mini-lit/dist/Button.js";
 import { Select, type SelectOption } from "@mariozechner/mini-lit/dist/Select.js";
 import type { Model } from "@mariozechner/pi-ai";
-import { html, LitElement } from "lit";
+import { html, LitElement, type PropertyValues } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { createRef, ref } from "lit/directives/ref.js";
 import { Brain, Loader2, Paperclip, Send, Sparkles, Square } from "lucide";
@@ -39,6 +39,7 @@ export class MessageEditor extends LitElement {
 	@property() onModelSelect?: () => void;
 	@property() onThinkingChange?: (level: "off" | "minimal" | "low" | "medium" | "high") => void;
 	@property() onFilesChange?: (files: Attachment[]) => void;
+	@property({ attribute: false }) autoFocusKey?: unknown;
 	@property() attachments: Attachment[] = [];
 	@property() maxFiles = 10;
 	@property() maxFileSize = 20 * 1024 * 1024; // 20MB
@@ -228,10 +229,26 @@ export class MessageEditor extends LitElement {
 		this.processingFiles = false;
 	};
 
+	public focusInput() {
+		this.textareaRef.value?.focus({ preventScroll: true });
+	}
+
+	private queueFocusInput() {
+		this.focusInput();
+		requestAnimationFrame(() => this.focusInput());
+		setTimeout(() => this.focusInput(), 0);
+		setTimeout(() => this.focusInput(), 50);
+	}
+
 	override firstUpdated() {
-		const textarea = this.textareaRef.value;
-		if (textarea) {
-			textarea.focus();
+		this.queueFocusInput();
+	}
+
+	override updated(changedProperties: PropertyValues<this>) {
+		super.updated(changedProperties);
+
+		if (changedProperties.has("autoFocusKey")) {
+			this.queueFocusInput();
 		}
 	}
 

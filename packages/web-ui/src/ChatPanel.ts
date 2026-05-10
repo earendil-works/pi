@@ -14,6 +14,18 @@ import { i18n } from "./utils/i18n.js";
 
 const BREAKPOINT = 800; // px - switch between overlay and side-by-side
 
+function focusPromptTextarea() {
+	const promptTextareas = Array.from(document.querySelectorAll("message-editor textarea"));
+	const fallbackTextareas = Array.from(document.querySelectorAll("pi-chat-panel textarea, textarea"));
+	const textarea = [...promptTextareas, ...fallbackTextareas].find((element): element is HTMLTextAreaElement => {
+		return element instanceof HTMLTextAreaElement && !element.disabled && element.offsetParent !== null;
+	});
+
+	if (!textarea) return false;
+	textarea.focus({ preventScroll: true });
+	return document.activeElement === textarea;
+}
+
 @customElement("pi-chat-panel")
 export class ChatPanel extends LitElement {
 	@state() public agent?: Agent;
@@ -29,6 +41,10 @@ export class ChatPanel extends LitElement {
 		this.requestUpdate();
 	};
 
+	private focusPromptHandler = () => {
+		this.focusInput();
+	};
+
 	createRenderRoot() {
 		return this;
 	}
@@ -37,6 +53,7 @@ export class ChatPanel extends LitElement {
 		super.connectedCallback();
 		this.windowWidth = window.innerWidth; // Set initial width after connection
 		window.addEventListener("resize", this.resizeHandler);
+		window.addEventListener("pi-focus-prompt", this.focusPromptHandler);
 		this.style.display = "flex";
 		this.style.flexDirection = "column";
 		this.style.height = "100%";
@@ -51,6 +68,24 @@ export class ChatPanel extends LitElement {
 	override disconnectedCallback() {
 		super.disconnectedCallback();
 		window.removeEventListener("resize", this.resizeHandler);
+		window.removeEventListener("pi-focus-prompt", this.focusPromptHandler);
+	}
+
+	public async focusInput() {
+		await this.updateComplete;
+
+		let attempts = 0;
+		const focus = () => {
+			attempts++;
+			if (!focusPromptTextarea()) {
+				this.agentInterface?.focusInput();
+			}
+			if (attempts < 20) {
+				setTimeout(focus, 50);
+			}
+		};
+
+		focus();
 	}
 
 	async setAgent(
@@ -71,8 +106,11 @@ export class ChatPanel extends LitElement {
 	) {
 		this.agent = agent;
 
-		// Create AgentInterface
-		this.agentInterface = document.createElement("agent-interface") as AgentInterface;
+		// Keep AgentInterface mounted across conversation switches so the
+		// prompt editor DOM is not destroyed while focus is being moved.
+		if (!this.agentInterface) {
+			this.agentInterface = document.createElement("agent-interface") as AgentInterface;
+		}
 		this.agentInterface.session = agent;
 		this.agentInterface.enableAttachments = true;
 		this.agentInterface.enableModelSelector = true;
@@ -154,6 +192,7 @@ export class ChatPanel extends LitElement {
 		this.artifactCount = this.artifactsPanel.artifacts.size;
 
 		this.requestUpdate();
+		await this.focusInput();
 	}
 
 	render() {

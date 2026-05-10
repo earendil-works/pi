@@ -12,7 +12,7 @@ export class SessionListDialog extends DialogBase {
 	@state() private sessions: SessionMetadata[] = [];
 	@state() private loading = true;
 
-	private onSelectCallback?: (sessionId: string) => void;
+	private onSelectCallback?: (sessionId: string) => void | Promise<void>;
 	private onDeleteCallback?: (sessionId: string) => void;
 	private deletedSessions = new Set<string>();
 	private closedViaSelection = false;
@@ -20,7 +20,7 @@ export class SessionListDialog extends DialogBase {
 	protected modalWidth = "min(600px, 90vw)";
 	protected modalHeight = "min(700px, 90vh)";
 
-	static async open(onSelect: (sessionId: string) => void, onDelete?: (sessionId: string) => void) {
+	static async open(onSelect: (sessionId: string) => void | Promise<void>, onDelete?: (sessionId: string) => void) {
 		const dialog = new SessionListDialog();
 		dialog.onSelectCallback = onSelect;
 		dialog.onDeleteCallback = onDelete;
@@ -73,12 +73,22 @@ export class SessionListDialog extends DialogBase {
 		}
 	}
 
-	private handleSelect(sessionId: string) {
+	private async handleSelect(sessionId: string) {
 		this.closedViaSelection = true;
-		if (this.onSelectCallback) {
-			this.onSelectCallback(sessionId);
-		}
+		const onSelect = this.onSelectCallback;
 		this.close();
+
+		// DialogBase restores focus to the previously focused element on the
+		// next animation frame. Run the selection callback after that so the
+		// newly opened conversation can focus the prompt input last.
+		if (onSelect) {
+			requestAnimationFrame(() => {
+				requestAnimationFrame(async () => {
+					await onSelect(sessionId);
+					window.dispatchEvent(new CustomEvent("pi-focus-prompt"));
+				});
+			});
+		}
 	}
 
 	private formatDate(isoString: string): string {

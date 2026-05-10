@@ -61,6 +61,12 @@ export class AgentInterface extends LitElement {
 		this._autoScroll = enabled;
 	}
 
+	public async focusInput() {
+		await this.updateComplete;
+		const messageEditor = this._messageEditor ?? (this.querySelector("message-editor") as MessageEditor | null);
+		messageEditor?.focusInput();
+	}
+
 	protected override createRenderRoot(): HTMLElement | DocumentFragment {
 		return this;
 	}
@@ -71,6 +77,16 @@ export class AgentInterface extends LitElement {
 		// Re-subscribe when session property changes
 		if (changedProperties.has("session")) {
 			this.setupSessionSubscription();
+		}
+	}
+
+	override updated(changedProperties: Map<string, any>) {
+		super.updated(changedProperties);
+
+		if (changedProperties.has("session") && this.session) {
+			requestAnimationFrame(() => {
+				this.focusInput();
+			});
 		}
 	}
 
@@ -362,6 +378,7 @@ export class AgentInterface extends LitElement {
 				<div class="shrink-0">
 					<div class="max-w-3xl mx-auto px-2">
 						<message-editor
+							.autoFocusKey=${this.session}
 							.isStreaming=${state.isStreaming}
 							.currentModel=${state.model}
 							.thinkingLevel=${state.thinkingLevel}
