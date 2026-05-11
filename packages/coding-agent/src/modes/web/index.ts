@@ -1,13 +1,14 @@
 import { spawn, spawnSync } from "node:child_process";
 import * as fs from "node:fs/promises";
 import * as http from "node:http";
-import { networkInterfaces } from "node:os";
+import { homedir, networkInterfaces } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "../../config.js";
 import { estimateContextTokens } from "../../core/compaction/index.js";
 import { SessionManager } from "../../core/session-manager.js";
 import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.js";
+import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.js";
 import { assertHostAllowed, parseWebArgs, usage } from "./args.js";
 import { assertAuthorized, assertSafeOrigin, requestHasToken, writeAuthRedirect } from "./auth.js";
 import {
@@ -271,6 +272,10 @@ async function startWebServer(options: WebOptions): Promise<void> {
 			sendJson(res, await rpc.send({ type: "get_messages" }));
 			return;
 		}
+		if (req.method === "GET" && url.pathname === "/api/local-image") {
+			await sendLocalImage(res, requireNonEmptyString(url.searchParams.get("path"), "path"));
+			return;
+		}
 		if (req.method === "POST" && url.pathname === "/api/new-session") {
 			const response = await rpc.send({ type: "new_session" });
 			await applyMainSystemPromptOverride();
@@ -347,6 +352,17 @@ async function startWebServer(options: WebOptions): Promise<void> {
 			return;
 		}
 		throw new HttpError(404, "Not found");
+	}
+
+	async function sendLocalImage(res: http.ServerResponse, filePath: string): Promise<void> {
+		const expandedPath =
+			filePath === "~" || filePath.startsWith(`~${path.sep}`) ? path.join(homedir(), filePath.slice(2)) : filePath;
+		const resolvedPath = path.resolve(expandedPath);
+		const mimeType = await detectSupportedImageMimeTypeFromFile(resolvedPath);
+		if (!mimeType) throw new HttpError(404, "Image not found");
+		const data = await fs.readFile(resolvedPath);
+		res.writeHead(200, { "content-type": mimeType, "cache-control": "no-cache" });
+		res.end(data);
 	}
 
 	async function handleTerminalApi(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {

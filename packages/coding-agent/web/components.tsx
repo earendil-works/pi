@@ -8,7 +8,6 @@ const {
   shortPath,
   sessionTitle,
   relTime,
-  contentText,
   pretty,
   parseFrontmatter,
   toolResultText,
@@ -165,7 +164,7 @@ function ChatView({ logRef, messages, input, setInput, submitPrompt, submitMessa
   return <>
     <main ref={logRef} onScroll={handleChatScroll} style={{ paddingBottom: composerHeight + 64 }} className={'flex-1 overflow-y-auto px-6 pt-16 scrollbar-thin dark:bg-black ' + terminalOffsetClass}><div className="mx-auto w-full max-w-6xl space-y-4">
       {renderStart > 0 && <div className="py-3 text-center text-xs text-gray-400">Scroll up to load older messages</div>}
-      {messages.slice(renderStart).map((item: ChatItem) => <Message key={item.id} item={item} answerQuestion={answerQuestion} />)}
+      {messages.slice(renderStart).map((item: ChatItem) => <Message key={item.id} item={item} answerQuestion={answerQuestion} cwd={state?.cwd} />)}
     </div></main>
     {terminalOpen && <TerminalPane focusKey={focusKey} onClose={() => setTerminalOpen(false)} />}
     <form ref={formRef} onSubmit={submitPrompt} className={'fixed bottom-0 left-[290px] bg-gradient-to-t from-white via-white px-6 pb-4 pt-3 dark:from-black dark:via-black max-[820px]:left-0 ' + terminalFormClass}><div className="mx-auto w-full max-w-6xl">
@@ -340,9 +339,48 @@ function TerminalPane({ focusKey, onClose }: any) {
   </aside>;
 }
 function AttachmentPreview({ files, remove }: any) { return <div className="mb-2 flex flex-wrap gap-2">{files.map((file: any, index: number) => <div key={index} className="group relative overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-neutral-800 dark:bg-neutral-900">{String(file.type || '').startsWith('image/') && file.dataUrl ? <img src={file.dataUrl} className="h-20 w-20 object-cover" /> : <div className="flex h-20 w-40 items-center justify-center px-3 text-center text-xs text-gray-500 dark:text-slate-400">{file.name}</div>}<div className="absolute inset-x-0 bottom-0 truncate bg-black/55 px-2 py-1 text-[10px] text-white">{file.name}</div>{remove && <button type="button" className="absolute right-1 top-1 hidden rounded-full bg-black/60 px-1.5 text-xs text-white group-hover:block" onClick={() => remove(index)}>×</button>}</div>)}</div>; }
-function Message({ item, answerQuestion }: { item: ChatItem; answerQuestion?: (request: any, answer: any) => void }) {
-  if (item.kind === 'user') return <div className="ml-auto max-w-[74%]"><div className="ml-auto w-fit whitespace-pre-wrap rounded-2xl bg-black px-4 py-3 text-[15px] text-white dark:bg-slate-100 dark:text-black">{item.text}</div>{item.attachments?.length > 0 && <div className="mt-2 flex justify-end"><AttachmentPreview files={item.attachments} /></div>}</div>;
-  if (item.kind === 'assistant') return <div className="whitespace-pre-wrap py-2 text-[15px] leading-7 text-[#202124] dark:text-slate-100">{item.text}{item.running && <span className="ml-1 animate-pulse">●</span>}</div>;
+function imageUrlFromReference(reference: string, cwd?: string) {
+  const value = String(reference || '').trim();
+  if (!value) return '';
+  if (/^https?:\/\//i.test(value) || /^data:image\//i.test(value)) return value;
+  if (/^file:\/\//i.test(value)) return '/api/local-image?path=' + encodeURIComponent(decodeURIComponent(value.replace(/^file:\/\//i, '')));
+  if (value.startsWith('/') || value.startsWith('~/')) return '/api/local-image?path=' + encodeURIComponent(value);
+  if ((value.startsWith('./') || value.startsWith('../')) && cwd) return '/api/local-image?path=' + encodeURIComponent(cwd.replace(/\/+$/, '') + '/' + value);
+  return '';
+}
+function looksLikeImageReference(value: string) {
+  return /\.(png|jpe?g|gif|webp|svg)(?:[?#].*)?$/i.test(String(value || '').trim());
+}
+function collectTextImages(text: string, cwd?: string) {
+  const images: Array<{ src: string; alt?: string; title?: string }> = [];
+  const seen = new Set<string>();
+  const add = (reference: string, alt?: string) => {
+    if (!looksLikeImageReference(reference) && !/^data:image\//i.test(reference)) return;
+    const src = imageUrlFromReference(reference, cwd);
+    if (!src || seen.has(src)) return;
+    seen.add(src);
+    images.push({ src, alt: alt || baseName(reference), title: reference });
+  };
+  for (const match of String(text || '').matchAll(/!\[([^\]]*)\]\(([^)]+)\)/g)) add(match[2], match[1]);
+  for (const match of String(text || '').matchAll(/(?:https?:\/\/|file:\/\/)[^\s)"']+\.(?:png|jpe?g|gif|webp|svg)(?:[?#][^\s)"']*)?/gi)) add(match[0]);
+  for (const match of String(text || '').matchAll(/(?:^|\s)(\/[^\s)"']+\.(?:png|jpe?g|gif|webp|svg))(?:\s|$)/gi)) add(match[1]);
+  return images;
+}
+function textWithoutImageMarkdown(text: string) {
+  return String(text || '').replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '$1').trim();
+}
+function RenderedImages({ images }: { images?: Array<{ src: string; alt?: string; title?: string }> }) {
+  const list = (images || []).filter(image => image?.src);
+  if (list.length === 0) return null;
+  return <div className="mt-3 flex flex-wrap gap-3">{list.map((image, index) => <a key={image.src + index} href={image.src} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-neutral-800 dark:bg-neutral-950" title={image.title || image.alt || 'image'}><img src={image.src} alt={image.alt || 'image'} className="max-h-80 max-w-full object-contain" loading="lazy" /></a>)}</div>;
+}
+function RichText({ text, images, cwd }: { text: string; images?: Array<{ src: string; alt?: string; title?: string }>; cwd?: string }) {
+  const textImages = collectTextImages(text, cwd);
+  return <><div className="whitespace-pre-wrap">{textWithoutImageMarkdown(text)}</div><RenderedImages images={[...(images || []), ...textImages]} /></>;
+}
+function Message({ item, answerQuestion, cwd }: { item: ChatItem; answerQuestion?: (request: any, answer: any) => void; cwd?: string }) {
+  if (item.kind === 'user') return <div className="ml-auto max-w-[74%]"><div className="ml-auto w-fit whitespace-pre-wrap rounded-2xl bg-black px-4 py-3 text-[15px] text-white dark:bg-slate-100 dark:text-black">{item.text}</div>{item.attachments?.length > 0 && <div className="mt-2 flex justify-end"><AttachmentPreview files={item.attachments} /></div>}{item.images?.length > 0 && <div className="mt-2 flex justify-end"><RenderedImages images={item.images} /></div>}</div>;
+  if (item.kind === 'assistant') return <div className="py-2 text-[15px] leading-7 text-[#202124] dark:text-slate-100"><RichText text={item.text} images={item.images} cwd={cwd} />{item.running && <span className="ml-1 animate-pulse">●</span>}</div>;
   if (item.kind === 'system') return <div className="rounded-xl bg-[#fff7df] px-4 py-3 text-sm text-[#6b5b1a] dark:bg-amber-400/10 dark:text-amber-200"><div className="mb-1 text-xs font-bold uppercase">{item.title}</div>{item.text}</div>;
   if (item.kind === 'question') return <QuestionBlock item={item} answerQuestion={answerQuestion} />;
   if (item.kind === 'thinking') return <details className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500 dark:border-neutral-800 dark:bg-neutral-950 dark:text-slate-400" open={!!item.running}><summary className="cursor-pointer font-medium">{item.running ? '◌ ' : '✓ '}Thinking</summary><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap text-xs">{item.text}</pre></details>;
@@ -386,6 +424,10 @@ function truncateToolValue(value: string, max = 30) {
 }
 function ToolStatus({ item, icon }: { item: ChatItem; icon: string }) { return <span className="inline-flex w-5 shrink-0 items-center justify-center text-[13px] leading-6 text-gray-400 dark:text-slate-500">{item.running ? '·' : item.error ? '!' : icon}</span>; }
 function ToolPill({ value, max = 30 }: { value: string; max?: number }) { return <span className="rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-[0.95em] leading-none text-gray-500 dark:bg-neutral-900 dark:text-slate-400" title={value}>{truncateToolValue(value, max)}</span>; }
+function ToolOutput({ item }: { item: ChatItem }) {
+  if (!item.text && !(item.images?.length > 0)) return null;
+  return <><RenderedImages images={item.images} />{item.text && <pre className="max-h-80 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5 text-gray-600 dark:text-slate-300">{item.text}</pre>}</>;
+}
 function ToolFullTitle({ label, value }: { label: string; value: string }) {
   return <div className="mb-2 text-[13px] leading-5 text-gray-500 dark:text-slate-400"><span>{label} </span><span className="font-mono">{value}</span></div>;
 }
@@ -398,13 +440,13 @@ function ToolRow({ item, icon, label, fullTitle, children, open }: { item: ChatI
 function BashToolBlock({ item }: { item: ChatItem }) {
   const command = item.args?.command || item.title || 'bash';
   return <ToolRow item={item} icon="⌘" label={<>Ran <ToolPill value={command} max={36} /></>} fullTitle={<ToolFullTitle label="Ran" value={command} />}>
-    {item.text && <pre className="max-h-80 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5 text-gray-600 dark:text-slate-300">{item.text}</pre>}
+    <ToolOutput item={item} />
   </ToolRow>;
 }
 function ReadToolBlock({ item }: { item: ChatItem }) {
   const file = item.args?.path || item.title.replace(/^Read\s+/, '') || 'file';
   return <ToolRow item={item} icon="⌕" label={<>Read <ToolPill value={baseName(file)} /></>} fullTitle={<ToolFullTitle label="Read" value={file} />}>
-    {item.text && <pre className="max-h-96 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5 text-gray-600 dark:text-slate-300">{item.text}</pre>}
+    <ToolOutput item={item} />
   </ToolRow>;
 }
 function EditToolBlock({ item }: { item: ChatItem }) {
@@ -421,7 +463,7 @@ function WriteToolBlock({ item }: { item: ChatItem }) {
 }
 function GenericToolBlock({ item }: { item: ChatItem }) {
   return <details className={'rounded-xl border px-3 py-2 text-sm ' + (item.error ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300' : 'border-gray-200 bg-gray-50 text-gray-600 dark:border-neutral-800 dark:bg-neutral-950 dark:text-slate-300')} open={!!item.running || !!item.text}>
-    <summary className="cursor-pointer font-medium"><ToolStatus item={item} />{item.title}</summary>{item.text && <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap text-xs">{item.text}</pre>}
+    <summary className="cursor-pointer font-medium"><ToolStatus item={item} icon="›" />{item.title}</summary>{item.text && <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap text-xs">{item.text}</pre>}
   </details>;
 }
 function DiffView({ edits, fallback }: any) {

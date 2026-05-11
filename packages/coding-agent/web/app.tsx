@@ -44,11 +44,13 @@ const {
   sessionTitle,
   relTime,
   contentText,
+  contentImages,
   messageText,
   pretty,
   parseFrontmatter,
   yamlScalar,
   toolResultText,
+  toolResultImages,
   projectRouteId,
   conversationRouteId,
   sessionRoute,
@@ -484,11 +486,11 @@ function App() {
     }
     if (e.type === 'tool_execution_update') {
       const id = e.toolCallId || e.id;
-      if (id) updateItem(id, item => ({ ...item, text: toolResultText(e.partialResult) || item.text }));
+      if (id) updateItem(id, item => ({ ...item, text: toolResultText(e.partialResult) || item.text, images: toolResultImages(e.partialResult) || item.images }));
     }
     if (e.type === 'tool_execution_end') {
       const id = e.toolCallId || e.id;
-      if (id) updateItem(id, item => ({ ...item, text: toolResultText(e.result) || item.text, running: false, error: !!(e.error || e.isError) }));
+      if (id) updateItem(id, item => ({ ...item, text: toolResultText(e.result) || item.text, images: toolResultImages(e.result) || item.images, running: false, error: !!(e.error || e.isError) }));
     }
   }
   function formatToolTitle(name: string, args: any) {
@@ -503,13 +505,13 @@ function App() {
     const toolResults = new Map<string, any>();
     for (const msg of raw) if (msg.role === 'toolResult') toolResults.set(msg.toolCallId, msg);
     for (const msg of raw) {
-      if (msg.role === 'user') result.push({ id: uid('user'), kind: 'user', title: 'You', text: messageText(msg) });
+      if (msg.role === 'user') result.push({ id: uid('user'), kind: 'user', title: 'You', text: messageText(msg), images: contentImages(msg.content) });
       else if (msg.role === 'assistant') {
         let text = '';
         const blocks = Array.isArray(msg.content) ? msg.content : [];
         for (const block of blocks) {
           if (block.type === 'text') text += block.text || '';
-          if (block.type === 'toolCall') result.push({ id: uid('tool'), kind: 'tool', title: formatToolTitle(block.name, block.arguments), text: toolResultText(toolResults.get(block.id)), running: false, error: !!toolResults.get(block.id)?.isError, toolName: block.name, args: block.arguments || {} });
+          if (block.type === 'toolCall') result.push({ id: uid('tool'), kind: 'tool', title: formatToolTitle(block.name, block.arguments), text: toolResultText(toolResults.get(block.id)), images: toolResultImages(toolResults.get(block.id)), running: false, error: !!toolResults.get(block.id)?.isError, toolName: block.name, args: block.arguments || {} });
         }
         if (text.trim()) result.push({ id: uid('assistant'), kind: 'assistant', title: 'Assistant', text });
       } else if (msg.role === 'bashExecution') result.push({ id: uid('bash'), kind: 'tool', title: msg.command || 'bash', text: msg.output || '', error: msg.exitCode !== 0, toolName: 'bash', args: { command: msg.command } });

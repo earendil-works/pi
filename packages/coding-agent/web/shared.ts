@@ -20,6 +20,7 @@ type ChatItem = {
   kind: 'system' | 'user' | 'assistant' | 'tool' | 'thinking' | 'question';
   title: string;
   text: string;
+  images?: Array<{ src: string; alt?: string; title?: string }>;
   running?: boolean;
   error?: boolean;
   toolName?: string;
@@ -84,6 +85,10 @@ function contentText(content: any): string {
   return String(content);
 }
 function messageText(message: any): string { return contentText(message && message.content); }
+function contentImages(content: any): Array<{ src: string; alt?: string; title?: string }> {
+  if (!Array.isArray(content)) return [];
+  return content.filter(part => part?.type === 'image' && part.data && part.mimeType).map((part, index) => ({ src: 'data:' + part.mimeType + ';base64,' + part.data, alt: part.name || 'image ' + (index + 1), title: part.name || part.mimeType }));
+}
 function pretty(value: any) { try { return typeof value === 'string' ? value : JSON.stringify(value, null, 2); } catch { return String(value); } }
 function parseFrontmatter(content: string) {
   const match = String(content || '').match(/^---\n([\s\S]*?)\n---\n?/);
@@ -93,6 +98,7 @@ function parseFrontmatter(content: string) {
 }
 function yamlScalar(value: any) { return String(value || '').replace(/\r?\n/g, ' ').trim(); }
 function toolResultText(result: any) { return result ? (contentText(result.content) || result.output || pretty(result)) : ''; }
+function toolResultImages(result: any) { return result ? contentImages(result.content) : []; }
 function slugPart(value: any) { return String(value || '').toLowerCase().replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'item'; }
 function hashString(value: any) {
   let hash = 2166136261;
@@ -125,11 +131,13 @@ function formatK(n: number) { return n >= 1000 ? Math.round(n / 1000) + 'k' : St
   sessionTitle,
   relTime,
   contentText,
+  contentImages,
   messageText,
   pretty,
   parseFrontmatter,
   yamlScalar,
   toolResultText,
+  toolResultImages,
   slugPart,
   hashString,
   projectRouteId,
