@@ -380,35 +380,36 @@ function QuestionBlock({ item, answerQuestion }: { item: ChatItem; answerQuestio
     </div>}
   </div>;
 }
-function ToolStatus({ item }: { item: ChatItem }) { return <span className="mr-2 inline-block w-4 text-center">{item.running ? '◌' : item.error ? '✕' : '✓'}</span>; }
+function ToolStatus({ item }: { item: ChatItem }) { return <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md border border-gray-300 text-[11px] text-gray-400 dark:border-neutral-700 dark:text-slate-500">{item.running ? '·' : item.error ? '!' : '›'}</span>; }
+function ToolRow({ item, label, children, open }: { item: ChatItem; label: any; children?: any; open?: boolean }) {
+  return <details className={'group py-2 text-[15px] ' + (item.error ? 'text-red-500 dark:text-red-300' : 'text-gray-400 dark:text-slate-500')} open={open ?? !!item.running}>
+    <summary className="flex cursor-pointer list-none items-center gap-3 font-medium [&::-webkit-details-marker]:hidden"><ToolStatus item={item} /><span>{label}</span></summary>
+    {children && <div className="ml-8 mt-2 border-l border-gray-200 pl-4 dark:border-neutral-800">{children}</div>}
+  </details>;
+}
 function BashToolBlock({ item }: { item: ChatItem }) {
   const command = item.args?.command || item.title || 'bash';
-  return <details className={'rounded-xl border px-3 py-2 text-sm ' + (item.error ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300' : 'border-gray-200 bg-gray-50 text-gray-700 dark:border-neutral-800 dark:bg-neutral-950 dark:text-slate-300')}>
-    <summary className="cursor-pointer font-medium"><ToolStatus item={item} />Bash</summary>
-    <pre className="mt-2 overflow-auto rounded-lg bg-black p-3 text-xs text-gray-100"><code>{command}</code></pre>
-    {item.text && <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-3 text-xs text-gray-600 dark:bg-black dark:text-slate-300">{item.text}</pre>}
-  </details>;
+  return <ToolRow item={item} label={<>Ran <span className="rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600 dark:bg-neutral-900 dark:text-slate-300">{command}</span></>}>
+    {item.text && <pre className="max-h-80 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5 text-gray-600 dark:text-slate-300">{item.text}</pre>}
+  </ToolRow>;
 }
 function ReadToolBlock({ item }: { item: ChatItem }) {
   const file = item.args?.path || item.title.replace(/^Read\s+/, '') || 'file';
-  return <details className={'rounded-xl border px-3 py-2 text-sm ' + (item.error ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300' : 'border-gray-200 bg-gray-50 text-gray-700 dark:border-neutral-800 dark:bg-neutral-950 dark:text-slate-300')}>
-    <summary className="cursor-pointer font-medium"><ToolStatus item={item} />Read <span className="font-mono">{baseName(file)}</span></summary>
-    {item.text && <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap rounded-lg bg-white p-3 text-xs text-gray-700 dark:bg-black dark:text-slate-300">{item.text}</pre>}
-  </details>;
+  return <ToolRow item={item} label={<>Read <span className="rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600 dark:bg-neutral-900 dark:text-slate-300">{baseName(file)}</span></>}>
+    {item.text && <pre className="max-h-96 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5 text-gray-600 dark:text-slate-300">{item.text}</pre>}
+  </ToolRow>;
 }
 function EditToolBlock({ item }: { item: ChatItem }) {
   const file = item.args?.path || 'file';
-  return <details className={'rounded-xl border px-3 py-2 text-sm ' + (item.error ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300' : 'border-gray-200 bg-gray-50 text-gray-700 dark:border-neutral-800 dark:bg-neutral-950 dark:text-slate-300')} open={!!item.running}>
-    <summary className="cursor-pointer font-medium"><ToolStatus item={item} />Edited <span className="font-mono">{baseName(file)}</span></summary>
+  return <ToolRow item={item} label={<>Edited <span className="rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600 dark:bg-neutral-900 dark:text-slate-300">{baseName(file)}</span></>} open={!!item.running}>
     <DiffView edits={item.args?.edits} fallback={item.text} />
-  </details>;
+  </ToolRow>;
 }
 function WriteToolBlock({ item }: { item: ChatItem }) {
   const file = item.args?.path || 'file';
-  return <details className={'rounded-xl border px-3 py-2 text-sm ' + (item.error ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300' : 'border-gray-200 bg-gray-50 text-gray-700 dark:border-neutral-800 dark:bg-neutral-950 dark:text-slate-300')} open={!!item.running}>
-    <summary className="cursor-pointer font-medium"><ToolStatus item={item} />Wrote <span className="font-mono">{baseName(file)}</span></summary>
+  return <ToolRow item={item} label={<>Wrote <span className="rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-gray-600 dark:bg-neutral-900 dark:text-slate-300">{baseName(file)}</span></>} open={!!item.running}>
     <AddedFileView content={item.args?.content || item.text} />
-  </details>;
+  </ToolRow>;
 }
 function GenericToolBlock({ item }: { item: ChatItem }) {
   return <details className={'rounded-xl border px-3 py-2 text-sm ' + (item.error ? 'border-red-200 bg-red-50 text-red-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-300' : 'border-gray-200 bg-gray-50 text-gray-600 dark:border-neutral-800 dark:bg-neutral-950 dark:text-slate-300')} open={!!item.running || !!item.text}>
