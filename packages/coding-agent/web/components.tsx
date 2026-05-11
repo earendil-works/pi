@@ -327,7 +327,7 @@ function TerminalPane({ focusKey, onClose }: any) {
     return () => window.removeEventListener('pi-terminal-event', handler);
   }, []);
 
-  return <aside className="fixed bottom-0 right-0 top-12 z-20 flex w-[420px] max-w-full flex-col border-l border-gray-200 bg-[#0b1020] text-gray-100 shadow-pi max-[999px]:left-0 max-[999px]:top-auto max-[999px]:h-[45vh] max-[999px]:w-full max-[999px]:border-l-0 max-[999px]:border-t">
+  return <aside className="terminal-panel fixed bottom-0 right-0 top-12 z-20 flex w-[420px] max-w-full flex-col border-l border-gray-200 bg-[#0b1020] text-gray-100 shadow-pi max-[999px]:left-0 max-[999px]:top-auto max-[999px]:h-[45vh] max-[999px]:w-full max-[999px]:border-l-0 max-[999px]:border-t">
     <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/10 px-3">
       <div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-gray-100">Terminal</div><div className="truncate font-mono text-[10px] text-gray-400">{cwd || 'starting'}{pid ? ' · pid ' + pid : ''}</div></div>
       <span className={'rounded-full px-2 py-0.5 text-[10px] font-semibold ' + (running ? 'bg-green-400/15 text-green-200' : 'bg-gray-400/15 text-gray-300')}>{running ? 'Running' : 'Stopped'}</span>

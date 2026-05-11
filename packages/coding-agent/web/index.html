@@ -37,6 +37,21 @@
     pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
     .scrollbar-thin::-webkit-scrollbar-thumb { background: #d0d5dd; border-radius: 999px; }
+    .terminal-panel { animation: terminal-panel-in 180ms cubic-bezier(.2,.8,.2,1); transform-origin: right center; }
+    @keyframes terminal-panel-in {
+      from { opacity: 0; transform: translateX(18px); }
+      to { opacity: 1; transform: translateX(0); }
+    }
+    @media (max-width: 999px) {
+      .terminal-panel { transform-origin: bottom center; }
+      @keyframes terminal-panel-in {
+        from { opacity: 0; transform: translateY(18px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .terminal-panel { animation: none; }
+    }
   </style>
 </head>
 <body>
