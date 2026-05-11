@@ -258,7 +258,7 @@ async function startWebServer(options: WebOptions): Promise<void> {
 				const sessions = await SessionManager.listAll();
 				const match = sessions.find((session) => path.resolve(session.path) === path.resolve(sessionPath));
 				if (match?.cwd) activeCwd = match.cwd;
-				await applyMainSystemPromptOverride();
+				void applyMainSystemPromptOverride();
 			}
 			sendJson(res, response, response.success ? 200 : 400);
 			return;

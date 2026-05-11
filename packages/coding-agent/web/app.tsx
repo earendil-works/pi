@@ -337,16 +337,27 @@ function App() {
   }
   async function openSession(project: ProjectInfo, session: SessionInfo, updateUrl = true) {
     setView('chat');
+    const previousRoute = window.location.pathname + window.location.search;
     if (updateUrl) pushRoute(sessionRoute(project, session));
     if (currentSessionPath === session.path) return;
     setStatus('switching session…');
     setQueue([]);
-    const res = await fetch('/api/switch-session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionPath: session.path }) });
-    if (!res.ok) { alert(await res.text()); setStatus('ready'); return; }
-    setCurrentSessionPath(session.path);
-    await loadMessages();
-    await loadState();
-    setStatus('ready');
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 20000);
+    try {
+      const res = await fetch('/api/switch-session', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionPath: session.path }), signal: controller.signal });
+      if (!res.ok) throw new Error(await res.text());
+      setCurrentSessionPath(session.path);
+      await loadMessages();
+      await loadState();
+    } catch (err: any) {
+      const message = err?.name === 'AbortError' ? 'Session switch timed out.' : String(err?.message || err);
+      addItem({ kind: 'tool', title: 'Session switch failed', text: message, error: true });
+      if (updateUrl) replaceRoute(previousRoute);
+    } finally {
+      clearTimeout(timeout);
+      setStatus('ready');
+    }
   }
   async function newChat() {
     await fetch('/api/new-session', { method: 'POST' });
