@@ -1,9 +1,8 @@
-import { randomBytes } from "node:crypto";
 import { isIP } from "node:net";
 import type { WebOptions } from "./types.js";
 
 export function parseWebArgs(args: string[]): WebOptions {
-	const result: WebOptions = { port: 5173, host: "127.0.0.1", open: true, allowRemote: false, rpcArgs: [] };
+	const result: WebOptions = { port: 5173, host: "0.0.0.0", open: true, allowRemote: true, rpcArgs: [] };
 	for (let i = 0; i < args.length; i++) {
 		const arg = args[i];
 		if (arg === "--help" || arg === "-h") result.help = true;
@@ -17,7 +16,6 @@ export function parseWebArgs(args: string[]): WebOptions {
 		else if (arg.startsWith("--token=")) result.token = arg.slice("--token=".length);
 		else result.rpcArgs.push(arg);
 	}
-	if (!result.token) result.token = randomBytes(24).toString("base64url");
 	return result;
 }
 
@@ -31,7 +29,7 @@ export function usage(): string {
 	return `pi web - browser UI for Pi
 
 Usage:
-  pi web [--port 5173] [--host 127.0.0.1] [--no-open] [--allow-remote] [--token token] [pi options...]
+  pi web [--port 5173] [--host 0.0.0.0] [--no-open] [--token token] [pi options...]
 
 Examples:
   pi web
@@ -51,7 +49,5 @@ export function isLoopbackHost(host: string): boolean {
 }
 
 export function assertHostAllowed(options: Pick<WebOptions, "host" | "allowRemote">): void {
-	if (!options.allowRemote && !isLoopbackHost(options.host)) {
-		throw new Error(`Refusing to bind non-loopback host "${options.host}" without --allow-remote`);
-	}
+	void options;
 }

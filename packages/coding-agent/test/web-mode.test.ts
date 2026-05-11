@@ -37,6 +37,18 @@ function request(body: string, headers: Record<string, string> = {}, method = "P
 }
 
 describe("web args", () => {
+	test("defaults to remote access without an auth token", () => {
+		const result = parseWebArgs([]);
+		expect(result).toMatchObject({
+			port: 5173,
+			host: "0.0.0.0",
+			open: true,
+			allowRemote: true,
+			rpcArgs: [],
+		});
+		expect(result.token).toBeUndefined();
+	});
+
 	test("parses public flags and keeps remaining args for rpc", () => {
 		const result = parseWebArgs([
 			"--port",
@@ -58,11 +70,11 @@ describe("web args", () => {
 		});
 	});
 
-	test("guards remote hosts unless explicitly allowed", () => {
+	test("allows remote hosts by default", () => {
 		expect(isLoopbackHost("127.0.0.1")).toBe(true);
 		expect(isLoopbackHost("localhost")).toBe(true);
 		expect(isLoopbackHost("0.0.0.0")).toBe(false);
-		expect(() => assertHostAllowed({ host: "0.0.0.0", allowRemote: false })).toThrow(/allow-remote/);
+		expect(() => assertHostAllowed({ host: "0.0.0.0", allowRemote: false })).not.toThrow();
 		expect(() => assertHostAllowed({ host: "0.0.0.0", allowRemote: true })).not.toThrow();
 	});
 });

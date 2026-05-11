@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from "node:child_process";
-import { randomBytes } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as http from "node:http";
+import { networkInterfaces } from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import { getAgentDir } from "../../config.js";
@@ -59,7 +59,7 @@ export async function runWebMode(args: string[] = []): Promise<void> {
 }
 
 async function startWebServer(options: WebOptions): Promise<void> {
-	const token = options.token || randomBytes(24).toString("base64url");
+	const token = options.token?.trim() || "";
 	const clients = new Set<http.ServerResponse>();
 	const replayBuffer: WebEvent[] = [];
 	const webRoot = await resolveWebRoot();
@@ -108,13 +108,13 @@ async function startWebServer(options: WebOptions): Promise<void> {
 
 	async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
 		const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-		if (url.searchParams.get("token") === token) {
+		if (token && url.searchParams.get("token") === token) {
 			url.searchParams.delete("token");
 			writeAuthRedirect(res, url.pathname + url.search, token);
 			return;
 		}
 
-		if (url.pathname.startsWith("/api/") || url.pathname === "/events") {
+		if (token && (url.pathname.startsWith("/api/") || url.pathname === "/events")) {
 			assertAuthorized(req, token);
 			assertSafeOrigin(req);
 		}
@@ -154,7 +154,7 @@ async function startWebServer(options: WebOptions): Promise<void> {
 			if (!served) throw new HttpError(404, "Not found");
 			return;
 		}
-		if (!requestHasToken(req, token)) {
+		if (token && !requestHasToken(req, token)) {
 			sendText(res, "Unauthorized. Open the URL printed by pi web.", 401);
 			return;
 		}
@@ -477,10 +477,11 @@ async function startWebServer(options: WebOptions): Promise<void> {
 	});
 	const address = server.address();
 	const port = typeof address === "object" && address ? address.port : options.port;
-	const url = `http://${options.host}:${port}/?token=${encodeURIComponent(token)}`;
-	console.log(`Pi web UI running at ${url}`);
+	const urls = webUrls(options.host, port, token);
+	console.log(`Pi web UI running at ${urls.local}`);
+	for (const url of urls.network) console.log(`Network URL: ${url}`);
 	console.log(`Headless Pi RPC PID: ${rpc.pid}`);
-	if (options.open) openBrowser(url);
+	if (options.open) openBrowser(urls.local);
 
 	const shutdown = (): void => {
 		server.close();
@@ -571,6 +572,19 @@ async function resumeResponse(): Promise<WebRpcResponse> {
 			})),
 		},
 	} as WebRpcResponse;
+}
+
+function webUrls(host: string, port: number, token: string): { local: string; network: string[] } {
+	const suffix = token ? `/?token=${encodeURIComponent(token)}` : "/";
+	const wildcard = host === "0.0.0.0" || host === "::" || host === "[::]";
+	const localHost = wildcard ? "localhost" : host;
+	const network = wildcard
+		? Object.values(networkInterfaces())
+				.flatMap((items) => items ?? [])
+				.filter((item) => item.family === "IPv4" && !item.internal)
+				.map((item) => `http://${item.address}:${port}${suffix}`)
+		: [];
+	return { local: `http://${localHost}:${port}${suffix}`, network };
 }
 
 function openBrowser(url: string): void {
