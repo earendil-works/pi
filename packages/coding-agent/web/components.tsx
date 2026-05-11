@@ -33,7 +33,7 @@ function ProjectTree({ project, collapsed, icon, currentSessionPath, onToggle, o
     </div>)}
   </div>;
 }
-function ChatView({ logRef, messages, input, setInput, submitPrompt, submitMessage, abortGeneration, busy, queuedPrompts, removeQueuedPrompt, models, commands, state, loadState, focusKey, terminalOpen, setTerminalOpen }: any) {
+function ChatView({ logRef, messages, input, setInput, submitPrompt, submitMessage, answerQuestion, abortGeneration, busy, queuedPrompts, removeQueuedPrompt, models, commands, state, loadState, focusKey, terminalOpen, setTerminalOpen }: any) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -165,7 +165,7 @@ function ChatView({ logRef, messages, input, setInput, submitPrompt, submitMessa
   return <>
     <main ref={logRef} onScroll={handleChatScroll} style={{ paddingBottom: composerHeight + 64 }} className={'flex-1 overflow-y-auto px-6 pt-16 scrollbar-thin dark:bg-black ' + terminalOffsetClass}><div className="mx-auto w-full max-w-6xl space-y-4">
       {renderStart > 0 && <div className="py-3 text-center text-xs text-gray-400">Scroll up to load older messages</div>}
-      {messages.slice(renderStart).map((item: ChatItem) => <Message key={item.id} item={item} />)}
+      {messages.slice(renderStart).map((item: ChatItem) => <Message key={item.id} item={item} answerQuestion={answerQuestion} />)}
     </div></main>
     {terminalOpen && <TerminalPane focusKey={focusKey} onClose={() => setTerminalOpen(false)} />}
     <form ref={formRef} onSubmit={submitPrompt} className={'fixed bottom-0 left-[290px] bg-gradient-to-t from-white via-white px-6 pb-4 pt-3 dark:from-black dark:via-black max-[820px]:left-0 ' + terminalFormClass}><div className="mx-auto w-full max-w-6xl">
@@ -340,16 +340,32 @@ function TerminalPane({ focusKey, onClose }: any) {
   </aside>;
 }
 function AttachmentPreview({ files, remove }: any) { return <div className="mb-2 flex flex-wrap gap-2">{files.map((file: any, index: number) => <div key={index} className="group relative overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-neutral-800 dark:bg-neutral-900">{String(file.type || '').startsWith('image/') && file.dataUrl ? <img src={file.dataUrl} className="h-20 w-20 object-cover" /> : <div className="flex h-20 w-40 items-center justify-center px-3 text-center text-xs text-gray-500 dark:text-slate-400">{file.name}</div>}<div className="absolute inset-x-0 bottom-0 truncate bg-black/55 px-2 py-1 text-[10px] text-white">{file.name}</div>{remove && <button type="button" className="absolute right-1 top-1 hidden rounded-full bg-black/60 px-1.5 text-xs text-white group-hover:block" onClick={() => remove(index)}>×</button>}</div>)}</div>; }
-function Message({ item }: { item: ChatItem }) {
+function Message({ item, answerQuestion }: { item: ChatItem; answerQuestion?: (request: any, answer: any) => void }) {
   if (item.kind === 'user') return <div className="ml-auto max-w-[74%]"><div className="ml-auto w-fit whitespace-pre-wrap rounded-2xl bg-black px-4 py-3 text-[15px] text-white dark:bg-slate-100 dark:text-black">{item.text}</div>{item.attachments?.length > 0 && <div className="mt-2 flex justify-end"><AttachmentPreview files={item.attachments} /></div>}</div>;
   if (item.kind === 'assistant') return <div className="whitespace-pre-wrap py-2 text-[15px] leading-7 text-[#202124] dark:text-slate-100">{item.text}{item.running && <span className="ml-1 animate-pulse">●</span>}</div>;
   if (item.kind === 'system') return <div className="rounded-xl bg-[#fff7df] px-4 py-3 text-sm text-[#6b5b1a] dark:bg-amber-400/10 dark:text-amber-200"><div className="mb-1 text-xs font-bold uppercase">{item.title}</div>{item.text}</div>;
+  if (item.kind === 'question') return <QuestionBlock item={item} answerQuestion={answerQuestion} />;
   if (item.kind === 'thinking') return <details className="rounded-xl border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-500 dark:border-neutral-800 dark:bg-neutral-950 dark:text-slate-400" open={!!item.running}><summary className="cursor-pointer font-medium">{item.running ? '◌ ' : '✓ '}Thinking</summary><pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap text-xs">{item.text}</pre></details>;
   if (item.toolName === 'bash') return <BashToolBlock item={item} />;
   if (item.toolName === 'read') return <ReadToolBlock item={item} />;
   if (item.toolName === 'edit') return <EditToolBlock item={item} />;
   if (item.toolName === 'write') return <WriteToolBlock item={item} />;
   return <GenericToolBlock item={item} />;
+}
+function QuestionBlock({ item, answerQuestion }: { item: ChatItem; answerQuestion?: (request: any, answer: any) => void }) {
+  const [customAnswer, setCustomAnswer] = useState('');
+  const request = item.args?.request || { id: item.id, question: item.text, options: item.args?.options || [] };
+  const options = item.args?.options || request.options || [];
+  const answer = item.args?.answer;
+  const answered = !!answer || !item.running;
+  return <div className={'rounded-2xl border px-4 py-3 text-sm shadow-sm ' + (item.error ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200' : 'border-piAccent/25 bg-[#f7f8ff] text-gray-800 dark:border-piAccent/30 dark:bg-piAccent/10 dark:text-slate-100')}>
+    <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase text-piAccent"><span>{answered ? 'Answered question' : 'Question'}</span>{item.running && <span className="animate-pulse rounded-full bg-piAccent/10 px-2 py-0.5 normal-case">waiting</span>}</div>
+    <div className="whitespace-pre-wrap text-[15px] leading-6">{item.text}</div>
+    {answer ? <div className="mt-3 rounded-xl border border-gray-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-black"><div className="text-xs font-semibold uppercase text-gray-400 dark:text-slate-500">Answer</div><div className="mt-1 whitespace-pre-wrap">{answer.answer}</div></div> : <div className="mt-3 space-y-3">
+      <div className="grid gap-2">{options.map((option: string, index: number) => <button key={index} type="button" className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-left font-medium hover:border-piAccent hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-800 dark:bg-black dark:hover:bg-neutral-900" disabled={!item.running || !answerQuestion} onClick={() => answerQuestion?.(request, { answer: option, optionIndex: index, custom: false })}>{option}</button>)}</div>
+      <div className="flex flex-col gap-2 sm:flex-row"><input className="min-w-0 flex-1 rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:border-piAccent dark:border-neutral-800 dark:bg-black" value={customAnswer} onChange={e => setCustomAnswer(e.target.value)} placeholder="Other" disabled={!item.running} /><button type="button" className="rounded-xl bg-piAccent px-4 py-2 font-bold text-white disabled:cursor-not-allowed disabled:opacity-50" disabled={!item.running || !customAnswer.trim() || !answerQuestion} onClick={() => answerQuestion?.(request, { answer: customAnswer.trim(), optionIndex: null, custom: true })}>Send</button></div>
+    </div>}
+  </div>;
 }
 function ToolStatus({ item }: { item: ChatItem }) { return <span className="mr-2 inline-block w-4 text-center">{item.running ? '◌' : item.error ? '✕' : '✓'}</span>; }
 function BashToolBlock({ item }: { item: ChatItem }) {
@@ -421,17 +437,6 @@ function Modal({ children, onClose }: any) {
   return <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-900/30 p-5 dark:bg-black/50" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}><div className="flex max-h-[calc(100vh-40px)] w-[min(760px,94vw)] max-w-3xl flex-col overflow-hidden rounded-[18px] border border-gray-200 bg-white shadow-modal dark:border-neutral-800 dark:bg-neutral-950">{children}</div></div>;
 }
 function CommandOutputModal({ command, text, onClose }: any) { return <Modal onClose={onClose}><div className="flex items-center justify-between border-b border-gray-200 p-4 dark:border-neutral-900"><h2 className="font-bold">{command}</h2><button className="rounded-lg bg-gray-100 px-3 py-2 dark:bg-neutral-900" onClick={onClose}>Close</button></div><pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap p-4 text-sm leading-6 text-gray-700 dark:text-slate-300">{text}</pre></Modal>; }
-function AskQuestionModal({ request, onAnswer, onClose }: any) {
-  const [customAnswer, setCustomAnswer] = useState('');
-  return <Modal onClose={onClose}><div className="flex items-center justify-between border-b border-gray-200 p-4 dark:border-neutral-900"><h2 className="font-bold">Question</h2><button className="rounded-lg bg-gray-100 px-3 py-2 dark:bg-neutral-900" onClick={onClose}>Cancel</button></div>
-    <div className="space-y-4 p-4">
-      <p className="whitespace-pre-wrap text-sm leading-6 text-gray-700 dark:text-slate-300">{request.question}</p>
-      <div className="grid gap-2">{(request.options || []).map((option: string, index: number) => <button key={index} type="button" className="rounded-xl border border-gray-200 px-4 py-3 text-left text-sm font-medium hover:border-piAccent hover:bg-gray-50 dark:border-neutral-800 dark:hover:bg-neutral-900" onClick={() => onAnswer({ answer: option, optionIndex: index, custom: false })}>{option}</button>)}</div>
-      <div className="rounded-xl border border-gray-200 p-3 dark:border-neutral-800"><label className="mb-2 block text-sm font-semibold text-gray-600 dark:text-slate-300">Other</label><textarea className="h-24 w-full resize-none rounded-lg border border-gray-300 bg-white p-3 text-sm outline-none dark:border-neutral-800 dark:bg-black" value={customAnswer} onChange={e => setCustomAnswer(e.target.value)} placeholder="Write your own answer" /></div>
-    </div>
-    <div className="flex justify-end gap-2 border-t border-gray-200 p-4 dark:border-neutral-900"><button className="rounded-xl bg-gray-100 px-4 py-2 dark:bg-neutral-900" onClick={onClose}>Cancel</button><button className="rounded-xl bg-piAccent px-4 py-2 font-bold text-white disabled:opacity-50" disabled={!customAnswer.trim()} onClick={() => onAnswer({ answer: customAnswer.trim(), optionIndex: null, custom: true })}>Send Other</button></div>
-  </Modal>;
-}
 function SkillsView({ skills, reload, openModal }: any) {
   const [query, setQuery] = useState('');
   useEffect(() => { reload(); }, []);
@@ -620,7 +625,6 @@ function Field({ label, children }: any) { return <label className="block"><span
   FolderModal,
   Modal,
   CommandOutputModal,
-  AskQuestionModal,
   SkillsView,
   SkillTile,
   ToolsView,

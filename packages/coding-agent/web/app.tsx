@@ -17,7 +17,7 @@ type ProjectInfo = {
 
 type ChatItem = {
   id: string;
-  kind: 'system' | 'user' | 'assistant' | 'tool' | 'thinking';
+  kind: 'system' | 'user' | 'assistant' | 'tool' | 'thinking' | 'question';
   title: string;
   text: string;
   running?: boolean;
@@ -70,7 +70,6 @@ const {
   SearchModal,
   FolderModal,
   CommandOutputModal,
-  AskQuestionModal,
   SkillsView,
   ToolsView,
   AgentsView,
@@ -110,7 +109,6 @@ function App() {
   const [builtinAgentOverrides, setBuiltinAgentOverrides] = useState<Record<string, any>>(() => safeJson(localStorage.getItem('piWebBuiltinAgentOverrides'), {}));
   const [agentModal, setAgentModal] = useState<any>(null);
   const [commandModal, setCommandModal] = useState<any>(null);
-  const [askQuestionRequest, setAskQuestionRequest] = useState<any>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [terminalOpenByProject, setTerminalOpenByProject] = useState<Record<string, boolean>>(() => safeJson(localStorage.getItem('piWebTerminalOpenByProject'), {}));
   const [terminalOpen, setTerminalOpenState] = useState(false);
@@ -460,7 +458,10 @@ function App() {
     if (e.type === 'terminal_start' || e.type === 'terminal_output' || e.type === 'terminal_exit') {
       window.dispatchEvent(new CustomEvent('pi-terminal-event', { detail: e }));
     }
-    if (e.type === 'ask_question') { setAskQuestionRequest(e); setStatus('waiting for answer…'); }
+    if (e.type === 'ask_question') {
+      setMessages(prev => prev.some(item => item.id === e.id) ? prev : [...prev, { id: e.id, kind: 'question', title: 'Question', text: e.question, running: true, args: { request: e, options: e.options || [] } }]);
+      setStatus('waiting for answer…');
+    }
     if (e.type === 'agent_start') { resetStreamingRefs(); setBusyState(true); setStatus('thinking…'); }
     if (e.type === 'web_connected' && e.rpcBusy) { setBusyState(true); setStatus('thinking…'); loadState(); }
     if (e.type === 'agent_end') { finishThinking(); finishAssistant(); setBusyState(false); setStatus('ready'); setMessages(prev => prev.map(item => item.running ? { ...item, running: false } : item)); loadMessages(); loadProjects(); loadState(); setTimeout(drainPromptQueue, 150); }
@@ -548,17 +549,17 @@ function App() {
     setInput('');
     await submitMessage(message);
   }
-  async function answerQuestion(answer: any) {
-    const request = askQuestionRequest;
-    if (!request) return;
-    setAskQuestionRequest(null);
+  async function answerQuestion(request: any, answer: any) {
+    if (!request?.id) return;
     setStatus('sending answer…');
     try {
       const res = await fetch('/api/ask-question/answer', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: request.id, ...answer }) });
       if (!res.ok) throw new Error(await res.text());
+      updateItem(request.id, item => ({ ...item, title: 'Question answered', running: false, args: { ...(item.args || {}), answer } }));
       setStatus('answer sent');
       setTimeout(() => setStatus('ready'), 1200);
     } catch (err: any) {
+      updateItem(request.id, item => ({ ...item, running: false, error: true }));
       addItem({ kind: 'tool', title: 'Question answer failed', text: String(err.message || err), error: true });
       setStatus('ready');
     }
@@ -663,7 +664,7 @@ function App() {
         <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 dark:bg-neutral-900 dark:text-slate-200 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-sm font-semibold">{view === 'skills' ? 'Skills' : view === 'tools' ? 'Tools' : 'Agents'}</h1></div>
         <div className="flex items-center gap-3 text-xs text-gray-400 dark:text-slate-500"><ThemeToggle value={themePreference} onChange={setThemePreference} /><span>π Pi Web</span></div>
       </header>}
-      {view === 'chat' && <ChatView logRef={logRef} messages={messages} input={input} setInput={setInput} submitPrompt={submitPrompt} submitMessage={submitMessage} abortGeneration={abortGeneration} busy={busy} queuedPrompts={queuedPrompts} removeQueuedPrompt={(id: string) => setQueue(queuedPromptsRef.current.filter(item => item.id !== id))} models={models} commands={commands} state={state} loadState={loadState} focusKey={(state?.cwd || '') + ':' + currentSessionPath} terminalOpen={terminalOpen} setTerminalOpen={setTerminalOpen} />}
+      {view === 'chat' && <ChatView logRef={logRef} messages={messages} input={input} setInput={setInput} submitPrompt={submitPrompt} submitMessage={submitMessage} answerQuestion={answerQuestion} abortGeneration={abortGeneration} busy={busy} queuedPrompts={queuedPrompts} removeQueuedPrompt={(id: string) => setQueue(queuedPromptsRef.current.filter(item => item.id !== id))} models={models} commands={commands} state={state} loadState={loadState} focusKey={(state?.cwd || '') + ':' + currentSessionPath} terminalOpen={terminalOpen} setTerminalOpen={setTerminalOpen} />}
       {view === 'skills' && <SkillsView skills={skills} reload={async () => { await loadSkills(); await loadCommands(); }} openModal={setSkillModal} />}
       {view === 'tools' && <ToolsView tools={[...builtinTools, ...tools]} openModal={setToolModal} saveTools={saveTools} customTools={tools} />}
       {view === 'agents' && <AgentsView builtinAgents={builtinAgents.map(agent => ({ ...agent, systemPrompt: mainSystemPrompt, skills: skills.filter((skill: any) => skill.name !== 'ask-question').map((skill: any) => skill.name), tools: [...builtinTools, ...tools].map((tool: any) => tool.name), ...(builtinAgentOverrides[agent.id] || {}) }))} customAgents={agents} openModal={setAgentModal} saveAgents={saveAgents} />}
@@ -681,7 +682,6 @@ function App() {
     {toolModal && <ToolModal tool={toolModal === true ? null : toolModal} onClose={() => setToolModal(null)} onSave={(tool: any) => { if (tool.id) saveTools(tools.map(t => t.id === tool.id ? tool : t)); else saveTools([...tools, { ...tool, id: uid('tool'), createdAt: new Date().toISOString() }]); setToolModal(null); }} />}
     {agentModal && <AgentModal agent={agentModal === true ? null : agentModal} skills={skills} tools={[...builtinTools, ...tools]} cwd={state?.cwd} onClose={() => setAgentModal(null)} onSave={(agent: any) => { if (agent.builtin) saveBuiltinAgent(agent); else if (agent.id) saveAgents(agents.map(a => a.id === agent.id ? agent : a)); else saveAgents([...agents, { ...agent, id: uid('agent'), createdAt: new Date().toISOString() }]); setAgentModal(null); }} />}
     {commandModal && <CommandOutputModal command={commandModal.title} text={commandModal.text} onClose={() => setCommandModal(null)} />}
-    {askQuestionRequest && <AskQuestionModal request={askQuestionRequest} onAnswer={answerQuestion} onClose={() => answerQuestion({ answer: 'Cancelled', optionIndex: null, custom: true })} />}
   </div>;
 }
 

@@ -17,7 +17,7 @@ type ProjectInfo = {
 
 type ChatItem = {
   id: string;
-  kind: 'system' | 'user' | 'assistant' | 'tool' | 'thinking';
+  kind: 'system' | 'user' | 'assistant' | 'tool' | 'thinking' | 'question';
   title: string;
   text: string;
   running?: boolean;
