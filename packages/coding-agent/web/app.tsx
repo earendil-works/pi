@@ -65,6 +65,7 @@ const {
 const {
   SidebarButton,
   NewChatIcon,
+  SearchIcon,
   ProjectTree,
   ChatView,
   TerminalPane,
@@ -647,7 +648,7 @@ function App() {
     {sidebarOpen && <div className="fixed inset-0 z-30 bg-gray-900/30 min-[821px]:hidden" onClick={() => setSidebarOpen(false)} />}
     <aside className={'h-screen overflow-y-auto bg-piPanel px-3 py-4 text-piText scrollbar-thin dark:bg-neutral-950 dark:text-slate-100 max-[820px]:fixed max-[820px]:inset-y-0 max-[820px]:left-0 max-[820px]:z-40 max-[820px]:w-[290px] max-[820px]:transition-transform ' + (sidebarOpen ? 'max-[820px]:translate-x-0' : 'max-[820px]:-translate-x-full')}>
       <SidebarButton icon={<NewChatIcon />} label="New chat" onClick={() => { setSidebarOpen(false); newChat(); }} />
-      <SidebarButton icon="⌕" label="Search" onClick={() => { setSidebarOpen(false); setSearchOpen(true); }} />
+      <SidebarButton icon={<SearchIcon />} label="Search" onClick={() => { setSidebarOpen(false); setSearchOpen(true); }} />
       <SidebarButton icon="◎" label="Agents" onClick={() => { setSidebarOpen(false); go('/agents', 'agents'); }} />
       <SidebarButton icon="✦" label="Skills" onClick={() => { setSidebarOpen(false); go('/skills', 'skills'); loadSkills(); }} />
       <SidebarButton icon="⚙" label="Tools" onClick={() => { setSidebarOpen(false); go('/tools', 'tools'); }} />
