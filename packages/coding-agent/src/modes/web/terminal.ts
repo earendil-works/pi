@@ -43,11 +43,12 @@ interface TerminalSession {
 const require = createRequire(import.meta.url);
 
 export function loadNodePty(): NodePtyModule | null {
-	try {
-		return require("node-pty") as NodePtyModule;
-	} catch {
-		return null;
+	for (const moduleName of ["@lydell/node-pty", "node-pty"]) {
+		try {
+			return require(moduleName) as NodePtyModule;
+		} catch {}
 	}
+	return null;
 }
 
 export class TerminalUnavailableError extends Error {

@@ -67,6 +67,7 @@
 		}
 	},
 	"optionalDependencies": {
+		"@lydell/node-pty": "^1.2.0-beta.12",
 		"@mariozechner/clipboard": "^0.3.5",
 		"node-pty": "^1.1.0"
 	},
