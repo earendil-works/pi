@@ -130,33 +130,39 @@ describe("terminal manager", () => {
 		const cwd = await tempDir();
 		let dataHandler: ((data: string) => void) | undefined;
 		let exitHandler: ((event: { exitCode: number; signal?: number }) => void) | undefined;
+		let spawnedArgs: string[] = [];
 		const writes: string[] = [];
 		const resizes: Array<[number, number]> = [];
 		const broadcasts: unknown[] = [];
 		const manager = new TerminalManager({
 			broadcast: (event) => broadcasts.push(event),
 			loadPty: () => ({
-				spawn: () => ({
-					pid: 123,
-					process: "shell",
-					write: (data: string) => writes.push(data),
-					resize: (cols: number, rows: number) => resizes.push([cols, rows]),
-					kill: () => exitHandler?.({ exitCode: 0 }),
-					onData: (callback: (data: string) => void) => {
-						dataHandler = callback;
-						return { dispose: vi.fn() };
-					},
-					onExit: (callback: (event: { exitCode: number; signal?: number }) => void) => {
-						exitHandler = callback;
-						return { dispose: vi.fn() };
-					},
-				}),
+				spawn: (_file, args) => {
+					spawnedArgs = args;
+					return {
+						pid: 123,
+						process: "shell",
+						write: (data: string) => writes.push(data),
+						resize: (cols: number, rows: number) => resizes.push([cols, rows]),
+						kill: () => exitHandler?.({ exitCode: 0 }),
+						onData: (callback: (data: string) => void) => {
+							dataHandler = callback;
+							return { dispose: vi.fn() };
+						},
+						onExit: (callback: (event: { exitCode: number; signal?: number }) => void) => {
+							exitHandler = callback;
+							return { dispose: vi.fn() };
+						},
+					};
+				},
 			}),
 		});
 		const started = manager.start(cwd, 80, 24);
 		expect(started.running).toBe(true);
+		expect(writes).toEqual(["\r"]);
+		expect(spawnedArgs).toEqual(expect.arrayContaining(["-i"]));
 		manager.write(cwd, "echo hi\r");
-		expect(writes).toEqual(["echo hi\r"]);
+		expect(writes).toEqual(["\r", "echo hi\r"]);
 		manager.resize(cwd, 120, 40);
 		expect(resizes).toEqual([[120, 40]]);
 		dataHandler?.("x".repeat(210 * 1024));

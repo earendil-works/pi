@@ -101,6 +101,7 @@ export class TerminalManager {
 				});
 			}),
 		);
+		terminal.pty.write("\r");
 		this.sessions.set(resolvedCwd, terminal);
 		this.options.broadcast({ type: "terminal_start", cwd: resolvedCwd, pid: terminal.pty.pid });
 		return this.state(resolvedCwd);
@@ -175,7 +176,9 @@ export class TerminalManager {
 	private shell(): { file: string; args: string[] } {
 		if (process.platform === "win32") return { file: process.env.COMSPEC || "cmd.exe", args: [] };
 		const shell = process.env.SHELL || (os.platform() === "darwin" ? "/bin/zsh" : "/bin/sh");
-		return { file: shell, args: [] };
+		const base = path.basename(shell);
+		const args = base === "bash" || base === "zsh" || base === "fish" || base === "sh" ? ["-i"] : [];
+		return { file: shell, args };
 	}
 
 	private spawnTerminal(

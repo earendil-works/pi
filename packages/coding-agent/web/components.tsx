@@ -286,7 +286,7 @@ function TerminalPane({ focusKey, onClose }: any) {
       <button type="button" className="rounded-lg bg-white/10 px-2 py-1 text-xs text-gray-100 hover:bg-white/15" onClick={() => start(true)}>Restart</button>
       <button type="button" className="rounded-lg bg-white/10 px-2 py-1 text-xs text-gray-100 hover:bg-white/15" onClick={onClose}>Close</button>
     </div>
-    <pre ref={outputRef} className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5 text-gray-100 scrollbar-thin">{output || 'Starting terminal…'}</pre>
+    <pre ref={outputRef} className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5 text-gray-100 scrollbar-thin">{output || (running ? '' : 'Starting terminal…')}</pre>
     <div className="flex shrink-0 items-center gap-2 border-t border-white/10 p-2">
       <button type="button" className="rounded-md bg-white/10 px-2 py-1 font-mono text-xs text-gray-100 hover:bg-white/15" title="Send Ctrl+C" onClick={() => send('\u0003')}>^C</button>
       <span className="font-mono text-xs text-gray-500">$</span>
