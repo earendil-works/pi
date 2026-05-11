@@ -134,11 +134,13 @@ describe("terminal manager", () => {
 		const writes: string[] = [];
 		const resizes: Array<[number, number]> = [];
 		const broadcasts: unknown[] = [];
+		let spawnedTerm: string | undefined;
 		const manager = new TerminalManager({
 			broadcast: (event) => broadcasts.push(event),
 			loadPty: () => ({
-				spawn: (_file, args) => {
+				spawn: (_file, args, options) => {
 					spawnedArgs = args;
+					spawnedTerm = options.env.TERM;
 					return {
 						pid: 123,
 						process: "shell",
@@ -161,6 +163,7 @@ describe("terminal manager", () => {
 		expect(started.running).toBe(true);
 		expect(writes).toEqual(["\r"]);
 		expect(spawnedArgs).toEqual(expect.arrayContaining(["-i"]));
+		expect(spawnedTerm).toBe("xterm-256color");
 		manager.write(cwd, "echo hi\r");
 		expect(writes).toEqual(["\r", "echo hi\r"]);
 		manager.resize(cwd, 120, 40);

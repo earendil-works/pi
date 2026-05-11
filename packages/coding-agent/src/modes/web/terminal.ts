@@ -193,7 +193,7 @@ export class TerminalManager {
 		try {
 			return nodePty.spawn(file, args, {
 				cwd,
-				env: { ...process.env, TERM: process.env.TERM || "xterm-256color" },
+				env: terminalEnv(),
 				cols,
 				rows,
 			});
@@ -211,7 +211,7 @@ export class TerminalManager {
 function createChildProcessPty(file: string, cwd: string): IPty {
 	const child = spawn(file, [], {
 		cwd,
-		env: { ...process.env, TERM: process.env.TERM || "xterm-256color" },
+		env: terminalEnv(),
 		stdio: ["pipe", "pipe", "pipe"],
 	});
 	return {
@@ -242,6 +242,10 @@ function createChildProcessPty(file: string, cwd: string): IPty {
 			return { dispose: () => child.off("exit", exitHandler) };
 		},
 	};
+}
+
+function terminalEnv(): NodeJS.ProcessEnv {
+	return { ...process.env, TERM: "xterm-256color" };
 }
 
 function sanitizeSize(value: number, fallback: number): number {
