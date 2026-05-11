@@ -118,6 +118,7 @@ describe("web skills", () => {
 	test("includes read-only built-in ask-question skill", async () => {
 		const root = await tempDir();
 		const builtinsRoot = await tempDir();
+		const sourceBuiltinsRoot = await tempDir();
 		const skillDir = path.join(builtinsRoot, "ask-question");
 		await fsp.mkdir(skillDir, { recursive: true });
 		await fsp.writeFile(
@@ -125,9 +126,16 @@ describe("web skills", () => {
 			"---\nname: ask-question\ndescription: Ask a question\n---\n# Ask Question\n",
 			"utf8",
 		);
-		const skills = await listWebSkills(root, builtinsRoot);
-		expect(skills).toHaveLength(1);
-		expect(skills[0]).toMatchObject({ name: "ask-question", builtin: true });
+		const imageSkillDir = path.join(sourceBuiltinsRoot, "show-images");
+		await fsp.mkdir(imageSkillDir, { recursive: true });
+		await fsp.writeFile(
+			path.join(imageSkillDir, "SKILL.md"),
+			"---\nname: show-images\ndescription: Show images\n---\n# Show Images\n",
+			"utf8",
+		);
+		const skills = await listWebSkills(root, [builtinsRoot, sourceBuiltinsRoot]);
+		expect(skills.map((skill) => skill.name)).toEqual(["ask-question", "show-images"]);
+		expect(skills.every((skill) => skill.builtin)).toBe(true);
 		await expect(deleteWebSkill(skills[0].path, root)).rejects.toMatchObject({ status: 400 });
 	});
 

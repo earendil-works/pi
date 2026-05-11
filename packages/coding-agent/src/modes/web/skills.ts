@@ -7,10 +7,10 @@ import { HttpError } from "./http.js";
 import type { SkillWriteRequest, WebSkill } from "./types.js";
 
 const webModeDir = path.dirname(fileURLToPath(import.meta.url));
-const builtinSkillsRoot = [
+const builtinSkillsRoots = [
 	path.resolve(webModeDir, "..", "..", "web", "builtin-skills"),
 	path.resolve(webModeDir, "..", "..", "..", "web", "builtin-skills"),
-].find((candidate) => existsSync(candidate));
+].filter((candidate) => existsSync(candidate));
 
 export function skillsRoot(): string {
 	return path.join(getAgentDir(), "skills");
@@ -65,10 +65,14 @@ async function readSkillsFromRoot(root: string, builtin: boolean): Promise<WebSk
 	return skills;
 }
 
-export async function listWebSkills(root = skillsRoot(), builtinsRoot = builtinSkillsRoot): Promise<WebSkill[]> {
+export async function listWebSkills(
+	root = skillsRoot(),
+	builtinsRoot: string | string[] | undefined = builtinSkillsRoots,
+): Promise<WebSkill[]> {
 	const byName = new Map<string, WebSkill>();
-	if (builtinsRoot) {
-		for (const skill of await readSkillsFromRoot(builtinsRoot, true)) {
+	const roots = Array.isArray(builtinsRoot) ? builtinsRoot : builtinsRoot ? [builtinsRoot] : [];
+	for (const builtinRoot of roots) {
+		for (const skill of await readSkillsFromRoot(builtinRoot, true)) {
 			byName.set(skill.name, skill);
 		}
 	}
