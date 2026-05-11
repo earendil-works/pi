@@ -380,11 +380,11 @@ function QuestionBlock({ item, answerQuestion }: { item: ChatItem; answerQuestio
     </div>}
   </div>;
 }
-function ToolStatus({ item, icon }: { item: ChatItem; icon: string }) { return <span className="inline-flex w-6 shrink-0 items-center justify-center text-[18px] leading-7 text-gray-400 dark:text-slate-500">{item.running ? '·' : item.error ? '!' : icon}</span>; }
-function ToolPill({ children }: { children: any }) { return <span className="rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-[15px] text-gray-500 dark:bg-neutral-900 dark:text-slate-400">{children}</span>; }
+function ToolStatus({ item, icon }: { item: ChatItem; icon: string }) { return <span className="inline-flex w-6 shrink-0 items-center justify-center text-[15px] leading-7 text-gray-400 dark:text-slate-500">{item.running ? '·' : item.error ? '!' : icon}</span>; }
+function ToolPill({ children }: { children: any }) { return <span className="rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-[0.95em] leading-none text-gray-500 dark:bg-neutral-900 dark:text-slate-400">{children}</span>; }
 function ToolRow({ item, icon, label, children, open }: { item: ChatItem; icon: string; label: any; children?: any; open?: boolean }) {
   return <details className={'group py-2 text-[15px] leading-7 ' + (item.error ? 'text-red-400 dark:text-red-300' : 'text-gray-400 dark:text-slate-500')} open={open ?? !!item.running}>
-    <summary className="flex cursor-pointer list-none items-center gap-3 font-normal [&::-webkit-details-marker]:hidden"><ToolStatus item={item} icon={icon} /><span>{label}</span></summary>
+    <summary className="flex cursor-pointer list-none items-center gap-3 text-[15px] font-normal leading-7 [&::-webkit-details-marker]:hidden"><ToolStatus item={item} icon={icon} /><span className="text-[15px] leading-7">{label}</span></summary>
     {children && <div className="ml-8 mt-2 border-l border-gray-200 pl-4 dark:border-neutral-800">{children}</div>}
   </details>;
 }
