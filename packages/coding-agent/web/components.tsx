@@ -381,9 +381,8 @@ function ImageModal({ image, onClose }: { image: { src: string; alt?: string; ti
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [onClose]);
-  return <div className="fixed inset-0 z-50 flex flex-col bg-black/90 p-4 text-white" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
-    <div className="mb-3 flex shrink-0 items-center gap-3"><div className="min-w-0 flex-1 truncate text-sm text-gray-200">{image.title || image.alt || 'Image'}</div><button type="button" className="rounded-lg bg-white/10 px-3 py-2 text-sm font-medium hover:bg-white/15" onClick={onClose}>Close</button></div>
-    <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto"><img src={image.src} alt={image.alt || 'image'} className="max-h-full max-w-full object-contain" /></div>
+  return <div className="fixed inset-0 z-50 flex bg-black/90 p-4 text-white" onMouseDown={onClose}>
+    <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto"><img src={image.src} alt={image.alt || 'image'} className="max-h-full max-w-full object-contain" onMouseDown={e => e.stopPropagation()} /></div>
   </div>;
 }
 function RichText({ text, images, cwd }: { text: string; images?: Array<{ src: string; alt?: string; title?: string }>; cwd?: string }) {
