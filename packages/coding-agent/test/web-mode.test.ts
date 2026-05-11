@@ -115,17 +115,34 @@ describe("web http", () => {
 });
 
 describe("web skills", () => {
+	test("includes read-only built-in ask-question skill", async () => {
+		const root = await tempDir();
+		const builtinsRoot = await tempDir();
+		const skillDir = path.join(builtinsRoot, "ask-question");
+		await fsp.mkdir(skillDir, { recursive: true });
+		await fsp.writeFile(
+			path.join(skillDir, "SKILL.md"),
+			"---\nname: ask-question\ndescription: Ask a question\n---\n# Ask Question\n",
+			"utf8",
+		);
+		const skills = await listWebSkills(root, builtinsRoot);
+		expect(skills).toHaveLength(1);
+		expect(skills[0]).toMatchObject({ name: "ask-question", builtin: true });
+		await expect(deleteWebSkill(skills[0].path, root)).rejects.toMatchObject({ status: 400 });
+	});
+
 	test("validates skill CRUD and safe paths", async () => {
 		const agentDir = await tempDir();
 		process.env[ENV_AGENT_DIR] = agentDir;
 		const root = path.join(agentDir, "skills");
+		const builtinsRoot = await tempDir();
 		const content = "---\nname: demo\ndescription: useful\n---\n# Demo\n";
 		const skill = await writeWebSkill({ name: "Demo", description: "useful", content }, "POST", root);
 		expect(skill.name).toBe("demo");
-		expect((await listWebSkills(root)).map((item) => item.name)).toEqual(["demo"]);
+		expect((await listWebSkills(root, builtinsRoot)).map((item) => item.name)).toEqual(["demo"]);
 		expect(() => resolveSkillPath(path.join(agentDir, "outside", "SKILL.md"), root)).toThrow(HttpError);
 		await deleteWebSkill(skill.path, root);
-		expect(await listWebSkills(root)).toEqual([]);
+		expect(await listWebSkills(root, builtinsRoot)).toEqual([]);
 	});
 
 	test("rejects malformed skill writes with 400 errors", async () => {

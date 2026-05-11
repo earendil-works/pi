@@ -1,8 +1,16 @@
+import { existsSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import { getAgentDir } from "../../config.js";
 import { HttpError } from "./http.js";
 import type { SkillWriteRequest, WebSkill } from "./types.js";
+
+const webModeDir = path.dirname(fileURLToPath(import.meta.url));
+const builtinSkillsRoot = [
+	path.resolve(webModeDir, "..", "..", "web", "builtin-skills"),
+	path.resolve(webModeDir, "..", "..", "..", "web", "builtin-skills"),
+].find((candidate) => existsSync(candidate));
 
 export function skillsRoot(): string {
 	return path.join(getAgentDir(), "skills");
@@ -36,7 +44,7 @@ export function skillSlug(name: string): string {
 		.slice(0, 80);
 }
 
-export async function listWebSkills(root = skillsRoot()): Promise<WebSkill[]> {
+async function readSkillsFromRoot(root: string, builtin: boolean): Promise<WebSkill[]> {
 	const skills: WebSkill[] = [];
 	let entries: Array<import("node:fs").Dirent>;
 	try {
@@ -49,12 +57,25 @@ export async function listWebSkills(root = skillsRoot()): Promise<WebSkill[]> {
 		const skillPath = path.join(root, entry.name, "SKILL.md");
 		try {
 			const content = await fs.readFile(skillPath, "utf8");
-			skills.push({ ...parseSkillMarkdown(content, entry.name), path: skillPath });
+			skills.push({ ...parseSkillMarkdown(content, entry.name), path: skillPath, builtin });
 		} catch {
 			// Ignore incomplete skill directories.
 		}
 	}
-	return skills.sort((a, b) => a.name.localeCompare(b.name));
+	return skills;
+}
+
+export async function listWebSkills(root = skillsRoot(), builtinsRoot = builtinSkillsRoot): Promise<WebSkill[]> {
+	const byName = new Map<string, WebSkill>();
+	if (builtinsRoot) {
+		for (const skill of await readSkillsFromRoot(builtinsRoot, true)) {
+			byName.set(skill.name, skill);
+		}
+	}
+	for (const skill of await readSkillsFromRoot(root, false)) {
+		byName.set(skill.name, skill);
+	}
+	return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function writeWebSkill(

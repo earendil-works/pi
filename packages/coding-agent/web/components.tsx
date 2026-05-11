@@ -421,6 +421,17 @@ function Modal({ children, onClose }: any) {
   return <div className="fixed inset-0 z-40 flex items-center justify-center bg-gray-900/30 p-5 dark:bg-black/50" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}><div className="flex max-h-[calc(100vh-40px)] w-[min(760px,94vw)] max-w-3xl flex-col overflow-hidden rounded-[18px] border border-gray-200 bg-white shadow-modal dark:border-neutral-800 dark:bg-neutral-950">{children}</div></div>;
 }
 function CommandOutputModal({ command, text, onClose }: any) { return <Modal onClose={onClose}><div className="flex items-center justify-between border-b border-gray-200 p-4 dark:border-neutral-900"><h2 className="font-bold">{command}</h2><button className="rounded-lg bg-gray-100 px-3 py-2 dark:bg-neutral-900" onClick={onClose}>Close</button></div><pre className="max-h-[70vh] overflow-auto whitespace-pre-wrap p-4 text-sm leading-6 text-gray-700 dark:text-slate-300">{text}</pre></Modal>; }
+function AskQuestionModal({ request, onAnswer, onClose }: any) {
+  const [customAnswer, setCustomAnswer] = useState('');
+  return <Modal onClose={onClose}><div className="flex items-center justify-between border-b border-gray-200 p-4 dark:border-neutral-900"><h2 className="font-bold">Question</h2><button className="rounded-lg bg-gray-100 px-3 py-2 dark:bg-neutral-900" onClick={onClose}>Cancel</button></div>
+    <div className="space-y-4 p-4">
+      <p className="whitespace-pre-wrap text-sm leading-6 text-gray-700 dark:text-slate-300">{request.question}</p>
+      <div className="grid gap-2">{(request.options || []).map((option: string, index: number) => <button key={index} type="button" className="rounded-xl border border-gray-200 px-4 py-3 text-left text-sm font-medium hover:border-piAccent hover:bg-gray-50 dark:border-neutral-800 dark:hover:bg-neutral-900" onClick={() => onAnswer({ answer: option, optionIndex: index, custom: false })}>{option}</button>)}</div>
+      <div className="rounded-xl border border-gray-200 p-3 dark:border-neutral-800"><label className="mb-2 block text-sm font-semibold text-gray-600 dark:text-slate-300">Other</label><textarea className="h-24 w-full resize-none rounded-lg border border-gray-300 bg-white p-3 text-sm outline-none dark:border-neutral-800 dark:bg-black" value={customAnswer} onChange={e => setCustomAnswer(e.target.value)} placeholder="Write your own answer" /></div>
+    </div>
+    <div className="flex justify-end gap-2 border-t border-gray-200 p-4 dark:border-neutral-900"><button className="rounded-xl bg-gray-100 px-4 py-2 dark:bg-neutral-900" onClick={onClose}>Cancel</button><button className="rounded-xl bg-piAccent px-4 py-2 font-bold text-white disabled:opacity-50" disabled={!customAnswer.trim()} onClick={() => onAnswer({ answer: customAnswer.trim(), optionIndex: null, custom: true })}>Send Other</button></div>
+  </Modal>;
+}
 function SkillsView({ skills, reload, openModal }: any) {
   const [query, setQuery] = useState('');
   useEffect(() => { reload(); }, []);
@@ -435,11 +446,11 @@ function SkillsView({ skills, reload, openModal }: any) {
 }
 function SkillTile({ skill, open, reload }: any) {
   const excerpt = String(skill.content || '').replace(/^---[\s\S]*?---/, '').trim().split(/\s+/).slice(0, 26).join(' ');
-  return <button className="group flex min-h-56 flex-col rounded-[24px] border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-piAccent/40 hover:shadow-pi dark:border-neutral-800 dark:bg-neutral-950" onClick={open}>
-    <div className="mb-4 flex items-start justify-between gap-3"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-piAccent text-xl font-bold text-white">✦</div><span className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-500 dark:bg-neutral-900 dark:text-slate-400">Skill</span></div>
+  return <button className="group flex min-h-56 flex-col rounded-[24px] border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-piAccent/40 hover:shadow-pi dark:border-neutral-800 dark:bg-neutral-950" onClick={skill.builtin ? undefined : open}>
+    <div className="mb-4 flex items-start justify-between gap-3"><div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-piAccent text-xl font-bold text-white">✦</div><span className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-500 dark:bg-neutral-900 dark:text-slate-400">{skill.builtin ? 'Built-in' : 'Skill'}</span></div>
     <h3 className="text-lg font-bold text-gray-900 group-hover:text-piAccent dark:text-slate-100">{skill.name}</h3><p className="mt-2 line-clamp-2 text-sm text-gray-500 dark:text-slate-400">{skill.description || 'No description'}</p>
     <p className="mt-4 line-clamp-4 flex-1 text-xs leading-5 text-gray-400 dark:text-slate-500">{excerpt || 'No instructions yet.'}</p>
-    <div className="mt-4 flex items-center justify-between gap-2 border-t border-gray-100 pt-3 dark:border-neutral-900"><span className="min-w-0 truncate text-xs text-gray-400 dark:text-slate-500">{skill.path}</span><span className="flex gap-2 text-sm text-piAccent"><span>Edit</span><span onClick={async e => { e.stopPropagation(); if (confirm('Delete skill "' + skill.name + '"?')) { await fetch('/api/skills', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: skill.path }) }); reload(); } }}>Delete</span></span></div>
+    <div className="mt-4 flex items-center justify-between gap-2 border-t border-gray-100 pt-3 dark:border-neutral-900"><span className="min-w-0 truncate text-xs text-gray-400 dark:text-slate-500">{skill.path}</span>{skill.builtin ? <span className="text-sm text-gray-400 dark:text-slate-500">Read-only</span> : <span className="flex gap-2 text-sm text-piAccent"><span>Edit</span><span onClick={async e => { e.stopPropagation(); if (confirm('Delete skill "' + skill.name + '"?')) { await fetch('/api/skills', { method: 'DELETE', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ path: skill.path }) }); reload(); } }}>Delete</span></span>}</div>
   </button>;
 }
 function ToolsView({ tools, customTools, saveTools, openModal }: any) {
@@ -609,6 +620,7 @@ function Field({ label, children }: any) { return <label className="block"><span
   FolderModal,
   Modal,
   CommandOutputModal,
+  AskQuestionModal,
   SkillsView,
   SkillTile,
   ToolsView,

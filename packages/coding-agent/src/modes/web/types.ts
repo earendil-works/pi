@@ -40,6 +40,7 @@ export interface WebSkill {
 	body: string;
 	content: string;
 	path: string;
+	builtin?: boolean;
 }
 
 export interface TerminalState {
@@ -58,6 +59,12 @@ export type WebEvent =
 	| {
 			type: "web_connected";
 			rpcBusy: boolean;
+	  }
+	| {
+			type: "ask_question";
+			id: string;
+			question: string;
+			options: string[];
 	  }
 	| {
 			type: "terminal_start" | "terminal_output" | "terminal_exit";
@@ -110,6 +117,17 @@ export interface SkillWriteRequest {
 	description: string;
 	content: string;
 	path?: string;
+}
+
+export interface AskQuestionRequest {
+	question: string;
+	options: string[];
+}
+
+export interface AskQuestionAnswer {
+	answer: string;
+	optionIndex: number | null;
+	custom: boolean;
 }
 
 export interface SystemPromptRequest {

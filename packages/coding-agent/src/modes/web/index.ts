@@ -25,6 +25,8 @@ import { RpcBridge } from "./rpc-bridge.js";
 import { deleteWebSkill, listWebSkills, writeWebSkill } from "./skills.js";
 import { TerminalManager, TerminalUnavailableError } from "./terminal.js";
 import type {
+	AskQuestionAnswer,
+	AskQuestionRequest,
 	PromptRequest,
 	SetModelRequest,
 	SetThinkingRequest,
@@ -44,6 +46,13 @@ const cliPath = path.resolve(__dirname, "..", "..", "cli.js");
 const sourceWebDir = path.resolve(__dirname, "..", "..", "..", "web");
 const distWebDir = path.resolve(__dirname, "..", "..", "web");
 const webMainSystemPromptPath = path.join(getAgentDir(), "web-main-system-prompt.txt");
+
+interface PendingQuestion {
+	resolve: (answer: AskQuestionAnswer) => void;
+	reject: (error: Error) => void;
+	timeout: ReturnType<typeof setTimeout>;
+	options: string[];
+}
 
 export { assertHostAllowed, isLoopbackHost, parseWebArgs } from "./args.js";
 export { TerminalManager, TerminalUnavailableError } from "./terminal.js";
@@ -65,9 +74,11 @@ async function startWebServer(options: WebOptions): Promise<void> {
 	const webRoot = await resolveWebRoot();
 	let activeCwd = process.cwd();
 	let rpcBusy = false;
-	let rpc = new RpcBridge(cliPath, options.rpcArgs, broadcast, activeCwd);
+	let askQuestionUrl = "";
+	let rpc = new RpcBridge(cliPath, options.rpcArgs, broadcast, activeCwd, askQuestionEnv());
 	const terminalManager = new TerminalManager({ broadcast });
 	let mainSystemPromptOverride = await readMainSystemPromptOverride();
+	const pendingQuestions = new Map<string, PendingQuestion>();
 
 	function broadcast(event: WebEvent): void {
 		if (event.type === "agent_start") rpcBusy = true;
@@ -89,12 +100,16 @@ async function startWebServer(options: WebOptions): Promise<void> {
 		}
 	}
 
+	function askQuestionEnv(): NodeJS.ProcessEnv {
+		return askQuestionUrl ? { PI_WEB_ASK_QUESTION_URL: askQuestionUrl } : {};
+	}
+
 	await applyMainSystemPromptOverride();
 
 	async function restartRpc(cwd: string, startNewSession: boolean): Promise<string> {
 		const resolvedCwd = path.resolve(cwd);
 		const previous = rpc;
-		rpc = new RpcBridge(cliPath, options.rpcArgs, broadcast, resolvedCwd);
+		rpc = new RpcBridge(cliPath, options.rpcArgs, broadcast, resolvedCwd, askQuestionEnv());
 		activeCwd = resolvedCwd;
 		previous.stop();
 		if (startNewSession) await rpc.send({ type: "new_session" });
@@ -108,13 +123,14 @@ async function startWebServer(options: WebOptions): Promise<void> {
 
 	async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
 		const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`);
-		if (token && url.searchParams.get("token") === token) {
+		const queryTokenMatches = token && url.searchParams.get("token") === token;
+		if (queryTokenMatches && !url.pathname.startsWith("/api/") && url.pathname !== "/events") {
 			url.searchParams.delete("token");
 			writeAuthRedirect(res, url.pathname + url.search, token);
 			return;
 		}
 
-		if (token && (url.pathname.startsWith("/api/") || url.pathname === "/events")) {
+		if (token && (url.pathname.startsWith("/api/") || url.pathname === "/events") && !queryTokenMatches) {
 			assertAuthorized(req, token);
 			assertSafeOrigin(req);
 		}
@@ -237,6 +253,17 @@ async function startWebServer(options: WebOptions): Promise<void> {
 		if (req.method === "DELETE" && url.pathname === "/api/skills") {
 			const body = await readJsonBody<{ path?: string }>(req);
 			await deleteWebSkill(body.path);
+			sendJson(res, { success: true });
+			return;
+		}
+		if (req.method === "POST" && url.pathname === "/api/ask-question") {
+			const body = await readJsonBody<AskQuestionRequest>(req, 64 * 1024);
+			sendJson(res, await askQuestion(body));
+			return;
+		}
+		if (req.method === "POST" && url.pathname === "/api/ask-question/answer") {
+			const body = await readJsonBody<AskQuestionAnswer & { id?: string }>(req, 64 * 1024);
+			answerQuestion(body.id, body);
 			sendJson(res, { success: true });
 			return;
 		}
@@ -364,6 +391,36 @@ async function startWebServer(options: WebOptions): Promise<void> {
 		}
 	}
 
+	function askQuestion(input: AskQuestionRequest): Promise<AskQuestionAnswer> {
+		const question = requireNonEmptyString(input.question, "question");
+		if (!Array.isArray(input.options)) throw new HttpError(400, "Missing options");
+		const options = input.options.map((option) => String(option || "").trim()).filter(Boolean);
+		if (options.length === 0) throw new HttpError(400, "Missing options");
+		if (options.length > 12) throw new HttpError(400, "Too many options");
+		const id = crypto.randomUUID();
+		return new Promise((resolve, reject) => {
+			const timeout = setTimeout(
+				() => {
+					pendingQuestions.delete(id);
+					reject(new HttpError(408, "Question timed out"));
+				},
+				10 * 60 * 1000,
+			);
+			pendingQuestions.set(id, { resolve, reject, timeout, options });
+			broadcast({ type: "ask_question", id, question, options });
+		});
+	}
+
+	function answerQuestion(id: string | undefined, answer: AskQuestionAnswer): void {
+		if (!id) throw new HttpError(400, "Missing question id");
+		const pending = pendingQuestions.get(id);
+		if (!pending) throw new HttpError(404, "Question not found");
+		const response = normalizeQuestionAnswer(answer, pending.options);
+		clearTimeout(pending.timeout);
+		pendingQuestions.delete(id);
+		pending.resolve(response);
+	}
+
 	async function handlePrompt(message: string, body: PromptRequest): Promise<WebRpcResponse> {
 		if (!message.trim().startsWith("/")) {
 			return rpc.send({
@@ -477,6 +534,8 @@ async function startWebServer(options: WebOptions): Promise<void> {
 	});
 	const address = server.address();
 	const port = typeof address === "object" && address ? address.port : options.port;
+	askQuestionUrl = askQuestionEndpointUrl(options.host, port, token);
+	await restartRpc(activeCwd, false);
 	const urls = webUrls(options.host, port, token);
 	console.log(`Pi web UI running at ${urls.local}`);
 	for (const url of urls.network) console.log(`Network URL: ${url}`);
@@ -487,6 +546,11 @@ async function startWebServer(options: WebOptions): Promise<void> {
 		server.close();
 		terminalManager.stopAll();
 		rpc.stop();
+		for (const [id, pending] of pendingQuestions) {
+			clearTimeout(pending.timeout);
+			pending.reject(new Error("Pi web server stopped"));
+			pendingQuestions.delete(id);
+		}
 	};
 	process.once("SIGINT", () => {
 		shutdown();
@@ -547,6 +611,26 @@ async function mergeCommands(response: WebRpcResponse): Promise<WebRpcResponse> 
 
 function textResponse(command: string, text: string): WebRpcResponse {
 	return { type: "response", command, success: true, data: { text } } as WebRpcResponse;
+}
+
+function normalizeQuestionAnswer(answer: AskQuestionAnswer, options: string[]): AskQuestionAnswer {
+	if (answer.custom) {
+		const customAnswer = String(answer.answer || "").trim();
+		if (!customAnswer) throw new HttpError(400, "Missing custom answer");
+		return { answer: customAnswer, optionIndex: null, custom: true };
+	}
+	const optionIndex = Number(answer.optionIndex);
+	if (!Number.isInteger(optionIndex) || optionIndex < 0 || optionIndex >= options.length) {
+		throw new HttpError(400, "Invalid optionIndex");
+	}
+	return { answer: options[optionIndex], optionIndex, custom: false };
+}
+
+function askQuestionEndpointUrl(host: string, port: number, token: string): string {
+	const wildcard = host === "0.0.0.0" || host === "::" || host === "[::]";
+	const localHost = wildcard ? "127.0.0.1" : host;
+	const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : "";
+	return `http://${localHost}:${port}/api/ask-question${tokenQuery}`;
 }
 
 async function readChangelog(): Promise<string> {

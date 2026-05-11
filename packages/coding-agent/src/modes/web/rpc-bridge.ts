@@ -20,6 +20,7 @@ export class RpcBridge {
 		private readonly rpcArgs: string[],
 		private readonly broadcast: Broadcast,
 		public readonly cwd: string,
+		private readonly extraEnv: NodeJS.ProcessEnv = {},
 	) {
 		this.child = this.spawnRpc();
 	}
@@ -74,7 +75,7 @@ export class RpcBridge {
 	private spawnRpc(): ChildProcessWithoutNullStreams {
 		const child = spawn(process.execPath, [this.cliPath, "--mode", "rpc", ...this.rpcArgs], {
 			cwd: this.cwd,
-			env: process.env,
+			env: { ...process.env, ...this.extraEnv },
 			stdio: ["pipe", "pipe", "pipe"],
 		});
 
