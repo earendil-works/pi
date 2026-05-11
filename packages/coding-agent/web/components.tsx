@@ -16,8 +16,7 @@ const {
 type ChatItem = any;
 type ProjectInfo = any;
 
-function SidebarButton({ icon, label, onClick, iconOnly }: any) {
-  if (iconOnly) return <button type="button" aria-label={label} title={label} className="mb-4 flex h-9 w-9 items-center justify-center rounded-xl text-[#333] hover:bg-piHover dark:text-slate-200 dark:hover:bg-neutral-900" onClick={onClick}>{icon}</button>;
+function SidebarButton({ icon, label, onClick }: any) {
   return <button className="mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[18px] font-medium hover:bg-piHover dark:hover:bg-neutral-900" onClick={onClick}><span className="w-6 text-center">{icon}</span><span>{label}</span></button>;
 }
 function NewChatIcon() {

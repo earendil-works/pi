@@ -646,7 +646,7 @@ function App() {
   return <div className="grid h-screen grid-cols-[290px_minmax(0,1fr)] bg-white text-[#202124] dark:bg-black dark:text-slate-100 max-[820px]:grid-cols-1">
     {sidebarOpen && <div className="fixed inset-0 z-30 bg-gray-900/30 min-[821px]:hidden" onClick={() => setSidebarOpen(false)} />}
     <aside className={'h-screen overflow-y-auto bg-piPanel px-3 py-4 text-piText scrollbar-thin dark:bg-neutral-950 dark:text-slate-100 max-[820px]:fixed max-[820px]:inset-y-0 max-[820px]:left-0 max-[820px]:z-40 max-[820px]:w-[290px] max-[820px]:transition-transform ' + (sidebarOpen ? 'max-[820px]:translate-x-0' : 'max-[820px]:-translate-x-full')}>
-      <SidebarButton icon={<NewChatIcon />} label="New chat" iconOnly onClick={() => { setSidebarOpen(false); newChat(); }} />
+      <SidebarButton icon={<NewChatIcon />} label="New chat" onClick={() => { setSidebarOpen(false); newChat(); }} />
       <SidebarButton icon="⌕" label="Search" onClick={() => { setSidebarOpen(false); setSearchOpen(true); }} />
       <SidebarButton icon="◎" label="Agents" onClick={() => { setSidebarOpen(false); go('/agents', 'agents'); }} />
       <SidebarButton icon="✦" label="Skills" onClick={() => { setSidebarOpen(false); go('/skills', 'skills'); loadSkills(); }} />
