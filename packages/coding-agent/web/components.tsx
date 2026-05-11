@@ -472,7 +472,7 @@ function AgentsView({ builtinAgents, customAgents, saveAgents, openModal }: any)
   </div></main>;
 }
 function AgentTile({ agent, custom, onEdit, onDelete }: any) {
-  const prompt = String(agent.systemPrompt || '').trim().split(/\s+/).slice(0, 28).join(' ');
+  const prompt = stripGeneratedPromptSections(agent.systemPrompt || '').split(/\s+/).slice(0, 28).join(' ');
   return <button className="group flex min-h-60 flex-col rounded-[24px] border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-piAccent/40 hover:shadow-pi dark:border-neutral-800 dark:bg-neutral-950" onClick={onEdit}>
     <div className="mb-4 flex items-start justify-between gap-3"><div className="flex h-12 w-12 items-center justify-center overflow-hidden rounded-2xl bg-piAccent text-xl font-bold text-white">{agent.icon ? <img src={agent.icon} className="h-full w-full object-cover" /> : (agent.name || 'A')[0]}</div><span className="rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-500 dark:bg-neutral-900 dark:text-slate-400">{custom ? 'Custom' : 'Built-in'}</span></div>
     <h3 className="text-lg font-bold text-gray-900 group-hover:text-piAccent dark:text-slate-100">{agent.name}</h3><p className="mt-2 line-clamp-2 text-sm text-gray-500 dark:text-slate-400">{agent.description || 'No description'}</p><p className="mt-4 line-clamp-3 text-xs leading-5 text-gray-400 dark:text-slate-500">{prompt || 'No system prompt.'}</p>
@@ -501,49 +501,85 @@ function SkillModal({ skill, onClose, onSave }: any) {
   </EditorModal>;
 }
 function ToolModal({ tool, onClose, onSave }: any) { const [name, setName] = useState(tool?.name || ''); const [description, setDescription] = useState(tool?.description || ''); const [content, setContent] = useState(tool?.content || ''); return <EditorModal title={tool ? 'Edit tool' : 'Create tool'} onClose={onClose} onSave={() => onSave({ ...tool, name, description, content })}><Field label="Name"><input disabled={!!tool} value={name} onChange={e => setName(e.target.value)} /></Field><Field label="Description"><input value={description} onChange={e => setDescription(e.target.value)} /></Field><Field label="Content"><textarea value={content} onChange={e => setContent(e.target.value)} /></Field></EditorModal>; }
-function AgentModal({ agent, skills, tools, onClose, onSave }: any) {
+function AgentModal({ agent, skills, tools, cwd, onClose, onSave }: any) {
   const [name, setName] = useState(agent?.name || '');
   const [description, setDescription] = useState(agent?.description || '');
-  const [systemPrompt, setSystemPrompt] = useState(stripAvailableSkillsSection(agent?.systemPrompt || ''));
+  const [systemPrompt, setSystemPrompt] = useState(stripGeneratedPromptSections(agent?.systemPrompt || ''));
   const [selectedSkills, setSelectedSkills] = useState<string[]>(agent?.skills || []);
   const [selectedTools, setSelectedTools] = useState<string[]>(agent?.tools || []);
+  const [addCurrentDate, setAddCurrentDate] = useState(agent?.addCurrentDate ?? (agent ? hasCurrentDate(agent.systemPrompt || '') : true));
+  const [addCurrentWorkingDirectory, setAddCurrentWorkingDirectory] = useState(agent?.addCurrentWorkingDirectory ?? (agent ? hasCurrentWorkingDirectory(agent.systemPrompt || '') : true));
   const toggle = (list: string[], setList: any, value: string) => setList(list.includes(value) ? list.filter(item => item !== value) : [...list, value]);
-  return <EditorModal title={agent ? (agent.builtin ? 'Edit built-in agent' : 'Edit custom agent') : 'Create custom agent'} onClose={onClose} onSave={() => onSave({ ...agent, name, description, systemPrompt: buildAgentSystemPrompt(systemPrompt, selectedSkills, selectedTools, skills), skills: selectedSkills, tools: selectedTools })}>
+  return <EditorModal title={agent ? (agent.builtin ? 'Edit built-in agent' : 'Edit custom agent') : 'Create custom agent'} onClose={onClose} onSave={() => onSave({ ...agent, name, description, systemPrompt: buildAgentSystemPrompt(systemPrompt, selectedSkills, selectedTools, skills, { addCurrentDate, addCurrentWorkingDirectory, cwd }), skills: selectedSkills, tools: selectedTools, addCurrentDate, addCurrentWorkingDirectory })}>
     <Field label="Name"><input value={name} onChange={e => setName(e.target.value)} /></Field>
     <Field label="Short description"><input value={description} onChange={e => setDescription(e.target.value)} /></Field>
     <Field label="System prompt"><textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} /></Field>
+    <div><div className="mb-2 text-sm font-semibold text-gray-600 dark:text-slate-300">Generated context</div><div className="grid gap-2 rounded-xl border border-gray-200 p-2 dark:border-neutral-800">
+      <ToggleRow label="Add current date" checked={addCurrentDate} onChange={setAddCurrentDate} />
+      <ToggleRow label="Add current working directory" checked={addCurrentWorkingDirectory} onChange={setAddCurrentWorkingDirectory} />
+    </div></div>
     <Checklist title="Skills this agent can use" empty="No skills found." items={skills.map((skill: any) => ({ key: skill.name, label: skill.name, desc: skill.description }))} selected={selectedSkills} toggle={(value: string) => toggle(selectedSkills, setSelectedSkills, value)} />
     <Checklist title="Tools this agent can use" items={tools.map((tool: any) => ({ key: tool.name, label: tool.name, desc: tool.description }))} selected={selectedTools} toggle={(value: string) => toggle(selectedTools, setSelectedTools, value)} />
   </EditorModal>;
 }
 function Checklist({ title, items, selected, toggle, empty }: any) { return <div><div className="mb-2 text-sm font-semibold text-gray-600 dark:text-slate-300">{title}</div><div className="max-h-44 overflow-auto rounded-xl border border-gray-200 p-1.5 dark:border-neutral-800">{items.length === 0 ? <div className="p-2 text-sm text-gray-400 dark:text-slate-500">{empty || 'Nothing available.'}</div> : items.map((item: any) => <label key={item.key} className="grid cursor-pointer grid-cols-[18px_minmax(0,1fr)] items-center gap-2 rounded-lg px-2.5 py-2 hover:bg-gray-50 dark:hover:bg-neutral-900"><input type="checkbox" className="!h-4 !w-4 !rounded !border-gray-300 !p-0 accent-piAccent dark:!border-neutral-700" checked={selected.includes(item.key)} onChange={() => toggle(item.key)} /><span className="min-w-0 truncate text-sm font-medium">{item.label}</span></label>)}</div></div>; }
+function ToggleRow({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) { return <label className="grid cursor-pointer grid-cols-[18px_minmax(0,1fr)] items-center gap-2 rounded-lg px-2.5 py-2 hover:bg-gray-50 dark:hover:bg-neutral-900"><input type="checkbox" className="!h-4 !w-4 !rounded !border-gray-300 !p-0 accent-piAccent dark:!border-neutral-700" checked={checked} onChange={e => onChange(e.target.checked)} /><span className="min-w-0 truncate text-sm font-medium">{label}</span></label>; }
+function stripGeneratedPromptSections(prompt: string) {
+  return stripCurrentWorkingDirectory(stripCurrentDate(stripAvailableSkillsSection(prompt))).trim();
+}
 function stripAvailableSkillsSection(prompt: string) {
   return String(prompt || '').replace(/\n*The following skills provide specialized instructions for specific tasks\.[\s\S]*?<\/available_skills>\n*/g, '\n').trim();
 }
+function stripCurrentDate(prompt: string) {
+  return String(prompt || '').replace(/\n*Current date(?: and time)?:[^\n]*/g, '\n').trim();
+}
+function stripCurrentWorkingDirectory(prompt: string) {
+  return String(prompt || '').replace(/\n*Current working directory:[^\n]*/g, '\n').trim();
+}
+function hasCurrentDate(prompt: string) {
+  return /(?:^|\n)Current date(?: and time)?:[^\n]*/.test(String(prompt || ''));
+}
+function hasCurrentWorkingDirectory(prompt: string) {
+  return /(?:^|\n)Current working directory:[^\n]*/.test(String(prompt || ''));
+}
 type AgentSkillOption = { name: string; description?: string; path?: string; filePath?: string };
-function buildAgentSystemPrompt(basePrompt: string, selectedSkills: string[], _selectedTools: string[], skills: AgentSkillOption[]) {
-  const prompt = stripAvailableSkillsSection(basePrompt);
-  if (selectedSkills.length === 0) return prompt;
+function buildAgentSystemPrompt(basePrompt: string, selectedSkills: string[], _selectedTools: string[], skills: AgentSkillOption[], options: { addCurrentDate: boolean; addCurrentWorkingDirectory: boolean; cwd?: string }) {
+  let prompt = stripGeneratedPromptSections(basePrompt);
   const selected = skills.filter(skill => selectedSkills.includes(skill.name));
-  if (selected.length === 0) return prompt;
-  const lines = [
-    '',
-    '',
-    'The following skills provide specialized instructions for specific tasks.',
-    "Use the read tool to load a skill's file when the task matches its description.",
-    'When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.',
-    '',
-    '<available_skills>',
-  ];
-  for (const skill of selected) {
-    lines.push('  <skill>');
-    lines.push('    <name>' + escapeXml(skill.name) + '</name>');
-    lines.push('    <description>' + escapeXml(skill.description || '') + '</description>');
-    lines.push('    <location>' + escapeXml(skill.path || skill.filePath || '') + '</location>');
-    lines.push('  </skill>');
+  if (selected.length > 0) {
+    const lines = [
+      '',
+      '',
+      'The following skills provide specialized instructions for specific tasks.',
+      "Use the read tool to load a skill's file when the task matches its description.",
+      'When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.',
+      '',
+      '<available_skills>',
+    ];
+    for (const skill of selected) {
+      lines.push('  <skill>');
+      lines.push('    <name>' + escapeXml(skill.name) + '</name>');
+      lines.push('    <description>' + escapeXml(skill.description || '') + '</description>');
+      lines.push('    <location>' + escapeXml(skill.path || skill.filePath || '') + '</location>');
+      lines.push('  </skill>');
+    }
+    lines.push('</available_skills>');
+    prompt += lines.join('\n');
   }
-  lines.push('</available_skills>');
-  return prompt + lines.join('\n');
+  if (options.addCurrentDate) {
+    prompt += '\nCurrent date: ' + formatCurrentDate();
+  }
+  if (options.addCurrentWorkingDirectory && options.cwd) {
+    prompt += '\nCurrent working directory: ' + String(options.cwd).replace(/\\/g, '/');
+  }
+  return prompt;
+}
+function formatCurrentDate() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return year + '-' + month + '-' + day;
 }
 function escapeXml(value: unknown) {
   return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');

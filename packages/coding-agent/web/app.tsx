@@ -661,7 +661,7 @@ function App() {
     {folderOpen && <FolderModal path={folderPath} entries={folderEntries} browse={browseFolder} close={() => setFolderOpen(false)} select={openProject} />}
     {skillModal && <SkillModal skill={skillModal === true ? null : skillModal} onClose={() => setSkillModal(null)} onSave={saveSkill} />}
     {toolModal && <ToolModal tool={toolModal === true ? null : toolModal} onClose={() => setToolModal(null)} onSave={(tool: any) => { if (tool.id) saveTools(tools.map(t => t.id === tool.id ? tool : t)); else saveTools([...tools, { ...tool, id: uid('tool'), createdAt: new Date().toISOString() }]); setToolModal(null); }} />}
-    {agentModal && <AgentModal agent={agentModal === true ? null : agentModal} skills={skills} tools={[...builtinTools, ...tools]} onClose={() => setAgentModal(null)} onSave={(agent: any) => { if (agent.builtin) saveBuiltinAgent(agent); else if (agent.id) saveAgents(agents.map(a => a.id === agent.id ? agent : a)); else saveAgents([...agents, { ...agent, id: uid('agent'), createdAt: new Date().toISOString() }]); setAgentModal(null); }} />}
+    {agentModal && <AgentModal agent={agentModal === true ? null : agentModal} skills={skills} tools={[...builtinTools, ...tools]} cwd={state?.cwd} onClose={() => setAgentModal(null)} onSave={(agent: any) => { if (agent.builtin) saveBuiltinAgent(agent); else if (agent.id) saveAgents(agents.map(a => a.id === agent.id ? agent : a)); else saveAgents([...agents, { ...agent, id: uid('agent'), createdAt: new Date().toISOString() }]); setAgentModal(null); }} />}
     {commandModal && <CommandOutputModal command={commandModal.title} text={commandModal.text} onClose={() => setCommandModal(null)} />}
   </div>;
 }
