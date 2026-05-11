@@ -40,9 +40,19 @@
 </head>
 <body>
   <div id="root"></div>
+  <script>
+    window.addEventListener('error', function (event) {
+      var root = document.getElementById('root');
+      if (root && !root.childElementCount) {
+        root.innerHTML = '<pre style="padding:16px;color:#a1362f;white-space:pre-wrap">Pi Web failed to load: ' + String(event.message || event.error || 'unknown error') + '</pre>';
+      }
+    });
+  </script>
   <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="text/babel" data-presets="typescript" src="/web/shared.ts"></script>
+  <script type="text/babel" data-presets="typescript,react" src="/web/components.tsx"></script>
   <script type="text/babel" data-presets="typescript,react" data-type="module" src="/web/app.tsx"></script>
 </body>
 </html>

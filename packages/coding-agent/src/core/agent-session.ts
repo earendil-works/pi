@@ -785,6 +785,11 @@ export class AgentSession {
 		return this.agent.state.systemPrompt;
 	}
 
+	setSystemPrompt(systemPrompt: string): void {
+		this._baseSystemPrompt = systemPrompt;
+		this.agent.state.systemPrompt = systemPrompt;
+	}
+
 	/** Current retry attempt (0 if not retrying) */
 	get retryAttempt(): number {
 		return this._retryAttempt;

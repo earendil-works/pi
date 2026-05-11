@@ -446,6 +446,15 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				return success(id, "get_state", state);
 			}
 
+			case "get_system_prompt": {
+				return success(id, "get_system_prompt", { systemPrompt: session.systemPrompt });
+			}
+
+			case "set_system_prompt": {
+				session.setSystemPrompt(command.systemPrompt);
+				return success(id, "set_system_prompt", { systemPrompt: session.systemPrompt });
+			}
+
 			// =================================================================
 			// Model
 			// =================================================================
