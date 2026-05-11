@@ -27,6 +27,7 @@ type ChatItem = {
 };
 
 type ViewName = 'chat' | 'agents' | 'skills' | 'tools';
+type ThemePreference = 'system' | 'light' | 'dark';
 
 declare const React: any;
 declare const ReactDOM: any;
@@ -111,6 +112,11 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [terminalOpenByProject, setTerminalOpenByProject] = useState<Record<string, boolean>>(() => safeJson(localStorage.getItem('piWebTerminalOpenByProject'), {}));
   const [terminalOpen, setTerminalOpenState] = useState(false);
+  const [themePreference, setThemePreferenceState] = useState<ThemePreference>(() => {
+    const stored = localStorage.getItem('piWebTheme');
+    return stored === 'light' || stored === 'dark' ? stored : 'system';
+  });
+  const [systemDark, setSystemDark] = useState(() => window.matchMedia?.('(prefers-color-scheme: dark)').matches || false);
   const activeTools = useRef<Record<string, string>>({});
   const activeAssistantId = useRef<string | null>(null);
   const activeThinkingId = useRef<string | null>(null);
@@ -154,6 +160,10 @@ function App() {
       localStorage.setItem('piWebTerminalOpenByProject', JSON.stringify(next));
       return next;
     });
+  }
+  function setThemePreference(value: ThemePreference) {
+    setThemePreferenceState(value);
+    localStorage.setItem('piWebTheme', value);
   }
   function addItem(item: Partial<ChatItem>) {
     setMessages(prev => [...prev, { id: uid('msg'), kind: 'tool', title: '', text: '', ...item } as ChatItem]);
@@ -409,6 +419,19 @@ function App() {
     setTerminalOpenState(view === 'chat' && terminalOpenByProject[key] === true);
   }, [currentProjectCwd, terminalOpenByProject, view]);
   useEffect(() => {
+    const query = window.matchMedia?.('(prefers-color-scheme: dark)');
+    if (!query) return;
+    const onChange = () => setSystemDark(query.matches);
+    onChange();
+    query.addEventListener('change', onChange);
+    return () => query.removeEventListener('change', onChange);
+  }, []);
+  useEffect(() => {
+    const dark = themePreference === 'dark' || (themePreference === 'system' && systemDark);
+    document.documentElement.classList.toggle('dark', dark);
+    document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+  }, [themePreference, systemDark]);
+  useEffect(() => {
     const onTouchStart = (ev: TouchEvent) => {
       if (ev.touches.length !== 1) return;
       touchStartRef.current = { x: ev.touches[0].clientX, y: ev.touches[0].clientY };
@@ -598,29 +621,29 @@ function App() {
     return 'Context: ' + formatK(used) + ' used · ' + formatK(left) + ' left · ' + pct + '%';
   }, [state, stats]);
 
-  return <div className="grid h-screen grid-cols-[290px_minmax(0,1fr)] bg-white text-[#202124] max-[820px]:grid-cols-1">
+  return <div className="grid h-screen grid-cols-[290px_minmax(0,1fr)] bg-white text-[#202124] dark:bg-slate-950 dark:text-slate-100 max-[820px]:grid-cols-1">
     {sidebarOpen && <div className="fixed inset-0 z-30 bg-gray-900/30 min-[821px]:hidden" onClick={() => setSidebarOpen(false)} />}
-    <aside className={'h-screen overflow-y-auto bg-piPanel px-3 py-4 text-piText scrollbar-thin max-[820px]:fixed max-[820px]:inset-y-0 max-[820px]:left-0 max-[820px]:z-40 max-[820px]:w-[290px] max-[820px]:transition-transform ' + (sidebarOpen ? 'max-[820px]:translate-x-0' : 'max-[820px]:-translate-x-full')}>
+    <aside className={'h-screen overflow-y-auto bg-piPanel px-3 py-4 text-piText scrollbar-thin dark:bg-slate-900 dark:text-slate-100 max-[820px]:fixed max-[820px]:inset-y-0 max-[820px]:left-0 max-[820px]:z-40 max-[820px]:w-[290px] max-[820px]:transition-transform ' + (sidebarOpen ? 'max-[820px]:translate-x-0' : 'max-[820px]:-translate-x-full')}>
       <SidebarButton icon="✎" label="New chat" onClick={() => { setSidebarOpen(false); newChat(); }} />
       <SidebarButton icon="⌕" label="Search" onClick={() => { setSidebarOpen(false); setSearchOpen(true); }} />
       <SidebarButton icon="◎" label="Agents" onClick={() => { setSidebarOpen(false); go('/agents', 'agents'); }} />
       <SidebarButton icon="✦" label="Skills" onClick={() => { setSidebarOpen(false); go('/skills', 'skills'); loadSkills(); }} />
       <SidebarButton icon="⚙" label="Tools" onClick={() => { setSidebarOpen(false); go('/tools', 'tools'); }} />
       <SidebarButton icon="＋" label="Add project" onClick={() => browseFolder('')} />
-      <div className="mx-1 mb-4 mt-7 text-[17px] text-[#9a9a9a]">Projects</div>
+      <div className="mx-1 mb-4 mt-7 text-[17px] text-[#9a9a9a] dark:text-slate-500">Projects</div>
       <div className="space-y-3">
         {filteredProjects.length === 0 && <div className="pl-11 text-sm text-piMuted">No projects yet. Use Add project to open a folder.</div>}
         {filteredProjects.map(project => <ProjectTree key={project.cwd} project={project} collapsed={collapsedProjects.has(project.cwd) && !projectQuery} icon={projectIcons[project.cwd]} currentSessionPath={currentSessionPath} onToggle={() => setCollapsed(project.cwd)} onOpen={(project: ProjectInfo, session: SessionInfo, updateUrl: boolean) => { setSidebarOpen(false); openSession(project, session, updateUrl); }} onMenu={(kind, payload, ev) => setMenu({ kind, payload, x: ev.currentTarget.getBoundingClientRect().left, y: ev.currentTarget.getBoundingClientRect().bottom + 6 })} />)}
       </div>
     </aside>
     <section className="relative flex h-screen min-w-0 flex-col">
-      {view === 'chat' && <header className="fixed left-[290px] right-0 top-0 z-10 flex h-12 items-center justify-between border-b border-gray-100 bg-white/95 px-4 max-[820px]:left-0">
-        <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-sm font-semibold">π Pi Web</h1></div>
-        <div className="flex items-center gap-2 text-xs text-gray-500"><span className="rounded-full bg-gray-100 px-3 py-1">{contextText}</span><span>{status}</span><button type="button" className={'rounded-lg px-3 py-1 font-semibold ' + (terminalOpen ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200')} onClick={() => setTerminalOpen(!terminalOpen)}>Terminal</button></div>
+      {view === 'chat' && <header className="fixed left-[290px] right-0 top-0 z-10 flex h-12 items-center justify-between border-b border-gray-100 bg-white/95 px-4 dark:border-slate-800 dark:bg-slate-950/95 max-[820px]:left-0">
+        <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 dark:bg-slate-800 dark:text-slate-200 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-sm font-semibold">π Pi Web</h1></div>
+        <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400"><ThemeToggle value={themePreference} onChange={setThemePreference} /><span className="rounded-full bg-gray-100 px-3 py-1 dark:bg-slate-800 dark:text-slate-300">{contextText}</span><span>{status}</span><button type="button" className={'rounded-lg px-3 py-1 font-semibold ' + (terminalOpen ? 'bg-gray-900 text-white dark:bg-slate-100 dark:text-slate-950' : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700')} onClick={() => setTerminalOpen(!terminalOpen)}>Terminal</button></div>
       </header>}
-      {view !== 'chat' && <header className="fixed left-[290px] right-0 top-0 z-10 flex h-12 items-center justify-between border-b border-gray-100 bg-white/95 px-4 max-[820px]:left-0">
-        <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-sm font-semibold">{view === 'skills' ? 'Skills' : view === 'tools' ? 'Tools' : 'Agents'}</h1></div>
-        <div className="text-xs text-gray-400">π Pi Web</div>
+      {view !== 'chat' && <header className="fixed left-[290px] right-0 top-0 z-10 flex h-12 items-center justify-between border-b border-gray-100 bg-white/95 px-4 dark:border-slate-800 dark:bg-slate-950/95 max-[820px]:left-0">
+        <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 dark:bg-slate-800 dark:text-slate-200 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-sm font-semibold">{view === 'skills' ? 'Skills' : view === 'tools' ? 'Tools' : 'Agents'}</h1></div>
+        <div className="flex items-center gap-3 text-xs text-gray-400 dark:text-slate-500"><ThemeToggle value={themePreference} onChange={setThemePreference} /><span>π Pi Web</span></div>
       </header>}
       {view === 'chat' && <ChatView logRef={logRef} messages={messages} input={input} setInput={setInput} submitPrompt={submitPrompt} submitMessage={submitMessage} abortGeneration={abortGeneration} busy={busy} queuedPrompts={queuedPrompts} removeQueuedPrompt={(id: string) => setQueue(queuedPromptsRef.current.filter(item => item.id !== id))} models={models} commands={commands} state={state} loadState={loadState} focusKey={(state?.cwd || '') + ':' + currentSessionPath} terminalOpen={terminalOpen} setTerminalOpen={setTerminalOpen} />}
       {view === 'skills' && <SkillsView skills={skills} reload={async () => { await loadSkills(); await loadCommands(); }} openModal={setSkillModal} />}
@@ -640,6 +663,17 @@ function App() {
     {toolModal && <ToolModal tool={toolModal === true ? null : toolModal} onClose={() => setToolModal(null)} onSave={(tool: any) => { if (tool.id) saveTools(tools.map(t => t.id === tool.id ? tool : t)); else saveTools([...tools, { ...tool, id: uid('tool'), createdAt: new Date().toISOString() }]); setToolModal(null); }} />}
     {agentModal && <AgentModal agent={agentModal === true ? null : agentModal} skills={skills} tools={[...builtinTools, ...tools]} onClose={() => setAgentModal(null)} onSave={(agent: any) => { if (agent.builtin) saveBuiltinAgent(agent); else if (agent.id) saveAgents(agents.map(a => a.id === agent.id ? agent : a)); else saveAgents([...agents, { ...agent, id: uid('agent'), createdAt: new Date().toISOString() }]); setAgentModal(null); }} />}
     {commandModal && <CommandOutputModal command={commandModal.title} text={commandModal.text} onClose={() => setCommandModal(null)} />}
+  </div>;
+}
+
+function ThemeToggle({ value, onChange }: { value: ThemePreference; onChange: (value: ThemePreference) => void }) {
+  const options: { value: ThemePreference; label: string; icon: string }[] = [
+    { value: 'light', label: 'Light theme', icon: '☼' },
+    { value: 'dark', label: 'Dark theme', icon: '☾' },
+    { value: 'system', label: 'System theme', icon: '◐' },
+  ];
+  return <div className="hidden rounded-full bg-gray-100 p-0.5 dark:bg-slate-800 min-[821px]:flex" role="group" aria-label="Theme">
+    {options.map(option => <button key={option.value} type="button" title={option.label} aria-label={option.label} aria-pressed={value === option.value} className={'flex h-7 w-7 items-center justify-center rounded-full text-sm transition ' + (value === option.value ? 'bg-white text-gray-900 shadow-sm dark:bg-slate-100 dark:text-slate-950' : 'text-gray-500 hover:text-gray-900 dark:text-slate-400 dark:hover:text-slate-100')} onClick={() => onChange(option.value)}>{option.icon}</button>)}
   </div>;
 }
 

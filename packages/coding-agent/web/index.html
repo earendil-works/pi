@@ -9,6 +9,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
+      darkMode: 'class',
       theme: {
         extend: {
           colors: {
@@ -28,12 +29,24 @@
       }
     };
   </script>
+  <script>
+    (function () {
+      var preference = localStorage.getItem('piWebTheme') || 'system';
+      var dark = preference === 'dark' || (preference === 'system' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      document.documentElement.classList.toggle('dark', dark);
+      document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+    })();
+  </script>
   <style>
     :root { color-scheme: light; }
+    html.dark { color-scheme: dark; }
     * { box-sizing: border-box; }
     body { margin:0; background:#fff; color:#202124; font-family: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    html.dark body { background:#0f172a; color:#e5e7eb; }
     textarea, input, select, button { font: inherit; }
     textarea { color:#202124; }
+    html.dark textarea, html.dark input, html.dark select { color:#e5e7eb; }
+    html.dark input::placeholder, html.dark textarea::placeholder { color:#64748b; }
     pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
     .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
     .scrollbar-thin::-webkit-scrollbar-thumb { background: #d0d5dd; border-radius: 999px; }
