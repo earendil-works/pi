@@ -380,35 +380,39 @@ function QuestionBlock({ item, answerQuestion }: { item: ChatItem; answerQuestio
     </div>}
   </div>;
 }
-function ToolStatus({ item, icon }: { item: ChatItem; icon: string }) { return <span className="inline-flex w-6 shrink-0 items-center justify-center text-[15px] leading-7 text-gray-400 dark:text-slate-500">{item.running ? '·' : item.error ? '!' : icon}</span>; }
-function ToolPill({ children }: { children: any }) { return <span className="rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-[0.95em] leading-none text-gray-500 dark:bg-neutral-900 dark:text-slate-400">{children}</span>; }
+function truncateToolValue(value: string, max = 30) {
+  const normalized = String(value || '').replace(/\s+/g, ' ').trim();
+  return normalized.length > max ? normalized.slice(0, max).trimEnd() + '…' : normalized;
+}
+function ToolStatus({ item, icon }: { item: ChatItem; icon: string }) { return <span className="inline-flex w-5 shrink-0 items-center justify-center text-[13px] leading-6 text-gray-400 dark:text-slate-500">{item.running ? '·' : item.error ? '!' : icon}</span>; }
+function ToolPill({ value, max = 30 }: { value: string; max?: number }) { return <span className="rounded-md bg-gray-100 px-1.5 py-0.5 font-mono text-[0.95em] leading-none text-gray-500 dark:bg-neutral-900 dark:text-slate-400" title={value}>{truncateToolValue(value, max)}</span>; }
 function ToolRow({ item, icon, label, children, open }: { item: ChatItem; icon: string; label: any; children?: any; open?: boolean }) {
-  return <details className={'group py-2 text-[15px] leading-7 ' + (item.error ? 'text-red-400 dark:text-red-300' : 'text-gray-400 dark:text-slate-500')} open={open ?? !!item.running}>
-    <summary className="flex cursor-pointer list-none items-center gap-3 text-[15px] font-normal leading-7 [&::-webkit-details-marker]:hidden"><ToolStatus item={item} icon={icon} /><span className="text-[15px] leading-7">{label}</span></summary>
+  return <details className={'group py-1.5 text-[13px] leading-6 ' + (item.error ? 'text-red-400 dark:text-red-300' : 'text-gray-400 dark:text-slate-500')} open={open ?? !!item.running}>
+    <summary className="flex cursor-pointer list-none items-center gap-2.5 text-[13px] font-normal leading-6 [&::-webkit-details-marker]:hidden"><ToolStatus item={item} icon={icon} /><span className="min-w-0 truncate text-[13px] leading-6">{label}</span></summary>
     {children && <div className="ml-8 mt-2 border-l border-gray-200 pl-4 dark:border-neutral-800">{children}</div>}
   </details>;
 }
 function BashToolBlock({ item }: { item: ChatItem }) {
   const command = item.args?.command || item.title || 'bash';
-  return <ToolRow item={item} icon="⌘" label={<>Ran <ToolPill>{command}</ToolPill></>}>
+  return <ToolRow item={item} icon="⌘" label={<>Ran <ToolPill value={command} max={36} /></>}>
     {item.text && <pre className="max-h-80 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5 text-gray-600 dark:text-slate-300">{item.text}</pre>}
   </ToolRow>;
 }
 function ReadToolBlock({ item }: { item: ChatItem }) {
   const file = item.args?.path || item.title.replace(/^Read\s+/, '') || 'file';
-  return <ToolRow item={item} icon="⌕" label={<>Read <ToolPill>{baseName(file)}</ToolPill></>}>
+  return <ToolRow item={item} icon="⌕" label={<>Read <ToolPill value={baseName(file)} /></>}>
     {item.text && <pre className="max-h-96 overflow-auto whitespace-pre-wrap font-mono text-xs leading-5 text-gray-600 dark:text-slate-300">{item.text}</pre>}
   </ToolRow>;
 }
 function EditToolBlock({ item }: { item: ChatItem }) {
   const file = item.args?.path || 'file';
-  return <ToolRow item={item} icon="✎" label={<>Edited <ToolPill>{baseName(file)}</ToolPill></>} open={!!item.running}>
+  return <ToolRow item={item} icon="✎" label={<>Edited <ToolPill value={baseName(file)} /></>} open={!!item.running}>
     <DiffView edits={item.args?.edits} fallback={item.text} />
   </ToolRow>;
 }
 function WriteToolBlock({ item }: { item: ChatItem }) {
   const file = item.args?.path || 'file';
-  return <ToolRow item={item} icon="✎" label={<>Wrote <ToolPill>{baseName(file)}</ToolPill></>} open={!!item.running}>
+  return <ToolRow item={item} icon="✎" label={<>Wrote <ToolPill value={baseName(file)} /></>} open={!!item.running}>
     <AddedFileView content={item.args?.content || item.text} />
   </ToolRow>;
 }
