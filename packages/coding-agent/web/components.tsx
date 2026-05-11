@@ -504,11 +504,11 @@ function ToolModal({ tool, onClose, onSave }: any) { const [name, setName] = use
 function AgentModal({ agent, skills, tools, onClose, onSave }: any) {
   const [name, setName] = useState(agent?.name || '');
   const [description, setDescription] = useState(agent?.description || '');
-  const [systemPrompt, setSystemPrompt] = useState(agent?.systemPrompt || '');
+  const [systemPrompt, setSystemPrompt] = useState(stripAvailableSkillsSection(agent?.systemPrompt || ''));
   const [selectedSkills, setSelectedSkills] = useState<string[]>(agent?.skills || []);
   const [selectedTools, setSelectedTools] = useState<string[]>(agent?.tools || []);
   const toggle = (list: string[], setList: any, value: string) => setList(list.includes(value) ? list.filter(item => item !== value) : [...list, value]);
-  return <EditorModal title={agent ? (agent.builtin ? 'Edit built-in agent' : 'Edit custom agent') : 'Create custom agent'} onClose={onClose} onSave={() => onSave({ ...agent, name, description, systemPrompt, skills: selectedSkills, tools: selectedTools })}>
+  return <EditorModal title={agent ? (agent.builtin ? 'Edit built-in agent' : 'Edit custom agent') : 'Create custom agent'} onClose={onClose} onSave={() => onSave({ ...agent, name, description, systemPrompt: buildAgentSystemPrompt(systemPrompt, selectedSkills, selectedTools, skills), skills: selectedSkills, tools: selectedTools })}>
     <Field label="Name"><input value={name} onChange={e => setName(e.target.value)} /></Field>
     <Field label="Short description"><input value={description} onChange={e => setDescription(e.target.value)} /></Field>
     <Field label="System prompt"><textarea value={systemPrompt} onChange={e => setSystemPrompt(e.target.value)} /></Field>
@@ -517,6 +517,37 @@ function AgentModal({ agent, skills, tools, onClose, onSave }: any) {
   </EditorModal>;
 }
 function Checklist({ title, items, selected, toggle, empty }: any) { return <div><div className="mb-2 text-sm font-semibold text-gray-600 dark:text-slate-300">{title}</div><div className="max-h-44 overflow-auto rounded-xl border border-gray-200 p-1.5 dark:border-neutral-800">{items.length === 0 ? <div className="p-2 text-sm text-gray-400 dark:text-slate-500">{empty || 'Nothing available.'}</div> : items.map((item: any) => <label key={item.key} className="grid cursor-pointer grid-cols-[18px_minmax(0,1fr)] items-center gap-2 rounded-lg px-2.5 py-2 hover:bg-gray-50 dark:hover:bg-neutral-900"><input type="checkbox" className="!h-4 !w-4 !rounded !border-gray-300 !p-0 accent-piAccent dark:!border-neutral-700" checked={selected.includes(item.key)} onChange={() => toggle(item.key)} /><span className="min-w-0 truncate text-sm font-medium">{item.label}</span></label>)}</div></div>; }
+function stripAvailableSkillsSection(prompt: string) {
+  return String(prompt || '').replace(/\n*The following skills provide specialized instructions for specific tasks\.[\s\S]*?<\/available_skills>\n*/g, '\n').trim();
+}
+type AgentSkillOption = { name: string; description?: string; path?: string; filePath?: string };
+function buildAgentSystemPrompt(basePrompt: string, selectedSkills: string[], _selectedTools: string[], skills: AgentSkillOption[]) {
+  const prompt = stripAvailableSkillsSection(basePrompt);
+  if (selectedSkills.length === 0) return prompt;
+  const selected = skills.filter(skill => selectedSkills.includes(skill.name));
+  if (selected.length === 0) return prompt;
+  const lines = [
+    '',
+    '',
+    'The following skills provide specialized instructions for specific tasks.',
+    "Use the read tool to load a skill's file when the task matches its description.",
+    'When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.',
+    '',
+    '<available_skills>',
+  ];
+  for (const skill of selected) {
+    lines.push('  <skill>');
+    lines.push('    <name>' + escapeXml(skill.name) + '</name>');
+    lines.push('    <description>' + escapeXml(skill.description || '') + '</description>');
+    lines.push('    <location>' + escapeXml(skill.path || skill.filePath || '') + '</location>');
+    lines.push('  </skill>');
+  }
+  lines.push('</available_skills>');
+  return prompt + lines.join('\n');
+}
+function escapeXml(value: unknown) {
+  return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+}
 function EditorModal({ title, children, onClose, onSave }: any) { return <Modal onClose={onClose}><div className="flex shrink-0 items-center justify-between border-b border-gray-200 p-4 dark:border-neutral-900"><h2 className="font-bold">{title}</h2><button className="rounded-lg bg-gray-100 px-3 py-2 dark:bg-neutral-900" onClick={onClose}>Cancel</button></div><div className="min-h-0 flex-1 space-y-4 overflow-auto p-4 [&_input]:w-full [&_input]:rounded-xl [&_input]:border [&_input]:border-gray-300 [&_input]:bg-white [&_input]:p-3 [&_textarea]:h-64 [&_textarea]:w-full [&_textarea]:rounded-xl [&_textarea]:border [&_textarea]:border-gray-300 [&_textarea]:bg-white [&_textarea]:p-3 dark:[&_input]:border-neutral-800 dark:[&_input]:bg-black dark:[&_textarea]:border-neutral-800 dark:[&_textarea]:bg-black">{children}</div><div className="flex shrink-0 justify-end gap-2 border-t border-gray-200 p-4 dark:border-neutral-900"><button className="rounded-xl bg-gray-100 px-4 py-2 dark:bg-neutral-900" onClick={onClose}>Cancel</button><button className="rounded-xl bg-piAccent px-4 py-2 font-bold text-white" onClick={onSave}>Save</button></div></Modal>; }
 function Field({ label, children }: any) { return <label className="block"><span className="mb-1 block text-sm font-semibold text-gray-600 dark:text-slate-300">{label}</span>{children}</label>; }
 
