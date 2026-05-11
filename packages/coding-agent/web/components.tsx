@@ -16,7 +16,13 @@ const {
 type ChatItem = any;
 type ProjectInfo = any;
 
-function SidebarButton({ icon, label, onClick }: any) { return <button className="mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[18px] font-medium hover:bg-piHover dark:hover:bg-neutral-900" onClick={onClick}><span className="w-6 text-center">{icon}</span><span>{label}</span></button>; }
+function SidebarButton({ icon, label, onClick, iconOnly }: any) {
+  if (iconOnly) return <button type="button" aria-label={label} title={label} className="mb-4 flex h-9 w-9 items-center justify-center rounded-xl text-[#333] hover:bg-piHover dark:text-slate-200 dark:hover:bg-neutral-900" onClick={onClick}>{icon}</button>;
+  return <button className="mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[18px] font-medium hover:bg-piHover dark:hover:bg-neutral-900" onClick={onClick}><span className="w-6 text-center">{icon}</span><span>{label}</span></button>;
+}
+function NewChatIcon() {
+  return <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3H6.5A3.5 3.5 0 0 0 3 6.5v11A3.5 3.5 0 0 0 6.5 21h11A3.5 3.5 0 0 0 21 17.5V12" /><path d="M19.4 3.6a2.1 2.1 0 0 1 3 3L12 17l-4 1 1-4Z" /></svg>;
+}
 function ProjectTree({ project, collapsed, icon, currentSessionPath, onToggle, onOpen, onMenu }: any) {
   const shown = collapsed ? [] : project.sessions.slice(0, 10);
   return <div className="mb-5">
@@ -680,6 +686,7 @@ function Field({ label, children }: any) { return <label className="block"><span
 
 (window as any).PiWebComponents = {
   SidebarButton,
+  NewChatIcon,
   ProjectTree,
   ChatView,
   TerminalPane,
