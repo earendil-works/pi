@@ -354,16 +354,24 @@ function Message({ item, answerQuestion }: { item: ChatItem; answerQuestion?: (r
 }
 function QuestionBlock({ item, answerQuestion }: { item: ChatItem; answerQuestion?: (request: any, answer: any) => void }) {
   const [customAnswer, setCustomAnswer] = useState('');
+  const customInputRef = useRef<HTMLInputElement | null>(null);
   const request = item.args?.request || { id: item.id, question: item.text, options: item.args?.options || [] };
   const options = item.args?.options || request.options || [];
   const answer = item.args?.answer;
   const answered = !!answer || !item.running;
+  function selectOption(option: string, index: number) {
+    if (option.trim().toLowerCase() === 'other') {
+      customInputRef.current?.focus();
+      return;
+    }
+    answerQuestion?.(request, { answer: option, optionIndex: index, custom: false });
+  }
   return <div className={'rounded-2xl border px-4 py-3 text-sm shadow-sm ' + (item.error ? 'border-red-200 bg-red-50 text-red-800 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200' : 'border-piAccent/25 bg-[#f7f8ff] text-gray-800 dark:border-piAccent/30 dark:bg-piAccent/10 dark:text-slate-100')}>
     <div className="mb-2 flex items-center gap-2 text-xs font-bold uppercase text-piAccent"><span>{answered ? 'Answered question' : 'Question'}</span>{item.running && <span className="animate-pulse rounded-full bg-piAccent/10 px-2 py-0.5 normal-case">waiting</span>}</div>
     <div className="whitespace-pre-wrap text-[15px] leading-6">{item.text}</div>
     {answer ? <div className="mt-3 rounded-xl border border-gray-200 bg-white px-3 py-2 dark:border-neutral-800 dark:bg-black"><div className="text-xs font-semibold uppercase text-gray-400 dark:text-slate-500">Answer</div><div className="mt-1 whitespace-pre-wrap">{answer.answer}</div></div> : <div className="mt-3 space-y-3">
-      <div className="grid gap-2">{options.map((option: string, index: number) => <button key={index} type="button" className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-left font-medium hover:border-piAccent hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-800 dark:bg-black dark:hover:bg-neutral-900" disabled={!item.running || !answerQuestion} onClick={() => answerQuestion?.(request, { answer: option, optionIndex: index, custom: false })}>{option}</button>)}</div>
-      <div className="flex flex-col gap-2 sm:flex-row"><input className="min-w-0 flex-1 rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:border-piAccent dark:border-neutral-800 dark:bg-black" value={customAnswer} onChange={e => setCustomAnswer(e.target.value)} placeholder="Other" disabled={!item.running} /><button type="button" className="rounded-xl bg-piAccent px-4 py-2 font-bold text-white disabled:cursor-not-allowed disabled:opacity-50" disabled={!item.running || !customAnswer.trim() || !answerQuestion} onClick={() => answerQuestion?.(request, { answer: customAnswer.trim(), optionIndex: null, custom: true })}>Send</button></div>
+      <div className="grid gap-2">{options.map((option: string, index: number) => <button key={index} type="button" className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-left font-medium hover:border-piAccent hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:border-neutral-800 dark:bg-black dark:hover:bg-neutral-900" disabled={!item.running || !answerQuestion} onClick={() => selectOption(option, index)}>{option}</button>)}</div>
+      <div className="flex flex-col gap-2 sm:flex-row"><input ref={customInputRef} className="min-w-0 flex-1 rounded-xl border border-gray-300 bg-white px-3 py-2 outline-none focus:border-piAccent dark:border-neutral-800 dark:bg-black" value={customAnswer} onChange={e => setCustomAnswer(e.target.value)} placeholder="Other" disabled={!item.running} /><button type="button" className="rounded-xl bg-piAccent px-4 py-2 font-bold text-white disabled:cursor-not-allowed disabled:opacity-50" disabled={!item.running || !customAnswer.trim() || !answerQuestion} onClick={() => answerQuestion?.(request, { answer: customAnswer.trim(), optionIndex: null, custom: true })}>Send</button></div>
     </div>}
   </div>;
 }
