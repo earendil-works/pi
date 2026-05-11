@@ -197,7 +197,7 @@ export class TerminalManager {
 				rows,
 			});
 		} catch {
-			return createChildProcessPty(file, args, cwd);
+			return createChildProcessPty(file, cwd);
 		}
 	}
 
@@ -207,8 +207,8 @@ export class TerminalManager {
 	}
 }
 
-function createChildProcessPty(file: string, args: string[], cwd: string): IPty {
-	const child = spawn(file, args, {
+function createChildProcessPty(file: string, cwd: string): IPty {
+	const child = spawn(file, [], {
 		cwd,
 		env: { ...process.env, TERM: process.env.TERM || "xterm-256color" },
 		stdio: ["pipe", "pipe", "pipe"],
@@ -217,7 +217,7 @@ function createChildProcessPty(file: string, args: string[], cwd: string): IPty 
 		pid: child.pid ?? 0,
 		process: file,
 		write: (data: string) => {
-			child.stdin.write(data);
+			child.stdin.write(data.replace(/\r/g, "\n"));
 		},
 		resize: () => {},
 		kill: (signal?: string) => {

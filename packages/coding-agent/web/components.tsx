@@ -219,65 +219,113 @@ function TerminalPane({ focusKey, onClose }: any) {
   const [cwd, setCwd] = useState('');
   const [pid, setPid] = useState<number | null>(null);
   const [running, setRunning] = useState(false);
-  const [output, setOutput] = useState('');
-  const [input, setInput] = useState('');
-  const outputRef = useRef<HTMLPreElement | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [terminalReady, setTerminalReady] = useState(false);
+  const terminalElementRef = useRef<HTMLDivElement | null>(null);
+  const terminalRef = useRef<any>(null);
+  const fitAddonRef = useRef<any>(null);
+  const cwdRef = useRef('');
+  const startGenerationRef = useRef(0);
 
-  function append(text: string) {
-    setOutput(prev => {
-      const next = prev + text;
-      return next.length > 200000 ? next.slice(-200000) : next;
-    });
+  function writeToTerminal(text: string) {
+    terminalRef.current?.write(text);
   }
 
   async function start(restart = false) {
+    const generation = ++startGenerationRef.current;
     const res = await fetch(restart ? '/api/terminal/restart' : '/api/terminal/start', { method: 'POST' });
     if (!res.ok) {
-      append('\nTerminal error: ' + await res.text() + '\n');
+      writeToTerminal('\r\nTerminal error: ' + await res.text() + '\r\n');
       return;
     }
     const json = await res.json();
     const data = json.data || {};
+    if (generation !== startGenerationRef.current) return;
     setCwd(data.cwd || '');
+    cwdRef.current = data.cwd || '';
     setPid(data.pid || null);
     setRunning(!!data.running);
-    setOutput(data.buffer || '');
-    setTimeout(() => inputRef.current?.focus(), 0);
+    terminalRef.current?.reset();
+    if (data.buffer) writeToTerminal(data.buffer);
+    fitAndResize();
+    setTimeout(() => terminalRef.current?.focus(), 0);
   }
 
   async function send(data: string) {
     if (!data) return;
     const res = await fetch('/api/terminal/input', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ data }) });
-    if (!res.ok) append('\nTerminal error: ' + await res.text() + '\n');
+    if (!res.ok) writeToTerminal('\r\nTerminal error: ' + await res.text() + '\r\n');
   }
 
-  function submitLine() {
-    const value = input;
-    setInput('');
-    send(value + '\n');
+  async function resize(cols: number, rows: number) {
+    await fetch('/api/terminal/resize', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ cols, rows }) }).catch(() => {});
   }
 
-  useEffect(() => { start(false); }, [focusKey]);
+  function fitAndResize() {
+    const fitAddon = fitAddonRef.current;
+    const terminal = terminalRef.current;
+    if (!fitAddon || !terminal) return;
+    try {
+      fitAddon.fit();
+      resize(terminal.cols, terminal.rows);
+    } catch {}
+  }
+
+  useEffect(() => {
+    const XTerm = (window as any).Terminal;
+    const FitAddon = (window as any).FitAddon?.FitAddon;
+    if (!terminalElementRef.current || !XTerm || !FitAddon) return;
+    const terminal = new XTerm({
+      cursorBlink: true,
+      convertEol: true,
+      fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
+      fontSize: 13,
+      theme: { background: '#0b1020', foreground: '#f3f4f6', cursor: '#f3f4f6', selectionBackground: '#374151' },
+    });
+    const fitAddon = new FitAddon();
+    terminal.loadAddon(fitAddon);
+    terminal.open(terminalElementRef.current);
+    terminal.onData((data: string) => send(data));
+    terminalRef.current = terminal;
+    fitAddonRef.current = fitAddon;
+    setTerminalReady(true);
+    fitAndResize();
+    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fitAndResize);
+    if (resizeObserver) resizeObserver.observe(terminalElementRef.current);
+    window.addEventListener('resize', fitAndResize);
+    return () => {
+      window.removeEventListener('resize', fitAndResize);
+      resizeObserver?.disconnect();
+      terminal.dispose();
+      terminalRef.current = null;
+      fitAddonRef.current = null;
+      setTerminalReady(false);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!terminalRef.current) return;
+    start(false);
+  }, [focusKey, terminalReady]);
+
   useEffect(() => {
     const handler = (event: any) => {
       const detail = event.detail || {};
-      if (detail.cwd && cwd && detail.cwd !== cwd) return;
+      if (detail.cwd && cwdRef.current && detail.cwd !== cwdRef.current) return;
       if (detail.type === 'terminal_start') {
         setCwd(detail.cwd || '');
+        cwdRef.current = detail.cwd || '';
         setPid(detail.pid || null);
         setRunning(true);
       } else if (detail.type === 'terminal_output') {
-        append(detail.data || '');
+        writeToTerminal(detail.data || '');
       } else if (detail.type === 'terminal_exit') {
         setRunning(false);
-        append('\n[terminal exited code=' + detail.code + ' signal=' + detail.signal + ']\n');
+        writeToTerminal('\r\n[terminal exited code=' + detail.code + ' signal=' + detail.signal + ']\r\n');
       }
     };
     window.addEventListener('pi-terminal-event', handler);
     return () => window.removeEventListener('pi-terminal-event', handler);
-  }, [cwd]);
-  useEffect(() => { outputRef.current?.scrollTo({ top: outputRef.current.scrollHeight }); }, [output]);
+  }, []);
 
   return <aside className="fixed bottom-0 right-0 top-12 z-20 flex w-[420px] max-w-full flex-col border-l border-gray-200 bg-[#0b1020] text-gray-100 shadow-pi max-[999px]:left-0 max-[999px]:top-auto max-[999px]:h-[45vh] max-[999px]:w-full max-[999px]:border-l-0 max-[999px]:border-t">
     <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/10 px-3">
@@ -286,11 +334,12 @@ function TerminalPane({ focusKey, onClose }: any) {
       <button type="button" className="rounded-lg bg-white/10 px-2 py-1 text-xs text-gray-100 hover:bg-white/15" onClick={() => start(true)}>Restart</button>
       <button type="button" className="rounded-lg bg-white/10 px-2 py-1 text-xs text-gray-100 hover:bg-white/15" onClick={onClose}>Close</button>
     </div>
-    <pre ref={outputRef} className="min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-words p-3 font-mono text-xs leading-5 text-gray-100 scrollbar-thin">{output || (running ? '' : 'Starting terminal…')}</pre>
-    <div className="flex shrink-0 items-center gap-2 border-t border-white/10 p-2">
+    <div className="min-h-0 flex-1 p-3" onClick={() => terminalRef.current?.focus()}>
+      <div ref={terminalElementRef} className="h-full w-full overflow-hidden" />
+    </div>
+    <div className="flex shrink-0 items-center justify-between gap-2 border-t border-white/10 p-2">
       <button type="button" className="rounded-md bg-white/10 px-2 py-1 font-mono text-xs text-gray-100 hover:bg-white/15" title="Send Ctrl+C" onClick={() => send('\u0003')}>^C</button>
-      <span className="font-mono text-xs text-gray-500">$</span>
-      <input ref={inputRef} className="min-w-0 flex-1 border-0 bg-transparent font-mono text-xs text-gray-100 outline-none placeholder:text-gray-600" value={input} disabled={!running} placeholder={running ? 'type command and press Enter' : 'terminal stopped'} onChange={e => setInput(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); submitLine(); } }} />
+      <div className="truncate font-mono text-[10px] text-gray-500">{running ? 'xterm.js connected' : 'terminal stopped'}</div>
     </div>
   </aside>;
 }
