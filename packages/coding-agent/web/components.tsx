@@ -370,9 +370,21 @@ function textWithoutImageMarkdown(text: string) {
   return String(text || '').replace(/!\[([^\]]*)\]\(([^)]+)\)/g, '$1').trim();
 }
 function RenderedImages({ images }: { images?: Array<{ src: string; alt?: string; title?: string }> }) {
+  const [expandedImage, setExpandedImage] = useState<any>(null);
   const list = (images || []).filter(image => image?.src);
   if (list.length === 0) return null;
-  return <div className="mt-3 flex flex-wrap gap-3">{list.map((image, index) => <a key={image.src + index} href={image.src} target="_blank" rel="noreferrer" className="block overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-neutral-800 dark:bg-neutral-950" title={image.title || image.alt || 'image'}><img src={image.src} alt={image.alt || 'image'} className="max-h-80 max-w-full object-contain" loading="lazy" /></a>)}</div>;
+  return <><div className="mt-3 flex flex-wrap gap-3">{list.map((image, index) => <button key={image.src + index} type="button" className="block overflow-hidden rounded-xl border border-gray-200 bg-gray-50 dark:border-neutral-800 dark:bg-neutral-950" title={image.title || image.alt || 'image'} onClick={() => setExpandedImage(image)}><img src={image.src} alt={image.alt || 'image'} className="max-h-80 max-w-full object-contain" loading="lazy" /></button>)}</div>{expandedImage && <ImageModal image={expandedImage} onClose={() => setExpandedImage(null)} />}</>;
+}
+function ImageModal({ image, onClose }: { image: { src: string; alt?: string; title?: string }; onClose: () => void }) {
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [onClose]);
+  return <div className="fixed inset-0 z-50 flex flex-col bg-black/90 p-4 text-white" onMouseDown={e => { if (e.target === e.currentTarget) onClose(); }}>
+    <div className="mb-3 flex shrink-0 items-center gap-3"><div className="min-w-0 flex-1 truncate text-sm text-gray-200">{image.title || image.alt || 'Image'}</div><button type="button" className="rounded-lg bg-white/10 px-3 py-2 text-sm font-medium hover:bg-white/15" onClick={onClose}>Close</button></div>
+    <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto"><img src={image.src} alt={image.alt || 'image'} className="max-h-full max-w-full object-contain" /></div>
+  </div>;
 }
 function RichText({ text, images, cwd }: { text: string; images?: Array<{ src: string; alt?: string; title?: string }>; cwd?: string }) {
   const textImages = collectTextImages(text, cwd);
