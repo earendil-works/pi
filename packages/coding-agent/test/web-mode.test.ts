@@ -166,6 +166,38 @@ describe("terminal manager", () => {
 		expect(broadcasts.length).toBeGreaterThan(1);
 	});
 
+	test("reuses a running terminal and replays buffered output", async () => {
+		const cwd = await tempDir();
+		let dataHandler: ((data: string) => void) | undefined;
+		let spawnCount = 0;
+		const manager = new TerminalManager({
+			broadcast: vi.fn(),
+			loadPty: () => ({
+				spawn: () => {
+					spawnCount++;
+					return {
+						pid: 123,
+						process: "shell",
+						write: vi.fn(),
+						resize: vi.fn(),
+						kill: vi.fn(),
+						onData: (callback: (data: string) => void) => {
+							dataHandler = callback;
+							return { dispose: vi.fn() };
+						},
+						onExit: () => ({ dispose: vi.fn() }),
+					};
+				},
+			}),
+		});
+		manager.start(cwd);
+		dataHandler?.("hello\n");
+		const resumed = manager.start(cwd);
+		expect(spawnCount).toBe(1);
+		expect(resumed.running).toBe(true);
+		expect(resumed.buffer).toBe("hello\n");
+	});
+
 	test("reports unavailable optional dependency", async () => {
 		const cwd = await tempDir();
 		const manager = new TerminalManager({ broadcast: vi.fn(), loadPty: () => null });

@@ -109,7 +109,7 @@ function App() {
   const [agentModal, setAgentModal] = useState<any>(null);
   const [commandModal, setCommandModal] = useState<any>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [terminalOpen, setTerminalOpen] = useState(false);
+  const [terminalOpen, setTerminalOpenState] = useState(() => localStorage.getItem('piWebTerminalOpen') === 'true');
   const activeTools = useRef<Record<string, string>>({});
   const activeAssistantId = useRef<string | null>(null);
   const activeThinkingId = useRef<string | null>(null);
@@ -141,6 +141,10 @@ function App() {
   function pushRoute(path: string) { if (location.pathname !== path) history.pushState({}, '', path); }
   function replaceRoute(path: string) { if (location.pathname !== path) history.replaceState({}, '', path); }
   function go(path: string, nextView?: ViewName) { pushRoute(path); if (nextView) setView(nextView); applyRoute(projects); }
+  function setTerminalOpen(value: boolean) {
+    setTerminalOpenState(value);
+    localStorage.setItem('piWebTerminalOpen', value ? 'true' : 'false');
+  }
   function addItem(item: Partial<ChatItem>) {
     setMessages(prev => [...prev, { id: uid('msg'), kind: 'tool', title: '', text: '', ...item } as ChatItem]);
   }
@@ -379,6 +383,18 @@ function App() {
     es.onmessage = ev => handleEvent(JSON.parse(ev.data));
     return () => es.close();
   }, []);
+  useEffect(() => {
+    if (view !== 'chat') return;
+    let cancelled = false;
+    fetch('/api/terminal/state')
+      .then(res => res.ok ? res.json() : null)
+      .then(json => {
+        const data = json?.data;
+        if (!cancelled && data && (data.running || data.buffer)) setTerminalOpen(true);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [state?.cwd, currentSessionPath, view]);
   useEffect(() => {
     const onTouchStart = (ev: TouchEvent) => {
       if (ev.touches.length !== 1) return;
