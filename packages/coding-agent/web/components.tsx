@@ -337,10 +337,6 @@ function TerminalPane({ focusKey, onClose }: any) {
     <div className="min-h-0 flex-1 p-3" onClick={() => terminalRef.current?.focus()}>
       <div ref={terminalElementRef} className="h-full w-full overflow-hidden" />
     </div>
-    <div className="flex shrink-0 items-center justify-between gap-2 border-t border-white/10 p-2">
-      <button type="button" className="rounded-md bg-white/10 px-2 py-1 font-mono text-xs text-gray-100 hover:bg-white/15" title="Send Ctrl+C" onClick={() => send('\u0003')}>^C</button>
-      <div className="truncate font-mono text-[10px] text-gray-500">{running ? 'xterm.js connected' : 'terminal stopped'}</div>
-    </div>
   </aside>;
 }
 function AttachmentPreview({ files, remove }: any) { return <div className="mb-2 flex flex-wrap gap-2">{files.map((file: any, index: number) => <div key={index} className="group relative overflow-hidden rounded-xl border border-gray-200 bg-gray-50">{String(file.type || '').startsWith('image/') && file.dataUrl ? <img src={file.dataUrl} className="h-20 w-20 object-cover" /> : <div className="flex h-20 w-40 items-center justify-center px-3 text-center text-xs text-gray-500">{file.name}</div>}<div className="absolute inset-x-0 bottom-0 truncate bg-black/55 px-2 py-1 text-[10px] text-white">{file.name}</div>{remove && <button type="button" className="absolute right-1 top-1 hidden rounded-full bg-black/60 px-1.5 text-xs text-white group-hover:block" onClick={() => remove(index)}>×</button>}</div>)}</div>; }
