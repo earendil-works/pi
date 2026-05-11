@@ -109,7 +109,8 @@ function App() {
   const [agentModal, setAgentModal] = useState<any>(null);
   const [commandModal, setCommandModal] = useState<any>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [terminalOpen, setTerminalOpenState] = useState(() => localStorage.getItem('piWebTerminalOpen') === 'true');
+  const [terminalOpenByProject, setTerminalOpenByProject] = useState<Record<string, boolean>>(() => safeJson(localStorage.getItem('piWebTerminalOpenByProject'), {}));
+  const [terminalOpen, setTerminalOpenState] = useState(false);
   const activeTools = useRef<Record<string, string>>({});
   const activeAssistantId = useRef<string | null>(null);
   const activeThinkingId = useRef<string | null>(null);
@@ -137,13 +138,22 @@ function App() {
       return null;
     }).filter(Boolean) as ProjectInfo[];
   }, [allProjects, projectQuery]);
+  const currentProjectCwd = useMemo(() => {
+    if (state?.cwd) return state.cwd;
+    return projects.find(project => project.sessions.some(session => session.path === currentSessionPath))?.cwd || '';
+  }, [projects, currentSessionPath, state?.cwd]);
 
   function pushRoute(path: string) { if (location.pathname !== path) history.pushState({}, '', path); }
   function replaceRoute(path: string) { if (location.pathname !== path) history.replaceState({}, '', path); }
   function go(path: string, nextView?: ViewName) { pushRoute(path); if (nextView) setView(nextView); applyRoute(projects); }
   function setTerminalOpen(value: boolean) {
+    const key = currentProjectCwd || 'default';
     setTerminalOpenState(value);
-    localStorage.setItem('piWebTerminalOpen', value ? 'true' : 'false');
+    setTerminalOpenByProject(prev => {
+      const next = { ...prev, [key]: value };
+      localStorage.setItem('piWebTerminalOpenByProject', JSON.stringify(next));
+      return next;
+    });
   }
   function addItem(item: Partial<ChatItem>) {
     setMessages(prev => [...prev, { id: uid('msg'), kind: 'tool', title: '', text: '', ...item } as ChatItem]);
@@ -395,17 +405,9 @@ function App() {
     return () => es.close();
   }, []);
   useEffect(() => {
-    if (view !== 'chat') return;
-    let cancelled = false;
-    fetch('/api/terminal/state')
-      .then(res => res.ok ? res.json() : null)
-      .then(json => {
-        const data = json?.data;
-        if (!cancelled && data && (data.running || data.buffer)) setTerminalOpen(true);
-      })
-      .catch(() => {});
-    return () => { cancelled = true; };
-  }, [state?.cwd, currentSessionPath, view]);
+    const key = currentProjectCwd || 'default';
+    setTerminalOpenState(view === 'chat' && terminalOpenByProject[key] === true);
+  }, [currentProjectCwd, terminalOpenByProject, view]);
   useEffect(() => {
     const onTouchStart = (ev: TouchEvent) => {
       if (ev.touches.length !== 1) return;
