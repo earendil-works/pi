@@ -621,9 +621,9 @@ function App() {
     return 'Context: ' + formatK(used) + ' used · ' + formatK(left) + ' left · ' + pct + '%';
   }, [state, stats]);
 
-  return <div className="grid h-screen grid-cols-[290px_minmax(0,1fr)] bg-white text-[#202124] dark:bg-slate-950 dark:text-slate-100 max-[820px]:grid-cols-1">
+  return <div className="grid h-screen grid-cols-[290px_minmax(0,1fr)] bg-white text-[#202124] dark:bg-black dark:text-slate-100 max-[820px]:grid-cols-1">
     {sidebarOpen && <div className="fixed inset-0 z-30 bg-gray-900/30 min-[821px]:hidden" onClick={() => setSidebarOpen(false)} />}
-    <aside className={'h-screen overflow-y-auto bg-piPanel px-3 py-4 text-piText scrollbar-thin dark:bg-slate-900 dark:text-slate-100 max-[820px]:fixed max-[820px]:inset-y-0 max-[820px]:left-0 max-[820px]:z-40 max-[820px]:w-[290px] max-[820px]:transition-transform ' + (sidebarOpen ? 'max-[820px]:translate-x-0' : 'max-[820px]:-translate-x-full')}>
+    <aside className={'h-screen overflow-y-auto bg-piPanel px-3 py-4 text-piText scrollbar-thin dark:bg-neutral-950 dark:text-slate-100 max-[820px]:fixed max-[820px]:inset-y-0 max-[820px]:left-0 max-[820px]:z-40 max-[820px]:w-[290px] max-[820px]:transition-transform ' + (sidebarOpen ? 'max-[820px]:translate-x-0' : 'max-[820px]:-translate-x-full')}>
       <SidebarButton icon="✎" label="New chat" onClick={() => { setSidebarOpen(false); newChat(); }} />
       <SidebarButton icon="⌕" label="Search" onClick={() => { setSidebarOpen(false); setSearchOpen(true); }} />
       <SidebarButton icon="◎" label="Agents" onClick={() => { setSidebarOpen(false); go('/agents', 'agents'); }} />
@@ -637,12 +637,12 @@ function App() {
       </div>
     </aside>
     <section className="relative flex h-screen min-w-0 flex-col">
-      {view === 'chat' && <header className="fixed left-[290px] right-0 top-0 z-10 flex h-12 items-center justify-between border-b border-gray-100 bg-white/95 px-4 dark:border-slate-800 dark:bg-slate-950/95 max-[820px]:left-0">
-        <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 dark:bg-slate-800 dark:text-slate-200 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-sm font-semibold">π Pi Web</h1></div>
-        <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400"><ThemeToggle value={themePreference} onChange={setThemePreference} /><span className="rounded-full bg-gray-100 px-3 py-1 dark:bg-slate-800 dark:text-slate-300">{contextText}</span><span>{status}</span><button type="button" className={'rounded-lg px-3 py-1 font-semibold ' + (terminalOpen ? 'bg-gray-900 text-white dark:bg-slate-100 dark:text-slate-950' : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700')} onClick={() => setTerminalOpen(!terminalOpen)}>Terminal</button></div>
+      {view === 'chat' && <header className="fixed left-[290px] right-0 top-0 z-10 flex h-12 items-center justify-between border-b border-gray-100 bg-white/95 px-4 dark:border-neutral-900 dark:bg-black/95 max-[820px]:left-0">
+        <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 dark:bg-neutral-900 dark:text-slate-200 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-sm font-semibold">π Pi Web</h1></div>
+        <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400"><ThemeToggle value={themePreference} onChange={setThemePreference} /><span className="rounded-full bg-gray-100 px-3 py-1 dark:bg-neutral-900 dark:text-slate-300">{contextText}</span><span>{status}</span><button type="button" className={'rounded-lg px-3 py-1 font-semibold ' + (terminalOpen ? 'bg-gray-900 text-white dark:bg-slate-100 dark:text-black' : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-neutral-900 dark:text-slate-200 dark:hover:bg-neutral-800')} onClick={() => setTerminalOpen(!terminalOpen)}>Terminal</button></div>
       </header>}
-      {view !== 'chat' && <header className="fixed left-[290px] right-0 top-0 z-10 flex h-12 items-center justify-between border-b border-gray-100 bg-white/95 px-4 dark:border-slate-800 dark:bg-slate-950/95 max-[820px]:left-0">
-        <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 dark:bg-slate-800 dark:text-slate-200 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-sm font-semibold">{view === 'skills' ? 'Skills' : view === 'tools' ? 'Tools' : 'Agents'}</h1></div>
+      {view !== 'chat' && <header className="fixed left-[290px] right-0 top-0 z-10 flex h-12 items-center justify-between border-b border-gray-100 bg-white/95 px-4 dark:border-neutral-900 dark:bg-black/95 max-[820px]:left-0">
+        <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 dark:bg-neutral-900 dark:text-slate-200 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-sm font-semibold">{view === 'skills' ? 'Skills' : view === 'tools' ? 'Tools' : 'Agents'}</h1></div>
         <div className="flex items-center gap-3 text-xs text-gray-400 dark:text-slate-500"><ThemeToggle value={themePreference} onChange={setThemePreference} /><span>π Pi Web</span></div>
       </header>}
       {view === 'chat' && <ChatView logRef={logRef} messages={messages} input={input} setInput={setInput} submitPrompt={submitPrompt} submitMessage={submitMessage} abortGeneration={abortGeneration} busy={busy} queuedPrompts={queuedPrompts} removeQueuedPrompt={(id: string) => setQueue(queuedPromptsRef.current.filter(item => item.id !== id))} models={models} commands={commands} state={state} loadState={loadState} focusKey={(state?.cwd || '') + ':' + currentSessionPath} terminalOpen={terminalOpen} setTerminalOpen={setTerminalOpen} />}
@@ -667,13 +667,34 @@ function App() {
 }
 
 function ThemeToggle({ value, onChange }: { value: ThemePreference; onChange: (value: ThemePreference) => void }) {
+  const [open, setOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const options: { value: ThemePreference; label: string; icon: string }[] = [
+    { value: 'system', label: 'System theme', icon: '◐' },
     { value: 'light', label: 'Light theme', icon: '☼' },
     { value: 'dark', label: 'Dark theme', icon: '☾' },
-    { value: 'system', label: 'System theme', icon: '◐' },
   ];
-  return <div className="hidden rounded-full bg-gray-100 p-0.5 dark:bg-slate-800 min-[821px]:flex" role="group" aria-label="Theme">
-    {options.map(option => <button key={option.value} type="button" title={option.label} aria-label={option.label} aria-pressed={value === option.value} className={'flex h-7 w-7 items-center justify-center rounded-full text-sm transition ' + (value === option.value ? 'bg-white text-gray-900 shadow-sm dark:bg-slate-100 dark:text-slate-950' : 'text-gray-500 hover:text-gray-900 dark:text-slate-400 dark:hover:text-slate-100')} onClick={() => onChange(option.value)}>{option.icon}</button>)}
+  const selected = options.find(option => option.value === value) || options[0];
+  useEffect(() => {
+    if (!open) return;
+    const close = (event: MouseEvent) => {
+      if (!menuRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false);
+    };
+    document.addEventListener('mousedown', close);
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [open]);
+  return <div ref={menuRef} className="relative hidden min-[821px]:block">
+    <button type="button" title="Theme" aria-label={'Theme: ' + selected.label.replace(' theme', '')} aria-haspopup="menu" aria-expanded={open} className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-sm text-gray-700 hover:bg-gray-200 dark:bg-neutral-900 dark:text-slate-200 dark:hover:bg-neutral-800" onClick={() => setOpen(!open)}>{selected.icon}</button>
+    {open && <div className="absolute right-0 top-9 z-50 min-w-36 rounded-xl border border-gray-200 bg-white p-1.5 shadow-pi dark:border-neutral-800 dark:bg-neutral-950" role="menu" aria-label="Theme">
+      {options.map(option => <button key={option.value} type="button" role="menuitemradio" aria-checked={value === option.value} className={'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-neutral-900 ' + (value === option.value ? 'font-semibold text-gray-900 dark:text-slate-100' : 'text-gray-600 dark:text-slate-400')} onClick={() => { onChange(option.value); setOpen(false); }}><span className="w-4 text-center">{option.icon}</span><span>{option.label.replace(' theme', '')}</span></button>)}
+    </div>}
   </div>;
 }
 
