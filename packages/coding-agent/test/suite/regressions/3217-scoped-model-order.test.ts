@@ -1,10 +1,10 @@
 import { setKeybindings, type TUI } from "@earendil-works/pi-tui";
-import stripAnsi from "strip-ansi";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KeybindingsManager } from "../../../src/core/keybindings.js";
 import { ModelSelectorComponent } from "../../../src/modes/interactive/components/model-selector.js";
 import { ScopedModelsSelectorComponent } from "../../../src/modes/interactive/components/scoped-models-selector.js";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.js";
+import { stripAnsi } from "../../../src/utils/ansi.js";
 import { createHarness, type Harness } from "../harness.js";
 
 function createFakeTui(): TUI {

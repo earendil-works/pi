@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { v7 as uuidv7 } from "uuid";
 import type { SessionMetadata, SessionStorage, SessionTreeEntry } from "../../types.js";
+import { uuidv7 } from "../uuid.js";
 
 function updateLabelCache(labelsById: Map<string, string>, entry: SessionTreeEntry): void {
 	if (entry.type !== "label") return;

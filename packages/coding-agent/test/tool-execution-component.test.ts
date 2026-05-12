@@ -1,6 +1,5 @@
 import { join, resolve } from "node:path";
 import { Text, type TUI } from "@earendil-works/pi-tui";
-import stripAnsi from "strip-ansi";
 import { Type } from "typebox";
 import { beforeAll, describe, expect, test } from "vitest";
 import { getReadmePath } from "../src/config.js";
@@ -10,6 +9,7 @@ import { createReadTool, createReadToolDefinition } from "../src/core/tools/read
 import { createWriteToolDefinition } from "../src/core/tools/write.js";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.js";
 import { initTheme } from "../src/modes/interactive/theme/theme.js";
+import { stripAnsi } from "../src/utils/ansi.js";
 
 function createBaseToolDefinition(name = "custom_tool"): ToolDefinition {
 	return {

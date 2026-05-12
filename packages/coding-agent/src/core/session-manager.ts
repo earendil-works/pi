@@ -15,8 +15,8 @@ import {
 } from "fs";
 import { readdir, readFile, stat } from "fs/promises";
 import { join, resolve } from "path";
-import { v7 as uuidv7 } from "uuid";
 import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.js";
+import { uuidv7 } from "../utils/uuid.js";
 import {
 	type BashExecutionMessage,
 	type CustomMessage,

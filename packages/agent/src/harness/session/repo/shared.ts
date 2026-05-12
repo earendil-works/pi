@@ -1,6 +1,6 @@
-import { v7 as uuidv7 } from "uuid";
 import type { SessionMetadata, SessionStorage, SessionTreeEntry } from "../../types.js";
 import { Session } from "../session.js";
+import { uuidv7 } from "../uuid.js";
 
 export function createSessionId(): string {
 	return uuidv7();
