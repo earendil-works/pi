@@ -746,11 +746,11 @@ function App() {
     </aside>
     <section className="relative flex h-screen min-w-0 flex-col">
       {view === 'chat' && <header className="fixed left-[290px] right-0 top-0 z-10 flex h-12 items-center justify-between border-b border-gray-100 bg-white/95 px-4 dark:border-neutral-900 dark:bg-black/95 max-[820px]:left-0">
-        <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 dark:bg-neutral-900 dark:text-slate-200 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-sm font-semibold">π Pi Web</h1></div>
+        <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 dark:bg-neutral-900 dark:text-slate-200 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-xs font-semibold">π Pi Web</h1></div>
         <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400"><ThemeToggle value={themePreference} onChange={setThemePreference} /><span className="rounded-full bg-gray-100 px-3 py-1 dark:bg-neutral-900 dark:text-slate-300">{contextText}</span><span>{status}</span><button type="button" className="hidden rounded-lg bg-gray-100 px-3 py-1 font-semibold text-gray-700 hover:bg-gray-200 dark:bg-neutral-900 dark:text-slate-200 dark:hover:bg-neutral-800 max-[1099px]:block" onClick={() => setGitPanelOpen(true)}>Git</button><button type="button" className={'rounded-lg px-3 py-1 font-semibold ' + (terminalOpen ? 'bg-gray-900 text-white dark:bg-slate-100 dark:text-black' : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-neutral-900 dark:text-slate-200 dark:hover:bg-neutral-800')} onClick={() => setTerminalOpen(!terminalOpen)}>Terminal</button></div>
       </header>}
       {view !== 'chat' && <header className="fixed left-[290px] right-0 top-0 z-10 flex h-12 items-center justify-between border-b border-gray-100 bg-white/95 px-4 dark:border-neutral-900 dark:bg-black/95 max-[820px]:left-0">
-        <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 dark:bg-neutral-900 dark:text-slate-200 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-sm font-semibold">{view === 'skills' ? 'Skills' : view === 'tools' ? 'Tools' : 'Agents'}</h1></div>
+        <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 dark:bg-neutral-900 dark:text-slate-200 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-xs font-semibold">{view === 'skills' ? 'Skills' : view === 'tools' ? 'Tools' : 'Agents'}</h1></div>
         <div className="flex items-center gap-3 text-xs text-gray-400 dark:text-slate-500"><ThemeToggle value={themePreference} onChange={setThemePreference} /><span>π Pi Web</span></div>
       </header>}
       {view === 'chat' && <ChatView logRef={logRef} messages={messages} input={input} setInput={setInput} submitPrompt={submitPrompt} submitMessage={submitMessage} answerQuestion={answerQuestion} abortGeneration={abortGeneration} busy={busy} queuedPrompts={queuedPrompts} removeQueuedPrompt={(id: string) => setQueue(queuedPromptsRef.current.filter(item => item.id !== id))} progressTracker={progressTracker} removeProgressTracker={removeProgressTracker} models={models} commands={commands} state={state} loadState={loadState} focusKey={(state?.cwd || '') + ':' + currentSessionPath} terminalOpen={terminalOpen} setTerminalOpen={setTerminalOpen} />}
@@ -761,8 +761,8 @@ function App() {
     {gitPanelVisible && <GitPanel status={gitStatus} busy={gitBusy} mobileOpen={gitPanelOpen} closeMobile={() => setGitPanelOpen(false)} refresh={loadGitStatus} commit={openCommitModal} push={() => runGitAction('push')} init={() => runGitAction('init')} createRepo={() => runGitAction('create-github-repo')} />}
     {commitModalOpen && <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 px-4" onClick={() => setCommitModalOpen(false)}>
       <form className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-4 shadow-pi dark:border-neutral-800 dark:bg-neutral-950" onClick={ev => ev.stopPropagation()} onSubmit={confirmCommit}>
-        <div className="mb-3 text-sm font-bold text-gray-900 dark:text-slate-100">Commit changes</div>
-        <input autoFocus className="mb-3 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none focus:border-[#6c5ce7] dark:border-neutral-800 dark:bg-black dark:text-slate-100" value={commitMessage} onChange={ev => setCommitMessage(ev.target.value)} placeholder="Commit message" />
+        <div className="mb-3 text-xs font-bold text-gray-900 dark:text-slate-100">Commit changes</div>
+        <input autoFocus className="mb-3 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-xs outline-none focus:border-[#6c5ce7] dark:border-neutral-800 dark:bg-black dark:text-slate-100" value={commitMessage} onChange={ev => setCommitMessage(ev.target.value)} placeholder="Commit message" />
         <div className="flex justify-end gap-2">
           <button type="button" className="rounded-lg bg-gray-100 px-3 py-1.5 text-xs font-semibold text-gray-700 dark:bg-neutral-900 dark:text-slate-200" onClick={() => setCommitModalOpen(false)}>Cancel</button>
           <button type="submit" className="rounded-lg bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50 dark:bg-slate-100 dark:text-black" disabled={!commitMessage.trim()}>Commit</button>
@@ -810,9 +810,9 @@ function ThemeToggle({ value, onChange }: { value: ThemePreference; onChange: (v
     };
   }, [open]);
   return <div ref={menuRef} className="relative hidden min-[821px]:block">
-    <button type="button" title="Theme" aria-label={'Theme: ' + selected.label.replace(' theme', '')} aria-haspopup="menu" aria-expanded={open} className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-sm text-gray-700 hover:bg-gray-200 dark:bg-neutral-900 dark:text-slate-200 dark:hover:bg-neutral-800" onClick={() => setOpen(!open)}>{selected.icon}</button>
+    <button type="button" title="Theme" aria-label={'Theme: ' + selected.label.replace(' theme', '')} aria-haspopup="menu" aria-expanded={open} className="flex h-8 w-8 items-center justify-center rounded-full bg-gray-100 text-xs text-gray-700 hover:bg-gray-200 dark:bg-neutral-900 dark:text-slate-200 dark:hover:bg-neutral-800" onClick={() => setOpen(!open)}>{selected.icon}</button>
     {open && <div className="absolute right-0 top-9 z-50 min-w-36 rounded-xl border border-gray-200 bg-white p-1.5 shadow-pi dark:border-neutral-800 dark:bg-neutral-950" role="menu" aria-label="Theme">
-      {options.map(option => <button key={option.value} type="button" role="menuitemradio" aria-checked={value === option.value} className={'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-sm hover:bg-gray-50 dark:hover:bg-neutral-900 ' + (value === option.value ? 'font-semibold text-gray-900 dark:text-slate-100' : 'text-gray-600 dark:text-slate-400')} onClick={() => { onChange(option.value); setOpen(false); }}><span className="w-4 text-center">{option.icon}</span><span>{option.label.replace(' theme', '')}</span></button>)}
+      {options.map(option => <button key={option.value} type="button" role="menuitemradio" aria-checked={value === option.value} className={'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-xs hover:bg-gray-50 dark:hover:bg-neutral-900 ' + (value === option.value ? 'font-semibold text-gray-900 dark:text-slate-100' : 'text-gray-600 dark:text-slate-400')} onClick={() => { onChange(option.value); setOpen(false); }}><span className="w-4 text-center">{option.icon}</span><span>{option.label.replace(' theme', '')}</span></button>)}
     </div>}
   </div>;
 }
@@ -838,13 +838,13 @@ function GitPanel({ status, busy, mobileOpen, closeMobile, refresh, commit, push
   const disabled = !!busy;
   return <aside className={panelClass} aria-label="Git project status">
     <div className="mb-4 flex items-center justify-between gap-2">
-      <div><div className="text-sm font-bold text-gray-900 dark:text-slate-100">Git</div><div className="truncate text-[11px] text-gray-400 dark:text-slate-500" title={status?.cwd}>{status?.cwd ? baseName(status.cwd) : 'loading'}</div></div>
-      <button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-sm dark:bg-neutral-900 max-[1099px]:block" onClick={closeMobile}>Close</button>
+      <div><div className="text-xs font-bold text-gray-900 dark:text-slate-100">Git</div><div className="truncate text-[11px] text-gray-400 dark:text-slate-500" title={status?.cwd}>{status?.cwd ? baseName(status.cwd) : 'loading'}</div></div>
+      <button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-xs dark:bg-neutral-900 max-[1099px]:block" onClick={closeMobile}>Close</button>
     </div>
-    {!status && <div className="text-sm text-gray-500 dark:text-slate-400">Loading git status…</div>}
-    {status && <div className="space-y-4 text-sm">
+    {!status && <div className="text-xs text-gray-500 dark:text-slate-400">Loading git status…</div>}
+    {status && <div className="space-y-4 text-xs">
       <div className="rounded-2xl border border-gray-200 p-3 dark:border-neutral-800">
-        <div className="mb-2 flex items-center justify-between"><span className="text-gray-500 dark:text-slate-400">Changed lines</span><span className="text-lg font-bold text-gray-900 dark:text-slate-100">{lines.total}</span></div>
+        <div className="mb-2 flex items-center justify-between"><span className="text-gray-500 dark:text-slate-400">Changed lines</span><span className="text-base font-bold text-gray-900 dark:text-slate-100">{lines.total}</span></div>
         <div className="flex gap-2 text-xs"><span className="rounded-full bg-green-50 px-2 py-0.5 text-green-700 dark:bg-green-400/10 dark:text-green-300">+{lines.added}</span><span className="rounded-full bg-red-50 px-2 py-0.5 text-red-700 dark:bg-red-400/10 dark:text-red-300">-{lines.deleted}</span></div>
       </div>
       <div className="space-y-1 text-xs text-gray-500 dark:text-slate-400">
