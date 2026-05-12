@@ -312,7 +312,7 @@ describe("Kitty image cursor movement", () => {
 		}
 	});
 
-	it("restores the cursor to the reserved image row after Kitty rendering", () => {
+	it("places image sequence on first line with empty padding rows", () => {
 		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
 		setCellDimensions({ widthPx: 10, heightPx: 10 });
 		try {
@@ -326,11 +326,11 @@ describe("Kitty image cursor movement", () => {
 			const lines = image.render(4);
 			const imageId = image.getImageId();
 			assert.strictEqual(typeof imageId, "number");
-			assert.deepStrictEqual(lines.slice(0, -1), [""]);
-			assert.ok(lines[1].startsWith("\x1b[1A\x1b_G"));
-			assert.ok(lines[1].includes(",C=1,"));
-			assert.ok(lines[1].includes(`,i=${imageId}`));
-			assert.ok(lines[1].endsWith("\x1b[1B"));
+			assert.ok(lines[0].startsWith("\x1b_G"));
+			assert.ok(lines[0].includes(",C=1,"));
+			assert.ok(lines[0].includes(`,i=${imageId}`));
+			assert.ok(lines[0].endsWith("\x1b\\"));
+			assert.deepStrictEqual(lines.slice(1, lines.length), [""]);
 		} finally {
 			resetCapabilitiesCache();
 			setCellDimensions({ widthPx: 9, heightPx: 18 });
