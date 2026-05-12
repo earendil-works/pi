@@ -81,6 +81,10 @@ export type WebEvent =
 			type: "progress_tracker";
 	  } & ProgressTrackerData)
 	| {
+			type: "progress_tracker_removed";
+			sessionFile: string;
+	  }
+	| {
 			type: "terminal_start" | "terminal_output" | "terminal_exit";
 			cwd: string;
 			data?: string;

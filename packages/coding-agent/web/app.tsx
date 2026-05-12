@@ -478,6 +478,9 @@ function App() {
         return (!sessionFile || sessionFile === e.sessionFile || current?.sessionFile === e.sessionFile) ? { sessionFile: e.sessionFile, path: e.path, tasks: e.tasks || [] } : current;
       });
     }
+    if (e.type === 'progress_tracker_removed') {
+      setProgressTracker((current: any) => current?.sessionFile === e.sessionFile ? null : current);
+    }
     if (e.type === 'agent_start') { resetStreamingRefs(); setBusyState(true); setStatus('thinking…'); }
     if (e.type === 'web_connected' && e.rpcBusy) { setBusyState(true); setStatus('thinking…'); loadState(); }
     if (e.type === 'agent_end') { finishThinking(); finishAssistant(); setBusyState(false); setStatus('ready'); setMessages(prev => prev.map(item => item.running ? { ...item, running: false } : item)); loadMessages(); loadProjects(); loadState(); setTimeout(drainPromptQueue, 150); }
@@ -580,6 +583,17 @@ function App() {
       setStatus('ready');
     }
   }
+  async function removeProgressTracker() {
+    const previous = progressTracker;
+    setProgressTracker(null);
+    try {
+      const res = await fetch('/api/progress-tracker', { method: 'DELETE' });
+      if (!res.ok) throw new Error(await res.text());
+    } catch (err: any) {
+      setProgressTracker(previous);
+      addItem({ kind: 'tool', title: 'Progress tracker remove failed', text: String(err.message || err), error: true });
+    }
+  }
   async function deleteConversation(session: SessionInfo) {
     if (!confirm('Delete this conversation? This cannot be undone.')) return;
     const deletingActive = currentSessionPath === session.path;
@@ -680,7 +694,7 @@ function App() {
         <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 dark:bg-neutral-900 dark:text-slate-200 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-sm font-semibold">{view === 'skills' ? 'Skills' : view === 'tools' ? 'Tools' : 'Agents'}</h1></div>
         <div className="flex items-center gap-3 text-xs text-gray-400 dark:text-slate-500"><ThemeToggle value={themePreference} onChange={setThemePreference} /><span>π Pi Web</span></div>
       </header>}
-      {view === 'chat' && <ChatView logRef={logRef} messages={messages} input={input} setInput={setInput} submitPrompt={submitPrompt} submitMessage={submitMessage} answerQuestion={answerQuestion} abortGeneration={abortGeneration} busy={busy} queuedPrompts={queuedPrompts} removeQueuedPrompt={(id: string) => setQueue(queuedPromptsRef.current.filter(item => item.id !== id))} progressTracker={progressTracker} models={models} commands={commands} state={state} loadState={loadState} focusKey={(state?.cwd || '') + ':' + currentSessionPath} terminalOpen={terminalOpen} setTerminalOpen={setTerminalOpen} />}
+      {view === 'chat' && <ChatView logRef={logRef} messages={messages} input={input} setInput={setInput} submitPrompt={submitPrompt} submitMessage={submitMessage} answerQuestion={answerQuestion} abortGeneration={abortGeneration} busy={busy} queuedPrompts={queuedPrompts} removeQueuedPrompt={(id: string) => setQueue(queuedPromptsRef.current.filter(item => item.id !== id))} progressTracker={progressTracker} removeProgressTracker={removeProgressTracker} models={models} commands={commands} state={state} loadState={loadState} focusKey={(state?.cwd || '') + ':' + currentSessionPath} terminalOpen={terminalOpen} setTerminalOpen={setTerminalOpen} />}
       {view === 'skills' && <SkillsView skills={skills} reload={async () => { await loadSkills(); await loadCommands(); }} openModal={setSkillModal} />}
       {view === 'tools' && <ToolsView tools={[...builtinTools, ...tools]} openModal={setToolModal} saveTools={saveTools} customTools={tools} />}
       {view === 'agents' && <AgentsView builtinAgents={builtinAgents.map(agent => ({ ...agent, systemPrompt: mainSystemPrompt, skills: skills.filter((skill: any) => skill.name !== 'ask-question' && skill.name !== 'progress-tracker').map((skill: any) => skill.name), tools: [...builtinTools, ...tools].map((tool: any) => tool.name), ...(builtinAgentOverrides[agent.id] || {}) }))} customAgents={agents} openModal={setAgentModal} saveAgents={saveAgents} />}

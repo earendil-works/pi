@@ -40,7 +40,7 @@ function ProjectTree({ project, collapsed, icon, currentSessionPath, onToggle, o
     </div>)}
   </div>;
 }
-function ChatView({ logRef, messages, input, setInput, submitPrompt, submitMessage, answerQuestion, abortGeneration, busy, queuedPrompts, removeQueuedPrompt, progressTracker, models, commands, state, loadState, focusKey, terminalOpen, setTerminalOpen }: any) {
+function ChatView({ logRef, messages, input, setInput, submitPrompt, submitMessage, answerQuestion, abortGeneration, busy, queuedPrompts, removeQueuedPrompt, progressTracker, removeProgressTracker, models, commands, state, loadState, focusKey, terminalOpen, setTerminalOpen }: any) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const formRef = useRef<HTMLFormElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -176,7 +176,7 @@ function ChatView({ logRef, messages, input, setInput, submitPrompt, submitMessa
     </div></main>
     {terminalOpen && <TerminalPane focusKey={focusKey} onClose={() => setTerminalOpen(false)} />}
     <form ref={formRef} onSubmit={submitPrompt} className={'fixed bottom-0 left-[290px] bg-gradient-to-t from-white via-white px-6 pb-4 pt-3 dark:from-black dark:via-black max-[820px]:left-0 ' + terminalFormClass}><div className="mx-auto w-full max-w-6xl">
-      {progressTracker && <ProgressTrackerPanel tracker={progressTracker} />}
+      {progressTracker && <ProgressTrackerPanel tracker={progressTracker} onRemove={removeProgressTracker} />}
       {showSuggestions && <div className="mb-2 max-h-64 overflow-auto rounded-2xl border border-gray-200 bg-white p-1.5 shadow-pi dark:border-neutral-800 dark:bg-neutral-950">
         {slashMatches.map((command: any, index: number) => <button key={command.name} type="button" className={'flex w-full items-baseline gap-3 rounded-xl px-3 py-2 text-left hover:bg-[#f2f4ff] dark:hover:bg-neutral-900 ' + (index === selectedSuggestion ? 'bg-[#f2f4ff] dark:bg-neutral-900' : '')} onMouseDown={ev => { ev.preventDefault(); runSuggestion(command); }}>
           <span className="min-w-36 font-bold text-piAccent">/{command.name}</span><span className="truncate text-xs text-gray-500 dark:text-slate-400">{command.description || command.source || ''}</span>
@@ -223,7 +223,7 @@ function ChatView({ logRef, messages, input, setInput, submitPrompt, submitMessa
     </div></form>
   </>;
 }
-function ProgressTrackerPanel({ tracker }: any) {
+function ProgressTrackerPanel({ tracker, onRemove }: any) {
   const tasks = Array.isArray(tracker?.tasks) ? tracker.tasks : [];
   const done = tasks.filter((task: any) => task.status === 'done').length;
   const total = tasks.length;
@@ -237,6 +237,7 @@ function ProgressTrackerPanel({ tracker }: any) {
       <div className="font-semibold text-gray-700 dark:text-slate-200">Progress</div>
       <div className="rounded-full bg-gray-100 px-2 py-0.5 dark:bg-neutral-900">{done}/{total} done</div>
       <div className="min-w-0 flex-1 truncate font-mono text-[11px]" title={tracker.path}>{baseName(tracker.path || '')}</div>
+      <button type="button" className="rounded-md px-1.5 py-0.5 text-sm leading-none text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:text-slate-500 dark:hover:bg-neutral-900 dark:hover:text-slate-200" title="Remove progress tracker" aria-label="Remove progress tracker" onClick={onRemove}>×</button>
     </div>
     <div className="max-h-36 overflow-auto px-3 py-2">
       {tasks.length === 0 && <div className="py-1 text-sm text-gray-500 dark:text-slate-400">No tasks yet</div>}

@@ -44,6 +44,11 @@ export class ProgressTrackerManager {
 		this.debounceTimers.delete(sessionFile);
 	}
 
+	remove(sessionFile: string): void {
+		this.stop(sessionFile);
+		this.broadcast({ type: "progress_tracker_removed", sessionFile });
+	}
+
 	stopAll(): void {
 		for (const sessionFile of [...this.registrations.keys()]) this.stop(sessionFile);
 	}

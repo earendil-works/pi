@@ -288,6 +288,11 @@ async function startWebServer(options: WebOptions): Promise<void> {
 			sendJson(res, { success: true, data });
 			return;
 		}
+		if (req.method === "DELETE" && url.pathname === "/api/progress-tracker") {
+			progressTrackerManager.remove(await requireCurrentSessionFile());
+			sendJson(res, { success: true });
+			return;
+		}
 		if (req.method === "GET" && url.pathname === "/api/messages") {
 			sendJson(res, await rpc.send({ type: "get_messages" }));
 			return;

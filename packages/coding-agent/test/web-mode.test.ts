@@ -9,7 +9,11 @@ import { ENV_AGENT_DIR } from "../src/config.js";
 import { assertHostAllowed, isLoopbackHost, parseWebArgs } from "../src/modes/web/args.js";
 import { assertAuthorized, assertSafeOrigin, requestHasToken, tokenCookie } from "../src/modes/web/auth.js";
 import { HttpError, readJsonBody, sendStaticFile } from "../src/modes/web/http.js";
-import { parseProgressTrackerMarkdown, resolveProgressTrackerPath } from "../src/modes/web/progress-tracker.js";
+import {
+	ProgressTrackerManager,
+	parseProgressTrackerMarkdown,
+	resolveProgressTrackerPath,
+} from "../src/modes/web/progress-tracker.js";
 import { RpcBridge } from "../src/modes/web/rpc-bridge.js";
 import { deleteWebSkill, listWebSkills, resolveSkillPath, writeWebSkill } from "../src/modes/web/skills.js";
 import { TerminalManager, TerminalUnavailableError } from "../src/modes/web/terminal.js";
@@ -195,6 +199,20 @@ plain text
 		const cwd = await tempDir();
 		expect(resolveProgressTrackerPath("./.pi/progress.md", cwd)).toBe(path.join(cwd, ".pi", "progress.md"));
 		expect(() => resolveProgressTrackerPath("progress.txt", cwd)).toThrow(HttpError);
+	});
+
+	test("removes registered trackers without deleting files", async () => {
+		const cwd = await tempDir();
+		const trackerPath = path.join(cwd, "progress.md");
+		await fsp.writeFile(trackerPath, "- [ ] Keep file\n", "utf8");
+		const events: unknown[] = [];
+		const manager = new ProgressTrackerManager((event) => events.push(event));
+		await manager.register(trackerPath, cwd, "session.jsonl");
+		expect(await manager.state("session.jsonl")).toMatchObject({ path: trackerPath });
+		manager.remove("session.jsonl");
+		expect(await manager.state("session.jsonl")).toBeNull();
+		expect(await fsp.readFile(trackerPath, "utf8")).toBe("- [ ] Keep file\n");
+		expect(events).toContainEqual({ type: "progress_tracker_removed", sessionFile: "session.jsonl" });
 	});
 });
 
