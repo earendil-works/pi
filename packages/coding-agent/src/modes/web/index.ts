@@ -79,7 +79,7 @@ async function startWebServer(options: WebOptions): Promise<void> {
 	let rpcBusy = false;
 	let askQuestionUrl = "";
 	let progressTrackerUrl = "";
-	let rpc = new RpcBridge(cliPath, options.rpcArgs, broadcast, activeCwd, webEnv());
+	let rpc = undefined as unknown as RpcBridge;
 	const terminalManager = new TerminalManager({ broadcast });
 	const progressTrackerManager = new ProgressTrackerManager(broadcast);
 	let mainSystemPromptOverride = await readMainSystemPromptOverride();
@@ -97,6 +97,7 @@ async function startWebServer(options: WebOptions): Promise<void> {
 	}
 
 	async function applyMainSystemPromptOverride(targetRpc = rpc): Promise<void> {
+		if (!targetRpc) return;
 		if (!mainSystemPromptOverride.trim()) return;
 		try {
 			await targetRpc.send({ type: "set_system_prompt", systemPrompt: mainSystemPromptOverride }, 120000);
@@ -112,14 +113,12 @@ async function startWebServer(options: WebOptions): Promise<void> {
 		};
 	}
 
-	await applyMainSystemPromptOverride();
-
 	async function restartRpc(cwd: string, startNewSession: boolean): Promise<string> {
 		const resolvedCwd = path.resolve(cwd);
 		const previous = rpc;
 		rpc = new RpcBridge(cliPath, options.rpcArgs, broadcast, resolvedCwd, webEnv());
 		activeCwd = resolvedCwd;
-		previous.stop();
+		previous?.stop();
 		if (startNewSession) await rpc.send({ type: "new_session" });
 		await applyMainSystemPromptOverride();
 		return resolvedCwd;
