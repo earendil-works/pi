@@ -120,6 +120,7 @@ function App() {
   const [progressTracker, setProgressTracker] = useState<any>(null);
   const [gitStatus, setGitStatus] = useState<GitProjectStatus | null>(null);
   const [gitPanelOpen, setGitPanelOpen] = useState(false);
+  const [gitPanelHidden, setGitPanelHidden] = useState(() => localStorage.getItem('piWebGitPanelHidden') === 'true');
   const [gitBusy, setGitBusy] = useState('');
   const [commitModalOpen, setCommitModalOpen] = useState(false);
   const [commitMessage, setCommitMessage] = useState('');
@@ -728,6 +729,10 @@ function App() {
   }, [state, stats]);
 
   const gitPanelVisible = view === 'chat';
+  function setDesktopGitPanelHidden(hidden: boolean) {
+    setGitPanelHidden(hidden);
+    localStorage.setItem('piWebGitPanelHidden', hidden ? 'true' : 'false');
+  }
 
   return <div className="grid h-screen grid-cols-[290px_minmax(0,1fr)] bg-white text-[#202124] dark:bg-black dark:text-slate-100 max-[820px]:grid-cols-1">
     {sidebarOpen && <div className="fixed inset-0 z-30 bg-gray-900/30 min-[821px]:hidden" onClick={() => setSidebarOpen(false)} />}
@@ -747,7 +752,7 @@ function App() {
     <section className="relative flex h-screen min-w-0 flex-col">
       {view === 'chat' && <header className="fixed left-[290px] right-0 top-0 z-10 flex h-12 items-center justify-between border-b border-gray-100 bg-white/95 px-4 dark:border-neutral-900 dark:bg-black/95 max-[820px]:left-0">
         <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 dark:bg-neutral-900 dark:text-slate-200 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-xs font-semibold">π Pi Web</h1></div>
-        <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400"><ThemeToggle value={themePreference} onChange={setThemePreference} /><span className="rounded-full bg-gray-100 px-3 py-1 dark:bg-neutral-900 dark:text-slate-300">{contextText}</span><span>{status}</span><button type="button" className="hidden rounded-lg bg-gray-100 px-3 py-1 font-semibold text-gray-700 hover:bg-gray-200 dark:bg-neutral-900 dark:text-slate-200 dark:hover:bg-neutral-800 max-[1099px]:block" onClick={() => setGitPanelOpen(true)}>Git</button><button type="button" className={'rounded-lg px-3 py-1 font-semibold ' + (terminalOpen ? 'bg-gray-900 text-white dark:bg-slate-100 dark:text-black' : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-neutral-900 dark:text-slate-200 dark:hover:bg-neutral-800')} onClick={() => setTerminalOpen(!terminalOpen)}>Terminal</button></div>
+        <div className="flex items-center gap-2 text-xs text-gray-500 dark:text-slate-400"><ThemeToggle value={themePreference} onChange={setThemePreference} /><span className="rounded-full bg-gray-100 px-3 py-1 dark:bg-neutral-900 dark:text-slate-300">{contextText}</span><span>{status}</span><button type="button" className={'rounded-lg px-3 py-1 font-semibold text-gray-700 hover:bg-gray-200 dark:text-slate-200 dark:hover:bg-neutral-800 max-[1099px]:hidden ' + (gitPanelHidden ? 'bg-gray-100 dark:bg-neutral-900' : 'bg-gray-200 dark:bg-neutral-800')} onClick={() => setDesktopGitPanelHidden(!gitPanelHidden)}>Git</button><button type="button" className="hidden rounded-lg bg-gray-100 px-3 py-1 font-semibold text-gray-700 hover:bg-gray-200 dark:bg-neutral-900 dark:text-slate-200 dark:hover:bg-neutral-800 max-[1099px]:block" onClick={() => setGitPanelOpen(true)}>Git</button><button type="button" className={'rounded-lg px-3 py-1 font-semibold ' + (terminalOpen ? 'bg-gray-900 text-white dark:bg-slate-100 dark:text-black' : 'bg-gray-100 text-gray-700 hover:bg-gray-200 dark:bg-neutral-900 dark:text-slate-200 dark:hover:bg-neutral-800')} onClick={() => setTerminalOpen(!terminalOpen)}>Terminal</button></div>
       </header>}
       {view !== 'chat' && <header className="fixed left-[290px] right-0 top-0 z-10 flex h-12 items-center justify-between border-b border-gray-100 bg-white/95 px-4 dark:border-neutral-900 dark:bg-black/95 max-[820px]:left-0">
         <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 dark:bg-neutral-900 dark:text-slate-200 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-xs font-semibold">{view === 'skills' ? 'Skills' : view === 'tools' ? 'Tools' : 'Agents'}</h1></div>
@@ -758,7 +763,7 @@ function App() {
       {view === 'tools' && <ToolsView tools={[...builtinTools, ...tools]} openModal={setToolModal} saveTools={saveTools} customTools={tools} />}
       {view === 'agents' && <AgentsView builtinAgents={builtinAgents.map(agent => ({ ...agent, systemPrompt: mainSystemPrompt, skills: skills.filter((skill: any) => skill.name !== 'ask-question' && skill.name !== 'progress-tracker').map((skill: any) => skill.name), tools: [...builtinTools, ...tools].map((tool: any) => tool.name), ...(builtinAgentOverrides[agent.id] || {}) }))} customAgents={agents} openModal={setAgentModal} saveAgents={saveAgents} />}
     </section>
-    {gitPanelVisible && <GitPanel status={gitStatus} busy={gitBusy} mobileOpen={gitPanelOpen} closeMobile={() => setGitPanelOpen(false)} refresh={loadGitStatus} commit={openCommitModal} push={() => runGitAction('push')} init={() => runGitAction('init')} createRepo={() => runGitAction('create-github-repo')} />}
+    {gitPanelVisible && (!gitPanelHidden || gitPanelOpen) && <GitPanel status={gitStatus} busy={gitBusy} mobileOpen={gitPanelOpen} closeMobile={() => setGitPanelOpen(false)} hideDesktop={() => setDesktopGitPanelHidden(true)} refresh={loadGitStatus} commit={openCommitModal} push={() => runGitAction('push')} init={() => runGitAction('init')} createRepo={() => runGitAction('create-github-repo')} />}
     {commitModalOpen && <div className="fixed inset-0 z-50 grid place-items-center bg-black/30 px-4" onClick={() => setCommitModalOpen(false)}>
       <form className="w-full max-w-md rounded-2xl border border-gray-200 bg-white p-4 shadow-pi dark:border-neutral-800 dark:bg-neutral-950" onClick={ev => ev.stopPropagation()} onSubmit={confirmCommit}>
         <div className="mb-3 text-xs font-bold text-gray-900 dark:text-slate-100">Commit changes</div>
@@ -822,6 +827,7 @@ type GitPanelProps = {
   busy: string;
   mobileOpen: boolean;
   closeMobile(): void;
+  hideDesktop(): void;
   refresh(): void;
   commit(): void;
   push(): void;
@@ -829,7 +835,7 @@ type GitPanelProps = {
   createRepo(): void;
 };
 
-function GitPanel({ status, busy, mobileOpen, closeMobile, refresh, commit, push, init, createRepo }: GitPanelProps) {
+function GitPanel({ status, busy, mobileOpen, closeMobile, hideDesktop, refresh, commit, push, init, createRepo }: GitPanelProps) {
   const lines = status?.changedLines || { added: 0, deleted: 0, total: 0 };
   const checkpoint = status?.lastCheckpointAt ? new Date(status.lastCheckpointAt).toLocaleTimeString() : 'none';
   const panelClass = 'fixed right-4 top-16 z-20 max-h-[calc(100vh-5rem)] w-[280px] overflow-y-auto rounded-2xl border border-gray-200 bg-white/95 p-4 shadow-pi backdrop-blur dark:border-neutral-900 dark:bg-black/95 max-[1099px]:inset-0 max-[1099px]:z-50 max-[1099px]:h-screen max-[1099px]:max-h-none max-[1099px]:w-full max-[1099px]:rounded-none max-[1099px]:border-0 ' + (mobileOpen ? 'max-[1099px]:block' : 'max-[1099px]:hidden');
@@ -839,7 +845,8 @@ function GitPanel({ status, busy, mobileOpen, closeMobile, refresh, commit, push
   return <aside className={panelClass} aria-label="Git project status">
     <div className="mb-4 flex items-center justify-between gap-2">
       <div><div className="text-xs font-bold text-gray-900 dark:text-slate-100">Git</div><div className="truncate text-[11px] text-gray-400 dark:text-slate-500" title={status?.cwd}>{status?.cwd ? baseName(status.cwd) : 'loading'}</div></div>
-      <button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-xs dark:bg-neutral-900 max-[1099px]:block" onClick={closeMobile}>Close</button>
+      <button type="button" className="rounded-lg bg-gray-100 px-2 py-1 text-xs dark:bg-neutral-900 min-[1100px]:hidden" onClick={closeMobile}>Close</button>
+      <button type="button" className="rounded-lg bg-gray-100 px-2 py-1 text-xs dark:bg-neutral-900 max-[1099px]:hidden" onClick={hideDesktop}>Hide</button>
     </div>
     {!status && <div className="text-xs text-gray-500 dark:text-slate-400">Loading git status…</div>}
     {status && <div className="space-y-4 text-xs">
