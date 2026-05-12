@@ -11,6 +11,15 @@ import { i18n } from "../utils/i18n.js";
 import "./AttachmentTile.js";
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 
+export interface FocusInputOptions {
+	force?: boolean;
+	reason?: string;
+}
+
+export interface FocusInputRequest extends FocusInputOptions {
+	id: string;
+}
+
 @customElement("message-editor")
 export class MessageEditor extends LitElement {
 	private _value = "";
@@ -39,7 +48,7 @@ export class MessageEditor extends LitElement {
 	@property() onModelSelect?: () => void;
 	@property() onThinkingChange?: (level: "off" | "minimal" | "low" | "medium" | "high") => void;
 	@property() onFilesChange?: (files: Attachment[]) => void;
-	@property({ attribute: false }) autoFocusKey?: unknown;
+	@property({ attribute: false }) focusRequest?: FocusInputRequest;
 	@property() attachments: Attachment[] = [];
 	@property() maxFiles = 10;
 	@property() maxFileSize = 20 * 1024 * 1024; // 20MB
@@ -229,27 +238,34 @@ export class MessageEditor extends LitElement {
 		this.processingFiles = false;
 	};
 
-	public focusInput() {
-		this.textareaRef.value?.focus({ preventScroll: true });
+	public focusInput(options: FocusInputOptions = {}) {
+		const textarea = this.textareaRef.value;
+		if (!textarea) return;
+		if (!options.force && !this.canTakeFocus(textarea)) return;
+		textarea.focus({ preventScroll: true });
 	}
 
-	private queueFocusInput() {
-		this.focusInput();
-		requestAnimationFrame(() => this.focusInput());
-		setTimeout(() => this.focusInput(), 0);
-		setTimeout(() => this.focusInput(), 50);
-		setTimeout(() => this.focusInput(), 150);
-	}
-
-	override firstUpdated() {
-		this.queueFocusInput();
+	private canTakeFocus(textarea: HTMLTextAreaElement): boolean {
+		const active = document.activeElement;
+		if (!active || active === document.body || active === textarea) return true;
+		if (!(active instanceof HTMLElement)) return true;
+		if (active.isContentEditable) return false;
+		if (
+			active instanceof HTMLInputElement ||
+			active instanceof HTMLTextAreaElement ||
+			active instanceof HTMLSelectElement
+		) {
+			return false;
+		}
+		const role = active.getAttribute("role");
+		return role !== "textbox" && role !== "searchbox" && role !== "combobox";
 	}
 
 	override updated(changedProperties: PropertyValues<this>) {
 		super.updated(changedProperties);
 
-		if (changedProperties.has("autoFocusKey")) {
-			this.queueFocusInput();
+		if (changedProperties.has("focusRequest") && this.focusRequest) {
+			this.focusInput(this.focusRequest);
 		}
 	}
 

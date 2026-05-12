@@ -4,6 +4,7 @@ import { customElement, state } from "lit/decorators.js";
 import "./components/AgentInterface.js";
 import type { Agent, AgentTool } from "@mariozechner/pi-agent-core";
 import type { AgentInterface } from "./components/AgentInterface.js";
+import type { FocusInputOptions, FocusInputRequest } from "./components/MessageEditor.js";
 import { ArtifactsRuntimeProvider } from "./components/sandbox/ArtifactsRuntimeProvider.js";
 import { AttachmentsRuntimeProvider } from "./components/sandbox/AttachmentsRuntimeProvider.js";
 import type { SandboxRuntimeProvider } from "./components/sandbox/SandboxRuntimeProvider.js";
@@ -23,14 +24,11 @@ export class ChatPanel extends LitElement {
 	@state() private artifactCount = 0;
 	@state() private showArtifactsPanel = false;
 	@state() private windowWidth = 0;
+	@state() private focusRequest?: FocusInputRequest;
 
 	private resizeHandler = () => {
 		this.windowWidth = window.innerWidth;
 		this.requestUpdate();
-	};
-
-	private focusPromptHandler = () => {
-		this.focusInput();
 	};
 
 	createRenderRoot() {
@@ -41,7 +39,6 @@ export class ChatPanel extends LitElement {
 		super.connectedCallback();
 		this.windowWidth = window.innerWidth; // Set initial width after connection
 		window.addEventListener("resize", this.resizeHandler);
-		window.addEventListener("pi-focus-prompt", this.focusPromptHandler);
 		this.style.display = "flex";
 		this.style.flexDirection = "column";
 		this.style.height = "100%";
@@ -56,20 +53,13 @@ export class ChatPanel extends LitElement {
 	override disconnectedCallback() {
 		super.disconnectedCallback();
 		window.removeEventListener("resize", this.resizeHandler);
-		window.removeEventListener("pi-focus-prompt", this.focusPromptHandler);
 	}
 
-	public async focusInput() {
+	public async focusInput(options: FocusInputOptions = {}) {
 		if (!this.isConnected) return;
 		await this.updateComplete;
-		await this.agentInterface?.focusInput();
-	}
-
-	private scheduleFocusInput() {
-		requestAnimationFrame(() => {
-			void this.focusInput();
-			window.setTimeout(() => void this.focusInput(), 0);
-		});
+		this.focusRequest = { id: crypto.randomUUID(), ...options };
+		await this.agentInterface?.focusInput(options);
 	}
 
 	async setAgent(
@@ -172,7 +162,7 @@ export class ChatPanel extends LitElement {
 		this.artifactCount = this.artifactsPanel.artifacts.size;
 
 		this.requestUpdate();
-		this.scheduleFocusInput();
+		requestAnimationFrame(() => void this.focusInput({ reason: "session" }));
 	}
 
 	render() {
@@ -188,6 +178,9 @@ export class ChatPanel extends LitElement {
 		if (this.artifactsPanel) {
 			this.artifactsPanel.collapsed = !this.showArtifactsPanel;
 			this.artifactsPanel.overlay = isMobile;
+		}
+		if (this.agentInterface) {
+			this.agentInterface.focusRequest = this.focusRequest;
 		}
 
 		return html`

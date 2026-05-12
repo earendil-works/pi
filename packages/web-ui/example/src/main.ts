@@ -158,7 +158,6 @@ const updateUrl = (sessionId: string) => {
 const focusPromptInput = () => {
 	requestAnimationFrame(() => {
 		void chatPanel?.focusInput();
-		window.setTimeout(() => void chatPanel?.focusInput(), 0);
 	});
 };
 

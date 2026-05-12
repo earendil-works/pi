@@ -79,16 +79,8 @@ export class SessionListDialog extends DialogBase {
 		const onSelect = this.onSelectCallback;
 		this.close();
 
-		// DialogBase restores focus to the previously focused element on the
-		// next animation frame. Run the selection callback after that so the
-		// newly opened conversation can focus the prompt input last.
 		if (onSelect) {
-			requestAnimationFrame(() => {
-				requestAnimationFrame(async () => {
-					await onSelect(sessionId);
-					window.dispatchEvent(new CustomEvent("pi-focus-prompt"));
-				});
-			});
+			await onSelect(sessionId);
 		}
 	}
 

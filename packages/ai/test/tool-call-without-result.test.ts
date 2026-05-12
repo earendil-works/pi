@@ -301,7 +301,7 @@ describe("Tool Call Without Result Tests", () => {
 			"claude-sonnet-4 - should filter out tool calls without corresponding tool results",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const model = getModel("github-copilot", "claude-sonnet-4");
+				const model = getModel("github-copilot", "claude-sonnet-4.5");
 				await testToolCallWithoutResult(model, { apiKey: githubCopilotToken });
 			},
 		);

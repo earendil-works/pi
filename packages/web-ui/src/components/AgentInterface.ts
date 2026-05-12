@@ -2,7 +2,7 @@ import { streamSimple, type ToolResultMessage, type Usage } from "@mariozechner/
 import { html, LitElement } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
 import { ModelSelector } from "../dialogs/ModelSelector.js";
-import type { MessageEditor } from "./MessageEditor.js";
+import type { FocusInputOptions, FocusInputRequest, MessageEditor } from "./MessageEditor.js";
 import "./MessageEditor.js";
 import "./MessageList.js";
 import "./Messages.js"; // Import for side effects to register the custom elements
@@ -15,37 +15,6 @@ import { i18n } from "../utils/i18n.js";
 import { createStreamFn } from "../utils/proxy-utils.js";
 import type { UserMessageWithAttachments } from "./Messages.js";
 import type { StreamingMessageContainer } from "./StreamingMessageContainer.js";
-
-function getMessageTextPreview(message: Agent["state"]["messages"][number] | undefined): string {
-	if (!message) return "";
-	if (!("content" in message)) return message.role;
-	const content = message.content;
-	if (typeof content === "string") return content.slice(0, 120);
-	if (!Array.isArray(content)) return message.role;
-	return content
-		.map((block) => {
-			if (block.type === "text") return block.text;
-			if (block.type === "toolCall") return `${block.name}:${block.id}`;
-			return block.type;
-		})
-		.join("|")
-		.slice(0, 120);
-}
-
-function getConversationFocusKey(session: Agent): string {
-	const messages = session.state.messages;
-	const first = messages[0];
-	const second = messages[1];
-	return [
-		session.state.model?.id ?? "",
-		session.state.thinkingLevel,
-		messages.length,
-		first?.role ?? "",
-		getMessageTextPreview(first),
-		second?.role ?? "",
-		getMessageTextPreview(second),
-	].join("\u0001");
-}
 
 @customElement("agent-interface")
 export class AgentInterface extends LitElement {
@@ -65,6 +34,7 @@ export class AgentInterface extends LitElement {
 	@property({ attribute: false }) onCostClick?: () => void;
 	// Optional callback to override model selector behavior
 	@property({ attribute: false }) onModelSelect?: () => void;
+	@property({ attribute: false }) focusRequest?: FocusInputRequest;
 
 	// References
 	@query("message-editor") private _messageEditor!: MessageEditor;
@@ -92,12 +62,12 @@ export class AgentInterface extends LitElement {
 		this._autoScroll = enabled;
 	}
 
-	public async focusInput() {
+	public async focusInput(options: FocusInputOptions = {}) {
 		await this.updateComplete;
 		const messageEditor = this._messageEditor ?? (this.querySelector("message-editor") as MessageEditor | null);
 		if (!messageEditor) return;
 		await messageEditor.updateComplete;
-		messageEditor.focusInput();
+		messageEditor.focusInput(options);
 	}
 
 	protected override createRenderRoot(): HTMLElement | DocumentFragment {
@@ -110,16 +80,6 @@ export class AgentInterface extends LitElement {
 		// Re-subscribe when session property changes
 		if (changedProperties.has("session")) {
 			this.setupSessionSubscription();
-		}
-	}
-
-	override updated(changedProperties: Map<string, any>) {
-		super.updated(changedProperties);
-
-		if (changedProperties.has("session") && this.session) {
-			requestAnimationFrame(() => {
-				this.focusInput();
-			});
 		}
 	}
 
@@ -400,7 +360,6 @@ export class AgentInterface extends LitElement {
 
 		const session = this.session;
 		const state = this.session.state;
-		const conversationFocusKey = getConversationFocusKey(session);
 		return html`
 			<div class="flex flex-col h-full bg-background text-foreground">
 				<!-- Messages Area -->
@@ -412,7 +371,7 @@ export class AgentInterface extends LitElement {
 				<div class="shrink-0">
 					<div class="max-w-3xl mx-auto px-2">
 						<message-editor
-							.autoFocusKey=${conversationFocusKey}
+							.focusRequest=${this.focusRequest}
 							.isStreaming=${state.isStreaming}
 							.currentModel=${state.model}
 							.thinkingLevel=${state.thinkingLevel}

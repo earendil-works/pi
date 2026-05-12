@@ -649,7 +649,7 @@ describe("AI Providers Empty Message Tests", () => {
 			"claude-sonnet-4 - should handle empty content array",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("github-copilot", "claude-sonnet-4");
+				const llm = getModel("github-copilot", "claude-sonnet-4.5");
 				await testEmptyMessage(llm, { apiKey: githubCopilotToken });
 			},
 		);
@@ -658,7 +658,7 @@ describe("AI Providers Empty Message Tests", () => {
 			"claude-sonnet-4 - should handle empty string content",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("github-copilot", "claude-sonnet-4");
+				const llm = getModel("github-copilot", "claude-sonnet-4.5");
 				await testEmptyStringMessage(llm, { apiKey: githubCopilotToken });
 			},
 		);
@@ -667,7 +667,7 @@ describe("AI Providers Empty Message Tests", () => {
 			"claude-sonnet-4 - should handle whitespace-only content",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("github-copilot", "claude-sonnet-4");
+				const llm = getModel("github-copilot", "claude-sonnet-4.5");
 				await testWhitespaceOnlyMessage(llm, { apiKey: githubCopilotToken });
 			},
 		);
@@ -676,7 +676,7 @@ describe("AI Providers Empty Message Tests", () => {
 			"claude-sonnet-4 - should handle empty assistant message in conversation",
 			{ retry: 3, timeout: 30000 },
 			async () => {
-				const llm = getModel("github-copilot", "claude-sonnet-4");
+				const llm = getModel("github-copilot", "claude-sonnet-4.5");
 				await testEmptyAssistantMessage(llm, { apiKey: githubCopilotToken });
 			},
 		);
