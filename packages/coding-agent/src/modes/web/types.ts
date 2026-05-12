@@ -65,6 +65,26 @@ export interface ProgressTrackerData {
 	tasks: ProgressTrackerTask[];
 }
 
+export interface GitChangedLines {
+	added: number;
+	deleted: number;
+	total: number;
+}
+
+export interface GitProjectStatus {
+	cwd: string;
+	isRepo: boolean;
+	branch: string | null;
+	upstream: string | null;
+	hasRemote: boolean;
+	ghLoggedIn: boolean;
+	githubReady: boolean;
+	changedLines: GitChangedLines;
+	lastCheckpointAt: string | null;
+	lastCheckpointRef: string | null;
+	error: string | null;
+}
+
 export type WebEvent =
 	| Record<string, unknown>
 	| {
@@ -83,6 +103,10 @@ export type WebEvent =
 	| {
 			type: "progress_tracker_removed";
 			sessionFile: string;
+	  }
+	| {
+			type: "git_status" | "git_checkpoint";
+			data: GitProjectStatus;
 	  }
 	| {
 			type: "terminal_start" | "terminal_output" | "terminal_exit";
@@ -144,6 +168,10 @@ export interface AskQuestionRequest {
 
 export interface ProgressTrackerRequest {
 	path: string;
+}
+
+export interface GitCommitRequest {
+	message: string;
 }
 
 export interface AskQuestionAnswer {

@@ -11,6 +11,7 @@ import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.js";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.js";
 import { assertHostAllowed, parseWebArgs, usage } from "./args.js";
 import { assertAuthorized, assertSafeOrigin, requestHasToken, writeAuthRedirect } from "./auth.js";
+import { GitProjectManager } from "./git-project.js";
 import {
 	HttpError,
 	readJsonBody,
@@ -29,6 +30,7 @@ import { TerminalManager, TerminalUnavailableError } from "./terminal.js";
 import type {
 	AskQuestionAnswer,
 	AskQuestionRequest,
+	GitCommitRequest,
 	ProgressTrackerRequest,
 	PromptRequest,
 	SetModelRequest,
@@ -82,8 +84,10 @@ async function startWebServer(options: WebOptions): Promise<void> {
 	let rpc = undefined as unknown as RpcBridge;
 	const terminalManager = new TerminalManager({ broadcast });
 	const progressTrackerManager = new ProgressTrackerManager(broadcast);
+	const gitProjectManager = new GitProjectManager(broadcast);
 	let mainSystemPromptOverride = await readMainSystemPromptOverride();
 	const pendingQuestions = new Map<string, PendingQuestion>();
+	let checkpointChain = Promise.resolve();
 
 	function broadcast(event: WebEvent): void {
 		if (event.type === "agent_start") rpcBusy = true;
@@ -94,6 +98,7 @@ async function startWebServer(options: WebOptions): Promise<void> {
 		if (event.type === "agent_end") rpcBusy = false;
 		const payload = `data: ${JSON.stringify(event)}\n\n`;
 		for (const res of clients) res.write(payload);
+		if (event.type === "agent_end") scheduleCheckpoint();
 	}
 
 	async function applyMainSystemPromptOverride(targetRpc = rpc): Promise<void> {
@@ -221,6 +226,7 @@ async function startWebServer(options: WebOptions): Promise<void> {
 		if (req.method === "POST" && url.pathname === "/api/open-project") {
 			const body = await readJsonBody<{ cwd?: string }>(req);
 			const cwd = await restartRpc(requireNonEmptyString(body.cwd, "cwd"), true);
+			void gitProjectManager.broadcastStatus(cwd);
 			sendJson(res, { success: true, cwd });
 			return;
 		}
@@ -293,6 +299,10 @@ async function startWebServer(options: WebOptions): Promise<void> {
 			sendJson(res, { success: true });
 			return;
 		}
+		if (url.pathname.startsWith("/api/git/")) {
+			await handleGitApi(req, res, url);
+			return;
+		}
 		if (req.method === "GET" && url.pathname === "/api/messages") {
 			sendJson(res, await rpc.send({ type: "get_messages" }));
 			return;
@@ -316,6 +326,7 @@ async function startWebServer(options: WebOptions): Promise<void> {
 				const match = sessions.find((session) => path.resolve(session.path) === path.resolve(sessionPath));
 				if (match?.cwd) activeCwd = match.cwd;
 				void applyMainSystemPromptOverride();
+				void gitProjectManager.broadcastStatus(activeCwd);
 			}
 			sendJson(res, response, response.success ? 200 : 400);
 			return;
@@ -432,6 +443,31 @@ async function startWebServer(options: WebOptions): Promise<void> {
 		}
 	}
 
+	async function handleGitApi(req: http.IncomingMessage, res: http.ServerResponse, url: URL): Promise<void> {
+		if (req.method === "GET" && url.pathname === "/api/git/status") {
+			sendJson(res, { success: true, data: await gitProjectManager.status(activeCwd) });
+			return;
+		}
+		if (req.method === "POST" && url.pathname === "/api/git/commit") {
+			const body = await readJsonBody<GitCommitRequest>(req, 64 * 1024);
+			sendJson(res, { success: true, data: await gitProjectManager.commit(activeCwd, body.message) });
+			return;
+		}
+		if (req.method === "POST" && url.pathname === "/api/git/push") {
+			sendJson(res, { success: true, data: await gitProjectManager.push(activeCwd) });
+			return;
+		}
+		if (req.method === "POST" && url.pathname === "/api/git/init") {
+			sendJson(res, { success: true, data: await gitProjectManager.init(activeCwd) });
+			return;
+		}
+		if (req.method === "POST" && url.pathname === "/api/git/create-github-repo") {
+			sendJson(res, { success: true, data: await gitProjectManager.createGithubRepo(activeCwd) });
+			return;
+		}
+		throw new HttpError(404, "Not found");
+	}
+
 	function askQuestion(input: AskQuestionRequest): Promise<AskQuestionAnswer> {
 		const question = requireNonEmptyString(input.question, "question");
 		if (!Array.isArray(input.options)) throw new HttpError(400, "Missing options");
@@ -471,6 +507,17 @@ async function startWebServer(options: WebOptions): Promise<void> {
 		const sessionFile = await currentSessionFile();
 		if (!sessionFile) throw new HttpError(400, "No active conversation session file");
 		return sessionFile;
+	}
+
+	function scheduleCheckpoint(): void {
+		checkpointChain = checkpointChain
+			.then(async () => {
+				const sessionFile = await currentSessionFile().catch(() => null);
+				await gitProjectManager.checkpoint(activeCwd, sessionFile);
+			})
+			.catch((error) => {
+				broadcast({ type: "web_warning", message: error instanceof Error ? error.message : String(error) });
+			});
 	}
 
 	async function handlePrompt(message: string, body: PromptRequest): Promise<WebRpcResponse> {
@@ -589,6 +636,7 @@ async function startWebServer(options: WebOptions): Promise<void> {
 	askQuestionUrl = askQuestionEndpointUrl(options.host, port, token);
 	progressTrackerUrl = progressTrackerEndpointUrl(options.host, port, token);
 	await restartRpc(activeCwd, false);
+	void gitProjectManager.broadcastStatus(activeCwd);
 	const urls = webUrls(options.host, port, token);
 	console.log(`Pi web UI running at ${urls.local}`);
 	for (const url of urls.network) console.log(`Network URL: ${url}`);

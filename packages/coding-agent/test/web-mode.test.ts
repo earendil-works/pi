@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import * as fs from "node:fs";
 import * as fsp from "node:fs/promises";
 import type { IncomingMessage } from "node:http";
@@ -8,6 +9,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.js";
 import { assertHostAllowed, isLoopbackHost, parseWebArgs } from "../src/modes/web/args.js";
 import { assertAuthorized, assertSafeOrigin, requestHasToken, tokenCookie } from "../src/modes/web/auth.js";
+import { GitProjectManager, parseNumstat } from "../src/modes/web/git-project.js";
 import { HttpError, readJsonBody, sendStaticFile } from "../src/modes/web/http.js";
 import {
 	ProgressTrackerManager,
@@ -39,6 +41,17 @@ function request(body: string, headers: Record<string, string> = {}, method = "P
 	readable.headers = headers;
 	readable.method = method;
 	return readable;
+}
+
+function git(cwd: string, args: string[]): string {
+	const result = spawnSync("git", args, { cwd, encoding: "utf8" });
+	if (result.status !== 0) throw new Error(result.stderr || result.stdout || `git ${args.join(" ")} failed`);
+	return result.stdout.trim();
+}
+
+function configureGit(cwd: string): void {
+	git(cwd, ["config", "user.name", "Pi Test"]);
+	git(cwd, ["config", "user.email", "pi-test@example.com"]);
 }
 
 describe("web args", () => {
@@ -213,6 +226,87 @@ plain text
 		expect(await manager.state("session.jsonl")).toBeNull();
 		expect(await fsp.readFile(trackerPath, "utf8")).toBe("- [ ] Keep file\n");
 		expect(events).toContainEqual({ type: "progress_tracker_removed", sessionFile: "session.jsonl" });
+	});
+});
+
+describe("git project manager", () => {
+	test("parses numstat and ignores binary entries", () => {
+		expect(parseNumstat("2\t1\ta.txt\n-\t-\timage.png\n3\t0\tb.txt\n")).toEqual({
+			added: 5,
+			deleted: 1,
+			total: 6,
+		});
+	});
+
+	test("reports setup-needed status for non-repositories", async () => {
+		const manager = new GitProjectManager(vi.fn());
+		const status = await manager.status(await tempDir());
+		expect(status).toMatchObject({
+			isRepo: false,
+			branch: null,
+			upstream: null,
+			hasRemote: false,
+			changedLines: { added: 0, deleted: 0, total: 0 },
+		});
+	});
+
+	test("counts changed and untracked text lines", async () => {
+		const cwd = await tempDir();
+		git(cwd, ["init"]);
+		configureGit(cwd);
+		await fsp.writeFile(path.join(cwd, "tracked.txt"), "one\n", "utf8");
+		git(cwd, ["add", "tracked.txt"]);
+		git(cwd, ["commit", "-m", "initial"]);
+		await fsp.writeFile(path.join(cwd, "tracked.txt"), "one\ntwo\n", "utf8");
+		await fsp.writeFile(path.join(cwd, "new.txt"), "alpha\nbeta\n", "utf8");
+		const manager = new GitProjectManager(vi.fn());
+		const status = await manager.status(cwd);
+		expect(status.isRepo).toBe(true);
+		expect(status.changedLines.added).toBeGreaterThanOrEqual(3);
+		expect(status.changedLines.total).toBe(status.changedLines.added + status.changedLines.deleted);
+	});
+
+	test("creates checkpoints with a temporary index and preserves real git state", async () => {
+		const cwd = await tempDir();
+		const events: unknown[] = [];
+		git(cwd, ["init"]);
+		configureGit(cwd);
+		await fsp.writeFile(path.join(cwd, "tracked.txt"), "initial\n", "utf8");
+		git(cwd, ["add", "tracked.txt"]);
+		git(cwd, ["commit", "-m", "initial"]);
+		await fsp.writeFile(path.join(cwd, "tracked.txt"), "changed\n", "utf8");
+		await fsp.writeFile(path.join(cwd, "new.txt"), "new\n", "utf8");
+		const before = git(cwd, ["status", "--porcelain"]);
+		const manager = new GitProjectManager((event) => events.push(event));
+		const status = await manager.checkpoint(cwd, "session.jsonl");
+		const after = git(cwd, ["status", "--porcelain"]);
+		expect(after).toBe(before);
+		expect(status.lastCheckpointRef).toMatch(/^refs\/pi-web\/checkpoints\//);
+		expect(git(cwd, ["rev-parse", "--verify", status.lastCheckpointRef || ""])).toMatch(/^[a-f0-9]{40}$/);
+		expect(events).toContainEqual({ type: "git_checkpoint", data: status });
+	});
+
+	test("requires a commit message", async () => {
+		const cwd = await tempDir();
+		git(cwd, ["init"]);
+		const manager = new GitProjectManager(vi.fn());
+		await expect(manager.commit(cwd, " ")).rejects.toMatchObject({ status: 400 });
+	});
+
+	test("push sets upstream when missing", async () => {
+		const cwd = await tempDir();
+		const remote = await tempDir();
+		git(remote, ["init", "--bare"]);
+		git(cwd, ["init"]);
+		configureGit(cwd);
+		await fsp.writeFile(path.join(cwd, "tracked.txt"), "initial\n", "utf8");
+		git(cwd, ["add", "tracked.txt"]);
+		git(cwd, ["commit", "-m", "initial"]);
+		git(cwd, ["remote", "add", "origin", remote]);
+		const branch = git(cwd, ["branch", "--show-current"]);
+		const manager = new GitProjectManager(vi.fn());
+		await manager.push(cwd);
+		expect(git(cwd, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])).toBe(`origin/${branch}`);
 	});
 });
 
