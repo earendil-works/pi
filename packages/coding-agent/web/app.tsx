@@ -731,16 +731,16 @@ function App() {
 
   return <div className="grid h-screen grid-cols-[290px_minmax(0,1fr)] bg-white text-[#202124] dark:bg-black dark:text-slate-100 max-[820px]:grid-cols-1">
     {sidebarOpen && <div className="fixed inset-0 z-30 bg-gray-900/30 min-[821px]:hidden" onClick={() => setSidebarOpen(false)} />}
-    <aside className={'h-screen overflow-y-auto bg-piPanel px-3 py-4 text-piText scrollbar-thin dark:bg-neutral-950 dark:text-slate-100 max-[820px]:fixed max-[820px]:inset-y-0 max-[820px]:left-0 max-[820px]:z-40 max-[820px]:w-[290px] max-[820px]:transition-transform ' + (sidebarOpen ? 'max-[820px]:translate-x-0' : 'max-[820px]:-translate-x-full')}>
+    <aside className={'h-screen overflow-y-auto bg-piPanel px-3 py-3 text-piText scrollbar-thin dark:bg-neutral-950 dark:text-slate-100 max-[820px]:fixed max-[820px]:inset-y-0 max-[820px]:left-0 max-[820px]:z-40 max-[820px]:w-[290px] max-[820px]:transition-transform ' + (sidebarOpen ? 'max-[820px]:translate-x-0' : 'max-[820px]:-translate-x-full')}>
       <SidebarButton icon={<NewChatIcon />} label="New chat" onClick={() => { setSidebarOpen(false); newChat(); }} />
       <SidebarButton icon={<SearchIcon />} label="Search" onClick={() => { setSidebarOpen(false); setSearchOpen(true); }} />
       <SidebarButton icon="◎" label="Agents" onClick={() => { setSidebarOpen(false); go('/agents', 'agents'); }} />
       <SidebarButton icon="✦" label="Skills" onClick={() => { setSidebarOpen(false); go('/skills', 'skills'); loadSkills(); }} />
       <SidebarButton icon="⚙" label="Tools" onClick={() => { setSidebarOpen(false); go('/tools', 'tools'); }} />
       <SidebarButton icon="＋" label="Add project" onClick={() => browseFolder('')} />
-      <div className="mx-1 mb-4 mt-7 text-[17px] text-[#9a9a9a] dark:text-slate-500">Projects</div>
-      <div className="space-y-3">
-        {filteredProjects.length === 0 && <div className="pl-11 text-sm text-piMuted">No projects yet. Use Add project to open a folder.</div>}
+      <div className="mx-1 mb-2 mt-4 text-[11px] font-medium uppercase tracking-wide text-[#9a9a9a] dark:text-slate-500">Projects</div>
+      <div className="space-y-1.5">
+        {filteredProjects.length === 0 && <div className="pl-8 text-[11px] text-piMuted">No projects yet. Use Add project to open a folder.</div>}
         {filteredProjects.map(project => <ProjectTree key={project.cwd} project={project} collapsed={collapsedProjects.has(project.cwd) && !projectQuery} icon={projectIcons[project.cwd]} currentSessionPath={currentSessionPath} onToggle={() => setCollapsed(project.cwd)} onOpen={(project: ProjectInfo, session: SessionInfo, updateUrl: boolean) => { setSidebarOpen(false); openSession(project, session, updateUrl); }} onMenu={(kind, payload, ev) => setMenu({ kind, payload, x: ev.currentTarget.getBoundingClientRect().left, y: ev.currentTarget.getBoundingClientRect().bottom + 6 })} />)}
       </div>
     </aside>

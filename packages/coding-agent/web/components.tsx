@@ -17,26 +17,26 @@ type ChatItem = any;
 type ProjectInfo = any;
 
 function SidebarButton({ icon, label, onClick }: any) {
-  return <button className="mb-1 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-[18px] font-medium hover:bg-piHover dark:hover:bg-neutral-900" onClick={onClick}><span className="w-6 text-center">{icon}</span><span>{label}</span></button>;
+  return <button className="mb-0.5 flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left text-xs font-medium hover:bg-piHover dark:hover:bg-neutral-900" onClick={onClick}><span className="w-4 text-center text-[13px]">{icon}</span><span>{label}</span></button>;
 }
 function NewChatIcon() {
-  return <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3H6.5A3.5 3.5 0 0 0 3 6.5v11A3.5 3.5 0 0 0 6.5 21h11A3.5 3.5 0 0 0 21 17.5V12" /><path d="M19.4 3.6a2.1 2.1 0 0 1 3 3L12 17l-4 1 1-4Z" /></svg>;
+  return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3H6.5A3.5 3.5 0 0 0 3 6.5v11A3.5 3.5 0 0 0 6.5 21h11A3.5 3.5 0 0 0 21 17.5V12" /><path d="M19.4 3.6a2.1 2.1 0 0 1 3 3L12 17l-4 1 1-4Z" /></svg>;
 }
 function SearchIcon() {
-  return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><g transform="translate(24 0) scale(-1 1)"><circle cx="11" cy="11" r="7" /><path d="m16 16 4 4" /></g></svg>;
+  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><g transform="translate(24 0) scale(-1 1)"><circle cx="11" cy="11" r="7" /><path d="m16 16 4 4" /></g></svg>;
 }
 function ProjectTree({ project, collapsed, icon, currentSessionPath, onToggle, onOpen, onMenu }: any) {
   const shown = collapsed ? [] : project.sessions.slice(0, 10);
-  return <div className="mb-5">
-    <div className="group mx-1 flex cursor-pointer items-center gap-2 rounded-xl px-1.5 py-1 text-[18px] text-[#666] hover:bg-piHover dark:text-slate-300 dark:hover:bg-neutral-900" onClick={onToggle} title={project.cwd}>
-      <span className={'w-4 text-gray-500 transition dark:text-slate-500 ' + (collapsed ? '-rotate-90' : '')}>⌄</span>
-      <span className="flex h-5 w-5 items-center justify-center overflow-hidden rounded-md">{icon ? <img src={icon} className="h-5 w-5 object-cover" /> : '▱'}</span>
+  return <div className="mb-2.5">
+    <div className="group mx-1 flex cursor-pointer items-center gap-1.5 rounded-lg px-1.5 py-1 text-xs text-[#666] hover:bg-piHover dark:text-slate-300 dark:hover:bg-neutral-900" onClick={onToggle} title={project.cwd}>
+      <span className={'w-3 text-[11px] text-gray-500 transition dark:text-slate-500 ' + (collapsed ? '-rotate-90' : '')}>⌄</span>
+      <span className="flex h-4 w-4 items-center justify-center overflow-hidden rounded">{icon ? <img src={icon} className="h-4 w-4 object-cover" /> : '▱'}</span>
       <span className="min-w-0 flex-1 truncate">{shortPath(project.cwd)}</span>
-      <button className="rounded-lg px-1.5 text-lg leading-none text-gray-500 opacity-0 hover:bg-[#d3d2cd] dark:text-slate-500 dark:hover:bg-neutral-800 group-hover:opacity-100" onClick={(ev) => { ev.stopPropagation(); onMenu('project', project, ev); }}>…</button>
+      <button className="rounded-md px-1 text-xs leading-none text-gray-500 opacity-0 hover:bg-[#d3d2cd] dark:text-slate-500 dark:hover:bg-neutral-800 group-hover:opacity-100" onClick={(ev) => { ev.stopPropagation(); onMenu('project', project, ev); }}>…</button>
     </div>
-    {shown.map((session: SessionInfo) => <div key={session.path} className={'group ml-0 flex cursor-pointer items-center gap-2 rounded-[14px] py-2 pl-11 pr-2 text-[#333] hover:bg-piActive dark:text-slate-200 dark:hover:bg-neutral-900 ' + (currentSessionPath === session.path ? 'bg-piActive dark:bg-neutral-900' : '')} onClick={() => onOpen(project, session, true)} title={sessionTitle(session)}>
-      <div className="min-w-0 flex-1 truncate text-base">{sessionTitle(session)}</div><div className="whitespace-nowrap text-sm text-piMuted dark:text-slate-500">{relTime(session.modified)}</div>
-      <button className="rounded-lg px-1.5 text-lg leading-none text-gray-500 opacity-0 hover:bg-[#d3d2cd] dark:text-slate-500 dark:hover:bg-neutral-800 group-hover:opacity-100" onClick={(ev) => { ev.stopPropagation(); onMenu('session', session, ev); }}>…</button>
+    {shown.map((session: SessionInfo) => <div key={session.path} className={'group ml-0 flex cursor-pointer items-center gap-1.5 rounded-lg py-1.5 pl-8 pr-1.5 text-[#333] hover:bg-piActive dark:text-slate-200 dark:hover:bg-neutral-900 ' + (currentSessionPath === session.path ? 'bg-piActive dark:bg-neutral-900' : '')} onClick={() => onOpen(project, session, true)} title={sessionTitle(session)}>
+      <div className="min-w-0 flex-1 truncate text-[11px]">{sessionTitle(session)}</div><div className="whitespace-nowrap text-[10px] text-piMuted dark:text-slate-500">{relTime(session.modified)}</div>
+      <button className="rounded-md px-1 text-xs leading-none text-gray-500 opacity-0 hover:bg-[#d3d2cd] dark:text-slate-500 dark:hover:bg-neutral-800 group-hover:opacity-100" onClick={(ev) => { ev.stopPropagation(); onMenu('session', session, ev); }}>…</button>
     </div>)}
   </div>;
 }
