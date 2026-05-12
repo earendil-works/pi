@@ -14,11 +14,11 @@
     "@mariozechner/mini-lit": "^0.2.0",
     "@earendil-works/pi-ai": "file:../../ai",
     "@earendil-works/pi-web-ui": "file:../",
-    "@tailwindcss/vite": "^4.1.17",
     "lit": "^3.3.1",
     "lucide": "^0.544.0"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.1.17",
     "typescript": "^5.7.3",
     "vite": "^7.1.6"
   }
