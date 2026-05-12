@@ -23,7 +23,7 @@ function NewChatIcon() {
   return <svg width="23" height="23" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 3H6.5A3.5 3.5 0 0 0 3 6.5v11A3.5 3.5 0 0 0 6.5 21h11A3.5 3.5 0 0 0 21 17.5V12" /><path d="M19.4 3.6a2.1 2.1 0 0 1 3 3L12 17l-4 1 1-4Z" /></svg>;
 }
 function SearchIcon() {
-  return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" className="-scale-x-100" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m16 16 4 4" /></svg>;
+  return <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><g transform="translate(24 0) scale(-1 1)"><circle cx="11" cy="11" r="7" /><path d="m16 16 4 4" /></g></svg>;
 }
 function ProjectTree({ project, collapsed, icon, currentSessionPath, onToggle, onOpen, onMenu }: any) {
   const shown = collapsed ? [] : project.sessions.slice(0, 10);
