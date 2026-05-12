@@ -40,6 +40,7 @@ import {
 } from "../utils/diagnostics.js";
 import { AssistantMessageEventStream } from "../utils/event-stream.js";
 import { headersToRecord } from "../utils/headers.js";
+import { parseJsonWithRepair } from "../utils/json-parse.js";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.js";
 import { buildBaseOptions } from "./simple-options.js";
 
@@ -558,7 +559,14 @@ async function* parseSSE(response: Response): AsyncGenerator<Record<string, unkn
 					const data = dataLines.join("\n").trim();
 					if (data && data !== "[DONE]") {
 						try {
-							yield JSON.parse(data) as Record<string, unknown>;
+							// Codex echoes tool output verbatim inside SSE string literals;
+							// raw U+0000–U+001F (NUL, BEL, ESC, etc.) are common in real
+							// agent traffic (env scans, binary inspection, OTP forwards) and
+							// strict JSON.parse rejects them. parseJsonWithRepair escapes
+							// control chars + invalid escapes before re-parsing, matching
+							// the pattern already used by the Anthropic provider in this
+							// package.
+							yield parseJsonWithRepair<Record<string, unknown>>(data);
 						} catch (cause) {
 							throw new CodexProtocolError(`Invalid Codex SSE JSON: ${formatThrownValue(cause)}`, {
 								cause,
@@ -1014,7 +1022,9 @@ async function* parseWebSocket(socket: WebSocketLike, signal?: AbortSignal): Asy
 				if (!event || typeof event !== "object" || !("data" in event)) return;
 				text = await decodeWebSocketData((event as { data?: unknown }).data);
 				if (!text) return;
-				const parsed = JSON.parse(text) as Record<string, unknown>;
+				// Same rationale as the SSE parser above: parseJsonWithRepair is
+				// resilient to raw control characters that strict JSON.parse rejects.
+				const parsed = parseJsonWithRepair<Record<string, unknown>>(text);
 				const type = typeof parsed.type === "string" ? parsed.type : "";
 				if (type === "response.completed" || type === "response.done" || type === "response.incomplete") {
 					sawCompletion = true;
