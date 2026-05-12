@@ -167,15 +167,12 @@ function ChatView({ logRef, messages, input, setInput, submitPrompt, submitMessa
     observer.observe(el);
     return () => observer.disconnect();
   }, []);
-  const terminalOffsetClass = terminalOpen ? 'min-[1000px]:pr-[420px]' : '';
-  const terminalFormClass = terminalOpen ? 'min-[1000px]:right-[420px]' : 'right-0';
   return <>
-    <main ref={logRef} onScroll={handleChatScroll} style={{ paddingBottom: composerHeight + 64 }} className={'flex-1 overflow-y-auto px-6 pt-16 scrollbar-thin dark:bg-black ' + terminalOffsetClass}><div className="mx-auto w-full max-w-6xl space-y-4">
+    <main ref={logRef} onScroll={handleChatScroll} style={{ paddingBottom: composerHeight + 64 }} className="flex-1 overflow-y-auto px-6 pt-16 scrollbar-thin dark:bg-black"><div className="mx-auto w-full max-w-6xl space-y-4">
       {renderStart > 0 && <div className="py-3 text-center text-xs text-gray-400">Scroll up to load older messages</div>}
       {messages.slice(renderStart).map((item: ChatItem) => <Message key={item.id} item={item} answerQuestion={answerQuestion} cwd={state?.cwd} />)}
     </div></main>
-    {terminalOpen && <TerminalPane focusKey={focusKey} onClose={() => setTerminalOpen(false)} />}
-    <form ref={formRef} onSubmit={submitPrompt} className={'fixed bottom-0 left-[290px] bg-gradient-to-t from-white via-white px-6 pb-4 pt-3 dark:from-black dark:via-black max-[820px]:left-0 ' + terminalFormClass}><div className="mx-auto w-full max-w-6xl">
+    <form ref={formRef} onSubmit={submitPrompt} className="fixed bottom-0 left-[290px] right-0 bg-gradient-to-t from-white via-white px-6 pb-4 pt-3 dark:from-black dark:via-black max-[820px]:left-0"><div className="mx-auto w-full max-w-6xl">
       {progressTracker && <ProgressTrackerPanel tracker={progressTracker} onRemove={removeProgressTracker} />}
       {showSuggestions && <div className="mb-2 max-h-64 overflow-auto rounded-2xl border border-gray-200 bg-white p-1.5 shadow-pi dark:border-neutral-800 dark:bg-neutral-950">
         {slashMatches.map((command: any, index: number) => <button key={command.name} type="button" className={'flex w-full items-baseline gap-3 rounded-xl px-3 py-2 text-left hover:bg-[#f2f4ff] dark:hover:bg-neutral-900 ' + (index === selectedSuggestion ? 'bg-[#f2f4ff] dark:bg-neutral-900' : '')} onMouseDown={ev => { ev.preventDefault(); runSuggestion(command); }}>
@@ -220,6 +217,7 @@ function ChatView({ logRef, messages, input, setInput, submitPrompt, submitMessa
       }} />
       <div className="flex items-center gap-2"><button type="button" className="h-8 w-8 rounded-full text-xl text-gray-500 hover:bg-gray-100 dark:text-slate-400 dark:hover:bg-neutral-900" onClick={() => fileInputRef.current?.click()}>＋</button><ModelControls models={models} state={state} loadState={loadState} /><div className="flex-1" />{busy && (input.trim() || attachments.length > 0) && <button type="button" className="rounded-full bg-gray-100 px-3 py-1.5 text-sm font-medium text-gray-700 hover:bg-gray-200 dark:bg-neutral-900 dark:text-slate-200 dark:hover:bg-neutral-800" onClick={submitCurrentInput}>Queue</button>}<button type="button" className={'flex h-8 w-8 items-center justify-center rounded-full text-white ' + (busy || input.trim() || attachments.length > 0 ? 'bg-gray-900 dark:bg-slate-100 dark:text-black' : 'bg-gray-300 dark:bg-neutral-800')} disabled={!busy && !input.trim() && attachments.length === 0} onClick={busy ? abortGeneration : submitCurrentInput}>{busy ? <span className="h-3 w-3 rounded-sm bg-white dark:bg-black" /> : '↑'}</button></div>
       </div>
+      {terminalOpen && <TerminalPane focusKey={focusKey} onClose={() => setTerminalOpen(false)} />}
     </div></form>
   </>;
 }
@@ -361,7 +359,7 @@ function TerminalPane({ focusKey, onClose }: any) {
     return () => window.removeEventListener('pi-terminal-event', handler);
   }, []);
 
-  return <aside className="terminal-panel fixed bottom-0 right-0 top-12 z-20 flex w-[420px] max-w-full flex-col border-l border-gray-200 bg-black text-gray-100 shadow-pi dark:border-neutral-900 max-[999px]:left-0 max-[999px]:w-full max-[999px]:border-l-0">
+  return <aside className="terminal-panel mt-2 flex h-72 max-h-[45vh] w-full flex-col overflow-hidden rounded-2xl border border-gray-200 bg-black text-gray-100 shadow-pi dark:border-neutral-900 max-[820px]:fixed max-[820px]:inset-0 max-[820px]:z-50 max-[820px]:mt-0 max-[820px]:h-auto max-[820px]:max-h-none max-[820px]:rounded-none max-[820px]:border-0">
     <div className="flex h-11 shrink-0 items-center gap-2 border-b border-white/10 px-3">
       <div className="min-w-0 flex-1"><div className="truncate text-xs font-semibold text-gray-100">Terminal</div><div className="truncate font-mono text-[10px] text-gray-400">{cwd || 'starting'}{pid ? ' · pid ' + pid : ''}</div></div>
       <span className={'rounded-full px-2 py-0.5 text-[10px] font-semibold ' + (running ? 'bg-green-400/15 text-green-200' : 'bg-gray-400/15 text-gray-300')}>{running ? 'Running' : 'Stopped'}</span>
