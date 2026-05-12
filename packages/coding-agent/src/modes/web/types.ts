@@ -54,6 +54,17 @@ export interface TerminalState {
 	rows: number;
 }
 
+export interface ProgressTrackerTask {
+	status: "todo" | "doing" | "done";
+	text: string;
+}
+
+export interface ProgressTrackerData {
+	sessionFile: string;
+	path: string;
+	tasks: ProgressTrackerTask[];
+}
+
 export type WebEvent =
 	| Record<string, unknown>
 	| {
@@ -66,6 +77,9 @@ export type WebEvent =
 			question: string;
 			options: string[];
 	  }
+	| ({
+			type: "progress_tracker";
+	  } & ProgressTrackerData)
 	| {
 			type: "terminal_start" | "terminal_output" | "terminal_exit";
 			cwd: string;
@@ -122,6 +136,10 @@ export interface SkillWriteRequest {
 export interface AskQuestionRequest {
 	question: string;
 	options: string[];
+}
+
+export interface ProgressTrackerRequest {
+	path: string;
 }
 
 export interface AskQuestionAnswer {

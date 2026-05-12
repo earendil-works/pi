@@ -97,6 +97,7 @@ function App() {
   const [status, setStatus] = useState('connecting…');
   const [state, setState] = useState<any>(null);
   const [stats, setStats] = useState<any>(null);
+  const [progressTracker, setProgressTracker] = useState<any>(null);
   const [mainSystemPrompt, setMainSystemPrompt] = useState(MAIN_AGENT_SYSTEM_PROMPT);
   const [models, setModels] = useState<any[]>([]);
   const [commands, setCommands] = useState<any[]>([]);
@@ -125,6 +126,7 @@ function App() {
   const activeAssistantId = useRef<string | null>(null);
   const activeThinkingId = useRef<string | null>(null);
   const busyRef = useRef(false);
+  const stateRef = useRef<any>(null);
   const queuedPromptsRef = useRef<any[]>([]);
   const drainingQueueRef = useRef(false);
   const projectsRef = useRef<ProjectInfo[]>([]);
@@ -334,6 +336,7 @@ function App() {
     try { const json = await (await fetch('/api/state')).json(); setState(json.data || null); } catch {}
     try { const json = await (await fetch('/api/stats')).json(); setStats(json.data || null); } catch {}
     try { const json = await (await fetch('/api/system-prompt')).json(); setMainSystemPrompt(json.data?.systemPrompt || MAIN_AGENT_SYSTEM_PROMPT); } catch {}
+    try { const json = await (await fetch('/api/progress-tracker')).json(); setProgressTracker(json.data || null); } catch { setProgressTracker(null); }
   }
   async function loadModels() {
     try { const json = await (await fetch('/api/models')).json(); setModels(json.data?.models || []); } catch { setModels([]); }
@@ -373,6 +376,7 @@ function App() {
       if (!res.ok) throw new Error(await res.text());
       setCurrentSessionPath(session.path);
       await loadMessages();
+      setProgressTracker(null);
       await loadState();
     } catch (err: any) {
       const message = err?.name === 'AbortError' ? 'Session switch timed out.' : String(err?.message || err);
@@ -393,11 +397,13 @@ function App() {
     setBusyState(false);
     setQueue([]);
     setMessages([SYSTEM_ITEM]);
+    setProgressTracker(null);
     setStatus('ready');
     await loadProjects();
   }
 
   useEffect(() => { projectsRef.current = projects; }, [projects]);
+  useEffect(() => { stateRef.current = state; }, [state]);
   useEffect(() => { queuedPromptsRef.current = queuedPrompts; setTimeout(drainPromptQueue, 1000); }, []);
   useEffect(() => {
     loadState(); loadModels(); loadCommands(); loadProjects();
@@ -465,6 +471,12 @@ function App() {
     if (e.type === 'ask_question') {
       setMessages(prev => prev.some(item => item.id === e.id) ? prev : [...prev, { id: e.id, kind: 'question', title: 'Question', text: e.question, running: true, args: { request: e, options: e.options || [] } }]);
       setStatus('waiting for answer…');
+    }
+    if (e.type === 'progress_tracker') {
+      setProgressTracker((current: any) => {
+        const sessionFile = stateRef.current?.sessionFile;
+        return (!sessionFile || sessionFile === e.sessionFile || current?.sessionFile === e.sessionFile) ? { sessionFile: e.sessionFile, path: e.path, tasks: e.tasks || [] } : current;
+      });
     }
     if (e.type === 'agent_start') { resetStreamingRefs(); setBusyState(true); setStatus('thinking…'); }
     if (e.type === 'web_connected' && e.rpcBusy) { setBusyState(true); setStatus('thinking…'); loadState(); }
@@ -668,10 +680,10 @@ function App() {
         <div className="flex items-center gap-2"><button type="button" className="hidden rounded-lg bg-gray-100 px-2 py-1 text-gray-700 dark:bg-neutral-900 dark:text-slate-200 max-[820px]:block" onClick={() => setSidebarOpen(true)}>☰</button><h1 className="text-sm font-semibold">{view === 'skills' ? 'Skills' : view === 'tools' ? 'Tools' : 'Agents'}</h1></div>
         <div className="flex items-center gap-3 text-xs text-gray-400 dark:text-slate-500"><ThemeToggle value={themePreference} onChange={setThemePreference} /><span>π Pi Web</span></div>
       </header>}
-      {view === 'chat' && <ChatView logRef={logRef} messages={messages} input={input} setInput={setInput} submitPrompt={submitPrompt} submitMessage={submitMessage} answerQuestion={answerQuestion} abortGeneration={abortGeneration} busy={busy} queuedPrompts={queuedPrompts} removeQueuedPrompt={(id: string) => setQueue(queuedPromptsRef.current.filter(item => item.id !== id))} models={models} commands={commands} state={state} loadState={loadState} focusKey={(state?.cwd || '') + ':' + currentSessionPath} terminalOpen={terminalOpen} setTerminalOpen={setTerminalOpen} />}
+      {view === 'chat' && <ChatView logRef={logRef} messages={messages} input={input} setInput={setInput} submitPrompt={submitPrompt} submitMessage={submitMessage} answerQuestion={answerQuestion} abortGeneration={abortGeneration} busy={busy} queuedPrompts={queuedPrompts} removeQueuedPrompt={(id: string) => setQueue(queuedPromptsRef.current.filter(item => item.id !== id))} progressTracker={progressTracker} models={models} commands={commands} state={state} loadState={loadState} focusKey={(state?.cwd || '') + ':' + currentSessionPath} terminalOpen={terminalOpen} setTerminalOpen={setTerminalOpen} />}
       {view === 'skills' && <SkillsView skills={skills} reload={async () => { await loadSkills(); await loadCommands(); }} openModal={setSkillModal} />}
       {view === 'tools' && <ToolsView tools={[...builtinTools, ...tools]} openModal={setToolModal} saveTools={saveTools} customTools={tools} />}
-      {view === 'agents' && <AgentsView builtinAgents={builtinAgents.map(agent => ({ ...agent, systemPrompt: mainSystemPrompt, skills: skills.filter((skill: any) => skill.name !== 'ask-question').map((skill: any) => skill.name), tools: [...builtinTools, ...tools].map((tool: any) => tool.name), ...(builtinAgentOverrides[agent.id] || {}) }))} customAgents={agents} openModal={setAgentModal} saveAgents={saveAgents} />}
+      {view === 'agents' && <AgentsView builtinAgents={builtinAgents.map(agent => ({ ...agent, systemPrompt: mainSystemPrompt, skills: skills.filter((skill: any) => skill.name !== 'ask-question' && skill.name !== 'progress-tracker').map((skill: any) => skill.name), tools: [...builtinTools, ...tools].map((tool: any) => tool.name), ...(builtinAgentOverrides[agent.id] || {}) }))} customAgents={agents} openModal={setAgentModal} saveAgents={saveAgents} />}
     </section>
     {menu && <Menu x={menu.x} y={menu.y} onClose={() => setMenu(null)}>
       {menu.kind === 'project' && <>

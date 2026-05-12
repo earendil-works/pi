@@ -21,6 +21,7 @@ import {
 	sendStaticFile,
 	sendText,
 } from "./http.js";
+import { ProgressTrackerManager } from "./progress-tracker.js";
 import { groupSessionsByProject } from "./projects.js";
 import { RpcBridge } from "./rpc-bridge.js";
 import { deleteWebSkill, listWebSkills, writeWebSkill } from "./skills.js";
@@ -28,6 +29,7 @@ import { TerminalManager, TerminalUnavailableError } from "./terminal.js";
 import type {
 	AskQuestionAnswer,
 	AskQuestionRequest,
+	ProgressTrackerRequest,
 	PromptRequest,
 	SetModelRequest,
 	SetThinkingRequest,
@@ -76,8 +78,10 @@ async function startWebServer(options: WebOptions): Promise<void> {
 	let activeCwd = process.cwd();
 	let rpcBusy = false;
 	let askQuestionUrl = "";
-	let rpc = new RpcBridge(cliPath, options.rpcArgs, broadcast, activeCwd, askQuestionEnv());
+	let progressTrackerUrl = "";
+	let rpc = new RpcBridge(cliPath, options.rpcArgs, broadcast, activeCwd, webEnv());
 	const terminalManager = new TerminalManager({ broadcast });
+	const progressTrackerManager = new ProgressTrackerManager(broadcast);
 	let mainSystemPromptOverride = await readMainSystemPromptOverride();
 	const pendingQuestions = new Map<string, PendingQuestion>();
 
@@ -101,8 +105,11 @@ async function startWebServer(options: WebOptions): Promise<void> {
 		}
 	}
 
-	function askQuestionEnv(): NodeJS.ProcessEnv {
-		return askQuestionUrl ? { PI_WEB_ASK_QUESTION_URL: askQuestionUrl } : {};
+	function webEnv(): NodeJS.ProcessEnv {
+		return {
+			...(askQuestionUrl ? { PI_WEB_ASK_QUESTION_URL: askQuestionUrl } : {}),
+			...(progressTrackerUrl ? { PI_WEB_PROGRESS_TRACKER_URL: progressTrackerUrl } : {}),
+		};
 	}
 
 	await applyMainSystemPromptOverride();
@@ -110,7 +117,7 @@ async function startWebServer(options: WebOptions): Promise<void> {
 	async function restartRpc(cwd: string, startNewSession: boolean): Promise<string> {
 		const resolvedCwd = path.resolve(cwd);
 		const previous = rpc;
-		rpc = new RpcBridge(cliPath, options.rpcArgs, broadcast, resolvedCwd, askQuestionEnv());
+		rpc = new RpcBridge(cliPath, options.rpcArgs, broadcast, resolvedCwd, webEnv());
 		activeCwd = resolvedCwd;
 		previous.stop();
 		if (startNewSession) await rpc.send({ type: "new_session" });
@@ -266,6 +273,20 @@ async function startWebServer(options: WebOptions): Promise<void> {
 			const body = await readJsonBody<AskQuestionAnswer & { id?: string }>(req, 64 * 1024);
 			answerQuestion(body.id, body);
 			sendJson(res, { success: true });
+			return;
+		}
+		if (req.method === "GET" && url.pathname === "/api/progress-tracker") {
+			sendJson(res, { success: true, data: await progressTrackerManager.state(await currentSessionFile()) });
+			return;
+		}
+		if (req.method === "POST" && url.pathname === "/api/progress-tracker") {
+			const body = await readJsonBody<ProgressTrackerRequest>(req, 64 * 1024);
+			const data = await progressTrackerManager.register(
+				requireNonEmptyString(body.path, "path"),
+				activeCwd,
+				await requireCurrentSessionFile(),
+			);
+			sendJson(res, { success: true, data });
 			return;
 		}
 		if (req.method === "GET" && url.pathname === "/api/messages") {
@@ -437,6 +458,17 @@ async function startWebServer(options: WebOptions): Promise<void> {
 		pending.resolve(response);
 	}
 
+	async function currentSessionFile(): Promise<string | null> {
+		const response = await rpc.send<WebRpcResponse & { data?: { sessionFile?: string } }>({ type: "get_state" });
+		return response.success ? response.data?.sessionFile || null : null;
+	}
+
+	async function requireCurrentSessionFile(): Promise<string> {
+		const sessionFile = await currentSessionFile();
+		if (!sessionFile) throw new HttpError(400, "No active conversation session file");
+		return sessionFile;
+	}
+
 	async function handlePrompt(message: string, body: PromptRequest): Promise<WebRpcResponse> {
 		if (!message.trim().startsWith("/")) {
 			return rpc.send({
@@ -551,6 +583,7 @@ async function startWebServer(options: WebOptions): Promise<void> {
 	const address = server.address();
 	const port = typeof address === "object" && address ? address.port : options.port;
 	askQuestionUrl = askQuestionEndpointUrl(options.host, port, token);
+	progressTrackerUrl = progressTrackerEndpointUrl(options.host, port, token);
 	await restartRpc(activeCwd, false);
 	const urls = webUrls(options.host, port, token);
 	console.log(`Pi web UI running at ${urls.local}`);
@@ -561,6 +594,7 @@ async function startWebServer(options: WebOptions): Promise<void> {
 	const shutdown = (): void => {
 		server.close();
 		terminalManager.stopAll();
+		progressTrackerManager.stopAll();
 		rpc.stop();
 		for (const [id, pending] of pendingQuestions) {
 			clearTimeout(pending.timeout);
@@ -643,10 +677,18 @@ function normalizeQuestionAnswer(answer: AskQuestionAnswer, options: string[]): 
 }
 
 function askQuestionEndpointUrl(host: string, port: number, token: string): string {
+	return webApiEndpointUrl(host, port, token, "/api/ask-question");
+}
+
+function progressTrackerEndpointUrl(host: string, port: number, token: string): string {
+	return webApiEndpointUrl(host, port, token, "/api/progress-tracker");
+}
+
+function webApiEndpointUrl(host: string, port: number, token: string, pathname: string): string {
 	const wildcard = host === "0.0.0.0" || host === "::" || host === "[::]";
 	const localHost = wildcard ? "127.0.0.1" : host;
 	const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : "";
-	return `http://${localHost}:${port}/api/ask-question${tokenQuery}`;
+	return `http://${localHost}:${port}${pathname}${tokenQuery}`;
 }
 
 async function readChangelog(): Promise<string> {

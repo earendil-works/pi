@@ -9,6 +9,7 @@ import { ENV_AGENT_DIR } from "../src/config.js";
 import { assertHostAllowed, isLoopbackHost, parseWebArgs } from "../src/modes/web/args.js";
 import { assertAuthorized, assertSafeOrigin, requestHasToken, tokenCookie } from "../src/modes/web/auth.js";
 import { HttpError, readJsonBody, sendStaticFile } from "../src/modes/web/http.js";
+import { parseProgressTrackerMarkdown, resolveProgressTrackerPath } from "../src/modes/web/progress-tracker.js";
 import { RpcBridge } from "../src/modes/web/rpc-bridge.js";
 import { deleteWebSkill, listWebSkills, resolveSkillPath, writeWebSkill } from "../src/modes/web/skills.js";
 import { TerminalManager, TerminalUnavailableError } from "../src/modes/web/terminal.js";
@@ -115,7 +116,7 @@ describe("web http", () => {
 });
 
 describe("web skills", () => {
-	test("includes read-only built-in ask-question skill", async () => {
+	test("includes read-only built-in skills", async () => {
 		const root = await tempDir();
 		const builtinsRoot = await tempDir();
 		const sourceBuiltinsRoot = await tempDir();
@@ -133,8 +134,15 @@ describe("web skills", () => {
 			"---\nname: show-images\ndescription: Show images\n---\n# Show Images\n",
 			"utf8",
 		);
+		const trackerSkillDir = path.join(sourceBuiltinsRoot, "progress-tracker");
+		await fsp.mkdir(trackerSkillDir, { recursive: true });
+		await fsp.writeFile(
+			path.join(trackerSkillDir, "SKILL.md"),
+			"---\nname: progress-tracker\ndescription: Track progress\n---\n# Progress Tracker\n",
+			"utf8",
+		);
 		const skills = await listWebSkills(root, [builtinsRoot, sourceBuiltinsRoot]);
-		expect(skills.map((skill) => skill.name)).toEqual(["ask-question", "show-images"]);
+		expect(skills.map((skill) => skill.name)).toEqual(["ask-question", "progress-tracker", "show-images"]);
 		expect(skills.every((skill) => skill.builtin)).toBe(true);
 		await expect(deleteWebSkill(skills[0].path, root)).rejects.toMatchObject({ status: 400 });
 	});
@@ -159,6 +167,34 @@ describe("web skills", () => {
 		).rejects.toMatchObject({
 			status: 400,
 		});
+	});
+});
+
+describe("progress tracker", () => {
+	test("parses markdown task markers", () => {
+		expect(
+			parseProgressTrackerMarkdown(`
+# Progress
+
+- [ ]  Write tests
+- [~] Implement tracker
+- [x] Ship it
+- [X] Uppercase done
+- [-] ignored
+plain text
+`),
+		).toEqual([
+			{ status: "todo", text: "Write tests" },
+			{ status: "doing", text: "Implement tracker" },
+			{ status: "done", text: "Ship it" },
+			{ status: "done", text: "Uppercase done" },
+		]);
+	});
+
+	test("resolves tracker paths and rejects non-markdown files", async () => {
+		const cwd = await tempDir();
+		expect(resolveProgressTrackerPath("./.pi/progress.md", cwd)).toBe(path.join(cwd, ".pi", "progress.md"));
+		expect(() => resolveProgressTrackerPath("progress.txt", cwd)).toThrow(HttpError);
 	});
 });
 
