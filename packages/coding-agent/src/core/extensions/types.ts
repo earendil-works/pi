@@ -1320,8 +1320,10 @@ export interface ProviderConfig {
 	name?: string;
 	/** Base URL for the API endpoint. Required when defining models. */
 	baseUrl?: string;
-	/** API key or environment variable name. Required when defining models (unless oauth provided). */
+	/** API key or environment variable name. Required when defining models (unless `oauth` or `keyless` set). */
 	apiKey?: string;
+	/** Declare the provider keyless (e.g., local inference). */
+	keyless?: true;
 	/** API type. Required at provider or model level when defining models. */
 	api?: Api;
 	/** Optional streamSimple handler for custom APIs. */

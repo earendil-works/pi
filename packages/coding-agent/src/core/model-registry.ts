@@ -185,6 +185,7 @@ const ProviderConfigSchema = Type.Object({
 	name: Type.Optional(Type.String({ minLength: 1 })),
 	baseUrl: Type.Optional(Type.String({ minLength: 1 })),
 	apiKey: Type.Optional(Type.String({ minLength: 1 })),
+	keyless: Type.Optional(Type.Literal(true)),
 	api: Type.Optional(Type.String({ minLength: 1 })),
 	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
 	compat: Type.Optional(ProviderCompatSchema),
@@ -229,6 +230,7 @@ interface ProviderOverride {
 
 interface ProviderRequestConfig {
 	apiKey?: string;
+	keyless?: true;
 	headers?: Record<string, string>;
 	authHeader?: boolean;
 }
@@ -237,6 +239,7 @@ export type ResolvedRequestAuth =
 	| {
 			ok: true;
 			apiKey?: string;
+			keyless?: true;
 			headers?: Record<string, string>;
 	  }
 	| {
@@ -528,8 +531,15 @@ export class ModelRegistry {
 				if (!providerConfig.baseUrl) {
 					throw new Error(`Provider ${providerName}: "baseUrl" is required when defining custom models.`);
 				}
-				if (!providerConfig.apiKey) {
-					throw new Error(`Provider ${providerName}: "apiKey" is required when defining custom models.`);
+				if (providerConfig.apiKey === undefined && !providerConfig.keyless) {
+					throw new Error(
+						`Provider ${providerName}: "apiKey" or "keyless" is required when defining custom models`,
+					);
+				}
+				if (providerConfig.apiKey !== undefined && providerConfig.keyless) {
+					throw new Error(
+						`Provider ${providerName}: "apiKey" and "keyless" are mutually exclusive.`,
+					);
 				}
 			}
 			// Built-in providers with custom models: baseUrl/apiKey/api are optional,
@@ -636,9 +646,11 @@ export class ModelRegistry {
 	 * Get API key for a model.
 	 */
 	hasConfiguredAuth(model: Model<Api>): boolean {
+		const config = this.providerRequestConfigs.get(model.provider);
 		return (
 			this.authStorage.hasAuth(model.provider) ||
-			this.providerRequestConfigs.get(model.provider)?.apiKey !== undefined
+			config?.apiKey !== undefined ||
+			config?.keyless === true
 		);
 	}
 
@@ -650,16 +662,18 @@ export class ModelRegistry {
 		providerName: string,
 		config: {
 			apiKey?: string;
+			keyless?: true;
 			headers?: Record<string, string>;
 			authHeader?: boolean;
 		},
 	): void {
-		if (!config.apiKey && !config.headers && !config.authHeader) {
+		if (!config.keyless && !config.apiKey && !config.headers && !config.authHeader) {
 			return;
 		}
 
 		this.providerRequestConfigs.set(providerName, {
 			apiKey: config.apiKey,
+			keyless: config.keyless,
 			headers: config.headers,
 			authHeader: config.authHeader,
 		});
@@ -674,12 +688,35 @@ export class ModelRegistry {
 		this.modelRequestHeaders.set(key, headers);
 	}
 
+	private resolveAllHeaders(
+		model: Model<Api>,
+		providerConfig: ProviderRequestConfig | undefined,
+	): Record<string, string> | undefined {
+		const providerHeaders = resolveHeadersOrThrow(providerConfig?.headers, `provider "${model.provider}"`);
+		const modelHeaders = resolveHeadersOrThrow(
+			this.modelRequestHeaders.get(this.getModelRequestKey(model.provider, model.id)),
+			`model "${model.provider}/${model.id}"`,
+		);
+		return model.headers || providerHeaders || modelHeaders
+			? { ...model.headers, ...providerHeaders, ...modelHeaders }
+			: undefined;
+	}
+
 	/**
 	 * Get API key and request headers for a model.
 	 */
 	async getApiKeyAndHeaders(model: Model<Api>): Promise<ResolvedRequestAuth> {
 		try {
 			const providerConfig = this.providerRequestConfigs.get(model.provider);
+
+			if (providerConfig?.keyless) {
+				return {
+					ok: true,
+					keyless: true,
+					headers: this.resolveAllHeaders(model, providerConfig),
+				};
+			}
+
 			const apiKeyFromAuthStorage = await this.authStorage.getApiKey(model.provider, { includeFallback: false });
 			const apiKey =
 				apiKeyFromAuthStorage ??
@@ -687,16 +724,7 @@ export class ModelRegistry {
 					? resolveConfigValueOrThrow(providerConfig.apiKey, `API key for provider "${model.provider}"`)
 					: undefined);
 
-			const providerHeaders = resolveHeadersOrThrow(providerConfig?.headers, `provider "${model.provider}"`);
-			const modelHeaders = resolveHeadersOrThrow(
-				this.modelRequestHeaders.get(this.getModelRequestKey(model.provider, model.id)),
-				`model "${model.provider}/${model.id}"`,
-			);
-
-			let headers =
-				model.headers || providerHeaders || modelHeaders
-					? { ...model.headers, ...providerHeaders, ...modelHeaders }
-					: undefined;
+			let headers = this.resolveAllHeaders(model, providerConfig);
 
 			if (providerConfig?.authHeader) {
 				if (!apiKey) {
@@ -840,8 +868,23 @@ export class ModelRegistry {
 		if (!config.baseUrl) {
 			throw new Error(`Provider ${providerName}: "baseUrl" is required when defining models.`);
 		}
-		if (!config.apiKey && !config.oauth) {
-			throw new Error(`Provider ${providerName}: "apiKey" or "oauth" is required when defining models.`);
+		const authModes = [config.apiKey !== undefined, config.oauth !== undefined, config.keyless === true].filter(
+			Boolean,
+		).length;
+		if (authModes === 0) {
+			throw new Error(
+				`Provider ${providerName}: one of "apiKey", "oauth", or "keyless" is required when defining models.`,
+			);
+		}
+		if (authModes > 1) {
+			throw new Error(
+				`Provider ${providerName}: "apiKey", "oauth", and "keyless" are mutually exclusive.`,
+			);
+		}
+		if (typeof config.apiKey === "string" && config.apiKey.length === 0) {
+			throw new Error(
+				`Provider ${providerName}: "apiKey" cannot be an empty string.`,
+			);
 		}
 
 		for (const modelDef of config.models) {
@@ -930,6 +973,7 @@ export interface ProviderConfigInput {
 	name?: string;
 	baseUrl?: string;
 	apiKey?: string;
+	keyless?: true;
 	api?: Api;
 	streamSimple?: (model: Model<Api>, context: Context, options?: SimpleStreamOptions) => AssistantMessageEventStream;
 	headers?: Record<string, string>;

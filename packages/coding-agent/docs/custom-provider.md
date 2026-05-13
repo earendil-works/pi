@@ -550,8 +550,11 @@ interface ProviderConfig {
   /** API endpoint URL. Required when defining models. */
   baseUrl?: string;
 
-  /** API key or environment variable name. Required when defining models (unless oauth). */
+  /** API key or environment variable name. Required when defining models (unless `oauth` or `keyless`). */
   apiKey?: string;
+
+  /** Declare the provider keyless (e.g., local inference). */
+  keyless?: true;
 
   /** API type for streaming. Required at provider or model level when defining models. */
   api?: Api;

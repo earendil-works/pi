@@ -352,6 +352,9 @@ export class AgentSession {
 			}
 			throw new Error(result.error);
 		}
+		if (result.keyless) {
+			return { apiKey: "", headers: result.headers };
+		}
 		if (result.apiKey) {
 			return { apiKey: result.apiKey, headers: result.headers };
 		}
@@ -1865,7 +1868,7 @@ export class AgentSession {
 			}
 
 			const authResult = await this._modelRegistry.getApiKeyAndHeaders(this.model);
-			if (!authResult.ok || !authResult.apiKey) {
+			if (!authResult.ok || (!authResult.apiKey && !authResult.keyless)) {
 				this._emit({
 					type: "compaction_end",
 					reason,
@@ -1875,7 +1878,7 @@ export class AgentSession {
 				});
 				return;
 			}
-			const { apiKey, headers } = authResult;
+			const { apiKey = "", headers } = authResult;
 
 			const pathEntries = this.sessionManager.getBranch();
 
