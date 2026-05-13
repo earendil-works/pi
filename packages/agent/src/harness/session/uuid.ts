@@ -8,10 +8,10 @@ export function uuidv7(): string {
 	const timestamp = Date.now();
 
 	if (timestamp > lastTimestamp) {
-		sequence = (random[6] << 23) | (random[7] << 16) | (random[8] << 8) | random[9];
+		sequence = random[6] * 0x1000000 + random[7] * 0x10000 + random[8] * 0x100 + random[9];
 		lastTimestamp = timestamp;
 	} else {
-		sequence = (sequence + 1) | 0;
+		sequence = (sequence + 1) >>> 0;
 		if (sequence === 0) {
 			lastTimestamp++;
 		}
@@ -28,7 +28,7 @@ export function uuidv7(): string {
 	bytes[7] = (sequence >>> 20) & 0xff;
 	bytes[8] = 0x80 | ((sequence >>> 14) & 0x3f);
 	bytes[9] = (sequence >>> 6) & 0xff;
-	bytes[10] = ((sequence << 2) & 0xff) | (random[10] & 0x03);
+	bytes[10] = ((sequence & 0x3f) << 2) | (random[10] & 0x03);
 	bytes[11] = random[11];
 	bytes[12] = random[12];
 	bytes[13] = random[13];

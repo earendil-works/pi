@@ -1,87 +1,60 @@
+/*
+ * Portions of this file are derived from:
+ * - ansi-regex (https://github.com/chalk/ansi-regex)
+ * - strip-ansi (https://github.com/chalk/strip-ansi)
+ *
+ * MIT License
+ *
+ * Copyright (c) Sindre Sorhus <sindresorhus@gmail.com> (https://sindresorhus.com)
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+
+function ansiRegex({ onlyFirst = false }: { onlyFirst?: boolean } = {}): RegExp {
+	// Valid string terminator sequences are BEL, ESC\, and 0x9c
+	const ST = "(?:\\u0007|\\u001B\\u005C|\\u009C)";
+
+	// OSC sequences only: ESC ] ... ST (non-greedy until the first ST)
+	const osc = `(?:\\u001B\\][\\s\\S]*?${ST})`;
+
+	// CSI and related: ESC/C1, optional intermediates, optional params (supports ; and :) then final byte
+	const csi = "[\\u001B\\u009B][[\\]()#;?]*(?:\\d{1,4}(?:[;:]\\d{0,4})*)?[\\dA-PR-TZcf-nq-uy=><~]";
+
+	const pattern = `${osc}|${csi}`;
+
+	return new RegExp(pattern, onlyFirst ? undefined : "g");
+}
+
+const regex = ansiRegex();
+
 export function stripAnsi(value: string): string {
-	let output = "";
-	let index = 0;
-
-	while (index < value.length) {
-		const code = value.charCodeAt(index);
-
-		if (code === 0x1b) {
-			const next = value[index + 1];
-
-			if (next === "[") {
-				index = skipCsi(value, index + 2);
-				continue;
-			}
-
-			if (next === "]" || next === "P" || next === "^" || next === "_") {
-				index = skipStringControl(value, index + 2);
-				continue;
-			}
-
-			if (next && "()*+-./#".includes(next)) {
-				index = Math.min(index + 3, value.length);
-				continue;
-			}
-
-			if (next && isEscFinalByte(next.charCodeAt(0))) {
-				index += 2;
-				continue;
-			}
-		} else if (code === 0x9b) {
-			index = skipCsi(value, index + 1);
-			continue;
-		} else if (code === 0x9d || code === 0x90 || code === 0x9e || code === 0x9f) {
-			index = skipStringControl(value, index + 1);
-			continue;
-		}
-
-		output += value[index];
-		index++;
+	if (typeof value !== "string") {
+		throw new TypeError(`Expected a \`string\`, got \`${typeof value}\``);
 	}
 
-	return output;
-}
-
-function isEscFinalByte(code: number): boolean {
-	return (
-		(code >= 0x30 && code <= 0x39) ||
-		(code >= 0x41 && code <= 0x50) ||
-		(code >= 0x52 && code <= 0x54) ||
-		code === 0x5a ||
-		code === 0x63 ||
-		(code >= 0x66 && code <= 0x6e) ||
-		(code >= 0x71 && code <= 0x75) ||
-		code === 0x79 ||
-		code === 0x3d ||
-		code === 0x3e ||
-		code === 0x3c ||
-		code === 0x7e
-	);
-}
-
-function skipCsi(value: string, start: number): number {
-	let index = start;
-	while (index < value.length) {
-		const code = value.charCodeAt(index);
-		index++;
-		if (code >= 0x40 && code <= 0x7e) {
-			return index;
-		}
+	// Fast path: ANSI codes require ESC (7-bit) or CSI (8-bit) introducer
+	if (!value.includes("\u001B") && !value.includes("\u009B")) {
+		return value;
 	}
-	return value.length;
-}
 
-function skipStringControl(value: string, start: number): number {
-	let index = start;
-	while (index < value.length) {
-		const code = value.charCodeAt(index);
-		if (code === 0x07 || code === 0x9c) {
-			return index + 1;
-		}
-		if (code === 0x1b && value[index + 1] === "\\") {
-			return index + 2;
-		}
-		index++;
-	}
-	return value.length;
+	// Even though the regex is global, we don't need to reset the `.lastIndex`
+	// because unlike `.exec()` and `.test()`, `.replace()` does it automatically
+	// and doing it manually has a performance penalty.
+	return value.replace(regex, "");
 }

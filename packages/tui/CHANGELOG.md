@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed inline image rendering to cap portrait images by height instead of always scaling them to the configured maximum width.
+
 ## [0.74.0] - 2026-05-07
 
 ## [0.73.1] - 2026-05-07

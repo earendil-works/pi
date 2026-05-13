@@ -1,6 +1,7 @@
 import {
 	allocateImageId,
 	getCapabilities,
+	getCellDimensions,
 	getImageDimensions,
 	type ImageDimensions,
 	imageFallback,
@@ -61,7 +62,10 @@ export class Image implements Component {
 			return this.cachedLines;
 		}
 
-		const maxWidth = Math.min(width - 2, this.options.maxWidthCells ?? 60);
+		const maxWidth = Math.max(1, Math.min(width - 2, this.options.maxWidthCells ?? 60));
+		const cellDimensions = getCellDimensions();
+		const defaultMaxHeight = Math.max(1, Math.ceil((maxWidth * cellDimensions.widthPx) / cellDimensions.heightPx));
+		const maxHeight = this.options.maxHeightCells ?? defaultMaxHeight;
 
 		const caps = getCapabilities();
 		let lines: string[];
@@ -72,6 +76,7 @@ export class Image implements Component {
 			}
 			const result = renderImage(this.base64Data, this.dimensions, {
 				maxWidthCells: maxWidth,
+				maxHeightCells: maxHeight,
 				imageId: this.imageId,
 				moveCursor: false,
 			});
