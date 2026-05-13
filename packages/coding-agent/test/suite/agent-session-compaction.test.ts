@@ -340,4 +340,130 @@ describe("AgentSession compaction characterization", () => {
 		expect(belowThresholdSpy).not.toHaveBeenCalled();
 		expect(disabledSpy).not.toHaveBeenCalled();
 	});
+
+	it("shouldStopAfterTurn stops mid-run and sets willRetry when context hits threshold with tool results", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { enabled: true, reserveTokens: 1000 } },
+			models: [{ id: "faux-1", contextWindow: 200_000 }],
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "auto compacted mid-run",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue();
+
+		// Simulate shouldStopAfterTurn being called with context over threshold and tool results present
+		const aboveThresholdMessage = createAssistant(harness, {
+			stopReason: "toolUse",
+			totalTokens: 199_500,
+			timestamp: Date.now(),
+		});
+		const fakeToolResult = {
+			role: "toolResult" as const,
+			content: [],
+			toolCallId: "t1",
+			timestamp: Date.now(),
+		};
+		const ctx = {
+			message: aboveThresholdMessage,
+			toolResults: [fakeToolResult],
+			context: { systemPrompt: "", messages: [], tools: [] },
+			newMessages: [],
+		};
+
+		const stopped = await harness.session.agent.shouldStopAfterTurn!(ctx);
+		expect(stopped).toBe(true);
+
+		// After shouldStopAfterTurn returns true, _checkCompaction is called at agent_end
+		await sessionInternals._checkCompaction(aboveThresholdMessage);
+
+		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", true);
+	});
+
+	it("shouldStopAfterTurn does not set willRetry when no tool results (natural turn end)", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { enabled: true, reserveTokens: 1000 } },
+			models: [{ id: "faux-1", contextWindow: 200_000 }],
+		});
+		harnesses.push(harness);
+
+		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
+		const runAutoCompactionSpy = vi.spyOn(sessionInternals, "_runAutoCompaction").mockResolvedValue();
+
+		const aboveThresholdMessage = createAssistant(harness, {
+			stopReason: "stop",
+			totalTokens: 199_500,
+			timestamp: Date.now(),
+		});
+		const ctx = {
+			message: aboveThresholdMessage,
+			toolResults: [], // no tool results — turn completed naturally
+			context: { systemPrompt: "", messages: [], tools: [] },
+			newMessages: [],
+		};
+
+		const stopped = await harness.session.agent.shouldStopAfterTurn!(ctx);
+		expect(stopped).toBe(true);
+
+		// _stoppedForCompaction should be false (no tool results), so willRetry=false
+		await sessionInternals._checkCompaction(aboveThresholdMessage);
+		expect(runAutoCompactionSpy).toHaveBeenCalledWith("threshold", false);
+	});
+
+	it("shouldStopAfterTurn returns false when disabled", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { enabled: false } },
+			models: [{ id: "faux-1", contextWindow: 200_000 }],
+		});
+		harnesses.push(harness);
+
+		const aboveThresholdMessage = createAssistant(harness, {
+			stopReason: "stop",
+			totalTokens: 199_500,
+			timestamp: Date.now(),
+		});
+		const ctx = {
+			message: aboveThresholdMessage,
+			toolResults: [],
+			context: { systemPrompt: "", messages: [], tools: [] },
+			newMessages: [],
+		};
+
+		const stopped = await harness.session.agent.shouldStopAfterTurn!(ctx);
+		expect(stopped).toBe(false);
+	});
+
+	it("shouldStopAfterTurn returns false when context is below threshold", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { enabled: true, reserveTokens: 1000 } },
+			models: [{ id: "faux-1", contextWindow: 200_000 }],
+		});
+		harnesses.push(harness);
+
+		const belowThresholdMessage = createAssistant(harness, {
+			stopReason: "stop",
+			totalTokens: 100_000,
+			timestamp: Date.now(),
+		});
+		const ctx = {
+			message: belowThresholdMessage,
+			toolResults: [],
+			context: { systemPrompt: "", messages: [], tools: [] },
+			newMessages: [],
+		};
+
+		const stopped = await harness.session.agent.shouldStopAfterTurn!(ctx);
+		expect(stopped).toBe(false);
+	});
 });

@@ -425,6 +425,18 @@ export class AgentSession {
 				isError: hookResult.isError ?? isError,
 			};
 		};
+
+		this.agent.shouldStopAfterTurn = (ctx) => {
+			const settings = this.settingsManager.getCompactionSettings();
+			if (!settings.enabled) return false;
+			const contextWindow = this.model?.contextWindow ?? 0;
+			const contextTokens = calculateContextTokens(ctx.message.usage);
+			if (!shouldCompact(contextTokens, contextWindow, settings)) return false;
+			// Only set willRetry flag when there are pending tool results — the agent
+			// is mid-task and must resume after compaction.
+			this._stoppedForCompaction = ctx.toolResults.length > 0;
+			return true;
+		};
 	}
 
 	// =========================================================================
@@ -448,6 +460,11 @@ export class AgentSession {
 
 	// Track last assistant message for auto-compaction check
 	private _lastAssistantMessage: AssistantMessage | undefined = undefined;
+	// Set to true when shouldStopAfterTurn halted the run because context hit the threshold.
+	// Causes _checkCompaction to pass willRetry=true so the agent resumes after compaction.
+	// Safe from concurrent access: Agent enforces a single activeRun at a time and turns
+	// execute sequentially within a run.
+	private _stoppedForCompaction = false;
 
 	/** Internal handler for agent events - shared by subscribe and reconnect */
 	private _handleAgentEvent = (event: AgentEvent): void => {
@@ -1839,7 +1856,9 @@ export class AgentSession {
 			contextTokens = calculateContextTokens(assistantMessage.usage);
 		}
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
-			await this._runAutoCompaction("threshold", false);
+			const willRetry = this._stoppedForCompaction;
+			this._stoppedForCompaction = false;
+			await this._runAutoCompaction("threshold", willRetry);
 		}
 	}
 
