@@ -100,6 +100,8 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--off
 | `retry.enabled` | boolean | `true` | Enable automatic agent-level retry on transient errors |
 | `retry.maxRetries` | number | `3` | Maximum agent-level retry attempts |
 | `retry.baseDelayMs` | number | `2000` | Base delay for agent-level exponential backoff (2s, 4s, 8s) |
+| `retry.watchdogEnabled` | boolean | `true` | Enable a low-frequency heartbeat that recovers retryable terminal errors if the event-driven retry path is missed |
+| `retry.watchdogIntervalMs` | number | `2000` | Retry watchdog heartbeat interval in milliseconds |
 | `retry.provider.timeoutMs` | number | SDK default | Provider/SDK request timeout in milliseconds |
 | `retry.provider.maxRetries` | number | SDK default | Provider/SDK retry attempts |
 | `retry.provider.maxRetryDelayMs` | number | `60000` | Max server-requested delay before failing (60s) |
@@ -112,6 +114,8 @@ When a provider requests a retry delay longer than `retry.provider.maxRetryDelay
     "enabled": true,
     "maxRetries": 3,
     "baseDelayMs": 2000,
+    "watchdogEnabled": true,
+    "watchdogIntervalMs": 2000,
     "provider": {
       "timeoutMs": 3600000,
       "maxRetries": 0,

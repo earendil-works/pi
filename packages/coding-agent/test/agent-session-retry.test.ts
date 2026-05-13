@@ -68,10 +68,16 @@ describe("AgentSession retry", () => {
 		}
 	});
 
-	function createSession(options?: { failCount?: number; maxRetries?: number; delayAssistantMessageEndMs?: number }) {
+	function createSession(options?: {
+		failCount?: number;
+		maxRetries?: number;
+		delayAssistantMessageEndMs?: number;
+		watchdogIntervalMs?: number;
+	}) {
 		const failCount = options?.failCount ?? 1;
 		const maxRetries = options?.maxRetries ?? 3;
 		const delayAssistantMessageEndMs = options?.delayAssistantMessageEndMs ?? 0;
+		const watchdogIntervalMs = options?.watchdogIntervalMs;
 		let callCount = 0;
 
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
@@ -104,7 +110,7 @@ describe("AgentSession retry", () => {
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
 		const modelRegistry = ModelRegistry.create(authStorage, tempDir);
 		authStorage.setRuntimeApiKey("anthropic", "test-key");
-		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries, baseDelayMs: 1 } });
+		settingsManager.applyOverrides({ retry: { enabled: true, maxRetries, baseDelayMs: 1, watchdogIntervalMs } });
 
 		session = new AgentSession({
 			agent,
@@ -167,6 +173,31 @@ describe("AgentSession retry", () => {
 		await created.session.prompt("Test");
 
 		expect(created.getCallCount()).toBe(2);
+		expect(created.session.isRetrying).toBe(false);
+	});
+
+	it("watchdog recovers a retryable terminal error if the event-driven retry path misses it", async () => {
+		const created = createSession({ failCount: 1, watchdogIntervalMs: 5 });
+		const sessionWithPrivates = created.session as unknown as {
+			_isRetryableError: (message: AssistantMessage) => boolean;
+		};
+		const originalIsRetryableError = sessionWithPrivates._isRetryableError.bind(created.session);
+		sessionWithPrivates._isRetryableError = () => false;
+
+		await created.session.prompt("Test");
+		expect(created.getCallCount()).toBe(1);
+
+		sessionWithPrivates._isRetryableError = originalIsRetryableError;
+		await new Promise<void>((resolve, reject) => {
+			const deadline = Date.now() + 500;
+			const poll = () => {
+				if (created.getCallCount() >= 2) return resolve();
+				if (Date.now() > deadline) return reject(new Error("retry watchdog did not fire"));
+				setTimeout(poll, 10);
+			};
+			poll();
+		});
+
 		expect(created.session.isRetrying).toBe(false);
 	});
 
