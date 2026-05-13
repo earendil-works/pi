@@ -26,6 +26,10 @@ export interface RetrySettings {
 	enabled?: boolean; // default: true
 	maxRetries?: number; // default: 3
 	baseDelayMs?: number; // default: 2000 (exponential backoff: 2s, 4s, 8s)
+	/** Enable a low-frequency watchdog that recovers retryable terminal errors if the event-driven retry path is missed. Default: true. */
+	watchdogEnabled?: boolean;
+	/** Retry watchdog heartbeat interval. Default: 2000ms. */
+	watchdogIntervalMs?: number;
 	provider?: ProviderRetrySettings;
 }
 
@@ -723,6 +727,18 @@ export class SettingsManager {
 			enabled: this.getRetryEnabled(),
 			maxRetries: this.settings.retry?.maxRetries ?? 3,
 			baseDelayMs: this.settings.retry?.baseDelayMs ?? 2000,
+		};
+	}
+
+	getRetryWatchdogSettings(): { enabled: boolean; intervalMs: number } {
+		const rawIntervalMs = this.settings.retry?.watchdogIntervalMs;
+		const intervalMs =
+			typeof rawIntervalMs === "number" && Number.isFinite(rawIntervalMs) && rawIntervalMs > 0
+				? rawIntervalMs
+				: 2000;
+		return {
+			enabled: this.getRetryEnabled() && (this.settings.retry?.watchdogEnabled ?? true),
+			intervalMs: Math.max(100, Math.round(intervalMs)),
 		};
 	}
 

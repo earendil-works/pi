@@ -273,6 +273,9 @@ export class AgentSession {
 	private _retryAttempt = 0;
 	private _retryPromise: Promise<void> | undefined = undefined;
 	private _retryResolve: (() => void) | undefined = undefined;
+	private _retryWatchdogTimer: ReturnType<typeof setInterval> | undefined = undefined;
+	private _retryWatchdogRunning = false;
+	private _retryExhaustedErrorKey: string | undefined = undefined;
 
 	// Bash execution state
 	private _bashAbortController: AbortController | undefined = undefined;
@@ -329,6 +332,7 @@ export class AgentSession {
 		// (session persistence, extensions, auto-compaction, retry logic)
 		this._unsubscribeAgent = this.agent.subscribe(this._handleAgentEvent);
 		this._installAgentToolHooks();
+		this._startRetryWatchdog();
 
 		this._buildRuntime({
 			activeToolNames: this._initialActiveToolNames,
@@ -554,6 +558,7 @@ export class AgentSession {
 				const assistantMsg = event.message as AssistantMessage;
 				if (assistantMsg.stopReason !== "error") {
 					this._overflowRecoveryAttempted = false;
+					this._retryExhaustedErrorKey = undefined;
 				}
 
 				// Reset retry counter immediately on successful assistant response
@@ -751,6 +756,7 @@ export class AgentSession {
 		this._extensionRunner.invalidate(
 			"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
 		);
+		this._stopRetryWatchdog();
 		this._disconnectFromAgent();
 		this._eventListeners = [];
 		cleanupSessionResources(this.sessionId);
@@ -2407,6 +2413,52 @@ export class AgentSession {
 	// Auto-Retry
 	// =========================================================================
 
+	private _startRetryWatchdog(): void {
+		const settings = this.settingsManager.getRetryWatchdogSettings();
+		if (!settings.enabled) return;
+		this._retryWatchdogTimer = setInterval(() => {
+			void this._retryWatchdogTick();
+		}, settings.intervalMs);
+		this._retryWatchdogTimer.unref?.();
+	}
+
+	private _stopRetryWatchdog(): void {
+		if (!this._retryWatchdogTimer) return;
+		clearInterval(this._retryWatchdogTimer);
+		this._retryWatchdogTimer = undefined;
+	}
+
+	private _getRetryErrorKey(message: AssistantMessage): string {
+		return [message.timestamp ?? "", message.provider ?? "", message.model ?? "", message.errorMessage ?? ""].join(
+			"\u0000",
+		);
+	}
+
+	private _findTerminalAssistantMessage(): AssistantMessage | undefined {
+		const messages = this.agent.state.messages;
+		const last = messages[messages.length - 1];
+		return last?.role === "assistant" ? (last as AssistantMessage) : undefined;
+	}
+
+	private async _retryWatchdogTick(): Promise<void> {
+		if (this._retryWatchdogRunning) return;
+		const watchdogSettings = this.settingsManager.getRetryWatchdogSettings();
+		if (!watchdogSettings.enabled || this._retryPromise || this.isStreaming) return;
+
+		const msg = this._findTerminalAssistantMessage();
+		if (!msg || !this._isRetryableError(msg)) return;
+
+		const key = this._getRetryErrorKey(msg);
+		if (key === this._retryExhaustedErrorKey) return;
+
+		this._retryWatchdogRunning = true;
+		try {
+			await this._handleRetryableError(msg);
+		} finally {
+			this._retryWatchdogRunning = false;
+		}
+	}
+
 	/**
 	 * Check if an error is retryable (overloaded, rate limit, server errors).
 	 * Context overflow errors are NOT retryable (handled by compaction instead).
@@ -2447,7 +2499,10 @@ export class AgentSession {
 		this._retryAttempt++;
 
 		if (this._retryAttempt > settings.maxRetries) {
-			// Max retries exceeded, emit final failure and reset
+			// Max retries exceeded, emit final failure and reset. Remember this
+			// terminal error so the heartbeat watchdog does not start a fresh retry
+			// cycle against the same exhausted assistant error.
+			this._retryExhaustedErrorKey = this._getRetryErrorKey(message);
 			this._emit({
 				type: "auto_retry_end",
 				success: false,
