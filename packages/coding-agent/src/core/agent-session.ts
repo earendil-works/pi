@@ -43,6 +43,7 @@ import {
 	collectEntriesForBranchSummary,
 	compact,
 	estimateContextTokens,
+	estimateTokens,
 	generateBranchSummary,
 	prepareCompaction,
 	shouldCompact,
@@ -1770,7 +1771,7 @@ export class AgentSession {
 		// Skip if message was aborted (user cancelled) - unless skipAbortedCheck is false
 		if (skipAbortedCheck && assistantMessage.stopReason === "aborted") return;
 
-		const contextWindow = this.model?.contextWindow ?? 0;
+		const contextWindow = this.model?.contextWindow ?? 128000;
 
 		// Skip overflow check if the message came from a different model.
 		// This handles the case where user switched from a smaller-context model (e.g. opus)
@@ -1837,6 +1838,16 @@ export class AgentSession {
 			contextTokens = estimate.tokens;
 		} else {
 			contextTokens = calculateContextTokens(assistantMessage.usage);
+			// Local models (Ollama, LM Studio, etc.) often return zero/default usage data.
+			// Fall back to direct estimation when reported tokens are 0.
+			if (!contextTokens) {
+				const messages = this.agent.state.messages;
+				let estimated = 0;
+				for (const msg of messages) {
+					estimated += estimateTokens(msg);
+				}
+				contextTokens = estimated;
+			}
 		}
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
 			await this._runAutoCompaction("threshold", false);
@@ -2415,7 +2426,7 @@ export class AgentSession {
 		if (message.stopReason !== "error" || !message.errorMessage) return false;
 
 		// Context overflow is handled by compaction, not retry
-		const contextWindow = this.model?.contextWindow ?? 0;
+		const contextWindow = this.model?.contextWindow ?? 128000;
 		if (isContextOverflow(message, contextWindow)) return false;
 
 		const err = message.errorMessage;
