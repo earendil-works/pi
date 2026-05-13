@@ -79,6 +79,7 @@ import { emitSessionShutdownEvent } from "./extensions/runner.js";
 import type { BashExecutionMessage, CustomMessage } from "./messages.js";
 import type { ModelRegistry } from "./model-registry.js";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.js";
+import { mergeProviderAttributionHeaders } from "./provider-attribution.js";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.js";
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.js";
 import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.js";
@@ -353,7 +354,10 @@ export class AgentSession {
 			throw new Error(result.error);
 		}
 		if (result.apiKey) {
-			return { apiKey: result.apiKey, headers: result.headers };
+			return {
+				apiKey: result.apiKey,
+				headers: mergeProviderAttributionHeaders(model, this.settingsManager, result.headers),
+			};
 		}
 
 		const isOAuth = this._modelRegistry.isUsingOAuth(model);
@@ -1864,8 +1868,13 @@ export class AgentSession {
 				return;
 			}
 
-			const authResult = await this._modelRegistry.getApiKeyAndHeaders(this.model);
-			if (!authResult.ok || !authResult.apiKey) {
+			let apiKey: string;
+			let headers: Record<string, string> | undefined;
+			try {
+				const auth = await this._getRequiredRequestAuth(this.model);
+				apiKey = auth.apiKey;
+				headers = auth.headers;
+			} catch {
 				this._emit({
 					type: "compaction_end",
 					reason,
@@ -1875,7 +1884,6 @@ export class AgentSession {
 				});
 				return;
 			}
-			const { apiKey, headers } = authResult;
 
 			const pathEntries = this.sessionManager.getBranch();
 

@@ -1,7 +1,13 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "noEmit": true
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "noEmit": true,
+    "paths": {
+      "@earendil-works/pi-agent-core": ["../agent/src/index.ts"],
+      "@earendil-works/pi-ai": ["../ai/src/index.ts"],
+      "@earendil-works/pi-tui": ["../tui/src/index.ts"]
+    }
   },
   "include": ["src/**/*"]
 }
