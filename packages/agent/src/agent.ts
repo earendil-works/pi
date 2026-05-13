@@ -21,6 +21,7 @@ import type {
 	AgentTool,
 	BeforeToolCallContext,
 	BeforeToolCallResult,
+	ShouldStopAfterTurnContext,
 	StreamFn,
 	ToolExecutionMode,
 } from "./types.js";
@@ -105,6 +106,7 @@ export interface AgentOptions {
 	prepareNextTurn?: (
 		signal?: AbortSignal,
 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+	shouldStopAfterTurn?: (context: ShouldStopAfterTurnContext) => boolean | Promise<boolean>;
 	steeringMode?: QueueMode;
 	followUpMode?: QueueMode;
 	sessionId?: string;
@@ -182,6 +184,7 @@ export class Agent {
 	public prepareNextTurn?: (
 		signal?: AbortSignal,
 	) => Promise<AgentLoopTurnUpdate | undefined> | AgentLoopTurnUpdate | undefined;
+	public shouldStopAfterTurn?: (context: ShouldStopAfterTurnContext) => boolean | Promise<boolean>;
 	private activeRun?: ActiveRun;
 	/** Session identifier forwarded to providers for cache-aware backends. */
 	public sessionId?: string;
@@ -205,6 +208,7 @@ export class Agent {
 		this.beforeToolCall = options.beforeToolCall;
 		this.afterToolCall = options.afterToolCall;
 		this.prepareNextTurn = options.prepareNextTurn;
+		this.shouldStopAfterTurn = options.shouldStopAfterTurn;
 		this.steeringQueue = new PendingMessageQueue(options.steeringMode ?? "one-at-a-time");
 		this.followUpQueue = new PendingMessageQueue(options.followUpMode ?? "one-at-a-time");
 		this.sessionId = options.sessionId;
@@ -430,6 +434,9 @@ export class Agent {
 			beforeToolCall: this.beforeToolCall,
 			afterToolCall: this.afterToolCall,
 			prepareNextTurn: this.prepareNextTurn ? async () => await this.prepareNextTurn?.(this.signal) : undefined,
+			shouldStopAfterTurn: this.shouldStopAfterTurn
+				? async (ctx) => (await this.shouldStopAfterTurn?.(ctx)) ?? false
+				: undefined,
 			convertToLlm: this.convertToLlm,
 			transformContext: this.transformContext,
 			getApiKey: this.getApiKey,
