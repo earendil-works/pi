@@ -1,6 +1,5 @@
 import chalk from "chalk";
-import { spawnSync } from "child_process";
-import extractZip from "extract-zip";
+import { type SpawnSyncReturns, spawnSync } from "child_process";
 import { chmodSync, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "fs";
 import { arch, platform } from "os";
 import { join } from "path";
@@ -159,6 +158,85 @@ function findBinaryRecursively(rootDir: string, binaryFileName: string): string 
 	return null;
 }
 
+function formatSpawnFailure(result: SpawnSyncReturns<Buffer>): string {
+	if (result.error?.message) {
+		return result.error.message;
+	}
+	const stderr = result.stderr?.toString().trim();
+	if (stderr) {
+		return stderr;
+	}
+	const stdout = result.stdout?.toString().trim();
+	if (stdout) {
+		return stdout;
+	}
+	return `exit status ${result.status ?? "unknown"}`;
+}
+
+function runExtractionCommand(command: string, args: string[]): string | null {
+	const result = spawnSync(command, args, { stdio: "pipe" });
+	if (!result.error && result.status === 0) {
+		return null;
+	}
+	return `${command}: ${formatSpawnFailure(result)}`;
+}
+
+function extractTarGzArchive(archivePath: string, extractDir: string, assetName: string): void {
+	const failure = runExtractionCommand("tar", ["xzf", archivePath, "-C", extractDir]);
+	if (failure) {
+		throw new Error(`Failed to extract ${assetName}: ${failure}`);
+	}
+}
+
+function getWindowsTarCommand(): string {
+	const systemRoot = process.env.SystemRoot ?? process.env.WINDIR;
+	if (systemRoot) {
+		const systemTar = join(systemRoot, "System32", "tar.exe");
+		if (existsSync(systemTar)) {
+			return systemTar;
+		}
+	}
+	return "tar.exe";
+}
+
+function extractZipArchive(archivePath: string, extractDir: string, assetName: string): void {
+	const failures: string[] = [];
+
+	if (platform() === "win32") {
+		// Windows ships bsdtar as tar.exe, which supports zip files. Prefer the
+		// System32 binary over Git Bash's GNU tar, which does not handle zip archives.
+		const tarFailure = runExtractionCommand(getWindowsTarCommand(), ["xf", archivePath, "-C", extractDir]);
+		if (!tarFailure) return;
+		failures.push(tarFailure);
+
+		const script =
+			"& { param($archive, $destination) $ErrorActionPreference = 'Stop'; Expand-Archive -LiteralPath $archive -DestinationPath $destination -Force }";
+		const powershellFailure = runExtractionCommand("powershell.exe", [
+			"-NoLogo",
+			"-NoProfile",
+			"-NonInteractive",
+			"-ExecutionPolicy",
+			"Bypass",
+			"-Command",
+			script,
+			archivePath,
+			extractDir,
+		]);
+		if (!powershellFailure) return;
+		failures.push(powershellFailure);
+	} else {
+		const unzipFailure = runExtractionCommand("unzip", ["-q", archivePath, "-d", extractDir]);
+		if (!unzipFailure) return;
+		failures.push(unzipFailure);
+
+		const tarFailure = runExtractionCommand("tar", ["xf", archivePath, "-C", extractDir]);
+		if (!tarFailure) return;
+		failures.push(tarFailure);
+	}
+
+	throw new Error(`Failed to extract ${assetName}: ${failures.join("; ")}`);
+}
+
 // Download and install a tool
 async function downloadTool(tool: "fd" | "rg"): Promise<string> {
 	const config = TOOLS[tool];
@@ -197,13 +275,9 @@ async function downloadTool(tool: "fd" | "rg"): Promise<string> {
 
 	try {
 		if (assetName.endsWith(".tar.gz")) {
-			const extractResult = spawnSync("tar", ["xzf", archivePath, "-C", extractDir], { stdio: "pipe" });
-			if (extractResult.error || extractResult.status !== 0) {
-				const errMsg = extractResult.error?.message ?? extractResult.stderr?.toString().trim() ?? "unknown error";
-				throw new Error(`Failed to extract ${assetName}: ${errMsg}`);
-			}
+			extractTarGzArchive(archivePath, extractDir, assetName);
 		} else if (assetName.endsWith(".zip")) {
-			await extractZip(archivePath, { dir: extractDir });
+			extractZipArchive(archivePath, extractDir, assetName);
 		} else {
 			throw new Error(`Unsupported archive format: ${assetName}`);
 		}
