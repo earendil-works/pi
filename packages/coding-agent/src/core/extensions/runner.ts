@@ -44,6 +44,8 @@ import type {
 	ResolvedCommand,
 	ResourcesDiscoverEvent,
 	ResourcesDiscoverResult,
+	RetryWatchdogEvent,
+	RetryWatchdogEventResult,
 	SessionBeforeCompactResult,
 	SessionBeforeForkResult,
 	SessionBeforeSwitchResult,
@@ -122,6 +124,7 @@ type RunnerEmitEvent = Exclude<
 	| BeforeAgentStartEvent
 	| MessageEndEvent
 	| ResourcesDiscoverEvent
+	| RetryWatchdogEvent
 	| InputEvent
 >;
 
@@ -751,6 +754,36 @@ export class ExtensionRunner {
 		}
 
 		return modified ? currentMessage : undefined;
+	}
+
+	async emitRetryWatchdog(event: RetryWatchdogEvent): Promise<RetryWatchdogEventResult | undefined> {
+		const ctx = this.createContext();
+		let result: RetryWatchdogEventResult | undefined;
+
+		for (const ext of this.extensions) {
+			const handlers = ext.handlers.get("retry_watchdog");
+			if (!handlers || handlers.length === 0) continue;
+
+			for (const handler of handlers) {
+				try {
+					const handlerResult = (await handler(event, ctx)) as RetryWatchdogEventResult | undefined;
+					if (!handlerResult) continue;
+					result = { ...result, ...handlerResult };
+					if (handlerResult.cancel) return result;
+				} catch (err) {
+					const message = err instanceof Error ? err.message : String(err);
+					const stack = err instanceof Error ? err.stack : undefined;
+					this.emitError({
+						extensionPath: ext.path,
+						event: "retry_watchdog",
+						error: message,
+						stack,
+					});
+				}
+			}
+		}
+
+		return result;
 	}
 
 	async emitToolResult(event: ToolResultEvent): Promise<ToolResultEventResult | undefined> {

@@ -631,6 +631,28 @@ pi.on("after_provider_response", (event, ctx) => {
 
 Header availability depends on provider and transport. Providers that abstract HTTP responses may not expose headers.
 
+#### retry_watchdog
+
+Fired by Pi's retry heartbeat when the agent is idle and the latest assistant message is a retryable terminal provider/API error that the normal event-driven retry path did not recover. This hook lets extensions observe, cancel, or tune watchdog-triggered recovery without replacing Pi's normal retry behavior.
+
+```typescript
+pi.on("retry_watchdog", async (event, ctx) => {
+  // event.message - terminal assistant error message
+  // event.errorMessage - convenience copy of message.errorMessage
+  // event.attempt / event.maxAttempts - retry attempt about to start
+
+  ctx.ui.notify(`Retry watchdog saw: ${event.errorMessage}`, "warning");
+
+  // Optional: suppress Pi's built-in watchdog retry for this terminal error
+  // return { cancel: true };
+
+  // Optional: override delay before the watchdog retry attempt
+  // return { delayMs: 10_000 };
+});
+```
+
+Use this for custom escalation, model/provider switching, scheduled wake-ups, or extension-owned retry policies. Return `{ cancel: true }` only if your extension will handle recovery itself; Pi suppresses repeated watchdog retries for that same terminal error.
+
 ### Model Events
 
 #### model_select
