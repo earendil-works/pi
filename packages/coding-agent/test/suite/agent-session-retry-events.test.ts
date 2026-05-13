@@ -141,6 +141,51 @@ describe("AgentSession retry and event characterization", () => {
 		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
 	});
 
+	it("fires retry_watchdog extension hook and honors cancellation", async () => {
+		const watchdogEvents: Array<{ errorMessage: string; attempt: number; maxAttempts: number }> = [];
+		const harness = await createHarness({
+			settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 1, watchdogIntervalMs: 5 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("retry_watchdog", (event) => {
+						watchdogEvents.push({
+							errorMessage: event.errorMessage,
+							attempt: event.attempt,
+							maxAttempts: event.maxAttempts,
+						});
+						return { cancel: true };
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+		harness.setResponses([fauxAssistantMessage("", { stopReason: "error", errorMessage: "overloaded_error" })]);
+
+		const sessionWithPrivates = harness.session as unknown as {
+			_isRetryableError: (message: unknown) => boolean;
+		};
+		const originalIsRetryableError = sessionWithPrivates._isRetryableError.bind(harness.session);
+		sessionWithPrivates._isRetryableError = () => false;
+
+		await harness.session.prompt("test");
+		expect(harness.faux.state.callCount).toBe(1);
+
+		sessionWithPrivates._isRetryableError = originalIsRetryableError;
+		await new Promise<void>((resolve, reject) => {
+			const deadline = Date.now() + 500;
+			const poll = () => {
+				if (watchdogEvents.length > 0) return resolve();
+				if (Date.now() > deadline) return reject(new Error("retry_watchdog hook did not fire"));
+				setTimeout(poll, 10);
+			};
+			poll();
+		});
+
+		expect(watchdogEvents).toEqual([{ errorMessage: "overloaded_error", attempt: 1, maxAttempts: 3 }]);
+		expect(harness.faux.state.callCount).toBe(1);
+		expect(harness.eventsOfType("auto_retry_start")).toEqual([]);
+	});
+
 	it("cancels retry sleep when abortRetry is called", async () => {
 		const harness = await createHarness({ settings: { retry: { enabled: true, maxRetries: 3, baseDelayMs: 100 } } });
 		harnesses.push(harness);

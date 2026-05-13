@@ -2453,7 +2453,28 @@ export class AgentSession {
 
 		this._retryWatchdogRunning = true;
 		try {
-			await this._handleRetryableError(msg);
+			const retrySettings = this.settingsManager.getRetrySettings();
+			const hookResult = this._extensionRunner.hasHandlers("retry_watchdog")
+				? await this._extensionRunner.emitRetryWatchdog({
+						type: "retry_watchdog",
+						message: msg,
+						errorMessage: msg.errorMessage ?? "Unknown error",
+						attempt: this._retryAttempt + 1,
+						maxAttempts: retrySettings.maxRetries,
+					})
+				: undefined;
+
+			if (hookResult?.cancel) {
+				this._retryExhaustedErrorKey = key;
+				return;
+			}
+
+			await this._handleRetryableError(msg, {
+				delayMs:
+					typeof hookResult?.delayMs === "number" && Number.isFinite(hookResult.delayMs) && hookResult.delayMs >= 0
+						? Math.round(hookResult.delayMs)
+						: undefined,
+			});
 		} finally {
 			this._retryWatchdogRunning = false;
 		}
@@ -2481,7 +2502,7 @@ export class AgentSession {
 	 * Handle retryable errors with exponential backoff.
 	 * @returns true if retry was initiated, false if max retries exceeded or disabled
 	 */
-	private async _handleRetryableError(message: AssistantMessage): Promise<boolean> {
+	private async _handleRetryableError(message: AssistantMessage, options?: { delayMs?: number }): Promise<boolean> {
 		const settings = this.settingsManager.getRetrySettings();
 		if (!settings.enabled) {
 			this._resolveRetry();
@@ -2514,7 +2535,7 @@ export class AgentSession {
 			return false;
 		}
 
-		const delayMs = settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
+		const delayMs = options?.delayMs ?? settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
 
 		this._emit({
 			type: "auto_retry_start",

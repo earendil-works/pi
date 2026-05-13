@@ -17,6 +17,7 @@ import type {
 } from "@earendil-works/pi-agent-core";
 import type {
 	Api,
+	AssistantMessage,
 	AssistantMessageEvent,
 	AssistantMessageEventStream,
 	Context,
@@ -725,6 +726,19 @@ export interface ThinkingLevelSelectEvent {
 	previousLevel: ThinkingLevel;
 }
 
+/** Fired when the retry watchdog heartbeat finds an idle terminal retryable provider error. */
+export interface RetryWatchdogEvent {
+	type: "retry_watchdog";
+	/** Terminal assistant error message that the watchdog is about to recover. */
+	message: AssistantMessage;
+	/** Convenience copy of message.errorMessage. */
+	errorMessage: string;
+	/** Retry attempt that would be started if the hook does not cancel. */
+	attempt: number;
+	/** Max retry attempts from retry.maxRetries. */
+	maxAttempts: number;
+}
+
 // ============================================================================
 // User Bash Events
 // ============================================================================
@@ -966,6 +980,7 @@ export type ExtensionEvent =
 	| ToolExecutionEndEvent
 	| ModelSelectEvent
 	| ThinkingLevelSelectEvent
+	| RetryWatchdogEvent
 	| UserBashEvent
 	| InputEvent
 	| ToolCallEvent
@@ -999,6 +1014,13 @@ export interface ToolResultEventResult {
 	content?: (TextContent | ImageContent)[];
 	details?: unknown;
 	isError?: boolean;
+}
+
+export interface RetryWatchdogEventResult {
+	/** Cancel Pi's built-in watchdog retry for this terminal error. The extension may handle recovery itself. */
+	cancel?: boolean;
+	/** Override the delay before Pi's watchdog-triggered retry attempt. */
+	delayMs?: number;
 }
 
 export interface MessageEndEventResult {
@@ -1120,6 +1142,7 @@ export interface ExtensionAPI {
 	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): void;
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent>): void;
 	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): void;
+	on(event: "retry_watchdog", handler: ExtensionHandler<RetryWatchdogEvent, RetryWatchdogEventResult>): void;
 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
