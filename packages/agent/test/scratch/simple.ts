@@ -7,11 +7,11 @@ import {
 	formatSkillsForSystemPrompt,
 	loadSourcedPromptTemplates,
 	loadSourcedSkills,
-	NodeExecutionEnv,
 	type PromptTemplate,
 	Session,
 	type Skill,
 } from "../../src/index.js";
+import { NodeExecutionEnv } from "../../src/node.js";
 
 type Source = { type: "project" | "user" | "path"; dir: string };
 type SourcedSkill = Skill & { source: Source };
