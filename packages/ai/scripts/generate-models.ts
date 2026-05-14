@@ -240,6 +240,13 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	if (model.provider === "openai-codex" && model.id === "gpt-5.1-codex-mini") {
 		mergeThinkingLevelMap(model, { minimal: "medium", low: "medium", medium: "medium", high: "high" });
 	}
+	if (model.provider === "openrouter" && model.id.startsWith("inception/mercury-2")) {
+		// Mercury 2 in instant mode (reasoning_effort: "none") disables tool calling.
+		// Mark "off" unsupported so the openai-completions provider omits the reasoning param
+		// instead of defaulting to {reasoning:{effort:"none"}} (see openai-completions.ts:575).
+		// Pi's low/medium/high pass through verbatim; OpenRouter normalizes to Mercury's vocabulary.
+		mergeThinkingLevelMap(model, { off: null });
+	}
 }
 
 function getAnthropicMessagesCompat(provider: string, modelId: string): AnthropicMessagesCompat | undefined {
