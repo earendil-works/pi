@@ -442,7 +442,7 @@ export class TUI extends Container {
 		this.stopped = false;
 		this.terminal.start(
 			(data) => this.handleInput(data),
-			() => this.requestRender(),
+			() => this.requestRender(!isTermuxSession()),
 		);
 		this.terminal.hideCursor();
 		this.queryCellSize();
