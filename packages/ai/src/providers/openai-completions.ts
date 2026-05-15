@@ -482,9 +482,14 @@ function createClient(
 				}
 			: headers;
 
+	let baseURL = isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model) : model.baseUrl;
+	if (model.provider === "litellm" && process.env.LITELLM_BASE_URL) {
+		baseURL = process.env.LITELLM_BASE_URL;
+	}
+
 	return new OpenAI({
 		apiKey,
-		baseURL: isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model) : model.baseUrl,
+		baseURL,
 		dangerouslyAllowBrowser: true,
 		defaultHeaders,
 	});
