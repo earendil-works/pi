@@ -16,9 +16,10 @@ export interface SystemNotificationMessage {
 	timestamp: string;
 }
 
-// Extend CustomAgentMessages interface via declaration merging
-// This must target pi-agent-core where CustomAgentMessages is defined
-declare module "@earendil-works/pi-agent-core" {
+// Extend CustomAgentMessages interface via declaration merging.
+// Must target the types submodule where CustomAgentMessages and AgentMessage
+// are defined (not index.d.ts which only re-exports them).
+declare module "@earendil-works/pi-agent-core/types" {
 	interface CustomAgentMessages {
 		"system-notification": SystemNotificationMessage;
 	}
