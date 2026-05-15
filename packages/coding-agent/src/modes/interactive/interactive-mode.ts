@@ -2852,6 +2852,10 @@ export class InteractiveMode {
 					(spinner) => theme.fg("accent", spinner),
 					(text) => theme.fg("muted", text),
 					label,
+					{
+						frames: ["▰▱▱▱▱▱▱▱▱▱", "▰▰▱▱▱▱▱▱▱▱", "▰▰▰▱▱▱▱▱▱▱", "▰▰▰▰▱▱▱▱▱▱", "▰▰▰▰▰▱▱▱▱▱", "▰▰▰▰▰▰▱▱▱▱", "▰▰▰▰▰▰▰▱▱▱", "▰▰▰▰▰▰▰▰▱▱", "▰▰▰▰▰▰▰▰▰▱", "▰▰▰▰▰▰▰▰▰▰", "▱▰▰▰▰▰▰▰▰▰", "▱▱▰▰▰▰▰▰▰▰", "▱▱▱▰▰▰▰▰▰▰", "▱▱▱▱▰▰▰▰▰▰", "▱▱▱▱▱▰▰▰▰▰", "▱▱▱▱▱▱▰▰▰▰", "▱▱▱▱▱▱▱▰▰▰", "▱▱▱▱▱▱▱▱▰▰", "▱▱▱▱▱▱▱▱▱▰"],
+						intervalMs: 100,
+					},
 				);
 				this.statusContainer.addChild(this.autoCompactionLoader);
 				this.ui.requestRender();
