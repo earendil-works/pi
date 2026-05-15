@@ -8,12 +8,19 @@ import { streamAnthropic } from "../src/providers/anthropic.js";
 import type { Context, Model, Tool } from "../src/types.js";
 
 const originalFireworksApiKey = process.env.FIREWORKS_API_KEY;
+const originalFirepassApiKey = process.env.FIREPASS_API_KEY;
 
 afterEach(() => {
 	if (originalFireworksApiKey === undefined) {
 		delete process.env.FIREWORKS_API_KEY;
 	} else {
 		process.env.FIREWORKS_API_KEY = originalFireworksApiKey;
+	}
+
+	if (originalFirepassApiKey === undefined) {
+		delete process.env.FIREPASS_API_KEY;
+	} else {
+		process.env.FIREPASS_API_KEY = originalFirepassApiKey;
 	}
 });
 
@@ -51,6 +58,37 @@ describe("Fireworks models", () => {
 
 		expect(findEnvKeys("fireworks")).toEqual(["FIREWORKS_API_KEY"]);
 		expect(getEnvApiKey("fireworks")).toBe("test-fireworks-key");
+	});
+
+	it("registers the FirePass Kimi K2.6 Turbo router model", () => {
+		const model = getModel("firepass", "accounts/fireworks/routers/kimi-k2p6-turbo");
+
+		expect(model).toBeDefined();
+		expect(model.api).toBe("openai-completions");
+		expect(model.provider).toBe("firepass");
+		expect(model.baseUrl).toBe("https://api.fireworks.ai/inference/v1");
+		expect(model.reasoning).toBe(true);
+		expect(model.input).toEqual(["text", "image"]);
+		expect(model.contextWindow).toBe(262000);
+		expect(model.maxTokens).toBe(262000);
+		expect(model.cost).toEqual({
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+		});
+		expect(model.compat).toEqual({
+			supportsDeveloperRole: false,
+			maxTokensField: "max_tokens",
+			sendSessionAffinityHeaders: true,
+		});
+	});
+
+	it("resolves FIREPASS_API_KEY from the environment", () => {
+		process.env.FIREPASS_API_KEY = "test-firepass-key";
+
+		expect(findEnvKeys("firepass")).toEqual(["FIREPASS_API_KEY"]);
+		expect(getEnvApiKey("firepass")).toBe("test-firepass-key");
 	});
 
 	it("sets Fireworks-specific compat for session affinity and unsupported tool fields", () => {

@@ -117,6 +117,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		"moonshotai-cn": "MOONSHOT_API_KEY",
 		huggingface: "HF_TOKEN",
 		fireworks: "FIREWORKS_API_KEY",
+		firepass: "FIREPASS_API_KEY",
 		together: "TOGETHER_API_KEY",
 		opencode: "OPENCODE_API_KEY",
 		"opencode-go": "OPENCODE_API_KEY",
