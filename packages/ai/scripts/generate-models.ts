@@ -117,6 +117,15 @@ const TOGETHER_TOGGLE_REASONING_LEVEL_MAP = {
 
 const AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1";
 const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
+const NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1";
+const NVIDIA_OPENAI_COMPAT: OpenAICompletionsCompat = {
+	supportsStore: false,
+	supportsDeveloperRole: false,
+	supportsReasoningEffort: false,
+	maxTokensField: "max_tokens",
+	supportsStrictMode: false,
+	supportsLongCacheRetention: false,
+};
 const ZAI_TOOL_STREAM_UNSUPPORTED_MODELS = new Set(["glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v"]);
 const EAGER_TOOL_INPUT_STREAMING_UNSUPPORTED_ANTHROPIC_MODELS = new Set([
 	"github-copilot:claude-haiku-4.5",
@@ -1506,6 +1515,90 @@ async function generateModels() {
 			allModels.splice(i, 1);
 		}
 	}
+
+
+	// NVIDIA NIM is OpenAI-compatible and exposes canonical owner/name model IDs.
+	const nvidiaModels: Model<"openai-completions">[] = [
+		{
+			id: "nvidia/llama-3.3-nemotron-super-49b-v1.5",
+			name: "Llama 3.3 Nemotron Super 49B v1.5",
+			api: "openai-completions",
+			provider: "nvidia",
+			baseUrl: NVIDIA_BASE_URL,
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 131072,
+			maxTokens: 32768,
+			compat: NVIDIA_OPENAI_COMPAT,
+		},
+		{
+			id: "meta/llama-3.1-70b-instruct",
+			name: "Llama 3.1 70B Instruct",
+			api: "openai-completions",
+			provider: "nvidia",
+			baseUrl: NVIDIA_BASE_URL,
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 131072,
+			maxTokens: 32768,
+			compat: NVIDIA_OPENAI_COMPAT,
+		},
+		{
+			id: "meta/llama-3.3-70b-instruct",
+			name: "Llama 3.3 70B Instruct",
+			api: "openai-completions",
+			provider: "nvidia",
+			baseUrl: NVIDIA_BASE_URL,
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 131072,
+			maxTokens: 32768,
+			compat: NVIDIA_OPENAI_COMPAT,
+		},
+		{
+			id: "deepseek-ai/deepseek-r1",
+			name: "DeepSeek R1",
+			api: "openai-completions",
+			provider: "nvidia",
+			baseUrl: NVIDIA_BASE_URL,
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 131072,
+			maxTokens: 32768,
+			compat: NVIDIA_OPENAI_COMPAT,
+		},
+		{
+			id: "moonshotai/kimi-k2-instruct",
+			name: "Kimi K2 Instruct",
+			api: "openai-completions",
+			provider: "nvidia",
+			baseUrl: NVIDIA_BASE_URL,
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 1048576,
+			maxTokens: 32768,
+			compat: NVIDIA_OPENAI_COMPAT,
+		},
+		{
+			id: "microsoft/phi-4-mini-instruct",
+			name: "Phi 4 Mini Instruct",
+			api: "openai-completions",
+			provider: "nvidia",
+			baseUrl: NVIDIA_BASE_URL,
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 128000,
+			maxTokens: 16384,
+			compat: NVIDIA_OPENAI_COMPAT,
+		},
+	];
+	allModels.push(...nvidiaModels);
 
 	// OpenAI Codex (ChatGPT OAuth) models
 	// NOTE: These are not fetched from models.dev; we keep a small, explicit list to avoid aliases.
