@@ -264,13 +264,15 @@ LITELLM_API_KEY=dummy pi --provider litellm --model "anthropic/claude-sonnet-4-6
 
 `LITELLM_API_KEY` is required by pi but can be any value when the proxy has no auth enabled. Set it to a real virtual key if the proxy requires authentication.
 
-**Custom proxy URL:**
-
-By default, pi connects to `http://localhost:4000/v1`. Override with:
+**Already have a hosted LiteLLM server?** Skip step 1 and point pi at it:
 
 ```bash
-export LITELLM_BASE_URL=https://my-litellm-server.com/v1
+export LITELLM_BASE_URL=https://my-company-litellm.example.com/v1
+export LITELLM_API_KEY=sk-my-virtual-key
+pi --provider litellm --model "anthropic/claude-sonnet-4-6"
 ```
+
+By default, pi connects to `http://localhost:4000/v1`. `LITELLM_BASE_URL` overrides this for hosted, Docker, or Kubernetes deployments.
 
 **Available curated models:** `anthropic/claude-sonnet-4-6`, `openai/gpt-4o`, `openai/gpt-4.1`, `google/gemini-2.5-flash`, `groq/llama-4-scout-17b-16e-instruct`, `mistral/mistral-large-latest`. Any model configured in your LiteLLM proxy can be used with these model IDs.
 
