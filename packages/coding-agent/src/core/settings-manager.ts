@@ -78,6 +78,7 @@ export interface Settings {
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+	lockDefaults?: boolean;
 	transport?: TransportSetting; // default: "auto"
 	steeringMode?: "all" | "one-at-a-time";
 	followUpMode?: "all" | "one-at-a-time";
@@ -595,19 +596,32 @@ export class SettingsManager {
 		return this.settings.defaultModel;
 	}
 
+	getLockDefaults(): boolean {
+		return this.settings.lockDefaults ?? false;
+	}
+
+	setLockDefaults(locked: boolean): void {
+		this.globalSettings.lockDefaults = locked;
+		this.markModified("lockDefaults");
+		this.save();
+	}
+
 	setDefaultProvider(provider: string): void {
+		if (this.getLockDefaults()) return;
 		this.globalSettings.defaultProvider = provider;
 		this.markModified("defaultProvider");
 		this.save();
 	}
 
 	setDefaultModel(modelId: string): void {
+		if (this.getLockDefaults()) return;
 		this.globalSettings.defaultModel = modelId;
 		this.markModified("defaultModel");
 		this.save();
 	}
 
 	setDefaultModelAndProvider(provider: string, modelId: string): void {
+		if (this.getLockDefaults()) return;
 		this.globalSettings.defaultProvider = provider;
 		this.globalSettings.defaultModel = modelId;
 		this.markModified("defaultProvider");
@@ -650,6 +664,7 @@ export class SettingsManager {
 	}
 
 	setDefaultThinkingLevel(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh"): void {
+		if (this.getLockDefaults()) return;
 		this.globalSettings.defaultThinkingLevel = level;
 		this.markModified("defaultThinkingLevel");
 		this.save();

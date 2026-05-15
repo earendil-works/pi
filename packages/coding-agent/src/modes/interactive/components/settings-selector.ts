@@ -56,6 +56,7 @@ export interface SettingsConfig {
 	clearOnShrink: boolean;
 	showTerminalProgress: boolean;
 	warnings: WarningSettings;
+	lockDefaults: boolean;
 }
 
 export interface SettingsCallbacks {
@@ -83,6 +84,7 @@ export interface SettingsCallbacks {
 	onClearOnShrinkChange: (enabled: boolean) => void;
 	onShowTerminalProgressChange: (enabled: boolean) => void;
 	onWarningsChange: (warnings: WarningSettings) => void;
+	onLockDefaultsChange: (locked: boolean) => void;
 	onCancel: () => void;
 }
 
@@ -214,6 +216,13 @@ export class SettingsSelectorComponent extends Container {
 				label: "Auto-compact",
 				description: "Automatically compact context when it gets too large",
 				currentValue: config.autoCompact ? "true" : "false",
+				values: ["true", "false"],
+			},
+			{
+				id: "lock-defaults",
+				label: "Lock defaults",
+				description: "Prevent model/provider/thinking level changes from being saved to settings.json",
+				currentValue: config.lockDefaults ? "true" : "false",
 				values: ["true", "false"],
 			},
 			{
@@ -457,6 +466,9 @@ export class SettingsSelectorComponent extends Container {
 				switch (id) {
 					case "autocompact":
 						callbacks.onAutoCompactChange(newValue === "true");
+						break;
+					case "lock-defaults":
+						callbacks.onLockDefaultsChange(newValue === "true");
 						break;
 					case "show-images":
 						callbacks.onShowImagesChange(newValue === "true");

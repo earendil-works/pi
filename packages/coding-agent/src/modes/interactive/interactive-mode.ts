@@ -3822,6 +3822,7 @@ export class InteractiveMode {
 					clearOnShrink: this.settingsManager.getClearOnShrink(),
 					showTerminalProgress: this.settingsManager.getShowTerminalProgress(),
 					warnings: this.settingsManager.getWarnings(),
+					lockDefaults: this.settingsManager.getLockDefaults(),
 				},
 				{
 					onAutoCompactChange: (enabled) => {
@@ -3937,6 +3938,9 @@ export class InteractiveMode {
 					},
 					onWarningsChange: (warnings) => {
 						this.settingsManager.setWarnings(warnings);
+					},
+					onLockDefaultsChange: (locked) => {
+						this.settingsManager.setLockDefaults(locked);
 					},
 					onCancel: () => {
 						done();

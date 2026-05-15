@@ -316,4 +316,82 @@ describe("SettingsManager", () => {
 			expect(manager.getSessionDir()).toBe(join(homedir(), "sessions"));
 		});
 	});
+
+	describe("lockDefaults", () => {
+		it("should default to false", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getLockDefaults()).toBe(false);
+		});
+
+		it("should read lockDefaults from settings file", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ lockDefaults: true }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getLockDefaults()).toBe(true);
+		});
+
+		it("should persist lockDefaults when set", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ theme: "dark" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.setLockDefaults(true);
+			await manager.flush();
+			const saved = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			expect(saved.lockDefaults).toBe(true);
+		});
+
+		it("should block setDefaultModel when locked", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ lockDefaults: true, defaultModel: "claude-sonnet" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.setDefaultModel("gpt-4o");
+			await manager.flush();
+			const saved = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			expect(saved.defaultModel).toBe("claude-sonnet");
+		});
+
+		it("should block setDefaultProvider when locked", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ lockDefaults: true, defaultProvider: "anthropic" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.setDefaultProvider("openai");
+			await manager.flush();
+			const saved = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			expect(saved.defaultProvider).toBe("anthropic");
+		});
+
+		it("should block setDefaultModelAndProvider when locked", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(
+				settingsPath,
+				JSON.stringify({ lockDefaults: true, defaultProvider: "anthropic", defaultModel: "claude-sonnet" }),
+			);
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.setDefaultModelAndProvider("openai", "gpt-4o");
+			await manager.flush();
+			const saved = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			expect(saved.defaultProvider).toBe("anthropic");
+			expect(saved.defaultModel).toBe("claude-sonnet");
+		});
+
+		it("should block setDefaultThinkingLevel when locked", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ lockDefaults: true, defaultThinkingLevel: "low" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.setDefaultThinkingLevel("high");
+			await manager.flush();
+			const saved = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			expect(saved.defaultThinkingLevel).toBe("low");
+		});
+
+		it("should allow setDefaultModel when not locked", async () => {
+			const settingsPath = join(agentDir, "settings.json");
+			writeFileSync(settingsPath, JSON.stringify({ lockDefaults: false, defaultModel: "claude-sonnet" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.setDefaultModel("gpt-4o");
+			await manager.flush();
+			const saved = JSON.parse(readFileSync(settingsPath, "utf-8"));
+			expect(saved.defaultModel).toBe("gpt-4o");
+		});
+	});
 });
