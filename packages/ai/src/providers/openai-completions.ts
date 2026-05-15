@@ -882,7 +882,12 @@ export function convertMessages(
 				model.reasoning &&
 				(assistantMsg as { reasoning_content?: string }).reasoning_content === undefined
 			) {
-				(assistantMsg as { reasoning_content?: string }).reasoning_content = "";
+				// Preserve reasoning content from thinking blocks when available
+				if (nonEmptyThinkingBlocks.length > 0) {
+					(assistantMsg as { reasoning_content?: string }).reasoning_content = nonEmptyThinkingBlocks.map((block) => block.thinking).join("\n");
+				} else {
+					(assistantMsg as { reasoning_content?: string }).reasoning_content = "";
+				}
 			}
 			// Skip assistant messages that have no content and no tool calls.
 			// Some providers require "either content or tool_calls, but not none".
