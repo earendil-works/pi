@@ -74,6 +74,7 @@ pi
 | Xiaomi MiMo Token Plan (China) | `XIAOMI_TOKEN_PLAN_CN_API_KEY` | `xiaomi-token-plan-cn` |
 | Xiaomi MiMo Token Plan (Amsterdam) | `XIAOMI_TOKEN_PLAN_AMS_API_KEY` | `xiaomi-token-plan-ams` |
 | Xiaomi MiMo Token Plan (Singapore) | `XIAOMI_TOKEN_PLAN_SGP_API_KEY` | `xiaomi-token-plan-sgp` |
+| LiteLLM | `LITELLM_API_KEY` | `litellm` |
 
 Reference for environment variables and `auth.json` keys: [`const envMap`](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/env-api-keys.ts) in [`packages/ai/src/env-api-keys.ts`](https://github.com/earendil-works/pi-mono/blob/main/packages/ai/src/env-api-keys.ts).
 
@@ -226,6 +227,52 @@ export GOOGLE_CLOUD_LOCATION=us-central1
 ```
 
 Or set `GOOGLE_APPLICATION_CREDENTIALS` to a service account key file.
+
+### LiteLLM
+
+[LiteLLM](https://github.com/BerriAI/litellm) is an AI gateway proxy that routes requests to 100+ LLM providers through a single OpenAI-compatible endpoint.
+
+**1. Start the LiteLLM proxy:**
+
+```bash
+pip install 'litellm[proxy]'
+ANTHROPIC_API_KEY=sk-ant-... litellm --model anthropic/claude-sonnet-4-6 --port 4000
+```
+
+Or with a config file for multiple models:
+
+```yaml
+# litellm_config.yaml
+model_list:
+  - model_name: anthropic/claude-sonnet-4-6
+    litellm_params:
+      model: anthropic/claude-sonnet-4-6
+  - model_name: openai/gpt-4o
+    litellm_params:
+      model: openai/gpt-4o
+```
+
+```bash
+ANTHROPIC_API_KEY=... OPENAI_API_KEY=... litellm --config litellm_config.yaml --port 4000
+```
+
+**2. Run pi with the litellm provider:**
+
+```bash
+LITELLM_API_KEY=dummy pi --provider litellm --model "anthropic/claude-sonnet-4-6"
+```
+
+`LITELLM_API_KEY` is required by pi but can be any value when the proxy has no auth enabled. Set it to a real virtual key if the proxy requires authentication.
+
+**Custom proxy URL:**
+
+By default, pi connects to `http://localhost:4000/v1`. Override with:
+
+```bash
+export LITELLM_BASE_URL=https://my-litellm-server.com/v1
+```
+
+**Available curated models:** `anthropic/claude-sonnet-4-6`, `openai/gpt-4o`, `openai/gpt-4.1`, `google/gemini-2.5-flash`, `groq/llama-4-scout-17b-16e-instruct`, `mistral/mistral-large-latest`. Any model configured in your LiteLLM proxy can be used with these model IDs.
 
 ## Custom Providers
 
