@@ -4,6 +4,7 @@ import { randomUUID } from "crypto";
 import {
 	appendFileSync,
 	closeSync,
+	createReadStream,
 	existsSync,
 	mkdirSync,
 	openSync,
@@ -13,8 +14,9 @@ import {
 	statSync,
 	writeFileSync,
 } from "fs";
-import { readdir, readFile, stat } from "fs/promises";
+import { readdir, stat } from "fs/promises";
 import { join, resolve } from "path";
+import { createInterface } from "readline";
 import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.js";
 import {
 	type BashExecutionMessage,
@@ -507,108 +509,111 @@ function extractTextContent(message: Message): string {
 		.join(" ");
 }
 
-function getLastActivityTime(entries: FileEntry[]): number | undefined {
-	let lastActivityTime: number | undefined;
-
-	for (const entry of entries) {
-		if (entry.type !== "message") continue;
-
-		const message = (entry as SessionMessageEntry).message;
-		if (!isMessageWithContent(message)) continue;
-		if (message.role !== "user" && message.role !== "assistant") continue;
-
-		const msgTimestamp = (message as { timestamp?: number }).timestamp;
-		if (typeof msgTimestamp === "number") {
-			lastActivityTime = Math.max(lastActivityTime ?? 0, msgTimestamp);
-			continue;
-		}
-
-		const entryTimestamp = (entry as SessionEntryBase).timestamp;
-		if (typeof entryTimestamp === "string") {
-			const t = new Date(entryTimestamp).getTime();
-			if (!Number.isNaN(t)) {
-				lastActivityTime = Math.max(lastActivityTime ?? 0, t);
-			}
-		}
-	}
-
-	return lastActivityTime;
-}
-
-function getSessionModifiedDate(entries: FileEntry[], header: SessionHeader, statsMtime: Date): Date {
-	const lastActivityTime = getLastActivityTime(entries);
-	if (typeof lastActivityTime === "number" && lastActivityTime > 0) {
-		return new Date(lastActivityTime);
-	}
-
-	const headerTime = typeof header.timestamp === "string" ? new Date(header.timestamp).getTime() : NaN;
-	return !Number.isNaN(headerTime) ? new Date(headerTime) : statsMtime;
-}
+// Maximum number of non-empty lines from which message text is collected for
+// allMessagesText (used for name-filter search in the resume picker). Lines beyond
+// this cap still contribute to messageCount but their content is discarded, keeping
+// memory bounded even for very large session files.
+const SESSION_INFO_TEXT_LINE_CAP = 500;
 
 async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 	try {
-		const content = await readFile(filePath, "utf8");
-		const entries: FileEntry[] = [];
-		const lines = content.trim().split("\n");
-
-		for (const line of lines) {
-			if (!line.trim()) continue;
-			try {
-				entries.push(JSON.parse(line) as FileEntry);
-			} catch {
-				// Skip malformed lines
-			}
-		}
-
-		if (entries.length === 0) return null;
-		const header = entries[0];
-		if (header.type !== "session") return null;
-
 		const stats = await stat(filePath);
-		let messageCount = 0;
-		let firstMessage = "";
-		const allMessages: string[] = [];
+
+		// Stream line-by-line to avoid loading large session files into memory all at once.
+		const rl = createInterface({
+			input: createReadStream(filePath, { encoding: "utf8" }),
+			crlfDelay: Number.POSITIVE_INFINITY,
+		});
+
+		let lineIndex = 0;
+		let header: SessionHeader | null = null;
 		let name: string | undefined;
+		let firstMessage = "";
+		let messageCount = 0;
+		const collectedText: string[] = [];
+		let lastActivityTime: number | undefined;
+		let validHeader = true;
 
-		for (const entry of entries) {
-			// Extract session name (use latest, including explicit clears)
-			if (entry.type === "session_info") {
-				const infoEntry = entry as SessionInfoEntry;
-				name = infoEntry.name?.trim() || undefined;
+		try {
+			for await (const line of rl) {
+				if (!line.trim()) continue;
+				let entry: FileEntry;
+				try {
+					entry = JSON.parse(line) as FileEntry;
+				} catch {
+					lineIndex++;
+					continue;
+				}
+
+				if (lineIndex === 0) {
+					if (entry.type !== "session") {
+						validHeader = false;
+						break;
+					}
+					header = entry as SessionHeader;
+				} else {
+					if (entry.type === "session_info") {
+						name = (entry as SessionInfoEntry).name?.trim() || undefined;
+					}
+
+					if (entry.type === "message") {
+						messageCount++;
+
+						// Track last activity time from message timestamps (same logic as getLastActivityTime).
+						const msgEntry = entry as SessionMessageEntry;
+						const msgTimestamp = (msgEntry.message as { timestamp?: number }).timestamp;
+						if (typeof msgTimestamp === "number") {
+							lastActivityTime = Math.max(lastActivityTime ?? 0, msgTimestamp);
+						} else {
+							const entryTimestamp = (entry as SessionEntryBase).timestamp;
+							if (typeof entryTimestamp === "string") {
+								const t = new Date(entryTimestamp).getTime();
+								if (!Number.isNaN(t)) lastActivityTime = Math.max(lastActivityTime ?? 0, t);
+							}
+						}
+
+						if (lineIndex <= SESSION_INFO_TEXT_LINE_CAP) {
+							const message = msgEntry.message;
+							if (isMessageWithContent(message) && (message.role === "user" || message.role === "assistant")) {
+								const textContent = extractTextContent(message);
+								if (textContent) {
+									collectedText.push(textContent);
+									if (!firstMessage && message.role === "user") {
+										firstMessage = textContent;
+									}
+								}
+							}
+						}
+					}
+				}
+
+				lineIndex++;
 			}
-
-			if (entry.type !== "message") continue;
-			messageCount++;
-
-			const message = (entry as SessionMessageEntry).message;
-			if (!isMessageWithContent(message)) continue;
-			if (message.role !== "user" && message.role !== "assistant") continue;
-
-			const textContent = extractTextContent(message);
-			if (!textContent) continue;
-
-			allMessages.push(textContent);
-			if (!firstMessage && message.role === "user") {
-				firstMessage = textContent;
-			}
+		} finally {
+			rl.close();
 		}
 
-		const cwd = typeof (header as SessionHeader).cwd === "string" ? (header as SessionHeader).cwd : "";
-		const parentSessionPath = (header as SessionHeader).parentSession;
+		if (!validHeader || !header) return null;
 
-		const modified = getSessionModifiedDate(entries, header as SessionHeader, stats.mtime);
+		const modified =
+			typeof lastActivityTime === "number" && lastActivityTime > 0
+				? new Date(lastActivityTime)
+				: (() => {
+						const headerTime = new Date((header as SessionHeader).timestamp).getTime();
+						return !Number.isNaN(headerTime) ? new Date(headerTime) : stats.mtime;
+					})();
 
 		return {
 			path: filePath,
 			id: (header as SessionHeader).id,
-			cwd,
+			cwd: typeof (header as SessionHeader).cwd === "string" ? (header as SessionHeader).cwd : "",
 			name,
-			parentSessionPath,
+			parentSessionPath: (header as SessionHeader).parentSession,
 			created: new Date((header as SessionHeader).timestamp),
 			modified,
 			messageCount,
 			firstMessage: firstMessage || "(no messages)",
-			allMessagesText: allMessages.join(" "),
+			allMessagesText: collectedText.join(" "),
 		};
 	} catch {
 		return null;
@@ -616,6 +621,11 @@ async function buildSessionInfo(filePath: string): Promise<SessionInfo | null> {
 }
 
 export type SessionListProgress = (loaded: number, total: number) => void;
+
+// Maximum number of session files processed concurrently. Promise.all on thousands
+// of large files OOMs the V8 heap; a bounded worker pool keeps peak memory proportional
+// to this limit rather than to the total session count.
+const MAX_CONCURRENT_SESSION_LOADS = 20;
 
 async function listSessionsFromDir(
 	dir: string,
@@ -634,18 +644,22 @@ async function listSessionsFromDir(
 		const total = progressTotal ?? files.length;
 
 		let loaded = 0;
-		const results = await Promise.all(
-			files.map(async (file) => {
-				const info = await buildSessionInfo(file);
+		const results: (SessionInfo | null)[] = new Array(files.length).fill(null);
+		let nextIndex = 0;
+
+		async function worker(): Promise<void> {
+			while (nextIndex < files.length) {
+				const i = nextIndex++;
+				results[i] = await buildSessionInfo(files[i]);
 				loaded++;
 				onProgress?.(progressOffset + loaded, total);
-				return info;
-			}),
-		);
-		for (const info of results) {
-			if (info) {
-				sessions.push(info);
 			}
+		}
+
+		await Promise.all(Array.from({ length: Math.min(MAX_CONCURRENT_SESSION_LOADS, files.length) }, () => worker()));
+
+		for (const info of results) {
+			if (info) sessions.push(info);
 		}
 	} catch {
 		// Return empty list on error
