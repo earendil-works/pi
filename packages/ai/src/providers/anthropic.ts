@@ -1063,21 +1063,17 @@ function convertMessages(
 						continue;
 					}
 					if (block.thinking.trim().length === 0) continue;
-					// If thinking signature is missing/empty (e.g., from aborted stream),
-					// convert to plain text block without <thinking> tags to avoid API rejection
-					// and prevent Claude from mimicking the tags in responses
+					// Drop unsigned thinking blocks: they cannot be replayed as Anthropic thinking
+					// (a valid signature is required) and converting them to visible text leaks
+					// internal reasoning into the conversation context.
 					if (!block.thinkingSignature || block.thinkingSignature.trim().length === 0) {
-						blocks.push({
-							type: "text",
-							text: sanitizeSurrogates(block.thinking),
-						});
-					} else {
-						blocks.push({
-							type: "thinking",
-							thinking: sanitizeSurrogates(block.thinking),
-							signature: block.thinkingSignature,
-						});
+						continue;
 					}
+					blocks.push({
+						type: "thinking",
+						thinking: sanitizeSurrogates(block.thinking),
+						signature: block.thinkingSignature,
+					});
 				} else if (block.type === "toolCall") {
 					blocks.push({
 						type: "tool_use",
