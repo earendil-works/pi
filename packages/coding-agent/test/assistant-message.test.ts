@@ -1,5 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test } from "vitest";
+import { setScreenReaderMode } from "../src/modes/interactive/accessibility.js";
 import { AssistantMessageComponent } from "../src/modes/interactive/components/assistant-message.js";
 import { initTheme } from "../src/modes/interactive/theme/theme.js";
 
@@ -28,6 +29,10 @@ function createAssistantMessage(content: AssistantMessage["content"]): Assistant
 }
 
 describe("AssistantMessageComponent", () => {
+	afterEach(() => {
+		setScreenReaderMode(undefined);
+	});
+
 	test("adds OSC 133 zone markers to assistant messages without tool calls", () => {
 		initTheme("dark");
 
@@ -53,5 +58,31 @@ describe("AssistantMessageComponent", () => {
 		expect(rendered.includes(OSC133_ZONE_START)).toBe(false);
 		expect(rendered.includes(OSC133_ZONE_END)).toBe(false);
 		expect(rendered.includes(OSC133_ZONE_FINAL)).toBe(false);
+	});
+
+	test("trims leading and trailing whitespace in screen reader mode", () => {
+		initTheme("dark");
+		setScreenReaderMode("flat");
+
+		const lines = new AssistantMessageComponent(
+			createAssistantMessage([{ type: "text", text: "\n  hello  \n" }]),
+		).render(20);
+
+		expect(lines).toEqual([`${OSC133_ZONE_END}${OSC133_ZONE_FINAL}${OSC133_ZONE_START}Assistant: hello`]);
+	});
+
+	test("does not trim middle response lines in screen reader mode", () => {
+		initTheme("dark");
+		setScreenReaderMode("flat");
+
+		const lines = new AssistantMessageComponent(
+			createAssistantMessage([{ type: "text", text: "one two three four five six seven eight nine ten" }]),
+		).render(20);
+
+		expect(lines).toEqual([
+			`${OSC133_ZONE_START}Assistant: one two three four `,
+			" five six seven     ",
+			`${OSC133_ZONE_END}${OSC133_ZONE_FINAL} eight nine ten`,
+		]);
 	});
 });

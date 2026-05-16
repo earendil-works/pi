@@ -8,6 +8,7 @@ import { getCustomThemesDir, getThemesDir } from "../../../config.js";
 import type { SourceInfo } from "../../../core/source-info.js";
 import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.js";
 import { highlight, supportsLanguage } from "../../../utils/syntax-highlight.js";
+import { getSelectionPrefix } from "../accessibility.js";
 
 // ============================================================================
 // Types & Schema
@@ -1117,7 +1118,7 @@ export function getMarkdownTheme(): MarkdownTheme {
 
 export function getSelectListTheme(): SelectListTheme {
 	return {
-		selectedPrefix: (text: string) => theme.fg("accent", text),
+		selectedPrefix: (_text: string) => theme.fg("accent", getSelectionPrefix()),
 		selectedText: (text: string) => theme.fg("accent", text),
 		description: (text: string) => theme.fg("muted", text),
 		scrollInfo: (text: string) => theme.fg("muted", text),
@@ -1137,7 +1138,7 @@ export function getSettingsListTheme(): import("@earendil-works/pi-tui").Setting
 		label: (text: string, selected: boolean) => (selected ? theme.fg("accent", text) : text),
 		value: (text: string, selected: boolean) => (selected ? theme.fg("accent", text) : theme.fg("muted", text)),
 		description: (text: string) => theme.fg("dim", text),
-		cursor: theme.fg("accent", "→ "),
+		cursor: theme.fg("accent", getSelectionPrefix()),
 		hint: (text: string) => theme.fg("dim", text),
 	};
 }

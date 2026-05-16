@@ -1,5 +1,6 @@
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { Container, Markdown, type MarkdownTheme, Spacer, Text } from "@earendil-works/pi-tui";
+import { isFlatScreenReaderMode } from "../accessibility.js";
 import { getMarkdownTheme, theme } from "../theme/theme.js";
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -61,6 +62,27 @@ export class AssistantMessageComponent extends Container {
 
 	override render(width: number): string[] {
 		const lines = super.render(width);
+		if (isFlatScreenReaderMode()) {
+			while (lines.length > 0 && lines[0].trim() === "") {
+				lines.shift();
+			}
+			while (lines.length > 0 && lines[lines.length - 1].trim() === "") {
+				lines.pop();
+			}
+			if (lines.length > 0) {
+				const hasAssistantLabel = lines[0].trimEnd() === "Assistant:";
+				const firstResponseLine = hasAssistantLabel ? 1 : 0;
+				if (firstResponseLine < lines.length) {
+					lines[firstResponseLine] = lines[firstResponseLine].trimStart();
+					lines[lines.length - 1] = lines[lines.length - 1].trimEnd();
+					if (hasAssistantLabel) {
+						lines.splice(0, 2, `Assistant: ${lines[firstResponseLine]}`);
+					}
+				} else if (hasAssistantLabel) {
+					lines[0] = lines[0].trimEnd();
+				}
+			}
+		}
 		if (this.hasToolCalls || lines.length === 0) {
 			return lines;
 		}
@@ -80,8 +102,16 @@ export class AssistantMessageComponent extends Container {
 			(c) => (c.type === "text" && c.text.trim()) || (c.type === "thinking" && c.thinking.trim()),
 		);
 
+		const flatScreenReaderMode = isFlatScreenReaderMode();
+		const horizontalPadding = 1;
+
 		if (hasVisibleContent) {
-			this.contentContainer.addChild(new Spacer(1));
+			if (!flatScreenReaderMode) {
+				this.contentContainer.addChild(new Spacer(1));
+			}
+			if (flatScreenReaderMode) {
+				this.contentContainer.addChild(new Text("Assistant:", 0, 0));
+			}
 		}
 
 		// Render content in order
@@ -90,7 +120,7 @@ export class AssistantMessageComponent extends Container {
 			if (content.type === "text" && content.text.trim()) {
 				// Assistant text messages with no background - trim the text
 				// Set paddingY=0 to avoid extra spacing before tool executions
-				this.contentContainer.addChild(new Markdown(content.text.trim(), 1, 0, this.markdownTheme));
+				this.contentContainer.addChild(new Markdown(content.text.trim(), horizontalPadding, 0, this.markdownTheme));
 			} else if (content.type === "thinking" && content.thinking.trim()) {
 				// Add spacing only when another visible assistant content block follows.
 				// This avoids a superfluous blank line before separately-rendered tool execution blocks.
@@ -101,7 +131,7 @@ export class AssistantMessageComponent extends Container {
 				if (this.hideThinkingBlock) {
 					// Show static thinking label when hidden
 					this.contentContainer.addChild(
-						new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), 1, 0),
+						new Text(theme.italic(theme.fg("thinkingText", this.hiddenThinkingLabel)), horizontalPadding, 0),
 					);
 					if (hasVisibleContentAfter) {
 						this.contentContainer.addChild(new Spacer(1));
@@ -109,7 +139,7 @@ export class AssistantMessageComponent extends Container {
 				} else {
 					// Thinking traces in thinkingText color, italic
 					this.contentContainer.addChild(
-						new Markdown(content.thinking.trim(), 1, 0, this.markdownTheme, {
+						new Markdown(content.thinking.trim(), horizontalPadding, 0, this.markdownTheme, {
 							color: (text: string) => theme.fg("thinkingText", text),
 							italic: true,
 						}),
@@ -136,11 +166,11 @@ export class AssistantMessageComponent extends Container {
 				} else {
 					this.contentContainer.addChild(new Spacer(1));
 				}
-				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), 1, 0));
+				this.contentContainer.addChild(new Text(theme.fg("error", abortMessage), horizontalPadding, 0));
 			} else if (message.stopReason === "error") {
 				const errorMsg = message.errorMessage || "Unknown error";
 				this.contentContainer.addChild(new Spacer(1));
-				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), 1, 0));
+				this.contentContainer.addChild(new Text(theme.fg("error", `Error: ${errorMsg}`), horizontalPadding, 0));
 			}
 		}
 	}

@@ -8,6 +8,7 @@ import {
 	TruncatedText,
 } from "@earendil-works/pi-tui";
 import type { AuthStatus, AuthStorage } from "../../../core/auth-storage.js";
+import { getSelectionPrefix } from "../accessibility.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 
@@ -120,7 +121,7 @@ export class OAuthSelectorComponent extends Container implements Focusable {
 			const statusIndicator = this.formatStatusIndicator(provider);
 			let line = "";
 			if (isSelected) {
-				const prefix = theme.fg("accent", "→ ");
+				const prefix = theme.fg("accent", getSelectionPrefix());
 				const text = theme.fg("accent", provider.name);
 				line = prefix + text + statusIndicator;
 			} else {

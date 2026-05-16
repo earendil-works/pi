@@ -1,4 +1,5 @@
 import { CancellableLoader, Container, Loader, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
+import { isFlatScreenReaderMode } from "../accessibility.js";
 import type { Theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { keyHint } from "./keybinding-hints.js";
@@ -14,12 +15,14 @@ export class BorderedLoader extends Container {
 		this.cancellable = options?.cancellable ?? true;
 		const borderColor = (s: string) => theme.fg("border", s);
 		this.addChild(new DynamicBorder(borderColor));
+		const indicator = isFlatScreenReaderMode() ? { frames: [] } : undefined;
 		if (this.cancellable) {
 			this.loader = new CancellableLoader(
 				tui,
 				(s) => theme.fg("accent", s),
 				(s) => theme.fg("muted", s),
 				message,
+				indicator,
 			);
 		} else {
 			this.signalController = new AbortController();
@@ -28,6 +31,7 @@ export class BorderedLoader extends Container {
 				(s) => theme.fg("accent", s),
 				(s) => theme.fg("muted", s),
 				message,
+				indicator,
 			);
 		}
 		this.addChild(this.loader);

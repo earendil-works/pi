@@ -16,6 +16,7 @@ import {
 import { KeybindingsManager } from "../../../core/keybindings.js";
 import type { SessionInfo, SessionListProgress } from "../../../core/session-manager.js";
 import { canonicalizePath as _canonicalizePath } from "../../../utils/paths.js";
+import { getSelectionPrefix, isFlatScreenReaderMode } from "../accessibility.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { keyHint, keyText } from "./keybinding-hints.js";
@@ -459,7 +460,7 @@ class SessionList implements Component, Focusable {
 			}
 
 			// Cursor
-			const cursor = isSelected ? theme.fg("accent", "› ") : "  ";
+			const cursor = isSelected ? theme.fg("accent", getSelectionPrefix()) : "  ";
 
 			// Calculate available width for message
 			const prefixWidth = visibleWidth(prefix);
@@ -508,6 +509,10 @@ class SessionList implements Component, Focusable {
 	private buildTreePrefix(node: FlatSessionNode): string {
 		if (node.depth === 0) {
 			return "";
+		}
+
+		if (isFlatScreenReaderMode()) {
+			return " ".repeat(node.depth * 2);
 		}
 
 		const parts = node.ancestorContinues.map((continues) => (continues ? "│  " : "   "));

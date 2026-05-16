@@ -6,6 +6,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.js";
 import type { ExtensionFlag } from "../core/extensions/types.js";
+import type { ScreenReaderMode } from "../modes/interactive/accessibility.js";
 
 export type Mode = "text" | "json" | "rpc";
 
@@ -43,6 +44,7 @@ export interface Args {
 	listModels?: string | true;
 	offline?: boolean;
 	verbose?: boolean;
+	screenReader?: ScreenReaderMode;
 	messages: string[];
 	fileArgs: string[];
 	/** Unknown flags (potentially extension flags) - map of flag name to value */
@@ -51,6 +53,11 @@ export interface Args {
 }
 
 const VALID_THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+const VALID_SCREEN_READER_MODES = ["flat"] as const;
+
+function isValidScreenReaderMode(mode: string): mode is ScreenReaderMode {
+	return VALID_SCREEN_READER_MODES.includes(mode as ScreenReaderMode);
+}
 
 export function isValidThinkingLevel(level: string): level is ThinkingLevel {
 	return VALID_THINKING_LEVELS.includes(level as ThinkingLevel);
@@ -162,6 +169,24 @@ export function parseArgs(args: string[]): Args {
 			result.verbose = true;
 		} else if (arg === "--offline") {
 			result.offline = true;
+		} else if (arg === "--screen-reader" || arg === "-sr") {
+			const next = args[i + 1];
+			if (next !== undefined && isValidScreenReaderMode(next)) {
+				result.screenReader = next;
+				i++;
+			} else {
+				result.screenReader = "flat";
+			}
+		} else if (arg.startsWith("--screen-reader=")) {
+			const mode = arg.slice("--screen-reader=".length);
+			if (isValidScreenReaderMode(mode)) {
+				result.screenReader = mode;
+			} else {
+				result.diagnostics.push({
+					type: "warning",
+					message: `Invalid screen reader mode "${mode}". Valid values: ${VALID_SCREEN_READER_MODES.join(", ")}`,
+				});
+			}
 		} else if (arg.startsWith("@")) {
 			result.fileArgs.push(arg.slice(1)); // Remove @ prefix
 		} else if (arg.startsWith("--")) {
@@ -247,6 +272,7 @@ ${chalk.bold("Options:")}
   --list-models [search]         List available models (with optional fuzzy search)
   --verbose                      Force verbose startup (overrides quietStartup setting)
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
+  --screen-reader, -sr           Enable screen reader mode (removes decorative TUI art)
   --help, -h                     Show this help
   --version, -v                  Show version number
 

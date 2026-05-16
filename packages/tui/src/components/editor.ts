@@ -205,6 +205,7 @@ export interface EditorTheme {
 export interface EditorOptions {
 	paddingX?: number;
 	autocompleteMaxVisible?: number;
+	showBorders?: boolean;
 }
 
 const SLASH_COMMAND_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
@@ -227,6 +228,7 @@ export class Editor implements Component, Focusable {
 	protected tui: TUI;
 	private theme: EditorTheme;
 	private paddingX: number = 0;
+	private showBorders: boolean = true;
 
 	// Store last render width for cursor navigation
 	private lastWidth: number = 80;
@@ -293,6 +295,7 @@ export class Editor implements Component, Focusable {
 		this.paddingX = Number.isFinite(paddingX) ? Math.max(0, Math.floor(paddingX)) : 0;
 		const maxVisible = options.autocompleteMaxVisible ?? 5;
 		this.autocompleteMaxVisible = Number.isFinite(maxVisible) ? Math.max(3, Math.min(20, Math.floor(maxVisible))) : 5;
+		this.showBorders = options.showBorders ?? true;
 	}
 
 	/** Set of currently valid paste IDs, for marker-aware segmentation. */
@@ -418,7 +421,7 @@ export class Editor implements Component, Focusable {
 		// Store for cursor navigation (must match wrapping width)
 		this.lastWidth = layoutWidth;
 
-		const horizontal = this.borderColor("─");
+		const horizontal = this.showBorders ? this.borderColor("─") : "";
 
 		// Layout the text
 		const layoutLines = this.layoutText(layoutWidth);
@@ -451,14 +454,18 @@ export class Editor implements Component, Focusable {
 
 		// Render top border (with scroll indicator if scrolled down)
 		if (this.scrollOffset > 0) {
-			const indicator = `─── ↑ ${this.scrollOffset} more `;
-			const remaining = width - visibleWidth(indicator);
-			if (remaining >= 0) {
-				result.push(this.borderColor(indicator + "─".repeat(remaining)));
+			if (this.showBorders) {
+				const indicator = `─── ↑ ${this.scrollOffset} more `;
+				const remaining = width - visibleWidth(indicator);
+				if (remaining >= 0) {
+					result.push(this.borderColor(indicator + "─".repeat(remaining)));
+				} else {
+					result.push(this.borderColor(truncateToWidth(indicator, width)));
+				}
 			} else {
-				result.push(this.borderColor(truncateToWidth(indicator, width)));
+				result.push(`↑ ${this.scrollOffset} more`);
 			}
-		} else {
+		} else if (this.showBorders) {
 			result.push(horizontal.repeat(width));
 		}
 
@@ -511,10 +518,14 @@ export class Editor implements Component, Focusable {
 		// Render bottom border (with scroll indicator if more content below)
 		const linesBelow = layoutLines.length - (this.scrollOffset + visibleLines.length);
 		if (linesBelow > 0) {
-			const indicator = `─── ↓ ${linesBelow} more `;
-			const remaining = width - visibleWidth(indicator);
-			result.push(this.borderColor(indicator + "─".repeat(Math.max(0, remaining))));
-		} else {
+			if (this.showBorders) {
+				const indicator = `─── ↓ ${linesBelow} more `;
+				const remaining = width - visibleWidth(indicator);
+				result.push(this.borderColor(indicator + "─".repeat(Math.max(0, remaining))));
+			} else {
+				result.push(`↓ ${linesBelow} more`);
+			}
+		} else if (this.showBorders) {
 			result.push(horizontal.repeat(width));
 		}
 

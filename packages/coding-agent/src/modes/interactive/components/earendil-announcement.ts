@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import { Container, Image, Spacer, Text } from "@earendil-works/pi-tui";
 import { getBundledInteractiveAssetPath } from "../../../config.js";
+import { isFlatScreenReaderMode } from "../accessibility.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 
@@ -35,7 +36,7 @@ export class EarendilAnnouncementComponent extends Container {
 		this.addChild(new Text(theme.fg("mdLink", BLOG_URL), 1, 0));
 		this.addChild(new Spacer(1));
 
-		const imageBase64 = loadImageBase64();
+		const imageBase64 = isFlatScreenReaderMode() ? undefined : loadImageBase64();
 		if (imageBase64) {
 			this.addChild(
 				new Image(

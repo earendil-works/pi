@@ -92,6 +92,7 @@ import { getPiUserAgent } from "../../utils/pi-user-agent.js";
 import { killTrackedDetachedChildren } from "../../utils/shell.js";
 import { ensureTool } from "../../utils/tools-manager.js";
 import { checkForNewPiVersion } from "../../utils/version-check.js";
+import { isFlatScreenReaderMode, type ScreenReaderMode, setScreenReaderMode } from "./accessibility.js";
 import { ArminComponent } from "./components/armin.js";
 import { AssistantMessageComponent } from "./components/assistant-message.js";
 import { BashExecutionComponent } from "./components/bash-execution.js";
@@ -226,6 +227,8 @@ export interface InteractiveModeOptions {
 	initialMessages?: string[];
 	/** Force verbose startup (overrides quietStartup setting) */
 	verbose?: boolean;
+	/** Screen reader mode for reducing decorative TUI output */
+	screenReader?: ScreenReaderMode;
 }
 
 export class InteractiveMode {
@@ -352,6 +355,7 @@ export class InteractiveMode {
 		runtimeHost: AgentSessionRuntime,
 		private options: InteractiveModeOptions = {},
 	) {
+		setScreenReaderMode(options.screenReader);
 		this.runtimeHost = runtimeHost;
 		this.runtimeHost.setBeforeSessionInvalidate(() => {
 			this.resetExtensionUI();
@@ -375,6 +379,7 @@ export class InteractiveMode {
 		this.defaultEditor = new CustomEditor(this.ui, getEditorTheme(), this.keybindings, {
 			paddingX: editorPaddingX,
 			autocompleteMaxVisible,
+			showBorders: !isFlatScreenReaderMode(),
 		});
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
@@ -577,7 +582,10 @@ export class InteractiveMode {
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
-			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
+			const logo =
+				theme.bold(theme.fg("accent", APP_NAME)) +
+				theme.fg("dim", ` v${this.version}`) +
+				(this.options.screenReader ? "\nScreen reader mode" : "");
 
 			// Build startup instructions using keybinding hint helpers
 			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
@@ -622,7 +630,7 @@ export class InteractiveMode {
 				() => `${logo}\n${compactInstructions}\n${compactOnboarding}\n\n${onboarding}`,
 				() => `${logo}\n${expandedInstructions}\n\n${onboarding}`,
 				this.getStartupExpansionState(),
-				1,
+				isFlatScreenReaderMode() ? 0 : 1,
 				0,
 			);
 
@@ -1660,13 +1668,17 @@ export class InteractiveMode {
 		return this.workingMessage ?? this.defaultWorkingMessage;
 	}
 
+	private getLoaderIndicator(indicator?: LoaderIndicatorOptions): LoaderIndicatorOptions | undefined {
+		return isFlatScreenReaderMode() ? { frames: [] } : indicator;
+	}
+
 	private createWorkingLoader(): Loader {
 		return new Loader(
 			this.ui,
 			(spinner) => theme.fg("accent", spinner),
 			(text) => theme.fg("muted", text),
 			this.getWorkingLoaderMessage(),
-			this.workingIndicatorOptions,
+			this.getLoaderIndicator(this.workingIndicatorOptions),
 		);
 	}
 
@@ -1695,7 +1707,7 @@ export class InteractiveMode {
 
 	private setWorkingIndicator(options?: LoaderIndicatorOptions): void {
 		this.workingIndicatorOptions = options;
-		this.loadingAnimation?.setIndicator(options);
+		this.loadingAnimation?.setIndicator(this.getLoaderIndicator(options));
 		this.ui.requestRender();
 	}
 
@@ -2139,6 +2151,7 @@ export class InteractiveMode {
 					this.hideExtensionEditor();
 					resolve(undefined);
 				},
+				{ showBorders: !isFlatScreenReaderMode() },
 			);
 
 			this.editorContainer.clear();
@@ -2852,6 +2865,7 @@ export class InteractiveMode {
 					(spinner) => theme.fg("accent", spinner),
 					(text) => theme.fg("muted", text),
 					label,
+					this.getLoaderIndicator(),
 				);
 				this.statusContainer.addChild(this.autoCompactionLoader);
 				this.ui.requestRender();
@@ -2917,6 +2931,7 @@ export class InteractiveMode {
 					(spinner) => theme.fg("warning", spinner),
 					(text) => theme.fg("muted", text),
 					retryMessage(Math.ceil(event.delayMs / 1000)),
+					this.getLoaderIndicator(),
 				);
 				this.retryCountdown = new CountdownTimer(
 					event.delayMs,
@@ -2987,7 +3002,7 @@ export class InteractiveMode {
 		}
 
 		const spacer = new Spacer(1);
-		const text = new Text(theme.fg("dim", message), 1, 0);
+		const text = new Text(theme.fg("dim", message), isFlatScreenReaderMode() ? 0 : 1, 0);
 		this.chatContainer.addChild(spacer);
 		this.chatContainer.addChild(text);
 		this.lastStatusSpacer = spacer;
@@ -4275,6 +4290,7 @@ export class InteractiveMode {
 							(spinner) => theme.fg("accent", spinner),
 							(text) => theme.fg("muted", text),
 							`Summarizing branch... (${keyText("app.interrupt")} to cancel)`,
+							this.getLoaderIndicator(),
 						);
 						this.statusContainer.addChild(summaryLoader);
 						this.ui.requestRender();
@@ -5358,18 +5374,32 @@ export class InteractiveMode {
 	}
 
 	private handleArminSaysHi(): void {
+		if (isFlatScreenReaderMode()) {
+			this.showStatus("Armin says hi.");
+			return;
+		}
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new ArminComponent(this.ui));
 		this.ui.requestRender();
 	}
 
 	private handleDementedDelves(): void {
+		if (isFlatScreenReaderMode()) {
+			this.showStatus(
+				"pi has joined Earendil. Read the blog post: https://mariozechner.at/posts/2026-04-08-ive-sold-out/",
+			);
+			return;
+		}
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new EarendilAnnouncementComponent());
 		this.ui.requestRender();
 	}
 
 	private handleDaxnuts(): void {
+		if (isFlatScreenReaderMode()) {
+			this.showStatus("Dax says hi.");
+			return;
+		}
 		this.chatContainer.addChild(new Spacer(1));
 		this.chatContainer.addChild(new DaxnutsComponent(this.ui));
 		this.ui.requestRender();

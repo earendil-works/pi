@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Fixed select lists to respect the configured selected-item prefix.
+- Fixed editor rendering to support hiding decorative prompt borders.
 - Fixed inline image rendering to cap portrait images by height instead of always scaling them to the configured maximum width.
 
 ## [0.74.0] - 2026-05-07

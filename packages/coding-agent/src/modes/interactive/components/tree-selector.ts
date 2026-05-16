@@ -10,6 +10,7 @@ import {
 	truncateToWidth,
 } from "@earendil-works/pi-tui";
 import type { SessionTreeNode } from "../../../core/session-manager.js";
+import { getSelectionPrefix, isFlatScreenReaderMode } from "../accessibility.js";
 import { theme } from "../theme/theme.js";
 import { DynamicBorder } from "./dynamic-border.js";
 import { keyHint, keyText } from "./keybinding-hints.js";
@@ -623,56 +624,63 @@ class TreeList implements Component {
 			const isSelected = i === this.selectedIndex;
 
 			// Build line: cursor + prefix + path marker + label + content
-			const cursor = isSelected ? theme.fg("accent", "› ") : "  ";
+			const cursor = isSelected ? theme.fg("accent", getSelectionPrefix()) : "  ";
 
 			// If multiple roots, shift display (roots at 0, not 1)
 			const displayIndent = this.multipleRoots ? Math.max(0, flatNode.indent - 1) : flatNode.indent;
 
 			// Build prefix with gutters at their correct positions
 			// Each gutter has a position (displayIndent where its connector was shown)
-			const connector =
-				flatNode.showConnector && !flatNode.isVirtualRootChild ? (flatNode.isLast ? "└─ " : "├─ ") : "";
-			const connectorPosition = connector ? displayIndent - 1 : -1;
-
-			// Build prefix char by char, placing gutters and connector at their positions
-			const totalChars = displayIndent * 3;
-			const prefixChars: string[] = [];
+			let prefix: string;
+			let foldMarker: string;
+			let pathMarker: string;
 			const isFolded = this.foldedNodes.has(entry.id);
-			for (let i = 0; i < totalChars; i++) {
-				const level = Math.floor(i / 3);
-				const posInLevel = i % 3;
-
-				// Check if there's a gutter at this level
-				const gutter = flatNode.gutters.find((g) => g.position === level);
-				if (gutter) {
-					if (posInLevel === 0) {
-						prefixChars.push(gutter.show ? "│" : " ");
-					} else {
-						prefixChars.push(" ");
-					}
-				} else if (connector && level === connectorPosition) {
-					// Connector at this level, with fold indicator
-					if (posInLevel === 0) {
-						prefixChars.push(flatNode.isLast ? "└" : "├");
-					} else if (posInLevel === 1) {
-						const foldable = this.isFoldable(entry.id);
-						prefixChars.push(isFolded ? "⊞" : foldable ? "⊟" : "─");
-					} else {
-						prefixChars.push(" ");
-					}
-				} else {
-					prefixChars.push(" ");
-				}
-			}
-			const prefix = prefixChars.join("");
-
-			// Fold marker for nodes without connectors (roots)
-			const showsFoldInConnector = flatNode.showConnector && !flatNode.isVirtualRootChild;
-			const foldMarker = isFolded && !showsFoldInConnector ? theme.fg("accent", "⊞ ") : "";
-
-			// Active path marker - shown right before the entry text
 			const isOnActivePath = this.activePathIds.has(entry.id);
-			const pathMarker = isOnActivePath ? theme.fg("accent", "• ") : "";
+			if (isFlatScreenReaderMode()) {
+				prefix = " ".repeat(displayIndent * 2);
+				foldMarker = isFolded ? theme.fg("accent", "folded ") : "";
+				pathMarker = isOnActivePath ? theme.fg("accent", "active ") : "";
+			} else {
+				const connector =
+					flatNode.showConnector && !flatNode.isVirtualRootChild ? (flatNode.isLast ? "└─ " : "├─ ") : "";
+				const connectorPosition = connector ? displayIndent - 1 : -1;
+
+				// Build prefix char by char, placing gutters and connector at their positions
+				const totalChars = displayIndent * 3;
+				const prefixChars: string[] = [];
+				for (let i = 0; i < totalChars; i++) {
+					const level = Math.floor(i / 3);
+					const posInLevel = i % 3;
+
+					// Check if there's a gutter at this level
+					const gutter = flatNode.gutters.find((g) => g.position === level);
+					if (gutter) {
+						if (posInLevel === 0) {
+							prefixChars.push(gutter.show ? "│" : " ");
+						} else {
+							prefixChars.push(" ");
+						}
+					} else if (connector && level === connectorPosition) {
+						// Connector at this level, with fold indicator
+						if (posInLevel === 0) {
+							prefixChars.push(flatNode.isLast ? "└" : "├");
+						} else if (posInLevel === 1) {
+							const foldable = this.isFoldable(entry.id);
+							prefixChars.push(isFolded ? "⊞" : foldable ? "⊟" : "─");
+						} else {
+							prefixChars.push(" ");
+						}
+					} else {
+						prefixChars.push(" ");
+					}
+				}
+				prefix = prefixChars.join("");
+
+				// Fold marker for nodes without connectors (roots)
+				const showsFoldInConnector = flatNode.showConnector && !flatNode.isVirtualRootChild;
+				foldMarker = isFolded && !showsFoldInConnector ? theme.fg("accent", "⊞ ") : "";
+				pathMarker = isOnActivePath ? theme.fg("accent", "• ") : "";
+			}
 
 			const label = flatNode.node.label ? theme.fg("warning", `[${flatNode.node.label}] `) : "";
 			const labelTimestamp =

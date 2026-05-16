@@ -18,6 +18,14 @@ const visibleIndexOf = (line: string, text: string): number => {
 };
 
 describe("SelectList", () => {
+	it("uses the configured selected prefix", () => {
+		const items = [{ value: "one", label: "one" }];
+		const list = new SelectList(items, 5, { ...testTheme, selectedPrefix: () => "> " });
+		const rendered = list.render(20);
+
+		assert.equal(rendered[0], "> one");
+	});
+
 	it("normalizes multiline descriptions to single line", () => {
 		const items = [
 			{
