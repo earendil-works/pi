@@ -347,10 +347,10 @@ export class AgentSession {
 	}> {
 		const result = await this._modelRegistry.getApiKeyAndHeaders(model);
 		if (!result.ok) {
-			if (result.error.startsWith("No API key found")) {
+			if (result.error && result.error.startsWith("No API key found")) {
 				throw new Error(formatNoApiKeyFoundMessage(model.provider));
 			}
-			throw new Error(result.error);
+			throw new Error(result.error || "Unknown API error");
 		}
 		if (result.apiKey) {
 			return { apiKey: result.apiKey, headers: result.headers };
