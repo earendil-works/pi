@@ -58,6 +58,7 @@ unset AWS_CONTAINER_CREDENTIALS_FULL_URI
 unset AWS_WEB_IDENTITY_TOKEN_FILE
 unset BEDROCK_EXTENSIVE_MODEL_TEST
 unset FIREWORKS_API_KEY
+unset ROUTSTR_API_KEY
 
 echo "Running tests without API keys..."
 npm test

@@ -13,7 +13,6 @@
 
 - Added image generation support from `@earendil-works/pi-ai`, including image generation APIs, image model metadata, and built-in OpenRouter image generation support ([#3887](https://github.com/earendil-works/pi-mono/pull/3887) by [@cristinaponcela](https://github.com/cristinaponcela)).
 - Added Together AI to built-in provider setup, `/login` API-key auth, and default model resolution ([#3624](https://github.com/earendil-works/pi-mono/pull/3624) by [@Nutlope](https://github.com/Nutlope)).
-- Added Routstr to built-in provider setup, `/login` API-key auth, and default model resolution.
 - Added Windows ARM64 standalone binary release artifacts ([#4458](https://github.com/earendil-works/pi/pull/4458) by [@brianmichel](https://github.com/brianmichel)).
 
 ### Fixed
