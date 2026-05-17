@@ -138,6 +138,83 @@ const DEEPSEEK_V4_THINKING_LEVEL_MAP = {
 	xhigh: "max",
 } as const;
 
+const ROUTING_RUN_BASE_URL = "https://api.routing.run/v1";
+const ROUTING_RUN_BASE_COMPAT: OpenAICompletionsCompat = {
+	supportsStore: false,
+	supportsDeveloperRole: false,
+	supportsUsageInStreaming: true,
+	maxTokensField: "max_tokens",
+	supportsStrictMode: false,
+};
+
+const ROUTING_RUN_MODELS: Record<string, ModelsDevModel> = {
+	"route/minimax-m2.5": routeModel("MiniMax M2.5", true, 100_000, 131_072, 0.193, 1.238),
+	"route/minimax-m2.5-highspeed": routeModel("MiniMax M2.5 Highspeed", true, 100_000, 131_072, 0.193, 1.238),
+	"route/minimax-m2.7": routeModel("MiniMax M2.7", true, 100_000, 131_072, 0.33, 1.32),
+	"route/minimax-m2.7-highspeed": routeModel("MiniMax M2.7 Highspeed", true, 100_000, 131_072, 0.33, 1.32),
+	"route/kimi-k2.5": routeModel("Kimi K2.5", true, 262_144, 262_144, 0.462, 2.42, ["text", "image", "video"]),
+	"route/kimi-k2.5-highspeed": routeModel("Kimi K2.5 Highspeed", true, 131_072, 32_768, 0.6468, 3.388, ["text", "image", "video"]),
+	"route/glm-5": routeModel("GLM 5", true, 202_752, 202_752, 0.792, 2.53),
+	"route/glm-5-highspeed": routeModel("GLM 5 Highspeed", true, 202_752, 202_752, 1.1088, 3.542),
+	"route/glm-5.1": routeModel("GLM 5.1", true, 202_752, 202_752, 1, 3),
+	"route/glm-5.1-precision": routeModel("GLM 5.1 Precision", true, 202_752, 202_752, 1.2, 3.5),
+	"route/glm-5.1-fp16": routeModel("GLM 5.1 FP16", true, 202_752, 202_752, 1.2, 3.5),
+	"route/glm-5.1-full": routeModel("GLM 5.1 Full", true, 202_752, 202_752, 1.2, 3.5),
+	"route/glm-4.7": routeModel("GLM 4.7", true, 128_000, 128_000, 1.32, 4.4),
+	"route/glm-4.7-flash": routeModel("GLM 4.7 Flash", true, 128_000, 128_000, 1.32, 4.4),
+	"route/qwen3.5-9b": routeModel("Qwen3.5 9B", true, 262_144, 262_144, 0.2, 0.6, ["text", "image", "video"]),
+	"route/qwen3.5-9b-chat": routeModel("Qwen3.5 9B Chat", true, 262_144, 262_144, 0.2, 0.6, ["text", "image", "video"]),
+	"route/qwen3.5-397b-a17b": routeModel("Qwen3.5 397B-A17B", true, 262_144, 262_144, 1.1, 3.3, ["text", "image", "video"]),
+	"route/qwen3.6-27b": routeModel("Qwen3.6 27B", true, 262_144, 262_144, 1.1, 3.3, ["text", "image", "video"]),
+	"route/deepseek-v3.2": routeModel("DeepSeek V3.2", true, 163_840, 163_840, 0.4928, 0.7392),
+	"route/gemma-4-31b-it": routeModel("Gemma 4 31B IT", true, 131_072, 65_536, 0.1, 0.3),
+	"route/kimi-k2.6": routeModel("Kimi K2.6", true, 262_144, 262_144, 0.462, 2.42, ["text", "image", "video"]),
+	"route/kimi-k2.6-full": routeModel("Kimi K2.6 Full", true, 262_144, 262_144, 0.462, 2.42, ["text", "image", "video"]),
+	"route/kimi-k2.6-precision": routeModel("Kimi K2.6 Precision", true, 262_144, 262_144, 0.6468, 3.388, ["text", "image", "video"]),
+	"route/deepseek-v4-flash": routeModel("DeepSeek V4 Flash", true, 1_000_000, 131_072, 0.4928, 0.7392),
+	"route/deepseek-v4-flash-full": routeModel("DeepSeek V4 Flash Full", true, 1_000_000, 131_072, 0.4928, 0.7392),
+	"route/deepseek-v4-pro": routeModel("DeepSeek V4 Pro", true, 1_000_000, 131_072, 0.4928, 0.7392),
+	"route/deepseek-v4-pro-precision": routeModel("DeepSeek V4 Pro Precision", true, 1_000_000, 131_072, 0.7392, 1.1088),
+	"route/mimo-v2.5": routeModel("MiMo V2.5", true, 256_000, 65_536, 0.4, 2, ["text", "image"]),
+	"route/mimo-v2.5-pro": routeModel("MiMo V2.5 Pro", true, 1_000_000, 262_144, 0.45, 1.35),
+	"route/mimo-v2.5-pro-precision": routeModel("MiMo V2.5 Pro Precision", true, 1_000_000, 131_072, 0.45, 1.35),
+	"route/mistral-large-3": routeModel("Mistral Large 3", false, 128_000, 32_768, 0.5, 1.5, ["text", "image"]),
+	"route/mistral-medium-2505": routeModel("Mistral Medium 2505", false, 128_000, 32_768, 0.4, 2, ["text", "image"]),
+	"route/mistral-small-2503": routeModel("Mistral Small 2503", true, 128_000, 32_768, 0.15, 0.6, ["text", "image"]),
+	"route/step-3.5-flash": routeModel("Step 3.5 Flash", true, 262_144, 65_536, 0, 0),
+	"route/stepfun-3.5-flash": routeModel("StepFun 3.5 Flash", true, 262_144, 65_536, 0, 0),
+	"route/step-3.5-flash-2603": routeModel("Step 3.5 Flash 2603", true, 262_144, 65_536, 0, 0),
+	"route/step-3.5-flash-full": routeModel("Step 3.5 Flash Full", true, 262_144, 65_536, 0, 0),
+};
+
+function routeModel(
+	name: string,
+	reasoning: boolean,
+	context: number,
+	output: number,
+	inputCost: number,
+	outputCost: number,
+	input: string[] = ["text"],
+): ModelsDevModel {
+	return {
+		id: "",
+		name,
+		tool_call: true,
+		reasoning,
+		limit: { context, output },
+		cost: { input: inputCost, output: outputCost },
+		modalities: { input },
+	};
+}
+
+function getRoutingRunThinkingFormat(modelId: string): OpenAICompletionsCompat["thinkingFormat"] | undefined {
+	if (modelId.includes("glm-")) return "qwen-chat-template";
+	if (modelId.includes("kimi-")) return "zai";
+	if (modelId.includes("qwen") || modelId.includes("minimax") || modelId.includes("mimo")) return "qwen";
+	if (modelId.includes("deepseek") || modelId.includes("gemma")) return "deepseek";
+	return undefined;
+}
+
 const OPENAI_RESPONSES_NONE_REASONING_MODELS = new Set([
 	"gpt-5.1",
 	"gpt-5.2",
@@ -900,6 +977,38 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 					maxTokens: m.limit?.output || 4096,
 				});
 			}
+		}
+
+		// Process routing.run models
+		const routingRunModels = data["routing-run"]?.models ?? ROUTING_RUN_MODELS;
+		for (const [modelId, model] of Object.entries(routingRunModels)) {
+			const m = model as ModelsDevModel & { status?: string };
+			if (m.tool_call !== true) continue;
+			if (m.status === "deprecated") continue;
+
+			const compat: OpenAICompletionsCompat = {
+				...ROUTING_RUN_BASE_COMPAT,
+				...(getRoutingRunThinkingFormat(modelId) ? { thinkingFormat: getRoutingRunThinkingFormat(modelId) } : {}),
+			};
+
+			models.push({
+				id: modelId,
+				name: m.name || modelId,
+				api: "openai-completions",
+				provider: "routing-run",
+				baseUrl: ROUTING_RUN_BASE_URL,
+				reasoning: m.reasoning === true,
+				input: m.modalities?.input?.includes("image") ? ["text", "image"] : ["text"],
+				cost: {
+					input: m.cost?.input || 0,
+					output: m.cost?.output || 0,
+					cacheRead: m.cost?.cache_read || 0,
+					cacheWrite: m.cost?.cache_write || 0,
+				},
+				compat,
+				contextWindow: m.limit?.context || 4096,
+				maxTokens: m.limit?.output || 4096,
+			});
 		}
 
 		// Process GitHub Copilot models

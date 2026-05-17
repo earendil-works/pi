@@ -46,6 +46,7 @@ export type KnownProvider =
 	| "together"
 	| "opencode"
 	| "opencode-go"
+	| "routing-run"
 	| "kimi-coding"
 	| "cloudflare-workers-ai"
 	| "cloudflare-ai-gateway"

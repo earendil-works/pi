@@ -21,6 +21,7 @@ export const BUILT_IN_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 	"opencode-go": "OpenCode Go",
 	openai: "OpenAI",
 	openrouter: "OpenRouter",
+	"routing-run": "routing.run",
 	together: "Together AI",
 	"vercel-ai-gateway": "Vercel AI Gateway",
 	xai: "xAI",
