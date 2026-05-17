@@ -201,6 +201,28 @@ function validateForkFlags(parsed: Args): void {
 	}
 }
 
+export function validateNewSessionIdFlags(parsed: Args): void {
+	if (!parsed.newSessionId) return;
+
+	const conflictingFlags = [
+		parsed.session ? "--session" : undefined,
+		parsed.continue ? "--continue" : undefined,
+		parsed.resume ? "--resume" : undefined,
+		parsed.fork ? "--fork" : undefined,
+		parsed.noSession ? "--no-session" : undefined,
+	].filter((flag): flag is string => flag !== undefined);
+
+	if (conflictingFlags.length > 0) {
+		console.error(chalk.red(`Error: --new-session-id cannot be combined with ${conflictingFlags.join(", ")}`));
+		process.exit(1);
+	}
+
+	if (!/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(parsed.newSessionId)) {
+		console.error(chalk.red(`Error: --new-session-id must be a UUID (got "${parsed.newSessionId}")`));
+		process.exit(1);
+	}
+}
+
 function forkSessionOrExit(sourcePath: string, cwd: string, sessionDir?: string): SessionManager {
 	try {
 		return SessionManager.forkFrom(sourcePath, cwd, sessionDir);
@@ -281,7 +303,7 @@ async function createSessionManager(
 		return SessionManager.continueRecent(cwd, sessionDir);
 	}
 
-	return SessionManager.create(cwd, sessionDir);
+	return SessionManager.create(cwd, sessionDir, parsed.newSessionId ? { id: parsed.newSessionId } : undefined);
 }
 
 function buildSessionOptions(
@@ -478,6 +500,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	validateForkFlags(parsed);
+	validateNewSessionIdFlags(parsed);
 
 	// Run migrations (pass cwd for project-local migrations)
 	const { migratedAuthProviders: migratedProviders, deprecationWarnings } = runMigrations(process.cwd());

@@ -1302,10 +1302,15 @@ export class SessionManager {
 	 * Create a new session.
 	 * @param cwd Working directory (stored in session header)
 	 * @param sessionDir Optional session directory. If omitted, uses default (~/.pi/agent/sessions/<encoded-cwd>/).
+	 * @param options Optional. Pass `{ id: "<uuid>" }` to use a caller-supplied UUID instead of a generated one.
 	 */
-	static create(cwd: string, sessionDir?: string): SessionManager {
+	static create(cwd: string, sessionDir?: string, options?: { id?: string }): SessionManager {
 		const dir = sessionDir ?? getDefaultSessionDir(cwd);
-		return new SessionManager(cwd, dir, undefined, true);
+		const sm = new SessionManager(cwd, dir, undefined, true);
+		if (options?.id) {
+			sm.newSession({ id: options.id });
+		}
+		return sm;
 	}
 
 	/**

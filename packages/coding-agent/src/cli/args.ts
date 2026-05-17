@@ -25,6 +25,7 @@ export interface Args {
 	session?: string;
 	fork?: string;
 	sessionDir?: string;
+	newSessionId?: string;
 	models?: string[];
 	tools?: string[];
 	noTools?: boolean;
@@ -99,6 +100,8 @@ export function parseArgs(args: string[]): Args {
 			result.fork = args[++i];
 		} else if (arg === "--session-dir" && i + 1 < args.length) {
 			result.sessionDir = args[++i];
+		} else if (arg === "--new-session-id" && i + 1 < args.length) {
+			result.newSessionId = args[++i];
 		} else if (arg === "--models" && i + 1 < args.length) {
 			result.models = args[++i].split(",").map((s) => s.trim());
 		} else if (arg === "--no-tools" || arg === "-nt") {
@@ -227,6 +230,7 @@ ${chalk.bold("Options:")}
   --fork <path|id>               Fork specific session file or partial UUID into a new session
   --session-dir <dir>            Directory for session storage and lookup
   --no-session                   Don't save session (ephemeral)
+  --new-session-id <uuid>        Use this UUID for a new session (any RFC-4122 UUID; rejects if combined with --session/--continue/--fork/--resume/--no-session)
   --models <patterns>            Comma-separated model patterns for Ctrl+P cycling
                                  Supports globs (anthropic/*, *sonnet*) and fuzzy matching
   --no-tools, -nt                Disable all tools by default (built-in and extension)
