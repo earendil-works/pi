@@ -341,6 +341,17 @@ describe("Context overflow error handling", () => {
 		}, 120000);
 	});
 
+	describe.skipIf(!process.env.ROUTSTR_API_KEY)("Routstr", () => {
+		it("kimi-k2.6 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("routstr", "kimi-k2.6");
+			const result = await testContextOverflow(model, process.env.ROUTSTR_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
 	// =============================================================================
 	// z.ai
 	// Special case: may return explicit overflow error text, may accept overflow silently,

@@ -58,6 +58,27 @@ interface AiGatewayModel {
 	};
 }
 
+interface RoutstrModel {
+	id: string;
+	name?: string;
+	enabled?: boolean;
+	context_length?: number;
+	architecture?: {
+		input_modalities?: string[];
+	};
+	pricing?: {
+		prompt?: number;
+		completion?: number;
+		input_cache_read?: number;
+		input_cache_write?: number;
+		internal_reasoning?: number;
+	};
+	top_provider?: {
+		context_length?: number;
+		max_completion_tokens?: number | null;
+	};
+}
+
 const COPILOT_STATIC_HEADERS = {
 	"User-Agent": "GitHubCopilotChat/0.35.0",
 	"Editor-Version": "vscode/1.107.0",
@@ -121,6 +142,32 @@ const TOGETHER_TOGGLE_REASONING_LEVEL_MAP = {
 	medium: null,
 } as const;
 
+const ROUTSTR_BASE_URL = "https://api.routstr.com/v1";
+const ROUTSTR_MODELS_URL = `${ROUTSTR_BASE_URL}/models`;
+const ROUTSTR_BASE_COMPAT: OpenAICompletionsCompat = {
+	supportsStore: false,
+	supportsDeveloperRole: false,
+	supportsReasoningEffort: false,
+	maxTokensField: "max_tokens",
+	supportsStrictMode: false,
+	supportsLongCacheRetention: false,
+};
+const ROUTSTR_REASONING_MODEL_PATTERNS = [
+	/claude-(?:opus|sonnet)-4/i,
+	/deepseek.*(?:r1|v4)/i,
+	/gemini-(?:2\.5|3)/i,
+	/gpt-(?:5|oss)/i,
+	/glm-[45]/i,
+	/grok-4/i,
+	/minimax-m2/i,
+	/qwen3/i,
+] as const;
+const ROUTSTR_REASONING_LEVEL_MAP = {
+	minimal: null,
+	low: null,
+	medium: null,
+} as const;
+
 const AI_GATEWAY_MODELS_URL = "https://ai-gateway.vercel.sh/v1";
 const AI_GATEWAY_BASE_URL = "https://ai-gateway.vercel.sh";
 const ZAI_TOOL_STREAM_UNSUPPORTED_MODELS = new Set(["glm-4.5", "glm-4.5-air", "glm-4.5-flash", "glm-4.5v"]);
@@ -169,6 +216,11 @@ function getTogetherThinkingLevelMap(
 	if (TOGETHER_TOGGLE_REASONING_EFFORT_MODELS.has(modelId)) return { ...TOGETHER_DEEPSEEK_V4_THINKING_LEVEL_MAP };
 	if (TOGETHER_REASONING_ONLY_MODELS.has(modelId)) return { ...TOGETHER_FIXED_REASONING_LEVEL_MAP };
 	return { ...TOGETHER_TOGGLE_REASONING_LEVEL_MAP };
+}
+
+function isRoutstrReasoningModel(model: RoutstrModel): boolean {
+	if ((model.pricing?.internal_reasoning ?? 0) > 0) return true;
+	return ROUTSTR_REASONING_MODEL_PATTERNS.some((pattern) => pattern.test(model.id) || pattern.test(model.name ?? ""));
 }
 
 function supportsOpenAiXhigh(modelId: string): boolean {
@@ -315,6 +367,54 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 		return models;
 	} catch (error) {
 		console.error("Failed to fetch OpenRouter models:", error);
+		return [];
+	}
+}
+
+async function fetchRoutstrModels(): Promise<Model<any>[]> {
+	try {
+		console.log("Fetching models from Routstr API...");
+		const response = await fetch(ROUTSTR_MODELS_URL);
+		const data = await response.json();
+		const models: Model<any>[] = [];
+		const items = Array.isArray(data.data) ? (data.data as RoutstrModel[]) : [];
+
+		for (const model of items) {
+			if (model.enabled === false) continue;
+
+			const input: ("text" | "image")[] = ["text"];
+			if (model.architecture?.input_modalities?.includes("image")) {
+				input.push("image");
+			}
+
+			const reasoning = isRoutstrReasoningModel(model);
+			const thinkingLevelMap = reasoning ? { ...ROUTSTR_REASONING_LEVEL_MAP } : undefined;
+
+			models.push({
+				id: model.id,
+				name: model.name || model.id,
+				api: "openai-completions",
+				baseUrl: ROUTSTR_BASE_URL,
+				provider: "routstr",
+				reasoning,
+				...(thinkingLevelMap ? { thinkingLevelMap } : {}),
+				input,
+				cost: {
+					input: (model.pricing?.prompt ?? 0) * 1_000_000,
+					output: (model.pricing?.completion ?? 0) * 1_000_000,
+					cacheRead: (model.pricing?.input_cache_read ?? 0) * 1_000_000,
+					cacheWrite: (model.pricing?.input_cache_write ?? 0) * 1_000_000,
+				},
+				compat: ROUTSTR_BASE_COMPAT,
+				contextWindow: model.top_provider?.context_length || model.context_length || 4096,
+				maxTokens: model.top_provider?.max_completion_tokens || 4096,
+			});
+		}
+
+		console.log(`Fetched ${models.length} models from Routstr`);
+		return models;
+	} catch (error) {
+		console.error("Failed to fetch Routstr models:", error);
 		return [];
 	}
 }
@@ -1123,9 +1223,10 @@ async function generateModels() {
 	const modelsDevModels = await loadModelsDevData();
 	const openRouterModels = await fetchOpenRouterModels();
 	const aiGatewayModels = await fetchAiGatewayModels();
+	const routstrModels = await fetchRoutstrModels();
 
 	// Combine models (models.dev has priority)
-	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels].filter(
+	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels, ...routstrModels].filter(
 		(model) =>
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
 	);

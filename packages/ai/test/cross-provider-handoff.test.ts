@@ -109,6 +109,8 @@ const PROVIDER_MODEL_PAIRS: ProviderModelPair[] = [
 	{ provider: "huggingface", model: "moonshotai/Kimi-K2.5", label: "huggingface-kimi-k2.5" },
 	// Together AI
 	{ provider: "together", model: "moonshotai/Kimi-K2.6", label: "together-kimi-k2.6" },
+	// Routstr
+	{ provider: "routstr", model: "kimi-k2.6", label: "routstr-kimi-k2.6" },
 	// Kimi For Coding
 	{ provider: "kimi-coding", model: "kimi-k2-thinking", label: "kimi-coding-k2-thinking" },
 	// Mistral

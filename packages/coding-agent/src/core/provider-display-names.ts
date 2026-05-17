@@ -22,6 +22,7 @@ export const BUILT_IN_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 	openai: "OpenAI",
 	openrouter: "OpenRouter",
 	together: "Together AI",
+	routstr: "Routstr",
 	"vercel-ai-gateway": "Vercel AI Gateway",
 	xai: "xAI",
 	zai: "ZAI",

@@ -211,6 +211,26 @@ describe("ModelRegistry", () => {
 
 			expect(getModelsForProvider(registry, "anthropic")[0].baseUrl).toBe("https://second-proxy.example.com/v1");
 		});
+
+		test("routstr baseUrl override updates all generated built-in models", () => {
+			writeRawModelsJson({
+				routstr: overrideConfig("https://routstr-proxy.example.com/v1"),
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const routstrModels = getModelsForProvider(registry, "routstr");
+
+			expect(routstrModels.length).toBeGreaterThan(1);
+			for (const model of routstrModels) {
+				expect(model.baseUrl).toBe("https://routstr-proxy.example.com/v1");
+			}
+
+			const defaultModel = routstrModels.find((model) => model.id === "kimi-k2.6");
+			expect(defaultModel?.compat).toMatchObject({
+				maxTokensField: "max_tokens",
+				supportsDeveloperRole: false,
+			});
+		});
 	});
 
 	describe("custom models merge behavior", () => {

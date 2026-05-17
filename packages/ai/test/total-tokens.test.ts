@@ -396,6 +396,23 @@ describe("totalTokens field", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.ROUTSTR_API_KEY)("Routstr", () => {
+		it("kimi-k2.6 - should return totalTokens equal to sum of components", { retry: 3, timeout: 60000 }, async () => {
+			const llm = getModel("routstr", "kimi-k2.6");
+
+			console.log(`\nRoutstr / ${llm.id}:`);
+			const { first, second } = await testTotalTokensWithCache(llm, {
+				apiKey: process.env.ROUTSTR_API_KEY,
+			});
+
+			logUsage("First request", first);
+			logUsage("Second request", second);
+
+			assertTotalTokensEqualsComponents(first);
+			assertTotalTokensEqualsComponents(second);
+		});
+	});
+
 	// =========================================================================
 	// z.ai
 	// =========================================================================

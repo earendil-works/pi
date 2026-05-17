@@ -6,6 +6,7 @@
 
 - Added image generation APIs, image model metadata, and built-in OpenRouter image generation support ([#3887](https://github.com/earendil-works/pi-mono/pull/3887) by [@cristinaponcela](https://github.com/cristinaponcela)).
 - Added Together AI as a built-in OpenAI-compatible provider with generated model metadata and `TOGETHER_API_KEY` authentication ([#3624](https://github.com/earendil-works/pi-mono/pull/3624) by [@Nutlope](https://github.com/Nutlope)).
+- Added Routstr as a built-in OpenAI-compatible provider with generated model metadata and `ROUTSTR_API_KEY` authentication.
 
 ### Fixed
 

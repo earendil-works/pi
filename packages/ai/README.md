@@ -67,6 +67,7 @@ Unified LLM API with automatic model discovery, provider configuration, token an
 - **Vercel AI Gateway**
 - **MiniMax**
 - **Together AI**
+- **Routstr**
 - **GitHub Copilot** (requires OAuth, see below)
 - **Amazon Bedrock**
 - **OpenCode Zen**
@@ -1112,6 +1113,7 @@ In Node.js environments, you can set environment variables to avoid passing API 
 | xAI | `XAI_API_KEY` |
 | Fireworks | `FIREWORKS_API_KEY` |
 | Together AI | `TOGETHER_API_KEY` |
+| Routstr | `ROUTSTR_API_KEY` |
 | OpenRouter | `OPENROUTER_API_KEY` |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
 | zAI | `ZAI_API_KEY` |
