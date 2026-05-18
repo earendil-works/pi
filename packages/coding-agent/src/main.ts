@@ -113,27 +113,6 @@ function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc"> {
 	return appMode === "json" ? "json" : "text";
 }
 
-async function prepareInitialMessage(
-	parsed: Args,
-	autoResizeImages: boolean,
-	stdinContent?: string,
-): Promise<{
-	initialMessage?: string;
-	initialImages?: ImageContent[];
-}> {
-	if (parsed.fileArgs.length === 0) {
-		return buildInitialMessage({ parsed, stdinContent });
-	}
-
-	const { text, images } = await processFileArguments(parsed.fileArgs, { autoResizeImages });
-	return buildInitialMessage({
-		parsed,
-		fileText: text,
-		fileImages: images,
-		stdinContent,
-	});
-}
-
 /** Result from resolving a session argument */
 type ResolvedSession =
 	| { type: "path"; path: string } // Direct file path
@@ -482,6 +461,10 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(1);
 	}
 
+	// Start reading piped stdin early — independent of runtime, overlaps with
+	// migrations, session resolution, and runtime creation.
+	const stdinPromise = appMode !== "rpc" ? readPipedStdin() : undefined;
+
 	validateForkFlags(parsed);
 
 	// Run migrations (pass cwd for project-local migrations)
@@ -492,6 +475,12 @@ export async function main(args: string[], options?: MainOptions) {
 	const agentDir = getAgentDir();
 	const startupSettingsManager = SettingsManager.create(cwd, agentDir);
 	reportDiagnostics(collectSettingsDiagnostics(startupSettingsManager, "startup session lookup"));
+
+	// Start file processing early — I/O overlaps with session resolution and runtime creation.
+	const fileProcessingPromise =
+		parsed.fileArgs.length > 0
+			? processFileArguments(parsed.fileArgs, { autoResizeImages: startupSettingsManager.getImageAutoResize() })
+			: undefined;
 
 	// Decide the final runtime cwd before creating cwd-bound runtime services.
 	// --session and --resume may select a session from another project, so project-local
@@ -632,21 +621,30 @@ export async function main(args: string[], options?: MainOptions) {
 		process.exit(0);
 	}
 
-	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
+	// Resolve piped stdin (likely already completed during runtime creation)
 	let stdinContent: string | undefined;
-	if (appMode !== "rpc") {
-		stdinContent = await readPipedStdin();
+	if (stdinPromise) {
+		stdinContent = await stdinPromise;
 		if (stdinContent !== undefined && appMode === "interactive") {
 			appMode = "print";
 		}
 	}
 	time("readPipedStdin");
 
-	const { initialMessage, initialImages } = await prepareInitialMessage(
-		parsed,
-		settingsManager.getImageAutoResize(),
-		stdinContent,
-	);
+	// Resolve file processing (likely already completed) and build initial message
+	let initialMessage: string | undefined;
+	let initialImages: ImageContent[] | undefined;
+	if (fileProcessingPromise) {
+		const { text, images } = await fileProcessingPromise;
+		({ initialMessage, initialImages } = buildInitialMessage({
+			parsed,
+			fileText: text,
+			fileImages: images,
+			stdinContent,
+		}));
+	} else {
+		({ initialMessage, initialImages } = buildInitialMessage({ parsed, stdinContent }));
+	}
 	time("prepareInitialMessage");
 	initTheme(settingsManager.getTheme(), appMode === "interactive");
 	time("initTheme");

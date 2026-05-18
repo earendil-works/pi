@@ -321,10 +321,14 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	async reload(): Promise<void> {
 		await this.settingsManager.reload();
-		const resolvedPaths = await this.packageManager.resolve();
-		const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
-			temporary: true,
-		});
+		// resolve() and resolveExtensionSources() are independent — each creates its own
+		// accumulator and reads settings without mutation. Parallelize to overlap their I/O.
+		const [resolvedPaths, cliExtensionPaths] = await Promise.all([
+			this.packageManager.resolve(),
+			this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
+				temporary: true,
+			}),
+		]);
 		const metadataByPath = new Map<string, PathMetadata>();
 
 		this.extensionSkillSourceInfos = new Map();

@@ -353,16 +353,28 @@ function createExtensionAPI(
 	return api;
 }
 
-async function loadExtensionModule(extensionPath: string) {
-	const jiti = createJiti(import.meta.url, {
-		moduleCache: false,
-		// In Bun binary: use virtualModules for bundled packages (no filesystem resolution)
-		// Also disable tryNative so jiti handles ALL imports (not just the entry point)
-		// In Node.js/dev: use aliases to resolve to node_modules paths
-		...(isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }),
-	});
+import { pathToFileURL } from "url";
 
-	const module = await jiti.import(extensionPath, { default: true });
+async function loadExtensionModule(extensionPath: string, jiti: import("jiti").Jiti) {
+	let module: any;
+	if (!isBunBinary) {
+		try {
+			// In dev mode (tsx), the native Node loader is orders of magnitude faster
+			// than routing everything through Jiti's internal babel/resolve pipeline.
+			const importUrl = pathToFileURL(extensionPath).href;
+			module = await import(importUrl);
+			// ESM dynamic imports resolve to a namespace object where default is a property
+			if (module?.default) {
+				module = module.default;
+			}
+		} catch (e) {
+			console.error(`[STARTUP] Native import failed for ${extensionPath}, falling back to jiti`, e);
+			module = await jiti.import(extensionPath, { default: true });
+		}
+	} else {
+		module = await jiti.import(extensionPath, { default: true });
+	}
+
 	const factory = module as ExtensionFactory;
 	return typeof factory !== "function" ? undefined : factory;
 }
@@ -395,11 +407,12 @@ async function loadExtension(
 	cwd: string,
 	eventBus: EventBus,
 	runtime: ExtensionRuntime,
+	jiti: import("jiti").Jiti,
 ): Promise<{ extension: Extension | null; error: string | null }> {
 	const resolvedPath = resolvePath(extensionPath, cwd);
 
 	try {
-		const factory = await loadExtensionModule(resolvedPath);
+		const factory = await loadExtensionModule(resolvedPath, jiti);
 		if (!factory) {
 			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
 		}
@@ -440,14 +453,33 @@ export async function loadExtensions(paths: string[], cwd: string, eventBus?: Ev
 	const resolvedEventBus = eventBus ?? createEventBus();
 	const runtime = createExtensionRuntime();
 
-	for (const extPath of paths) {
-		const { extension, error } = await loadExtension(extPath, cwd, resolvedEventBus, runtime);
+	// Create a single shared Jiti instance for all extensions in this load cycle.
+	// This prevents massive CPU blocking when loading multiple extensions,
+	// and allows module caching across shared dependencies.
+	const sharedJiti = createJiti(import.meta.url, {
+		moduleCache: true, // Crucial for performance: cache shared dependencies
+		// In Bun binary: use virtualModules for bundled packages (no filesystem resolution)
+		// Also disable tryNative so jiti handles ALL imports (not just the entry point)
+		// In Node.js/dev: use aliases to resolve to node_modules paths
+		...(isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }),
+	});
 
+	// Load all extensions in parallel — each jiti instance is independent,
+	// and runtime mutations (Array.push, Map.set) are safe in single-threaded JS.
+	const results = await Promise.all(
+		paths.map(async (extPath) => {
+			const res = await loadExtension(extPath, cwd, resolvedEventBus, runtime, sharedJiti);
+			return res;
+		}),
+	);
+
+	// Process results in original order to preserve load-order precedence
+	for (let i = 0; i < results.length; i++) {
+		const { extension, error } = results[i];
 		if (error) {
-			errors.push({ path: extPath, error });
+			errors.push({ path: paths[i], error });
 			continue;
 		}
-
 		if (extension) {
 			extensions.push(extension);
 		}
