@@ -576,9 +576,6 @@ describe("agentLoop with AgentMessage", () => {
 		};
 
 		const abortController = new AbortController();
-		let prepareNextTurnCalls = 0;
-		let shouldStopAfterTurnCalls = 0;
-		let steeringCalls = 0;
 		let followUpCalls = 0;
 		let followUpReady = false;
 		const config: AgentLoopConfig = {
@@ -588,18 +585,6 @@ describe("agentLoop with AgentMessage", () => {
 				abortController.abort();
 				followUpReady = true;
 				return undefined;
-			},
-			prepareNextTurn: async () => {
-				prepareNextTurnCalls++;
-				return undefined;
-			},
-			shouldStopAfterTurn: async () => {
-				shouldStopAfterTurnCalls++;
-				return false;
-			},
-			getSteeringMessages: async () => {
-				steeringCalls++;
-				return [];
 			},
 			getFollowUpMessages: async () => {
 				followUpCalls++;
@@ -647,9 +632,6 @@ describe("agentLoop with AgentMessage", () => {
 		});
 
 		expect(llmCalls).toBe(1);
-		expect(prepareNextTurnCalls).toBe(0);
-		expect(shouldStopAfterTurnCalls).toBe(0);
-		expect(steeringCalls).toBe(1);
 		expect(followUpCalls).toBe(0);
 		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
 		expect(assistantStopReasons).toEqual(["toolUse"]);
@@ -850,7 +832,7 @@ describe("agentLoop with AgentMessage", () => {
 		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
 	});
 
-	it("should stop a parallel tool batch immediately when the signal aborts during or before tool preflight", async () => {
+	it("should stop a parallel tool batch immediately when beforeToolCall aborts the first tool", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		const executed: string[] = [];
 		const tool: AgentTool<typeof toolSchema, { value: string }> = {
@@ -946,6 +928,33 @@ describe("agentLoop with AgentMessage", () => {
 		expect(toolResultIds).toEqual(["tool-1"]);
 		expect(messages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
 		expect(executed).toEqual([]);
+	});
+
+	it("should stop a parallel tool batch immediately when the signal aborts before tool preflight completes", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		const executed: string[] = [];
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params, signal) {
+				executed.push(params.value);
+				if (signal?.aborted) {
+					throw new Error("aborted");
+				}
+				return {
+					content: [{ type: "text", text: `echoed: ${params.value}` }],
+					details: { value: params.value },
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
 
 		const preflightAbortController = new AbortController();
 		const preflightConfig: AgentLoopConfig = {
@@ -1018,6 +1027,33 @@ describe("agentLoop with AgentMessage", () => {
 		expect(preflightToolResultIds).toEqual(["tool-1"]);
 		expect(preflightMessages.map((message) => message.role)).toEqual(["user", "assistant", "toolResult"]);
 		expect(executed).toEqual([]);
+	});
+
+	it("should emit already-prepared parallel abort results without starting execution", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		const executed: string[] = [];
+		const tool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "echo",
+			label: "Echo",
+			description: "Echo tool",
+			parameters: toolSchema,
+			async execute(_toolCallId, params, signal) {
+				executed.push(params.value);
+				if (signal?.aborted) {
+					throw new Error("aborted");
+				}
+				return {
+					content: [{ type: "text", text: `echoed: ${params.value}` }],
+					details: { value: params.value },
+				};
+			},
+		};
+
+		const context: AgentContext = {
+			systemPrompt: "",
+			messages: [],
+			tools: [tool],
+		};
 
 		const preparedAbortController = new AbortController();
 		const preparedAbortConfig: AgentLoopConfig = {
