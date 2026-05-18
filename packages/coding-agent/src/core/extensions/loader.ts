@@ -358,8 +358,11 @@ async function loadExtensionModule(extensionPath: string) {
 		moduleCache: false,
 		// In Bun binary: use virtualModules for bundled packages (no filesystem resolution)
 		// Also disable tryNative so jiti handles ALL imports (not just the entry point)
-		// In Node.js/dev: use aliases to resolve to node_modules paths
-		...(isBunBinary ? { virtualModules: VIRTUAL_MODULES, tryNative: false } : { alias: getAliases() }),
+		// In Node.js/dev: use aliases to resolve to node_modules paths. Use nativeModules
+		// to bypass Jiti's transpilation for the heavy workspace packages (they are already cached by Node).
+		...(isBunBinary
+			? { virtualModules: VIRTUAL_MODULES, tryNative: false }
+			: { alias: getAliases(), nativeModules: Object.keys(getAliases()) }),
 	});
 
 	const module = await jiti.import(extensionPath, { default: true });
@@ -440,16 +443,21 @@ export async function loadExtensions(paths: string[], cwd: string, eventBus?: Ev
 	const resolvedEventBus = eventBus ?? createEventBus();
 	const runtime = createExtensionRuntime();
 
-	for (const extPath of paths) {
-		const { extension, error } = await loadExtension(extPath, cwd, resolvedEventBus, runtime);
+	// Load all extensions in parallel to overlap I/O and async initialization
+	const results = await Promise.all(
+		paths.map(async (extPath) => {
+			const res = await loadExtension(extPath, cwd, resolvedEventBus, runtime);
+			return { path: extPath, ...res };
+		}),
+	);
 
-		if (error) {
-			errors.push({ path: extPath, error });
+	for (const res of results) {
+		if (res.error) {
+			errors.push({ path: res.path, error: res.error });
 			continue;
 		}
-
-		if (extension) {
-			extensions.push(extension);
+		if (res.extension) {
+			extensions.push(res.extension);
 		}
 	}
 
