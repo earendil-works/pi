@@ -1,19 +1,19 @@
+import type { Agent, AgentEvent } from "@earendil-works/pi-agent-core";
 import { streamSimple, type ToolResultMessage, type Usage } from "@earendil-works/pi-ai";
 import { html, LitElement } from "lit";
 import { customElement, property, query } from "lit/decorators.js";
 import { ModelSelector } from "../dialogs/ModelSelector.js";
-import type { MessageEditor } from "./MessageEditor.js";
-import "./MessageEditor.js";
-import "./MessageList.js";
-import "./Messages.js"; // Import for side effects to register the custom elements
 import { getAppStorage } from "../storage/app-storage.js";
-import "./StreamingMessageContainer.js";
-import type { Agent, AgentEvent } from "@earendil-works/pi-agent-core";
 import type { Attachment } from "../utils/attachment-utils.js";
 import { formatUsage } from "../utils/format.js";
 import { i18n } from "../utils/i18n.js";
 import { createStreamFn } from "../utils/proxy-utils.js";
+import "./MessageEditor.js";
+import type { MessageEditor } from "./MessageEditor.js";
+import "./MessageList.js";
+import "./Messages.js"; // Import for side effects to register the custom elements
 import type { UserMessageWithAttachments } from "./Messages.js";
+import "./StreamingMessageContainer.js";
 import type { StreamingMessageContainer } from "./StreamingMessageContainer.js";
 
 @customElement("agent-interface")
@@ -172,7 +172,7 @@ export class AgentInterface extends LitElement {
 						this._streamingContainer.isStreaming = false;
 						this._streamingContainer.setMessage(null, true);
 					}
-					this.requestUpdate();
+					this.session?.waitForIdle().then(() => this.requestUpdate());
 					break;
 				case "message_update":
 					if (this._streamingContainer) {
