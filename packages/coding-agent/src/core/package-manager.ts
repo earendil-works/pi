@@ -1189,8 +1189,65 @@ export class DefaultPackageManager implements PackageManager {
 		accumulator: ResourceAccumulator,
 		onMissing?: (source: string) => Promise<MissingSourceAction>,
 	): Promise<void> {
-		for (const { pkg, scope } of sources) {
-			const sourceStr = typeof pkg === "string" ? pkg : pkg.source;
+		const startTime = Date.now();
+		const packageTimings: Record<string, number> = {};
+
+		// Load all packages in parallel for better startup performance
+		const results = await Promise.allSettled(
+			sources.map((entry) =>
+				this.resolveSinglePackageSource(entry, accumulator, onMissing, packageTimings),
+			),
+		);
+
+		// Log results
+		const failed = results.filter((r) => r.status === "rejected").length;
+		const successful = results.filter((r) => r.status === "fulfilled").length;
+		const totalTime = Date.now() - startTime;
+
+		if (process.env.DEBUG_PACKAGE_LOADING) {
+			console.log(
+				`[parallel-loader] Resolved ${successful}/${sources.length} packages in ${totalTime}ms`,
+			);
+			if (failed > 0) {
+				console.log(`[parallel-loader] ${failed} packages failed to load`);
+			}
+			const slowest = Object.entries(packageTimings)
+				.sort(([, a], [, b]) => b - a)
+				.slice(0, 3);
+			if (slowest.length > 0) {
+				console.log(
+					`[parallel-loader] Slowest packages: ${slowest.map(([name, time]) => `${name} (${time}ms)`).join(", ")}`,
+				);
+			}
+		}
+
+		// Throw if any package failed
+		const failedResults = results.filter((r) => r.status === "rejected");
+		if (failedResults.length > 0) {
+			const errors = failedResults
+				.map((r) => (r as PromiseRejectedResult).reason)
+				.map((e) => (e instanceof Error ? e.message : String(e)));
+			if (errors.length === 1) {
+				throw new Error(errors[0]);
+			}
+			throw new Error(`Package loading failed: ${errors.join("; ")}`);
+		}
+	}
+
+	/**
+	 * Resolve a single package source (extracted for parallel execution)
+	 */
+	private async resolveSinglePackageSource(
+		entry: { pkg: PackageSource; scope: SourceScope },
+		accumulator: ResourceAccumulator,
+		onMissing: ((source: string) => Promise<MissingSourceAction>) | undefined,
+		packageTimings: Record<string, number>,
+	): Promise<void> {
+		const startTime = Date.now();
+		const { pkg, scope } = entry;
+		const sourceStr = typeof pkg === "string" ? pkg : pkg.source;
+
+		try {
 			const filter = typeof pkg === "object" ? pkg : undefined;
 			const parsed = this.parseSource(sourceStr);
 			const metadata: PathMetadata = { source: sourceStr, scope, origin: "package" };
@@ -1198,7 +1255,7 @@ export class DefaultPackageManager implements PackageManager {
 			if (parsed.type === "local") {
 				const baseDir = this.getBaseDirForScope(scope);
 				this.resolveLocalExtensionSource(parsed, accumulator, filter, metadata, baseDir);
-				continue;
+				return;
 			}
 
 			const installMissing = async (): Promise<boolean> => {
@@ -1223,25 +1280,28 @@ export class DefaultPackageManager implements PackageManager {
 					(parsed.pinned && !(await this.installedNpmMatchesPinnedVersion(parsed, installedPath)));
 				if (needsInstall) {
 					const installed = await installMissing();
-					if (!installed) continue;
+					if (!installed) return;
 					installedPath = this.getNpmInstallPath(parsed, scope);
 				}
 				metadata.baseDir = installedPath;
 				this.collectPackageResources(installedPath, accumulator, filter, metadata);
-				continue;
+				return;
 			}
 
 			if (parsed.type === "git") {
 				const installedPath = this.getGitInstallPath(parsed, scope);
 				if (!existsSync(installedPath)) {
 					const installed = await installMissing();
-					if (!installed) continue;
+					if (!installed) return;
 				} else if (scope === "temporary" && !parsed.pinned && !isOfflineModeEnabled()) {
 					await this.refreshTemporaryGitSource(parsed, sourceStr);
 				}
 				metadata.baseDir = installedPath;
 				this.collectPackageResources(installedPath, accumulator, filter, metadata);
 			}
+		} finally {
+			const elapsed = Date.now() - startTime;
+			packageTimings[sourceStr] = elapsed;
 		}
 	}
 
