@@ -496,6 +496,54 @@ function createClient(
 		baseURL: isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model) : model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		defaultHeaders,
+		fetch: async (url, init) => {
+			const ac = new AbortController();
+			const onAbort = () => ac.abort(init?.signal?.reason);
+			if (init?.signal) {
+				init.signal.addEventListener("abort", onAbort);
+			}
+
+			// Add a timeout for the headers to arrive to prevent hanging if the server tarpits
+			const timeoutId = setTimeout(() => ac.abort(new Error("Request timed out waiting for headers")), 30000);
+			try {
+				const fetchInit = { ...init, signal: ac.signal };
+				const response = await fetch(url, fetchInit);
+				clearTimeout(timeoutId);
+
+				if (!response.ok) {
+					// Prevent undici from hanging indefinitely on abrupt TCP closures with bodyTimeout: 0
+					// by explicitly wrapping the text() consumption in a hard timeout.
+					const timeoutMs = 5000;
+					const textPromise = response.text();
+					const timeoutPromise = new Promise<string>((_, reject) =>
+						setTimeout(
+							() => reject(new Error(`Timeout reading error body (HTTP ${response.status})`)),
+							timeoutMs,
+						),
+					);
+
+					let errText = "";
+					try {
+						errText = await Promise.race([textPromise, timeoutPromise]);
+					} catch (e) {
+						errText = e instanceof Error ? e.message : String(e);
+					}
+
+					// Synthesize a new response that returns the safely extracted text immediately
+					const newResponse = response.clone();
+					Object.defineProperty(newResponse, "text", {
+						value: async () => errText,
+					});
+					return newResponse;
+				}
+
+				return response;
+			} finally {
+				if (init?.signal) {
+					init.signal.removeEventListener("abort", onAbort);
+				}
+			}
+		},
 	});
 }
 
