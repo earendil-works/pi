@@ -142,7 +142,17 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 - Main documentation: ${readmePath}
 - Additional docs: ${docsPath}
 - Examples: ${examplesPath} (extensions, custom tools, SDK)
-- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md)
+- When asked about:
+  - extensions (${docsPath}/extensions.md, ${examplesPath}/extensions/)
+  - themes (${docsPath}/themes.md)
+  - skills (${docsPath}/skills.md)
+  - prompt templates (${docsPath}/prompt-templates.md)
+  - TUI components (${docsPath}/tui.md)
+  - keybindings (${docsPath}/keybindings.md)
+  - SDK integrations (${docsPath}/sdk.md)
+  - custom providers (${docsPath}/custom-provider.md)
+  - adding models (${docsPath}/models.md)
+  - pi packages (${docsPath}/packages.md)
 - When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
 - Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
 
