@@ -1,3 +1,4 @@
+import { Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
 import chalk from "chalk";
 import { selectConfig } from "./cli/config-selector.js";
 import {
@@ -23,6 +24,23 @@ import {
 export type PackageCommand = "install" | "remove" | "update" | "list";
 
 type UpdateTarget = { type: "all" } | { type: "self" } | { type: "extensions"; source?: string };
+
+const SELF_UPDATE_NOTE_MARKDOWN_THEME: MarkdownTheme = {
+	heading: (text) => chalk.bold(chalk.yellow(text)),
+	link: (text) => chalk.cyan(text),
+	linkUrl: (text) => chalk.dim(text),
+	code: (text) => chalk.yellow(text),
+	codeBlock: (text) => chalk.dim(text),
+	codeBlockBorder: (text) => chalk.dim(text),
+	quote: (text) => chalk.dim(text),
+	quoteBorder: (text) => chalk.dim(text),
+	hr: (text) => chalk.dim(text),
+	listBullet: (text) => chalk.yellow(text),
+	bold: (text) => chalk.bold(text),
+	italic: (text) => chalk.italic(text),
+	strikethrough: (text) => chalk.strikethrough(text),
+	underline: (text) => chalk.underline(text),
+};
 
 interface PackageCommandOptions {
 	command: PackageCommand;
@@ -293,9 +311,30 @@ function printSelfUpdateFallback(command: SelfUpdateCommand): void {
 	console.error(chalk.dim(`If this keeps failing, run this command yourself: ${command.display}`));
 }
 
+function printSelfUpdateNote(note: string): void {
+	const trimmedNote = note.trim();
+	if (!trimmedNote) {
+		return;
+	}
+
+	console.log();
+	console.log(chalk.bold(chalk.yellow("Update note")));
+	try {
+		const width = Math.max(20, process.stdout.columns ?? 80);
+		const renderedLines = new Markdown(trimmedNote, 0, 0, SELF_UPDATE_NOTE_MARKDOWN_THEME)
+			.render(width)
+			.map((line) => line.trimEnd());
+		console.log(renderedLines.join("\n"));
+	} catch {
+		console.log(trimmedNote);
+	}
+	console.log();
+}
+
 interface SelfUpdatePlan {
 	packageName: string;
 	shouldRun: boolean;
+	note?: string;
 }
 
 async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
@@ -307,7 +346,7 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 		const latestRelease = await getLatestPiRelease(VERSION);
 		const packageName = latestRelease?.packageName ?? PACKAGE_NAME;
 		if (!latestRelease || packageName !== PACKAGE_NAME || isNewerPackageVersion(latestRelease.version, VERSION)) {
-			return { packageName, shouldRun: true };
+			return { packageName, shouldRun: true, ...(latestRelease?.note ? { note: latestRelease.note } : {}) };
 		}
 	} catch {
 		return { packageName: PACKAGE_NAME, shouldRun: true };
@@ -521,6 +560,9 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 						printSelfUpdateUnavailable(selfUpdateNpmCommand, selfUpdatePlan.packageName);
 						process.exitCode = 1;
 						return true;
+					}
+					if (selfUpdatePlan.note) {
+						printSelfUpdateNote(selfUpdatePlan.note);
 					}
 					try {
 						if (installMethod === "npm") {
