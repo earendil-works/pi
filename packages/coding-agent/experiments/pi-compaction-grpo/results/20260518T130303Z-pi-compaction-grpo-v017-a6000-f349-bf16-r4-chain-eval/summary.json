@@ -1,0 +1,8 @@
+{
+  "adapter": "pi-compaction-grpo-v017-a6000-f349-bf16-r4-chain",
+  "scorer": "scripts/score_compaction.py@v0.2",
+  "means": {
+    "base": 0.3436436507936508,
+    "pi-compaction-grpo-v017-a6000-f349-bf16-r4-chain": 0.3436436507936508
+  }
+}

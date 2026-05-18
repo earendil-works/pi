@@ -1,0 +1,8 @@
+{
+  "adapter": "pi-compaction-grpo-v014-a6000-f349-bf16-r4",
+  "scorer": "scripts/score_compaction.py@v0.2",
+  "means": {
+    "base": 0.5282140141586242,
+    "pi-compaction-grpo-v014-a6000-f349-bf16-r4": 0.5282140141586242
+  }
+}

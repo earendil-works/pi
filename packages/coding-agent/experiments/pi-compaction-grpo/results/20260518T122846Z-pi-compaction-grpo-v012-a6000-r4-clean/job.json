@@ -1,0 +1,12 @@
+{
+  "adapter_name": "pi-compaction-grpo-v012-a6000-r4-clean",
+  "current_loss": null,
+  "elapsed_secs": 5.002501056,
+  "finished_unix_ms": 1779107326281,
+  "job_id": "c518b168-b537-4123-ae5d-a7c2b8974ca4",
+  "job_type": "grpo",
+  "progress": 0.0,
+  "started_at": "5s ago",
+  "state": "failed",
+  "submitted_unix_ms": 1779107326067
+}

@@ -1,0 +1,12 @@
+{
+  "adapter_name": "pi-compaction-grpo-v004",
+  "current_loss": -0.3409274930836337,
+  "elapsed_secs": 40.009276923,
+  "finished_unix_ms": 1779100024499,
+  "job_id": "fa79978c-a4b9-472d-bf3e-1304cb0dae50",
+  "job_type": "grpo",
+  "progress": 1.0,
+  "started_at": "40s ago",
+  "state": "completed",
+  "submitted_unix_ms": 1779099987021
+}

@@ -1,0 +1,12 @@
+{
+  "adapter_name": "pi-compaction-grpo-v018-a6000-f349-bf16-strongpos",
+  "current_loss": 0.0010978818628221698,
+  "elapsed_secs": 20.0057755,
+  "finished_unix_ms": 1779109779405,
+  "job_id": "7d22836b-60f6-4132-ba6c-bd87f2ef8742",
+  "job_type": "grpo",
+  "progress": 1.0,
+  "started_at": "20s ago",
+  "state": "completed",
+  "submitted_unix_ms": 1779109762126
+}

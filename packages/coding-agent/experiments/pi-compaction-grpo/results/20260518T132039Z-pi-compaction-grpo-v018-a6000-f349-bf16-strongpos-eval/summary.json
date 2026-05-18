@@ -1,0 +1,8 @@
+{
+  "adapter": "pi-compaction-grpo-v018-a6000-f349-bf16-strongpos",
+  "scorer": "scripts/score_compaction.py@v0.2",
+  "means": {
+    "base": 0.5414251278409091,
+    "pi-compaction-grpo-v018-a6000-f349-bf16-strongpos": 0.27609527400169925
+  }
+}

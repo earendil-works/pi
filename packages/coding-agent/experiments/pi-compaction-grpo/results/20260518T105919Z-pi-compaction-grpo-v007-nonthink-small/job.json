@@ -1,0 +1,12 @@
+{
+  "adapter_name": "pi-compaction-grpo-v007-nonthink-small",
+  "current_loss": null,
+  "elapsed_secs": 30.005980634,
+  "finished_unix_ms": 1779101987232,
+  "job_id": "95f9d545-9fa6-48e1-b553-880cfa9ed125",
+  "job_type": "grpo",
+  "progress": 0.0,
+  "started_at": "30s ago",
+  "state": "failed",
+  "submitted_unix_ms": 1779101959232
+}

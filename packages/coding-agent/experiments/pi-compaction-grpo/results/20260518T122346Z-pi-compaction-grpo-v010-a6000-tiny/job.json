@@ -1,0 +1,12 @@
+{
+  "adapter_name": "pi-compaction-grpo-v010-a6000-tiny",
+  "current_loss": null,
+  "elapsed_secs": 5.002145288,
+  "finished_unix_ms": 1779107026897,
+  "job_id": "5ab9ddbf-fdb0-4d64-aaab-2e1aef7fa37f",
+  "job_type": "grpo",
+  "progress": 0.0,
+  "started_at": "5s ago",
+  "state": "failed",
+  "submitted_unix_ms": 1779107026669
+}

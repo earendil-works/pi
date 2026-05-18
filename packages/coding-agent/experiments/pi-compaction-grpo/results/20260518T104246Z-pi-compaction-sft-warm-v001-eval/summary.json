@@ -1,0 +1,7 @@
+{
+  "adapter": "pi-compaction-sft-warm-v001",
+  "means": {
+    "base": 0.18205227963525838,
+    "pi-compaction-sft-warm-v001": 0.18205227963525838
+  }
+}

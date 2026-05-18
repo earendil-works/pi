@@ -1,0 +1,12 @@
+{
+  "adapter_name": "pi-compaction-sft-v016-a6000-f349-bf16-r4-small",
+  "current_loss": 1.6982944011688232,
+  "elapsed_secs": 15.005023587,
+  "finished_unix_ms": 1779109174222,
+  "job_id": "3e135c05-4211-4e18-ac37-446f1adf5d0f",
+  "job_type": "sft",
+  "progress": 0.11111111,
+  "started_at": "15s ago",
+  "state": "failed",
+  "submitted_unix_ms": 1779109161740
+}

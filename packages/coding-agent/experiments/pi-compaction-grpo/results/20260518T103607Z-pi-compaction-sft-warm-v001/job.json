@@ -1,0 +1,12 @@
+{
+  "adapter_name": "pi-compaction-sft-warm-v001",
+  "current_loss": 0.5890517830848694,
+  "elapsed_secs": 255.043466907,
+  "finished_unix_ms": 1779100822315,
+  "job_id": "f57b3589-829f-44cb-a2e5-491cbcaf3fae",
+  "job_type": "sft",
+  "progress": 1.0,
+  "started_at": "255s ago",
+  "state": "completed",
+  "submitted_unix_ms": 1779100567557
+}
