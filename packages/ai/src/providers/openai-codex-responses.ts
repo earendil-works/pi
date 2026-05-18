@@ -54,6 +54,23 @@ const BASE_DELAY_MS = 1000;
 const CODEX_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 const WEBSOCKET_MESSAGE_TOO_BIG_CLOSE_CODE = 1009;
 
+// OpenAI's hard ceiling on prompt_cache_key. Requests with longer values
+// are rejected with: Invalid 'prompt_cache_key': string too long.
+// Expected a string with maximum length 64, but got a string with length N.
+const PROMPT_CACHE_KEY_MAX_LEN = 64;
+
+/**
+ * Clamp prompt_cache_key to the OpenAI 64-char ceiling. Truncation is a
+ * deterministic prefix slice so identical inputs still produce identical
+ * cache keys — prefix caching across turns continues to work as long as
+ * the discriminating part of the session id is at the start.
+ */
+function clampPromptCacheKey(key: string | undefined): string | undefined {
+	if (!key) return key;
+	if (key.length <= PROMPT_CACHE_KEY_MAX_LEN) return key;
+	return key.slice(0, PROMPT_CACHE_KEY_MAX_LEN);
+}
+
 const CODEX_RESPONSE_STATUSES = new Set<CodexResponseStatus>([
 	"completed",
 	"incomplete",
@@ -378,7 +395,7 @@ function buildRequestBody(
 		input: messages,
 		text: { verbosity: options?.textVerbosity || "low" },
 		include: ["reasoning.encrypted_content"],
-		prompt_cache_key: options?.sessionId,
+		prompt_cache_key: clampPromptCacheKey(options?.sessionId),
 		tool_choice: "auto",
 		parallel_tool_calls: true,
 	};
