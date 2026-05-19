@@ -68,7 +68,6 @@ describe("version checks", () => {
 		vi.stubGlobal("fetch", fetchMock);
 
 		await expect(getLatestPiRelease("1.2.3")).resolves.toEqual({
-			changelogUrl: "https://pi.dev/news/releases/1.2.4",
 			packageName: "@new-scope/pi",
 			version: "1.2.4",
 		});

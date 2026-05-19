@@ -1,13 +1,13 @@
 import { getPiUserAgent } from "./pi-user-agent.js";
 
 const LATEST_VERSION_URL = "https://pi.dev/api/latest-version";
+export const PI_CHANGELOG_URL = "https://pi.dev/changelog";
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;
 
 export interface LatestPiRelease {
 	version: string;
 	packageName?: string;
 	note?: string;
-	changelogUrl?: string;
 }
 
 interface ParsedVersion {
@@ -73,7 +73,6 @@ export async function getLatestPiRelease(
 		packageName?: unknown;
 		version?: unknown;
 		note?: unknown;
-		changelogUrl?: unknown;
 	};
 	if (typeof data.version !== "string" || !data.version.trim()) {
 		return undefined;
@@ -81,13 +80,10 @@ export async function getLatestPiRelease(
 	const packageName =
 		typeof data.packageName === "string" && data.packageName.trim() ? data.packageName.trim() : undefined;
 	const note = typeof data.note === "string" && data.note.trim() ? data.note.trim() : undefined;
-	const changelogUrl =
-		typeof data.changelogUrl === "string" && data.changelogUrl.trim() ? data.changelogUrl.trim() : undefined;
 	return {
 		version: data.version.trim(),
 		packageName,
 		...(note ? { note } : {}),
-		...(changelogUrl ? { changelogUrl } : {}),
 	};
 }
 
