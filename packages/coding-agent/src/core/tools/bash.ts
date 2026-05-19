@@ -57,6 +57,74 @@ export interface BashOperations {
 }
 
 /**
+ * Normalize Windows NUL redirects (> nul, 2> nul, etc.) to /dev/null.
+ * No-op on non-Windows. Skips text inside quotes and after backslash escapes.
+ */
+export function normalizeNulRedirects(command: string): string {
+	if (process.platform !== "win32") return command;
+
+	let result = "";
+	let inSingleQuotes = false;
+	let inDoubleQuotes = false;
+	let i = 0;
+
+	// Track consecutive backslashes as we walk the string.
+	// When we hit a non-backslash char, an odd count means it's escaped
+	// (e.g. \> ) and an even count means it's not (e.g. \\> ).
+	let trailingBackslashes = 0;
+
+	// Sticky regex (y flag) anchors the match to lastIndex so we don't need
+	// command.slice(i). Captures optional fd (1, 2, &) + operator (>, >>).
+	const redirectRe = /([12&]?)(>>?)\s*nul(?=\s|$|[|&;()<>])/iy;
+
+	while (i < command.length) {
+		const char = command[i];
+
+		// Accumulate backslashes; they only affect the *next* character.
+		if (char === "\\") {
+			trailingBackslashes++;
+			result += char;
+			i++;
+			continue;
+		}
+
+		const isEscaped = trailingBackslashes % 2 === 1;
+		trailingBackslashes = 0;
+
+		// Toggle quote state for unescaped quotes.
+		if (char === "'" && !inDoubleQuotes && !isEscaped) {
+			inSingleQuotes = !inSingleQuotes;
+			result += char;
+			i++;
+			continue;
+		}
+
+		if (char === '"' && !inSingleQuotes && !isEscaped) {
+			inDoubleQuotes = !inDoubleQuotes;
+			result += char;
+			i++;
+			continue;
+		}
+
+		// Outside quotes and unescaped: try to match a NUL redirect.
+		if (!inSingleQuotes && !inDoubleQuotes && !isEscaped) {
+			redirectRe.lastIndex = i;
+			const match = redirectRe.exec(command);
+			if (match) {
+				result += `${match[1]}${match[2]}/dev/null`;
+				i += match[0].length;
+				continue;
+			}
+		}
+
+		result += char;
+		i++;
+	}
+
+	return result;
+}
+
+/**
  * Create bash operations using pi's built-in local shell execution backend.
  *
  * This is useful for extensions that intercept user_bash and still want pi's
@@ -71,7 +139,8 @@ export function createLocalBashOperations(options?: { shellPath?: string }): Bas
 					reject(new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`));
 					return;
 				}
-				const child = spawn(shell, [...args, command], {
+				const normalizedCommand = normalizeNulRedirects(command);
+				const child = spawn(shell, [...args, normalizedCommand], {
 					cwd,
 					detached: process.platform !== "win32",
 					env: env ?? getShellEnv(),
