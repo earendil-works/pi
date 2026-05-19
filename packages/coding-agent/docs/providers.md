@@ -24,6 +24,7 @@ Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json`
 ### OpenAI Codex
 
 - Requires ChatGPT Plus or Pro subscription
+- Select Browser OAuth on local machines, or Device Code when authenticating over SSH or on a headless host
 - Officially endorsed by OpenAI: [Codex for OSS](https://developers.openai.com/community/codex-for-oss)
 
 ### Claude Pro/Max

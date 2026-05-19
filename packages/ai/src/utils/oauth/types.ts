@@ -21,6 +21,7 @@ export type OAuthPrompt = {
 export type OAuthAuthInfo = {
 	url: string;
 	instructions?: string;
+	manualCodeInput?: boolean;
 };
 
 export type OAuthSelectOption = {

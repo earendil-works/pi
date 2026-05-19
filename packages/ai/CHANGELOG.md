@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a device-code login option for OpenAI Codex OAuth so ChatGPT Plus/Pro authentication works on headless hosts ([#3424](https://github.com/earendil-works/pi-mono/issues/3424)).
+
 ### Changed
 
 - Changed source syntax to avoid TypeScript constructs that require JavaScript emit, keeping the package compatible with Node.js strip-only TypeScript checks.

@@ -14,6 +14,7 @@ import {
 	type ImageContent,
 	type Message,
 	type Model,
+	type OAuthAuthInfo,
 	type OAuthProviderId,
 	type OAuthSelectPrompt,
 } from "@earendil-works/pi-ai";
@@ -4796,10 +4797,10 @@ export class InteractiveMode {
 
 		try {
 			await this.session.modelRegistry.authStorage.login(providerId as OAuthProviderId, {
-				onAuth: (info: { url: string; instructions?: string }) => {
+				onAuth: (info: OAuthAuthInfo) => {
 					dialog.showAuth(info.url, info.instructions);
 
-					if (usesCallbackServer) {
+					if (usesCallbackServer && info.manualCodeInput !== false) {
 						// Show input for manual paste, racing with callback
 						dialog
 							.showManualInput("Paste redirect URL below, or complete login in browser:")
