@@ -47,15 +47,12 @@ describe("normalizeNulRedirects", () => {
 		expect(normalizeNulRedirects("echo hello >> nul")).toBe("echo hello >>/dev/null");
 		expect(normalizeNulRedirects("echo hello >>  NUL")).toBe("echo hello >>/dev/null");
 
-		// stderr overwrite with and without space between fd and >
+		// stderr overwrite with fd adjacent to operator
 		expect(normalizeNulRedirects("echo hello 1> nul")).toBe("echo hello 1>/dev/null");
-		expect(normalizeNulRedirects("echo hello 1 > nul")).toBe("echo hello 1>/dev/null");
 		expect(normalizeNulRedirects("echo hello 2> nul")).toBe("echo hello 2>/dev/null");
-		expect(normalizeNulRedirects("echo hello 2  >  nul")).toBe("echo hello 2>/dev/null");
 
-		// stderr append with and without space
+		// stderr append with fd adjacent to operator
 		expect(normalizeNulRedirects("echo hello 2>> nul")).toBe("echo hello 2>>/dev/null");
-		expect(normalizeNulRedirects("echo hello 2 >>  nul")).toBe("echo hello 2>>/dev/null");
 
 		// stdout + stderr overwrite
 		expect(normalizeNulRedirects("echo hello &> nul")).toBe("echo hello &>/dev/null");
@@ -64,6 +61,25 @@ describe("normalizeNulRedirects", () => {
 		// stdout + stderr append
 		expect(normalizeNulRedirects("echo hello &>> nul")).toBe("echo hello &>>/dev/null");
 		expect(normalizeNulRedirects("echo hello &>>  NuL")).toBe("echo hello &>>/dev/null");
+	});
+
+	it("does not rewrite nul when it is part of a filename", () => {
+		if (process.platform !== "win32") return;
+
+		expect(normalizeNulRedirects("echo data > nul.txt")).toBe("echo data > nul.txt");
+		expect(normalizeNulRedirects("echo data > nul-backup")).toBe("echo data > nul-backup");
+		expect(normalizeNulRedirects("echo data > nul_suffix")).toBe("echo data > nul_suffix");
+		expect(normalizeNulRedirects("echo data 1 > nul.txt")).toBe("echo data 1 > nul.txt");
+	});
+
+	it("preserves fd as an argument when separated from the operator by whitespace", () => {
+		if (process.platform !== "win32") return;
+
+		// When fd is not adjacent to the operator it is a normal argument;
+		// only the redirect target is rewritten.
+		expect(normalizeNulRedirects("echo hello 1 > nul")).toBe("echo hello 1 >/dev/null");
+		expect(normalizeNulRedirects("echo hello 2  >  nul")).toBe("echo hello 2  >/dev/null");
+		expect(normalizeNulRedirects("echo hello 2 >>  nul")).toBe("echo hello 2 >>/dev/null");
 	});
 
 	it("does not modify commands on non-Windows platforms", () => {

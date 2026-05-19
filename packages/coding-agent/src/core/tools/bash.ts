@@ -56,16 +56,6 @@ export interface BashOperations {
 	) => Promise<{ exitCode: number | null }>;
 }
 
-/**
- * Normalize Windows-style NUL redirects to Unix-style /dev/null so they
- * work correctly in Git Bash / MSYS2.
- *
- * Covers: > nul, >> nul, 1> nul, 2> nul, 2>> nul, &> nul, &>> nul,
- * including optional whitespace between the file descriptor and >.
- *
- * Only replaces redirects outside of quoted strings; text inside quotes
- * is left untouched. No-op on non-Windows platforms.
- */
 function isEscaped(str: string, index: number): boolean {
 	let backslashes = 0;
 	let j = index - 1;
@@ -76,6 +66,19 @@ function isEscaped(str: string, index: number): boolean {
 	return backslashes % 2 === 1;
 }
 
+/**
+ * Normalize Windows-style NUL redirects to Unix-style /dev/null so they
+ * work correctly in Git Bash / MSYS2.
+ *
+ * Covers: > nul, >> nul, 1>nul, 2>nul, 2>>nul, &>nul, &>>nul.
+ * The file descriptor (1, 2, &) must be adjacent to the operator; if
+ * separated by whitespace it is treated as a normal argument.
+ * The token "nul" must be followed by whitespace, end-of-string, or a
+ * shell control character to avoid rewriting filenames like nul.txt.
+ *
+ * Only replaces redirects outside of quoted strings; text inside quotes
+ * is left untouched. No-op on non-Windows platforms.
+ */
 export function normalizeNulRedirects(command: string): string {
 	if (process.platform !== "win32") {
 		return command;
@@ -106,18 +109,22 @@ export function normalizeNulRedirects(command: string): string {
 		}
 
 		if (!inSingleQuotes && !inDoubleQuotes) {
-			const match = command.slice(i).match(/^([12&]?)\s*(>>?)\s*nul\b/i);
-			if (match) {
-				const fd = match[1] || "";
-				// Avoid eating the space before > when fd is omitted.
-				if (!fd && /^\s/.test(match[0])) {
-					// skip — let the next iteration handle the >
-				} else {
-					const operator = match[2];
-					result += `${fd}${operator}/dev/null`;
-					i += match[0].length;
-					continue;
-				}
+			// fd adjacent to operator (e.g. 1>nul, 2>>nul, &>nul).
+			// Whitespace between fd and > changes Bash semantics, so we only
+			// match when they are touching.
+			const fdMatch = command.slice(i).match(/^([12&])(>>?)\s*nul(?=\s|$|[|&;()<>])/i);
+			if (fdMatch) {
+				result += `${fdMatch[1]}${fdMatch[2]}/dev/null`;
+				i += fdMatch[0].length;
+				continue;
+			}
+
+			// operator without fd (e.g. >nul, >>nul).
+			const opMatch = command.slice(i).match(/^(>>?)\s*nul(?=\s|$|[|&;()<>])/i);
+			if (opMatch) {
+				result += `${opMatch[1]}/dev/null`;
+				i += opMatch[0].length;
+				continue;
 			}
 		}
 
