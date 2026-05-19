@@ -414,6 +414,13 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			// Some providers via OpenRouter give additional information in this field.
 			const rawMetadata = (error as any)?.error?.metadata?.raw;
 			if (rawMetadata) output.errorMessage += `\n${rawMetadata}`;
+
+			// If the error was thrown by openai-node, it may have headers directly on it
+			const retryAfter = (error as any)?.headers?.["retry-after"] || (error as any)?.headers?.["Retry-After"];
+			if (retryAfter && !output.errorMessage.includes("Retry-After")) {
+				output.errorMessage += `\nRetry-After: ${retryAfter}`;
+			}
+
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}
@@ -527,6 +534,11 @@ function createClient(
 						errText = await Promise.race([textPromise, timeoutPromise]);
 					} catch (e) {
 						errText = e instanceof Error ? e.message : String(e);
+					}
+
+					const retryAfter = response.headers.get("retry-after");
+					if (retryAfter) {
+						errText += `\nRetry-After: ${retryAfter}`;
 					}
 
 					// Synthesize a new response that returns the safely extracted text immediately
