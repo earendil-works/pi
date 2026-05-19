@@ -1627,6 +1627,22 @@ async function generateModels() {
 		}
 	}
 
+	// Add Claudinio model (OpenAI-compatible)
+	if (!allModels.some(m => m.provider === "claudinio" && m.id === "claudinio")) {
+		allModels.push({
+			id: "claudinio",
+			name: "Claudinio",
+			api: "openai-completions",
+			provider: "claudinio",
+			baseUrl: "https://api.claudin.io/v1",
+			reasoning: true,
+			input: ["text", "image"],
+			cost: { input: 0.5, output: 2, cacheRead: 0.15, cacheWrite: 0 },
+			contextWindow: 262144,
+			maxTokens: 65536,
+		});
+	}
+
 	// Add missing Mistral Medium 3.5 model until models.dev includes it
 	if (!allModels.some(m => m.provider === "mistral" && m.id === "mistral-medium-3.5")) {
 		allModels.push({
