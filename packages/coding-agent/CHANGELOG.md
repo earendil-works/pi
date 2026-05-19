@@ -2,10 +2,6 @@
 
 ## [Unreleased]
 
-### Changed
-
-- Changed interactive update notifications to link to `https://pi.dev/changelog`.
-
 ### Fixed
 
 - Fixed the subagent extension's parallel mode to return useful per-task output and failed-task diagnostics to the parent model instead of 100-character previews ([#4710](https://github.com/earendil-works/pi/issues/4710)).

@@ -60,7 +60,6 @@ describe("version checks", () => {
 	it("returns the active package metadata from the version check api", async () => {
 		const fetchMock = vi.fn(async () =>
 			Response.json({
-				changelogUrl: " https://pi.dev/news/releases/1.2.4 ",
 				packageName: "@new-scope/pi",
 				version: "1.2.4",
 			}),
