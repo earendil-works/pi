@@ -2,6 +2,10 @@ name: PR Gate
 
 on:
   pull_request_target:
+    branches:
+      - development
+      - test
+      - main
     types: [opened]
 
 jobs:

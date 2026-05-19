@@ -4,6 +4,10 @@ on:
   issues:
     types: [opened]
   pull_request_target:
+    branches:
+      - development
+      - test
+      - main
     types: [opened]
 
 jobs:
