@@ -57,6 +57,66 @@ export interface BashOperations {
 }
 
 /**
+ * Normalize Windows-style NUL redirects to Unix-style /dev/null so they
+ * work correctly in Git Bash / MSYS2.
+ *
+ * Covers: > nul, >> nul, 1> nul, 2> nul, 2>> nul, &> nul, &>> nul,
+ * including optional whitespace between the file descriptor and >.
+ *
+ * Only replaces redirects outside of quoted strings; text inside quotes
+ * is left untouched. No-op on non-Windows platforms.
+ */
+export function normalizeNulRedirects(command: string): string {
+	if (process.platform !== "win32") {
+		return command;
+	}
+
+	let result = "";
+	let inSingleQuotes = false;
+	let inDoubleQuotes = false;
+	let i = 0;
+
+	while (i < command.length) {
+		const char = command[i];
+
+		if (char === "'" && !inDoubleQuotes) {
+			inSingleQuotes = !inSingleQuotes;
+			result += char;
+			i++;
+			continue;
+		}
+
+		if (char === '"' && !inSingleQuotes) {
+			inDoubleQuotes = !inDoubleQuotes;
+			result += char;
+			i++;
+			continue;
+		}
+
+		if (!inSingleQuotes && !inDoubleQuotes) {
+			const match = command.slice(i).match(/^([12&]?)\s*(>>?)\s*nul\b/i);
+			if (match) {
+				const fd = match[1] || "";
+				// Avoid eating the space before > when fd is omitted.
+				if (!fd && /^\s/.test(match[0])) {
+					// skip — let the next iteration handle the >
+				} else {
+					const operator = match[2];
+					result += `${fd}${operator}/dev/null`;
+					i += match[0].length;
+					continue;
+				}
+			}
+		}
+
+		result += char;
+		i++;
+	}
+
+	return result;
+}
+
+/**
  * Create bash operations using pi's built-in local shell execution backend.
  *
  * This is useful for extensions that intercept user_bash and still want pi's
@@ -71,7 +131,8 @@ export function createLocalBashOperations(options?: { shellPath?: string }): Bas
 					reject(new Error(`Working directory does not exist: ${cwd}\nCannot execute bash commands.`));
 					return;
 				}
-				const child = spawn(shell, [...args, command], {
+				const normalizedCommand = normalizeNulRedirects(command);
+				const child = spawn(shell, [...args, normalizedCommand], {
 					cwd,
 					detached: process.platform !== "win32",
 					env: env ?? getShellEnv(),
