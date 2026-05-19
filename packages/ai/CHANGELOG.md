@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `compat.forceAdaptiveThinking` to the Anthropic Messages model config, allowing custom Anthropic-compatible providers to opt their models into `thinking.type: "adaptive"` plus `output_config.effort` regardless of model id. Previously adaptive thinking was selected only by id substring match, which broke proxies that expose Opus 4.7 / Sonnet 4.6 under their own id schemes and require the new format ([#4797](https://github.com/earendil-works/pi-mono/pull/4797) by [@mbazso](https://github.com/mbazso)).
+
 ### Changed
 
 - Changed source syntax to avoid TypeScript constructs that require JavaScript emit, keeping the package compatible with Node.js strip-only TypeScript checks.

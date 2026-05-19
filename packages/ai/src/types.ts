@@ -435,6 +435,18 @@ export interface AnthropicMessagesCompat {
 	 * Default: true.
 	 */
 	supportsCacheControlOnTools?: boolean;
+	/**
+	 * Whether to force adaptive thinking (`thinking.type: "adaptive"` plus
+	 * `output_config.effort`) regardless of the model id. By default, adaptive
+	 * thinking is selected by matching the model id against known patterns
+	 * (`opus-4-6`, `opus-4-7`, `sonnet-4-6`). Custom Anthropic-compatible
+	 * providers (e.g. corporate proxies) often expose models under their own
+	 * id schemes (e.g. `anthropic--claude-opus-latest`) where the upstream
+	 * already requires the adaptive format. Set this to `true` on those models
+	 * to opt in. Set to `false` to opt out.
+	 * Default: undefined (use id-based detection).
+	 */
+	forceAdaptiveThinking?: boolean;
 }
 
 /**
