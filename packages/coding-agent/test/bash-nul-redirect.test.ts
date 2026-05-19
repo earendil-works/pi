@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
 import { normalizeNulRedirects } from "../src/core/tools/bash.js";
 
 describe("normalizeNulRedirects", () => {
@@ -12,6 +15,22 @@ describe("normalizeNulRedirects", () => {
 
 		expect(normalizeNulRedirects('echo "foo > nul bar"')).toBe('echo "foo > nul bar"');
 		expect(normalizeNulRedirects("echo 'foo > nul bar'")).toBe("echo 'foo > nul bar'");
+	});
+
+	it("does not replace > nul inside escaped quotes", () => {
+		if (process.platform !== "win32") return;
+
+		// Escaped double quotes outside quotes: > nul is outside quotes, so it IS replaced
+		expect(normalizeNulRedirects('echo \\"foo > nul bar\\"')).toBe('echo \\"foo >/dev/null bar\\"');
+
+		// Escaped double quote inside double quotes: string stays quoted, > nul stays
+		expect(normalizeNulRedirects('echo "foo \\"bar > nul baz"')).toBe('echo "foo \\"bar > nul baz"');
+
+		// Escaped single quote outside quotes: > nul is outside quotes, so it IS replaced
+		expect(normalizeNulRedirects("echo \\'foo > nul bar\\'")).toBe("echo \\'foo >/dev/null bar\\'");
+
+		// Escaped single quote inside double quotes: double quotes stay active, > nul stays
+		expect(normalizeNulRedirects('echo "foo \\\'bar > nul baz"')).toBe('echo "foo \\\'bar > nul baz"');
 	});
 
 	it("replaces all NUL redirect variants on Windows", () => {
@@ -59,14 +78,19 @@ describe("normalizeNulRedirects", () => {
 });
 
 describe.skipIf(process.platform !== "win32")("bash tool NUL redirect integration", () => {
+	let testDir: string;
+
+	afterEach(() => {
+		if (testDir) {
+			rmSync(testDir, { recursive: true, force: true });
+		}
+	});
+
 	it("does not create a file named nul when redirecting output", async () => {
 		const { createLocalBashOperations } = await import("../src/core/tools/bash.js");
 		const { existsSync } = await import("node:fs");
-		const { tmpdir } = await import("node:os");
-		const { join } = await import("node:path");
 
-		const testDir = join(tmpdir(), `pi-nul-test-${Date.now()}`);
-		await import("node:fs").then((fs) => fs.mkdirSync(testDir, { recursive: true }));
+		testDir = mkdtempSync(join(tmpdir(), "pi-nul-test-"));
 		const ops = createLocalBashOperations();
 
 		await ops.exec("echo hello > nul", testDir, {

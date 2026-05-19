@@ -66,6 +66,16 @@ export interface BashOperations {
  * Only replaces redirects outside of quoted strings; text inside quotes
  * is left untouched. No-op on non-Windows platforms.
  */
+function isEscaped(str: string, index: number): boolean {
+	let backslashes = 0;
+	let j = index - 1;
+	while (j >= 0 && str[j] === "\\") {
+		backslashes++;
+		j--;
+	}
+	return backslashes % 2 === 1;
+}
+
 export function normalizeNulRedirects(command: string): string {
 	if (process.platform !== "win32") {
 		return command;
@@ -80,13 +90,15 @@ export function normalizeNulRedirects(command: string): string {
 		const char = command[i];
 
 		if (char === "'" && !inDoubleQuotes) {
-			inSingleQuotes = !inSingleQuotes;
-			result += char;
-			i++;
-			continue;
+			if (inSingleQuotes || !isEscaped(command, i)) {
+				inSingleQuotes = !inSingleQuotes;
+				result += char;
+				i++;
+				continue;
+			}
 		}
 
-		if (char === '"' && !inSingleQuotes) {
+		if (char === '"' && !inSingleQuotes && !isEscaped(command, i)) {
 			inDoubleQuotes = !inDoubleQuotes;
 			result += char;
 			i++;
