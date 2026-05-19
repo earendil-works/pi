@@ -4,7 +4,7 @@
 
 ### Changed
 
-- Changed interactive update notifications to always link to `https://pi.dev/changelog` instead of a changelog URL returned by the version check endpoint.
+- Changed interactive update notifications to link to `https://pi.dev/changelog`.
 
 ### Fixed
 
