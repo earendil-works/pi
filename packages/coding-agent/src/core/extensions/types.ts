@@ -27,6 +27,7 @@ import type {
 	SimpleStreamOptions,
 	TextContent,
 	ToolResultMessage,
+	Usage,
 } from "@earendil-works/pi-ai";
 import type {
 	AutocompleteItem,
@@ -302,6 +303,8 @@ export interface ExtensionContext {
 	hasUI: boolean;
 	/** Current working directory */
 	cwd: string;
+	/** Agent directory (e.g. ~/.pi/agent). Use together with createAgentSessionServices() to create child sessions that inherit the parent session's resource context. */
+	agentDir: string;
 	/** Session manager (read-only) */
 	sessionManager: ReadonlySessionManager;
 	/** Model registry for API key resolution */
@@ -546,6 +549,8 @@ export interface SessionCompactEvent {
 	type: "session_compact";
 	compactionEntry: CompactionEntry;
 	fromExtension: boolean;
+	/** LLM token usage from the summarization call(s). Undefined when compaction was provided by an extension. */
+	usage?: Usage;
 }
 
 /** Fired before an extension runtime is torn down due to quit, reload, or session replacement. */
@@ -585,6 +590,8 @@ export interface SessionTreeEvent {
 	oldLeafId: string | null;
 	summaryEntry?: BranchSummaryEntry;
 	fromExtension?: boolean;
+	/** LLM token usage from the branch summarization call. Undefined when no summary was generated or it came from an extension. */
+	usage?: Usage;
 }
 
 export type SessionEvent =
