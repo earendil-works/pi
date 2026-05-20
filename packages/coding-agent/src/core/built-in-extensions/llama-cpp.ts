@@ -13,7 +13,7 @@
 
 import { Type } from "typebox";
 import { Compile } from "typebox/compile";
-import type { ExtensionAPI, ExtensionContext } from "../extensions/types.ts";
+import type { ExtensionAPI, ExtensionContext, ProviderModelConfig } from "../extensions/types.ts";
 
 const PROVIDER_ID = "llama-cpp";
 const DEFAULT_BASE_URL = "http://localhost:8080/v1";
@@ -75,12 +75,10 @@ const PropsResponseSchema = Type.Object({
 
 const validatePropsResponse = Compile(PropsResponseSchema);
 
-type LlamaModel = NonNullable<Parameters<ExtensionAPI["registerProvider"]>[1]["models"]>[number];
-
 export default async function (pi: ExtensionAPI): Promise<void> {
 	if (!isLlamaEnabled(process.env)) return;
 
-	let currentModels: LlamaModel[] = [];
+	let currentModels: ProviderModelConfig[] = [];
 
 	const baseUrl = (process.env.LLAMA_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
 	const apiKey = process.env.LLAMA_API_KEY ?? "no-key";
@@ -121,7 +119,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 					input,
 					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 					contextWindow: model.meta?.n_ctx ?? previousById.get(model.id)?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
-				} as LlamaModel;
+				} as ProviderModelConfig;
 			});
 
 			if (currentModels.length === 0) {
