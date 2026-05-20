@@ -303,7 +303,11 @@ function sleep(ms: number): Promise<void> {
 
 // Base overlay component with common rendering
 abstract class BaseOverlay {
-	constructor(protected theme: Theme) {}
+	protected theme: Theme;
+
+	constructor(theme: Theme) {
+		this.theme = theme;
+	}
 
 	protected box(lines: string[], width: number, title?: string): string[] {
 		const th = this.theme;
@@ -330,12 +334,13 @@ abstract class BaseOverlay {
 
 // Anchor position test
 class AnchorTestComponent extends BaseOverlay {
-	constructor(
-		theme: Theme,
-		private anchor: OverlayAnchor,
-		private done: (result: "next" | "confirm" | "cancel") => void,
-	) {
+	private anchor: OverlayAnchor;
+	private done: (result: "next" | "confirm" | "cancel") => void;
+
+	constructor(theme: Theme, anchor: OverlayAnchor, done: (result: "next" | "confirm" | "cancel") => void) {
 		super(theme);
+		this.anchor = anchor;
+		this.done = done;
 	}
 
 	handleInput(data: string): void {
@@ -368,12 +373,17 @@ class AnchorTestComponent extends BaseOverlay {
 
 // Margin/offset test
 class MarginTestComponent extends BaseOverlay {
+	private config: { name: string; options: OverlayOptions };
+	private done: (result: "next" | "close") => void;
+
 	constructor(
 		theme: Theme,
-		private config: { name: string; options: OverlayOptions },
-		private done: (result: "next" | "close") => void,
+		config: { name: string; options: OverlayOptions },
+		done: (result: "next" | "close") => void,
 	) {
 		super(theme);
+		this.config = config;
+		this.done = done;
 	}
 
 	handleInput(data: string): void {
@@ -403,13 +413,15 @@ class MarginTestComponent extends BaseOverlay {
 
 // Stacked overlay test
 class StackOverlayComponent extends BaseOverlay {
-	constructor(
-		theme: Theme,
-		private num: number,
-		private position: string,
-		private done: (result: string) => void,
-	) {
+	private num: number;
+	private position: string;
+	private done: (result: string) => void;
+
+	constructor(theme: Theme, num: number, position: string, done: (result: string) => void) {
 		super(theme);
+		this.num = num;
+		this.position = position;
+		this.done = done;
 	}
 
 	handleInput(data: string): void {
@@ -446,19 +458,19 @@ class StackOverlayComponent extends BaseOverlay {
 
 // Streaming overflow test - spawns real process with colored output (original crash scenario)
 class StreamingOverflowComponent extends BaseOverlay {
+	private tui: TUI;
 	private lines: string[] = [];
 	private proc: ReturnType<typeof spawn> | null = null;
 	private scrollOffset = 0;
 	private maxVisibleLines = 15;
 	private finished = false;
 	private disposed = false;
+	private done: () => void;
 
-	constructor(
-		private tui: TUI,
-		theme: Theme,
-		private done: () => void,
-	) {
+	constructor(tui: TUI, theme: Theme, done: () => void) {
 		super(theme);
+		this.tui = tui;
+		this.done = done;
 		this.startProcess();
 	}
 
@@ -579,11 +591,11 @@ class StreamingOverflowComponent extends BaseOverlay {
 
 // Edge position test
 class EdgeTestComponent extends BaseOverlay {
-	constructor(
-		theme: Theme,
-		private done: () => void,
-	) {
+	private done: () => void;
+
+	constructor(theme: Theme, done: () => void) {
 		super(theme);
+		this.done = done;
 	}
 
 	handleInput(data: string): void {
@@ -614,12 +626,17 @@ class EdgeTestComponent extends BaseOverlay {
 
 // Percentage positioning test
 class PercentTestComponent extends BaseOverlay {
+	private config: { name: string; row: number; col: number };
+	private done: (result: "next" | "close") => void;
+
 	constructor(
 		theme: Theme,
-		private config: { name: string; row: number; col: number },
-		private done: (result: "next" | "close") => void,
+		config: { name: string; row: number; col: number },
+		done: (result: "next" | "close") => void,
 	) {
 		super(theme);
+		this.config = config;
+		this.done = done;
 	}
 
 	handleInput(data: string): void {
@@ -649,11 +666,11 @@ class PercentTestComponent extends BaseOverlay {
 
 // MaxHeight test - renders 20 lines, truncated to 10 by maxHeight
 class MaxHeightTestComponent extends BaseOverlay {
-	constructor(
-		theme: Theme,
-		private done: () => void,
-	) {
+	private done: () => void;
+
+	constructor(theme: Theme, done: () => void) {
 		super(theme);
+		this.done = done;
 	}
 
 	handleInput(data: string): void {
@@ -684,15 +701,15 @@ class MaxHeightTestComponent extends BaseOverlay {
 
 // Responsive sidepanel - demonstrates percentage width and visibility callback
 class SidepanelComponent extends BaseOverlay {
+	private tui: TUI;
 	private items = ["Dashboard", "Messages", "Settings", "Help", "About"];
 	private selectedIndex = 0;
+	private done: () => void;
 
-	constructor(
-		private tui: TUI,
-		theme: Theme,
-		private done: () => void,
-	) {
+	constructor(tui: TUI, theme: Theme, done: () => void) {
 		super(theme);
+		this.tui = tui;
+		this.done = done;
 	}
 
 	handleInput(data: string): void {
@@ -745,18 +762,18 @@ class SidepanelComponent extends BaseOverlay {
 
 // Animation demo - proves overlays can handle real-time updates like pi-doom
 class AnimationDemoComponent extends BaseOverlay {
+	private tui: TUI;
 	private frame = 0;
 	private interval: ReturnType<typeof setInterval> | null = null;
 	private fps = 0;
 	private lastFpsUpdate = Date.now();
 	private framesSinceLastFps = 0;
+	private done: () => void;
 
-	constructor(
-		private tui: TUI,
-		theme: Theme,
-		private done: () => void,
-	) {
+	constructor(tui: TUI, theme: Theme, done: () => void) {
 		super(theme);
+		this.tui = tui;
+		this.done = done;
 		this.startAnimation();
 	}
 
@@ -860,15 +877,15 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
 
 // Toggle demo - demonstrates OverlayHandle.setHidden() via onHandle callback
 class ToggleDemoComponent extends BaseOverlay {
+	private tui: TUI;
 	private toggleCount = 0;
 	private isToggling = false;
+	private done: () => void;
 
-	constructor(
-		private tui: TUI,
-		theme: Theme,
-		private done: () => void,
-	) {
+	constructor(tui: TUI, theme: Theme, done: () => void) {
 		super(theme);
+		this.tui = tui;
+		this.done = done;
 	}
 
 	handleInput(data: string): void {
@@ -923,19 +940,19 @@ class ToggleDemoComponent extends BaseOverlay {
 
 class PassiveDemoController extends BaseOverlay {
 	focused = false;
+	private tui: TUI;
 	private typed = "";
 	private timerComponent: TimerPanel;
 	private timerHandle: OverlayHandle | null = null;
 	private interval: ReturnType<typeof setInterval> | null = null;
 	private inputCount = 0;
 	private lastInputDebug = "";
+	private done: () => void;
 
-	constructor(
-		private tui: TUI,
-		theme: Theme,
-		private done: () => void,
-	) {
+	constructor(tui: TUI, theme: Theme, done: () => void) {
 		super(theme);
+		this.tui = tui;
+		this.done = done;
 		this.timerComponent = new TimerPanel(theme);
 		this.timerHandle = this.tui.showOverlay(this.timerComponent, {
 			nonCapturing: true,
@@ -1015,16 +1032,16 @@ class TimerPanel extends BaseOverlay {
 // === Focus cycling demo ===
 
 class FocusDemoController extends BaseOverlay {
+	private tui: TUI;
 	private panels: FocusPanel[] = [];
 	private handles: OverlayHandle[] = [];
 	private focusIndex = -1;
+	private done: () => void;
 
-	constructor(
-		private tui: TUI,
-		theme: Theme,
-		private done: () => void,
-	) {
+	constructor(tui: TUI, theme: Theme, done: () => void) {
 		super(theme);
+		this.tui = tui;
+		this.done = done;
 		const colors = ["error", "success", "accent"] as const;
 		const labels = ["Alpha", "Beta", "Gamma"];
 
@@ -1107,16 +1124,22 @@ class FocusDemoController extends BaseOverlay {
 class FocusPanel extends BaseOverlay {
 	handle: OverlayHandle | null = null;
 	readonly label: string;
+	private color: "error" | "success" | "accent";
+	private onTab: () => void;
+	private onClose: () => void;
 
 	constructor(
 		theme: Theme,
 		label: string,
-		private color: "error" | "success" | "accent",
-		private onTab: () => void,
-		private onClose: () => void,
+		color: "error" | "success" | "accent",
+		onTab: () => void,
+		onClose: () => void,
 	) {
 		super(theme);
 		this.label = label;
+		this.color = color;
+		this.onTab = onTab;
+		this.onClose = onClose;
 	}
 
 	handleInput(data: string): void {
@@ -1155,19 +1178,19 @@ class FocusPanel extends BaseOverlay {
 // === Streaming input panel test (/overlay-streaming) ===
 
 class StreamingInputController extends BaseOverlay {
+	private tui: TUI;
 	private panels: StreamingInputPanel[] = [];
 	private handles: OverlayHandle[] = [];
 	private focusIndex = -1; // -1 = controller focused, 0-2 = panel focused
 	private streamLines: string[] = [];
 	private streamInterval: ReturnType<typeof setInterval> | null = null;
 	private lineCount = 0;
+	private done: () => void;
 
-	constructor(
-		private tui: TUI,
-		theme: Theme,
-		private done: () => void,
-	) {
+	constructor(tui: TUI, theme: Theme, done: () => void) {
 		super(theme);
+		this.tui = tui;
+		this.done = done;
 
 		// Create 3 input panels as non-capturing overlays
 		const colors = ["error", "success", "accent"] as const;
@@ -1287,17 +1310,25 @@ class StreamingInputController extends BaseOverlay {
 
 class StreamingInputPanel implements Component {
 	handle: OverlayHandle | null = null;
+	private theme: Theme;
 	private typed = "";
 	readonly label: string;
+	private color: "error" | "success" | "accent";
+	private onTab: () => void;
+	private onClose: () => void;
 
 	constructor(
-		private theme: Theme,
+		theme: Theme,
 		label: string,
-		private color: "error" | "success" | "accent",
-		private onTab: () => void,
-		private onClose: () => void,
+		color: "error" | "success" | "accent",
+		onTab: () => void,
+		onClose: () => void,
 	) {
+		this.theme = theme;
 		this.label = label;
+		this.color = color;
+		this.onTab = onTab;
+		this.onClose = onClose;
 	}
 
 	handleInput(data: string): void {

@@ -1,9 +1,9 @@
-import { getKeybindings } from "../keybindings.js";
-import { decodeKittyPrintable } from "../keys.js";
-import { KillRing } from "../kill-ring.js";
-import { type Component, CURSOR_MARKER, type Focusable } from "../tui.js";
-import { UndoStack } from "../undo-stack.js";
-import { getSegmenter, isPunctuationChar, isWhitespaceChar, sliceByColumn, visibleWidth } from "../utils.js";
+import { getKeybindings } from "../keybindings.ts";
+import { decodeKittyPrintable } from "../keys.ts";
+import { KillRing } from "../kill-ring.ts";
+import { type Component, CURSOR_MARKER, type Focusable } from "../tui.ts";
+import { UndoStack } from "../undo-stack.ts";
+import { getSegmenter, isPunctuationChar, isWhitespaceChar, sliceByColumn, visibleWidth } from "../utils.ts";
 
 const segmenter = getSegmenter();
 

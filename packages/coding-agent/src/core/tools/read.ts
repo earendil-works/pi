@@ -5,17 +5,17 @@ import { Text } from "@earendil-works/pi-tui";
 import { constants } from "fs";
 import { access as fsAccess, readFile as fsReadFile } from "fs/promises";
 import { type Static, Type } from "typebox";
-import { getReadmePath } from "../../config.js";
-import { keyHint, keyText } from "../../modes/interactive/components/keybinding-hints.js";
-import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/interactive/theme/theme.js";
-import { formatDimensionNote, resizeImage } from "../../utils/image-resize.js";
-import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.js";
-import { formatPathRelativeToCwdOrAbsolute } from "../../utils/paths.js";
-import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.js";
-import { resolveReadPath } from "./path-utils.js";
-import { getTextOutput, invalidArgText, replaceTabs, shortenPath, str } from "./render-utils.js";
-import { wrapToolDefinition } from "./tool-definition-wrapper.js";
-import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateHead } from "./truncate.js";
+import { getReadmePath } from "../../config.ts";
+import { keyHint, keyText } from "../../modes/interactive/components/keybinding-hints.ts";
+import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/interactive/theme/theme.ts";
+import { formatDimensionNote, resizeImage } from "../../utils/image-resize.ts";
+import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
+import { formatPathRelativeToCwdOrAbsolute } from "../../utils/paths.ts";
+import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { resolveReadPath } from "./path-utils.ts";
+import { getTextOutput, invalidArgText, replaceTabs, shortenPath, str } from "./render-utils.ts";
+import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
+import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
 
 const readSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to read (relative or absolute)" }),

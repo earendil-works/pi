@@ -1,6 +1,6 @@
-import { registerImagesApiProvider } from "../../images-api-registry.js";
-import type { AssistantImages, ImagesContext, ImagesFunction, ImagesModel, ImagesOptions } from "../../types.js";
-import type { generateImagesOpenRouter as generateImagesOpenRouterFunction } from "./openrouter.js";
+import { registerImagesApiProvider } from "../../images-api-registry.ts";
+import type { AssistantImages, ImagesContext, ImagesFunction, ImagesModel, ImagesOptions } from "../../types.ts";
+import type { generateImagesOpenRouter as generateImagesOpenRouterFunction } from "./openrouter.ts";
 
 interface OpenRouterImagesProviderModule {
 	generateImagesOpenRouter: typeof generateImagesOpenRouterFunction;
@@ -21,7 +21,7 @@ function createLazyLoadErrorImages(model: ImagesModel<"openrouter-images">, erro
 }
 
 function loadOpenRouterImagesProviderModule(): Promise<OpenRouterImagesProviderModule> {
-	openRouterImagesProviderModulePromise ||= import("./openrouter.js").then(
+	openRouterImagesProviderModulePromise ||= import("./openrouter.ts").then(
 		(module) => module as OpenRouterImagesProviderModule,
 	);
 	return openRouterImagesProviderModulePromise;

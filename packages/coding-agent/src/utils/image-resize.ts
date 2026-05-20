@@ -1,6 +1,6 @@
 import type { ImageContent } from "@earendil-works/pi-ai";
-import { applyExifOrientation } from "./exif-orientation.js";
-import { loadPhoton } from "./photon.js";
+import { applyExifOrientation } from "./exif-orientation.ts";
+import { loadPhoton } from "./photon.ts";
 
 export interface ImageResizeOptions {
 	maxWidth?: number; // Default: 2000

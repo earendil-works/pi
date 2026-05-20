@@ -11,11 +11,11 @@ import {
 	Spacer,
 	Text,
 } from "@earendil-works/pi-tui";
-import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.js";
-import type { WarningSettings } from "../../../core/settings-manager.js";
-import { getSelectListTheme, getSettingsListTheme, theme } from "../theme/theme.js";
-import { DynamicBorder } from "./dynamic-border.js";
-import { keyDisplayText } from "./keybinding-hints.js";
+import { formatHttpIdleTimeoutMs, HTTP_IDLE_TIMEOUT_CHOICES } from "../../../core/http-dispatcher.ts";
+import type { WarningSettings } from "../../../core/settings-manager.ts";
+import { getSelectListTheme, getSettingsListTheme, theme } from "../theme/theme.ts";
+import { DynamicBorder } from "./dynamic-border.ts";
+import { keyDisplayText } from "./keybinding-hints.ts";
 
 const SETTINGS_SUBMENU_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
 	minPrimaryColumnWidth: 12,

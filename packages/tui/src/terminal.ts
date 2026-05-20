@@ -1,8 +1,8 @@
 import * as fs from "node:fs";
 import { createRequire } from "node:module";
 import * as path from "node:path";
-import { setKittyProtocolActive } from "./keys.js";
-import { StdinBuffer } from "./stdin-buffer.js";
+import { setKittyProtocolActive } from "./keys.ts";
+import { StdinBuffer } from "./stdin-buffer.ts";
 
 const cjsRequire = createRequire(import.meta.url);
 

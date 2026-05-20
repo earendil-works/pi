@@ -1,6 +1,6 @@
-import "./providers/register-builtins.js";
+import "./providers/register-builtins.ts";
 
-import { getApiProvider } from "./api-registry.js";
+import { getApiProvider } from "./api-registry.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -10,9 +10,9 @@ import type {
 	ProviderStreamOptions,
 	SimpleStreamOptions,
 	StreamOptions,
-} from "./types.js";
+} from "./types.ts";
 
-export { getEnvApiKey } from "./env-api-keys.js";
+export { getEnvApiKey } from "./env-api-keys.ts";
 
 function resolveApiProvider(api: Api) {
 	const provider = getApiProvider(api);

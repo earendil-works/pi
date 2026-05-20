@@ -2,7 +2,7 @@ import { accessSync, constants, existsSync, readFileSync, realpathSync } from "f
 import { homedir } from "os";
 import { basename, dirname, join, resolve, sep, win32 } from "path";
 import { fileURLToPath } from "url";
-import { spawnProcessSync } from "./utils/child-process.js";
+import { spawnProcessSync } from "./utils/child-process.ts";
 
 // =============================================================================
 // Package Detection

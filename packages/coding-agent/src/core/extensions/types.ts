@@ -40,27 +40,27 @@ import type {
 	TUI,
 } from "@earendil-works/pi-tui";
 import type { Static, TSchema } from "typebox";
-import type { Theme } from "../../modes/interactive/theme/theme.js";
-import type { BashResult } from "../bash-executor.js";
-import type { CompactionPreparation, CompactionResult } from "../compaction/index.js";
-import type { EventBus } from "../event-bus.js";
-import type { ExecOptions, ExecResult } from "../exec.js";
-import type { ReadonlyFooterDataProvider } from "../footer-data-provider.js";
-import type { KeybindingsManager } from "../keybindings.js";
-import type { CustomMessage } from "../messages.js";
-import type { ModelRegistry } from "../model-registry.js";
+import type { Theme } from "../../modes/interactive/theme/theme.ts";
+import type { BashResult } from "../bash-executor.ts";
+import type { CompactionPreparation, CompactionResult } from "../compaction/index.ts";
+import type { EventBus } from "../event-bus.ts";
+import type { ExecOptions, ExecResult } from "../exec.ts";
+import type { ReadonlyFooterDataProvider } from "../footer-data-provider.ts";
+import type { KeybindingsManager } from "../keybindings.ts";
+import type { CustomMessage } from "../messages.ts";
+import type { ModelRegistry } from "../model-registry.ts";
 import type {
 	BranchSummaryEntry,
 	CompactionEntry,
 	ReadonlySessionManager,
 	SessionEntry,
 	SessionManager,
-} from "../session-manager.js";
-import type { SlashCommandInfo } from "../slash-commands.js";
-import type { SourceInfo } from "../source-info.js";
-import type { BuildSystemPromptOptions } from "../system-prompt.js";
-import type { BashOperations } from "../tools/bash.js";
-import type { EditToolDetails } from "../tools/edit.js";
+} from "../session-manager.ts";
+import type { SlashCommandInfo } from "../slash-commands.ts";
+import type { SourceInfo } from "../source-info.ts";
+import type { BuildSystemPromptOptions } from "../system-prompt.ts";
+import type { BashOperations } from "../tools/bash.ts";
+import type { EditToolDetails } from "../tools/edit.ts";
 import type {
 	BashToolDetails,
 	BashToolInput,
@@ -74,12 +74,12 @@ import type {
 	ReadToolDetails,
 	ReadToolInput,
 	WriteToolInput,
-} from "../tools/index.js";
+} from "../tools/index.ts";
 
-export type { ExecOptions, ExecResult } from "../exec.js";
-export type { BuildSystemPromptOptions } from "../system-prompt.js";
+export type { ExecOptions, ExecResult } from "../exec.ts";
+export type { BuildSystemPromptOptions } from "../system-prompt.ts";
 export type { AgentToolResult, AgentToolUpdateCallback, ToolExecutionMode };
-export type { AppKeybinding, KeybindingsManager } from "../keybindings.js";
+export type { AppKeybinding, KeybindingsManager } from "../keybindings.ts";
 
 // ============================================================================
 // UI Context

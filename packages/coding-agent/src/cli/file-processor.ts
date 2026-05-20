@@ -6,9 +6,9 @@ import { access, readFile, stat } from "node:fs/promises";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import chalk from "chalk";
 import { resolve } from "path";
-import { resolveReadPath } from "../core/tools/path-utils.js";
-import { formatDimensionNote, resizeImage } from "../utils/image-resize.js";
-import { detectSupportedImageMimeTypeFromFile } from "../utils/mime.js";
+import { resolveReadPath } from "../core/tools/path-utils.ts";
+import { formatDimensionNote, resizeImage } from "../utils/image-resize.ts";
+import { detectSupportedImageMimeTypeFromFile } from "../utils/mime.ts";
 
 export interface ProcessedFiles {
 	text: string;

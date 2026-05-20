@@ -28,12 +28,9 @@
 			"packages/*/src/**/*.ts",
 			"packages/*/test/**/*.ts",
 			"packages/coding-agent/examples/**/*.ts",
-			"packages/web-ui/src/**/*.ts",
-			"packages/web-ui/example/**/*.ts",
 			"!**/node_modules/**/*",
 			"!**/test-sessions.ts",
 			"!**/models.generated.ts",
-			"!packages/web-ui/src/app.css",
 			"!packages/mom/data/**/*",
 			"!!**/node_modules"
 		]

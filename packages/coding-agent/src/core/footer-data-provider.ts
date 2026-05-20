@@ -1,7 +1,7 @@
 import { type ExecFileException, execFile, spawnSync } from "child_process";
 import { existsSync, type FSWatcher, readFileSync, statSync, unwatchFile, watchFile } from "fs";
 import { dirname, join, resolve } from "path";
-import { closeWatcher, FS_WATCH_RETRY_DELAY_MS, watchWithErrorHandler } from "../utils/fs-watch.js";
+import { closeWatcher, FS_WATCH_RETRY_DELAY_MS, watchWithErrorHandler } from "../utils/fs-watch.ts";
 
 type GitPaths = {
 	repoDir: string;

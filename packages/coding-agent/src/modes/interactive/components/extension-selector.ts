@@ -4,10 +4,10 @@
  */
 
 import { Container, getKeybindings, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
-import { theme } from "../theme/theme.js";
-import { CountdownTimer } from "./countdown-timer.js";
-import { DynamicBorder } from "./dynamic-border.js";
-import { keyHint, rawKeyHint } from "./keybinding-hints.js";
+import { theme } from "../theme/theme.ts";
+import { CountdownTimer } from "./countdown-timer.ts";
+import { DynamicBorder } from "./dynamic-border.ts";
+import { keyHint, rawKeyHint } from "./keybinding-hints.ts";
 
 export interface ExtensionSelectorOptions {
 	tui?: TUI;

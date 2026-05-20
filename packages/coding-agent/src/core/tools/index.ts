@@ -8,7 +8,7 @@ export {
 	createBashTool,
 	createBashToolDefinition,
 	createLocalBashOperations,
-} from "./bash.js";
+} from "./bash.ts";
 export {
 	createEditTool,
 	createEditToolDefinition,
@@ -16,8 +16,8 @@ export {
 	type EditToolDetails,
 	type EditToolInput,
 	type EditToolOptions,
-} from "./edit.js";
-export { withFileMutationQueue } from "./file-mutation-queue.js";
+} from "./edit.ts";
+export { withFileMutationQueue } from "./file-mutation-queue.ts";
 export {
 	createFindTool,
 	createFindToolDefinition,
@@ -25,7 +25,7 @@ export {
 	type FindToolDetails,
 	type FindToolInput,
 	type FindToolOptions,
-} from "./find.js";
+} from "./find.ts";
 export {
 	createGrepTool,
 	createGrepToolDefinition,
@@ -33,7 +33,7 @@ export {
 	type GrepToolDetails,
 	type GrepToolInput,
 	type GrepToolOptions,
-} from "./grep.js";
+} from "./grep.ts";
 export {
 	createLsTool,
 	createLsToolDefinition,
@@ -41,7 +41,7 @@ export {
 	type LsToolDetails,
 	type LsToolInput,
 	type LsToolOptions,
-} from "./ls.js";
+} from "./ls.ts";
 export {
 	createReadTool,
 	createReadToolDefinition,
@@ -49,7 +49,7 @@ export {
 	type ReadToolDetails,
 	type ReadToolInput,
 	type ReadToolOptions,
-} from "./read.js";
+} from "./read.ts";
 export {
 	DEFAULT_MAX_BYTES,
 	DEFAULT_MAX_LINES,
@@ -59,24 +59,24 @@ export {
 	truncateHead,
 	truncateLine,
 	truncateTail,
-} from "./truncate.js";
+} from "./truncate.ts";
 export {
 	createWriteTool,
 	createWriteToolDefinition,
 	type WriteOperations,
 	type WriteToolInput,
 	type WriteToolOptions,
-} from "./write.js";
+} from "./write.ts";
 
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { ToolDefinition } from "../extensions/types.js";
-import { type BashToolOptions, createBashTool, createBashToolDefinition } from "./bash.js";
-import { createEditTool, createEditToolDefinition, type EditToolOptions } from "./edit.js";
-import { createFindTool, createFindToolDefinition, type FindToolOptions } from "./find.js";
-import { createGrepTool, createGrepToolDefinition, type GrepToolOptions } from "./grep.js";
-import { createLsTool, createLsToolDefinition, type LsToolOptions } from "./ls.js";
-import { createReadTool, createReadToolDefinition, type ReadToolOptions } from "./read.js";
-import { createWriteTool, createWriteToolDefinition, type WriteToolOptions } from "./write.js";
+import type { ToolDefinition } from "../extensions/types.ts";
+import { type BashToolOptions, createBashTool, createBashToolDefinition } from "./bash.ts";
+import { createEditTool, createEditToolDefinition, type EditToolOptions } from "./edit.ts";
+import { createFindTool, createFindToolDefinition, type FindToolOptions } from "./find.ts";
+import { createGrepTool, createGrepToolDefinition, type GrepToolOptions } from "./grep.ts";
+import { createLsTool, createLsToolDefinition, type LsToolOptions } from "./ls.ts";
+import { createReadTool, createReadToolDefinition, type ReadToolOptions } from "./read.ts";
+import { createWriteTool, createWriteToolDefinition, type WriteToolOptions } from "./write.ts";
 
 export type Tool = AgentTool<any>;
 export type ToolDef = ToolDefinition<any, any>;

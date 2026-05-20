@@ -20,7 +20,7 @@ import type {
 	AgentToolCall,
 	AgentToolResult,
 	StreamFn,
-} from "./types.js";
+} from "./types.ts";
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
 

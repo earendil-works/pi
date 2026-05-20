@@ -1,4 +1,4 @@
-import { clearApiProviders, registerApiProvider } from "../api-registry.js";
+import { clearApiProviders, registerApiProvider } from "../api-registry.ts";
 import type {
 	Api,
 	AssistantMessage,
@@ -8,17 +8,17 @@ import type {
 	SimpleStreamOptions,
 	StreamFunction,
 	StreamOptions,
-} from "../types.js";
-import { AssistantMessageEventStream } from "../utils/event-stream.js";
-import type { BedrockOptions } from "./amazon-bedrock.js";
-import type { AnthropicOptions } from "./anthropic.js";
-import type { AzureOpenAIResponsesOptions } from "./azure-openai-responses.js";
-import type { GoogleOptions } from "./google.js";
-import type { GoogleVertexOptions } from "./google-vertex.js";
-import type { MistralOptions } from "./mistral.js";
-import type { OpenAICodexResponsesOptions } from "./openai-codex-responses.js";
-import type { OpenAICompletionsOptions } from "./openai-completions.js";
-import type { OpenAIResponsesOptions } from "./openai-responses.js";
+} from "../types.ts";
+import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+import type { BedrockOptions } from "./amazon-bedrock.ts";
+import type { AnthropicOptions } from "./anthropic.ts";
+import type { AzureOpenAIResponsesOptions } from "./azure-openai-responses.ts";
+import type { GoogleOptions } from "./google.ts";
+import type { GoogleVertexOptions } from "./google-vertex.ts";
+import type { MistralOptions } from "./mistral.ts";
+import type { OpenAICodexResponsesOptions } from "./openai-codex-responses.ts";
+import type { OpenAICompletionsOptions } from "./openai-completions.ts";
+import type { OpenAIResponsesOptions } from "./openai-responses.ts";
 
 interface LazyProviderModule<
 	TApi extends Api,
@@ -86,7 +86,10 @@ interface BedrockProviderModule {
 	) => AsyncIterable<AssistantMessageEvent>;
 }
 
-const importNodeOnlyProvider = (specifier: string): Promise<unknown> => import(specifier);
+const importNodeOnlyProvider = (specifier: string): Promise<unknown> => {
+	const runtimeSpecifier = import.meta.url.endsWith(".js") ? specifier.replace(/\.ts$/, ".js") : specifier;
+	return import(runtimeSpecifier);
+};
 
 let anthropicProviderModulePromise:
 	| Promise<LazyProviderModule<"anthropic-messages", AnthropicOptions, SimpleStreamOptions>>
@@ -203,7 +206,7 @@ function createLazySimpleStream<
 function loadAnthropicProviderModule(): Promise<
 	LazyProviderModule<"anthropic-messages", AnthropicOptions, SimpleStreamOptions>
 > {
-	anthropicProviderModulePromise ||= import("./anthropic.js").then((module) => {
+	anthropicProviderModulePromise ||= import("./anthropic.ts").then((module) => {
 		const provider = module as AnthropicProviderModule;
 		return {
 			stream: provider.streamAnthropic,
@@ -216,7 +219,7 @@ function loadAnthropicProviderModule(): Promise<
 function loadAzureOpenAIResponsesProviderModule(): Promise<
 	LazyProviderModule<"azure-openai-responses", AzureOpenAIResponsesOptions, SimpleStreamOptions>
 > {
-	azureOpenAIResponsesProviderModulePromise ||= import("./azure-openai-responses.js").then((module) => {
+	azureOpenAIResponsesProviderModulePromise ||= import("./azure-openai-responses.ts").then((module) => {
 		const provider = module as AzureOpenAIResponsesProviderModule;
 		return {
 			stream: provider.streamAzureOpenAIResponses,
@@ -229,7 +232,7 @@ function loadAzureOpenAIResponsesProviderModule(): Promise<
 function loadGoogleProviderModule(): Promise<
 	LazyProviderModule<"google-generative-ai", GoogleOptions, SimpleStreamOptions>
 > {
-	googleProviderModulePromise ||= import("./google.js").then((module) => {
+	googleProviderModulePromise ||= import("./google.ts").then((module) => {
 		const provider = module as GoogleProviderModule;
 		return {
 			stream: provider.streamGoogle,
@@ -242,7 +245,7 @@ function loadGoogleProviderModule(): Promise<
 function loadGoogleVertexProviderModule(): Promise<
 	LazyProviderModule<"google-vertex", GoogleVertexOptions, SimpleStreamOptions>
 > {
-	googleVertexProviderModulePromise ||= import("./google-vertex.js").then((module) => {
+	googleVertexProviderModulePromise ||= import("./google-vertex.ts").then((module) => {
 		const provider = module as GoogleVertexProviderModule;
 		return {
 			stream: provider.streamGoogleVertex,
@@ -255,7 +258,7 @@ function loadGoogleVertexProviderModule(): Promise<
 function loadMistralProviderModule(): Promise<
 	LazyProviderModule<"mistral-conversations", MistralOptions, SimpleStreamOptions>
 > {
-	mistralProviderModulePromise ||= import("./mistral.js").then((module) => {
+	mistralProviderModulePromise ||= import("./mistral.ts").then((module) => {
 		const provider = module as MistralProviderModule;
 		return {
 			stream: provider.streamMistral,
@@ -268,7 +271,7 @@ function loadMistralProviderModule(): Promise<
 function loadOpenAICodexResponsesProviderModule(): Promise<
 	LazyProviderModule<"openai-codex-responses", OpenAICodexResponsesOptions, SimpleStreamOptions>
 > {
-	openAICodexResponsesProviderModulePromise ||= import("./openai-codex-responses.js").then((module) => {
+	openAICodexResponsesProviderModulePromise ||= import("./openai-codex-responses.ts").then((module) => {
 		const provider = module as OpenAICodexResponsesProviderModule;
 		return {
 			stream: provider.streamOpenAICodexResponses,
@@ -281,7 +284,7 @@ function loadOpenAICodexResponsesProviderModule(): Promise<
 function loadOpenAICompletionsProviderModule(): Promise<
 	LazyProviderModule<"openai-completions", OpenAICompletionsOptions, SimpleStreamOptions>
 > {
-	openAICompletionsProviderModulePromise ||= import("./openai-completions.js").then((module) => {
+	openAICompletionsProviderModulePromise ||= import("./openai-completions.ts").then((module) => {
 		const provider = module as OpenAICompletionsProviderModule;
 		return {
 			stream: provider.streamOpenAICompletions,
@@ -294,7 +297,7 @@ function loadOpenAICompletionsProviderModule(): Promise<
 function loadOpenAIResponsesProviderModule(): Promise<
 	LazyProviderModule<"openai-responses", OpenAIResponsesOptions, SimpleStreamOptions>
 > {
-	openAIResponsesProviderModulePromise ||= import("./openai-responses.js").then((module) => {
+	openAIResponsesProviderModulePromise ||= import("./openai-responses.ts").then((module) => {
 		const provider = module as OpenAIResponsesProviderModule;
 		return {
 			stream: provider.streamOpenAIResponses,
@@ -310,7 +313,7 @@ function loadBedrockProviderModule(): Promise<
 	if (bedrockProviderModuleOverride) {
 		return Promise.resolve(bedrockProviderModuleOverride);
 	}
-	bedrockProviderModulePromise ||= importNodeOnlyProvider("./amazon-bedrock.js").then((module) => {
+	bedrockProviderModulePromise ||= importNodeOnlyProvider("./amazon-bedrock.ts").then((module) => {
 		const provider = module as BedrockProviderModule;
 		return {
 			stream: provider.streamBedrock,

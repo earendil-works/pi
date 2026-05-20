@@ -3,13 +3,13 @@ import { Container, Text } from "@earendil-works/pi-tui";
 import { mkdir as fsMkdir, writeFile as fsWriteFile } from "fs/promises";
 import { dirname } from "path";
 import { type Static, Type } from "typebox";
-import { keyHint } from "../../modes/interactive/components/keybinding-hints.js";
-import { getLanguageFromPath, highlightCode } from "../../modes/interactive/theme/theme.js";
-import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.js";
-import { withFileMutationQueue } from "./file-mutation-queue.js";
-import { resolveToCwd } from "./path-utils.js";
-import { invalidArgText, normalizeDisplayText, replaceTabs, shortenPath, str } from "./render-utils.js";
-import { wrapToolDefinition } from "./tool-definition-wrapper.js";
+import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
+import { getLanguageFromPath, highlightCode } from "../../modes/interactive/theme/theme.ts";
+import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { withFileMutationQueue } from "./file-mutation-queue.ts";
+import { resolveToCwd } from "./path-utils.ts";
+import { invalidArgText, normalizeDisplayText, replaceTabs, shortenPath, str } from "./render-utils.ts";
+import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 
 const writeSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to write (relative or absolute)" }),
@@ -131,7 +131,7 @@ function trimTrailingEmptyLines(lines: string[]): string[] {
 function formatWriteCall(
 	args: { path?: string; file_path?: string; content?: string } | undefined,
 	options: ToolRenderResultOptions,
-	theme: typeof import("../../modes/interactive/theme/theme.js").theme,
+	theme: typeof import("../../modes/interactive/theme/theme.ts").theme,
 	cache: WriteHighlightCache | undefined,
 ): string {
 	const rawPath = str(args?.file_path ?? args?.path);
@@ -163,7 +163,7 @@ function formatWriteCall(
 
 function formatWriteResult(
 	result: { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>; isError?: boolean },
-	theme: typeof import("../../modes/interactive/theme/theme.js").theme,
+	theme: typeof import("../../modes/interactive/theme/theme.ts").theme,
 ): string | undefined {
 	if (!result.isError) {
 		return undefined;

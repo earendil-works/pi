@@ -5,7 +5,11 @@ import { TUI } from "../src/tui.js";
 import { VirtualTerminal } from "./virtual-terminal.js";
 
 class StaticOverlay implements Component {
-	constructor(private lines: string[]) {}
+	private lines: string[];
+
+	constructor(lines: string[]) {
+		this.lines = lines;
+	}
 
 	render(): string[] {
 		return this.lines;
@@ -24,8 +28,11 @@ class EmptyContent implements Component {
 class FocusableOverlay implements Component, Focusable {
 	focused = false;
 	inputs: string[] = [];
+	private lines: string[];
 
-	constructor(private lines: string[]) {}
+	constructor(lines: string[]) {
+		this.lines = lines;
+	}
 
 	handleInput(data: string): void {
 		this.inputs.push(data);

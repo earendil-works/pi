@@ -10,10 +10,10 @@ import {
 import chalk from "chalk";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
-import { getCustomThemesDir, getThemesDir } from "../../../config.js";
-import type { SourceInfo } from "../../../core/source-info.js";
-import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.js";
-import { highlight, supportsLanguage } from "../../../utils/syntax-highlight.js";
+import { getCustomThemesDir, getThemesDir } from "../../../config.ts";
+import type { SourceInfo } from "../../../core/source-info.ts";
+import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.ts";
+import { highlight, supportsLanguage } from "../../../utils/syntax-highlight.ts";
 
 // ============================================================================
 // Types & Schema

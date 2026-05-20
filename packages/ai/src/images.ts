@@ -1,7 +1,7 @@
-import "./providers/images/register-builtins.js";
+import "./providers/images/register-builtins.ts";
 
-import { getImagesApiProvider } from "./images-api-registry.js";
-import type { AssistantImages, ImagesApi, ImagesContext, ImagesModel, ProviderImagesOptions } from "./types.js";
+import { getImagesApiProvider } from "./images-api-registry.ts";
+import type { AssistantImages, ImagesApi, ImagesContext, ImagesModel, ProviderImagesOptions } from "./types.ts";
 
 function resolveImagesApiProvider(api: ImagesApi) {
 	const provider = getImagesApiProvider(api);

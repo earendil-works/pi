@@ -7,11 +7,11 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import type { AgentEvent, AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ImageContent } from "@earendil-works/pi-ai";
-import type { SessionStats } from "../../core/agent-session.js";
-import type { BashResult } from "../../core/bash-executor.js";
-import type { CompactionResult } from "../../core/compaction/index.js";
-import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.js";
-import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.js";
+import type { SessionStats } from "../../core/agent-session.ts";
+import type { BashResult } from "../../core/bash-executor.ts";
+import type { CompactionResult } from "../../core/compaction/index.ts";
+import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
+import type { RpcCommand, RpcResponse, RpcSessionState, RpcSlashCommand } from "./rpc-types.ts";
 
 // ============================================================================
 // Types
@@ -59,8 +59,11 @@ export class RpcClient {
 		new Map();
 	private requestId = 0;
 	private stderr = "";
+	private options: RpcClientOptions;
 
-	constructor(private options: RpcClientOptions = {}) {}
+	constructor(options: RpcClientOptions = {}) {
+		this.options = options;
+	}
 
 	/**
 	 * Start the RPC agent process.

@@ -2,8 +2,8 @@
 
 import { createInterface } from "node:readline";
 import { existsSync, readFileSync, writeFileSync } from "fs";
-import { getOAuthProvider, getOAuthProviders } from "./utils/oauth/index.js";
-import type { OAuthCredentials, OAuthProviderId } from "./utils/oauth/types.js";
+import { getOAuthProvider, getOAuthProviders } from "./utils/oauth/index.ts";
+import type { OAuthCredentials, OAuthProviderId } from "./utils/oauth/types.ts";
 
 const AUTH_FILE = "auth.json";
 const PROVIDERS = getOAuthProviders();

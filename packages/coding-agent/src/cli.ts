@@ -5,9 +5,9 @@
  *
  * Test with: npx tsx src/cli-new.ts [args...]
  */
-import { APP_NAME } from "./config.js";
-import { configureHttpDispatcher } from "./core/http-dispatcher.js";
-import { main } from "./main.js";
+import { APP_NAME } from "./config.ts";
+import { configureHttpDispatcher } from "./core/http-dispatcher.ts";
+import { main } from "./main.ts";
 
 process.title = APP_NAME;
 process.env.PI_CODING_AGENT = "true";

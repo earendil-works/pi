@@ -63,8 +63,6 @@
 		"generate-models": "npx tsx scripts/generate-models.ts",
 		"generate-image-models": "npx tsx scripts/generate-image-models.ts",
 		"build": "npm run generate-models && npm run generate-image-models && tsgo -p tsconfig.build.json",
-		"dev": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
-		"dev:tsc": "tsgo -p tsconfig.build.json --watch --preserveWatchOutput",
 		"test": "vitest --run",
 		"prepublishOnly": "npm run clean && npm run build"
 	},

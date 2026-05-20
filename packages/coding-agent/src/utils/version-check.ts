@@ -1,4 +1,4 @@
-import { getPiUserAgent } from "./pi-user-agent.js";
+import { getPiUserAgent } from "./pi-user-agent.ts";
 
 const LATEST_VERSION_URL = "https://pi.dev/api/latest-version";
 const DEFAULT_VERSION_CHECK_TIMEOUT_MS = 10000;

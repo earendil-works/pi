@@ -3,9 +3,9 @@
  */
 
 import { ProcessTerminal, setKeybindings, TUI } from "@earendil-works/pi-tui";
-import { KeybindingsManager } from "../core/keybindings.js";
-import type { SessionInfo, SessionListProgress } from "../core/session-manager.js";
-import { SessionSelectorComponent } from "../modes/interactive/components/session-selector.js";
+import { KeybindingsManager } from "../core/keybindings.ts";
+import type { SessionInfo, SessionListProgress } from "../core/session-manager.ts";
+import { SessionSelectorComponent } from "../modes/interactive/components/session-selector.ts";
 
 type SessionsLoader = (onProgress?: SessionListProgress) => Promise<SessionInfo[]>;
 

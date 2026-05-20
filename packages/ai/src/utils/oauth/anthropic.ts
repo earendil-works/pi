@@ -6,9 +6,9 @@
  */
 
 import type { Server } from "node:http";
-import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.js";
-import { generatePKCE } from "./pkce.js";
-import type { OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, OAuthProviderInterface } from "./types.js";
+import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
+import { generatePKCE } from "./pkce.ts";
+import type { OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, OAuthProviderInterface } from "./types.ts";
 
 type CallbackServerInfo = {
 	server: Server;

@@ -6,8 +6,8 @@ import {
 	type ImageDimensions,
 	imageFallback,
 	renderImage,
-} from "../terminal-image.js";
-import type { Component } from "../tui.js";
+} from "../terminal-image.ts";
+import type { Component } from "../tui.ts";
 
 export interface ImageTheme {
 	fallbackColor: (str: string) => string;

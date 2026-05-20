@@ -1,15 +1,15 @@
 import type { Model } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai";
-import type { AgentMessage } from "../../types.js";
+import type { AgentMessage } from "../../types.ts";
 import {
 	convertToLlm,
 	createBranchSummaryMessage,
 	createCompactionSummaryMessage,
 	createCustomMessage,
-} from "../messages.js";
-import type { BranchSummaryResult, Session, SessionTreeEntry } from "../types.js";
-import { BranchSummaryError, err, ok, type Result, SessionError } from "../types.js";
-import { estimateTokens, SUMMARIZATION_SYSTEM_PROMPT } from "./compaction.js";
+} from "../messages.ts";
+import type { BranchSummaryResult, Session, SessionTreeEntry } from "../types.ts";
+import { BranchSummaryError, err, ok, type Result, SessionError } from "../types.ts";
+import { estimateTokens, SUMMARIZATION_SYSTEM_PROMPT } from "./compaction.ts";
 import {
 	computeFileLists,
 	createFileOps,
@@ -17,7 +17,7 @@ import {
 	type FileOperations,
 	formatFileOperations,
 	serializeConversation,
-} from "./utils.js";
+} from "./utils.ts";
 
 /** File-operation details stored on generated branch summary entries. */
 export interface BranchSummaryDetails {
@@ -27,7 +27,7 @@ export interface BranchSummaryDetails {
 	modifiedFiles: string[];
 }
 
-export type { FileOperations } from "./utils.js";
+export type { FileOperations } from "./utils.ts";
 
 /** Prepared branch content for summarization. */
 export interface BranchPreparation {

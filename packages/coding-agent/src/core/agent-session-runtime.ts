@@ -1,12 +1,12 @@
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import type { AgentSession } from "./agent-session.js";
-import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.js";
-import type { ReplacedSessionContext, SessionShutdownEvent, SessionStartEvent } from "./extensions/index.js";
-import { emitSessionShutdownEvent } from "./extensions/runner.js";
-import type { CreateAgentSessionResult } from "./sdk.js";
-import { assertSessionCwdExists } from "./session-cwd.js";
-import { SessionManager } from "./session-manager.js";
+import type { AgentSession } from "./agent-session.ts";
+import type { AgentSessionRuntimeDiagnostic, AgentSessionServices } from "./agent-session-services.ts";
+import type { ReplacedSessionContext, SessionShutdownEvent, SessionStartEvent } from "./extensions/index.ts";
+import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import type { CreateAgentSessionResult } from "./sdk.ts";
+import { assertSessionCwdExists } from "./session-cwd.ts";
+import { SessionManager } from "./session-manager.ts";
 
 /**
  * Result returned by runtime creation.
@@ -67,14 +67,25 @@ function extractUserMessageText(content: string | Array<{ type: string; text?: s
 export class AgentSessionRuntime {
 	private rebindSession?: (session: AgentSession) => Promise<void>;
 	private beforeSessionInvalidate?: () => void;
+	private _session: AgentSession;
+	private _services: AgentSessionServices;
+	private readonly createRuntime: CreateAgentSessionRuntimeFactory;
+	private _diagnostics: AgentSessionRuntimeDiagnostic[];
+	private _modelFallbackMessage?: string;
 
 	constructor(
-		private _session: AgentSession,
-		private _services: AgentSessionServices,
-		private readonly createRuntime: CreateAgentSessionRuntimeFactory,
-		private _diagnostics: AgentSessionRuntimeDiagnostic[] = [],
-		private _modelFallbackMessage?: string,
-	) {}
+		_session: AgentSession,
+		_services: AgentSessionServices,
+		createRuntime: CreateAgentSessionRuntimeFactory,
+		_diagnostics: AgentSessionRuntimeDiagnostic[] = [],
+		_modelFallbackMessage?: string,
+	) {
+		this._session = _session;
+		this._services = _services;
+		this.createRuntime = createRuntime;
+		this._diagnostics = _diagnostics;
+		this._modelFallbackMessage = _modelFallbackMessage;
+	}
 
 	get services(): AgentSessionServices {
 		return this._services;
@@ -406,4 +417,4 @@ export {
 	type CreateAgentSessionServicesOptions,
 	createAgentSessionFromServices,
 	createAgentSessionServices,
-} from "./agent-session-services.js";
+} from "./agent-session-services.ts";

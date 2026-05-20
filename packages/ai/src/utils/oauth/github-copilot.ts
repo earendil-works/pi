@@ -2,9 +2,9 @@
  * GitHub Copilot OAuth flow
  */
 
-import { getModels } from "../../models.js";
-import type { Api, Model } from "../../types.js";
-import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderInterface } from "./types.js";
+import { getModels } from "../../models.ts";
+import type { Api, Model } from "../../types.ts";
+import type { OAuthCredentials, OAuthLoginCallbacks, OAuthProviderInterface } from "./types.ts";
 
 type CopilotCredentials = OAuthCredentials & {
 	enterpriseUrl?: string;

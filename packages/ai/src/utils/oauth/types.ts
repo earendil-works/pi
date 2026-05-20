@@ -1,4 +1,4 @@
-import type { Api, Model } from "../../types.js";
+import type { Api, Model } from "../../types.ts";
 
 export type OAuthCredentials = {
 	refresh: string;

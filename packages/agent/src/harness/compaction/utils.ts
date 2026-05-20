@@ -1,5 +1,5 @@
 import type { Message } from "@earendil-works/pi-ai";
-import type { AgentMessage } from "../../types.js";
+import type { AgentMessage } from "../../types.ts";
 
 /** File paths touched by a session branch or compaction range. */
 export interface FileOperations {

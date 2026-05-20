@@ -5,7 +5,7 @@
  * It is only intended for CLI use, not browser environments.
  */
 
-// NEVER convert to top-level imports - breaks browser/Vite builds (web-ui)
+// NEVER convert to top-level imports - breaks browser/Vite builds
 let _randomBytes: typeof import("node:crypto").randomBytes | null = null;
 let _http: typeof import("node:http") | null = null;
 if (typeof process !== "undefined" && (process.versions?.node || process.versions?.bun)) {
@@ -17,9 +17,9 @@ if (typeof process !== "undefined" && (process.versions?.node || process.version
 	});
 }
 
-import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.js";
-import { generatePKCE } from "./pkce.js";
-import type { OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, OAuthProviderInterface } from "./types.js";
+import { oauthErrorHtml, oauthSuccessHtml } from "./oauth-page.ts";
+import { generatePKCE } from "./pkce.ts";
+import type { OAuthCredentials, OAuthLoginCallbacks, OAuthPrompt, OAuthProviderInterface } from "./types.ts";
 
 const CALLBACK_HOST = process.env.PI_OAUTH_CALLBACK_HOST || "127.0.0.1";
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";

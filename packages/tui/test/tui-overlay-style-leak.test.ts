@@ -5,7 +5,11 @@ import { type Component, TUI } from "../src/tui.js";
 import { VirtualTerminal } from "./virtual-terminal.js";
 
 class StaticLines implements Component {
-	constructor(private readonly lines: string[]) {}
+	private readonly lines: string[];
+
+	constructor(lines: string[]) {
+		this.lines = lines;
+	}
 
 	render(): string[] {
 		return this.lines;
@@ -15,7 +19,11 @@ class StaticLines implements Component {
 }
 
 class StaticOverlay implements Component {
-	constructor(private readonly line: string) {}
+	private readonly line: string;
+
+	constructor(line: string) {
+		this.line = line;
+	}
 
 	render(): string[] {
 		return [this.line];

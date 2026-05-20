@@ -5,7 +5,7 @@ import {
 	streamSimple,
 	type UserMessage,
 } from "@earendil-works/pi-ai";
-import { runAgentLoop } from "../agent-loop.js";
+import { runAgentLoop } from "../agent-loop.ts";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -15,12 +15,12 @@ import type {
 	QueueMode,
 	StreamFn,
 	ThinkingLevel,
-} from "../types.js";
-import { collectEntriesForBranchSummary, generateBranchSummary } from "./compaction/branch-summarization.js";
-import { compact, DEFAULT_COMPACTION_SETTINGS, prepareCompaction } from "./compaction/compaction.js";
-import { convertToLlm } from "./messages.js";
-import { formatPromptTemplateInvocation } from "./prompt-templates.js";
-import { formatSkillInvocation } from "./skills.js";
+} from "../types.ts";
+import { collectEntriesForBranchSummary, generateBranchSummary } from "./compaction/branch-summarization.ts";
+import { compact, DEFAULT_COMPACTION_SETTINGS, prepareCompaction } from "./compaction/compaction.ts";
+import { convertToLlm } from "./messages.ts";
+import { formatPromptTemplateInvocation } from "./prompt-templates.ts";
+import { formatSkillInvocation } from "./skills.ts";
 import type {
 	AbortResult,
 	AgentHarnessEvent,
@@ -37,8 +37,8 @@ import type {
 	PromptTemplate,
 	Session,
 	Skill,
-} from "./types.js";
-import { AgentHarnessError, BranchSummaryError, CompactionError, SessionError, toError } from "./types.js";
+} from "./types.ts";
+import { AgentHarnessError, BranchSummaryError, CompactionError, SessionError, toError } from "./types.ts";
 
 function createUserMessage(text: string, images?: ImageContent[]): UserMessage {
 	const content: Array<{ type: "text"; text: string } | ImageContent> = [{ type: "text", text }];

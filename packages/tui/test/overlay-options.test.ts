@@ -5,10 +5,13 @@ import { TUI } from "../src/tui.js";
 import { VirtualTerminal } from "./virtual-terminal.js";
 
 class StaticOverlay implements Component {
-	constructor(
-		private lines: string[],
-		public requestedWidth?: number,
-	) {}
+	private lines: string[];
+	requestedWidth?: number;
+
+	constructor(lines: string[], requestedWidth?: number) {
+		this.lines = lines;
+		this.requestedWidth = requestedWidth;
+	}
 
 	render(width: number): string[] {
 		// Store the width we were asked to render at for verification

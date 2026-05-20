@@ -1,7 +1,7 @@
-import type { FileSystem, JsonlSessionMetadata, LeafEntry, SessionStorage, SessionTreeEntry } from "../types.js";
-import { SessionError, toError } from "../types.js";
-import { getFileSystemResultOrThrow } from "./repo-utils.js";
-import { uuidv7 } from "./uuid.js";
+import type { FileSystem, JsonlSessionMetadata, LeafEntry, SessionStorage, SessionTreeEntry } from "../types.ts";
+import { SessionError, toError } from "../types.ts";
+import { getFileSystemResultOrThrow } from "./repo-utils.ts";
+import { uuidv7 } from "./uuid.ts";
 
 type JsonlSessionStorageFileSystem = Pick<FileSystem, "readTextFile" | "readTextLines" | "writeFile" | "appendFile">;
 

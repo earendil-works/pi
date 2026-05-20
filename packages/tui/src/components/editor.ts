@@ -1,11 +1,11 @@
-import type { AutocompleteProvider, AutocompleteSuggestions } from "../autocomplete.js";
-import { getKeybindings } from "../keybindings.js";
-import { decodePrintableKey, matchesKey } from "../keys.js";
-import { KillRing } from "../kill-ring.js";
-import { type Component, CURSOR_MARKER, type Focusable, type TUI } from "../tui.js";
-import { UndoStack } from "../undo-stack.js";
-import { getSegmenter, isPunctuationChar, isWhitespaceChar, truncateToWidth, visibleWidth } from "../utils.js";
-import { SelectList, type SelectListLayoutOptions, type SelectListTheme } from "./select-list.js";
+import type { AutocompleteProvider, AutocompleteSuggestions } from "../autocomplete.ts";
+import { getKeybindings } from "../keybindings.ts";
+import { decodePrintableKey, matchesKey } from "../keys.ts";
+import { KillRing } from "../kill-ring.ts";
+import { type Component, CURSOR_MARKER, type Focusable, type TUI } from "../tui.ts";
+import { UndoStack } from "../undo-stack.ts";
+import { getSegmenter, isPunctuationChar, isWhitespaceChar, truncateToWidth, visibleWidth } from "../utils.ts";
+import { SelectList, type SelectListLayoutOptions, type SelectListTheme } from "./select-list.ts";
 
 const baseSegmenter = getSegmenter();
 
