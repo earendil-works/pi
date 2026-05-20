@@ -3,6 +3,7 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { Model } from "@earendil-works/pi-ai";
 import { getAgentDir } from "../config.ts";
 import { AuthStorage } from "./auth-storage.ts";
+import llamaCppFactory from "./built-in-extensions/llama-cpp.ts";
 import type { SessionStartEvent, ToolDefinition } from "./extensions/index.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import { DefaultResourceLoader, type DefaultResourceLoaderOptions, type ResourceLoader } from "./resource-loader.ts";
@@ -136,6 +137,7 @@ export async function createAgentSessionServices(
 	const modelRegistry = options.modelRegistry ?? ModelRegistry.create(authStorage, join(agentDir, "models.json"));
 	const resourceLoader = new DefaultResourceLoader({
 		...(options.resourceLoaderOptions ?? {}),
+		extensionFactories: [...(options.resourceLoaderOptions?.extensionFactories ?? []), llamaCppFactory],
 		cwd,
 		agentDir,
 		settingsManager,
