@@ -324,6 +324,7 @@ user sends another prompt ◄─────────────────
   └─► session_tree
 
 /model or Ctrl+P (model selection/cycling)
+  ├─► model_selector_open (when the picker opens, fire-and-forget)
   ├─► thinking_level_select (if model change changes/clamps thinking level)
   └─► model_select
 
@@ -653,6 +654,19 @@ pi.on("model_select", async (event, ctx) => {
 ```
 
 Use this to update UI elements (status bars, footers) or perform model-specific initialization when the active model changes.
+
+#### model_selector_open
+
+Fired when the interactive model picker opens (via `/model` or `Ctrl+P`). Dispatched fire-and-forget so the picker is never delayed by extension work, which means provider state changes made in this handler (e.g. re-registering a provider after a remote `/v1/models` fetch) are reflected on the **next** picker open, not the current one.
+
+```typescript
+pi.on("model_selector_open", async () => {
+  // Refresh dynamically discovered models so the next open sees them.
+  await refreshRemoteModels();
+});
+```
+
+Use this for providers backed by a live endpoint where the model list can change between sessions (e.g. a running llama-server with hot-swappable models).
 
 #### thinking_level_select
 
