@@ -21,7 +21,7 @@ const DEFAULT_BASE_URL = "http://localhost:8080/v1";
 const DEFAULT_CONTEXT_WINDOW = 8192;
 const PROPS_TIMEOUT_MS = 120_000;
 
-function isLlamaEnabled(env: NodeJS.ProcessEnv): boolean {
+export function isLlamaEnabled(env: NodeJS.ProcessEnv): boolean {
 	if (env.LLAMA_BASE_URL || env.LLAMA_CACHE) return true;
 	for (const key of Object.keys(env)) {
 		if (key.startsWith("LLAMA_ARG_")) return true;
@@ -76,8 +76,6 @@ const PropsResponseSchema = Type.Object({
 const validatePropsResponse = Compile(PropsResponseSchema);
 
 export default async function (pi: ExtensionAPI): Promise<void> {
-	if (!isLlamaEnabled(process.env)) return;
-
 	let currentModels: ProviderModelConfig[] = [];
 
 	const baseUrl = (process.env.LLAMA_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
