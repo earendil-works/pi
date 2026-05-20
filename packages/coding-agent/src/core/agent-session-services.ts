@@ -139,7 +139,7 @@ export async function createAgentSessionServices(
 		...(options.resourceLoaderOptions ?? {}),
 		extensionFactories: [
 			...(options.resourceLoaderOptions?.extensionFactories ?? []),
-			...(isLlamaEnabled(process.env) ? [{ path: "<built-in:llama-cpp>", factory: llamaCppFactory }] : []),
+			...(isLlamaEnabled(process.env) ? [llamaCppFactory] : []),
 		],
 		cwd,
 		agentDir,

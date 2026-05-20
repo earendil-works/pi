@@ -927,8 +927,6 @@ export class InteractiveMode {
 	}
 
 	private formatExtensionDisplayPath(path: string): string {
-		const builtIn = this.extractBuiltInName(path);
-		if (builtIn) return builtIn;
 		let result = this.formatDisplayPath(path);
 		result = result.replace(/\/index\.ts$/, "").replace(/\/index\.js$/, "");
 		return result;
@@ -981,13 +979,7 @@ export class InteractiveMode {
 		return this.formatDisplayPath(fullPath);
 	}
 
-	private extractBuiltInName(resourcePath: string): string | undefined {
-		return /^<built-in:([^>]+)>$/.exec(resourcePath)?.[1];
-	}
-
 	private getCompactPathLabel(resourcePath: string, sourceInfo?: SourceInfo): string {
-		const builtIn = this.extractBuiltInName(resourcePath);
-		if (builtIn) return builtIn;
 		const shortPath = this.getShortPath(resourcePath, sourceInfo);
 		const normalizedPath = shortPath.replace(/\\/g, "/");
 		const segments = normalizedPath.split("/").filter((segment) => segment.length > 0 && segment !== "~");
@@ -1033,8 +1025,6 @@ export class InteractiveMode {
 	}
 
 	private getCompactDisplayPathSegments(resourcePath: string): string[] {
-		const builtIn = this.extractBuiltInName(resourcePath);
-		if (builtIn) return [builtIn];
 		return this.formatDisplayPath(resourcePath)
 			.replace(/\\/g, "/")
 			.split("/")

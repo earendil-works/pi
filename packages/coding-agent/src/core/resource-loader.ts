@@ -11,13 +11,7 @@ export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 import { canonicalizePath, isLocalPath } from "../utils/paths.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import { createExtensionRuntime, loadExtensionFromFactory, loadExtensions } from "./extensions/loader.ts";
-import type {
-	Extension,
-	ExtensionFactory,
-	ExtensionFactoryEntry,
-	ExtensionRuntime,
-	LoadExtensionsResult,
-} from "./extensions/types.ts";
+import type { Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResult } from "./extensions/types.ts";
 import { DefaultPackageManager, type PathMetadata } from "./package-manager.ts";
 import type { PromptTemplate } from "./prompt-templates.ts";
 import { loadPromptTemplates } from "./prompt-templates.ts";
@@ -128,7 +122,7 @@ export interface DefaultResourceLoaderOptions {
 	additionalSkillPaths?: string[];
 	additionalPromptTemplatePaths?: string[];
 	additionalThemePaths?: string[];
-	extensionFactories?: ExtensionFactoryEntry[];
+	extensionFactories?: ExtensionFactory[];
 	noExtensions?: boolean;
 	noSkills?: boolean;
 	noPromptTemplates?: boolean;
@@ -166,7 +160,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private additionalSkillPaths: string[];
 	private additionalPromptTemplatePaths: string[];
 	private additionalThemePaths: string[];
-	private extensionFactories: ExtensionFactoryEntry[];
+	private extensionFactories: ExtensionFactory[];
 	private noExtensions: boolean;
 	private noSkills: boolean;
 	private noPromptTemplates: boolean;
@@ -780,10 +774,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const extensions: Extension[] = [];
 		const errors: Array<{ path: string; error: string }> = [];
 
-		for (const [index, entry] of this.extensionFactories.entries()) {
-			const isNamed = typeof entry !== "function";
-			const factory: ExtensionFactory = isNamed ? entry.factory : entry;
-			const extensionPath = isNamed ? entry.path : `<inline:${index + 1}>`;
+		for (const [index, factory] of this.extensionFactories.entries()) {
+			const extensionPath = `<inline:${index + 1}>`;
 			try {
 				const extension = await loadExtensionFromFactory(factory, this.cwd, this.eventBus, runtime, extensionPath);
 				extensions.push(extension);
