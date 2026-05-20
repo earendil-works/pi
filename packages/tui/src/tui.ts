@@ -1050,11 +1050,15 @@ export class TUI extends Container {
 			return;
 		}
 
-		// Find first and last changed lines
+		// Find first and last changed lines within the visible viewport only.
+		// Skipping lines above prevViewportTop avoids triggering fullRender(true) when
+		// off-screen content (e.g. a spinner in a scrolled-out tool header) updates at
+		// 80ms intervals — those changes are invisible to the user but were causing a
+		// full screen clear on every tick.
 		let firstChanged = -1;
 		let lastChanged = -1;
 		const maxLines = Math.max(newLines.length, this.previousLines.length);
-		for (let i = 0; i < maxLines; i++) {
+		for (let i = prevViewportTop; i < maxLines; i++) {
 			const oldLine = i < this.previousLines.length ? this.previousLines[i] : "";
 			const newLine = i < newLines.length ? newLines[i] : "";
 
