@@ -23,7 +23,7 @@ import type {
 	AgentTool,
 	ThinkingLevel,
 } from "@earendil-works/pi-agent-core";
-import type { AssistantMessage, ImageContent, Message, Model, TextContent } from "@earendil-works/pi-ai";
+import type { AssistantMessage, ImageContent, Message, Model, TextContent, Usage } from "@earendil-works/pi-ai";
 import {
 	clampThinkingLevel,
 	cleanupSessionResources,
@@ -88,6 +88,7 @@ import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.js";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.js";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.js";
 import { createAllToolDefinitions } from "./tools/index.js";
+import { getAgentDir } from "../config.js";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.js";
 
 // ============================================================================
@@ -153,6 +154,8 @@ export interface AgentSessionConfig {
 	cwd: string;
 	/** Models to cycle through with Ctrl+P (from --models flag) */
 	scopedModels?: Array<{ model: Model<any>; thinkingLevel?: ThinkingLevel }>;
+	/** Agent directory (e.g. ~/.pi/agent). Defaults to getAgentDir() when omitted. */
+	agentDir?: string;
 	/** Resource loader for skills, prompts, themes, context files, system prompt */
 	resourceLoader: ResourceLoader;
 	/** SDK custom tools registered outside extensions */
@@ -283,6 +286,7 @@ export class AgentSession {
 	private _turnIndex = 0;
 
 	private _resourceLoader: ResourceLoader;
+	private _agentDir: string;
 	private _customTools: ToolDefinition[];
 	private _baseToolDefinitions: Map<string, ToolDefinition> = new Map();
 	private _cwd: string;
@@ -316,6 +320,7 @@ export class AgentSession {
 		this.settingsManager = config.settingsManager;
 		this._scopedModels = config.scopedModels ?? [];
 		this._resourceLoader = config.resourceLoader;
+		this._agentDir = config.agentDir ?? getAgentDir();
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
 		this._modelRegistry = config.modelRegistry;
@@ -1659,6 +1664,7 @@ export class AgentSession {
 			let firstKeptEntryId: string;
 			let tokensBefore: number;
 			let details: unknown;
+			let llmUsage: Usage | undefined;
 
 			if (extensionCompaction) {
 				// Extension provided compaction content
@@ -1681,6 +1687,7 @@ export class AgentSession {
 				firstKeptEntryId = result.firstKeptEntryId;
 				tokensBefore = result.tokensBefore;
 				details = result.details;
+				llmUsage = result.usage;
 			}
 
 			if (this._compactionAbortController.signal.aborted) {
@@ -1702,6 +1709,7 @@ export class AgentSession {
 					type: "session_compact",
 					compactionEntry: savedCompactionEntry,
 					fromExtension,
+					usage: llmUsage,
 				});
 			}
 
@@ -1924,6 +1932,7 @@ export class AgentSession {
 			let firstKeptEntryId: string;
 			let tokensBefore: number;
 			let details: unknown;
+			let llmUsage: Usage | undefined;
 
 			if (extensionCompaction) {
 				// Extension provided compaction content
@@ -1946,6 +1955,7 @@ export class AgentSession {
 				firstKeptEntryId = compactResult.firstKeptEntryId;
 				tokensBefore = compactResult.tokensBefore;
 				details = compactResult.details;
+				llmUsage = compactResult.usage;
 			}
 
 			if (this._autoCompactionAbortController.signal.aborted) {
@@ -1974,6 +1984,7 @@ export class AgentSession {
 					type: "session_compact",
 					compactionEntry: savedCompactionEntry,
 					fromExtension,
+					usage: llmUsage,
 				});
 			}
 
@@ -2361,6 +2372,7 @@ export class AgentSession {
 			extensionsResult.extensions,
 			extensionsResult.runtime,
 			this._cwd,
+			this._agentDir,
 			this.sessionManager,
 			this._modelRegistry,
 		);
@@ -2761,6 +2773,7 @@ export class AgentSession {
 			// Run default summarizer if needed
 			let summaryText: string | undefined;
 			let summaryDetails: unknown;
+			let branchSummaryUsage: Usage | undefined;
 			if (options.summarize && entriesToSummarize.length > 0 && !extensionSummary) {
 				const model = this.model!;
 				const { apiKey, headers } = await this._getRequiredRequestAuth(model);
@@ -2785,6 +2798,7 @@ export class AgentSession {
 					readFiles: result.readFiles || [],
 					modifiedFiles: result.modifiedFiles || [],
 				};
+				branchSummaryUsage = result.usage;
 			} else if (extensionSummary) {
 				summaryText = extensionSummary.summary;
 				summaryDetails = extensionSummary.details;
@@ -2854,6 +2868,7 @@ export class AgentSession {
 				oldLeafId,
 				summaryEntry,
 				fromExtension: summaryText ? fromExtension : undefined,
+				usage: summaryText && !fromExtension ? branchSummaryUsage : undefined,
 			});
 
 			// Emit to custom tools

@@ -6,7 +6,7 @@
  */
 
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Model, Usage } from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai";
 import {
 	convertToLlm,
@@ -36,6 +36,8 @@ export interface BranchSummaryResult {
 	modifiedFiles?: string[];
 	aborted?: boolean;
 	error?: string;
+	/** LLM token usage from the summarization call. Undefined when aborted, errored, or no content. */
+	usage?: Usage;
 }
 
 /** Details stored in BranchSummaryEntry.details for file tracking */
@@ -324,7 +326,7 @@ export async function generateBranchSummary(
 	const response = await completeSimple(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		{ apiKey, headers, signal, maxTokens: 2048 },
+		{ apiKey, headers, signal, maxTokens: 2048, label: "branch_summary" },
 	);
 
 	// Check if aborted or errored
@@ -351,5 +353,6 @@ export async function generateBranchSummary(
 		summary: summary || "No summary generated",
 		readFiles,
 		modifiedFiles,
+		usage: response.usage,
 	};
 }

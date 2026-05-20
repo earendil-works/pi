@@ -334,6 +334,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			const attributionHeaders = getAttributionHeaders(model, settingsManager);
 			return streamSimple(model, context, {
 				...options,
+				label: "agent",
 				apiKey: auth.apiKey,
 				timeoutMs: options?.timeoutMs ?? providerRetrySettings.timeoutMs,
 				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
@@ -394,6 +395,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionManager,
 		settingsManager,
 		cwd,
+		agentDir,
 		scopedModels: options.scopedModels,
 		resourceLoader,
 		customTools: options.customTools,

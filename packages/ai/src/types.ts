@@ -87,6 +87,12 @@ export interface StreamOptions {
 	signal?: AbortSignal;
 	apiKey?: string;
 	/**
+	 * Optional label identifying the purpose of this LLM call (e.g. "agent",
+	 * "compaction", "branch_summary"). Used only for local usage attribution.
+	 * Never sent to providers.
+	 */
+	label?: string;
+	/**
 	 * Preferred transport for providers that support multiple transports.
 	 * Providers that do not support this option ignore it.
 	 */

@@ -106,6 +106,8 @@ export interface CompactionResult<T = unknown> {
 	tokensBefore: number;
 	/** Extension-specific data (e.g., ArtifactIndex, version markers for structured compaction) */
 	details?: T;
+	/** LLM token usage from the summarization call(s). Undefined when compaction was provided by an extension. */
+	usage?: Usage;
 }
 
 // ============================================================================
@@ -537,7 +539,7 @@ export async function generateSummary(
 	customInstructions?: string,
 	previousSummary?: string,
 	thinkingLevel?: ThinkingLevel,
-): Promise<string> {
+): Promise<{ text: string; usage: Usage }> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
@@ -571,8 +573,8 @@ export async function generateSummary(
 
 	const completionOptions =
 		model.reasoning && thinkingLevel && thinkingLevel !== "off"
-			? { maxTokens, signal, apiKey, headers, reasoning: thinkingLevel }
-			: { maxTokens, signal, apiKey, headers };
+			? { maxTokens, signal, apiKey, headers, reasoning: thinkingLevel, label: "compaction" }
+			: { maxTokens, signal, apiKey, headers, label: "compaction" };
 
 	const response = await completeSimple(
 		model,
@@ -589,7 +591,7 @@ export async function generateSummary(
 		.map((c) => c.text)
 		.join("\n");
 
-	return textContent;
+	return { text: textContent, usage: response.usage };
 }
 
 // ============================================================================
@@ -739,6 +741,23 @@ export async function compact(
 
 	// Generate summaries (can be parallel if both needed) and merge into one
 	let summary: string;
+	let compactionUsage: Usage | undefined;
+
+	const zeroUsage: Usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+	const mergeUsage = (a: Usage, b: Usage): Usage => ({
+		input: a.input + b.input,
+		output: a.output + b.output,
+		cacheRead: a.cacheRead + b.cacheRead,
+		cacheWrite: a.cacheWrite + b.cacheWrite,
+		totalTokens: a.totalTokens + b.totalTokens,
+		cost: {
+			input: a.cost.input + b.cost.input,
+			output: a.cost.output + b.cost.output,
+			cacheRead: a.cost.cacheRead + b.cost.cacheRead,
+			cacheWrite: a.cost.cacheWrite + b.cost.cacheWrite,
+			total: a.cost.total + b.cost.total,
+		},
+	});
 
 	if (isSplitTurn && turnPrefixMessages.length > 0) {
 		// Generate both summaries in parallel
@@ -755,7 +774,7 @@ export async function compact(
 						previousSummary,
 						thinkingLevel,
 					)
-				: Promise.resolve("No prior history."),
+				: Promise.resolve({ text: "No prior history.", usage: zeroUsage }),
 			generateTurnPrefixSummary(
 				turnPrefixMessages,
 				model,
@@ -767,10 +786,11 @@ export async function compact(
 			),
 		]);
 		// Merge into single summary
-		summary = `${historyResult}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult}`;
+		summary = `${historyResult.text}\n\n---\n\n**Turn Context (split turn):**\n\n${turnPrefixResult.text}`;
+		compactionUsage = mergeUsage(historyResult.usage, turnPrefixResult.usage);
 	} else {
 		// Just generate history summary
-		summary = await generateSummary(
+		const genResult = await generateSummary(
 			messagesToSummarize,
 			model,
 			settings.reserveTokens,
@@ -781,6 +801,8 @@ export async function compact(
 			previousSummary,
 			thinkingLevel,
 		);
+		summary = genResult.text;
+		compactionUsage = genResult.usage;
 	}
 
 	// Compute file lists and append to summary
@@ -796,6 +818,7 @@ export async function compact(
 		firstKeptEntryId,
 		tokensBefore,
 		details: { readFiles, modifiedFiles } as CompactionDetails,
+		usage: compactionUsage,
 	};
 }
 
@@ -810,7 +833,7 @@ async function generateTurnPrefixSummary(
 	headers?: Record<string, string>,
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
-): Promise<string> {
+): Promise<{ text: string; usage: Usage }> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
 		model.maxTokens > 0 ? model.maxTokens : Number.POSITIVE_INFINITY,
@@ -830,16 +853,17 @@ async function generateTurnPrefixSummary(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
 		model.reasoning && thinkingLevel && thinkingLevel !== "off"
-			? { maxTokens, signal, apiKey, headers, reasoning: thinkingLevel }
-			: { maxTokens, signal, apiKey, headers },
+			? { maxTokens, signal, apiKey, headers, reasoning: thinkingLevel, label: "compaction" }
+			: { maxTokens, signal, apiKey, headers, label: "compaction" },
 	);
 
 	if (response.stopReason === "error") {
 		throw new Error(`Turn prefix summarization failed: ${response.errorMessage || "Unknown error"}`);
 	}
 
-	return response.content
+	const text = response.content
 		.filter((c): c is { type: "text"; text: string } => c.type === "text")
 		.map((c) => c.text)
 		.join("\n");
+	return { text, usage: response.usage };
 }

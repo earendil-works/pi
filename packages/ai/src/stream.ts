@@ -11,8 +11,11 @@ import type {
 	SimpleStreamOptions,
 	StreamOptions,
 } from "./types.js";
+import { notifyUsageListeners } from "./usage-listeners.js";
 
 export { getEnvApiKey } from "./env-api-keys.js";
+export { addUsageListener } from "./usage-listeners.js";
+export type { UsageListener } from "./usage-listeners.js";
 
 function resolveApiProvider(api: Api) {
 	const provider = getApiProvider(api);
@@ -28,7 +31,9 @@ export function stream<TApi extends Api>(
 	options?: ProviderStreamOptions,
 ): AssistantMessageEventStream {
 	const provider = resolveApiProvider(model.api);
-	return provider.stream(model, context, options as StreamOptions);
+	const s = provider.stream(model, context, options as StreamOptions);
+	s.result().then((msg) => notifyUsageListeners(msg, model, options?.label)).catch(() => {});
+	return s;
 }
 
 export async function complete<TApi extends Api>(
@@ -46,7 +51,9 @@ export function streamSimple<TApi extends Api>(
 	options?: SimpleStreamOptions,
 ): AssistantMessageEventStream {
 	const provider = resolveApiProvider(model.api);
-	return provider.streamSimple(model, context, options);
+	const s = provider.streamSimple(model, context, options);
+	s.result().then((msg) => notifyUsageListeners(msg, model, options?.label)).catch(() => {});
+	return s;
 }
 
 export async function completeSimple<TApi extends Api>(
