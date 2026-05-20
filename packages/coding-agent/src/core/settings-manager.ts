@@ -741,11 +741,10 @@ export class SettingsManager {
 	}
 
 	setHttpIdleTimeoutMs(timeoutMs: number): void {
-		const normalizedTimeoutMs = parseHttpIdleTimeoutMs(timeoutMs);
-		if (normalizedTimeoutMs === undefined) {
+		if (!Number.isFinite(timeoutMs) || timeoutMs < 0) {
 			throw new Error(`Invalid httpIdleTimeoutMs setting: ${String(timeoutMs)}`);
 		}
-		this.globalSettings.httpIdleTimeoutMs = normalizedTimeoutMs;
+		this.globalSettings.httpIdleTimeoutMs = Math.floor(timeoutMs);
 		this.markModified("httpIdleTimeoutMs");
 		this.save();
 	}
