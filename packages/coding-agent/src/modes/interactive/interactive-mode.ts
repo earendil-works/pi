@@ -4078,6 +4078,7 @@ export class InteractiveMode {
 	}
 
 	private showModelSelector(initialSearchInput?: string): void {
+		void this.session.extensionRunner.emit({ type: "model_selector_open" });
 		this.showSelector((done) => {
 			const selector = new ModelSelectorComponent(
 				this.ui,

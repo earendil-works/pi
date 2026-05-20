@@ -718,6 +718,11 @@ export interface ModelSelectEvent {
 	source: ModelSelectSource;
 }
 
+/** Fired when the interactive model picker opens. Dispatched fire-and-forget so handlers do not block the UI — any provider-state refresh (e.g. fetching a remote model list) will be reflected on the next open. */
+export interface ModelSelectorOpenEvent {
+	type: "model_selector_open";
+}
+
 /** Fired when a new thinking level is selected */
 export interface ThinkingLevelSelectEvent {
 	type: "thinking_level_select";
@@ -965,6 +970,7 @@ export type ExtensionEvent =
 	| ToolExecutionUpdateEvent
 	| ToolExecutionEndEvent
 	| ModelSelectEvent
+	| ModelSelectorOpenEvent
 	| ThinkingLevelSelectEvent
 	| UserBashEvent
 	| InputEvent
@@ -1119,6 +1125,7 @@ export interface ExtensionAPI {
 	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): void;
 	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): void;
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent>): void;
+	on(event: "model_selector_open", handler: ExtensionHandler<ModelSelectorOpenEvent>): void;
 	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): void;
 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
