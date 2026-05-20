@@ -328,11 +328,20 @@ function buildSessionOptions(
 	}
 
 	if (!options.model && scopedModels.length > 0 && !hasExistingSession) {
-		// Check if saved default is in scoped models - use it if so, otherwise first scoped model
+		// When --provider is given without --model, narrow candidates to that provider.
+		// This prevents --provider openai-codex from being silently ignored when no
+		// --model is specified, which would otherwise fall through to the saved default
+		// (potentially a different provider) and fail auth.
+		const providerCandidates = parsed.provider
+			? scopedModels.filter((sm) => sm.model.provider.toLowerCase() === parsed.provider!.toLowerCase())
+			: scopedModels;
+		const candidateModels = providerCandidates.length > 0 ? providerCandidates : scopedModels;
+
+		// Check if saved default is in candidate models - use it if so, otherwise first candidate model
 		const savedProvider = settingsManager.getDefaultProvider();
 		const savedModelId = settingsManager.getDefaultModel();
 		const savedModel = savedProvider && savedModelId ? modelRegistry.find(savedProvider, savedModelId) : undefined;
-		const savedInScope = savedModel ? scopedModels.find((sm) => modelsAreEqual(sm.model, savedModel)) : undefined;
+		const savedInScope = savedModel ? candidateModels.find((sm) => modelsAreEqual(sm.model, savedModel)) : undefined;
 
 		if (savedInScope) {
 			options.model = savedInScope.model;
@@ -341,10 +350,10 @@ function buildSessionOptions(
 				options.thinkingLevel = savedInScope.thinkingLevel;
 			}
 		} else {
-			options.model = scopedModels[0].model;
+			options.model = candidateModels[0].model;
 			// Use thinking level from first scoped model if explicitly set
-			if (!parsed.thinking && scopedModels[0].thinkingLevel) {
-				options.thinkingLevel = scopedModels[0].thinkingLevel;
+			if (!parsed.thinking && candidateModels[0].thinkingLevel) {
+				options.thinkingLevel = candidateModels[0].thinkingLevel;
 			}
 		}
 	}
