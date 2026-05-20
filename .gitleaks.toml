@@ -1,0 +1,10 @@
+[allowlist]
+description = "False positives from upstream repo history"
+commits = [
+  "3d8fcd612a1d2995afdc6182f84588efce4f1808",
+  "f5e6bcac1b74dd66567310b51a2134ecda7d6676",
+  "c359023c3f90f859fc446fa56e4e8668ddc6e7f1",
+  "36e17933d57ca7079b86d75b73a9721b229c853c",
+  "b6fe07b618b9ccb082d9ea0dd6dbe5661c66ec64",
+  "f9d688d57766f3c4d72b592cc25ea3881bebf46d",
+]
