@@ -461,8 +461,8 @@ describe("createBranchedSession", () => {
 		expect(entries.map((e) => e.id)).toEqual([id1, id2, id4, id5]);
 	});
 
-	it("does not duplicate entries when forking from first user message", () => {
-		const tempDir = join(tmpdir(), `session-fork-dedup-${Date.now()}`);
+	it("writes file immediately when forking from a point with no assistant messages", () => {
+		const tempDir = join(tmpdir(), `session-fork-no-assistant-${Date.now()}`);
 		mkdirSync(tempDir, { recursive: true });
 
 		try {
@@ -477,22 +477,29 @@ describe("createBranchedSession", () => {
 			const newFile = session.createBranchedSession(id1);
 			expect(newFile).toBeDefined();
 
-			// The branched path has no assistant, so the file should not exist yet
-			// (deferred to _persist on first assistant, matching newSession() contract)
-			expect(existsSync(newFile!)).toBe(false);
+			// File must exist immediately so forked subagent sessions can open it
+			expect(existsSync(newFile!)).toBe(true);
+			let content = readFileSync(newFile!, "utf-8");
+			let lines = content.trim().split("\n").filter(Boolean);
+			let records = lines.map((line) => JSON.parse(line));
+			expect(records.filter((r) => r.type === "session")).toHaveLength(1);
 
 			// Simulate extension adding entry before assistant (like preset on turn_start)
 			session.appendCustomEntry("preset-state", { name: "plan" });
 
+			// File should still have no duplicates
+			content = readFileSync(newFile!, "utf-8");
+			lines = content.trim().split("\n").filter(Boolean);
+			records = lines.map((line) => JSON.parse(line));
+			expect(records.filter((r) => r.type === "session")).toHaveLength(1);
+
 			// Now the assistant responds
 			session.appendMessage(assistantMsg("new answer"));
 
-			// File should now exist with exactly one header and no duplicate IDs
-			expect(existsSync(newFile!)).toBe(true);
-			const content = readFileSync(newFile!, "utf-8");
-			const lines = content.trim().split("\n").filter(Boolean);
-			const records = lines.map((line) => JSON.parse(line));
-
+			// File should still have exactly one header and no duplicate IDs
+			content = readFileSync(newFile!, "utf-8");
+			lines = content.trim().split("\n").filter(Boolean);
+			records = lines.map((line) => JSON.parse(line));
 			expect(records.filter((r) => r.type === "session")).toHaveLength(1);
 
 			const entryIds = records

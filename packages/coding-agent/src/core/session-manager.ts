@@ -710,6 +710,7 @@ export class SessionManager {
 	private cwd: string;
 	private persist: boolean;
 	private flushed: boolean = false;
+	private initialWriteDone: boolean = false;
 	private fileEntries: FileEntry[] = [];
 	private byId: Map<string, SessionEntry> = new Map();
 	private labelsById: Map<string, string> = new Map();
@@ -840,8 +841,13 @@ export class SessionManager {
 
 		const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
 		if (!hasAssistant) {
-			// Mark as not flushed so when assistant arrives, all entries get written
-			this.flushed = false;
+			// Defer writing until first assistant message, but only before the
+			// initial full write has happened. After that (e.g., after
+			// createBranchedSession wrote the file), keep flushed=true so new
+			// entries just append and we never duplicate the header.
+			if (!this.initialWriteDone) {
+				this.flushed = false;
+			}
 			return;
 		}
 
@@ -850,6 +856,7 @@ export class SessionManager {
 				appendFileSync(this.sessionFile, `${JSON.stringify(e)}\n`);
 			}
 			this.flushed = true;
+			this.initialWriteDone = true;
 		} else {
 			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
 		}
@@ -1261,18 +1268,13 @@ export class SessionManager {
 			this.sessionFile = newSessionFile;
 			this._buildIndex();
 
-			// Only write the file now if it contains an assistant message.
-			// Otherwise defer to _persist(), which creates the file on the
-			// first assistant response, matching the newSession() contract
-			// and avoiding the duplicate-header bug when _persist()'s
-			// no-assistant guard later resets flushed to false.
-			const hasAssistant = this.fileEntries.some((e) => e.type === "message" && e.message.role === "assistant");
-			if (hasAssistant) {
-				this._rewriteFile();
-				this.flushed = true;
-			} else {
-				this.flushed = false;
-			}
+			// Always write the branched session file so callers (e.g.,
+			// forked subagent sessions) can rely on the returned path existing.
+			// The initialWriteDone flag in _persist() prevents the old
+			// duplicate-header bug: after this write, flushed stays true and
+			// new entries just append.
+			this._rewriteFile();
+			this.flushed = true;
 
 			return newSessionFile;
 		}

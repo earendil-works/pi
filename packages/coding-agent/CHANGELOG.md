@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed `createBranchedSession` returning a file path that does not exist on disk when the branched path has no assistant messages, causing forked subagent sessions (`/run scout` then `/run planner`) to fail with "Session manager returned a forked session file that does not exist".
+
 ## [0.75.4] - 2026-05-20
 
 ### New Features
