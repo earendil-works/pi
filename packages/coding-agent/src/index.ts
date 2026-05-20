@@ -4,6 +4,26 @@ export { type Args, parseArgs } from "./cli/args.ts";
 
 // Config paths
 export { getAgentDir, VERSION } from "./config.ts";
+export type {
+	AgentBusAddress,
+	AgentBusEvent,
+	AgentBusEventKind,
+	AgentBusEventSink,
+	AgentBusMirrorContext,
+	AgentBusMirrorOptions,
+	AgentBusProjectionOptions,
+	AgentBusRegistration,
+	AgentBusRegistrationStatus,
+	AgentBusSchemaVersion,
+} from "./core/agent-bus.ts";
+export {
+	AGENT_BUS_SCHEMA_VERSION,
+	addressFingerprint,
+	agentSessionEventToAgentBusEvents,
+	createAgentBusEvent,
+	createAgentBusMirror,
+	createAgentBusRegistration,
+} from "./core/agent-bus.ts";
 export {
 	AgentSession,
 	type AgentSessionConfig,
