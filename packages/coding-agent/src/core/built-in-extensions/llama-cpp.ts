@@ -81,11 +81,11 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 	const baseUrl = (process.env.LLAMA_BASE_URL ?? DEFAULT_BASE_URL).replace(/\/+$/, "");
 	const apiKey = process.env.LLAMA_API_KEY ?? "no-key";
 
-	async function refreshProvider(): Promise<void> {
+	async function refreshProvider(ctx?: ExtensionContext): Promise<void> {
 		try {
 			const response = await fetch(`${baseUrl}/models`);
 			if (!response.ok) {
-				console.warn(`[llama-cpp] ${baseUrl}/models returned ${response.status}`);
+				ctx?.ui.notify(`[llama-cpp] ${baseUrl}/models returned ${response.status}`, "error");
 				return;
 			}
 
@@ -94,7 +94,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 				const errors = [...validateModelsResponse.Errors(payload)]
 					.map((e) => `${"path" in e ? e.path : ""} ${e.message}`)
 					.join("; ");
-				console.warn(`[llama-cpp] invalid /models response: ${errors}`);
+				ctx?.ui.notify(`[llama-cpp] invalid /models response: ${errors}`, "error");
 				return;
 			}
 
@@ -121,7 +121,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 			});
 
 			if (currentModels.length === 0) {
-				console.warn(`[llama-cpp] no models returned from ${baseUrl}/models`);
+				ctx?.ui.notify(`[llama-cpp] no models returned from ${baseUrl}/models`, "warning");
 				return;
 			}
 
@@ -133,7 +133,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 				models: currentModels,
 			});
 		} catch (error) {
-			console.warn(`[llama-cpp] failed to reach ${baseUrl}/models: ${(error as Error).message}`);
+			ctx?.ui.notify(`[llama-cpp] failed to reach ${baseUrl}/models: ${(error as Error).message}`, "error");
 		}
 	}
 
@@ -193,10 +193,14 @@ export default async function (pi: ExtensionAPI): Promise<void> {
 
 	await refreshProvider();
 
-	pi.on("input", async (event) => {
+	pi.on("input", async (event, ctx) => {
+		// Built-in slash commands like /model are intercepted by the interactive editor
+		// before reaching emitInput, so this handler never sees "/model". If this PR is
+		// accepted, follow up by adding a "model_selector_open" event so we can refresh
+		// the model list right before the picker is shown.
 		const trimmed = event.text.trim().toLowerCase();
 		if (trimmed === "/model") {
-			await refreshProvider();
+			await refreshProvider(ctx);
 		}
 	});
 
