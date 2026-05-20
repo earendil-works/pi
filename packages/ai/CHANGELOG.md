@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added NEAR AI Cloud as a built-in provider with dynamic model discovery from cloud-api.near.ai
+
 ### Changed
 
 - Changed source syntax to avoid TypeScript constructs that require JavaScript emit, keeping the package compatible with Node.js strip-only TypeScript checks.

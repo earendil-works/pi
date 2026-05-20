@@ -313,6 +313,73 @@ async function fetchOpenRouterModels(): Promise<Model<any>[]> {
 	}
 }
 
+const NEARAI_BASE_URL = "https://cloud-api.near.ai/v1";
+
+interface NearAIModel {
+	modelId: string;
+	inputCostPerToken: { amount: number; scale: number; currency: string };
+	outputCostPerToken: { amount: number; scale: number; currency: string };
+	cacheReadCostPerToken?: { amount: number; scale: number; currency: string };
+	metadata: {
+		contextLength?: number;
+		modelDisplayName?: string;
+		providerType?: string;
+		architecture?: {
+			inputModalities?: string[];
+			outputModalities?: string[];
+		};
+	};
+}
+
+async function fetchNearAIModels(): Promise<Model<any>[]> {
+	try {
+		console.log("Fetching models from NEAR AI Cloud API...");
+		const response = await fetch("https://cloud-api.near.ai/v1/model/list");
+		const data = (await response.json()) as { models: NearAIModel[] };
+		const models: Model<any>[] = [];
+
+		for (const m of data.models) {
+			const id = m.modelId;
+			const outputMods = m.metadata?.architecture?.outputModalities ?? [];
+			if (!outputMods.includes("text")) continue;
+			if (/Embedding|Reranker|whisper|FLUX|privacy-filter/i.test(id)) continue;
+
+			const input: ("text" | "image")[] = ["text"];
+			if (m.metadata?.architecture?.inputModalities?.includes("image")) {
+				input.push("image");
+			}
+
+			const toMTok = (cost?: { amount: number }): number => (cost?.amount ?? 0) / 1000;
+
+			const contextWindow = m.metadata?.contextLength ?? 128000;
+
+			models.push({
+				id,
+				name: m.metadata?.modelDisplayName || id,
+				api: "openai-completions",
+				baseUrl: NEARAI_BASE_URL,
+				provider: "nearai" as KnownProvider,
+				reasoning: /\b(o3|o4|qwen3)/i.test(id),
+				input,
+				cost: {
+					input: toMTok(m.inputCostPerToken),
+					output: toMTok(m.outputCostPerToken),
+					cacheRead: toMTok(m.cacheReadCostPerToken),
+					cacheWrite: 0,
+				},
+				contextWindow,
+				maxTokens: Math.min(contextWindow, 32768),
+			});
+		}
+
+		console.log(`Fetched ${models.length} chat-capable models from NEAR AI Cloud`);
+		return models;
+	} catch (error) {
+		console.error("Failed to fetch NEAR AI Cloud models:", error);
+		return [];
+	}
+}
+
 async function fetchAiGatewayModels(): Promise<Model<any>[]> {
 	try {
 		console.log("Fetching models from Vercel AI Gateway API...");
@@ -1115,16 +1182,18 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 }
 
 async function generateModels() {
-	// Fetch models from both sources
+	// Fetch models from all sources
 	// models.dev: Anthropic, Google, OpenAI, Groq, Cerebras
 	// OpenRouter: xAI and other providers (excluding Anthropic, Google, OpenAI)
 	// AI Gateway: OpenAI-compatible catalog with tool-capable models
+	// NEAR AI Cloud: self-hosted and proxied models via cloud-api.near.ai
 	const modelsDevModels = await loadModelsDevData();
 	const openRouterModels = await fetchOpenRouterModels();
 	const aiGatewayModels = await fetchAiGatewayModels();
+	const nearaiModels = await fetchNearAIModels();
 
 	// Combine models (models.dev has priority)
-	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels].filter(
+	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels, ...nearaiModels].filter(
 		(model) =>
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
 	);

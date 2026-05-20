@@ -17,6 +17,7 @@ export const BUILT_IN_PROVIDER_DISPLAY_NAMES: Record<string, string> = {
 	"minimax-cn": "MiniMax (China)",
 	moonshotai: "Moonshot AI",
 	"moonshotai-cn": "Moonshot AI (China)",
+	nearai: "NEAR AI Cloud",
 	opencode: "OpenCode Zen",
 	"opencode-go": "OpenCode Go",
 	openai: "OpenAI",

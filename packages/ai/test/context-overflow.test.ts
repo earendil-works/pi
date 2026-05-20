@@ -342,6 +342,22 @@ describe("Context overflow error handling", () => {
 	});
 
 	// =============================================================================
+	// NEAR AI Cloud
+	// Uses OpenAI-compatible Chat Completions API
+	// =============================================================================
+
+	describe.skipIf(!process.env.NEARAI_API_KEY)("NEAR AI Cloud", () => {
+		it("GLM-5.1-FP8 - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("nearai", "zai-org/GLM-5.1-FP8");
+			const result = await testContextOverflow(model, process.env.NEARAI_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	// =============================================================================
 	// z.ai
 	// Special case: may return explicit overflow error text, may accept overflow silently,
 	// or may rate limit instead

@@ -397,6 +397,31 @@ describe("totalTokens field", () => {
 	});
 
 	// =========================================================================
+	// NEAR AI Cloud
+	// =========================================================================
+
+	describe.skipIf(!process.env.NEARAI_API_KEY)("NEAR AI Cloud", () => {
+		it(
+			"GLM-5.1-FP8 - should return totalTokens equal to sum of components",
+			{ retry: 3, timeout: 60000 },
+			async () => {
+				const llm = getModel("nearai", "zai-org/GLM-5.1-FP8");
+
+				console.log(`\nNEAR AI Cloud / ${llm.id}:`);
+				const { first, second } = await testTotalTokensWithCache(llm, {
+					apiKey: process.env.NEARAI_API_KEY,
+				});
+
+				logUsage("First request", first);
+				logUsage("Second request", second);
+
+				assertTotalTokensEqualsComponents(first);
+				assertTotalTokensEqualsComponents(second);
+			},
+		);
+	});
+
+	// =========================================================================
 	// z.ai
 	// =========================================================================
 

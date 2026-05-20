@@ -115,6 +115,7 @@ function getApiKeyEnvVars(provider: string): readonly string[] | undefined {
 		"minimax-cn": "MINIMAX_CN_API_KEY",
 		moonshotai: "MOONSHOT_API_KEY",
 		"moonshotai-cn": "MOONSHOT_API_KEY",
+		nearai: "NEARAI_API_KEY",
 		huggingface: "HF_TOKEN",
 		fireworks: "FIREWORKS_API_KEY",
 		together: "TOGETHER_API_KEY",

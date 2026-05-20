@@ -40,6 +40,7 @@ export type KnownProvider =
 	| "minimax"
 	| "minimax-cn"
 	| "moonshotai"
+	| "nearai"
 	| "moonshotai-cn"
 	| "huggingface"
 	| "fireworks"

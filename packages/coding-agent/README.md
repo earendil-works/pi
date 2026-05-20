@@ -130,6 +130,7 @@ For each built-in provider, pi maintains a list of tool-capable models, updated 
 - Together AI
 - Kimi For Coding
 - MiniMax
+- NEAR AI Cloud
 - Xiaomi MiMo
 - Xiaomi MiMo Token Plan (China)
 - Xiaomi MiMo Token Plan (Amsterdam)

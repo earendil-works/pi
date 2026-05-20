@@ -66,6 +66,7 @@ Unified LLM API with automatic model discovery, provider configuration, token an
 - **OpenRouter**
 - **Vercel AI Gateway**
 - **MiniMax**
+- **NEAR AI Cloud**
 - **Together AI**
 - **GitHub Copilot** (requires OAuth, see below)
 - **Amazon Bedrock**
@@ -923,7 +924,7 @@ const ollamaReasoningModel: Model<'openai-completions'> = {
 
 ### OpenAI Compatibility Settings
 
-The `openai-completions` API is implemented by many providers with minor differences. By default, the library auto-detects compatibility settings based on `baseUrl` for a small set of known OpenAI-compatible providers (Cerebras, xAI, Chutes, DeepSeek, Together AI, zAi, OpenCode, Cloudflare Workers AI, etc.). For custom proxies or unknown endpoints, you can override these settings via the `compat` field. For `openai-responses` models, the compat field only supports Responses-specific flags.
+The `openai-completions` API is implemented by many providers with minor differences. By default, the library auto-detects compatibility settings based on `baseUrl` for a small set of known OpenAI-compatible providers (Cerebras, xAI, Chutes, DeepSeek, Together AI, zAi, NEAR AI Cloud, OpenCode, Cloudflare Workers AI, etc.). For custom proxies or unknown endpoints, you can override these settings via the `compat` field. For `openai-responses` models, the compat field only supports Responses-specific flags.
 
 ```typescript
 interface OpenAICompletionsCompat {
@@ -1116,6 +1117,7 @@ In Node.js environments, you can set environment variables to avoid passing API 
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` |
 | zAI | `ZAI_API_KEY` |
 | MiniMax | `MINIMAX_API_KEY` |
+| NEAR AI Cloud | `NEARAI_API_KEY` |
 | OpenCode Zen / OpenCode Go | `OPENCODE_API_KEY` |
 | Kimi For Coding | `KIMI_API_KEY` |
 | Xiaomi MiMo (API billing) | `XIAOMI_API_KEY` |

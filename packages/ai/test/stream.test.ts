@@ -1585,4 +1585,20 @@ describe("Generate E2E Tests", () => {
 			await multiTurn(llm, { apiKey: "test", reasoningEffort: "medium" });
 		});
 	});
+
+	describe.skipIf(!process.env.NEARAI_API_KEY)("NEAR AI Provider (GLM-5.1-FP8 via OpenAI Completions)", () => {
+		const llm = getModel("nearai", "zai-org/GLM-5.1-FP8");
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+	});
 });
