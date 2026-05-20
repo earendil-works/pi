@@ -9,9 +9,9 @@
 			"version": "0.75.4",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-agent-core": "^0.75.4",
-				"@earendil-works/pi-ai": "^0.75.4",
-				"@earendil-works/pi-tui": "^0.75.4",
+				"@earendil-works/pi-agent-core": "0.75.4",
+				"@earendil-works/pi-ai": "0.75.4",
+				"@earendil-works/pi-tui": "0.75.4",
 				"@silvia-odwyer/photon-node": "0.3.4",
 				"chalk": "5.6.2",
 				"cross-spawn": "7.0.6",
@@ -477,7 +477,7 @@
 			"resolved": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-0.75.4.tgz",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-ai": "^0.75.4",
+				"@earendil-works/pi-ai": "0.75.4",
 				"ignore": "7.0.5",
 				"typebox": "1.1.38",
 				"yaml": "2.9.0"

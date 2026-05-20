@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Removed
+
+- Removed unpublished root Bedrock shim files and the unused test-image generator script.
+
 ## [0.75.4] - 2026-05-20
 
 ### Changed

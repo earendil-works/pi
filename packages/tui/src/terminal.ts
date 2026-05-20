@@ -69,6 +69,7 @@ export class ProcessTerminal implements Terminal {
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string) => void;
 	private progressInterval?: ReturnType<typeof setInterval>;
+	private modifyOtherKeysFallbackTimer?: ReturnType<typeof setTimeout>;
 	private writeLogPath = (() => {
 		const env = process.env.PI_TUI_WRITE_LOG || "";
 		if (!env) return "";
@@ -193,7 +194,8 @@ export class ProcessTerminal implements Terminal {
 		this.setupStdinBuffer();
 		process.stdin.on("data", this.stdinDataHandler!);
 		process.stdout.write("\x1b[?u");
-		setTimeout(() => {
+		this.modifyOtherKeysFallbackTimer = setTimeout(() => {
+			this.modifyOtherKeysFallbackTimer = undefined;
 			if (!this._kittyProtocolActive && !this._modifyOtherKeysActive) {
 				process.stdout.write("\x1b[>4;2m");
 				this._modifyOtherKeysActive = true;
@@ -272,6 +274,7 @@ export class ProcessTerminal implements Terminal {
 		if (this.clearProgressInterval()) {
 			process.stdout.write(TERMINAL_PROGRESS_CLEAR_SEQUENCE);
 		}
+		this.clearModifyOtherKeysFallbackTimer();
 
 		// Disable bracketed paste mode
 		process.stdout.write("\x1b[?2004l");
@@ -391,5 +394,11 @@ export class ProcessTerminal implements Terminal {
 		clearInterval(this.progressInterval);
 		this.progressInterval = undefined;
 		return true;
+	}
+
+	private clearModifyOtherKeysFallbackTimer(): void {
+		if (!this.modifyOtherKeysFallbackTimer) return;
+		clearTimeout(this.modifyOtherKeysFallbackTimer);
+		this.modifyOtherKeysFallbackTimer = undefined;
 	}
 }

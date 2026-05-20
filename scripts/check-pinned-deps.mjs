@@ -21,10 +21,6 @@ function collectPackageJsonFiles(directory) {
 	}
 }
 
-function isInternalWorkspaceDependency(name) {
-	return name.startsWith("@earendil-works/pi-");
-}
-
 function isNonRegistrySpecifier(specifier) {
 	return /^(?:workspace:|file:|link:|portal:|git\+|github:|git:|https?:|ssh:|git:\/\/)/.test(specifier);
 }
@@ -49,7 +45,7 @@ for (const file of packageJsonFiles.sort()) {
 		if (!dependencies) continue;
 
 		for (const [name, specifier] of Object.entries(dependencies)) {
-			if (isInternalWorkspaceDependency(name) || isNonRegistrySpecifier(specifier)) continue;
+			if (isNonRegistrySpecifier(specifier)) continue;
 			if (exactVersionPattern.test(getVersionSpecifier(specifier))) continue;
 			failures.push(`${file}: ${section}.${name} must be pinned, found ${specifier}`);
 		}

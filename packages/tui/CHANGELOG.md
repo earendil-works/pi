@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Added an explicit package export map so only the root entry point and package metadata are public subpaths.
+
+### Fixed
+
+- Fixed `ProcessTerminal` cleanup to cancel the modifyOtherKeys fallback timer before it can write after terminal shutdown.
+- Fixed cancellable loader disposal to abort the loader signal.
+
 ## [0.75.4] - 2026-05-20
 
 ### Changed

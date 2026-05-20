@@ -113,11 +113,20 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 			reject(new Error("Request was aborted"));
 			return;
 		}
-		const timeout = setTimeout(resolve, ms);
-		signal?.addEventListener("abort", () => {
+
+		const cleanup = () => {
+			if (signal) signal.removeEventListener("abort", onAbort);
+		};
+		const timeout = setTimeout(() => {
+			cleanup();
+			resolve();
+		}, ms);
+		const onAbort = () => {
 			clearTimeout(timeout);
+			cleanup();
 			reject(new Error("Request was aborted"));
-		});
+		};
+		signal?.addEventListener("abort", onAbort, { once: true });
 	});
 }
 
@@ -811,6 +820,10 @@ function scheduleSessionWebSocketExpiry(sessionId: string, entry: CachedWebSocke
 }
 
 async function connectWebSocket(url: string, headers: Headers, signal?: AbortSignal): Promise<WebSocketLike> {
+	if (signal?.aborted) {
+		throw new Error("Request was aborted");
+	}
+
 	const WebSocketCtor = await getWebSocketConstructor();
 	if (!WebSocketCtor) {
 		throw new Error("WebSocket transport is not available in this runtime");
@@ -868,7 +881,7 @@ async function connectWebSocket(url: string, headers: Headers, signal?: AbortSig
 		socket.addEventListener("open", onOpen);
 		socket.addEventListener("error", onError);
 		socket.addEventListener("close", onClose);
-		signal?.addEventListener("abort", onAbort);
+		signal?.addEventListener("abort", onAbort, { once: true });
 	});
 }
 

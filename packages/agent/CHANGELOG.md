@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Exact-pinned internal lockstep package dependencies.
+
 ## [0.75.4] - 2026-05-20
 
 ### Changed

@@ -154,16 +154,20 @@ function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
 			return;
 		}
 
-		const timeout = setTimeout(resolve, ms);
+		const cleanup = () => {
+			if (signal) signal.removeEventListener("abort", onAbort);
+		};
+		const timeout = setTimeout(() => {
+			cleanup();
+			resolve();
+		}, ms);
+		const onAbort = () => {
+			clearTimeout(timeout);
+			cleanup();
+			reject(new Error("Login cancelled"));
+		};
 
-		signal?.addEventListener(
-			"abort",
-			() => {
-				clearTimeout(timeout);
-				reject(new Error("Login cancelled"));
-			},
-			{ once: true },
-		);
+		signal?.addEventListener("abort", onAbort, { once: true });
 	});
 }
 

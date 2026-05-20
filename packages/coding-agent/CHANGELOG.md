@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- Removed the broken `./hooks` package subpath export.
+
+### Fixed
+
+- Fixed bordered loader disposal to abort outstanding work for non-cancellable loaders.
+
 ## [0.75.4] - 2026-05-20
 
 ### New Features
