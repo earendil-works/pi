@@ -252,6 +252,8 @@ export class InteractiveMode {
 	private workingMessage: string | undefined = undefined;
 	private workingVisible = true;
 	private workingIndicatorOptions: LoaderIndicatorOptions | undefined = undefined;
+	private workingStartedAt: number | undefined = undefined;
+	private workingElapsedTimer: NodeJS.Timeout | undefined = undefined;
 	private readonly defaultWorkingMessage = "Working...";
 	private readonly defaultHiddenThinkingLabel = "Thinking...";
 	private hiddenThinkingLabel = this.defaultHiddenThinkingLabel;
@@ -1622,6 +1624,7 @@ export class InteractiveMode {
 			ui: this.createExtensionUIContext(),
 			hasUI: true,
 			cwd: this.sessionManager.getCwd(),
+			agentDir: getAgentDir(),
 			sessionManager: this.sessionManager,
 			modelRegistry: this.session.modelRegistry,
 			model: this.session.model,
@@ -1675,6 +1678,38 @@ export class InteractiveMode {
 		return this.workingMessage ?? this.defaultWorkingMessage;
 	}
 
+	private formatElapsed(ms: number): string {
+		const totalSeconds = Math.floor(ms / 1000);
+		const h = Math.floor(totalSeconds / 3600);
+		const m = Math.floor((totalSeconds % 3600) / 60);
+		const s = totalSeconds % 60;
+		if (h > 0) return `${h}h ${m}m ${s}s`;
+		if (m > 0) return `${m}m ${s}s`;
+		return `${s}s`;
+	}
+
+	private startWorkingTimer(): void {
+		this.stopWorkingTimer();
+		this.workingStartedAt = Date.now();
+		if (this.loadingAnimation) {
+			this.loadingAnimation.setMessage(`${this.getWorkingLoaderMessage()} (0s)`);
+		}
+		this.workingElapsedTimer = setInterval(() => {
+			if (this.loadingAnimation && this.workingStartedAt !== undefined) {
+				const elapsed = this.formatElapsed(Date.now() - this.workingStartedAt);
+				this.loadingAnimation.setMessage(`${this.getWorkingLoaderMessage()} (${elapsed})`);
+			}
+		}, 1000);
+	}
+
+	private stopWorkingTimer(): void {
+		if (this.workingElapsedTimer) {
+			clearInterval(this.workingElapsedTimer);
+			this.workingElapsedTimer = undefined;
+		}
+		this.workingStartedAt = undefined;
+	}
+
 	private createWorkingLoader(): Loader {
 		return new Loader(
 			this.ui,
@@ -1686,6 +1721,7 @@ export class InteractiveMode {
 	}
 
 	private stopWorkingLoader(): void {
+		this.stopWorkingTimer();
 		if (this.loadingAnimation) {
 			this.loadingAnimation.stop();
 			this.loadingAnimation = undefined;
@@ -1703,6 +1739,7 @@ export class InteractiveMode {
 		if (this.session.isStreaming && !this.loadingAnimation) {
 			this.statusContainer.clear();
 			this.loadingAnimation = this.createWorkingLoader();
+			this.startWorkingTimer();
 			this.statusContainer.addChild(this.loadingAnimation);
 		}
 		this.ui.requestRender();
@@ -2666,6 +2703,7 @@ export class InteractiveMode {
 				this.stopWorkingLoader();
 				if (this.workingVisible) {
 					this.loadingAnimation = this.createWorkingLoader();
+					this.startWorkingTimer();
 					this.statusContainer.addChild(this.loadingAnimation);
 				}
 				this.ui.requestRender();
