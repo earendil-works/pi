@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Amazon Bedrock provider silently capping output at ~4096 tokens for adaptive-thinking models (Claude Opus 4.6/4.7, Sonnet 4.6) and other paths where the caller did not pass an explicit `maxTokens`. The provider now mirrors the Anthropic-native provider and defaults `inferenceConfig.maxTokens` to `model.maxTokens` when it is not set, preventing `stopReason: "length"` truncation mid-response ([#4871](https://github.com/earendil-works/pi/pull/4871) by [@unexge](https://github.com/unexge)).
+
 ## [0.75.4] - 2026-05-20
 
 ### Changed

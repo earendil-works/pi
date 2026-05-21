@@ -188,7 +188,10 @@ export const streamBedrock: StreamFunction<"bedrock-converse-stream", BedrockOpt
 				messages: convertMessages(context, model, cacheRetention),
 				system: buildSystemPrompt(context.systemPrompt, model, cacheRetention),
 				inferenceConfig: {
-					...(options.maxTokens !== undefined && { maxTokens: options.maxTokens }),
+					// When caller omits `maxTokens`, default to the model's documented cap.
+					// Without this fallback Bedrock applies its own much smaller server-side default (~4096 for Anthropic Claude),
+					// which silently truncates long outputs with stopReason "length".
+					maxTokens: options.maxTokens ?? (model.maxTokens || undefined),
 					...(options.temperature !== undefined && { temperature: options.temperature }),
 				},
 				toolConfig: convertToolConfig(context.tools, options.toolChoice),
