@@ -13,6 +13,7 @@ const execPathDescriptor = Object.getOwnPropertyDescriptor(process, "execPath");
 const originalPath = process.env.PATH;
 const originalLylaPackageDir = process.env.LYLA_PACKAGE_DIR;
 const originalArgv1 = process.argv[1];
+const testUnlessWindows = process.platform === "win32" ? test.skip : test;
 let tempDir: string | undefined;
 
 function setExecPath(value: string): void {
@@ -204,7 +205,7 @@ describe("detectInstallMethod", () => {
 		});
 	});
 
-	test("self-update respects configured npmCommand", () => {
+	testUnlessWindows("self-update respects configured npmCommand", () => {
 		const { prefix } = createNpmPrefixInstall();
 
 		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent", ["npm", "--prefix", prefix]);
@@ -252,7 +253,7 @@ describe("detectInstallMethod", () => {
 		);
 	});
 
-	test("self-updates bun global installs from bun pm bin", () => {
+	testUnlessWindows("self-updates bun global installs from bun pm bin", () => {
 		createBunGlobalInstall();
 
 		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent");
@@ -265,7 +266,7 @@ describe("detectInstallMethod", () => {
 		});
 	});
 
-	test("self-updates renamed pnpm global installs by removing the old package first", () => {
+	testUnlessWindows("self-updates renamed pnpm global installs by removing the old package first", () => {
 		createPnpmGlobalInstall();
 
 		const command = getSelfUpdateCommand("@mariozechner/pi-coding-agent", undefined, "@new-scope/pi");
@@ -290,7 +291,7 @@ describe("detectInstallMethod", () => {
 		});
 	});
 
-	test("self-updates pnpm v11 global installs resolved through the store", () => {
+	testUnlessWindows("self-updates pnpm v11 global installs resolved through the store", () => {
 		const temp = mkdtempSync(join(tmpdir(), "pi-pnpm11-"));
 		const binDir = join(temp, "bin");
 		const root = join(temp, "Library", "pnpm", "global", "v11");
@@ -333,7 +334,7 @@ describe("detectInstallMethod", () => {
 		});
 	});
 
-	test("self-updates renamed yarn global installs by removing the old package first", () => {
+	testUnlessWindows("self-updates renamed yarn global installs by removing the old package first", () => {
 		createYarnGlobalInstall();
 
 		const command = getSelfUpdateCommand("@mariozechner/pi-coding-agent", undefined, "@new-scope/pi");
@@ -358,7 +359,7 @@ describe("detectInstallMethod", () => {
 		});
 	});
 
-	test("self-updates renamed bun global installs by removing the old package first", () => {
+	testUnlessWindows("self-updates renamed bun global installs by removing the old package first", () => {
 		createBunGlobalInstall();
 
 		const command = getSelfUpdateCommand("@mariozechner/pi-coding-agent", undefined, "@new-scope/pi");
@@ -383,7 +384,7 @@ describe("detectInstallMethod", () => {
 		});
 	});
 
-	test("does not self-update when npm install path is not writable", () => {
+	testUnlessWindows("does not self-update when npm install path is not writable", () => {
 		const { packageDir } = createNpmPrefixInstall();
 		chmodSync(packageDir, 0o500);
 

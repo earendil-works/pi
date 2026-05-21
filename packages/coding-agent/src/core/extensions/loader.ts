@@ -72,7 +72,9 @@ function getAliases(): Record<string, string> {
 	if (_aliases) return _aliases;
 
 	const __dirname = path.dirname(fileURLToPath(import.meta.url));
-	const packageIndex = path.resolve(__dirname, "../..", "index.js");
+	const packageIndexJs = path.resolve(__dirname, "../..", "index.js");
+	const packageIndexTs = path.resolve(__dirname, "../..", "index.ts");
+	const packageIndex = fs.existsSync(packageIndexJs) ? packageIndexJs : packageIndexTs;
 
 	const typeboxEntry = require.resolve("typebox");
 	const typeboxCompileEntry = require.resolve("typebox/compile");
@@ -84,7 +86,16 @@ function getAliases(): Record<string, string> {
 		if (fs.existsSync(workspacePath)) {
 			return workspacePath;
 		}
-		return fileURLToPath(import.meta.resolve(specifier));
+		const workspaceSourcePath = workspacePath
+			.replace(`${path.sep}dist${path.sep}`, `${path.sep}src${path.sep}`)
+			.replace(/\.js$/, ".ts");
+		if (fs.existsSync(workspaceSourcePath)) {
+			return workspaceSourcePath;
+		}
+		if (typeof import.meta.resolve === "function") {
+			return fileURLToPath(import.meta.resolve(specifier));
+		}
+		return require.resolve(specifier);
 	};
 
 	const piCodingAgentEntry = packageIndex;

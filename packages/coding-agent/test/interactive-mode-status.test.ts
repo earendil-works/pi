@@ -484,7 +484,7 @@ describe("InteractiveMode.showLoadedResources", () => {
 
 		expect(normalizeRenderedOutput(fakeThis.chatContainer)).toMatchInlineSnapshot(`
 "[Extensions]
-  @scope/pi-scoped, answer.ts, cli-extension.ts, HazAT/pi-interactive-subagents, HazAT/pi-interactive-subagents:subagents, local-index, pi-markdown-preview, user-index"`);
+  answer.ts, cli-extension.ts, HazAT/pi-interactive-subagents, HazAT/pi-interactive-subagents:subagents, local-index, pi-markdown-preview, @scope/pi-scoped, user-index"`);
 	});
 
 	test("adds more parent folders until local extension labels are unique", () => {
@@ -775,9 +775,9 @@ describe("InteractiveMode.showLoadedResources", () => {
     git:github.com/HazAT/pi-interactive-subagents
       extensions
       extensions/subagents
-    npm:@scope/pi-scoped
-      extensions
     npm:pi-markdown-preview
+      extensions
+    npm:@scope/pi-scoped
       extensions
   user
     /tmp/agent/extensions/user-index
