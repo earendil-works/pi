@@ -1,6 +1,23 @@
 import { realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve as resolvePath, sep } from "node:path";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { spawnProcessSync } from "./child-process.ts";
+
+const UNICODE_SPACES = /[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g;
+
+export interface PathInputOptions {
+	/** Trim leading/trailing whitespace before normalization. */
+	trim?: boolean;
+	/** Expand leading `~` to a home directory. Defaults to true. */
+	expandTilde?: boolean;
+	/** Home directory used for `~` expansion. Defaults to `os.homedir()`. */
+	homeDir?: string;
+	/** Strip a leading `@`, used for CLI @file paths. */
+	stripAtPrefix?: boolean;
+	/** Normalize unicode space variants to regular spaces. */
+	normalizeUnicodeSpaces?: boolean;
+}
 
 /**
  * Resolve a path to its canonical (real) form, following symlinks.
@@ -18,12 +35,12 @@ export function canonicalizePath(path: string): string {
 
 /**
  * Returns true if the value is NOT a package source (npm:, git:, etc.)
- * or a URL protocol. Bare names and relative paths without ./ prefix
+ * or a remote URL protocol. Bare names, relative paths, and file: URLs
  * are considered local.
  */
 export function isLocalPath(value: string): boolean {
 	const trimmed = value.trim();
-	// Known non-local prefixes
+	// Known non-local prefixes. file: URLs are local paths and are intentionally resolved by resolvePathInput().
 	if (
 		trimmed.startsWith("npm:") ||
 		trimmed.startsWith("git:") ||
@@ -37,13 +54,44 @@ export function isLocalPath(value: string): boolean {
 	return true;
 }
 
-function resolveAgainstCwd(filePath: string, cwd: string): string {
-	return isAbsolute(filePath) ? resolvePath(filePath) : resolvePath(cwd, filePath);
+export function normalizePathInput(input: string, options: PathInputOptions = {}): string {
+	let normalized = options.trim ? input.trim() : input;
+	if (options.normalizeUnicodeSpaces) {
+		normalized = normalized.replace(UNICODE_SPACES, " ");
+	}
+	if (options.stripAtPrefix && normalized.startsWith("@")) {
+		normalized = normalized.slice(1);
+	}
+
+	if (options.expandTilde ?? true) {
+		const home = options.homeDir ?? homedir();
+		if (normalized === "~") return home;
+		if (normalized.startsWith("~/") || (process.platform === "win32" && normalized.startsWith("~\\"))) {
+			return join(home, normalized.slice(2));
+		}
+		if (normalized.startsWith("~")) return join(home, normalized.slice(1));
+	}
+
+	if (/^file:\/\//.test(normalized)) {
+		return fileURLToPath(normalized);
+	}
+
+	return normalized;
+}
+
+export function resolvePathInput(
+	input: string,
+	baseDir: string = process.cwd(),
+	options: PathInputOptions = {},
+): string {
+	const normalized = normalizePathInput(input, options);
+	const normalizedBaseDir = normalizePathInput(baseDir);
+	return isAbsolute(normalized) ? resolvePath(normalized) : resolvePath(normalizedBaseDir, normalized);
 }
 
 export function getCwdRelativePath(filePath: string, cwd: string): string | undefined {
 	const resolvedCwd = resolvePath(cwd);
-	const resolvedPath = resolveAgainstCwd(filePath, resolvedCwd);
+	const resolvedPath = resolvePathInput(filePath, resolvedCwd);
 	const relativePath = relative(resolvedCwd, resolvedPath);
 	const isInsideCwd =
 		relativePath === "" ||
@@ -53,7 +101,7 @@ export function getCwdRelativePath(filePath: string, cwd: string): string | unde
 }
 
 export function formatPathRelativeToCwdOrAbsolute(filePath: string, cwd: string): string {
-	const absolutePath = resolveAgainstCwd(filePath, cwd);
+	const absolutePath = resolvePathInput(filePath, cwd);
 	return (getCwdRelativePath(absolutePath, cwd) ?? absolutePath).split(sep).join("/");
 }
 

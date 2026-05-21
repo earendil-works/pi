@@ -1,8 +1,9 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { canonicalizePath, getCwdRelativePath, isLocalPath } from "../src/utils/paths.ts";
+import { canonicalizePath, getCwdRelativePath, isLocalPath, resolvePathInput } from "../src/utils/paths.ts";
 
 let tempDir: string;
 
@@ -73,6 +74,47 @@ describe("getCwdRelativePath", () => {
 	});
 });
 
+describe("resolvePathInput", () => {
+	it("resolves relative paths against the base directory", () => {
+		const cwd = join(tmpdir(), "pi-paths-cwd");
+		expect(resolvePathInput("subdir/file.txt", cwd)).toBe(resolve(cwd, "subdir/file.txt"));
+		expect(resolvePathInput("subdir/file.txt", pathToFileURL(cwd).href)).toBe(resolve(cwd, "subdir/file.txt"));
+	});
+
+	it("accepts file URLs", () => {
+		const dir = createTempDir();
+		const filePath = join(dir, "file with spaces.txt");
+		expect(resolvePathInput(pathToFileURL(filePath).href, join(dir, "base"))).toBe(resolve(filePath));
+	});
+
+	it("throws for invalid file URLs", () => {
+		expect(() => resolvePathInput("file:///%E0%A4%A")).toThrow();
+	});
+
+	it("preserves POSIX absolute paths with literal percent sequences", () => {
+		if (process.platform === "win32") {
+			return;
+		}
+
+		const dir = createTempDir();
+		for (const filePath of [join(dir, "report%2026.md"), join(dir, "foo%2Fbar"), join(dir, "malformed%A.md")]) {
+			expect(resolvePathInput(filePath, join(dir, "base"))).toBe(resolve(filePath));
+		}
+	});
+
+	it("does not treat Windows file URL pathname strings as native paths", () => {
+		if (process.platform !== "win32") {
+			return;
+		}
+
+		const dir = createTempDir();
+		const filePath = join(dir, "dir", "SKILL.md");
+		const pathname = pathToFileURL(filePath).pathname;
+		expect(pathname).toMatch(/^\/[A-Za-z]:/);
+		expect(resolvePathInput(pathname, "E:\\project")).toBe(resolve(pathname));
+	});
+});
+
 describe("isLocalPath", () => {
 	it("returns true for bare names", () => {
 		expect(isLocalPath("my-package")).toBe(true);
@@ -80,6 +122,10 @@ describe("isLocalPath", () => {
 
 	it("returns true for relative paths", () => {
 		expect(isLocalPath("./foo")).toBe(true);
+	});
+
+	it("returns true for file URLs", () => {
+		expect(isLocalPath("file:///tmp/foo")).toBe(true);
 	});
 
 	it("returns false for npm: protocol", () => {

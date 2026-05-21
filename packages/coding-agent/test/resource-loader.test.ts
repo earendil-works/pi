@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
@@ -404,6 +405,44 @@ Extra prompt content`,
 			expect(loadedPrompt).toBeDefined();
 			expect(loadedPrompt?.sourceInfo?.source).toBe("extension:extra");
 			expect(loadedPrompt?.sourceInfo?.path).toBe(promptPath);
+		});
+
+		it("should load extension resources returned as file URLs", async () => {
+			const extraSkillDir = join(tempDir, "extra skills", "file-url-skill");
+			mkdirSync(extraSkillDir, { recursive: true });
+			const skillPath = join(extraSkillDir, "SKILL.md");
+			writeFileSync(
+				skillPath,
+				`---
+name: file-url-skill
+description: File URL skill
+---
+Extra content`,
+			);
+
+			const loader = new DefaultResourceLoader({ cwd, agentDir });
+			await loader.reload();
+
+			loader.extendResources({
+				skillPaths: [
+					{
+						path: pathToFileURL(extraSkillDir).href,
+						metadata: {
+							source: "extension:file-url",
+							scope: "temporary",
+							origin: "top-level",
+							baseDir: extraSkillDir,
+						},
+					},
+				],
+			});
+
+			const { skills, diagnostics } = loader.getSkills();
+			expect(diagnostics).toEqual([]);
+			const loadedSkill = skills.find((skill) => skill.name === "file-url-skill");
+			expect(loadedSkill).toBeDefined();
+			expect(loadedSkill?.filePath).toBe(skillPath);
+			expect(loadedSkill?.sourceInfo?.source).toBe("extension:file-url");
 		});
 	});
 

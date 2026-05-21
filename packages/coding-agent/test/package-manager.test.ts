@@ -574,6 +574,40 @@ Content`,
 			);
 		});
 
+		it("should keep pi manifest entries with leading tilde package-relative", async () => {
+			const pkgDir = join(tempDir, "tilde-manifest-package");
+			const directExtensionPath = join(pkgDir, "~extensions", "main.ts");
+			const slashExtensionPath = join(pkgDir, "~", "extensions", "alt.ts");
+			const directSkillPath = join(pkgDir, "~skills", "direct-skill", "SKILL.md");
+			const slashSkillPath = join(pkgDir, "~", "skills", "slash-skill", "SKILL.md");
+
+			mkdirSync(join(pkgDir, "~extensions"), { recursive: true });
+			mkdirSync(join(pkgDir, "~", "extensions"), { recursive: true });
+			mkdirSync(join(pkgDir, "~skills", "direct-skill"), { recursive: true });
+			mkdirSync(join(pkgDir, "~", "skills", "slash-skill"), { recursive: true });
+			writeFileSync(directExtensionPath, "export default function() {}");
+			writeFileSync(slashExtensionPath, "export default function() {}");
+			writeFileSync(directSkillPath, "---\nname: direct-skill\ndescription: Direct\n---\nContent");
+			writeFileSync(slashSkillPath, "---\nname: slash-skill\ndescription: Slash\n---\nContent");
+			writeFileSync(
+				join(pkgDir, "package.json"),
+				JSON.stringify({
+					name: "tilde-manifest-package",
+					pi: {
+						extensions: ["~extensions/main.ts", "~/extensions/alt.ts"],
+						skills: ["~skills", "~/skills"],
+					},
+				}),
+			);
+
+			const result = await packageManager.resolveExtensionSources([pkgDir]);
+
+			expect(result.extensions.some((r) => r.path === directExtensionPath && r.enabled)).toBe(true);
+			expect(result.extensions.some((r) => r.path === slashExtensionPath && r.enabled)).toBe(true);
+			expect(result.skills.some((r) => r.path === directSkillPath && r.enabled)).toBe(true);
+			expect(result.skills.some((r) => r.path === slashSkillPath && r.enabled)).toBe(true);
+		});
+
 		it("should handle directories with auto-discovery layout", async () => {
 			const pkgDir = join(tempDir, "auto-pkg");
 			mkdirSync(join(pkgDir, "extensions"), { recursive: true });

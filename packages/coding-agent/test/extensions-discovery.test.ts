@@ -123,6 +123,31 @@ describe("extensions discovery", () => {
 		expect(result.extensions[0].path).toContain("main.ts");
 	});
 
+	it("keeps package.json pi extension entries with leading tilde package-relative", async () => {
+		const subdir = path.join(extensionsDir, "tilde-package");
+		const directExtensionPath = path.join(subdir, "~entry.ts");
+		const slashExtensionPath = path.join(subdir, "~", "entry.ts");
+		fs.mkdirSync(path.join(subdir, "~"), { recursive: true });
+		fs.writeFileSync(directExtensionPath, extensionCode);
+		fs.writeFileSync(slashExtensionPath, extensionCode);
+		fs.writeFileSync(
+			path.join(subdir, "package.json"),
+			JSON.stringify({
+				name: "tilde-package",
+				pi: {
+					extensions: ["~entry.ts", "~/entry.ts"],
+				},
+			}),
+		);
+
+		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+
+		expect(result.errors).toHaveLength(0);
+		expect(result.extensions.map((extension) => extension.path).sort()).toEqual(
+			[directExtensionPath, slashExtensionPath].sort(),
+		);
+	});
+
 	it("package.json can declare multiple extensions", async () => {
 		const subdir = path.join(extensionsDir, "my-package");
 		fs.mkdirSync(subdir);

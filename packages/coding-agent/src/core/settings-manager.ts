@@ -1,9 +1,9 @@
 import type { Transport } from "@earendil-works/pi-ai";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
-import { homedir } from "os";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
+import { normalizePathInput, resolvePathInput } from "../utils/paths.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 
 export interface CompactionSettings {
@@ -161,8 +161,10 @@ export class FileSettingsStorage implements SettingsStorage {
 	private projectSettingsPath: string;
 
 	constructor(cwd: string, agentDir: string) {
-		this.globalSettingsPath = join(agentDir, "settings.json");
-		this.projectSettingsPath = join(cwd, CONFIG_DIR_NAME, "settings.json");
+		const resolvedCwd = resolvePathInput(cwd);
+		const resolvedAgentDir = resolvePathInput(agentDir);
+		this.globalSettingsPath = join(resolvedAgentDir, "settings.json");
+		this.projectSettingsPath = join(resolvedCwd, CONFIG_DIR_NAME, "settings.json");
 	}
 
 	private acquireLockSyncWithRetry(path: string): () => void {
@@ -577,16 +579,7 @@ export class SettingsManager {
 
 	getSessionDir(): string | undefined {
 		const sessionDir = this.settings.sessionDir;
-		if (!sessionDir) {
-			return sessionDir;
-		}
-		if (sessionDir === "~") {
-			return homedir();
-		}
-		if (sessionDir.startsWith("~/")) {
-			return join(homedir(), sessionDir.slice(2));
-		}
-		return sessionDir;
+		return sessionDir ? normalizePathInput(sessionDir) : sessionDir;
 	}
 
 	getDefaultProvider(): string | undefined {

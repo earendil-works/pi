@@ -1,8 +1,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "fs";
-import { homedir } from "os";
-import { basename, dirname, isAbsolute, join, resolve, sep } from "path";
+import { basename, dirname, join, resolve, sep } from "path";
 import { CONFIG_DIR_NAME } from "../config.ts";
 import { parseFrontmatter } from "../utils/frontmatter.ts";
+import { resolvePathInput } from "../utils/paths.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 
 /**
@@ -185,19 +185,6 @@ export interface LoadPromptTemplatesOptions {
 	includeDefaults: boolean;
 }
 
-function normalizePath(input: string): string {
-	const trimmed = input.trim();
-	if (trimmed === "~") return homedir();
-	if (trimmed.startsWith("~/")) return join(homedir(), trimmed.slice(2));
-	if (trimmed.startsWith("~")) return join(homedir(), trimmed.slice(1));
-	return trimmed;
-}
-
-function resolvePromptPath(p: string, cwd: string): string {
-	const normalized = normalizePath(p);
-	return isAbsolute(normalized) ? normalized : resolve(cwd, normalized);
-}
-
 /**
  * Load all prompt templates from:
  * 1. Global: agentDir/prompts/
@@ -205,14 +192,14 @@ function resolvePromptPath(p: string, cwd: string): string {
  * 3. Explicit prompt paths
  */
 export function loadPromptTemplates(options: LoadPromptTemplatesOptions): PromptTemplate[] {
-	const resolvedCwd = options.cwd;
-	const resolvedAgentDir = options.agentDir;
+	const resolvedCwd = resolvePathInput(options.cwd);
+	const resolvedAgentDir = resolvePathInput(options.agentDir);
 	const promptPaths = options.promptPaths;
 	const includeDefaults = options.includeDefaults;
 
 	const templates: PromptTemplate[] = [];
 
-	const globalPromptsDir = options.agentDir ? join(options.agentDir, "prompts") : resolvedAgentDir;
+	const globalPromptsDir = join(resolvedAgentDir, "prompts");
 	const projectPromptsDir = resolve(resolvedCwd, CONFIG_DIR_NAME, "prompts");
 
 	const isUnderPath = (target: string, root: string): boolean => {
@@ -252,7 +239,7 @@ export function loadPromptTemplates(options: LoadPromptTemplatesOptions): Prompt
 
 	// 3. Load explicit prompt paths
 	for (const rawPath of promptPaths) {
-		const resolvedPath = resolvePromptPath(rawPath, resolvedCwd);
+		const resolvedPath = resolvePathInput(rawPath, resolvedCwd, { trim: true });
 		if (!existsSync(resolvedPath)) {
 			continue;
 		}
