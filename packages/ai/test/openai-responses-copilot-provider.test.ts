@@ -244,6 +244,39 @@ describe("openai-responses provider defaults", () => {
 		expect(captured).toEqual({ sessionId: null, clientRequestId: null });
 	});
 
+	it("resolves gemini-3.5-flash on copilot with correct properties", () => {
+		const model = getModel("github-copilot", "gemini-3.5-flash");
+
+		expect(model).toBeDefined();
+		expect(model.id).toBe("gemini-3.5-flash");
+		expect(model.name).toBe("Gemini 3.5 Flash (Copilot)");
+		expect(model.api).toBe("openai-completions");
+		expect(model.provider).toBe("github-copilot");
+		expect(model.baseUrl).toBe("https://api.individual.githubcopilot.com");
+		expect(model.reasoning).toBe(false);
+		expect(model.input).toEqual(["text", "image"]);
+		expect(model.cost).toEqual({
+			input: 1.5,
+			output: 9.0,
+			cacheRead: 0.15,
+			cacheWrite: 0,
+		});
+		expect(model.contextWindow).toBe(1048576);
+		expect(model.maxTokens).toBe(64000);
+		expect(model.headers).toEqual({
+			"User-Agent": "GitHubCopilotChat/0.35.0",
+			"Editor-Version": "vscode/1.107.0",
+			"Editor-Plugin-Version": "copilot-chat/0.35.0",
+			"Copilot-Integration-Id": "vscode-chat",
+		});
+		expect(model.compat).toEqual({
+			supportsStore: false,
+			supportsDeveloperRole: false,
+			supportsReasoningEffort: false,
+			maxTokensField: "max_tokens",
+		});
+	});
+
 	it.each([
 		["gpt-5.4", "priority", 2],
 		["gpt-5.5", "priority", 2.5],

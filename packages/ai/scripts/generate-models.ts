@@ -941,6 +941,7 @@ async function loadModelsDevData(): Promise<Model<any>[]> {
 							supportsStore: false,
 							supportsDeveloperRole: false,
 							supportsReasoningEffort: false,
+							...(modelId === "gemini-3.5-flash" ? { maxTokensField: "max_tokens" } : {}),
 						},
 					} : {}),
 				};
@@ -1385,6 +1386,34 @@ async function generateModels() {
 				name: "GPT-5.3 Codex",
 			});
 		}
+	}
+
+	// Inject gemini-3.5-flash model configuration as a fallback if not returned by models.dev
+	if (!allModels.some((m) => m.provider === "github-copilot" && m.id === "gemini-3.5-flash")) {
+		allModels.push({
+			id: "gemini-3.5-flash",
+			name: "Gemini 3.5 Flash (Copilot)",
+			api: "openai-completions",
+			provider: "github-copilot",
+			baseUrl: "https://api.individual.githubcopilot.com",
+			reasoning: false,
+			input: ["text", "image"],
+			cost: {
+				input: 1.5,
+				output: 9.0,
+				cacheRead: 0.15,
+				cacheWrite: 0,
+			},
+			contextWindow: 1048576,
+			maxTokens: 64000,
+			headers: { ...COPILOT_STATIC_HEADERS },
+			compat: {
+				supportsStore: false,
+				supportsDeveloperRole: false,
+				supportsReasoningEffort: false,
+				maxTokensField: "max_tokens",
+			},
+		});
 	}
 
 	if (!allModels.some((m) => m.provider === "openai" && m.id === "gpt-5.4")) {
