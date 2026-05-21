@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build pi binaries for all platforms locally.
+# Build lyla binaries for all platforms locally.
 # Mirrors .github/workflows/build-binaries.yml
 #
 # Usage:
@@ -12,12 +12,12 @@
 #
 # Output:
 #   packages/coding-agent/binaries/
-#     pi-darwin-arm64.tar.gz
-#     pi-darwin-x64.tar.gz
-#     pi-linux-x64.tar.gz
-#     pi-linux-arm64.tar.gz
-#     pi-windows-x64.zip
-#     pi-windows-arm64.zip
+#     lyla-darwin-arm64.tar.gz
+#     lyla-darwin-x64.tar.gz
+#     lyla-linux-x64.tar.gz
+#     lyla-linux-arm64.tar.gz
+#     lyla-windows-x64.zip
+#     lyla-windows-arm64.zip
 
 set -euo pipefail
 
@@ -106,9 +106,9 @@ fi
 for platform in "${PLATFORMS[@]}"; do
     echo "Building for $platform..."
     if [[ "$platform" == windows-* ]]; then
-        bun build --compile --target=bun-$platform ./dist/bun/cli.js --outfile binaries/$platform/pi.exe
+        bun build --compile --target=bun-$platform ./dist/bun/cli.js --outfile binaries/$platform/lyla.exe
     else
-        bun build --compile --target=bun-$platform ./dist/bun/cli.js --outfile binaries/$platform/pi
+        bun build --compile --target=bun-$platform ./dist/bun/cli.js --outfile binaries/$platform/lyla
     fi
 done
 
@@ -146,12 +146,12 @@ cd binaries
 for platform in "${PLATFORMS[@]}"; do
     if [[ "$platform" == windows-* ]]; then
         # Windows (zip)
-        echo "Creating pi-$platform.zip..."
-        (cd $platform && zip -r ../pi-$platform.zip .)
+        echo "Creating lyla-$platform.zip..."
+        (cd $platform && zip -r ../lyla-$platform.zip .)
     else
         # Unix platforms (tar.gz) - use wrapper directory for mise compatibility
-        echo "Creating pi-$platform.tar.gz..."
-        mv $platform pi && tar -czf pi-$platform.tar.gz pi && mv pi $platform
+        echo "Creating lyla-$platform.tar.gz..."
+        mv $platform lyla && tar -czf lyla-$platform.tar.gz lyla && mv lyla $platform
     fi
 done
 
@@ -160,9 +160,9 @@ echo "==> Extracting archives for testing..."
 for platform in "${PLATFORMS[@]}"; do
     rm -rf $platform
     if [[ "$platform" == windows-* ]]; then
-        mkdir -p $platform && (cd $platform && unzip -q ../pi-$platform.zip)
+        mkdir -p $platform && (cd $platform && unzip -q ../lyla-$platform.zip)
     else
-        tar -xzf pi-$platform.tar.gz && mv pi $platform
+        tar -xzf lyla-$platform.tar.gz && mv lyla $platform
     fi
 done
 
@@ -174,8 +174,8 @@ echo ""
 echo "Extracted directories for testing:"
 for platform in "${PLATFORMS[@]}"; do
     if [[ "$platform" == windows-* ]]; then
-        echo "  binaries/$platform/pi.exe"
+        echo "  binaries/$platform/lyla.exe"
     else
-        echo "  binaries/$platform/pi"
+        echo "  binaries/$platform/lyla"
     fi
 done

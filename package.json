@@ -1,5 +1,5 @@
 {
-	"name": "pi-monorepo",
+	"name": "lyla-monorepo",
 	"private": true,
 	"type": "module",
 	"workspaces": [

@@ -99,7 +99,7 @@ function isInsidePath(child, parent) {
 
 function prepareOutputDirectory(options, repoRoot) {
 	if (!options.outDir) {
-		return mkdtempSync(join(tmpdir(), "pi-local-release-"));
+		return mkdtempSync(join(tmpdir(), "lyla-local-release-"));
 	}
 
 	const outDir = resolve(options.outDir);
@@ -162,33 +162,33 @@ function buildBunBinaryRelease(targetDirectory, archiveDirectory) {
 	}
 	const platform = currentBinaryPlatform();
 	mkdirSync(targetDirectory, { recursive: true });
-	const executableName = platform.startsWith("windows-") ? "pi.exe" : "pi";
+	const executableName = platform.startsWith("windows-") ? "lyla.exe" : "lyla";
 	const executablePath = join(targetDirectory, executableName);
 	const target = `bun-${platform}`;
 	run("bun", ["build", "--compile", `--target=${target}`, join(repoRoot, "packages", "coding-agent", "dist", "bun", "cli.js"), "--outfile", executablePath]);
 	copyBinaryAssets(targetDirectory);
 	copyWindowsConsoleModeHelper(targetDirectory, platform);
 	if (platform.startsWith("windows-")) {
-		run("powershell", ["-NoProfile", "-Command", `Compress-Archive -Path '${join(targetDirectory, "*").replaceAll("'", "''")}' -DestinationPath '${join(archiveDirectory, `pi-${platform}.zip`).replaceAll("'", "''")}' -Force`]);
+		run("powershell", ["-NoProfile", "-Command", `Compress-Archive -Path '${join(targetDirectory, "*").replaceAll("'", "''")}' -DestinationPath '${join(archiveDirectory, `lyla-${platform}.zip`).replaceAll("'", "''")}' -Force`]);
 	} else {
-		run("tar", ["-czf", join(archiveDirectory, `pi-${platform}.tar.gz`), "-C", targetDirectory, "."]);
+		run("tar", ["-czf", join(archiveDirectory, `lyla-${platform}.tar.gz`), "-C", targetDirectory, "."]);
 	}
 	return platform;
 }
 
-function createPiShim(installDirectory) {
+function createLylaShim(installDirectory) {
 	const binDirectory = join(installDirectory, "node_modules", ".bin");
 	if (process.platform === "win32") {
-		if (existsSync(join(binDirectory, "pi.cmd"))) {
-			writeFileSync(join(installDirectory, "pi.cmd"), '@ECHO off\r\n"%~dp0node_modules\\.bin\\pi.cmd" %*\r\n');
-			writeFileSync(join(installDirectory, "pi.ps1"), '& "$PSScriptRoot/node_modules/.bin/pi.ps1" @args\n');
+		if (existsSync(join(binDirectory, "lyla.cmd"))) {
+			writeFileSync(join(installDirectory, "lyla.cmd"), '@ECHO off\r\n"%~dp0node_modules\\.bin\\lyla.cmd" %*\r\n');
+			writeFileSync(join(installDirectory, "lyla.ps1"), '& "$PSScriptRoot/node_modules/.bin/lyla.ps1" @args\n');
 			return;
 		}
-		writeFileSync(join(installDirectory, "pi.cmd"), '@ECHO off\r\n"%~dp0node_modules\\.bin\\pi.exe" %*\r\n');
-		writeFileSync(join(installDirectory, "pi.ps1"), '& "$PSScriptRoot/node_modules/.bin/pi.exe" @args\n');
+		writeFileSync(join(installDirectory, "lyla.cmd"), '@ECHO off\r\n"%~dp0node_modules\\.bin\\lyla.exe" %*\r\n');
+		writeFileSync(join(installDirectory, "lyla.ps1"), '& "$PSScriptRoot/node_modules/.bin/lyla.exe" @args\n');
 		return;
 	}
-	symlinkSync(join("node_modules", ".bin", "pi"), join(installDirectory, "pi"));
+	symlinkSync(join("node_modules", ".bin", "lyla"), join(installDirectory, "lyla"));
 }
 
 function packPackage(pkg, tarballDirectory) {
@@ -209,7 +209,7 @@ const options = parseArgs();
 const repoRoot = process.cwd();
 const rootPackageJson = readPackageJson(repoRoot);
 
-if (rootPackageJson.name !== "pi-monorepo") {
+if (rootPackageJson.name !== "lyla-monorepo") {
 	throw new Error("Run this script from the repository root");
 }
 
@@ -247,7 +247,7 @@ if (!options.skipInstall) {
 	writeFileSync(join(nodeInstallDirectory, "package.json"), installPackageJson);
 
 	run("npm", ["install", "--omit=dev", "--ignore-scripts"], { cwd: nodeInstallDirectory });
-	createPiShim(nodeInstallDirectory);
+	createLylaShim(nodeInstallDirectory);
 
 	if (!options.skipBunInstall) {
 		if (!commandExists("bun")) {
@@ -259,7 +259,7 @@ if (!options.skipInstall) {
 		);
 		writeFileSync(join(bunInstallDirectory, "package.json"), `${JSON.stringify({ private: true, dependencies: bunDependencies, overrides: bunDependencies }, undefined, "\t")}\n`);
 		run("bun", ["install", "--production", "--ignore-scripts"], { cwd: bunInstallDirectory });
-		createPiShim(bunInstallDirectory);
+		createLylaShim(bunInstallDirectory);
 	}
 }
 
@@ -273,19 +273,19 @@ for (const tarball of tarballs.values()) {
 if (!options.skipInstall) {
 	console.log("\nLocal Bun binary release:");
 	console.log(`  ${binaryDirectory}`);
-	console.log(`  ${join(outDir, `pi-${binaryPlatform}.${String(binaryPlatform).startsWith("windows-") ? "zip" : "tar.gz"}`)}`);
+	console.log(`  ${join(outDir, `lyla-${binaryPlatform}.${String(binaryPlatform).startsWith("windows-") ? "zip" : "tar.gz"}`)}`);
 	console.log("\nRun the local Bun binary release from outside the repository:");
-	console.log(`  ${join(binaryDirectory, String(binaryPlatform).startsWith("windows-") ? "pi.exe" : "pi")} --help`);
+	console.log(`  ${join(binaryDirectory, String(binaryPlatform).startsWith("windows-") ? "lyla.exe" : "lyla")} --help`);
 
 	console.log("\nIsolated npm install:");
 	console.log(`  ${nodeInstallDirectory}`);
 	console.log("\nRun the locally packed npm CLI from outside the repository:");
-	console.log(`  ${join(nodeInstallDirectory, process.platform === "win32" ? "pi.cmd" : "pi")} --help`);
+	console.log(`  ${join(nodeInstallDirectory, process.platform === "win32" ? "lyla.cmd" : "lyla")} --help`);
 
 	if (!options.skipBunInstall) {
 		console.log("\nIsolated Bun package install:");
 		console.log(`  ${bunInstallDirectory}`);
 		console.log("\nRun the locally packed Bun package CLI from outside the repository:");
-		console.log(`  ${join(bunInstallDirectory, process.platform === "win32" ? "pi.cmd" : "pi")} --help`);
+		console.log(`  ${join(bunInstallDirectory, process.platform === "win32" ? "lyla.cmd" : "lyla")} --help`);
 	}
 }
