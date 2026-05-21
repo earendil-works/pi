@@ -1,5 +1,5 @@
 {
-	"name": "@earendil-works/pi-coding-agent",
+	"name": "@lyla/coding-agent",
 	"version": "0.75.4",
 	"description": "Coding agent CLI with read, bash, edit, write tools and session management",
 	"type": "module",
@@ -40,9 +40,9 @@
 		"prepublishOnly": "npm run clean && npm run build && npm run shrinkwrap"
 	},
 	"dependencies": {
-		"@earendil-works/pi-agent-core": "^0.75.4",
-		"@earendil-works/pi-ai": "^0.75.4",
-		"@earendil-works/pi-tui": "^0.75.4",
+		"@lyla/agent": "^0.75.4",
+		"@lyla/ai": "^0.75.4",
+		"@lyla/tui": "^0.75.4",
 		"@silvia-odwyer/photon-node": "0.3.4",
 		"chalk": "5.6.2",
 		"cross-spawn": "7.0.6",

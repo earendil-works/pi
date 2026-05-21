@@ -1,5 +1,5 @@
-import { getOAuthProviders } from "@earendil-works/pi-ai/oauth";
-import { Container, type Focusable, getKeybindings, Input, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
+import { getOAuthProviders } from "@lyla/ai/oauth";
+import { Container, type Focusable, getKeybindings, Input, Spacer, Text, type TUI } from "@lyla/tui";
 import { exec } from "child_process";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";

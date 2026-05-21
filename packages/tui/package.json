@@ -1,5 +1,5 @@
 {
-	"name": "@earendil-works/pi-tui",
+	"name": "@lyla/tui",
 	"version": "0.75.4",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"type": "module",

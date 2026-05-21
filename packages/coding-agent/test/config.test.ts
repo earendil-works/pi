@@ -153,8 +153,8 @@ describe("detectInstallMethod", () => {
 		);
 
 		expect(detectInstallMethod()).toBe("pnpm");
-		expect(getUpdateInstruction("@earendil-works/pi-coding-agent")).toBe(
-			"Run: pnpm install -g --ignore-scripts @earendil-works/pi-coding-agent",
+		expect(getUpdateInstruction("@lyla/coding-agent")).toBe(
+			"Run: pnpm install -g --ignore-scripts @lyla/coding-agent",
 		);
 	});
 
@@ -162,39 +162,39 @@ describe("detectInstallMethod", () => {
 		setExecPath("/usr/local/bin/node");
 
 		expect(detectInstallMethod()).toBe("unknown");
-		expect(getSelfUpdateCommand("@earendil-works/pi-coding-agent")).toBeUndefined();
-		expect(getUpdateInstruction("@earendil-works/pi-coding-agent")).toBe(
-			"Update @earendil-works/pi-coding-agent using the package manager, wrapper, or source checkout that provides this installation.",
+		expect(getSelfUpdateCommand("@lyla/coding-agent")).toBeUndefined();
+		expect(getUpdateInstruction("@lyla/coding-agent")).toBe(
+			"Update @lyla/coding-agent using the package manager, wrapper, or source checkout that provides this installation.",
 		);
 	});
 
 	test("self-updates npm installs from custom prefixes", () => {
 		const { prefix } = createNpmPrefixInstall();
 
-		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent");
+		const command = getSelfUpdateCommand("@lyla/coding-agent");
 
 		expect(detectInstallMethod()).toBe("npm");
 		expect(command).toEqual({
 			command: "npm",
-			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "@earendil-works/pi-coding-agent"],
-			display: `npm --prefix ${prefix} install -g --ignore-scripts @earendil-works/pi-coding-agent`,
+			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "@lyla/coding-agent"],
+			display: `npm --prefix ${prefix} install -g --ignore-scripts @lyla/coding-agent`,
 		});
 	});
 
 	test("self-updates renamed packages from the current install prefix", () => {
 		const { prefix } = createNpmPrefixInstall();
 
-		const command = getSelfUpdateCommand("@mariozechner/pi-coding-agent", undefined, "@new-scope/pi");
+		const command = getSelfUpdateCommand("@lyla/coding-agent", undefined, "@new-scope/pi");
 
 		expect(command).toEqual({
 			command: "npm",
 			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "@new-scope/pi"],
-			display: `npm --prefix ${prefix} uninstall -g @mariozechner/pi-coding-agent && npm --prefix ${prefix} install -g --ignore-scripts @new-scope/pi`,
+			display: `npm --prefix ${prefix} uninstall -g @lyla/coding-agent && npm --prefix ${prefix} install -g --ignore-scripts @new-scope/pi`,
 			steps: [
 				{
 					command: "npm",
-					args: ["--prefix", prefix, "uninstall", "-g", "@mariozechner/pi-coding-agent"],
-					display: `npm --prefix ${prefix} uninstall -g @mariozechner/pi-coding-agent`,
+					args: ["--prefix", prefix, "uninstall", "-g", "@lyla/coding-agent"],
+					display: `npm --prefix ${prefix} uninstall -g @lyla/coding-agent`,
 				},
 				{
 					command: "npm",
@@ -208,38 +208,29 @@ describe("detectInstallMethod", () => {
 	testUnlessWindows("self-update respects configured npmCommand", () => {
 		const { prefix } = createNpmPrefixInstall();
 
-		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent", ["npm", "--prefix", prefix]);
+		const command = getSelfUpdateCommand("@lyla/coding-agent", ["npm", "--prefix", prefix]);
 
 		expect(command).toEqual({
 			command: "npm",
-			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "@earendil-works/pi-coding-agent"],
-			display: `npm --prefix ${prefix} install -g --ignore-scripts @earendil-works/pi-coding-agent`,
+			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "@lyla/coding-agent"],
+			display: `npm --prefix ${prefix} install -g --ignore-scripts @lyla/coding-agent`,
 		});
 	});
 
 	test("self-update treats empty npmCommand as unset", () => {
 		const { prefix } = createNpmPrefixInstall();
 
-		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent", []);
+		const command = getSelfUpdateCommand("@lyla/coding-agent", []);
 
-		expect(command?.args).toEqual([
-			"--prefix",
-			prefix,
-			"install",
-			"-g",
-			"--ignore-scripts",
-			"@earendil-works/pi-coding-agent",
-		]);
+		expect(command?.args).toEqual(["--prefix", prefix, "install", "-g", "--ignore-scripts", "@lyla/coding-agent"]);
 	});
 
 	test("quotes npm self-update display paths", () => {
 		const { prefix } = createNpmPrefixInstall("pi prefix ");
 
-		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent");
+		const command = getSelfUpdateCommand("@lyla/coding-agent");
 
-		expect(command?.display).toBe(
-			`npm --prefix "${prefix}" install -g --ignore-scripts @earendil-works/pi-coding-agent`,
-		);
+		expect(command?.display).toBe(`npm --prefix "${prefix}" install -g --ignore-scripts @lyla/coding-agent`);
 	});
 
 	test("does not infer Windows npm custom prefixes from package paths", () => {
@@ -248,39 +239,39 @@ describe("detectInstallMethod", () => {
 		setExecPath(`${packageDir}\\dist\\cli.js`);
 
 		expect(detectInstallMethod()).toBe("npm");
-		expect(getUpdateInstruction("@earendil-works/pi-coding-agent")).toBe(
-			"Run: npm install -g --ignore-scripts @earendil-works/pi-coding-agent",
+		expect(getUpdateInstruction("@lyla/coding-agent")).toBe(
+			"Run: npm install -g --ignore-scripts @lyla/coding-agent",
 		);
 	});
 
 	testUnlessWindows("self-updates bun global installs from bun pm bin", () => {
 		createBunGlobalInstall();
 
-		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent");
+		const command = getSelfUpdateCommand("@lyla/coding-agent");
 
 		expect(detectInstallMethod()).toBe("bun");
 		expect(command).toEqual({
 			command: "bun",
-			args: ["install", "-g", "--ignore-scripts", "@earendil-works/pi-coding-agent"],
-			display: "bun install -g --ignore-scripts @earendil-works/pi-coding-agent",
+			args: ["install", "-g", "--ignore-scripts", "@lyla/coding-agent"],
+			display: "bun install -g --ignore-scripts @lyla/coding-agent",
 		});
 	});
 
 	testUnlessWindows("self-updates renamed pnpm global installs by removing the old package first", () => {
 		createPnpmGlobalInstall();
 
-		const command = getSelfUpdateCommand("@mariozechner/pi-coding-agent", undefined, "@new-scope/pi");
+		const command = getSelfUpdateCommand("@lyla/coding-agent", undefined, "@new-scope/pi");
 
 		expect(detectInstallMethod()).toBe("pnpm");
 		expect(command).toEqual({
 			command: "pnpm",
 			args: ["install", "-g", "--ignore-scripts", "@new-scope/pi"],
-			display: "pnpm remove -g @mariozechner/pi-coding-agent && pnpm install -g --ignore-scripts @new-scope/pi",
+			display: "pnpm remove -g @lyla/coding-agent && pnpm install -g --ignore-scripts @new-scope/pi",
 			steps: [
 				{
 					command: "pnpm",
-					args: ["remove", "-g", "@mariozechner/pi-coding-agent"],
-					display: "pnpm remove -g @mariozechner/pi-coding-agent",
+					args: ["remove", "-g", "@lyla/coding-agent"],
+					display: "pnpm remove -g @lyla/coding-agent",
 				},
 				{
 					command: "pnpm",
@@ -295,7 +286,7 @@ describe("detectInstallMethod", () => {
 		const temp = mkdtempSync(join(tmpdir(), "pi-pnpm11-"));
 		const binDir = join(temp, "bin");
 		const root = join(temp, "Library", "pnpm", "global", "v11");
-		const packageName = "@earendil-works/pi-coding-agent";
+		const packageName = "@lyla/coding-agent";
 		const globalPackageDir = join(root, "11e9a", "node_modules", "@earendil-works", "pi-coding-agent");
 		const storePackageDir = join(
 			temp,
@@ -337,18 +328,18 @@ describe("detectInstallMethod", () => {
 	testUnlessWindows("self-updates renamed yarn global installs by removing the old package first", () => {
 		createYarnGlobalInstall();
 
-		const command = getSelfUpdateCommand("@mariozechner/pi-coding-agent", undefined, "@new-scope/pi");
+		const command = getSelfUpdateCommand("@lyla/coding-agent", undefined, "@new-scope/pi");
 
 		expect(detectInstallMethod()).toBe("yarn");
 		expect(command).toEqual({
 			command: "yarn",
 			args: ["global", "add", "--ignore-scripts", "@new-scope/pi"],
-			display: "yarn global remove @mariozechner/pi-coding-agent && yarn global add --ignore-scripts @new-scope/pi",
+			display: "yarn global remove @lyla/coding-agent && yarn global add --ignore-scripts @new-scope/pi",
 			steps: [
 				{
 					command: "yarn",
-					args: ["global", "remove", "@mariozechner/pi-coding-agent"],
-					display: "yarn global remove @mariozechner/pi-coding-agent",
+					args: ["global", "remove", "@lyla/coding-agent"],
+					display: "yarn global remove @lyla/coding-agent",
 				},
 				{
 					command: "yarn",
@@ -362,18 +353,18 @@ describe("detectInstallMethod", () => {
 	testUnlessWindows("self-updates renamed bun global installs by removing the old package first", () => {
 		createBunGlobalInstall();
 
-		const command = getSelfUpdateCommand("@mariozechner/pi-coding-agent", undefined, "@new-scope/pi");
+		const command = getSelfUpdateCommand("@lyla/coding-agent", undefined, "@new-scope/pi");
 
 		expect(detectInstallMethod()).toBe("bun");
 		expect(command).toEqual({
 			command: "bun",
 			args: ["install", "-g", "--ignore-scripts", "@new-scope/pi"],
-			display: "bun uninstall -g @mariozechner/pi-coding-agent && bun install -g --ignore-scripts @new-scope/pi",
+			display: "bun uninstall -g @lyla/coding-agent && bun install -g --ignore-scripts @new-scope/pi",
 			steps: [
 				{
 					command: "bun",
-					args: ["uninstall", "-g", "@mariozechner/pi-coding-agent"],
-					display: "bun uninstall -g @mariozechner/pi-coding-agent",
+					args: ["uninstall", "-g", "@lyla/coding-agent"],
+					display: "bun uninstall -g @lyla/coding-agent",
 				},
 				{
 					command: "bun",
@@ -388,9 +379,7 @@ describe("detectInstallMethod", () => {
 		const { packageDir } = createNpmPrefixInstall();
 		chmodSync(packageDir, 0o500);
 
-		expect(getSelfUpdateCommand("@earendil-works/pi-coding-agent")).toBeUndefined();
-		expect(getSelfUpdateUnavailableInstruction("@earendil-works/pi-coding-agent")).toContain(
-			"the install path is not writable",
-		);
+		expect(getSelfUpdateCommand("@lyla/coding-agent")).toBeUndefined();
+		expect(getSelfUpdateUnavailableInstruction("@lyla/coding-agent")).toContain("the install path is not writable");
 	});
 });

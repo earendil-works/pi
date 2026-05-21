@@ -1,4 +1,4 @@
-import { Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
+import { Markdown, type MarkdownTheme } from "@lyla/tui";
 import chalk from "chalk";
 import { selectConfig } from "./cli/config-selector.ts";
 import {

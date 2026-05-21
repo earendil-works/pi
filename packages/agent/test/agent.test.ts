@@ -1,4 +1,4 @@
-import { type AssistantMessage, type AssistantMessageEvent, EventStream, getModel } from "@earendil-works/pi-ai";
+import { type AssistantMessage, type AssistantMessageEvent, EventStream, getModel } from "@lyla/ai";
 import { describe, expect, it } from "vitest";
 import { Agent } from "../src/index.ts";
 

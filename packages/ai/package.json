@@ -1,5 +1,5 @@
 {
-	"name": "@earendil-works/pi-ai",
+	"name": "@lyla/ai",
 	"version": "0.75.4",
 	"description": "Unified LLM API with automatic model discovery and provider configuration",
 	"type": "module",

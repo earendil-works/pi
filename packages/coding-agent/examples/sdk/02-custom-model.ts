@@ -4,8 +4,8 @@
  * Shows how to select a specific model and thinking level.
  */
 
-import { getModel } from "@earendil-works/pi-ai";
-import { AuthStorage, createAgentSession, ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { getModel } from "@lyla/ai";
+import { AuthStorage, createAgentSession, ModelRegistry } from "@lyla/coding-agent";
 
 // Set up auth storage and model registry
 const authStorage = AuthStorage.create();
