@@ -167,6 +167,8 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			let textBlock: TextContent | null = null;
 			let thinkingBlock: ThinkingContent | null = null;
 			let hasFinishReason = false;
+			let normalizedChunkCount = 0;
+			let sseTextBuffer = "";
 			const toolCallBlocksByIndex = new Map<number, StreamingToolCallBlock>();
 			const toolCallBlocksById = new Map<string, StreamingToolCallBlock>();
 			const blocks = output.content as StreamingBlock[];
@@ -261,26 +263,33 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 				}
 				return block;
 			};
-
-			for await (const chunk of openaiStream) {
-				if (!chunk || typeof chunk !== "object") continue;
+			const applyOpenAIChunk = (chunk: ChatCompletionChunk | Record<string, unknown>) => {
+				if (!chunk || typeof chunk !== "object") return;
+				normalizedChunkCount += 1;
 
 				// OpenAI documents ChatCompletionChunk.id as the unique chat completion identifier,
 				// and each chunk in a streamed completion carries the same id.
-				output.responseId ||= chunk.id;
-				if (typeof chunk.model === "string" && chunk.model.length > 0 && chunk.model !== model.id) {
-					output.responseModel ||= chunk.model;
+				output.responseId ||= (chunk as ChatCompletionChunk).id;
+				if (
+					typeof (chunk as ChatCompletionChunk).model === "string" &&
+					(chunk as ChatCompletionChunk).model.length > 0 &&
+					(chunk as ChatCompletionChunk).model !== model.id
+				) {
+					output.responseModel ||= (chunk as ChatCompletionChunk).model;
 				}
-				if (chunk.usage) {
-					output.usage = parseChunkUsage(chunk.usage, model);
+				const usage = (chunk as ChatCompletionChunk).usage;
+				if (usage) {
+					output.usage = parseChunkUsage(usage, model);
 				}
 
-				const choice = Array.isArray(chunk.choices) ? chunk.choices[0] : undefined;
-				if (!choice) continue;
+				const choice = Array.isArray((chunk as ChatCompletionChunk).choices)
+					? (chunk as ChatCompletionChunk).choices[0]
+					: undefined;
+				if (!choice) return;
 
 				// Fallback: some providers (e.g., Moonshot) return usage
 				// in choice.usage instead of the standard chunk.usage
-				if (!chunk.usage && (choice as any).usage) {
+				if (!usage && (choice as any).usage) {
 					output.usage = parseChunkUsage((choice as any).usage, model);
 				}
 
@@ -382,6 +391,45 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 						}
 					}
 				}
+			};
+
+			for await (const rawChunk of openaiStream as AsyncIterable<unknown>) {
+				let normalizedChunks: Array<ChatCompletionChunk | Record<string, unknown>> = [];
+				if (rawChunk && typeof rawChunk === "object") {
+					normalizedChunks = [rawChunk as ChatCompletionChunk];
+				} else if (typeof rawChunk === "string") {
+					const parsedSse = consumeSseCompletionChunks(sseTextBuffer + rawChunk);
+					normalizedChunks = parsedSse.chunks;
+					sseTextBuffer = parsedSse.rest;
+
+					// Some proxies return plain JSON strings without SSE framing.
+					if (normalizedChunks.length === 0) {
+						try {
+							const parsed = JSON.parse(rawChunk) as Record<string, unknown>;
+							if (parsed && typeof parsed === "object") {
+								normalizedChunks = [parsed];
+							}
+						} catch {
+							// Ignore non-JSON string chunks.
+						}
+					}
+				}
+
+				for (const chunk of normalizedChunks) {
+					applyOpenAIChunk(chunk);
+				}
+			}
+
+			if (sseTextBuffer.length > 0) {
+				const parsedTail = consumeSseCompletionChunks(sseTextBuffer, true);
+				sseTextBuffer = parsedTail.rest;
+				for (const chunk of parsedTail.chunks) {
+					applyOpenAIChunk(chunk);
+				}
+			}
+
+			if (normalizedChunkCount === 0) {
+				throw new Error("Stream ended without parseable chunks");
 			}
 
 			for (const block of blocks) {
@@ -1034,6 +1082,67 @@ function parseChunkUsage(
 	};
 	calculateCost(model, usage);
 	return usage;
+}
+
+function parseSseCompletionChunks(rawSseText: string): Array<ChatCompletionChunk | Record<string, unknown>> {
+	if (typeof rawSseText !== "string" || rawSseText.length === 0) {
+		return [];
+	}
+
+	const events = rawSseText.split(/\r?\n\r?\n/);
+	const chunks: Array<ChatCompletionChunk | Record<string, unknown>> = [];
+	for (const event of events) {
+		if (!event) continue;
+
+		const dataLines = event
+			.split(/\r?\n/)
+			.filter((line) => line.startsWith("data:"))
+			.map((line) => line.slice(5).trim());
+		if (dataLines.length === 0) continue;
+
+		const payload = dataLines.join("\n");
+		if (!payload || payload === "[DONE]") continue;
+
+		try {
+			const parsed = JSON.parse(payload) as ChatCompletionChunk | Record<string, unknown>;
+			if (parsed && typeof parsed === "object") {
+				chunks.push(parsed);
+			}
+		} catch {
+			// Ignore invalid SSE payload chunks and continue parsing.
+		}
+	}
+	return chunks;
+}
+
+function consumeSseCompletionChunks(
+	buffer: string,
+	flush = false,
+): { chunks: Array<ChatCompletionChunk | Record<string, unknown>>; rest: string } {
+	if (typeof buffer !== "string" || buffer.length === 0) {
+		return { chunks: [], rest: "" };
+	}
+
+	const events = buffer.split(/\r?\n\r?\n/);
+	const rest = flush ? "" : (events.pop() ?? "");
+	const chunks: Array<ChatCompletionChunk | Record<string, unknown>> = [];
+
+	for (const event of events) {
+		if (!event) continue;
+		const parsed = parseSseCompletionChunks(`${event}\n\n`);
+		if (parsed.length > 0) {
+			chunks.push(...parsed);
+		}
+	}
+
+	if (flush && rest) {
+		const parsed = parseSseCompletionChunks(rest);
+		if (parsed.length > 0) {
+			chunks.push(...parsed);
+		}
+	}
+
+	return { chunks, rest };
 }
 
 function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"] | string): {
