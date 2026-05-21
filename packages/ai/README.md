@@ -694,6 +694,8 @@ const response = await complete(model, context, {
 
 The callback is supported by `stream`, `complete`, `streamSimple`, and `completeSimple`.
 
+For consumers that need the provider-native wire data, `StreamOptions` also supports `onRawRequestBody`, `onRawResponseChunk`, and `onRawResponseEnd`. These callbacks expose the final provider request body and raw streaming chunks before Pi normalizes them. Initial support covers `openai-responses`, `openai-completions`, and `anthropic-messages`.
+
 ## APIs, Models, and Providers
 
 The library uses a registry of API implementations. Built-in APIs include:

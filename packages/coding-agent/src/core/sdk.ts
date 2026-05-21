@@ -362,6 +362,27 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				headers: response.headers,
 			});
 		},
+		onRawRequestBody: async (payload, _model) => {
+			const runner = extensionRunnerRef.current;
+			if (!runner?.hasHandlers("before_provider_raw_request")) {
+				return;
+			}
+			await runner.emit({ type: "before_provider_raw_request", ...payload });
+		},
+		onRawResponseChunk: async (payload, _model) => {
+			const runner = extensionRunnerRef.current;
+			if (!runner?.hasHandlers("provider_raw_response_chunk")) {
+				return;
+			}
+			await runner.emit({ type: "provider_raw_response_chunk", ...payload });
+		},
+		onRawResponseEnd: async (payload, _model) => {
+			const runner = extensionRunnerRef.current;
+			if (!runner?.hasHandlers("provider_raw_response_end")) {
+				return;
+			}
+			await runner.emit({ type: "provider_raw_response_end", ...payload });
+		},
 		sessionId: sessionManager.getSessionId(),
 		transformContext: async (messages) => {
 			const runner = extensionRunnerRef.current;

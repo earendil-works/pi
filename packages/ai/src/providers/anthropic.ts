@@ -34,6 +34,13 @@ import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 
 import { resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
+import {
+	createRawProviderErrorEnvelope,
+	emitRawRequestBody,
+	emitRawResponseChunk,
+	emitRawResponseEnd,
+	getProviderRequestId,
+} from "./raw-hooks.ts";
 import { adjustMaxTokensForThinking, buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -221,6 +228,11 @@ export interface AnthropicOptions extends StreamOptions {
 	 * `AnthropicVertex` that shares the same messaging API.
 	 */
 	client?: Anthropic;
+}
+
+function getAnthropicEventRequestId(event: RawMessageStreamEvent): string | undefined {
+	if (event.type === "message_start") return event.message.id;
+	return undefined;
 }
 
 function mergeHeaders(...headerSources: (Record<string, string | null> | undefined)[]): Record<string, string | null> {
@@ -451,6 +463,10 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 			timestamp: Date.now(),
 		};
 
+		let rawResponseIndex = 0;
+		let rawResponseEnded = false;
+		const rawResponseMeta: { requestId?: string; status?: number; headers?: Record<string, string> } = {};
+
 		try {
 			let client: Anthropic;
 			let isOAuth: boolean;
@@ -490,19 +506,29 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 			if (nextParams !== undefined) {
 				params = nextParams as MessageCreateParamsStreaming;
 			}
+			const requestParams = { ...params, stream: true };
+			await emitRawRequestBody(options, model, requestParams);
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
 				...(options?.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
 			};
-			const response = await client.messages.create({ ...params, stream: true }, requestOptions).asResponse();
-			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
+			const response = await client.messages.create(requestParams, requestOptions).asResponse();
+			const responseHeaders = headersToRecord(response.headers);
+			rawResponseMeta.status = response.status;
+			rawResponseMeta.headers = responseHeaders;
+			rawResponseMeta.requestId = getProviderRequestId(responseHeaders);
+			await options?.onResponse?.({ status: response.status, headers: responseHeaders }, model);
 			stream.push({ type: "start", partial: output });
 
 			type Block = (ThinkingContent | TextContent | (ToolCall & { partialJson: string })) & { index: number };
 			const blocks = output.content as Block[];
 
 			for await (const event of iterateAnthropicEvents(response, options?.signal)) {
+				const requestId = getAnthropicEventRequestId(event) ?? rawResponseMeta.requestId;
+				if (requestId) rawResponseMeta.requestId = requestId;
+				await emitRawResponseChunk(options, model, { ...rawResponseMeta, requestId }, rawResponseIndex, event);
+				rawResponseIndex++;
 				if (event.type === "message_start") {
 					output.responseId = event.message.id;
 					// Capture initial token usage from message_start event
@@ -668,9 +694,24 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 				throw new Error("An unknown error occurred");
 			}
 
+			await emitRawResponseEnd(options, model, rawResponseMeta, rawResponseIndex);
+			rawResponseEnded = true;
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			if (!rawResponseEnded) {
+				try {
+					await emitRawResponseEnd(
+						options,
+						model,
+						rawResponseMeta,
+						rawResponseIndex,
+						createRawProviderErrorEnvelope(error),
+					);
+				} catch {
+					// Preserve the original provider error.
+				}
+			}
 			for (const block of output.content) {
 				delete (block as { index?: number }).index;
 				// partialJson is only a streaming scratch buffer; never persist it.

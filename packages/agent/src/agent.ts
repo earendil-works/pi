@@ -101,6 +101,9 @@ export interface AgentOptions {
 	getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 	onPayload?: SimpleStreamOptions["onPayload"];
 	onResponse?: SimpleStreamOptions["onResponse"];
+	onRawRequestBody?: SimpleStreamOptions["onRawRequestBody"];
+	onRawResponseChunk?: SimpleStreamOptions["onRawResponseChunk"];
+	onRawResponseEnd?: SimpleStreamOptions["onRawResponseEnd"];
 	beforeToolCall?: (context: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined>;
 	afterToolCall?: (context: AfterToolCallContext, signal?: AbortSignal) => Promise<AfterToolCallResult | undefined>;
 	prepareNextTurn?: (
@@ -175,6 +178,9 @@ export class Agent {
 	public getApiKey?: (provider: string) => Promise<string | undefined> | string | undefined;
 	public onPayload?: SimpleStreamOptions["onPayload"];
 	public onResponse?: SimpleStreamOptions["onResponse"];
+	public onRawRequestBody?: SimpleStreamOptions["onRawRequestBody"];
+	public onRawResponseChunk?: SimpleStreamOptions["onRawResponseChunk"];
+	public onRawResponseEnd?: SimpleStreamOptions["onRawResponseEnd"];
 	public beforeToolCall?: (
 		context: BeforeToolCallContext,
 		signal?: AbortSignal,
@@ -206,6 +212,9 @@ export class Agent {
 		this.getApiKey = options.getApiKey;
 		this.onPayload = options.onPayload;
 		this.onResponse = options.onResponse;
+		this.onRawRequestBody = options.onRawRequestBody;
+		this.onRawResponseChunk = options.onRawResponseChunk;
+		this.onRawResponseEnd = options.onRawResponseEnd;
 		this.beforeToolCall = options.beforeToolCall;
 		this.afterToolCall = options.afterToolCall;
 		this.prepareNextTurn = options.prepareNextTurn;
@@ -427,6 +436,9 @@ export class Agent {
 			sessionId: this.sessionId,
 			onPayload: this.onPayload,
 			onResponse: this.onResponse,
+			onRawRequestBody: this.onRawRequestBody,
+			onRawResponseChunk: this.onRawResponseChunk,
+			onRawResponseEnd: this.onRawResponseEnd,
 			transport: this.transport,
 			thinkingBudgets: this.thinkingBudgets,
 			maxRetryDelayMs: this.maxRetryDelayMs,

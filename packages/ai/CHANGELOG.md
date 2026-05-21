@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added provider raw request/response hooks for OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages streams.
+
 ## [0.75.4] - 2026-05-20
 
 ### Changed

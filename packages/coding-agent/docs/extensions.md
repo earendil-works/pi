@@ -631,6 +631,20 @@ pi.on("after_provider_response", (event, ctx) => {
 
 Header availability depends on provider and transport. Providers that abstract HTTP responses may not expose headers.
 
+#### before_provider_raw_request
+
+Fired with the final provider request body after `before_provider_request` payload changes are applied and before the provider SDK call starts.
+
+#### provider_raw_response_chunk
+
+Fired for each provider stream chunk before Pi normalization. Event fields include `provider`, `api`, `model`, `requestId` when available, `status`/`headers` when available, `index`, `raw`, and `timestamp`.
+
+#### provider_raw_response_end
+
+Fired when provider raw stream consumption ends. On errors, `raw` contains an error envelope and the original provider error continues through Pi's normal error path.
+
+Initial raw event support covers `openai-responses`, `openai-completions`, and `anthropic-messages`.
+
 ### Model Events
 
 #### model_select

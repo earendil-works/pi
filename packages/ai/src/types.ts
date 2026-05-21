@@ -81,6 +81,20 @@ export interface ProviderResponse {
 	headers: Record<string, string>;
 }
 
+export interface RawProviderPayload {
+	provider: Provider;
+	api: Api;
+	model: string;
+	requestId?: string;
+	status?: number;
+	headers?: Record<string, string>;
+	index: number;
+	raw: unknown;
+	timestamp: number;
+}
+
+export type RawProviderPayloadCallback = (payload: RawProviderPayload, model: Model<Api>) => void | Promise<void>;
+
 export interface StreamOptions {
 	temperature?: number;
 	maxTokens?: number;
@@ -112,6 +126,12 @@ export interface StreamOptions {
 	 * its body stream is consumed.
 	 */
 	onResponse?: (response: ProviderResponse, model: Model<Api>) => void | Promise<void>;
+	/** Optional callback invoked with the final provider request body before sending. */
+	onRawRequestBody?: RawProviderPayloadCallback;
+	/** Optional callback invoked for each provider stream chunk before Pi normalization. */
+	onRawResponseChunk?: RawProviderPayloadCallback;
+	/** Optional callback invoked when provider raw stream consumption ends or errors. */
+	onRawResponseEnd?: RawProviderPayloadCallback;
 	/**
 	 * Optional custom HTTP headers to include in API requests.
 	 * Merged with provider defaults; can override default headers.

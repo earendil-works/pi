@@ -35,6 +35,7 @@ export type {
 	BashToolResultEvent,
 	BeforeAgentStartEvent,
 	BeforeAgentStartEventResult,
+	BeforeProviderRawRequestEvent,
 	BeforeProviderRequestEvent,
 	BeforeProviderRequestEventResult,
 	BuildSystemPromptOptions,
@@ -100,6 +101,8 @@ export type {
 	// Provider Registration
 	ProviderConfig,
 	ProviderModelConfig,
+	ProviderRawResponseChunkEvent,
+	ProviderRawResponseEndEvent,
 	ReadToolCallEvent,
 	ReadToolResultEvent,
 	// Commands

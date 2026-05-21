@@ -37,6 +37,13 @@ import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
+import {
+	createRawProviderErrorEnvelope,
+	emitRawRequestBody,
+	emitRawResponseChunk,
+	emitRawResponseEnd,
+	getProviderRequestId,
+} from "./raw-hooks.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 import { transformMessages } from "./transform-messages.ts";
 
@@ -73,6 +80,12 @@ function isToolCallBlock(block: { type: string }): block is ToolCall {
 
 function isImageContentBlock(block: { type: string }): block is ImageContent {
 	return block.type === "image";
+}
+
+function getOpenAICompletionsChunkRequestId(chunk: unknown): string | undefined {
+	if (!chunk || typeof chunk !== "object") return undefined;
+	const id = (chunk as Record<string, unknown>).id;
+	return typeof id === "string" ? id : undefined;
 }
 
 export interface OpenAICompletionsOptions extends StreamOptions {
@@ -135,6 +148,10 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			timestamp: Date.now(),
 		};
 
+		let rawResponseIndex = 0;
+		let rawResponseEnded = false;
+		const rawResponseMeta: { requestId?: string; status?: number; headers?: Record<string, string> } = {};
+
 		try {
 			const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
 			const compat = getCompat(model);
@@ -146,6 +163,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			if (nextParams !== undefined) {
 				params = nextParams as OpenAI.Chat.Completions.ChatCompletionCreateParamsStreaming;
 			}
+			await emitRawRequestBody(options, model, params);
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
@@ -154,7 +172,11 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			const { data: openaiStream, response } = await client.chat.completions
 				.create(params, requestOptions)
 				.withResponse();
-			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
+			const responseHeaders = headersToRecord(response.headers);
+			rawResponseMeta.status = response.status;
+			rawResponseMeta.headers = responseHeaders;
+			rawResponseMeta.requestId = getProviderRequestId(responseHeaders);
+			await options?.onResponse?.({ status: response.status, headers: responseHeaders }, model);
 			stream.push({ type: "start", partial: output });
 
 			interface StreamingToolCallBlock extends ToolCall {
@@ -263,6 +285,10 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			};
 
 			for await (const chunk of openaiStream) {
+				const requestId = getOpenAICompletionsChunkRequestId(chunk) ?? rawResponseMeta.requestId;
+				if (requestId) rawResponseMeta.requestId = requestId;
+				await emitRawResponseChunk(options, model, { ...rawResponseMeta, requestId }, rawResponseIndex, chunk);
+				rawResponseIndex++;
 				if (!chunk || typeof chunk !== "object") continue;
 
 				// OpenAI documents ChatCompletionChunk.id as the unique chat completion identifier,
@@ -401,9 +427,24 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 				throw new Error("Stream ended without finish_reason");
 			}
 
+			await emitRawResponseEnd(options, model, rawResponseMeta, rawResponseIndex);
+			rawResponseEnded = true;
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			if (!rawResponseEnded) {
+				try {
+					await emitRawResponseEnd(
+						options,
+						model,
+						rawResponseMeta,
+						rawResponseIndex,
+						createRawProviderErrorEnvelope(error),
+					);
+				} catch {
+					// Preserve the original provider error.
+				}
+			}
 			for (const block of output.content) {
 				delete (block as { index?: number }).index;
 				// Streaming scratch buffers are only used during parsing; never persist them.

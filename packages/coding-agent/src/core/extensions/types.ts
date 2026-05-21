@@ -24,6 +24,7 @@ import type {
 	Model,
 	OAuthCredentials,
 	OAuthLoginCallbacks,
+	RawProviderPayload,
 	SimpleStreamOptions,
 	TextContent,
 	ToolResultMessage,
@@ -620,6 +621,21 @@ export interface AfterProviderResponseEvent {
 	headers: Record<string, string>;
 }
 
+/** Fired with the final provider request body before sending. */
+export interface BeforeProviderRawRequestEvent extends RawProviderPayload {
+	type: "before_provider_raw_request";
+}
+
+/** Fired for each provider stream chunk before Pi normalization. */
+export interface ProviderRawResponseChunkEvent extends RawProviderPayload {
+	type: "provider_raw_response_chunk";
+}
+
+/** Fired when provider raw stream consumption ends or errors. */
+export interface ProviderRawResponseEndEvent extends RawProviderPayload {
+	type: "provider_raw_response_end";
+}
+
 /** Fired after user submits prompt but before agent loop. */
 export interface BeforeAgentStartEvent {
 	type: "before_agent_start";
@@ -953,6 +969,9 @@ export type ExtensionEvent =
 	| ContextEvent
 	| BeforeProviderRequestEvent
 	| AfterProviderResponseEvent
+	| BeforeProviderRawRequestEvent
+	| ProviderRawResponseChunkEvent
+	| ProviderRawResponseEndEvent
 	| BeforeAgentStartEvent
 	| AgentStartEvent
 	| AgentEndEvent
@@ -1107,6 +1126,9 @@ export interface ExtensionAPI {
 		handler: ExtensionHandler<BeforeProviderRequestEvent, BeforeProviderRequestEventResult>,
 	): void;
 	on(event: "after_provider_response", handler: ExtensionHandler<AfterProviderResponseEvent>): void;
+	on(event: "before_provider_raw_request", handler: ExtensionHandler<BeforeProviderRawRequestEvent>): void;
+	on(event: "provider_raw_response_chunk", handler: ExtensionHandler<ProviderRawResponseChunkEvent>): void;
+	on(event: "provider_raw_response_end", handler: ExtensionHandler<ProviderRawResponseEndEvent>): void;
 	on(event: "before_agent_start", handler: ExtensionHandler<BeforeAgentStartEvent, BeforeAgentStartEventResult>): void;
 	on(event: "agent_start", handler: ExtensionHandler<AgentStartEvent>): void;
 	on(event: "agent_end", handler: ExtensionHandler<AgentEndEvent>): void;

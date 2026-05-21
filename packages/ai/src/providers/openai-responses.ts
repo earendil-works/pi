@@ -20,6 +20,13 @@ import { isCloudflareProvider, resolveCloudflareBaseUrl } from "./cloudflare.ts"
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
+import {
+	createRawProviderErrorEnvelope,
+	emitRawRequestBody,
+	emitRawResponseChunk,
+	emitRawResponseEnd,
+	getProviderRequestId,
+} from "./raw-hooks.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
@@ -50,6 +57,17 @@ function getPromptCacheRetention(
 	cacheRetention: CacheRetention,
 ): "24h" | undefined {
 	return cacheRetention === "long" && compat.supportsLongCacheRetention ? "24h" : undefined;
+}
+
+function getOpenAIResponsesEventRequestId(event: unknown): string | undefined {
+	if (!event || typeof event !== "object") return undefined;
+	const record = event as Record<string, unknown>;
+	const response = record.response;
+	if (response && typeof response === "object") {
+		const id = (response as Record<string, unknown>).id;
+		if (typeof id === "string") return id;
+	}
+	return undefined;
 }
 
 function formatOpenAIResponsesError(error: unknown): string {
@@ -105,6 +123,10 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses", OpenAIRes
 			timestamp: Date.now(),
 		};
 
+		let rawResponseIndex = 0;
+		let rawResponseEnded = false;
+		const rawResponseMeta: { requestId?: string; status?: number; headers?: Record<string, string> } = {};
+
 		try {
 			// Create OpenAI client
 			const apiKey = options?.apiKey || getEnvApiKey(model.provider) || "";
@@ -116,16 +138,31 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses", OpenAIRes
 			if (nextParams !== undefined) {
 				params = nextParams as ResponseCreateParamsStreaming;
 			}
+			await emitRawRequestBody(options, model, params);
 			const requestOptions = {
 				...(options?.signal ? { signal: options.signal } : {}),
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
 				...(options?.maxRetries !== undefined ? { maxRetries: options.maxRetries } : {}),
 			};
 			const { data: openaiStream, response } = await client.responses.create(params, requestOptions).withResponse();
-			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
+			const responseHeaders = headersToRecord(response.headers);
+			rawResponseMeta.status = response.status;
+			rawResponseMeta.headers = responseHeaders;
+			rawResponseMeta.requestId = getProviderRequestId(responseHeaders);
+			await options?.onResponse?.({ status: response.status, headers: responseHeaders }, model);
 			stream.push({ type: "start", partial: output });
 
-			await processResponsesStream(openaiStream, output, stream, model, {
+			const rawOpenAIStream = async function* () {
+				for await (const event of openaiStream) {
+					const requestId = getOpenAIResponsesEventRequestId(event) ?? rawResponseMeta.requestId;
+					if (requestId) rawResponseMeta.requestId = requestId;
+					await emitRawResponseChunk(options, model, { ...rawResponseMeta, requestId }, rawResponseIndex, event);
+					rawResponseIndex++;
+					yield event;
+				}
+			};
+
+			await processResponsesStream(rawOpenAIStream(), output, stream, model, {
 				serviceTier: options?.serviceTier,
 				applyServiceTierPricing: (usage, serviceTier) => applyServiceTierPricing(usage, serviceTier, model),
 			});
@@ -138,9 +175,24 @@ export const streamOpenAIResponses: StreamFunction<"openai-responses", OpenAIRes
 				throw new Error("An unknown error occurred");
 			}
 
+			await emitRawResponseEnd(options, model, rawResponseMeta, rawResponseIndex);
+			rawResponseEnded = true;
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
 		} catch (error) {
+			if (!rawResponseEnded) {
+				try {
+					await emitRawResponseEnd(
+						options,
+						model,
+						rawResponseMeta,
+						rawResponseIndex,
+						createRawProviderErrorEnvelope(error),
+					);
+				} catch {
+					// Preserve the original provider error.
+				}
+			}
 			for (const block of output.content) {
 				delete (block as { index?: number }).index;
 				// partialJson is only a streaming scratch buffer; never persist it.

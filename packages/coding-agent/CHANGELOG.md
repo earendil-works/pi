@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added extension events for provider raw request bodies, raw response chunks, and raw stream endings.
 - Added a standard unified patch to edit tool result details for SDK consumers ([#4821](https://github.com/earendil-works/pi/issues/4821)).
 
 ### Fixed
