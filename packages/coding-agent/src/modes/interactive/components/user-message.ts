@@ -8,14 +8,31 @@ const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 /**
  * Component that renders a user message
  */
+function formatPromptLabel(format: string, index: number, timestamp: Date): string {
+	const hh = timestamp.getHours().toString().padStart(2, "0");
+	const mm = timestamp.getMinutes().toString().padStart(2, "0");
+	const ss = timestamp.getSeconds().toString().padStart(2, "0");
+	return format.replace(/%num/g, String(index)).replace(/%HH/g, hh).replace(/%mm/g, mm).replace(/%ss/g, ss);
+}
+
 export class UserMessageComponent extends Container {
 	private contentBox: Box;
 
-	constructor(text: string, markdownTheme: MarkdownTheme = getMarkdownTheme()) {
+	constructor(
+		text: string,
+		markdownTheme: MarkdownTheme = getMarkdownTheme(),
+		index?: number,
+		timestamp?: Date,
+		promptLogFormat?: string,
+	) {
 		super();
+		const prefix =
+			promptLogFormat && index !== undefined && timestamp !== undefined
+				? `${formatPromptLabel(promptLogFormat, index, timestamp)} `
+				: "";
 		this.contentBox = new Box(1, 1, (content: string) => theme.bg("userMessageBg", content));
 		this.contentBox.addChild(
-			new Markdown(text, 0, 0, markdownTheme, {
+			new Markdown(prefix + text, 0, 0, markdownTheme, {
 				color: (content: string) => theme.fg("userMessageText", content),
 			}),
 		);

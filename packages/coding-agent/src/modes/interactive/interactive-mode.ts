@@ -333,6 +333,7 @@ export class InteractiveMode {
 
 	// Header container that holds the built-in or custom header
 	private headerContainer: Container;
+	private userMessageIndex = 0;
 
 	// Built-in header (logo + keybinding hints + changelog)
 	private builtInHeader: Component | undefined = undefined;
@@ -2704,7 +2705,7 @@ export class InteractiveMode {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "user") {
-					this.addMessageToChat(event.message);
+					this.addMessageToChat(event.message, { timestamp: new Date() });
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
@@ -3022,7 +3023,7 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void {
+	private addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean; timestamp?: Date }): void {
 		switch (message.role) {
 			case "bashExecution": {
 				const component = new BashExecutionComponent(message.command, this.ui, message.excludeFromContext);
@@ -3081,11 +3082,20 @@ export class InteractiveMode {
 							const userComponent = new UserMessageComponent(
 								skillBlock.userMessage,
 								this.getMarkdownThemeWithSettings(),
+								++this.userMessageIndex,
+								options?.timestamp,
+								this.settingsManager.getPromptLogFormat(),
 							);
 							this.chatContainer.addChild(userComponent);
 						}
 					} else {
-						const userComponent = new UserMessageComponent(textContent, this.getMarkdownThemeWithSettings());
+						const userComponent = new UserMessageComponent(
+							textContent,
+							this.getMarkdownThemeWithSettings(),
+							++this.userMessageIndex,
+							options?.timestamp,
+							this.settingsManager.getPromptLogFormat(),
+						);
 						this.chatContainer.addChild(userComponent);
 					}
 					if (options?.populateHistory) {
@@ -3131,6 +3141,20 @@ export class InteractiveMode {
 			this.footer.invalidate();
 			this.updateEditorBorderColor();
 		}
+
+		// Build timestamp map for user messages from session entries
+		const userMessageTimestamps: Date[] = [];
+		for (const entry of this.sessionManager.getEntries()) {
+			if (
+				entry.type === "message" &&
+				(entry as import("../../core/session-manager.ts").SessionMessageEntry).message.role === "user"
+			) {
+				userMessageTimestamps.push(
+					new Date((entry as import("../../core/session-manager.ts").SessionMessageEntry).timestamp),
+				);
+			}
+		}
+		let userEntryIndex = 0;
 
 		for (const message of sessionContext.messages) {
 			// Assistant messages need special handling for tool calls
@@ -3179,8 +3203,8 @@ export class InteractiveMode {
 					renderedPendingTools.delete(message.toolCallId);
 				}
 			} else {
-				// All other messages use standard rendering
-				this.addMessageToChat(message, options);
+				const timestamp = message.role === "user" ? userMessageTimestamps[userEntryIndex++] : undefined;
+				this.addMessageToChat(message, { ...options, timestamp });
 			}
 		}
 

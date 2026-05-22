@@ -112,6 +112,7 @@ export interface Settings {
 	warnings?: WarningSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
+	promptLogFormat?: string; // Format for user prompt label, e.g. "%num|%HH:%mm>" (empty string disables)
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */
@@ -1079,5 +1080,9 @@ export class SettingsManager {
 		this.globalSettings.warnings = { ...warnings };
 		this.markModified("warnings");
 		this.save();
+	}
+
+	getPromptLogFormat(): string | undefined {
+		return this.settings.promptLogFormat;
 	}
 }
