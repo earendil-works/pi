@@ -778,9 +778,21 @@ export class DefaultPackageManager implements PackageManager {
 			scope === "project" ? this.settingsManager.getProjectSettings() : this.settingsManager.getGlobalSettings();
 		const currentPackages = currentSettings.packages ?? [];
 		const normalizedSource = this.normalizePackageSourceForSettings(source, scope);
-		const exists = currentPackages.some((existing) => this.packageSourcesMatch(existing, source, scope));
-		if (exists) {
-			return false;
+		const matchIndex = currentPackages.findIndex((existing) => this.packageSourcesMatch(existing, source, scope));
+		if (matchIndex !== -1) {
+			const existingStr = this.getPackageSourceString(currentPackages[matchIndex]);
+			if (existingStr === normalizedSource) {
+				return false;
+			}
+			// Replace existing entry with updated source (e.g. different ref/version)
+			const nextPackages = [...currentPackages];
+			nextPackages[matchIndex] = normalizedSource;
+			if (scope === "project") {
+				this.settingsManager.setProjectPackages(nextPackages);
+			} else {
+				this.settingsManager.setPackages(nextPackages);
+			}
+			return true;
 		}
 		const nextPackages = [...currentPackages, normalizedSource];
 		if (scope === "project") {
@@ -1723,6 +1735,9 @@ export class DefaultPackageManager implements PackageManager {
 	private async installGit(source: GitSource, scope: SourceScope): Promise<void> {
 		const targetDir = this.getGitInstallPath(source, scope);
 		if (existsSync(targetDir)) {
+			if (source.ref) {
+				await this.ensureGitRef(targetDir, ["fetch", "origin", source.ref], "FETCH_HEAD");
+			}
 			return;
 		}
 		const gitRoot = this.getGitInstallRoot(scope);
@@ -1749,24 +1764,29 @@ export class DefaultPackageManager implements PackageManager {
 		}
 
 		const target = await this.getLocalGitUpdateTarget(targetDir);
+		await this.ensureGitRef(targetDir, target.fetchArgs, target.ref);
+	}
 
-		// Fetch only the ref we will reset to, avoiding unrelated branch/tag noise.
-		await this.runCommand("git", target.fetchArgs, { cwd: targetDir });
+	/**
+	 * Ensure the checkout at targetDir is at the given ref.
+	 * Fetches first, then compares with HEAD and resets if needed.
+	 */
+	private async ensureGitRef(targetDir: string, fetchArgs: string[], ref: string): Promise<void> {
+		await this.runCommand("git", fetchArgs, { cwd: targetDir });
 
 		const localHead = await this.runCommandCapture("git", ["rev-parse", "HEAD"], {
 			cwd: targetDir,
 			timeoutMs: NETWORK_TIMEOUT_MS,
 		});
-		const refreshedTargetHead = await this.runCommandCapture("git", ["rev-parse", target.ref], {
+		const targetHead = await this.runCommandCapture("git", ["rev-parse", ref], {
 			cwd: targetDir,
 			timeoutMs: NETWORK_TIMEOUT_MS,
 		});
-		if (localHead.trim() === refreshedTargetHead.trim()) {
+		if (localHead.trim() === targetHead.trim()) {
 			return;
 		}
 
-		await this.runCommand("git", ["reset", "--hard", target.ref], { cwd: targetDir });
-
+		await this.runCommand("git", ["reset", "--hard", ref], { cwd: targetDir });
 		// Clean untracked files (extensions should be pristine)
 		await this.runCommand("git", ["clean", "-fdx"], { cwd: targetDir });
 

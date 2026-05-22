@@ -1061,6 +1061,41 @@ Content`,
 			expect(removed).toBe(true);
 			expect(settingsManager.getGlobalSettings().packages ?? []).toHaveLength(0);
 		});
+
+		it("should return false when adding the same git source with the same ref", () => {
+			const first = packageManager.addSourceToSettings("git:github.com/user/repo@v1");
+			expect(first).toBe(true);
+			const second = packageManager.addSourceToSettings("git:github.com/user/repo@v1");
+			expect(second).toBe(false);
+			expect(settingsManager.getGlobalSettings().packages).toHaveLength(1);
+		});
+
+		it("should update the ref when adding the same git source with a different ref", () => {
+			packageManager.addSourceToSettings("git:github.com/user/repo@v1");
+			const updated = packageManager.addSourceToSettings("git:github.com/user/repo@v2");
+			expect(updated).toBe(true);
+			const packages = settingsManager.getGlobalSettings().packages;
+			expect(packages).toHaveLength(1);
+			expect(packages![0]).toBe("git:github.com/user/repo@v2");
+		});
+
+		it("should update when adding a git source with a ref where none existed", () => {
+			packageManager.addSourceToSettings("git:github.com/user/repo");
+			const updated = packageManager.addSourceToSettings("git:github.com/user/repo@v1");
+			expect(updated).toBe(true);
+			const packages = settingsManager.getGlobalSettings().packages;
+			expect(packages).toHaveLength(1);
+			expect(packages![0]).toBe("git:github.com/user/repo@v1");
+		});
+
+		it("should update when removing a ref from a git source", () => {
+			packageManager.addSourceToSettings("git:github.com/user/repo@v1");
+			const updated = packageManager.addSourceToSettings("git:github.com/user/repo");
+			expect(updated).toBe(true);
+			const packages = settingsManager.getGlobalSettings().packages;
+			expect(packages).toHaveLength(1);
+			expect(packages![0]).toBe("git:github.com/user/repo");
+		});
 	});
 
 	describe("HTTPS git URL parsing (old behavior)", () => {
