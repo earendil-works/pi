@@ -5,6 +5,8 @@
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import { Text } from "@earendil-works/pi-tui";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createExtensionRuntime, discoverAndLoadExtensions } from "../src/core/extensions/loader.ts";
@@ -13,6 +15,7 @@ import type { ExtensionActions, ExtensionContextActions, ProviderConfig } from "
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import { DecoratedRowComponent } from "../src/modes/interactive/components/message-decorator.ts";
 
 describe("ExtensionRunner", () => {
 	let tempDir: string;
@@ -488,6 +491,122 @@ describe("ExtensionRunner", () => {
 
 			const missing = runner.getMessageRenderer("not-exists");
 			expect(missing).toBeUndefined();
+		});
+	});
+
+	describe("message decorators", () => {
+		it("returns matching message decorators by role", async () => {
+			fs.writeFileSync(
+				path.join(extensionsDir, "decorator.ts"),
+				`
+					export default function(pi) {
+						pi.registerMessageDecorator("assistant-badge", { roles: ["assistant"], priority: 10, decorate() {} });
+					}
+				`,
+			);
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const decorators = runner.getMessageDecorators({
+				type: "message",
+				message: { role: "assistant" } as AgentMessage,
+			});
+			expect(decorators.map((decorator) => decorator.name)).toEqual(["assistant-badge"]);
+		});
+
+		it("returns matching tool decorators by toolNames", async () => {
+			fs.writeFileSync(
+				path.join(extensionsDir, "tool-decorator.ts"),
+				`
+					export default function(pi) {
+						pi.registerMessageDecorator("bash-timer", { toolNames: ["bash"], decorate() {} });
+					}
+				`,
+			);
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const decorators = runner.getMessageDecorators({
+				type: "tool",
+				toolCallId: "1",
+				toolName: "bash",
+				timestamp: Date.now(),
+			});
+			expect(decorators.map((decorator) => decorator.name)).toEqual(["bash-timer"]);
+		});
+
+		it("does not return message-only decorators for tool subjects", async () => {
+			fs.writeFileSync(
+				path.join(extensionsDir, "message-only.ts"),
+				`
+					export default function(pi) {
+						pi.registerMessageDecorator("role-only", { roles: ["user"], decorate() {} });
+					}
+				`,
+			);
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const decorators = runner.getMessageDecorators({
+				type: "tool",
+				toolCallId: "1",
+				toolName: "bash",
+				timestamp: Date.now(),
+			});
+			expect(decorators).toHaveLength(0);
+		});
+
+		it("sorts decorators by ascending priority", async () => {
+			fs.writeFileSync(
+				path.join(extensionsDir, "priority.ts"),
+				`
+					export default function(pi) {
+						pi.registerMessageDecorator("high", { roles: ["assistant"], priority: 100, decorate() {} });
+						pi.registerMessageDecorator("low", { roles: ["assistant"], priority: -10, decorate() {} });
+						pi.registerMessageDecorator("mid", { roles: ["assistant"], priority: 50, decorate() {} });
+					}
+				`,
+			);
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const decorators = runner.getMessageDecorators({
+				type: "message",
+				message: { role: "assistant" } as AgentMessage,
+			});
+			expect(decorators.map((decorator) => decorator.name)).toEqual(["low", "mid", "high"]);
+		});
+
+		it("reports decorator errors and continues later decorators", async () => {
+			fs.writeFileSync(
+				path.join(extensionsDir, "error-isolation.ts"),
+				`
+					import { Text } from "@earendil-works/pi-tui";
+
+					export default function(pi) {
+						pi.registerMessageDecorator("throws", {
+							toolNames: ["bash"],
+							priority: 1,
+							decorate() { throw new Error("decorator failed"); },
+						});
+						pi.registerMessageDecorator("continues", {
+							toolNames: ["bash"],
+							priority: 2,
+							decorate(_subject, context) { context.appendChild(context.parent, new Text("continued", 0, 0)); },
+						});
+					}
+				`,
+			);
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const errors: string[] = [];
+			runner.onError((error) => errors.push(`${error.event}: ${error.error}`));
+
+			const row = new DecoratedRowComponent(
+				{ type: "tool", toolCallId: "1", toolName: "bash", timestamp: Date.now() },
+				runner,
+				[new Text("base", 0, 0)],
+				{ expanded: false },
+			);
+
+			expect(errors).toEqual(["message_decorator:throws: decorator failed"]);
+			expect(row.render(120).join("\n")).toContain("continued");
 		});
 	});
 

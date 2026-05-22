@@ -2464,6 +2464,37 @@ pi.sendMessage({
 });
 ```
 
+To decorate existing built-in or custom message views after primary rendering, use `registerMessageDecorator`:
+
+```typescript
+import { Text } from "@earendil-works/pi-tui";
+
+pi.registerMessageDecorator("assistant-model-label", {
+  roles: ["assistant"],
+  priority: 50,
+  decorate(subject, context) {
+    if (subject.type !== "message" || subject.message.role !== "assistant") return;
+    context.insertChild(context.parent, new Text(`${subject.message.provider}/${subject.message.model}`, 1, 0), 0);
+  },
+});
+```
+
+Tool rows can be decorated with `toolNames`:
+
+```typescript
+import { Text } from "@earendil-works/pi-tui";
+
+pi.registerMessageDecorator("bash-start-time", {
+  toolNames: ["bash"],
+  decorate(subject, context) {
+    if (subject.type !== "tool") return;
+    context.appendChild(context.parent, new Text(`tool: ${subject.toolName}`, 1, 0));
+  },
+});
+```
+
+Decorators receive `context.parent`, `context.components`, `context.insertChild`, `context.appendChild`, and `context.findDescendant`. Use decorators for badges, labels, metadata, and status lines without changing transcript content.
+
 ### Theme Colors
 
 All render functions receive a `theme` object. See [themes.md](themes.md) for creating custom themes and the full color palette.

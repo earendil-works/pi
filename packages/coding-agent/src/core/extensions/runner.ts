@@ -34,11 +34,14 @@ import type {
 	InputEvent,
 	InputEventResult,
 	InputSource,
+	MessageDecorationSubject,
 	MessageEndEvent,
 	MessageEndEventResult,
 	MessageRenderer,
+	MessageViewTarget,
 	ProviderConfig,
 	RegisteredCommand,
+	RegisteredMessageDecorator,
 	RegisteredTool,
 	ReplacedSessionContext,
 	ResolvedCommand,
@@ -507,6 +510,57 @@ export class ExtensionRunner {
 			}
 		}
 		return undefined;
+	}
+
+	private matchesMessageViewTarget(target: MessageViewTarget, message: AgentMessage): boolean {
+		const roles = target.roles ?? "*";
+		if (roles !== "*" && !roles.includes(message.role)) {
+			return false;
+		}
+
+		if (target.customTypes === undefined) {
+			return true;
+		}
+
+		if (message.role !== "custom") {
+			return false;
+		}
+
+		return target.customTypes === "*" || target.customTypes.includes(message.customType);
+	}
+
+	private matchesMessageDecoratorTarget(
+		decorator: RegisteredMessageDecorator,
+		subject: MessageDecorationSubject,
+	): boolean {
+		if (subject.type === "message") {
+			if (decorator.toolNames !== undefined) {
+				return false;
+			}
+			return this.matchesMessageViewTarget(decorator, subject.message);
+		}
+
+		if (decorator.customTypes !== undefined) {
+			return false;
+		}
+		const roles = decorator.roles ?? "*";
+		if (roles !== "*") {
+			return false;
+		}
+		const toolNames = decorator.toolNames ?? "*";
+		return toolNames === "*" || toolNames.includes(subject.toolName);
+	}
+
+	getMessageDecorators(subject: MessageDecorationSubject): RegisteredMessageDecorator[] {
+		const decorators: RegisteredMessageDecorator[] = [];
+		for (const ext of this.extensions) {
+			for (const decorator of ext.messageDecorators.values()) {
+				if (this.matchesMessageDecoratorTarget(decorator, subject)) {
+					decorators.push(decorator);
+				}
+			}
+		}
+		return decorators.sort((a, b) => (a.priority ?? 0) - (b.priority ?? 0));
 	}
 
 	private resolveRegisteredCommands(): ResolvedCommand[] {

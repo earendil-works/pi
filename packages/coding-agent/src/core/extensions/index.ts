@@ -88,13 +88,20 @@ export type {
 	LoadExtensionsResult,
 	LsToolCallEvent,
 	LsToolResultEvent,
+	// Message Rendering
+	MessageDecorationMessageSubject,
+	MessageDecorationSubject,
+	MessageDecorationToolSubject,
+	MessageDecoratorContext,
+	MessageDecoratorDefinition,
 	// Events - Message
 	MessageEndEvent,
-	// Message Rendering
 	MessageRenderer,
 	MessageRenderOptions,
 	MessageStartEvent,
 	MessageUpdateEvent,
+	MessageViewOptions,
+	MessageViewRole,
 	ModelSelectEvent,
 	ModelSelectSource,
 	// Provider Registration

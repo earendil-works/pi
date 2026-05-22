@@ -32,6 +32,7 @@ import type {
 	AutocompleteItem,
 	AutocompleteProvider,
 	Component,
+	Container,
 	EditorComponent,
 	EditorTheme,
 	KeyId,
@@ -1054,6 +1055,62 @@ export type MessageRenderer<T = unknown> = (
 	theme: Theme,
 ) => Component | undefined;
 
+export type MessageViewRole = AgentMessage["role"];
+
+export interface MessageViewOptions {
+	expanded: boolean;
+	isStreaming?: boolean;
+}
+
+export interface MessageViewTarget {
+	roles?: MessageViewRole[] | "*";
+	customTypes?: string[] | "*";
+}
+
+export interface MessageDecorationMessageSubject {
+	type: "message";
+	message: AgentMessage;
+}
+
+export interface MessageDecorationToolSubject {
+	type: "tool";
+	toolCallId: string;
+	toolName: string;
+	timestamp: number;
+}
+
+export type MessageDecorationSubject = MessageDecorationMessageSubject | MessageDecorationToolSubject;
+
+export interface MessageDecoratorContext {
+	options: MessageViewOptions;
+	theme: Theme;
+	/** Parent container for this decorated row. Contains the rendered primary components. */
+	parent: Container;
+	/** Primary rendered components for this row. */
+	components: Component[];
+	/** Insert a child into any component that exposes a mutable children array. */
+	insertChild(parent: Component, child: Component, index: number): boolean;
+	/** Append a child into any component that exposes addChild(). */
+	appendChild(parent: Component, child: Component): boolean;
+	/** Depth-first search helper for rendered component trees. */
+	findDescendant<T extends Component>(
+		root: Component | Component[],
+		predicate: (component: Component) => component is T,
+	): T | undefined;
+}
+
+export interface MessageDecoratorDefinition extends MessageViewTarget {
+	priority?: number;
+	toolNames?: string[] | "*";
+	decorate(subject: MessageDecorationSubject, context: MessageDecoratorContext): void;
+}
+
+export interface RegisteredMessageDecorator extends MessageDecoratorDefinition {
+	name: string;
+	extensionPath: string;
+	sourceInfo: SourceInfo;
+}
+
 // ============================================================================
 // Command Registration
 // ============================================================================
@@ -1169,6 +1226,9 @@ export interface ExtensionAPI {
 
 	/** Register a custom renderer for CustomMessageEntry. */
 	registerMessageRenderer<T = unknown>(customType: string, renderer: MessageRenderer<T>): void;
+
+	/** Register a decorator that can mutate matching built-in or custom message views after primary rendering. */
+	registerMessageDecorator(name: string, definition: MessageDecoratorDefinition): void;
 
 	// =========================================================================
 	// Actions
@@ -1542,6 +1602,7 @@ export interface Extension {
 	handlers: Map<string, HandlerFn[]>;
 	tools: Map<string, RegisteredTool>;
 	messageRenderers: Map<string, MessageRenderer>;
+	messageDecorators: Map<string, RegisteredMessageDecorator>;
 	commands: Map<string, RegisteredCommand>;
 	flags: Map<string, ExtensionFlag>;
 	shortcuts: Map<KeyId, ExtensionShortcut>;

@@ -34,6 +34,7 @@ import type {
 	ExtensionFactory,
 	ExtensionRuntime,
 	LoadExtensionsResult,
+	MessageDecoratorDefinition,
 	MessageRenderer,
 	ProviderConfig,
 	RegisteredCommand,
@@ -234,6 +235,19 @@ function createExtensionAPI(
 			extension.messageRenderers.set(customType, renderer as MessageRenderer);
 		},
 
+		registerMessageDecorator(name: string, definition: MessageDecoratorDefinition): void {
+			runtime.assertActive();
+			if (extension.messageDecorators.has(name)) {
+				throw new Error(`Message decorator '${name}' is already registered by ${extension.path}`);
+			}
+			extension.messageDecorators.set(name, {
+				...definition,
+				name,
+				extensionPath: extension.path,
+				sourceInfo: extension.sourceInfo,
+			});
+		},
+
 		// Flag access - checks extension registered it, reads from runtime
 		getFlag(name: string): boolean | string | undefined {
 			runtime.assertActive();
@@ -359,6 +373,7 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 		handlers: new Map(),
 		tools: new Map(),
 		messageRenderers: new Map(),
+		messageDecorators: new Map(),
 		commands: new Map(),
 		flags: new Map(),
 		shortcuts: new Map(),

@@ -3,7 +3,9 @@ import type { AssistantMessage, ToolResultMessage, Usage } from "@earendil-works
 import { Container, Text, type TUI } from "@earendil-works/pi-tui";
 import { beforeAll, describe, expect, test, vi } from "vitest";
 import type { AgentSessionEvent } from "../../../src/core/agent-session.ts";
+import type { ExtensionRunner } from "../../../src/core/extensions/runner.ts";
 import type { SessionContext } from "../../../src/core/session-manager.ts";
+import { DecoratedRowComponent } from "../../../src/modes/interactive/components/message-decorator.ts";
 import type { ToolExecutionComponent } from "../../../src/modes/interactive/components/tool-execution.ts";
 import { InteractiveMode } from "../../../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../../../src/modes/interactive/theme/theme.ts";
@@ -27,8 +29,13 @@ const EMPTY_USAGE: Usage = {
 	},
 };
 
+type PendingToolRow = {
+	component: ToolExecutionComponent;
+	row: DecoratedRowComponent;
+};
+
 type RenderSessionContextThis = {
-	pendingTools: Map<string, ToolExecutionComponent>;
+	pendingToolRows: Map<string, PendingToolRow>;
 	chatContainer: Container;
 	footer: { invalidate(): void };
 	ui: TUI;
@@ -37,11 +44,24 @@ type RenderSessionContextThis = {
 		getImageWidthCells(): number;
 	};
 	sessionManager: { getCwd(): string };
-	session: { retryAttempt: number };
+	session: {
+		retryAttempt: number;
+		extensionRunner: {
+			emitError(): void;
+			getMessageDecorators(): [];
+		};
+	};
 	toolOutputExpanded: boolean;
 	isInitialized: boolean;
 	updateEditorBorderColor(): void;
 	getRegisteredToolDefinition(toolName: string): undefined;
+	createPendingToolRow(
+		toolName: string,
+		toolCallId: string,
+		component: ToolExecutionComponent,
+		timestamp: number,
+	): void;
+	getPendingToolComponent(toolCallId: string): ToolExecutionComponent | undefined;
 	addMessageToChat(message: AgentMessage, options?: { populateHistory?: boolean }): void;
 };
 
@@ -56,7 +76,7 @@ type HandleEvent = (this: RenderSessionContextThis, event: AgentSessionEvent) =>
 function createFakeInteractiveModeThis(): RenderSessionContextThis {
 	const chatContainer = new Container();
 	return {
-		pendingTools: new Map<string, ToolExecutionComponent>(),
+		pendingToolRows: new Map<string, PendingToolRow>(),
 		chatContainer,
 		footer: { invalidate: vi.fn() },
 		ui: { requestRender: vi.fn() } as unknown as TUI,
@@ -65,11 +85,30 @@ function createFakeInteractiveModeThis(): RenderSessionContextThis {
 			getImageWidthCells: () => 60,
 		},
 		sessionManager: { getCwd: () => process.cwd() },
-		session: { retryAttempt: 0 },
+		session: {
+			retryAttempt: 0,
+			extensionRunner: {
+				emitError: vi.fn(),
+				getMessageDecorators: () => [],
+			},
+		},
 		toolOutputExpanded: false,
 		isInitialized: true,
 		updateEditorBorderColor: vi.fn(),
 		getRegisteredToolDefinition: (_toolName: string) => undefined,
+		createPendingToolRow(toolName, toolCallId, component, timestamp) {
+			const row = new DecoratedRowComponent(
+				{ type: "tool", toolCallId, toolName, timestamp },
+				this.session.extensionRunner as unknown as ExtensionRunner,
+				[component],
+				{ expanded: this.toolOutputExpanded },
+			);
+			this.pendingToolRows.set(toolCallId, { component, row });
+			this.chatContainer.addChild(row);
+		},
+		getPendingToolComponent(toolCallId) {
+			return this.pendingToolRows.get(toolCallId)?.component;
+		},
 		addMessageToChat(message: AgentMessage) {
 			chatContainer.addChild(new Text(message.role, 0, 0));
 		},
@@ -133,7 +172,7 @@ describe("InteractiveMode.renderSessionContext", () => {
 
 		renderSessionContext.call(fakeThis, createSessionContext([createAssistantToolCallMessage()]));
 
-		expect(fakeThis.pendingTools.has(TOOL_CALL_ID)).toBe(true);
+		expect(fakeThis.pendingToolRows.has(TOOL_CALL_ID)).toBe(true);
 
 		await handleEvent.call(fakeThis, {
 			type: "tool_execution_end",
@@ -143,7 +182,7 @@ describe("InteractiveMode.renderSessionContext", () => {
 			isError: false,
 		});
 
-		expect(fakeThis.pendingTools.has(TOOL_CALL_ID)).toBe(false);
+		expect(fakeThis.pendingToolRows.has(TOOL_CALL_ID)).toBe(false);
 		expect(renderChat(fakeThis.chatContainer)).toContain("FINAL_RESULT");
 	});
 
@@ -158,7 +197,7 @@ describe("InteractiveMode.renderSessionContext", () => {
 			createSessionContext([createAssistantToolCallMessage(), createToolResultMessage("HISTORICAL_RESULT")]),
 		);
 
-		expect(fakeThis.pendingTools.size).toBe(0);
+		expect(fakeThis.pendingToolRows.size).toBe(0);
 		expect(renderChat(fakeThis.chatContainer)).toContain("HISTORICAL_RESULT");
 	});
 });

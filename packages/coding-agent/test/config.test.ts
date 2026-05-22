@@ -4,6 +4,7 @@ import { delimiter, join } from "path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
 	detectInstallMethod,
+	findPackageDir,
 	getSelfUpdateCommand,
 	getSelfUpdateUnavailableInstruction,
 	getUpdateInstruction,
@@ -146,6 +147,17 @@ function createFakeBunScript(bunBin: string): string {
 }
 
 describe("detectInstallMethod", () => {
+	test("finds package root when dist also contains package metadata", () => {
+		const packageDir = mkdtempSync(join(tmpdir(), "pi-package-dir-"));
+		const distDir = join(packageDir, "dist");
+		mkdirSync(distDir, { recursive: true });
+		writeFileSync(join(packageDir, "package.json"), "{}");
+		writeFileSync(join(distDir, "package.json"), "{}");
+		tempDir = packageDir;
+
+		expect(findPackageDir(distDir)).toBe(packageDir);
+	});
+
 	test("detects pnpm from Windows .pnpm install paths", () => {
 		setExecPath(
 			"C:\\Users\\Admin\\Documents\\pnpm-repository\\global\\5\\.pnpm\\@earendil-works+pi-coding-agent@0.67.68\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js",
