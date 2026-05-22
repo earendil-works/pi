@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
-import { normalizePathInput, resolvePathInput } from "../utils/paths.ts";
+import { normalizePathInput, resolvePath } from "../utils/paths.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
 
 export interface CompactionSettings {
@@ -161,8 +161,8 @@ export class FileSettingsStorage implements SettingsStorage {
 	private projectSettingsPath: string;
 
 	constructor(cwd: string, agentDir: string) {
-		const resolvedCwd = resolvePathInput(cwd);
-		const resolvedAgentDir = resolvePathInput(agentDir);
+		const resolvedCwd = resolvePath(cwd);
+		const resolvedAgentDir = resolvePath(agentDir);
 		this.globalSettingsPath = join(resolvedAgentDir, "settings.json");
 		this.projectSettingsPath = join(resolvedCwd, CONFIG_DIR_NAME, "settings.json");
 	}

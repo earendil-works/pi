@@ -3,7 +3,7 @@ import ignore from "ignore";
 import { basename, dirname, join, relative, resolve, sep } from "path";
 import { CONFIG_DIR_NAME, getAgentDir } from "../config.ts";
 import { parseFrontmatter } from "../utils/frontmatter.ts";
-import { canonicalizePath, resolvePathInput } from "../utils/paths.ts";
+import { canonicalizePath, resolvePath } from "../utils/paths.ts";
 import type { ResourceDiagnostic } from "./diagnostics.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 
@@ -388,8 +388,8 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	const { agentDir, skillPaths, includeDefaults } = options;
 
 	// Resolve agentDir - if not provided, use default from config
-	const resolvedCwd = resolvePathInput(options.cwd);
-	const resolvedAgentDir = resolvePathInput(agentDir ?? getAgentDir());
+	const resolvedCwd = resolvePath(options.cwd);
+	const resolvedAgentDir = resolvePath(agentDir ?? getAgentDir());
 
 	const skillMap = new Map<string, Skill>();
 	const realPathSet = new Set<string>();
@@ -453,7 +453,7 @@ export function loadSkills(options: LoadSkillsOptions): LoadSkillsResult {
 	};
 
 	for (const rawPath of skillPaths) {
-		const resolvedPath = resolvePathInput(rawPath, resolvedCwd, { trim: true });
+		const resolvedPath = resolvePath(rawPath, resolvedCwd, { trim: true });
 		if (!existsSync(resolvedPath)) {
 			allDiagnostics.push({ type: "warning", message: "skill path does not exist", path: resolvedPath });
 			continue;

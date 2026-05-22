@@ -45,7 +45,7 @@ import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { ExtensionSelectorComponent } from "./modes/interactive/components/extension-selector.ts";
 import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
-import { isLocalPath, normalizePathInput, resolvePathInput } from "./utils/paths.ts";
+import { isLocalPath, normalizePathInput, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
 /**
@@ -148,7 +148,7 @@ type ResolvedSession =
 async function resolveSessionPath(sessionArg: string, cwd: string, sessionDir?: string): Promise<ResolvedSession> {
 	// If it looks like a file path, resolve it before handing it to the session manager.
 	if (sessionArg.includes("/") || sessionArg.includes("\\") || sessionArg.endsWith(".jsonl")) {
-		return { type: "path", path: resolvePathInput(sessionArg, cwd) };
+		return { type: "path", path: resolvePath(sessionArg, cwd) };
 	}
 
 	// Try to match as session ID in current project first
@@ -380,7 +380,7 @@ function buildSessionOptions(
 }
 
 function resolveCliPaths(cwd: string, paths: string[] | undefined): string[] | undefined {
-	return paths?.map((value) => (isLocalPath(value) ? resolvePathInput(value, cwd) : value));
+	return paths?.map((value) => (isLocalPath(value) ? resolvePath(value, cwd) : value));
 }
 
 async function promptForMissingSessionCwd(

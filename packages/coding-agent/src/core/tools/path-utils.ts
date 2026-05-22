@@ -1,5 +1,5 @@
 import { accessSync, constants } from "node:fs";
-import { normalizePathInput, resolvePathInput } from "../../utils/paths.ts";
+import { normalizePathInput, resolvePath } from "../../utils/paths.ts";
 
 const NARROW_NO_BREAK_SPACE = "\u202F";
 
@@ -36,7 +36,7 @@ export function expandPath(filePath: string): string {
  * Handles ~ expansion and absolute paths.
  */
 export function resolveToCwd(filePath: string, cwd: string): string {
-	return resolvePathInput(filePath, cwd, { normalizeUnicodeSpaces: true, stripAtPrefix: true });
+	return resolvePath(filePath, cwd, { normalizeUnicodeSpaces: true, stripAtPrefix: true });
 }
 
 export function resolveReadPath(filePath: string, cwd: string): string {

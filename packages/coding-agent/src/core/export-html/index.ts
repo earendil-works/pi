@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "fs";
 import { basename, join } from "path";
 import { APP_NAME, getExportTemplateDir } from "../../config.ts";
 import { getResolvedThemeColors, getThemeExportColors } from "../../modes/interactive/theme/theme.ts";
-import { normalizePathInput, resolvePathInput } from "../../utils/paths.ts";
+import { normalizePathInput, resolvePath } from "../../utils/paths.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
 import type { SessionEntry } from "../session-manager.ts";
 import { SessionManager } from "../session-manager.ts";
@@ -287,7 +287,7 @@ export async function exportSessionToHtml(
  */
 export async function exportFromFile(inputPath: string, options?: ExportOptions | string): Promise<string> {
 	const opts: ExportOptions = typeof options === "string" ? { outputPath: options } : options || {};
-	const resolvedInputPath = resolvePathInput(inputPath);
+	const resolvedInputPath = resolvePath(inputPath);
 
 	if (!existsSync(resolvedInputPath)) {
 		throw new Error(`File not found: ${resolvedInputPath}`);

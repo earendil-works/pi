@@ -7,7 +7,7 @@ import type { ResourceDiagnostic } from "./diagnostics.ts";
 
 export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
-import { canonicalizePath, isLocalPath, resolvePathInput } from "../utils/paths.ts";
+import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
 import { createExtensionRuntime, loadExtensionFromFactory, loadExtensions } from "./extensions/loader.ts";
 import type { Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResult } from "./extensions/types.ts";
@@ -76,8 +76,8 @@ export function loadProjectContextFiles(options: {
 	cwd: string;
 	agentDir: string;
 }): Array<{ path: string; content: string }> {
-	const resolvedCwd = resolvePathInput(options.cwd);
-	const resolvedAgentDir = resolvePathInput(options.agentDir);
+	const resolvedCwd = resolvePath(options.cwd);
+	const resolvedAgentDir = resolvePath(options.agentDir);
 
 	const contextFiles: Array<{ path: string; content: string }> = [];
 	const seenPaths = new Set<string>();
@@ -204,8 +204,8 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private lastThemePaths: string[];
 
 	constructor(options: DefaultResourceLoaderOptions) {
-		this.cwd = resolvePathInput(options.cwd);
-		this.agentDir = resolvePathInput(options.agentDir);
+		this.cwd = resolvePath(options.cwd);
+		this.agentDir = resolvePath(options.agentDir);
 		this.settingsManager = options.settingsManager ?? SettingsManager.create(this.cwd, this.agentDir);
 		this.eventBus = options.eventBus ?? createEventBus();
 		this.packageManager = new DefaultPackageManager({
@@ -692,7 +692,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private resolveResourcePath(p: string): string {
-		return resolvePathInput(p, this.cwd, { trim: true });
+		return resolvePath(p, this.cwd, { trim: true });
 	}
 
 	private loadThemes(

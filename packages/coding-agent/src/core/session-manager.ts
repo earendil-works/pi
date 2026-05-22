@@ -16,7 +16,7 @@ import {
 import { readdir, readFile, stat } from "fs/promises";
 import { join, resolve } from "path";
 import { getAgentDir as getDefaultAgentDir, getSessionsDir } from "../config.ts";
-import { normalizePathInput, resolvePathInput } from "../utils/paths.ts";
+import { normalizePathInput, resolvePath } from "../utils/paths.ts";
 import {
 	type BashExecutionMessage,
 	type CustomMessage,
@@ -426,8 +426,8 @@ export function buildSessionContext(
  * Encodes cwd into a safe directory name under ~/.pi/agent/sessions/.
  */
 export function getDefaultSessionDir(cwd: string, agentDir: string = getDefaultAgentDir()): string {
-	const resolvedCwd = resolvePathInput(cwd);
-	const resolvedAgentDir = resolvePathInput(agentDir);
+	const resolvedCwd = resolvePath(cwd);
+	const resolvedAgentDir = resolvePath(agentDir);
 	const safePath = `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
 	const sessionDir = join(resolvedAgentDir, "sessions", safePath);
 	if (!existsSync(sessionDir)) {
@@ -722,7 +722,7 @@ export class SessionManager {
 	private leafId: string | null = null;
 
 	private constructor(cwd: string, sessionDir: string, sessionFile: string | undefined, persist: boolean) {
-		this.cwd = resolvePathInput(cwd);
+		this.cwd = resolvePath(cwd);
 		this.sessionDir = normalizePathInput(sessionDir);
 		this.persist = persist;
 		if (persist && this.sessionDir && !existsSync(this.sessionDir)) {
@@ -738,7 +738,7 @@ export class SessionManager {
 
 	/** Switch to a different session file (used for resume and branching) */
 	setSessionFile(sessionFile: string): void {
-		this.sessionFile = resolvePathInput(sessionFile);
+		this.sessionFile = resolvePath(sessionFile);
 		if (existsSync(this.sessionFile)) {
 			this.fileEntries = loadEntriesFromFile(this.sessionFile);
 
@@ -1320,7 +1320,7 @@ export class SessionManager {
 	 * @param cwdOverride Optional cwd override instead of the session header cwd.
 	 */
 	static open(path: string, sessionDir?: string, cwdOverride?: string): SessionManager {
-		const resolvedPath = resolvePathInput(path);
+		const resolvedPath = resolvePath(path);
 		// Extract cwd from session header if possible, otherwise use process.cwd()
 		const entries = loadEntriesFromFile(resolvedPath);
 		const header = entries.find((e) => e.type === "session") as SessionHeader | undefined;
@@ -1357,8 +1357,8 @@ export class SessionManager {
 	 * @param sessionDir Optional session directory. If omitted, uses default for targetCwd.
 	 */
 	static forkFrom(sourcePath: string, targetCwd: string, sessionDir?: string): SessionManager {
-		const resolvedSourcePath = resolvePathInput(sourcePath);
-		const resolvedTargetCwd = resolvePathInput(targetCwd);
+		const resolvedSourcePath = resolvePath(sourcePath);
+		const resolvedTargetCwd = resolvePath(targetCwd);
 		const sourceEntries = loadEntriesFromFile(resolvedSourcePath);
 		if (sourceEntries.length === 0) {
 			throw new Error(`Cannot fork: source session file is empty or invalid: ${resolvedSourcePath}`);

@@ -35,7 +35,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
-import { resolvePathInput } from "../utils/paths.ts";
+import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
@@ -2994,7 +2994,7 @@ export class AgentSession {
 	 * @returns The resolved output file path.
 	 */
 	exportToJsonl(outputPath?: string): string {
-		const filePath = resolvePathInput(
+		const filePath = resolvePath(
 			outputPath ?? `session-${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`,
 			process.cwd(),
 		);

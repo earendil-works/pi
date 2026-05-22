@@ -23,7 +23,7 @@ import { CONFIG_DIR_NAME, getAgentDir, isBunBinary } from "../../config.ts";
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
 // avoiding a circular dependency. Extensions can import from @earendil-works/pi-coding-agent.
 import * as _bundledPiCodingAgent from "../../index.ts";
-import { resolvePathInput } from "../../utils/paths.ts";
+import { resolvePath } from "../../utils/paths.ts";
 import { createEventBus, type EventBus } from "../event-bus.ts";
 import type { ExecOptions } from "../exec.ts";
 import { execCommand } from "../exec.ts";
@@ -371,7 +371,7 @@ async function loadExtension(
 	eventBus: EventBus,
 	runtime: ExtensionRuntime,
 ): Promise<{ extension: Extension | null; error: string | null }> {
-	const resolvedPath = resolvePathInput(extensionPath, cwd, { normalizeUnicodeSpaces: true });
+	const resolvedPath = resolvePath(extensionPath, cwd, { normalizeUnicodeSpaces: true });
 
 	try {
 		const factory = await loadExtensionModule(resolvedPath);
@@ -401,7 +401,7 @@ export async function loadExtensionFromFactory(
 	extensionPath = "<inline>",
 ): Promise<Extension> {
 	const extension = createExtension(extensionPath, extensionPath);
-	const resolvedCwd = resolvePathInput(cwd);
+	const resolvedCwd = resolvePath(cwd);
 	const api = createExtensionAPI(extension, runtime, resolvedCwd, eventBus);
 	await factory(api);
 	return extension;
@@ -413,7 +413,7 @@ export async function loadExtensionFromFactory(
 export async function loadExtensions(paths: string[], cwd: string, eventBus?: EventBus): Promise<LoadExtensionsResult> {
 	const extensions: Extension[] = [];
 	const errors: Array<{ path: string; error: string }> = [];
-	const resolvedCwd = resolvePathInput(cwd);
+	const resolvedCwd = resolvePath(cwd);
 	const resolvedEventBus = eventBus ?? createEventBus();
 	const runtime = createExtensionRuntime();
 
@@ -555,8 +555,8 @@ export async function discoverAndLoadExtensions(
 	agentDir: string = getAgentDir(),
 	eventBus?: EventBus,
 ): Promise<LoadExtensionsResult> {
-	const resolvedCwd = resolvePathInput(cwd);
-	const resolvedAgentDir = resolvePathInput(agentDir);
+	const resolvedCwd = resolvePath(cwd);
+	const resolvedAgentDir = resolvePath(agentDir);
 	const allPaths: string[] = [];
 	const seen = new Set<string>();
 
@@ -580,7 +580,7 @@ export async function discoverAndLoadExtensions(
 
 	// 3. Explicitly configured paths
 	for (const p of configuredPaths) {
-		const resolved = resolvePathInput(p, resolvedCwd, { normalizeUnicodeSpaces: true });
+		const resolved = resolvePath(p, resolvedCwd, { normalizeUnicodeSpaces: true });
 		if (fs.existsSync(resolved) && fs.statSync(resolved).isDirectory()) {
 			// Check for package.json with pi manifest or index.ts
 			const entries = resolveExtensionEntries(resolved);

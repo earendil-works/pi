@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { canonicalizePath, getCwdRelativePath, isLocalPath, resolvePathInput } from "../src/utils/paths.ts";
+import { canonicalizePath, getCwdRelativePath, isLocalPath, resolvePath } from "../src/utils/paths.ts";
 
 let tempDir: string;
 
@@ -74,21 +74,21 @@ describe("getCwdRelativePath", () => {
 	});
 });
 
-describe("resolvePathInput", () => {
+describe("resolvePath", () => {
 	it("resolves relative paths against the base directory", () => {
 		const cwd = join(tmpdir(), "pi-paths-cwd");
-		expect(resolvePathInput("subdir/file.txt", cwd)).toBe(resolve(cwd, "subdir/file.txt"));
-		expect(resolvePathInput("subdir/file.txt", pathToFileURL(cwd).href)).toBe(resolve(cwd, "subdir/file.txt"));
+		expect(resolvePath("subdir/file.txt", cwd)).toBe(resolve(cwd, "subdir/file.txt"));
+		expect(resolvePath("subdir/file.txt", pathToFileURL(cwd).href)).toBe(resolve(cwd, "subdir/file.txt"));
 	});
 
 	it("accepts file URLs", () => {
 		const dir = createTempDir();
 		const filePath = join(dir, "file with spaces.txt");
-		expect(resolvePathInput(pathToFileURL(filePath).href, join(dir, "base"))).toBe(resolve(filePath));
+		expect(resolvePath(pathToFileURL(filePath).href, join(dir, "base"))).toBe(resolve(filePath));
 	});
 
 	it("throws for invalid file URLs", () => {
-		expect(() => resolvePathInput("file:///%E0%A4%A")).toThrow();
+		expect(() => resolvePath("file:///%E0%A4%A")).toThrow();
 	});
 
 	it("preserves POSIX absolute paths with literal percent sequences", () => {
@@ -98,7 +98,7 @@ describe("resolvePathInput", () => {
 
 		const dir = createTempDir();
 		for (const filePath of [join(dir, "report%2026.md"), join(dir, "foo%2Fbar"), join(dir, "malformed%A.md")]) {
-			expect(resolvePathInput(filePath, join(dir, "base"))).toBe(resolve(filePath));
+			expect(resolvePath(filePath, join(dir, "base"))).toBe(resolve(filePath));
 		}
 	});
 
@@ -111,7 +111,7 @@ describe("resolvePathInput", () => {
 		const filePath = join(dir, "dir", "SKILL.md");
 		const pathname = pathToFileURL(filePath).pathname;
 		expect(pathname).toMatch(/^\/[A-Za-z]:/);
-		expect(resolvePathInput(pathname, "E:\\project")).toBe(resolve(pathname));
+		expect(resolvePath(pathname, "E:\\project")).toBe(resolve(pathname));
 	});
 });
 

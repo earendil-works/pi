@@ -1,6 +1,6 @@
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve as resolvePath, sep } from "node:path";
+import { isAbsolute, join, resolve as nodeResolvePath, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnProcessSync } from "./child-process.ts";
 
@@ -40,7 +40,7 @@ export function canonicalizePath(path: string): string {
  */
 export function isLocalPath(value: string): boolean {
 	const trimmed = value.trim();
-	// Known non-local prefixes. file: URLs are local paths and are intentionally resolved by resolvePathInput().
+	// Known non-local prefixes. file: URLs are local paths and are intentionally resolved by resolvePath().
 	if (
 		trimmed.startsWith("npm:") ||
 		trimmed.startsWith("git:") ||
@@ -79,19 +79,15 @@ export function normalizePathInput(input: string, options: PathInputOptions = {}
 	return normalized;
 }
 
-export function resolvePathInput(
-	input: string,
-	baseDir: string = process.cwd(),
-	options: PathInputOptions = {},
-): string {
+export function resolvePath(input: string, baseDir: string = process.cwd(), options: PathInputOptions = {}): string {
 	const normalized = normalizePathInput(input, options);
 	const normalizedBaseDir = normalizePathInput(baseDir);
-	return isAbsolute(normalized) ? resolvePath(normalized) : resolvePath(normalizedBaseDir, normalized);
+	return isAbsolute(normalized) ? nodeResolvePath(normalized) : nodeResolvePath(normalizedBaseDir, normalized);
 }
 
 export function getCwdRelativePath(filePath: string, cwd: string): string | undefined {
 	const resolvedCwd = resolvePath(cwd);
-	const resolvedPath = resolvePathInput(filePath, resolvedCwd);
+	const resolvedPath = resolvePath(filePath, resolvedCwd);
 	const relativePath = relative(resolvedCwd, resolvedPath);
 	const isInsideCwd =
 		relativePath === "" ||
@@ -101,7 +97,7 @@ export function getCwdRelativePath(filePath: string, cwd: string): string | unde
 }
 
 export function formatPathRelativeToCwdOrAbsolute(filePath: string, cwd: string): string {
-	const absolutePath = resolvePathInput(filePath, cwd);
+	const absolutePath = resolvePath(filePath, cwd);
 	return (getCwdRelativePath(absolutePath, cwd) ?? absolutePath).split(sep).join("/");
 }
 
