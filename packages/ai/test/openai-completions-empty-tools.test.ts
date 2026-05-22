@@ -163,6 +163,30 @@ describe("openai-completions empty tools handling", () => {
 		expect(clientOptions.defaultHeaders?.["cf-aig-authorization"]).toBe("Bearer test");
 	});
 
+	it("omits store for Google OpenAI-compatible endpoints", async () => {
+		const { compat: _compat, ...baseModel } = getModel("openai", "gpt-4o-mini")!;
+		const model = {
+			...baseModel,
+			id: "gemini-3.1-pro-preview",
+			name: "Gemini 3.1 Pro Preview",
+			api: "openai-completions",
+			provider: "custom",
+			baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+		} as const;
+
+		await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+			},
+			{ apiKey: "test" },
+		).result();
+
+		const params = mockState.lastParams as { store?: boolean };
+		expect(params.store).toBeUndefined();
+		expect("store" in (params as object)).toBe(false);
+	});
+
 	it("preserves inline upstream Authorization for Cloudflare AI Gateway BYOK requests", async () => {
 		process.env.CLOUDFLARE_ACCOUNT_ID = "account-id";
 		process.env.CLOUDFLARE_GATEWAY_ID = "gateway-id";

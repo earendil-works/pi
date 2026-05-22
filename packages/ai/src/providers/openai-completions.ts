@@ -1077,6 +1077,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 	const isMoonshot = provider === "moonshotai" || provider === "moonshotai-cn" || baseUrl.includes("api.moonshot.");
 	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || baseUrl.includes("api.cloudflare.com");
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
+	const isGoogleOpenAICompat = baseUrl.includes("generativelanguage.googleapis.com");
 
 	const isNonStandard =
 		provider === "cerebras" ||
@@ -1100,7 +1101,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
 
 	return {
-		supportsStore: !isNonStandard,
+		supportsStore: !isNonStandard && !isGoogleOpenAICompat,
 		supportsDeveloperRole: !isNonStandard,
 		supportsReasoningEffort: !isGrok && !isZai && !isMoonshot && !isTogether && !isCloudflareAiGateway,
 		supportsUsageInStreaming: true,
