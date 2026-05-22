@@ -1248,6 +1248,23 @@ export class DefaultPackageManager implements PackageManager {
 				if (!existsSync(installedPath)) {
 					const installed = await installMissing();
 					if (!installed) continue;
+				} else if (parsed.ref && scope !== "temporary" && !isOfflineModeEnabled()) {
+					// local check: if HEAD doesn't match the configured ref
+					// (or the ref doesn't exist locally yet), trigger install to fetch it.
+					let refMatches = false;
+					try {
+						const head = await this.runCommandCapture("git", ["rev-parse", "HEAD"], { cwd: installedPath });
+						const target = await this.runCommandCapture("git", ["rev-parse", parsed.ref], {
+							cwd: installedPath,
+						});
+						refMatches = head.trim() === target.trim();
+					} catch {
+						// ref doesn't exist locally or not a git repo
+					}
+					if (!refMatches) {
+						const installed = await installMissing();
+						if (!installed) continue;
+					}
 				} else if (scope === "temporary" && !parsed.pinned && !isOfflineModeEnabled()) {
 					await this.refreshTemporaryGitSource(parsed, sourceStr);
 				}
