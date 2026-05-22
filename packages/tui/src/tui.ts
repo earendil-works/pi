@@ -251,6 +251,10 @@ export class TUI extends Container {
 	private renderTimer: NodeJS.Timeout | undefined;
 	private lastRenderAt = 0;
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
+	private static readonly DEFAULT_IME_RENDER_QUIET_MS = 250;
+	private handlingInput = false;
+	private imeRenderQuietUntil = 0;
+	private imeDeferredRenderTimer: NodeJS.Timeout | undefined;
 	private cursorRow = 0; // Logical cursor row (end of rendered content)
 	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
 	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
@@ -476,6 +480,10 @@ export class TUI extends Container {
 			clearTimeout(this.renderTimer);
 			this.renderTimer = undefined;
 		}
+		if (this.imeDeferredRenderTimer) {
+			clearTimeout(this.imeDeferredRenderTimer);
+			this.imeDeferredRenderTimer = undefined;
+		}
 		// Move cursor to the end of the content to prevent overwriting/artifacts on exit
 		if (this.previousLines.length > 0) {
 			const targetRow = this.previousLines.length; // Line after the last content
@@ -492,7 +500,41 @@ export class TUI extends Container {
 		this.terminal.stop();
 	}
 
+	private getImeRenderQuietMs(): number {
+		const raw = process.env.PI_TUI_IME_QUIET_MS;
+		if (raw === undefined) return TUI.DEFAULT_IME_RENDER_QUIET_MS;
+		const parsed = Number(raw);
+		return Number.isFinite(parsed) ? Math.max(0, parsed) : TUI.DEFAULT_IME_RENDER_QUIET_MS;
+	}
+
+	private hasFocusedInputHandler(): boolean {
+		return Boolean(this.focusedComponent?.handleInput);
+	}
+
+	private markImeRenderQuietWindow(): void {
+		const quietMs = this.getImeRenderQuietMs();
+		if (quietMs <= 0 || !this.hasFocusedInputHandler()) return;
+		this.imeRenderQuietUntil = Math.max(this.imeRenderQuietUntil, Date.now() + quietMs);
+	}
+
+	private shouldDeferRenderForIme(): boolean {
+		return !this.handlingInput && this.hasFocusedInputHandler() && Date.now() < this.imeRenderQuietUntil;
+	}
+
+	private scheduleImeDeferredRender(): void {
+		if (this.imeDeferredRenderTimer || this.stopped) return;
+		const delay = Math.max(0, this.imeRenderQuietUntil - Date.now());
+		this.imeDeferredRenderTimer = setTimeout(() => {
+			this.imeDeferredRenderTimer = undefined;
+			this.requestRender();
+		}, delay);
+	}
+
 	requestRender(force = false): void {
+		if (!force && this.shouldDeferRenderForIme()) {
+			this.scheduleImeDeferredRender();
+			return;
+		}
 		if (force) {
 			this.previousLines = [];
 			this.previousWidth = -1; // -1 triggers widthChanged, forcing a full clear
@@ -504,6 +546,10 @@ export class TUI extends Container {
 			if (this.renderTimer) {
 				clearTimeout(this.renderTimer);
 				this.renderTimer = undefined;
+			}
+			if (this.imeDeferredRenderTimer) {
+				clearTimeout(this.imeDeferredRenderTimer);
+				this.imeDeferredRenderTimer = undefined;
 			}
 			this.renderRequested = true;
 			process.nextTick(() => {
@@ -591,8 +637,14 @@ export class TUI extends Container {
 			if (isKeyRelease(data) && !this.focusedComponent.wantsKeyRelease) {
 				return;
 			}
-			this.focusedComponent.handleInput(data);
-			this.requestRender();
+			this.markImeRenderQuietWindow();
+			this.handlingInput = true;
+			try {
+				this.focusedComponent.handleInput(data);
+				this.requestRender();
+			} finally {
+				this.handlingInput = false;
+			}
 		}
 	}
 

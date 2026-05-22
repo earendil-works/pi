@@ -13,6 +13,13 @@ class TestComponent implements Component {
 	invalidate(): void {}
 }
 
+class FocusedInputComponent extends TestComponent {
+	focused = false;
+	handleInput(data: string): void {
+		this.lines = [data];
+	}
+}
+
 class LoggingVirtualTerminal extends VirtualTerminal {
 	private writes: string[] = [];
 
@@ -63,6 +70,47 @@ function getCellItalic(terminal: VirtualTerminal, row: number, col: number): num
 	assert.ok(cell, `Missing cell at row ${row} col ${col}`);
 	return cell.isItalic();
 }
+
+describe("TUI IME render quiet window", () => {
+	it("defers background renders shortly after focused input while allowing the input render", async () => {
+		await withEnv({ PI_TUI_IME_QUIET_MS: "100" }, async () => {
+			const terminal = new LoggingVirtualTerminal(40, 10);
+			const tui = new TUI(terminal);
+			const component = new FocusedInputComponent();
+			tui.addChild(component);
+			tui.setFocus(component);
+
+			component.lines = [""];
+			tui.start();
+			await terminal.waitForRender();
+			terminal.clearWrites();
+
+			terminal.sendInput("한");
+			await terminal.waitForRender();
+			assert.ok(terminal.getWrites().includes("한"), "input-triggered render should still run immediately");
+
+			terminal.clearWrites();
+			component.lines = ["background update"];
+			tui.requestRender();
+			await new Promise<void>((resolve) => setTimeout(resolve, 30));
+			await terminal.flush();
+			assert.strictEqual(
+				terminal.getWrites(),
+				"",
+				"background render should be deferred during the IME quiet window",
+			);
+
+			await new Promise<void>((resolve) => setTimeout(resolve, 120));
+			await terminal.flush();
+			assert.ok(
+				terminal.getWrites().includes("background update"),
+				"deferred background render should run after the quiet window",
+			);
+
+			tui.stop();
+		});
+	});
+});
 
 describe("TUI Kitty image cleanup", () => {
 	it("deletes changed image ids before drawing moved placements", async () => {
