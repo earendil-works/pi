@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed Amazon Bedrock Claude requests to send the model output token cap by default, matching Anthropic requests and avoiding Bedrock's 4096-token default truncation ([#4848](https://github.com/earendil-works/pi/issues/4848)).
+
 ## [0.75.4] - 2026-05-20
 
 ### Changed

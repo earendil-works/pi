@@ -156,8 +156,8 @@ describe("ToolExecutionComponent parity", () => {
 		expect(rendered.match(/Full output:/g)?.length ?? 0).toBe(1);
 		expect(rendered).toMatch(/line-4000[^\n]*\n[^\S\n]*\n \[Full output:/);
 		expect(rendered).not.toMatch(/line-4000[^\n]*\n[^\S\n]*\n[^\S\n]*\n \[Full output:/);
-		expect(rendered).toContain("Truncated: showing 2000 of 4001 lines");
-		expect(rendered).not.toContain("[Showing lines 2002-4001 of 4001. Full output:");
+		expect(rendered).toContain("Truncated: showing 2000 of 4000 lines");
+		expect(rendered).not.toContain("[Showing lines 2001-4000 of 4000. Full output:");
 	});
 
 	test("does not duplicate built-in headers when passed the active built-in definition", () => {
