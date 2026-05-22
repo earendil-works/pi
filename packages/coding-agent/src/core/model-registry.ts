@@ -25,7 +25,7 @@ import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 import type { TLocalizedValidationError } from "typebox/error";
 import { getAgentDir } from "../config.ts";
-import { normalizePathInput } from "../utils/paths.ts";
+import { normalizePath } from "../utils/paths.ts";
 import type { AuthStatus, AuthStorage } from "./auth-storage.ts";
 import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "./provider-display-names.ts";
 import {
@@ -340,7 +340,7 @@ export class ModelRegistry {
 
 	private constructor(authStorage: AuthStorage, modelsJsonPath: string | undefined) {
 		this.authStorage = authStorage;
-		this.modelsJsonPath = modelsJsonPath ? normalizePathInput(modelsJsonPath) : undefined;
+		this.modelsJsonPath = modelsJsonPath ? normalizePath(modelsJsonPath) : undefined;
 		this.loadModels();
 	}
 

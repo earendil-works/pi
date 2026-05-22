@@ -3,7 +3,7 @@ import { homedir } from "os";
 import { basename, dirname, join, resolve, sep, win32 } from "path";
 import { fileURLToPath } from "url";
 import { spawnProcessSync } from "./utils/child-process.ts";
-import { normalizePathInput } from "./utils/paths.ts";
+import { normalizePath } from "./utils/paths.ts";
 
 // =============================================================================
 // Package Detection
@@ -331,7 +331,7 @@ export function getPackageDir(): string {
 	// Allow override via environment variable (useful for Nix/Guix where store paths tokenize poorly)
 	const envDir = process.env.PI_PACKAGE_DIR;
 	if (envDir) {
-		return normalizePathInput(envDir);
+		return normalizePath(envDir);
 	}
 
 	if (isBunBinary) {
@@ -453,7 +453,7 @@ export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
 export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
 
 export function expandTildePath(path: string): string {
-	return normalizePathInput(path);
+	return normalizePath(path);
 }
 
 const DEFAULT_SHARE_VIEWER_URL = "https://pi.dev/session/";

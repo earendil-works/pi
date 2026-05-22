@@ -54,7 +54,7 @@ export function isLocalPath(value: string): boolean {
 	return true;
 }
 
-export function normalizePathInput(input: string, options: PathInputOptions = {}): string {
+export function normalizePath(input: string, options: PathInputOptions = {}): string {
 	let normalized = options.trim ? input.trim() : input;
 	if (options.normalizeUnicodeSpaces) {
 		normalized = normalized.replace(UNICODE_SPACES, " ");
@@ -80,8 +80,8 @@ export function normalizePathInput(input: string, options: PathInputOptions = {}
 }
 
 export function resolvePath(input: string, baseDir: string = process.cwd(), options: PathInputOptions = {}): string {
-	const normalized = normalizePathInput(input, options);
-	const normalizedBaseDir = normalizePathInput(baseDir);
+	const normalized = normalizePath(input, options);
+	const normalizedBaseDir = normalizePath(baseDir);
 	return isAbsolute(normalized) ? nodeResolvePath(normalized) : nodeResolvePath(normalizedBaseDir, normalized);
 }
 

@@ -1,5 +1,5 @@
 import { accessSync, constants } from "node:fs";
-import { normalizePathInput, resolvePath } from "../../utils/paths.ts";
+import { normalizePath, resolvePath } from "../../utils/paths.ts";
 
 const NARROW_NO_BREAK_SPACE = "\u202F";
 
@@ -28,7 +28,7 @@ function fileExists(filePath: string): boolean {
 }
 
 export function expandPath(filePath: string): string {
-	return normalizePathInput(filePath, { normalizeUnicodeSpaces: true, stripAtPrefix: true });
+	return normalizePath(filePath, { normalizeUnicodeSpaces: true, stripAtPrefix: true });
 }
 
 /**

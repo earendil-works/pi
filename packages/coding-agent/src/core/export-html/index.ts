@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync } from "fs";
 import { basename, join } from "path";
 import { APP_NAME, getExportTemplateDir } from "../../config.ts";
 import { getResolvedThemeColors, getThemeExportColors } from "../../modes/interactive/theme/theme.ts";
-import { normalizePathInput, resolvePath } from "../../utils/paths.ts";
+import { normalizePath, resolvePath } from "../../utils/paths.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
 import type { SessionEntry } from "../session-manager.ts";
 import { SessionManager } from "../session-manager.ts";
@@ -271,7 +271,7 @@ export async function exportSessionToHtml(
 
 	const html = generateHtml(sessionData, opts.themeName);
 
-	let outputPath = opts.outputPath ? normalizePathInput(opts.outputPath) : undefined;
+	let outputPath = opts.outputPath ? normalizePath(opts.outputPath) : undefined;
 	if (!outputPath) {
 		const sessionBasename = basename(sessionFile, ".jsonl");
 		outputPath = `${APP_NAME}-session-${sessionBasename}.html`;
@@ -305,7 +305,7 @@ export async function exportFromFile(inputPath: string, options?: ExportOptions 
 
 	const html = generateHtml(sessionData, opts.themeName);
 
-	let outputPath = opts.outputPath ? normalizePathInput(opts.outputPath) : undefined;
+	let outputPath = opts.outputPath ? normalizePath(opts.outputPath) : undefined;
 	if (!outputPath) {
 		const inputBasename = basename(resolvedInputPath, ".jsonl");
 		outputPath = `${APP_NAME}-session-${inputBasename}.html`;

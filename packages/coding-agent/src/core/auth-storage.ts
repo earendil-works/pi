@@ -18,7 +18,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "f
 import { dirname, join } from "path";
 import lockfile from "proper-lockfile";
 import { getAgentDir } from "../config.ts";
-import { normalizePathInput } from "../utils/paths.ts";
+import { normalizePath } from "../utils/paths.ts";
 import { resolveConfigValue } from "./resolve-config-value.ts";
 
 export type ApiKeyCredential = {
@@ -54,7 +54,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 	private authPath: string;
 
 	constructor(authPath: string = join(getAgentDir(), "auth.json")) {
-		this.authPath = normalizePathInput(authPath);
+		this.authPath = normalizePath(authPath);
 	}
 
 	private ensureParentDir(): void {
