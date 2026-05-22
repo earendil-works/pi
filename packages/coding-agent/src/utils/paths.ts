@@ -69,7 +69,6 @@ export function normalizePath(input: string, options: PathInputOptions = {}): st
 		if (normalized.startsWith("~/") || (process.platform === "win32" && normalized.startsWith("~\\"))) {
 			return join(home, normalized.slice(2));
 		}
-		if (normalized.startsWith("~")) return join(home, normalized.slice(1));
 	}
 
 	if (/^file:\/\//.test(normalized)) {

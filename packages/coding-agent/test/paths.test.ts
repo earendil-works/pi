@@ -1,9 +1,9 @@
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { canonicalizePath, getCwdRelativePath, isLocalPath, resolvePath } from "../src/utils/paths.ts";
+import { canonicalizePath, getCwdRelativePath, isLocalPath, normalizePath, resolvePath } from "../src/utils/paths.ts";
 
 let tempDir: string;
 
@@ -75,6 +75,14 @@ describe("getCwdRelativePath", () => {
 });
 
 describe("resolvePath", () => {
+	it("expands only home tilde shortcuts", () => {
+		const cwd = join(tmpdir(), "pi-paths-cwd");
+		expect(normalizePath("~")).toBe(homedir());
+		expect(normalizePath("~/file.txt")).toBe(join(homedir(), "file.txt"));
+		expect(resolvePath("~draft.md", cwd)).toBe(resolve(cwd, "~draft.md"));
+		expect(normalizePath("~draft.md")).toBe("~draft.md");
+	});
+
 	it("resolves relative paths against the base directory", () => {
 		const cwd = join(tmpdir(), "pi-paths-cwd");
 		expect(resolvePath("subdir/file.txt", cwd)).toBe(resolve(cwd, "subdir/file.txt"));
