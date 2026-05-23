@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerOAuthProvider } from "@earendil-works/pi-ai/oauth";
@@ -448,6 +448,41 @@ describe("AuthStorage", () => {
 			expect(JSON.stringify(authStorage.getAuthStatus("anthropic"))).not.toContain("secret-api-key");
 			expect(JSON.stringify(authStorage.getAuthStatus("openai"))).not.toContain("secret-access-token");
 			expect(JSON.stringify(authStorage.getAuthStatus("openai"))).not.toContain("secret-refresh-token");
+		});
+	});
+
+	describe("stale lock recovery", () => {
+		// Covers the shared acquireLockSyncWithRetry helper used by both
+		// FileAuthStorageBackend (here) and FileSettingsStorage. The sync lock path
+		// lowers `stale` to the proper-lockfile floor (2000ms) so a lock orphaned by a
+		// crashed/concurrent pi instance is reclaimed quickly rather than blocking for
+		// the 10s library default (the sync retry budget is only ~200ms, so it cannot
+		// wait out the stale window) and failing with "No API key found".
+		test("reclaims a sync lock orphaned ~3s ago (stale floor 2000ms)", () => {
+			writeAuthJson({
+				anthropic: { type: "api_key", key: "anthropic-key" },
+			});
+
+			authStorage = AuthStorage.create(authJsonPath);
+
+			// Fabricate a proper-lockfile lock directory and backdate its mtime to 3s
+			// ago: stale under the new 2000ms floor (reclaimed) but NOT under the old
+			// 10000ms default (would throw ELOCKED after the ~200ms retry budget).
+			const lockDir = `${authJsonPath}.lock`;
+			mkdirSync(lockDir);
+			const t = new Date(Date.now() - 3000);
+			utimesSync(lockDir, t, t);
+
+			// A subsequent write must succeed without any manual lock cleanup.
+			authStorage.set("openai", { type: "api_key", key: "openai-key" });
+
+			// No lock-acquisition error should have been recorded.
+			expect(authStorage.drainErrors()).toHaveLength(0);
+
+			// The write actually landed on disk (it would not if the lock blocked it).
+			const updated = JSON.parse(readFileSync(authJsonPath, "utf-8")) as Record<string, { key: string }>;
+			expect(updated.anthropic.key).toBe("anthropic-key");
+			expect(updated.openai.key).toBe("openai-key");
 		});
 	});
 

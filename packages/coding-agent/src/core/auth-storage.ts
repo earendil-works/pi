@@ -78,7 +78,7 @@ export class FileAuthStorageBackend implements AuthStorageBackend {
 
 		for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 			try {
-				return lockfile.lockSync(path, { realpath: false });
+				return lockfile.lockSync(path, { realpath: false, stale: 2000 });
 			} catch (error) {
 				const code =
 					typeof error === "object" && error !== null && "code" in error
