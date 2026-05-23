@@ -63,6 +63,17 @@ const KIMI_STATIC_HEADERS = {
 	"User-Agent": "KimiCLI/1.5",
 } as const;
 
+const DASHSCOPE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+const DASHSCOPE_COMPAT: OpenAICompletionsCompat = {
+	thinkingFormat: "qwen",
+	supportsStore: false,
+	supportsDeveloperRole: false,
+	supportsReasoningEffort: false,
+	maxTokensField: "max_tokens",
+	cacheControlFormat: "anthropic",
+	requiresReasoningContentOnAssistantMessages: true,
+};
+
 const TOGETHER_BASE_URL = "https://api.together.ai/v1";
 const TOGETHER_BASE_COMPAT: OpenAICompletionsCompat = {
 	supportsStore: false,
@@ -1469,7 +1480,64 @@ async function generateModels() {
 	];
 	allModels.push(...deepseekV4Models);
 
+	const dashscopeModels: Model<"openai-completions">[] = [
+		{
+			id: "qwen3.7-max",
+			name: "Qwen 3.7 Max",
+			api: "openai-completions",
+			baseUrl: DASHSCOPE_BASE_URL,
+			provider: "dashscope",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0.83,
+				output: 2.5,
+				cacheRead: 0.083,
+				cacheWrite: 1.04,
+			},
+			contextWindow: 1_048_576,
+			maxTokens: 65_536,
+			compat: DASHSCOPE_COMPAT,
+			thinkingBudgets: {
+				minimal: 4096,
+				low: 8192,
+				medium: 32768,
+				high: 131072,
+				xhigh: 262144,
+			},
+		},
+		{
+			id: "qwen3.7-max-2026-05-20",
+			name: "Qwen 3.7 Max (2026-05-20)",
+			api: "openai-completions",
+			baseUrl: DASHSCOPE_BASE_URL,
+			provider: "dashscope",
+			reasoning: true,
+			input: ["text"],
+			cost: {
+				input: 0.83,
+				output: 2.5,
+				cacheRead: 0.083,
+				cacheWrite: 1.04,
+			},
+			contextWindow: 1_048_576,
+			maxTokens: 65_536,
+			compat: DASHSCOPE_COMPAT,
+			thinkingBudgets: {
+				minimal: 4096,
+				low: 8192,
+				medium: 32768,
+				high: 131072,
+				xhigh: 262144,
+			},
+		},
+	];
+	allModels.push(...dashscopeModels);
+
 	for (const candidate of allModels) {
+		if (candidate.provider === "dashscope") {
+			mergeThinkingLevelMap(candidate, { xhigh: "xhigh" });
+		}
 		if (candidate.api === "openai-completions" && candidate.id.includes("deepseek-v4")) {
 			candidate.compat = {
 				...candidate.compat,
@@ -1907,6 +1975,9 @@ export const MODELS = {
 			output += `\t\t\treasoning: ${model.reasoning},\n`;
 			if (model.thinkingLevelMap) {
 				output += `\t\t\tthinkingLevelMap: ${JSON.stringify(model.thinkingLevelMap)},\n`;
+			}
+			if (model.thinkingBudgets) {
+				output += `\t\t\tthinkingBudgets: ${JSON.stringify(model.thinkingBudgets)},\n`;
 			}
 			output += `\t\t\tinput: [${model.input.map(i => `"${i}"`).join(", ")}],\n`;
 			output += `\t\t\tcost: {\n`;

@@ -563,7 +563,17 @@ function buildParams(
 	if (compat.thinkingFormat === "zai" && model.reasoning) {
 		(params as any).enable_thinking = !!options?.reasoningEffort;
 	} else if (compat.thinkingFormat === "qwen" && model.reasoning) {
-		(params as any).enable_thinking = !!options?.reasoningEffort;
+		const enableThinking = !!options?.reasoningEffort;
+		(params as any).enable_thinking = enableThinking;
+		if (model.provider === "dashscope" && enableThinking) {
+			(params as any).preserve_thinking = true;
+			if (options?.reasoningEffort && model.thinkingBudgets) {
+				const thinkingBudget = model.thinkingBudgets[options.reasoningEffort];
+				if (thinkingBudget !== undefined) {
+					(params as any).thinking_budget = thinkingBudget;
+				}
+			}
+		}
 	} else if (compat.thinkingFormat === "qwen-chat-template" && model.reasoning) {
 		(params as any).chat_template_kwargs = {
 			enable_thinking: !!options?.reasoningEffort,
@@ -1077,6 +1087,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 	const isMoonshot = provider === "moonshotai" || provider === "moonshotai-cn" || baseUrl.includes("api.moonshot.");
 	const isCloudflareWorkersAI = provider === "cloudflare-workers-ai" || baseUrl.includes("api.cloudflare.com");
 	const isCloudflareAiGateway = provider === "cloudflare-ai-gateway" || baseUrl.includes("gateway.ai.cloudflare.com");
+	const isDashScope = provider === "dashscope" || baseUrl.includes("dashscope.aliyuncs.com");
 
 	const isNonStandard =
 		provider === "cerebras" ||
@@ -1091,13 +1102,15 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		provider === "opencode" ||
 		baseUrl.includes("opencode.ai") ||
 		isCloudflareWorkersAI ||
-		isCloudflareAiGateway;
+		isCloudflareAiGateway ||
+		isDashScope;
 
 	const useMaxTokens = baseUrl.includes("chutes.ai") || isMoonshot || isCloudflareAiGateway || isTogether;
 
 	const isGrok = provider === "xai" || baseUrl.includes("api.x.ai");
 	const isDeepSeek = provider === "deepseek" || baseUrl.includes("deepseek.com");
-	const cacheControlFormat = provider === "openrouter" && model.id.startsWith("anthropic/") ? "anthropic" : undefined;
+	const cacheControlFormat =
+		(provider === "openrouter" && model.id.startsWith("anthropic/")) || isDashScope ? "anthropic" : undefined;
 
 	return {
 		supportsStore: !isNonStandard,
@@ -1108,16 +1121,18 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		requiresToolResultName: false,
 		requiresAssistantAfterToolResult: false,
 		requiresThinkingAsText: false,
-		requiresReasoningContentOnAssistantMessages: isDeepSeek,
+		requiresReasoningContentOnAssistantMessages: isDeepSeek || isDashScope,
 		thinkingFormat: isDeepSeek
 			? "deepseek"
-			: isZai
-				? "zai"
-				: isTogether
-					? "together"
-					: provider === "openrouter" || baseUrl.includes("openrouter.ai")
-						? "openrouter"
-						: "openai",
+			: isDashScope
+				? "qwen"
+				: isZai
+					? "zai"
+					: isTogether
+						? "together"
+						: provider === "openrouter" || baseUrl.includes("openrouter.ai")
+							? "openrouter"
+							: "openai",
 		openRouterRouting: {},
 		vercelGatewayRouting: {},
 		zaiToolStream: false,

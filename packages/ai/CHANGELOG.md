@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added Alibaba DashScope (`dashscope`) provider with `qwen3.7-max` and `qwen3.7-max-2026-05-20`, including Qwen thinking (`enable_thinking`, `preserve_thinking`, `thinking_budget`) and `DASHSCOPE_API_KEY` authentication.
+
 ## [0.75.5] - 2026-05-23
 
 ### Breaking Changes
