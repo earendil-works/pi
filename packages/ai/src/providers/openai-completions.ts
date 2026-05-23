@@ -548,8 +548,12 @@ function buildParams(
 			(params as any).tool_stream = true;
 		}
 	} else if (hasToolHistory(context.messages)) {
-		// Anthropic (via LiteLLM/proxy) requires tools param when conversation has tool_calls/tool_results
-		params.tools = [];
+		// Anthropic (via LiteLLM/proxy) requires tools param when conversation has tool_calls/tool_results.
+		// DashScope rejects `tools: []` with HTTP 400 ("[] is too short - 'tools'").
+		const isDashScope = model.provider === "dashscope" || model.baseUrl.includes("dashscope.aliyuncs.com");
+		if (!isDashScope) {
+			params.tools = [];
+		}
 	}
 
 	if (cacheControl) {

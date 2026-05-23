@@ -98,4 +98,54 @@ describe("dashscope qwen3.7-max thinking", () => {
 		expect(params.preserve_thinking).toBeUndefined();
 		expect(params.thinking_budget).toBeUndefined();
 	});
+
+	it("omits tools field when conversation has tool history but no active tools", async () => {
+		const model = getModel("dashscope", "qwen3.7-max")!;
+
+		await streamSimple(
+			model,
+			{
+				messages: [
+					{ role: "user", content: "use the tool", timestamp: Date.now() },
+					{
+						role: "assistant",
+						content: [
+							{
+								type: "toolCall",
+								id: "t1",
+								name: "noop",
+								arguments: {},
+							},
+						],
+						stopReason: "toolUse",
+						usage: {
+							input: 0,
+							output: 0,
+							cacheRead: 0,
+							cacheWrite: 0,
+							totalTokens: 0,
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+						},
+						api: "openai-completions",
+						provider: "dashscope",
+						model: "qwen3.7-max",
+						timestamp: Date.now(),
+					},
+					{
+						role: "toolResult",
+						toolCallId: "t1",
+						toolName: "noop",
+						content: [{ type: "text", text: "done" }],
+						isError: false,
+						timestamp: Date.now(),
+					},
+				],
+				tools: [],
+			},
+			{ apiKey: "test", reasoning: "high" },
+		).result();
+
+		const params = mockState.lastParams as { tools?: unknown[] };
+		expect("tools" in (params as object)).toBe(false);
+	});
 });
