@@ -984,6 +984,22 @@ export function convertMessages(
 	return params;
 }
 
+/**
+ * Recursively removes `const` fields from JSON Schema objects.
+ * Some providers (e.g., Gemini) reject schemas containing the `const` keyword,
+ * which TypeBox generates for `Type.Literal` values.
+ */
+function stripJsonSchemaConst(schema: unknown): unknown {
+	if (!schema || typeof schema !== "object") return schema;
+	if (Array.isArray(schema)) return schema.map(stripJsonSchemaConst);
+	const result: Record<string, unknown> = {};
+	for (const [k, v] of Object.entries(schema as Record<string, unknown>)) {
+		if (k === "const") continue;
+		result[k] = stripJsonSchemaConst(v);
+	}
+	return result;
+}
+
 function convertTools(
 	tools: Tool[],
 	compat: ResolvedOpenAICompletionsCompat,
@@ -993,7 +1009,7 @@ function convertTools(
 		function: {
 			name: tool.name,
 			description: tool.description,
-			parameters: tool.parameters as any, // TypeBox already generates JSON Schema
+			parameters: stripJsonSchemaConst(tool.parameters) as Record<string, unknown>,
 			// Only include strict if provider supports it. Some reject unknown fields.
 			...(compat.supportsStrictMode !== false && { strict: false }),
 		},
