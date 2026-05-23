@@ -58,7 +58,13 @@ import {
 	getShareViewerUrl,
 	VERSION,
 } from "../../config.ts";
-import { type AgentSession, type AgentSessionEvent, parseSkillBlock } from "../../core/agent-session.ts";
+import {
+	type AgentSession,
+	type AgentSessionEvent,
+	parseSkillBlock,
+	type ToolPermissionDecision,
+	type ToolPermissionRequest,
+} from "../../core/agent-session.ts";
 import { type AgentSessionRuntime, SessionImportFileNotFoundError } from "../../core/agent-session-runtime.ts";
 import type {
 	AutocompleteProviderFactory,
@@ -1588,6 +1594,7 @@ export class InteractiveMode {
 		this.unsubscribe?.();
 		this.unsubscribe = undefined;
 		this.applyRuntimeSettings();
+		this.session.setToolPermissionHandler((request, signal) => this.requestToolPermission(request, signal));
 		await this.bindCurrentSessionExtensions();
 		this.subscribeToAgent();
 		await this.updateAvailableProviderCount();
@@ -2085,6 +2092,32 @@ export class InteractiveMode {
 		return result === "Yes";
 	}
 
+	private formatToolPermissionArgs(args: unknown): string {
+		try {
+			const text = JSON.stringify(args, null, 2);
+			if (!text) return "";
+			return text.length > 1200 ? `${text.slice(0, 1200)}\n...` : text;
+		} catch {
+			return String(args);
+		}
+	}
+
+	private async requestToolPermission(
+		request: ToolPermissionRequest,
+		signal?: AbortSignal,
+	): Promise<ToolPermissionDecision> {
+		const args = this.formatToolPermissionArgs(request.args);
+		const message = args ? `${request.toolName}\n\n${args}` : request.toolName;
+		const result = await this.showExtensionSelector(
+			`Allow tool execution?\n${message}`,
+			["Yes", "Yes, always for this tool", "No"],
+			{ signal },
+		);
+		if (result === "Yes") return "allow";
+		if (result === "Yes, always for this tool") return "allow_always";
+		return "deny";
+	}
+
 	private async promptForMissingSessionCwd(error: MissingSessionCwdError): Promise<string | undefined> {
 		const confirmed = await this.showExtensionConfirm(
 			"Session cwd not found",
@@ -2562,6 +2595,11 @@ export class InteractiveMode {
 			if (text === "/reload") {
 				this.editor.setText("");
 				await this.handleReloadCommand();
+				return;
+			}
+			if (text === "/yolo" || text.startsWith("/yolo ")) {
+				this.handleYoloCommand(text);
+				this.editor.setText("");
 				return;
 			}
 			if (text === "/debug") {
@@ -5406,6 +5444,25 @@ export class InteractiveMode {
 			new Text(`${theme.fg("accent", "✓ Debug log written")}\n${theme.fg("muted", debugLogPath)}`, 1, 1),
 		);
 		this.ui.requestRender();
+	}
+
+	private handleYoloCommand(text: string): void {
+		const arg = text.slice("/yolo".length).trim().toLowerCase();
+		let enabled: boolean;
+		if (arg === "on" || arg === "true" || arg === "1") {
+			enabled = true;
+			this.session.setYoloMode(true);
+		} else if (arg === "off" || arg === "false" || arg === "0") {
+			enabled = false;
+			this.session.setYoloMode(false);
+		} else if (arg.length === 0) {
+			enabled = this.session.toggleYoloMode();
+		} else {
+			this.showWarning("Usage: /yolo [on|off]");
+			return;
+		}
+
+		this.showStatus(enabled ? "YOLO mode enabled: tool permission prompts disabled" : "YOLO mode disabled");
 	}
 
 	private handleArminSaysHi(): void {

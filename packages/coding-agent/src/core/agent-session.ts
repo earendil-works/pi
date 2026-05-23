@@ -213,6 +213,19 @@ export interface ModelCycleResult {
 	isScoped: boolean;
 }
 
+export type ToolPermissionDecision = "allow" | "allow_always" | "deny";
+
+export interface ToolPermissionRequest {
+	toolName: string;
+	toolCallId: string;
+	args: unknown;
+}
+
+export type ToolPermissionHandler = (
+	request: ToolPermissionRequest,
+	signal?: AbortSignal,
+) => Promise<ToolPermissionDecision>;
+
 /** Session statistics for /session command */
 export interface SessionStats {
 	sessionFile: string | undefined;
@@ -311,6 +324,10 @@ export class AgentSession {
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
+	private _toolPermissionHandler: ToolPermissionHandler | undefined;
+	private _toolPermissionQueue: Promise<void> = Promise.resolve();
+	private _sessionAllowedToolNames = new Set<string>();
+	private _yoloMode = false;
 
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
@@ -394,25 +411,39 @@ export class AgentSession {
 	 * happens here instead of in wrappers.
 	 */
 	private _installAgentToolHooks(): void {
-		this.agent.beforeToolCall = async ({ toolCall, args }) => {
+		this.agent.beforeToolCall = async ({ toolCall, args }, signal) => {
 			const runner = this._extensionRunner;
-			if (!runner.hasHandlers("tool_call")) {
-				return undefined;
+			if (runner.hasHandlers("tool_call")) {
+				try {
+					const result = await runner.emitToolCall({
+						type: "tool_call",
+						toolName: toolCall.name,
+						toolCallId: toolCall.id,
+						input: args as Record<string, unknown>,
+					});
+					if (result?.block) {
+						return result;
+					}
+				} catch (err) {
+					if (err instanceof Error) {
+						throw err;
+					}
+					throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+				}
 			}
 
-			try {
-				return await runner.emitToolCall({
-					type: "tool_call",
+			const permission = await this._requestToolPermission(
+				{
 					toolName: toolCall.name,
 					toolCallId: toolCall.id,
-					input: args as Record<string, unknown>,
-				});
-			} catch (err) {
-				if (err instanceof Error) {
-					throw err;
-				}
-				throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+					args,
+				},
+				signal,
+			);
+			if (permission === "deny") {
+				return { block: true, reason: "Tool execution denied by user" };
 			}
+			return undefined;
 		};
 
 		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
@@ -756,6 +787,62 @@ export class AgentSession {
 	 */
 	getActiveToolNames(): string[] {
 		return this.agent.state.tools.map((t) => t.name);
+	}
+
+	get yoloMode(): boolean {
+		return this._yoloMode;
+	}
+
+	setYoloMode(enabled: boolean): void {
+		this._yoloMode = enabled;
+	}
+
+	toggleYoloMode(): boolean {
+		this._yoloMode = !this._yoloMode;
+		return this._yoloMode;
+	}
+
+	setToolPermissionHandler(handler: ToolPermissionHandler | undefined): void {
+		this._toolPermissionHandler = handler;
+	}
+
+	private _requiresToolPermission(toolName: string): boolean {
+		return !["read", "grep", "find", "ls"].includes(toolName);
+	}
+
+	private async _requestToolPermission(
+		request: ToolPermissionRequest,
+		signal?: AbortSignal,
+	): Promise<ToolPermissionDecision> {
+		if (
+			this._yoloMode ||
+			this._sessionAllowedToolNames.has(request.toolName) ||
+			!this._requiresToolPermission(request.toolName) ||
+			!this._toolPermissionHandler
+		) {
+			return "allow";
+		}
+
+		let release: () => void;
+		const previous = this._toolPermissionQueue;
+		this._toolPermissionQueue = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		await previous;
+
+		try {
+			if (signal?.aborted) {
+				return "deny";
+			}
+			const decision = await this._toolPermissionHandler(request, signal);
+			if (decision === "allow_always") {
+				this._sessionAllowedToolNames.add(request.toolName);
+				return "allow";
+			}
+			return decision;
+		} finally {
+			release!();
+		}
 	}
 
 	/**
