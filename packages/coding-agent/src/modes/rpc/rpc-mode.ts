@@ -404,7 +404,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		});
 
 		unsubscribe?.();
-		unsubscribe = session.subscribeWithBackpressure(async (event) => {
+		unsubscribe = session.setTransportEventHandler(async (event) => {
 			await output(event);
 		});
 	};

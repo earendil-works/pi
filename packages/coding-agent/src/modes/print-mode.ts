@@ -100,7 +100,7 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		});
 
 		unsubscribe?.();
-		unsubscribe = session.subscribeWithBackpressure(async (event) => {
+		unsubscribe = session.setTransportEventHandler(async (event) => {
 			if (mode === "json") {
 				await writeRawStdout(`${JSON.stringify(event)}\n`);
 			}

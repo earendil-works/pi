@@ -259,7 +259,7 @@ export class AgentSession {
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
-	private _backpressureEventListeners: Array<(event: AgentSessionEvent) => void | Promise<void>> = [];
+	private _transportEventHandler?: (event: AgentSessionEvent) => void | Promise<void>;
 
 	/** Tracks pending steering messages for UI display. Removed when delivered. */
 	private _steeringMessages: string[] = [];
@@ -448,14 +448,20 @@ export class AgentSession {
 	// Event Subscription
 	// =========================================================================
 
-	/** Emit an event to all listeners. Public listeners are fire-and-forget for API compatibility. */
-	private async _emit(event: AgentSessionEvent): Promise<void> {
+	private _emitPublic(event: AgentSessionEvent): void {
 		for (const listener of this._eventListeners) {
 			listener(event);
 		}
-		for (const listener of this._backpressureEventListeners) {
-			await listener(event);
-		}
+	}
+
+	private async _emitTransport(event: AgentSessionEvent): Promise<void> {
+		await this._transportEventHandler?.(event);
+	}
+
+	/** Emit an event to all listeners. Public listeners are fire-and-forget for API compatibility. */
+	private async _emit(event: AgentSessionEvent): Promise<void> {
+		this._emitPublic(event);
+		await this._emitTransport(event);
 	}
 
 	private _emitDetached(event: AgentSessionEvent): void {
@@ -502,12 +508,13 @@ export class AgentSession {
 		// Emit to extensions first
 		await this._emitExtensionEvent(event);
 
-		// Notify all listeners
-		await this._emit(
-			event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event,
-		);
+		const sessionEvent: AgentSessionEvent =
+			event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event;
+		this._emitPublic(sessionEvent);
 
-		// Handle session persistence
+		const followUpEvents: AgentSessionEvent[] = [];
+
+		// Handle session persistence before awaited transport listeners so output failures cannot skip it.
 		if (event.type === "message_end") {
 			// Check if this is a custom message from extensions
 			if (event.message.role === "custom") {
@@ -540,7 +547,7 @@ export class AgentSession {
 				// Reset retry counter immediately on successful assistant response
 				// This prevents accumulation across multiple LLM calls within a turn
 				if (assistantMsg.stopReason !== "error" && this._retryAttempt > 0) {
-					await this._emit({
+					followUpEvents.push({
 						type: "auto_retry_end",
 						success: true,
 						attempt: this._retryAttempt,
@@ -548,6 +555,11 @@ export class AgentSession {
 					this._retryAttempt = 0;
 				}
 			}
+		}
+
+		await this._emitTransport(sessionEvent);
+		for (const followUpEvent of followUpEvents) {
+			await this._emit(followUpEvent);
 		}
 	};
 
@@ -694,13 +706,12 @@ export class AgentSession {
 		};
 	}
 
-	/** @internal Subscribe to awaited events for transports that need backpressure. */
-	subscribeWithBackpressure(listener: (event: AgentSessionEvent) => void | Promise<void>): () => void {
-		this._backpressureEventListeners.push(listener);
+	/** @internal Configure the awaited event sink used by process transports. */
+	setTransportEventHandler(handler: ((event: AgentSessionEvent) => void | Promise<void>) | undefined): () => void {
+		this._transportEventHandler = handler;
 		return () => {
-			const index = this._backpressureEventListeners.indexOf(listener);
-			if (index !== -1) {
-				this._backpressureEventListeners.splice(index, 1);
+			if (this._transportEventHandler === handler) {
+				this._transportEventHandler = undefined;
 			}
 		};
 	}
@@ -736,7 +747,7 @@ export class AgentSession {
 		);
 		this._disconnectFromAgent();
 		this._eventListeners = [];
-		this._backpressureEventListeners = [];
+		this._transportEventHandler = undefined;
 		cleanupSessionResources(this.sessionId);
 	}
 
@@ -1327,8 +1338,14 @@ export class AgentSession {
 				message.display,
 				message.details,
 			);
-			await this._emit({ type: "message_start", message: appMessage });
-			await this._emit({ type: "message_end", message: appMessage });
+			const startEvent: AgentSessionEvent = { type: "message_start", message: appMessage };
+			const endEvent: AgentSessionEvent = { type: "message_end", message: appMessage };
+			this._emitPublic(startEvent);
+			this._emitPublic(endEvent);
+			const startOutput = this._emitTransport(startEvent);
+			const endOutput = this._emitTransport(endEvent);
+			await startOutput;
+			await endOutput;
 		}
 	}
 
