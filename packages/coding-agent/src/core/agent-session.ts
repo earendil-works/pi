@@ -147,7 +147,7 @@ export type AgentSessionEvent =
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string };
 
 /** Listener function for agent session events */
-export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
+export type AgentSessionEventListener = (event: AgentSessionEvent) => void | Promise<void>;
 
 // ============================================================================
 // Types
@@ -202,7 +202,7 @@ export interface PromptOptions {
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
 	source?: InputSource;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
-	preflightResult?: (success: boolean) => void;
+	preflightResult?: (success: boolean) => void | Promise<void>;
 }
 
 /** Result from cycleModel() */
@@ -448,14 +448,18 @@ export class AgentSession {
 	// =========================================================================
 
 	/** Emit an event to all listeners */
-	private _emit(event: AgentSessionEvent): void {
+	private async _emit(event: AgentSessionEvent): Promise<void> {
 		for (const l of this._eventListeners) {
-			l(event);
+			await l(event);
 		}
 	}
 
-	private _emitQueueUpdate(): void {
-		this._emit({
+	private _emitDetached(event: AgentSessionEvent): void {
+		void this._emit(event);
+	}
+
+	private async _emitQueueUpdate(): Promise<void> {
+		await this._emit({
 			type: "queue_update",
 			steering: [...this._steeringMessages],
 			followUp: [...this._followUpMessages],
@@ -477,13 +481,13 @@ export class AgentSession {
 				const steeringIndex = this._steeringMessages.indexOf(messageText);
 				if (steeringIndex !== -1) {
 					this._steeringMessages.splice(steeringIndex, 1);
-					this._emitQueueUpdate();
+					await this._emitQueueUpdate();
 				} else {
 					// Check follow-up queue
 					const followUpIndex = this._followUpMessages.indexOf(messageText);
 					if (followUpIndex !== -1) {
 						this._followUpMessages.splice(followUpIndex, 1);
-						this._emitQueueUpdate();
+						await this._emitQueueUpdate();
 					}
 				}
 			}
@@ -493,7 +497,9 @@ export class AgentSession {
 		await this._emitExtensionEvent(event);
 
 		// Notify all listeners
-		this._emit(event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event);
+		await this._emit(
+			event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event,
+		);
 
 		// Handle session persistence
 		if (event.type === "message_end") {
@@ -528,7 +534,7 @@ export class AgentSession {
 				// Reset retry counter immediately on successful assistant response
 				// This prevents accumulation across multiple LLM calls within a turn
 				if (assistantMsg.stopReason !== "error" && this._retryAttempt > 0) {
-					this._emit({
+					await this._emit({
 						type: "auto_retry_end",
 						success: true,
 						attempt: this._retryAttempt,
@@ -938,7 +944,7 @@ export class AgentSession {
 		}
 
 		if (msg.stopReason === "error" && this._retryAttempt > 0) {
-			this._emit({
+			await this._emit({
 				type: "auto_retry_end",
 				success: false,
 				attempt: this._retryAttempt,
@@ -971,7 +977,7 @@ export class AgentSession {
 				const handled = await this._tryExecuteExtensionCommand(text);
 				if (handled) {
 					// Extension command executed, no prompt to send
-					preflightResult?.(true);
+					await preflightResult?.(true);
 					return;
 				}
 			}
@@ -986,7 +992,7 @@ export class AgentSession {
 					options?.source ?? "interactive",
 				);
 				if (inputResult.action === "handled") {
-					preflightResult?.(true);
+					await preflightResult?.(true);
 					return;
 				}
 				if (inputResult.action === "transform") {
@@ -1014,7 +1020,7 @@ export class AgentSession {
 				} else {
 					await this._queueSteer(expandedText, currentImages);
 				}
-				preflightResult?.(true);
+				await preflightResult?.(true);
 				return;
 			}
 
@@ -1099,7 +1105,7 @@ export class AgentSession {
 				this.agent.state.systemPrompt = this._baseSystemPrompt;
 			}
 		} catch (error) {
-			preflightResult?.(false);
+			await preflightResult?.(false);
 			throw error;
 		}
 
@@ -1107,7 +1113,7 @@ export class AgentSession {
 			return;
 		}
 
-		preflightResult?.(true);
+		await preflightResult?.(true);
 		await this._runAgentPrompt(messages);
 	}
 
@@ -1217,7 +1223,7 @@ export class AgentSession {
 	 */
 	private async _queueSteer(text: string, images?: ImageContent[]): Promise<void> {
 		this._steeringMessages.push(text);
-		this._emitQueueUpdate();
+		await this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
 			content.push(...images);
@@ -1234,7 +1240,7 @@ export class AgentSession {
 	 */
 	private async _queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
 		this._followUpMessages.push(text);
-		this._emitQueueUpdate();
+		await this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
 			content.push(...images);
@@ -1303,8 +1309,8 @@ export class AgentSession {
 				message.display,
 				message.details,
 			);
-			this._emit({ type: "message_start", message: appMessage });
-			this._emit({ type: "message_end", message: appMessage });
+			await this._emit({ type: "message_start", message: appMessage });
+			await this._emit({ type: "message_end", message: appMessage });
 		}
 	}
 
@@ -1359,7 +1365,7 @@ export class AgentSession {
 		this._steeringMessages = [];
 		this._followUpMessages = [];
 		this.agent.clearAllQueues();
-		this._emitQueueUpdate();
+		void this._emitQueueUpdate();
 		return { steering, followUp };
 	}
 
@@ -1522,7 +1528,7 @@ export class AgentSession {
 			if (this.supportsThinking() || effectiveLevel !== "off") {
 				this.settingsManager.setDefaultThinkingLevel(effectiveLevel);
 			}
-			this._emit({ type: "thinking_level_changed", level: effectiveLevel });
+			this._emitDetached({ type: "thinking_level_changed", level: effectiveLevel });
 			void this._extensionRunner.emit({
 				type: "thinking_level_select",
 				level: effectiveLevel,
@@ -1612,7 +1618,7 @@ export class AgentSession {
 		this._disconnectFromAgent();
 		await this.abort();
 		this._compactionAbortController = new AbortController();
-		this._emit({ type: "compaction_start", reason: "manual" });
+		await this._emit({ type: "compaction_start", reason: "manual" });
 
 		try {
 			if (!this.model) {
@@ -1713,7 +1719,7 @@ export class AgentSession {
 				tokensBefore,
 				details,
 			};
-			this._emit({
+			await this._emit({
 				type: "compaction_end",
 				reason: "manual",
 				result: compactionResult,
@@ -1724,7 +1730,7 @@ export class AgentSession {
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			const aborted = message === "Compaction cancelled" || (error instanceof Error && error.name === "AbortError");
-			this._emit({
+			await this._emit({
 				type: "compaction_end",
 				reason: "manual",
 				result: undefined,
@@ -1794,7 +1800,7 @@ export class AgentSession {
 		// Case 1: Overflow - LLM returned context overflow error
 		if (sameModel && isContextOverflow(assistantMessage, contextWindow)) {
 			if (this._overflowRecoveryAttempted) {
-				this._emit({
+				await this._emit({
 					type: "compaction_end",
 					reason: "overflow",
 					result: undefined,
@@ -1851,12 +1857,12 @@ export class AgentSession {
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings();
 
-		this._emit({ type: "compaction_start", reason });
+		await this._emit({ type: "compaction_start", reason });
 		this._autoCompactionAbortController = new AbortController();
 
 		try {
 			if (!this.model) {
-				this._emit({
+				await this._emit({
 					type: "compaction_end",
 					reason,
 					result: undefined,
@@ -1871,7 +1877,7 @@ export class AgentSession {
 			if (this.agent.streamFn === streamSimple) {
 				const authResult = await this._modelRegistry.getApiKeyAndHeaders(this.model);
 				if (!authResult.ok || !authResult.apiKey) {
-					this._emit({
+					await this._emit({
 						type: "compaction_end",
 						reason,
 						result: undefined,
@@ -1890,7 +1896,7 @@ export class AgentSession {
 
 			const preparation = prepareCompaction(pathEntries, settings);
 			if (!preparation) {
-				this._emit({
+				await this._emit({
 					type: "compaction_end",
 					reason,
 					result: undefined,
@@ -1913,7 +1919,7 @@ export class AgentSession {
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (extensionResult?.cancel) {
-					this._emit({
+					await this._emit({
 						type: "compaction_end",
 						reason,
 						result: undefined,
@@ -1959,7 +1965,7 @@ export class AgentSession {
 			}
 
 			if (this._autoCompactionAbortController.signal.aborted) {
-				this._emit({
+				await this._emit({
 					type: "compaction_end",
 					reason,
 					result: undefined,
@@ -1993,7 +1999,7 @@ export class AgentSession {
 				tokensBefore,
 				details,
 			};
-			this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
+			await this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
 
 			if (willRetry) {
 				const messages = this.agent.state.messages;
@@ -2009,7 +2015,7 @@ export class AgentSession {
 			return this.agent.hasQueuedMessages();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "compaction failed";
-			this._emit({
+			await this._emit({
 				type: "compaction_end",
 				reason,
 				result: undefined,
@@ -2460,7 +2466,7 @@ export class AgentSession {
 
 		const delayMs = settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
 
-		this._emit({
+		await this._emit({
 			type: "auto_retry_start",
 			attempt: this._retryAttempt,
 			maxAttempts: settings.maxRetries,
@@ -2482,7 +2488,7 @@ export class AgentSession {
 			// Aborted during sleep - emit end event so UI can clean up
 			const attempt = this._retryAttempt;
 			this._retryAttempt = 0;
-			this._emit({
+			await this._emit({
 				type: "auto_retry_end",
 				success: false,
 				attempt,
@@ -2636,7 +2642,7 @@ export class AgentSession {
 	 */
 	setSessionName(name: string): void {
 		this.sessionManager.appendSessionInfo(name);
-		this._emit({ type: "session_info_changed", name: this.sessionManager.getSessionName() });
+		this._emitDetached({ type: "session_info_changed", name: this.sessionManager.getSessionName() });
 	}
 
 	// =========================================================================

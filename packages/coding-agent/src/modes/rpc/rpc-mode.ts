@@ -50,8 +50,14 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
 
-	const output = (obj: RpcResponse | RpcExtensionUIRequest | object) => {
-		writeRawStdout(serializeJsonLine(obj));
+	const output = async (obj: RpcResponse | RpcExtensionUIRequest | object): Promise<void> => {
+		await writeRawStdout(serializeJsonLine(obj));
+	};
+
+	const outputDetached = (obj: RpcResponse | RpcExtensionUIRequest | object): void => {
+		void output(obj).catch((err: unknown) => {
+			process.stderr.write(`RPC output failed: ${err instanceof Error ? err.message : String(err)}\n`);
+		});
 	};
 
 	const success = <T extends RpcCommand["type"]>(
@@ -81,28 +87,30 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	const signalCleanupHandlers: Array<() => void> = [];
 
 	/** Helper for dialog methods with signal/timeout support */
-	function createDialogPromise<T>(
+	async function createDialogPromise<T>(
 		opts: ExtensionUIDialogOptions | undefined,
 		defaultValue: T,
 		request: Record<string, unknown>,
 		parseResponse: (response: RpcExtensionUIResponse) => T,
 	): Promise<T> {
-		if (opts?.signal?.aborted) return Promise.resolve(defaultValue);
+		if (opts?.signal?.aborted) return defaultValue;
 
 		const id = crypto.randomUUID();
-		return new Promise((resolve, reject) => {
+		let cleanup = () => {};
+		const responsePromise = new Promise<T>((resolve, reject) => {
 			let timeoutId: ReturnType<typeof setTimeout> | undefined;
-
-			const cleanup = () => {
-				if (timeoutId) clearTimeout(timeoutId);
-				opts?.signal?.removeEventListener("abort", onAbort);
-				pendingExtensionRequests.delete(id);
-			};
 
 			const onAbort = () => {
 				cleanup();
 				resolve(defaultValue);
 			};
+
+			cleanup = () => {
+				if (timeoutId) clearTimeout(timeoutId);
+				opts?.signal?.removeEventListener("abort", onAbort);
+				pendingExtensionRequests.delete(id);
+			};
+
 			opts?.signal?.addEventListener("abort", onAbort, { once: true });
 
 			if (opts?.timeout) {
@@ -117,10 +125,20 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 					cleanup();
 					resolve(parseResponse(response));
 				},
-				reject,
+				reject: (error) => {
+					cleanup();
+					reject(error);
+				},
 			});
-			output({ type: "extension_ui_request", id, ...request } as RpcExtensionUIRequest);
 		});
+
+		try {
+			await output({ type: "extension_ui_request", id, ...request } as RpcExtensionUIRequest);
+		} catch (err) {
+			cleanup();
+			throw err;
+		}
+		return await responsePromise;
 	}
 
 	/**
@@ -144,7 +162,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 		notify(message: string, type?: "info" | "warning" | "error"): void {
 			// Fire and forget - no response needed
-			output({
+			outputDetached({
 				type: "extension_ui_request",
 				id: crypto.randomUUID(),
 				method: "notify",
@@ -160,7 +178,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 		setStatus(key: string, text: string | undefined): void {
 			// Fire and forget - no response needed
-			output({
+			outputDetached({
 				type: "extension_ui_request",
 				id: crypto.randomUUID(),
 				method: "setStatus",
@@ -188,7 +206,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		setWidget(key: string, content: unknown, options?: ExtensionWidgetOptions): void {
 			// Only support string arrays in RPC mode - factory functions are ignored
 			if (content === undefined || Array.isArray(content)) {
-				output({
+				outputDetached({
 					type: "extension_ui_request",
 					id: crypto.randomUUID(),
 					method: "setWidget",
@@ -210,7 +228,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 		setTitle(title: string): void {
 			// Fire and forget - host can implement terminal title control
-			output({
+			outputDetached({
 				type: "extension_ui_request",
 				id: crypto.randomUUID(),
 				method: "setTitle",
@@ -230,7 +248,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 		setEditorText(text: string): void {
 			// Fire and forget - host can implement editor control
-			output({
+			outputDetached({
 				type: "extension_ui_request",
 				id: crypto.randomUUID(),
 				method: "set_editor_text",
@@ -246,9 +264,14 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 		async editor(title: string, prefill?: string): Promise<string | undefined> {
 			const id = crypto.randomUUID();
-			return new Promise((resolve, reject) => {
+			let cleanup = () => {};
+			const responsePromise = new Promise<string | undefined>((resolve, reject) => {
+				cleanup = () => {
+					pendingExtensionRequests.delete(id);
+				};
 				pendingExtensionRequests.set(id, {
 					resolve: (response: RpcExtensionUIResponse) => {
+						cleanup();
 						if ("cancelled" in response && response.cancelled) {
 							resolve(undefined);
 						} else if ("value" in response) {
@@ -257,10 +280,25 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 							resolve(undefined);
 						}
 					},
-					reject,
+					reject: (error) => {
+						cleanup();
+						reject(error);
+					},
 				});
-				output({ type: "extension_ui_request", id, method: "editor", title, prefill } as RpcExtensionUIRequest);
 			});
+			try {
+				await output({
+					type: "extension_ui_request",
+					id,
+					method: "editor",
+					title,
+					prefill,
+				} as RpcExtensionUIRequest);
+			} catch (err) {
+				cleanup();
+				throw err;
+			}
+			return await responsePromise;
 		},
 
 		addAutocompleteProvider(): void {
@@ -338,13 +376,18 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				shutdownRequested = true;
 			},
 			onError: (err) => {
-				output({ type: "extension_error", extensionPath: err.extensionPath, event: err.event, error: err.error });
+				outputDetached({
+					type: "extension_error",
+					extensionPath: err.extensionPath,
+					event: err.event,
+					error: err.error,
+				});
 			},
 		});
 
 		unsubscribe?.();
-		unsubscribe = session.subscribe((event) => {
-			output(event);
+		unsubscribe = session.subscribe(async (event) => {
+			await output(event);
 		});
 	};
 
@@ -385,16 +428,17 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 						images: command.images,
 						streamingBehavior: command.streamingBehavior,
 						source: "rpc",
-						preflightResult: (didSucceed) => {
+						preflightResult: async (didSucceed) => {
 							if (didSucceed) {
+								await output(success(id, "prompt"));
 								preflightSucceeded = true;
-								output(success(id, "prompt"));
 							}
 						},
 					})
-					.catch((e) => {
+					.catch((err: unknown) => {
 						if (!preflightSucceeded) {
-							output(error(id, "prompt", e.message));
+							const message = err instanceof Error ? err.message : String(err);
+							outputDetached(error(id, "prompt", message));
 						}
 					});
 				return undefined;
@@ -690,7 +734,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		try {
 			parsed = JSON.parse(line);
 		} catch (parseError: unknown) {
-			output(
+			await output(
 				error(
 					undefined,
 					"parse",
@@ -720,11 +764,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		try {
 			const response = await handleCommand(command);
 			if (response) {
-				output(response);
+				await output(response);
 			}
 			await checkShutdownRequested();
 		} catch (commandError: unknown) {
-			output(
+			await output(
 				error(
 					command.id,
 					command.type,
@@ -741,7 +785,9 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 
 	detachInput = (() => {
 		const detachJsonl = attachJsonlLineReader(process.stdin, (line) => {
-			void handleInputLine(line);
+			void handleInputLine(line).catch((err: unknown) => {
+				process.stderr.write(`RPC command handling failed: ${err instanceof Error ? err.message : String(err)}\n`);
+			});
 		});
 		return () => {
 			detachJsonl();

@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Fixed RPC mode to respect stdout backpressure while streaming events, avoiding `ENOBUFS` crashes when clients drain stdout slowly ([#4897](https://github.com/earendil-works/pi/issues/4897)).
 - Fixed managed npm extension updates to avoid package managers installing or resolving pi host packages as peer dependencies ([#4907](https://github.com/earendil-works/pi/issues/4907)).
 
 ## [0.75.5] - 2026-05-23
