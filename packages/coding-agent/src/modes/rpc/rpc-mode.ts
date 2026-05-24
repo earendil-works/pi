@@ -743,15 +743,18 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 			process.exit(exitCode);
 		}
 		shuttingDown = true;
-		for (const cleanup of signalCleanupHandlers) {
-			cleanup();
+		try {
+			for (const cleanup of signalCleanupHandlers) {
+				cleanup();
+			}
+			unsubscribe?.();
+			await runtimeHost.dispose();
+			await outputQueue.flush();
+		} finally {
+			detachInput();
+			process.stdin.pause();
+			process.exit(exitCode);
 		}
-		unsubscribe?.();
-		await runtimeHost.dispose();
-		await outputQueue.flush();
-		detachInput();
-		process.stdin.pause();
-		process.exit(exitCode);
 	}
 
 	async function checkShutdownRequested(): Promise<void> {

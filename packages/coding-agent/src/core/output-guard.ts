@@ -138,6 +138,7 @@ export class RawStdoutQueue {
 	}
 
 	async flushIfLarge(maxQueuedBytes = 64 * 1024): Promise<void> {
+		if (this._error) throw this._error;
 		if (this._queuedBytes >= maxQueuedBytes) {
 			await this.flush();
 		}
