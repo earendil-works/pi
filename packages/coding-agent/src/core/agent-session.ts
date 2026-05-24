@@ -919,11 +919,32 @@ export class AgentSession {
 		try {
 			await this.agent.prompt(messages);
 			while (await this._handlePostAgentRun()) {
-				await this.agent.continue();
+				if (!(await this._continueAgentIfPossible())) {
+					break;
+				}
 			}
 		} finally {
 			this._flushPendingBashMessages();
 		}
+	}
+
+	private async _continueAgentIfPossible(): Promise<boolean> {
+		const messages = this.agent.state.messages;
+		const lastMessage = messages[messages.length - 1];
+		if (!lastMessage) {
+			return false;
+		}
+
+		// Auto-compaction can rebuild session state so the transcript still ends
+		// with an assistant message even though the caller asked to continue.
+		// Guard here so pre-prompt compaction checks do not crash on
+		// "Cannot continue from message role: assistant".
+		if (lastMessage.role === "assistant" && !this.agent.hasQueuedMessages()) {
+			return false;
+		}
+
+		await this.agent.continue();
+		return true;
 	}
 
 	private async _handlePostAgentRun(): Promise<boolean> {
@@ -1042,9 +1063,10 @@ export class AgentSession {
 			const lastAssistant = this._findLastAssistantMessage();
 			if (lastAssistant && (await this._checkCompaction(lastAssistant, false))) {
 				try {
-					await this.agent.continue();
-					while (await this._handlePostAgentRun()) {
-						await this.agent.continue();
+					while (await this._continueAgentIfPossible()) {
+						if (!(await this._handlePostAgentRun())) {
+							break;
+						}
 					}
 				} finally {
 					this._flushPendingBashMessages();

@@ -222,6 +222,50 @@ describe("AgentSession compaction characterization", () => {
 		await expect(sessionInternals._runAutoCompaction("threshold", false)).resolves.toBe(true);
 	});
 
+	it("pre-prompt threshold compaction does not call continue when the rebuilt transcript still ends with assistant", async () => {
+		const harness = await createHarness({
+			settings: { compaction: { reserveTokens: 127_900, keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on("session_before_compact", async (event) => ({
+						compaction: {
+							summary: "auto compacted",
+							firstKeptEntryId: event.preparation.firstKeptEntryId,
+							tokensBefore: event.preparation.tokensBefore,
+							details: {},
+						},
+					}));
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		const staleTimestamp = Date.now() - 10_000;
+		harness.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: "before compaction" }],
+			timestamp: staleTimestamp - 1000,
+		});
+		harness.sessionManager.appendMessage(
+			createAssistant(harness, {
+				stopReason: "stop",
+				totalTokens: 500,
+				timestamp: staleTimestamp,
+			}),
+		);
+		harness.session.agent.state.messages = harness.sessionManager.buildSessionContext().messages;
+
+		const continueSpy = vi.spyOn(harness.session.agent, "continue");
+		harness.setResponses([fauxAssistantMessage("after compaction")]);
+
+		await expect(harness.session.prompt("next turn")).resolves.toBeUndefined();
+
+		expect(continueSpy).not.toHaveBeenCalled();
+		expect(harness.getPendingResponseCount()).toBe(0);
+		expect(harness.eventsOfType("compaction_end")).toHaveLength(1);
+		expect(harness.session.messages.at(-1)).toMatchObject({ role: "assistant" });
+	});
+
 	it("does not retry overflow recovery more than once", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
