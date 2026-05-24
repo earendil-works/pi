@@ -25,6 +25,16 @@ const rpcIo = vi.hoisted(() => ({
 }));
 
 vi.mock("../src/core/output-guard.js", () => ({
+	createRawStdoutQueue: () => ({
+		enqueue: (line: string) => {
+			rpcIo.outputLines.push(line);
+		},
+		write: async (line: string) => {
+			rpcIo.outputLines.push(line);
+		},
+		flush: async () => {},
+		flushIfLarge: async () => {},
+	}),
 	takeOverStdout: vi.fn(),
 	writeRawStdout: (line: string) => {
 		rpcIo.outputLines.push(line);
