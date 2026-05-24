@@ -259,7 +259,7 @@ export class AgentSession {
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
-	private _transportEventHandler?: (event: AgentSessionEvent) => void | Promise<void>;
+	private _eventOutputFlusher?: (event: AgentSessionEvent) => void | Promise<void>;
 
 	/** Tracks pending steering messages for UI display. Removed when delivered. */
 	private _steeringMessages: string[] = [];
@@ -448,30 +448,15 @@ export class AgentSession {
 	// Event Subscription
 	// =========================================================================
 
-	private _emitPublic(event: AgentSessionEvent): void {
+	/** Emit an event to all listeners */
+	private _emit(event: AgentSessionEvent): void {
 		for (const listener of this._eventListeners) {
 			listener(event);
 		}
 	}
 
-	private async _emitTransport(event: AgentSessionEvent): Promise<void> {
-		await this._transportEventHandler?.(event);
-	}
-
-	/** Emit an event to all listeners. Public listeners are fire-and-forget for API compatibility. */
-	private async _emit(event: AgentSessionEvent): Promise<void> {
-		this._emitPublic(event);
-		await this._emitTransport(event);
-	}
-
-	private _emitDetached(event: AgentSessionEvent): void {
-		void this._emit(event).catch((err: unknown) => {
-			process.stderr.write(`Session event listener failed: ${err instanceof Error ? err.message : String(err)}\n`);
-		});
-	}
-
-	private async _emitQueueUpdate(): Promise<void> {
-		await this._emit({
+	private _emitQueueUpdate(): void {
+		this._emit({
 			type: "queue_update",
 			steering: [...this._steeringMessages],
 			followUp: [...this._followUpMessages],
@@ -493,13 +478,13 @@ export class AgentSession {
 				const steeringIndex = this._steeringMessages.indexOf(messageText);
 				if (steeringIndex !== -1) {
 					this._steeringMessages.splice(steeringIndex, 1);
-					await this._emitQueueUpdate();
+					this._emitQueueUpdate();
 				} else {
 					// Check follow-up queue
 					const followUpIndex = this._followUpMessages.indexOf(messageText);
 					if (followUpIndex !== -1) {
 						this._followUpMessages.splice(followUpIndex, 1);
-						await this._emitQueueUpdate();
+						this._emitQueueUpdate();
 					}
 				}
 			}
@@ -510,11 +495,9 @@ export class AgentSession {
 
 		const sessionEvent: AgentSessionEvent =
 			event.type === "agent_end" ? { ...event, willRetry: this._willRetryAfterAgentEnd(event) } : event;
-		this._emitPublic(sessionEvent);
+		this._emit(sessionEvent);
 
-		const followUpEvents: AgentSessionEvent[] = [];
-
-		// Handle session persistence before awaited transport listeners so output failures cannot skip it.
+		// Handle session persistence
 		if (event.type === "message_end") {
 			// Check if this is a custom message from extensions
 			if (event.message.role === "custom") {
@@ -547,7 +530,7 @@ export class AgentSession {
 				// Reset retry counter immediately on successful assistant response
 				// This prevents accumulation across multiple LLM calls within a turn
 				if (assistantMsg.stopReason !== "error" && this._retryAttempt > 0) {
-					followUpEvents.push({
+					this._emit({
 						type: "auto_retry_end",
 						success: true,
 						attempt: this._retryAttempt,
@@ -557,10 +540,7 @@ export class AgentSession {
 			}
 		}
 
-		await this._emitTransport(sessionEvent);
-		for (const followUpEvent of followUpEvents) {
-			await this._emit(followUpEvent);
-		}
+		await this._eventOutputFlusher?.(sessionEvent);
 	};
 
 	private _willRetryAfterAgentEnd(event: Extract<AgentEvent, { type: "agent_end" }>): boolean {
@@ -706,12 +686,12 @@ export class AgentSession {
 		};
 	}
 
-	/** @internal Configure the awaited event sink used by process transports. */
-	setTransportEventHandler(handler: ((event: AgentSessionEvent) => void | Promise<void>) | undefined): () => void {
-		this._transportEventHandler = handler;
+	/** @internal Configure an awaited output flush hook used by process transports. */
+	setEventOutputFlusher(handler: ((event: AgentSessionEvent) => void | Promise<void>) | undefined): () => void {
+		this._eventOutputFlusher = handler;
 		return () => {
-			if (this._transportEventHandler === handler) {
-				this._transportEventHandler = undefined;
+			if (this._eventOutputFlusher === handler) {
+				this._eventOutputFlusher = undefined;
 			}
 		};
 	}
@@ -747,7 +727,7 @@ export class AgentSession {
 		);
 		this._disconnectFromAgent();
 		this._eventListeners = [];
-		this._transportEventHandler = undefined;
+		this._eventOutputFlusher = undefined;
 		cleanupSessionResources(this.sessionId);
 	}
 
@@ -973,7 +953,7 @@ export class AgentSession {
 		}
 
 		if (msg.stopReason === "error" && this._retryAttempt > 0) {
-			await this._emit({
+			this._emit({
 				type: "auto_retry_end",
 				success: false,
 				attempt: this._retryAttempt,
@@ -1252,7 +1232,7 @@ export class AgentSession {
 	 */
 	private async _queueSteer(text: string, images?: ImageContent[]): Promise<void> {
 		this._steeringMessages.push(text);
-		await this._emitQueueUpdate();
+		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
 			content.push(...images);
@@ -1269,7 +1249,7 @@ export class AgentSession {
 	 */
 	private async _queueFollowUp(text: string, images?: ImageContent[]): Promise<void> {
 		this._followUpMessages.push(text);
-		await this._emitQueueUpdate();
+		this._emitQueueUpdate();
 		const content: (TextContent | ImageContent)[] = [{ type: "text", text }];
 		if (images) {
 			content.push(...images);
@@ -1338,14 +1318,8 @@ export class AgentSession {
 				message.display,
 				message.details,
 			);
-			const startEvent: AgentSessionEvent = { type: "message_start", message: appMessage };
-			const endEvent: AgentSessionEvent = { type: "message_end", message: appMessage };
-			this._emitPublic(startEvent);
-			this._emitPublic(endEvent);
-			const startOutput = this._emitTransport(startEvent);
-			const endOutput = this._emitTransport(endEvent);
-			await startOutput;
-			await endOutput;
+			this._emit({ type: "message_start", message: appMessage });
+			this._emit({ type: "message_end", message: appMessage });
 		}
 	}
 
@@ -1400,7 +1374,7 @@ export class AgentSession {
 		this._steeringMessages = [];
 		this._followUpMessages = [];
 		this.agent.clearAllQueues();
-		this._emitDetached({ type: "queue_update", steering: [], followUp: [] });
+		this._emitQueueUpdate();
 		return { steering, followUp };
 	}
 
@@ -1563,7 +1537,7 @@ export class AgentSession {
 			if (this.supportsThinking() || effectiveLevel !== "off") {
 				this.settingsManager.setDefaultThinkingLevel(effectiveLevel);
 			}
-			this._emitDetached({ type: "thinking_level_changed", level: effectiveLevel });
+			this._emit({ type: "thinking_level_changed", level: effectiveLevel });
 			void this._extensionRunner.emit({
 				type: "thinking_level_select",
 				level: effectiveLevel,
@@ -1653,7 +1627,7 @@ export class AgentSession {
 		this._disconnectFromAgent();
 		await this.abort();
 		this._compactionAbortController = new AbortController();
-		await this._emit({ type: "compaction_start", reason: "manual" });
+		this._emit({ type: "compaction_start", reason: "manual" });
 
 		try {
 			if (!this.model) {
@@ -1754,7 +1728,7 @@ export class AgentSession {
 				tokensBefore,
 				details,
 			};
-			await this._emit({
+			this._emit({
 				type: "compaction_end",
 				reason: "manual",
 				result: compactionResult,
@@ -1765,7 +1739,7 @@ export class AgentSession {
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			const aborted = message === "Compaction cancelled" || (error instanceof Error && error.name === "AbortError");
-			await this._emit({
+			this._emit({
 				type: "compaction_end",
 				reason: "manual",
 				result: undefined,
@@ -1835,7 +1809,7 @@ export class AgentSession {
 		// Case 1: Overflow - LLM returned context overflow error
 		if (sameModel && isContextOverflow(assistantMessage, contextWindow)) {
 			if (this._overflowRecoveryAttempted) {
-				await this._emit({
+				this._emit({
 					type: "compaction_end",
 					reason: "overflow",
 					result: undefined,
@@ -1892,12 +1866,12 @@ export class AgentSession {
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings();
 
+		this._emit({ type: "compaction_start", reason });
 		this._autoCompactionAbortController = new AbortController();
-		await this._emit({ type: "compaction_start", reason });
 
 		try {
 			if (!this.model) {
-				await this._emit({
+				this._emit({
 					type: "compaction_end",
 					reason,
 					result: undefined,
@@ -1912,7 +1886,7 @@ export class AgentSession {
 			if (this.agent.streamFn === streamSimple) {
 				const authResult = await this._modelRegistry.getApiKeyAndHeaders(this.model);
 				if (!authResult.ok || !authResult.apiKey) {
-					await this._emit({
+					this._emit({
 						type: "compaction_end",
 						reason,
 						result: undefined,
@@ -1931,7 +1905,7 @@ export class AgentSession {
 
 			const preparation = prepareCompaction(pathEntries, settings);
 			if (!preparation) {
-				await this._emit({
+				this._emit({
 					type: "compaction_end",
 					reason,
 					result: undefined,
@@ -1954,7 +1928,7 @@ export class AgentSession {
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (extensionResult?.cancel) {
-					await this._emit({
+					this._emit({
 						type: "compaction_end",
 						reason,
 						result: undefined,
@@ -2000,7 +1974,7 @@ export class AgentSession {
 			}
 
 			if (this._autoCompactionAbortController.signal.aborted) {
-				await this._emit({
+				this._emit({
 					type: "compaction_end",
 					reason,
 					result: undefined,
@@ -2034,7 +2008,7 @@ export class AgentSession {
 				tokensBefore,
 				details,
 			};
-			await this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
+			this._emit({ type: "compaction_end", reason, result, aborted: false, willRetry });
 
 			if (willRetry) {
 				const messages = this.agent.state.messages;
@@ -2050,7 +2024,7 @@ export class AgentSession {
 			return this.agent.hasQueuedMessages();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "compaction failed";
-			await this._emit({
+			this._emit({
 				type: "compaction_end",
 				reason,
 				result: undefined,
@@ -2500,47 +2474,38 @@ export class AgentSession {
 		}
 
 		const delayMs = settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
-		const retryAbortController = new AbortController();
-		this._retryAbortController = retryAbortController;
 
+		this._emit({
+			type: "auto_retry_start",
+			attempt: this._retryAttempt,
+			maxAttempts: settings.maxRetries,
+			delayMs,
+			errorMessage: message.errorMessage || "Unknown error",
+		});
+
+		// Remove error message from agent state (keep in session for history)
+		const messages = this.agent.state.messages;
+		if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
+			this.agent.state.messages = messages.slice(0, -1);
+		}
+
+		// Wait with exponential backoff (abortable)
+		this._retryAbortController = new AbortController();
 		try {
-			await this._emit({
-				type: "auto_retry_start",
-				attempt: this._retryAttempt,
-				maxAttempts: settings.maxRetries,
-				delayMs,
-				errorMessage: message.errorMessage || "Unknown error",
+			await sleep(delayMs, this._retryAbortController.signal);
+		} catch {
+			// Aborted during sleep - emit end event so UI can clean up
+			const attempt = this._retryAttempt;
+			this._retryAttempt = 0;
+			this._emit({
+				type: "auto_retry_end",
+				success: false,
+				attempt,
+				finalError: "Retry cancelled",
 			});
-
-			// Remove error message from agent state (keep in session for history)
-			const messages = this.agent.state.messages;
-			if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
-				this.agent.state.messages = messages.slice(0, -1);
-			}
-
-			// Wait with exponential backoff (abortable)
-			try {
-				await sleep(delayMs, retryAbortController.signal);
-			} catch (error) {
-				if (!retryAbortController.signal.aborted) {
-					throw error;
-				}
-
-				// Aborted during sleep - emit end event so UI can clean up
-				const attempt = this._retryAttempt;
-				this._retryAttempt = 0;
-				await this._emit({
-					type: "auto_retry_end",
-					success: false,
-					attempt,
-					finalError: "Retry cancelled",
-				});
-				return false;
-			}
+			return false;
 		} finally {
-			if (this._retryAbortController === retryAbortController) {
-				this._retryAbortController = undefined;
-			}
+			this._retryAbortController = undefined;
 		}
 
 		return true;
@@ -2686,7 +2651,7 @@ export class AgentSession {
 	 */
 	setSessionName(name: string): void {
 		this.sessionManager.appendSessionInfo(name);
-		this._emitDetached({ type: "session_info_changed", name: this.sessionManager.getSessionName() });
+		this._emit({ type: "session_info_changed", name: this.sessionManager.getSessionName() });
 	}
 
 	// =========================================================================

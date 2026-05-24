@@ -12,6 +12,7 @@
  */
 
 import * as crypto from "node:crypto";
+import type { AgentSessionEvent } from "../../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../../core/agent-session-runtime.ts";
 import type {
 	ExtensionUIContext,
@@ -19,7 +20,7 @@ import type {
 	ExtensionWidgetOptions,
 	WorkingIndicatorOptions,
 } from "../../core/extensions/index.ts";
-import { takeOverStdout, writeRawStdout } from "../../core/output-guard.ts";
+import { createRawStdoutQueue, takeOverStdout } from "../../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../../utils/shell.ts";
 import { type Theme, theme } from "../interactive/theme/theme.ts";
 import { attachJsonlLineReader, serializeJsonLine } from "./jsonl.ts";
@@ -41,6 +42,16 @@ export type {
 	RpcSessionState,
 } from "./rpc-types.ts";
 
+function shouldFlushEventOutput(event: AgentSessionEvent): boolean {
+	return (
+		event.type === "message_start" ||
+		event.type === "message_end" ||
+		event.type === "tool_execution_start" ||
+		event.type === "tool_execution_end" ||
+		event.type === "agent_end"
+	);
+}
+
 /**
  * Run in RPC mode.
  * Listens for JSON commands on stdin, outputs events and responses on stdout.
@@ -50,27 +61,29 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
 
-	let outputChain: Promise<void> = Promise.resolve();
-	let outputError: Error | undefined;
+	const outputQueue = createRawStdoutQueue();
 
-	const output = (obj: RpcResponse | RpcExtensionUIRequest | object): Promise<void> => {
-		const line = serializeJsonLine(obj);
-		const writePromise = outputChain.then(async () => {
-			if (outputError) {
-				throw outputError;
-			}
-			await writeRawStdout(line);
-		});
-		outputChain = writePromise.catch((err: unknown) => {
-			outputError = err instanceof Error ? err : new Error(String(err));
-		});
-		return writePromise;
+	const output = async (obj: RpcResponse | RpcExtensionUIRequest | object): Promise<void> => {
+		await outputQueue.write(serializeJsonLine(obj));
 	};
 
 	const outputDetached = (obj: RpcResponse | RpcExtensionUIRequest | object): void => {
-		void output(obj).catch((err: unknown) => {
+		outputQueue.enqueue(serializeJsonLine(obj));
+		void outputQueue.flush().catch((err: unknown) => {
 			process.stderr.write(`RPC output failed: ${err instanceof Error ? err.message : String(err)}\n`);
 		});
+	};
+
+	const outputEvent = (event: AgentSessionEvent): void => {
+		outputQueue.enqueue(serializeJsonLine(event));
+	};
+
+	const flushEventOutput = async (event: AgentSessionEvent): Promise<void> => {
+		if (shouldFlushEventOutput(event)) {
+			await outputQueue.flush();
+		} else {
+			await outputQueue.flushIfLarge();
+		}
 	};
 
 	const success = <T extends RpcCommand["type"]>(
@@ -98,11 +111,6 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	let shutdownRequested = false;
 	let shuttingDown = false;
 	const signalCleanupHandlers: Array<() => void> = [];
-	const onStdoutError = (err: Error) => {
-		outputError = err;
-	};
-	process.stdout.on("error", onStdoutError);
-	signalCleanupHandlers.push(() => process.stdout.off("error", onStdoutError));
 
 	/** Helper for dialog methods with signal/timeout support */
 	async function createDialogPromise<T>(
@@ -404,9 +412,12 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		});
 
 		unsubscribe?.();
-		unsubscribe = session.setTransportEventHandler(async (event) => {
-			await output(event);
-		});
+		const unsubscribeEvents = session.subscribe(outputEvent);
+		const unsubscribeFlusher = session.setEventOutputFlusher(flushEventOutput);
+		unsubscribe = () => {
+			unsubscribeEvents();
+			unsubscribeFlusher();
+		};
 	};
 
 	const registerSignalHandlers = (): void => {
@@ -737,6 +748,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		}
 		unsubscribe?.();
 		await runtimeHost.dispose();
+		await outputQueue.flush();
 		detachInput();
 		process.stdin.pause();
 		process.exit(exitCode);

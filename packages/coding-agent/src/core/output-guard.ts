@@ -46,10 +46,18 @@ export function isStdoutTakenOver(): boolean {
 	return stdoutTakeoverState !== undefined;
 }
 
-export async function writeRawStdout(text: string): Promise<void> {
-	const write = stdoutTakeoverState
+function getRawStdoutWrite(): StdoutTakeoverState["rawStdoutWrite"] {
+	return stdoutTakeoverState
 		? stdoutTakeoverState.rawStdoutWrite
 		: (process.stdout.write.bind(process.stdout) as StdoutTakeoverState["rawStdoutWrite"]);
+}
+
+export function writeRawStdout(text: string): void {
+	getRawStdoutWrite()(text);
+}
+
+async function writeRawStdoutBackpressured(text: string): Promise<void> {
+	const write = getRawStdoutWrite();
 
 	await new Promise<void>((resolve, reject) => {
 		let writeDone = false;
@@ -105,6 +113,65 @@ export async function writeRawStdout(text: string): Promise<void> {
 	});
 }
 
+export class RawStdoutQueue {
+	private _queue: string[] = [];
+	private _queuedBytes = 0;
+	private _drainPromise: Promise<void> | undefined;
+	private _error: Error | undefined;
+
+	enqueue(text: string): void {
+		if (this._error) return;
+		this._queue.push(text);
+		this._queuedBytes += Buffer.byteLength(text);
+		void this._ensureDrain().catch(() => {});
+	}
+
+	async write(text: string): Promise<void> {
+		this.enqueue(text);
+		await this.flush();
+	}
+
+	async flush(): Promise<void> {
+		if (this._error) throw this._error;
+		await this._ensureDrain();
+		if (this._error) throw this._error;
+	}
+
+	async flushIfLarge(maxQueuedBytes = 64 * 1024): Promise<void> {
+		if (this._queuedBytes >= maxQueuedBytes) {
+			await this.flush();
+		}
+	}
+
+	private _ensureDrain(): Promise<void> {
+		if (!this._drainPromise) {
+			this._drainPromise = this._drain().finally(() => {
+				this._drainPromise = undefined;
+			});
+		}
+		return this._drainPromise;
+	}
+
+	private async _drain(): Promise<void> {
+		try {
+			while (this._queue.length > 0) {
+				const text = this._queue.shift()!;
+				this._queuedBytes -= Buffer.byteLength(text);
+				await writeRawStdoutBackpressured(text);
+			}
+		} catch (err) {
+			this._error = err instanceof Error ? err : new Error(String(err));
+			this._queue = [];
+			this._queuedBytes = 0;
+			throw this._error;
+		}
+	}
+}
+
+export function createRawStdoutQueue(): RawStdoutQueue {
+	return new RawStdoutQueue();
+}
+
 export async function flushRawStdout(): Promise<void> {
-	await writeRawStdout("");
+	await writeRawStdoutBackpressured("");
 }
