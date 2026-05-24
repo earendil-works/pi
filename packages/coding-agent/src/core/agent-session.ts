@@ -147,7 +147,7 @@ export type AgentSessionEvent =
 	| { type: "auto_retry_end"; success: boolean; attempt: number; finalError?: string };
 
 /** Listener function for agent session events */
-export type AgentSessionEventListener = (event: AgentSessionEvent) => void | Promise<void>;
+export type AgentSessionEventListener = (event: AgentSessionEvent) => void;
 
 // ============================================================================
 // Types
@@ -202,7 +202,7 @@ export interface PromptOptions {
 	/** Source of input for extension input event handlers. Defaults to "interactive". */
 	source?: InputSource;
 	/** Internal hook used by RPC mode to observe prompt preflight acceptance or rejection. */
-	preflightResult?: (success: boolean) => void | Promise<void>;
+	preflightResult?: (success: boolean) => void;
 }
 
 /** Result from cycleModel() */
@@ -259,6 +259,7 @@ export class AgentSession {
 	// Event subscription state
 	private _unsubscribeAgent?: () => void;
 	private _eventListeners: AgentSessionEventListener[] = [];
+	private _backpressureEventListeners: Array<(event: AgentSessionEvent) => void | Promise<void>> = [];
 
 	/** Tracks pending steering messages for UI display. Removed when delivered. */
 	private _steeringMessages: string[] = [];
@@ -447,15 +448,20 @@ export class AgentSession {
 	// Event Subscription
 	// =========================================================================
 
-	/** Emit an event to all listeners */
+	/** Emit an event to all listeners. Public listeners are fire-and-forget for API compatibility. */
 	private async _emit(event: AgentSessionEvent): Promise<void> {
-		for (const l of this._eventListeners) {
-			await l(event);
+		for (const listener of this._eventListeners) {
+			listener(event);
+		}
+		for (const listener of this._backpressureEventListeners) {
+			await listener(event);
 		}
 	}
 
 	private _emitDetached(event: AgentSessionEvent): void {
-		void this._emit(event);
+		void this._emit(event).catch((err: unknown) => {
+			process.stderr.write(`Session event listener failed: ${err instanceof Error ? err.message : String(err)}\n`);
+		});
 	}
 
 	private async _emitQueueUpdate(): Promise<void> {
@@ -688,6 +694,17 @@ export class AgentSession {
 		};
 	}
 
+	/** @internal Subscribe to awaited events for transports that need backpressure. */
+	subscribeWithBackpressure(listener: (event: AgentSessionEvent) => void | Promise<void>): () => void {
+		this._backpressureEventListeners.push(listener);
+		return () => {
+			const index = this._backpressureEventListeners.indexOf(listener);
+			if (index !== -1) {
+				this._backpressureEventListeners.splice(index, 1);
+			}
+		};
+	}
+
 	/**
 	 * Temporarily disconnect from agent events.
 	 * User listeners are preserved and will receive events again after resubscribe().
@@ -719,6 +736,7 @@ export class AgentSession {
 		);
 		this._disconnectFromAgent();
 		this._eventListeners = [];
+		this._backpressureEventListeners = [];
 		cleanupSessionResources(this.sessionId);
 	}
 
@@ -977,7 +995,7 @@ export class AgentSession {
 				const handled = await this._tryExecuteExtensionCommand(text);
 				if (handled) {
 					// Extension command executed, no prompt to send
-					await preflightResult?.(true);
+					preflightResult?.(true);
 					return;
 				}
 			}
@@ -992,7 +1010,7 @@ export class AgentSession {
 					options?.source ?? "interactive",
 				);
 				if (inputResult.action === "handled") {
-					await preflightResult?.(true);
+					preflightResult?.(true);
 					return;
 				}
 				if (inputResult.action === "transform") {
@@ -1020,7 +1038,7 @@ export class AgentSession {
 				} else {
 					await this._queueSteer(expandedText, currentImages);
 				}
-				await preflightResult?.(true);
+				preflightResult?.(true);
 				return;
 			}
 
@@ -1105,7 +1123,7 @@ export class AgentSession {
 				this.agent.state.systemPrompt = this._baseSystemPrompt;
 			}
 		} catch (error) {
-			await preflightResult?.(false);
+			preflightResult?.(false);
 			throw error;
 		}
 
@@ -1113,7 +1131,7 @@ export class AgentSession {
 			return;
 		}
 
-		await preflightResult?.(true);
+		preflightResult?.(true);
 		await this._runAgentPrompt(messages);
 	}
 
@@ -1365,7 +1383,7 @@ export class AgentSession {
 		this._steeringMessages = [];
 		this._followUpMessages = [];
 		this.agent.clearAllQueues();
-		void this._emitQueueUpdate();
+		this._emitDetached({ type: "queue_update", steering: [], followUp: [] });
 		return { steering, followUp };
 	}
 
@@ -1857,8 +1875,8 @@ export class AgentSession {
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
 		const settings = this.settingsManager.getCompactionSettings();
 
-		await this._emit({ type: "compaction_start", reason });
 		this._autoCompactionAbortController = new AbortController();
+		await this._emit({ type: "compaction_start", reason });
 
 		try {
 			if (!this.model) {

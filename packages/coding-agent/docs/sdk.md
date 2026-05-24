@@ -81,7 +81,7 @@ interface AgentSession {
   followUp(text: string): Promise<void>;
 
   // Subscribe to events (returns unsubscribe function)
-  subscribe(listener: (event: AgentSessionEvent) => void | Promise<void>): () => void;
+  subscribe(listener: (event: AgentSessionEvent) => void): () => void;
 
   // Session info
   sessionFile: string | undefined;
@@ -191,7 +191,7 @@ interface PromptOptions {
   images?: ImageContent[];
   streamingBehavior?: "steer" | "followUp";
   source?: InputSource;
-  preflightResult?: (success: boolean) => void | Promise<void>;
+  preflightResult?: (success: boolean) => void;
 }
 ```
 

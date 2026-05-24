@@ -50,8 +50,21 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
 
-	const output = async (obj: RpcResponse | RpcExtensionUIRequest | object): Promise<void> => {
-		await writeRawStdout(serializeJsonLine(obj));
+	let outputChain: Promise<void> = Promise.resolve();
+	let outputError: Error | undefined;
+
+	const output = (obj: RpcResponse | RpcExtensionUIRequest | object): Promise<void> => {
+		const line = serializeJsonLine(obj);
+		const writePromise = outputChain.then(async () => {
+			if (outputError) {
+				throw outputError;
+			}
+			await writeRawStdout(line);
+		});
+		outputChain = writePromise.catch((err: unknown) => {
+			outputError = err instanceof Error ? err : new Error(String(err));
+		});
+		return writePromise;
 	};
 
 	const outputDetached = (obj: RpcResponse | RpcExtensionUIRequest | object): void => {
@@ -85,6 +98,11 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 	let shutdownRequested = false;
 	let shuttingDown = false;
 	const signalCleanupHandlers: Array<() => void> = [];
+	const onStdoutError = (err: Error) => {
+		outputError = err;
+	};
+	process.stdout.on("error", onStdoutError);
+	signalCleanupHandlers.push(() => process.stdout.off("error", onStdoutError));
 
 	/** Helper for dialog methods with signal/timeout support */
 	async function createDialogPromise<T>(
@@ -386,7 +404,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 		});
 
 		unsubscribe?.();
-		unsubscribe = session.subscribe(async (event) => {
+		unsubscribe = session.subscribeWithBackpressure(async (event) => {
 			await output(event);
 		});
 	};
@@ -428,10 +446,10 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 						images: command.images,
 						streamingBehavior: command.streamingBehavior,
 						source: "rpc",
-						preflightResult: async (didSucceed) => {
+						preflightResult: (didSucceed) => {
 							if (didSucceed) {
-								await output(success(id, "prompt"));
 								preflightSucceeded = true;
+								outputDetached(success(id, "prompt"));
 							}
 						},
 					})

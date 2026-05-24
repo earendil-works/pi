@@ -1,5 +1,3 @@
-import { once } from "node:events";
-
 interface StdoutTakeoverState {
 	rawStdoutWrite: (chunk: string, callback?: (error?: Error | null) => void) => boolean;
 	rawStderrWrite: (chunk: string, callback?: (error?: Error | null) => void) => boolean;
@@ -49,27 +47,64 @@ export function isStdoutTakenOver(): boolean {
 }
 
 export async function writeRawStdout(text: string): Promise<void> {
-	const canContinue = stdoutTakeoverState ? stdoutTakeoverState.rawStdoutWrite(text) : process.stdout.write(text);
-	if (!canContinue) {
-		await once(process.stdout, "drain");
-	}
+	const write = stdoutTakeoverState
+		? stdoutTakeoverState.rawStdoutWrite
+		: (process.stdout.write.bind(process.stdout) as StdoutTakeoverState["rawStdoutWrite"]);
+
+	await new Promise<void>((resolve, reject) => {
+		let writeDone = false;
+		let writeReturned = false;
+		let drainDone = true;
+		let settled = false;
+
+		const cleanup = () => {
+			process.stdout.off("error", onError);
+			process.stdout.off("drain", onDrain);
+		};
+		const finish = (err?: Error | null) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			if (err) reject(err);
+			else resolve();
+		};
+		const finishIfDone = () => {
+			if (writeDone && drainDone) {
+				finish();
+			}
+		};
+		const onError = (err: Error) => {
+			finish(err);
+		};
+		const onDrain = () => {
+			drainDone = true;
+			finishIfDone();
+		};
+
+		process.stdout.on("error", onError);
+		try {
+			const canContinue = write(text, (err) => {
+				if (err) {
+					finish(err);
+					return;
+				}
+				writeDone = true;
+				if (writeReturned) {
+					finishIfDone();
+				}
+			});
+			if (!canContinue) {
+				drainDone = false;
+				process.stdout.once("drain", onDrain);
+			}
+			writeReturned = true;
+			finishIfDone();
+		} catch (err) {
+			finish(err instanceof Error ? err : new Error(String(err)));
+		}
+	});
 }
 
 export async function flushRawStdout(): Promise<void> {
-	if (stdoutTakeoverState) {
-		await new Promise<void>((resolve, reject) => {
-			stdoutTakeoverState?.rawStdoutWrite("", (err) => {
-				if (err) reject(err);
-				else resolve();
-			});
-		});
-		return;
-	}
-
-	await new Promise<void>((resolve, reject) => {
-		process.stdout.write("", (err) => {
-			if (err) reject(err);
-			else resolve();
-		});
-	});
+	await writeRawStdout("");
 }
