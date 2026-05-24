@@ -7,20 +7,9 @@
  */
 
 import type { AssistantMessage, ImageContent } from "@earendil-works/pi-ai";
-import type { AgentSessionEvent } from "../core/agent-session.ts";
 import type { AgentSessionRuntime } from "../core/agent-session-runtime.ts";
-import { createRawStdoutQueue } from "../core/output-guard.ts";
+import { flushRawStdout, writeRawStdout } from "../core/output-guard.ts";
 import { killTrackedDetachedChildren } from "../utils/shell.ts";
-
-function shouldFlushEventOutput(event: AgentSessionEvent): boolean {
-	return (
-		event.type === "message_start" ||
-		event.type === "message_end" ||
-		event.type === "tool_execution_start" ||
-		event.type === "tool_execution_end" ||
-		event.type === "agent_end"
-	);
-}
 
 /**
  * Options for print mode.
@@ -46,7 +35,6 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 	let session = runtimeHost.session;
 	let unsubscribe: (() => void) | undefined;
 	let disposed = false;
-	const outputQueue = createRawStdoutQueue();
 	const signalCleanupHandlers: Array<() => void> = [];
 
 	const disposeRuntime = async (): Promise<void> => {
@@ -112,31 +100,18 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 		});
 
 		unsubscribe?.();
-		if (mode === "json") {
-			const unsubscribeEvents = session.subscribe((event) => {
-				outputQueue.enqueue(`${JSON.stringify(event)}\n`);
-			});
-			const unsubscribeFlusher = session.setEventOutputFlusher(async (event) => {
-				if (shouldFlushEventOutput(event)) {
-					await outputQueue.flush();
-				} else {
-					await outputQueue.flushIfLarge();
-				}
-			});
-			unsubscribe = () => {
-				unsubscribeEvents();
-				unsubscribeFlusher();
-			};
-		} else {
-			unsubscribe = undefined;
-		}
+		unsubscribe = session.subscribe((event) => {
+			if (mode === "json") {
+				writeRawStdout(`${JSON.stringify(event)}\n`);
+			}
+		});
 	};
 
 	try {
 		if (mode === "json") {
 			const header = session.sessionManager.getHeader();
 			if (header) {
-				await outputQueue.write(`${JSON.stringify(header)}\n`);
+				writeRawStdout(`${JSON.stringify(header)}\n`);
 			}
 		}
 
@@ -162,7 +137,7 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 				} else {
 					for (const content of assistantMsg.content) {
 						if (content.type === "text") {
-							await outputQueue.write(`${content.text}\n`);
+							writeRawStdout(`${content.text}\n`);
 						}
 					}
 				}
@@ -178,6 +153,6 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 			cleanup();
 		}
 		await disposeRuntime();
-		await outputQueue.flush();
+		await flushRawStdout();
 	}
 }
