@@ -338,24 +338,12 @@ async function streamAssistantResponse(
 					});
 				}
 				break;
-
-			case "done":
-			case "error": {
-				const finalMessage = await response.result();
-				if (addedPartial) {
-					context.messages[context.messages.length - 1] = finalMessage;
-				} else {
-					context.messages.push(finalMessage);
-				}
-				if (!addedPartial) {
-					await emit({ type: "message_start", message: { ...finalMessage } });
-				}
-				await emit({ type: "message_end", message: finalMessage });
-				return finalMessage;
-			}
 		}
 	}
 
+	// Stream exhausted — finalize with the completed message.
+	// Covers both explicit done/error termination (stream closes after the event)
+	// and edge cases where the iterator ends without emitting a terminal event.
 	const finalMessage = await response.result();
 	if (addedPartial) {
 		context.messages[context.messages.length - 1] = finalMessage;
