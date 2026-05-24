@@ -2465,38 +2465,47 @@ export class AgentSession {
 		}
 
 		const delayMs = settings.baseDelayMs * 2 ** (this._retryAttempt - 1);
+		const retryAbortController = new AbortController();
+		this._retryAbortController = retryAbortController;
 
-		await this._emit({
-			type: "auto_retry_start",
-			attempt: this._retryAttempt,
-			maxAttempts: settings.maxRetries,
-			delayMs,
-			errorMessage: message.errorMessage || "Unknown error",
-		});
-
-		// Remove error message from agent state (keep in session for history)
-		const messages = this.agent.state.messages;
-		if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
-			this.agent.state.messages = messages.slice(0, -1);
-		}
-
-		// Wait with exponential backoff (abortable)
-		this._retryAbortController = new AbortController();
 		try {
-			await sleep(delayMs, this._retryAbortController.signal);
-		} catch {
-			// Aborted during sleep - emit end event so UI can clean up
-			const attempt = this._retryAttempt;
-			this._retryAttempt = 0;
 			await this._emit({
-				type: "auto_retry_end",
-				success: false,
-				attempt,
-				finalError: "Retry cancelled",
+				type: "auto_retry_start",
+				attempt: this._retryAttempt,
+				maxAttempts: settings.maxRetries,
+				delayMs,
+				errorMessage: message.errorMessage || "Unknown error",
 			});
-			return false;
+
+			// Remove error message from agent state (keep in session for history)
+			const messages = this.agent.state.messages;
+			if (messages.length > 0 && messages[messages.length - 1].role === "assistant") {
+				this.agent.state.messages = messages.slice(0, -1);
+			}
+
+			// Wait with exponential backoff (abortable)
+			try {
+				await sleep(delayMs, retryAbortController.signal);
+			} catch (error) {
+				if (!retryAbortController.signal.aborted) {
+					throw error;
+				}
+
+				// Aborted during sleep - emit end event so UI can clean up
+				const attempt = this._retryAttempt;
+				this._retryAttempt = 0;
+				await this._emit({
+					type: "auto_retry_end",
+					success: false,
+					attempt,
+					finalError: "Retry cancelled",
+				});
+				return false;
+			}
 		} finally {
-			this._retryAbortController = undefined;
+			if (this._retryAbortController === retryAbortController) {
+				this._retryAbortController = undefined;
+			}
 		}
 
 		return true;

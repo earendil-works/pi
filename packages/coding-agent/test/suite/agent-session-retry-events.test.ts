@@ -152,6 +152,7 @@ describe("AgentSession retry and event characterization", () => {
 			const unsubscribe = harness.session.subscribe((event) => {
 				if (event.type === "auto_retry_start") {
 					unsubscribe();
+					harness.session.abortRetry();
 					resolve();
 				}
 			});
@@ -159,7 +160,6 @@ describe("AgentSession retry and event characterization", () => {
 
 		const promptPromise = harness.session.prompt("test");
 		await sawRetryStart;
-		harness.session.abortRetry();
 		await promptPromise;
 
 		expect(harness.session.isRetrying).toBe(false);
