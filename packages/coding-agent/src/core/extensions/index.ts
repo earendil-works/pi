@@ -78,6 +78,7 @@ export type {
 	GetAllToolsHandler,
 	GetCommandsHandler,
 	GetThinkingLevelHandler,
+	GetToolDefinitionHandler,
 	GrepToolCallEvent,
 	GrepToolResultEvent,
 	// Events - Input

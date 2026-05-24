@@ -247,6 +247,34 @@ describe("AgentSession prompt characterization", () => {
 		expect(harness.getPendingResponseCount()).toBe(1);
 	});
 
+	it("exposes full tool definitions to extension commands", async () => {
+		let ctxReadLabel: string | undefined;
+		let ctxReadHasExecute = false;
+		let missingWasUndefined = false;
+		const harness = await createHarness({
+			extensionFactories: [
+				(pi) => {
+					pi.registerCommand("inspect-tools", {
+						description: "Inspect tools",
+						handler: async (_args, ctx) => {
+							const ctxRead = ctx.getToolDefinition("read");
+							ctxReadLabel = ctxRead?.label;
+							ctxReadHasExecute = typeof ctxRead?.execute === "function";
+							missingWasUndefined = ctx.getToolDefinition("missing") === undefined;
+						},
+					});
+				},
+			],
+		});
+		harnesses.push(harness);
+
+		await harness.session.prompt("/inspect-tools");
+
+		expect(ctxReadLabel).toBe("read");
+		expect(ctxReadHasExecute).toBe(true);
+		expect(missingWasUndefined).toBe(true);
+	});
+
 	it("sendUserMessage while idle triggers a turn", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);

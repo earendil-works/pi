@@ -988,6 +988,19 @@ pi.registerCommand("my-cmd", {
 });
 ```
 
+### ctx.getToolDefinition(name)
+
+Return the full configured `ToolDefinition` for a tool name, including execute and render hooks. Treat the returned definition as read-only; use `pi.registerTool()` to override tools.
+
+```typescript
+pi.registerCommand("inspect-read", {
+  handler: async (_args, ctx) => {
+    const readTool = ctx.getToolDefinition("read");
+    ctx.ui.notify(readTool?.description ?? "read tool not available");
+  },
+});
+```
+
 ### ctx.newSession(options?)
 
 Create a new session:
