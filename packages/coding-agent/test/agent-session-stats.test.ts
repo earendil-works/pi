@@ -23,6 +23,7 @@ function createUsage(totalTokens: number): Usage {
 			cacheRead: 0,
 			cacheWrite: 0,
 			total: 0,
+			source: "pi" as const,
 		},
 	};
 }

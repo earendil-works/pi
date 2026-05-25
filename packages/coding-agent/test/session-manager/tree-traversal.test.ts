@@ -1,3 +1,4 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { existsSync, mkdirSync, readFileSync, rmSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
@@ -5,13 +6,17 @@ import { describe, expect, it } from "vitest";
 import { type CustomEntry, SessionManager } from "../../src/core/session-manager.ts";
 import { assistantMsg, userMsg } from "../utilities.ts";
 
+function typedAssistantMsg(text: string): AssistantMessage {
+	return assistantMsg(text) as AssistantMessage;
+}
+
 describe("SessionManager append and tree traversal", () => {
 	describe("append operations", () => {
 		it("appendMessage creates entry with correct parentId chain", () => {
 			const session = SessionManager.inMemory();
 
 			const id1 = session.appendMessage(userMsg("first"));
-			const id2 = session.appendMessage(assistantMsg("second"));
+			const id2 = session.appendMessage(typedAssistantMsg("second"));
 			const id3 = session.appendMessage(userMsg("third"));
 
 			const entries = session.getEntries();
@@ -33,7 +38,7 @@ describe("SessionManager append and tree traversal", () => {
 
 			const msgId = session.appendMessage(userMsg("hello"));
 			const thinkingId = session.appendThinkingLevelChange("high");
-			const _msg2Id = session.appendMessage(assistantMsg("response"));
+			const _msg2Id = session.appendMessage(typedAssistantMsg("response"));
 
 			const entries = session.getEntries();
 			expect(entries).toHaveLength(3);
@@ -51,7 +56,7 @@ describe("SessionManager append and tree traversal", () => {
 
 			const msgId = session.appendMessage(userMsg("hello"));
 			const modelId = session.appendModelChange("openai", "gpt-4");
-			const _msg2Id = session.appendMessage(assistantMsg("response"));
+			const _msg2Id = session.appendMessage(typedAssistantMsg("response"));
 
 			const entries = session.getEntries();
 			const modelEntry = entries.find((e) => e.type === "model_change");
@@ -70,7 +75,7 @@ describe("SessionManager append and tree traversal", () => {
 			const session = SessionManager.inMemory();
 
 			const id1 = session.appendMessage(userMsg("1"));
-			const id2 = session.appendMessage(assistantMsg("2"));
+			const id2 = session.appendMessage(typedAssistantMsg("2"));
 			const compactionId = session.appendCompaction("summary", id1, 1000);
 			const _id3 = session.appendMessage(userMsg("3"));
 
@@ -93,7 +98,7 @@ describe("SessionManager append and tree traversal", () => {
 
 			const msgId = session.appendMessage(userMsg("hello"));
 			const customId = session.appendCustomEntry("my_data", { key: "value" });
-			const _msg2Id = session.appendMessage(assistantMsg("response"));
+			const _msg2Id = session.appendMessage(typedAssistantMsg("response"));
 
 			const entries = session.getEntries();
 			const customEntry = entries.find((e) => e.type === "custom") as CustomEntry;
@@ -114,7 +119,7 @@ describe("SessionManager append and tree traversal", () => {
 			const id1 = session.appendMessage(userMsg("1"));
 			expect(session.getLeafId()).toBe(id1);
 
-			const id2 = session.appendMessage(assistantMsg("2"));
+			const id2 = session.appendMessage(typedAssistantMsg("2"));
 			expect(session.getLeafId()).toBe(id2);
 
 			const id3 = session.appendThinkingLevelChange("high");
@@ -141,7 +146,7 @@ describe("SessionManager append and tree traversal", () => {
 			const session = SessionManager.inMemory();
 
 			const id1 = session.appendMessage(userMsg("1"));
-			const id2 = session.appendMessage(assistantMsg("2"));
+			const id2 = session.appendMessage(typedAssistantMsg("2"));
 			const id3 = session.appendThinkingLevelChange("high");
 			const id4 = session.appendMessage(userMsg("3"));
 
@@ -154,9 +159,9 @@ describe("SessionManager append and tree traversal", () => {
 			const session = SessionManager.inMemory();
 
 			const id1 = session.appendMessage(userMsg("1"));
-			const id2 = session.appendMessage(assistantMsg("2"));
+			const id2 = session.appendMessage(typedAssistantMsg("2"));
 			const _id3 = session.appendMessage(userMsg("3"));
-			const _id4 = session.appendMessage(assistantMsg("4"));
+			const _id4 = session.appendMessage(typedAssistantMsg("4"));
 
 			const path = session.getBranch(id2);
 			expect(path).toHaveLength(2);
@@ -174,7 +179,7 @@ describe("SessionManager append and tree traversal", () => {
 			const session = SessionManager.inMemory();
 
 			const id1 = session.appendMessage(userMsg("1"));
-			const id2 = session.appendMessage(assistantMsg("2"));
+			const id2 = session.appendMessage(typedAssistantMsg("2"));
 			const id3 = session.appendMessage(userMsg("3"));
 
 			const tree = session.getTree();
@@ -194,7 +199,7 @@ describe("SessionManager append and tree traversal", () => {
 
 			// Build: 1 -> 2 -> 3
 			const id1 = session.appendMessage(userMsg("1"));
-			const id2 = session.appendMessage(assistantMsg("2"));
+			const id2 = session.appendMessage(typedAssistantMsg("2"));
 			const id3 = session.appendMessage(userMsg("3"));
 
 			// Branch from id2, add new path: 2 -> 4
@@ -220,7 +225,7 @@ describe("SessionManager append and tree traversal", () => {
 			const session = SessionManager.inMemory();
 
 			const _id1 = session.appendMessage(userMsg("root"));
-			const id2 = session.appendMessage(assistantMsg("response"));
+			const id2 = session.appendMessage(typedAssistantMsg("response"));
 
 			// Branch A
 			session.branch(id2);
@@ -248,14 +253,14 @@ describe("SessionManager append and tree traversal", () => {
 
 			// Main path: 1 -> 2 -> 3 -> 4
 			const _id1 = session.appendMessage(userMsg("1"));
-			const id2 = session.appendMessage(assistantMsg("2"));
+			const id2 = session.appendMessage(typedAssistantMsg("2"));
 			const id3 = session.appendMessage(userMsg("3"));
-			const _id4 = session.appendMessage(assistantMsg("4"));
+			const _id4 = session.appendMessage(typedAssistantMsg("4"));
 
 			// Branch from 2: 2 -> 5 -> 6
 			session.branch(id2);
 			const id5 = session.appendMessage(userMsg("5"));
-			const _id6 = session.appendMessage(assistantMsg("6"));
+			const _id6 = session.appendMessage(typedAssistantMsg("6"));
 
 			// Branch from 5: 5 -> 7
 			session.branch(id5);
@@ -280,7 +285,7 @@ describe("SessionManager append and tree traversal", () => {
 			const session = SessionManager.inMemory();
 
 			const id1 = session.appendMessage(userMsg("1"));
-			const _id2 = session.appendMessage(assistantMsg("2"));
+			const _id2 = session.appendMessage(typedAssistantMsg("2"));
 			const id3 = session.appendMessage(userMsg("3"));
 
 			expect(session.getLeafId()).toBe(id3);
@@ -300,7 +305,7 @@ describe("SessionManager append and tree traversal", () => {
 			const session = SessionManager.inMemory();
 
 			const id1 = session.appendMessage(userMsg("1"));
-			const _id2 = session.appendMessage(assistantMsg("2"));
+			const _id2 = session.appendMessage(typedAssistantMsg("2"));
 
 			session.branch(id1);
 			const id3 = session.appendMessage(userMsg("branched"));
@@ -316,7 +321,7 @@ describe("SessionManager append and tree traversal", () => {
 			const session = SessionManager.inMemory();
 
 			const id1 = session.appendMessage(userMsg("1"));
-			const _id2 = session.appendMessage(assistantMsg("2"));
+			const _id2 = session.appendMessage(typedAssistantMsg("2"));
 			const _id3 = session.appendMessage(userMsg("3"));
 
 			const summaryId = session.branchWithSummary(id1, "Summary of abandoned work");
@@ -350,7 +355,7 @@ describe("SessionManager append and tree traversal", () => {
 			const session = SessionManager.inMemory();
 
 			session.appendMessage(userMsg("1"));
-			const id2 = session.appendMessage(assistantMsg("2"));
+			const id2 = session.appendMessage(typedAssistantMsg("2"));
 
 			const leaf = session.getLeafEntry();
 			expect(leaf).toBeDefined();
@@ -368,7 +373,7 @@ describe("SessionManager append and tree traversal", () => {
 			const session = SessionManager.inMemory();
 
 			const id1 = session.appendMessage(userMsg("first"));
-			const id2 = session.appendMessage(assistantMsg("second"));
+			const id2 = session.appendMessage(typedAssistantMsg("second"));
 
 			const entry1 = session.getEntry(id1);
 			expect(entry1).toBeDefined();
@@ -391,12 +396,12 @@ describe("SessionManager append and tree traversal", () => {
 
 			// Main: 1 -> 2 -> 3
 			session.appendMessage(userMsg("msg1"));
-			const id2 = session.appendMessage(assistantMsg("msg2"));
+			const id2 = session.appendMessage(typedAssistantMsg("msg2"));
 			session.appendMessage(userMsg("msg3"));
 
 			// Branch from 2: 2 -> 4
 			session.branch(id2);
-			session.appendMessage(assistantMsg("msg4-branch"));
+			session.appendMessage(typedAssistantMsg("msg4-branch"));
 
 			const ctx = session.buildSessionContext();
 			expect(ctx.messages).toHaveLength(3); // msg1, msg2, msg4-branch (not msg3)
@@ -421,9 +426,9 @@ describe("createBranchedSession", () => {
 
 		// Build: 1 -> 2 -> 3 -> 4
 		const id1 = session.appendMessage(userMsg("1"));
-		const id2 = session.appendMessage(assistantMsg("2"));
+		const id2 = session.appendMessage(typedAssistantMsg("2"));
 		const id3 = session.appendMessage(userMsg("3"));
-		session.appendMessage(assistantMsg("4"));
+		session.appendMessage(typedAssistantMsg("4"));
 
 		// Branch from 3: 3 -> 5
 		session.branch(id3);
@@ -445,13 +450,13 @@ describe("createBranchedSession", () => {
 
 		// Build: 1 -> 2 -> 3
 		const id1 = session.appendMessage(userMsg("1"));
-		const id2 = session.appendMessage(assistantMsg("2"));
+		const id2 = session.appendMessage(typedAssistantMsg("2"));
 		session.appendMessage(userMsg("3"));
 
 		// Branch from 2: 2 -> 4 -> 5
 		session.branch(id2);
 		const id4 = session.appendMessage(userMsg("4"));
-		const id5 = session.appendMessage(assistantMsg("5"));
+		const id5 = session.appendMessage(typedAssistantMsg("5"));
 
 		// Create branched session from id5 (should have 1 -> 2 -> 4 -> 5)
 		session.createBranchedSession(id5);
@@ -469,9 +474,9 @@ describe("createBranchedSession", () => {
 			// Create a persisted session with a couple of turns
 			const session = SessionManager.create(tempDir, tempDir);
 			const id1 = session.appendMessage(userMsg("first question"));
-			session.appendMessage(assistantMsg("first answer"));
+			session.appendMessage(typedAssistantMsg("first answer"));
 			session.appendMessage(userMsg("second question"));
-			session.appendMessage(assistantMsg("second answer"));
+			session.appendMessage(typedAssistantMsg("second answer"));
 
 			// Fork from the very first user message (no assistant in the branched path)
 			const newFile = session.createBranchedSession(id1);
@@ -485,7 +490,7 @@ describe("createBranchedSession", () => {
 			session.appendCustomEntry("preset-state", { name: "plan" });
 
 			// Now the assistant responds
-			session.appendMessage(assistantMsg("new answer"));
+			session.appendMessage(typedAssistantMsg("new answer"));
 
 			// File should now exist with exactly one header and no duplicate IDs
 			expect(existsSync(newFile!)).toBe(true);
@@ -512,9 +517,9 @@ describe("createBranchedSession", () => {
 		try {
 			const session = SessionManager.create(tempDir, tempDir);
 			session.appendMessage(userMsg("first question"));
-			const id2 = session.appendMessage(assistantMsg("first answer"));
+			const id2 = session.appendMessage(typedAssistantMsg("first answer"));
 			session.appendMessage(userMsg("second question"));
-			session.appendMessage(assistantMsg("second answer"));
+			session.appendMessage(typedAssistantMsg("second answer"));
 
 			// Fork including the assistant message
 			const newFile = session.createBranchedSession(id2);

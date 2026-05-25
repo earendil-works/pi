@@ -942,6 +942,7 @@ interface OpenAICompletionsCompat {
   cacheControlFormat?: 'anthropic';  // Anthropic-style cache_control on system prompt, last tool, and last user/assistant text content
   openRouterRouting?: OpenRouterRouting; // OpenRouter routing preferences (default: {})
   vercelGatewayRouting?: VercelGatewayRouting; // Vercel AI Gateway routing preferences (default: {})
+  openRouterReconcileCostFromGenerationEndpoint?: boolean; // When true, pi fetches /api/v1/generation?id=<gen-id> after each stream and replaces usage.cost.total with the authoritative tiered total (default: false)
 }
 
 interface OpenAIResponsesCompat {

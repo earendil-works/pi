@@ -843,7 +843,7 @@ describe("openai-completions tool_choice", () => {
 				cacheRead: 0,
 				cacheWrite: 0,
 				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, source: "pi" },
 			},
 			stopReason: "toolUse",
 			timestamp: Date.now(),
@@ -963,7 +963,7 @@ describe("openai-completions tool_choice", () => {
 							cacheRead: 0,
 							cacheWrite: 0,
 							totalTokens: 0,
-							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+							cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, source: "pi" },
 						},
 						stopReason: "stop",
 						timestamp: Date.now(),
@@ -988,6 +988,7 @@ describe("openai-completions tool_choice", () => {
 				supportsStrictMode: true,
 				sendSessionAffinityHeaders: false,
 				supportsLongCacheRetention: true,
+				openRouterReconcileCostFromGenerationEndpoint: false,
 			},
 		);
 

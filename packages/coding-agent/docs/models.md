@@ -393,6 +393,7 @@ For providers with partial OpenAI compatibility, use the `compat` field.
 | `supportsLongCacheRetention` | Whether the provider accepts long cache retention when cache retention is `long`: `prompt_cache_retention: "24h"` for OpenAI prompt caching, or `cache_control.ttl: "1h"` when `cacheControlFormat` is `anthropic`. Default: `true`. |
 | `openRouterRouting` | OpenRouter provider routing preferences. This object is sent as-is in the `provider` field of the [OpenRouter API request](https://openrouter.ai/docs/guides/routing/provider-selection). |
 | `vercelGatewayRouting` | Vercel AI Gateway routing config for provider selection (`only`, `order`) |
+| `openRouterReconcileCostFromGenerationEndpoint` | When `true` and the provider is OpenRouter, pi fetches `/api/v1/generation?id=<gen-id>` after each stream and replaces `usage.cost.total` with the authoritative tiered total. Adds one small HTTP round-trip per assistant turn. Default: `false`. |
 
 `openrouter` uses `reasoning: { effort }`. `together` uses `reasoning: { enabled }` and also `reasoning_effort` when `supportsReasoningEffort` is enabled. `qwen` uses top-level `enable_thinking`. Use `qwen-chat-template` for local Qwen-compatible servers that require `chat_template_kwargs.enable_thinking`.
 
@@ -474,6 +475,18 @@ Vercel AI Gateway example:
           }
         }
       ]
+    }
+  }
+}
+```
+
+OpenRouter post-hoc cost reconciliation:
+
+```json
+{
+  "providers": {
+    "openrouter": {
+      "compat": { "openRouterReconcileCostFromGenerationEndpoint": true }
     }
   }
 }

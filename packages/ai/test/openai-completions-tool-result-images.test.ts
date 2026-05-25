@@ -16,7 +16,7 @@ const emptyUsage: Usage = {
 	cacheRead: 0,
 	cacheWrite: 0,
 	totalTokens: 0,
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, source: "pi" },
 };
 
 const compat: Required<OpenAICompletionsCompat> = {
@@ -37,6 +37,7 @@ const compat: Required<OpenAICompletionsCompat> = {
 	cacheControlFormat: "anthropic",
 	sendSessionAffinityHeaders: false,
 	supportsLongCacheRetention: true,
+	openRouterReconcileCostFromGenerationEndpoint: false,
 };
 
 function buildToolResult(toolCallId: string, timestamp: number): ToolResultMessage {

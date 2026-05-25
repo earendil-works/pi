@@ -24,6 +24,7 @@ const EMPTY_USAGE: Usage = {
 		cacheRead: 0,
 		cacheWrite: 0,
 		total: 0,
+		source: "pi",
 	},
 };
 

@@ -30,6 +30,7 @@ import type {
 	ToolCall,
 	ToolResultMessage,
 } from "../types.ts";
+import { appendAssistantMessageDiagnostic, createAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
 import { AssistantMessageEventStream } from "../utils/event-stream.ts";
 import { headersToRecord } from "../utils/headers.ts";
 import { parseStreamingJson } from "../utils/json-parse.ts";
@@ -129,7 +130,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 				cacheRead: 0,
 				cacheWrite: 0,
 				totalTokens: 0,
-				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, source: "pi" },
 			},
 			stopReason: "stop",
 			timestamp: Date.now(),
@@ -267,7 +268,11 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 
 				// OpenAI documents ChatCompletionChunk.id as the unique chat completion identifier,
 				// and each chunk in a streamed completion carries the same id.
-				output.responseId ||= chunk.id;
+				if (model.provider === "openrouter" && typeof chunk.id === "string" && chunk.id.startsWith("gen-")) {
+					output.responseId = chunk.id;
+				} else {
+					output.responseId ||= chunk.id;
+				}
 				if (typeof chunk.model === "string" && chunk.model.length > 0 && chunk.model !== model.id) {
 					output.responseModel ||= chunk.model;
 				}
@@ -386,6 +391,9 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 
 			for (const block of blocks) {
 				finishBlock(block);
+			}
+			if (compat.openRouterReconcileCostFromGenerationEndpoint && model.provider === "openrouter") {
+				await reconcileOpenRouterCost(model, output, apiKey, options?.signal);
 			}
 			if (options?.signal?.aborted) {
 				throw new Error("Request was aborted");
@@ -1000,11 +1008,88 @@ function convertTools(
 	}));
 }
 
+function applyAuthoritativeCost(
+	usage: AssistantMessage["usage"],
+	totalCost: number,
+	source: AssistantMessage["usage"]["cost"]["source"],
+): void {
+	if (usage.cost.total > 0) {
+		const scale = totalCost / usage.cost.total;
+		usage.cost.input *= scale;
+		usage.cost.output *= scale;
+		usage.cost.cacheRead *= scale;
+		usage.cost.cacheWrite *= scale;
+	} else {
+		usage.cost.input = totalCost;
+		usage.cost.output = 0;
+		usage.cost.cacheRead = 0;
+		usage.cost.cacheWrite = 0;
+	}
+	usage.cost.total = totalCost;
+	usage.cost.source = source;
+}
+
+function delayWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
+	return new Promise((resolve, reject) => {
+		if (signal?.aborted) {
+			reject(new Error("Request was aborted"));
+			return;
+		}
+		const abort = () => {
+			clearTimeout(timeout);
+			signal?.removeEventListener("abort", abort);
+			reject(new Error("Request was aborted"));
+		};
+		const timeout = setTimeout(() => {
+			signal?.removeEventListener("abort", abort);
+			resolve();
+		}, ms);
+		signal?.addEventListener("abort", abort, { once: true });
+	});
+}
+
+// Reconciliation retry policy. The fast-follow GET to /api/v1/generation is a
+// best-effort sidecar after the primary stream has already produced billed
+// usage from the stream chunk, so we keep the retry budget tight (one extra
+// attempt) and follow the same retry-after / retry-after-ms / exponential
+// backoff shape used by streamOpenAICodexResponses for consistency.
+const RECONCILE_BASE_DELAY_MS = 500;
+const RECONCILE_MAX_RETRIES = 1;
+const RECONCILE_TIMEOUT_MS = 2000;
+
+function isReconcileRetryableStatus(status: number): boolean {
+	return status === 404 || status === 429 || status >= 500;
+}
+
+function parseRetryDelayMs(response: Response, fallbackMs: number): number {
+	const retryAfterMs = response.headers.get("retry-after-ms");
+	if (retryAfterMs !== null) {
+		const millis = Number(retryAfterMs);
+		if (Number.isFinite(millis)) {
+			return Math.max(0, millis);
+		}
+	}
+	const retryAfter = response.headers.get("retry-after");
+	if (retryAfter) {
+		const seconds = Number(retryAfter);
+		if (Number.isFinite(seconds)) {
+			return Math.max(0, seconds * 1000);
+		}
+		const date = Date.parse(retryAfter);
+		if (!Number.isNaN(date)) {
+			return Math.max(0, date - Date.now());
+		}
+	}
+	return fallbackMs;
+}
+
 function parseChunkUsage(
 	rawUsage: {
 		prompt_tokens?: number;
 		completion_tokens?: number;
 		prompt_cache_hit_tokens?: number;
+		cost?: number;
+		cost_details?: { upstream_inference_cost?: number };
 		prompt_tokens_details?: { cached_tokens?: number; cache_write_tokens?: number };
 	},
 	model: Model<"openai-completions">,
@@ -1030,10 +1115,97 @@ function parseChunkUsage(
 		cacheRead: cacheReadTokens,
 		cacheWrite: cacheWriteTokens,
 		totalTokens: input + outputTokens + cacheReadTokens + cacheWriteTokens,
-		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, source: "pi" },
 	};
 	calculateCost(model, usage);
+	if (model.provider === "openrouter" && typeof rawUsage.cost === "number" && Number.isFinite(rawUsage.cost)) {
+		applyAuthoritativeCost(usage, rawUsage.cost, "provider");
+	}
 	return usage;
+}
+
+async function reconcileOpenRouterCost(
+	model: Model<"openai-completions">,
+	output: AssistantMessage,
+	apiKey: string,
+	signal?: AbortSignal,
+): Promise<void> {
+	if (!output.responseId?.startsWith("gen-")) {
+		return;
+	}
+
+	const resolvedApiKey = apiKey || getEnvApiKey(model.provider) || "";
+	if (!resolvedApiKey) {
+		return;
+	}
+
+	const url = `https://openrouter.ai/api/v1/generation?id=${encodeURIComponent(output.responseId)}`;
+	const headers: Record<string, string> = {
+		Authorization: `Bearer ${resolvedApiKey}`,
+		...(model.headers ?? {}),
+	};
+	const signals: AbortSignal[] = [AbortSignal.timeout(RECONCILE_TIMEOUT_MS)];
+	if (signal) signals.push(signal);
+	const combinedSignal = AbortSignal.any(signals);
+	let failureCategory: string | undefined;
+	let failureError: unknown;
+
+	for (let attempt = 0; attempt <= RECONCILE_MAX_RETRIES; attempt++) {
+		let response: Response;
+		try {
+			response = await fetch(url, { method: "GET", headers, signal: combinedSignal });
+		} catch (error) {
+			failureCategory = "network";
+			failureError = error;
+			break;
+		}
+
+		if (!response.ok) {
+			failureCategory = `http_${response.status}`;
+			failureError = new Error(`OpenRouter generation lookup failed with HTTP ${response.status}`);
+			if (attempt >= RECONCILE_MAX_RETRIES || !isReconcileRetryableStatus(response.status)) {
+				break;
+			}
+			const delayMs = parseRetryDelayMs(response, RECONCILE_BASE_DELAY_MS * 2 ** attempt);
+			try {
+				await delayWithSignal(delayMs, combinedSignal);
+			} catch (error) {
+				failureCategory = "network";
+				failureError = error;
+				break;
+			}
+			continue;
+		}
+
+		let data: unknown;
+		try {
+			data = await response.json();
+		} catch (error) {
+			failureCategory = "parse";
+			failureError = error;
+			break;
+		}
+
+		const totalCost = (data as { data?: { total_cost?: unknown } })?.data?.total_cost;
+		if (typeof totalCost !== "number" || !Number.isFinite(totalCost)) {
+			failureCategory = "missing_field";
+			failureError = new Error("OpenRouter generation lookup response missing data.total_cost");
+			break;
+		}
+
+		applyAuthoritativeCost(output.usage, totalCost, "provider");
+		return;
+	}
+
+	if (failureCategory && !signal?.aborted) {
+		appendAssistantMessageDiagnostic(
+			output,
+			createAssistantMessageDiagnostic("openrouter_cost_reconcile_failed", failureError, {
+				category: failureCategory,
+				responseId: output.responseId,
+			}),
+		);
+	}
 }
 
 function mapStopReason(reason: ChatCompletionChunk.Choice["finish_reason"] | string): {
@@ -1125,6 +1297,7 @@ function detectCompat(model: Model<"openai-completions">): ResolvedOpenAIComplet
 		cacheControlFormat,
 		sendSessionAffinityHeaders: false,
 		supportsLongCacheRetention: !(isTogether || isCloudflareWorkersAI || isCloudflareAiGateway),
+		openRouterReconcileCostFromGenerationEndpoint: false,
 	};
 }
 
@@ -1157,5 +1330,8 @@ function getCompat(model: Model<"openai-completions">): ResolvedOpenAICompletion
 		cacheControlFormat: model.compat.cacheControlFormat ?? detected.cacheControlFormat,
 		sendSessionAffinityHeaders: model.compat.sendSessionAffinityHeaders ?? detected.sendSessionAffinityHeaders,
 		supportsLongCacheRetention: model.compat.supportsLongCacheRetention ?? detected.supportsLongCacheRetention,
+		openRouterReconcileCostFromGenerationEndpoint:
+			model.compat.openRouterReconcileCostFromGenerationEndpoint ??
+			detected.openRouterReconcileCostFromGenerationEndpoint,
 	};
 }

@@ -263,6 +263,7 @@ export interface Usage {
 		cacheRead: number;
 		cacheWrite: number;
 		total: number;
+		source: "provider" | "pi";
 	};
 }
 
@@ -397,6 +398,8 @@ export interface OpenAICompletionsCompat {
 	sendSessionAffinityHeaders?: boolean;
 	/** Whether the provider supports long prompt cache retention (`prompt_cache_retention: "24h"` or Anthropic-style `cache_control.ttl: "1h"`, depending on format). Default: true. */
 	supportsLongCacheRetention?: boolean;
+	/** When true and model.provider === "openrouter", after the stream finishes pi performs a GET to /api/v1/generation?id=<gen-id> (with one retry on 404, 429, or 5xx) and replaces usage.cost.total with the authoritative tiered total. The lookup has a ~2s timeout and is best-effort; failures are recorded in diagnostics without failing the request. Default: false. */
+	openRouterReconcileCostFromGenerationEndpoint?: boolean;
 }
 
 /** Compatibility settings for OpenAI Responses APIs. */

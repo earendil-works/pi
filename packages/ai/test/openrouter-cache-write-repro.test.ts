@@ -65,14 +65,35 @@ describe.skipIf(!process.env.OPENROUTER_API_KEY)("OpenRouter cache_write repro E
 
 			const first = await completeSimple(model, context, options);
 			expect(first.stopReason, first.errorMessage).toBe("stop");
+			expect(first.usage.cost.source).toBe("provider");
+			expect(
+				Math.abs(
+					first.usage.cost.input +
+						first.usage.cost.output +
+						first.usage.cost.cacheRead +
+						first.usage.cost.cacheWrite -
+						first.usage.cost.total,
+				),
+			).toBeLessThan(1e-9);
 
 			const second = await completeSimple(model, context, options);
 			expect(second.stopReason, second.errorMessage).toBe("stop");
+			expect(second.usage.cost.source).toBe("provider");
+			expect(
+				Math.abs(
+					second.usage.cost.input +
+						second.usage.cost.output +
+						second.usage.cost.cacheRead +
+						second.usage.cost.cacheWrite -
+						second.usage.cost.total,
+				),
+			).toBeLessThan(1e-9);
 
 			// Regression expectation: cache_write_tokens from provider usage must be preserved.
 			// With the cache_control marker above, at least one of the two calls should create cache.
 			const hasCacheWrite = first.usage.cacheWrite > 0 || second.usage.cacheWrite > 0;
 			expect(hasCacheWrite).toBe(true);
+			expect(first.usage.cost.total > 0 || second.usage.cost.total > 0).toBe(true);
 		},
 	);
 });

@@ -1,6 +1,11 @@
+import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it } from "vitest";
 import { assistantMsg, userMsg } from "../../utilities.ts";
 import { createHarness, type Harness } from "../harness.ts";
+
+function typedAssistantMsg(text: string): AssistantMessage {
+	return assistantMsg(text) as AssistantMessage;
+}
 
 describe("issue #3688 tree cancellation compaction state", () => {
 	const harnesses: Harness[] = [];
@@ -22,7 +27,7 @@ describe("issue #3688 tree cancellation compaction state", () => {
 		harnesses.push(harness);
 
 		const targetId = harness.sessionManager.appendMessage(userMsg("first"));
-		harness.sessionManager.appendMessage(assistantMsg("reply"));
+		harness.sessionManager.appendMessage(typedAssistantMsg("reply"));
 		const currentLeafId = harness.sessionManager.appendMessage(userMsg("second"));
 
 		expect(harness.sessionManager.getLeafId()).toBe(currentLeafId);

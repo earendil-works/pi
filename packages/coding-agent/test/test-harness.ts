@@ -108,7 +108,7 @@ function buildUsage(partial?: Partial<Usage>): Usage {
 		cacheRead,
 		cacheWrite,
 		totalTokens: partial?.totalTokens ?? input + output + cacheRead + cacheWrite,
-		cost: partial?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+		cost: partial?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0, source: "pi" },
 	};
 }
 
