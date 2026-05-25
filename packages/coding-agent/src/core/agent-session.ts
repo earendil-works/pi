@@ -706,8 +706,29 @@ export class AgentSession {
 	/**
 	 * Remove all listeners and disconnect from agent.
 	 * Call this when completely done with the session.
+	 *
+	 * Aborts any in-flight LLM HTTP call before disconnecting so the
+	 * underlying socket tears down cleanly rather than being orphaned.
+	 * Without this, callers that dispose a session mid-stream
+	 * (switchSession / newSession / fork / clone via
+	 * agent-session-runtime.teardownCurrent) leave the previous LLM
+	 * call running in the background — provider billing continues, the
+	 * socket stays ESTABLISHED until the provider responds, and the
+	 * resulting state is externally indistinguishable from a wedged
+	 * process. Discovered by PIRA (PI Remote Access) when tab-reopen
+	 * triggered switchSession against an already-loaded session.
+	 *
+	 * Fire-and-forget: `agent.abort()` is synchronous (just trips the
+	 * AbortController). The fetch rejection lands asynchronously after
+	 * dispose returns. Keeps dispose() synchronous so callers don't
+	 * need to be updated.
 	 */
 	dispose(): void {
+		try {
+			this.agent.abort();
+		} catch {
+			/* defensive: dispose must succeed even if abort throws */
+		}
 		this._extensionRunner.invalidate(
 			"This extension ctx is stale after session replacement or reload. Do not use a captured pi or command ctx after ctx.newSession(), ctx.fork(), ctx.switchSession(), or ctx.reload(). For newSession, fork, and switchSession, move post-replacement work into withSession and use the ctx passed to withSession. For reload, do not use the old ctx after await ctx.reload().",
 		);
