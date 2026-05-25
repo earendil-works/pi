@@ -177,6 +177,7 @@ function getAnthropicCompat(
 		sendSessionAffinityHeaders:
 			model.compat?.sendSessionAffinityHeaders ?? !!(isFireworks || isCloudflareAiGatewayAnthropic),
 		supportsCacheControlOnTools: model.compat?.supportsCacheControlOnTools ?? !isFireworks,
+		allowEmptySignature: model.compat?.allowEmptySignature ?? false,
 	};
 }
 
@@ -895,7 +896,13 @@ function buildParams(
 	const { cacheControl } = getCacheControl(model, options?.cacheRetention);
 	const params: MessageCreateParamsStreaming = {
 		model: model.id,
-		messages: convertMessages(context.messages, model, isOAuthToken, cacheControl),
+		messages: convertMessages(
+			context.messages,
+			model,
+			isOAuthToken,
+			cacheControl,
+			getAnthropicCompat(model).allowEmptySignature,
+		),
 		max_tokens: options?.maxTokens ?? model.maxTokens,
 		stream: true,
 	};
@@ -1001,6 +1008,7 @@ function convertMessages(
 	model: Model<"anthropic-messages">,
 	isOAuthToken: boolean,
 	cacheControl?: CacheControlEphemeral,
+	allowEmptySignature?: boolean,
 ): MessageParam[] {
 	const params: MessageParam[] = [];
 
@@ -1070,12 +1078,22 @@ function convertMessages(
 					if (block.thinking.trim().length === 0) continue;
 					// If thinking signature is missing/empty (e.g., from aborted stream),
 					// convert to plain text block without <thinking> tags to avoid API rejection
-					// and prevent Claude from mimicking the tags in responses
+					// and prevent Claude from mimicking the tags in responses.
+					// Exception: when allowEmptySignature is true (Anthropic-compatible providers
+					// that don't provide signatures but accept empty ones on replay).
 					if (!block.thinkingSignature || block.thinkingSignature.trim().length === 0) {
-						blocks.push({
-							type: "text",
-							text: sanitizeSurrogates(block.thinking),
-						});
+						if (allowEmptySignature) {
+							blocks.push({
+								type: "thinking",
+								thinking: sanitizeSurrogates(block.thinking),
+								signature: "",
+							});
+						} else {
+							blocks.push({
+								type: "text",
+								text: sanitizeSurrogates(block.thinking),
+							});
+						}
 					} else {
 						blocks.push({
 							type: "thinking",

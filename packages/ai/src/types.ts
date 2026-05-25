@@ -445,6 +445,16 @@ export interface AnthropicMessagesCompat {
 	 * Default: false.
 	 */
 	forceAdaptiveThinking?: boolean;
+	/**
+	 * When true, thinking blocks with an empty `thinkingSignature` are sent
+	 * back to the API as `type: "thinking"` with `signature: ""` instead of
+	 * being converted to plain text blocks. Some Anthropic-compatible providers
+	 * do not return a meaningful signature but still accept empty ones on
+	 * replay. Real Anthropic API rejects empty signatures, so this defaults
+	 * to false.
+	 * Default: false.
+	 */
+	allowEmptySignature?: boolean;
 }
 
 /**
