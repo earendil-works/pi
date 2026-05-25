@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+cd "$(dirname "$0")"
+
+echo "==> Installing dependencies..."
+npm ci
+
+echo "==> Building all packages..."
+npm run build
+
+echo "==> Linking pi globally..."
+cd packages/coding-agent
+npm link
+
+echo "==> Setting up pi configuration for GenPlat..."
+PI_AGENT_DIR="$HOME/.pi/agent"
+mkdir -p "$PI_AGENT_DIR"
+
+# Create auth helper script (same approach as tompero claude uses)
+AUTH_HELPER="$PI_AGENT_DIR/ifood_auth.sh"
+cat > "$AUTH_HELPER" << 'AUTHEOF'
+#!/bin/bash
+# Helper script to auth with pi that exposes a non-expired Tompero requester JWT via
+# stdout, refreshing it only when necessary.
+
+decode_base64url() {
+  local data="$1" decoded
+
+  case $(( ${#data} % 4 )) in
+    2) data="${data}==" ;;
+    3) data="${data}=" ;;
+    0) ;;
+    *) return 1 ;;
+  esac
+
+  data=$(printf '%s' "$data" | tr '_-' '/+')
+
+  if decoded=$(printf '%s' "$data" | base64 --decode 2>/dev/null); then
+    printf '%s' "$decoded"
+    return 0
+  fi
+
+  if decoded=$(printf '%s' "$data" | base64 -d 2>/dev/null); then
+    printf '%s' "$decoded"
+    return 0
+  fi
+
+  if decoded=$(printf '%s' "$data" | base64 -D 2>/dev/null); then
+    printf '%s' "$decoded"
+    return 0
+  fi
+
+  return 1
+}
+
+extract_jwt_exp() {
+  local token="$1" payload payload_json exp
+
+  payload=$(printf '%s' "$token" | cut -d '.' -f 2)
+  if [ -z "$payload" ]; then
+    return 1
+  fi
+
+  payload_json=$(decode_base64url "$payload") || return 1
+
+  exp=$(printf '%s' "$payload_json" | tr -d '\n' | grep -Eo '"exp"[[:space:]]*:[[:space:]]*[0-9]+' | head -n1 | cut -d ':' -f2)
+  if [ -z "$exp" ]; then
+    return 1
+  fi
+
+  printf '%s' "$exp"
+}
+
+token_expired() {
+  local token="$1"
+  exp=$(extract_jwt_exp "$token") || return 0
+  now=$(date +%s)
+  local skew=60
+
+  if [ $((now + skew)) -ge "$exp" ]; then
+    return 0
+  fi
+
+  return 1
+}
+
+fetch_requester_token() {
+  REQUESTER_TOKEN=$(tompero auth get requester-token --details | grep -E '^[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+$')
+
+  if [ -z "$REQUESTER_TOKEN" ]; then
+    echo "Error: Failed to retrieve valid requester token from tompero" >&2
+    return 1
+  fi
+
+  if token_expired "$REQUESTER_TOKEN"; then
+    echo "Error: Retrieved requester token appears to be expired" >&2
+    return 1
+  fi
+
+  return 0
+}
+
+if ! command -v tompero &> /dev/null; then
+    echo "Error: tompero command not found" >&2
+    exit 1
+fi
+
+if [ -z "${REQUESTER_TOKEN:-}" ] || token_expired "$REQUESTER_TOKEN" ; then
+  if ! fetch_requester_token ; then
+    exit 1
+  fi
+fi
+
+echo "$REQUESTER_TOKEN"
+AUTHEOF
+chmod +x "$AUTH_HELPER"
+
+# Create models.json with GenPlat provider configuration
+cat > "$PI_AGENT_DIR/models.json" << 'MODELSEOF'
+{
+  "providers": {
+    "genplat": {
+      "name": "iFood GenPlat",
+      "baseUrl": "https://generative-ai-platform-development.ifoodcorp.com.br/api/v2",
+      "apiKey": "!~/.pi/agent/ifood_auth.sh",
+      "api": "anthropic-messages",
+      "headers": {
+        "x-genplat-user-agent": "pi-coding-agent",
+        "x-requester-token": "!~/.pi/agent/ifood_auth.sh"
+      },
+      "models": [
+        {
+          "id": "ifood_claude_code",
+          "name": "Claude Opus 4.6 (GenPlat)",
+          "reasoning": true,
+          "input": ["text", "image"],
+          "contextWindow": 200000,
+          "maxTokens": 16384,
+          "cost": {
+            "input": 15,
+            "output": 75,
+            "cacheRead": 1.5,
+            "cacheWrite": 18.75
+          }
+        }
+      ]
+    }
+  }
+}
+MODELSEOF
+
+# Create settings.json with default model
+cat > "$PI_AGENT_DIR/settings.json" << 'SETTINGSEOF'
+{
+  "defaultProvider": "genplat",
+  "defaultModel": "ifood_claude_code"
+}
+SETTINGSEOF
+
+echo "==> Done! pi is now installed and configured."
+echo "    Model: ifood_claude_code (Claude Opus 4.6 via GenPlat)"
+echo "    Auth: tompero requester-token"
+echo ""
+echo "    Run 'pi' to start."
