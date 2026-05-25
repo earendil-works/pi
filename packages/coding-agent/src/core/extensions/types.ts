@@ -756,6 +756,8 @@ export interface InputEvent {
 	images?: ImageContent[];
 	/** Where the input came from */
 	source: InputSource;
+	/** Queue behavior requested for this prompt while streaming, if submitted via prompt(). */
+	streamingBehavior?: "steer" | "followUp";
 }
 
 /** Result from input event handler */

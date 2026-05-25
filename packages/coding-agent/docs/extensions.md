@@ -819,6 +819,7 @@ pi.on("input", async (event, ctx) => {
   // event.text - raw input (before skill/template expansion)
   // event.images - attached images, if any
   // event.source - "interactive" (typed), "rpc" (API), or "extension" (via sendUserMessage)
+  // event.streamingBehavior - "steer" or "followUp" when prompt() was called with queue behavior
 
   // Transform: rewrite input before expansion
   if (event.text.startsWith("?quick "))
@@ -848,6 +849,8 @@ pi.on("input", async (event, ctx) => {
 - `handled` - skip agent entirely (first handler to return this wins)
 
 Transforms chain across handlers. See [input-transform.ts](../examples/extensions/input-transform.ts).
+
+`event.streamingBehavior` is optional. It is set when the input came through `prompt()` with a queueing mode while the agent was already streaming. Idle prompts normally leave it undefined. Direct `steer()` and `followUp()` calls do not fire the `input` event.
 
 ## ExtensionContext
 

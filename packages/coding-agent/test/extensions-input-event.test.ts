@@ -94,6 +94,24 @@ describe("Input Event", () => {
 		}
 	});
 
+	it("passes streaming behavior when provided", async () => {
+		const r = await createRunner(
+			`export default p => p.on("input", async e => { globalThis.testVar = e.streamingBehavior; return { action: "continue" }; });`,
+		);
+		await r.emitInput("x", undefined, "interactive", "followUp");
+		expect((globalThis as any).testVar).toBe("followUp");
+	});
+
+	it("preserves streaming behavior across transform chains", async () => {
+		const r = await createRunner(
+			`export default p => p.on("input", async e => ({ action: "transform", text: e.text + "!" }));`,
+			`export default p => p.on("input", async e => { globalThis.testVar = e.streamingBehavior; return { action: "continue" }; });`,
+		);
+		const result = await r.emitInput("x", undefined, "interactive", "steer");
+		expect(result).toEqual({ action: "transform", text: "x!", images: undefined });
+		expect((globalThis as any).testVar).toBe("steer");
+	});
+
 	it("catches handler errors and continues", async () => {
 		const r = await createRunner(`export default p => p.on("input", async () => { throw new Error("boom"); });`);
 		const errs: string[] = [];

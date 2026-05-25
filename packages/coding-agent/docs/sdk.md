@@ -237,6 +237,8 @@ await session.followUp("After you're done, also do this");
 
 Both `steer()` and `followUp()` expand file-based prompt templates but error on extension commands (extension commands cannot be queued).
 
+When a prompt is submitted through `prompt()` with `streamingBehavior`, extension `input` handlers receive that value as `event.streamingBehavior`. Direct `steer()` and `followUp()` calls do not fire `input` handlers.
+
 ### Agent and AgentState
 
 The `Agent` class (from `@earendil-works/pi-agent-core`) handles the core LLM interaction. Access it via `session.agent`.
