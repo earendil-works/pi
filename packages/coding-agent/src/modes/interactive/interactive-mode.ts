@@ -173,14 +173,22 @@ type CompactionQueuedMessage = {
 	mode: "steer" | "followUp";
 };
 
-const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "EPIPE", "ENOTCONN"]);
+const DEAD_TERMINAL_ERROR_CODES = new Set(["EIO", "ENOTCONN"]);
+
+function getErrorCode(error: unknown): string | undefined {
+	if (!error || typeof error !== "object" || !("code" in error)) {
+		return undefined;
+	}
+	return (error as NodeJS.ErrnoException).code;
+}
 
 function isDeadTerminalError(error: unknown): boolean {
-	if (!error || typeof error !== "object" || !("code" in error)) {
-		return false;
-	}
-	const code = (error as NodeJS.ErrnoException).code;
+	const code = getErrorCode(error);
 	return code !== undefined && DEAD_TERMINAL_ERROR_CODES.has(code);
+}
+
+function isOutputPipeClosedError(error: unknown): boolean {
+	return getErrorCode(error) === "EPIPE";
 }
 
 const ANTHROPIC_SUBSCRIPTION_AUTH_WARNING =
@@ -3282,7 +3290,13 @@ export class InteractiveMode {
 	 * call ui.stop() to restore cooked mode, the cursor, and disable bracketed
 	 * paste / Kitty / modifyOtherKeys sequences.
 	 */
-	private uncaughtCrash(error: Error): never {
+	private uncaughtCrash(error: Error): void {
+		if (isOutputPipeClosedError(error)) {
+			// Node can surface an async stdout/stderr EPIPE as an uncaught exception
+			// after a render write has already failed. Treat it as a dropped frame
+			// instead of aborting the active agent turn.
+			return;
+		}
 		if (this.isShuttingDown) {
 			process.exit(1);
 		}
@@ -3330,6 +3344,9 @@ export class InteractiveMode {
 		}
 
 		const terminalErrorHandler = (error: Error) => {
+			if (isOutputPipeClosedError(error)) {
+				return;
+			}
 			if (isDeadTerminalError(error)) {
 				this.emergencyTerminalExit();
 			}
