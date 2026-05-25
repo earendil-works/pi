@@ -66,6 +66,8 @@ export interface MarkdownTheme {
 	strikethrough: (text: string) => string;
 	underline: (text: string) => string;
 	highlightCode?: (code: string, lang?: string) => string[];
+	/** Style applied to code block line numbers and language labels. */
+	codeBlockLineNumber?: (text: string) => string;
 	/** Prefix applied to each rendered code block line (default: "  ") */
 	codeBlockIndent?: string;
 }
@@ -299,7 +301,6 @@ export class Markdown implements Component {
 		switch (token.type) {
 			case "heading": {
 				const headingLevel = token.depth;
-				const headingPrefix = `${"#".repeat(headingLevel)} `;
 
 				// Build a heading-specific style context so inline tokens (codespan, bold, etc.)
 				// restore heading styling after their own ANSI resets instead of falling back to
@@ -316,8 +317,7 @@ export class Markdown implements Component {
 					stylePrefix: this.getStylePrefix(headingStyleFn),
 				};
 
-				const headingText = this.renderInlineTokens(token.tokens || [], headingStyleContext);
-				const styledHeading = headingLevel >= 3 ? headingStyleFn(headingPrefix) + headingText : headingText;
+				const styledHeading = this.renderInlineTokens(token.tokens || [], headingStyleContext);
 				lines.push(styledHeading);
 				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after headings (unless space token follows)
@@ -341,20 +341,29 @@ export class Markdown implements Component {
 
 			case "code": {
 				const indent = this.theme.codeBlockIndent ?? "  ";
-				lines.push(this.theme.codeBlockBorder(`\`\`\`${token.lang || ""}`));
-				if (this.theme.highlightCode) {
-					const highlightedLines = this.theme.highlightCode(token.text, token.lang);
-					for (const hlLine of highlightedLines) {
-						lines.push(`${indent}${hlLine}`);
-					}
-				} else {
-					// Split code by newlines and style each line
-					const codeLines = token.text.split("\n");
-					for (const codeLine of codeLines) {
-						lines.push(`${indent}${this.theme.codeBlock(codeLine)}`);
+				const codeLines = this.theme.highlightCode
+					? this.theme.highlightCode(token.text, token.lang)
+					: token.text.split("\n").map((codeLine: string) => this.theme.codeBlock(codeLine));
+				const languageLabel = typeof token.lang === "string" && token.lang.trim() ? token.lang.trim() : undefined;
+				const lineNumberWidth = Math.max(codeLines.length.toString().length, languageLabel?.length ?? 0);
+				const continuationNumber = " ".repeat(lineNumberWidth);
+				const styleLineNumber = this.theme.codeBlockLineNumber ?? this.theme.codeBlockBorder;
+				const makePrefix = (marker: string) =>
+					this.theme.codeBlockBorder("│ ") + styleLineNumber(marker) + this.theme.codeBlockBorder(" │ ") + indent;
+				const codeContentWidth = Math.max(1, width - visibleWidth(makePrefix(continuationNumber)));
+				for (let lineIndex = 0; lineIndex < codeLines.length; lineIndex++) {
+					const codeLine = codeLines[lineIndex] ?? "";
+					const marker =
+						lineIndex === 0 && languageLabel
+							? languageLabel.padStart(lineNumberWidth, " ")
+							: (lineIndex + 1).toString().padStart(lineNumberWidth, " ");
+					const firstPrefix = makePrefix(marker);
+					const continuationPrefix = makePrefix(continuationNumber);
+					const wrappedLines = wrapTextWithAnsi(codeLine, codeContentWidth);
+					for (let wrapIndex = 0; wrapIndex < wrappedLines.length; wrapIndex++) {
+						lines.push((wrapIndex === 0 ? firstPrefix : continuationPrefix) + wrappedLines[wrapIndex]);
 					}
 				}
-				lines.push(this.theme.codeBlockBorder("```"));
 				if (nextTokenType && nextTokenType !== "space") {
 					lines.push(""); // Add spacing after code blocks (unless space token follows)
 				}

@@ -1160,6 +1160,54 @@ export function getLanguageFromPath(filePath: string): string | undefined {
 	return extToLang[ext];
 }
 
+function highlightFallbackMarkdownCode(code: string): string[] {
+	const highlightStrings = (text: string): string => {
+		let result = "";
+		let offset = 0;
+		const stringRegex = /(["'`])(?:\\.|(?!\1).)*\1/g;
+		for (const match of text.matchAll(stringRegex)) {
+			const index = match.index ?? 0;
+			if (index > offset) {
+				result += theme.fg("mdCodeBlock", text.slice(offset, index));
+			}
+			result += theme.fg("syntaxString", match[0]);
+			offset = index + match[0].length;
+		}
+		if (offset < text.length) {
+			result += theme.fg("mdCodeBlock", text.slice(offset));
+		}
+		return result;
+	};
+
+	return code.split("\n").map((line) => {
+		const leadingWhitespaceLength = line.length - line.trimStart().length;
+		const leadingWhitespace = line.slice(0, leadingWhitespaceLength);
+		const content = line.slice(leadingWhitespaceLength);
+
+		if (content.startsWith("#")) {
+			return theme.fg("mdCodeBlock", leadingWhitespace) + theme.fg("syntaxComment", content);
+		}
+
+		const commandMatch = /^(\$ |>\s*)?([A-Za-z0-9_./-]+)(.*)$/.exec(content);
+		if (!commandMatch) {
+			return theme.fg("mdCodeBlock", leadingWhitespace) + highlightStrings(content);
+		}
+
+		const prompt = commandMatch[1] ?? "";
+		const command = commandMatch[2] ?? "";
+		const rest = commandMatch[3] ?? "";
+		const looksLikeCommand = rest.trim().length > 0 || command.startsWith("./");
+		if (!looksLikeCommand || command.startsWith("/")) {
+			return theme.fg("mdCodeBlock", leadingWhitespace) + highlightStrings(content);
+		}
+
+		return (
+			theme.fg("mdCodeBlock", leadingWhitespace + prompt) +
+			theme.fg("syntaxFunction", command) +
+			highlightStrings(rest)
+		);
+	});
+}
 export function getMarkdownTheme(): MarkdownTheme {
 	return {
 		heading: (text: string) => theme.fg("mdHeading", text),
@@ -1168,6 +1216,7 @@ export function getMarkdownTheme(): MarkdownTheme {
 		code: (text: string) => theme.fg("mdCode", text),
 		codeBlock: (text: string) => theme.fg("mdCodeBlock", text),
 		codeBlockBorder: (text: string) => theme.fg("mdCodeBlockBorder", text),
+		codeBlockLineNumber: (text: string) => theme.fg("dim", text),
 		quote: (text: string) => theme.fg("mdQuote", text),
 		quoteBorder: (text: string) => theme.fg("mdQuoteBorder", text),
 		hr: (text: string) => theme.fg("mdHr", text),
@@ -1179,11 +1228,10 @@ export function getMarkdownTheme(): MarkdownTheme {
 		highlightCode: (code: string, lang?: string): string[] => {
 			// Validate language before highlighting to avoid stderr spam from cli-highlight
 			const validLang = lang && supportsLanguage(lang) ? lang : undefined;
-			// Skip highlighting when no valid language is specified. cli-highlight's
-			// auto-detection is unreliable and can misidentify prose as AppleScript,
-			// LiveCodeServer, etc., coloring random English words as keywords.
+			// Avoid highlight.js auto-detection for unlabeled fences, but still apply
+			// conservative shell-like styling so agent command blocks are readable.
 			if (!validLang) {
-				return code.split("\n").map((line) => theme.fg("mdCodeBlock", line));
+				return highlightFallbackMarkdownCode(code);
 			}
 			const opts = {
 				language: validLang,
@@ -1193,7 +1241,7 @@ export function getMarkdownTheme(): MarkdownTheme {
 			try {
 				return highlight(code, opts).split("\n");
 			} catch {
-				return code.split("\n").map((line) => theme.fg("mdCodeBlock", line));
+				return highlightFallbackMarkdownCode(code);
 			}
 		},
 	};
