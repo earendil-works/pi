@@ -119,6 +119,22 @@ export function parseSkillBlock(text: string): ParsedSkillBlock | null {
 	};
 }
 
+export function extractTextContentForEditor(content: string | Array<{ type: string; text?: string }>): string {
+	if (typeof content === "string") return content;
+	return content
+		.filter((part): part is { type: "text"; text: string } => part.type === "text" && typeof part.text === "string")
+		.map((part) => part.text)
+		.join("");
+}
+
+export function collapseSkillBlockToCommand(text: string): string {
+	const skillBlock = parseSkillBlock(text);
+	if (!skillBlock) return text;
+
+	const command = `/skill:${skillBlock.name}`;
+	return skillBlock.userMessage ? `${command} ${skillBlock.userMessage}` : command;
+}
+
 /** Session-specific events that extend the core AgentEvent */
 export type AgentSessionEvent =
 	| Exclude<AgentEvent, { type: "agent_end" }>
@@ -2861,14 +2877,8 @@ export class AgentSession {
 	}
 
 	private _extractUserMessageText(content: string | Array<{ type: string; text?: string }>): string {
-		if (typeof content === "string") return content;
-		if (Array.isArray(content)) {
-			return content
-				.filter((c): c is { type: "text"; text: string } => c.type === "text")
-				.map((c) => c.text)
-				.join("");
-		}
-		return "";
+		const text = extractTextContentForEditor(content);
+		return collapseSkillBlockToCommand(text);
 	}
 
 	/**

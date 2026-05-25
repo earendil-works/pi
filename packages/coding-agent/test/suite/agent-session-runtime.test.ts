@@ -290,6 +290,44 @@ describe("AgentSessionRuntime characterization", () => {
 		expect(events).toEqual([{ type: "session_before_fork", entryId: "missing-entry", position: "at" }]);
 	});
 
+	it("returns slash command text when forking before a skill invocation", async () => {
+		const { runtime } = await createRuntimeForTest(() => {});
+		const skillInvocation = `<skill name="browser-use" location="/tmp/skills/browser-use/SKILL.md">
+References are relative to /tmp/skills/browser-use.
+
+# Browser Use
+
+Use browser automation.
+</skill>\n\nopen the dashboard`;
+		const entryId = runtime.session.sessionManager.appendMessage({
+			role: "user",
+			content: [{ type: "text", text: skillInvocation }],
+			timestamp: Date.now(),
+		});
+		runtime.session.sessionManager.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: "done" }],
+			api: "faux",
+			provider: "faux",
+			model: "faux-1",
+			usage: {
+				input: 0,
+				output: 0,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 0,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		});
+
+		const result = await runtime.fork(entryId);
+
+		expect(result.cancelled).toBe(false);
+		expect(result.selectedText).toBe("/skill:browser-use open the dashboard");
+	});
+
 	it("duplicates the current active branch when forking at the current position", async () => {
 		const { runtime } = await createRuntimeForTest(() => {});
 		await runtime.session.prompt("hello");
