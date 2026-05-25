@@ -1609,9 +1609,17 @@ export class AgentSession {
 	 * @param customInstructions Optional instructions for the compaction summary
 	 */
 	async compact(customInstructions?: string): Promise<CompactionResult> {
+		if (this._compactionAbortController) {
+			throw new Error("Compaction already in progress");
+		}
+		// User-initiated compaction wins over an in-flight auto-compaction. The
+		// auto-compaction flow checks its own local signal before mutating session state.
+		this._autoCompactionAbortController?.abort();
+
 		this._disconnectFromAgent();
 		await this.abort();
-		this._compactionAbortController = new AbortController();
+		const abortController = new AbortController();
+		this._compactionAbortController = abortController;
 		this._emit({ type: "compaction_start", reason: "manual" });
 
 		try {
@@ -1643,7 +1651,7 @@ export class AgentSession {
 					preparation,
 					branchEntries: pathEntries,
 					customInstructions,
-					signal: this._compactionAbortController.signal,
+					signal: abortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (result?.cancel) {
@@ -1675,7 +1683,7 @@ export class AgentSession {
 					apiKey,
 					headers,
 					customInstructions,
-					this._compactionAbortController.signal,
+					abortController.signal,
 					this.thinkingLevel,
 					this.agent.streamFn,
 				);
@@ -1685,7 +1693,7 @@ export class AgentSession {
 				details = result.details;
 			}
 
-			if (this._compactionAbortController.signal.aborted) {
+			if (abortController.signal.aborted) {
 				throw new Error("Compaction cancelled");
 			}
 
@@ -1734,7 +1742,9 @@ export class AgentSession {
 			});
 			throw error;
 		} finally {
-			this._compactionAbortController = undefined;
+			if (this._compactionAbortController === abortController) {
+				this._compactionAbortController = undefined;
+			}
 			this._reconnectToAgent();
 		}
 	}
@@ -1849,10 +1859,15 @@ export class AgentSession {
 	 * Internal: Run auto-compaction with events.
 	 */
 	private async _runAutoCompaction(reason: "overflow" | "threshold", willRetry: boolean): Promise<boolean> {
+		if (this._compactionAbortController || this._autoCompactionAbortController) {
+			return false;
+		}
+
 		const settings = this.settingsManager.getCompactionSettings();
 
 		this._emit({ type: "compaction_start", reason });
-		this._autoCompactionAbortController = new AbortController();
+		const abortController = new AbortController();
+		this._autoCompactionAbortController = abortController;
 
 		try {
 			if (!this.model) {
@@ -1909,7 +1924,7 @@ export class AgentSession {
 					preparation,
 					branchEntries: pathEntries,
 					customInstructions: undefined,
-					signal: this._autoCompactionAbortController.signal,
+					signal: abortController.signal,
 				})) as SessionBeforeCompactResult | undefined;
 
 				if (extensionResult?.cancel) {
@@ -1948,7 +1963,7 @@ export class AgentSession {
 					apiKey,
 					headers,
 					undefined,
-					this._autoCompactionAbortController.signal,
+					abortController.signal,
 					this.thinkingLevel,
 					this.agent.streamFn,
 				);
@@ -1958,7 +1973,7 @@ export class AgentSession {
 				details = compactResult.details;
 			}
 
-			if (this._autoCompactionAbortController.signal.aborted) {
+			if (abortController.signal.aborted) {
 				this._emit({
 					type: "compaction_end",
 					reason,
@@ -2009,20 +2024,24 @@ export class AgentSession {
 			return this.agent.hasQueuedMessages();
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : "compaction failed";
+			const aborted = abortController.signal.aborted || (error instanceof Error && error.name === "AbortError");
 			this._emit({
 				type: "compaction_end",
 				reason,
 				result: undefined,
-				aborted: false,
+				aborted,
 				willRetry: false,
-				errorMessage:
-					reason === "overflow"
+				errorMessage: aborted
+					? undefined
+					: reason === "overflow"
 						? `Context overflow recovery failed: ${errorMessage}`
 						: `Auto-compaction failed: ${errorMessage}`,
 			});
 			return false;
 		} finally {
-			this._autoCompactionAbortController = undefined;
+			if (this._autoCompactionAbortController === abortController) {
+				this._autoCompactionAbortController = undefined;
+			}
 		}
 	}
 

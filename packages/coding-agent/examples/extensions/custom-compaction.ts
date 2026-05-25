@@ -118,6 +118,9 @@ ${conversationText}
 				},
 			};
 		} catch (error) {
+			if (signal.aborted || (error instanceof Error && error.name === "AbortError")) {
+				return { cancel: true };
+			}
 			const message = error instanceof Error ? error.message : String(error);
 			ctx.ui.notify(`Compaction failed: ${message}`, "error");
 			// Fall back to default compaction on error

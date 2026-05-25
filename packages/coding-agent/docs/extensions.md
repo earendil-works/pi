@@ -413,6 +413,10 @@ Fired on compaction. See [compaction.md](compaction.md) for details.
 pi.on("session_before_compact", async (event, ctx) => {
   const { preparation, branchEntries, customInstructions, signal } = event;
 
+  // Honor compaction cancellation. Pass `signal` to fetch/model calls and
+  // return `{ cancel: true }` if the signal is already aborted or an abort is caught.
+  if (signal.aborted) return { cancel: true };
+
   // Cancel:
   return { cancel: true };
 

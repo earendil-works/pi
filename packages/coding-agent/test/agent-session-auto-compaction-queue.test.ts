@@ -234,6 +234,94 @@ describe("AgentSession auto-compaction queue resume", () => {
 		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
 	});
 
+	it("should keep auto-compaction signal stable if the controller field changes while awaiting auth", async () => {
+		let resolveAuth!: (value: { ok: true; apiKey: string }) => void;
+		vi.spyOn(session.modelRegistry, "getApiKeyAndHeaders").mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveAuth = resolve as (value: { ok: true; apiKey: string }) => void;
+				}),
+		);
+
+		const events: Array<{ type: string; errorMessage?: string }> = [];
+		session.subscribe((event) => {
+			if (event.type === "compaction_end") events.push(event);
+		});
+
+		const runAutoCompaction = (
+			session as unknown as {
+				_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
+			}
+		)._runAutoCompaction.bind(session);
+
+		const promise = runAutoCompaction("threshold", false);
+		expect(
+			(session as unknown as { _autoCompactionAbortController?: AbortController })._autoCompactionAbortController,
+		).toBeDefined();
+
+		// Simulate a stale overlapping cleanup clearing the shared field while this
+		// compaction is awaiting auth. The compaction flow must keep using its local
+		// controller reference instead of reading `.signal` from the mutable field.
+		(session as unknown as { _autoCompactionAbortController?: AbortController })._autoCompactionAbortController =
+			undefined;
+
+		resolveAuth({ ok: true, apiKey: "test-key" });
+		await promise;
+
+		expect(events).toHaveLength(1);
+		expect(events[0].errorMessage).toBeUndefined();
+	});
+
+	it("should not clear a newer auto-compaction controller from stale cleanup", async () => {
+		let resolveAuth!: (value: { ok: true; apiKey: string }) => void;
+		vi.spyOn(session.modelRegistry, "getApiKeyAndHeaders").mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveAuth = resolve as (value: { ok: true; apiKey: string }) => void;
+				}),
+		);
+
+		const runAutoCompaction = (
+			session as unknown as {
+				_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
+			}
+		)._runAutoCompaction.bind(session);
+
+		const promise = runAutoCompaction("threshold", false);
+		const replacement = new AbortController();
+		(session as unknown as { _autoCompactionAbortController?: AbortController })._autoCompactionAbortController =
+			replacement;
+
+		resolveAuth({ ok: true, apiKey: "test-key" });
+		await promise;
+
+		expect(
+			(session as unknown as { _autoCompactionAbortController?: AbortController })._autoCompactionAbortController,
+		).toBe(replacement);
+		(session as unknown as { _autoCompactionAbortController?: AbortController })._autoCompactionAbortController =
+			undefined;
+	});
+
+	it("should skip a second auto-compaction while one is already in progress", async () => {
+		(session as unknown as { _autoCompactionAbortController?: AbortController })._autoCompactionAbortController =
+			new AbortController();
+		const events: string[] = [];
+		session.subscribe((event) => {
+			if (event.type === "compaction_start" || event.type === "compaction_end") events.push(event.type);
+		});
+
+		const runAutoCompaction = (
+			session as unknown as {
+				_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
+			}
+		)._runAutoCompaction.bind(session);
+
+		await expect(runAutoCompaction("threshold", false)).resolves.toBe(false);
+		expect(events).toEqual([]);
+		(session as unknown as { _autoCompactionAbortController?: AbortController })._autoCompactionAbortController =
+			undefined;
+	});
+
 	it("should trigger threshold compaction for error messages using last successful usage", async () => {
 		const model = session.model!;
 

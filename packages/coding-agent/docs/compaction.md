@@ -287,7 +287,10 @@ pi.on("session_before_compact", async (event, ctx) => {
   // preparation.settings - compaction settings
 
   // branchEntries - all entries on current branch (for custom state)
-  // signal - AbortSignal (pass to LLM calls)
+  // signal - AbortSignal for this compaction run (pass to LLM calls)
+
+  // Honor cancellation before starting long-running work:
+  if (signal.aborted) return { cancel: true };
 
   // Cancel:
   return { cancel: true };
