@@ -3,9 +3,9 @@ import { decodeKittyPrintable } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
 import { type Component, CURSOR_MARKER, type Focusable } from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
-import { getSegmenter, isPunctuationChar, isWhitespaceChar, sliceByColumn, visibleWidth } from "../utils.ts";
+import { getGraphemeSegmenter, isPunctuationChar, isWhitespaceChar, sliceByColumn, visibleWidth } from "../utils.ts";
 
-const segmenter = getSegmenter();
+const segmenter = getGraphemeSegmenter();
 
 interface InputState {
 	value: string;
