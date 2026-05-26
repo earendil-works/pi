@@ -79,7 +79,7 @@ export interface PersonalAssistantConfig {
 		enabled?: boolean;
 		query_rewrite?: { provider?: string; model?: string };
 		extraction?: { provider?: string; model?: string };
-		embedding?: { model?: string; api_base?: string };
+		embedding?: { provider?: string; model?: string };
 		decay?: { base_decay?: number; archive_threshold?: number };
 		injection?: { max_count?: number };
 	};

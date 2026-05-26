@@ -13,7 +13,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { completeSimple } from "@earendil-works/pi-ai";
 import { createHash, randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -46,6 +46,8 @@ interface MemoryAtom {
   version: number;
   archived: boolean;
   content: string;
+  file_path: string;
+  content_hash: string;
 }
 
 interface PersonalAssistantConfig {
@@ -66,7 +68,7 @@ interface PersonalAssistantConfig {
     enabled?: boolean;
     query_rewrite?: { provider?: string; model?: string };
     extraction?: { provider?: string; model?: string };
-    embedding?: { model?: string; api_base?: string };
+    embedding?: { provider?: string; model?: string };
     decay?: { base_decay?: number; archive_threshold?: number };
     injection?: { max_count?: number };
   };
@@ -84,6 +86,7 @@ interface SearchResult {
 interface QueryRewriteResult {
   keywords: string[];
   target_types: string[];
+  raw_query: string;
 }
 
 interface ExtractionPlanItem {
@@ -309,8 +312,8 @@ function getMemoryConfig(config: PersonalAssistantConfig) {
     queryRewriteModel: config.memory?.query_rewrite?.model,
     extractionProvider: config.memory?.extraction?.provider,
     extractionModel: config.memory?.extraction?.model,
+    embeddingProvider: config.memory?.embedding?.provider,
     embeddingModel: config.memory?.embedding?.model,
-    embeddingApiBase: config.memory?.embedding?.api_base,
     baseDecay: config.memory?.decay?.base_decay ?? DEFAULT_BASE_DECAY,
     archiveThreshold: config.memory?.decay?.archive_threshold ?? DEFAULT_ARCHIVE_THRESHOLD,
     maxInjection: config.memory?.injection?.max_count ?? DEFAULT_MAX_INJECTION,
@@ -364,6 +367,10 @@ function escapeXml(text: string): string {
     .replace(/'/g, "&apos;");
 }
 
+function getFileHash(filePath: string): string {
+  return createHash("sha256").update(readFileSync(filePath)).digest("hex");
+}
+
 function formatMessagesForLLM(messages: Array<{ role: string; content: unknown }>): string {
   const parts: string[] = [];
   for (const msg of messages) {
@@ -401,7 +408,6 @@ class MemoryIndex {
         id TEXT PRIMARY KEY,
         type TEXT NOT NULL,
         title TEXT NOT NULL,
-        summary TEXT NOT NULL DEFAULT '',
         tags TEXT NOT NULL DEFAULT '[]',
         importance REAL NOT NULL DEFAULT 0.5,
         strength REAL NOT NULL DEFAULT 1.0,
@@ -410,7 +416,9 @@ class MemoryIndex {
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         version INTEGER NOT NULL DEFAULT 1,
-        archived INTEGER NOT NULL DEFAULT 0
+        archived INTEGER NOT NULL DEFAULT 0,
+        file_path TEXT NOT NULL DEFAULT '',
+        content_hash TEXT NOT NULL DEFAULT ''
       )
     `);
 
@@ -422,6 +430,18 @@ class MemoryIndex {
         tokenize='unicode61'
       )
     `);
+
+    this.db.exec(`
+      CREATE TABLE IF NOT EXISTS memory_embeddings (
+        id TEXT PRIMARY KEY REFERENCES memory_index(id),
+        embedding TEXT NOT NULL
+      )
+    `);
+
+    // Add columns for existing databases (silently ignored if present)
+    try { this.db.exec("ALTER TABLE memory_index ADD COLUMN file_path TEXT NOT NULL DEFAULT ''"); } catch { /* ok */ }
+    try { this.db.exec("ALTER TABLE memory_index ADD COLUMN content_hash TEXT NOT NULL DEFAULT ''"); } catch { /* ok */ }
+    try { this.db.exec("CREATE TABLE IF NOT EXISTS memory_embeddings (id TEXT PRIMARY KEY REFERENCES memory_index(id), embedding TEXT NOT NULL)"); } catch { /* ok */ }
   }
 
   close(): void {
@@ -442,12 +462,11 @@ class MemoryIndex {
 
     // Upsert main table
     db.prepare(`
-      INSERT INTO memory_index (id, type, title, summary, tags, importance, strength, access_count, last_access, created_at, updated_at, version, archived)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO memory_index (id, type, title, tags, importance, strength, access_count, last_access, created_at, updated_at, version, archived, file_path, content_hash)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         type=excluded.type,
         title=excluded.title,
-        summary=excluded.summary,
         tags=excluded.tags,
         importance=excluded.importance,
         strength=excluded.strength,
@@ -455,12 +474,14 @@ class MemoryIndex {
         last_access=excluded.last_access,
         updated_at=excluded.updated_at,
         version=excluded.version,
-        archived=excluded.archived
+        archived=excluded.archived,
+        file_path=excluded.file_path,
+        content_hash=excluded.content_hash
     `).run(
-      atom.id, atom.type, atom.title, atom.summary, tagsJson,
+      atom.id, atom.type, atom.title, tagsJson,
       atom.importance, atom.strength, atom.access_count,
       atom.last_access, atom.created_at, atom.updated_at,
-      atom.version, archivedInt,
+      atom.version, archivedInt, atom.file_path, atom.content_hash,
     );
 
     // Upsert FTS
@@ -468,6 +489,34 @@ class MemoryIndex {
     db.prepare("INSERT INTO memory_fts (id, title, tags) VALUES (?, ?, ?)").run(
       atom.id, atom.title, tagsJson,
     );
+  }
+
+  upsertEmbedding(id: string, embedding: number[]): void {
+    const db = this.ensureDb();
+    db.prepare(`
+      INSERT INTO memory_embeddings (id, embedding) VALUES (?, ?)
+      ON CONFLICT(id) DO UPDATE SET embedding=excluded.embedding
+    `).run(id, JSON.stringify(embedding));
+  }
+
+  getEmbedding(id: string): number[] | null {
+    const db = this.ensureDb();
+    const row = db.prepare("SELECT embedding FROM memory_embeddings WHERE id = ?").get(id) as { embedding: string } | undefined;
+    if (!row) return null;
+    try { return JSON.parse(row.embedding); } catch { return null; }
+  }
+
+  getEmbeddings(ids: string[]): Map<string, number[]> {
+    const db = this.ensureDb();
+    const result = new Map<string, number[]>();
+    if (ids.length === 0) return result;
+
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = db.prepare(`SELECT id, embedding FROM memory_embeddings WHERE id IN (${placeholders})`).all(...ids) as Array<{ id: string; embedding: string }>;
+    for (const row of rows) {
+      try { result.set(row.id, JSON.parse(row.embedding)); } catch { /* skip */ }
+    }
+    return result;
   }
 
   getAtom(id: string): MemoryAtom | null {
@@ -554,7 +603,7 @@ class MemoryIndex {
       id: row.id as string,
       type: row.type as MemoryAtomType,
       title: row.title as string,
-      summary: (row.summary as string) ?? "",
+      summary: "",
       tags: JSON.parse((row.tags as string) ?? "[]"),
       importance: row.importance as number,
       strength: row.strength as number,
@@ -565,7 +614,15 @@ class MemoryIndex {
       version: row.version as number,
       archived: (row.archived as number) === 1,
       content: "",
+      file_path: (row.file_path as string) ?? "",
+      content_hash: (row.content_hash as string) ?? "",
     };
+  }
+
+  /** Get all memory_index rows for migration. */
+  getAllRows(): Array<Record<string, unknown>> {
+    const db = this.ensureDb();
+    return db.prepare("SELECT * FROM memory_index").all() as Array<Record<string, unknown>>;
   }
 }
 
@@ -573,13 +630,23 @@ class MemoryIndex {
 // Atom File Storage
 // ============================================================================
 
-function readAtomFromFile(type: MemoryAtomType, slug: string): MemoryAtom | null {
-  const filePath = join(ATOMS_DIR, type, `${slug}.md`);
+function readAtomFromFile(filePath: string, expectedHash?: string): MemoryAtom | null {
   if (!existsSync(filePath)) return null;
 
   const raw = readFileSync(filePath, "utf-8");
+
+  // Validate content hash if provided
+  if (expectedHash) {
+    const actualHash = createHash("sha256").update(raw).digest("hex");
+    if (actualHash !== expectedHash) {
+      throw new Error(`content hash mismatch (expected ${expectedHash}, got ${actualHash})`);
+    }
+  }
+
   const match = raw.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
-  if (!match) return null;
+  if (!match) {
+    throw new Error(`missing frontmatter in ${filePath}`);
+  }
 
   const frontmatter = match[1];
   const content = match[2];
@@ -592,6 +659,15 @@ function readAtomFromFile(type: MemoryAtomType, slug: string): MemoryAtom | null
     const val = line.slice(colonIdx + 1).trim();
     fields[key] = val;
   }
+
+  // Validate required fields
+  for (const field of ["id", "type", "title"] as const) {
+    if (!fields[field]) {
+      throw new Error(`missing required field "${field}" in ${filePath}`);
+    }
+  }
+
+  const typeDir = filePath.split("/").slice(-2, -1)[0] as MemoryAtomType;
 
   let tags: string[] = [];
   if (fields.tags) {
@@ -606,9 +682,9 @@ function readAtomFromFile(type: MemoryAtomType, slug: string): MemoryAtom | null
   }
 
   return {
-    id: fields.id ?? "",
-    type: (fields.type as MemoryAtomType) ?? type,
-    title: fields.title ?? "",
+    id: fields.id,
+    type: (fields.type as MemoryAtomType) ?? typeDir,
+    title: fields.title,
     summary: fields.summary ?? "",
     tags,
     importance: parseFloat(fields.importance ?? "0.5"),
@@ -620,10 +696,12 @@ function readAtomFromFile(type: MemoryAtomType, slug: string): MemoryAtom | null
     version: parseInt(fields.version ?? "1", 10),
     archived: fields.archived === "true",
     content: content.trim(),
+    file_path: filePath,
+    content_hash: expectedHash ?? createHash("sha256").update(raw).digest("hex"),
   };
 }
 
-function writeAtomToFile(atom: MemoryAtom): void {
+function writeAtomToFile(atom: MemoryAtom): { filePath: string; contentHash: string } {
   const dir = join(ATOMS_DIR, atom.type);
   ensureDir(dir);
 
@@ -651,7 +729,15 @@ function writeAtomToFile(atom: MemoryAtom): void {
   ].join("\n");
 
   const body = atom.content || atom.summary;
-  writeFileSync(filePath, `${frontmatter}\n\n${body}\n`, "utf-8");
+  const content = `${frontmatter}\n\n${body}\n`;
+
+  // Atomic write: temp file → rename
+  const tmpPath = filePath + ".tmp";
+  writeFileSync(tmpPath, content, "utf-8");
+  renameSync(tmpPath, filePath);
+
+  const contentHash = createHash("sha256").update(content).digest("hex");
+  return { filePath, contentHash };
 }
 
 // ============================================================================
@@ -669,6 +755,7 @@ function simpleKeywordExtraction(query: string): QueryRewriteResult {
   return {
     keywords: unique.slice(0, 10),
     target_types: [],
+    raw_query: query,
   };
 }
 
@@ -762,6 +849,7 @@ function parseRewriteJson(text: string): QueryRewriteResult | null {
         target_types: Array.isArray(parsed.target_types)
           ? parsed.target_types.filter((t: unknown) => ATOM_TYPE_ORDER.includes(t as MemoryAtomType))
           : [],
+        raw_query: parsed.raw_query ?? "",
       };
     }
   } catch { /* ignore */ }
@@ -816,6 +904,43 @@ async function searchMemory(
 ): Promise<MemoryAtom[]> {
   const rewritten = await rewriteQuery(query, ctx, config);
   return searchAtoms(index, rewritten, topK);
+}
+
+async function searchEmbeddings(
+  index: MemoryIndex,
+  queryText: string,
+  candidateIds: string[],
+): Promise<Map<string, number>> {
+  // Find embedding model config
+  const config = loadConfig();
+  const embConfig = config.memory?.embedding;
+  if (!embConfig?.provider || !embConfig?.model) return new Map();
+
+  let embModel: { baseUrl: string; id: string } | null = null;
+  // We need access to modelRegistry here, but searchEmbeddings doesn't have ctx.
+  // Instead we'll read baseUrl from the config directly like the old approach.
+  // The embedding config in settings still has api_base for this case.
+  // Actually, for new code, use known local models:
+  if (embConfig.provider === "local") {
+    const baseUrl = "http://localhost:11434/v1";
+    embModel = { baseUrl, id: embConfig.model };
+  } else {
+    return new Map();
+  }
+
+  if (!embModel) return new Map();
+
+  const queryEmb = await getEmbedding(queryText, embModel.baseUrl, embModel.id);
+  if (!queryEmb) return new Map();
+
+  const candidateEmbs = index.getEmbeddings(candidateIds);
+  const result = new Map<string, number>();
+
+  for (const [id, emb] of candidateEmbs) {
+    result.set(id, cosineSimilarity(queryEmb, emb));
+  }
+
+  return result;
 }
 
 async function searchAtoms(index: MemoryIndex, query: QueryRewriteResult, topK: number): Promise<MemoryAtom[]> {
@@ -873,7 +998,23 @@ async function searchAtoms(index: MemoryIndex, query: QueryRewriteResult, topK: 
     index.updateAccess(r.atom.id);
   }
 
-  return results.map(r => r.atom);
+  // Load full atom data from files for return (summary, content, file_path)
+  const loaded = await Promise.all(
+    results.map(async (r) => {
+      const atom = r.atom;
+      if (atom.file_path) {
+        try {
+          return readAtomFromFile(atom.file_path, atom.content_hash || undefined) ?? atom;
+        } catch {
+          // File read failed — return DB info as-is (summary empty)
+          return atom;
+        }
+      }
+      return atom;
+    }),
+  );
+
+  return loaded;
 }
 
 async function getEmbedding(text: string, apiBase: string, model: string): Promise<number[] | null> {
@@ -1057,9 +1198,14 @@ Only create atoms for genuinely important information. Skip routine conversation
           version: 1,
           archived: false,
           content: item.summary ?? item.title,
+          file_path: "",
+          content_hash: "",
         };
+        const { filePath, contentHash } = writeAtomToFile(atom);
+        atom.file_path = filePath;
+        atom.content_hash = contentHash;
         index.upsertAtom(atom);
-        writeAtomToFile(atom);
+        // Embedding computed on next write; migration script handles it
       }
 
       if (item.action === "update" && item.id && item.changes) {
@@ -1072,8 +1218,10 @@ Only create atoms for genuinely important information. Skip routine conversation
           updated_at: nowISO(),
           version: existing.version + 1,
         };
+        const { filePath, contentHash } = writeAtomToFile(updated);
+        updated.file_path = filePath;
+        updated.content_hash = contentHash;
         index.upsertAtom(updated);
-        writeAtomToFile(updated);
       }
     }
   } catch {
@@ -1148,16 +1296,24 @@ function loadPersonaPrompt(config: PersonalAssistantConfig): string {
 // Memory Context Formatting
 // ============================================================================
 
-function formatMemoryContext(results: SearchResult[]): string {
-  if (results.length === 0) return "";
+function formatMemoryContext(atoms: MemoryAtom[]): string {
+  if (atoms.length === 0) return "";
 
   const sections: string[] = [];
 
-  for (const result of results) {
-    const { atom } = result;
+  for (const atom of atoms) {
     const tagsStr = atom.tags.length > 0 ? ` [${atom.tags.join(", ")}]` : "";
+
+    // If file read failed, summary will be empty — inject error
+    if (atom.file_path && !atom.summary) {
+      sections.push(
+        `<memory-error>Atom ${atom.id} (${atom.title}) could not be loaded from ${atom.file_path}</memory-error>`,
+      );
+      continue;
+    }
+
     sections.push(
-      `<memory type="${atom.type}" importance="${atom.importance.toFixed(2)}" strength="${atom.strength.toFixed(2)}">` +
+      `<memory type="${atom.type}" importance="${atom.importance.toFixed(2)}" strength="${atom.strength.toFixed(2)}" file="${escapeXml(atom.file_path)}">` +
         `\n  <title>${escapeXml(atom.title)}</title>` +
         `\n  <summary>${escapeXml(atom.summary)}</summary>` +
         (tagsStr ? `\n  <tags>${escapeXml(atom.tags.join(", "))}</tags>` : "") +

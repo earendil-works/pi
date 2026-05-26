@@ -23,8 +23,8 @@ function getEnv(): NodeJS.ProcessEnv {
 }
 
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { globSync } from "glob";
 import ignore from "ignore";
 import { minimatch } from "minimatch";
@@ -2394,13 +2394,14 @@ export class DefaultPackageManager implements PackageManager {
 		const repoSKillsDir = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../skills");
 		const repoPromptsDir = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../prompts");
 		if (existsSync(repoExtDir)) {
+			const autoEntries = collectAutoExtensionEntries(repoExtDir);
 			const bundledMetadata: PathMetadata = {
 				source: "auto",
 				scope: "project",
 				origin: "top-level",
 				baseDir: repoExtDir,
 			};
-			addResources("extensions", collectAutoExtensionEntries(repoExtDir), bundledMetadata, projectOverrides.extensions, repoExtDir);
+			addResources("extensions", autoEntries, bundledMetadata, projectOverrides.extensions, repoExtDir);
 		}
 		if (existsSync(repoSKillsDir)) {
 			const bundledSkillMetadata: PathMetadata = {
@@ -2409,7 +2410,13 @@ export class DefaultPackageManager implements PackageManager {
 				origin: "top-level",
 				baseDir: repoSKillsDir,
 			};
-			addResources("skills", collectAutoSkillEntries(repoSKillsDir, "pi"), bundledSkillMetadata, projectOverrides.skills, repoSKillsDir);
+			addResources(
+				"skills",
+				collectAutoSkillEntries(repoSKillsDir, "pi"),
+				bundledSkillMetadata,
+				projectOverrides.skills,
+				repoSKillsDir,
+			);
 		}
 		if (existsSync(repoPromptsDir)) {
 			const bundledPromptMetadata: PathMetadata = {
@@ -2418,7 +2425,13 @@ export class DefaultPackageManager implements PackageManager {
 				origin: "top-level",
 				baseDir: repoPromptsDir,
 			};
-			addResources("prompts", collectAutoPromptEntries(repoPromptsDir), bundledPromptMetadata, projectOverrides.prompts, repoPromptsDir);
+			addResources(
+				"prompts",
+				collectAutoPromptEntries(repoPromptsDir),
+				bundledPromptMetadata,
+				projectOverrides.prompts,
+				repoPromptsDir,
+			);
 		}
 	}
 
