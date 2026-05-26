@@ -31,13 +31,20 @@ import { createSyntheticSourceInfo } from "../source-info.ts";
 import type {
 	Extension,
 	ExtensionAPI,
+	ExtensionContext,
 	ExtensionFactory,
 	ExtensionRuntime,
+	LegacyCommandDefinition,
+	LegacyCommandResult,
+	LegacyContextEngineInstance,
+	LegacyHookMetadata,
 	LoadExtensionsResult,
 	MessageRenderer,
 	ProviderConfig,
 	RegisteredCommand,
+	ToolCallEventResult,
 	ToolDefinition,
+	ToolResultEventResult,
 } from "./types.ts";
 
 /** Modules available to extensions via virtualModules (for compiled Bun binary) */
@@ -116,6 +123,7 @@ function getAliases(): Record<string, string> {
 }
 
 type HandlerFn = (...args: unknown[]) => Promise<unknown>;
+type RegisteredCommandOptions = Omit<RegisteredCommand, "name" | "sourceInfo">;
 
 /**
  * Create a runtime with throwing stubs for action methods.
@@ -180,6 +188,29 @@ function createExtensionAPI(
 	cwd: string,
 	eventBus: EventBus,
 ): ExtensionAPI {
+	const warnLegacyUsage = (
+		apiName: "registerHook" | "registerCommand(object)" | "registerContextEngine",
+		subject: string,
+		replacement: string,
+	): void => {
+		console.warn(
+			`[extensions] ${extension.path}: ${apiName} is deprecated (${subject}). Use ${replacement} instead.`,
+		);
+	};
+
+	const setRegisteredCommand = (name: string, options: RegisteredCommandOptions): void => {
+		if (name.trim().length === 0) {
+			throw new Error("registerCommand() requires a non-empty command name.");
+		}
+		if (typeof options.handler !== "function") {
+			throw new Error(`registerCommand("${name}") requires a handler function.`);
+		}
+		extension.commands.set(name, {
+			name,
+			sourceInfo: extension.sourceInfo,
+			...options,
+		});
+	};
 	const api = {
 		// Registration methods - write to extension
 		on(event: string, handler: HandlerFn): void {
@@ -198,12 +229,155 @@ function createExtensionAPI(
 			runtime.refreshTools();
 		},
 
-		registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void {
+		registerCommand(nameOrCommand: string | LegacyCommandDefinition, options?: RegisteredCommandOptions): void {
 			runtime.assertActive();
-			extension.commands.set(name, {
-				name,
-				sourceInfo: extension.sourceInfo,
-				...options,
+			if (typeof nameOrCommand === "string") {
+				if (!options) {
+					throw new Error(`registerCommand("${nameOrCommand}") requires command options.`);
+				}
+				setRegisteredCommand(nameOrCommand, options);
+				return;
+			}
+
+			const command = nameOrCommand;
+			warnLegacyUsage("registerCommand(object)", `name=${command.name}`, "registerCommand(name, options)");
+
+			const name = command.name?.trim();
+			if (!name) {
+				throw new Error("registerCommand(command) requires a non-empty command.name.");
+			}
+
+			const handler: RegisteredCommand["handler"] = async (args) => {
+				const result = await command.handler({
+					args,
+					commandBody: args,
+				});
+				const legacyResult = result as LegacyCommandResult | undefined;
+				if (!legacyResult || typeof legacyResult.text !== "string" || legacyResult.text.length === 0) {
+					return;
+				}
+				runtime.sendMessage(
+					{
+						customType: `legacy-command:${name}`,
+						content: legacyResult.text,
+						display: true,
+					},
+					{ triggerTurn: false },
+				);
+			};
+
+			setRegisteredCommand(name, {
+				description: command.description,
+				handler,
+			});
+		},
+
+		registerHook(
+			event: string,
+			handler: (legacyEvent: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown,
+			meta?: LegacyHookMetadata,
+		): void {
+			runtime.assertActive();
+			const metaName = meta?.name ? `, name=${meta.name}` : "";
+			warnLegacyUsage("registerHook", `event=${event}${metaName}`, "on(event, handler)");
+
+			if (event === "command:new" || event === "command:reset") {
+				api.on("session_before_switch", async (sessionEvent, ctx) => {
+					if (
+						typeof sessionEvent !== "object" ||
+						sessionEvent === null ||
+						!("reason" in sessionEvent) ||
+						sessionEvent.reason !== "new"
+					) {
+						return;
+					}
+					await handler(sessionEvent, ctx);
+				});
+				return;
+			}
+
+			if (event === "command:stop") {
+				api.on("session_shutdown", async (sessionEvent, ctx) => {
+					if (
+						typeof sessionEvent !== "object" ||
+						sessionEvent === null ||
+						!("reason" in sessionEvent) ||
+						sessionEvent.reason !== "quit"
+					) {
+						return;
+					}
+					await handler(sessionEvent, ctx);
+				});
+				return;
+			}
+
+			if (event === "before_tool_call" || event === "tool_call:before") {
+				api.on("tool_call", async (toolEvent, ctx) => {
+					const legacyEvent =
+						typeof toolEvent === "object" && toolEvent !== null && "input" in toolEvent
+							? { ...toolEvent, params: toolEvent.input }
+							: toolEvent;
+					const legacyResult = await handler(legacyEvent, ctx);
+					if (typeof legacyResult !== "object" || legacyResult === null) {
+						return legacyResult as ToolCallEventResult | undefined;
+					}
+					const block = "block" in legacyResult ? legacyResult.block : undefined;
+					const blockReason =
+						"blockReason" in legacyResult && typeof legacyResult.blockReason === "string"
+							? legacyResult.blockReason
+							: undefined;
+					const reason =
+						"reason" in legacyResult && typeof legacyResult.reason === "string" ? legacyResult.reason : undefined;
+					if (block === undefined && blockReason === undefined) {
+						return legacyResult as ToolCallEventResult | undefined;
+					}
+					return {
+						block: Boolean(block),
+						reason: blockReason ?? reason,
+					} satisfies ToolCallEventResult;
+				});
+				return;
+			}
+
+			if (event === "after_tool_call" || event === "tool_call:after") {
+				api.on("tool_result", async (toolEvent, ctx) => {
+					const legacyEvent =
+						typeof toolEvent === "object" && toolEvent !== null && "input" in toolEvent
+							? { ...toolEvent, params: toolEvent.input }
+							: toolEvent;
+					return (await handler(legacyEvent, ctx)) as ToolResultEventResult | undefined;
+				});
+				return;
+			}
+
+			throw new Error(`Unsupported legacy hook event "${event}". Use pi.on() with a supported event name instead.`);
+		},
+
+		registerContextEngine(id: string, factory: () => LegacyContextEngineInstance): void {
+			runtime.assertActive();
+			warnLegacyUsage("registerContextEngine", `id=${id}`, "session hooks (e.g. session_before_compact)");
+
+			const engine = factory();
+			if (!engine || typeof engine !== "object") {
+				throw new Error(`registerContextEngine("${id}") must return a context engine object.`);
+			}
+			if (!engine.info || typeof engine.info !== "object") {
+				throw new Error(`registerContextEngine("${id}") requires engine.info.`);
+			}
+			if (engine.info.ownsCompaction) {
+				throw new Error(
+					`registerContextEngine("${id}") with ownsCompaction=true is not supported. Use session_before_compact and return a compaction result instead.`,
+				);
+			}
+			if (typeof engine.compact !== "function") {
+				throw new Error(`registerContextEngine("${id}") requires an async compact() method.`);
+			}
+
+			api.on("session_before_compact", async () => {
+				const compactResult = await engine.compact();
+				if (!compactResult || typeof compactResult !== "object" || compactResult.ok !== true) {
+					throw new Error(`Legacy context engine "${id}" compact() must return { ok: true, compacted: boolean }.`);
+				}
 			});
 		},
 
@@ -211,7 +385,7 @@ function createExtensionAPI(
 			shortcut: KeyId,
 			options: {
 				description?: string;
-				handler: (ctx: import("./types.ts").ExtensionContext) => Promise<void> | void;
+				handler: (ctx: ExtensionContext) => Promise<void> | void;
 			},
 		): void {
 			runtime.assertActive();

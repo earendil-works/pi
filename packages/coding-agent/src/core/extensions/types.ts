@@ -1065,6 +1065,47 @@ export interface RegisteredCommand {
 	getArgumentCompletions?: (argumentPrefix: string) => AutocompleteItem[] | null | Promise<AutocompleteItem[] | null>;
 	handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 }
+/** Legacy command context shape used by OpenClaw-style object command handlers. */
+export interface LegacyCommandContext {
+	senderId?: string;
+	channel?: string;
+	isAuthorizedSender?: boolean;
+	args?: string;
+	commandBody?: string;
+	config?: Record<string, unknown>;
+}
+
+export interface LegacyCommandResult {
+	text: string;
+}
+
+/** Legacy object-style command registration format. */
+export interface LegacyCommandDefinition {
+	name: string;
+	description?: string;
+	acceptsArgs?: boolean;
+	requireAuth?: boolean;
+	handler: (ctx: LegacyCommandContext) => LegacyCommandResult | Promise<LegacyCommandResult>;
+}
+
+/** Metadata passed to legacy registerHook() registrations. */
+export interface LegacyHookMetadata {
+	name?: string;
+	description?: string;
+}
+
+export interface LegacyContextEngineInfo {
+	id: string;
+	name: string;
+	ownsCompaction: boolean;
+}
+
+export interface LegacyContextEngineInstance {
+	info: LegacyContextEngineInfo;
+	ingest: (data: unknown) => Promise<{ ingested: boolean }>;
+	assemble: (ctx: { messages: unknown[] }) => Promise<{ messages: unknown[]; estimatedTokens: number }>;
+	compact: () => Promise<{ ok: boolean; compacted: boolean }>;
+}
 
 export interface ResolvedCommand extends RegisteredCommand {
 	invocationName: string;
@@ -1124,6 +1165,15 @@ export interface ExtensionAPI {
 	on(event: "tool_result", handler: ExtensionHandler<ToolResultEvent, ToolResultEventResult>): void;
 	on(event: "user_bash", handler: ExtensionHandler<UserBashEvent, UserBashEventResult>): void;
 	on(event: "input", handler: ExtensionHandler<InputEvent, InputEventResult>): void;
+	/**
+	 * Legacy compatibility API for older OpenClaw-style plugins.
+	 * New extensions should use `on(...)`.
+	 */
+	registerHook(
+		event: string,
+		handler: (event: unknown, ctx: ExtensionContext) => Promise<unknown> | unknown,
+		meta?: LegacyHookMetadata,
+	): void;
 
 	// =========================================================================
 	// Tool Registration
@@ -1140,6 +1190,14 @@ export interface ExtensionAPI {
 
 	/** Register a custom command. */
 	registerCommand(name: string, options: Omit<RegisteredCommand, "name" | "sourceInfo">): void;
+	/** Legacy object-style command registration used by older OpenClaw plugins. */
+	registerCommand(command: LegacyCommandDefinition): void;
+
+	/**
+	 * Legacy compatibility API for OpenClaw context engines.
+	 * New extensions should use session lifecycle hooks.
+	 */
+	registerContextEngine(id: string, factory: () => LegacyContextEngineInstance): void;
 
 	/** Register a keyboard shortcut. */
 	registerShortcut(
