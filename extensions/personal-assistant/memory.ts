@@ -748,89 +748,68 @@ async function searchMemory(
   query: string,
   ctx: ExtensionContext,
   config: PersonalAssistantConfig,
-  topK: number = 10,
-): Promise<SearchResult[]> {
-  const memConfig = getMemoryConfig(config);
-  const rewriteResult = await rewriteQuery(query, ctx, config);
+  topK: number,
+): Promise<MemoryAtom[]> {
+  const rewritten = await rewriteQuery(query, ctx, config);
+  return searchAtoms(index, rewritten, topK);
+}
 
-  const hasKeywords = rewriteResult.keywords.length > 0;
-  const hasEmbedding = !!memConfig.embeddingApiBase && !!memConfig.embeddingModel;
+async function searchAtoms(index: MemoryIndex, query: QueryRewriteResult, topK: number): Promise<MemoryAtom[]> {
+  const candidates: Array<{ atom: MemoryAtom; score: number }> = [];
 
-  let candidates: SearchResult[] = [];
-
-  if (hasKeywords) {
+  if (query.keywords.length > 0) {
     // FTS5 search
-    const typeFilter = rewriteResult.target_types.length === 1 ? rewriteResult.target_types[0] : undefined;
-    const ftsResults = index.searchByFts(rewriteResult.keywords, typeFilter, topK * 2);
+    const ftsResults = index.searchByFts(query.keywords, query.target_types);
+    if (ftsResults.length === 0) return [];
 
-    if (hasEmbedding) {
-      // Hybrid search with embeddings
-      const ftsScores = ftsResults.map((r) => r.score);
-      const maxFts = Math.max(...ftsScores, 1);
+    // Try embedding search if available
+    const embeddingResults = await searchEmbeddings(index, query.raw_query || query.keywords.join(" "), ftsResults.map(r => r.id));
 
-      // Get embedding for query
-      const queryEmbedding = await getEmbedding(query, memConfig.embeddingApiBase!, memConfig.embeddingModel!);
+    if (embeddingResults.size > 0) {
+      const maxFts = Math.max(...ftsResults.map(r => Math.abs(r.score)));
+      const maxEmb = Math.max(...Array.from(embeddingResults.values()));
+      const ftsRange = maxFts > 0 ? maxFts : 1;
+      const embRange = maxEmb > 0 ? maxEmb : 1;
 
-      if (queryEmbedding) {
-        // Compute cosine similarity for each FTS candidate
-        const hybridResults: SearchResult[] = [];
-        for (const ftsResult of ftsResults) {
-          const atom = index.getAtom(ftsResult.id);
-          if (!atom) continue;
-
-          const atomText = `${atom.title} ${atom.summary} ${atom.tags.join(" ")}`;
-          const atomEmbedding = await getEmbedding(atomText, memConfig.embeddingApiBase!, memConfig.embeddingModel!);
-
-          let cosineScore = 0;
-          if (atomEmbedding) {
-            cosineScore = cosineSimilarity(queryEmbedding, atomEmbedding);
-          }
-
-          const ftsNorm = ftsResult.score / maxFts;
-          const hybrid = (0.5 * ftsNorm + 0.5 * cosineScore) * (0.5 + 0.3 * atom.strength + 0.2 * atom.importance);
-          hybridResults.push({ atom, score: hybrid });
-        }
-
-        candidates = hybridResults.sort((a, b) => b.score - a.score).slice(0, topK);
-      } else {
-        // Embedding failed, fall back to FTS-only
-        candidates = ftsResults.map((r) => {
-          const atom = index.getAtom(r.id);
-          const score = r.score * (0.5 + 0.3 * (atom?.strength ?? 1) + 0.2 * (atom?.importance ?? 0.5));
-          return { atom: atom!, score };
-        }).filter((r) => r.atom);
+      for (const fts of ftsResults) {
+        const ftsNorm = Math.abs(fts.score) / ftsRange;
+        const cosScore = embeddingResults.get(fts.id) ?? 0;
+        const cosNorm = cosScore / embRange;
+        const atomData = index.getAtom(fts.id);
+        if (!atomData) continue;
+        const hybrid = (0.5 * ftsNorm + 0.5 * cosNorm) * (0.5 + 0.3 * atomData.strength + 0.2 * atomData.importance);
+        candidates.push({ atom: atomData, score: hybrid });
       }
     } else {
       // FTS-only scoring
-      candidates = ftsResults.map((r) => {
-        const atom = index.getAtom(r.id);
-        const score = r.score * (0.5 + 0.3 * (atom?.strength ?? 1) + 0.2 * (atom?.importance ?? 0.5));
-        return { atom: atom!, score };
-      }).filter((r) => r.atom);
+      for (const fts of ftsResults) {
+        const atomData = index.getAtom(fts.id);
+        if (!atomData) continue;
+        const score = Math.abs(fts.score) * (0.5 + 0.3 * atomData.strength + 0.2 * atomData.importance);
+        candidates.push({ atom: atomData, score });
+      }
     }
   } else {
     // No keywords — rank by type filter + strength + importance
     let atoms = index.getActiveAtoms();
-    if (rewriteResult.target_types.length > 0) {
-      const typeSet = new Set(rewriteResult.target_types);
+    if (query.target_types.length > 0) {
+      const typeSet = new Set(query.target_types);
       atoms = atoms.filter((a) => typeSet.has(a.type));
     }
-    candidates = atoms.map((atom) => ({
-      atom,
-      score: 0.5 + 0.3 * atom.strength + 0.2 * atom.importance,
-    }));
+    for (const atom of atoms) {
+      candidates.push({ atom, score: 0.5 + 0.3 * atom.strength + 0.2 * atom.importance });
+    }
   }
 
-  // Sort descending and take top_k
   candidates.sort((a, b) => b.score - a.score);
   const results = candidates.slice(0, topK);
 
   // Update access stats
-  for (const result of results) {
-    index.updateAccess(result.atom.id);
+  for (const r of results) {
+    index.updateAccess(r.atom.id);
   }
 
-  return results;
+  return results.map(r => r.atom);
 }
 
 async function getEmbedding(text: string, apiBase: string, model: string): Promise<number[] | null> {
@@ -1167,39 +1146,71 @@ export function registerMemory(pi: ExtensionAPI): void {
     }
   });
 
-  // --- before_agent_start: inject persona + memory context ---
+  // --- before_agent_start: inject persona fast, kick off async memory search ---
+
+  // Shared promise for memory search started in before_agent_start,
+  // awaited in context handler so it doesn't block TUI rendering.
+  let pendingMemorySearch:
+    | { promise: Promise<MemoryAtom[]>; timestamp: number }
+    | undefined;
+
   pi.on("before_agent_start", async (event, ctx) => {
     const config = loadConfig();
     const memConfig = getMemoryConfig(config);
-
     if (!memConfig.enabled) return;
 
     let systemPrompt = event.systemPrompt;
 
-    // Inject persona
+    // Inject persona (fast file read, no LLM call)
     const persona = loadPersonaPrompt(config);
     if (persona) {
       systemPrompt += persona;
     }
 
-    // Search and inject memory context if prompt is non-empty
+    // Kick off async memory search — don't await, store promise for context handler
     const prompt = event.prompt.trim();
     if (prompt) {
       const index = getIndex();
       if (index) {
-        try {
-          const results = await searchMemory(index, prompt, ctx, config, memConfig.maxInjection);
-          const memoryBlock = formatMemoryContext(results);
-          if (memoryBlock) {
-            systemPrompt += `\n\n${memoryBlock}`;
-          }
-        } catch {
-          // Don't let memory errors break the agent
-        }
+        const searchPromise = searchMemory(index, prompt, ctx, config, memConfig.maxInjection);
+        pendingMemorySearch = { promise: searchPromise, timestamp: Date.now() };
+        searchPromise.catch(() => { /* don't crash */ });
       }
     }
 
     return { systemPrompt };
+  });
+
+  // --- context: inject memory context before first LLM call ---
+  pi.on("context" as any, async (event: { messages: unknown[] }, ctx: ExtensionContext) => {
+    if (!pendingMemorySearch) return;
+    const ps = pendingMemorySearch;
+    pendingMemorySearch = undefined;
+
+    try {
+      const results = await Promise.race([
+        ps.promise,
+        new Promise<null>((_, reject) =>
+          setTimeout(() => reject(new Error("memory search timeout")), 8000),
+        ),
+      ]);
+
+      if (!results || results.length === 0) return;
+
+      const memoryBlock = formatMemoryContext(results);
+      if (!memoryBlock) return;
+
+      // Inject memory context into the last user message
+      for (let i = event.messages.length - 1; i >= 0; i--) {
+        const msg = event.messages[i] as Record<string, unknown>;
+        if (msg.role === "user" && typeof msg.content === "string") {
+          msg.content = `${memoryBlock}\n\n${msg.content}`;
+          break;
+        }
+      }
+    } catch {
+      // Memory search timed out or failed — proceed without context
+    }
   });
 
   // --- session_before_compact: extract memories ---
