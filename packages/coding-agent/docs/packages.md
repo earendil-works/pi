@@ -85,8 +85,9 @@ ssh://git@github.com/user/repo@v1
 - HTTPS and SSH URLs are both supported.
 - SSH URLs use your configured SSH keys automatically (respects `~/.ssh/config`).
 - For non-interactive runs (for example CI), you can set `GIT_TERMINAL_PROMPT=0` to disable credential prompts and set `GIT_SSH_COMMAND` (for example `ssh -o BatchMode=yes -o ConnectTimeout=5`) to fail fast.
-- Refs are pinned tags or commits. `pi update` and `pi update --extensions` do not move them to newer refs, but they do reconcile an existing clone to the configured ref.
-- Use `pi install git:host/user/repo@new-ref` to update settings and move an existing package to a new pinned ref.
+- Refs are pinned tags, commits, or branches. `pi update` and `pi update --extensions` reconcile an existing clone to the configured ref. Tag and commit refs do not move; branch refs follow new commits as the remote branch advances.
+- Without a ref (e.g. `git:host/user/repo`), pi tracks the remote default branch (`origin/HEAD`). Removing a ref from settings.json restores this behavior — the next install or update reconciles the clone to the default branch.
+- Use `pi install git:host/user/repo@new-ref` to update settings and move an existing package to a new pinned ref. Reinstalling without a ref reverts to tracking the default branch.
 - Cloned to `~/.pi/agent/git/<host>/<path>` (global) or `.pi/git/<host>/<path>` (project).
 - When reconciliation changes the checkout, pi resets and cleans the clone, then runs `npm install` if `package.json` exists.
 

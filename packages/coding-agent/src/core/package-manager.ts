@@ -1496,25 +1496,28 @@ export class DefaultPackageManager implements PackageManager {
 	private async getLocalGitUpdateTarget(
 		installedPath: string,
 	): Promise<{ ref: string; head: string; fetchArgs: string[] }> {
-		try {
-			const upstream = await this.runCommandCapture("git", ["rev-parse", "--abbrev-ref", "@{upstream}"], {
-				cwd: installedPath,
-				timeoutMs: NETWORK_TIMEOUT_MS,
-			});
-			const trimmedUpstream = upstream.trim();
-			if (!trimmedUpstream.startsWith("origin/")) {
-				throw new Error(`Unsupported upstream remote: ${trimmedUpstream}`);
-			}
-			const branch = trimmedUpstream.slice("origin/".length);
-			if (!branch) {
-				throw new Error("Missing upstream branch name");
-			}
-			const head = await this.runCommandCapture("git", ["rev-parse", "@{upstream}"], {
-				cwd: installedPath,
-				timeoutMs: NETWORK_TIMEOUT_MS,
-			});
+		// No ref configured in settings.json — track the remote default branch.
+		//
+		// We deliberately do not consult the local @{upstream}: if the clone
+		// was previously installed with a branch ref in settings.json that has
+		// since been removed, @{upstream} would still point at the old branch,
+		// leaving the clone permanently stuck on it even though the user's
+		// configured intent is now "track default". Resolving against
+		// origin/HEAD ensures every no-ref reconciliation aligns with the
+		// remote's current default branch.
+		await this.runCommand("git", ["remote", "set-head", "origin", "-a"], { cwd: installedPath }).catch(() => {});
+		const head = await this.runCommandCapture("git", ["rev-parse", "origin/HEAD"], {
+			cwd: installedPath,
+			timeoutMs: NETWORK_TIMEOUT_MS,
+		});
+		const originHeadRef = await this.runCommandCapture("git", ["symbolic-ref", "refs/remotes/origin/HEAD"], {
+			cwd: installedPath,
+			timeoutMs: NETWORK_TIMEOUT_MS,
+		}).catch(() => "");
+		const branch = originHeadRef.trim().replace(/^refs\/remotes\/origin\//, "");
+		if (branch) {
 			return {
-				ref: "@{upstream}",
+				ref: "origin/HEAD",
 				head,
 				fetchArgs: [
 					"fetch",
@@ -1524,36 +1527,12 @@ export class DefaultPackageManager implements PackageManager {
 					`+refs/heads/${branch}:refs/remotes/origin/${branch}`,
 				],
 			};
-		} catch {
-			await this.runCommand("git", ["remote", "set-head", "origin", "-a"], { cwd: installedPath }).catch(() => {});
-			const head = await this.runCommandCapture("git", ["rev-parse", "origin/HEAD"], {
-				cwd: installedPath,
-				timeoutMs: NETWORK_TIMEOUT_MS,
-			});
-			const originHeadRef = await this.runCommandCapture("git", ["symbolic-ref", "refs/remotes/origin/HEAD"], {
-				cwd: installedPath,
-				timeoutMs: NETWORK_TIMEOUT_MS,
-			}).catch(() => "");
-			const branch = originHeadRef.trim().replace(/^refs\/remotes\/origin\//, "");
-			if (branch) {
-				return {
-					ref: "origin/HEAD",
-					head,
-					fetchArgs: [
-						"fetch",
-						"--prune",
-						"--no-tags",
-						"origin",
-						`+refs/heads/${branch}:refs/remotes/origin/${branch}`,
-					],
-				};
-			}
-			return {
-				ref: "origin/HEAD",
-				head,
-				fetchArgs: ["fetch", "--prune", "--no-tags", "origin", "+HEAD:refs/remotes/origin/HEAD"],
-			};
 		}
+		return {
+			ref: "origin/HEAD",
+			head,
+			fetchArgs: ["fetch", "--prune", "--no-tags", "origin", "+HEAD:refs/remotes/origin/HEAD"],
+		};
 	}
 
 	private async getGitUpstreamRef(installedPath: string): Promise<string | undefined> {

@@ -843,8 +843,14 @@ Content`,
 
 			vi.spyOn(packageManager as any, "runCommandCapture").mockImplementation(async (...callArgs: unknown[]) => {
 				const [_command, args] = callArgs as [string, string[]];
-				if (args[0] === "rev-parse" && args[1] === "--abbrev-ref" && args[2] === "@{upstream}") {
-					return "origin/main";
+				if (args[0] === "rev-parse" && args[1] === "HEAD") {
+					return "local-head";
+				}
+				if (args[0] === "rev-parse" && (args[1] === "origin/HEAD" || args[1] === "origin/HEAD^{commit}")) {
+					return "remote-head";
+				}
+				if (args[0] === "symbolic-ref" && args[1] === "refs/remotes/origin/HEAD") {
+					return "refs/remotes/origin/main";
 				}
 				if (args[0] === "rev-parse" && (args[1] === "@{upstream}" || args[1] === "@{upstream}^{commit}")) {
 					return "remote-head";
@@ -879,8 +885,14 @@ Content`,
 
 			vi.spyOn(packageManager as any, "runCommandCapture").mockImplementation(async (...callArgs: unknown[]) => {
 				const [_command, args] = callArgs as [string, string[]];
-				if (args[0] === "rev-parse" && args[1] === "--abbrev-ref" && args[2] === "@{upstream}") {
-					return "origin/main";
+				if (args[0] === "rev-parse" && args[1] === "HEAD") {
+					return "local-head";
+				}
+				if (args[0] === "rev-parse" && (args[1] === "origin/HEAD" || args[1] === "origin/HEAD^{commit}")) {
+					return "remote-head";
+				}
+				if (args[0] === "symbolic-ref" && args[1] === "refs/remotes/origin/HEAD") {
+					return "refs/remotes/origin/main";
 				}
 				if (args[0] === "rev-parse" && (args[1] === "@{upstream}" || args[1] === "@{upstream}^{commit}")) {
 					return "remote-head";
