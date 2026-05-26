@@ -78,6 +78,7 @@ export class ProcessTerminal implements Terminal {
 	private resizeHandler?: () => void;
 	private _kittyProtocolActive = false;
 	private _modifyOtherKeysActive = false;
+	private _keyboardProbeDa1Pending = false;
 	private stdinBuffer?: StdinBuffer;
 	private stdinDataHandler?: (data: string) => void;
 	private progressInterval?: ReturnType<typeof setInterval>;
@@ -150,23 +151,36 @@ export class ProcessTerminal implements Terminal {
 		// Kitty protocol response pattern: \x1b[?<flags>u
 		const kittyResponsePattern = /^\x1b\[\?(\d+)u$/;
 
+		const da1ResponsePattern = /^\x1b\[\?[\d;]*c$/;
+
 		// Forward individual sequences to the input handler
 		this.stdinBuffer.on("data", (sequence) => {
-			// Check for Kitty protocol response (only if not already enabled)
-			if (!this._kittyProtocolActive) {
-				const match = sequence.match(kittyResponsePattern);
-				if (match) {
+			if (da1ResponsePattern.test(sequence) && this._keyboardProbeDa1Pending) {
+				this._keyboardProbeDa1Pending = false;
+				if (!this._kittyProtocolActive && !this._modifyOtherKeysActive) {
+					process.stdout.write("\x1b[>4;2m");
+					this._modifyOtherKeysActive = true;
+				}
+				return;
+			}
+
+			const match = sequence.match(kittyResponsePattern);
+			if (match && !this._modifyOtherKeysActive) {
+				this._keyboardProbeDa1Pending = false;
+				const reportedFlags = Number.parseInt(match[1]!, 10);
+				if (reportedFlags >= 3) {
 					this._kittyProtocolActive = true;
 					setKittyProtocolActive(true);
-
-					// Enable Kitty keyboard protocol (push flags)
-					// Flag 1 = disambiguate escape codes
-					// Flag 2 = report event types (press/repeat/release)
-					// Flag 4 = report alternate keys (shifted key, base layout key)
-					// Base layout key enables shortcuts to work with non-Latin keyboard layouts
 					process.stdout.write("\x1b[>7u");
-					return; // Don't forward protocol response to TUI
+				} else if (reportedFlags >= 1) {
+					this._kittyProtocolActive = true;
+					setKittyProtocolActive(true);
+					process.stdout.write("\x1b[>1u");
+				} else if (reportedFlags === 0) {
+					process.stdout.write("\x1b[>4;2m");
+					this._modifyOtherKeysActive = true;
 				}
+				return;
 			}
 
 			if (this.inputHandler) {
@@ -210,8 +224,10 @@ export class ProcessTerminal implements Terminal {
 	private queryAndEnableKittyProtocol(): void {
 		this.setupStdinBuffer();
 		process.stdin.on("data", this.stdinDataHandler!);
-		process.stdout.write("\x1b[?u");
+		this._keyboardProbeDa1Pending = true;
+		process.stdout.write("\x1b[>31u\x1b[?u\x1b[c");
 		setTimeout(() => {
+			this._keyboardProbeDa1Pending = false;
 			if (!this._kittyProtocolActive && !this._modifyOtherKeysActive) {
 				process.stdout.write("\x1b[>4;2m");
 				this._modifyOtherKeysActive = true;

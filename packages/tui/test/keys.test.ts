@@ -610,5 +610,23 @@ describe("parseKey", () => {
 		it("should parse double bracket pageUp", () => {
 			assert.strictEqual(parseKey("\x1b[[5~"), "pageUp");
 		});
+
+		describe("ESC-prefixed alt (mixed mode)", () => {
+			it("parses alt+arrow when kitty protocol is active", () => {
+				setKittyProtocolActive(true);
+				assert.strictEqual(parseKey("\x1b\x1b[A"), "alt+up");
+				assert.strictEqual(parseKey("\x1b\x1b[B"), "alt+down");
+				assert.strictEqual(matchesKey("\x1b\x1b[A", "alt+up"), true);
+				setKittyProtocolActive(false);
+			});
+
+			it("does not treat bare double-ESC as alt+letter", () => {
+				setKittyProtocolActive(true);
+				assert.strictEqual(parseKey("\x1b\x1b"), "ctrl+alt+[");
+				assert.strictEqual(parseKey("\x1b\x1bX"), undefined);
+				setKittyProtocolActive(false);
+			});
+		});
 	});
 });
+

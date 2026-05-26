@@ -68,6 +68,16 @@ function isCompleteSequence(data: string): "complete" | "incomplete" | "not-esca
 		return afterEsc.length >= 2 ? "complete" : "incomplete";
 	}
 
+	// ESC-prefixed (metaSendsEscape): incomplete only for CSI/SS3 continuations.
+	if (afterEsc.startsWith(ESC)) {
+		const inner = data.slice(1);
+		const third = inner.charCodeAt(1);
+		if (third === 0x5b || third === 0x4f) {
+			return isCompleteSequence(inner);
+		}
+		return "complete";
+	}
+
 	// Meta key sequences: ESC followed by a single character
 	if (afterEsc.length === 1) {
 		return "complete";

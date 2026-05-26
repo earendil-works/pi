@@ -817,9 +817,41 @@ function parseKeyId(
  * @param data - Raw input data from terminal
  * @param keyId - Key identifier (e.g., "ctrl+c", "escape", Key.ctrl("c"))
  */
+
+/** \x1b\x1b[ / \x1b\x1bO → alt+inner (mixed mode under partial Kitty, e.g. Zellij). */
+function parseEscPrefixedAlt(data: string): string | undefined {
+	if (data.length <= 2 || data.charCodeAt(0) !== 0x1b || data.charCodeAt(1) !== 0x1b) {
+		return undefined;
+	}
+	const third = data.charCodeAt(2);
+	if (third !== 0x5b && third !== 0x4f) {
+		return undefined;
+	}
+	const inner = parseKey(data.slice(1));
+	return inner ? `alt+${inner}` : undefined;
+}
+
+function matchesEscPrefixedAlt(data: string, keyId: KeyId): boolean {
+	const parsed = parseKeyId(keyId);
+	if (!parsed?.alt) return false;
+	if (data.length <= 2 || data.charCodeAt(0) !== 0x1b || data.charCodeAt(1) !== 0x1b) {
+		return false;
+	}
+	const third = data.charCodeAt(2);
+	if (third !== 0x5b && third !== 0x4f) return false;
+	const { key, ctrl, shift } = parsed;
+	const parts: string[] = [];
+	if (ctrl) parts.push("ctrl");
+	if (shift) parts.push("shift");
+	parts.push(key);
+	return matchesKey(data.slice(1), parts.join("+") as KeyId);
+}
+
 export function matchesKey(data: string, keyId: KeyId): boolean {
 	const parsed = parseKeyId(keyId);
 	if (!parsed) return false;
+
+	if (matchesEscPrefixedAlt(data, keyId)) return true;
 
 	const { key, ctrl, shift, alt, super: superModifier } = parsed;
 	let modifier = 0;
@@ -1249,6 +1281,9 @@ function formatParsedKey(codepoint: number, modifier: number, baseLayoutKey?: nu
 }
 
 export function parseKey(data: string): string | undefined {
+	const escPrefixed = parseEscPrefixedAlt(data);
+	if (escPrefixed) return escPrefixed;
+
 	const kitty = parseKittySequence(data);
 	if (kitty) {
 		return formatParsedKey(kitty.codepoint, kitty.modifier, kitty.baseLayoutKey);
