@@ -317,6 +317,14 @@ function getMemoryConfig(config: PersonalAssistantConfig) {
   };
 }
 
+function getRewriteModelLabel(config: PersonalAssistantConfig, ctx: ExtensionContext): string {
+  const rw = config.memory?.query_rewrite;
+  if (rw?.provider && rw?.model) {
+    return `${rw.provider}/${rw.model}`;
+  }
+  return ctx.model?.id ?? "?";
+}
+
 // ============================================================================
 // Utility
 // ============================================================================
@@ -1209,6 +1217,7 @@ export function registerMemory(pi: ExtensionAPI): void {
   let pendingMemorySearch:
     | { promise: Promise<MemoryAtom[]>; timestamp: number }
     | undefined;
+  let pendingMemoryModel: string | undefined;
 
   pi.on("before_agent_start", async (event, ctx) => {
     const config = loadConfig();
@@ -1230,7 +1239,8 @@ export function registerMemory(pi: ExtensionAPI): void {
     if (prompt) {
       const index = getIndex();
       if (index) {
-        ctx.ui.setStatus("memory", "mem: searching\u2026");
+        pendingMemoryModel = getRewriteModelLabel(config, ctx);
+        ctx.ui.setStatus("memory", `mem: ${pendingMemoryModel} searching\u2026`);
         const searchPromise = searchMemory(index, prompt, ctx, config, memConfig.maxInjection);
         pendingMemorySearch = { promise: searchPromise, timestamp: Date.now() };
         searchPromise.catch(() => { /* don't crash */ });
@@ -1256,10 +1266,12 @@ export function registerMemory(pi: ExtensionAPI): void {
 
       if (!results || results.length === 0) {
         ctx.ui.setStatus("memory", undefined);
+        pendingMemoryModel = undefined;
         return;
       }
 
-      ctx.ui.setStatus("memory", `mem: ${results.length} found`);
+      ctx.ui.setStatus("memory", `mem: ${pendingMemoryModel ?? "?"} ${results.length} found`);
+      pendingMemoryModel = undefined;
 
       const memoryBlock = formatMemoryContext(results);
       if (!memoryBlock) return;
@@ -1274,12 +1286,14 @@ export function registerMemory(pi: ExtensionAPI): void {
       }
     } catch {
       ctx.ui.setStatus("memory", undefined);
+      pendingMemoryModel = undefined;
     }
   });
 
   // --- agent_end: clear memory status ---
   pi.on("agent_end", async (_event, ctx) => {
     ctx.ui.setStatus("memory", undefined);
+    pendingMemoryModel = undefined;
   });
 
   // --- session_before_compact: extract memories ---
