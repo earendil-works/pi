@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `$RAW_ARGUMENTS` for prompt templates to preserve the raw argument text after the command separator ([#5027](https://github.com/earendil-works/pi/issues/5027)).
+
 ### Fixed
 
 - Fixed `RpcClient` to reject pending requests and consume stdin pipe errors when the child process exits unexpectedly ([#4764](https://github.com/earendil-works/pi/issues/4764)).

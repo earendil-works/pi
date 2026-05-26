@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `$RAW_ARGUMENTS` support to prompt template formatting.
+
 ## [0.75.5] - 2026-05-23
 
 ## [0.75.4] - 2026-05-20

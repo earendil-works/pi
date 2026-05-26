@@ -68,6 +68,7 @@ Templates support positional arguments and simple slicing:
 
 - `$1`, `$2`, ... positional args
 - `$@` or `$ARGUMENTS` for all args joined
+- `$RAW_ARGUMENTS` for the raw text after the command separator, preserving newlines and spacing
 - `${@:N}` for args from the Nth position (1-indexed)
 - `${@:N:L}` for `L` args starting at N
 
@@ -81,6 +82,8 @@ Create a React component named $1 with features: $@
 ```
 
 Usage: `/component Button "onClick handler" "disabled support"`
+
+Use `$RAW_ARGUMENTS` when a template should preserve pasted prose, logs, diffs, or other formatted text without quoting.
 
 ## Loading Rules
 

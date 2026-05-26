@@ -59,13 +59,14 @@ export function parseCommandArgs(argsString: string): string[] {
  * Supports:
  * - $1, $2, ... for positional args
  * - $@ and $ARGUMENTS for all args
+ * - $RAW_ARGUMENTS for the unparsed argument string
  * - ${@:N} for args from Nth onwards (bash-style slicing)
  * - ${@:N:L} for L args starting from Nth
  *
  * Note: Replacement happens on the template string only. Argument values
  * containing patterns like $1, $@, or $ARGUMENTS are NOT recursively substituted.
  */
-export function substituteArgs(content: string, args: string[]): string {
+export function substituteArgs(content: string, args: string[], rawArgs = args.join(" ")): string {
 	let result = content;
 
 	// Replace $1, $2, etc. with positional args FIRST (before wildcards)
@@ -97,6 +98,9 @@ export function substituteArgs(content: string, args: string[]): string {
 
 	// Replace $@ with all args joined (existing syntax)
 	result = result.replace(/\$@/g, allArgs);
+
+	// Replace $RAW_ARGUMENTS with the unparsed argument string LAST to avoid recursive substitution
+	result = result.replace(/\$RAW_ARGUMENTS/g, rawArgs);
 
 	return result;
 }
@@ -269,7 +273,7 @@ export function loadPromptTemplates(options: LoadPromptTemplatesOptions): Prompt
 export function expandPromptTemplate(text: string, templates: PromptTemplate[]): string {
 	if (!text.startsWith("/")) return text;
 
-	const match = text.match(/^\/([^\s]+)(?:\s+([\s\S]*))?$/);
+	const match = text.match(/^\/([^\s]+)(?:\s([\s\S]*))?$/);
 	if (!match) return text;
 
 	const templateName = match[1];
@@ -278,7 +282,7 @@ export function expandPromptTemplate(text: string, templates: PromptTemplate[]):
 	const template = templates.find((t) => t.name === templateName);
 	if (template) {
 		const args = parseCommandArgs(argsString);
-		return substituteArgs(template.content, args);
+		return substituteArgs(template.content, args, argsString);
 	}
 
 	return text;
