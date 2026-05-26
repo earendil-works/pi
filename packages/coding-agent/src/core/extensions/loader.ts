@@ -601,11 +601,5 @@ export async function discoverAndLoadExtensions(
 		addPaths([resolved]);
 	}
 
-	// 4. Bundled extensions: <repo-root>/extensions/
-	const bundledExtDir = path.resolve(__dirname, "../../../../..", "extensions");
-	if (fs.existsSync(bundledExtDir)) {
-		addPaths(discoverExtensionsInDir(bundledExtDir));
-	}
-
 	return loadExtensions(allPaths, resolvedCwd, eventBus);
 }

@@ -23,6 +23,7 @@ function getEnv(): NodeJS.ProcessEnv {
 }
 
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Readable } from "node:stream";
 import { globSync } from "glob";
 import ignore from "ignore";
@@ -2387,6 +2388,18 @@ export class DefaultPackageManager implements PackageManager {
 			userOverrides.themes,
 			globalBaseDir,
 		);
+
+		// Bundled extensions from repo root extensions/
+		const repoExtDir = resolve(dirname(fileURLToPath(import.meta.url)), "../../../../extensions");
+		if (existsSync(repoExtDir)) {
+			const bundledMetadata: PathMetadata = {
+				source: "auto",
+				scope: "project",
+				origin: "top-level",
+				baseDir: repoExtDir,
+			};
+			addResources("extensions", collectAutoExtensionEntries(repoExtDir), bundledMetadata, projectOverrides.extensions, repoExtDir);
+		}
 	}
 
 	private collectFilesFromPaths(paths: string[], resourceType: ResourceType): string[] {
