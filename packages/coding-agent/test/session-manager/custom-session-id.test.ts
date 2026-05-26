@@ -1,4 +1,4 @@
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -44,6 +44,16 @@ describe("SessionManager.newSession with custom id", () => {
 		const session = SessionManager.inMemory();
 		expect(session.getSessionId()).toMatch(UUID_V7_RE);
 		expect(session.getHeader()!.id).toBe(session.getSessionId());
+	});
+
+	it("uses the provided id when creating a persisted session", () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-session-manager-"));
+		const session = SessionManager.create(tempDir, tempDir, { id: "created-session-id" });
+
+		expect(session.getSessionId()).toBe("created-session-id");
+		expect(session.getHeader()!.id).toBe("created-session-id");
+		expect(session.getSessionFile()).toContain("created-session-id");
+		expect(existsSync(session.getSessionFile()!)).toBe(false);
 	});
 
 	it("generates a UUIDv7 id when creating a branched session", () => {
@@ -105,5 +115,27 @@ describe("SessionManager.newSession with custom id", () => {
 		expect(header).not.toBeNull();
 		expect(header!.id).toMatch(UUID_V7_RE);
 		expect(header!.parentSession).toBe(sourcePath);
+	});
+
+	it("uses the provided id when forking from another session file", () => {
+		const tempDir = mkdtempSync(join(tmpdir(), "pi-session-manager-"));
+		const sourcePath = join(tempDir, "source.jsonl");
+		writeFileSync(
+			sourcePath,
+			`${JSON.stringify({
+				type: "session",
+				version: 3,
+				id: "source-session-id",
+				timestamp: new Date().toISOString(),
+				cwd: tempDir,
+			})}\n`,
+		);
+
+		const forked = SessionManager.forkFrom(sourcePath, tempDir, tempDir, { id: "forked-session-id" });
+		const header = forked.getHeader();
+		expect(header).not.toBeNull();
+		expect(header!.id).toBe("forked-session-id");
+		expect(header!.parentSession).toBe(sourcePath);
+		expect(forked.getSessionFile()).toContain("forked-session-id");
 	});
 });

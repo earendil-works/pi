@@ -23,6 +23,7 @@ export interface Args {
 	mode?: Mode;
 	noSession?: boolean;
 	session?: string;
+	sessionId?: string;
 	fork?: string;
 	sessionDir?: string;
 	models?: string[];
@@ -95,6 +96,8 @@ export function parseArgs(args: string[]): Args {
 			result.noSession = true;
 		} else if (arg === "--session" && i + 1 < args.length) {
 			result.session = args[++i];
+		} else if (arg === "--session-id" && i + 1 < args.length) {
+			result.sessionId = args[++i];
 		} else if (arg === "--fork" && i + 1 < args.length) {
 			result.fork = args[++i];
 		} else if (arg === "--session-dir" && i + 1 < args.length) {
@@ -224,6 +227,7 @@ ${chalk.bold("Options:")}
   --continue, -c                 Continue previous session
   --resume, -r                   Select a session to resume
   --session <path|id>            Use specific session file or partial UUID
+  --session-id <id>              Use exact project session ID, creating it if missing
   --fork <path|id>               Fork specific session file or partial UUID into a new session
   --session-dir <dir>            Directory for session storage and lookup
   --no-session                   Don't save session (ephemeral)

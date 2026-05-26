@@ -130,6 +130,11 @@ describe("parseArgs", () => {
 			expect(result.session).toBe("/path/to/session.jsonl");
 		});
 
+		test("parses --session-id", () => {
+			const result = parseArgs(["--session-id", "orchestrated-session"]);
+			expect(result.sessionId).toBe("orchestrated-session");
+		});
+
 		test("parses --fork", () => {
 			const result = parseArgs(["--fork", "1234abcd"]);
 			expect(result.fork).toBe("1234abcd");

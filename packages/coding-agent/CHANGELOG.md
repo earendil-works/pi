@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `--session-id` to let CLI callers use an exact project-local session ID, creating it if missing ([#4874](https://github.com/earendil-works/pi/issues/4874)).
+
 ### Fixed
 
 - Fixed `RpcClient` to reject pending requests and consume stdin pipe errors when the child process exits unexpectedly ([#4764](https://github.com/earendil-works/pi/issues/4764)).
