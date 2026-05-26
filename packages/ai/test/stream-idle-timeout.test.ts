@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { StreamIdleTimeoutError, withStreamIdleTimeout } from "../src/utils/stream-idle-timeout.js";
+import { StreamIdleTimeoutError, withStreamIdleTimeout } from "../src/utils/stream-idle-timeout.ts";
 
 /** Helper: create an async iterable that yields values with configurable delays */
 async function* delayedStream(items: { value: string; delayMs: number }[]): AsyncGenerator<string> {

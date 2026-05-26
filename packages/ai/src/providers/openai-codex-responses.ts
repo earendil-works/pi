@@ -1233,7 +1233,10 @@ async function processWebSocketStream(
 		socket.send(JSON.stringify({ type: "response.create", ...requestBody }));
 		await processResponsesStream(
 			startWebSocketOutputOnFirstEvent(
-				withStreamIdleTimeout(mapCodexEvents(parseWebSocket(socket, options?.signal)), options?.streamIdleTimeoutMs),
+				withStreamIdleTimeout(
+					mapCodexEvents(parseWebSocket(socket, options?.signal)),
+					options?.streamIdleTimeoutMs,
+				),
 				output,
 				stream,
 				onStart,
