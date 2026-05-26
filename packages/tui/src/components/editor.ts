@@ -1050,9 +1050,13 @@ export class Editor implements Component, Focusable {
 
 		// Check if we should trigger or update autocomplete
 		if (!this.autocompleteState) {
-			// Auto-trigger for "/" at the start of a line (slash commands)
-			if (char === "/" && this.isAtStartOfMessage()) {
-				this.tryTriggerAutocomplete();
+			// Auto-trigger for "/" at the start of the message (commands) or at token boundaries (inline skill mentions)
+			if (char === "/") {
+				const currentLine = this.state.lines[this.state.cursorLine] || "";
+				const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
+				if (this.isAtSlashTokenBoundary(textBeforeCursor)) {
+					this.tryTriggerAutocomplete();
+				}
 			}
 			// Auto-trigger for symbol-based completion like @ or # at token boundaries
 			else if (char === "@" || char === "#") {
@@ -2035,21 +2039,28 @@ export class Editor implements Component, Focusable {
 		this.setCursorCol(newCol);
 	}
 
-	// Slash menu only allowed on the first line of the editor
-	private isSlashMenuAllowed(): boolean {
-		return this.state.cursorLine === 0;
-	}
-
 	// Helper method to check if cursor is at start of message (for slash command detection)
 	private isAtStartOfMessage(): boolean {
-		if (!this.isSlashMenuAllowed()) return false;
 		const currentLine = this.state.lines[this.state.cursorLine] || "";
 		const beforeCursor = currentLine.slice(0, this.state.cursorCol);
-		return beforeCursor.trim() === "" || beforeCursor.trim() === "/";
+		return this.state.cursorLine === 0 && (beforeCursor.trim() === "" || beforeCursor.trim() === "/");
+	}
+
+	private isAtSlashTokenBoundary(textBeforeCursor: string): boolean {
+		if (!textBeforeCursor.endsWith("/")) return false;
+		if (this.isAtStartOfMessage()) return true;
+		const charBeforeSlash = textBeforeCursor[textBeforeCursor.length - 2];
+		return (
+			charBeforeSlash === " " ||
+			charBeforeSlash === "\t" ||
+			charBeforeSlash === "(" ||
+			charBeforeSlash === "[" ||
+			charBeforeSlash === "{"
+		);
 	}
 
 	private isInSlashCommandContext(textBeforeCursor: string): boolean {
-		return this.isSlashMenuAllowed() && textBeforeCursor.trimStart().startsWith("/");
+		return /(?:^|[\s([{])\/[^\s/]*$/.test(textBeforeCursor);
 	}
 
 	// Autocomplete methods

@@ -5,6 +5,7 @@ import { basename, dirname, join } from "path";
 import { fuzzyFilter } from "./fuzzy.ts";
 
 const PATH_DELIMITERS = new Set([" ", "\t", '"', "'", "="]);
+const TOKEN_DELIMITERS = new Set([" ", "\t", '"', "'", "=", "(", "[", "{"]);
 
 function toDisplayPath(value: string): string {
 	return value.replace(/\\/g, "/");
@@ -45,6 +46,15 @@ function buildFdPathQuery(query: string): string {
 function findLastDelimiter(text: string): number {
 	for (let i = text.length - 1; i >= 0; i -= 1) {
 		if (PATH_DELIMITERS.has(text[i] ?? "")) {
+			return i;
+		}
+	}
+	return -1;
+}
+
+function findLastTokenDelimiter(text: string): number {
+	for (let i = text.length - 1; i >= 0; i -= 1) {
+		if (TOKEN_DELIMITERS.has(text[i] ?? "")) {
 			return i;
 		}
 	}
@@ -302,21 +312,31 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			};
 		}
 
-		if (!options.force && textBeforeCursor.startsWith("/")) {
-			const spaceIndex = textBeforeCursor.indexOf(" ");
+		const slashPrefix = textBeforeCursor.startsWith("/")
+			? { prefix: textBeforeCursor, tokenStart: 0, inline: false }
+			: this.extractSlashPrefix(textBeforeCursor);
+		if (!options.force && slashPrefix) {
+			const { prefix: slashText, inline } = slashPrefix;
+			const spaceIndex = slashText.indexOf(" ");
 
 			if (spaceIndex === -1) {
-				const prefix = textBeforeCursor.slice(1);
-				const commandItems = this.commands.map((cmd) => {
+				const prefix = slashText.slice(1);
+				const commandItems = this.commands.flatMap((cmd) => {
 					const name = "name" in cmd ? cmd.name : cmd.value;
+					if (inline && !name.startsWith("skill:")) {
+						return [];
+					}
+					const value = inline && name.startsWith("skill:") ? name.slice("skill:".length) : name;
 					const hint = "argumentHint" in cmd && cmd.argumentHint ? cmd.argumentHint : undefined;
 					const desc = cmd.description ?? "";
 					const fullDesc = hint ? (desc ? `${hint} — ${desc}` : hint) : desc;
-					return {
-						name,
-						label: name,
-						description: fullDesc || undefined,
-					};
+					return [
+						{
+							name: value,
+							label: value,
+							description: inline ? (fullDesc ? `skill — ${fullDesc}` : "skill") : fullDesc || undefined,
+						},
+					];
 				});
 
 				const filtered = fuzzyFilter(commandItems, prefix, (item) => item.name).map((item) => ({
@@ -329,12 +349,14 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 
 				return {
 					items: filtered,
-					prefix: textBeforeCursor,
+					prefix: slashText,
 				};
 			}
 
-			const commandName = textBeforeCursor.slice(1, spaceIndex);
-			const argumentText = textBeforeCursor.slice(spaceIndex + 1);
+			if (inline) return null;
+
+			const commandName = slashText.slice(1, spaceIndex);
+			const argumentText = slashText.slice(spaceIndex + 1);
 
 			const command = this.commands.find((cmd) => {
 				const name = "name" in cmd ? cmd.name : cmd.value;
@@ -385,11 +407,10 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 		const adjustedAfterCursor =
 			isQuotedPrefix && hasTrailingQuoteInItem && hasLeadingQuoteAfterCursor ? afterCursor.slice(1) : afterCursor;
 
-		// Check if we're completing a slash command (prefix starts with "/" but NOT a file path)
-		// Slash commands are at the start of the line and don't contain path separators after the first /
-		const isSlashCommand = prefix.startsWith("/") && beforePrefix.trim() === "" && !prefix.slice(1).includes("/");
-		if (isSlashCommand) {
-			// This is a command name completion
+		// Check if we're completing a slash command or inline skill mention.
+		// These do not contain path separators after the first slash.
+		const isSlashCompletion = prefix.startsWith("/") && !prefix.slice(1).includes("/");
+		if (isSlashCompletion) {
 			const newLine = `${beforePrefix}/${item.value} ${adjustedAfterCursor}`;
 			const newLines = [...lines];
 			newLines[cursorLine] = newLine;
@@ -453,6 +474,19 @@ export class CombinedAutocompleteProvider implements AutocompleteProvider {
 			lines: newLines,
 			cursorLine,
 			cursorCol: beforePrefix.length + cursorOffset,
+		};
+	}
+
+	private extractSlashPrefix(text: string): { prefix: string; tokenStart: number; inline: boolean } | null {
+		const tokenDelimiterIndex = findLastTokenDelimiter(text);
+		const tokenStart = tokenDelimiterIndex === -1 ? 0 : tokenDelimiterIndex + 1;
+		const token = text.slice(tokenStart);
+		if (!token.startsWith("/")) return null;
+		if (token.slice(1).includes("/")) return null;
+		return {
+			prefix: token,
+			tokenStart,
+			inline: text.slice(0, tokenStart).trim().length > 0,
 		};
 	}
 

@@ -112,6 +112,47 @@ describe("CombinedAutocompleteProvider", () => {
 				assert.strictEqual(result.prefix, "/", "Prefix should be '/'");
 			}
 		});
+
+		it("suggests skill aliases for inline slash mentions", async () => {
+			const provider = new CombinedAutocompleteProvider(
+				[
+					{ name: "reload", description: "Reload" },
+					{ name: "skill:deep-research", description: "Deep research" },
+					{ name: "skill:quick-page", description: "Quick page" },
+				],
+				"/tmp",
+			);
+			const lines = ["please use /deep"];
+
+			const result = await getSuggestions(provider, lines, 0, lines[0]!.length, false);
+
+			assert.notEqual(result, null);
+			assert.strictEqual(result?.prefix, "/deep");
+			assert.deepStrictEqual(
+				result?.items.map((item) => item.value),
+				["deep-research"],
+			);
+		});
+
+		it("keeps built-in commands for message-start slash completion", async () => {
+			const provider = new CombinedAutocompleteProvider(
+				[
+					{ name: "reload", description: "Reload" },
+					{ name: "skill:deep-research", description: "Deep research" },
+				],
+				"/tmp",
+			);
+			const lines = ["/rel"];
+
+			const result = await getSuggestions(provider, lines, 0, lines[0]!.length, false);
+
+			assert.notEqual(result, null);
+			assert.strictEqual(result?.prefix, "/rel");
+			assert.deepStrictEqual(
+				result?.items.map((item) => item.value),
+				["reload"],
+			);
+		});
 	});
 
 	describe("fd @ file suggestions", { skip: !isFdInstalled }, () => {

@@ -85,6 +85,7 @@ import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.t
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
 import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
+import type { Skill } from "./skills.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
@@ -995,11 +996,12 @@ export class AgentSession {
 				}
 			}
 
-			// Expand skill commands (/skill:name args) and prompt templates (/template args)
+			// Expand skill commands (/skill:name args), prompt templates (/template args), and inline skill mentions.
 			let expandedText = currentText;
 			if (expandPromptTemplates) {
 				expandedText = this._expandSkillCommand(expandedText);
 				expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+				expandedText = this._expandInlineSkillMentions(expandedText);
 			}
 
 			// If streaming, queue via steer() or followUp() based on option
@@ -1155,20 +1157,51 @@ export class AgentSession {
 		const skill = this.resourceLoader.getSkills().skills.find((s) => s.name === skillName);
 		if (!skill) return text; // Unknown skill, pass through
 
+		const skillBlock = this._buildSkillBlock(skill);
+		if (!skillBlock) return text;
+		return args ? `${skillBlock}\n\n${args}` : skillBlock;
+	}
+
+	private _buildSkillBlock(skill: Skill): string | null {
 		try {
 			const content = readFileSync(skill.filePath, "utf-8");
 			const body = stripFrontmatter(content).trim();
-			const skillBlock = `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
-			return args ? `${skillBlock}\n\n${args}` : skillBlock;
+			return `<skill name="${skill.name}" location="${skill.filePath}">\nReferences are relative to ${skill.baseDir}.\n\n${body}\n</skill>`;
 		} catch (err) {
-			// Emit error like extension commands do
 			this._extensionRunner.emitError({
 				extensionPath: skill.filePath,
 				event: "skill_expansion",
 				error: err instanceof Error ? err.message : String(err),
 			});
-			return text; // Return original on error
+			return null;
 		}
+	}
+
+	private _expandInlineSkillMentions(text: string): string {
+		const skills = this.resourceLoader.getSkills().skills;
+		if (skills.length === 0) return text;
+
+		const skillByName = new Map(skills.map((skill) => [skill.name, skill]));
+		const mentionedNames: string[] = [];
+		const mentionPattern = /(^|[\s([{])\/(?:skill:)?([a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)(?=$|[\s\]).,;:!?}])/g;
+		let match: RegExpExecArray | null;
+		for (let execResult = mentionPattern.exec(text); execResult !== null; execResult = mentionPattern.exec(text)) {
+			match = execResult;
+			const skillName = match[2];
+			if (!skillName || !skillByName.has(skillName) || mentionedNames.includes(skillName)) continue;
+			mentionedNames.push(skillName);
+		}
+
+		if (mentionedNames.length === 0) return text;
+
+		const skillBlocks = mentionedNames
+			.map((name) => skillByName.get(name))
+			.filter((skill): skill is Skill => Boolean(skill))
+			.map((skill) => this._buildSkillBlock(skill))
+			.filter((block): block is string => Boolean(block));
+
+		if (skillBlocks.length === 0) return text;
+		return `The user mentioned these skills in the prompt. Load and apply them as task constraints.\n\n${skillBlocks.join("\n\n")}\n\nUser prompt:\n${text}`;
 	}
 
 	/**
@@ -1185,9 +1218,10 @@ export class AgentSession {
 			this._throwIfExtensionCommand(text);
 		}
 
-		// Expand skill commands and prompt templates
+		// Expand skill commands, prompt templates, and inline skill mentions
 		let expandedText = this._expandSkillCommand(text);
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+		expandedText = this._expandInlineSkillMentions(expandedText);
 
 		await this._queueSteer(expandedText, images);
 	}
@@ -1205,9 +1239,10 @@ export class AgentSession {
 			this._throwIfExtensionCommand(text);
 		}
 
-		// Expand skill commands and prompt templates
+		// Expand skill commands, prompt templates, and inline skill mentions
 		let expandedText = this._expandSkillCommand(text);
 		expandedText = expandPromptTemplate(expandedText, [...this.promptTemplates]);
+		expandedText = this._expandInlineSkillMentions(expandedText);
 
 		await this._queueFollowUp(expandedText, images);
 	}
