@@ -271,10 +271,15 @@ const STOP_WORDS = new Set([
   "run",
   "show",
   "help",
-  "start",
-  "move",
-  "play",
-  "feel",
+  // Chinese stop words
+  "的", "了", "是", "在", "我", "你", "他", "她", "它",
+  "们", "这", "那", "和", "与", "或", "就", "也", "还",
+  "有", "没", "对", "到", "从", "被", "把", "让", "给",
+  "为", "做", "能", "会", "要", "可", "以", "但", "而",
+  "所", "如", "之", "上", "下", "中", "前", "后", "里",
+  "什么", "怎么", "如何", "哪些", "这些", "那些", "这个", "那个",
+  "没有", "可以", "应该", "能够", "需要", "因为", "所以", "如果",
+  "但是", "而且", "虽然", "然后", "已经", "正在", "还是", "就是",
 ]);
 
 const ATOM_TYPE_ORDER: MemoryAtomType[] = [
@@ -651,13 +656,16 @@ function writeAtomToFile(atom: MemoryAtom): void {
 // ============================================================================
 
 function simpleKeywordExtraction(query: string): QueryRewriteResult {
-  const words = query
+  // Extract Chinese words (2+ characters) and English words (>2 chars)
+  const chineseWords = query.match(/[\u4e00-\u9fff]{2,}/g) ?? [];
+  const englishWords = query
     .toLowerCase()
     .replace(/[^\w\s-]/g, " ")
     .split(/\s+/)
     .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
 
-  const unique = [...new Set(words)];
+  const all = [...chineseWords, ...englishWords];
+  const unique = [...new Set(all)];
   return {
     keywords: unique.slice(0, 10),
     target_types: [],
@@ -750,7 +758,8 @@ async function searchMemory(
   config: PersonalAssistantConfig,
   topK: number,
 ): Promise<MemoryAtom[]> {
-  const rewritten = await rewriteQuery(query, ctx, config);
+  // Fast keyword extraction — no LLM call needed
+  const rewritten = simpleKeywordExtraction(query);
   return searchAtoms(index, rewritten, topK);
 }
 
@@ -1195,10 +1204,32 @@ export function registerMemory(pi: ExtensionAPI): void {
         ),
       ]);
 
-      if (!results || results.length === 0) return;
+      if (!results || results.length === 0) {
+        if (ctx.hasUI) {
+          ctx.ui.setStatus("memory", undefined);
+        }
+        return;
+      }
 
       const memoryBlock = formatMemoryContext(results);
-      if (!memoryBlock) return;
+      if (!memoryBlock) {
+        if (ctx.hasUI) {
+          ctx.ui.setStatus("memory", undefined);
+        }
+        return;
+      }
+
+      // Show memory retrieval details in TUI
+      if (ctx.hasUI) {
+        const typeCounts = new Map<string, number>();
+        for (const r of results) {
+          typeCounts.set(r.type, (typeCounts.get(r.type) ?? 0) + 1);
+        }
+        const detail = Array.from(typeCounts.entries())
+          .map(([t, n]) => `${t}(${n})`)
+          .join(" ");
+        ctx.ui.setStatus("memory", `mem: ${results.length} [${detail}]`);
+      }
 
       // Inject memory context into the last user message
       for (let i = event.messages.length - 1; i >= 0; i--) {
@@ -1210,6 +1241,9 @@ export function registerMemory(pi: ExtensionAPI): void {
       }
     } catch {
       // Memory search timed out or failed — proceed without context
+      if (ctx.hasUI) {
+        ctx.ui.setStatus("memory", undefined);
+      }
     }
   });
 
