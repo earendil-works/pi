@@ -59,6 +59,43 @@ export interface WarningSettings {
 
 export type DefaultProjectTrust = "ask" | "always" | "never";
 
+export interface PersonalAssistantAgentConfig {
+	provider?: string;
+	model?: string;
+	thinking?: "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+	max_tokens?: number;
+	temperature?: number;
+}
+
+export interface PersonalAssistantConfig {
+	agent?: PersonalAssistantAgentConfig;
+	subagent?: {
+		provider?: string;
+		model?: string;
+		max_iterations?: number;
+		max_parallel?: number;
+	};
+	memory?: {
+		enabled?: boolean;
+		query_rewrite?: { provider?: string; model?: string };
+		extraction?: { provider?: string; model?: string };
+		embedding?: { model?: string; api_base?: string };
+		decay?: { base_decay?: number; archive_threshold?: number };
+		injection?: { max_count?: number };
+	};
+	search?: {
+		provider?: string;
+		api_key?: string;
+		max_results?: number;
+		timeout?: number;
+		base_url?: string;
+	};
+	persona?: {
+		soul_path?: string;
+		user_path?: string;
+	};
+}
+
 export type TransportSetting = Transport;
 
 /**
@@ -116,6 +153,7 @@ export interface Settings {
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
+	personalAssistant?: PersonalAssistantConfig;
 }
 
 /** Deep merge settings: project/overrides take precedence, nested objects merge recursively */

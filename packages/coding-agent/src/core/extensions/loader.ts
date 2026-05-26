@@ -60,6 +60,7 @@ const VIRTUAL_MODULES: Record<string, unknown> = {
 	"@mariozechner/pi-coding-agent": _bundledPiCodingAgent,
 };
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 
 /**
@@ -71,7 +72,6 @@ let _aliases: Record<string, string> | null = null;
 function getAliases(): Record<string, string> {
 	if (_aliases) return _aliases;
 
-	const __dirname = path.dirname(fileURLToPath(import.meta.url));
 	const packageIndex = path.resolve(__dirname, "../..", "index.js");
 
 	const typeboxEntry = require.resolve("typebox");
@@ -599,6 +599,12 @@ export async function discoverAndLoadExtensions(
 		}
 
 		addPaths([resolved]);
+	}
+
+	// 4. Bundled extensions: <repo-root>/extensions/
+	const bundledExtDir = path.resolve(__dirname, "../../../../..", "extensions");
+	if (fs.existsSync(bundledExtDir)) {
+		addPaths(discoverExtensionsInDir(bundledExtDir));
 	}
 
 	return loadExtensions(allPaths, resolvedCwd, eventBus);
