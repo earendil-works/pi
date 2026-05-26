@@ -42,4 +42,7 @@ for file in $STAGED_FILES; do
   fi
 done
 
+# Mark codegraph as dirty for incremental sync
+codegraph mark-dirty /home/qjh/workspace/personal/pi
+
 echo "✅ All pre-commit checks passed!"

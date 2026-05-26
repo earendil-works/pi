@@ -1,0 +1,4 @@
+#!/bin/sh
+
+# Sync codegraph if marked dirty
+codegraph sync-if-dirty /home/qjh/workspace/personal/pi
