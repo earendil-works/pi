@@ -64,7 +64,7 @@ interface PersonalAssistantConfig {
   };
   memory?: {
     enabled?: boolean;
-    query_rewrite?: { provider?: string; model?: string };
+    query_rewrite?: { provider?: string; model?: string; ollama_base_url?: string; ollama_model?: string };
     extraction?: { provider?: string; model?: string };
     embedding?: { model?: string; api_base?: string };
     decay?: { base_decay?: number; archive_threshold?: number };
@@ -271,15 +271,10 @@ const STOP_WORDS = new Set([
   "run",
   "show",
   "help",
-  // Chinese stop words
-  "的", "了", "是", "在", "我", "你", "他", "她", "它",
-  "们", "这", "那", "和", "与", "或", "就", "也", "还",
-  "有", "没", "对", "到", "从", "被", "把", "让", "给",
-  "为", "做", "能", "会", "要", "可", "以", "但", "而",
-  "所", "如", "之", "上", "下", "中", "前", "后", "里",
-  "什么", "怎么", "如何", "哪些", "这些", "那些", "这个", "那个",
-  "没有", "可以", "应该", "能够", "需要", "因为", "所以", "如果",
-  "但是", "而且", "虽然", "然后", "已经", "正在", "还是", "就是",
+  "start",
+  "move",
+  "play",
+  "feel",
 ]);
 
 const ATOM_TYPE_ORDER: MemoryAtomType[] = [
@@ -312,6 +307,8 @@ function getMemoryConfig(config: PersonalAssistantConfig) {
     enabled: config.memory?.enabled !== false,
     queryRewriteProvider: config.memory?.query_rewrite?.provider,
     queryRewriteModel: config.memory?.query_rewrite?.model,
+    queryRewriteOllamaBase: config.memory?.query_rewrite?.ollama_base_url,
+    queryRewriteOllamaModel: config.memory?.query_rewrite?.ollama_model,
     extractionProvider: config.memory?.extraction?.provider,
     extractionModel: config.memory?.extraction?.model,
     embeddingModel: config.memory?.embedding?.model,
@@ -656,16 +653,13 @@ function writeAtomToFile(atom: MemoryAtom): void {
 // ============================================================================
 
 function simpleKeywordExtraction(query: string): QueryRewriteResult {
-  // Extract Chinese words (2+ characters) and English words (>2 chars)
-  const chineseWords = query.match(/[\u4e00-\u9fff]{2,}/g) ?? [];
-  const englishWords = query
+  const words = query
     .toLowerCase()
     .replace(/[^\w\s-]/g, " ")
     .split(/\s+/)
     .filter((w) => w.length > 2 && !STOP_WORDS.has(w));
 
-  const all = [...chineseWords, ...englishWords];
-  const unique = [...new Set(all)];
+  const unique = [...new Set(words)];
   return {
     keywords: unique.slice(0, 10),
     target_types: [],
@@ -679,7 +673,35 @@ async function rewriteQuery(
 ): Promise<QueryRewriteResult> {
   const memConfig = getMemoryConfig(config);
 
-  // Try LLM-based rewriting if model is available
+  const ollamaBase = memConfig.queryRewriteOllamaBase;
+  const ollamaModel = memConfig.queryRewriteOllamaModel;
+  if (ollamaBase && ollamaModel) {
+    try {
+      const resp = await fetch(`${ollamaBase}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: ollamaModel,
+          messages: [{ role: "user", content: buildRewritePrompt(query) }],
+          stream: false,
+          temperature: 0,
+        }),
+        signal: AbortSignal.timeout(10000),
+      });
+      if (resp.ok) {
+        const data = (await resp.json()) as { message?: { content?: string } };
+        const text = data?.message?.content?.trim();
+        if (text) {
+          const parsed = tryParseRewriteJson(text);
+          if (parsed) return parsed;
+        }
+      }
+    } catch {
+      // Ollama failed - fall through
+    }
+  }
+
+  // Standard Pi model path
   const model = ctx.model;
   if (!model) return simpleKeywordExtraction(query);
 
@@ -687,24 +709,7 @@ async function rewriteQuery(
     const auth = await ctx.modelRegistry.getApiKeyAndHeaders(model);
     if (!auth.ok) return simpleKeywordExtraction(query);
 
-    const prompt = `You are a query rewriting assistant. Given a user query, extract keywords and suggest which memory atom types would be most relevant.
-
-Memory atom types:
-- constraint: Hard requirements or rules
-- preference: User preferences and style choices
-- workflow: Process and workflow patterns
-- knowledge: Facts, knowledge, and information
-- event: Past events and interactions
-- solution: Solutions to problems
-- insight: Insights and observations
-
-Respond with ONLY valid JSON in this exact format:
-{"keywords": ["keyword1", "keyword2"], "target_types": ["type1", "type2"]}
-
-If no specific types seem relevant, use an empty array for target_types.
-Extract 3-8 meaningful keywords. Remove stop words and focus on content words.
-
-User query: ${query}`;
+    const prompt = buildRewritePrompt(query);
 
     const result = await completeSimple(model, { messages: [{ role: "user", content: prompt }] }, {
       maxTokens: 256,
@@ -715,10 +720,30 @@ User query: ${query}`;
     const text = extractAssistantText(result);
     if (!text) return simpleKeywordExtraction(query);
 
-    // Try to parse JSON from response
-    const jsonMatch = text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return simpleKeywordExtraction(query);
+    const parsed = tryParseRewriteJson(text);
+    if (parsed) return parsed;
+  } catch {
+    // Fall through to simple extraction
+  }
 
+  return simpleKeywordExtraction(query);
+}
+
+function buildRewritePrompt(query: string): string {
+  return `Extract keywords and relevant memory types from this query.
+
+Valid types: constraint, preference, workflow, knowledge, event, solution, insight
+
+Query: ${query}
+
+Respond with ONLY JSON:
+{"keywords": ["keyword1", "keyword2"], "target_types": ["type1", "type2"]}`;
+}
+
+function tryParseRewriteJson(text: string): QueryRewriteResult | null {
+  const jsonMatch = text.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return null;
+  try {
     const parsed = JSON.parse(jsonMatch[0]);
     if (Array.isArray(parsed.keywords) && parsed.keywords.length > 0) {
       return {
@@ -729,10 +754,9 @@ User query: ${query}`;
       };
     }
   } catch {
-    // Fall through to simple extraction
+    // ignore
   }
-
-  return simpleKeywordExtraction(query);
+  return null;
 }
 
 // ============================================================================
@@ -758,8 +782,7 @@ async function searchMemory(
   config: PersonalAssistantConfig,
   topK: number,
 ): Promise<MemoryAtom[]> {
-  // Fast keyword extraction — no LLM call needed
-  const rewritten = simpleKeywordExtraction(query);
+  const rewritten = await rewriteQuery(query, ctx, config);
   return searchAtoms(index, rewritten, topK);
 }
 
@@ -1168,6 +1191,8 @@ export function registerMemory(pi: ExtensionAPI): void {
     const memConfig = getMemoryConfig(config);
     if (!memConfig.enabled) return;
 
+    ctx.ui.setStatus("memory", undefined); // clear previous status
+
     let systemPrompt = event.systemPrompt;
 
     // Inject persona (fast file read, no LLM call)
@@ -1176,11 +1201,12 @@ export function registerMemory(pi: ExtensionAPI): void {
       systemPrompt += persona;
     }
 
-    // Kick off async memory search — don't await, store promise for context handler
+    // Kick off async memory search — show status immediately
     const prompt = event.prompt.trim();
     if (prompt) {
       const index = getIndex();
       if (index) {
+        ctx.ui.setStatus("memory", "mem: searching\u2026");
         const searchPromise = searchMemory(index, prompt, ctx, config, memConfig.maxInjection);
         pendingMemorySearch = { promise: searchPromise, timestamp: Date.now() };
         searchPromise.catch(() => { /* don't crash */ });
@@ -1205,31 +1231,14 @@ export function registerMemory(pi: ExtensionAPI): void {
       ]);
 
       if (!results || results.length === 0) {
-        if (ctx.hasUI) {
-          ctx.ui.setStatus("memory", undefined);
-        }
+        ctx.ui.setStatus("memory", undefined);
         return;
       }
+
+      ctx.ui.setStatus("memory", `mem: ${results.length} found`);
 
       const memoryBlock = formatMemoryContext(results);
-      if (!memoryBlock) {
-        if (ctx.hasUI) {
-          ctx.ui.setStatus("memory", undefined);
-        }
-        return;
-      }
-
-      // Show memory retrieval details in TUI
-      if (ctx.hasUI) {
-        const typeCounts = new Map<string, number>();
-        for (const r of results) {
-          typeCounts.set(r.type, (typeCounts.get(r.type) ?? 0) + 1);
-        }
-        const detail = Array.from(typeCounts.entries())
-          .map(([t, n]) => `${t}(${n})`)
-          .join(" ");
-        ctx.ui.setStatus("memory", `mem: ${results.length} [${detail}]`);
-      }
+      if (!memoryBlock) return;
 
       // Inject memory context into the last user message
       for (let i = event.messages.length - 1; i >= 0; i--) {
@@ -1240,11 +1249,13 @@ export function registerMemory(pi: ExtensionAPI): void {
         }
       }
     } catch {
-      // Memory search timed out or failed — proceed without context
-      if (ctx.hasUI) {
-        ctx.ui.setStatus("memory", undefined);
-      }
+      ctx.ui.setStatus("memory", undefined);
     }
+  });
+
+  // --- agent_end: clear memory status ---
+  pi.on("agent_end", async (_event, ctx) => {
+    ctx.ui.setStatus("memory", undefined);
   });
 
   // --- session_before_compact: extract memories ---
