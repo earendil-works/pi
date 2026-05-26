@@ -64,7 +64,7 @@ interface PersonalAssistantConfig {
   };
   memory?: {
     enabled?: boolean;
-    query_rewrite?: { provider?: string; model?: string; ollama_base_url?: string; ollama_model?: string };
+    query_rewrite?: { provider?: string; model?: string };
     extraction?: { provider?: string; model?: string };
     embedding?: { model?: string; api_base?: string };
     decay?: { base_decay?: number; archive_threshold?: number };
@@ -307,8 +307,6 @@ function getMemoryConfig(config: PersonalAssistantConfig) {
     enabled: config.memory?.enabled !== false,
     queryRewriteProvider: config.memory?.query_rewrite?.provider,
     queryRewriteModel: config.memory?.query_rewrite?.model,
-    queryRewriteOllamaBase: config.memory?.query_rewrite?.ollama_base_url,
-    queryRewriteOllamaModel: config.memory?.query_rewrite?.ollama_model,
     extractionProvider: config.memory?.extraction?.provider,
     extractionModel: config.memory?.extraction?.model,
     embeddingModel: config.memory?.embedding?.model,
@@ -673,35 +671,30 @@ async function rewriteQuery(
 ): Promise<QueryRewriteResult> {
   const memConfig = getMemoryConfig(config);
 
-  const ollamaBase = memConfig.queryRewriteOllamaBase;
-  const ollamaModel = memConfig.queryRewriteOllamaModel;
-  if (ollamaBase && ollamaModel) {
-    try {
-      const resp = await fetch(`${ollamaBase}/api/chat`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: ollamaModel,
-          messages: [{ role: "user", content: buildRewritePrompt(query) }],
-          stream: false,
-          temperature: 0,
-        }),
-        signal: AbortSignal.timeout(10000),
-      });
-      if (resp.ok) {
-        const data = (await resp.json()) as { message?: { content?: string } };
-        const text = data?.message?.content?.trim();
+  // Use configured rewrite model if provider+model are set
+  const rewriteProvider = memConfig.queryRewriteProvider;
+  const rewriteModel = memConfig.queryRewriteModel;
+  if (rewriteProvider && rewriteModel) {
+    const configuredModel = ctx.modelRegistry.find(rewriteProvider, rewriteModel);
+    if (configuredModel) {
+      const auth = await ctx.modelRegistry.getApiKeyAndHeaders(configuredModel);
+      if (auth.ok) {
+        const prompt = buildRewritePrompt(query);
+        const result = await completeSimple(configuredModel, { messages: [{ role: "user", content: prompt }] }, {
+          maxTokens: 256,
+          apiKey: auth.apiKey,
+          headers: auth.headers,
+        });
+        const text = extractAssistantText(result);
         if (text) {
-          const parsed = tryParseRewriteJson(text);
+          const parsed = parseRewriteJson(text);
           if (parsed) return parsed;
         }
       }
-    } catch {
-      // Ollama failed - fall through
     }
   }
 
-  // Standard Pi model path
+  // Fall back to session model
   const model = ctx.model;
   if (!model) return simpleKeywordExtraction(query);
 
@@ -720,7 +713,7 @@ async function rewriteQuery(
     const text = extractAssistantText(result);
     if (!text) return simpleKeywordExtraction(query);
 
-    const parsed = tryParseRewriteJson(text);
+    const parsed = parseRewriteJson(text);
     if (parsed) return parsed;
   } catch {
     // Fall through to simple extraction
@@ -730,17 +723,27 @@ async function rewriteQuery(
 }
 
 function buildRewritePrompt(query: string): string {
-  return `Extract keywords and relevant memory types from this query.
+  return `You are a query rewriting assistant. Given a user query, extract keywords and suggest which memory atom types would be most relevant.
 
-Valid types: constraint, preference, workflow, knowledge, event, solution, insight
+Memory atom types:
+- constraint: Hard requirements or rules
+- preference: User preferences and style choices
+- workflow: Process and workflow patterns
+- knowledge: Facts, knowledge, and information
+- event: Past events and interactions
+- solution: Solutions to problems
+- insight: Insights and observations
 
-Query: ${query}
+Respond with ONLY valid JSON in this exact format:
+{"keywords": ["keyword1", "keyword2"], "target_types": ["type1", "type2"]}
 
-Respond with ONLY JSON:
-{"keywords": ["keyword1", "keyword2"], "target_types": ["type1", "type2"]}`;
+If no specific types seem relevant, use an empty array for target_types.
+Extract 3-8 meaningful keywords. Remove stop words and focus on content words.
+
+User query: ${query}`;
 }
 
-function tryParseRewriteJson(text: string): QueryRewriteResult | null {
+function parseRewriteJson(text: string): QueryRewriteResult | null {
   const jsonMatch = text.match(/\{[\s\S]*\}/);
   if (!jsonMatch) return null;
   try {
@@ -753,10 +756,31 @@ function tryParseRewriteJson(text: string): QueryRewriteResult | null {
           : [],
       };
     }
-  } catch {
-    // ignore
-  }
+  } catch { /* ignore */ }
   return null;
+}
+
+async function callOllamaRewrite(model: string, query: string): Promise<QueryRewriteResult | null> {
+  try {
+    const prompt = buildRewritePrompt(query);
+    const res = await fetch("http://localhost:11434/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: "user", content: prompt }],
+        stream: false,
+        options: { temperature: 0.1 },
+      }),
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { message?: { content?: string } };
+    const text = data?.message?.content;
+    if (!text) return null;
+    return parseRewriteJson(text);
+  } catch {
+    return null;
+  }
 }
 
 // ============================================================================

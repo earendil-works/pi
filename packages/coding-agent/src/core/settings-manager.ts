@@ -77,7 +77,7 @@ export interface PersonalAssistantConfig {
 	};
 	memory?: {
 		enabled?: boolean;
-		query_rewrite?: { provider?: string; model?: string; ollama_base_url?: string; ollama_model?: string };
+		query_rewrite?: { provider?: string; model?: string };
 		extraction?: { provider?: string; model?: string };
 		embedding?: { model?: string; api_base?: string };
 		decay?: { base_decay?: number; archive_threshold?: number };
