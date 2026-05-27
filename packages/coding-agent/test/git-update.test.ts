@@ -461,6 +461,64 @@ describe("DefaultPackageManager git update", () => {
 			);
 		});
 
+		it("should fall back to +HEAD when symbolic-ref points outside refs/remotes/origin/", async () => {
+			mkdirSync(remoteDir, { recursive: true });
+			initGitRepo(remoteDir);
+			createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
+			git(["checkout", "-b", "feature"], remoteDir);
+			createCommit(remoteDir, "extension.ts", "// feature", "Feature work");
+			git(["checkout", "main"], remoteDir);
+			createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
+
+			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
+			git(["clone", remoteDir, installedDir], tempDir);
+			git(["config", "--local", "user.email", "test@test.com"], installedDir);
+			git(["config", "--local", "user.name", "Test"], installedDir);
+			git(["checkout", "feature"], installedDir);
+			settingsManager.setPackages([gitSource]);
+
+			// Stub `symbolic-ref refs/remotes/origin/HEAD` to return a ref outside
+			// `refs/remotes/origin/` (a user who manually re-targeted the
+			// symbolic-ref to another remote). The parser must treat this as
+			// "no usable branch" rather than emit a malformed fetch refspec.
+			const executedCommands: string[] = [];
+			const managerWithInternals = packageManager as unknown as {
+				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
+				runCommandCapture: (
+					command: string,
+					args: string[],
+					options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
+				) => Promise<string>;
+			};
+			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
+			managerWithInternals.runCommandCapture = async (command, args, options) => {
+				if (command === "git" && args[0] === "symbolic-ref" && args[1] === "refs/remotes/origin/HEAD") {
+					return "refs/remotes/upstream/main";
+				}
+				return originalCapture(command, args, options);
+			};
+			managerWithInternals.runCommand = async (command, args, options) => {
+				executedCommands.push(`${command} ${args.join(" ")}`);
+				if (command === "npm") {
+					return;
+				}
+				const result = spawnSync(command, args, {
+					cwd: options?.cwd,
+					encoding: "utf-8",
+				});
+				if (result.status !== 0) {
+					throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr}`);
+				}
+			};
+
+			await packageManager.update();
+
+			expect(executedCommands).toContain("git fetch --prune --no-tags origin +HEAD:refs/remotes/origin/HEAD");
+			expect(executedCommands).not.toContain(
+				"git fetch --prune --no-tags origin +refs/heads/refs/remotes/upstream/main:refs/remotes/origin/refs/remotes/upstream/main",
+			);
+		});
+
 		it("should reconcile during install (not just update) when local upstream points at a feature branch", async () => {
 			mkdirSync(remoteDir, { recursive: true });
 			initGitRepo(remoteDir);

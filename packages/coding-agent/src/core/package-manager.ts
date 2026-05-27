@@ -1502,7 +1502,9 @@ export class DefaultPackageManager implements PackageManager {
 			cwd: installedPath,
 			timeoutMs: NETWORK_TIMEOUT_MS,
 		}).catch(() => "");
-		const branch = originHeadRef.trim().replace(/^refs\/remotes\/origin\//, "");
+		const trimmed = originHeadRef.trim();
+		const prefix = "refs/remotes/origin/";
+		const branch = trimmed.startsWith(prefix) ? trimmed.slice(prefix.length) : "";
 		if (branch) {
 			return {
 				ref: "origin/HEAD",
