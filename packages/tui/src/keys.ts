@@ -366,10 +366,10 @@ function normalizeShiftedLetterIdentityCodepoint(codepoint: number, modifier: nu
 }
 
 const LEGACY_KEY_SEQUENCES = {
-	up: ["\x1b[A", "\x1bOA"],
-	down: ["\x1b[B", "\x1bOB"],
-	right: ["\x1b[C", "\x1bOC"],
-	left: ["\x1b[D", "\x1bOD"],
+	up: ["\x1b[A", "\x1bOA", "\x1b[1;1A"],
+	down: ["\x1b[B", "\x1bOB", "\x1b[1;1B"],
+	right: ["\x1b[C", "\x1bOC", "\x1b[1;1C"],
+	left: ["\x1b[D", "\x1bOD", "\x1b[1;1D"],
 	home: ["\x1b[H", "\x1bOH", "\x1b[1~", "\x1b[7~"],
 	end: ["\x1b[F", "\x1bOF", "\x1b[4~", "\x1b[8~"],
 	insert: ["\x1b[2~"],

@@ -1,3 +1,5 @@
+import { execSync } from "node:child_process";
+
 export type ImageProtocol = "kitty" | "iterm2" | null;
 
 export interface TerminalCapabilities {
@@ -39,6 +41,50 @@ export function setCellDimensions(dims: CellDimensions): void {
 	cellDimensions = dims;
 }
 
+/**
+ * Detect the parent terminal when running inside tmux with allow-passthrough enabled.
+ * Reads tmux's environment variables to identify the outer terminal emulator.
+ * Returns null if passthrough is not available or the parent terminal is unknown.
+ */
+function detectParentTerminal(): TerminalCapabilities | null {
+	try {
+		const passthrough = execSync("tmux show-option -gv allow-passthrough 2>/dev/null", {
+			encoding: "utf-8",
+			timeout: 500,
+		}).trim();
+		if (passthrough !== "on" && passthrough !== "all") return null;
+
+		const raw = execSync("tmux show-environment -g 2>/dev/null", {
+			encoding: "utf-8",
+			timeout: 500,
+		});
+
+		const env: Record<string, string> = {};
+		for (const line of raw.split("\n")) {
+			const eq = line.indexOf("=");
+			if (eq > 0) env[line.slice(0, eq)] = line.slice(eq + 1);
+		}
+
+		const tp = (env.TERM_PROGRAM || "").toLowerCase();
+
+		if (env.KITTY_WINDOW_ID || tp === "kitty") {
+			return { images: "kitty", trueColor: true, hyperlinks: true };
+		}
+		if (env.GHOSTTY_RESOURCES_DIR || tp === "ghostty") {
+			return { images: "kitty", trueColor: true, hyperlinks: true };
+		}
+		if (env.WEZTERM_PANE || tp === "wezterm") {
+			return { images: "kitty", trueColor: true, hyperlinks: true };
+		}
+		if (env.ITERM_SESSION_ID || env.LC_TERMINAL === "iTerm2" || tp === "iterm.app") {
+			return { images: "iterm2", trueColor: true, hyperlinks: true };
+		}
+	} catch {
+		// tmux not available or command failed
+	}
+	return null;
+}
+
 export function detectCapabilities(): TerminalCapabilities {
 	const termProgram = process.env.TERM_PROGRAM?.toLowerCase() || "";
 	const terminalEmulator = process.env.TERMINAL_EMULATOR?.toLowerCase() || "";
@@ -52,6 +98,10 @@ export function detectCapabilities(): TerminalCapabilities {
 	// also unreliable under tmux/screen, so leave `images: null` for safety.
 	const inTmuxOrScreen = !!process.env.TMUX || term.startsWith("tmux") || term.startsWith("screen");
 	if (inTmuxOrScreen) {
+		const parentCaps = detectParentTerminal();
+		if (parentCaps) {
+			return { ...parentCaps, trueColor: parentCaps.trueColor || hasTrueColorHint };
+		}
 		return { images: null, trueColor: hasTrueColorHint, hyperlinks: false };
 	}
 
@@ -399,6 +449,16 @@ export function getImageDimensions(base64Data: string, mimeType: string): ImageD
 	return null;
 }
 
+/**
+ * Wrap an escape sequence in tmux DCS passthrough format.
+ * When not inside tmux, returns the sequence unchanged.
+ */
+function wrapForTmux(sequence: string): string {
+	if (!process.env.TMUX) return sequence;
+	const escaped = sequence.replace(/\x1b/g, "\x1b\x1b");
+	return `\x1bPtmux;${escaped}\x1b\\`;
+}
+
 export function renderImage(
 	base64Data: string,
 	imageDimensions: ImageDimensions,
@@ -424,11 +484,12 @@ export function renderImage(
 	}
 
 	if (caps.images === "iterm2") {
-		const sequence = encodeITerm2(base64Data, {
+		let sequence = encodeITerm2(base64Data, {
 			width: size.columns,
 			height: "auto",
 			preserveAspectRatio: options.preserveAspectRatio ?? true,
 		});
+		sequence = wrapForTmux(sequence);
 		return { sequence, rows: size.rows };
 	}
 

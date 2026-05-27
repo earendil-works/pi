@@ -107,7 +107,8 @@ export class Image implements Component {
 					}
 					const rowOffset = result.rows - 1;
 					const moveUp = rowOffset > 0 ? `\x1b[${rowOffset}A` : "";
-					lines.push(moveUp + result.sequence);
+					const moveDown = rowOffset > 0 ? `\x1b[${rowOffset}B` : "";
+					lines.push(moveUp + result.sequence + moveDown);
 				}
 			} else {
 				const fallback = imageFallback(this.mimeType, this.dimensions, this.options.filename);
