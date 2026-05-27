@@ -766,6 +766,13 @@ export function isWhitespaceChar(char: string): boolean {
 	return /\s/.test(char);
 }
 
+/**
+ * Check if a character is punctuation.
+ */
+export function isPunctuationChar(char: string): boolean {
+	return PUNCTUATION_REGEX.test(char);
+}
+
 function breakLongWord(word: string, width: number, tracker: AnsiCodeTracker): string[] {
 	const lines: string[] = [];
 	let currentLine = tracker.getActiveCodes();
