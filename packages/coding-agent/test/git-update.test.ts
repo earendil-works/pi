@@ -405,11 +405,12 @@ describe("DefaultPackageManager git update", () => {
 			git(["checkout", "feature"], installedDir);
 			settingsManager.setPackages([gitSource]);
 
-			// Stub `symbolic-ref refs/remotes/origin/HEAD` to return "" (covering
-			// the `.catch(() => "")` fallback in `getLocalGitUpdateTarget`).
-			// Production reaches this branch when symbolic-ref errors — e.g.,
-			// when `origin/HEAD` is a regular (non-symbolic) ref. Other captured
-			// commands pass through to spawnSync so the rest of the flow is real.
+			// Stub `symbolic-ref refs/remotes/origin/HEAD` to throw, exercising
+			// the `.catch(() => "")` fallback in `getLocalGitUpdateTarget`.
+			// Production reaches this branch when `origin/HEAD` is a regular
+			// (non-symbolic) ref — git symbolic-ref exits non-zero rather than
+			// emitting empty stdout. Other captured commands pass through to
+			// spawnSync so the rest of the flow is real.
 			const executedCommands: string[] = [];
 			const managerWithInternals = packageManager as unknown as {
 				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
@@ -422,7 +423,7 @@ describe("DefaultPackageManager git update", () => {
 			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
 			managerWithInternals.runCommandCapture = async (command, args, options) => {
 				if (command === "git" && args[0] === "symbolic-ref" && args[1] === "refs/remotes/origin/HEAD") {
-					return "";
+					throw new Error("simulated: not a symbolic ref");
 				}
 				return originalCapture(command, args, options);
 			};
