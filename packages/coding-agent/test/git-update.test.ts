@@ -245,11 +245,38 @@ describe("DefaultPackageManager git update", () => {
 			// User has since removed the @feature pin from settings.json.
 			settingsManager.setPackages([gitSource]);
 
+			const executedCommands: string[] = [];
+			const managerWithInternals = packageManager as unknown as {
+				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
+			};
+			managerWithInternals.runCommand = async (command, args, options) => {
+				executedCommands.push(`${command} ${args.join(" ")}`);
+				if (command === "npm") {
+					return;
+				}
+				const result = spawnSync(command, args, {
+					cwd: options?.cwd,
+					encoding: "utf-8",
+				});
+				if (result.status !== 0) {
+					throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr}`);
+				}
+			};
+
 			await packageManager.update();
 
-			// Clone must move to the remote default branch (main), not stay on feature.
+			// Pin both: the resulting HEAD/file (clone moved off feature) and
+			// the fetch refspec (we asked for main, not feature). A hybrid bug
+			// (right HEAD via wrong fetch, or right fetch with skipped reset)
+			// must fail at least one assertion.
 			expect(getCurrentCommit(installedDir)).toBe(mainTip);
 			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
+			expect(executedCommands).toContain(
+				"git fetch --prune --no-tags origin +refs/heads/main:refs/remotes/origin/main",
+			);
+			expect(executedCommands).not.toContain(
+				"git fetch --prune --no-tags origin +refs/heads/feature:refs/remotes/origin/feature",
+			);
 		});
 
 		it("should issue fetch for the default branch ref, not the locally tracked feature branch", async () => {
@@ -259,7 +286,7 @@ describe("DefaultPackageManager git update", () => {
 			git(["checkout", "-b", "feature"], remoteDir);
 			createCommit(remoteDir, "extension.ts", "// feature", "Feature work");
 			git(["checkout", "main"], remoteDir);
-			createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
+			const mainTip = createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
 
 			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
 			git(["clone", remoteDir, installedDir], tempDir);
@@ -288,12 +315,18 @@ describe("DefaultPackageManager git update", () => {
 
 			await packageManager.update();
 
+			// Pin both: the fetch refspec (asked for main, not feature) and
+			// the resulting HEAD/file (clone moved off feature). A hybrid bug
+			// (right HEAD via wrong fetch, or right fetch with skipped reset)
+			// must fail at least one assertion.
 			expect(executedCommands).toContain(
 				"git fetch --prune --no-tags origin +refs/heads/main:refs/remotes/origin/main",
 			);
 			expect(executedCommands).not.toContain(
 				"git fetch --prune --no-tags origin +refs/heads/feature:refs/remotes/origin/feature",
 			);
+			expect(getCurrentCommit(installedDir)).toBe(mainTip);
+			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
 		});
 
 		it("should reconcile during install (not just update) when local upstream points at a feature branch", async () => {
