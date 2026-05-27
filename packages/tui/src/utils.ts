@@ -757,7 +757,7 @@ function wrapSingleLine(line: string, width: number): string[] {
 	return wrapped.length > 0 ? wrapped.map((line) => line.trimEnd()) : [""];
 }
 
-const PUNCTUATION_REGEX = /[(){}[\]<>.,;:'"!?+\-=*/\\|&%^$#@~`]/;
+export const PUNCTUATION_REGEX = /[(){}[\]<>.,;:'"!?+\-=*/\\|&%^$#@~`]/;
 
 /**
  * Check if a character is whitespace.

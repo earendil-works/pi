@@ -532,6 +532,15 @@ describe("Editor component", () => {
 			editor.handleInput("\x17");
 			assert.strictEqual(editor.getText(), "foo bar");
 
+			// ASCII punctuation inside Intl word-like segments preserves old boundaries
+			editor.setText("foo.bar");
+			editor.handleInput("\x17");
+			assert.strictEqual(editor.getText(), "foo.");
+
+			editor.setText("foo:bar");
+			editor.handleInput("\x17");
+			assert.strictEqual(editor.getText(), "foo:");
+
 			// Delete across multiple lines
 			editor.setText("line one\nline two");
 			editor.handleInput("\x17");
@@ -590,6 +599,23 @@ describe("Editor component", () => {
 			editor.handleInput("\x01"); // Ctrl+A to go to start
 			editor.handleInput("\x1b[1;5C"); // Ctrl+Right
 			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 6 }); // after 'foo'
+
+			// ASCII punctuation inside Intl word-like segments preserves old boundaries
+			editor.setText("foo.bar baz");
+			editor.handleInput("\x1b[1;5D"); // Ctrl+Left over baz
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 8 });
+			editor.handleInput("\x1b[1;5D"); // Ctrl+Left over bar
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 4 });
+			editor.handleInput("\x1b[1;5D"); // Ctrl+Left over .
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 3 });
+
+			editor.handleInput("\x01"); // Ctrl+A
+			editor.handleInput("\x1b[1;5C"); // Ctrl+Right over foo
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 3 });
+			editor.handleInput("\x1b[1;5C"); // Ctrl+Right over .
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 4 });
+			editor.handleInput("\x1b[1;5C"); // Ctrl+Right over bar
+			assert.deepStrictEqual(editor.getCursor(), { line: 0, col: 7 });
 		});
 
 		it("stops at fullwidth Chinese punctuation (issue #4972)", () => {
