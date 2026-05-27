@@ -1,4 +1,4 @@
-import { Mistral } from "@mistralai/mistralai";
+import { HTTPClient, Mistral } from "@mistralai/mistralai";
 import type {
 	ChatCompletionStreamRequest,
 	ChatCompletionStreamRequestMessage,
@@ -66,6 +66,7 @@ export const streamMistral: StreamFunction<"mistral-conversations", MistralOptio
 			const mistral = new Mistral({
 				apiKey,
 				serverURL: model.baseUrl,
+				...(options?.fetch ? { httpClient: new HTTPClient({ fetcher: options.fetch }) } : {}),
 			});
 
 			const normalizeMistralToolCallId = createMistralToolCallIdNormalizer();

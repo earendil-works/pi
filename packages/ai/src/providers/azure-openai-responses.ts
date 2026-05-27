@@ -247,6 +247,7 @@ function createClient(model: Model<"azure-openai-responses">, apiKey: string, op
 		dangerouslyAllowBrowser: true,
 		defaultHeaders: headers,
 		baseURL: baseUrl,
+		...(options?.fetch ? { fetch: options.fetch } : {}),
 	});
 }
 

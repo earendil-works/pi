@@ -142,6 +142,21 @@ export interface StreamOptions {
 	 * For example, Anthropic uses `user_id` for abuse tracking and rate limiting.
 	 */
 	metadata?: Record<string, unknown>;
+	/**
+	 * Optional custom HTTP transport. When provided, replaces the default
+	 * `globalThis.fetch` for SDKs and raw HTTP calls that accept a fetch hook.
+	 * Use this to route requests through confidential-inference proxies, corp
+	 * HTTP proxies with mTLS, OTel-instrumented transports, in-process mocks,
+	 * or custom retry/backoff middleware.
+	 *
+	 * Supported by: OpenAI Completions, OpenAI Responses, Azure OpenAI
+	 * Responses, OpenAI Codex Responses, Anthropic (all auth modes), Mistral.
+	 * Providers that do not support this option ignore it: Bedrock (uses the
+	 * AWS SDK over Node http/https), Google Gemini and Vertex (the
+	 * `@google/genai` SDK does not expose a fetch hook). OAuth token refresh
+	 * paths also ignore this option; they have their own transport.
+	 */
+	fetch?: typeof fetch;
 }
 
 export type ProviderStreamOptions = StreamOptions & Record<string, unknown>;
@@ -184,6 +199,13 @@ export interface ImagesOptions {
 	 * Providers extract the fields they understand and ignore the rest.
 	 */
 	metadata?: Record<string, unknown>;
+	/**
+	 * Optional custom HTTP transport. When provided, replaces the default
+	 * `globalThis.fetch` for image providers backed by SDKs that accept a
+	 * fetch hook (currently OpenRouter via the OpenAI SDK). Providers that
+	 * do not support this option ignore it.
+	 */
+	fetch?: typeof fetch;
 }
 
 export type ProviderImagesOptions = ImagesOptions & Record<string, unknown>;

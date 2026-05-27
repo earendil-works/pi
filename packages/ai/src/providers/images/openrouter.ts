@@ -54,7 +54,7 @@ export const generateImagesOpenRouter: ImagesFunction<"openrouter-images", Image
 		if (!apiKey) {
 			throw new Error(`No API key available for provider: ${model.provider}`);
 		}
-		const client = createClient(model, apiKey, options?.headers);
+		const client = createClient(model, apiKey, options?.headers, options?.fetch);
 		let params = buildParams(model, context);
 		const nextParams = await options?.onPayload?.(params, model);
 		if (nextParams !== undefined) {
@@ -108,6 +108,7 @@ function createClient(
 	model: ImagesModel<"openrouter-images">,
 	apiKey: string,
 	optionsHeaders?: Record<string, string>,
+	customFetch?: typeof fetch,
 ): OpenAI {
 	return new OpenAI({
 		apiKey,
@@ -117,6 +118,7 @@ function createClient(
 			...model.headers,
 			...optionsHeaders,
 		},
+		...(customFetch ? { fetch: customFetch } : {}),
 	});
 }
 

@@ -140,7 +140,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			const compat = getCompat(model);
 			const cacheRetention = resolveCacheRetention(options?.cacheRetention);
 			const cacheSessionId = cacheRetention === "none" ? undefined : options?.sessionId;
-			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId, compat);
+			const client = createClient(model, context, apiKey, options?.headers, cacheSessionId, compat, options?.fetch);
 			let params = buildParams(model, context, options, compat, cacheRetention);
 			const nextParams = await options?.onPayload?.(params, model);
 			if (nextParams !== undefined) {
@@ -452,6 +452,7 @@ function createClient(
 	optionsHeaders?: Record<string, string>,
 	sessionId?: string,
 	compat: ResolvedOpenAICompletionsCompat = getCompat(model),
+	customFetch?: typeof fetch,
 ) {
 	if (!apiKey) {
 		if (!process.env.OPENAI_API_KEY) {
@@ -497,6 +498,7 @@ function createClient(
 		baseURL: isCloudflareProvider(model.provider) ? resolveCloudflareBaseUrl(model) : model.baseUrl,
 		dangerouslyAllowBrowser: true,
 		defaultHeaders,
+		...(customFetch ? { fetch: customFetch } : {}),
 	});
 }
 

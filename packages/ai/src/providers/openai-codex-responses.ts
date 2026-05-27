@@ -281,7 +281,8 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 				}
 
 				try {
-					response = await fetch(resolveCodexUrl(model.baseUrl), {
+					const fetchImpl = options?.fetch ?? globalThis.fetch;
+					response = await fetchImpl(resolveCodexUrl(model.baseUrl), {
 						method: "POST",
 						headers: sseHeaders,
 						body: bodyJson,

@@ -500,6 +500,7 @@ export const streamAnthropic: StreamFunction<"anthropic-messages", AnthropicOpti
 					options?.headers,
 					copilotDynamicHeaders,
 					cacheSessionId,
+					options?.fetch,
 				);
 				client = created.client;
 				isOAuth = created.isOAuthToken;
@@ -784,6 +785,7 @@ function createClient(
 	optionsHeaders?: Record<string, string>,
 	dynamicHeaders?: Record<string, string>,
 	sessionId?: string,
+	customFetch?: typeof fetch,
 ): { client: Anthropic; isOAuthToken: boolean } {
 	// Adaptive thinking models have interleaved thinking built in, so skip the beta header.
 	const needsInterleavedBeta = interleavedThinking && model.compat?.forceAdaptiveThinking !== true;
@@ -794,6 +796,8 @@ function createClient(
 	if (needsInterleavedBeta) {
 		betaFeatures.push(INTERLEAVED_THINKING_BETA);
 	}
+
+	const fetchOption = customFetch ? { fetch: customFetch } : {};
 
 	if (model.provider === "cloudflare-ai-gateway") {
 		const client = new Anthropic({
@@ -813,6 +817,7 @@ function createClient(
 				model.headers,
 				optionsHeaders,
 			),
+			...fetchOption,
 		});
 
 		return { client, isOAuthToken: false };
@@ -835,6 +840,7 @@ function createClient(
 				dynamicHeaders,
 				optionsHeaders,
 			),
+			...fetchOption,
 		});
 
 		return { client, isOAuthToken: false };
@@ -858,6 +864,7 @@ function createClient(
 				model.headers,
 				optionsHeaders,
 			),
+			...fetchOption,
 		});
 
 		return { client, isOAuthToken: true };
@@ -881,6 +888,7 @@ function createClient(
 			model.headers,
 			optionsHeaders,
 		),
+		...fetchOption,
 	});
 
 	return { client, isOAuthToken: false };
