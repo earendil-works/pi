@@ -3,9 +3,17 @@ import { decodeKittyPrintable } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
 import { type Component, CURSOR_MARKER, type Focusable } from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
-import { getGraphemeSegmenter, isPunctuationChar, isWhitespaceChar, sliceByColumn, visibleWidth } from "../utils.ts";
+import {
+	getGraphemeSegmenter,
+	getWordSegmenter,
+	isWhitespaceChar,
+	PUNCTUATION_REGEX,
+	sliceByColumn,
+	visibleWidth,
+} from "../utils.ts";
 
 const segmenter = getGraphemeSegmenter();
+const wordSegmenter = getWordSegmenter();
 
 interface InputState {
 	value: string;
@@ -353,28 +361,33 @@ export class Input implements Component, Focusable {
 
 		this.lastAction = null;
 		const textBeforeCursor = this.value.slice(0, this.cursor);
-		const graphemes = [...segmenter.segment(textBeforeCursor)];
+		const segments = [...wordSegmenter.segment(textBeforeCursor)];
 
 		// Skip trailing whitespace
-		while (graphemes.length > 0 && isWhitespaceChar(graphemes[graphemes.length - 1]?.segment || "")) {
-			this.cursor -= graphemes.pop()?.segment.length || 0;
+		while (segments.length > 0 && isWhitespaceChar(segments[segments.length - 1]?.segment || "")) {
+			this.cursor -= segments.pop()?.segment.length || 0;
 		}
 
-		if (graphemes.length > 0) {
-			const lastGrapheme = graphemes[graphemes.length - 1]?.segment || "";
-			if (isPunctuationChar(lastGrapheme)) {
-				// Skip punctuation run
-				while (graphemes.length > 0 && isPunctuationChar(graphemes[graphemes.length - 1]?.segment || "")) {
-					this.cursor -= graphemes.pop()?.segment.length || 0;
+		if (segments.length > 0) {
+			const last = segments[segments.length - 1]!;
+			if (last.isWordLike) {
+				// Skip inside one word-like segment, preserving existing ASCII punctuation boundaries.
+				const segment = last.segment;
+				const matches = [...segment.matchAll(new RegExp(PUNCTUATION_REGEX, "g"))];
+				if (matches.length <= 0) {
+					this.cursor -= segment.length;
+				} else {
+					const lastMatch = matches[matches.length - 1]!;
+					this.cursor -= segment.length - (lastMatch.index + lastMatch[0].length);
 				}
 			} else {
-				// Skip word run
+				// Skip non-word non-whitespace run (punctuation)
 				while (
-					graphemes.length > 0 &&
-					!isWhitespaceChar(graphemes[graphemes.length - 1]?.segment || "") &&
-					!isPunctuationChar(graphemes[graphemes.length - 1]?.segment || "")
+					segments.length > 0 &&
+					!segments[segments.length - 1]?.isWordLike &&
+					!isWhitespaceChar(segments[segments.length - 1]?.segment || "")
 				) {
-					this.cursor -= graphemes.pop()?.segment.length || 0;
+					this.cursor -= segments.pop()?.segment.length || 0;
 				}
 			}
 		}
@@ -387,7 +400,7 @@ export class Input implements Component, Focusable {
 
 		this.lastAction = null;
 		const textAfterCursor = this.value.slice(this.cursor);
-		const segments = segmenter.segment(textAfterCursor);
+		const segments = wordSegmenter.segment(textAfterCursor);
 		const iterator = segments[Symbol.iterator]();
 		let next = iterator.next();
 
@@ -398,16 +411,12 @@ export class Input implements Component, Focusable {
 		}
 
 		if (!next.done) {
-			const firstGrapheme = next.value.segment;
-			if (isPunctuationChar(firstGrapheme)) {
-				// Skip punctuation run
-				while (!next.done && isPunctuationChar(next.value.segment)) {
-					this.cursor += next.value.segment.length;
-					next = iterator.next();
-				}
+			if (next.value.isWordLike) {
+				// Skip inside one word-like segment, preserving existing ASCII punctuation boundaries.
+				this.cursor += PUNCTUATION_REGEX.exec(next.value.segment)?.index ?? next.value.segment.length;
 			} else {
-				// Skip word run
-				while (!next.done && !isWhitespaceChar(next.value.segment) && !isPunctuationChar(next.value.segment)) {
+				// Skip non-word non-whitespace run (punctuation)
+				while (!next.done && !next.value.isWordLike && !isWhitespaceChar(next.value.segment)) {
 					this.cursor += next.value.segment.length;
 					next = iterator.next();
 				}
