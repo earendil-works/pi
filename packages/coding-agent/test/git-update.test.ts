@@ -1,16 +1,4 @@
-/**
- * Tests for DefaultPackageManager git update + reconciliation paths.
- *
- * Test groups in this file:
- * - Normal updates (fast-forward / multi-commit)
- * - Force-push recovery scenarios (fix shipped — see #961)
- * - Pinned sources (tag/commit refs do not move via pi update)
- * - Temporary git sources (refresh on resolve)
- * - Scope-aware update (project vs user)
- * - No-ref reconciliation tracks remote default (the demote-from-feature-branch
- *   fix that motivated this file's expansion; see docs/packages.md)
- * - gitHasAvailableUpdate (the "is there an update?" UX banner contract)
- */
+/** Tests for DefaultPackageManager git update + reconciliation paths. */
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -169,6 +157,32 @@ describe("DefaultPackageManager git update", () => {
 		};
 	}
 
+	type CaptureOptions = { cwd?: string; timeoutMs?: number; env?: Record<string, string> };
+	type CaptureCommand = (command: string, args: string[], options?: CaptureOptions) => Promise<string>;
+
+	/**
+	 * Wrap `runCommandCapture` with a sync `intercept` callback that runs first.
+	 * If `intercept` returns `undefined`, the original implementation runs;
+	 * otherwise the returned string is used as the result. Throws inside
+	 * `intercept` propagate as the wrapper's rejection. Companion to
+	 * `installSpawnSyncShim` for tests that need to pin specific git capture
+	 * calls (set-head, symbolic-ref, ls-remote) while letting the rest run
+	 * against real fixtures.
+	 */
+	function spyOnRunCommandCapture(
+		intercept: (command: string, args: string[], options: CaptureOptions | undefined) => string | undefined,
+	): void {
+		const managerWithInternals = packageManager as unknown as { runCommandCapture: CaptureCommand };
+		const original = managerWithInternals.runCommandCapture.bind(packageManager);
+		managerWithInternals.runCommandCapture = async (command, args, options) => {
+			const result = intercept(command, args, options);
+			if (result !== undefined) {
+				return result;
+			}
+			return original(command, args, options);
+		};
+	}
+
 	describe("normal updates (no force-push)", () => {
 		it("should skip reset, clean, and install when already up to date", async () => {
 			mkdirSync(remoteDir, { recursive: true });
@@ -247,42 +261,25 @@ describe("DefaultPackageManager git update", () => {
 	});
 
 	describe("no-ref reconciliation tracks remote default", () => {
-		// Regression coverage for the case where a user previously installed a
-		// branch ref (`git:host/user/repo@feat/x`), then removed the ref from
-		// settings.json. The local clone retains its @{upstream} pointing at
-		// `origin/feat/x`, and the prior implementation of
-		// `getLocalGitUpdateTarget` honored that upstream forever, so the clone
-		// would never move back to the remote default branch even though the
-		// user's expressed intent is now "track default".
+		// Regression coverage for the demote-from-feature-branch bug;
+		// see docs/packages.md and design.md for full context.
 
 		it("should issue fetch for the default branch ref, not the locally tracked feature branch", async () => {
 			const { mainTip } = setupFeatureBranchClone();
 
 			const executedCommands: string[] = [];
 			let setHeadEnv: Record<string, string> | undefined;
-			const managerWithInternals = packageManager as unknown as {
-				runCommandCapture: (
-					command: string,
-					args: string[],
-					options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
-				) => Promise<string>;
-			};
-			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
-			managerWithInternals.runCommandCapture = async (command, args, options) => {
+			spyOnRunCommandCapture((command, args, options) => {
 				if (command === "git" && args[0] === "remote" && args[1] === "set-head") {
 					executedCommands.push(`${command} ${args.join(" ")}`);
 					setHeadEnv = options?.env;
 				}
-				return originalCapture(command, args, options);
-			};
+				return undefined;
+			});
 			installSpawnSyncShim(executedCommands);
 
 			await packageManager.update();
 
-			// Pin both: the fetch refspec (asked for main, not feature) and
-			// the resulting HEAD/file (clone moved off feature). A hybrid bug
-			// (right HEAD via wrong fetch, or right fetch with skipped reset)
-			// must fail at least one assertion.
 			expect(executedCommands).toContain(
 				"git fetch --prune --no-tags origin +refs/heads/main:refs/remotes/origin/main",
 			);
@@ -292,10 +289,7 @@ describe("DefaultPackageManager git update", () => {
 			// Pin that we re-resolve the remote default branch before fetching
 			// so a stale local origin/HEAD symbolic-ref does not steer the fetch.
 			expect(executedCommands).toContain("git remote set-head origin -a");
-			// Pin the env contract on the set-head invocation outside the stub:
-			// asserting inside the async runCommandCapture would have its rejection
-			// swallowed by production's `.catch(() => {})` on runGitRemoteCommand,
-			// hiding any regression that drops GIT_TERMINAL_PROMPT.
+			// Captured outside the stub: production swallows runCommandCapture rejections.
 			expect(setHeadEnv?.GIT_TERMINAL_PROMPT).toBe("0");
 			expect(getCurrentCommit(installedDir)).toBe(mainTip);
 			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
@@ -309,21 +303,13 @@ describe("DefaultPackageManager git update", () => {
 			// symbolic-ref already points at main from `git clone`, so
 			// reconciliation must still complete via the cached value.
 			const executedCommands: string[] = [];
-			const managerWithInternals = packageManager as unknown as {
-				runCommandCapture: (
-					command: string,
-					args: string[],
-					options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
-				) => Promise<string>;
-			};
-			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
-			managerWithInternals.runCommandCapture = async (command, args, options) => {
+			spyOnRunCommandCapture((command, args) => {
 				if (command === "git" && args[0] === "remote" && args[1] === "set-head") {
 					executedCommands.push(`${command} ${args.join(" ")}`);
 					throw new Error("simulated network failure");
 				}
-				return originalCapture(command, args, options);
-			};
+				return undefined;
+			});
 			installSpawnSyncShim(executedCommands);
 
 			await packageManager.update();
@@ -345,20 +331,12 @@ describe("DefaultPackageManager git update", () => {
 			git(["symbolic-ref", "-d", "refs/remotes/origin/HEAD"], installedDir);
 			settingsManager.setPackages([gitSource]);
 
-			const managerWithInternals = packageManager as unknown as {
-				runCommandCapture: (
-					command: string,
-					args: string[],
-					options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
-				) => Promise<string>;
-			};
-			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
-			managerWithInternals.runCommandCapture = async (command, args, options) => {
+			spyOnRunCommandCapture((command, args) => {
 				if (command === "git" && args[0] === "remote" && args[1] === "set-head") {
 					throw new Error("simulated: network unreachable");
 				}
-				return originalCapture(command, args, options);
-			};
+				return undefined;
+			});
 
 			await expect(packageManager.update()).rejects.toThrow(/origin\/HEAD/);
 		});
@@ -373,20 +351,12 @@ describe("DefaultPackageManager git update", () => {
 			// emitting empty stdout. Other captured commands pass through to
 			// spawnSync so the rest of the flow is real.
 			const executedCommands: string[] = [];
-			const managerWithInternals = packageManager as unknown as {
-				runCommandCapture: (
-					command: string,
-					args: string[],
-					options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
-				) => Promise<string>;
-			};
-			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
-			managerWithInternals.runCommandCapture = async (command, args, options) => {
+			spyOnRunCommandCapture((command, args) => {
 				if (command === "git" && args[0] === "symbolic-ref" && args[1] === "refs/remotes/origin/HEAD") {
 					throw new Error("simulated: not a symbolic ref");
 				}
-				return originalCapture(command, args, options);
-			};
+				return undefined;
+			});
 			installSpawnSyncShim(executedCommands);
 
 			await packageManager.update();
@@ -407,20 +377,12 @@ describe("DefaultPackageManager git update", () => {
 			// symbolic-ref to another remote). The parser must treat this as
 			// "no usable branch" rather than emit a malformed fetch refspec.
 			const executedCommands: string[] = [];
-			const managerWithInternals = packageManager as unknown as {
-				runCommandCapture: (
-					command: string,
-					args: string[],
-					options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
-				) => Promise<string>;
-			};
-			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
-			managerWithInternals.runCommandCapture = async (command, args, options) => {
+			spyOnRunCommandCapture((command, args) => {
 				if (command === "git" && args[0] === "symbolic-ref" && args[1] === "refs/remotes/origin/HEAD") {
 					return "refs/remotes/upstream/main";
 				}
-				return originalCapture(command, args, options);
-			};
+				return undefined;
+			});
 			installSpawnSyncShim(executedCommands);
 
 			await packageManager.update();
@@ -438,20 +400,12 @@ describe("DefaultPackageManager git update", () => {
 			const { mainTip } = setupFeatureBranchClone({ setPackages: false });
 
 			const executedCommands: string[] = [];
-			const managerWithInternals = packageManager as unknown as {
-				runCommandCapture: (
-					command: string,
-					args: string[],
-					options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
-				) => Promise<string>;
-			};
-			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
-			managerWithInternals.runCommandCapture = async (command, args, options) => {
+			spyOnRunCommandCapture((command, args) => {
 				if (command === "git" && args[0] === "remote" && args[1] === "set-head") {
 					executedCommands.push(`${command} ${args.join(" ")}`);
 				}
-				return originalCapture(command, args, options);
-			};
+				return undefined;
+			});
 			installSpawnSyncShim(executedCommands);
 
 			// Install path — not update.
@@ -758,20 +712,12 @@ describe("DefaultPackageManager git update", () => {
 			//    false — the silent-failure shape the source-side fix protects
 			//    against.
 			setupRemoteAndInstall();
-			const managerWithInternals = packageManager as unknown as {
-				runCommandCapture: (
-					command: string,
-					args: string[],
-					options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
-				) => Promise<string>;
-			};
-			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
-			managerWithInternals.runCommandCapture = async (command, args, options) => {
+			spyOnRunCommandCapture((command, args) => {
 				if (command === "git" && args[0] === "ls-remote" && args[1] === "origin" && args[2] === "HEAD") {
 					return "";
 				}
-				return originalCapture(command, args, options);
-			};
+				return undefined;
+			});
 
 			const hasUpdate = await (
 				packageManager as unknown as { gitHasAvailableUpdate(p: string): Promise<boolean> }
@@ -785,20 +731,12 @@ describe("DefaultPackageManager git update", () => {
 			// itself throwing (the realistic network-down failure mode), not
 			// just getRemoteGitHead's regex-no-match shape.
 			setupRemoteAndInstall();
-			const managerWithInternals = packageManager as unknown as {
-				runCommandCapture: (
-					command: string,
-					args: string[],
-					options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
-				) => Promise<string>;
-			};
-			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
-			managerWithInternals.runCommandCapture = async (command, args, options) => {
+			spyOnRunCommandCapture((command, args) => {
 				if (command === "git" && args[0] === "ls-remote" && args[1] === "origin" && args[2] === "HEAD") {
 					throw new Error("simulated: connection refused");
 				}
-				return originalCapture(command, args, options);
-			};
+				return undefined;
+			});
 
 			const hasUpdate = await (
 				packageManager as unknown as { gitHasAvailableUpdate(p: string): Promise<boolean> }
