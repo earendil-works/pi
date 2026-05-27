@@ -1,0 +1,182 @@
+{
+  "providers": {
+    "llama.cpp": {
+      "api": "openai-completions",
+      "apiKey": "llama.cpp",
+      "baseUrl": "http://127.0.0.1:11435/v1",
+      "models": [
+        {
+          "_launch": true,
+          "contextWindow": 65536,
+          "id": "qwen36-27b-q3km",
+          "input": [
+            "text",
+            "image"
+          ],
+          "reasoning": true
+        }
+      ]
+    },
+    "orc-0": {
+      "api": "openai-completions",
+      "apiKey": "llama.cpp",
+      "baseUrl": "http://127.0.0.1:11450/v1",
+      "model": "large",
+      "models": [
+        {
+          "_launch": true,
+          "contextWindow": 65536,
+          "id": "qwen36-27b-q3km",
+          "input": [
+            "text",
+            "image"
+          ],
+          "reasoning": true
+        }
+      ]
+    },
+    "orc-1": {
+      "api": "openai-completions",
+      "apiKey": "llama.cpp",
+      "baseUrl": "http://127.0.0.1:11451/v1",
+      "model": "large",
+      "models": [
+        {
+          "_launch": true,
+          "contextWindow": 96000,
+          "id": "qwen36-35b-iq1m",
+          "input": [
+            "text",
+            "image"
+          ],
+          "reasoning": true
+        },
+        {
+          "_launch": true,
+          "contextWindow": 65536,
+          "id": "qwen36-27b-q3km",
+          "input": [
+            "text",
+            "image"
+          ],
+          "reasoning": true
+        }
+      ]
+    },
+    "orc-2": {
+      "api": "openai-completions",
+      "apiKey": "llama.cpp",
+      "baseUrl": "http://127.0.0.1:11452/v1",
+      "model": "large",
+      "models": [
+        {
+          "_launch": true,
+          "contextWindow": 65536,
+          "id": "qwen36-27b-q3km",
+          "input": [
+            "text",
+            "image"
+          ],
+          "reasoning": true
+        }
+      ]
+    },
+    "mlx": {
+      "api": "openai-completions",
+      "apiKey": "mlx",
+      "baseUrl": "http://192.168.8.234:1234/v1",
+      "models": [
+        {
+          "_launch": true,
+          "contextWindow": 65536,
+          "id": "gemma-4-e4b-it-mlx@4bit",
+          "input": [
+            "text",
+            "image"
+          ]
+        },{
+          "_launch": true,
+          "contextWindow": 8192,
+          "id": "gemma-4-26b-a4b-it-mlx",
+          "input": [
+            "text"
+          ]
+        },{
+          "_launch": true,
+          "contextWindow": 65536,
+          "id": "enginil/qwen3.6-27b",
+          "input": [
+            "text",
+            "image"
+          ]
+        }
+      ]
+    },
+    "ollama": {
+      "api": "openai-completions",
+      "apiKey": "ollama",
+      "baseUrl": "http://127.0.0.1:11434/v1",
+      "models": [
+        {
+          "_launch": true,
+          "contextWindow": 262144,
+          "id": "Qwen3.6-35B-A3B-IQ3S-64k",
+          "input": [
+            "text"
+          ]
+        },
+        {
+          "_launch": true,
+          "contextWindow": 202752,
+          "id": "GLM-4.7-Flash-Q4KM-16k",
+          "input": [
+            "text"
+          ]
+        },
+        {
+          "_launch": true,
+          "contextWindow": 262144,
+          "id": "Qwen3.5-4B-Q-64k",
+          "input": [
+            "text",
+            "image"
+          ],
+          "reasoning": true
+        }
+      ]
+    },
+    "misha-pc": {
+      "api": "openai-completions",
+      "apiKey": "n",
+      "baseUrl": "http://192.168.8.47:11434/v1",
+      "models": [
+        {
+          "_launch": true,
+          "contextWindow": 65536,
+          "id": "gemma4-26b-a4b-iq4nl",
+          "input": [
+            "text",
+            "image"
+          ]
+        }
+      ]
+    },
+    "yevhe": {
+      "api": "openai-completions",
+      "apiKey": "llama.cpp",
+      "baseUrl": "http://192.168.8.151:11434/v1",
+      "models": [
+        {
+          "_launch": true,
+          "contextWindow": 65536,
+          "id": "qwen36-27b-q3km-mpt",
+          "input": [
+            "text",
+            "image"
+          ],
+          "reasoning": true
+        }
+      ]
+    }
+  }
+}

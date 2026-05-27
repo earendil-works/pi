@@ -1,0 +1,1 @@
+{"mcpServers": {"searxng": {"command": "/home/dst/.local/share/fnm/node-versions/v24.13.1/installation/bin/mcp-searxng", "env": {"SEARXNG_URL": "http://127.0.0.1:8888"}}, "playwright": {"command": "npx", "args": ["-y", "@playwright/mcp"]}, "agentmemory": {"command": "npx", "args": ["-y", "@agentmemory/agentmemory", "mcp"]}}}
