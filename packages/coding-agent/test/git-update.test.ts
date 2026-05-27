@@ -348,8 +348,7 @@ describe("DefaultPackageManager git update", () => {
 			// the `.catch(() => "")` fallback in `getLocalGitUpdateTarget`.
 			// Production reaches this branch when `origin/HEAD` is a regular
 			// (non-symbolic) ref — git symbolic-ref exits non-zero rather than
-			// emitting empty stdout. Other captured commands pass through to
-			// spawnSync so the rest of the flow is real.
+			// emitting empty stdout.
 			const executedCommands: string[] = [];
 			spyOnRunCommandCapture((command, args) => {
 				if (command === "git" && args[0] === "symbolic-ref" && args[1] === "refs/remotes/origin/HEAD") {
@@ -690,11 +689,8 @@ describe("DefaultPackageManager git update", () => {
 		});
 
 		it("reports update for stuck-on-feature-branch clone (matches no-ref reconciliation)", async () => {
-			// Build a remote with a feature branch divergent from main, clone
-			// it, and check out feature locally so `branch.<name>.merge` points
-			// at origin/feature. Per the no-ref reconciliation contract,
-			// gitHasAvailableUpdate must compare local HEAD to origin/HEAD
-			// (the remote default), not to the locally tracked feature branch.
+			// Per the no-ref reconciliation contract, gitHasAvailableUpdate must
+			// compare local HEAD to origin/HEAD, not the locally tracked feature branch.
 			setupFeatureBranchClone({ setPackages: false });
 			expect(git(["rev-parse", "--abbrev-ref", "@{upstream}"], installedDir)).toBe("origin/feature");
 
