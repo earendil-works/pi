@@ -791,4 +791,50 @@ describe("DefaultPackageManager git update", () => {
 			expect(existsSync(projectGitDir)).toBe(false);
 		});
 	});
+
+	describe("gitHasAvailableUpdate", () => {
+		it("reports no update when local matches remote HEAD", async () => {
+			setupRemoteAndInstall();
+			const hasUpdate = await (
+				packageManager as unknown as { gitHasAvailableUpdate(p: string): Promise<boolean> }
+			).gitHasAvailableUpdate(installedDir);
+			expect(hasUpdate).toBe(false);
+		});
+
+		it("reports update available when remote HEAD advances", async () => {
+			setupRemoteAndInstall();
+			createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
+			const hasUpdate = await (
+				packageManager as unknown as { gitHasAvailableUpdate(p: string): Promise<boolean> }
+			).gitHasAvailableUpdate(installedDir);
+			expect(hasUpdate).toBe(true);
+		});
+
+		it("reports update for stuck-on-feature-branch clone (matches no-ref reconciliation)", async () => {
+			// Build a remote with a feature branch divergent from main, clone
+			// it, and check out feature locally so `branch.<name>.merge` points
+			// at origin/feature. Per the no-ref reconciliation contract,
+			// gitHasAvailableUpdate must compare local HEAD to origin/HEAD
+			// (the remote default), not to the locally tracked feature branch.
+			mkdirSync(remoteDir, { recursive: true });
+			initGitRepo(remoteDir);
+			createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
+			git(["checkout", "-b", "feature"], remoteDir);
+			createCommit(remoteDir, "extension.ts", "// feature", "Feature work");
+			git(["checkout", "main"], remoteDir);
+			createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
+
+			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
+			git(["clone", remoteDir, installedDir], tempDir);
+			git(["config", "--local", "user.email", "test@test.com"], installedDir);
+			git(["config", "--local", "user.name", "Test"], installedDir);
+			git(["checkout", "feature"], installedDir);
+			expect(git(["rev-parse", "--abbrev-ref", "@{upstream}"], installedDir)).toBe("origin/feature");
+
+			const hasUpdate = await (
+				packageManager as unknown as { gitHasAvailableUpdate(p: string): Promise<boolean> }
+			).gitHasAvailableUpdate(installedDir);
+			expect(hasUpdate).toBe(true);
+		});
+	});
 });
