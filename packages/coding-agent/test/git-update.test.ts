@@ -351,7 +351,7 @@ describe("DefaultPackageManager git update", () => {
 			await expect(packageManager.update()).rejects.toThrow(/origin\/HEAD/);
 		});
 
-		it("should fall back to +HEAD:refs/remotes/origin/HEAD when symbolic-ref is empty", async () => {
+		it("should fall back to +HEAD when symbolic-ref fails", async () => {
 			const { mainTip } = setupFeatureBranchClone();
 
 			// Stub `symbolic-ref refs/remotes/origin/HEAD` to throw, exercising
