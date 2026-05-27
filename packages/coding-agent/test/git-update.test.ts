@@ -145,8 +145,9 @@ describe("DefaultPackageManager git update", () => {
 				"git fetch --prune --no-tags origin +refs/heads/main:refs/remotes/origin/main",
 			);
 			expect(executedCommands).not.toContain("git fetch --prune origin");
-			expect(executedCommands).not.toContain("git reset --hard @{upstream}");
-			expect(executedCommands).not.toContain("git reset --hard origin/HEAD");
+			for (const cmd of executedCommands) {
+				expect(cmd).not.toMatch(/^git reset --hard/);
+			}
 			expect(executedCommands).not.toContain("git clean -fdx");
 			expect(executedCommands).not.toContain("npm install");
 		});
