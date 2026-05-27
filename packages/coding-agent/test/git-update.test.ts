@@ -457,7 +457,7 @@ describe("DefaultPackageManager git update", () => {
 			git(["checkout", "-b", "feature"], remoteDir);
 			createCommit(remoteDir, "extension.ts", "// feature", "Feature work");
 			git(["checkout", "main"], remoteDir);
-			createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
+			const mainTip = createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
 
 			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
 			git(["clone", remoteDir, installedDir], tempDir);
@@ -506,6 +506,8 @@ describe("DefaultPackageManager git update", () => {
 			expect(executedCommands).not.toContain(
 				"git fetch --prune --no-tags origin +refs/heads/refs/remotes/upstream/main:refs/remotes/origin/refs/remotes/upstream/main",
 			);
+			expect(getCurrentCommit(installedDir)).toBe(mainTip);
+			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
 		});
 
 		it("install should reconcile no-ref source on existing clones", async () => {
