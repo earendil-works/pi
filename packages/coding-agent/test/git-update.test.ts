@@ -353,7 +353,7 @@ describe("DefaultPackageManager git update", () => {
 			git(["checkout", "-b", "feature"], remoteDir);
 			createCommit(remoteDir, "extension.ts", "// feature", "Feature work");
 			git(["checkout", "main"], remoteDir);
-			createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
+			const mainTip = createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
 
 			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
 			git(["clone", remoteDir, installedDir], tempDir);
@@ -362,10 +362,11 @@ describe("DefaultPackageManager git update", () => {
 			git(["checkout", "feature"], installedDir);
 			settingsManager.setPackages([gitSource]);
 
-			// Stub `symbolic-ref refs/remotes/origin/HEAD` to return empty
-			// (simulating a clone without origin/HEAD or a `set-head` failure
-			// that leaves the symbolic-ref unset). Other captured commands
-			// pass through to spawnSync so the rest of the flow is real.
+			// Stub `symbolic-ref refs/remotes/origin/HEAD` to return "" (covering
+			// the `.catch(() => "")` fallback in `getLocalGitUpdateTarget`).
+			// Production reaches this branch when symbolic-ref errors — e.g.,
+			// when `origin/HEAD` is a regular (non-symbolic) ref. Other captured
+			// commands pass through to spawnSync so the rest of the flow is real.
 			const executedCommands: string[] = [];
 			const managerWithInternals = packageManager as unknown as {
 				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
@@ -402,6 +403,8 @@ describe("DefaultPackageManager git update", () => {
 			expect(executedCommands).not.toContain(
 				"git fetch --prune --no-tags origin +refs/heads/main:refs/remotes/origin/main",
 			);
+			expect(getCurrentCommit(installedDir)).toBe(mainTip);
+			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
 		});
 
 		it("should fall back to +HEAD when symbolic-ref points outside refs/remotes/origin/", async () => {
