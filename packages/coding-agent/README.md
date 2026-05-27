@@ -400,7 +400,7 @@ pi install ssh://git@github.com/user/repo@v1    # tag, commit, or branch
 pi remove npm:@foo/pi-tools
 pi uninstall npm:@foo/pi-tools          # alias for remove
 pi list
-pi update                               # update pi and packages (skips pinned packages)
+pi update                               # update pi, update packages, and reconcile pinned git refs
 pi update --extensions                  # update packages only
 pi update --self                        # update pi only
 pi update --self --force                # reinstall pi even if current
@@ -408,7 +408,7 @@ pi update npm:@foo/pi-tools             # update one package
 pi config                               # enable/disable extensions, skills, prompts, themes
 ```
 
-Packages install to `~/.pi/agent/git/` (git) or `~/.pi/agent/npm/` (npm). Use `-l` for project-local installs (`.pi/git/`, `.pi/npm/`). Git `@ref` values can be tags, commits, or branches: tags and commits do not move; branch refs advance to the remote branch's tip on each update. Without a ref, pi tracks the remote default branch (`origin/HEAD`). See [docs/packages.md](./docs/packages.md) for full ref semantics. Packages with pinned versions or refs are skipped by `pi update`, so use `pi install git:host/user/repo@new-ref` to move an existing package to a new ref. Git packages install dependencies with `npm install --omit=dev` by default, so runtime deps must be listed under `dependencies`; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers. If you use a Node version manager and want package installs to reuse a stable npm context, set `npmCommand` in `settings.json`, for example `["mise", "exec", "node@20", "--", "npm"]`.
+Packages install to `~/.pi/agent/git/` (git) or `~/.pi/agent/npm/` (npm). Use `-l` for project-local installs (`.pi/git/`, `.pi/npm/`). Git `@ref` values can be tags, commits, or branches: tags and commits do not move; branch refs advance to the remote branch's tip on each update. Without a ref, pi tracks the remote default branch (`origin/HEAD`). See [docs/packages.md](./docs/packages.md) for full ref semantics. Pinned npm versions are skipped by `pi update`; pinned git refs (tags, commits, branches) are reconciled — tags and commits stay put, branches advance to the remote branch's tip. Use `pi install git:host/user/repo@new-ref` to move an existing package to a new ref. Git packages install dependencies with `npm install --omit=dev` by default, so runtime deps must be listed under `dependencies`; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers. If you use a Node version manager and want package installs to reuse a stable npm context, set `npmCommand` in `settings.json`, for example `["mise", "exec", "node@20", "--", "npm"]`.
 
 Create a package by adding a `pi` key to `package.json`:
 
@@ -499,7 +499,7 @@ pi [options] [@files...] [messages...]
 pi install <source> [-l]     # Install package, -l for project-local
 pi remove <source> [-l]      # Remove package
 pi uninstall <source> [-l]   # Alias for remove
-pi update [source|self|pi]   # Update pi and packages (skips pinned packages)
+pi update [source|self|pi]   # Update pi, update packages, reconcile pinned git refs
 pi update --extensions       # Update packages only
 pi update --self             # Update pi only
 pi update --self --force     # Reinstall pi even if current
