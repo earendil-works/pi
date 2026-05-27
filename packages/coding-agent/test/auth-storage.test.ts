@@ -134,6 +134,33 @@ describe("AuthStorage", () => {
 			}
 		});
 
+		test("literal API key is not corrupted by case-insensitive env var match on Windows", async () => {
+			// On Windows, process.env is case-insensitive, so "public" matches
+			// the PUBLIC env var (C:\Users\Public). A literal API key "public"
+			// must be returned as-is, not resolved to the PUBLIC env var value.
+			const originalPublic = process.env.PUBLIC;
+			process.env.PUBLIC = "C:\\Users\\Public";
+
+			try {
+				writeAuthJson({
+					opencode: { type: "api_key", key: "public" },
+				});
+
+				authStorage = AuthStorage.create(authJsonPath);
+				const apiKey = await authStorage.getApiKey("opencode");
+
+				expect(apiKey).toBe("public");
+				// The key must NOT be the env var value
+				expect(apiKey).not.toBe("C:\\Users\\Public");
+			} finally {
+				if (originalPublic === undefined) {
+					delete process.env.PUBLIC;
+				} else {
+					process.env.PUBLIC = originalPublic;
+				}
+			}
+		});
+
 		test("apiKey as literal value is used directly when not an env var", async () => {
 			// Make sure this isn't an env var
 			delete process.env.literal_api_key_value;
