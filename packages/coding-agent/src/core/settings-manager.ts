@@ -1018,9 +1018,10 @@ export class SettingsManager {
 	}
 
 	setEnabledModels(patterns: string[] | undefined): void {
-		this.globalSettings.enabledModels = patterns;
-		this.markModified("enabledModels");
-		this.save();
+		const projectSettings = structuredClone(this.projectSettings);
+		projectSettings.enabledModels = patterns;
+		this.markProjectModified("enabledModels");
+		this.saveProjectSettings(projectSettings);
 	}
 
 	getDoubleEscapeAction(): "fork" | "tree" | "none" {
