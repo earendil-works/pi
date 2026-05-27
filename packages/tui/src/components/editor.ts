@@ -4,14 +4,8 @@ import { decodePrintableKey, matchesKey } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
 import { type Component, CURSOR_MARKER, type Focusable, type TUI } from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
-import {
-	getGraphemeSegmenter,
-	getWordSegmenter,
-	isWhitespaceChar,
-	PUNCTUATION_REGEX,
-	truncateToWidth,
-	visibleWidth,
-} from "../utils.ts";
+import { getGraphemeSegmenter, getWordSegmenter, isWhitespaceChar, truncateToWidth, visibleWidth } from "../utils.ts";
+import { findWordBackward, findWordForward } from "../word-navigation.ts";
 import { SelectList, type SelectListLayoutOptions, type SelectListTheme } from "./select-list.ts";
 
 const graphemeSegmenter = getGraphemeSegmenter();
@@ -1780,48 +1774,12 @@ export class Editor implements Component, Focusable {
 			return;
 		}
 
-		const textBeforeCursor = currentLine.slice(0, this.state.cursorCol);
-		const segments = [...this.segment(textBeforeCursor, "word")];
-		let newCol = this.state.cursorCol;
-
-		// Skip trailing whitespace
-		while (
-			segments.length > 0 &&
-			!isPasteMarker(segments[segments.length - 1]?.segment || "") &&
-			isWhitespaceChar(segments[segments.length - 1]?.segment || "")
-		) {
-			newCol -= segments.pop()?.segment.length || 0;
-		}
-
-		if (segments.length > 0) {
-			const last = segments[segments.length - 1]!;
-			if (isPasteMarker(last.segment)) {
-				// Skip one paste marker.
-				newCol -= segments.pop()?.segment.length || 0;
-			} else if (last.isWordLike) {
-				// Skip inside one word-like segment, preserving existing ASCII punctuation boundaries.
-				const segment = last.segment;
-				const matches = [...segment.matchAll(new RegExp(PUNCTUATION_REGEX, "g"))];
-				if (matches.length <= 0) {
-					newCol -= segment.length;
-				} else {
-					const lastMatch = matches[matches.length - 1]!;
-					newCol -= segment.length - (lastMatch.index + lastMatch[0].length);
-				}
-			} else {
-				// Skip non-word non-whitespace run (punctuation)
-				while (
-					segments.length > 0 &&
-					!isPasteMarker(segments[segments.length - 1]?.segment || "") &&
-					!segments[segments.length - 1]?.isWordLike &&
-					!isWhitespaceChar(segments[segments.length - 1]?.segment || "")
-				) {
-					newCol -= segments.pop()?.segment.length || 0;
-				}
-			}
-		}
-
-		this.setCursorCol(newCol);
+		this.setCursorCol(
+			findWordBackward(currentLine, this.state.cursorCol, {
+				segment: (text) => this.segment(text, "word"),
+				isAtomicSegment: isPasteMarker,
+			}),
+		);
 	}
 
 	/**
@@ -2008,40 +1966,12 @@ export class Editor implements Component, Focusable {
 			return;
 		}
 
-		const textAfterCursor = currentLine.slice(this.state.cursorCol);
-		const segments = this.segment(textAfterCursor, "word");
-		const iterator = segments[Symbol.iterator]();
-		let next = iterator.next();
-		let newCol = this.state.cursorCol;
-
-		// Skip leading whitespace
-		while (!next.done && !isPasteMarker(next.value.segment) && isWhitespaceChar(next.value.segment)) {
-			newCol += next.value.segment.length;
-			next = iterator.next();
-		}
-
-		if (!next.done) {
-			if (isPasteMarker(next.value.segment)) {
-				// Skip one paste marker.
-				newCol += next.value.segment.length;
-			} else if (next.value.isWordLike) {
-				// Skip inside one word-like segment, preserving existing ASCII punctuation boundaries.
-				newCol += PUNCTUATION_REGEX.exec(next.value.segment)?.index ?? next.value.segment.length;
-			} else {
-				// Skip non-word non-whitespace run (punctuation)
-				while (
-					!next.done &&
-					!isPasteMarker(next.value.segment) &&
-					!next.value.isWordLike &&
-					!isWhitespaceChar(next.value.segment)
-				) {
-					newCol += next.value.segment.length;
-					next = iterator.next();
-				}
-			}
-		}
-
-		this.setCursorCol(newCol);
+		this.setCursorCol(
+			findWordForward(currentLine, this.state.cursorCol, {
+				segment: (text) => this.segment(text, "word"),
+				isAtomicSegment: isPasteMarker,
+			}),
+		);
 	}
 
 	// Slash menu only allowed on the first line of the editor
