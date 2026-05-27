@@ -836,5 +836,34 @@ describe("DefaultPackageManager git update", () => {
 			).gitHasAvailableUpdate(installedDir);
 			expect(hasUpdate).toBe(true);
 		});
+
+		it("reports no update when remote HEAD output is malformed (silent failure)", async () => {
+			// Pin two contracts in one test:
+			// 1. getRemoteGitHead throws when ls-remote origin HEAD output
+			//    doesn't match the strict /^([0-9a-f]{40})\s+HEAD$/m regex.
+			// 2. gitHasAvailableUpdate's catch swallows that throw and returns
+			//    false — the silent-failure shape the source-side fix protects
+			//    against.
+			setupRemoteAndInstall();
+			const managerWithInternals = packageManager as unknown as {
+				runCommandCapture: (
+					command: string,
+					args: string[],
+					options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
+				) => Promise<string>;
+			};
+			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
+			managerWithInternals.runCommandCapture = async (command, args, options) => {
+				if (command === "git" && args[0] === "ls-remote" && args[1] === "origin" && args[2] === "HEAD") {
+					return "";
+				}
+				return originalCapture(command, args, options);
+			};
+
+			const hasUpdate = await (
+				packageManager as unknown as { gitHasAvailableUpdate(p: string): Promise<boolean> }
+			).gitHasAvailableUpdate(installedDir);
+			expect(hasUpdate).toBe(false);
+		});
 	});
 });
