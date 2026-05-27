@@ -1475,16 +1475,10 @@ export class DefaultPackageManager implements PackageManager {
 		}
 	}
 
+	// Callers (gitHasAvailableUpdate via checkForAvailableUpdates) skip pinned
+	// sources, so this only runs for no-ref sources where origin/HEAD is the
+	// canonical update target.
 	private async getRemoteGitHead(installedPath: string): Promise<string> {
-		const upstreamRef = await this.getGitUpstreamRef(installedPath);
-		if (upstreamRef) {
-			const remoteHead = await this.runGitRemoteCommand(installedPath, ["ls-remote", "origin", upstreamRef]);
-			const match = remoteHead.match(/^([0-9a-f]{40})\s+/m);
-			if (match?.[1]) {
-				return match[1];
-			}
-		}
-
 		const remoteHead = await this.runGitRemoteCommand(installedPath, ["ls-remote", "origin", "HEAD"]);
 		const match = remoteHead.match(/^([0-9a-f]{40})\s+HEAD$/m);
 		if (!match?.[1]) {
@@ -1533,23 +1527,6 @@ export class DefaultPackageManager implements PackageManager {
 			head,
 			fetchArgs: ["fetch", "--prune", "--no-tags", "origin", "+HEAD:refs/remotes/origin/HEAD"],
 		};
-	}
-
-	private async getGitUpstreamRef(installedPath: string): Promise<string | undefined> {
-		try {
-			const upstream = await this.runCommandCapture("git", ["rev-parse", "--abbrev-ref", "@{upstream}"], {
-				cwd: installedPath,
-				timeoutMs: NETWORK_TIMEOUT_MS,
-			});
-			const trimmed = upstream.trim();
-			if (!trimmed.startsWith("origin/")) {
-				return undefined;
-			}
-			const branch = trimmed.slice("origin/".length);
-			return branch ? `refs/heads/${branch}` : undefined;
-		} catch {
-			return undefined;
-		}
 	}
 
 	private runGitRemoteCommand(installedPath: string, args: string[]): Promise<string> {
