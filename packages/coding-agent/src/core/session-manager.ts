@@ -805,10 +805,7 @@ export class SessionManager {
 
 		if (this.persist) {
 			const fileTimestamp = timestamp.replace(/[:.]/g, "-");
-			this.sessionFile = join(
-				this.getSessionDir(),
-				options?.id ? `${this.sessionId}.jsonl` : `${fileTimestamp}_${this.sessionId}.jsonl`,
-			);
+			this.sessionFile = join(this.getSessionDir(), `${fileTimestamp}_${this.sessionId}.jsonl`);
 		}
 		return this.sessionFile;
 	}
@@ -875,8 +872,14 @@ export class SessionManager {
 		}
 
 		if (!this.flushed) {
-			const content = `${this.fileEntries.map((e) => JSON.stringify(e)).join("\n")}\n`;
-			writeFileSync(this.sessionFile, content, { flag: "wx" });
+			const fd = openSync(this.sessionFile, "wx");
+			try {
+				for (const e of this.fileEntries) {
+					writeFileSync(fd, `${JSON.stringify(e)}\n`);
+				}
+			} finally {
+				closeSync(fd);
+			}
 			this.flushed = true;
 		} else {
 			appendFileSync(this.sessionFile, `${JSON.stringify(entry)}\n`);
@@ -1409,10 +1412,7 @@ export class SessionManager {
 		const newSessionId = options?.id ?? createSessionId();
 		const timestamp = new Date().toISOString();
 		const fileTimestamp = timestamp.replace(/[:.]/g, "-");
-		const newSessionFile = join(
-			dir,
-			options?.id ? `${newSessionId}.jsonl` : `${fileTimestamp}_${newSessionId}.jsonl`,
-		);
+		const newSessionFile = join(dir, `${fileTimestamp}_${newSessionId}.jsonl`);
 
 		// Write new header pointing to source as parent, with updated cwd
 		const newHeader: SessionHeader = {

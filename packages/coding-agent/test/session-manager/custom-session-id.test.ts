@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { SessionManager } from "../../src/core/session-manager.ts";
 
@@ -69,8 +69,10 @@ describe("SessionManager.newSession with custom id", () => {
 
 		expect(session.getSessionId()).toBe("created-session-id");
 		expect(session.getHeader()!.id).toBe("created-session-id");
-		expect(session.getSessionFile()).toContain("created-session-id");
-		expect(existsSync(session.getSessionFile()!)).toBe(false);
+		const sessionFile = session.getSessionFile()!;
+		expect(sessionFile).toContain("created-session-id");
+		expect(basename(sessionFile)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_created-session-id\.jsonl$/);
+		expect(existsSync(sessionFile)).toBe(false);
 	});
 
 	it("generates a UUIDv7 id when creating a branched session", () => {
@@ -153,6 +155,8 @@ describe("SessionManager.newSession with custom id", () => {
 		expect(header).not.toBeNull();
 		expect(header!.id).toBe("forked-session-id");
 		expect(header!.parentSession).toBe(sourcePath);
-		expect(forked.getSessionFile()).toContain("forked-session-id");
+		const sessionFile = forked.getSessionFile()!;
+		expect(sessionFile).toContain("forked-session-id");
+		expect(basename(sessionFile)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z_forked-session-id\.jsonl$/);
 	});
 });

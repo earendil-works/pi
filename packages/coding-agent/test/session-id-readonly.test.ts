@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -20,12 +20,20 @@ function createTempDir(): string {
 	return dir;
 }
 
-function hasFile(root: string, fileName: string): boolean {
+function hasSessionWithId(root: string, sessionId: string): boolean {
 	if (!existsSync(root)) return false;
 	for (const entry of readdirSync(root, { withFileTypes: true })) {
 		const path = join(root, entry.name);
-		if (entry.isFile() && entry.name === fileName) return true;
-		if (entry.isDirectory() && hasFile(path, fileName)) return true;
+		if (entry.isDirectory() && hasSessionWithId(path, sessionId)) return true;
+		if (!entry.isFile() || !entry.name.endsWith(".jsonl")) continue;
+
+		try {
+			const firstLine = readFileSync(path, "utf8").split("\n", 1)[0];
+			const header = JSON.parse(firstLine) as { type?: string; id?: string };
+			if (header.type === "session" && header.id === sessionId) return true;
+		} catch {
+			// Ignore malformed session files.
+		}
 	}
 	return false;
 }
@@ -85,14 +93,14 @@ describe("--session-id read-only commands", () => {
 		const result = await runCli(["--session-id", "read-only-help", "--help"]);
 
 		expect(result.code).toBe(0);
-		expect(hasFile(join(result.agentDir, "sessions"), "read-only-help.jsonl")).toBe(false);
+		expect(hasSessionWithId(join(result.agentDir, "sessions"), "read-only-help")).toBe(false);
 	});
 
 	it("does not reserve a session for --list-models", async () => {
 		const result = await runCli(["--session-id", "read-only-models", "--list-models"]);
 
 		expect(result.code).toBe(0);
-		expect(hasFile(join(result.agentDir, "sessions"), "read-only-models.jsonl")).toBe(false);
+		expect(hasSessionWithId(join(result.agentDir, "sessions"), "read-only-models")).toBe(false);
 	});
 
 	it("rejects an existing fork target session id", async () => {
