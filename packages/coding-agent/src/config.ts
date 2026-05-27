@@ -111,7 +111,13 @@ function getSelfUpdateCommandForMethod(
 			return undefined;
 		case "pnpm":
 			return makeSelfUpdateCommand(
-				makeSelfUpdateCommandStep("pnpm", ["install", "-g", "--ignore-scripts", updatePackageName]),
+				makeSelfUpdateCommandStep("pnpm", [
+					"install",
+					"-g",
+					"--ignore-scripts",
+					"--config.minimumReleaseAge=0",
+					updatePackageName,
+				]),
 				updatePackageName === installedPackageName
 					? undefined
 					: makeSelfUpdateCommandStep("pnpm", ["remove", "-g", installedPackageName]),
@@ -125,7 +131,13 @@ function getSelfUpdateCommandForMethod(
 			);
 		case "bun":
 			return makeSelfUpdateCommand(
-				makeSelfUpdateCommandStep("bun", ["install", "-g", "--ignore-scripts", updatePackageName]),
+				makeSelfUpdateCommandStep("bun", [
+					"install",
+					"-g",
+					"--ignore-scripts",
+					"--minimum-release-age=0",
+					updatePackageName,
+				]),
 				updatePackageName === installedPackageName
 					? undefined
 					: makeSelfUpdateCommandStep("bun", ["uninstall", "-g", installedPackageName]),
@@ -139,6 +151,7 @@ function getSelfUpdateCommandForMethod(
 				"install",
 				"-g",
 				"--ignore-scripts",
+				"--min-release-age=0",
 				updatePackageName,
 			]);
 			const uninstallStep =

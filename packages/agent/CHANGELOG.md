@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed context token estimates to count user image attachments consistently with tool result images ([#4983](https://github.com/earendil-works/pi/issues/4983)).
+
 ## [0.75.5] - 2026-05-23
 
 ## [0.75.4] - 2026-05-20

@@ -70,6 +70,11 @@ export interface MarkdownTheme {
 	codeBlockIndent?: string;
 }
 
+export interface MarkdownOptions {
+	/** Preserve source ordered-list markers instead of normalizing them from the list start. */
+	preserveOrderedListMarkers?: boolean;
+}
+
 interface InlineStyleContext {
 	applyText: (text: string) => string;
 	stylePrefix: string;
@@ -81,6 +86,7 @@ export class Markdown implements Component {
 	private paddingY: number; // Top/bottom padding
 	private defaultTextStyle?: DefaultTextStyle;
 	private theme: MarkdownTheme;
+	private options: MarkdownOptions;
 	private defaultStylePrefix?: string;
 
 	// Cache for rendered output
@@ -94,12 +100,14 @@ export class Markdown implements Component {
 		paddingY: number,
 		theme: MarkdownTheme,
 		defaultTextStyle?: DefaultTextStyle,
+		options?: MarkdownOptions,
 	) {
 		this.text = text;
 		this.paddingX = paddingX;
 		this.paddingY = paddingY;
 		this.theme = theme;
 		this.defaultTextStyle = defaultTextStyle;
+		this.options = options ? { ...options } : {};
 	}
 
 	setText(text: string): void {
@@ -548,6 +556,11 @@ export class Markdown implements Component {
 		return result;
 	}
 
+	private getOrderedListMarker(item: Tokens.ListItem): string | undefined {
+		const match = /^(?: {0,3})(\d{1,9}[.)])[ \t]+/.exec(item.raw);
+		return match ? `${match[1]} ` : undefined;
+	}
+
 	/**
 	 * Render a list with proper nesting support
 	 */
@@ -559,7 +572,11 @@ export class Markdown implements Component {
 
 		for (let i = 0; i < token.items.length; i++) {
 			const item = token.items[i];
-			const bullet = token.ordered ? `${startNumber + i}. ` : "- ";
+			const bullet = token.ordered
+				? this.options.preserveOrderedListMarkers
+					? (this.getOrderedListMarker(item) ?? `${startNumber + i}. `)
+					: `${startNumber + i}. `
+				: "- ";
 			const taskMarker = item.task ? `[${item.checked ? "x" : " "}] ` : "";
 			const marker = bullet + taskMarker;
 			const firstPrefix = indent + this.theme.listBullet(marker);

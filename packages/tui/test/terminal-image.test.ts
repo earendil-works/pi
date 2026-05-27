@@ -21,6 +21,7 @@ import {
 const ENV_KEYS = [
 	"TERM",
 	"TERM_PROGRAM",
+	"TERMINAL_EMULATOR",
 	"COLORTERM",
 	"TMUX",
 	"KITTY_WINDOW_ID",
@@ -278,6 +279,15 @@ describe("detectCapabilities", () => {
 			const caps = detectCapabilities();
 			assert.strictEqual(caps.trueColor, true);
 			assert.strictEqual(caps.hyperlinks, true);
+			assert.strictEqual(caps.images, null);
+		});
+	});
+
+	it("enables truecolor without hyperlinks for JetBrains terminal", () => {
+		withEnv({ TERMINAL_EMULATOR: "JetBrains-JediTerm", TERM: "xterm-256color" }, () => {
+			const caps = detectCapabilities();
+			assert.strictEqual(caps.trueColor, true);
+			assert.strictEqual(caps.hyperlinks, false);
 			assert.strictEqual(caps.images, null);
 		});
 	});

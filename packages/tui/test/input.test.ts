@@ -100,6 +100,20 @@ describe("Input component", () => {
 			assert.strictEqual(input.getValue(), "bazfoo bar ");
 		});
 
+		it("Ctrl+W preserves ASCII punctuation boundaries", () => {
+			const input = new Input();
+
+			input.setValue("foo.bar");
+			input.handleInput("\x05"); // Ctrl+E
+			input.handleInput("\x17"); // Ctrl+W - deletes "bar"
+			assert.strictEqual(input.getValue(), "foo.");
+
+			input.setValue("foo:bar");
+			input.handleInput("\x05"); // Ctrl+E
+			input.handleInput("\x17"); // Ctrl+W - deletes "bar"
+			assert.strictEqual(input.getValue(), "foo:");
+		});
+
 		it("Ctrl+U saves deleted text to kill ring", () => {
 			const input = new Input();
 

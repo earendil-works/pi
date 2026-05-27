@@ -124,6 +124,12 @@ export interface StreamOptions {
 	 */
 	timeoutMs?: number;
 	/**
+	 * WebSocket connect timeout in milliseconds for providers that support
+	 * WebSocket transports. This covers the connection/open handshake only;
+	 * stream idleness after connection uses timeoutMs.
+	 */
+	websocketConnectTimeoutMs?: number;
+	/**
 	 * Maximum retry attempts for providers/SDKs that support client-side retries.
 	 * For example, OpenAI and Anthropic SDK clients default to 2.
 	 */

@@ -1,13 +1,21 @@
 import { eastAsianWidth } from "get-east-asian-width";
 
-// Grapheme segmenter (shared instance)
-const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+// segmenters (shared instance)
+const graphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const wordSegmenter = new Intl.Segmenter(undefined, { granularity: "word" });
 
 /**
  * Get the shared grapheme segmenter instance.
  */
-export function getSegmenter(): Intl.Segmenter {
-	return segmenter;
+export function getGraphemeSegmenter(): Intl.Segmenter {
+	return graphemeSegmenter;
+}
+
+/**
+ * Get the shared word segmenter instance.
+ */
+export function getWordSegmenter(): Intl.Segmenter {
+	return wordSegmenter;
 }
 
 /**
@@ -62,7 +70,7 @@ function truncateFragmentToWidth(text: string, maxWidth: number): { text: string
 	if (!hasAnsi && !hasTabs) {
 		let result = "";
 		let width = 0;
-		for (const { segment } of segmenter.segment(text)) {
+		for (const { segment } of graphemeSegmenter.segment(text)) {
 			const w = graphemeWidth(segment);
 			if (width + w > maxWidth) {
 				break;
@@ -109,7 +117,7 @@ function truncateFragmentToWidth(text: string, maxWidth: number): { text: string
 			end++;
 		}
 
-		for (const { segment } of segmenter.segment(text.slice(i, end))) {
+		for (const { segment } of graphemeSegmenter.segment(text.slice(i, end))) {
 			const w = graphemeWidth(segment);
 			if (width + w > maxWidth) {
 				return { text: result, width };
@@ -239,7 +247,7 @@ export function visibleWidth(str: string): number {
 
 	// Calculate width
 	let width = 0;
-	for (const { segment } of segmenter.segment(clean)) {
+	for (const { segment } of graphemeSegmenter.segment(clean)) {
 		width += graphemeWidth(segment);
 	}
 
@@ -749,7 +757,7 @@ function wrapSingleLine(line: string, width: number): string[] {
 	return wrapped.length > 0 ? wrapped.map((line) => line.trimEnd()) : [""];
 }
 
-const PUNCTUATION_REGEX = /[(){}[\]<>.,;:'"!?+\-=*/\\|&%^$#@~`]/;
+export const PUNCTUATION_REGEX = /[(){}[\]<>.,;:'"!?+\-=*/\\|&%^$#@~`]/;
 
 /**
  * Check if a character is whitespace.
@@ -790,7 +798,7 @@ function breakLongWord(word: string, width: number, tracker: AnsiCodeTracker): s
 			}
 			// Segment this non-ANSI portion into graphemes
 			const textPortion = word.slice(i, end);
-			for (const seg of segmenter.segment(textPortion)) {
+			for (const seg of graphemeSegmenter.segment(textPortion)) {
 				segments.push({ type: "grapheme", value: seg.segment });
 			}
 			i = end;
@@ -912,7 +920,7 @@ export function truncateToWidth(
 	const hasTabs = text.includes("\t");
 
 	if (!hasAnsi && !hasTabs) {
-		for (const { segment } of segmenter.segment(text)) {
+		for (const { segment } of graphemeSegmenter.segment(text)) {
 			const width = graphemeWidth(segment);
 			if (keepContiguousPrefix && keptWidth + width <= targetWidth) {
 				result += segment;
@@ -967,7 +975,7 @@ export function truncateToWidth(
 				end++;
 			}
 
-			for (const { segment } of segmenter.segment(text.slice(i, end))) {
+			for (const { segment } of graphemeSegmenter.segment(text.slice(i, end))) {
 				const width = graphemeWidth(segment);
 				if (keepContiguousPrefix && keptWidth + width <= targetWidth) {
 					if (pendingAnsi) {
@@ -1037,7 +1045,7 @@ export function sliceWithWidth(
 		let textEnd = i;
 		while (textEnd < line.length && !extractAnsiCode(line, textEnd)) textEnd++;
 
-		for (const { segment } of segmenter.segment(line.slice(i, textEnd))) {
+		for (const { segment } of graphemeSegmenter.segment(line.slice(i, textEnd))) {
 			const w = graphemeWidth(segment);
 			const inRange = currentCol >= startCol && currentCol < endCol;
 			const fits = !strict || currentCol + w <= endCol;
@@ -1105,7 +1113,7 @@ export function extractSegments(
 		let textEnd = i;
 		while (textEnd < line.length && !extractAnsiCode(line, textEnd)) textEnd++;
 
-		for (const { segment } of segmenter.segment(line.slice(i, textEnd))) {
+		for (const { segment } of graphemeSegmenter.segment(line.slice(i, textEnd))) {
 			const w = graphemeWidth(segment);
 
 			if (currentCol < beforeEnd) {

@@ -41,6 +41,7 @@ export function setCellDimensions(dims: CellDimensions): void {
 
 export function detectCapabilities(): TerminalCapabilities {
 	const termProgram = process.env.TERM_PROGRAM?.toLowerCase() || "";
+	const terminalEmulator = process.env.TERMINAL_EMULATOR?.toLowerCase() || "";
 	const term = process.env.TERM?.toLowerCase() || "";
 	const colorTerm = process.env.COLORTERM?.toLowerCase() || "";
 	const hasTrueColorHint = colorTerm === "truecolor" || colorTerm === "24bit";
@@ -80,6 +81,10 @@ export function detectCapabilities(): TerminalCapabilities {
 
 	if (termProgram === "alacritty") {
 		return { images: null, trueColor: true, hyperlinks: true };
+	}
+
+	if (terminalEmulator === "jetbrains-jediterm") {
+		return { images: null, trueColor: true, hyperlinks: false };
 	}
 
 	// Unknown terminal: be conservative. OSC 8 is rendered invisibly as "just

@@ -153,7 +153,7 @@ describe("detectInstallMethod", () => {
 
 		expect(detectInstallMethod()).toBe("pnpm");
 		expect(getUpdateInstruction("@earendil-works/pi-coding-agent")).toBe(
-			"Run: pnpm install -g --ignore-scripts @earendil-works/pi-coding-agent",
+			"Run: pnpm install -g --ignore-scripts --config.minimumReleaseAge=0 @earendil-works/pi-coding-agent",
 		);
 	});
 
@@ -175,8 +175,16 @@ describe("detectInstallMethod", () => {
 		expect(detectInstallMethod()).toBe("npm");
 		expect(command).toEqual({
 			command: "npm",
-			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "@earendil-works/pi-coding-agent"],
-			display: `npm --prefix ${prefix} install -g --ignore-scripts @earendil-works/pi-coding-agent`,
+			args: [
+				"--prefix",
+				prefix,
+				"install",
+				"-g",
+				"--ignore-scripts",
+				"--min-release-age=0",
+				"@earendil-works/pi-coding-agent",
+			],
+			display: `npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @earendil-works/pi-coding-agent`,
 		});
 	});
 
@@ -187,8 +195,8 @@ describe("detectInstallMethod", () => {
 
 		expect(command).toEqual({
 			command: "npm",
-			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "@new-scope/pi"],
-			display: `npm --prefix ${prefix} uninstall -g @mariozechner/pi-coding-agent && npm --prefix ${prefix} install -g --ignore-scripts @new-scope/pi`,
+			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "--min-release-age=0", "@new-scope/pi"],
+			display: `npm --prefix ${prefix} uninstall -g @mariozechner/pi-coding-agent && npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @new-scope/pi`,
 			steps: [
 				{
 					command: "npm",
@@ -197,8 +205,8 @@ describe("detectInstallMethod", () => {
 				},
 				{
 					command: "npm",
-					args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "@new-scope/pi"],
-					display: `npm --prefix ${prefix} install -g --ignore-scripts @new-scope/pi`,
+					args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "--min-release-age=0", "@new-scope/pi"],
+					display: `npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @new-scope/pi`,
 				},
 			],
 		});
@@ -211,8 +219,16 @@ describe("detectInstallMethod", () => {
 
 		expect(command).toEqual({
 			command: "npm",
-			args: ["--prefix", prefix, "install", "-g", "--ignore-scripts", "@earendil-works/pi-coding-agent"],
-			display: `npm --prefix ${prefix} install -g --ignore-scripts @earendil-works/pi-coding-agent`,
+			args: [
+				"--prefix",
+				prefix,
+				"install",
+				"-g",
+				"--ignore-scripts",
+				"--min-release-age=0",
+				"@earendil-works/pi-coding-agent",
+			],
+			display: `npm --prefix ${prefix} install -g --ignore-scripts --min-release-age=0 @earendil-works/pi-coding-agent`,
 		});
 	});
 
@@ -227,6 +243,7 @@ describe("detectInstallMethod", () => {
 			"install",
 			"-g",
 			"--ignore-scripts",
+			"--min-release-age=0",
 			"@earendil-works/pi-coding-agent",
 		]);
 	});
@@ -237,7 +254,7 @@ describe("detectInstallMethod", () => {
 		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent");
 
 		expect(command?.display).toBe(
-			`npm --prefix "${prefix}" install -g --ignore-scripts @earendil-works/pi-coding-agent`,
+			`npm --prefix "${prefix}" install -g --ignore-scripts --min-release-age=0 @earendil-works/pi-coding-agent`,
 		);
 	});
 
@@ -248,7 +265,7 @@ describe("detectInstallMethod", () => {
 
 		expect(detectInstallMethod()).toBe("npm");
 		expect(getUpdateInstruction("@earendil-works/pi-coding-agent")).toBe(
-			"Run: npm install -g --ignore-scripts @earendil-works/pi-coding-agent",
+			"Run: npm install -g --ignore-scripts --min-release-age=0 @earendil-works/pi-coding-agent",
 		);
 	});
 
@@ -260,8 +277,8 @@ describe("detectInstallMethod", () => {
 		expect(detectInstallMethod()).toBe("bun");
 		expect(command).toEqual({
 			command: "bun",
-			args: ["install", "-g", "--ignore-scripts", "@earendil-works/pi-coding-agent"],
-			display: "bun install -g --ignore-scripts @earendil-works/pi-coding-agent",
+			args: ["install", "-g", "--ignore-scripts", "--minimum-release-age=0", "@earendil-works/pi-coding-agent"],
+			display: "bun install -g --ignore-scripts --minimum-release-age=0 @earendil-works/pi-coding-agent",
 		});
 	});
 
@@ -273,8 +290,9 @@ describe("detectInstallMethod", () => {
 		expect(detectInstallMethod()).toBe("pnpm");
 		expect(command).toEqual({
 			command: "pnpm",
-			args: ["install", "-g", "--ignore-scripts", "@new-scope/pi"],
-			display: "pnpm remove -g @mariozechner/pi-coding-agent && pnpm install -g --ignore-scripts @new-scope/pi",
+			args: ["install", "-g", "--ignore-scripts", "--config.minimumReleaseAge=0", "@new-scope/pi"],
+			display:
+				"pnpm remove -g @mariozechner/pi-coding-agent && pnpm install -g --ignore-scripts --config.minimumReleaseAge=0 @new-scope/pi",
 			steps: [
 				{
 					command: "pnpm",
@@ -283,8 +301,8 @@ describe("detectInstallMethod", () => {
 				},
 				{
 					command: "pnpm",
-					args: ["install", "-g", "--ignore-scripts", "@new-scope/pi"],
-					display: "pnpm install -g --ignore-scripts @new-scope/pi",
+					args: ["install", "-g", "--ignore-scripts", "--config.minimumReleaseAge=0", "@new-scope/pi"],
+					display: "pnpm install -g --ignore-scripts --config.minimumReleaseAge=0 @new-scope/pi",
 				},
 			],
 		});
@@ -328,8 +346,8 @@ describe("detectInstallMethod", () => {
 		expect(detectInstallMethod()).toBe("pnpm");
 		expect(command).toEqual({
 			command: "pnpm",
-			args: ["install", "-g", "--ignore-scripts", packageName],
-			display: `pnpm install -g --ignore-scripts ${packageName}`,
+			args: ["install", "-g", "--ignore-scripts", "--config.minimumReleaseAge=0", packageName],
+			display: `pnpm install -g --ignore-scripts --config.minimumReleaseAge=0 ${packageName}`,
 		});
 	});
 
@@ -366,8 +384,9 @@ describe("detectInstallMethod", () => {
 		expect(detectInstallMethod()).toBe("bun");
 		expect(command).toEqual({
 			command: "bun",
-			args: ["install", "-g", "--ignore-scripts", "@new-scope/pi"],
-			display: "bun uninstall -g @mariozechner/pi-coding-agent && bun install -g --ignore-scripts @new-scope/pi",
+			args: ["install", "-g", "--ignore-scripts", "--minimum-release-age=0", "@new-scope/pi"],
+			display:
+				"bun uninstall -g @mariozechner/pi-coding-agent && bun install -g --ignore-scripts --minimum-release-age=0 @new-scope/pi",
 			steps: [
 				{
 					command: "bun",
@@ -376,8 +395,8 @@ describe("detectInstallMethod", () => {
 				},
 				{
 					command: "bun",
-					args: ["install", "-g", "--ignore-scripts", "@new-scope/pi"],
-					display: "bun install -g --ignore-scripts @new-scope/pi",
+					args: ["install", "-g", "--ignore-scripts", "--minimum-release-age=0", "@new-scope/pi"],
+					display: "bun install -g --ignore-scripts --minimum-release-age=0 @new-scope/pi",
 				},
 			],
 		});

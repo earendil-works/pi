@@ -15,9 +15,16 @@ export class UserMessageComponent extends Container {
 		super();
 		this.contentBox = new Box(1, 1, (content: string) => theme.bg("userMessageBg", content));
 		this.contentBox.addChild(
-			new Markdown(text, 0, 0, markdownTheme, {
-				color: (content: string) => theme.fg("userMessageText", content),
-			}),
+			new Markdown(
+				text,
+				0,
+				0,
+				markdownTheme,
+				{
+					color: (content: string) => theme.fg("userMessageText", content),
+				},
+				{ preserveOrderedListMarkers: true },
+			),
 		);
 		this.addChild(this.contentBox);
 	}

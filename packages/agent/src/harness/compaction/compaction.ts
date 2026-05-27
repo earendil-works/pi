@@ -198,22 +198,33 @@ export function shouldCompact(contextTokens: number, contextWindow: number, sett
 	return contextTokens > contextWindow - settings.reserveTokens;
 }
 
+const ESTIMATED_IMAGE_CHARS = 4800;
+
+function estimateTextAndImageContentChars(content: string | Array<{ type: string; text?: string }>): number {
+	if (typeof content === "string") {
+		return content.length;
+	}
+
+	let chars = 0;
+	for (const block of content) {
+		if (block.type === "text" && block.text) {
+			chars += block.text.length;
+		} else if (block.type === "image") {
+			chars += ESTIMATED_IMAGE_CHARS;
+		}
+	}
+	return chars;
+}
+
 /** Estimate token count for one message using a conservative character heuristic. */
 export function estimateTokens(message: AgentMessage): number {
 	let chars = 0;
 
 	switch (message.role) {
 		case "user": {
-			const content = (message as { content: string | Array<{ type: string; text?: string }> }).content;
-			if (typeof content === "string") {
-				chars = content.length;
-			} else if (Array.isArray(content)) {
-				for (const block of content) {
-					if (block.type === "text" && block.text) {
-						chars += block.text.length;
-					}
-				}
-			}
+			chars = estimateTextAndImageContentChars(
+				(message as { content: string | Array<{ type: string; text?: string }> }).content,
+			);
 			return Math.ceil(chars / 4);
 		}
 		case "assistant": {
@@ -231,18 +242,7 @@ export function estimateTokens(message: AgentMessage): number {
 		}
 		case "custom":
 		case "toolResult": {
-			if (typeof message.content === "string") {
-				chars = message.content.length;
-			} else {
-				for (const block of message.content) {
-					if (block.type === "text" && block.text) {
-						chars += block.text.length;
-					}
-					if (block.type === "image") {
-						chars += 4800;
-					}
-				}
-			}
+			chars = estimateTextAndImageContentChars(message.content);
 			return Math.ceil(chars / 4);
 		}
 		case "bashExecution": {
