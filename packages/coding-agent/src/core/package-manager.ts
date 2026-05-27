@@ -1505,24 +1505,10 @@ export class DefaultPackageManager implements PackageManager {
 		const trimmed = originHeadRef.trim();
 		const prefix = "refs/remotes/origin/";
 		const branch = trimmed.startsWith(prefix) ? trimmed.slice(prefix.length) : "";
-		if (branch) {
-			return {
-				ref: "origin/HEAD",
-				head,
-				fetchArgs: [
-					"fetch",
-					"--prune",
-					"--no-tags",
-					"origin",
-					`+refs/heads/${branch}:refs/remotes/origin/${branch}`,
-				],
-			};
-		}
-		return {
-			ref: "origin/HEAD",
-			head,
-			fetchArgs: ["fetch", "--prune", "--no-tags", "origin", "+HEAD:refs/remotes/origin/HEAD"],
-		};
+		const fetchArgs = branch
+			? ["fetch", "--prune", "--no-tags", "origin", `+refs/heads/${branch}:refs/remotes/origin/${branch}`]
+			: ["fetch", "--prune", "--no-tags", "origin", "+HEAD:refs/remotes/origin/HEAD"];
+		return { ref: "origin/HEAD", head, fetchArgs };
 	}
 
 	private runGitRemoteCommand(installedPath: string, args: string[]): Promise<string> {
