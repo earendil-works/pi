@@ -43,7 +43,12 @@ import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
 import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
 import { ExtensionSelectorComponent } from "./modes/interactive/components/extension-selector.ts";
-import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
+import {
+	detectTerminalBackground,
+	initTheme,
+	queryTerminalBackgroundColor,
+	stopThemeWatcher,
+} from "./modes/interactive/theme/theme.ts";
 import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
@@ -433,6 +438,26 @@ function resolveCliPaths(cwd: string, paths: string[] | undefined): string[] | u
 	return paths?.map((value) => (isLocalPath(value) ? resolvePath(value, cwd) : value));
 }
 
+async function initializeStartupTheme(settingsManager: SettingsManager, appMode: AppMode, parsed: Args): Promise<void> {
+	if (appMode !== "interactive") {
+		return;
+	}
+	if (parsed.help || parsed.listModels !== undefined) {
+		return;
+	}
+	if (!process.stdin.isTTY || !process.stdout.isTTY) {
+		return;
+	}
+	if (settingsManager.getTheme()) {
+		return;
+	}
+
+	const terminalBackgroundColor = await queryTerminalBackgroundColor();
+	const detection = detectTerminalBackground({ terminalBackgroundColor });
+	settingsManager.setTheme(detection.theme);
+	await settingsManager.flush();
+}
+
 async function promptForMissingSessionCwd(
 	issue: SessionCwdIssue,
 	settingsManager: SettingsManager,
@@ -543,6 +568,8 @@ export async function main(args: string[], options?: MainOptions) {
 	const agentDir = getAgentDir();
 	const startupSettingsManager = SettingsManager.create(cwd, agentDir);
 	reportDiagnostics(collectSettingsDiagnostics(startupSettingsManager, "startup session lookup"));
+	await initializeStartupTheme(startupSettingsManager, appMode, parsed);
+	time("initializeStartupTheme");
 
 	// Decide the final runtime cwd before creating cwd-bound runtime services.
 	// --session and --resume may select a session from another project, so project-local

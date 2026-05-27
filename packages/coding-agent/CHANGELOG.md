@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Fixed first-run theme selection to query the terminal background before choosing the built-in light or dark theme.
+
 ### Fixed
 
 - Fixed fenced `diff` code blocks and other highlight.js scopes to keep theme-aware syntax colors after the `cli-highlight` replacement ([#5092](https://github.com/earendil-works/pi/issues/5092)).

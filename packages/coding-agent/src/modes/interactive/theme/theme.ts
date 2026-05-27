@@ -639,7 +639,34 @@ export interface TerminalThemeDetection {
 
 export interface TerminalThemeDetectionOptions {
 	env?: NodeJS.ProcessEnv;
+	terminalBackgroundColor?: RgbColor;
 }
+
+export interface TerminalBackgroundQueryInput {
+	readonly isTTY?: boolean;
+	readonly isRaw?: boolean;
+	setRawMode?(mode: boolean): void;
+	setEncoding(encoding: BufferEncoding): void;
+	resume(): void;
+	pause(): void;
+	isPaused(): boolean;
+	on(event: "data", listener: (data: string | Buffer) => void): void;
+	off(event: "data", listener: (data: string | Buffer) => void): void;
+}
+
+export interface TerminalBackgroundQueryOutput {
+	readonly isTTY?: boolean;
+	write(data: string): boolean | undefined;
+}
+
+export interface TerminalBackgroundQueryOptions {
+	stdin?: TerminalBackgroundQueryInput;
+	stdout?: TerminalBackgroundQueryOutput;
+	timeoutMs?: number;
+}
+
+const OSC11_BACKGROUND_QUERY = "\x1b]11;?\x07";
+const TERMINAL_BACKGROUND_QUERY_TIMEOUT_MS = 150;
 
 function getColorFgBgBackgroundIndex(colorfgbg: string): number | undefined {
 	const parts = colorfgbg.split(";");
@@ -711,7 +738,104 @@ export function parseOsc11BackgroundColor(data: string): RgbColor | undefined {
 	return r !== undefined && g !== undefined && b !== undefined ? { r, g, b } : undefined;
 }
 
+function findOsc11BackgroundColor(data: string): RgbColor | undefined {
+	const pattern = /\x1b\]11;[^\x07\x1b]*(?:\x07|\x1b\\)/gi;
+	let match = pattern.exec(data);
+	while (match !== null) {
+		const rgb = parseOsc11BackgroundColor(match[0]);
+		if (rgb) {
+			return rgb;
+		}
+		match = pattern.exec(data);
+	}
+	return undefined;
+}
+
+export async function queryTerminalBackgroundColor(
+	options: TerminalBackgroundQueryOptions = {},
+): Promise<RgbColor | undefined> {
+	const stdin = options.stdin ?? process.stdin;
+	const stdout = options.stdout ?? process.stdout;
+	if (!stdin.isTTY || !stdout.isTTY || !stdin.setRawMode) {
+		return undefined;
+	}
+
+	const wasRaw = stdin.isRaw ?? false;
+	const wasPaused = stdin.isPaused();
+	try {
+		stdin.setRawMode(true);
+		stdin.setEncoding("utf8");
+		stdin.resume();
+	} catch {
+		try {
+			stdin.setRawMode(wasRaw);
+		} catch {
+			// Ignore restore failures after a failed query setup.
+		}
+		if (wasPaused) {
+			stdin.pause();
+		}
+		return undefined;
+	}
+
+	return new Promise((resolve) => {
+		let settled = false;
+		let buffer = "";
+		let timer: NodeJS.Timeout | undefined;
+
+		const onData = (chunk: string | Buffer) => {
+			buffer += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : chunk;
+			const rgb = findOsc11BackgroundColor(buffer);
+			if (rgb) {
+				finish(rgb);
+			}
+		};
+
+		const cleanup = () => {
+			if (timer) {
+				clearTimeout(timer);
+			}
+			stdin.off("data", onData);
+			try {
+				stdin.setRawMode?.(wasRaw);
+			} catch {
+				// Ignore restore failures.
+			}
+			if (wasPaused) {
+				stdin.pause();
+			}
+		};
+
+		const finish = (rgb: RgbColor | undefined) => {
+			if (settled) {
+				return;
+			}
+			settled = true;
+			cleanup();
+			resolve(rgb);
+		};
+
+		stdin.on("data", onData);
+		timer = setTimeout(() => finish(undefined), options.timeoutMs ?? TERMINAL_BACKGROUND_QUERY_TIMEOUT_MS);
+		try {
+			stdout.write(OSC11_BACKGROUND_QUERY);
+		} catch {
+			finish(undefined);
+		}
+	});
+}
+
 export function detectTerminalBackground(options: TerminalThemeDetectionOptions = {}): TerminalThemeDetection {
+	if (options.terminalBackgroundColor) {
+		const { r, g, b } = options.terminalBackgroundColor;
+		return {
+			theme: getThemeForRgbColor(options.terminalBackgroundColor),
+			source: "terminal background",
+			detail: `OSC 11 background rgb(${r}, ${g}, ${b})`,
+			confidence: "high",
+		};
+	}
+
 	const env = options.env ?? process.env;
 	const colorfgbg = env.COLORFGBG || "";
 	const bg = getColorFgBgBackgroundIndex(colorfgbg);

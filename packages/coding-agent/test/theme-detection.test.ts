@@ -5,13 +5,81 @@ import {
 	getThemeByName,
 	getThemeForRgbColor,
 	parseOsc11BackgroundColor,
+	queryTerminalBackgroundColor,
+	type TerminalBackgroundQueryInput,
+	type TerminalBackgroundQueryOutput,
 } from "../src/modes/interactive/theme/theme.ts";
+
+class FakeStdin implements TerminalBackgroundQueryInput {
+	isTTY = true;
+	isRaw = false;
+	private paused = true;
+	private readonly listeners = new Set<(data: string | Buffer) => void>();
+
+	setRawMode(mode: boolean): void {
+		this.isRaw = mode;
+	}
+
+	setEncoding(_encoding: BufferEncoding): void {}
+
+	resume(): void {
+		this.paused = false;
+	}
+
+	pause(): void {
+		this.paused = true;
+	}
+
+	isPaused(): boolean {
+		return this.paused;
+	}
+
+	on(_event: "data", listener: (data: string | Buffer) => void): void {
+		this.listeners.add(listener);
+	}
+
+	off(_event: "data", listener: (data: string | Buffer) => void): void {
+		this.listeners.delete(listener);
+	}
+
+	send(data: string): void {
+		for (const listener of this.listeners) {
+			listener(data);
+		}
+	}
+}
+
+class FakeStdout implements TerminalBackgroundQueryOutput {
+	isTTY = true;
+	writes: string[] = [];
+	private readonly onWriteCallback: (() => void) | undefined;
+
+	constructor(onWrite?: () => void) {
+		this.onWriteCallback = onWrite;
+	}
+
+	write(data: string): boolean {
+		this.writes.push(data);
+		this.onWriteCallback?.();
+		return true;
+	}
+}
 
 afterEach(() => {
 	resetCapabilitiesCache();
 });
 
 describe("detectTerminalBackground", () => {
+	it("uses the terminal background color before COLORFGBG", () => {
+		expect(
+			detectTerminalBackground({ env: { COLORFGBG: "15;0" }, terminalBackgroundColor: { r: 255, g: 255, b: 255 } }),
+		).toMatchObject({
+			theme: "light",
+			source: "terminal background",
+			confidence: "high",
+		});
+	});
+
 	it("uses the COLORFGBG background color index", () => {
 		expect(detectTerminalBackground({ env: { COLORFGBG: "0;15" } })).toMatchObject({
 			theme: "light",
@@ -51,6 +119,24 @@ describe("theme color mode", () => {
 		if (!truecolorTheme) throw new Error("dark theme not found");
 		expect(truecolorTheme.getColorMode()).toBe("truecolor");
 		expect(truecolorTheme.getFgAnsi("accent")).toMatch(/^\x1b\[38;2;\d+;\d+;\d+m$/);
+	});
+});
+
+describe("queryTerminalBackgroundColor", () => {
+	it("queries OSC 11 and restores stdin state", async () => {
+		const stdin = new FakeStdin();
+		const stdout = new FakeStdout(() => {
+			queueMicrotask(() => stdin.send("\x1b]11;rgb:ffff/ffff/ffff\x07"));
+		});
+
+		await expect(queryTerminalBackgroundColor({ stdin, stdout, timeoutMs: 50 })).resolves.toEqual({
+			r: 255,
+			g: 255,
+			b: 255,
+		});
+		expect(stdout.writes).toEqual(["\x1b]11;?\x07"]);
+		expect(stdin.isRaw).toBe(false);
+		expect(stdin.isPaused()).toBe(true);
 	});
 });
 
