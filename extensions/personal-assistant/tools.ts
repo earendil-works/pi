@@ -1,16 +1,8 @@
-/**
- * Personal Assistant Tools Extension
- *
- * Provides three tools for the Pi coding agent:
- * - todo_write: Manage a persistent todo list
- * - web_search: Search the web via Tavily or DuckDuckGo
- * - web_fetch: Fetch and extract text from web pages
- */
-
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
-import { join, dirname } from "node:path";
+import { readFileSync, existsSync } from "node:fs";
+import { join } from "node:path";
 import { homedir } from "node:os";
 
 // ============================================================================
@@ -36,10 +28,6 @@ function getConfigPath(): string {
 	return join(homedir(), ".pi", "agent", "settings.json");
 }
 
-function getTodoPath(): string {
-	return join(homedir(), ".pi", "agent", "data", "todo.json");
-}
-
 function loadSettings(): PiSettings {
 	const configPath = getConfigPath();
 	try {
@@ -53,63 +41,17 @@ function loadSettings(): PiSettings {
 	return {};
 }
 
-function ensureDirectory(filePath: string): void {
-	const dir = dirname(filePath);
-	if (!existsSync(dir)) {
-		mkdirSync(dir, { recursive: true });
-	}
-}
-
-// ============================================================================
-// Todo Types
-// ============================================================================
-
-interface Todo {
-	id: string;
-	content: string;
-	priority: "low" | "medium" | "high";
-	category: string;
-	completed: boolean;
-	created_at: string;
-	updated_at: string;
-}
-
-function loadTodos(): Todo[] {
-	const todoPath = getTodoPath();
-	try {
-		if (existsSync(todoPath)) {
-			const raw = readFileSync(todoPath, "utf-8");
-			return JSON.parse(raw) as Todo[];
-		}
-	} catch {
-		// File missing or invalid
-	}
-	return [];
-}
-
-function saveTodos(todos: Todo[]): void {
-	const todoPath = getTodoPath();
-	ensureDirectory(todoPath);
-	writeFileSync(todoPath, JSON.stringify(todos, null, 2), "utf-8");
-}
-
-function generateId(): string {
-	return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-}
-
 // ============================================================================
 // SSRF Protection
 // ============================================================================
 
 function isPrivateIP(hostname: string): boolean {
-	// IPv4 private ranges
 	if (/^127\./.test(hostname)) return true;
 	if (/^10\./.test(hostname)) return true;
 	if (/^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(hostname)) return true;
 	if (/^192\.168\./.test(hostname)) return true;
 	if (/^0\./.test(hostname)) return true;
 	if (hostname === "localhost") return true;
-	// IPv6 loopback
 	if (hostname === "::1" || hostname === "[::1]") return true;
 	if (hostname === "0:0:0:0:0:0:0:1") return true;
 	return false;
@@ -121,20 +63,14 @@ function isPrivateIP(hostname: string): boolean {
 
 function htmlToText(html: string): string {
 	let text = html;
-	// Remove script and style tags with content
 	text = text.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, "");
 	text = text.replace(/<style\b[^<]*(?:(?!<\/style>)<[^<]*)*<\/style>/gi, "");
-	// Remove HTML comments
 	text = text.replace(/<!--[\s\S]*?-->/g, "");
-	// Replace common block elements with newlines
 	text = text.replace(/<\/(p|div|h[1-6]|li|tr|blockquote|section|article|header|footer|nav)>/gi, "\n");
 	text = text.replace(/<br\s*\/?>/gi, "\n");
 	text = text.replace(/<hr\s*\/?>/gi, "\n---\n");
-	// Replace list items
 	text = text.replace(/<li\b[^>]*>/gi, "- ");
-	// Remove all remaining tags
 	text = text.replace(/<[^>]+>/g, " ");
-	// Decode common HTML entities
 	text = text.replace(/&amp;/g, "&");
 	text = text.replace(/&lt;/g, "<");
 	text = text.replace(/&gt;/g, ">");
@@ -143,7 +79,6 @@ function htmlToText(html: string): string {
 	text = text.replace(/&nbsp;/g, " ");
 	text = text.replace(/&#(\d+);/g, (_match, code) => String.fromCharCode(Number(code)));
 	text = text.replace(/&#x([0-9a-fA-F]+);/g, (_match, hex) => String.fromCharCode(parseInt(hex, 16)));
-	// Normalize whitespace
 	text = text.replace(/[ \t]+/g, " ");
 	text = text.replace(/\n\s*\n\s*\n+/g, "\n\n");
 	text = text.trim();
@@ -151,20 +86,95 @@ function htmlToText(html: string): string {
 }
 
 // ============================================================================
-// Tool Definitions
+// Todowrite — Claude-style ephemeral planning tool
 // ============================================================================
 
-const TodoWriteParams = Type.Object({
-	todos: Type.Array(
+interface TodoItem {
+	id: string;
+	content: string;
+	status: "pending" | "in_progress" | "completed" | "cancelled";
+}
+
+type TodoStatus = TodoItem["status"];
+
+const VALID_STATUSES: TodoStatus[] = ["pending", "in_progress", "completed", "cancelled"];
+
+const VALID_TRANSITIONS: Record<TodoStatus, TodoStatus[]> = {
+	pending: ["in_progress", "cancelled"],
+	in_progress: ["completed", "cancelled", "pending"],
+	completed: ["pending"],
+	cancelled: ["pending"],
+};
+
+let todoItems: TodoItem[] = [];
+let roundsSinceTodo = 0;
+let contextCount = 0;
+
+function renderTodos(): string {
+	if (todoItems.length === 0) return "No todos.";
+	const lines = todoItems.map((t) => {
+		const marker = t.status === "pending" ? "[ ]"
+			: t.status === "in_progress" ? "[>]"
+			: t.status === "completed" ? "[x]"
+			: "[-]";
+		return `${marker} #${t.id}: ${t.content}`;
+	});
+	const done = todoItems.filter((t) => t.status === "completed").length;
+	lines.push(`\n(${done}/${todoItems.length} completed)`);
+	return lines.join("\n");
+}
+
+function validateItems(items: { id: string; content: string; status: string }[]): string | null {
+	if (items.length > 20) {
+		return "Error: Maximum 20 todos allowed.";
+	}
+
+	const inProgressCount = items.filter((t) => t.status === "in_progress").length;
+	if (inProgressCount > 1) {
+		return "Error: Only one task can be in_progress at a time.";
+	}
+
+	for (const item of items) {
+		if (!item.content || item.content.trim().length === 0) {
+			return `Error: Item ${item.id}: content is required.`;
+		}
+		if (!VALID_STATUSES.includes(item.status as TodoStatus)) {
+			return `Error: Item ${item.id}: Invalid status "${item.status}". Must be one of: ${VALID_STATUSES.join(", ")}.`;
+		}
+
+		const prev = todoItems.find((t) => t.id === item.id);
+		if (prev && !VALID_TRANSITIONS[prev.status].includes(item.status as TodoStatus)) {
+			return `Error: Item #${item.id}: Cannot transition from "${prev.status}" to "${item.status}". Allowed transitions: ${VALID_TRANSITIONS[prev.status].join(" → ")}.`;
+		}
+	}
+
+	return null;
+}
+
+// ============================================================================
+// Tool Parameter Schemas
+// ============================================================================
+
+const TodowriteParams = Type.Object({
+	items: Type.Array(
 		Type.Object({
-			action: Type.Union([Type.Literal("add"), Type.Literal("done"), Type.Literal("update"), Type.Literal("list")]),
-			id: Type.Optional(Type.String()),
-			content: Type.Optional(Type.String()),
-			priority: Type.Optional(Type.Union([Type.Literal("low"), Type.Literal("medium"), Type.Literal("high")])),
-			category: Type.Optional(Type.String()),
+			id: Type.String({ description: "Unique identifier for this todo item" }),
+			content: Type.String({ description: "Description of the task to complete" }),
+			status: Type.Union(
+				[
+					Type.Literal("pending"),
+					Type.Literal("in_progress"),
+					Type.Literal("completed"),
+					Type.Literal("cancelled"),
+				],
+				{
+					description:
+						"pending: not started, in_progress: actively working, completed: done, cancelled: abandoned",
+				},
+			),
 		}),
+		{ minItems: 1 },
 	),
-	merge: Type.Optional(Type.Boolean()),
 });
 
 const WebSearchParams = Type.Object({
@@ -182,132 +192,136 @@ const WebFetchParams = Type.Object({
 // ============================================================================
 
 export function registerTools(pi: ExtensionAPI): void {
-	// ----------------------------------------------------------------
-	// todo_write
-	// ----------------------------------------------------------------
+	// ============================================================================
+	// Hook: before_agent_start — reset state + inject todowrite rules
+	// ============================================================================
+
+	pi.on("before_agent_start", (event) => {
+		todoItems = [];
+		roundsSinceTodo = 0;
+		contextCount = 0;
+
+		return {
+			systemPrompt:
+				event.systemPrompt +
+				[
+					"",
+					"",
+					"## Planning",
+					"",
+					"You have a Todowrite tool available for planning and tracking multi-step tasks (3+ steps).",
+					"Rules:",
+					"  1. Create a plan with todowrite before starting a multi-step task",
+					"  2. Mark the current step as in_progress before working on it",
+					"  3. Mark steps as completed when done — update after EVERY step, do not batch completions",
+					"  4. Only one item can be in_progress at a time",
+					"  5. Change priority (high/medium/low) as needed to indicate importance",
+					'  6. Simple single-step tasks do not need a plan — use Todowrite only when it helps',
+					"",
+					"Your todo list is currently empty. Do not tell the user about this. If the current task benefits from planning, create one. Otherwise, ignore.",
+				].join("\n"),
+		};
+	});
+
+	// ============================================================================
+	// Hook: context — inject nag reminders
+	// ============================================================================
+
+	pi.on("context", (event: { messages: AgentMessage[] }) => {
+		contextCount++;
+
+		if (contextCount === 1 && todoItems.length === 0) {
+			event.messages.push({
+				role: "user",
+				content: [
+					{
+						type: "text",
+						text: '<system-reminder>Your todo list is currently empty. Do not tell the user about this reminder. If you are working on a task that benefits from a todo list, use the Todowrite tool to create one. If not, feel free to ignore this.</system-reminder>',
+					},
+				],
+			});
+		}
+
+		const hasActiveItems = todoItems.some(
+			(t) => t.status === "pending" || t.status === "in_progress",
+		);
+		if (hasActiveItems && roundsSinceTodo >= 3) {
+			event.messages.push({
+				role: "user",
+				content: [
+					{
+						type: "text",
+						text: '<reminder>Update your todos.</reminder>',
+					},
+				],
+			});
+			roundsSinceTodo = 0;
+		}
+	});
+
+	// ============================================================================
+	// Hook: turn_end — detect todowrite usage, update counter
+	// ============================================================================
+
+	pi.on("turn_end", (event: { message: { content?: { type: string; name?: string }[] } }) => {
+		const usedTodo = event.message.content?.some(
+			(block) => block.type === "tool_use" && block.name === "todowrite",
+		);
+
+		if (usedTodo) {
+			roundsSinceTodo = 0;
+		} else {
+			const hasActiveItems = todoItems.some(
+				(t) => t.status === "pending" || t.status === "in_progress",
+			);
+			if (hasActiveItems) {
+				roundsSinceTodo++;
+			}
+		}
+	});
+
+	// ============================================================================
+	// todowrite
+	// ============================================================================
+
 	pi.registerTool({
-		name: "todo_write",
-		label: "Todo Write",
+		name: "todowrite",
+		label: "Todowrite",
 		description:
-			"Manage a persistent todo list stored at ~/.pi/agent/data/todo.json. " +
-			"Supports batch operations: add (create new todos), done (mark complete by id), " +
-			"update (modify content/priority by id), list (return summary). " +
-			"When merge is true (default), add operations append to existing items. " +
-			"When false, existing items are replaced by the new set.",
-		promptSnippet: "Manage a persistent todo list with add, done, update, and list actions.",
-		parameters: TodoWriteParams,
+			"Plan and track progress for multi-step tasks. Each item has id, content, and status (pending/in_progress/completed/cancelled). " +
+			"Send the COMPLETE list of all items on every call (full replacement). " +
+			"Only one item can be in_progress at a time. Max 20 items.",
+		promptSnippet: "Plan and track progress for multi-step tasks.",
+		parameters: TodowriteParams,
 
 		async execute(_toolCallId, params, _signal, _onUpdate, _ctx) {
-			const merge = params.merge !== false; // default true
-			let todos = loadTodos();
-			const results: string[] = [];
+			const items = params.items;
 
-			for (const item of params.todos) {
-				switch (item.action) {
-					case "add": {
-						if (!item.content) {
-							results.push("Error: content is required for add action");
-							continue;
-						}
-						const newTodo: Todo = {
-							id: generateId(),
-							content: item.content,
-							priority: item.priority ?? "medium",
-							category: item.category ?? "general",
-							completed: false,
-							created_at: new Date().toISOString(),
-							updated_at: new Date().toISOString(),
-						};
-						if (merge) {
-							todos.push(newTodo);
-						} else {
-							todos = [newTodo];
-						}
-						results.push(`Added todo ${newTodo.id}: ${newTodo.content}`);
-						break;
-					}
-
-					case "done": {
-						if (!item.id) {
-							results.push("Error: id is required for done action");
-							continue;
-						}
-						const todo = todos.find((t) => t.id === item.id);
-						if (!todo) {
-							results.push(`Error: todo ${item.id} not found`);
-							continue;
-						}
-						todo.completed = true;
-						todo.updated_at = new Date().toISOString();
-						results.push(`Marked todo ${todo.id} as done: ${todo.content}`);
-						break;
-					}
-
-					case "update": {
-						if (!item.id) {
-							results.push("Error: id is required for update action");
-							continue;
-						}
-						const todo = todos.find((t) => t.id === item.id);
-						if (!todo) {
-							results.push(`Error: todo ${item.id} not found`);
-							continue;
-						}
-						if (item.content) todo.content = item.content;
-						if (item.priority) todo.priority = item.priority;
-						if (item.category) todo.category = item.category;
-						todo.updated_at = new Date().toISOString();
-						results.push(`Updated todo ${todo.id}`);
-						break;
-					}
-
-					case "list": {
-						const total = todos.length;
-						const completed = todos.filter((t) => t.completed).length;
-						const uncompleted = total - completed;
-
-						const grouped: Record<string, Todo[]> = { high: [], medium: [], low: [] };
-						for (const t of todos) {
-							if (!t.completed) {
-								grouped[t.priority].push(t);
-							}
-						}
-
-						let summary = `Total: ${total} (${completed} completed, ${uncompleted} pending)\n`;
-						summary += `\nPending by priority:`;
-						summary += `\n  High: ${grouped.high.map((t) => `${t.id} - ${t.content}`).join(", ") || "(none)"}`;
-						summary += `\n  Medium: ${grouped.medium.map((t) => `${t.id} - ${t.content}`).join(", ") || "(none)"}`;
-						summary += `\n  Low: ${grouped.low.map((t) => `${t.id} - ${t.content}`).join(", ") || "(none)"}`;
-
-						if (completed > 0) {
-							summary += `\n\nCompleted:`;
-							for (const t of todos.filter((t) => t.completed)) {
-								summary += `\n  ${t.id} - ${t.content}`;
-							}
-						}
-
-						results.push(summary);
-						break;
-					}
-				}
+			const error = validateItems(items);
+			if (error) {
+				return {
+					content: [{ type: "text", text: error }],
+					details: { error, currentTodos: renderTodos() },
+				};
 			}
 
-			// Save after processing all items (except pure list operations)
-			const hasMutations = params.todos.some((t) => t.action !== "list");
-			if (hasMutations) {
-				saveTodos(todos);
-			}
+			todoItems = items.map((item) => ({
+				id: item.id,
+				content: item.content.trim(),
+				status: item.status as TodoStatus,
+			}));
 
 			return {
-				content: [{ type: "text", text: results.join("\n\n") }],
-				details: { todos, actionCount: params.todos.length },
+				content: [{ type: "text", text: renderTodos() }],
+				details: { items: todoItems },
 			};
 		},
 	});
 
-	// ----------------------------------------------------------------
+	// ============================================================================
 	// web_search
-	// ----------------------------------------------------------------
+	// ============================================================================
+
 	pi.registerTool({
 		name: "web_search",
 		label: "Web Search",
@@ -371,7 +385,6 @@ export function registerTools(pi: ExtensionAPI): void {
 						details: { provider: "tavily", results },
 					};
 				} else {
-					// DuckDuckGo
 					const url = `https://api.duckduckgo.com/?q=${encodeURIComponent(params.query)}&format=json&no_html=1&skip_disambig=1`;
 
 					const controller = new AbortController();
@@ -402,7 +415,6 @@ export function registerTools(pi: ExtensionAPI): void {
 
 						const results: Array<{ title: string; url: string; snippet: string }> = [];
 
-						// Add the main abstract if present
 						if (data.AbstractText && data.AbstractURL) {
 							results.push({
 								title: data.Heading ?? params.query,
@@ -411,7 +423,6 @@ export function registerTools(pi: ExtensionAPI): void {
 							});
 						}
 
-						// Add related topics
 						for (const topic of data.RelatedTopics ?? []) {
 							if (results.length >= maxResults) break;
 							if (topic.Text && topic.FirstURL) {
@@ -445,9 +456,10 @@ export function registerTools(pi: ExtensionAPI): void {
 		},
 	});
 
-	// ----------------------------------------------------------------
+	// ============================================================================
 	// web_fetch
-	// ----------------------------------------------------------------
+	// ============================================================================
+
 	pi.registerTool({
 		name: "web_fetch",
 		label: "Web Fetch",
@@ -459,7 +471,6 @@ export function registerTools(pi: ExtensionAPI): void {
 		parameters: WebFetchParams,
 
 		async execute(_toolCallId, params, signal, _onUpdate, _ctx) {
-			// Validate URL
 			let parsed: URL;
 			try {
 				parsed = new URL(params.url);
@@ -470,7 +481,6 @@ export function registerTools(pi: ExtensionAPI): void {
 				};
 			}
 
-			// Only allow http/https
 			if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
 				return {
 					content: [{ type: "text", text: "Error: Only http and https URLs are allowed" }],
@@ -478,7 +488,6 @@ export function registerTools(pi: ExtensionAPI): void {
 				};
 			}
 
-			// SSRF protection — check hostname
 			if (isPrivateIP(parsed.hostname)) {
 				return {
 					content: [{ type: "text", text: "Error: Requests to private IP addresses are not allowed" }],
@@ -524,11 +533,9 @@ export function registerTools(pi: ExtensionAPI): void {
 				if (contentType.includes("text/html") || contentType.includes("application/xhtml")) {
 					text = htmlToText(html);
 				} else {
-					// Plain text or other — use as-is
 					text = html;
 				}
 
-				// Truncate
 				if (text.length > maxLength) {
 					text = text.slice(0, maxLength) + "\n\n[Content truncated]";
 				}
