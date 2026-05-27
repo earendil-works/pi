@@ -109,3 +109,15 @@ describe("--session-id read-only commands", () => {
 		expect(result.stderr).toContain("Session already exists with id 'existing-id'");
 	});
 });
+
+describe("--session-id validation", () => {
+	it("rejects ids invalid under SessionManager rules without stack traces", async () => {
+		for (const id of ["-bad", "bad id"]) {
+			const result = await runCli(["--session-id", id, "-p", "hi"]);
+
+			expect(result.code).toBe(1);
+			expect(result.stderr).toContain("Session id must be non-empty");
+			expect(result.stderr).not.toContain("SessionManager.create");
+		}
+	});
+});

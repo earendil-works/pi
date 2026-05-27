@@ -37,7 +37,7 @@ import {
 	MissingSessionCwdError,
 	type SessionCwdIssue,
 } from "./core/session-cwd.ts";
-import { SessionManager } from "./core/session-manager.ts";
+import { assertValidSessionId, SessionManager } from "./core/session-manager.ts";
 import { SettingsManager } from "./core/settings-manager.ts";
 import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
@@ -228,8 +228,11 @@ function validateSessionIdFlags(parsed: Args): void {
 		process.exit(1);
 	}
 
-	if (parsed.sessionId.length === 0 || parsed.sessionId.includes("/") || parsed.sessionId.includes("\\")) {
-		console.error(chalk.red("Error: --session-id must be non-empty and cannot contain path separators"));
+	try {
+		assertValidSessionId(parsed.sessionId);
+	} catch (error: unknown) {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(chalk.red(`Error: ${message}`));
 		process.exit(1);
 	}
 }
