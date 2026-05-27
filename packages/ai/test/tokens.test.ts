@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getModel } from "../src/models.ts";
+import { getModel, getModels } from "../src/models.ts";
 import { stream } from "../src/stream.ts";
 import type { Api, Context, Model, StreamOptions } from "../src/types.ts";
 
@@ -149,9 +149,15 @@ describe("Token Statistics on Abort", () => {
 	});
 
 	describe.skipIf(!process.env.CEREBRAS_API_KEY)("Cerebras Provider", () => {
-		const llm = getModel("cerebras", "qwen-3-235b-a22b-instruct-2507");
+		const preferredCerebrasModelIds: string[] = ["gpt-oss-120b", "zai-glm-4.7", "llama3.1-8b"];
+		const cerebrasModels = getModels("cerebras");
+		const llm = cerebrasModels.find((model) => preferredCerebrasModelIds.includes(model.id)) ?? cerebrasModels[0];
 
 		it("should include token stats when aborted mid-stream", { retry: 3, timeout: 30000 }, async () => {
+			if (!llm) {
+				throw new Error("No Cerebras models available");
+			}
+
 			await testTokensOnAbort(llm);
 		});
 	});
