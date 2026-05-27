@@ -510,7 +510,7 @@ describe("DefaultPackageManager git update", () => {
 			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
 		});
 
-		it("install should reconcile no-ref source on existing clones", async () => {
+		it("should reconcile no-ref source on existing clones via install", async () => {
 			// Pre-clone exercises installGit's existing-clone branch (mirrors updateGit).
 			mkdirSync(remoteDir, { recursive: true });
 			initGitRepo(remoteDir);
