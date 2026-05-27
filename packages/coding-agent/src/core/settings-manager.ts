@@ -94,6 +94,11 @@ export interface PersonalAssistantConfig {
 		soul_path?: string;
 		user_path?: string;
 	};
+	satellite?: {
+		ssh_user?: string;
+		ssh_host?: string;
+		remote_path?: string;
+	};
 }
 
 export type TransportSetting = Transport;

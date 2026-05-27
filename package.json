@@ -59,5 +59,8 @@
 		"gaxios": {
 			"rimraf": "6.1.2"
 		}
+	},
+	"dependencies": {
+		"@modelcontextprotocol/sdk": "1.29.0"
 	}
 }
