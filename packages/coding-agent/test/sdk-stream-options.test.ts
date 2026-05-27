@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -21,7 +21,7 @@ describe("createAgentSession stream options", () => {
 	let agentDir: string;
 
 	beforeEach(() => {
-		tempDir = join(tmpdir(), `pi-sdk-stream-options-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+		tempDir = mkdtempSync(join(tmpdir(), "pi-sdk-stream-options-"));
 		cwd = join(tempDir, "project");
 		agentDir = join(tempDir, "agent");
 		mkdirSync(cwd, { recursive: true });
@@ -29,7 +29,7 @@ describe("createAgentSession stream options", () => {
 	});
 
 	afterEach(() => {
-		if (tempDir && existsSync(tempDir)) {
+		if (tempDir) {
 			rmSync(tempDir, { recursive: true, force: true });
 		}
 	});

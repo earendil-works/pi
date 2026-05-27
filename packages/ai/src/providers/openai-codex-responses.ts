@@ -225,8 +225,7 @@ export const streamOpenAICodexResponses: StreamFunction<"openai-codex-responses"
 			);
 			const bodyJson = JSON.stringify(body);
 			const idleTimeoutMs = normalizeTimeoutMs(options?.timeoutMs);
-			const websocketConnectTimeoutMs =
-				normalizeTimeoutMs(options?.websocketConnectTimeoutMs) ?? DEFAULT_WEBSOCKET_CONNECT_TIMEOUT_MS;
+			const websocketConnectTimeoutMs = normalizeTimeoutMs(options?.websocketConnectTimeoutMs);
 			const transport = options?.transport || "auto";
 			const websocketDisabledForSession = transport !== "sse" && isWebSocketSseFallbackActive(options?.sessionId);
 			if (websocketDisabledForSession) {
@@ -946,13 +945,7 @@ async function acquireWebSocket(
 		return {
 			socket,
 			reused: false,
-			release: ({ keep } = {}) => {
-				if (keep === false) {
-					closeWebSocketSilently(socket);
-					return;
-				}
-				closeWebSocketSilently(socket);
-			},
+			release: () => closeWebSocketSilently(socket),
 		};
 	}
 

@@ -146,6 +146,17 @@ function deepMergeSettings(base: Settings, overrides: Settings): Settings {
 	return result;
 }
 
+function parseTimeoutSetting(value: unknown, settingName: string): number | undefined {
+	const timeoutMs = parseHttpIdleTimeoutMs(value);
+	if (timeoutMs !== undefined) {
+		return timeoutMs;
+	}
+	if (value !== undefined) {
+		throw new Error(`Invalid ${settingName} setting: ${String(value)}`);
+	}
+	return undefined;
+}
+
 export type SettingsScope = "global" | "project";
 
 export interface SettingsStorage {
@@ -723,15 +734,7 @@ export class SettingsManager {
 	}
 
 	getHttpIdleTimeoutMs(): number {
-		const value = this.settings.httpIdleTimeoutMs;
-		const timeoutMs = parseHttpIdleTimeoutMs(value);
-		if (timeoutMs !== undefined) {
-			return timeoutMs;
-		}
-		if (value !== undefined) {
-			throw new Error(`Invalid httpIdleTimeoutMs setting: ${String(value)}`);
-		}
-		return DEFAULT_HTTP_IDLE_TIMEOUT_MS;
+		return parseTimeoutSetting(this.settings.httpIdleTimeoutMs, "httpIdleTimeoutMs") ?? DEFAULT_HTTP_IDLE_TIMEOUT_MS;
 	}
 
 	setHttpIdleTimeoutMs(timeoutMs: number): void {
@@ -752,15 +755,7 @@ export class SettingsManager {
 	}
 
 	getWebSocketConnectTimeoutMs(): number | undefined {
-		const value = this.settings.websocketConnectTimeoutMs;
-		const timeoutMs = parseHttpIdleTimeoutMs(value);
-		if (timeoutMs !== undefined) {
-			return timeoutMs;
-		}
-		if (value !== undefined) {
-			throw new Error(`Invalid websocketConnectTimeoutMs setting: ${String(value)}`);
-		}
-		return undefined;
+		return parseTimeoutSetting(this.settings.websocketConnectTimeoutMs, "websocketConnectTimeoutMs");
 	}
 
 	getHideThinkingBlock(): boolean {
