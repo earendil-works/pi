@@ -1,9 +1,15 @@
 /**
- * Tests for git-based extension updates, specifically handling force-push scenarios.
+ * Tests for DefaultPackageManager git update + reconciliation paths.
  *
- * These tests verify that DefaultPackageManager.update() handles:
- * - Normal git updates (no force-push)
- * - Force-pushed remotes gracefully (currently fails, fix needed)
+ * Test groups in this file:
+ * - Normal updates (fast-forward / multi-commit)
+ * - Force-push recovery scenarios (fix shipped — see #961)
+ * - Pinned sources (tag/commit refs do not move via pi update)
+ * - Temporary git sources (refresh on resolve)
+ * - Scope-aware update (project vs user)
+ * - No-ref reconciliation tracks remote default (the demote-from-feature-branch
+ *   fix that motivated this file's expansion; see docs/packages.md)
+ * - gitHasAvailableUpdate (the "is there an update?" UX banner contract)
  */
 
 import { spawnSync } from "node:child_process";
