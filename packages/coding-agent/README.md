@@ -400,7 +400,7 @@ pi install ssh://git@github.com/user/repo@v1    # tag, commit, or branch
 pi remove npm:@foo/pi-tools
 pi uninstall npm:@foo/pi-tools          # alias for remove
 pi list
-pi update                               # update pi, update packages, and reconcile pinned git refs
+pi update                               # update pi and packages
 pi update --extensions                  # update packages only
 pi update --self                        # update pi only
 pi update --self --force                # reinstall pi even if current
