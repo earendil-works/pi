@@ -20,6 +20,8 @@
 		"check:ts-imports": "node scripts/check-ts-relative-imports.mjs",
 		"profile:tui": "node scripts/profile-coding-agent-node.mjs --mode tui",
 		"profile:rpc": "node scripts/profile-coding-agent-node.mjs --mode rpc",
+		"pi": "bun run packages/coding-agent/src/cli.ts",
+		"pi:no-env": "env -u ANTHROPIC_API_KEY -u ANTHROPIC_OAUTH_TOKEN -u OPENAI_API_KEY -u GEMINI_API_KEY -u GROQ_API_KEY -u CEREBRAS_API_KEY -u XAI_API_KEY -u OPENROUTER_API_KEY -u ZAI_API_KEY -u MISTRAL_API_KEY -u MINIMAX_API_KEY -u MINIMAX_CN_API_KEY -u AI_GATEWAY_API_KEY -u OPENCODE_API_KEY -u COPILOT_GITHUB_TOKEN -u GH_TOKEN -u GITHUB_TOKEN -u HF_TOKEN -u GOOGLE_APPLICATION_CREDENTIALS -u GOOGLE_CLOUD_PROJECT -u GCLOUD_PROJECT -u GOOGLE_CLOUD_LOCATION -u AWS_PROFILE -u AWS_ACCESS_KEY_ID -u AWS_SECRET_ACCESS_KEY -u AWS_SESSION_TOKEN -u AWS_REGION -u AWS_DEFAULT_REGION -u AWS_BEARER_TOKEN_BEDROCK -u AWS_CONTAINER_CREDENTIALS_RELATIVE_URI -u AWS_CONTAINER_CREDENTIALS_FULL_URI -u AWS_WEB_IDENTITY_TOKEN_FILE -u AZURE_OPENAI_API_KEY -u AZURE_OPENAI_BASE_URL -u AZURE_OPENAI_RESOURCE_NAME bun run packages/coding-agent/src/cli.ts",
 		"test": "npm run test --workspaces --if-present",
 		"version:patch": "npm version patch -ws --no-git-tag-version && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts",
 		"version:minor": "npm version minor -ws --no-git-tag-version && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts",
