@@ -33,6 +33,7 @@ export interface ResourceLoader {
 	getAgentsFiles(): { agentsFiles: Array<{ path: string; content: string }> };
 	getSystemPrompt(): string | undefined;
 	getAppendSystemPrompt(): string[];
+	getAppendPiDocs(): boolean;
 	extendResources(paths: ResourceExtensionPaths): void;
 	reload(): Promise<void>;
 }
@@ -129,6 +130,7 @@ export interface DefaultResourceLoaderOptions {
 	noContextFiles?: boolean;
 	systemPrompt?: string;
 	appendSystemPrompt?: string[];
+	appendPiDocs?: boolean;
 	extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
 	skillsOverride?: (base: { skills: Skill[]; diagnostics: ResourceDiagnostic[] }) => {
 		skills: Skill[];
@@ -196,6 +198,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private agentsFiles: Array<{ path: string; content: string }>;
 	private systemPrompt?: string;
 	private appendSystemPrompt: string[];
+	private appendPiDocs: boolean;
 	private lastSkillPaths: string[];
 	private extensionSkillSourceInfos: Map<string, SourceInfo>;
 	private extensionPromptSourceInfos: Map<string, SourceInfo>;
@@ -225,6 +228,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.noContextFiles = options.noContextFiles ?? false;
 		this.systemPromptSource = options.systemPrompt;
 		this.appendSystemPromptSource = options.appendSystemPrompt;
+		this.appendPiDocs = options.noThemes ?? true;
 		this.extensionsOverride = options.extensionsOverride;
 		this.skillsOverride = options.skillsOverride;
 		this.promptsOverride = options.promptsOverride;
@@ -276,6 +280,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 	getAppendSystemPrompt(): string[] {
 		return this.appendSystemPrompt;
+	}
+
+	getAppendPiDocs(): boolean {
+		return this.appendPiDocs;
 	}
 
 	extendResources(paths: ResourceExtensionPaths): void {

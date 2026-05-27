@@ -59,6 +59,7 @@ This is a test skill.
 			getAgentsFiles: () => ({ agentsFiles: [] }),
 			getSystemPrompt: () => undefined,
 			getAppendSystemPrompt: () => [],
+			getAppendPiDocs: () => true,
 			extendResources: () => {},
 			reload: async () => {},
 		};
@@ -92,6 +93,7 @@ This is a test skill.
 			getAgentsFiles: () => ({ agentsFiles: [] }),
 			getSystemPrompt: () => undefined,
 			getAppendSystemPrompt: () => [],
+			getAppendPiDocs: () => true,
 			extendResources: () => {},
 			reload: async () => {},
 		};

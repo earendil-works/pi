@@ -152,6 +152,13 @@ describe("parseArgs", () => {
 		});
 	});
 
+	describe("--no-system-prompt-docs flag", () => {
+		test("parses --no-system-prompt-docs flag", () => {
+			const result = parseArgs(["--no-system-prompt-docs"]);
+			expect(result.appendPiDocs).toBe(false);
+		});
+	});
+
 	describe("--no-session flag", () => {
 		test("parses --no-session flag", () => {
 			const result = parseArgs(["--no-session"]);

@@ -59,6 +59,30 @@ describe("buildSystemPrompt", () => {
 		});
 	});
 
+	describe("pi docs references", () => {
+		test("includes pi docs references by default", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: [],
+				contextFiles: [],
+				skills: [],
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).toContain("Pi documentation");
+		});
+
+		test("omits pi docs references upon user decision", () => {
+			const prompt = buildSystemPrompt({
+				selectedTools: [],
+				contextFiles: [],
+				skills: [],
+				appendPiDocs: false,
+				cwd: process.cwd(),
+			});
+
+			expect(prompt).not.toContain("Pi documentation");
+		});
+	});
 	describe("custom tool snippets", () => {
 		test("includes custom tools in available tools section when promptSnippet is provided", () => {
 			const prompt = buildSystemPrompt({
