@@ -16,7 +16,8 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { createDatabase } from "./sqlite.ts";
+import type { Database, Statement } from "./sqlite.ts";
 
 // ============================================================================
 // Types
@@ -395,13 +396,13 @@ function formatMessagesForLLM(messages: Array<{ role: string; content: unknown }
 // ============================================================================
 
 class MemoryIndex {
-  private db: InstanceType<typeof DatabaseSync> | null = null;
+  private db: Database | null = null;
 
   constructor(private dbPath: string) {}
 
-  init(): void {
+  async init(): Promise<void> {
     ensureDir(join(this.dbPath, ".."));
-    this.db = new DatabaseSync(this.dbPath);
+    this.db = await createDatabase(this.dbPath);
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS memory_index (
@@ -449,7 +450,7 @@ class MemoryIndex {
     this.db = null;
   }
 
-  private ensureDb(): InstanceType<typeof DatabaseSync> {
+  private ensureDb(): Database {
     if (!this.db) throw new Error("MemoryIndex not initialized");
     return this.db;
   }
@@ -1266,8 +1267,8 @@ function writeExtractionReport(plan: ExtractionPlanItem[]): void {
 function loadPersonaPrompt(config: PersonalAssistantConfig): string {
   const parts: string[] = [];
 
-  const soulPath = config.persona?.soul_path ?? join(AGENT_DIR, "SOUL.md");
-  const userPath = config.persona?.user_path ?? join(AGENT_DIR, "USER.md");
+  const soulPath = (config.persona?.soul_path || join(AGENT_DIR, "SOUL.md"));
+  const userPath = (config.persona?.user_path || join(AGENT_DIR, "USER.md"));
 
   if (existsSync(soulPath)) {
     try {
@@ -1332,11 +1333,11 @@ export function registerMemory(pi: ExtensionAPI): void {
   let memoryIndex: MemoryIndex | null = null;
   let lastDecayCheck = 0;
 
-  function getIndex(): MemoryIndex | null {
+  async function getIndex(): Promise<MemoryIndex | null> {
     if (!memoryIndex) {
       try {
         memoryIndex = new MemoryIndex(MEMORY_DB_PATH);
-        memoryIndex.init();
+        await memoryIndex.init();
       } catch {
         return null;
       }
@@ -1351,7 +1352,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 
     if (!memConfig.enabled) return;
 
-    const index = getIndex();
+    const index = await getIndex();
     if (!index) return;
 
     // Run decay if enough time has passed
@@ -1393,7 +1394,7 @@ export function registerMemory(pi: ExtensionAPI): void {
     // Kick off async memory search — show status immediately
     const prompt = event.prompt.trim();
     if (prompt) {
-      const index = getIndex();
+      const index = await getIndex();
       if (index) {
         pendingMemoryModel = getRewriteModelLabel(config, ctx);
         ctx.ui.setStatus("memory", `mem: ${pendingMemoryModel} searching\u2026`);
@@ -1459,7 +1460,7 @@ export function registerMemory(pi: ExtensionAPI): void {
 
     if (!memConfig.enabled) return;
 
-    const index = getIndex();
+    const index = await getIndex();
     if (!index) return;
 
     // Extract memories from messages being compacted
