@@ -13,6 +13,23 @@ describe("SessionManager.newSession with custom id", () => {
 		expect(session.getSessionId()).toBe("my-custom-id");
 	});
 
+	it("allows alphanumeric session ids with interior punctuation", () => {
+		const session = SessionManager.inMemory();
+		session.newSession({ id: "abc-123_def.456" });
+		expect(session.getSessionId()).toBe("abc-123_def.456");
+	});
+
+	it("rejects invalid custom session ids", () => {
+		const invalidIds = ["", "-abc", "abc-", "_abc", "abc_", ".abc", "abc.", "abc/def", "abc\\def", "abc def"];
+
+		for (const id of invalidIds) {
+			const session = SessionManager.inMemory();
+			expect(() => session.newSession({ id })).toThrow(
+				"Session id must be non-empty, contain only alphanumeric characters",
+			);
+		}
+	});
+
 	it("generates a UUIDv7 id when no id is provided", () => {
 		const session = SessionManager.inMemory();
 		session.newSession();
