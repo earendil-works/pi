@@ -1489,8 +1489,12 @@ const active = pi.getActiveTools();
 const all = pi.getAllTools();
 // [{
 //   name: "read",
+//   label: "Read",
 //   description: "Read file contents...",
-//   parameters: ..., 
+//   parameters: ...,
+//   execute: async (...),
+//   renderCall: (...),
+//   renderResult: (...),
 //   sourceInfo: { path: "<builtin:read>", source: "builtin", scope: "temporary", origin: "top-level" }
 // }, ...]
 const names = all.map(t => t.name);
@@ -1499,7 +1503,7 @@ const extensionTools = all.filter((t) => t.sourceInfo.source !== "builtin" && t.
 pi.setActiveTools(["read", "bash"]); // Switch to read-only
 ```
 
-`pi.getAllTools()` returns `name`, `description`, `parameters`, and `sourceInfo`.
+`pi.getAllTools()` returns full tool definitions with `sourceInfo`. Tool items are readonly as a type-level hint; nested schemas are not frozen.
 
 Typical `sourceInfo.source` values:
 - `builtin` for built-in tools

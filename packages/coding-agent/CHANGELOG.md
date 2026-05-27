@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- Changed `pi.getAllTools()` to return full readonly tool definitions with source metadata.
+
 ## [0.76.0] - 2026-05-27
 
 ### New Features
