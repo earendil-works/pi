@@ -394,6 +394,15 @@ export class AgentSession {
 	 * happens here instead of in wrappers.
 	 */
 	private _installAgentToolHooks(): void {
+		this.agent.prepareNextTurn = () => {
+			return {
+				model: this.agent.state.model,
+				thinkingLevel: this.agent.state.thinkingLevel,
+				tools: this.agent.state.tools,
+				systemPrompt: this.agent.state.systemPrompt,
+			};
+		};
+
 		this.agent.beforeToolCall = async ({ toolCall, args }) => {
 			const runner = this._extensionRunner;
 			if (!runner.hasHandlers("tool_call")) {

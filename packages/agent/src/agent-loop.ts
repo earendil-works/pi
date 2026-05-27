@@ -226,6 +226,12 @@ async function runLoop(
 			const nextTurnSnapshot = await config.prepareNextTurn?.(nextTurnContext);
 			if (nextTurnSnapshot) {
 				currentContext = nextTurnSnapshot.context ?? currentContext;
+				if (nextTurnSnapshot.tools) {
+					currentContext.tools = nextTurnSnapshot.tools;
+				}
+				if (nextTurnSnapshot.systemPrompt !== undefined) {
+					currentContext.systemPrompt = nextTurnSnapshot.systemPrompt;
+				}
 				config = {
 					...config,
 					model: nextTurnSnapshot.model ?? config.model,

@@ -128,6 +128,8 @@ export interface AgentLoopTurnUpdate {
 	model?: Model<any>;
 	/** Thinking level for the next provider request. */
 	thinkingLevel?: ThinkingLevel;
+	tools?: AgentTool<any>[];
+	systemPrompt?: string;
 }
 
 export interface PrepareNextTurnContext extends ShouldStopAfterTurnContext {}
