@@ -298,6 +298,19 @@ describe("DefaultPackageManager git update", () => {
 			const executedCommands: string[] = [];
 			const managerWithInternals = packageManager as unknown as {
 				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
+				runCommandCapture: (
+					command: string,
+					args: string[],
+					options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
+				) => Promise<string>;
+			};
+			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
+			managerWithInternals.runCommandCapture = async (command, args, options) => {
+				if (command === "git" && args[0] === "remote" && args[1] === "set-head") {
+					executedCommands.push(`${command} ${args.join(" ")}`);
+					expect(options?.env?.GIT_TERMINAL_PROMPT).toBe("0");
+				}
+				return originalCapture(command, args, options);
 			};
 			managerWithInternals.runCommand = async (command, args, options) => {
 				executedCommands.push(`${command} ${args.join(" ")}`);
@@ -355,12 +368,22 @@ describe("DefaultPackageManager git update", () => {
 			const executedCommands: string[] = [];
 			const managerWithInternals = packageManager as unknown as {
 				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
+				runCommandCapture: (
+					command: string,
+					args: string[],
+					options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
+				) => Promise<string>;
+			};
+			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
+			managerWithInternals.runCommandCapture = async (command, args, options) => {
+				if (command === "git" && args[0] === "remote" && args[1] === "set-head") {
+					executedCommands.push(`${command} ${args.join(" ")}`);
+					throw new Error("simulated network failure");
+				}
+				return originalCapture(command, args, options);
 			};
 			managerWithInternals.runCommand = async (command, args, options) => {
 				executedCommands.push(`${command} ${args.join(" ")}`);
-				if (command === "git" && args[0] === "remote" && args[1] === "set-head") {
-					throw new Error("simulated network failure");
-				}
 				if (command === "npm") {
 					return;
 				}
