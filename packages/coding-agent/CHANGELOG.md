@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Exported `convertToPng` for extension authors.
+
 ### Changed
 
 - Changed `pi.getAllTools()` to return full readonly tool definitions with source metadata.
