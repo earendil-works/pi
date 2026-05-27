@@ -1185,7 +1185,7 @@ async function generateModels() {
 			candidate.contextWindow = 272000;
 			candidate.maxTokens = 128000;
 		}
-		if (candidate.provider === "openai" && (candidate.id === "gpt-5.4" || candidate.id === "gpt-5.5")) {
+		if (candidate.provider === "openai" && candidate.id === "gpt-5.4") {
 			candidate.contextWindow = 272000;
 			candidate.maxTokens = 128000;
 		}
