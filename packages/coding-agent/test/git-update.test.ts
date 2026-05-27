@@ -325,8 +325,117 @@ describe("DefaultPackageManager git update", () => {
 			expect(executedCommands).not.toContain(
 				"git fetch --prune --no-tags origin +refs/heads/feature:refs/remotes/origin/feature",
 			);
+			// Pin that we re-resolve the remote default branch before fetching
+			// so a stale local origin/HEAD symbolic-ref does not steer the fetch.
+			expect(executedCommands).toContain("git remote set-head origin -a");
 			expect(getCurrentCommit(installedDir)).toBe(mainTip);
 			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
+		});
+
+		it("should still reconcile when remote set-head fails (e.g. transient network)", async () => {
+			mkdirSync(remoteDir, { recursive: true });
+			initGitRepo(remoteDir);
+			createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
+			git(["checkout", "-b", "feature"], remoteDir);
+			createCommit(remoteDir, "extension.ts", "// feature", "Feature work");
+			git(["checkout", "main"], remoteDir);
+			const mainTip = createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
+
+			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
+			git(["clone", remoteDir, installedDir], tempDir);
+			git(["config", "--local", "user.email", "test@test.com"], installedDir);
+			git(["config", "--local", "user.name", "Test"], installedDir);
+			git(["checkout", "feature"], installedDir);
+			settingsManager.setPackages([gitSource]);
+
+			// Make `git remote set-head origin -a` throw (simulating a network
+			// failure during the re-resolve attempt). The cached origin/HEAD
+			// symbolic-ref already points at main from `git clone`, so
+			// reconciliation must still complete via the cached value.
+			const executedCommands: string[] = [];
+			const managerWithInternals = packageManager as unknown as {
+				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
+			};
+			managerWithInternals.runCommand = async (command, args, options) => {
+				executedCommands.push(`${command} ${args.join(" ")}`);
+				if (command === "git" && args[0] === "remote" && args[1] === "set-head") {
+					throw new Error("simulated network failure");
+				}
+				if (command === "npm") {
+					return;
+				}
+				const result = spawnSync(command, args, {
+					cwd: options?.cwd,
+					encoding: "utf-8",
+				});
+				if (result.status !== 0) {
+					throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr}`);
+				}
+			};
+
+			await packageManager.update();
+
+			expect(executedCommands).toContain("git remote set-head origin -a");
+			expect(getCurrentCommit(installedDir)).toBe(mainTip);
+			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
+		});
+
+		it("should fall back to +HEAD:refs/remotes/origin/HEAD when symbolic-ref is empty", async () => {
+			mkdirSync(remoteDir, { recursive: true });
+			initGitRepo(remoteDir);
+			createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
+			git(["checkout", "-b", "feature"], remoteDir);
+			createCommit(remoteDir, "extension.ts", "// feature", "Feature work");
+			git(["checkout", "main"], remoteDir);
+			createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
+
+			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
+			git(["clone", remoteDir, installedDir], tempDir);
+			git(["config", "--local", "user.email", "test@test.com"], installedDir);
+			git(["config", "--local", "user.name", "Test"], installedDir);
+			git(["checkout", "feature"], installedDir);
+			settingsManager.setPackages([gitSource]);
+
+			// Stub `symbolic-ref refs/remotes/origin/HEAD` to return empty
+			// (simulating a clone without origin/HEAD or a `set-head` failure
+			// that leaves the symbolic-ref unset). Other captured commands
+			// pass through to spawnSync so the rest of the flow is real.
+			const executedCommands: string[] = [];
+			const managerWithInternals = packageManager as unknown as {
+				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
+				runCommandCapture: (
+					command: string,
+					args: string[],
+					options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
+				) => Promise<string>;
+			};
+			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
+			managerWithInternals.runCommandCapture = async (command, args, options) => {
+				if (command === "git" && args[0] === "symbolic-ref" && args[1] === "refs/remotes/origin/HEAD") {
+					return "";
+				}
+				return originalCapture(command, args, options);
+			};
+			managerWithInternals.runCommand = async (command, args, options) => {
+				executedCommands.push(`${command} ${args.join(" ")}`);
+				if (command === "npm") {
+					return;
+				}
+				const result = spawnSync(command, args, {
+					cwd: options?.cwd,
+					encoding: "utf-8",
+				});
+				if (result.status !== 0) {
+					throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr}`);
+				}
+			};
+
+			await packageManager.update();
+
+			expect(executedCommands).toContain("git fetch --prune --no-tags origin +HEAD:refs/remotes/origin/HEAD");
+			expect(executedCommands).not.toContain(
+				"git fetch --prune --no-tags origin +refs/heads/main:refs/remotes/origin/main",
+			);
 		});
 
 		it("should reconcile during install (not just update) when local upstream points at a feature branch", async () => {
