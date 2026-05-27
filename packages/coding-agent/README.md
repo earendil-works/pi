@@ -499,7 +499,7 @@ pi [options] [@files...] [messages...]
 pi install <source> [-l]     # Install package, -l for project-local
 pi remove <source> [-l]      # Remove package
 pi uninstall <source> [-l]   # Alias for remove
-pi update [source|self|pi]   # Update pi, update packages, reconcile pinned git refs
+pi update [source|self|pi]   # Update pi and packages
 pi update --extensions       # Update packages only
 pi update --self             # Update pi only
 pi update --self --force     # Reinstall pi even if current
