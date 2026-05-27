@@ -852,6 +852,9 @@ Content`,
 				if (args[0] === "symbolic-ref" && args[1] === "refs/remotes/origin/HEAD") {
 					return "refs/remotes/origin/main";
 				}
+				if (args[0] === "remote" && args[1] === "set-head") {
+					return "";
+				}
 				throw new Error(`Unexpected runCommandCapture args: ${args.join(" ")}`);
 			});
 			const runCommandSpy = vi.spyOn(packageManager as any, "runCommand").mockResolvedValue(undefined);
@@ -887,6 +890,9 @@ Content`,
 				}
 				if (args[0] === "symbolic-ref" && args[1] === "refs/remotes/origin/HEAD") {
 					return "refs/remotes/origin/main";
+				}
+				if (args[0] === "remote" && args[1] === "set-head") {
+					return "";
 				}
 				throw new Error(`Unexpected runCommandCapture args: ${args.join(" ")}`);
 			});
