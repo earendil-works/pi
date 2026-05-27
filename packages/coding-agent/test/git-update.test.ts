@@ -906,5 +906,32 @@ describe("DefaultPackageManager git update", () => {
 			).gitHasAvailableUpdate(installedDir);
 			expect(hasUpdate).toBe(false);
 		});
+
+		it("reports no update when ls-remote fails (e.g. network unreachable)", async () => {
+			// Sibling to the malformed-output test, covering the other throw
+			// path through gitHasAvailableUpdate's catch: runGitRemoteCommand
+			// itself throwing (the realistic network-down failure mode), not
+			// just getRemoteGitHead's regex-no-match shape.
+			setupRemoteAndInstall();
+			const managerWithInternals = packageManager as unknown as {
+				runCommandCapture: (
+					command: string,
+					args: string[],
+					options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
+				) => Promise<string>;
+			};
+			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
+			managerWithInternals.runCommandCapture = async (command, args, options) => {
+				if (command === "git" && args[0] === "ls-remote" && args[1] === "origin" && args[2] === "HEAD") {
+					throw new Error("simulated: connection refused");
+				}
+				return originalCapture(command, args, options);
+			};
+
+			const hasUpdate = await (
+				packageManager as unknown as { gitHasAvailableUpdate(p: string): Promise<boolean> }
+			).gitHasAvailableUpdate(installedDir);
+			expect(hasUpdate).toBe(false);
+		});
 	});
 });
