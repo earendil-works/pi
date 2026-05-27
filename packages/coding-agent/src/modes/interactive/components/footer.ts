@@ -226,8 +226,20 @@ export class FooterComponent implements Component {
 		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
 		const lines = [pwdLine, dimStatsLeft + dimRemainder];
 
+		// Add mode chip (Plan/Agent) before extension statuses
+		const extensionStatuses = new Map(this.footerData.getExtensionStatuses());
+		const isPlanMode = extensionStatuses.has("plan-mode");
+		const modeChip = isPlanMode ? theme.fg("warning", "📋 Plan") : theme.fg("accent", "🤖 Agent");
+
+		// Remove plan-mode from extension statuses to avoid duplication
+		if (isPlanMode) {
+			extensionStatuses.delete("plan-mode");
+		}
+
+		// Add mode chip on its own line
+		lines.push(truncateToWidth(modeChip, width, theme.fg("dim", "...")));
+
 		// Add extension statuses on a single line, sorted by key alphabetically
-		const extensionStatuses = this.footerData.getExtensionStatuses();
 		if (extensionStatuses.size > 0) {
 			const sortedStatuses = Array.from(extensionStatuses.entries())
 				.sort(([a], [b]) => a.localeCompare(b))
