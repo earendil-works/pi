@@ -1493,7 +1493,7 @@ export class DefaultPackageManager implements PackageManager {
 		// Resolve no-ref sources against origin/HEAD. Do not add an @{upstream}
 		// fast path here: a stale upstream from a removed pin would strand the
 		// clone on the old branch.
-		await this.runGitRemoteCommandVoid(installedPath, ["remote", "set-head", "origin", "-a"]).catch(() => {});
+		await this.runGitRemoteCommand(installedPath, ["remote", "set-head", "origin", "-a"]).catch(() => {});
 		const head = await this.runCommandCapture("git", ["rev-parse", "origin/HEAD"], {
 			cwd: installedPath,
 			timeoutMs: NETWORK_TIMEOUT_MS,
@@ -1527,16 +1527,6 @@ export class DefaultPackageManager implements PackageManager {
 
 	private runGitRemoteCommand(installedPath: string, args: string[]): Promise<string> {
 		return this.runCommandCapture("git", args, {
-			cwd: installedPath,
-			timeoutMs: NETWORK_TIMEOUT_MS,
-			env: {
-				GIT_TERMINAL_PROMPT: "0",
-			},
-		});
-	}
-
-	private async runGitRemoteCommandVoid(installedPath: string, args: string[]): Promise<void> {
-		await this.runCommandCapture("git", args, {
 			cwd: installedPath,
 			timeoutMs: NETWORK_TIMEOUT_MS,
 			env: {
