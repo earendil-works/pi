@@ -58,7 +58,8 @@ npm:@scope/pkg@1.2.3
 npm:pkg
 ```
 
-- Versioned specs are pinned and skipped by package updates (`pi update`, `pi update --extensions`).
+- Exact versions (e.g. `@1.2.3`) are pinned and never updated.
+- Dist-tags (e.g. `@latest`, `@next`) and semver ranges (e.g. `@^1.0`) are skipped by `pi update`, but pi re-resolves them on session start so they pick up new releases between explicit `pi update` runs.
 - User installs go under `~/.pi/agent/npm/`.
 - Project installs go under `.pi/npm/`.
 - Set `npmCommand` in `settings.json` to pin npm package lookup and install operations to a specific wrapper command such as `mise` or `asdf`.
