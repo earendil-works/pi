@@ -346,6 +346,49 @@ describe("DefaultPackageManager git update", () => {
 			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
 		});
 
+		it("should fail loud when set-head fails AND origin/HEAD is uncached", async () => {
+			mkdirSync(remoteDir, { recursive: true });
+			initGitRepo(remoteDir);
+			createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
+			git(["checkout", "-b", "feature"], remoteDir);
+			createCommit(remoteDir, "extension.ts", "// feature", "Feature work");
+			git(["checkout", "main"], remoteDir);
+			createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
+
+			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
+			git(["clone", remoteDir, installedDir], tempDir);
+			git(["config", "--local", "user.email", "test@test.com"], installedDir);
+			git(["config", "--local", "user.name", "Test"], installedDir);
+			git(["checkout", "feature"], installedDir);
+
+			// Delete the cached `refs/remotes/origin/HEAD` symbolic-ref to
+			// simulate a clone that doesn't have origin/HEAD populated. Stub
+			// `git remote set-head origin -a` to throw, so reconciliation cannot
+			// repopulate it. The function must surface the resulting
+			// `rev-parse origin/HEAD` failure rather than silently skip the
+			// reset.
+			git(["symbolic-ref", "-d", "refs/remotes/origin/HEAD"], installedDir);
+			settingsManager.setPackages([gitSource]);
+
+			const managerWithInternals = packageManager as unknown as {
+				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
+				runCommandCapture: (
+					command: string,
+					args: string[],
+					options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
+				) => Promise<string>;
+			};
+			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
+			managerWithInternals.runCommandCapture = async (command, args, options) => {
+				if (command === "git" && args[0] === "remote" && args[1] === "set-head") {
+					throw new Error("simulated: network unreachable");
+				}
+				return originalCapture(command, args, options);
+			};
+
+			await expect(packageManager.update()).rejects.toThrow();
+		});
+
 		it("should fall back to +HEAD:refs/remotes/origin/HEAD when symbolic-ref is empty", async () => {
 			mkdirSync(remoteDir, { recursive: true });
 			initGitRepo(remoteDir);
