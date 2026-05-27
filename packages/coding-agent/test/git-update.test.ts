@@ -253,6 +253,7 @@ describe("DefaultPackageManager git update", () => {
 			const { mainTip } = setupFeatureBranchClone();
 
 			const executedCommands: string[] = [];
+			let setHeadEnv: Record<string, string> | undefined;
 			const managerWithInternals = packageManager as unknown as {
 				runCommandCapture: (
 					command: string,
@@ -264,7 +265,7 @@ describe("DefaultPackageManager git update", () => {
 			managerWithInternals.runCommandCapture = async (command, args, options) => {
 				if (command === "git" && args[0] === "remote" && args[1] === "set-head") {
 					executedCommands.push(`${command} ${args.join(" ")}`);
-					expect(options?.env?.GIT_TERMINAL_PROMPT).toBe("0");
+					setHeadEnv = options?.env;
 				}
 				return originalCapture(command, args, options);
 			};
@@ -285,6 +286,11 @@ describe("DefaultPackageManager git update", () => {
 			// Pin that we re-resolve the remote default branch before fetching
 			// so a stale local origin/HEAD symbolic-ref does not steer the fetch.
 			expect(executedCommands).toContain("git remote set-head origin -a");
+			// Pin the env contract on the set-head invocation outside the stub:
+			// asserting inside the async runCommandCapture would have its rejection
+			// swallowed by production's `.catch(() => {})` on runGitRemoteCommand,
+			// hiding any regression that drops GIT_TERMINAL_PROMPT.
+			expect(setHeadEnv?.GIT_TERMINAL_PROMPT).toBe("0");
 			expect(getCurrentCommit(installedDir)).toBe(mainTip);
 			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
 		});
