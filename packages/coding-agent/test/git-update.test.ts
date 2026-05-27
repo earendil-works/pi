@@ -524,9 +524,46 @@ describe("DefaultPackageManager git update", () => {
 			git(["config", "--local", "user.name", "Test"], installedDir);
 			git(["checkout", "feature"], installedDir);
 
+			const executedCommands: string[] = [];
+			const managerWithInternals = packageManager as unknown as {
+				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
+				runCommandCapture: (
+					command: string,
+					args: string[],
+					options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
+				) => Promise<string>;
+			};
+			const originalCapture = managerWithInternals.runCommandCapture.bind(packageManager);
+			managerWithInternals.runCommandCapture = async (command, args, options) => {
+				if (command === "git" && args[0] === "remote" && args[1] === "set-head") {
+					executedCommands.push(`${command} ${args.join(" ")}`);
+				}
+				return originalCapture(command, args, options);
+			};
+			managerWithInternals.runCommand = async (command, args, options) => {
+				executedCommands.push(`${command} ${args.join(" ")}`);
+				if (command === "npm") {
+					return;
+				}
+				const result = spawnSync(command, args, {
+					cwd: options?.cwd,
+					encoding: "utf-8",
+				});
+				if (result.status !== 0) {
+					throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr}`);
+				}
+			};
+
 			// Install path — not update.
 			await packageManager.install(gitSource);
 
+			// Pin the reconciliation shape: install must run set-head before
+			// fetching, fetch the default branch (main) not the locally checked
+			// out feature branch, and land on the main tip with main's content.
+			expect(executedCommands).toContain("git remote set-head origin -a");
+			expect(executedCommands).toContain(
+				"git fetch --prune --no-tags origin +refs/heads/main:refs/remotes/origin/main",
+			);
 			expect(getCurrentCommit(installedDir)).toBe(mainTip);
 			expect(getFileContent(installedDir, "extension.ts")).toBe("// v2");
 		});
