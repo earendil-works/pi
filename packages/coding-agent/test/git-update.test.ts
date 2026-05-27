@@ -465,7 +465,8 @@ describe("DefaultPackageManager git update", () => {
 			);
 		});
 
-		it("should reconcile during install (not just update) when local upstream points at a feature branch", async () => {
+		it("install should reconcile no-ref source on existing clones", async () => {
+			// Pre-clone exercises installGit's existing-clone branch (mirrors updateGit).
 			mkdirSync(remoteDir, { recursive: true });
 			initGitRepo(remoteDir);
 			createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
