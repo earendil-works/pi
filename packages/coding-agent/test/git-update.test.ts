@@ -386,7 +386,7 @@ describe("DefaultPackageManager git update", () => {
 				return originalCapture(command, args, options);
 			};
 
-			await expect(packageManager.update()).rejects.toThrow();
+			await expect(packageManager.update()).rejects.toThrow(/origin\/HEAD/);
 		});
 
 		it("should fall back to +HEAD:refs/remotes/origin/HEAD when symbolic-ref is empty", async () => {
