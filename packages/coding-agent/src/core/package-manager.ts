@@ -1490,15 +1490,9 @@ export class DefaultPackageManager implements PackageManager {
 	private async getLocalGitUpdateTarget(
 		installedPath: string,
 	): Promise<{ ref: string; head: string; fetchArgs: string[] }> {
-		// No ref configured in settings.json — track the remote default branch.
-		//
-		// We deliberately do not consult the local @{upstream}: if the clone
-		// was previously installed with a branch ref in settings.json that has
-		// since been removed, @{upstream} would still point at the old branch,
-		// leaving the clone permanently stuck on it even though the user's
-		// configured intent is now "track default". Resolving against
-		// origin/HEAD ensures every no-ref reconciliation aligns with the
-		// remote's current default branch.
+		// Resolve no-ref sources against origin/HEAD. Do not add an @{upstream}
+		// fast path here: a stale upstream from a removed pin would strand the
+		// clone on the old branch.
 		await this.runCommand("git", ["remote", "set-head", "origin", "-a"], { cwd: installedPath }).catch(() => {});
 		const head = await this.runCommandCapture("git", ["rev-parse", "origin/HEAD"], {
 			cwd: installedPath,
