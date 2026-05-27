@@ -110,6 +110,59 @@ describe("DefaultPackageManager git update", () => {
 		settingsManager.setPackages([sourceOverride ?? gitSource]);
 	}
 
+	/**
+	 * Build a remote with a feature branch divergent from main, clone it,
+	 * and check out feature locally so `branch.<name>.merge` points at
+	 * origin/feature. Used by no-ref reconciliation tests to exercise the
+	 * demote-from-feature-branch scenario.
+	 * @returns The commit hash of the main tip (after the divergent feature work).
+	 */
+	function setupFeatureBranchClone(options: { setPackages?: boolean } = {}): { mainTip: string } {
+		const { setPackages = true } = options;
+		mkdirSync(remoteDir, { recursive: true });
+		initGitRepo(remoteDir);
+		createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
+		git(["checkout", "-b", "feature"], remoteDir);
+		createCommit(remoteDir, "extension.ts", "// feature", "Feature work");
+		git(["checkout", "main"], remoteDir);
+		const mainTip = createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
+
+		mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
+		git(["clone", remoteDir, installedDir], tempDir);
+		git(["config", "--local", "user.email", "test@test.com"], installedDir);
+		git(["config", "--local", "user.name", "Test"], installedDir);
+		git(["checkout", "feature"], installedDir);
+		if (setPackages) {
+			settingsManager.setPackages([gitSource]);
+		}
+		return { mainTip };
+	}
+
+	/**
+	 * Replace `runCommand` with a shim that records every invocation in
+	 * `executedCommands`, short-circuits npm calls (no-op return), and
+	 * forwards everything else to spawnSync so the rest of the flow runs
+	 * against real fixtures.
+	 */
+	function installSpawnSyncShim(executedCommands: string[]): void {
+		const managerWithInternals = packageManager as unknown as {
+			runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
+		};
+		managerWithInternals.runCommand = async (command, args, options) => {
+			executedCommands.push(`${command} ${args.join(" ")}`);
+			if (command === "npm") {
+				return;
+			}
+			const result = spawnSync(command, args, {
+				cwd: options?.cwd,
+				encoding: "utf-8",
+			});
+			if (result.status !== 0) {
+				throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr}`);
+			}
+		};
+	}
+
 	describe("normal updates (no force-push)", () => {
 		it("should skip reset, clean, and install when already up to date", async () => {
 			mkdirSync(remoteDir, { recursive: true });
@@ -122,22 +175,7 @@ describe("DefaultPackageManager git update", () => {
 			settingsManager.setPackages([gitSource]);
 
 			const executedCommands: string[] = [];
-			const managerWithInternals = packageManager as unknown as {
-				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
-			};
-			managerWithInternals.runCommand = async (command, args, options) => {
-				executedCommands.push(`${command} ${args.join(" ")}`);
-				if (command === "npm") {
-					return;
-				}
-				const result = spawnSync(command, args, {
-					cwd: options?.cwd,
-					encoding: "utf-8",
-				});
-				if (result.status !== 0) {
-					throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr}`);
-				}
-			};
+			installSpawnSyncShim(executedCommands);
 
 			await packageManager.update();
 
@@ -190,19 +228,7 @@ describe("DefaultPackageManager git update", () => {
 			git(["checkout", detachedCommit], installedDir);
 
 			const executedCommands: string[] = [];
-			const managerWithInternals = packageManager as unknown as {
-				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
-			};
-			managerWithInternals.runCommand = async (command, args, options) => {
-				executedCommands.push(`${command} ${args.join(" ")}`);
-				const result = spawnSync(command, args, {
-					cwd: options?.cwd,
-					encoding: "utf-8",
-				});
-				if (result.status !== 0) {
-					throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr}`);
-				}
-			};
+			installSpawnSyncShim(executedCommands);
 
 			await packageManager.update();
 
@@ -224,24 +250,10 @@ describe("DefaultPackageManager git update", () => {
 		// user's expressed intent is now "track default".
 
 		it("should issue fetch for the default branch ref, not the locally tracked feature branch", async () => {
-			mkdirSync(remoteDir, { recursive: true });
-			initGitRepo(remoteDir);
-			createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
-			git(["checkout", "-b", "feature"], remoteDir);
-			createCommit(remoteDir, "extension.ts", "// feature", "Feature work");
-			git(["checkout", "main"], remoteDir);
-			const mainTip = createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
-
-			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
-			git(["clone", remoteDir, installedDir], tempDir);
-			git(["config", "--local", "user.email", "test@test.com"], installedDir);
-			git(["config", "--local", "user.name", "Test"], installedDir);
-			git(["checkout", "feature"], installedDir);
-			settingsManager.setPackages([gitSource]);
+			const { mainTip } = setupFeatureBranchClone();
 
 			const executedCommands: string[] = [];
 			const managerWithInternals = packageManager as unknown as {
-				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
 				runCommandCapture: (
 					command: string,
 					args: string[],
@@ -256,19 +268,7 @@ describe("DefaultPackageManager git update", () => {
 				}
 				return originalCapture(command, args, options);
 			};
-			managerWithInternals.runCommand = async (command, args, options) => {
-				executedCommands.push(`${command} ${args.join(" ")}`);
-				if (command === "npm") {
-					return;
-				}
-				const result = spawnSync(command, args, {
-					cwd: options?.cwd,
-					encoding: "utf-8",
-				});
-				if (result.status !== 0) {
-					throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr}`);
-				}
-			};
+			installSpawnSyncShim(executedCommands);
 
 			await packageManager.update();
 
@@ -290,20 +290,7 @@ describe("DefaultPackageManager git update", () => {
 		});
 
 		it("should still reconcile when remote set-head fails (e.g. transient network)", async () => {
-			mkdirSync(remoteDir, { recursive: true });
-			initGitRepo(remoteDir);
-			createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
-			git(["checkout", "-b", "feature"], remoteDir);
-			createCommit(remoteDir, "extension.ts", "// feature", "Feature work");
-			git(["checkout", "main"], remoteDir);
-			const mainTip = createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
-
-			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
-			git(["clone", remoteDir, installedDir], tempDir);
-			git(["config", "--local", "user.email", "test@test.com"], installedDir);
-			git(["config", "--local", "user.name", "Test"], installedDir);
-			git(["checkout", "feature"], installedDir);
-			settingsManager.setPackages([gitSource]);
+			const { mainTip } = setupFeatureBranchClone();
 
 			// Make `git remote set-head origin -a` throw (simulating a network
 			// failure during the re-resolve attempt). The cached origin/HEAD
@@ -311,7 +298,6 @@ describe("DefaultPackageManager git update", () => {
 			// reconciliation must still complete via the cached value.
 			const executedCommands: string[] = [];
 			const managerWithInternals = packageManager as unknown as {
-				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
 				runCommandCapture: (
 					command: string,
 					args: string[],
@@ -326,19 +312,7 @@ describe("DefaultPackageManager git update", () => {
 				}
 				return originalCapture(command, args, options);
 			};
-			managerWithInternals.runCommand = async (command, args, options) => {
-				executedCommands.push(`${command} ${args.join(" ")}`);
-				if (command === "npm") {
-					return;
-				}
-				const result = spawnSync(command, args, {
-					cwd: options?.cwd,
-					encoding: "utf-8",
-				});
-				if (result.status !== 0) {
-					throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr}`);
-				}
-			};
+			installSpawnSyncShim(executedCommands);
 
 			await packageManager.update();
 
@@ -348,19 +322,7 @@ describe("DefaultPackageManager git update", () => {
 		});
 
 		it("should fail loud when set-head fails AND origin/HEAD is uncached", async () => {
-			mkdirSync(remoteDir, { recursive: true });
-			initGitRepo(remoteDir);
-			createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
-			git(["checkout", "-b", "feature"], remoteDir);
-			createCommit(remoteDir, "extension.ts", "// feature", "Feature work");
-			git(["checkout", "main"], remoteDir);
-			createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
-
-			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
-			git(["clone", remoteDir, installedDir], tempDir);
-			git(["config", "--local", "user.email", "test@test.com"], installedDir);
-			git(["config", "--local", "user.name", "Test"], installedDir);
-			git(["checkout", "feature"], installedDir);
+			setupFeatureBranchClone({ setPackages: false });
 
 			// Delete the cached `refs/remotes/origin/HEAD` symbolic-ref to
 			// simulate a clone that doesn't have origin/HEAD populated. Stub
@@ -372,7 +334,6 @@ describe("DefaultPackageManager git update", () => {
 			settingsManager.setPackages([gitSource]);
 
 			const managerWithInternals = packageManager as unknown as {
-				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
 				runCommandCapture: (
 					command: string,
 					args: string[],
@@ -391,20 +352,7 @@ describe("DefaultPackageManager git update", () => {
 		});
 
 		it("should fall back to +HEAD:refs/remotes/origin/HEAD when symbolic-ref is empty", async () => {
-			mkdirSync(remoteDir, { recursive: true });
-			initGitRepo(remoteDir);
-			createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
-			git(["checkout", "-b", "feature"], remoteDir);
-			createCommit(remoteDir, "extension.ts", "// feature", "Feature work");
-			git(["checkout", "main"], remoteDir);
-			const mainTip = createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
-
-			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
-			git(["clone", remoteDir, installedDir], tempDir);
-			git(["config", "--local", "user.email", "test@test.com"], installedDir);
-			git(["config", "--local", "user.name", "Test"], installedDir);
-			git(["checkout", "feature"], installedDir);
-			settingsManager.setPackages([gitSource]);
+			const { mainTip } = setupFeatureBranchClone();
 
 			// Stub `symbolic-ref refs/remotes/origin/HEAD` to throw, exercising
 			// the `.catch(() => "")` fallback in `getLocalGitUpdateTarget`.
@@ -414,7 +362,6 @@ describe("DefaultPackageManager git update", () => {
 			// spawnSync so the rest of the flow is real.
 			const executedCommands: string[] = [];
 			const managerWithInternals = packageManager as unknown as {
-				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
 				runCommandCapture: (
 					command: string,
 					args: string[],
@@ -428,19 +375,7 @@ describe("DefaultPackageManager git update", () => {
 				}
 				return originalCapture(command, args, options);
 			};
-			managerWithInternals.runCommand = async (command, args, options) => {
-				executedCommands.push(`${command} ${args.join(" ")}`);
-				if (command === "npm") {
-					return;
-				}
-				const result = spawnSync(command, args, {
-					cwd: options?.cwd,
-					encoding: "utf-8",
-				});
-				if (result.status !== 0) {
-					throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr}`);
-				}
-			};
+			installSpawnSyncShim(executedCommands);
 
 			await packageManager.update();
 
@@ -453,20 +388,7 @@ describe("DefaultPackageManager git update", () => {
 		});
 
 		it("should fall back to +HEAD when symbolic-ref points outside refs/remotes/origin/", async () => {
-			mkdirSync(remoteDir, { recursive: true });
-			initGitRepo(remoteDir);
-			createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
-			git(["checkout", "-b", "feature"], remoteDir);
-			createCommit(remoteDir, "extension.ts", "// feature", "Feature work");
-			git(["checkout", "main"], remoteDir);
-			const mainTip = createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
-
-			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
-			git(["clone", remoteDir, installedDir], tempDir);
-			git(["config", "--local", "user.email", "test@test.com"], installedDir);
-			git(["config", "--local", "user.name", "Test"], installedDir);
-			git(["checkout", "feature"], installedDir);
-			settingsManager.setPackages([gitSource]);
+			const { mainTip } = setupFeatureBranchClone();
 
 			// Stub `symbolic-ref refs/remotes/origin/HEAD` to return a ref outside
 			// `refs/remotes/origin/` (a user who manually re-targeted the
@@ -474,7 +396,6 @@ describe("DefaultPackageManager git update", () => {
 			// "no usable branch" rather than emit a malformed fetch refspec.
 			const executedCommands: string[] = [];
 			const managerWithInternals = packageManager as unknown as {
-				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
 				runCommandCapture: (
 					command: string,
 					args: string[],
@@ -488,19 +409,7 @@ describe("DefaultPackageManager git update", () => {
 				}
 				return originalCapture(command, args, options);
 			};
-			managerWithInternals.runCommand = async (command, args, options) => {
-				executedCommands.push(`${command} ${args.join(" ")}`);
-				if (command === "npm") {
-					return;
-				}
-				const result = spawnSync(command, args, {
-					cwd: options?.cwd,
-					encoding: "utf-8",
-				});
-				if (result.status !== 0) {
-					throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr}`);
-				}
-			};
+			installSpawnSyncShim(executedCommands);
 
 			await packageManager.update();
 
@@ -514,23 +423,10 @@ describe("DefaultPackageManager git update", () => {
 
 		it("should reconcile no-ref source on existing clones via install", async () => {
 			// Pre-clone exercises installGit's existing-clone branch (mirrors updateGit).
-			mkdirSync(remoteDir, { recursive: true });
-			initGitRepo(remoteDir);
-			createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
-			git(["checkout", "-b", "feature"], remoteDir);
-			createCommit(remoteDir, "extension.ts", "// feature", "Feature work");
-			git(["checkout", "main"], remoteDir);
-			const mainTip = createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
-
-			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
-			git(["clone", remoteDir, installedDir], tempDir);
-			git(["config", "--local", "user.email", "test@test.com"], installedDir);
-			git(["config", "--local", "user.name", "Test"], installedDir);
-			git(["checkout", "feature"], installedDir);
+			const { mainTip } = setupFeatureBranchClone({ setPackages: false });
 
 			const executedCommands: string[] = [];
 			const managerWithInternals = packageManager as unknown as {
-				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
 				runCommandCapture: (
 					command: string,
 					args: string[],
@@ -544,19 +440,7 @@ describe("DefaultPackageManager git update", () => {
 				}
 				return originalCapture(command, args, options);
 			};
-			managerWithInternals.runCommand = async (command, args, options) => {
-				executedCommands.push(`${command} ${args.join(" ")}`);
-				if (command === "npm") {
-					return;
-				}
-				const result = spawnSync(command, args, {
-					cwd: options?.cwd,
-					encoding: "utf-8",
-				});
-				if (result.status !== 0) {
-					throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr}`);
-				}
-			};
+			installSpawnSyncShim(executedCommands);
 
 			// Install path — not update.
 			await packageManager.install(gitSource);
@@ -711,19 +595,7 @@ describe("DefaultPackageManager git update", () => {
 			settingsManager.setPackages([`${gitSource}@v1`]);
 
 			const executedCommands: string[] = [];
-			const managerWithInternals = packageManager as unknown as {
-				runCommand: (command: string, args: string[], options?: { cwd?: string }) => Promise<void>;
-			};
-			managerWithInternals.runCommand = async (command, args, options) => {
-				executedCommands.push(`${command} ${args.join(" ")}`);
-				const result = spawnSync(command, args, {
-					cwd: options?.cwd,
-					encoding: "utf-8",
-				});
-				if (result.status !== 0) {
-					throw new Error(`Command failed: ${command} ${args.join(" ")}\n${result.stderr}`);
-				}
-			};
+			installSpawnSyncShim(executedCommands);
 
 			await packageManager.update();
 
@@ -857,19 +729,7 @@ describe("DefaultPackageManager git update", () => {
 			// at origin/feature. Per the no-ref reconciliation contract,
 			// gitHasAvailableUpdate must compare local HEAD to origin/HEAD
 			// (the remote default), not to the locally tracked feature branch.
-			mkdirSync(remoteDir, { recursive: true });
-			initGitRepo(remoteDir);
-			createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
-			git(["checkout", "-b", "feature"], remoteDir);
-			createCommit(remoteDir, "extension.ts", "// feature", "Feature work");
-			git(["checkout", "main"], remoteDir);
-			createCommit(remoteDir, "extension.ts", "// v2", "Mainline progress");
-
-			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
-			git(["clone", remoteDir, installedDir], tempDir);
-			git(["config", "--local", "user.email", "test@test.com"], installedDir);
-			git(["config", "--local", "user.name", "Test"], installedDir);
-			git(["checkout", "feature"], installedDir);
+			setupFeatureBranchClone({ setPackages: false });
 			expect(git(["rev-parse", "--abbrev-ref", "@{upstream}"], installedDir)).toBe("origin/feature");
 
 			const hasUpdate = await (
