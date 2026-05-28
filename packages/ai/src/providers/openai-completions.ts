@@ -169,6 +169,7 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 			let hasFinishReason = false;
 			const toolCallBlocksByIndex = new Map<number, StreamingToolCallBlock>();
 			const toolCallBlocksById = new Map<string, StreamingToolCallBlock>();
+			const unmatchedDetails = new Map<string, { id: string; [key: string]: unknown }>();
 			const blocks = output.content as StreamingBlock[];
 			const getContentIndex = (block: StreamingBlock) => blocks.indexOf(block);
 			const finishBlock = (block: StreamingBlock) => {
@@ -239,6 +240,12 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 						partialArgs: "",
 						streamIndex,
 					};
+					// Attach any reasoning_details that arrived before this tool call
+					const pending = unmatchedDetails.get(block.id);
+					if (pending) {
+						block.thoughtSignature = JSON.stringify(pending);
+						unmatchedDetails.delete(block.id);
+					}
 					if (streamIndex !== undefined) {
 						toolCallBlocksByIndex.set(streamIndex, block);
 					}
@@ -377,6 +384,8 @@ export const streamOpenAICompletions: StreamFunction<"openai-completions", OpenA
 								) as ToolCall | undefined;
 								if (matchingToolCall) {
 									matchingToolCall.thoughtSignature = JSON.stringify(detail);
+								} else {
+									unmatchedDetails.set(detail.id, detail);
 								}
 							}
 						}
