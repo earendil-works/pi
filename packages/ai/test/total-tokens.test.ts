@@ -564,6 +564,29 @@ describe("totalTokens field", () => {
 	});
 
 	// =========================================================================
+	// Ant Ling
+	// =========================================================================
+
+	describe.skipIf(!process.env.ANT_LING_API_KEY)("Ant Ling", () => {
+		it(
+			"Ling-2.6-flash - should return totalTokens equal to sum of components",
+			{ retry: 3, timeout: 60000 },
+			async () => {
+				const llm = getModel("ant-ling", "Ling-2.6-flash");
+
+				console.log(`\nAnt Ling / ${llm.id}:`);
+				const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.ANT_LING_API_KEY });
+
+				logUsage("First request", first);
+				logUsage("Second request", second);
+
+				assertTotalTokensEqualsComponents(first);
+				assertTotalTokensEqualsComponents(second);
+			},
+		);
+	});
+
+	// =========================================================================
 	// Kimi For Coding
 	// =========================================================================
 

@@ -1145,6 +1145,32 @@ describe("Generate E2E Tests", () => {
 		},
 	);
 
+	describe.skipIf(!process.env.ANT_LING_API_KEY)("Ant Ling Provider (Ling-2.6-flash via OpenAI Completions)", () => {
+		const llm = getModel("ant-ling", "Ling-2.6-flash");
+
+		it("should complete basic text generation", { retry: 3 }, async () => {
+			await basicTextGeneration(llm);
+		});
+
+		it("should handle tool calling", { retry: 3 }, async () => {
+			await handleToolCall(llm);
+		});
+
+		it("should handle streaming", { retry: 3 }, async () => {
+			await handleStreaming(llm);
+		});
+
+		it("should handle thinking mode", { retry: 3 }, async () => {
+			const ringModel = getModel("ant-ling", "Ring-2.6-1T");
+			await handleThinking(ringModel, { reasoningEffort: "high" });
+		});
+
+		it("should handle multi-turn with thinking and tools", { retry: 3 }, async () => {
+			const ringModel = getModel("ant-ling", "Ring-2.6-1T");
+			await multiTurn(ringModel, { reasoningEffort: "high" });
+		});
+	});
+
 	// =========================================================================
 	// OAuth-based providers (credentials from ~/.pi/agent/oauth.json)
 	// Tokens are resolved at module level (see oauthTokens above)

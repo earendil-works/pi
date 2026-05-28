@@ -696,6 +696,22 @@ describe("AI Providers Unicode Surrogate Pair Tests", () => {
 		},
 	);
 
+	describe.skipIf(!process.env.ANT_LING_API_KEY)("Ant Ling Provider Unicode Handling", () => {
+		const llm = getModel("ant-ling", "Ling-2.6-flash");
+
+		it("should handle emoji in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testEmojiInToolResults(llm);
+		});
+
+		it("should handle real-world LinkedIn comment data with emoji", { retry: 3, timeout: 30000 }, async () => {
+			await testRealWorldLinkedInData(llm);
+		});
+
+		it("should handle unpaired high surrogate (0xD83D) in tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testUnpairedHighSurrogate(llm);
+		});
+	});
+
 	describe.skipIf(!process.env.KIMI_API_KEY)("Kimi For Coding Provider Unicode Handling", () => {
 		const llm = getModel("kimi-coding", "kimi-k2-thinking");
 
