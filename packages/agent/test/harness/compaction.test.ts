@@ -597,6 +597,43 @@ describe("harness compaction", () => {
 		expect(invalidResult).toMatchObject({ ok: false, error: { code: "invalid_session" } });
 	});
 
+	it("passes stream options through compaction summaries", async () => {
+		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
+		const seenOptions: Array<Record<string, unknown> | undefined> = [];
+		const { faux, model } = createFauxModel(false);
+		faux.setResponses([
+			(_context, options) => {
+				seenOptions.push(options as Record<string, unknown> | undefined);
+				return fauxAssistantMessage("## Goal\nTest summary");
+			},
+			(_context, options) => {
+				seenOptions.push(options as Record<string, unknown> | undefined);
+				return fauxAssistantMessage("## Original Request\nTest summary");
+			},
+		]);
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: messages,
+			isSplitTurn: true,
+			tokensBefore: 100,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 2000, keepRecentTokens: 20 },
+		};
+
+		getOrThrow(
+			await compact(preparation, model, "test-key", undefined, undefined, undefined, undefined, {
+				sessionId: "session-123",
+				transport: "sse",
+			}),
+		);
+
+		expect(seenOptions).toEqual([
+			expect.objectContaining({ sessionId: "session-123", transport: "sse" }),
+			expect.objectContaining({ sessionId: "session-123", transport: "sse" }),
+		]);
+	});
+
 	it("passes reasoning through turn-prefix summaries when enabled", async () => {
 		const messages: AgentMessage[] = [createUserMessage("Summarize this.")];
 		const seenOptions: Array<Record<string, unknown> | undefined> = [];

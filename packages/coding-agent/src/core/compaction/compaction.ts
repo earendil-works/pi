@@ -35,6 +35,8 @@ export interface CompactionDetails {
 	modifiedFiles: string[];
 }
 
+type CompactionStreamOptions = Pick<SimpleStreamOptions, "sessionId" | "transport">;
+
 /**
  * Extract file operations from messages and previous compaction entries.
  */
@@ -530,8 +532,9 @@ function createSummarizationOptions(
 	headers: Record<string, string> | undefined,
 	signal: AbortSignal | undefined,
 	thinkingLevel: ThinkingLevel | undefined,
+	streamOptions?: CompactionStreamOptions,
 ): SimpleStreamOptions {
-	const options: SimpleStreamOptions = { maxTokens, signal, apiKey, headers };
+	const options: SimpleStreamOptions = { ...streamOptions, maxTokens, signal, apiKey, headers };
 	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
 		options.reasoning = thinkingLevel;
 	}
@@ -566,6 +569,7 @@ export async function generateSummary(
 	previousSummary?: string,
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
+	streamOptions?: CompactionStreamOptions,
 ): Promise<string> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
@@ -598,7 +602,15 @@ export async function generateSummary(
 		},
 	];
 
-	const completionOptions = createSummarizationOptions(model, maxTokens, apiKey, headers, signal, thinkingLevel);
+	const completionOptions = createSummarizationOptions(
+		model,
+		maxTokens,
+		apiKey,
+		headers,
+		signal,
+		thinkingLevel,
+		streamOptions,
+	);
 
 	const response = await completeSummarization(
 		model,
@@ -753,6 +765,7 @@ export async function compact(
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
+	streamOptions?: CompactionStreamOptions,
 ): Promise<CompactionResult> {
 	const {
 		firstKeptEntryId,
@@ -783,6 +796,7 @@ export async function compact(
 						previousSummary,
 						thinkingLevel,
 						streamFn,
+						streamOptions,
 					)
 				: Promise.resolve("No prior history."),
 			generateTurnPrefixSummary(
@@ -794,6 +808,7 @@ export async function compact(
 				signal,
 				thinkingLevel,
 				streamFn,
+				streamOptions,
 			),
 		]);
 		// Merge into single summary
@@ -811,6 +826,7 @@ export async function compact(
 			previousSummary,
 			thinkingLevel,
 			streamFn,
+			streamOptions,
 		);
 	}
 
@@ -842,6 +858,7 @@ async function generateTurnPrefixSummary(
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
 	streamFn?: StreamFn,
+	streamOptions?: CompactionStreamOptions,
 ): Promise<string> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
@@ -861,7 +878,7 @@ async function generateTurnPrefixSummary(
 	const response = await completeSummarization(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		createSummarizationOptions(model, maxTokens, apiKey, headers, signal, thinkingLevel),
+		createSummarizationOptions(model, maxTokens, apiKey, headers, signal, thinkingLevel, streamOptions),
 		streamFn,
 	);
 

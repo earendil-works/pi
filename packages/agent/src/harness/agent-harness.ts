@@ -689,6 +689,7 @@ export class AgentHarness<
 			const auth = await this.getApiKeyAndHeaders?.(model);
 			if (!auth) throw new AgentHarnessError("auth", "No auth available for compaction");
 			const branchEntries = await this.session.getBranch();
+			const sessionMetadata = await this.session.getMetadata();
 			const preparationResult = prepareCompaction(branchEntries, DEFAULT_COMPACTION_SETTINGS);
 			if (!preparationResult.ok) throw preparationResult.error;
 			const preparation = preparationResult.value;
@@ -712,6 +713,7 @@ export class AgentHarness<
 						customInstructions,
 						undefined,
 						this.thinkingLevel,
+						{ sessionId: sessionMetadata.id, transport: this.streamOptions.transport },
 					);
 			if (!compactResult.ok) throw compactResult.error;
 			const result = compactResult.value;

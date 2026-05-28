@@ -1678,6 +1678,7 @@ export class AgentSession {
 					this._compactionAbortController.signal,
 					this.thinkingLevel,
 					this.agent.streamFn,
+					{ sessionId: this.sessionId, transport: this.agent.transport },
 				);
 				summary = result.summary;
 				firstKeptEntryId = result.firstKeptEntryId;
@@ -1951,6 +1952,7 @@ export class AgentSession {
 					this._autoCompactionAbortController.signal,
 					this.thinkingLevel,
 					this.agent.streamFn,
+					{ sessionId: this.sessionId, transport: this.agent.transport },
 				);
 				summary = compactResult.summary;
 				firstKeptEntryId = compactResult.firstKeptEntryId;

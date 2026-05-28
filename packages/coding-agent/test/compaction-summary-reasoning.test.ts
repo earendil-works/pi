@@ -1,4 +1,4 @@
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
+import type { AgentMessage, StreamFn } from "@earendil-works/pi-agent-core";
 import type { AssistantMessage, Model } from "@earendil-works/pi-ai";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { type CompactionPreparation, compact, generateSummary } from "../src/core/compaction/index.ts";
@@ -116,6 +116,31 @@ describe("generateSummary reasoning options", () => {
 		expect(completeSimpleMock.mock.calls[0][2]).not.toHaveProperty("reasoning");
 	});
 
+	it("passes compaction stream options to a custom stream function", async () => {
+		const streamFn = vi.fn<StreamFn>(async () => ({ result: async () => mockSummaryResponse }) as any);
+
+		await generateSummary(
+			messages,
+			createModel(false),
+			2000,
+			"test-key",
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			undefined,
+			streamFn,
+			{ sessionId: "session-123", transport: "sse" },
+		);
+
+		expect(streamFn).toHaveBeenCalledTimes(1);
+		expect(streamFn.mock.calls[0][2]).toMatchObject({
+			apiKey: "test-key",
+			sessionId: "session-123",
+			transport: "sse",
+		});
+	});
+
 	it("clamps compaction summary maxTokens to the model output cap", async () => {
 		const preparation: CompactionPreparation = {
 			firstKeptEntryId: "entry-keep",
@@ -130,5 +155,29 @@ describe("generateSummary reasoning options", () => {
 		await compact(preparation, createModel(false, 128000), "test-key");
 
 		expect(completeSimpleMock.mock.calls.map((call) => call[2]?.maxTokens)).toEqual([128000, 128000]);
+	});
+
+	it("passes compaction stream options through split-turn summaries", async () => {
+		const streamFn = vi.fn<StreamFn>(async () => ({ result: async () => mockSummaryResponse }) as any);
+		const preparation: CompactionPreparation = {
+			firstKeptEntryId: "entry-keep",
+			messagesToSummarize: messages,
+			turnPrefixMessages: messages,
+			isSplitTurn: true,
+			tokensBefore: 600000,
+			fileOps: { read: new Set(), written: new Set(), edited: new Set() },
+			settings: { enabled: true, reserveTokens: 500000, keepRecentTokens: 20000 },
+		};
+
+		await compact(preparation, createModel(false), "test-key", undefined, undefined, undefined, undefined, streamFn, {
+			sessionId: "session-123",
+			transport: "sse",
+		});
+
+		expect(streamFn).toHaveBeenCalledTimes(2);
+		expect(streamFn.mock.calls.map((call) => call[2])).toEqual([
+			expect.objectContaining({ sessionId: "session-123", transport: "sse" }),
+			expect.objectContaining({ sessionId: "session-123", transport: "sse" }),
+		]);
 	});
 });

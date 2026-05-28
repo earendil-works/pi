@@ -1,4 +1,11 @@
-import type { AssistantMessage, ImageContent, Model, TextContent, Usage } from "@earendil-works/pi-ai";
+import type {
+	AssistantMessage,
+	ImageContent,
+	Model,
+	SimpleStreamOptions,
+	TextContent,
+	Usage,
+} from "@earendil-works/pi-ai";
 import { completeSimple } from "@earendil-works/pi-ai";
 import type { AgentMessage, ThinkingLevel } from "../../types.ts";
 import {
@@ -25,6 +32,9 @@ export interface CompactionDetails {
 	/** Files modified in the compacted history. */
 	modifiedFiles: string[];
 }
+
+type CompactionStreamOptions = Pick<SimpleStreamOptions, "sessionId" | "transport">;
+
 function safeJsonStringify(value: unknown): string {
 	try {
 		return JSON.stringify(value) ?? "undefined";
@@ -462,6 +472,7 @@ export async function generateSummary(
 	customInstructions?: string,
 	previousSummary?: string,
 	thinkingLevel?: ThinkingLevel,
+	streamOptions?: CompactionStreamOptions,
 ): Promise<Result<string, CompactionError>> {
 	const maxTokens = Math.min(
 		Math.floor(0.8 * reserveTokens),
@@ -487,10 +498,10 @@ export async function generateSummary(
 		},
 	];
 
-	const completionOptions =
-		model.reasoning && thinkingLevel && thinkingLevel !== "off"
-			? { maxTokens, signal, apiKey, headers, reasoning: thinkingLevel }
-			: { maxTokens, signal, apiKey, headers };
+	const completionOptions: SimpleStreamOptions = { ...streamOptions, maxTokens, signal, apiKey, headers };
+	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
+		completionOptions.reasoning = thinkingLevel;
+	}
 
 	const response = await completeSimple(
 		model,
@@ -631,6 +642,7 @@ export async function compact(
 	customInstructions?: string,
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
+	streamOptions?: CompactionStreamOptions,
 ): Promise<Result<CompactionResult, CompactionError>> {
 	const {
 		firstKeptEntryId,
@@ -662,6 +674,7 @@ export async function compact(
 						customInstructions,
 						previousSummary,
 						thinkingLevel,
+						streamOptions,
 					)
 				: Promise.resolve(ok<string, CompactionError>("No prior history.")),
 			generateTurnPrefixSummary(
@@ -672,6 +685,7 @@ export async function compact(
 				headers,
 				signal,
 				thinkingLevel,
+				streamOptions,
 			),
 		]);
 		if (!historyResult.ok) return err(historyResult.error);
@@ -688,6 +702,7 @@ export async function compact(
 			customInstructions,
 			previousSummary,
 			thinkingLevel,
+			streamOptions,
 		);
 		if (!summaryResult.ok) return err(summaryResult.error);
 		summary = summaryResult.value;
@@ -711,6 +726,7 @@ async function generateTurnPrefixSummary(
 	headers?: Record<string, string>,
 	signal?: AbortSignal,
 	thinkingLevel?: ThinkingLevel,
+	streamOptions?: CompactionStreamOptions,
 ): Promise<Result<string, CompactionError>> {
 	const maxTokens = Math.min(
 		Math.floor(0.5 * reserveTokens),
@@ -727,12 +743,15 @@ async function generateTurnPrefixSummary(
 		},
 	];
 
+	const completionOptions: SimpleStreamOptions = { ...streamOptions, maxTokens, signal, apiKey, headers };
+	if (model.reasoning && thinkingLevel && thinkingLevel !== "off") {
+		completionOptions.reasoning = thinkingLevel;
+	}
+
 	const response = await completeSimple(
 		model,
 		{ systemPrompt: SUMMARIZATION_SYSTEM_PROMPT, messages: summarizationMessages },
-		model.reasoning && thinkingLevel && thinkingLevel !== "off"
-			? { maxTokens, signal, apiKey, headers, reasoning: thinkingLevel }
-			: { maxTokens, signal, apiKey, headers },
+		completionOptions,
 	);
 	if (response.stopReason === "aborted") {
 		return err(new CompactionError("aborted", response.errorMessage || "Turn prefix summarization aborted"));

@@ -46,10 +46,15 @@ function createAssistant(
 	};
 }
 
-function useSummaryStreamFn(harness: Harness, summary: string): () => number {
+function useSummaryStreamFn(
+	harness: Harness,
+	summary: string,
+	seenOptions?: Array<Record<string, unknown> | undefined>,
+): () => number {
 	let callCount = 0;
-	harness.session.agent.streamFn = (model) => {
+	harness.session.agent.streamFn = (model, _context, options) => {
 		callCount++;
+		seenOptions?.push(options as Record<string, unknown> | undefined);
 		const stream = createAssistantMessageEventStream();
 		queueMicrotask(() => {
 			const message: AssistantMessage = {
@@ -141,19 +146,24 @@ describe("AgentSession compaction characterization", () => {
 		const harness = await createHarness({ withConfiguredAuth: false });
 		harnesses.push(harness);
 		seedCompactableSession(harness);
-		const getStreamCallCount = useSummaryStreamFn(harness, "summary from custom stream");
+		harness.session.agent.transport = "sse";
+		const seenOptions: Array<Record<string, unknown> | undefined> = [];
+		const getStreamCallCount = useSummaryStreamFn(harness, "summary from custom stream", seenOptions);
 
 		const result = await harness.session.compact();
 
 		expect(result.summary).toBe("summary from custom stream");
 		expect(getStreamCallCount()).toBe(1);
+		expect(seenOptions[0]).toMatchObject({ sessionId: harness.session.sessionId, transport: "sse" });
 	});
 
 	it("auto-compacts with a custom streamFn when registry auth is absent", async () => {
 		const harness = await createHarness({ withConfiguredAuth: false });
 		harnesses.push(harness);
 		seedCompactableSession(harness);
-		const getStreamCallCount = useSummaryStreamFn(harness, "auto summary from custom stream");
+		harness.session.agent.transport = "sse";
+		const seenOptions: Array<Record<string, unknown> | undefined> = [];
+		const getStreamCallCount = useSummaryStreamFn(harness, "auto summary from custom stream", seenOptions);
 		const sessionInternals = harness.session as unknown as SessionWithCompactionInternals;
 
 		await sessionInternals._runAutoCompaction("threshold", false);
@@ -161,6 +171,7 @@ describe("AgentSession compaction characterization", () => {
 		const compactionEntries = harness.sessionManager.getEntries().filter((entry) => entry.type === "compaction");
 		expect(compactionEntries).toHaveLength(1);
 		expect(getStreamCallCount()).toBe(1);
+		expect(seenOptions[0]).toMatchObject({ sessionId: harness.session.sessionId, transport: "sse" });
 	});
 
 	it("cancels in-progress manual compaction when abortCompaction is called", async () => {
