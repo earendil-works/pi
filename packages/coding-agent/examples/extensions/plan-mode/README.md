@@ -4,7 +4,7 @@ Read-only exploration mode for safe code analysis.
 
 ## Features
 
-- **Built-in write tools disabled**: Disables edit/write while preserving other active tools
+- **Built-in write tools disabled**: Disables edit/write while preserving other active read-only tools, including questionnaire
 - **Bash allowlist**: Only read-only bash commands are allowed
 - **Plan extraction**: Extracts numbered steps from `Plan:` sections
 - **Progress tracking**: Widget shows completion status during execution
