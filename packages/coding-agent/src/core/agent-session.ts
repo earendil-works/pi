@@ -79,6 +79,8 @@ import {
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+import { McpManager, type McpToolInfo } from "./mcp/manager.ts";
+import { createMcpToolDefinition } from "./mcp/tool-factory.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
@@ -86,12 +88,13 @@ import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.t
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
 import { CURRENT_SESSION_VERSION, getLatestCompactionEntry, type SessionHeader } from "./session-manager.ts";
 import type { SettingsManager } from "./settings-manager.ts";
+import { loadMcpConfig } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
-import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
+import { createToolDefinitionFromAgentTool, wrapToolDefinition } from "./tools/tool-definition-wrapper.ts";
 
 // ============================================================================
 // Skill Block Parsing
@@ -311,6 +314,11 @@ export class AgentSession {
 
 	// Model registry for API key resolution
 	private _modelRegistry: ModelRegistry;
+
+	// MCP
+	private _mcpManager: McpManager | null = null;
+	private _mcpToolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
+	private _mcpReady: Promise<void> = Promise.resolve();
 
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
@@ -730,6 +738,10 @@ export class AgentSession {
 		);
 		this._disconnectFromAgent();
 		this._eventListeners = [];
+		// Disconnect MCP servers
+		if (this._mcpManager) {
+			this._mcpManager.disconnectAll().catch(() => {});
+		}
 		cleanupSessionResources(this.sessionId);
 	}
 
@@ -984,6 +996,9 @@ export class AgentSession {
 	 * @throws Error if no model selected or no API key available (when not streaming)
 	 */
 	async prompt(text: string, options?: PromptOptions): Promise<void> {
+		// Wait for MCP servers to finish connecting before processing prompt
+		await this._mcpReady;
+
 		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 		const preflightResult = options?.preflightResult;
 		let messages: AgentMessage[] | undefined;
@@ -2318,6 +2333,12 @@ export class AgentSession {
 				sourceInfo: tool.sourceInfo,
 			});
 		}
+		// MCP tools
+		for (const [name, entry] of this._mcpToolDefinitions) {
+			if (isAllowedTool(name)) {
+				definitionRegistry.set(name, entry);
+			}
+		}
 		this._toolDefinitions = definitionRegistry;
 		this._toolPromptSnippets = new Map(
 			Array.from(definitionRegistry.values())
@@ -2350,6 +2371,12 @@ export class AgentSession {
 		const toolRegistry = new Map(wrappedBuiltInTools.map((tool) => [tool.name, tool]));
 		for (const tool of wrappedExtensionTools as AgentTool[]) {
 			toolRegistry.set(tool.name, tool);
+		}
+		// Wrap MCP tools as AgentTool and add to registry
+		for (const [name, entry] of this._mcpToolDefinitions) {
+			if (isAllowedTool(name)) {
+				toolRegistry.set(name, wrapToolDefinition(entry.definition) as AgentTool);
+			}
 		}
 		this._toolRegistry = toolRegistry;
 
@@ -2421,6 +2448,34 @@ export class AgentSession {
 		}
 		this._bindExtensionCore(this._extensionRunner);
 		this._applyExtensionBindings(this._extensionRunner);
+
+		// MCP: Connect to configured MCP servers and discover tools
+		const mcpConfig = loadMcpConfig();
+		if (Object.keys(mcpConfig).length > 0) {
+			if (!this._mcpManager) {
+				this._mcpManager = new McpManager();
+			}
+			this._mcpReady = Promise.allSettled(
+				Object.entries(mcpConfig).map(([name, config]) =>
+					this._mcpManager!.connectServer(name, config)
+						.then((tools: McpToolInfo[]) => {
+							for (const tool of tools) {
+								const def = createMcpToolDefinition(name, tool, this._mcpManager!);
+								this._mcpToolDefinitions.set(def.name, {
+									definition: def,
+									sourceInfo: createSyntheticSourceInfo(`<mcp:${name}>`, { source: "mcp" }),
+								});
+							}
+							this._refreshToolRegistry();
+						})
+						.catch((err: unknown) => {
+							console.error(
+								`[MCP] Failed to connect to ${name}: ${err instanceof Error ? err.message : String(err)}`,
+							);
+						}),
+				),
+			).then(() => {});
+		}
 
 		const defaultActiveToolNames = this._baseToolsOverride
 			? Object.keys(this._baseToolsOverride)

@@ -99,6 +99,14 @@ export interface PersonalAssistantConfig {
 		ssh_host?: string;
 		remote_path?: string;
 	};
+	mcpServers?: Record<
+		string,
+		{
+			command: string;
+			args?: string[];
+			env?: Record<string, string>;
+		}
+	>;
 }
 
 export type TransportSetting = Transport;
@@ -1204,5 +1212,21 @@ export class SettingsManager {
 		this.globalSettings.warnings = { ...warnings };
 		this.markModified("warnings");
 		this.save();
+	}
+}
+
+// ============================================================================
+// MCP Config Loader
+// ============================================================================
+
+const MCP_CONFIG_FILE = "mcp.json";
+
+export function loadMcpConfig(): Record<string, { command: string; args?: string[]; env?: Record<string, string> }> {
+	const configPath = join(getAgentDir(), MCP_CONFIG_FILE);
+	if (!existsSync(configPath)) return {};
+	try {
+		return JSON.parse(readFileSync(configPath, "utf-8"));
+	} catch {
+		return {};
 	}
 }
