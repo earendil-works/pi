@@ -162,6 +162,17 @@ function finalizeTruncatedResult(
  * check to avoid running the RGI_Emoji regex unnecessarily.
  */
 function graphemeWidth(segment: string): number {
+	// Tabs are accounted as 3 columns everywhere else in this module: visibleWidth()
+	// replaces "\t" with 3 spaces, and truncateToWidth()/truncateFragmentToWidth()
+	// advance by 3. graphemeWidth() feeds the column-slicing primitives
+	// (sliceByColumn/sliceWithWidth/extractSegments) used by the overlay compositor, so
+	// it MUST agree. Treating "\t" as a 0-width control char here desynced slice width
+	// from visibleWidth, so overlay compositing added 3 stray padding columns per tab and
+	// overflowed the terminal width (crash: terminal width 179 vs rendered line width 182).
+	if (segment === "\t") {
+		return 3;
+	}
+
 	// Zero-width clusters
 	if (zeroWidthRegex.test(segment)) {
 		return 0;

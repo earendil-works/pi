@@ -823,7 +823,12 @@ export class TUI extends Container {
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
 			if (!isImageLine(line)) {
-				lines[i] = normalizeTerminalOutput(line) + reset;
+				// Expand tabs to 3 spaces to match the fixed 3-column tab width used by
+				// visibleWidth/graphemeWidth/truncateToWidth. Emitting a raw "\t" lets the
+				// terminal advance to its own tab stop (commonly 8), desyncing the physical
+				// render from the width model and corrupting differential-redraw cursor math.
+				const expanded = line.includes("\t") ? line.replace(/\t/g, "   ") : line;
+				lines[i] = normalizeTerminalOutput(expanded) + reset;
 			}
 		}
 		return lines;

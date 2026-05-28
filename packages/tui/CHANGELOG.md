@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- Fixed overlay compositing overflowing the terminal width (and corrupting differential redraw) when overlay content contained tab characters. Tabs are now accounted as 3 columns in the column-slicing primitives (`sliceByColumn`/`sliceWithWidth`/`extractSegments`) to match `visibleWidth`/`truncateToWidth`, and are expanded to spaces before being written so the physical render matches the width model.
+
 ## [0.77.0] - 2026-05-28
 
 ### Fixed
