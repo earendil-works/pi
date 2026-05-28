@@ -322,6 +322,26 @@ function createExtensionAPI(
 			runtime.unregisterProvider(name, extension.path);
 		},
 
+		async withCommandContext(fn) {
+			runtime.assertActive();
+			if (!runtime.createCommandContext) {
+				throw new Error(
+					"pi.withCommandContext is not available in this mode " +
+						"(no ExtensionCommandContext actions bound by the host).",
+				);
+			}
+			const ctx = runtime.createCommandContext();
+			return await fn(ctx);
+		},
+
+		getMessageRenderer(customType) {
+			return runtime.getMessageRenderer?.(customType);
+		},
+
+		getToolDefinition(toolName) {
+			return runtime.getToolDefinition?.(toolName);
+		},
+
 		events: eventBus,
 	} as ExtensionAPI;
 

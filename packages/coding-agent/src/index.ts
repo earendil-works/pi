@@ -228,6 +228,12 @@ export {
 	type Skill,
 	type SkillFrontmatter,
 } from "./core/skills.ts";
+// Built-in slash-command catalogue. Useful for remote-control extensions that
+// want to surface the full set of "/foo" the user can type, not just the
+// extension/skill/template commands returned by pi.getCommands().
+// Types SlashCommandInfo / SlashCommandSource are already re-exported from
+// the extensions/types module above.
+export { BUILTIN_SLASH_COMMANDS, type BuiltinSlashCommand } from "./core/slash-commands.ts";
 export { createSyntheticSourceInfo } from "./core/source-info.ts";
 // Tools
 export {

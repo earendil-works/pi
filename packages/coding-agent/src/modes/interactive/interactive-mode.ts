@@ -1545,6 +1545,33 @@ export class InteractiveMode {
 				reload: async () => {
 					await this.handleReloadCommand();
 				},
+				executeInputLine: async (text) => {
+					// Run the line through the editor's submit handler — the same path a
+					// real Enter keypress uses (onSubmit dispatches built-in slash
+					// commands, runs `!` bash, or sends a prompt). Selectors it opens
+					// surface to remotes via SelectList lifecycle events.
+					//
+					// Deferred to a fresh task instead of awaited: session-replacing
+					// commands (/new, /resume) tear down and rebind the extension
+					// runtime, which would invalidate the command-context this call runs
+					// inside ("extension is stale, restart pi to recover"). Running from
+					// the event loop mirrors a keypress, which is never inside a
+					// command-context, so the reload is clean.
+					//
+					// Consequence: this resolves once the line is *scheduled*, not when
+					// it finishes. Surface failures through the host UI rather than
+					// swallowing them (and to avoid an unhandled rejection escaping the
+					// deferred task).
+					const submit = this.defaultEditor.onSubmit;
+					if (!submit) return;
+					setImmediate(() => {
+						void Promise.resolve(submit(text)).catch((err) => {
+							this.showError(
+								`Remote input "${text}" failed: ${err instanceof Error ? err.message : String(err)}`,
+							);
+						});
+					});
+				},
 			},
 			shutdownHandler: () => {
 				this.shutdownRequested = true;

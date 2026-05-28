@@ -1,3 +1,4 @@
+import { EventEmitter } from "node:events";
 import { getKeybindings } from "../keybindings.ts";
 import type { Component } from "../tui.ts";
 import { truncateToWidth, visibleWidth } from "../utils.ts";
@@ -5,6 +6,55 @@ import { truncateToWidth, visibleWidth } from "../utils.ts";
 const DEFAULT_PRIMARY_COLUMN_WIDTH = 32;
 const PRIMARY_COLUMN_GAP = 2;
 const MIN_DESCRIPTION_WIDTH = 10;
+
+/**
+ * Module-scope event bus for SelectList lifecycle, intended for remote-control
+ * extensions that want to mirror selectors to a non-TUI client (mobile app, web).
+ *
+ * Events:
+ *   "mount"   ({ id, items })  emitted from the SelectList constructor.
+ *   "dismiss" ({ id })         emitted exactly once when the list is resolved
+ *                              (selection, cancel, or remote response).
+ *
+ * Listeners receive the same `id` they can use with `respondToSelectList(id, value)`
+ * to drive the selection remotely.
+ */
+export const selectListEvents = new EventEmitter();
+
+// Registry of live SelectLists by id so a remote client can find one and drive
+// its selection. Held by WeakRef (with a FinalizationRegistry) so a list the
+// owner drops without an explicit confirm/cancel — there is no Component
+// teardown hook to clean up on — can still be garbage-collected and its entry
+// reclaimed instead of leaking. Settling a list also removes its entry eagerly.
+const liveSelectLists = new Map<string, WeakRef<SelectList>>();
+const selectListFinalizer = new FinalizationRegistry<string>((id) => {
+	liveSelectLists.delete(id);
+});
+
+let __selectListIdCounter = 0;
+function nextSelectListId(): string {
+	__selectListIdCounter++;
+	return `sl_${Date.now().toString(36)}_${__selectListIdCounter.toString(36)}`;
+}
+
+/**
+ * Resolve a live SelectList from outside the TUI focus stack by id.
+ * Pass `value === null` to cancel; otherwise the value is matched against
+ * `SelectItem.value` (preferred) or `SelectItem.label` (fallback) before
+ * invoking the list's onSelect callback.
+ *
+ * @returns for a cancel, true if a live list existed; for a selection, true
+ *   only if `value` matched an item. false if no live list exists for `id`.
+ */
+export function respondToSelectList(id: string, value: string | null): boolean {
+	const list = liveSelectLists.get(id)?.deref();
+	if (!list) return false;
+	if (value === null) {
+		list.cancelRemote();
+		return true;
+	}
+	return list.selectRemote(value);
+}
 
 const normalizeToSingleLine = (text: string): string => text.replace(/[\r\n]+/g, " ").trim();
 const clamp = (value: number, min: number, max: number): number => Math.max(min, Math.min(value, max));
@@ -38,12 +88,15 @@ export interface SelectListLayoutOptions {
 }
 
 export class SelectList implements Component {
+	/** Stable id for this instance. See `selectListEvents` for remote control. */
+	public readonly id: string = nextSelectListId();
 	private items: SelectItem[] = [];
 	private filteredItems: SelectItem[] = [];
 	private selectedIndex: number = 0;
 	private maxVisible: number = 5;
 	private theme: SelectListTheme;
 	private layout: SelectListLayoutOptions;
+	private dismissed: boolean = false;
 
 	public onSelect?: (item: SelectItem) => void;
 	public onCancel?: () => void;
@@ -55,6 +108,53 @@ export class SelectList implements Component {
 		this.maxVisible = maxVisible;
 		this.theme = theme;
 		this.layout = layout;
+		liveSelectLists.set(this.id, new WeakRef(this));
+		selectListFinalizer.register(this, this.id, this);
+		selectListEvents.emit("mount", { id: this.id, items });
+	}
+
+	/**
+	 * Transition to the dismissed state exactly once. Returns true if this call
+	 * performed the transition (the caller "won the race"), false if the list was
+	 * already dismissed. Callers must only fire onSelect/onCancel when this
+	 * returns true, so a keyboard confirm and a concurrent remote response can't
+	 * both invoke the callback.
+	 */
+	private settle(): boolean {
+		if (this.dismissed) return false;
+		this.dismissed = true;
+		liveSelectLists.delete(this.id);
+		selectListFinalizer.unregister(this);
+		selectListEvents.emit("dismiss", { id: this.id });
+		return true;
+	}
+
+	/**
+	 * Drive a selection from outside the TUI (e.g., a phone client).
+	 * Matches by `value` first, then `label`.
+	 * @returns true if `value` matched an item, false otherwise.
+	 */
+	selectRemote(value: string): boolean {
+		const item = this.items.find((i) => i.value === value) ?? this.items.find((i) => i.label === value);
+		if (!item) return false;
+		if (this.settle()) this.onSelect?.(item);
+		return true;
+	}
+
+	/** Drive a cancel from outside the TUI. Fires onCancel if not already dismissed. */
+	cancelRemote(): void {
+		if (this.settle()) this.onCancel?.();
+	}
+
+	/**
+	 * Component teardown hook. Called by the TUI's overlay manager when this
+	 * list is permanently removed (hide / pop). Settles the list if it hasn't
+	 * been already, so `dismiss` fires deterministically on every close path —
+	 * not just user pick/cancel and remote response. Does not invoke
+	 * onSelect/onCancel: the unmount itself isn't a user choice.
+	 */
+	dispose(): void {
+		this.settle();
 	}
 
 	setFilter(filter: string): void {
@@ -124,15 +224,13 @@ export class SelectList implements Component {
 		// Enter
 		else if (kb.matches(keyData, "tui.select.confirm")) {
 			const selectedItem = this.filteredItems[this.selectedIndex];
-			if (selectedItem && this.onSelect) {
-				this.onSelect(selectedItem);
+			if (selectedItem && this.settle()) {
+				this.onSelect?.(selectedItem);
 			}
 		}
 		// Escape or Ctrl+C
 		else if (kb.matches(keyData, "tui.select.cancel")) {
-			if (this.onCancel) {
-				this.onCancel();
-			}
+			if (this.settle()) this.onCancel?.();
 		}
 	}
 

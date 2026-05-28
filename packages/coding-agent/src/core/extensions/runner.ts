@@ -171,6 +171,8 @@ export type SwitchSessionHandler = (
 
 export type ReloadHandler = () => Promise<void>;
 
+export type ExecuteInputLineHandler = (text: string) => Promise<void>;
+
 export type ShutdownHandler = () => void;
 
 /**
@@ -243,6 +245,7 @@ export class ExtensionRunner {
 	private navigateTreeHandler: NavigateTreeHandler = async () => ({ cancelled: false });
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
 	private reloadHandler: ReloadHandler = async () => {};
+	private executeInputLineHandler: ExecuteInputLineHandler = async () => {};
 	private shutdownHandler: ShutdownHandler = () => {};
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
@@ -286,6 +289,16 @@ export class ExtensionRunner {
 		this.runtime.setModel = actions.setModel;
 		this.runtime.getThinkingLevel = actions.getThinkingLevel;
 		this.runtime.setThinkingLevel = actions.setThinkingLevel;
+		// Expose a synth-on-demand command context so pi.withCommandContext can
+		// give extensions access to switchSession/newSession/fork/etc. from
+		// arbitrary callsites (event handlers, WS bridges) instead of only from
+		// inside a registered command handler.
+		this.runtime.createCommandContext = () => this.createCommandContext();
+		// Forward the cross-extension renderer/tool-def lookups (they already
+		// exist on the runner) so pi.getMessageRenderer / pi.getToolDefinition
+		// can re-render another extension's presentation.
+		this.runtime.getMessageRenderer = (customType) => this.getMessageRenderer(customType);
+		this.runtime.getToolDefinition = (toolName) => this.getToolDefinition(toolName);
 
 		// Context actions (required)
 		this.getModel = contextActions.getModel;
@@ -343,6 +356,7 @@ export class ExtensionRunner {
 			this.navigateTreeHandler = actions.navigateTree;
 			this.switchSessionHandler = actions.switchSession;
 			this.reloadHandler = actions.reload;
+			this.executeInputLineHandler = actions.executeInputLine;
 			return;
 		}
 
@@ -352,6 +366,7 @@ export class ExtensionRunner {
 		this.navigateTreeHandler = async () => ({ cancelled: false });
 		this.switchSessionHandler = async () => ({ cancelled: false });
 		this.reloadHandler = async () => {};
+		this.executeInputLineHandler = async () => {};
 	}
 
 	setUIContext(uiContext?: ExtensionUIContext): void {
@@ -664,6 +679,10 @@ export class ExtensionRunner {
 		context.reload = () => {
 			this.assertActive();
 			return this.reloadHandler();
+		};
+		context.executeInputLine = (text) => {
+			this.assertActive();
+			return this.executeInputLineHandler(text);
 		};
 		return context;
 	}

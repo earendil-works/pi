@@ -775,6 +775,7 @@ describe("ExtensionRunner", () => {
 				navigateTree: async () => ({ cancelled: false }),
 				switchSession: async () => ({ cancelled: false }),
 				reload: async () => {},
+				executeInputLine: async () => {},
 			});
 
 			const commandContext = runner.createCommandContext();

@@ -361,6 +361,22 @@ export interface ExtensionCommandContext extends ExtensionContext {
 
 	/** Reload extensions, skills, prompts, and themes. */
 	reload(): Promise<void>;
+
+	/**
+	 * Submit a line of text through the interactive editor's submit path, as if
+	 * the user typed it and pressed Enter: built-in slash commands (`/model`,
+	 * `/settings`, …) open their selectors, `!`/`!!` run bash, and plain text is
+	 * sent as a prompt. Lets a remote client (phone, WS bridge) drive commands
+	 * that live in the TUI rather than the extension API. No-op outside
+	 * interactive mode.
+	 *
+	 * Fire-and-forget: the returned promise resolves once the line has been
+	 * *scheduled*, not when it finishes processing. This is deliberate — awaiting
+	 * a session-replacing command (`/new`, `/resume`) here would invalidate the
+	 * very command-context the call runs inside. Failures surface in the host UI,
+	 * not as a rejection of this promise.
+	 */
+	executeInputLine(text: string): Promise<void>;
 }
 
 /**
@@ -1306,6 +1322,42 @@ export interface ExtensionAPI {
 	 */
 	unregisterProvider(name: string): void;
 
+	/**
+	 * Run a function with an `ExtensionCommandContext` synthesised on demand.
+	 *
+	 * The context exposes session-control methods (`switchSession`, `newSession`,
+	 * `fork`, `navigateTree`, `reload`, `waitForIdle`) that are otherwise only
+	 * available inside a slash-command `handler`. Use this from event handlers
+	 * or external triggers (HTTP/WS bridges, scheduled jobs) when you need to
+	 * act on user intent that didn't arrive through pi's interactive editor.
+	 *
+	 * The provided callback runs synchronously inside the active extension; it
+	 * does **not** create a new session, swap state, or otherwise change the
+	 * current session by itself — it just hands you the same context shape a
+	 * registered command handler would receive.
+	 *
+	 * @example
+	 *   pi.withCommandContext(async (ctx) => {
+	 *     await ctx.switchSession(pathFromRemoteClient);
+	 *   });
+	 */
+	withCommandContext<T>(fn: (ctx: ExtensionCommandContext) => Promise<T> | T): Promise<T>;
+
+	/**
+	 * Look up the message renderer another extension registered for a custom
+	 * message type, or `undefined` if none. Lets an extension re-render another's
+	 * custom presentation (e.g. to mirror it to a non-TUI client) instead of
+	 * falling back to plain text.
+	 */
+	getMessageRenderer(customType: string): MessageRenderer | undefined;
+
+	/**
+	 * Look up a registered tool's definition by name, or `undefined` if none.
+	 * Exposes the tool's `renderResult` so its rich result can be re-rendered
+	 * outside the normal turn flow.
+	 */
+	getToolDefinition(toolName: string): RegisteredTool["definition"] | undefined;
+
 	/** Shared event bus for extension communication. */
 	events: EventBus;
 }
@@ -1463,6 +1515,23 @@ export interface ExtensionRuntimeState {
 	 */
 	registerProvider: (name: string, config: ProviderConfig, extensionPath?: string) => void;
 	unregisterProvider: (name: string, extensionPath?: string) => void;
+	/**
+	 * Synthesise an `ExtensionCommandContext` on demand.
+	 *
+	 * Bound by the runner during `initialize()`. Undefined before bind, and in
+	 * modes that don't expose command-context actions (e.g., peer-mode loading).
+	 * Called by `pi.withCommandContext()` to give extensions access to
+	 * `switchSession` / `newSession` / `fork` / etc. from outside a registered
+	 * command handler.
+	 */
+	createCommandContext?: () => ExtensionCommandContext;
+	/**
+	 * Look up renderers/tool defs registered across all extensions. Bound by the
+	 * runner during `initialize()`; forwarded by `pi.getMessageRenderer` /
+	 * `pi.getToolDefinition`. Undefined before bind.
+	 */
+	getMessageRenderer?: (customType: string) => MessageRenderer | undefined;
+	getToolDefinition?: (toolName: string) => RegisteredTool["definition"] | undefined;
 }
 
 /**
@@ -1526,6 +1595,7 @@ export interface ExtensionCommandContextActions {
 		options?: { withSession?: (ctx: ReplacedSessionContext) => Promise<void> },
 	) => Promise<{ cancelled: boolean }>;
 	reload: () => Promise<void>;
+	executeInputLine: (text: string) => Promise<void>;
 }
 
 /**

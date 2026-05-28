@@ -60,6 +60,15 @@ export interface Component {
 	 * Called when theme changes or when component needs to re-render from scratch.
 	 */
 	invalidate(): void;
+
+	/**
+	 * Optional teardown hook. Called by the overlay manager when this component
+	 * is being permanently removed (hide / pop), giving the component one
+	 * deterministic moment to clean up — e.g. emit a lifecycle event, release
+	 * resources, cancel subscriptions. Not called for transient hides (setHidden),
+	 * which only pause rendering. Implementations must be idempotent.
+	 */
+	dispose?(): void;
 }
 
 type InputListenerResult = { consume?: boolean; data?: string } | undefined;
@@ -355,6 +364,12 @@ export class TUI extends Container {
 					}
 					if (this.overlayStack.length === 0) this.terminal.hideCursor();
 					this.requestRender();
+					// Permanent removal — give the component its teardown moment.
+					try {
+						component.dispose?.();
+					} catch {
+						/* dispose must never block the unmount path */
+					}
 				}
 			},
 			setHidden: (hidden: boolean) => {
@@ -406,6 +421,12 @@ export class TUI extends Container {
 		}
 		if (this.overlayStack.length === 0) this.terminal.hideCursor();
 		this.requestRender();
+		// Permanent removal — give the component its teardown moment.
+		try {
+			overlay.component.dispose?.();
+		} catch {
+			/* dispose must never block the unmount path */
+		}
 	}
 
 	/** Check if there are any visible overlays */

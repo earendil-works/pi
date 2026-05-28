@@ -339,6 +339,8 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
 				reload: async () => {
 					await session.reload();
 				},
+				// No interactive editor in RPC mode — nothing to submit through.
+				executeInputLine: async () => {},
 			},
 			shutdownHandler: () => {
 				shutdownRequested = true;

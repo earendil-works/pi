@@ -93,6 +93,8 @@ export async function runPrintMode(runtimeHost: AgentSessionRuntime, options: Pr
 				reload: async () => {
 					await session.reload();
 				},
+				// No interactive editor in print mode — nothing to submit through.
+				executeInputLine: async () => {},
 			},
 			onError: (err) => {
 				console.error(`Extension error (${err.extensionPath}): ${err.error}`);
