@@ -28,10 +28,10 @@ export function normalizeDisplayText(text: string): string {
 }
 
 export function getTextOutput(
-	result: { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> } | undefined,
+	result: { content?: Array<{ type: string; text?: string; data?: string; mimeType?: string }> } | undefined,
 	showImages: boolean,
 ): string {
-	if (!result) return "";
+	if (!result || !result.content) return "";
 
 	const textBlocks = result.content.filter((c) => c.type === "text");
 	const imageBlocks = result.content.filter((c) => c.type === "image");
