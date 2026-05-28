@@ -318,4 +318,24 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_OAUTH_T
 		expect(sessionInfoEntries.length).toBe(1);
 		expect(sessionInfoEntries[0].name).toBe("my-test-session");
 	}, 60000);
+
+	test("should set session name via --name CLI argument at startup", async () => {
+		// Create client with --name arg that sets the name before any messages
+		const nameClient = new RpcClient({
+			cliPath: join(__dirname, "..", "dist", "cli.js"),
+			cwd: join(__dirname, ".."),
+			env: { PI_CODING_AGENT_DIR: join(tmpdir(), `pi-rpc-test-${Date.now()}`) },
+			provider: "anthropic",
+			model: "claude-sonnet-4-5",
+			args: ["--name", "cli-named-session"],
+		});
+
+		await nameClient.start();
+
+		// Name should be set immediately at startup, no prompt needed
+		const state = await nameClient.getState();
+		expect(state.sessionName).toBe("cli-named-session");
+
+		await nameClient.stop();
+	}, 30000);
 });
