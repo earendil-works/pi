@@ -2009,7 +2009,7 @@ export class Editor implements Component, Focusable {
 		let firstPrefixIndex = -1;
 
 		for (let i = 0; i < items.length; i++) {
-			const value = items[i]!.value;
+			const value = String(items[i]!.value ?? "");
 			if (value === prefix) {
 				return i; // Exact match always wins
 			}
