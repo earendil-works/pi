@@ -930,11 +930,25 @@ export class AgentSession {
 	// Prompting
 	// =========================================================================
 
+	/**
+	 * Safely continue the agent after compaction or post-run handling.
+	 * If the rebuilt context ends with an assistant message and there are no
+	 * queued messages to drain, skip the continuation — calling agent.continue()
+	 * in that state throws "Cannot continue from message role: assistant".
+	 */
+	private async _continueAgentIfPossible(): Promise<void> {
+		const messages = this.agent.state.messages;
+		const lastMsg = messages[messages.length - 1];
+		if (lastMsg?.role === "assistant" && !this.agent.hasQueuedMessages()) {
+			return;
+		}
+		await this.agent.continue();
+	}
 	private async _runAgentPrompt(messages: AgentMessage | AgentMessage[]): Promise<void> {
 		try {
 			await this.agent.prompt(messages);
 			while (await this._handlePostAgentRun()) {
-				await this.agent.continue();
+				await this._continueAgentIfPossible();
 			}
 		} finally {
 			this._flushPendingBashMessages();
@@ -1064,9 +1078,9 @@ export class AgentSession {
 			const lastAssistant = this._findLastAssistantMessage();
 			if (lastAssistant && (await this._checkCompaction(lastAssistant, false))) {
 				try {
-					await this.agent.continue();
+					await this._continueAgentIfPossible();
 					while (await this._handlePostAgentRun()) {
-						await this.agent.continue();
+						await this._continueAgentIfPossible();
 					}
 				} finally {
 					this._flushPendingBashMessages();
@@ -2020,7 +2034,10 @@ export class AgentSession {
 			if (willRetry) {
 				const messages = this.agent.state.messages;
 				const lastMsg = messages[messages.length - 1];
-				if (lastMsg?.role === "assistant" && (lastMsg as AssistantMessage).stopReason === "error") {
+				// Trim any trailing assistant — silent overflow (stopReason "stop" with
+				// usage exceeding context) leaves a non-error assistant that would cause
+				// "Cannot continue from message role: assistant" on the retry.
+				if (lastMsg?.role === "assistant") {
 					this.agent.state.messages = messages.slice(0, -1);
 				}
 				return true;
