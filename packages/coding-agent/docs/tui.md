@@ -803,9 +803,9 @@ Replace the footer. `footerData` exposes data not otherwise accessible to extens
 ctx.ui.setFooter((tui, theme, footerData) => ({
   invalidate() {},
   render(width: number): string[] {
-    // footerData.getGitBranch(): string | null
+    // footerData.getVcsMessage(): string | null
     // footerData.getExtensionStatuses(): ReadonlyMap<string, string>
-    return [`${ctx.model?.id} (${footerData.getGitBranch() || "no git"})`];
+    return [`${ctx.model?.id} (${footerData.getVcsMessage() || "no vcs"})`];
   },
   dispose: footerData.onBranchChange(() => tui.requestRender()), // reactive
 }));

@@ -109,10 +109,10 @@ export class FooterComponent implements Component {
 		// Replace home directory with ~
 		let pwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
 
-		// Add git branch if available
-		const branch = this.footerData.getGitBranch();
-		if (branch) {
-			pwd = `${pwd} (${branch})`;
+		// Add VCS info if available
+		const vcsMessage = this.footerData.getVcsMessage();
+		if (vcsMessage) {
+			pwd = `${pwd} (${vcsMessage})`;
 		}
 
 		// Add session name if set

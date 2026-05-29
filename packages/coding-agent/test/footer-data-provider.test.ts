@@ -114,7 +114,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 		const provider = new FooterDataProvider(nestedDir);
 		try {
-			expect(provider.getGitBranch()).toBe("main");
+			expect(provider.getVcsMessage()).toBe("main");
 			expect(vi.mocked(spawnSync)).not.toHaveBeenCalled();
 		} finally {
 			provider.dispose();
@@ -127,7 +127,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 		const provider = new FooterDataProvider(repoDir);
 		try {
-			expect(provider.getGitBranch()).toBe("main");
+			expect(provider.getVcsMessage()).toBe("main");
 			expect(vi.mocked(spawnSync)).toHaveBeenCalledWith(
 				"git",
 				["--no-optional-locks", "symbolic-ref", "--quiet", "--short", "HEAD"],
@@ -148,7 +148,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 		const provider = new FooterDataProvider(worktreeDir);
 		try {
-			expect(provider.getGitBranch()).toBe("main");
+			expect(provider.getVcsMessage()).toBe("main");
 		} finally {
 			provider.dispose();
 		}
@@ -161,7 +161,7 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 		const provider = new FooterDataProvider(repoDir);
 		try {
-			expect(provider.getGitBranch()).toBe("detached");
+			expect(provider.getVcsMessage()).toBe("detached");
 		} finally {
 			provider.dispose();
 		}
@@ -173,8 +173,9 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 		const provider = new FooterDataProvider(worktreeDir);
 		try {
-			expect(provider.getGitBranch()).toBe("main");
+			expect(provider.getVcsMessage()).toBe("main");
 			vi.mocked(spawnSync).mockClear();
+			vi.mocked(execFile).mockClear();
 			const onBranchChange = vi.fn();
 			provider.onBranchChange(onBranchChange);
 
@@ -183,20 +184,20 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
 			expect(vi.mocked(spawnSync)).not.toHaveBeenCalled();
-			expect(provider.getGitBranch()).toBe("main");
+			expect(provider.getVcsMessage()).toBe("main");
 			expect(onBranchChange).not.toHaveBeenCalled();
 		} finally {
 			provider.dispose();
 		}
 	});
 
-	it("debounces rapid reftable updates into a single async refresh", async () => {
+	it("debounces rapid reftable updates into a single sync refresh", async () => {
 		const { worktreeDir, reftableDir } = createReftableWorktree(tempDir);
 		process.chdir(worktreeDir);
 
 		const provider = new FooterDataProvider(worktreeDir);
 		try {
-			expect(provider.getGitBranch()).toBe("main");
+			expect(provider.getVcsMessage()).toBe("main");
 			vi.mocked(execFile).mockClear();
 
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
@@ -217,17 +218,19 @@ describe("FooterDataProvider reftable branch detection", () => {
 
 		const provider = new FooterDataProvider(worktreeDir);
 		try {
-			expect(provider.getGitBranch()).toBe("main");
+			expect(provider.getVcsMessage()).toBe("main");
+			vi.mocked(spawnSync).mockClear();
+			vi.mocked(execFile).mockClear();
 			resolvedBranch = "foo";
 			const onBranchChange = vi.fn();
 			provider.onBranchChange(onBranchChange);
 
 			writeFileSync(join(reftableDir, "tables.list"), "1\n");
 			await waitFor(() => vi.mocked(execFile).mock.calls.length === 1);
-			await waitFor(() => provider.getGitBranch() === "foo");
+			await waitFor(() => provider.getVcsMessage() === "foo");
 
 			expect(vi.mocked(execFile)).toHaveBeenCalledTimes(1);
-			expect(provider.getGitBranch()).toBe("foo");
+			expect(provider.getVcsMessage()).toBe("foo");
 			expect(onBranchChange).toHaveBeenCalledTimes(1);
 		} finally {
 			provider.dispose();

@@ -47,7 +47,7 @@ function findGitPaths(cwd: string): GitPaths | null {
 	}
 }
 
-/** Ask git for the current branch. Returns null on detached HEAD or if git is unavailable. */
+/** Ask git for the current branch synchronously. Returns null on detached HEAD or if git is unavailable. */
 function resolveBranchWithGitSync(repoDir: string): string | null {
 	const result = spawnSync("git", ["--no-optional-locks", "symbolic-ref", "--quiet", "--short", "HEAD"], {
 		cwd: repoDir,
@@ -81,7 +81,23 @@ function resolveBranchWithGitAsync(repoDir: string): Promise<string | null> {
 }
 
 /**
- * Provides git branch and extension statuses - data not otherwise accessible to extensions.
+ * A VCS provider registered by an extension or built-in.
+ * Providers are tried in registration order; the first non-null detect() result wins.
+ * The built-in git provider runs last.
+ */
+export interface VcsProvider {
+	/** Unique name, e.g. "git", "jj" */
+	name: string;
+	/** Return a display string for the VCS state at `dir`, or null if this provider doesn't apply. */
+	detect(dir: string): string | null;
+	/** Optional async detection for watch-triggered refreshes. Falls back to detect() if not provided. */
+	detectAsync?(dir: string): Promise<string | null>;
+	/** Optional: start watching for changes. Returns a dispose function. */
+	watch?(dir: string, onChange: () => void): { dispose(): void };
+}
+
+/**
+ * Provides VCS branch info and extension statuses - data not otherwise accessible to extensions.
  * Token stats, model info available via ctx.sessionManager and ctx.model.
  */
 export class FooterDataProvider {
@@ -102,6 +118,8 @@ export class FooterDataProvider {
 	private refreshInFlight = false;
 	private refreshPending = false;
 	private disposed = false;
+	private customProviders: VcsProvider[] = [];
+	private customProviderWatches: Array<{ dispose(): void }> = [];
 
 	constructor(cwd: string) {
 		this.cwd = cwd;
@@ -109,10 +127,28 @@ export class FooterDataProvider {
 		this.setupGitWatcher();
 	}
 
-	/** Current git branch, null if not in repo, "detached" if detached HEAD */
-	getGitBranch(): string | null {
+	/** Register a VCS provider. Custom providers are tried before the built-in git provider. */
+	registerVcsProvider(provider: VcsProvider): void {
+		this.customProviders.push(provider);
+		this.cachedBranch = undefined;
+		this.setupCustomProviderWatches();
+		this.notifyBranchChange();
+	}
+
+	/** Unregister a previously registered VCS provider by name. */
+	unregisterVcsProvider(name: string): void {
+		const idx = this.customProviders.findIndex((p) => p.name === name);
+		if (idx < 0) return;
+		this.customProviders.splice(idx, 1);
+		this.cachedBranch = undefined;
+		this.setupCustomProviderWatches();
+		this.notifyBranchChange();
+	}
+
+	/** Current VCS display string, null if no VCS detected. May be branch name, change ID, "detached", etc. */
+	getVcsMessage(): string | null {
 		if (this.cachedBranch === undefined) {
-			this.cachedBranch = this.resolveGitBranchSync();
+			this.cachedBranch = this.resolveBranchSync();
 		}
 		return this.cachedBranch;
 	}
@@ -122,7 +158,7 @@ export class FooterDataProvider {
 		return this.extensionStatuses;
 	}
 
-	/** Subscribe to git branch changes. Returns unsubscribe function. */
+	/** Subscribe to VCS branch changes. Returns unsubscribe function. */
 	onBranchChange(callback: () => void): () => void {
 		this.branchChangeCallbacks.add(callback);
 		return () => this.branchChangeCallbacks.delete(callback);
@@ -163,9 +199,11 @@ export class FooterDataProvider {
 			this.refreshTimer = null;
 		}
 		this.clearGitWatchers();
+		this.clearCustomProviderWatches();
 		this.cachedBranch = undefined;
 		this.gitPaths = findGitPaths(cwd);
 		this.setupGitWatcher();
+		this.setupCustomProviderWatches();
 		this.notifyBranchChange();
 	}
 
@@ -177,6 +215,7 @@ export class FooterDataProvider {
 			this.refreshTimer = null;
 		}
 		this.clearGitWatchers();
+		this.clearCustomProviderWatches();
 		this.branchChangeCallbacks.clear();
 	}
 
@@ -192,11 +231,11 @@ export class FooterDataProvider {
 		}
 		this.refreshTimer = setTimeout(() => {
 			this.refreshTimer = null;
-			void this.refreshGitBranchAsync();
+			void this.refreshBranchAsync();
 		}, FooterDataProvider.WATCH_DEBOUNCE_MS);
 	}
 
-	private async refreshGitBranchAsync(): Promise<void> {
+	private async refreshBranchAsync(): Promise<void> {
 		if (this.disposed) return;
 		if (this.refreshInFlight) {
 			this.refreshPending = true;
@@ -205,7 +244,7 @@ export class FooterDataProvider {
 
 		this.refreshInFlight = true;
 		try {
-			const nextBranch = await this.resolveGitBranchAsync();
+			const nextBranch = await this.resolveBranchAsync();
 			if (this.disposed) return;
 			if (this.cachedBranch !== undefined && this.cachedBranch !== nextBranch) {
 				this.cachedBranch = nextBranch;
@@ -222,18 +261,16 @@ export class FooterDataProvider {
 		}
 	}
 
-	private resolveGitBranchSync(): string | null {
-		try {
-			if (!this.gitPaths) return null;
-			const content = readFileSync(this.gitPaths.headPath, "utf8").trim();
-			if (content.startsWith("ref: refs/heads/")) {
-				const branch = content.slice(16);
-				return branch === ".invalid" ? (resolveBranchWithGitSync(this.gitPaths.repoDir) ?? "detached") : branch;
+	private async resolveBranchAsync(): Promise<string | null> {
+		for (const provider of this.customProviders) {
+			try {
+				const result = provider.detectAsync ? await provider.detectAsync(this.cwd) : provider.detect(this.cwd);
+				if (result !== null) return result;
+			} catch {
+				// ignore errors from custom providers
 			}
-			return "detached";
-		} catch {
-			return null;
 		}
+		return this.resolveGitBranchAsync();
 	}
 
 	private async resolveGitBranchAsync(): Promise<string | null> {
@@ -245,6 +282,32 @@ export class FooterDataProvider {
 				return branch === ".invalid"
 					? ((await resolveBranchWithGitAsync(this.gitPaths.repoDir)) ?? "detached")
 					: branch;
+			}
+			return "detached";
+		} catch {
+			return null;
+		}
+	}
+
+	private resolveBranchSync(): string | null {
+		for (const provider of this.customProviders) {
+			try {
+				const result = provider.detect(this.cwd);
+				if (result !== null) return result;
+			} catch {
+				// ignore errors from custom providers
+			}
+		}
+		return this.resolveGitBranchSync();
+	}
+
+	private resolveGitBranchSync(): string | null {
+		try {
+			if (!this.gitPaths) return null;
+			const content = readFileSync(this.gitPaths.headPath, "utf8").trim();
+			if (content.startsWith("ref: refs/heads/")) {
+				const branch = content.slice(16);
+				return branch === ".invalid" ? (resolveBranchWithGitSync(this.gitPaths.repoDir) ?? "detached") : branch;
 			}
 			return "detached";
 		} catch {
@@ -278,6 +341,30 @@ export class FooterDataProvider {
 			this.gitWatcherRetryTimer = null;
 			this.setupGitWatcher();
 		}, FS_WATCH_RETRY_DELAY_MS);
+	}
+
+	private clearCustomProviderWatches(): void {
+		for (const watch of this.customProviderWatches) {
+			try {
+				watch.dispose();
+			} catch {
+				// ignore errors during cleanup
+			}
+		}
+		this.customProviderWatches = [];
+	}
+
+	private setupCustomProviderWatches(): void {
+		this.clearCustomProviderWatches();
+		for (const provider of this.customProviders) {
+			if (!provider.watch) continue;
+			try {
+				const watch = provider.watch(this.cwd, () => this.scheduleRefresh());
+				this.customProviderWatches.push(watch);
+			} catch {
+				// ignore errors from custom watch setup
+			}
+		}
 	}
 
 	private handleGitWatcherError(): void {
@@ -350,5 +437,5 @@ export class FooterDataProvider {
 /** Read-only view for extensions - excludes setExtensionStatus, setAvailableProviderCount and dispose */
 export type ReadonlyFooterDataProvider = Pick<
 	FooterDataProvider,
-	"getGitBranch" | "getExtensionStatuses" | "getAvailableProviderCount" | "onBranchChange"
+	"getVcsMessage" | "getExtensionStatuses" | "getAvailableProviderCount" | "onBranchChange"
 >;

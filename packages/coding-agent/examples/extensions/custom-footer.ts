@@ -2,7 +2,7 @@
  * Custom Footer Extension - demonstrates ctx.ui.setFooter()
  *
  * footerData exposes data not otherwise accessible:
- * - getGitBranch(): current git branch
+ * - getVcsMessage(): current VCS display string (branch, change ID, etc.)
  * - getExtensionStatuses(): texts from ctx.ui.setStatus()
  *
  * Token stats come from ctx.sessionManager/ctx.model (already accessible).
@@ -42,7 +42,7 @@ export default function (pi: ExtensionAPI) {
 							}
 
 							// Get git branch (not otherwise accessible)
-							const branch = footerData.getGitBranch();
+							const branch = footerData.getVcsMessage();
 							const fmt = (n: number) => (n < 1000 ? `${n}` : `${(n / 1000).toFixed(1)}k`);
 
 							const left = theme.fg("dim", `↑${fmt(input)} ↓${fmt(output)} $${cost.toFixed(3)}`);

@@ -2002,6 +2002,8 @@ export class InteractiveMode {
 			setWorkingIndicator: (options) => this.setWorkingIndicator(options),
 			setHiddenThinkingLabel: (label) => this.setHiddenThinkingLabel(label),
 			setWidget: (key, content, options) => this.setExtensionWidget(key, content, options),
+			registerVcsProvider: (provider) => this.footerDataProvider.registerVcsProvider(provider),
+			unregisterVcsProvider: (name) => this.footerDataProvider.unregisterVcsProvider(name),
 			setFooter: (factory) => this.setExtensionFooter(factory),
 			setHeader: (factory) => this.setExtensionHeader(factory),
 			setTitle: (title) => this.ui.terminal.setTitle(title),
