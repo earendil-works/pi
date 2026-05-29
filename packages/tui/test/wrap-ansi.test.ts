@@ -131,6 +131,26 @@ describe("wrapTextWithAnsi", () => {
 			assert.ok(visibleWidth(twoSpacesWrappedToWidth1[0]) <= 1);
 		});
 
+		it("should avoid splitting URLs that fit on the next line", () => {
+			const text = "Open this URL to continue in your web browser: https://github.com/login/device";
+			const wrapped = wrapTextWithAnsi(text, 60);
+
+			assert.deepStrictEqual(wrapped, [
+				"Open this URL to continue in your web browser:",
+				"https://github.com/login/device",
+			]);
+		});
+
+		it("should still split URLs that are longer than the line width", () => {
+			const url = `https://example.com/${"a".repeat(40)}`;
+			const wrapped = wrapTextWithAnsi(url, 20);
+
+			assert.ok(wrapped.length > 1);
+			for (const line of wrapped) {
+				assert.ok(visibleWidth(line) <= 20);
+			}
+		});
+
 		it("should preserve color codes across wraps", () => {
 			const red = "\x1b[31m";
 			const reset = "\x1b[0m";

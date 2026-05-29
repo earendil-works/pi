@@ -695,9 +695,60 @@ function wrapSingleLine(line: string, width: number): string[] {
 	let currentLine = "";
 	let currentVisibleLength = 0;
 
-	for (const token of tokens) {
+	for (let i = 0; i < tokens.length; i++) {
+		const token = tokens[i];
 		const tokenVisibleLength = visibleWidth(token);
 		const isWhitespace = token.trim() === "";
+
+		// Avoid splitting plain-text URLs when the URL itself fits on one line.
+		// This keeps terminal-native URL detection reliable for CLI output such as
+		// `gh auth login`, without requiring the producer to emit OSC 8 metadata.
+		if (
+			currentVisibleLength > 0 &&
+			tokenVisibleLength <= width &&
+			!isWhitespace &&
+			isLikelyUrlToken(token) &&
+			currentVisibleLength + tokenVisibleLength > width
+		) {
+			let lineToWrap = currentLine.trimEnd();
+			const lineEndReset = tracker.getLineEndReset();
+			if (lineEndReset) {
+				lineToWrap += lineEndReset;
+			}
+			wrapped.push(lineToWrap);
+			currentLine = tracker.getActiveCodes() + token;
+			currentVisibleLength = tokenVisibleLength;
+			updateTrackerFromText(token, tracker);
+			continue;
+		}
+
+		const nextToken = tokens[i + 1];
+		const nextTokenVisibleLength = nextToken === undefined ? 0 : visibleWidth(nextToken);
+
+		// If this whitespace would leave a URL to be split mid-token, wrap before
+		// the URL instead. This produces:
+		//   Open this URL to continue in your web browser:
+		//   https://github.com/login/device
+		// instead of splitting the URL after the line prefix.
+		if (
+			isWhitespace &&
+			currentVisibleLength > 0 &&
+			nextToken !== undefined &&
+			nextTokenVisibleLength <= width &&
+			isLikelyUrlToken(nextToken) &&
+			currentVisibleLength + tokenVisibleLength + nextTokenVisibleLength > width
+		) {
+			let lineToWrap = currentLine.trimEnd();
+			const lineEndReset = tracker.getLineEndReset();
+			if (lineEndReset) {
+				lineToWrap += lineEndReset;
+			}
+			wrapped.push(lineToWrap);
+			updateTrackerFromText(token, tracker);
+			currentLine = tracker.getActiveCodes();
+			currentVisibleLength = 0;
+			continue;
+		}
 
 		// Token itself is too long - break it character by character
 		if (tokenVisibleLength > width && !isWhitespace) {
@@ -755,6 +806,10 @@ function wrapSingleLine(line: string, width: number): string[] {
 
 	// Trailing whitespace can cause lines to exceed the requested width
 	return wrapped.length > 0 ? wrapped.map((line) => line.trimEnd()) : [""];
+}
+
+function isLikelyUrlToken(token: string): boolean {
+	return /(?:^|\x1b\[[0-9;]*m)https?:\/\/\S+/u.test(token);
 }
 
 export const PUNCTUATION_REGEX = /[(){}[\]<>.,;:'"!?+\-=*/\\|&%^$#@~`]/;
