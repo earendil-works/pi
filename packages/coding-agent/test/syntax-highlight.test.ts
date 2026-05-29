@@ -11,7 +11,7 @@ describe("syntax highlight renderer", () => {
 		expect(rendered).toBe("[keyword:const] value");
 	});
 
-	it("decodes HTML entities emitted by highlight.js", () => {
+	it("decodes HTML entities emitted by highlight.ts", () => {
 		const rendered = renderHighlightedHtml("&lt;tag attr=&quot;value&quot;&gt;&amp;#x41;&#65;&lt;/tag&gt;");
 		expect(rendered).toBe('<tag attr="value">&#x41;A</tag>');
 	});
@@ -34,7 +34,7 @@ describe("syntax highlight renderer", () => {
 		expect(rendered).toBe("[string:a][string:b][string:c]");
 	});
 
-	it("highlights code through highlight.js", () => {
+	it("highlights code through highlight.ts", () => {
 		expect(supportsLanguage("typescript")).toBe(true);
 		const rendered = highlight("const value = 1", {
 			language: "typescript",

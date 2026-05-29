@@ -159,7 +159,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 		);
 		process.env.PI_PACKAGE_DIR = selfPackageDir;
 		Object.defineProperty(process, "execPath", {
-			value: join(selfPackageDir, "dist", "cli.js"),
+			value: join(selfPackageDir, "dist", "cli.ts"),
 			configurable: true,
 		});
 		const fetchMock = vi.fn();
@@ -203,7 +203,7 @@ else fs.writeFileSync(${JSON.stringify(recordPath)},JSON.stringify(args));
 		);
 		process.env.PI_PACKAGE_DIR = selfPackageDir;
 		Object.defineProperty(process, "execPath", {
-			value: join(selfPackageDir, "dist", "cli.js"),
+			value: join(selfPackageDir, "dist", "cli.ts"),
 			configurable: true,
 		});
 		const fetchMock = vi.fn(async () => Response.json({ version: getNewerPatchVersion() }));
@@ -249,7 +249,7 @@ else {
 		);
 		process.env.PI_PACKAGE_DIR = selfPackageDir;
 		Object.defineProperty(process, "execPath", {
-			value: join(selfPackageDir, "dist", "cli.js"),
+			value: join(selfPackageDir, "dist", "cli.ts"),
 			configurable: true,
 		});
 		const activePackageName = PACKAGE_NAME === "@new-scope/pi" ? "@newer-scope/pi" : "@new-scope/pi";
@@ -302,7 +302,7 @@ if(args.includes("install")) process.exit(23);
 		);
 		process.env.PI_PACKAGE_DIR = selfPackageDir;
 		Object.defineProperty(process, "execPath", {
-			value: join(selfPackageDir, "dist", "cli.js"),
+			value: join(selfPackageDir, "dist", "cli.ts"),
 			configurable: true,
 		});
 		const activePackageName = PACKAGE_NAME === "@new-scope/pi" ? "@newer-scope/pi" : "@new-scope/pi";

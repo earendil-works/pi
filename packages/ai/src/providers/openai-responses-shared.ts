@@ -11,7 +11,7 @@ import type {
 	ResponseOutputMessage,
 	ResponseReasoningItem,
 	ResponseStreamEvent,
-} from "openai/resources/responses/responses.js";
+} from "openai/resources/responses/responses";
 import { calculateCost } from "../models.ts";
 import type {
 	Api,

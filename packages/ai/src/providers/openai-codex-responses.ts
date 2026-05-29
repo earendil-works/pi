@@ -4,7 +4,7 @@ import type {
 	ResponseCreateParamsStreaming,
 	ResponseInput,
 	ResponseStreamEvent,
-} from "openai/resources/responses/responses.js";
+} from "openai/resources/responses/responses";
 
 // NEVER convert to top-level runtime imports - breaks browser/Vite builds
 let _os: typeof NodeOs | null = null;

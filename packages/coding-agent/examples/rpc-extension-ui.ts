@@ -245,7 +245,7 @@ class InputDialog implements Component {
 
 async function main() {
 	const extensionPath = join(__dirname, "extensions/rpc-demo.ts");
-	const cliPath = join(__dirname, "../dist/cli.js");
+	const cliPath = join(__dirname, "../dist/cli.ts");
 
 	const agent = spawn(
 		"node",

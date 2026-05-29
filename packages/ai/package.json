@@ -22,6 +22,10 @@
 			"types": "./dist/providers/google.d.ts",
 			"import": "./dist/providers/google.js"
 		},
+		"./google-gemini-cli": {
+			"types": "./dist/providers/google-gemini-cli.d.ts",
+			"import": "./dist/providers/google-gemini-cli.js"
+		},
 		"./google-vertex": {
 			"types": "./dist/providers/google-vertex.d.ts",
 			"import": "./dist/providers/google-vertex.js"

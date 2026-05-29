@@ -1063,7 +1063,7 @@ export class InteractiveMode {
 			.map((extension) => {
 				const segments = this.getCompactDisplayPathSegments(extension.path);
 				const lastSegment = segments[segments.length - 1];
-				if (segments.length > 1 && (lastSegment === "index.ts" || lastSegment === "index.js")) {
+				if (segments.length > 1 && (lastSegment === "index.ts" || lastSegment === "index.ts")) {
 					segments.pop();
 				}
 				return {

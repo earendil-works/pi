@@ -107,6 +107,8 @@ For each built-in provider, pi maintains a list of tool-capable models, updated 
 - Anthropic Claude Pro/Max
 - OpenAI ChatGPT Plus/Pro (Codex)
 - GitHub Copilot
+- Google Gemini CLI
+- Google Antigravity
 
 **API keys:**
 - Anthropic

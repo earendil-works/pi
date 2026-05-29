@@ -564,8 +564,8 @@ describe("InteractiveMode.showLoadedResources", () => {
 	test("strips index.js from local extension label, showing parent dir", () => {
 		const extensions: ExtensionFixture[] = [
 			{
-				path: "/tmp/extensions/plan-mode/index.js",
-				sourceInfo: createSourceInfo("/tmp/extensions/plan-mode/index.js", {
+				path: "/tmp/extensions/plan-mode/index.ts",
+				sourceInfo: createSourceInfo("/tmp/extensions/plan-mode/index.ts", {
 					source: "local",
 					scope: "project",
 					origin: "top-level",

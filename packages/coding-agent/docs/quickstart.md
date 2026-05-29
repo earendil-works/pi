@@ -51,7 +51,7 @@ Start pi and run:
 /login
 ```
 
-Then select a provider. Built-in subscription logins include Claude Pro/Max, ChatGPT Plus/Pro (Codex), and GitHub Copilot.
+Then select a provider. Built-in subscription logins include Claude Pro/Max, ChatGPT Plus/Pro (Codex), GitHub Copilot, Google Gemini CLI, and Google Antigravity.
 
 ### Option 2: API key
 

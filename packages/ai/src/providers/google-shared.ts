@@ -1,5 +1,5 @@
 /**
- * Shared utilities for Google Generative AI and Google Vertex providers.
+ * Shared utilities for Google Generative AI and Google Cloud Code Assist providers.
  */
 
 import { type Content, FinishReason, FunctionCallingConfigMode, type Part } from "@google/genai";
@@ -7,13 +7,7 @@ import type { Context, ImageContent, Model, StopReason, TextContent, Tool } from
 import { sanitizeSurrogates } from "../utils/sanitize-unicode.ts";
 import { transformMessages } from "./transform-messages.ts";
 
-type GoogleApiType = "google-generative-ai" | "google-vertex";
-
-/**
- * Thinking level for Gemini 3 models.
- * Mirrors Google's ThinkingLevel enum values.
- */
-export type GoogleThinkingLevel = "THINKING_LEVEL_UNSPECIFIED" | "MINIMAL" | "LOW" | "MEDIUM" | "HIGH";
+type GoogleApiType = "google-generative-ai" | "google-gemini-cli" | "google-vertex";
 
 /**
  * Determines whether a streamed Gemini `Part` should be treated as "thinking".
@@ -130,7 +124,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 
 			for (const block of msg.content) {
 				if (block.type === "text") {
-					// Skip empty text blocks
+					// Skip empty text blocks - they can cause issues with some models (e.g. Claude via Antigravity)
 					if (!block.text || block.text.trim() === "") continue;
 					const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.textSignature);
 					parts.push({
@@ -156,6 +150,9 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 					}
 				} else if (block.type === "toolCall") {
 					const thoughtSignature = resolveThoughtSignature(isSameProviderAndModel, block.thoughtSignature);
+					// Gemini 3 requires thoughtSignature on all function calls when thinking mode is enabled.
+					// Use the skip_thought_signature_validator sentinel for unsigned function calls
+					// (e.g. replayed from providers without thought signatures like Claude via Antigravity).
 					const part: Part = {
 						functionCall: {
 							name: block.name,
@@ -186,7 +183,7 @@ export function convertMessages<T extends GoogleApiType>(model: Model<T>, contex
 
 			// Gemini 3+ models support multimodal function responses with images nested inside
 			// functionResponse.parts. Claude and other non-Gemini models behind Cloud Code Assist /
-			// Gemini < 3 still needs a separate user image turn.
+			// Antigravity also accept this shape. Gemini < 3 still needs a separate user image turn.
 			const modelSupportsMultimodalFunctionResponse = supportsMultimodalFunctionResponse(model.id);
 
 			// Use "output" key for success, "error" key for errors as per SDK documentation

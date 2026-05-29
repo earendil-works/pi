@@ -72,7 +72,7 @@ function getAliases(): Record<string, string> {
 	if (_aliases) return _aliases;
 
 	const __dirname = path.dirname(fileURLToPath(import.meta.url));
-	const packageIndex = path.resolve(__dirname, "../..", "index.js");
+	const packageIndex = path.resolve(__dirname, "../..", "index.ts");
 
 	const typeboxEntry = require.resolve("typebox");
 	const typeboxCompileEntry = require.resolve("typebox/compile");
@@ -88,10 +88,10 @@ function getAliases(): Record<string, string> {
 	};
 
 	const piCodingAgentEntry = packageIndex;
-	const piAgentCoreEntry = resolveWorkspaceOrImport("agent/dist/index.js", "@earendil-works/pi-agent-core");
-	const piTuiEntry = resolveWorkspaceOrImport("tui/dist/index.js", "@earendil-works/pi-tui");
-	const piAiEntry = resolveWorkspaceOrImport("ai/dist/index.js", "@earendil-works/pi-ai");
-	const piAiOauthEntry = resolveWorkspaceOrImport("ai/dist/oauth.js", "@earendil-works/pi-ai/oauth");
+	const piAgentCoreEntry = resolveWorkspaceOrImport("agent/dist/index.ts", "@earendil-works/pi-agent-core");
+	const piTuiEntry = resolveWorkspaceOrImport("tui/dist/index.ts", "@earendil-works/pi-tui");
+	const piAiEntry = resolveWorkspaceOrImport("ai/dist/index.ts", "@earendil-works/pi-ai");
+	const piAiOauthEntry = resolveWorkspaceOrImport("ai/dist/oauth.ts", "@earendil-works/pi-ai/oauth");
 
 	_aliases = {
 		"@earendil-works/pi-coding-agent": piCodingAgentEntry,
@@ -458,7 +458,7 @@ function readPiManifest(packageJsonPath: string): PiManifest | null {
 }
 
 function isExtensionFile(name: string): boolean {
-	return name.endsWith(".ts") || name.endsWith(".js");
+	return name.endsWith(".ts") || name.endsWith(".ts");
 }
 
 /**
@@ -491,7 +491,7 @@ function resolveExtensionEntries(dir: string): string[] | null {
 
 	// Check for index.ts or index.js
 	const indexTs = path.join(dir, "index.ts");
-	const indexJs = path.join(dir, "index.js");
+	const indexJs = path.join(dir, "index.ts");
 	if (fs.existsSync(indexTs)) {
 		return [indexTs];
 	}

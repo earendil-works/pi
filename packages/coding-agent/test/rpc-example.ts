@@ -12,7 +12,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 
 async function main() {
 	const client = new RpcClient({
-		cliPath: join(__dirname, "../dist/cli.js"),
+		cliPath: join(__dirname, "../dist/cli.ts"),
 		provider: "anthropic",
 		model: "claude-sonnet-4-20250514",
 		args: ["--no-session"],

@@ -48,7 +48,7 @@ export class DoomEngine {
 		// Locate WASM build
 		const __dirname = dirname(fileURLToPath(import.meta.url));
 		const buildDir = join(__dirname, "doom", "build");
-		const doomJsPath = join(buildDir, "doom.js");
+		const doomJsPath = join(buildDir, "doom.ts");
 
 		if (!existsSync(doomJsPath)) {
 			throw new Error(`WASM not found at ${doomJsPath}. Run ./doom/build.sh first`);

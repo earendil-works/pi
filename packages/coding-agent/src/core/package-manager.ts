@@ -543,7 +543,7 @@ function resolveExtensionEntries(dir: string): string[] | null {
 	}
 
 	const indexTs = join(dir, "index.ts");
-	const indexJs = join(dir, "index.js");
+	const indexJs = join(dir, "index.ts");
 	if (existsSync(indexTs)) {
 		return [indexTs];
 	}
@@ -592,7 +592,7 @@ function collectAutoExtensionEntries(dir: string): string[] {
 			const ignorePath = isDir ? `${relPath}/` : relPath;
 			if (ig.ignores(ignorePath)) continue;
 
-			if (isFile && (entry.name.endsWith(".ts") || entry.name.endsWith(".js"))) {
+			if (isFile && (entry.name.endsWith(".ts") || entry.name.endsWith(".ts"))) {
 				entries.push(fullPath);
 			} else if (isDir) {
 				const resolvedEntries = resolveExtensionEntries(fullPath);

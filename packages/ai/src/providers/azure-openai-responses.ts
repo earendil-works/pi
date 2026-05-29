@@ -1,5 +1,5 @@
 import { AzureOpenAI } from "openai";
-import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses.js";
+import type { ResponseCreateParamsStreaming } from "openai/resources/responses/responses";
 import { getEnvApiKey } from "../env-api-keys.ts";
 import { clampThinkingLevel } from "../models.ts";
 import type {

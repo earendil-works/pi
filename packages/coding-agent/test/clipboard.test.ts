@@ -15,7 +15,7 @@ const mocks = vi.hoisted(() => {
 	};
 });
 
-vi.mock("../src/utils/clipboard-native.js", () => {
+vi.mock("../src/utils/clipboard-native.ts", () => {
 	return {
 		clipboard: mocks.clipboard,
 	};
@@ -34,7 +34,7 @@ vi.mock("os", () => {
 	};
 });
 
-vi.mock("../src/utils/clipboard-image.js", () => {
+vi.mock("../src/utils/clipboard-image.ts", () => {
 	return {
 		isWaylandSession: mocks.isWaylandSession,
 	};

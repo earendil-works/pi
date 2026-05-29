@@ -9,7 +9,7 @@ import type {
 	ChatCompletionMessageParam,
 	ChatCompletionSystemMessageParam,
 	ChatCompletionToolMessageParam,
-} from "openai/resources/chat/completions.js";
+} from "openai/resources/chat/completions";
 import { getEnvApiKey } from "../env-api-keys.ts";
 import { calculateCost, clampThinkingLevel } from "../models.ts";
 import type {

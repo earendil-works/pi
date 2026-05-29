@@ -18,7 +18,7 @@ describe.skipIf(!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_OAUTH_T
 	beforeEach(() => {
 		sessionDir = join(tmpdir(), `pi-rpc-test-${Date.now()}`);
 		client = new RpcClient({
-			cliPath: join(__dirname, "..", "dist", "cli.js"),
+			cliPath: join(__dirname, "..", "dist", "cli.ts"),
 			cwd: join(__dirname, ".."),
 			env: { PI_CODING_AGENT_DIR: sessionDir },
 			provider: "anthropic",

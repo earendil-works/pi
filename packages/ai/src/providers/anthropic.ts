@@ -5,7 +5,7 @@ import type {
 	MessageCreateParamsStreaming,
 	MessageParam,
 	RawMessageStreamEvent,
-} from "@anthropic-ai/sdk/resources/messages.js";
+} from "@anthropic-ai/sdk/resources/messages";
 import { getEnvApiKey } from "../env-api-keys.ts";
 import { calculateCost } from "../models.ts";
 import type {

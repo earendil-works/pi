@@ -5,7 +5,7 @@ import type {
 	ChatCompletionContentPartImage,
 	ChatCompletionContentPartText,
 	ChatCompletionCreateParamsNonStreaming,
-} from "openai/resources/chat/completions.js";
+} from "openai/resources/chat/completions";
 import { getEnvApiKey } from "../../env-api-keys.ts";
 import type {
 	AssistantImages,

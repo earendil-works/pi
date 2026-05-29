@@ -52,13 +52,13 @@ describe("extensions discovery", () => {
 	});
 
 	it("discovers direct .js files in extensions/", async () => {
-		fs.writeFileSync(path.join(extensionsDir, "foo.js"), extensionCode);
+		fs.writeFileSync(path.join(extensionsDir, "foo.ts"), extensionCode);
 
 		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 
 		expect(result.errors).toHaveLength(0);
 		expect(result.extensions).toHaveLength(1);
-		expect(path.basename(result.extensions[0].path)).toBe("foo.js");
+		expect(path.basename(result.extensions[0].path)).toBe("foo.ts");
 	});
 
 	it("discovers subdirectory with index.ts", async () => {
@@ -74,23 +74,23 @@ describe("extensions discovery", () => {
 		expect(result.extensions[0].path).toContain("index.ts");
 	});
 
-	it("discovers subdirectory with index.js", async () => {
+	it("discovers subdirectory with index.ts", async () => {
 		const subdir = path.join(extensionsDir, "my-extension");
 		fs.mkdirSync(subdir);
-		fs.writeFileSync(path.join(subdir, "index.js"), extensionCode);
+		fs.writeFileSync(path.join(subdir, "index.ts"), extensionCode);
 
 		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 
 		expect(result.errors).toHaveLength(0);
 		expect(result.extensions).toHaveLength(1);
-		expect(result.extensions[0].path).toContain("index.js");
+		expect(result.extensions[0].path).toContain("index.ts");
 	});
 
-	it("prefers index.ts over index.js", async () => {
+	it("prefers index.ts over index.ts", async () => {
 		const subdir = path.join(extensionsDir, "my-extension");
 		fs.mkdirSync(subdir);
 		fs.writeFileSync(path.join(subdir, "index.ts"), extensionCode);
-		fs.writeFileSync(path.join(subdir, "index.js"), extensionCode);
+		fs.writeFileSync(path.join(subdir, "index.ts"), extensionCode);
 
 		const result = await discoverAndLoadExtensions([], tempDir, tempDir);
 

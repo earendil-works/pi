@@ -10,7 +10,10 @@ import { hasBedrockCredentials } from "./bedrock-utils.ts";
 import { resolveApiKey } from "./oauth.ts";
 
 // Resolve OAuth tokens at module level (async, runs before tests)
-const [openaiCodexToken] = await Promise.all([resolveApiKey("openai-codex")]);
+const [geminiCliToken, openaiCodexToken] = await Promise.all([
+	resolveApiKey("google-gemini-cli"),
+	resolveApiKey("openai-codex"),
+]);
 
 async function testAbortSignal<TApi extends Api>(llm: Model<TApi>, options: StreamOptionsWithExtras = {}) {
 	const context: Context = {
@@ -271,6 +274,19 @@ describe("AI Providers Abort Tests", () => {
 
 		it("should handle immediate abort", { retry: 3 }, async () => {
 			await testImmediateAbort(llm);
+		});
+	});
+
+	// Google Gemini CLI / Antigravity share the same provider, so one test covers both
+	describe("Google Gemini CLI Provider Abort", () => {
+		it.skipIf(!geminiCliToken)("should abort mid-stream", { retry: 3 }, async () => {
+			const llm = getModel("google-gemini-cli", "gemini-2.5-flash");
+			await testAbortSignal(llm, { apiKey: geminiCliToken });
+		});
+
+		it.skipIf(!geminiCliToken)("should handle immediate abort", { retry: 3 }, async () => {
+			const llm = getModel("google-gemini-cli", "gemini-2.5-flash");
+			await testImmediateAbort(llm, { apiKey: geminiCliToken });
 		});
 	});
 

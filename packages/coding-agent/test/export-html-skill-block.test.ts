@@ -2,7 +2,7 @@ import { readFileSync } from "fs";
 import { describe, expect, it } from "vitest";
 
 describe("export HTML skill block rendering", () => {
-	const templateJs = readFileSync(new URL("../src/core/export-html/template.js", import.meta.url), "utf-8");
+	const templateJs = readFileSync(new URL("../src/core/export-html/template.ts", import.meta.url), "utf-8");
 
 	it("strips skill wrapper XML from user message rendering", () => {
 		// Skill commands store a structural wrapper in the raw user message:

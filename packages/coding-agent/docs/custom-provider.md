@@ -201,6 +201,7 @@ The `api` field determines which streaming implementation is used:
 | `openai-codex-responses` | OpenAI Codex Responses API |
 | `mistral-conversations` | Mistral SDK Conversations/Chat streaming |
 | `google-generative-ai` | Google Generative AI API |
+| `google-gemini-cli` | Google Cloud Code Assist API |
 | `google-vertex` | Google Vertex AI API |
 | `bedrock-converse-stream` | Amazon Bedrock Converse API |
 

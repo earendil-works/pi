@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../src/utils/image-resize.js", () => ({
+vi.mock("../src/utils/image-resize.ts", () => ({
 	resizeImage: vi.fn(),
 	formatDimensionNote: vi.fn(() => undefined),
 }));

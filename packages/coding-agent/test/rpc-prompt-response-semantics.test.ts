@@ -24,7 +24,7 @@ const rpcIo = vi.hoisted(() => ({
 	lineHandler: undefined as ((line: string) => void) | undefined,
 }));
 
-vi.mock("../src/core/output-guard.js", () => ({
+vi.mock("../src/core/output-guard.ts", () => ({
 	flushRawStdout: vi.fn(async () => {}),
 	takeOverStdout: vi.fn(),
 	waitForRawStdoutBackpressure: vi.fn(async () => {}),
@@ -33,9 +33,9 @@ vi.mock("../src/core/output-guard.js", () => ({
 	},
 }));
 
-vi.mock("../src/modes/interactive/theme/theme.js", () => ({ theme: {} }));
+vi.mock("../src/modes/interactive/theme/theme.ts", () => ({ theme: {} }));
 
-vi.mock("../src/modes/rpc/jsonl.js", () => ({
+vi.mock("../src/modes/rpc/jsonl.ts", () => ({
 	attachJsonlLineReader: vi.fn((_stream: NodeJS.ReadableStream, onLine: (line: string) => void) => {
 		rpcIo.lineHandler = onLine;
 		return () => {};

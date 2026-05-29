@@ -76,7 +76,7 @@ export class RpcClient {
 
 		this.exitError = null;
 
-		const cliPath = this.options.cliPath ?? "dist/cli.js";
+		const cliPath = this.options.cliPath ?? "dist/cli.ts";
 		const args = ["--mode", "rpc"];
 
 		if (this.options.provider) {

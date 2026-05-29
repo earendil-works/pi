@@ -89,7 +89,7 @@ export async function resizeImage(
 ): Promise<ResizedImage | null> {
 	const isTypeScriptRuntime = import.meta.url.endsWith(".ts");
 	const workerUrl = new URL(
-		isTypeScriptRuntime ? "./image-resize-worker.ts" : "./image-resize-worker.js",
+		isTypeScriptRuntime ? "./image-resize-worker.ts" : "./image-resize-worker.ts",
 		import.meta.url,
 	);
 

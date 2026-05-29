@@ -5,6 +5,8 @@
  * for OAuth-based providers:
  * - Anthropic (Claude Pro/Max)
  * - GitHub Copilot
+ * - Google Cloud Code Assist (Gemini CLI)
+ * - Antigravity (Gemini 3, Claude, GPT-OSS via Google Cloud)
  */
 
 // Anthropic
@@ -18,6 +20,10 @@ export {
 	normalizeDomain,
 	refreshGitHubCopilotToken,
 } from "./github-copilot.ts";
+// Google Antigravity
+export { antigravityOAuthProvider, loginAntigravity, refreshAntigravityToken } from "./google-antigravity.ts";
+// Google Gemini CLI
+export { geminiCliOAuthProvider, loginGeminiCli, refreshGoogleCloudToken } from "./google-gemini-cli.ts";
 // OpenAI Codex (ChatGPT OAuth)
 export {
 	loginOpenAICodex,
@@ -36,12 +42,16 @@ export * from "./types.ts";
 
 import { anthropicOAuthProvider } from "./anthropic.ts";
 import { githubCopilotOAuthProvider } from "./github-copilot.ts";
+import { antigravityOAuthProvider } from "./google-antigravity.ts";
+import { geminiCliOAuthProvider } from "./google-gemini-cli.ts";
 import { openaiCodexOAuthProvider } from "./openai-codex.ts";
 import type { OAuthCredentials, OAuthProviderId, OAuthProviderInfo, OAuthProviderInterface } from "./types.ts";
 
 const BUILT_IN_OAUTH_PROVIDERS: OAuthProviderInterface[] = [
 	anthropicOAuthProvider,
 	githubCopilotOAuthProvider,
+	geminiCliOAuthProvider,
+	antigravityOAuthProvider,
 	openaiCodexOAuthProvider,
 ];
 

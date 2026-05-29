@@ -15,9 +15,11 @@ import { resolveApiKey } from "./oauth.ts";
 const oauthTokens = await Promise.all([
 	resolveApiKey("anthropic"),
 	resolveApiKey("github-copilot"),
+	resolveApiKey("google-gemini-cli"),
+	resolveApiKey("google-antigravity"),
 	resolveApiKey("openai-codex"),
 ]);
-const [anthropicOAuthToken, githubCopilotToken, openaiCodexToken] = oauthTokens;
+const [anthropicOAuthToken, githubCopilotToken, geminiCliToken, antigravityToken, openaiCodexToken] = oauthTokens;
 
 // Simple calculate tool
 const calculateSchema = Type.Object({
@@ -311,6 +313,46 @@ describe("Tool Call Without Result Tests", () => {
 			async () => {
 				const model = getModel("github-copilot", "claude-sonnet-4.6");
 				await testToolCallWithoutResult(model, { apiKey: githubCopilotToken });
+			},
+		);
+	});
+
+	describe("Google Gemini CLI Provider", () => {
+		it.skipIf(!geminiCliToken)(
+			"gemini-2.5-flash - should filter out tool calls without corresponding tool results",
+			{ retry: 3, timeout: 30000 },
+			async () => {
+				const model = getModel("google-gemini-cli", "gemini-2.5-flash");
+				await testToolCallWithoutResult(model, { apiKey: geminiCliToken });
+			},
+		);
+	});
+
+	describe("Google Antigravity Provider", () => {
+		it.skipIf(!antigravityToken)(
+			"gemini-3-flash - should filter out tool calls without corresponding tool results",
+			{ retry: 3, timeout: 30000 },
+			async () => {
+				const model = getModel("google-antigravity", "gemini-3-flash");
+				await testToolCallWithoutResult(model, { apiKey: antigravityToken });
+			},
+		);
+
+		it.skipIf(!antigravityToken)(
+			"claude-sonnet-4-5 - should filter out tool calls without corresponding tool results",
+			{ retry: 3, timeout: 30000 },
+			async () => {
+				const model = getModel("google-antigravity", "claude-sonnet-4-5");
+				await testToolCallWithoutResult(model, { apiKey: antigravityToken });
+			},
+		);
+
+		it.skipIf(!antigravityToken)(
+			"gpt-oss-120b-medium - should filter out tool calls without corresponding tool results",
+			{ retry: 3, timeout: 30000 },
+			async () => {
+				const model = getModel("google-antigravity", "gpt-oss-120b-medium");
+				await testToolCallWithoutResult(model, { apiKey: antigravityToken });
 			},
 		);
 	});

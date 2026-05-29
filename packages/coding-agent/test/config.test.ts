@@ -56,7 +56,7 @@ function createNpmPrefixInstall(template = "pi-prefix-"): { prefix: string; pack
 	mkdirSync(packageDir, { recursive: true });
 	tempDir = prefix;
 	process.env.PI_PACKAGE_DIR = packageDir;
-	setExecPath(join(packageDir, "dist", "cli.js"));
+	setExecPath(join(packageDir, "dist", "cli.ts"));
 	return { prefix, packageDir };
 }
 
@@ -81,7 +81,7 @@ function createPnpmGlobalInstall(): { root: string; packageDir: string } {
 			"@mariozechner",
 			"pi-coding-agent",
 			"dist",
-			"cli.js",
+			"cli.ts",
 		),
 	);
 	return { root, packageDir };
@@ -99,7 +99,7 @@ function createYarnGlobalInstall(): { globalDir: string; packageDir: string } {
 	tempDir = temp;
 	process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
 	process.env.PI_PACKAGE_DIR = packageDir;
-	setExecPath(join(globalDir, ".yarn", "@mariozechner", "pi-coding-agent", "dist", "cli.js"));
+	setExecPath(join(globalDir, ".yarn", "@mariozechner", "pi-coding-agent", "dist", "cli.ts"));
 	return { globalDir, packageDir };
 }
 
@@ -117,7 +117,7 @@ function createBunGlobalInstall(): { packageDir: string } {
 	tempDir = temp;
 	process.env.PATH = `${bunBin}${delimiter}${originalPath ?? ""}`;
 	process.env.PI_PACKAGE_DIR = packageDir;
-	setExecPath(join(packageDir, "dist", "cli.js"));
+	setExecPath(join(packageDir, "dist", "cli.ts"));
 	return { packageDir };
 }
 
@@ -148,7 +148,7 @@ function createFakeBunScript(bunBin: string): string {
 describe("detectInstallMethod", () => {
 	test("detects pnpm from Windows .pnpm install paths", () => {
 		setExecPath(
-			"C:\\Users\\Admin\\Documents\\pnpm-repository\\global\\5\\.pnpm\\@earendil-works+pi-coding-agent@0.67.68\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js",
+			"C:\\Users\\Admin\\Documents\\pnpm-repository\\global\\5\\.pnpm\\@earendil-works+pi-coding-agent@0.67.68\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.ts",
 		);
 
 		expect(detectInstallMethod()).toBe("pnpm");
@@ -338,8 +338,8 @@ describe("detectInstallMethod", () => {
 		tempDir = temp;
 		process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
 		process.env.PI_PACKAGE_DIR = storePackageDir;
-		process.argv[1] = join(globalPackageDir, "dist", "cli.js");
-		setExecPath(join(storePackageDir, "dist", "cli.js"));
+		process.argv[1] = join(globalPackageDir, "dist", "cli.ts");
+		setExecPath(join(storePackageDir, "dist", "cli.ts"));
 
 		const command = getSelfUpdateCommand(packageName);
 

@@ -18,6 +18,8 @@ Use `/login` in interactive mode, then select a provider:
 - ChatGPT Plus/Pro (Codex)
 - Claude Pro/Max
 - GitHub Copilot
+- Google Gemini CLI
+- Google Antigravity
 
 Use `/logout` to clear credentials. Tokens are stored in `~/.pi/agent/auth.json` and auto-refresh when expired.
 
@@ -34,6 +36,18 @@ Anthropic subscription auth is active for Claude Pro/Max accounts. Third-party h
 
 - Press Enter for github.com, or enter your GitHub Enterprise Server domain
 - If you get "model not supported", enable it in VS Code: Copilot Chat → model selector → select model → "Enable"
+
+### Google Providers
+
+- **Gemini CLI**: Standard Gemini models via Cloud Code Assist
+- **Antigravity**: Sandbox with Gemini 3, Claude, and GPT-OSS models
+- Both free with any Google account, subject to rate limits
+- For paid Cloud Code Assist: set `GOOGLE_CLOUD_PROJECT` env var
+
+### OpenAI Codex
+
+- Requires ChatGPT Plus or Pro subscription
+- Personal use only; for production, use the OpenAI Platform API
 
 ## API Keys
 

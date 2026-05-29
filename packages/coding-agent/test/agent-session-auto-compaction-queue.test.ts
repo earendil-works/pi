@@ -11,7 +11,7 @@ import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createTestResourceLoader } from "./utilities.ts";
 
-vi.mock("../src/core/compaction/index.js", () => ({
+vi.mock("../src/core/compaction/index.ts", () => ({
 	calculateContextTokens: (usage: {
 		input: number;
 		output: number;
