@@ -264,6 +264,11 @@ function applyThinkingLevelMetadata(model: Model<any>): void {
 	if (model.provider === "groq" && model.id === "qwen/qwen3-32b") {
 		mergeThinkingLevelMap(model, { minimal: null, low: null, medium: null, high: "default" });
 	}
+	if (model.provider === "sambanova" && model.id === "gpt-oss-120b") {
+		// SambaNova's gpt-oss-120b accepts only low/medium/high via reasoning_effort.
+		// Collapse pi's extra levels into the nearest supported value.
+		mergeThinkingLevelMap(model, { minimal: "low", xhigh: "high" });
+	}
 	if (model.provider === "openai-codex" && supportsOpenAiXhigh(model.id)) {
 		mergeThinkingLevelMap(model, { minimal: "low" });
 	}
@@ -294,6 +299,51 @@ function getBedrockBaseUrl(modelId: string): string {
 	return modelId.startsWith("eu.")
 		? "https://bedrock-runtime.eu-central-1.amazonaws.com"
 		: "https://bedrock-runtime.us-east-1.amazonaws.com";
+}
+
+// SambaNova Cloud is not in models.dev's catalog, so its model list is
+// hand-curated here. Pricing tracks https://cloud.sambanova.ai/plans/pricing
+// and should be updated when SambaCloud changes rates or model availability.
+function getSambaNovaModels(): Model<any>[] {
+	const baseUrl = "https://api.sambanova.ai/v1";
+	return [
+		{
+			id: "Meta-Llama-3.3-70B-Instruct",
+			name: "Llama 3.3 70B Instruct",
+			api: "openai-completions",
+			provider: "sambanova",
+			baseUrl,
+			reasoning: false,
+			input: ["text"],
+			cost: { input: 0.6, output: 1.2, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 131072,
+			maxTokens: 8192,
+		},
+		{
+			id: "gpt-oss-120b",
+			name: "GPT-OSS 120B",
+			api: "openai-completions",
+			provider: "sambanova",
+			baseUrl,
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0.22, output: 0.59, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 131072,
+			maxTokens: 16384,
+		},
+		{
+			id: "MiniMax-M2.7",
+			name: "MiniMax M2.7",
+			api: "openai-completions",
+			provider: "sambanova",
+			baseUrl,
+			reasoning: true,
+			input: ["text"],
+			cost: { input: 0.6, output: 2.4, cacheRead: 0, cacheWrite: 0 },
+			contextWindow: 196608,
+			maxTokens: 16384,
+		},
+	];
 }
 
 async function fetchOpenRouterModels(): Promise<Model<any>[]> {
@@ -1167,9 +1217,10 @@ async function generateModels() {
 	const modelsDevModels = await loadModelsDevData();
 	const openRouterModels = await fetchOpenRouterModels();
 	const aiGatewayModels = await fetchAiGatewayModels();
+	const sambaNovaModels = getSambaNovaModels();
 
 	// Combine models (models.dev has priority)
-	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels].filter(
+	const allModels = [...modelsDevModels, ...openRouterModels, ...aiGatewayModels, ...sambaNovaModels].filter(
 		(model) =>
 			!((model.provider === "opencode" || model.provider === "opencode-go") && model.id === "gpt-5.3-codex-spark"),
 	);

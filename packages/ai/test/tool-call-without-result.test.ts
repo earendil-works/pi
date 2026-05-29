@@ -167,6 +167,14 @@ describe("Tool Call Without Result Tests", () => {
 		});
 	});
 
+	describe.skipIf(!process.env.SAMBANOVA_API_KEY)("SambaNova Provider", () => {
+		const model = getModel("sambanova", "gpt-oss-120b");
+
+		it("should filter out tool calls without corresponding tool results", { retry: 3, timeout: 30000 }, async () => {
+			await testToolCallWithoutResult(model);
+		});
+	});
+
 	describe.skipIf(!hasCloudflareWorkersAICredentials())("Cloudflare Workers AI Provider", () => {
 		const model = getModel("cloudflare-workers-ai", "@cf/moonshotai/kimi-k2.6");
 

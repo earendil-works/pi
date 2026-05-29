@@ -306,6 +306,29 @@ describe("totalTokens field", () => {
 	});
 
 	// =========================================================================
+	// SambaNova
+	// =========================================================================
+
+	describe.skipIf(!process.env.SAMBANOVA_API_KEY)("SambaNova", () => {
+		it(
+			"gpt-oss-120b - should return totalTokens equal to sum of components",
+			{ retry: 3, timeout: 60000 },
+			async () => {
+				const llm = getModel("sambanova", "gpt-oss-120b");
+
+				console.log(`\nSambaNova / ${llm.id}:`);
+				const { first, second } = await testTotalTokensWithCache(llm, { apiKey: process.env.SAMBANOVA_API_KEY });
+
+				logUsage("First request", first);
+				logUsage("Second request", second);
+
+				assertTotalTokensEqualsComponents(first);
+				assertTotalTokensEqualsComponents(second);
+			},
+		);
+	});
+
+	// =========================================================================
 	// Cloudflare Workers AI
 	// =========================================================================
 

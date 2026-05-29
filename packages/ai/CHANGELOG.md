@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added SambaNova Cloud as a built-in OpenAI-compatible provider (`sambanova`, `SAMBANOVA_API_KEY`) with `Meta-Llama-3.3-70B-Instruct`, `gpt-oss-120b`, and `MiniMax-M2.7`. Pricing tracks https://cloud.sambanova.ai/plans/pricing.
+
 ## [0.77.0] - 2026-05-28
 
 ### Added

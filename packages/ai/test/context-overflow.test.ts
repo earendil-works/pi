@@ -317,6 +317,21 @@ describe("Context overflow error handling", () => {
 	});
 
 	// =============================================================================
+	// SambaNova
+	// =============================================================================
+
+	describe.skipIf(!process.env.SAMBANOVA_API_KEY)("SambaNova", () => {
+		it("gpt-oss-120b - should detect overflow via isContextOverflow", async () => {
+			const model = getModel("sambanova", "gpt-oss-120b");
+			const result = await testContextOverflow(model, process.env.SAMBANOVA_API_KEY!);
+			logResult(result);
+
+			expect(result.stopReason).toBe("error");
+			expect(isContextOverflow(result.response, model.contextWindow)).toBe(true);
+		}, 120000);
+	});
+
+	// =============================================================================
 	// Hugging Face
 	// Uses OpenAI-compatible Inference Router
 	// =============================================================================

@@ -33,6 +33,7 @@ export type KnownProvider =
 	| "xai"
 	| "groq"
 	| "cerebras"
+	| "sambanova"
 	| "openrouter"
 	| "vercel-ai-gateway"
 	| "zai"
