@@ -2584,7 +2584,7 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
-			if (text === "/quit") {
+			if (text === "/quit" || text === "/exit" || text === "/bye") {
 				this.editor.setText("");
 				await this.shutdown();
 				return;
