@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added public exports for `parseArgs`, `Args`, and `convertToPng` for extensions ([#5171](https://github.com/earendil-works/pi/issues/5171), [#5166](https://github.com/earendil-works/pi/issues/5166)).
+
+### Fixed
+
+- Fixed forked sessions with explicit `--session-id` to reject duplicate target session IDs before creating a new session file.
+
 ## [0.77.0] - 2026-05-28
 
 ### New Features

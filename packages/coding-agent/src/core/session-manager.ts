@@ -527,6 +527,24 @@ export function findMostRecentSession(sessionDir: string, cwd?: string): string 
 	}
 }
 
+function findSessionByExactId(sessionDir: string, sessionId: string, cwd?: string): string | null {
+	const resolvedSessionDir = normalizePath(sessionDir);
+	const resolvedCwd = cwd ? resolvePath(cwd) : undefined;
+	try {
+		for (const file of readdirSync(resolvedSessionDir)) {
+			if (!file.endsWith(".jsonl")) continue;
+			const filePath = join(resolvedSessionDir, file);
+			const header = readSessionHeader(filePath);
+			if (!header || header.id !== sessionId) continue;
+			if (resolvedCwd && !sessionCwdMatches(getSessionHeaderCwd(header), resolvedCwd)) continue;
+			return filePath;
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
 function isMessageWithContent(message: AgentMessage): message is Message {
 	return typeof (message as Message).role === "string" && "content" in message;
 }
@@ -1440,6 +1458,9 @@ export class SessionManager {
 		const timestamp = new Date().toISOString();
 		const fileTimestamp = timestamp.replace(/[:.]/g, "-");
 		const newSessionFile = join(dir, `${fileTimestamp}_${newSessionId}.jsonl`);
+		if (findSessionByExactId(dir, newSessionId)) {
+			throw new Error(`Session already exists with id '${newSessionId}'`);
+		}
 
 		// Write new header pointing to source as parent, with updated cwd
 		const newHeader: SessionHeader = {
