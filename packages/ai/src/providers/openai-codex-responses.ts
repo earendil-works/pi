@@ -1294,20 +1294,43 @@ async function processWebSocketStream(
 	websocketConnectTimeoutMs: number | undefined,
 	options?: OpenAICodexResponsesOptions,
 ): Promise<void> {
+	const useCachedContext = options?.transport === "websocket-cached" || options?.transport === "auto";
+	// A pooled WebSocket still carries its prior response's server-side items
+	// (including assistant msg_* ids). Any request that does NOT continue from that
+	// exact response — a full-context request, a continuation miss, or a non-cached
+	// transport that reuses the pooled socket without sending a delta — would replay
+	// those ids and trigger a 400 "Duplicate item found". So unless the next request
+	// is a safe continuation delta, drop the idle cached socket and force a fresh one.
+	const sessionId = options?.sessionId;
+	if (sessionId) {
+		const cached = websocketSessionCache.get(sessionId);
+		if (cached && !cached.busy) {
+			const continuation = cached.continuation;
+			const willContinue =
+				useCachedContext &&
+				!!continuation &&
+				!!continuation.lastResponseId &&
+				getCachedWebSocketInputDelta(body, continuation) !== undefined;
+			if (!willContinue) {
+				if (cached.idleTimer) clearTimeout(cached.idleTimer);
+				closeWebSocketSilently(cached.socket, 1000, "stale_full_context");
+				websocketSessionCache.delete(sessionId);
+			}
+		}
+	}
 	const { socket, entry, reused, release } = await acquireWebSocket(
 		url,
 		headers,
-		options?.sessionId,
+		sessionId,
 		options?.signal,
 		websocketConnectTimeoutMs,
 	);
 	let keepConnection = true;
-	const useCachedContext = options?.transport === "websocket-cached" || options?.transport === "auto";
 	// ChatGPT Codex Responses rejects `store: true` ("Store must be set to false").
 	// WebSocket continuation still works via connection-scoped previous_response_id state.
 	const fullBody = body;
 	const requestBody = useCachedContext && entry ? buildCachedWebSocketRequestBody(entry, fullBody) : fullBody;
-	const stats = options?.sessionId ? getOrCreateWebSocketDebugStats(options.sessionId) : undefined;
+	const stats = sessionId ? getOrCreateWebSocketDebugStats(sessionId) : undefined;
 	if (stats) {
 		stats.requests++;
 		if (reused) stats.connectionsReused++;

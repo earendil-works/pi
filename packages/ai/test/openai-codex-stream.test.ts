@@ -1414,6 +1414,148 @@ describe("openai-codex streaming", () => {
 	});
 
 	it.each([
+		["explicit transport: websocket", "websocket" as const],
+		["default (omitted) transport", undefined],
+	])(
+		"drops the pooled socket instead of reusing it when the next request will not send a delta (%s)",
+		async (_label, transport) => {
+			// Regression: a pooled WebSocket still holds its prior response's server-side
+			// items (incl. assistant msg_* ids). Reusing it for a request that will NOT send a
+			// continuation delta — here a non-cached transport, which always sends the full body —
+			// replays those ids and the server rejects it with 400 "Duplicate item found". The fix
+			// drops the idle socket first, so the second request opens a fresh connection:
+			// connectionsCreated must climb to 2 and connectionsReused must stay 0.
+			const token = mockToken();
+			// Unique per case: the module-level websocket cache is not reset between tests,
+			// so a shared sessionId would let one case inherit the other's pooled socket.
+			const sessionId = `reuse-guard-${transport ?? "default"}`;
+			const responses = [
+				{ responseId: "resp_1", messageId: "msg_1", text: "Hello" },
+				{ responseId: "resp_2", messageId: "msg_2", text: "Done" },
+			];
+			let connectionsOpened = 0;
+
+			class MockWebSocket {
+				static OPEN = 1;
+				readyState = MockWebSocket.OPEN;
+				private listeners = new Map<string, Set<(event: unknown) => void>>();
+
+				constructor(_url: string, _protocols?: string | string[] | { headers?: Record<string, string> }) {
+					connectionsOpened++;
+					queueMicrotask(() => this.dispatch("open", {}));
+				}
+
+				addEventListener(type: string, listener: (event: unknown) => void): void {
+					let listeners = this.listeners.get(type);
+					if (!listeners) {
+						listeners = new Set();
+						this.listeners.set(type, listeners);
+					}
+					listeners.add(listener);
+				}
+
+				removeEventListener(type: string, listener: (event: unknown) => void): void {
+					this.listeners.get(type)?.delete(listener);
+				}
+
+				send(data: string): void {
+					const parsed = JSON.parse(data) as { previous_response_id?: string };
+					// A non-cached transport must never send a delta continuation.
+					expect(parsed.previous_response_id).toBeUndefined();
+					const response = responses.shift();
+					if (!response) throw new Error("unexpected websocket request");
+					const events = [
+						{ type: "response.created", response: { id: response.responseId } },
+						{
+							type: "response.output_item.added",
+							item: { type: "message", id: response.messageId, role: "assistant", status: "in_progress", content: [] },
+						},
+						{ type: "response.content_part.added", part: { type: "output_text", text: "" } },
+						{ type: "response.output_text.delta", delta: response.text },
+						{
+							type: "response.output_item.done",
+							item: {
+								type: "message",
+								id: response.messageId,
+								role: "assistant",
+								status: "completed",
+								content: [{ type: "output_text", text: response.text }],
+							},
+						},
+						{
+							type: "response.completed",
+							response: {
+								id: response.responseId,
+								status: "completed",
+								usage: {
+									input_tokens: 5,
+									output_tokens: 3,
+									total_tokens: 8,
+									input_tokens_details: { cached_tokens: 0 },
+								},
+							},
+						},
+					];
+					queueMicrotask(() => {
+						for (const event of events) {
+							this.dispatch("message", { data: JSON.stringify(event) });
+						}
+					});
+				}
+
+				close(): void {
+					this.readyState = 3;
+				}
+
+				private dispatch(type: string, event: unknown): void {
+					for (const listener of this.listeners.get(type) ?? []) {
+						listener(event);
+					}
+				}
+			}
+
+			vi.stubGlobal("WebSocket", MockWebSocket);
+
+			const model: Model<"openai-codex-responses"> = {
+				id: "gpt-5.1-codex",
+				name: "GPT-5.1 Codex",
+				api: "openai-codex-responses",
+				provider: "openai-codex",
+				baseUrl: "https://chatgpt.com/backend-api",
+				reasoning: true,
+				input: ["text"],
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+				contextWindow: 400000,
+				maxTokens: 128000,
+			};
+			const firstContext: Context = {
+				systemPrompt: "You are a helpful assistant.",
+				messages: [{ role: "user", content: "Say hello", timestamp: 1 }],
+			};
+			const options = { apiKey: token, sessionId, ...(transport ? { transport } : {}) };
+
+			const first = await streamOpenAICodexResponses(model, firstContext, options).result();
+			const secondContext: Context = {
+				systemPrompt: "You are a helpful assistant.",
+				messages: [...firstContext.messages, first, { role: "user", content: "Now finish", timestamp: 2 }],
+			};
+			await streamOpenAICodexResponses(model, secondContext, options).result();
+
+			// Two distinct connections were opened — the pooled socket from request 1 was dropped,
+			// never reused for request 2's full-context body.
+			expect(connectionsOpened).toBe(2);
+			expect(getOpenAICodexWebSocketDebugStats(sessionId)).toMatchObject({
+				requests: 2,
+				connectionsCreated: 2,
+				connectionsReused: 0,
+				cachedContextRequests: 0,
+				deltaRequests: 0,
+				fullContextRequests: 2,
+			});
+		},
+	);
+
+	it.each([
 		["retry-after-ms", () => ({ "content-type": "application/json", "retry-after-ms": "1500" }), 1500],
 		["retry-after seconds", () => ({ "content-type": "application/json", "retry-after": "60" }), 60_000],
 		[
