@@ -8,16 +8,17 @@ const DEFAULT_POLL_INTERVAL_SECONDS = 5;
 // RFC 8628 section 3.5: `slow_down` means the polling interval must increase by 5 seconds.
 const SLOW_DOWN_INTERVAL_INCREMENT_MS = 5000;
 
-export type OAuthDeviceCodePollResult =
+type OAuthDeviceCodeIncompletePollResult =
 	| { status: "pending" }
 	| { status: "slow_down" }
-	| { status: "complete"; accessToken: string }
 	| { status: "failed"; message: string };
 
-export type OAuthDeviceCodePollOptions = {
+export type OAuthDeviceCodePollResult<T> = OAuthDeviceCodeIncompletePollResult | { status: "complete"; value: T };
+
+export type OAuthDeviceCodePollOptions<T> = {
 	intervalSeconds?: number;
 	expiresInSeconds?: number;
-	poll: () => Promise<OAuthDeviceCodePollResult>;
+	poll: () => Promise<OAuthDeviceCodePollResult<T>>;
 	signal?: AbortSignal;
 };
 
@@ -41,7 +42,7 @@ function abortableSleep(ms: number, signal: AbortSignal | undefined, cancelMessa
 	});
 }
 
-export async function pollOAuthDeviceCodeFlow(options: OAuthDeviceCodePollOptions): Promise<string> {
+export async function pollOAuthDeviceCodeFlow<T>(options: OAuthDeviceCodePollOptions<T>): Promise<T> {
 	const deadline =
 		typeof options.expiresInSeconds === "number"
 			? Date.now() + options.expiresInSeconds * 1000
@@ -57,23 +58,25 @@ export async function pollOAuthDeviceCodeFlow(options: OAuthDeviceCodePollOption
 			throw new Error(CANCEL_MESSAGE);
 		}
 
-		const remainingMs = deadline - Date.now();
-		await abortableSleep(Math.min(intervalMs, remainingMs), options.signal, CANCEL_MESSAGE);
-
 		const result = await options.poll();
 		if (result.status === "complete") {
-			return result.accessToken;
+			return result.value;
 		}
-		if (result.status === "pending") {
-			continue;
+		if (result.status === "failed") {
+			throw new Error(result.message);
 		}
 		if (result.status === "slow_down") {
 			slowDownResponses += 1;
 			// RFC 8628 section 3.5: apply this increase to this and all subsequent requests.
 			intervalMs = Math.max(MINIMUM_INTERVAL_MS, intervalMs + SLOW_DOWN_INTERVAL_INCREMENT_MS);
-			continue;
 		}
-		throw new Error(result.message);
+
+		const remainingMs = deadline - Date.now();
+		if (remainingMs <= 0) {
+			break;
+		}
+
+		await abortableSleep(Math.min(intervalMs, remainingMs), options.signal, CANCEL_MESSAGE);
 	}
 
 	throw new Error(slowDownResponses > 0 ? SLOW_DOWN_TIMEOUT_MESSAGE : TIMEOUT_MESSAGE);

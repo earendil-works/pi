@@ -66,7 +66,7 @@ export interface BedrockOptions extends StreamOptions {
 	 * - "omitted": Thinking content is redacted but the signature still travels back
 	 *   for multi-turn continuity, reducing time-to-first-text-token.
 	 *
-	 * Note: Anthropic's API default for Claude Opus 4.7 and Mythos Preview is
+	 * Note: Anthropic's API default for Claude Opus 4.8 and Mythos Preview is
 	 * "omitted". We default to "summarized" here to keep behavior consistent with
 	 * older Claude 4 models. Only applies to Claude models on Bedrock.
 	 */
@@ -481,12 +481,14 @@ function getModelMatchCandidates(modelId: string, modelName?: string): string[] 
 
 function supportsAdaptiveThinking(modelId: string, modelName?: string): boolean {
 	const candidates = getModelMatchCandidates(modelId, modelName);
-	return candidates.some((s) => s.includes("opus-4-6") || s.includes("opus-4-7") || s.includes("sonnet-4-6"));
+	return candidates.some(
+		(s) => s.includes("opus-4-6") || s.includes("opus-4-7") || s.includes("opus-4-8") || s.includes("sonnet-4-6"),
+	);
 }
 
 function supportsNativeXhighEffort(model: Model<"bedrock-converse-stream">): boolean {
 	const candidates = getModelMatchCandidates(model.id, model.name);
-	return candidates.some((s) => s.includes("opus-4-7"));
+	return candidates.some((s) => s.includes("opus-4-7") || s.includes("opus-4-8"));
 }
 
 function mapThinkingLevelToEffort(

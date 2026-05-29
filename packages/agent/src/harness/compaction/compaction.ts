@@ -281,6 +281,7 @@ function findValidCutPoints(entries: SessionTreeEntry[], startIndex: number, end
 			}
 			case "thinking_level_change":
 			case "model_change":
+			case "active_tools_change":
 			case "compaction":
 			case "branch_summary":
 			case "custom":

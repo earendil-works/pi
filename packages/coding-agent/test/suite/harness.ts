@@ -60,6 +60,9 @@ export interface HarnessOptions {
 	settings?: Partial<Settings>;
 	systemPrompt?: string;
 	tools?: AgentTool[];
+	initialActiveToolNames?: string[];
+	allowedToolNames?: string[];
+	excludedToolNames?: string[];
 	resourceLoader?: ResourceLoader;
 	extensionFactories?: Array<ExtensionFactory | CreateTestExtensionsResultInput>;
 	withConfiguredAuth?: boolean;
@@ -173,6 +176,9 @@ export async function createHarness(options: HarnessOptions = {}): Promise<Harne
 		modelRegistry,
 		resourceLoader,
 		baseToolsOverride: toolMap,
+		initialActiveToolNames: options.initialActiveToolNames,
+		allowedToolNames: options.allowedToolNames,
+		excludedToolNames: options.excludedToolNames,
 		extensionRunnerRef,
 	});
 

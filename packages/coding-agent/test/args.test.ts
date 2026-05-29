@@ -308,6 +308,16 @@ describe("parseArgs", () => {
 			expect(result.tools).toEqual(["read", "bash"]);
 		});
 
+		test("parses --exclude-tools flag", () => {
+			const result = parseArgs(["--exclude-tools", "read,bash"]);
+			expect(result.excludeTools).toEqual(["read", "bash"]);
+		});
+
+		test("parses -xt shorthand", () => {
+			const result = parseArgs(["-xt", "read,bash"]);
+			expect(result.excludeTools).toEqual(["read", "bash"]);
+		});
+
 		test("parses --no-tools with explicit --tools flags", () => {
 			const result = parseArgs(["--no-tools", "--tools", "read,bash"]);
 			expect(result.noTools).toBe(true);

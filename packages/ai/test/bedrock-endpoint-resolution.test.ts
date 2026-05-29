@@ -98,7 +98,7 @@ describe("bedrock endpoint resolution", () => {
 
 	it("does not pin standard AWS endpoints when AWS_REGION is configured", async () => {
 		process.env.AWS_REGION = "us-east-2";
-		const model = getModel("amazon-bedrock", "us.anthropic.claude-opus-4-7");
+		const model = getModel("amazon-bedrock", "us.anthropic.claude-opus-4-8");
 
 		const config = await captureClientConfig(model);
 
@@ -117,7 +117,7 @@ describe("bedrock endpoint resolution", () => {
 
 	it("still passes custom Bedrock endpoints through to the SDK client", async () => {
 		process.env.AWS_REGION = "us-west-2";
-		const baseModel = getModel("amazon-bedrock", "us.anthropic.claude-opus-4-7");
+		const baseModel = getModel("amazon-bedrock", "us.anthropic.claude-opus-4-8");
 		const model: Model<"bedrock-converse-stream"> = {
 			...baseModel,
 			baseUrl: "https://bedrock-vpc.example.com",

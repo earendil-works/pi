@@ -124,6 +124,86 @@ describe("findMostRecentSession", () => {
 
 		expect(findMostRecentSession(tempDir)).toBe(valid);
 	});
+
+	it("filters most recent session by cwd", async () => {
+		const projectA = join(tempDir, "project-a");
+		const projectB = join(tempDir, "project-b");
+		const fileA = join(tempDir, "a.jsonl");
+		const fileB = join(tempDir, "b.jsonl");
+
+		writeFileSync(
+			fileA,
+			`${JSON.stringify({ type: "session", id: "a", timestamp: "2025-01-01T00:00:00Z", cwd: projectA })}\n`,
+		);
+		await new Promise((r) => setTimeout(r, 10));
+		writeFileSync(
+			fileB,
+			`${JSON.stringify({ type: "session", id: "b", timestamp: "2025-01-01T00:00:00Z", cwd: projectB })}\n`,
+		);
+
+		expect(findMostRecentSession(tempDir, projectA)).toBe(fileA);
+		expect(findMostRecentSession(tempDir, projectB)).toBe(fileB);
+	});
+});
+
+describe("SessionManager custom flat session directory", () => {
+	let tempDir: string;
+	let projectA: string;
+	let projectB: string;
+
+	beforeEach(() => {
+		tempDir = join(tmpdir(), `session-test-${Date.now()}`);
+		projectA = join(tempDir, "project-a");
+		projectB = join(tempDir, "project-b");
+		mkdirSync(projectA, { recursive: true });
+		mkdirSync(projectB, { recursive: true });
+	});
+
+	afterEach(() => {
+		rmSync(tempDir, { recursive: true, force: true });
+	});
+
+	function createPersistedSession(cwd: string, label: string): string {
+		const session = SessionManager.create(cwd, tempDir);
+		session.appendMessage({ role: "user", content: label, timestamp: Date.now() });
+		session.appendMessage({
+			role: "assistant",
+			content: [{ type: "text", text: `reply to ${label}` }],
+			api: "anthropic-messages",
+			provider: "anthropic",
+			model: "test",
+			usage: {
+				input: 1,
+				output: 1,
+				cacheRead: 0,
+				cacheWrite: 0,
+				totalTokens: 2,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp: Date.now(),
+		});
+		const sessionFile = session.getSessionFile();
+		if (!sessionFile) {
+			throw new Error("Expected persisted session file");
+		}
+		return sessionFile;
+	}
+
+	it("scopes current-folder APIs by cwd while listing all flat sessions", async () => {
+		const sessionA = createPersistedSession(projectA, "from A");
+		await new Promise((r) => setTimeout(r, 10));
+		const sessionB = createPersistedSession(projectB, "from B");
+
+		const currentA = await SessionManager.list(projectA, tempDir);
+		expect(currentA.map((session) => session.path)).toEqual([sessionA]);
+
+		const all = await SessionManager.listAll(tempDir);
+		expect(new Set(all.map((session) => session.path))).toEqual(new Set([sessionA, sessionB]));
+
+		const continuedA = SessionManager.continueRecent(projectA, tempDir);
+		expect(continuedA.getSessionFile()).toBe(sessionA);
+	});
 });
 
 describe("SessionManager.setSessionFile with corrupted files", () => {

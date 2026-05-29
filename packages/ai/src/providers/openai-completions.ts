@@ -601,6 +601,13 @@ function buildParams(
 		if (options?.reasoningEffort && compat.supportsReasoningEffort) {
 			togetherParams.reasoning_effort = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
 		}
+	} else if (compat.thinkingFormat === "string-thinking" && model.reasoning) {
+		const stringThinkingParams = params as typeof params & { thinking?: string };
+		if (options?.reasoningEffort) {
+			stringThinkingParams.thinking = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;
+		} else if (model.thinkingLevelMap?.off !== null) {
+			stringThinkingParams.thinking = model.thinkingLevelMap?.off ?? "none";
+		}
 	} else if (options?.reasoningEffort && model.reasoning && compat.supportsReasoningEffort) {
 		// OpenAI-style reasoning_effort
 		(params as any).reasoning_effort = model.thinkingLevelMap?.[options.reasoningEffort] ?? options.reasoningEffort;

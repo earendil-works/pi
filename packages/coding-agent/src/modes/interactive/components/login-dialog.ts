@@ -86,7 +86,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 	/**
 	 * Called by onAuth callback - show URL and optional instructions
 	 */
-	showAuth(url: string, instructions?: string, options: { autoOpenBrowser?: boolean } = {}): void {
+	showAuth(url: string, instructions?: string): void {
 		this.contentContainer.clear();
 		this.contentContainer.addChild(new Spacer(1));
 		const linkedUrl = `\x1b]8;;${url}\x07${url}\x1b]8;;\x07`;
@@ -101,9 +101,7 @@ export class LoginDialogComponent extends Container implements Focusable {
 			this.contentContainer.addChild(new Text(theme.fg("warning", instructions), 1, 0));
 		}
 
-		if (options.autoOpenBrowser ?? true) {
-			this.openUrl(url);
-		}
+		this.openUrl(url);
 		this.tui.requestRender();
 	}
 

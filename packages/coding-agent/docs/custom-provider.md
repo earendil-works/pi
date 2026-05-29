@@ -43,7 +43,7 @@ export default function (pi: ExtensionAPI) {
   pi.registerProvider("my-provider", {
     name: "My Provider",
     baseUrl: "https://api.example.com",
-    apiKey: "MY_API_KEY",
+    apiKey: "$MY_API_KEY",
     api: "openai-completions",
     models: [
       {
@@ -83,7 +83,7 @@ pi.registerProvider("openai", {
 pi.registerProvider("google", {
   baseUrl: "https://ai-gateway.corp.com/google",
   headers: {
-    "X-Corp-Auth": "CORP_AUTH_TOKEN"  // env var or literal
+    "X-Corp-Auth": "$CORP_AUTH_TOKEN"  // env var or literal
   }
 });
 ```
@@ -112,7 +112,7 @@ export default async function (pi: ExtensionAPI) {
 
   pi.registerProvider("local-openai", {
     baseUrl: "http://localhost:1234/v1",
-    apiKey: "LOCAL_OPENAI_API_KEY",
+    apiKey: "$LOCAL_OPENAI_API_KEY",
     api: "openai-completions",
     models: payload.data.map((model) => ({
       id: model.id,
@@ -132,7 +132,7 @@ This registers the fetched models before startup finishes.
 ```typescript
 pi.registerProvider("my-llm", {
   baseUrl: "https://api.my-llm.com/v1",
-  apiKey: "MY_LLM_API_KEY",  // env var name or literal value
+  apiKey: "$MY_LLM_API_KEY",  // env var reference
   api: "openai-completions",  // which streaming API to use
   models: [
     {
@@ -155,6 +155,8 @@ pi.registerProvider("my-llm", {
 
 When `models` is provided, it **replaces** all existing models for that provider.
 
+`apiKey` and custom header values use the same config value syntax as `models.json`: `!command` at the start executes a command for the whole value, `$ENV_VAR` and `${ENV_VAR}` interpolate environment variables, `$$` emits a literal `$`, and `$!` emits a literal `!`.
+
 ## Unregister Provider
 
 Use `pi.unregisterProvider(name)` to remove a provider that was previously registered via `pi.registerProvider(name, ...)`:
@@ -163,7 +165,7 @@ Use `pi.unregisterProvider(name)` to remove a provider that was previously regis
 // Register
 pi.registerProvider("my-llm", {
   baseUrl: "https://api.my-llm.com/v1",
-  apiKey: "MY_LLM_API_KEY",
+  apiKey: "$MY_LLM_API_KEY",
   api: "openai-completions",
   models: [
     {
@@ -230,7 +232,7 @@ models: [{
 Use `openrouter` for OpenRouter-style `reasoning: { effort }` controls. Use `together` for Together-style `reasoning: { enabled }` controls; with `supportsReasoningEffort`, it also sends `reasoning_effort`. Use `qwen-chat-template` instead for local Qwen-compatible servers that read `chat_template_kwargs.enable_thinking`.
 Use `cacheControlFormat: "anthropic"` for OpenAI-compatible providers that expose Anthropic-style prompt caching via `cache_control` on the system prompt, last tool definition, and last user/assistant text content.
 
-For Anthropic-compatible providers using `api: "anthropic-messages"`, set `compat.forceAdaptiveThinking: true` on models or providers whose upstream model requires adaptive thinking (`thinking.type: "adaptive"` plus `output_config.effort`). Built-in adaptive Claude models set this automatically.
+For Anthropic-compatible providers using `api: "anthropic-messages"`, set `compat.forceAdaptiveThinking: true` on models or providers whose upstream model requires adaptive thinking (`thinking.type: "adaptive"` plus `output_config.effort`). Built-in adaptive Claude models set this automatically. Set `compat.allowEmptySignature: true` only for providers that emit empty thinking signatures and expect `signature: ""` on replay.
 
 > Migration note: Mistral moved from `openai-completions` to `mistral-conversations`.
 > Use `mistral-conversations` for native Mistral models.
@@ -243,7 +245,7 @@ If your provider expects `Authorization: Bearer <key>` but doesn't use a standar
 ```typescript
 pi.registerProvider("custom-api", {
   baseUrl: "https://api.example.com",
-  apiKey: "MY_API_KEY",
+  apiKey: "$MY_API_KEY",
   authHeader: true,  // adds Authorization: Bearer header
   api: "openai-completions",
   models: [...]
@@ -592,7 +594,7 @@ Register your stream function:
 ```typescript
 pi.registerProvider("my-provider", {
   baseUrl: "https://api.example.com",
-  apiKey: "MY_API_KEY",
+  apiKey: "$MY_API_KEY",
   api: "my-custom-api",
   models: [...],
   streamSimple: streamMyProvider
@@ -629,7 +631,7 @@ interface ProviderConfig {
   /** API endpoint URL. Required when defining models. */
   baseUrl?: string;
 
-  /** API key or environment variable name. Required when defining models (unless oauth). */
+  /** API key literal, env interpolation ($ENV_VAR or ${ENV_VAR}), or !command. Required when defining models (unless oauth). */
   apiKey?: string;
 
   /** API type for streaming. Required at provider or model level when defining models. */
@@ -642,7 +644,7 @@ interface ProviderConfig {
     options?: SimpleStreamOptions
   ) => AssistantMessageEventStream;
 
-  /** Custom headers to include in requests. Values can be env var names. */
+  /** Custom headers to include in requests. Values use the same resolution syntax as apiKey. */
   headers?: Record<string, string>;
 
   /** If true, adds Authorization: Bearer header with the resolved API key. */
@@ -725,6 +727,7 @@ interface ProviderModelConfig {
     sendSessionAffinityHeaders?: boolean;
     supportsCacheControlOnTools?: boolean;
     forceAdaptiveThinking?: boolean;
+    allowEmptySignature?: boolean;
   };
 }
 ```

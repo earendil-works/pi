@@ -1,6 +1,6 @@
 {
 	"name": "@earendil-works/pi-tui",
-	"version": "0.76.0",
+	"version": "0.77.0",
 	"description": "Terminal User Interface library with differential rendering for efficient text-based applications",
 	"type": "module",
 	"main": "dist/index.js",
@@ -29,7 +29,7 @@
 	"license": "MIT",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/earendil-works/pi-mono.git",
+		"url": "git+https://github.com/earendil-works/pi.git",
 		"directory": "packages/tui"
 	},
 	"engines": {

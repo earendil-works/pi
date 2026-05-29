@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [0.77.0] - 2026-05-28
+
+### Breaking Changes
+
+- Renamed agent harness `model_select` and `thinking_level_select` events to `model_update` and `thinking_level_update`.
+
+### Added
+
+- Added agent harness tool registry APIs, `tools_update` events, branch-scoped active-tool persistence, and duplicate tool validation.
+
 ## [0.76.0] - 2026-05-27
 
 ### Fixed

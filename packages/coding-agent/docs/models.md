@@ -101,7 +101,7 @@ Use `google-generative-ai` with a `baseUrl` to add models from Google AI Studio,
     "my-google": {
       "baseUrl": "https://generativelanguage.googleapis.com/v1beta",
       "api": "google-generative-ai",
-      "apiKey": "GEMINI_API_KEY",
+      "apiKey": "$GEMINI_API_KEY",
       "models": [
         {
           "id": "gemma-4-31b-it",
@@ -143,21 +143,30 @@ Set `api` at provider level (default for all models) or model level (override pe
 
 ### Value Resolution
 
-The `apiKey` and `headers` fields support three formats:
+The `apiKey` and `headers` fields support command execution, environment interpolation, and literals:
 
-- **Shell command:** `"!command"` executes and uses stdout
+- **Shell command:** `"!command"` at the start executes the whole value as a command and uses stdout
   ```json
   "apiKey": "!security find-generic-password -ws 'anthropic'"
   "apiKey": "!op read 'op://vault/item/credential'"
   ```
-- **Environment variable:** Uses the value of the named variable
+- **Environment interpolation:** `"$ENV_VAR"` or `"${ENV_VAR}"` uses the value of the named variable. Interpolation works inside larger literals.
   ```json
-  "apiKey": "MY_API_KEY"
+  "apiKey": "$MY_API_KEY"
+  "apiKey": "${KEY_PREFIX}_${KEY_SUFFIX}"
+  ```
+  `$FOO_BAR` is the variable `FOO_BAR`; use `${FOO}_BAR` when `BAR` is literal text. Missing environment variables make the value unresolved.
+- **Escapes:** `"$$"` emits a literal `"$"`; `"$!"` emits a literal `"!"` without triggering command execution.
+  ```json
+  "apiKey": "$$literal-dollar-prefix"
+  "apiKey": "$!literal-bang-prefix"
   ```
 - **Literal value:** Used directly
   ```json
   "apiKey": "sk-..."
   ```
+
+Legacy uppercase env-var-like values such as `MY_API_KEY` are migrated to `$MY_API_KEY` on startup.
 
 For `models.json`, shell commands are resolved at request time. pi intentionally does not apply built-in TTL, stale reuse, or recovery logic for arbitrary commands. Different commands need different caching and failure strategies, and pi cannot infer the right one.
 
@@ -172,10 +181,10 @@ If your command is slow, expensive, rate-limited, or should keep using a previou
   "providers": {
     "custom-proxy": {
       "baseUrl": "https://proxy.example.com/v1",
-      "apiKey": "MY_API_KEY",
+      "apiKey": "$MY_API_KEY",
       "api": "anthropic-messages",
       "headers": {
-        "x-portkey-api-key": "PORTKEY_API_KEY",
+        "x-portkey-api-key": "$PORTKEY_API_KEY",
         "x-secret": "!op read 'op://vault/item/secret'"
       },
       "models": [...]
@@ -268,7 +277,7 @@ To merge custom models into a built-in provider, include the `models` array:
   "providers": {
     "anthropic": {
       "baseUrl": "https://my-proxy.example.com/v1",
-      "apiKey": "ANTHROPIC_API_KEY",
+      "apiKey": "$ANTHROPIC_API_KEY",
       "api": "anthropic-messages",
       "models": [...]
     }
@@ -321,17 +330,20 @@ By default pi sends per-tool `eager_input_streaming: true`. If a proxy or Anthro
 
 Some Anthropic models require adaptive thinking (`thinking.type: "adaptive"` plus `output_config.effort`) instead of the legacy budget-based thinking payload. Built-in models set this automatically. For custom providers or aliases that route to those models, set `forceAdaptiveThinking` to `true`.
 
+Some Anthropic-compatible providers emit thinking blocks with empty signatures and still expect them on replay. Set `allowEmptySignature` to `true` only for those providers; real Anthropic rejects empty thinking signatures.
+
 ```json
 {
   "providers": {
     "anthropic-proxy": {
       "baseUrl": "https://proxy.example.com",
       "api": "anthropic-messages",
-      "apiKey": "ANTHROPIC_PROXY_KEY",
+      "apiKey": "$ANTHROPIC_PROXY_KEY",
       "compat": {
         "supportsEagerToolInputStreaming": false,
         "supportsLongCacheRetention": true,
-        "forceAdaptiveThinking": true
+        "forceAdaptiveThinking": true,
+        "allowEmptySignature": true
       },
       "models": [
         {
@@ -352,6 +364,7 @@ Some Anthropic models require adaptive thinking (`thinking.type: "adaptive"` plu
 | `sendSessionAffinityHeaders` | Whether to send `x-session-affinity` from the session id when caching is enabled. Default: auto-detected for known providers. |
 | `supportsCacheControlOnTools` | Whether the provider accepts Anthropic-style `cache_control` markers on tool definitions. Default: `true`. |
 | `forceAdaptiveThinking` | Whether to send adaptive thinking (`thinking.type: "adaptive"` plus `output_config.effort`) for this model. Built-in adaptive models set this automatically. Default: `false`. |
+| `allowEmptySignature` | Whether to replay empty thinking signatures as `signature: ""` instead of converting thinking to text. Default: `false`. |
 
 ## OpenAI Compatibility
 
@@ -405,7 +418,7 @@ Example:
   "providers": {
     "openrouter": {
       "baseUrl": "https://openrouter.ai/api/v1",
-      "apiKey": "OPENROUTER_API_KEY",
+      "apiKey": "$OPENROUTER_API_KEY",
       "api": "openai-completions",
       "models": [
         {
@@ -455,7 +468,7 @@ Vercel AI Gateway example:
   "providers": {
     "vercel-ai-gateway": {
       "baseUrl": "https://ai-gateway.vercel.sh/v1",
-      "apiKey": "AI_GATEWAY_API_KEY",
+      "apiKey": "$AI_GATEWAY_API_KEY",
       "api": "openai-completions",
       "models": [
         {

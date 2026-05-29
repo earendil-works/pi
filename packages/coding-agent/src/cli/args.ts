@@ -28,6 +28,7 @@ export interface Args {
 	sessionDir?: string;
 	models?: string[];
 	tools?: string[];
+	excludeTools?: string[];
 	noTools?: boolean;
 	noBuiltinTools?: boolean;
 	extensions?: string[];
@@ -110,6 +111,11 @@ export function parseArgs(args: string[]): Args {
 			result.noBuiltinTools = true;
 		} else if ((arg === "--tools" || arg === "-t") && i + 1 < args.length) {
 			result.tools = args[++i]
+				.split(",")
+				.map((s) => s.trim())
+				.filter((name) => name.length > 0);
+		} else if ((arg === "--exclude-tools" || arg === "-xt") && i + 1 < args.length) {
+			result.excludeTools = args[++i]
 				.split(",")
 				.map((s) => s.trim())
 				.filter((name) => name.length > 0);
@@ -237,6 +243,8 @@ ${chalk.bold("Options:")}
   --no-builtin-tools, -nbt       Disable built-in tools by default but keep extension/custom tools enabled
   --tools, -t <tools>            Comma-separated allowlist of tool names to enable
                                  Applies to built-in, extension, and custom tools
+  --exclude-tools, -xt <tools>   Comma-separated denylist of tool names to disable
+                                 Applies to built-in, extension, and custom tools
   --thinking <level>             Set thinking level: off, minimal, low, medium, high, xhigh
   --extension, -e <path>         Load an extension file (can be used multiple times)
   --no-extensions, -ne           Disable extension discovery (explicit -e paths still work)
@@ -298,6 +306,9 @@ ${chalk.bold("Examples:")}
 
   # Read-only mode (no file modifications possible)
   ${APP_NAME} --tools read,grep,find,ls -p "Review the code in src/"
+
+  # Disable one tool while keeping the rest available
+  ${APP_NAME} --exclude-tools ask_question
 
   # Export a session file to HTML
   ${APP_NAME} --export ~/${CONFIG_DIR_NAME}/agent/sessions/--path--/session.jsonl

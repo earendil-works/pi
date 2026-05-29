@@ -568,7 +568,7 @@ function streamCustomAnthropic(
 export default function (pi: ExtensionAPI) {
 	pi.registerProvider("custom-anthropic", {
 		baseUrl: "https://api.anthropic.com",
-		apiKey: "CUSTOM_ANTHROPIC_API_KEY",
+		apiKey: "$CUSTOM_ANTHROPIC_API_KEY",
 		api: "custom-anthropic-api",
 
 		models: [

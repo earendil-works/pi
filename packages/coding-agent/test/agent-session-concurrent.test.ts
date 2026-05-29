@@ -444,6 +444,7 @@ describe("AgentSession concurrent prompt guard", () => {
 					text: string,
 					images: unknown,
 					source: "interactive" | "rpc" | "extension",
+					streamingBehavior?: "steer" | "followUp",
 				) => Promise<{ action: "continue" }>;
 				emitBeforeAgentStart: (
 					prompt: string,
@@ -588,6 +589,7 @@ describe("AgentSession concurrent prompt guard", () => {
 					text: string,
 					images: unknown,
 					source: "interactive" | "rpc" | "extension",
+					streamingBehavior?: "steer" | "followUp",
 				) => Promise<{ action: "continue" }>;
 				emitBeforeAgentStart: (
 					prompt: string,

@@ -3248,11 +3248,28 @@ export class InteractiveMode {
 	 */
 	private isShuttingDown = false;
 
-	private async shutdown(): Promise<void> {
+	private async shutdown(options?: { fromSignal?: boolean }): Promise<void> {
 		if (this.isShuttingDown) return;
 		this.isShuttingDown = true;
 		this.unregisterSignalHandlers();
 
+		if (options?.fromSignal) {
+			// Signal-triggered shutdown (SIGTERM/SIGHUP). Emit extension cleanup
+			// (session_shutdown) BEFORE touching the terminal. Extension teardown
+			// such as removing sockets does not write to the tty, so it must not be
+			// skipped if a later terminal-restore write fails on a dead or stalled
+			// terminal. If the terminal is gone, the restore writes below emit EIO,
+			// which the stdout/stderr error handler turns into emergencyTerminalExit;
+			// the render loop is already idle, so this cannot hot-spin (see #4144).
+			await this.runtimeHost.dispose();
+			await this.ui.terminal.drainInput(1000);
+			this.stop();
+			process.exit(0);
+		}
+
+		// Interactive quit (Ctrl+D, Ctrl+C, /quit, extension shutdown()). Stop the
+		// TUI before emitting shutdown events so extension UI cleanup cannot repaint
+		// the final frame while the process is exiting.
 		// Drain any in-flight Kitty key release events before stopping.
 		// This prevents escape sequences from leaking to the parent shell over slow SSH.
 		await this.ui.terminal.drainInput(1000);
@@ -3319,11 +3336,12 @@ export class InteractiveMode {
 
 		for (const signal of signals) {
 			const handler = () => {
-				if (signal === "SIGHUP") {
-					this.emergencyTerminalExit();
-				}
+				// SIGHUP no longer hard-exits: graceful shutdown emits session_shutdown
+				// first, then attempts terminal restore. A genuinely dead terminal
+				// surfaces as an EIO on the restore writes, which the stdout/stderr
+				// error handler converts into emergencyTerminalExit (see #4144, #5080).
 				killTrackedDetachedChildren();
-				void this.shutdown();
+				void this.shutdown({ fromSignal: true });
 			};
 			process.prependListener(signal, handler);
 			this.signalCleanupHandlers.push(() => process.off(signal, handler));
@@ -4383,7 +4401,10 @@ export class InteractiveMode {
 			const selector = new SessionSelectorComponent(
 				(onProgress) =>
 					SessionManager.list(this.sessionManager.getCwd(), this.sessionManager.getSessionDir(), onProgress),
-				SessionManager.listAll,
+				(onProgress) =>
+					this.sessionManager.usesDefaultSessionDir()
+						? SessionManager.listAll(onProgress)
+						: SessionManager.listAll(this.sessionManager.getSessionDir(), onProgress),
 				async (sessionPath) => {
 					done();
 					await this.handleResumeSession(sessionPath);

@@ -1,17 +1,17 @@
 {
 	"name": "@earendil-works/pi-coding-agent",
-	"version": "0.76.0",
+	"version": "0.77.0",
 	"lockfileVersion": 3,
 	"requires": true,
 	"packages": {
 		"": {
 			"name": "@earendil-works/pi-coding-agent",
-			"version": "0.76.0",
+			"version": "0.77.0",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-agent-core": "^0.76.0",
-				"@earendil-works/pi-ai": "^0.76.0",
-				"@earendil-works/pi-tui": "^0.76.0",
+				"@earendil-works/pi-agent-core": "^0.77.0",
+				"@earendil-works/pi-ai": "^0.77.0",
+				"@earendil-works/pi-tui": "^0.77.0",
 				"@silvia-odwyer/photon-node": "0.3.4",
 				"chalk": "5.6.2",
 				"cross-spawn": "7.0.6",
@@ -28,7 +28,7 @@
 				"yaml": "2.9.0"
 			},
 			"optionalDependencies": {
-				"@mariozechner/clipboard": "0.3.6"
+				"@mariozechner/clipboard": "0.3.9"
 			},
 			"bin": {
 				"pi": "dist/cli.js"
@@ -473,11 +473,11 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-agent-core": {
-			"version": "0.76.0",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-0.76.0.tgz",
+			"version": "0.77.0",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-agent-core/-/pi-agent-core-0.77.0.tgz",
 			"license": "MIT",
 			"dependencies": {
-				"@earendil-works/pi-ai": "^0.76.0",
+				"@earendil-works/pi-ai": "^0.77.0",
 				"ignore": "7.0.5",
 				"typebox": "1.1.38",
 				"yaml": "2.9.0"
@@ -487,8 +487,8 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-ai": {
-			"version": "0.76.0",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-0.76.0.tgz",
+			"version": "0.77.0",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-ai/-/pi-ai-0.77.0.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"@anthropic-ai/sdk": "0.91.1",
@@ -510,8 +510,8 @@
 			}
 		},
 		"node_modules/@earendil-works/pi-tui": {
-			"version": "0.76.0",
-			"resolved": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-0.76.0.tgz",
+			"version": "0.77.0",
+			"resolved": "https://registry.npmjs.org/@earendil-works/pi-tui/-/pi-tui-0.77.0.tgz",
 			"license": "MIT",
 			"dependencies": {
 				"get-east-asian-width": "1.6.0",
@@ -546,21 +546,21 @@
 			"hasInstallScript": true
 		},
 		"node_modules/@mariozechner/clipboard": {
-			"version": "0.3.6",
-			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard/-/clipboard-0.3.6.tgz",
-			"integrity": "sha512-MXdtr+6+ntlIVHdrZYuZNQydu6o8yZswFJ2Ln81j2O/Y9B/LDHvEaIm95xWNPkjGTWriSOeLnQJRFs6dYb60bg==",
+			"version": "0.3.9",
+			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard/-/clipboard-0.3.9.tgz",
+			"integrity": "sha512-ABnA53mdfkGZwOFUdZNv2S0CWGO/EIuPj8Vv9xmBFmSYg/qFc7ihO6q5FcQjvoE67kZpWkEc4AhD6B/os04yuA==",
 			"license": "MIT",
 			"optionalDependencies": {
-				"@mariozechner/clipboard-darwin-arm64": "0.3.6",
-				"@mariozechner/clipboard-darwin-universal": "0.3.6",
-				"@mariozechner/clipboard-darwin-x64": "0.3.6",
-				"@mariozechner/clipboard-linux-arm64-gnu": "0.3.6",
-				"@mariozechner/clipboard-linux-arm64-musl": "0.3.6",
-				"@mariozechner/clipboard-linux-riscv64-gnu": "0.3.6",
-				"@mariozechner/clipboard-linux-x64-gnu": "0.3.6",
-				"@mariozechner/clipboard-linux-x64-musl": "0.3.6",
-				"@mariozechner/clipboard-win32-arm64-msvc": "0.3.6",
-				"@mariozechner/clipboard-win32-x64-msvc": "0.3.6"
+				"@mariozechner/clipboard-darwin-arm64": "0.3.9",
+				"@mariozechner/clipboard-darwin-universal": "0.3.9",
+				"@mariozechner/clipboard-darwin-x64": "0.3.9",
+				"@mariozechner/clipboard-linux-arm64-gnu": "0.3.9",
+				"@mariozechner/clipboard-linux-arm64-musl": "0.3.9",
+				"@mariozechner/clipboard-linux-riscv64-gnu": "0.3.9",
+				"@mariozechner/clipboard-linux-x64-gnu": "0.3.9",
+				"@mariozechner/clipboard-linux-x64-musl": "0.3.9",
+				"@mariozechner/clipboard-win32-arm64-msvc": "0.3.9",
+				"@mariozechner/clipboard-win32-x64-msvc": "0.3.9"
 			},
 			"engines": {
 				"node": ">= 10"
@@ -568,9 +568,9 @@
 			"optional": true
 		},
 		"node_modules/@mariozechner/clipboard-darwin-arm64": {
-			"version": "0.3.6",
-			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-darwin-arm64/-/clipboard-darwin-arm64-0.3.6.tgz",
-			"integrity": "sha512-HjaisYCAbHi/1+N1yDAQHc8ZXGffufIUT5NSOSVR3f3AuMDusxTtnbK8tZ7JFDkShua1oNGZoNwQHsc8MPtE0Q==",
+			"version": "0.3.9",
+			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-darwin-arm64/-/clipboard-darwin-arm64-0.3.9.tgz",
+			"integrity": "sha512-BfgV7vCEWZwJwZJw03r6bP5+tf0iI/ANuQYCxi9RNn7FrWB3yzGuMKCrNLRl6V761vXRdL8+OqZ0wd4TqlsNOQ==",
 			"license": "MIT",
 			"engines": {
 				"node": ">= 10"
@@ -584,9 +584,9 @@
 			"optional": true
 		},
 		"node_modules/@mariozechner/clipboard-darwin-universal": {
-			"version": "0.3.6",
-			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-darwin-universal/-/clipboard-darwin-universal-0.3.6.tgz",
-			"integrity": "sha512-8BWtPjOtJOJoykml3w0fx0zRrfWP31mXrJwfoA7xzNprkZw1uolCNfgmjDiVBseoKjp16EGITz7bN+61qn8dWA==",
+			"version": "0.3.9",
+			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-darwin-universal/-/clipboard-darwin-universal-0.3.9.tgz",
+			"integrity": "sha512-BGGR4iA9Z2shAjI65eI5xtyb3LYNlDW9X3gxKxDbqtbnREohsrqznov6zpKoIrsRWpzlYVEdKphS7ksJ0/ndSQ==",
 			"license": "MIT",
 			"engines": {
 				"node": ">= 10"
@@ -597,9 +597,9 @@
 			"optional": true
 		},
 		"node_modules/@mariozechner/clipboard-darwin-x64": {
-			"version": "0.3.6",
-			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-darwin-x64/-/clipboard-darwin-x64-0.3.6.tgz",
-			"integrity": "sha512-p9syiZD1kU4I+1ya7f7g+zD1GiUvR8fdlRlNmgsZNWlyjtc8rlV2EjTLd/35x1LsdBq020GVvtzp0ZmPgBI09Q==",
+			"version": "0.3.9",
+			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-darwin-x64/-/clipboard-darwin-x64-0.3.9.tgz",
+			"integrity": "sha512-4kURmCbS6nt8uYhtmWpUcJWyPHfmAr5dTpXD1nO3pIfa+TSQ9DbrGOYCKH+aEFW47XhQ4Vp8ZTszie+wfFvDKg==",
 			"license": "MIT",
 			"engines": {
 				"node": ">= 10"
@@ -613,9 +613,9 @@
 			"optional": true
 		},
 		"node_modules/@mariozechner/clipboard-linux-arm64-gnu": {
-			"version": "0.3.6",
-			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-linux-arm64-gnu/-/clipboard-linux-arm64-gnu-0.3.6.tgz",
-			"integrity": "sha512-5JFf5rGofrm+V29HNF+wLthXphHdQpMbKDUYJ5tML6/Z5DLlLOV/9Ak4kDPtYyZ+Dzf+kAusE0VsFg4+tfP1IA==",
+			"version": "0.3.9",
+			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-linux-arm64-gnu/-/clipboard-linux-arm64-gnu-0.3.9.tgz",
+			"integrity": "sha512-g59OkUGP2DDfCOIKypHeYgv2M55u/cKvXa5dSxFbEJ34XvIQMdcVmpKCkGUro3ZgefXiGVdwguvTMQGpHWzIXw==",
 			"license": "MIT",
 			"engines": {
 				"node": ">= 10"
@@ -625,13 +625,16 @@
 			],
 			"cpu": [
 				"arm64"
+			],
+			"libc": [
+				"glibc"
 			],
 			"optional": true
 		},
 		"node_modules/@mariozechner/clipboard-linux-arm64-musl": {
-			"version": "0.3.6",
-			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-linux-arm64-musl/-/clipboard-linux-arm64-musl-0.3.6.tgz",
-			"integrity": "sha512-JlVjxxw0GbGC0djXYWRIqyteO3J1KZ/QG3udlEFaOD5TLOM1FnmXXAPDQBqr+aBVr720ef9K00dirYnJ0LDCtw==",
+			"version": "0.3.9",
+			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-linux-arm64-musl/-/clipboard-linux-arm64-musl-0.3.9.tgz",
+			"integrity": "sha512-AGuJdgKsmJdm4Pych7kv3sqe591ERRaAHW3xjLooiFzn8J+PxUyof++7YZrB5Y5tpnTO+K18Og3taj2NpluCRQ==",
 			"license": "MIT",
 			"engines": {
 				"node": ">= 10"
@@ -642,12 +645,15 @@
 			"cpu": [
 				"arm64"
 			],
+			"libc": [
+				"musl"
+			],
 			"optional": true
 		},
 		"node_modules/@mariozechner/clipboard-linux-riscv64-gnu": {
-			"version": "0.3.6",
-			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-linux-riscv64-gnu/-/clipboard-linux-riscv64-gnu-0.3.6.tgz",
-			"integrity": "sha512-4t8BUi5zZ+L77otFQVnVSlaTyAX4TVk9EqQm4syMrEQp96trFEHEwwNHcNEBGzYv5+K7mxay50TthYkz47OWzQ==",
+			"version": "0.3.9",
+			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-linux-riscv64-gnu/-/clipboard-linux-riscv64-gnu-0.3.9.tgz",
+			"integrity": "sha512-DXBEAiuMpk7dhS1a9NzNxVAFi1vaKoPu7rQNgY8LIDLGrK3lnIp3nT10DUum+PKVJoJppIP+NAA8IZe4DMNDPw==",
 			"license": "MIT",
 			"engines": {
 				"node": ">= 10"
@@ -658,12 +664,15 @@
 			"cpu": [
 				"riscv64"
 			],
+			"libc": [
+				"glibc"
+			],
 			"optional": true
 		},
 		"node_modules/@mariozechner/clipboard-linux-x64-gnu": {
-			"version": "0.3.6",
-			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-linux-x64-gnu/-/clipboard-linux-x64-gnu-0.3.6.tgz",
-			"integrity": "sha512-trtPwcNLW37irwQCJLtCxLw757jjJZk3TSnY/MU9bhtWtA3K9b/eLW0e4RGhUXDoFRds9opNWWaUDuFLa8dm0w==",
+			"version": "0.3.9",
+			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-linux-x64-gnu/-/clipboard-linux-x64-gnu-0.3.9.tgz",
+			"integrity": "sha512-WORrMLd6EpElEME7JRKfSaY34nW1P5LbdgK5YNCS1ncG2LqmITsSMEJ8nh2mpvxb3TxqbOOKgY7k9eMJYlW9Mw==",
 			"license": "MIT",
 			"engines": {
 				"node": ">= 10"
@@ -673,13 +682,16 @@
 			],
 			"cpu": [
 				"x64"
+			],
+			"libc": [
+				"glibc"
 			],
 			"optional": true
 		},
 		"node_modules/@mariozechner/clipboard-linux-x64-musl": {
-			"version": "0.3.6",
-			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-linux-x64-musl/-/clipboard-linux-x64-musl-0.3.6.tgz",
-			"integrity": "sha512-WfnzIvOCCWQiN0MmltCEo6cLceUDbYe+I7xyFZjaps5A+2Op/M2CY7Rey+C4ucQhrvmpoHmTSFgY9ODWk7snoA==",
+			"version": "0.3.9",
+			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-linux-x64-musl/-/clipboard-linux-x64-musl-0.3.9.tgz",
+			"integrity": "sha512-/DHn+1DrfL6oRaPPWXaOKvonFFrni666fxd+zFqiQEfvBH0tsHVWjq9iqBk0oDp0qaPA72lIMy5BptxISBEhZQ==",
 			"license": "MIT",
 			"engines": {
 				"node": ">= 10"
@@ -690,12 +702,15 @@
 			"cpu": [
 				"x64"
 			],
+			"libc": [
+				"musl"
+			],
 			"optional": true
 		},
 		"node_modules/@mariozechner/clipboard-win32-arm64-msvc": {
-			"version": "0.3.6",
-			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-win32-arm64-msvc/-/clipboard-win32-arm64-msvc-0.3.6.tgz",
-			"integrity": "sha512-+8+1aHYsBPUjmW3otmWlg+Hijt0iJvoBBs5e0mxFeUd4gDaKMB8Bn6x7c6KVtscg7E5j5NFXnwQqNSIAO4p8zQ==",
+			"version": "0.3.9",
+			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-win32-arm64-msvc/-/clipboard-win32-arm64-msvc-0.3.9.tgz",
+			"integrity": "sha512-O5FHD3ErkMwMhNzAfu3ggy0ug4z7btZuoQgwwxlzPrwV2bxlD6WDpqBY4NCgICAgZdDKdp+loUEKVAVt8aYnhQ==",
 			"license": "MIT",
 			"engines": {
 				"node": ">= 10"
@@ -709,9 +724,9 @@
 			"optional": true
 		},
 		"node_modules/@mariozechner/clipboard-win32-x64-msvc": {
-			"version": "0.3.6",
-			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-win32-x64-msvc/-/clipboard-win32-x64-msvc-0.3.6.tgz",
-			"integrity": "sha512-S4xfPmERC8ZkiLHe3vekZCjdDwNEETCuvCgQK2kP6/TnvmUkq1y2Pk+DjM4t8uh9KMX9bH4zs5ePcKa8GTXmfg==",
+			"version": "0.3.9",
+			"resolved": "https://registry.npmjs.org/@mariozechner/clipboard-win32-x64-msvc/-/clipboard-win32-x64-msvc-0.3.9.tgz",
+			"integrity": "sha512-ihQC3EufqEY81vhXBgVBtK4prL+wc62zJsSvxrgz7K1hsdt6OObz6v9p3Rn1OG3GJksTTKMJF0u/guMISHPhSA==",
 			"license": "MIT",
 			"engines": {
 				"node": ">= 10"

@@ -995,6 +995,51 @@ describe("openai-completions tool_choice", () => {
 		expect(messages[0]).not.toHaveProperty("reasoning");
 	});
 
+	it("sends thinking none for OpenCode Go Kimi K2.6 when thinking is off", async () => {
+		const model = getModel("opencode-go", "kimi-k2.6")!;
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as { thinking?: string; reasoning_effort?: string };
+		expect(params.thinking).toBe("none");
+		expect(params.reasoning_effort).toBeUndefined();
+	});
+
+	it("sends thinking effort for OpenCode Go Kimi K2.6 when thinking is enabled", async () => {
+		const model = getModel("opencode-go", "kimi-k2.6")!;
+		let payload: unknown;
+
+		await streamSimple(
+			model,
+			{
+				messages: [{ role: "user", content: "Hi", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test",
+				reasoning: "high",
+				onPayload: (params: unknown) => {
+					payload = params;
+				},
+			},
+		).result();
+
+		const params = (payload ?? mockState.lastParams) as { thinking?: string; reasoning_effort?: string };
+		expect(params.thinking).toBe("high");
+		expect(params.reasoning_effort).toBeUndefined();
+	});
+
 	it("does not double-count reasoning tokens in completion usage", async () => {
 		mockState.chunks = [
 			{

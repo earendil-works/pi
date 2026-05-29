@@ -8,8 +8,14 @@ describe("getSupportedThinkingLevels", () => {
 		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
 	});
 
-	it("includes xhigh for Anthropic Opus 4.7 on anthropic-messages API", () => {
-		const model = getModel("anthropic", "claude-opus-4-7");
+	it("includes xhigh for Anthropic Opus 4.8 on anthropic-messages API", () => {
+		const model = getModel("anthropic", "claude-opus-4-8");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
+	});
+
+	it("includes xhigh for Anthropic Opus 4.8 on anthropic-messages API", () => {
+		const model = getModel("anthropic", "claude-opus-4-8");
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
 	});
@@ -24,6 +30,18 @@ describe("getSupportedThinkingLevels", () => {
 		const model = getModel("openai-codex", modelId);
 		expect(model).toBeDefined();
 		expect(getSupportedThinkingLevels(model!)).toContain("xhigh");
+	});
+
+	it("includes only medium/high/xhigh for OpenAI GPT-5.5 Pro", () => {
+		const model = getModel("openai", "gpt-5.5-pro");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["medium", "high", "xhigh"]);
+	});
+
+	it("includes only medium/high/xhigh for OpenRouter GPT-5.5 Pro", () => {
+		const model = getModel("openrouter", "openai/gpt-5.5-pro");
+		expect(model).toBeDefined();
+		expect(getSupportedThinkingLevels(model!)).toEqual(["medium", "high", "xhigh"]);
 	});
 
 	it("includes only high/xhigh plus off for DeepSeek V4 Flash on the DeepSeek provider", () => {

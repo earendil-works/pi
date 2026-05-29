@@ -94,6 +94,18 @@ describe("Input Event", () => {
 		}
 	});
 
+	it("passes streamingBehavior correctly", async () => {
+		const r = await createRunner(
+			`export default p => p.on("input", async e => { globalThis.testVar = e.streamingBehavior; return { action: "continue" }; });`,
+		);
+		await r.emitInput("x", undefined, "interactive", "steer");
+		expect((globalThis as any).testVar).toBe("steer");
+		await r.emitInput("x", undefined, "interactive", "followUp");
+		expect((globalThis as any).testVar).toBe("followUp");
+		await r.emitInput("x", undefined, "interactive");
+		expect((globalThis as any).testVar).toBeUndefined();
+	});
+
 	it("catches handler errors and continues", async () => {
 		const r = await createRunner(`export default p => p.on("input", async () => { throw new Error("boom"); });`);
 		const errs: string[] = [];

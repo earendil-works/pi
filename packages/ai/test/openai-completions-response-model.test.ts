@@ -60,10 +60,10 @@ describe("openai-completions responseModel", () => {
 
 	it("surfaces routed chunk.model on responseModel without changing model", async () => {
 		mockState.chunks = [
-			{ id: "chatcmpl-1", model: "anthropic/claude-opus-4.7", choices: [{ index: 0, delta: { content: "hi" } }] },
+			{ id: "chatcmpl-1", model: "anthropic/claude-opus-4.8", choices: [{ index: 0, delta: { content: "hi" } }] },
 			{
 				id: "chatcmpl-1",
-				model: "anthropic/claude-opus-4.7",
+				model: "anthropic/claude-opus-4.8",
 				choices: [{ index: 0, delta: {}, finish_reason: "stop" }],
 				usage: {
 					prompt_tokens: 10,
@@ -81,7 +81,7 @@ describe("openai-completions responseModel", () => {
 		);
 
 		expect(message.model).toBe("openrouter/auto");
-		expect(message.responseModel).toBe("anthropic/claude-opus-4.7");
+		expect(message.responseModel).toBe("anthropic/claude-opus-4.8");
 		expect(message.provider).toBe("openrouter");
 		expect(message.stopReason).toBe("stop");
 	});

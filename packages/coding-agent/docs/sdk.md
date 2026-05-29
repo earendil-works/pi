@@ -472,6 +472,7 @@ Specify which built-in tools to enable:
 - Default built-ins: `read`, `bash`, `edit`, `write`
 - `noTools: "all"` disables all tools
 - `noTools: "builtin"` disables default built-ins while keeping extension and custom tools enabled
+- `excludeTools` disables specific built-in, extension, or custom tool names after any `tools` allowlist is applied
 
 The `edit` tool returns `details.diff` for Pi's TUI display and `details.patch` as a standard unified patch for SDK consumers.
 
@@ -486,6 +487,11 @@ const { session } = await createAgentSession({
 // Pick specific tools
 const { session } = await createAgentSession({
   tools: ["read", "bash", "grep"],
+});
+
+// Disable one tool while keeping the rest available
+const { session } = await createAgentSession({
+  excludeTools: ["ask_question"],
 });
 ```
 

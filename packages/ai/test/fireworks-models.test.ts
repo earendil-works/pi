@@ -97,8 +97,8 @@ function createFireworksModel(compat?: Model<"anthropic-messages">["compat"]): M
 
 function createAnthropicModel(): Model<"anthropic-messages"> {
 	return {
-		id: "claude-opus-4-7",
-		name: "Claude Opus 4.7",
+		id: "claude-opus-4-8",
+		name: "Claude Opus 4.8",
 		api: "anthropic-messages",
 		provider: "anthropic",
 		baseUrl: "http://127.0.0.1:0", // overridden by captureAnthropicRequest

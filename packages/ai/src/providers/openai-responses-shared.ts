@@ -166,6 +166,7 @@ export function convertResponsesMessages<TApi extends Api>(
 				assistantMsg.model !== model.id &&
 				assistantMsg.provider === model.provider &&
 				assistantMsg.api === model.api;
+			let textBlockIndex = 0;
 
 			for (const block of msg.content) {
 				if (block.type === "thinking") {
@@ -176,10 +177,13 @@ export function convertResponsesMessages<TApi extends Api>(
 				} else if (block.type === "text") {
 					const textBlock = block as TextContent;
 					const parsedSignature = parseTextSignature(textBlock.textSignature);
+					const fallbackMessageId =
+						textBlockIndex === 0 ? `msg_pi_${msgIndex}` : `msg_pi_${msgIndex}_${textBlockIndex}`;
+					textBlockIndex++;
 					// OpenAI requires id to be max 64 characters
 					let msgId = parsedSignature?.id;
 					if (!msgId) {
-						msgId = `msg_${msgIndex}`;
+						msgId = fallbackMessageId;
 					} else if (msgId.length > 64) {
 						msgId = `msg_${shortHash(msgId)}`;
 					}

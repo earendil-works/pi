@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [0.77.0] - 2026-05-28
+
+### Fixed
+
+- Fixed keyboard protocol negotiation to ignore mismatched or delayed terminal responses, avoiding false Kitty keyboard protocol detection ([#5091](https://github.com/earendil-works/pi/pull/5091) by [@mitsuhiko](https://github.com/mitsuhiko)).
+
 ## [0.76.0] - 2026-05-27
 
 ### Added

@@ -258,13 +258,14 @@ Done:
 - Exported `QueueMode` from core types.
 - Added `AgentHarnessOptions.steeringMode` and `followUpMode`.
 - Added live `getSteeringMode()` / `setSteeringMode()` and `getFollowUpMode()` / `setFollowUpMode()`.
+- Added `getTools()` and `getActiveTools()`.
+- Added `tools_update` observability events, including active-tool-only updates.
+- Active tool changes are persisted as branch-scoped `active_tools_change` entries.
+- Duplicate tool names and duplicate active tool names reject.
 
 Remaining:
 
-- Add `getTools()` semantics.
-- Add `getActiveTools()` semantics.
-- Decide and implement tool update observability events.
-- Include active-tool-only updates in the runtime config observability plan.
+- None.
 
 Notes:
 

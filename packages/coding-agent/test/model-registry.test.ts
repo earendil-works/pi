@@ -4,9 +4,10 @@ import { join } from "node:path";
 import type { AnthropicMessagesCompat, Api, Context, Model, OpenAICompletionsCompat } from "@earendil-works/pi-ai";
 import { getApiProvider } from "@earendil-works/pi-ai";
 import { getOAuthProvider } from "@earendil-works/pi-ai/oauth";
-import { afterEach, beforeEach, describe, expect, test } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { clearApiKeyCache, ModelRegistry, type ProviderConfigInput } from "../src/core/model-registry.ts";
+import { clearDeprecationWarningsForTests } from "../src/utils/deprecation.ts";
 
 describe("ModelRegistry", () => {
 	let tempDir: string;
@@ -18,6 +19,7 @@ describe("ModelRegistry", () => {
 		mkdirSync(tempDir, { recursive: true });
 		modelsJsonPath = join(tempDir, "models.json");
 		authStorage = AuthStorage.create(join(tempDir, "auth.json"));
+		clearDeprecationWarningsForTests();
 	});
 
 	afterEach(() => {
@@ -25,6 +27,8 @@ describe("ModelRegistry", () => {
 			rmSync(tempDir, { recursive: true });
 		}
 		clearApiKeyCache();
+		clearDeprecationWarningsForTests();
+		vi.restoreAllMocks();
 	});
 
 	/** Create minimal provider config  */
@@ -35,7 +39,7 @@ describe("ModelRegistry", () => {
 	): ProviderConfigInput {
 		return {
 			baseUrl,
-			apiKey: "TEST_KEY",
+			apiKey: "test-key",
 			api: api as Api,
 			models: models.map((m) => ({
 				id: m.id,
@@ -852,7 +856,7 @@ describe("ModelRegistry", () => {
 			registry.registerProvider("named-provider", {
 				name: "Named Provider",
 				baseUrl: "https://provider.test/v1",
-				apiKey: "TEST_KEY",
+				apiKey: "test-key",
 				api: "openai-completions",
 				models: [
 					{
@@ -892,6 +896,30 @@ describe("ModelRegistry", () => {
 			expect(registry.getProviderDisplayName("oauth-provider")).toBe("OAuth Provider");
 		});
 
+		test("registerProvider warns and temporarily treats uppercase apiKey as an env reference", async () => {
+			const originalEnv = process.env.CUSTOM_NAME;
+			process.env.CUSTOM_NAME = "legacy-env-key";
+			const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+			try {
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+				registry.registerProvider("legacy-provider", {
+					...providerConfig("https://provider.test/v1", [{ id: "demo-model" }], "openai-completions"),
+					apiKey: "CUSTOM_NAME",
+				});
+
+				expect(await registry.getApiKeyForProvider("legacy-provider")).toBe("legacy-env-key");
+				expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('Pass "$CUSTOM_NAME" instead'));
+			} finally {
+				if (originalEnv === undefined) {
+					delete process.env.CUSTOM_NAME;
+				} else {
+					process.env.CUSTOM_NAME = originalEnv;
+				}
+			}
+		});
+
 		test("failed registerProvider does not persist invalid streamSimple config", () => {
 			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
 
@@ -911,7 +939,7 @@ describe("ModelRegistry", () => {
 
 			registry.registerProvider("demo-provider", {
 				baseUrl: "https://provider.test/v1",
-				apiKey: "TEST_KEY",
+				apiKey: "test-key",
 				api: "openai-completions",
 				models: [
 					{
@@ -931,7 +959,7 @@ describe("ModelRegistry", () => {
 			expect(() =>
 				registry.registerProvider("demo-provider", {
 					baseUrl: "https://provider.test/v2",
-					apiKey: "TEST_KEY",
+					apiKey: "test-key",
 					models: [
 						{
 							id: "broken-model",
@@ -1187,7 +1215,117 @@ describe("ModelRegistry", () => {
 			expect(apiKey).toBeUndefined();
 		});
 
-		test("apiKey as environment variable name resolves to env value", async () => {
+		test("apiKey with $ prefix resolves to env value", async () => {
+			const originalEnv = process.env.TEST_API_KEY_12345;
+			process.env.TEST_API_KEY_12345 = "env-api-key-value";
+
+			try {
+				writeRawModelsJson({
+					"custom-provider": providerWithApiKey("$TEST_API_KEY_12345"),
+				});
+
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+				const apiKey = await registry.getApiKeyForProvider("custom-provider");
+
+				expect(apiKey).toBe("env-api-key-value");
+			} finally {
+				if (originalEnv === undefined) {
+					delete process.env.TEST_API_KEY_12345;
+				} else {
+					process.env.TEST_API_KEY_12345 = originalEnv;
+				}
+			}
+		});
+
+		test("apiKey with braced env syntax resolves to env value", async () => {
+			const originalEnv = process.env.TEST_BRACED_API_KEY_12345;
+			process.env.TEST_BRACED_API_KEY_12345 = "braced-env-api-key-value";
+			const bracedKey = "$" + "{TEST_BRACED_API_KEY_12345}";
+
+			try {
+				writeRawModelsJson({
+					"custom-provider": providerWithApiKey(bracedKey),
+				});
+
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+				const apiKey = await registry.getApiKeyForProvider("custom-provider");
+
+				expect(apiKey).toBe("braced-env-api-key-value");
+			} finally {
+				if (originalEnv === undefined) {
+					delete process.env.TEST_BRACED_API_KEY_12345;
+				} else {
+					process.env.TEST_BRACED_API_KEY_12345 = originalEnv;
+				}
+			}
+		});
+
+		test("apiKey interpolates braced env references inside literals", async () => {
+			const originalPartA = process.env.TEST_INTERPOLATED_PART_A_12345;
+			const originalPartB = process.env.TEST_INTERPOLATED_PART_B_12345;
+			process.env.TEST_INTERPOLATED_PART_A_12345 = "left";
+			process.env.TEST_INTERPOLATED_PART_B_12345 = "right";
+			const interpolatedKey = ["$", "{TEST_INTERPOLATED_PART_A_12345}_$", "{TEST_INTERPOLATED_PART_B_12345}"].join(
+				"",
+			);
+
+			try {
+				writeRawModelsJson({
+					"custom-provider": providerWithApiKey(interpolatedKey),
+				});
+
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+				const apiKey = await registry.getApiKeyForProvider("custom-provider");
+
+				expect(apiKey).toBe("left_right");
+			} finally {
+				if (originalPartA === undefined) {
+					delete process.env.TEST_INTERPOLATED_PART_A_12345;
+				} else {
+					process.env.TEST_INTERPOLATED_PART_A_12345 = originalPartA;
+				}
+				if (originalPartB === undefined) {
+					delete process.env.TEST_INTERPOLATED_PART_B_12345;
+				} else {
+					process.env.TEST_INTERPOLATED_PART_B_12345 = originalPartB;
+				}
+			}
+		});
+
+		test("apiKey with $$ prefix escapes a leading dollar", async () => {
+			writeRawModelsJson({
+				"custom-provider": providerWithApiKey("$$TEST_API_KEY_12345"),
+			});
+
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+			const apiKey = await registry.getApiKeyForProvider("custom-provider");
+
+			expect(apiKey).toBe("$TEST_API_KEY_12345");
+		});
+
+		test("apiKey with $! escapes a literal bang and still interpolates later env refs", async () => {
+			const originalEnv = process.env.TEST_API_KEY_12345;
+			process.env.TEST_API_KEY_12345 = "env-api-key-value";
+
+			try {
+				writeRawModelsJson({
+					"custom-provider": providerWithApiKey("$!literal-$TEST_API_KEY_12345"),
+				});
+
+				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+				const apiKey = await registry.getApiKeyForProvider("custom-provider");
+
+				expect(apiKey).toBe("!literal-env-api-key-value");
+			} finally {
+				if (originalEnv === undefined) {
+					delete process.env.TEST_API_KEY_12345;
+				} else {
+					process.env.TEST_API_KEY_12345 = originalEnv;
+				}
+			}
+		});
+
+		test("plain apiKey is used directly even when it matches an env var", async () => {
 			const originalEnv = process.env.TEST_API_KEY_12345;
 			process.env.TEST_API_KEY_12345 = "env-api-key-value";
 
@@ -1199,7 +1337,7 @@ describe("ModelRegistry", () => {
 				const registry = ModelRegistry.create(authStorage, modelsJsonPath);
 				const apiKey = await registry.getApiKeyForProvider("custom-provider");
 
-				expect(apiKey).toBe("env-api-key-value");
+				expect(apiKey).toBe("TEST_API_KEY_12345");
 			} finally {
 				if (originalEnv === undefined) {
 					delete process.env.TEST_API_KEY_12345;
@@ -1318,7 +1456,7 @@ describe("ModelRegistry", () => {
 					process.env[envVarName] = "status-test-key";
 
 					writeRawModelsJson({
-						"custom-provider": providerWithApiKey(envVarName),
+						"custom-provider": providerWithApiKey(`$${envVarName}`),
 					});
 
 					const registry = ModelRegistry.create(authStorage, modelsJsonPath);
@@ -1337,6 +1475,41 @@ describe("ModelRegistry", () => {
 				}
 			});
 
+			test("provider auth status reports interpolated apiKey environment variables", () => {
+				const envVarNameA = "TEST_API_KEY_STATUS_PART_A_98765";
+				const envVarNameB = "TEST_API_KEY_STATUS_PART_B_98765";
+				const originalEnvA = process.env[envVarNameA];
+				const originalEnvB = process.env[envVarNameB];
+				process.env[envVarNameA] = "left";
+				process.env[envVarNameB] = "right";
+				const interpolatedKey = ["$", "{", envVarNameA, "}_$", "{", envVarNameB, "}"].join("");
+
+				try {
+					writeRawModelsJson({
+						"custom-provider": providerWithApiKey(interpolatedKey),
+					});
+
+					const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+					expect(registry.getProviderAuthStatus("custom-provider")).toEqual({
+						configured: true,
+						source: "environment",
+						label: `${envVarNameA}, ${envVarNameB}`,
+					});
+				} finally {
+					if (originalEnvA === undefined) {
+						delete process.env[envVarNameA];
+					} else {
+						process.env[envVarNameA] = originalEnvA;
+					}
+					if (originalEnvB === undefined) {
+						delete process.env[envVarNameB];
+					} else {
+						process.env[envVarNameB] = originalEnvB;
+					}
+				}
+			});
+
 			test("provider auth status reports non-env apiKey values from models.json as a config key", () => {
 				writeRawModelsJson({
 					"custom-provider": providerWithApiKey("literal_api_key_value"),
@@ -1348,6 +1521,29 @@ describe("ModelRegistry", () => {
 					configured: true,
 					source: "models_json_key",
 				});
+			});
+
+			test("missing explicit env apiKey keeps provider unavailable", () => {
+				const envVarName = "TEST_API_KEY_MISSING_TEST_98765";
+				const originalEnv = process.env[envVarName];
+				delete process.env[envVarName];
+
+				try {
+					writeRawModelsJson({
+						"custom-provider": providerWithApiKey(`$${envVarName}`),
+					});
+
+					const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+					expect(registry.getProviderAuthStatus("custom-provider")).toEqual({ configured: false });
+					expect(registry.getAvailable().some((model) => model.provider === "custom-provider")).toBe(false);
+				} finally {
+					if (originalEnv === undefined) {
+						delete process.env[envVarName];
+					} else {
+						process.env[envVarName] = originalEnv;
+					}
+				}
 			});
 
 			test("provider auth status reports command apiKey values from models.json without executing them", () => {
@@ -1376,7 +1572,7 @@ describe("ModelRegistry", () => {
 					process.env[envVarName] = "first-value";
 
 					writeRawModelsJson({
-						"custom-provider": providerWithApiKey(envVarName),
+						"custom-provider": providerWithApiKey(`$${envVarName}`),
 					});
 
 					const registry = ModelRegistry.create(authStorage, modelsJsonPath);

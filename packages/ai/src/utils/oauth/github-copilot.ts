@@ -141,9 +141,13 @@ async function startDeviceFlow(domain: string): Promise<DeviceCodeResponse> {
 	};
 }
 
-async function pollForGitHubAccessToken(domain: string, device: DeviceCodeResponse, signal?: AbortSignal) {
+async function pollForGitHubAccessToken(
+	domain: string,
+	device: DeviceCodeResponse,
+	signal?: AbortSignal,
+): Promise<string> {
 	const urls = getUrls(domain);
-	return pollOAuthDeviceCodeFlow({
+	return pollOAuthDeviceCodeFlow<string>({
 		intervalSeconds: device.interval,
 		expiresInSeconds: device.expires_in,
 		signal,
@@ -163,7 +167,7 @@ async function pollForGitHubAccessToken(domain: string, device: DeviceCodeRespon
 			});
 
 			if (raw && typeof raw === "object" && typeof (raw as DeviceTokenSuccessResponse).access_token === "string") {
-				return { status: "complete", accessToken: (raw as DeviceTokenSuccessResponse).access_token };
+				return { status: "complete", value: (raw as DeviceTokenSuccessResponse).access_token };
 			}
 
 			if (raw && typeof raw === "object" && typeof (raw as DeviceTokenErrorResponse).error === "string") {

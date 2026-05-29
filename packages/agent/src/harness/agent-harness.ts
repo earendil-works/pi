@@ -86,6 +86,16 @@ function mergeHeaders(...headers: Array<Record<string, string> | undefined>): Re
 	return hasHeaders ? merged : undefined;
 }
 
+function findDuplicateNames(names: string[]): string[] {
+	const seen = new Set<string>();
+	const duplicates = new Set<string>();
+	for (const name of names) {
+		if (seen.has(name)) duplicates.add(name);
+		seen.add(name);
+	}
+	return [...duplicates];
+}
+
 function applyStreamOptionsPatch(
 	base: AgentHarnessStreamOptions,
 	patch?: AgentHarnessStreamOptionsPatch,
@@ -194,12 +204,20 @@ export class AgentHarness<
 		this.streamOptions = cloneStreamOptions(options.streamOptions);
 		this.systemPrompt = options.systemPrompt;
 		this.getApiKeyAndHeaders = options.getApiKeyAndHeaders;
+		this.validateUniqueNames(
+			(options.tools ?? []).map((tool) => tool.name),
+			"Duplicate tool name(s)",
+		);
 		for (const tool of options.tools ?? []) {
 			this.tools.set(tool.name, tool);
 		}
 		this.model = options.model;
 		this.thinkingLevel = options.thinkingLevel ?? "off";
-		this.activeToolNames = options.activeToolNames ?? (options.tools ?? []).map((tool) => tool.name);
+		this.activeToolNames = options.activeToolNames
+			? [...options.activeToolNames]
+			: (options.tools ?? []).map((tool) => tool.name);
+		this.validateUniqueNames(this.activeToolNames, "Duplicate active tool name(s)");
+		this.validateToolNames(this.activeToolNames);
 		this.steeringQueueMode = options.steeringMode ?? "one-at-a-time";
 		this.followUpQueueMode = options.followUpMode ?? "one-at-a-time";
 	}
@@ -451,7 +469,14 @@ export class AgentHarness<
 		};
 	}
 
+	private validateUniqueNames(names: string[], message: string): void {
+		const duplicates = findDuplicateNames(names);
+		if (duplicates.length > 0)
+			throw new AgentHarnessError("invalid_argument", `${message}: ${duplicates.join(", ")}`);
+	}
+
 	private validateToolNames(toolNames: string[], tools: Map<string, TTool> = this.tools): void {
+		this.validateUniqueNames(toolNames, "Duplicate active tool name(s)");
 		const missing = toolNames.filter((name) => !tools.has(name));
 		if (missing.length > 0) throw new AgentHarnessError("invalid_argument", `Unknown tool(s): ${missing.join(", ")}`);
 	}
@@ -465,6 +490,8 @@ export class AgentHarness<
 				await this.session.appendModelChange(write.provider, write.modelId);
 			} else if (write.type === "thinking_level_change") {
 				await this.session.appendThinkingLevelChange(write.thinkingLevel);
+			} else if (write.type === "active_tools_change") {
+				await this.session.appendActiveToolsChange(write.activeToolNames);
 			} else if (write.type === "custom") {
 				await this.session.appendCustomEntry(write.customType, write.data);
 			} else if (write.type === "custom_message") {
@@ -838,10 +865,6 @@ export class AgentHarness<
 		return this.model;
 	}
 
-	getThinkingLevel(): ThinkingLevel {
-		return this.thinkingLevel;
-	}
-
 	async setModel(model: Model<any>): Promise<void> {
 		try {
 			const previousModel = this.model;
@@ -851,10 +874,14 @@ export class AgentHarness<
 				this.pendingSessionWrites.push({ type: "model_change", provider: model.provider, modelId: model.id });
 			}
 			this.model = model;
-			await this.emitOwn({ type: "model_select", model, previousModel, source: "set" });
+			await this.emitOwn({ type: "model_update", model, previousModel, source: "set" });
 		} catch (error) {
 			throw normalizeHarnessError(error, "session");
 		}
+	}
+
+	getThinkingLevel(): ThinkingLevel {
+		return this.thinkingLevel;
 	}
 
 	async setThinkingLevel(level: ThinkingLevel): Promise<void> {
@@ -866,16 +893,70 @@ export class AgentHarness<
 				this.pendingSessionWrites.push({ type: "thinking_level_change", thinkingLevel: level });
 			}
 			this.thinkingLevel = level;
-			await this.emitOwn({ type: "thinking_level_select", level, previousLevel });
+			await this.emitOwn({ type: "thinking_level_update", level, previousLevel });
 		} catch (error) {
 			throw normalizeHarnessError(error, "session");
 		}
 	}
 
+	getTools(): TTool[] {
+		return [...this.tools.values()];
+	}
+
+	async setTools(tools: TTool[], activeToolNames?: string[]): Promise<void> {
+		try {
+			this.validateUniqueNames(
+				tools.map((tool) => tool.name),
+				"Duplicate tool name(s)",
+			);
+			const nextTools = new Map(tools.map((tool) => [tool.name, tool]));
+			const nextActiveToolNames = activeToolNames ? [...activeToolNames] : this.activeToolNames;
+			this.validateToolNames(nextActiveToolNames, nextTools);
+			const previousToolNames = [...this.tools.keys()];
+			const previousActiveToolNames = [...this.activeToolNames];
+			if (this.phase === "idle") {
+				await this.session.appendActiveToolsChange(nextActiveToolNames);
+			} else {
+				this.pendingSessionWrites.push({ type: "active_tools_change", activeToolNames: [...nextActiveToolNames] });
+			}
+			this.tools = nextTools;
+			this.activeToolNames = [...nextActiveToolNames];
+			await this.emitOwn({
+				type: "tools_update",
+				toolNames: [...this.tools.keys()],
+				previousToolNames,
+				activeToolNames: [...this.activeToolNames],
+				previousActiveToolNames,
+				source: "set",
+			});
+		} catch (error) {
+			throw normalizeHarnessError(error, "invalid_argument");
+		}
+	}
+
+	getActiveTools(): TTool[] {
+		return this.activeToolNames.map((name) => this.tools.get(name)!);
+	}
+
 	async setActiveTools(toolNames: string[]): Promise<void> {
 		try {
 			this.validateToolNames(toolNames);
+			const previousToolNames = [...this.tools.keys()];
+			const previousActiveToolNames = [...this.activeToolNames];
+			if (this.phase === "idle") {
+				await this.session.appendActiveToolsChange(toolNames);
+			} else {
+				this.pendingSessionWrites.push({ type: "active_tools_change", activeToolNames: [...toolNames] });
+			}
 			this.activeToolNames = [...toolNames];
+			await this.emitOwn({
+				type: "tools_update",
+				toolNames: [...this.tools.keys()],
+				previousToolNames,
+				activeToolNames: [...this.activeToolNames],
+				previousActiveToolNames,
+				source: "set",
+			});
 		} catch (error) {
 			throw normalizeHarnessError(error, "invalid_argument");
 		}
@@ -919,18 +1000,6 @@ export class AgentHarness<
 
 	async setStreamOptions(streamOptions: AgentHarnessStreamOptions): Promise<void> {
 		this.streamOptions = cloneStreamOptions(streamOptions);
-	}
-
-	async setTools(tools: TTool[], activeToolNames?: string[]): Promise<void> {
-		try {
-			const nextTools = new Map(tools.map((tool) => [tool.name, tool]));
-			const nextActiveToolNames = activeToolNames ? [...activeToolNames] : this.activeToolNames;
-			this.validateToolNames(nextActiveToolNames, nextTools);
-			this.tools = nextTools;
-			this.activeToolNames = [...nextActiveToolNames];
-		} catch (error) {
-			throw normalizeHarnessError(error, "invalid_argument");
-		}
 	}
 
 	async abort(): Promise<AbortResult> {
