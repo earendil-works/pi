@@ -47,6 +47,14 @@ export function takeOverStdout(): void {
 		return;
 	}
 
+	process.stdout.on("error", (err) => {
+		if (err.code === "EPIPE") {
+			return;
+		}
+		console.error(`Error: Failed to write to stdout: ${err.message}`);
+		process.exit(1);
+	});
+
 	const rawStdoutWrite = process.stdout.write.bind(process.stdout) as StdoutTakeoverState["rawStdoutWrite"];
 	const rawStderrWrite = process.stderr.write.bind(process.stderr) as StdoutTakeoverState["rawStderrWrite"];
 	const originalStdoutWrite = process.stdout.write;
