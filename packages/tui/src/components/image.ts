@@ -88,14 +88,18 @@ export class Image implements Component {
 				}
 
 				if (caps.images === "kitty") {
-					// For Kitty: C=1 prevents cursor movement.
-					// Don't need the cursor movement.
-					lines = [result.sequence];
-
-					// Return `rows` lines so TUI accounts for image height.
+					// Reserve rows first and draw from the last reserved row.
+					// The TUI clears each changed line before writing it; drawing the image
+					// on the first row would let later placeholder-line clears erase all but
+					// the top slice in terminals that clear graphics with line clears.
+					lines = [];
 					for (let i = 0; i < result.rows - 1; i++) {
 						lines.push("");
 					}
+					const rowOffset = result.rows - 1;
+					const moveUp = rowOffset > 0 ? `\x1b[${rowOffset}A` : "";
+					const moveDown = rowOffset > 0 ? `\x1b[${rowOffset}B` : "";
+					lines.push(moveUp + result.sequence + moveDown);
 				} else {
 					// Return `rows` lines so TUI accounts for image height.
 					// First (rows-1) lines are empty and cleared before the image is drawn.
