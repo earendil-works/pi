@@ -11,6 +11,7 @@
 
 ### Added
 
+- Added an Agent Bus mirror example extension for publishing redacted Pi session lifecycle events to nineight federated roster demos.
 - Added an SDK agent-bus mirror helper for publishing redacted Pi session lifecycle events to federated rosters.
 - Exported `convertToPng` for extension authors ([#5167](https://github.com/earendil-works/pi-mono/pull/5167) by [@xl0](https://github.com/xl0)).
 - Exported `parseArgs` and type `Args` for extension authors ([#5202](https://github.com/earendil-works/pi-mono/pull/5202) by [@xl0](https://github.com/xl0)).
