@@ -1,5 +1,7 @@
 # Quickstart
 
+[English](quickstart.md) | [简体中文](quickstart.zh-CN.md)
+
 This page gets you from install to a useful first pi session.
 
 ## Install

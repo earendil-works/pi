@@ -14,6 +14,8 @@
 
 > New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 ---
 
 # Pi Agent Harness Mono Repo

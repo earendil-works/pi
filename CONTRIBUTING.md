@@ -2,6 +2,8 @@
 
 This guide exists to save both sides time.
 
+[English](CONTRIBUTING.md) | [简体中文](CONTRIBUTING.zh-CN.md)
+
 ## The One Rule
 
 **You must understand your code.** If you cannot explain what your changes do and how they interact with the rest of the system, your PR will be closed.

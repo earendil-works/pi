@@ -1,5 +1,7 @@
 # Pi Documentation
 
+[English](index.md) | [简体中文](index.zh-CN.md)
+
 Pi is a minimal terminal coding harness. It is designed to stay small at the core while being extended through TypeScript extensions, skills, prompt templates, themes, and pi packages.
 
 ## Quick start

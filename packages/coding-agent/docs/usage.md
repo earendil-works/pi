@@ -1,5 +1,7 @@
 # Using Pi
 
+[English](usage.md) | [简体中文](usage.zh-CN.md)
+
 This page collects day-to-day usage details that do not fit on the quickstart page.
 
 ## Interactive Mode
