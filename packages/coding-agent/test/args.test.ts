@@ -135,6 +135,18 @@ describe("parseArgs", () => {
 			expect(result.sessionId).toBe("orchestrated-session");
 		});
 
+		test("parses --leaf", () => {
+			const result = parseArgs(["--leaf", "abc123def"]);
+			expect(result.leaf).toBe("abc123def");
+			expect(result.messages).toEqual([]);
+		});
+
+		test("parses --session with --leaf", () => {
+			const result = parseArgs(["--session", "019e70f0", "--leaf", "entry-id-xyz"]);
+			expect(result.session).toBe("019e70f0");
+			expect(result.leaf).toBe("entry-id-xyz");
+		});
+
 		test("parses --fork", () => {
 			const result = parseArgs(["--fork", "1234abcd"]);
 			expect(result.fork).toBe("1234abcd");

@@ -285,8 +285,18 @@ async function createSessionManager(
 
 		switch (resolved.type) {
 			case "path":
-			case "local":
-				return SessionManager.open(resolved.path, sessionDir);
+			case "local": {
+				const sm = SessionManager.open(resolved.path, sessionDir);
+				if (parsed.leaf) {
+					const entry = sm.getEntry(parsed.leaf);
+					if (!entry) {
+						console.error(chalk.red(`Leaf entry '${parsed.leaf}' not found in session`));
+						process.exit(1);
+					}
+					sm.branch(parsed.leaf);
+				}
+				return sm;
+			}
 
 			case "global": {
 				console.log(chalk.yellow(`Session found in different project: ${resolved.cwd}`));
@@ -322,7 +332,16 @@ async function createSessionManager(
 	}
 
 	if (parsed.continue) {
-		return SessionManager.continueRecent(cwd, sessionDir);
+		const sm = SessionManager.continueRecent(cwd, sessionDir);
+		if (parsed.leaf) {
+			const entry = sm.getEntry(parsed.leaf);
+			if (!entry) {
+				console.error(chalk.red(`Leaf entry '${parsed.leaf}' not found in session`));
+				process.exit(1);
+			}
+			sm.branch(parsed.leaf);
+		}
+		return sm;
 	}
 
 	if (parsed.sessionId) {
