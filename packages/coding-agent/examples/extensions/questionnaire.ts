@@ -6,7 +6,7 @@
  */
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Editor, type EditorTheme, Key, matchesKey, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { Editor, type EditorTheme, Key, matchesKey, Text, truncateToWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 // Types
@@ -262,8 +262,15 @@ export default function questionnaire(pi: ExtensionAPI) {
 					const q = currentQuestion();
 					const opts = currentOptions();
 
-					// Helper to add truncated line
+					// Helper to add a truncated line (for short elements like separators, tab bar)
 					const add = (s: string) => lines.push(truncateToWidth(s, width));
+
+					// Helper to add wrapped text (for prompts, descriptions, etc.)
+					const addWrapped = (s: string) => {
+						for (const line of wrapTextWithAnsi(s, width)) {
+							lines.push(line);
+						}
+					};
 
 					add(theme.fg("accent", "─".repeat(width)));
 
@@ -306,14 +313,18 @@ export default function questionnaire(pi: ExtensionAPI) {
 								add(prefix + theme.fg(color, `${i + 1}. ${opt.label}`));
 							}
 							if (opt.description) {
-								add(`     ${theme.fg("muted", opt.description)}`);
+								const descPrefix = `     `;
+								const descLines = wrapTextWithAnsi(theme.fg("muted", opt.description), width - 5);
+								for (const dl of descLines) {
+									add(`${descPrefix}${dl}`);
+								}
 							}
 						}
 					}
 
 					// Content
 					if (inputMode && q) {
-						add(theme.fg("text", ` ${q.prompt}`));
+						addWrapped(theme.fg("text", ` ${q.prompt}`));
 						lines.push("");
 						// Show options for reference
 						renderOptions();
@@ -331,7 +342,8 @@ export default function questionnaire(pi: ExtensionAPI) {
 							const answer = answers.get(question.id);
 							if (answer) {
 								const prefix = answer.wasCustom ? "(wrote) " : "";
-								add(`${theme.fg("muted", ` ${question.label}: `)}${theme.fg("text", prefix + answer.label)}`);
+								const answerText = `${theme.fg("muted", ` ${question.label}: `)}${theme.fg("text", prefix + answer.label)}`;
+								addWrapped(answerText);
 							}
 						}
 						lines.push("");
@@ -345,7 +357,7 @@ export default function questionnaire(pi: ExtensionAPI) {
 							add(theme.fg("warning", ` Unanswered: ${missing}`));
 						}
 					} else if (q) {
-						add(theme.fg("text", ` ${q.prompt}`));
+						addWrapped(theme.fg("text", ` ${q.prompt}`));
 						lines.push("");
 						renderOptions();
 					}
