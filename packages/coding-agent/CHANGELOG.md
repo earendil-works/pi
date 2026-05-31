@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added a worktree-agent extension example for launching child pi agents in isolated Git worktrees.
+
 ## [0.77.0] - 2026-05-28
 
 ### New Features
