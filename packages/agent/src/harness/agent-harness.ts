@@ -196,6 +196,16 @@ export class AgentHarness<
 	private followUpQueueMode: QueueMode;
 	private nextTurnQueue: AgentMessage[] = [];
 	private handlers = new Map<string, Set<AgentHarnessHandler>>();
+	/** Maximum turns before forcing agent to stop (safety against infinite loops). */
+	private maxTurns: number;
+	/** Current turn counter, reset at start of each prompt/executeTurn. */
+	private turnCount: number = 0;
+	/** Maximum unbound tool calls allowed per turn before aborting. */
+	private maxUnboundToolCalls: number;
+	/** Count of unbound tool calls in current turn. */
+	private unboundToolCallCount: number = 0;
+	/** Whether a warning about unbound tools has been injected this turn. */
+	private unboundToolWarningInjected: boolean = false;
 
 	constructor(options: AgentHarnessOptions<TSkill, TPromptTemplate, TTool>) {
 		this.env = options.env;
@@ -220,6 +230,8 @@ export class AgentHarness<
 		this.validateToolNames(this.activeToolNames);
 		this.steeringQueueMode = options.steeringMode ?? "one-at-a-time";
 		this.followUpQueueMode = options.followUpMode ?? "one-at-a-time";
+		this.maxTurns = options.maxTurns ?? 20;
+		this.maxUnboundToolCalls = options.maxUnboundToolCalls ?? 3;
 	}
 
 	private getHandlers(type: string): Set<AgentHarnessHandler> | undefined {
@@ -428,6 +440,23 @@ export class AgentHarness<
 			reasoning: turnState.thinkingLevel === "off" ? undefined : turnState.thinkingLevel,
 			convertToLlm,
 			transformContext: async (messages) => {
+				// Inject a warning about unbound tool calls if threshold is approaching
+				if (this.unboundToolCallCount > 0 && !this.unboundToolWarningInjected) {
+					this.unboundToolWarningInjected = true;
+					const warningMsg: AgentMessage = {
+						role: "user",
+						content: [
+							{
+								type: "text",
+								text: `⚠️ WARNING: You have attempted to call an unregistered tool ${this.unboundToolCallCount} time(s). The tool does not exist in this environment. Please respond without using tool calls for these operations. If you continue to call non-existent tools, the session will be terminated.`,
+							},
+						],
+						timestamp: Date.now(),
+					};
+					// Prepend warning to context so model sees it before generating next response
+					return [warningMsg, ...messages];
+				}
+
 				const result = await this.emitHook({ type: "context", messages: [...messages] });
 				return result?.messages ?? messages;
 			},
@@ -441,6 +470,33 @@ export class AgentHarness<
 				return result ? { block: result.block, reason: result.reason } : undefined;
 			},
 			afterToolCall: async ({ toolCall, args, result, isError }) => {
+				// Detect unbound (unregistered) tool calls
+				// When a tool is not found, the runtime returns an error with message like "Tool X not found"
+				if (isError && result?.content?.[0]?.type === "text") {
+					const errorMsg = result.content[0].text;
+					if (
+						errorMsg.includes("not found") ||
+						errorMsg.includes("not registered") ||
+						errorMsg.includes("not available")
+					) {
+						this.unboundToolCallCount++;
+						// If threshold exceeded, terminate the turn with a clear error
+						if (this.unboundToolCallCount >= this.maxUnboundToolCalls) {
+							return {
+								content: [
+									{
+										type: "text",
+										text: `⚠️ You have attempted to call the tool "${toolCall.name}" ${this.unboundToolCallCount} times, but it is not registered in this environment. This tool does not exist. Please stop trying to use it and respond in plain text instead.`,
+									},
+								],
+								details: {},
+								isError: true,
+								terminate: true,
+							};
+						}
+					}
+				}
+
 				const patch = await this.emitHook({
 					type: "tool_result",
 					toolCallId: toolCall.id,
@@ -466,6 +522,17 @@ export class AgentHarness<
 			},
 			getSteeringMessages: async () => this.drainQueuedMessages(this.steerQueue, this.steeringQueueMode),
 			getFollowUpMessages: async () => this.drainQueuedMessages(this.followUpQueue, this.followUpQueueMode),
+			/**
+			 * Safety mechanism: stop the agent loop after maxTurns turns.
+			 * This prevents infinite loops from unregistered tool calls, repeated errors, etc.
+			 */
+			shouldStopAfterTurn: () => {
+				this.turnCount++;
+				if (this.turnCount >= this.maxTurns) {
+					return true;
+				}
+				return false;
+			},
 		};
 	}
 
@@ -555,6 +622,11 @@ export class AgentHarness<
 		text: string,
 		options?: { images?: ImageContent[] },
 	): Promise<AssistantMessage> {
+		// Reset turn counters at start of each execution
+		this.turnCount = 0;
+		this.unboundToolCallCount = 0;
+		this.unboundToolWarningInjected = false;
+
 		let activeTurnState = turnState;
 		let messages: AgentMessage[] = [createUserMessage(text, options?.images)];
 		if (this.nextTurnQueue.length > 0) {

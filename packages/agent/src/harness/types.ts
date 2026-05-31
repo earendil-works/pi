@@ -828,6 +828,27 @@ export interface AgentHarnessOptions<
 	activeToolNames?: string[];
 	steeringMode?: QueueMode;
 	followUpMode?: QueueMode;
+	/**
+	 * Maximum number of turns before forcing the agent to stop.
+	 * A "turn" is one complete cycle: assistant response + tool executions.
+	 * Default: 20.
+	 *
+	 * This is a safety mechanism to prevent infinite loops caused by:
+	 * - Model hallucinating unregistered tool calls
+	 * - Repeated tool calls with the same error
+	 * - Orchestration layer bugs
+	 */
+	maxTurns?: number;
+	/**
+	 * Maximum number of unbound (unregistered) tool calls allowed per turn
+	 * before aborting the turn with an error.
+	 * Default: 3.
+	 *
+	 * When the model hallucinates a tool call to a name that isn't in the
+	 * runtime's tool registry, the runtime returns an error result. Without
+	 * this guard, the model may retry indefinitely (see issue #5016).
+	 */
+	maxUnboundToolCalls?: number;
 }
 
 export type { AgentHarness } from "./agent-harness.ts";
