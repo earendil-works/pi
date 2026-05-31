@@ -13,7 +13,6 @@
 				"@earendil-works/pi-ai": "^0.78.0",
 				"@earendil-works/pi-tui": "^0.78.0",
 				"@silvia-odwyer/photon-node": "0.3.4",
-				"chalk": "5.6.2",
 				"cross-spawn": "7.0.6",
 				"diff": "8.0.4",
 				"glob": "13.0.6",
@@ -1030,18 +1029,6 @@
 			"resolved": "https://registry.npmjs.org/buffer-equal-constant-time/-/buffer-equal-constant-time-1.0.1.tgz",
 			"integrity": "sha512-zRpUiDwd/xk6ADqPMATG8vc9VPrkck7T07OIx0gnjmJAnHnTVXNQG3vfvWNuiZIkwu9KrKdA1iJKfsfTVxE6NA==",
 			"license": "BSD-3-Clause"
-		},
-		"node_modules/chalk": {
-			"version": "5.6.2",
-			"resolved": "https://registry.npmjs.org/chalk/-/chalk-5.6.2.tgz",
-			"integrity": "sha512-7NzBL0rN6fMUW+f7A6Io4h40qQlG+xGmtMxfbnH/K7TAtt8JQWVQK+6g0UXKMeVJoyV5EkkNsErQ8pVD3bLHbA==",
-			"license": "MIT",
-			"engines": {
-				"node": "^12.17.0 || ^14.13 || >=16.0.0"
-			},
-			"funding": {
-				"url": "https://github.com/chalk/chalk?sponsor=1"
-			}
 		},
 		"node_modules/cross-spawn": {
 			"version": "7.0.6",

@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import chalk from "chalk";
+import { styleText } from "node:util";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import { APP_NAME } from "../../../src/config.ts";
 import type { SessionManager } from "../../../src/core/session-manager.ts";
@@ -146,7 +146,7 @@ describe("InteractiveMode.shutdown ordering (#5080)", () => {
 
 		expect(order).toEqual(["drainInput", "stop", "dispose"]);
 		expect(stdoutWrite).toHaveBeenCalledWith(
-			`${chalk.dim("To resume this session:")} ${APP_NAME} --session test-session\n`,
+			`${styleText("dim", "To resume this session:")} ${APP_NAME} --session test-session\n`,
 		);
 	});
 

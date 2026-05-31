@@ -1,15 +1,12 @@
 import assert from "node:assert";
 import { afterEach, describe, it } from "node:test";
+import { styleText } from "node:util";
 import type { Terminal as XtermTerminalType } from "@xterm/headless";
-import { Chalk } from "chalk";
 import { Markdown } from "../src/components/markdown.ts";
 import { resetCapabilitiesCache, setCapabilities } from "../src/terminal-image.ts";
 import { type Component, TUI } from "../src/tui.ts";
 import { defaultMarkdownTheme } from "./test-themes.ts";
 import { VirtualTerminal } from "./virtual-terminal.ts";
-
-// Force full color in CI so ANSI assertions are deterministic
-const chalk = new Chalk({ level: 3 });
 
 function getCellItalic(terminal: VirtualTerminal, row: number, col: number): number {
 	const xterm = (terminal as unknown as { xterm: XtermTerminalType }).xterm;
@@ -621,7 +618,7 @@ describe("Markdown component", () => {
 				0,
 				defaultMarkdownTheme,
 				{
-					color: (text) => chalk.gray(text),
+					color: (text) => styleText("gray", text),
 					italic: true,
 				},
 			);
@@ -648,7 +645,7 @@ describe("Markdown component", () => {
 				0,
 				defaultMarkdownTheme,
 				{
-					color: (text) => chalk.gray(text),
+					color: (text) => styleText("gray", text),
 					italic: true,
 				},
 			);
@@ -688,7 +685,7 @@ describe("Markdown component", () => {
 			}
 
 			const markdown = new Markdown("This is thinking with `inline code`", 1, 0, defaultMarkdownTheme, {
-				color: (text) => chalk.gray(text),
+				color: (text) => styleText("gray", text),
 				italic: true,
 			});
 
@@ -918,7 +915,7 @@ bar`,
 				0,
 				defaultMarkdownTheme,
 				{
-					color: (text) => chalk.magenta(text), // This should NOT be applied to blockquotes
+					color: (text) => styleText("magenta", text), // This should NOT be applied to blockquotes
 				},
 			);
 
@@ -952,7 +949,7 @@ bar`,
 				0,
 				defaultMarkdownTheme,
 				{
-					color: (text) => chalk.cyan(text), // This should NOT be applied to blockquotes
+					color: (text) => styleText("cyan", text), // This should NOT be applied to blockquotes
 				},
 			);
 
@@ -1030,7 +1027,7 @@ bar`,
 				0,
 				defaultMarkdownTheme,
 				{
-					color: (text) => chalk.yellow(text), // This should NOT be applied to blockquotes
+					color: (text) => styleText("yellow", text), // This should NOT be applied to blockquotes
 					italic: true,
 				},
 			);

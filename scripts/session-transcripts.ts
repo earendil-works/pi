@@ -15,7 +15,7 @@ import { createInterface } from "node:readline";
 import { homedir } from "os";
 import { join, resolve } from "path";
 import { parseSessionEntries, type SessionMessageEntry } from "../packages/coding-agent/src/core/session-manager.ts";
-import chalk from "chalk";
+import { styleText } from "node:util";
 
 const MAX_CHARS_PER_FILE = 100_000; // ~20k tokens, leaving room for prompt + analysis + output
 
@@ -98,7 +98,7 @@ function runSubagent(prompt: string, cwd: string): Promise<{ success: boolean }>
 				} else if (event.type === "tool_execution_start" && event.toolName) {
 					// Print accumulated text before tool starts
 					if (textBuffer.trim()) {
-						console.log(chalk.dim("  " + truncateLine(textBuffer, MAX_DISPLAY_WIDTH)));
+						console.log(styleText("dim", "  " + truncateLine(textBuffer, MAX_DISPLAY_WIDTH)));
 						textBuffer = "";
 					}
 					// Format tool call with args
@@ -112,11 +112,11 @@ function runSubagent(prompt: string, cwd: string): Promise<{ success: boolean }>
 							argsStr = event.args.path || "";
 						}
 					}
-					console.log(chalk.cyan(`  [${event.toolName}] ${argsStr}`));
+					console.log(styleText("cyan", `  [${event.toolName}] ${argsStr}`));
 				} else if (event.type === "turn_end") {
 					// Print any remaining text at turn end
 					if (textBuffer.trim()) {
-						console.log(chalk.dim("  " + truncateLine(textBuffer, MAX_DISPLAY_WIDTH)));
+						console.log(styleText("dim", "  " + truncateLine(textBuffer, MAX_DISPLAY_WIDTH)));
 					}
 					textBuffer = "";
 				}
@@ -126,7 +126,7 @@ function runSubagent(prompt: string, cwd: string): Promise<{ success: boolean }>
 		});
 
 		child.stderr.on("data", (data) => {
-			process.stderr.write(chalk.red(data.toString()));
+			process.stderr.write(styleText("red", data.toString()));
 		});
 
 		child.on("close", (code) => {
@@ -134,7 +134,7 @@ function runSubagent(prompt: string, cwd: string): Promise<{ success: boolean }>
 		});
 
 		child.on("error", (err) => {
-			console.error(chalk.red(`  Failed to spawn pi: ${err.message}`));
+			console.error(styleText("red", `  Failed to spawn pi: ${err.message}`));
 			resolve({ success: false });
 		});
 	});
@@ -224,7 +224,7 @@ async function main() {
 			const filename = `session-transcripts-${String(fileIndex).padStart(3, "0")}.txt`;
 			writeFileSync(join(outputDir, filename), transcript);
 			outputFiles.push(filename);
-			console.log(chalk.yellow(`Wrote ${filename} (${transcript.length} chars) - oversized`));
+			console.log(styleText("yellow", `Wrote ${filename} (${transcript.length} chars) - oversized`));
 			fileIndex++;
 			continue;
 		}
@@ -314,11 +314,11 @@ Rules:
 		const result = await runSubagent(fullPrompt, outputDir);
 
 		if (result.success && existsSync(summaryPath)) {
-			console.log(chalk.green(`  -> ${summaryFile}`));
+			console.log(styleText("green", `  -> ${summaryFile}`));
 		} else if (result.success) {
-			console.error(chalk.yellow(`  Agent finished but did not write ${summaryFile}`));
+			console.error(styleText("yellow", `  Agent finished but did not write ${summaryFile}`));
 		} else {
-			console.error(chalk.red(`  Failed to analyze ${file}`));
+			console.error(styleText("red", `  Failed to analyze ${file}`));
 		}
 	}
 
@@ -331,7 +331,7 @@ Rules:
 	console.log(`Created ${summaryFiles.length} summary files`);
 
 	if (summaryFiles.length === 0) {
-		console.log(chalk.yellow("No summary files created. Nothing to aggregate."));
+		console.log(styleText("yellow", "No summary files created. Nothing to aggregate."));
 		return;
 	}
 
@@ -394,12 +394,12 @@ Write the final summary to ${finalSummaryPath}`;
 	const aggregateResult = await runSubagent(aggregationPrompt, outputDir);
 
 	if (aggregateResult.success && existsSync(finalSummaryPath)) {
-		console.log(chalk.green(`\n=== Final Summary Created ===`));
-		console.log(chalk.green(`  ${finalSummaryPath}`));
+		console.log(styleText("green", `\n=== Final Summary Created ===`));
+		console.log(styleText("green", `  ${finalSummaryPath}`));
 	} else if (aggregateResult.success) {
-		console.error(chalk.yellow(`Agent finished but did not write final summary`));
+		console.error(styleText("yellow", `Agent finished but did not write final summary`));
 	} else {
-		console.error(chalk.red(`Failed to create final summary`));
+		console.error(styleText("red", `Failed to create final summary`));
 	}
 }
 

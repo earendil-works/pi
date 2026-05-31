@@ -2,7 +2,7 @@
  * One-time migrations that run on startup.
  */
 
-import chalk from "chalk";
+import { styleText } from "node:util";
 import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "fs";
 import { dirname, join } from "path";
 import { CONFIG_DIR_NAME, getAgentDir, getBinDir } from "./config.ts";
@@ -194,7 +194,8 @@ function migrateExplicitEnvVarConfigValues(): void {
 
 	const details = migrations.map((migration) => `  - ${migration.location}: ${migration.from} -> ${migration.to}`);
 	console.log(
-		chalk.yellow(
+		styleText(
+			"yellow",
 			[
 				"Warning: Migrated API key/header environment references to explicit $ENV_VAR syntax. Plain strings will be treated as literals.",
 				...details,
@@ -272,11 +273,12 @@ function migrateCommandsToPrompts(baseDir: string, label: string): boolean {
 	if (existsSync(commandsDir) && !existsSync(promptsDir)) {
 		try {
 			renameSync(commandsDir, promptsDir);
-			console.log(chalk.green(`Migrated ${label} commands/ → prompts/`));
+			console.log(styleText("green", `Migrated ${label} commands/ → prompts/`));
 			return true;
 		} catch (err) {
 			console.log(
-				chalk.yellow(
+				styleText(
+					"yellow",
 					`Warning: Could not migrate ${label} commands/ to prompts/: ${err instanceof Error ? err.message : err}`,
 				),
 			);
@@ -342,7 +344,7 @@ function migrateToolsToBin(): void {
 	}
 
 	if (movedAny) {
-		console.log(chalk.green(`Migrated managed binaries tools/ → bin/`));
+		console.log(styleText("green", `Migrated managed binaries tools/ → bin/`));
 	}
 }
 
@@ -409,12 +411,12 @@ export async function showDeprecationWarnings(warnings: string[]): Promise<void>
 	if (warnings.length === 0) return;
 
 	for (const warning of warnings) {
-		console.log(chalk.yellow(`Warning: ${warning}`));
+		console.log(styleText("yellow", `Warning: ${warning}`));
 	}
-	console.log(chalk.yellow(`\nMove your extensions to the extensions/ directory.`));
-	console.log(chalk.yellow(`Migration guide: ${MIGRATION_GUIDE_URL}`));
-	console.log(chalk.yellow(`Documentation: ${EXTENSIONS_DOC_URL}`));
-	console.log(chalk.dim(`\nPress any key to continue...`));
+	console.log(styleText("yellow", `\nMove your extensions to the extensions/ directory.`));
+	console.log(styleText("yellow", `Migration guide: ${MIGRATION_GUIDE_URL}`));
+	console.log(styleText("yellow", `Documentation: ${EXTENSIONS_DOC_URL}`));
+	console.log(styleText("dim", `\nPress any key to continue...`));
 
 	await new Promise<void>((resolve) => {
 		process.stdin.setRawMode?.(true);

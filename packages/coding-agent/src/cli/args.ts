@@ -2,8 +2,8 @@
  * CLI argument parsing and help display
  */
 
+import { styleText } from "node:util";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import chalk from "chalk";
 import { APP_NAME, CONFIG_DIR_NAME, ENV_AGENT_DIR, ENV_SESSION_DIR } from "../config.ts";
 import type { ExtensionFlag } from "../core/extensions/types.ts";
 
@@ -207,7 +207,7 @@ export function parseArgs(args: string[]): Args {
 export function printHelp(extensionFlags?: ExtensionFlag[]): void {
 	const extensionFlagsText =
 		extensionFlags && extensionFlags.length > 0
-			? `\n${chalk.bold("Extension CLI Flags:")}\n${extensionFlags
+			? `\n${styleText("bold", "Extension CLI Flags:")}\n${extensionFlags
 					.map((flag) => {
 						const value = flag.type === "string" ? " <value>" : "";
 						const description = flag.description ?? `Registered by ${flag.extensionPath}`;
@@ -215,12 +215,12 @@ export function printHelp(extensionFlags?: ExtensionFlag[]): void {
 					})
 					.join("\n")}\n`
 			: "";
-	console.log(`${chalk.bold(APP_NAME)} - AI coding assistant with read, bash, edit, write tools
+	console.log(`${styleText("bold", APP_NAME)} - AI coding assistant with read, bash, edit, write tools
 
-${chalk.bold("Usage:")}
+${styleText("bold", "Usage:")}
   ${APP_NAME} [options] [@files...] [messages...]
 
-${chalk.bold("Commands:")}
+${styleText("bold", "Commands:")}
   ${APP_NAME} install <source> [-l]     Install extension source and add to settings
   ${APP_NAME} remove <source> [-l]      Remove extension source from settings
   ${APP_NAME} uninstall <source> [-l]   Alias for remove
@@ -229,7 +229,7 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} config                    Open TUI to enable/disable package resources
   ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list
 
-${chalk.bold("Options:")}
+${styleText("bold", "Options:")}
   --provider <name>              Provider name (default: google)
   --model <pattern>              Model pattern or ID (supports "provider/id" and optional ":<thinking>")
   --api-key <key>                API key (defaults to env vars)
@@ -272,7 +272,7 @@ ${chalk.bold("Options:")}
 
 Extensions can register additional flags (e.g., --plan from plan-mode extension).${extensionFlagsText}
 
-${chalk.bold("Examples:")}
+${styleText("bold", "Examples:")}
   # Interactive mode
   ${APP_NAME}
 
@@ -325,7 +325,7 @@ ${chalk.bold("Examples:")}
   ${APP_NAME} --export ~/${CONFIG_DIR_NAME}/agent/sessions/--path--/session.jsonl
   ${APP_NAME} --export session.jsonl output.html
 
-${chalk.bold("Environment Variables:")}
+${styleText("bold", "Environment Variables:")}
   ANTHROPIC_API_KEY                - Anthropic Claude API key
   ANTHROPIC_OAUTH_TOKEN            - Anthropic OAuth token (alternative to API key)
   OPENAI_API_KEY                   - OpenAI GPT API key
@@ -368,7 +368,7 @@ ${chalk.bold("Environment Variables:")}
   PI_TELEMETRY                     - Override install telemetry when set to 1/true/yes or 0/false/no
   PI_SHARE_VIEWER_URL              - Base URL for /share command (default: https://pi.dev/session/)
 
-${chalk.bold("Built-in Tool Names:")}
+${styleText("bold", "Built-in Tool Names:")}
   read   - Read file contents
   bash   - Execute bash commands
   edit   - Edit files with find/replace

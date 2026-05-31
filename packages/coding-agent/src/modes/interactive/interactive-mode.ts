@@ -7,6 +7,7 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { styleText } from "node:util";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import {
 	type AssistantMessage,
@@ -47,7 +48,6 @@ import {
 	TUI,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import chalk from "chalk";
 import { spawn, spawnSync } from "child_process";
 import {
 	APP_NAME,
@@ -3310,7 +3310,7 @@ export class InteractiveMode {
 
 		const resumeCommand = formatResumeCommand(this.sessionManager);
 		if (resumeCommand) {
-			process.stdout.write(`${chalk.dim("To resume this session:")} ${resumeCommand}\n`);
+			process.stdout.write(`${styleText("dim", "To resume this session:")} ${resumeCommand}\n`);
 		}
 
 		process.exit(0);

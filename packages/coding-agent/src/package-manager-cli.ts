@@ -1,5 +1,5 @@
+import { styleText } from "node:util";
 import { Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
-import chalk from "chalk";
 import { selectConfig } from "./cli/config-selector.ts";
 import {
 	APP_NAME,
@@ -26,20 +26,20 @@ export type PackageCommand = "install" | "remove" | "update" | "list";
 type UpdateTarget = { type: "all" } | { type: "self" } | { type: "extensions"; source?: string };
 
 const SELF_UPDATE_NOTE_MARKDOWN_THEME: MarkdownTheme = {
-	heading: (text) => chalk.bold(chalk.yellow(text)),
-	link: (text) => chalk.cyan(text),
-	linkUrl: (text) => chalk.dim(text),
-	code: (text) => chalk.yellow(text),
-	codeBlock: (text) => chalk.dim(text),
-	codeBlockBorder: (text) => chalk.dim(text),
-	quote: (text) => chalk.dim(text),
-	quoteBorder: (text) => chalk.dim(text),
-	hr: (text) => chalk.dim(text),
-	listBullet: (text) => chalk.yellow(text),
-	bold: (text) => chalk.bold(text),
-	italic: (text) => chalk.italic(text),
-	strikethrough: (text) => chalk.strikethrough(text),
-	underline: (text) => chalk.underline(text),
+	heading: (text) => styleText(["bold", "yellow"], text),
+	link: (text) => styleText("cyan", text),
+	linkUrl: (text) => styleText("dim", text),
+	code: (text) => styleText("yellow", text),
+	codeBlock: (text) => styleText("dim", text),
+	codeBlockBorder: (text) => styleText("dim", text),
+	quote: (text) => styleText("dim", text),
+	quoteBorder: (text) => styleText("dim", text),
+	hr: (text) => styleText("dim", text),
+	listBullet: (text) => styleText("yellow", text),
+	bold: (text) => styleText("bold", text),
+	italic: (text) => styleText("italic", text),
+	strikethrough: (text) => styleText("strikethrough", text),
+	underline: (text) => styleText("underline", text),
 };
 
 interface PackageCommandOptions {
@@ -58,9 +58,9 @@ interface PackageCommandOptions {
 function reportSettingsErrors(settingsManager: SettingsManager, context: string): void {
 	const errors = settingsManager.drainErrors();
 	for (const { scope, error } of errors) {
-		console.error(chalk.yellow(`Warning (${context}, ${scope} settings): ${error.message}`));
+		console.error(styleText("yellow", `Warning (${context}, ${scope} settings): ${error.message}`));
 		if (error.stack) {
-			console.error(chalk.dim(error.stack));
+			console.error(styleText("dim", error.stack));
 		}
 	}
 }
@@ -81,7 +81,7 @@ function getPackageCommandUsage(command: PackageCommand): string {
 function printPackageCommandHelp(command: PackageCommand): void {
 	switch (command) {
 		case "install":
-			console.log(`${chalk.bold("Usage:")}
+			console.log(`${styleText("bold", "Usage:")}
   ${getPackageCommandUsage("install")}
 
 Install a package and add it to settings.
@@ -100,7 +100,7 @@ Examples:
 			return;
 
 		case "remove":
-			console.log(`${chalk.bold("Usage:")}
+			console.log(`${styleText("bold", "Usage:")}
   ${getPackageCommandUsage("remove")}
 
 Remove a package and its source from settings.
@@ -116,7 +116,7 @@ Examples:
 			return;
 
 		case "update":
-			console.log(`${chalk.bold("Usage:")}
+			console.log(`${styleText("bold", "Usage:")}
   ${getPackageCommandUsage("update")}
 
 Update pi and installed packages.
@@ -135,7 +135,7 @@ Short forms:
 			return;
 
 		case "list":
-			console.log(`${chalk.bold("Usage:")}
+			console.log(`${styleText("bold", "Usage:")}
   ${getPackageCommandUsage("list")}
 
 List installed packages from user and project settings.
@@ -308,7 +308,7 @@ function printSelfUpdateUnavailable(npmCommand?: string[], updatePackageName = P
 }
 
 function printSelfUpdateFallback(command: SelfUpdateCommand): void {
-	console.error(chalk.dim(`If this keeps failing, run this command yourself: ${command.display}`));
+	console.error(styleText("dim", `If this keeps failing, run this command yourself: ${command.display}`));
 }
 
 function printSelfUpdateNote(note: string): void {
@@ -318,7 +318,7 @@ function printSelfUpdateNote(note: string): void {
 	}
 
 	console.log();
-	console.log(chalk.bold(chalk.yellow("Update note")));
+	console.log(styleText(["bold", "yellow"], "Update note"));
 	try {
 		const width = Math.max(20, process.stdout.columns ?? 80);
 		const renderedLines = new Markdown(trimmedNote, 0, 0, SELF_UPDATE_NOTE_MARKDOWN_THEME)
@@ -352,12 +352,12 @@ async function getSelfUpdatePlan(force: boolean): Promise<SelfUpdatePlan> {
 		return { packageName: PACKAGE_NAME, shouldRun: true };
 	}
 
-	console.log(chalk.green(`${APP_NAME} is already up to date (v${VERSION})`));
+	console.log(styleText("green", `${APP_NAME} is already up to date (v${VERSION})`));
 	return { packageName: PACKAGE_NAME, shouldRun: false };
 }
 
 async function runSelfUpdate(command: SelfUpdateCommand): Promise<void> {
-	console.log(chalk.dim(`Updating ${APP_NAME} with ${command.display}...`));
+	console.log(styleText("dim", `Updating ${APP_NAME} with ${command.display}...`));
 	for (const step of command.steps ?? [command]) {
 		await new Promise<void>((resolve, reject) => {
 			const child = spawnProcess(step.command, step.args, {
@@ -423,37 +423,37 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 	}
 
 	if (options.invalidOption) {
-		console.error(chalk.red(`Unknown option ${options.invalidOption} for "${options.command}".`));
-		console.error(chalk.dim(`Use "${APP_NAME} --help" or "${getPackageCommandUsage(options.command)}".`));
+		console.error(styleText("red", `Unknown option ${options.invalidOption} for "${options.command}".`));
+		console.error(styleText("dim", `Use "${APP_NAME} --help" or "${getPackageCommandUsage(options.command)}".`));
 		process.exitCode = 1;
 		return true;
 	}
 
 	if (options.missingOptionValue) {
-		console.error(chalk.red(`Missing value for ${options.missingOptionValue}.`));
-		console.error(chalk.dim(`Usage: ${getPackageCommandUsage(options.command)}`));
+		console.error(styleText("red", `Missing value for ${options.missingOptionValue}.`));
+		console.error(styleText("dim", `Usage: ${getPackageCommandUsage(options.command)}`));
 		process.exitCode = 1;
 		return true;
 	}
 
 	if (options.invalidArgument) {
-		console.error(chalk.red(`Unexpected argument ${options.invalidArgument}.`));
-		console.error(chalk.dim(`Usage: ${getPackageCommandUsage(options.command)}`));
+		console.error(styleText("red", `Unexpected argument ${options.invalidArgument}.`));
+		console.error(styleText("dim", `Usage: ${getPackageCommandUsage(options.command)}`));
 		process.exitCode = 1;
 		return true;
 	}
 
 	if (options.conflictingOptions) {
-		console.error(chalk.red(options.conflictingOptions));
-		console.error(chalk.dim(`Usage: ${getPackageCommandUsage(options.command)}`));
+		console.error(styleText("red", options.conflictingOptions));
+		console.error(styleText("dim", `Usage: ${getPackageCommandUsage(options.command)}`));
 		process.exitCode = 1;
 		return true;
 	}
 
 	const source = options.source;
 	if ((options.command === "install" || options.command === "remove") && !source) {
-		console.error(chalk.red(`Missing ${options.command} source.`));
-		console.error(chalk.dim(`Usage: ${getPackageCommandUsage(options.command)}`));
+		console.error(styleText("red", `Missing ${options.command} source.`));
+		console.error(styleText("dim", `Usage: ${getPackageCommandUsage(options.command)}`));
 		process.exitCode = 1;
 		return true;
 	}
@@ -468,7 +468,7 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 
 	packageManager.setProgressCallback((event) => {
 		if (event.type === "start") {
-			process.stdout.write(chalk.dim(`${event.message}\n`));
+			process.stdout.write(styleText("dim", `${event.message}\n`));
 		}
 	});
 
@@ -476,17 +476,17 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 		switch (options.command) {
 			case "install":
 				await packageManager.installAndPersist(source!, { local: options.local });
-				console.log(chalk.green(`Installed ${source}`));
+				console.log(styleText("green", `Installed ${source}`));
 				return true;
 
 			case "remove": {
 				const removed = await packageManager.removeAndPersist(source!, { local: options.local });
 				if (!removed) {
-					console.error(chalk.red(`No matching package found for ${source}`));
+					console.error(styleText("red", `No matching package found for ${source}`));
 					process.exitCode = 1;
 					return true;
 				}
-				console.log(chalk.green(`Removed ${source}`));
+				console.log(styleText("green", `Removed ${source}`));
 				return true;
 			}
 
@@ -496,7 +496,7 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 				const projectPackages = configuredPackages.filter((pkg) => pkg.scope === "project");
 
 				if (configuredPackages.length === 0) {
-					console.log(chalk.dim("No packages installed."));
+					console.log(styleText("dim", "No packages installed."));
 					return true;
 				}
 
@@ -504,12 +504,12 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 					const display = pkg.filtered ? `${pkg.source} (filtered)` : pkg.source;
 					console.log(`  ${display}`);
 					if (pkg.installedPath) {
-						console.log(chalk.dim(`    ${pkg.installedPath}`));
+						console.log(styleText("dim", `    ${pkg.installedPath}`));
 					}
 				};
 
 				if (userPackages.length > 0) {
-					console.log(chalk.bold("User packages:"));
+					console.log(styleText("bold", "User packages:"));
 					for (const pkg of userPackages) {
 						formatPackage(pkg);
 					}
@@ -517,7 +517,7 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 
 				if (projectPackages.length > 0) {
 					if (userPackages.length > 0) console.log();
-					console.log(chalk.bold("Project packages:"));
+					console.log(styleText("bold", "Project packages:"));
 					for (const pkg of projectPackages) {
 						formatPackage(pkg);
 					}
@@ -532,9 +532,9 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 					const updateSource = target.type === "extensions" ? target.source : undefined;
 					await packageManager.update(updateSource);
 					if (updateSource) {
-						console.log(chalk.green(`Updated ${updateSource}`));
+						console.log(styleText("green", `Updated ${updateSource}`));
 					} else {
-						console.log(chalk.green("Updated packages"));
+						console.log(styleText("green", "Updated packages"));
 					}
 				}
 				if (updateTargetIncludesSelf(target)) {
@@ -545,9 +545,14 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 					const installMethod = detectInstallMethod();
 					if (process.platform === "win32" && installMethod !== "npm" && installMethod !== "pnpm") {
 						console.error(
-							chalk.red(`${APP_NAME} self-update on Windows is only supported for npm and pnpm installs.`),
+							styleText(
+								"red",
+								`${APP_NAME} self-update on Windows is only supported for npm and pnpm installs.`,
+							),
 						);
-						console.error(chalk.dim(`Detected install method: ${installMethod}. Update ${APP_NAME} manually.`));
+						console.error(
+							styleText("dim", `Detected install method: ${installMethod}. Update ${APP_NAME} manually.`),
+						);
 						process.exitCode = 1;
 						return true;
 					}
@@ -571,19 +576,19 @@ export async function handlePackageCommand(args: string[]): Promise<boolean> {
 						await runSelfUpdate(selfUpdateCommand);
 					} catch (error: unknown) {
 						const message = error instanceof Error ? error.message : "Unknown package command error";
-						console.error(chalk.red(`Error: ${message}`));
+						console.error(styleText("red", `Error: ${message}`));
 						printSelfUpdateFallback(selfUpdateCommand);
 						process.exitCode = 1;
 						return true;
 					}
-					console.log(chalk.green(`Updated ${APP_NAME}`));
+					console.log(styleText("green", `Updated ${APP_NAME}`));
 				}
 				return true;
 			}
 		}
 	} catch (error: unknown) {
 		const message = error instanceof Error ? error.message : "Unknown package command error";
-		console.error(chalk.red(`Error: ${message}`));
+		console.error(styleText("red", `Error: ${message}`));
 		process.exitCode = 1;
 		return true;
 	}

@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { styleText } from "node:util";
 import {
 	type EditorTheme,
 	getCapabilities,
@@ -7,7 +8,6 @@ import {
 	type SelectListTheme,
 	type SettingsListTheme,
 } from "@earendil-works/pi-tui";
-import chalk from "chalk";
 import { type Static, Type } from "typebox";
 import { Compile } from "typebox/compile";
 import { getCustomThemesDir, getThemesDir } from "../../../config.ts";
@@ -360,23 +360,23 @@ export class Theme {
 	}
 
 	bold(text: string): string {
-		return chalk.bold(text);
+		return styleText("bold", text);
 	}
 
 	italic(text: string): string {
-		return chalk.italic(text);
+		return styleText("italic", text);
 	}
 
 	underline(text: string): string {
-		return chalk.underline(text);
+		return styleText("underline", text);
 	}
 
 	inverse(text: string): string {
-		return chalk.inverse(text);
+		return styleText("inverse", text);
 	}
 
 	strikethrough(text: string): string {
-		return chalk.strikethrough(text);
+		return styleText("strikethrough", text);
 	}
 
 	getFgAnsi(color: ThemeColor): string {
@@ -1185,7 +1185,7 @@ export function getMarkdownTheme(): MarkdownTheme {
 		bold: (text: string) => theme.bold(text),
 		italic: (text: string) => theme.italic(text),
 		underline: (text: string) => theme.underline(text),
-		strikethrough: (text: string) => chalk.strikethrough(text),
+		strikethrough: (text: string) => styleText("strikethrough", text),
 		highlightCode: (code: string, lang?: string): string[] => {
 			// Validate language before highlighting to avoid stderr spam from cli-highlight
 			const validLang = lang && supportsLanguage(lang) ? lang : undefined;
