@@ -617,7 +617,7 @@ export async function main(args: string[], options?: MainOptions) {
 			...services.diagnostics,
 			...collectSettingsDiagnostics(settingsManager, "runtime creation"),
 			...resourceLoader.getExtensions().errors.map(({ path, error }) => ({
-				type: "error" as const,
+				type: "warning" as const,
 				message: `Failed to load extension "${path}": ${error}`,
 			})),
 		];
