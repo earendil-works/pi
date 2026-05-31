@@ -24,12 +24,12 @@ For the JSONL file format and SessionManager API, see [Session Format](session-f
 | Command | Description |
 |---------|-------------|
 | `/resume` | Browse and select previous sessions |
-| `/new` | Start a new session |
+| `/new [name]` | Start a new session with an optional session display name |
 | `/name <name>` | Set the current session display name |
 | `/session` | Show session info |
 | `/tree` | Navigate the current session tree |
-| `/fork` | Create a new session from a previous user message |
-| `/clone` | Duplicate the current active branch into a new session |
+| `/fork [name]` | Create a new session from a previous user message with an optional session display name |
+| `/clone [name]` | Duplicate the current active branch into a new session with an optional session display name |
 | `/compact [prompt]` | Summarize older context; see [Compaction](compaction.md) |
 | `/export [file]` | Export session to HTML |
 | `/share` | Upload as private GitHub gist with shareable HTML link |
@@ -51,7 +51,15 @@ When available, pi uses the `trash` CLI for deletion instead of permanently remo
 
 ## Naming Sessions
 
-Use `/name <name>` to set a human-readable session name:
+Use `/new <name>`, `/clone <name>`, or `/fork <name>` to start a new session with a human-readable name:
+
+```text
+/new Refactor auth module
+/clone Refactor auth module
+/fork Refactor auth module
+```
+
+Use `/name <name>` to set or rename the current session:
 
 ```text
 /name Refactor auth module
@@ -124,7 +132,7 @@ Selecting the root user message resets the leaf to an empty conversation and pla
 | Typical use | Explore alternatives in place | Start a new session from an earlier prompt | Duplicate current work before continuing |
 | Summary | Optional branch summary | None | None |
 
-Use `/tree` when you want to keep alternatives together. Use `/fork` or `/clone` when you want a separate session file.
+Use `/tree` when you want to keep alternatives together. Use `/fork`, `/clone`, or `/new` when you want a separate session file. All three accept an optional session display name.
 
 ## Branch Summaries
 

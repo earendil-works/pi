@@ -1536,7 +1536,9 @@ export class InteractiveMode {
 						if (!result.cancelled) {
 							this.renderCurrentSessionState();
 							this.editor.setText(result.selectedText ?? "");
-							this.showStatus("Forked to new session");
+							this.chatContainer.addChild(new Spacer(1));
+							this.chatContainer.addChild(new Text(`${theme.fg("accent", "✓ Forked to new session")}`, 1, 1));
+							this.ui.requestRender();
 						}
 						return { cancelled: result.cancelled };
 					} catch (error: unknown) {
@@ -2444,7 +2446,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.editor.external", () => this.openExternalEditor());
 		this.defaultEditor.onAction("app.message.followUp", () => this.handleFollowUp());
 		this.defaultEditor.onAction("app.message.dequeue", () => this.handleDequeue());
-		this.defaultEditor.onAction("app.session.new", () => this.handleClearCommand());
+		this.defaultEditor.onAction("app.session.new", () => this.handleNewCommand());
 		this.defaultEditor.onAction("app.session.tree", () => this.showTreeSelector());
 		this.defaultEditor.onAction("app.session.fork", () => this.showUserMessageSelector());
 		this.defaultEditor.onAction("app.session.resume", () => this.showSessionSelector());
@@ -2547,14 +2549,16 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
-			if (text === "/fork") {
-				this.showUserMessageSelector();
+			if (text === "/fork" || text.startsWith("/fork ")) {
+				const name = text.startsWith("/fork ") ? text.slice(6).trim() : undefined;
+				this.showUserMessageSelector(name || undefined);
 				this.editor.setText("");
 				return;
 			}
-			if (text === "/clone") {
+			if (text === "/clone" || text.startsWith("/clone ")) {
+				const name = text.startsWith("/clone ") ? text.slice(7).trim() : undefined;
 				this.editor.setText("");
-				await this.handleCloneCommand();
+				await this.handleCloneCommand(name || undefined);
 				return;
 			}
 			if (text === "/tree") {
@@ -2572,9 +2576,10 @@ export class InteractiveMode {
 				this.editor.setText("");
 				return;
 			}
-			if (text === "/new") {
+			if (text === "/new" || text.startsWith("/new ")) {
+				const name = text.startsWith("/new ") ? text.slice(5).trim() : undefined;
 				this.editor.setText("");
-				await this.handleClearCommand();
+				await this.handleNewCommand(name || undefined);
 				return;
 			}
 			if (text === "/compact" || text.startsWith("/compact ")) {
@@ -4241,7 +4246,7 @@ export class InteractiveMode {
 		});
 	}
 
-	private showUserMessageSelector(): void {
+	private showUserMessageSelector(name?: string): void {
 		const userMessages = this.session.getUserMessagesForForking();
 
 		if (userMessages.length === 0) {
@@ -4263,10 +4268,17 @@ export class InteractiveMode {
 							return;
 						}
 
+						if (name) {
+							this.session.setSessionName(name);
+						}
 						this.renderCurrentSessionState();
 						this.editor.setText(result.selectedText ?? "");
+						const sessionName = this.sessionManager.getSessionName();
+						const message = sessionName ? `✓ Forked to new session: ${sessionName}` : "✓ Forked to new session";
+						this.chatContainer.addChild(new Spacer(1));
+						this.chatContainer.addChild(new Text(`${theme.fg("accent", message)}`, 1, 1));
 						done();
-						this.showStatus("Forked to new session");
+						this.ui.requestRender();
 					} catch (error: unknown) {
 						done();
 						this.showError(error instanceof Error ? error.message : String(error));
@@ -4282,7 +4294,7 @@ export class InteractiveMode {
 		});
 	}
 
-	private async handleCloneCommand(): Promise<void> {
+	private async handleCloneCommand(name?: string): Promise<void> {
 		const leafId = this.sessionManager.getLeafId();
 		if (!leafId) {
 			this.showStatus("Nothing to clone yet");
@@ -4296,9 +4308,16 @@ export class InteractiveMode {
 				return;
 			}
 
+			if (name) {
+				this.session.setSessionName(name);
+			}
 			this.renderCurrentSessionState();
 			this.editor.setText("");
-			this.showStatus("Cloned to new session");
+			const sessionName = this.sessionManager.getSessionName();
+			const message = sessionName ? `✓ Cloned to new session: ${sessionName}` : "✓ Cloned to new session";
+			this.chatContainer.addChild(new Spacer(1));
+			this.chatContainer.addChild(new Text(`${theme.fg("accent", message)}`, 1, 1));
+			this.ui.requestRender();
 		} catch (error: unknown) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
@@ -5221,8 +5240,10 @@ export class InteractiveMode {
 		}
 
 		this.session.setSessionName(name);
+		const sessionName = this.sessionManager.getSessionName() ?? name;
+		const message = `✓ Session name set: ${sessionName}`;
 		this.chatContainer.addChild(new Spacer(1));
-		this.chatContainer.addChild(new Text(theme.fg("dim", `Session name set: ${name}`), 1, 0));
+		this.chatContainer.addChild(new Text(`${theme.fg("accent", message)}`, 1, 1));
 		this.ui.requestRender();
 	}
 
@@ -5413,7 +5434,7 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	private async handleClearCommand(): Promise<void> {
+	private async handleNewCommand(name?: string): Promise<void> {
 		if (this.loadingAnimation) {
 			this.loadingAnimation.stop();
 			this.loadingAnimation = undefined;
@@ -5424,9 +5445,14 @@ export class InteractiveMode {
 			if (result.cancelled) {
 				return;
 			}
+			if (name) {
+				this.session.setSessionName(name);
+			}
 			this.renderCurrentSessionState();
+			const sessionName = this.sessionManager.getSessionName();
+			const message = sessionName ? `✓ New session started: ${sessionName}` : "✓ New session started";
 			this.chatContainer.addChild(new Spacer(1));
-			this.chatContainer.addChild(new Text(`${theme.fg("accent", "✓ New session started")}`, 1, 1));
+			this.chatContainer.addChild(new Text(`${theme.fg("accent", message)}`, 1, 1));
 			this.ui.requestRender();
 		} catch (error: unknown) {
 			await this.handleFatalRuntimeError("Failed to create session", error);

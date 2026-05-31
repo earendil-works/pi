@@ -29,6 +29,9 @@ import {
 
 export const CURRENT_SESSION_VERSION = 3;
 
+/** Safety limit for persisted session name metadata. enough for descriptive names, bounded to avoid accidental huge names. */
+export const MAX_SESSION_NAME_LENGTH = 120;
+
 export interface SessionHeader {
 	type: "session";
 	version?: number; // v1 sessions don't have this
@@ -210,6 +213,18 @@ export function assertValidSessionId(id: string): void {
 			"Session id must be non-empty, contain only alphanumeric characters, '-', '_', and '.', and start and end with an alphanumeric character",
 		);
 	}
+}
+
+export function normalizeSessionName(name: string): string {
+	const normalized = name
+		// Replace control characters at storage time so session names stay single-line and safe to display.
+		.replace(/[\x00-\x1f\x7f]/g, " ")
+		.replace(/ +/g, " ")
+		.trim();
+	if (normalized.length <= MAX_SESSION_NAME_LENGTH) {
+		return normalized;
+	}
+	return `${normalized.slice(0, MAX_SESSION_NAME_LENGTH - 3)}...`;
 }
 
 /** Generate a unique short ID (8 hex chars, collision-checked) */
@@ -1030,7 +1045,7 @@ export class SessionManager {
 			id: generateId(this.byId),
 			parentId: this.leafId,
 			timestamp: new Date().toISOString(),
-			name: name.trim(),
+			name: normalizeSessionName(name),
 		};
 		this._appendEntry(entry);
 		return entry.id;
