@@ -823,6 +823,90 @@ describe("ExtensionRunner", () => {
 		});
 	});
 
+	describe("ui prompt events", () => {
+		const loadPromptRecorderRunner = async (eventsFile: string) => {
+			const extCode = `
+				import * as fs from "node:fs";
+				export default function(pi) {
+					const record = (entry) => fs.appendFileSync(${JSON.stringify(eventsFile)}, JSON.stringify(entry) + "\\n");
+					pi.on("ui_prompt_start", async (event) => { record(["start", event.kind, event.title ?? null]); });
+					pi.on("ui_prompt_end", async (event) => { record(["end", event.kind]); });
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "prompt-recorder.ts"), extCode);
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			expect(result.errors).toEqual([]);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+			return runner;
+		};
+
+		const readEvents = (eventsFile: string): unknown[] =>
+			fs.existsSync(eventsFile)
+				? fs
+						.readFileSync(eventsFile, "utf8")
+						.split("\n")
+						.filter((line) => line.length > 0)
+						.map((line) => JSON.parse(line))
+				: [];
+
+		it("emits ui_prompt_start/end around a blocking ctx.ui prompt", async () => {
+			const eventsFile = path.join(tempDir, "ui-events.log");
+			const runner = await loadPromptRecorderRunner(eventsFile);
+			runner.setUIContext({ select: async () => "a" } as unknown as ExtensionUIContext, "tui");
+
+			const choice = await runner.getUIContext().select("Pick one", ["a", "b"]);
+
+			expect(choice).toBe("a");
+			expect(readEvents(eventsFile)).toEqual([
+				["start", "select", "Pick one"],
+				["end", "select"],
+			]);
+		});
+
+		it("coalesces nested prompts into a single outer start/end pair", async () => {
+			const eventsFile = path.join(tempDir, "ui-events-nested.log");
+			const runner = await loadPromptRecorderRunner(eventsFile);
+			// confirm() runs an input() prompt while it is still open: only the
+			// outer confirm should produce lifecycle events.
+			const uiContext = {
+				confirm: async () => {
+					await runner.getUIContext().input("Inner", "");
+					return true;
+				},
+				input: async () => "inner-value",
+			} as unknown as ExtensionUIContext;
+			runner.setUIContext(uiContext, "tui");
+
+			const confirmed = await runner.getUIContext().confirm("Outer", "Proceed?");
+
+			expect(confirmed).toBe(true);
+			expect(readEvents(eventsFile)).toEqual([
+				["start", "confirm", "Outer"],
+				["end", "confirm"],
+			]);
+		});
+
+		it("emits ui_prompt_end even when the prompt rejects", async () => {
+			const eventsFile = path.join(tempDir, "ui-events-reject.log");
+			const runner = await loadPromptRecorderRunner(eventsFile);
+			runner.setUIContext(
+				{
+					input: async () => {
+						throw new Error("dismissed");
+					},
+				} as unknown as ExtensionUIContext,
+				"tui",
+			);
+
+			await expect(runner.getUIContext().input("Name")).rejects.toThrow("dismissed");
+			expect(readEvents(eventsFile)).toEqual([
+				["start", "input", "Name"],
+				["end", "input"],
+			]);
+		});
+	});
+
 	describe("hasHandlers", () => {
 		it("returns true when handlers exist for event type", async () => {
 			const extCode = `

@@ -54,6 +54,9 @@ import type {
 	ToolCallEventResult,
 	ToolResultEvent,
 	ToolResultEventResult,
+	UiPromptEndEvent,
+	UiPromptKind,
+	UiPromptStartEvent,
 	UserBashEvent,
 	UserBashEventResult,
 } from "./types.ts";
@@ -249,6 +252,8 @@ export class ExtensionRunner {
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
 	private staleMessage: string | undefined;
+	/** Depth of currently open interactive ctx.ui prompts; >0 means blocked on user input. */
+	private activePromptDepth = 0;
 
 	constructor(
 		extensions: Extension[],
@@ -357,8 +362,52 @@ export class ExtensionRunner {
 	}
 
 	setUIContext(uiContext?: ExtensionUIContext, mode: ExtensionMode = "print"): void {
-		this.uiContext = uiContext ?? noOpUIContext;
+		this.uiContext = uiContext ? this.wrapUIContextWithPromptEvents(uiContext) : noOpUIContext;
 		this.mode = mode;
+	}
+
+	/**
+	 * Wrap a UI context so the blocking dialog methods emit `ui_prompt_start` /
+	 * `ui_prompt_end` around the time the agent is waiting on user input. This is
+	 * the single chokepoint every `ctx.ui` flows through, so all prompts (built-in
+	 * and extension-raised) are covered without per-call instrumentation.
+	 *
+	 * Non-blocking methods and getters (e.g. `theme`) are inherited unchanged via
+	 * the prototype chain.
+	 */
+	private wrapUIContextWithPromptEvents(ui: ExtensionUIContext): ExtensionUIContext {
+		const wrapped: ExtensionUIContext = Object.create(ui);
+		wrapped.select = (title, options, opts) =>
+			this.withPromptEvent("select", title, () => ui.select(title, options, opts));
+		wrapped.confirm = (title, message, opts) =>
+			this.withPromptEvent("confirm", title, () => ui.confirm(title, message, opts));
+		wrapped.input = (title, placeholder, opts) =>
+			this.withPromptEvent("input", title, () => ui.input(title, placeholder, opts));
+		wrapped.editor = (title, prefill) => this.withPromptEvent("editor", title, () => ui.editor(title, prefill));
+		type CustomParams = Parameters<ExtensionUIContext["custom"]>;
+		wrapped.custom = ((factory: CustomParams[0], options: CustomParams[1]) =>
+			this.withPromptEvent("custom", undefined, () => ui.custom(factory, options))) as ExtensionUIContext["custom"];
+		return wrapped;
+	}
+
+	/**
+	 * Run a blocking ctx.ui prompt, emitting prompt lifecycle events for the
+	 * outermost prompt only (nested or parallel prompts are coalesced). Events
+	 * are fire-and-forget so handlers never delay the user-facing dialog.
+	 */
+	private withPromptEvent<T>(kind: UiPromptKind, title: string | undefined, run: () => Promise<T>): Promise<T> {
+		if (this.activePromptDepth === 0) {
+			const startEvent: UiPromptStartEvent = { type: "ui_prompt_start", kind, title };
+			void this.emit(startEvent);
+		}
+		this.activePromptDepth += 1;
+		return run().finally(() => {
+			this.activePromptDepth -= 1;
+			if (this.activePromptDepth === 0) {
+				const endEvent: UiPromptEndEvent = { type: "ui_prompt_end", kind };
+				void this.emit(endEvent);
+			}
+		});
 	}
 
 	getUIContext(): ExtensionUIContext {

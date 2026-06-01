@@ -709,6 +709,40 @@ export interface ToolExecutionEndEvent {
 }
 
 // ============================================================================
+// UI Events
+// ============================================================================
+
+/** Kind of interactive UI prompt that blocks the agent on user input. */
+export type UiPromptKind = "select" | "confirm" | "input" | "editor" | "custom";
+
+/**
+ * Fired when an interactive `ctx.ui` prompt opens and the agent is blocked
+ * waiting for user input (e.g. `select`, `confirm`, `input`, `editor`,
+ * `custom`). This covers the built-in prompts and any prompt raised by an
+ * extension, since all of them route through `ctx.ui`.
+ *
+ * Only the outermost prompt fires this when prompts nest. Pairs with
+ * `ui_prompt_end`. Handlers are notified fire-and-forget and must not block:
+ * their return values are ignored and the prompt is not delayed on them.
+ *
+ * Use this to signal "waiting for input" to host integrations such as status
+ * bars or terminal multiplexers, which otherwise see the agent as "running"
+ * for the whole turn.
+ */
+export interface UiPromptStartEvent {
+	type: "ui_prompt_start";
+	kind: UiPromptKind;
+	/** Prompt title, when the prompt provides one. */
+	title?: string;
+}
+
+/** Fired when the outermost interactive `ctx.ui` prompt closes. Pairs with `ui_prompt_start`. */
+export interface UiPromptEndEvent {
+	type: "ui_prompt_end";
+	kind: UiPromptKind;
+}
+
+// ============================================================================
 // Model Events
 // ============================================================================
 
@@ -970,6 +1004,8 @@ export type ExtensionEvent =
 	| ToolExecutionStartEvent
 	| ToolExecutionUpdateEvent
 	| ToolExecutionEndEvent
+	| UiPromptStartEvent
+	| UiPromptEndEvent
 	| ModelSelectEvent
 	| ThinkingLevelSelectEvent
 	| UserBashEvent
@@ -1124,6 +1160,8 @@ export interface ExtensionAPI {
 	on(event: "tool_execution_start", handler: ExtensionHandler<ToolExecutionStartEvent>): void;
 	on(event: "tool_execution_update", handler: ExtensionHandler<ToolExecutionUpdateEvent>): void;
 	on(event: "tool_execution_end", handler: ExtensionHandler<ToolExecutionEndEvent>): void;
+	on(event: "ui_prompt_start", handler: ExtensionHandler<UiPromptStartEvent>): void;
+	on(event: "ui_prompt_end", handler: ExtensionHandler<UiPromptEndEvent>): void;
 	on(event: "model_select", handler: ExtensionHandler<ModelSelectEvent>): void;
 	on(event: "thinking_level_select", handler: ExtensionHandler<ThinkingLevelSelectEvent>): void;
 	on(event: "tool_call", handler: ExtensionHandler<ToolCallEvent, ToolCallEventResult>): void;

@@ -294,6 +294,7 @@ user sends prompt ────────────────────�
   │   │     ├─► tool_execution_start               │       │
   │   │     ├─► tool_call (can block)              │       │
   │   │     ├─► tool_execution_update              │       │
+  │   │     ├─► (ui_prompt_start / ui_prompt_end around any blocking ctx.ui prompt)
   │   │     ├─► tool_result (can modify)           │       │
   │   │     └─► tool_execution_end                 │       │
   │   │                                            │       │
@@ -583,6 +584,28 @@ pi.on("tool_execution_update", async (event, ctx) => {
 
 pi.on("tool_execution_end", async (event, ctx) => {
   // event.toolCallId, event.toolName, event.result, event.isError
+});
+```
+
+#### ui_prompt_start / ui_prompt_end
+
+Fired when an interactive `ctx.ui` prompt opens and closes — i.e. when the agent is blocked waiting on the user mid-turn. Because every prompt (`select`, `confirm`, `input`, `editor`, `custom`) routes through `ctx.ui`, these events cover both the built-in prompts and any prompt raised by an extension, with no per-call instrumentation.
+
+Use them to distinguish "waiting for input" from "working" in host integrations (status bars, terminal multiplexers, notifiers) that otherwise see the whole turn as "running".
+
+- Only the outermost prompt fires the pair; nested or parallel prompts are coalesced.
+- Notification-only and fire-and-forget: handler return values are ignored and the prompt is never delayed waiting on a handler, so do not run slow work inline.
+- These fire only for mid-turn `ctx.ui` prompts, not for the main composer (use `agent_end` for the idle/awaiting-prompt transition).
+
+```typescript
+pi.on("ui_prompt_start", async (event, ctx) => {
+  // event.kind  - "select" | "confirm" | "input" | "editor" | "custom"
+  // event.title - prompt title, when available
+  // ctx.sessionManager.getSessionId(), ctx.cwd available as usual
+});
+
+pi.on("ui_prompt_end", async (event, ctx) => {
+  // event.kind - matches the outermost prompt
 });
 ```
 
