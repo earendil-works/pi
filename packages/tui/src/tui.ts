@@ -295,7 +295,10 @@ export class TUI extends Container {
 	private static readonly MIN_RENDER_INTERVAL_MS = 16;
 	private cursorRow = 0; // Logical cursor row (end of rendered content)
 	private hardwareCursorRow = 0; // Actual terminal cursor row (may differ due to IME positioning)
-	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR === "1";
+	// Hardware cursor on by default so the terminal owns cursor presentation
+	// (shape, blink, hollow-on-blur). Opt out with PI_HARDWARE_CURSOR=0 for
+	// terminals that mishandle it (e.g. some JetBrains IDE terminals).
+	private showHardwareCursor = process.env.PI_HARDWARE_CURSOR !== "0";
 	private clearOnShrink = process.env.PI_CLEAR_ON_SHRINK === "1"; // Clear empty rows when content shrinks (default: off)
 	private maxLinesRendered = 0; // Track terminal's working area (max lines ever rendered)
 	private previousViewportTop = 0; // Track previous viewport top for resize-aware cursor moves
@@ -331,7 +334,10 @@ export class TUI extends Container {
 	setShowHardwareCursor(enabled: boolean): void {
 		if (this.showHardwareCursor === enabled) return;
 		this.showHardwareCursor = enabled;
-		if (!enabled) {
+		if (enabled) {
+			this.terminal.setCursorStyle("steady-block");
+		} else {
+			this.terminal.setCursorStyle("default");
 			this.terminal.hideCursor();
 		}
 		this.requestRender();
@@ -487,6 +493,10 @@ export class TUI extends Container {
 			() => this.requestRender(),
 		);
 		this.terminal.hideCursor();
+		if (this.showHardwareCursor) {
+			// Steady block matches the prior painted-cursor look and avoids blink.
+			this.terminal.setCursorStyle("steady-block");
+		}
 		this.queryCellSize();
 		this.requestRender();
 	}
@@ -530,6 +540,10 @@ export class TUI extends Container {
 			this.terminal.write("\r\n");
 		}
 
+		if (this.showHardwareCursor) {
+			// Restore the terminal's configured cursor shape for the shell.
+			this.terminal.setCursorStyle("default");
+		}
 		this.terminal.showCursor();
 		this.terminal.stop();
 	}

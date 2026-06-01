@@ -49,7 +49,7 @@ config.enable_kitty_keyboard = true
 return config
 ```
 
-On WSL, WezTerm may require a visible hardware cursor for IME candidate window positioning. If CJK IME candidates do not follow the text cursor, set `PI_HARDWARE_CURSOR=1` before running pi or set `showHardwareCursor` to `true` in settings.
+The hardware cursor is on by default, so CJK IME candidate windows follow the text cursor and the cursor hollows when the window loses focus. If you previously set `PI_HARDWARE_CURSOR=0` or `showHardwareCursor: false`, remove it to restore this behavior.
 
 ## VS Code (Integrated Terminal)
 
@@ -109,6 +109,6 @@ For the best experience, use a terminal that supports the Kitty keyboard protoco
 
 The built-in terminal has limited escape sequence support. Shift+Enter cannot be distinguished from Enter in IntelliJ's terminal.
 
-If you want the hardware cursor visible, set `PI_HARDWARE_CURSOR=1` before running pi (disabled by default for compatibility).
+The hardware cursor is on by default. JetBrains IDE terminals can mishandle it (the cursor may blink unexpectedly or disappear); if that happens, set `PI_HARDWARE_CURSOR=0` before running pi (or set `showHardwareCursor` to `false` in settings) to fall back to the painted cursor.
 
 Consider using a dedicated terminal emulator for the best experience.

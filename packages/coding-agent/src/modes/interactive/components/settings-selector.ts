@@ -412,7 +412,8 @@ export class SettingsSelectorComponent extends Container {
 		items.splice(skillCommandsIndex + 1, 0, {
 			id: "show-hardware-cursor",
 			label: "Show hardware cursor",
-			description: "Show the terminal cursor while still positioning it for IME support",
+			description:
+				"Let the terminal own the cursor (shape, blink, hollow-on-blur); turn off to use the painted cursor",
 			currentValue: config.showHardwareCursor ? "true" : "false",
 			values: ["true", "false"],
 		});

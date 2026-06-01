@@ -13,9 +13,10 @@ type SessionsLoader = (onProgress?: SessionListProgress) => Promise<SessionInfo[
 export async function selectSession(
 	currentSessionsLoader: SessionsLoader,
 	allSessionsLoader: SessionsLoader,
+	showHardwareCursor: boolean,
 ): Promise<string | null> {
 	return new Promise((resolve) => {
-		const ui = new TUI(new ProcessTerminal());
+		const ui = new TUI(new ProcessTerminal(), showHardwareCursor);
 		const keybindings = KeybindingsManager.create();
 		setKeybindings(keybindings);
 		let resolved = false;
