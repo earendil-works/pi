@@ -7,6 +7,7 @@ import ChatMessages from "../components/ChatMessages";
 
 export default function ChatPage() {
   const { id } = useParams<{ id: string }>();
+  
   const navigate = useNavigate();
   const [messages, setMessages] = useState<Message[]>([]);
   const [streamingContent, setStreamingContent] = useState<string>("");
@@ -27,7 +28,7 @@ export default function ChatPage() {
       setIsLoading(true);
       try {
         // Fetch existing messages
-        const msgs = await api.getMessages(id);
+        const msgs = await api.getMessages(id!);
         if (!cancelled) {
           setMessages(msgs);
         }
@@ -61,14 +62,16 @@ export default function ChatPage() {
     const unsubMessage = ws.subscribe("message", (msg: unknown) => {
       const message = msg as { sessionId?: string; role?: string; content?: string };
       if (message.sessionId !== id) return;
-      if (message.role && message.content) {
+      const role = message.role;
+      const content = message.content;
+      if (role && content) {
         setMessages((prev) => [
           ...prev,
           {
             id: crypto.randomUUID(),
-            sessionId: id,
-            role: message.role as "user" | "assistant" | "system",
-            content: message.content,
+            sessionId: id!,
+            role: role as "user" | "assistant" | "system",
+            content,
             timestamp: new Date().toISOString(),
           },
         ]);
@@ -86,7 +89,7 @@ export default function ChatPage() {
             ...msgs,
             {
               id: crypto.randomUUID(),
-              sessionId: id,
+              sessionId: id!,
               role: "assistant",
               content: prev,
               timestamp: new Date().toISOString(),
@@ -101,7 +104,7 @@ export default function ChatPage() {
     const unsubOpen = ws.subscribe("open", () => {
       setIsConnected(true);
       // Subscribe to the session on the server
-      ws.send({ type: "subscribe", sessionId: id });
+      ws.send({ type: "subscribe", sessionId: id! });
     });
 
     unsubscribesRef.current = [
@@ -136,7 +139,7 @@ export default function ChatPage() {
         ...prev,
         {
           id: crypto.randomUUID(),
-          sessionId: id,
+          sessionId: id!,
           role: "user",
           content: text,
           timestamp: new Date().toISOString(),
@@ -144,7 +147,7 @@ export default function ChatPage() {
       ]);
 
       // Send via WebSocket
-      ws.send({ type: "prompt", text, sessionId: id });
+      ws.send({ type: "prompt", text, sessionId: id! });
     },
     [inputValue, id]
   );

@@ -19,7 +19,7 @@ function parseEverySchedule(
   const match = schedule.match(/^every\s+(\d+)\s+(second|minute|hour|seconds|minutes|hours)$/);
   if (!match) return null;
   const value = parseInt(match[1], 10);
-  const unit = match[2].replace(/s$/, "") as "second" | "minute" | "hour";
+  const unit = (match[2].replace(/s$/, "") + "s") as "seconds" | "minutes" | "hours";
   return { value, unit };
 }
 
