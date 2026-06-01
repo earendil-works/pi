@@ -18,6 +18,7 @@ import type {
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
+import type { Theme } from "../src/modes/interactive/theme/theme.ts";
 
 describe("ExtensionRunner", () => {
 	let tempDir: string;
@@ -864,6 +865,34 @@ describe("ExtensionRunner", () => {
 			]);
 		});
 
+		it("delegates non-prompt UI members with the original context as this", async () => {
+			const eventsFile = path.join(tempDir, "ui-events-private.log");
+			const runner = await loadPromptRecorderRunner(eventsFile);
+			class PrivateStateUI {
+				#notified = false;
+				#theme = { name: "private-theme" } as Theme;
+
+				get notified() {
+					return this.#notified;
+				}
+
+				get theme() {
+					return this.#theme;
+				}
+
+				notify(_message: string) {
+					this.#notified = true;
+				}
+			}
+			const uiContext = new PrivateStateUI();
+			runner.setUIContext(uiContext as unknown as ExtensionUIContext, "tui");
+
+			expect(runner.getUIContext().theme).toBe(uiContext.theme);
+			expect(() => runner.getUIContext().notify("Hello")).not.toThrow();
+			expect(uiContext.notified).toBe(true);
+			expect(readEvents(eventsFile)).toEqual([]);
+		});
+
 		it("coalesces nested prompts into a single outer start/end pair", async () => {
 			const eventsFile = path.join(tempDir, "ui-events-nested.log");
 			const runner = await loadPromptRecorderRunner(eventsFile);
@@ -884,6 +913,39 @@ describe("ExtensionRunner", () => {
 			expect(readEvents(eventsFile)).toEqual([
 				["start", "confirm", "Outer"],
 				["end", "confirm"],
+			]);
+		});
+
+		it("coalesces parallel prompts into a single outer start/end pair", async () => {
+			const eventsFile = path.join(tempDir, "ui-events-parallel.log");
+			const runner = await loadPromptRecorderRunner(eventsFile);
+			let resolveSelect!: (value: string | undefined) => void;
+			let resolveConfirm!: (value: boolean) => void;
+			const uiContext = {
+				select: async () =>
+					new Promise<string | undefined>((resolve) => {
+						resolveSelect = resolve;
+					}),
+				confirm: async () =>
+					new Promise<boolean>((resolve) => {
+						resolveConfirm = resolve;
+					}),
+			} as unknown as ExtensionUIContext;
+			runner.setUIContext(uiContext, "tui");
+
+			const selectPromise = runner.getUIContext().select("First", ["a", "b"]);
+			const confirmPromise = runner.getUIContext().confirm("Second", "Proceed?");
+			expect(readEvents(eventsFile)).toEqual([["start", "select", "First"]]);
+
+			resolveSelect("a");
+			expect(await selectPromise).toBe("a");
+			expect(readEvents(eventsFile)).toEqual([["start", "select", "First"]]);
+
+			resolveConfirm(true);
+			expect(await confirmPromise).toBe(true);
+			expect(readEvents(eventsFile)).toEqual([
+				["start", "select", "First"],
+				["end", "select"],
 			]);
 		});
 

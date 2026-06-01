@@ -739,6 +739,7 @@ export interface UiPromptStartEvent {
 /** Fired when the outermost interactive `ctx.ui` prompt closes. Pairs with `ui_prompt_start`. */
 export interface UiPromptEndEvent {
 	type: "ui_prompt_end";
+	/** Matches the outermost prompt that fired `ui_prompt_start`. */
 	kind: UiPromptKind;
 }
 

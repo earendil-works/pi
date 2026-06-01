@@ -254,6 +254,8 @@ export class ExtensionRunner {
 	private staleMessage: string | undefined;
 	/** Depth of currently open interactive ctx.ui prompts; >0 means blocked on user input. */
 	private activePromptDepth = 0;
+	/** Kind of the outermost currently open prompt, used for the matching end event. */
+	private activePromptKind: UiPromptKind | undefined;
 
 	constructor(
 		extensions: Extension[],
@@ -372,22 +374,37 @@ export class ExtensionRunner {
 	 * the single chokepoint every `ctx.ui` flows through, so all prompts (built-in
 	 * and extension-raised) are covered without per-call instrumentation.
 	 *
-	 * Non-blocking methods and getters (e.g. `theme`) are inherited unchanged via
-	 * the prototype chain.
+	 * Non-blocking methods and getters (e.g. `theme`) are delegated with the
+	 * original UI context as `this`, so future class-based implementations keep
+	 * private fields and instance-bound state intact.
 	 */
 	private wrapUIContextWithPromptEvents(ui: ExtensionUIContext): ExtensionUIContext {
-		const wrapped: ExtensionUIContext = Object.create(ui);
-		wrapped.select = (title, options, opts) =>
-			this.withPromptEvent("select", title, () => ui.select(title, options, opts));
-		wrapped.confirm = (title, message, opts) =>
-			this.withPromptEvent("confirm", title, () => ui.confirm(title, message, opts));
-		wrapped.input = (title, placeholder, opts) =>
-			this.withPromptEvent("input", title, () => ui.input(title, placeholder, opts));
-		wrapped.editor = (title, prefill) => this.withPromptEvent("editor", title, () => ui.editor(title, prefill));
 		type CustomParams = Parameters<ExtensionUIContext["custom"]>;
-		wrapped.custom = ((factory: CustomParams[0], options: CustomParams[1]) =>
-			this.withPromptEvent("custom", undefined, () => ui.custom(factory, options))) as ExtensionUIContext["custom"];
-		return wrapped;
+		const wrappedPrompts = {
+			select: (title, options, opts) => this.withPromptEvent("select", title, () => ui.select(title, options, opts)),
+			confirm: (title, message, opts) =>
+				this.withPromptEvent("confirm", title, () => ui.confirm(title, message, opts)),
+			input: (title, placeholder, opts) =>
+				this.withPromptEvent("input", title, () => ui.input(title, placeholder, opts)),
+			editor: (title, prefill) => this.withPromptEvent("editor", title, () => ui.editor(title, prefill)),
+			custom: ((factory: CustomParams[0], options: CustomParams[1]) =>
+				this.withPromptEvent("custom", undefined, () =>
+					ui.custom(factory, options),
+				)) as ExtensionUIContext["custom"],
+		} satisfies Pick<ExtensionUIContext, "select" | "confirm" | "input" | "editor" | "custom">;
+
+		return new Proxy(ui, {
+			get(target, property) {
+				if (property === "select") return wrappedPrompts.select;
+				if (property === "confirm") return wrappedPrompts.confirm;
+				if (property === "input") return wrappedPrompts.input;
+				if (property === "editor") return wrappedPrompts.editor;
+				if (property === "custom") return wrappedPrompts.custom;
+
+				const value = Reflect.get(target, property, target) as unknown;
+				return typeof value === "function" ? value.bind(target) : value;
+			},
+		});
 	}
 
 	/**
@@ -396,15 +413,28 @@ export class ExtensionRunner {
 	 * are fire-and-forget so handlers never delay the user-facing dialog.
 	 */
 	private withPromptEvent<T>(kind: UiPromptKind, title: string | undefined, run: () => Promise<T>): Promise<T> {
-		if (this.activePromptDepth === 0) {
+		const isOutermostPrompt = this.activePromptDepth === 0;
+		if (isOutermostPrompt) {
+			this.activePromptKind = kind;
+		}
+		this.activePromptDepth += 1;
+		if (isOutermostPrompt) {
 			const startEvent: UiPromptStartEvent = { type: "ui_prompt_start", kind, title };
 			void this.emit(startEvent);
 		}
-		this.activePromptDepth += 1;
-		return run().finally(() => {
+
+		let result: Promise<T>;
+		try {
+			result = run();
+		} catch (error) {
+			result = Promise.reject(error);
+		}
+
+		return result.finally(() => {
 			this.activePromptDepth -= 1;
 			if (this.activePromptDepth === 0) {
-				const endEvent: UiPromptEndEvent = { type: "ui_prompt_end", kind };
+				const endEvent: UiPromptEndEvent = { type: "ui_prompt_end", kind: this.activePromptKind ?? kind };
+				this.activePromptKind = undefined;
 				void this.emit(endEvent);
 			}
 		});
