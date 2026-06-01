@@ -5,6 +5,7 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
+import path from "node:path";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import chalk from "chalk";
@@ -508,6 +509,31 @@ export async function main(args: string[], options?: MainOptions) {
 	const shouldTakeOverStdout = appMode !== "interactive" && !isPlainRuntimeMetadataCommand(parsed);
 	if (shouldTakeOverStdout) {
 		takeOverStdout();
+	}
+
+	if (parsed.web) {
+		const port = parsed.port ?? "8741";
+		const maxSessions = parsed.maxSessions ?? "16";
+
+		// Locate the webui server entry
+		let webuiServerPath: string;
+		try {
+			// eslint-disable-next-line @typescript-eslint/no-require-imports
+			const webuiPkg = require.resolve("@pi-mono/webui");
+			webuiServerPath = path.join(path.dirname(webuiPkg), "server", "index.ts");
+		} catch {
+			// Fallback: relative path (for development)
+			webuiServerPath = path.resolve(__dirname, "../../../webui/server/index.ts");
+		}
+
+		const { spawn } = await import("node:child_process");
+		const child = spawn("node", ["--import", "tsx/esm", webuiServerPath], {
+			stdio: "inherit",
+			cwd: process.cwd(),
+			env: { ...process.env, PI_WEB_PORT: port, PI_WEB_MAX_SESSIONS: maxSessions },
+		});
+		child.on("exit", (code) => process.exit(code ?? 0));
+		return;
 	}
 
 	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {

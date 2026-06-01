@@ -71,7 +71,7 @@
 
 ## 4. Cron file watcher (cross-process sync)
 
-- [ ] 4.1 **chokidar watch cron.json**
+- [x] 4.1 **chokidar watch cron.json**
   - **文件**: `packages/webui/server/cron-watcher.ts` (Create)
   - **内容**: `CronWatcher` class using chokidar.watch(CRON_DATA_PATH, {ignoreInitial:true}); on `change`/`add`, debounce 200ms then emit `cron_changed` event to all WS clients; subscribe method to register listener
   - **验证**: Start server, write to `cron.json` from another shell (`echo '[]' > ~/.pi/agent/data/cron.json`); within 500ms, server logs "cron.json changed, broadcasting"
@@ -79,7 +79,7 @@
 
 ## 5. Session pool (process management)
 
-- [ ] 5.1 **Session pool module**
+- [x] 5.1 **Session pool module**
   - **文件**: `packages/webui/server/session-pool.ts` (Create)
   - **内容**: `SessionPool` class; `init()` scans `~/.pi/agent/sessions/--<cwd>--/`, parses each JSONL header; `spawnIfNeeded(sessionId)` spawns `pi --mode rpc --resume <id> --cwd <cwd>` via child_process.spawn, sets up stdin/stdout JSON-line piping; `broadcast(sessionId, event)` to all WS clients; `kill(sessionId, signal='SIGTERM')` with 5s timeout then SIGKILL; `cleanupOnExit()` sends SIGTERM to all
   - **验证**: Mock child_process in test; create pool, call spawnIfNeeded twice; assert 2 processes tracked; call kill → all receive SIGTERM
@@ -105,7 +105,7 @@
   - **验证**: Create temp db, init, writeAtom({id:'a1', type:'knowledge', title:'t', summary:'s', content:'c', tags:[], importance:0.5, strength:1.0, created_at:now, updated_at:now, version:1, archived:false, file_path:'', content_hash:'h'}); query back: returns 1 row
   - **依赖**: 1.2
 
-- [ ] 6.2 **Memory store unit tests**
+- [x] 6.2 **Memory store unit tests**
   - **文件**: `packages/webui/server/test/memory-store.test.ts` (Create)
   - **内容**: Vitest: (a) init creates tables, (b) writeAtom then read returns atom, (c) fts row exists after write, (d) writeAtom with same id overwrites (UPSERT)
   - **验证**: `cd packages/webui && npx vitest run server/test/memory-store.test.ts` all 4 tests PASS
@@ -117,7 +117,7 @@
   - **验证**: Unit test with mocked fetch: returns 2 atoms; on 500, retries; on second 500, throws
   - **依赖**: 1.2
 
-- [ ] 6.4 **LLM client unit tests**
+- [x] 6.4 **LLM client unit tests**
   - **文件**: `packages/webui/server/test/llm-client.test.ts` (Create)
   - **内容**: Vitest: (a) reads models.json, (b) extractAtoms parses valid JSON, (c) retries on 500, (d) throws after 2nd failure
   - **验证**: `cd packages/webui && npx vitest run server/test/llm-client.test.ts` all 4 tests PASS
@@ -165,7 +165,7 @@
   - **验证**: `cd packages/coding-agent && ./pi-test.sh --help 2>&1 | grep -A1 "web"` shows the new flags
   - **依赖**: 无
 
-- [ ] 9.2 **Add --web spawn logic to main.ts**
+- [x] 9.2 **Add --web spawn logic to main.ts**
   - **文件**: `packages/coding-agent/src/main.ts` (Modify)
   - **内容**: When `parsed.web` is true, locate webui package via `require.resolve("@pi-mono/webui")` or relative path; spawn `node` with `["--import", "tsx", "<webui>/server/index.ts", "--port", port, "--max-sessions", maxSessions, "--cwd", process.cwd()]`; inherit stdio; on child exit, call `process.exit(code)`
   - **验证**: Build pi, run `pi --web`, see "WebUI running at http://127.0.0.1:8741" in terminal; `curl http://127.0.0.1:8741/api/health` returns 200
@@ -185,7 +185,7 @@
   - **验证**: `cd packages/webui/web && npx tsc --noEmit` returns exit 0 with empty src dir
   - **依赖**: 10.1
 
-- [ ] 10.2 **Vite + Tailwind + index.html**
+- [x] 10.2 **Vite + Tailwind + index.html**
   - **文件**: `packages/webui/web/vite.config.ts` (Create)
   - **内容**: vite.config.ts with react plugin + tailwindcss plugin; vitest config block: `test: { environment: 'jsdom', globals: true, setupFiles: ['./src/test-setup.ts'] }`; `index.html` with `<div id="root"></div>`; `web/src/index.css` with `@import "tailwindcss";`; `web/src/test-setup.ts` imports `@testing-library/jest-dom`
   - **验证**: `cd packages/webui/web && npx vite build` succeeds

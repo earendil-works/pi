@@ -1,0 +1,285 @@
+import { ChildProcess, spawn, type SpawnOptions } from "node:child_process";
+import { createReadStream } from "node:fs";
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
+import { EventEmitter } from "node:events";
+import { homedir } from "node:os";
+
+export interface SessionHeader {
+	type: "session";
+	version?: number;
+	id: string;
+	timestamp: string;
+	cwd: string;
+	parentSession?: string;
+}
+
+export interface WSClient {
+	send(data: string): void;
+}
+
+/** Raw stdout line from a pi RPC process */
+export interface PiEvent {
+	sessionId: string;
+	event: unknown;
+}
+
+interface SessionState {
+	proc: ChildProcess;
+	subscribers: Set<WSClient>;
+}
+
+/**
+ * Manages a pool of pi RPC processes.
+ *
+ * Each session maps to a running `pi --mode rpc --resume <id> --cwd <cwd>` process.
+ * Events from stdout are emitted via the `event` EventEmitter.
+ */
+export class SessionPool extends EventEmitter {
+	private readonly sessionsDir: string;
+	private readonly maxSessions: number;
+	private readonly spawnFn: (
+		command: string,
+		args: string[],
+		options: SpawnOptions,
+	) => ChildProcess;
+
+	/** sessionId -> SessionState */
+	private readonly sessions = new Map<string, SessionState>();
+
+	constructor(opts?: {
+		cwd?: string;
+		maxSessions?: number;
+		spawnFn?: (command: string, args: string[], options: SpawnOptions) => ChildProcess;
+	}) {
+		super();
+		const cwd = opts?.cwd ?? process.cwd();
+		this.maxSessions = opts?.maxSessions ?? parseInt(process.env.PI_WEB_MAX_SESSIONS || "16", 10);
+		this.spawnFn = opts?.spawnFn ?? spawn;
+
+		// Session directory path: ~/.pi/agent/sessions/--<cwd-slashes-->--
+		const sessionsBase = join(homedir(), ".pi", "agent", "sessions");
+		const cwdDir = cwd.replace(/^\//, "").replace(/\//g, "--");
+		this.sessionsDir = join(sessionsBase, `--${cwdDir}--`);
+	}
+
+	/**
+	 * Scan existing sessions from the sessions directory.
+	 * Populates internal session list (but does NOT spawn processes).
+	 */
+	async init(): Promise<string[]> {
+		const sessionIds: string[] = [];
+
+		try {
+			const entries = await readdir(this.sessionsDir, { withFileTypes: true });
+			for (const entry of entries) {
+				if (!entry.isFile() || !entry.name.endsWith(".jsonl")) {
+					continue;
+				}
+				const filePath = join(this.sessionsDir, entry.name);
+				try {
+					const header = await this.parseSessionHeader(filePath);
+					if (header?.id) {
+						sessionIds.push(header.id);
+					}
+				} catch {
+					// Skip files that can't be parsed
+				}
+			}
+		} catch {
+			// Directory doesn't exist yet — no sessions
+		}
+
+		return sessionIds;
+	}
+
+	/**
+	 * Parse the JSONL header from a session file.
+	 * Returns undefined if the file can't be read or parsed.
+	 */
+	private async parseSessionHeader(filePath: string): Promise<SessionHeader | undefined> {
+		return new Promise((resolve) => {
+			const stream = createReadStream(filePath, { encoding: "utf8", highWaterMark: 1024 });
+			let settled = false;
+
+			stream.on("data", (chunk: string) => {
+				if (settled) return;
+				const lineEnd = chunk.indexOf("\n");
+				if (lineEnd === -1) return;
+
+				settled = true;
+				stream.destroy();
+				try {
+					const header = JSON.parse(chunk.slice(0, lineEnd)) as SessionHeader;
+					resolve(header.type === "session" ? header : undefined);
+				} catch {
+					resolve(undefined);
+				}
+			});
+
+			stream.on("error", () => {
+				if (!settled) {
+					settled = true;
+					resolve(undefined);
+				}
+			});
+
+			stream.on("end", () => {
+				if (!settled) {
+					settled = true;
+					resolve(undefined);
+				}
+			});
+		});
+	}
+
+	/**
+	 * Spawn a pi RPC process for the given session if not already running.
+	 * Lazy — only spawns when first called for a session.
+	 *
+	 * @throws Error if max sessions reached
+	 */
+	async spawnIfNeeded(sessionId: string): Promise<void> {
+		if (this.sessions.has(sessionId)) {
+			return; // Already running
+		}
+
+		if (this.sessions.size >= this.maxSessions) {
+			throw new Error(`Max sessions (${this.maxSessions}) reached, delete one to create new`);
+		}
+
+		// Reconstruct cwd from directory name
+		// Directory format: ~/.pi/agent/sessions/--home--user--proj-- => /home/user/proj
+		const cwdFromDir = this.sessionsDir
+			.replace(/^.*\/sessions\/--/, "/")
+			.replace(/--$/, "")
+			.replace(/--/g, "/");
+
+		const proc = this.spawnFn("pi", ["--mode", "rpc", "--resume", sessionId, "--cwd", cwdFromDir], {
+			stdio: ["pipe", "pipe", "inherit"],
+			env: { ...process.env },
+			detached: false,
+		});
+
+		const state: SessionState = { proc, subscribers: new Set() };
+
+		// Handle stdout JSON-line output
+		proc.stdout?.on("data", (chunk: Buffer | string) => {
+			const lines = chunk.toString().split("\n").filter((l) => l.trim());
+			for (const line of lines) {
+				try {
+					const event = JSON.parse(line);
+					// Emit event for subscribers
+					state.subscribers.forEach((ws) => {
+						ws.send(JSON.stringify(event));
+					});
+					// Also emit on the pool for external listeners
+					this.emit("event", { sessionId, event } as PiEvent);
+				} catch {
+					// Ignore non-JSON output
+				}
+			}
+		});
+
+		proc.on("exit", (code, signal) => {
+			this.sessions.delete(sessionId);
+			this.emit("exit", { sessionId, code, signal });
+		});
+
+		proc.on("error", (err) => {
+			this.emit("error", { sessionId, error: err });
+		});
+
+		this.sessions.set(sessionId, state);
+	}
+
+	/**
+	 * Subscribe a WebSocket client to a session's events.
+	 * The client will receive all stdout events from the pi process.
+	 */
+	subscribe(sessionId: string, client: WSClient): void {
+		const state = this.sessions.get(sessionId);
+		if (state) {
+			state.subscribers.add(client);
+		}
+	}
+
+	/**
+	 * Unsubscribe a WebSocket client from a session.
+	 */
+	unsubscribe(sessionId: string, client: WSClient): void {
+		const state = this.sessions.get(sessionId);
+		if (state) {
+			state.subscribers.delete(client);
+		}
+	}
+
+	/**
+	 * Broadcast an event to all WS clients of a session.
+	 */
+	broadcast(sessionId: string, event: unknown): void {
+		const state = this.sessions.get(sessionId);
+		if (!state) return;
+
+		const msg = JSON.stringify(event);
+		state.subscribers.forEach((ws) => {
+			ws.send(msg);
+		});
+	}
+
+	/**
+	 * Kill a pi process for a session.
+	 * Sends SIGTERM, waits up to 5s, then SIGKILL if still alive.
+	 */
+	async kill(sessionId: string, signal: NodeJS.Signals = "SIGTERM"): Promise<void> {
+		const state = this.sessions.get(sessionId);
+		if (!state) return;
+
+		return new Promise((resolve) => {
+			const proc = state.proc;
+
+			const killTimeout = setTimeout(() => {
+				// Force kill after 5s
+				if (!proc.killed) {
+					proc.kill("SIGKILL");
+				}
+			}, 5000);
+
+			proc.once("exit", () => {
+				clearTimeout(killTimeout);
+				this.sessions.delete(sessionId);
+				resolve();
+			});
+
+			proc.kill(signal);
+		});
+	}
+
+	/**
+	 * Cleanup all pi processes on exit. Best-effort — SIGTERM only, no wait.
+	 */
+	cleanupOnExit(): void {
+		this.sessions.forEach((state) => {
+			try {
+				state.proc.kill("SIGTERM");
+			} catch {
+				// Best effort
+			}
+		});
+		this.sessions.clear();
+	}
+
+	/**
+	 * Get number of active sessions.
+	 */
+	get size(): number {
+		return this.sessions.size;
+	}
+
+	/**
+	 * Check if a session is currently running.
+	 */
+	isRunning(sessionId: string): boolean {
+		return this.sessions.has(sessionId);
+	}
+}
