@@ -205,7 +205,7 @@
 
 ## 11. Sessions + Chat views
 
-- [ ] 11.1 **SessionsPage + SessionList component**
+- [x] 11.1 **SessionsPage + SessionList component**
   - **文件**: `packages/webui/web/src/pages/SessionsPage.tsx` (Create)
   - **内容**: Lists sessions from API; each item: title (first user message truncated to 30 chars), status badge (idle/running/error), last_active; click navigates to `/chat/:id`; empty state with "+ New Session" button; virtual scroll for 50+ sessions
   - **验证**: Component test renders empty state; renders 1 session; click navigates
@@ -225,7 +225,7 @@
 
 ## 12. Cron Dashboard view
 
-- [ ] 12.1 **CronPage + CronList component**
+- [x] 12.1 **CronPage + CronList component**
   - **文件**: `packages/webui/web/src/pages/CronPage.tsx` (Create)
   - **内容**: Lists all cron jobs from API; each row: name, schedule humanized ("every day at 09:00"), enabled toggle, status chip, last run, next run, action buttons (Pause/Resume, Trigger Now, Edit, Delete); empty state with "+ New Cron" CTA; "Show disabled" filter toggle
   - **验证**: Component test: render empty state; render 1 job; click Trigger calls API
@@ -251,7 +251,7 @@
 
 ## 14. Integration test: end-to-end
 
-- [ ] 14.1 **End-to-end smoke test**
+- [x] 14.1 **End-to-end smoke test**
   - **文件**: `packages/webui/test/e2e/smoke.test.ts` (Create)
   - **内容**: Vitest integration: start full server, mock pi binary with a script that echoes; (a) GET /api/health, (b) POST /api/cron/jobs → 200, (c) GET /api/cron/jobs includes new, (d) WS connect + subscribe + receive broadcast on cron file change
   - **验证**: `cd packages/webui && npx vitest run test/e2e/smoke.test.ts` all tests PASS
