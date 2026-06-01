@@ -145,8 +145,8 @@ export default function (pi: ExtensionAPI) {
 			return; // Let normal handling proceed
 		}
 
-		// No UI available (print mode, RPC, etc.)
-		if (!ctx.hasUI) {
+		// Requires interactive TUI (not available in print or RPC mode)
+		if (!ctx.isInteractive) {
 			return {
 				result: { output: "(interactive commands require TUI)", exitCode: 1, cancelled: false, truncated: false },
 			};

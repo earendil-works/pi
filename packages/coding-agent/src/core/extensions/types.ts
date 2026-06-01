@@ -298,8 +298,10 @@ export interface CompactOptions {
 export interface ExtensionContext {
 	/** UI methods for user interaction */
 	ui: ExtensionUIContext;
-	/** Whether UI is available (false in print/RPC mode) */
+	/** Whether UI is available (false in print mode) */
 	hasUI: boolean;
+	/** Whether pi is running in interactive TUI mode (false in print and RPC modes) */
+	isInteractive: boolean;
 	/** Current working directory */
 	cwd: string;
 	/** Session manager (read-only) */

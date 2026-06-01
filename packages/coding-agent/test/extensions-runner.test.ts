@@ -9,7 +9,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AuthStorage } from "../src/core/auth-storage.ts";
 import { createExtensionRuntime, discoverAndLoadExtensions } from "../src/core/extensions/loader.ts";
 import { ExtensionRunner } from "../src/core/extensions/runner.ts";
-import type { ExtensionActions, ExtensionContextActions, ProviderConfig } from "../src/core/extensions/types.ts";
+import type {
+	ExtensionActions,
+	ExtensionContextActions,
+	ExtensionUIContext,
+	ProviderConfig,
+} from "../src/core/extensions/types.ts";
 import { KeybindingsManager, type KeyId } from "../src/core/keybindings.ts";
 import { ModelRegistry } from "../src/core/model-registry.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -440,6 +445,50 @@ describe("ExtensionRunner", () => {
 
 			controller.abort();
 			expect(ctx.signal?.aborted).toBe(true);
+		});
+
+		it("hasUI is false and isInteractive is false by default (no uiContext)", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+
+			const ctx = runner.createContext();
+			expect(ctx.hasUI).toBe(false);
+			expect(ctx.isInteractive).toBe(false);
+		});
+
+		it("hasUI is true when uiContext is provided, isInteractive defaults to false (RPC mode)", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+			runner.setUIContext({} as ExtensionUIContext);
+
+			const ctx = runner.createContext();
+			expect(ctx.hasUI).toBe(true);
+			expect(ctx.isInteractive).toBe(false);
+		});
+
+		it("isInteractive is true when uiContext is provided with interactive flag (interactive mode)", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+			runner.setUIContext({} as ExtensionUIContext, true);
+
+			const ctx = runner.createContext();
+			expect(ctx.hasUI).toBe(true);
+			expect(ctx.isInteractive).toBe(true);
+		});
+
+		it("isInteractive resets when uiContext is replaced without interactive flag", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+			runner.setUIContext({} as ExtensionUIContext, true);
+			runner.setUIContext({} as ExtensionUIContext);
+
+			const ctx = runner.createContext();
+			expect(ctx.hasUI).toBe(true);
+			expect(ctx.isInteractive).toBe(false);
 		});
 	});
 

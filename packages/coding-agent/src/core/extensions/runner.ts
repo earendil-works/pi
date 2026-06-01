@@ -225,6 +225,7 @@ export class ExtensionRunner {
 	private extensions: Extension[];
 	private runtime: ExtensionRuntime;
 	private uiContext: ExtensionUIContext;
+	private _isInteractive = false;
 	private cwd: string;
 	private sessionManager: SessionManager;
 	private modelRegistry: ModelRegistry;
@@ -354,8 +355,9 @@ export class ExtensionRunner {
 		this.reloadHandler = async () => {};
 	}
 
-	setUIContext(uiContext?: ExtensionUIContext): void {
+	setUIContext(uiContext?: ExtensionUIContext, interactive = false): void {
 		this.uiContext = uiContext ?? noOpUIContext;
+		this._isInteractive = interactive;
 	}
 
 	getUIContext(): ExtensionUIContext {
@@ -581,6 +583,10 @@ export class ExtensionRunner {
 			get hasUI() {
 				runner.assertActive();
 				return runner.hasUI();
+			},
+			get isInteractive() {
+				runner.assertActive();
+				return runner._isInteractive;
 			},
 			get cwd() {
 				runner.assertActive();
