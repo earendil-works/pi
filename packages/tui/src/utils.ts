@@ -1121,7 +1121,7 @@ export function extractSegments(
 		for (const { segment } of graphemeSegmenter.segment(line.slice(i, textEnd))) {
 			const w = graphemeWidth(segment);
 
-			if (currentCol < beforeEnd) {
+			if (currentCol + w <= beforeEnd) {
 				if (pendingAnsiBefore) {
 					before += pendingAnsiBefore;
 					pendingAnsiBefore = "";
