@@ -4,12 +4,17 @@ import { WebSocketServer, WebSocket } from "ws";
 import { join } from "node:path";
 import { mountStatic } from "./routes/static";
 import { mountHealth } from "./routes/health";
+import { mountCronRoutes } from "./routes/cron";
+import { CronStore } from "./cron-store";
 
 const PORT = parseInt(process.env.PI_WEB_PORT || "8741", 10);
 const MAX_SESSIONS = parseInt(process.env.PI_WEB_MAX_SESSIONS || "16", 10);
 
 export function createApp(): express.Express {
   const app = express();
+
+  // Cron store singleton (used by cron routes)
+  const cronStore = new CronStore();
 
   // CORS: loopback-only (http://127.0.0.1:*)
   app.use((req, res, next) => {
@@ -31,6 +36,9 @@ export function createApp(): express.Express {
 
   // Health check endpoint - mounted BEFORE static catch-all
   mountHealth(app);
+
+  // Cron REST API endpoints - mounted BEFORE static catch-all
+  mountCronRoutes(app, cronStore);
 
   // Static files (SPA fallback) - mounted LAST as catch-all
   mountStatic(app, join(__dirname, "../web/dist"));
