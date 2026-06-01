@@ -222,7 +222,13 @@ export class ToolExecutionComponent extends Container {
 		if (this.hideComponent) {
 			return [];
 		}
-		return super.render(width);
+		const lines = super.render(width);
+		// If every line is empty (Spacer-only with a zero-height custom renderer),
+		// treat the component as invisible so it takes no layout space.
+		if (lines.length > 0 && lines.every((l) => l === "")) {
+			return [];
+		}
+		return lines;
 	}
 
 	private updateDisplay(): void {
