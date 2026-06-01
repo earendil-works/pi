@@ -54,7 +54,7 @@ interface ClientState {
  * @returns The WebSocketServer (caller may call .close() on it)
  */
 export function attachWsHandler(httpServer: Server, pool: SessionPool): WebSocketServer {
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
 
   // Per-client state
   const clients = new Map<WebSocket, ClientState>();
@@ -148,9 +148,24 @@ export function attachWsHandler(httpServer: Server, pool: SessionPool): WebSocke
 
         case "prompt": {
           const { text, images } = msg;
-          if (typeof text !== "string" || !text) {
-            sendError(ws, "text is required");
+          // Validate text: string, length 1-256KB
+          if (
+            typeof text !== "string" ||
+            text.length === 0 ||
+            text.length > 256 * 1024
+          ) {
+            sendError(ws, "invalid prompt");
             return;
+          }
+          // Validate images: array of strings, each < 1KB
+          if (images !== undefined) {
+            if (
+              !Array.isArray(images) ||
+              !images.every((i) => typeof i === "string" && i.length < 1024)
+            ) {
+              sendError(ws, "invalid prompt");
+              return;
+            }
           }
           const state = clients.get(ws)!;
           const sessionId = state.activeSession;

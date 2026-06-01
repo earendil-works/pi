@@ -83,7 +83,18 @@ export class MemoryStore {
   }
 
   writeAtom(atom: MemoryAtom): void {
-    const tagsJson = JSON.stringify(atom.tags);
+    // Validate and sanitize atom fields (defense-in-depth)
+    const title = typeof atom.title === "string" ? atom.title.slice(0, 500) : "";
+    const summary = typeof atom.summary === "string" ? atom.summary.slice(0, 500) : "";
+    const content = typeof atom.content === "string" ? atom.content.slice(0, 32 * 1024) : "";
+    const rawTags = Array.isArray(atom.tags) ? atom.tags : [];
+    const tags = rawTags.filter((t): t is string => typeof t === "string").slice(0, 20).map((t) => t.slice(0, 50));
+    let importance = typeof atom.importance === "number" ? atom.importance : 0.5;
+    let strength = typeof atom.strength === "number" ? atom.strength : 1.0;
+    importance = Math.max(0, Math.min(1, importance));
+    strength = Math.max(0, Math.min(1, strength));
+
+    const tagsJson = JSON.stringify(tags);
     const archivedInt = atom.archived ? 1 : 0;
 
     // Upsert main table
@@ -104,8 +115,8 @@ export class MemoryStore {
         file_path=excluded.file_path,
         content_hash=excluded.content_hash
     `).run(
-      atom.id, atom.type, atom.title, tagsJson,
-      atom.importance, atom.strength, atom.access_count,
+      atom.id, atom.type, title, tagsJson,
+      importance, strength, atom.access_count,
       atom.last_access, atom.created_at, atom.updated_at,
       atom.version, archivedInt, atom.file_path, atom.content_hash,
     );
@@ -113,7 +124,7 @@ export class MemoryStore {
     // Upsert FTS
     this.db.prepare("DELETE FROM memory_fts WHERE id = ?").run(atom.id);
     this.db.prepare("INSERT INTO memory_fts (id, title, tags) VALUES (?, ?, ?)").run(
-      atom.id, atom.title, tagsJson,
+      atom.id, title, tagsJson,
     );
   }
 

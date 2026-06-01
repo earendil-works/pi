@@ -4,7 +4,7 @@ import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, readdir, unlink, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionPool, SessionHeader } from "../session-pool";
-import type { LLMClient } from "../llm-client";
+import type { LLMClient, ExtractedAtom } from "../llm-client";
 import { MemoryStore } from "../memory-store";
 
 function toIsoTs(date: Date): string {
@@ -153,15 +153,18 @@ async function extractAtomsSafely(jsonlContent: string, deps?: SessionsDeps): Pr
 		if (atoms.length > 0 && deps.memoryStore) {
 			const now = new Date().toISOString();
 			for (const atom of atoms) {
+				// Sanitize atom fields before writing
+				const sanitized = sanitizeAtom(atom);
+				if (!sanitized) continue; // Skip invalid atoms
 				deps.memoryStore.writeAtom({
-					id: atom.id ?? randomUUID(),
-					type: atom.type,
-					title: atom.title,
-					summary: atom.summary,
-					content: atom.content,
-					tags: atom.tags,
-					importance: atom.importance,
-					strength: atom.strength,
+					id: sanitized.id ?? randomUUID(),
+					type: sanitized.type,
+					title: sanitized.title,
+					summary: sanitized.summary,
+					content: sanitized.content,
+					tags: sanitized.tags,
+					importance: sanitized.importance,
+					strength: sanitized.strength,
 					access_count: 0,
 					last_access: now,
 					created_at: now,
@@ -169,7 +172,7 @@ async function extractAtomsSafely(jsonlContent: string, deps?: SessionsDeps): Pr
 					version: 1,
 					archived: false,
 					file_path: "",
-					content_hash: createHash("sha256").update(atom.content).digest("hex"),
+					content_hash: createHash("sha256").update(sanitized.content).digest("hex"),
 				});
 			}
 		}
@@ -178,6 +181,40 @@ async function extractAtomsSafely(jsonlContent: string, deps?: SessionsDeps): Pr
 		console.warn("Memory extraction failed, proceeding with deletion:", llmErr);
 		return 0;
 	}
+}
+
+/**
+ * Sanitize an extracted atom to enforce length and range constraints.
+ * Returns null if the atom is invalid and should be skipped.
+ */
+function sanitizeAtom(atom: ExtractedAtom): { id: string; title: string; summary: string; content: string; tags: string[]; importance: number; strength: number; type: string } | null {
+	// title/summary max 500 chars
+	const title = typeof atom.title === "string" ? atom.title.slice(0, 500) : "";
+	const summary = typeof atom.summary === "string" ? atom.summary.slice(0, 500) : "";
+
+	// content max 32KB
+	const content = typeof atom.content === "string" ? atom.content.slice(0, 32 * 1024) : "";
+
+	// tags: max 20, each < 50 chars
+	const rawTags = Array.isArray(atom.tags) ? atom.tags : [];
+	const tags = rawTags
+		.filter((t): t is string => typeof t === "string")
+		.slice(0, 20)
+		.map((t) => t.slice(0, 50));
+
+	// importance and strength must be in [0, 1]
+	let importance = typeof atom.importance === "number" ? atom.importance : 0.5;
+	let strength = typeof atom.strength === "number" ? atom.strength : 1.0;
+	importance = Math.max(0, Math.min(1, importance));
+	strength = Math.max(0, Math.min(1, strength));
+
+	// Require valid type
+	if (!atom.type || typeof atom.type !== "string") return null;
+
+	// Require non-empty title
+	if (title.length === 0) return null;
+
+	return { id: atom.id ?? randomUUID(), title, summary, content, tags, importance, strength, type: atom.type };
 }
 
 async function parseSessionHeader(filePath: string): Promise<SessionHeader | undefined> {

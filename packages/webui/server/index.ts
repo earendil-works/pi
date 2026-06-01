@@ -2,6 +2,7 @@ import express from "express";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import helmet from "helmet";
 import { mountStatic } from "./routes/static";
 import { mountHealth } from "./routes/health";
 import { mountCronRoutes } from "./routes/cron";
@@ -56,8 +57,23 @@ export function createApp(deps?: Partial<ServerDeps>): { app: express.Express; d
     next();
   });
 
-  // JSON body parser
-  app.use(express.json());
+  // JSON body parser with size limit
+  app.use(express.json({ limit: "32kb" }));
+
+  // Security headers
+  app.use(helmet({
+    contentSecurityPolicy: {
+      directives: {
+        "default-src": ["'self'"],
+        "script-src": ["'self'"],
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "connect-src": ["'self'", "ws:", "wss:"],
+        "img-src": ["'self'", "data:"],
+        "object-src": ["'none'"],
+        "frame-ancestors": ["'none'"],
+      },
+    },
+  }));
 
   // Health check endpoint - mounted BEFORE static catch-all
   mountHealth(app);

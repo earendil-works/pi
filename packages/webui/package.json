@@ -14,6 +14,7 @@
     "better-sqlite3": "11.7.0",
     "chokidar": "3.6.0",
     "express": "4.21.2",
+    "helmet": "8.0.0",
     "ws": "8.18.0"
   },
   "devDependencies": {
