@@ -26,6 +26,7 @@ interface CronJob {
 	prompt: string;
 	enabled: boolean;
 	last_run: string | null;
+	last_run_status?: "ok" | "error" | null;
 	created_at: string;
 }
 
@@ -137,7 +138,7 @@ function matchesCron(parsed: ParsedCron, date: Date): boolean {
 // Schedule Checking
 // ============================================================================
 
-function isOverdue(job: CronJob, now: Date): boolean {
+export function isOverdue(job: CronJob, now: Date): boolean {
 	if (!job.enabled) {
 		return false;
 	}
@@ -275,6 +276,7 @@ function executeOperation(
 				prompt: params.prompt,
 				enabled: true,
 				last_run: null,
+				last_run_status: null,
 				created_at: new Date().toISOString(),
 			};
 
@@ -491,10 +493,10 @@ export function registerCron(pi: ExtensionAPI): void {
 			return;
 		}
 
-		// Update last_run timestamps
+		// Update last_run timestamps and set status to ok
 		const updatedJobs = jobs.map((job) => {
 			if (overdueJobs.some((o) => o.id === job.id)) {
-				return { ...job, last_run: now.toISOString() };
+				return { ...job, last_run: now.toISOString(), last_run_status: "ok" as const };
 			}
 			return job;
 		});
@@ -512,10 +514,27 @@ export function registerCron(pi: ExtensionAPI): void {
 		}
 
 		// Send prompts for each overdue job
+		const failedJobIds: string[] = [];
 		for (const job of overdueJobs) {
-			pi.sendUserMessage(`[Scheduled task: ${job.name}] ${job.prompt}`, {
-				deliverAs: "followUp",
+			try {
+				await pi.sendUserMessage(`[Scheduled task: ${job.name}] ${job.prompt}`, {
+					deliverAs: "followUp",
+				});
+			} catch {
+				failedJobIds.push(job.id);
+			}
+		}
+
+		// Update status to error for jobs that failed
+		if (failedJobIds.length > 0) {
+			const allJobs = loadJobs();
+			const reSavedJobs = allJobs.map((job) => {
+				if (failedJobIds.includes(job.id)) {
+					return { ...job, last_run_status: "error" as const };
+				}
+				return job;
 			});
+			saveJobs(reSavedJobs);
 		}
 	});
 }

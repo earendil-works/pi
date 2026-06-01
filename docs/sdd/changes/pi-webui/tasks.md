@@ -99,7 +99,7 @@
 
 ## 6. Memory extraction (session deletion)
 
-- [ ] 6.1 **Memory store writer**
+- [x] 6.1 **Memory store writer**
   - **文件**: `packages/webui/server/memory-store.ts` (Create)
   - **内容**: `MemoryStore` class with `init()` running schema CREATE TABLE IF NOT EXISTS for `memory_index`/`memory_fts`/`memory_embeddings` (matching `extensions/personal-assistant/memory.ts` schema); `writeAtom(atom)` inserts row + fts row; `close()` closes db connection
   - **验证**: Create temp db, init, writeAtom({id:'a1', type:'knowledge', title:'t', summary:'s', content:'c', tags:[], importance:0.5, strength:1.0, created_at:now, updated_at:now, version:1, archived:false, file_path:'', content_hash:'h'}); query back: returns 1 row
@@ -111,7 +111,7 @@
   - **验证**: `cd packages/webui && npx vitest run server/test/memory-store.test.ts` all 4 tests PASS
   - **依赖**: 6.1
 
-- [ ] 6.3 **LLM client for atom extraction**
+- [x] 6.3 **LLM client for atom extraction**
   - **文件**: `packages/webui/server/llm-client.ts` (Create)
   - **内容**: `LLMClient` class; reads `~/.pi/agent/models.json` to find default model + provider config; `extractAtoms(sessionMessages: string): Promise<ExtractedAtom[]>` builds the same extraction prompt as `extensions/personal-assistant/memory.ts` line 1131; calls provider's chat completion API; parses JSON response into ExtractedAtom[]; 5s timeout + 1 retry on failure
   - **验证**: Unit test with mocked fetch: returns 2 atoms; on 500, retries; on second 500, throws
@@ -151,7 +151,7 @@
   - **验证**: `cd packages/personal-assistant && npx vitest run test/cron.test.ts` existing tests PASS + new test for trigger_now PASS
   - **依赖**: 无
 
-- [ ] 8.2 **Cron extension tests for trigger_now**
+- [x] 8.2 **Cron extension tests for trigger_now**
   - **文件**: `extensions/personal-assistant/test/cron.test.ts` (Create new file; the `test/` directory does not exist yet, must be created)
   - **内容**: Vitest: (a) add new job, (b) trigger_now sets last_run to null, (c) isOverdue returns true after trigger_now, (d) existing add/list/remove/toggle still work (backward compat). Use a temp HOME dir to avoid touching real cron.json.
   - **验证**: `cd extensions/personal-assistant && npx vitest run test/cron.test.ts` all 4 tests PASS
@@ -173,13 +173,13 @@
 
 ## 10. React SPA foundation
 
-- [ ] 10.1 **Create web/package.json and vite config**
+- [x] 10.1 **Create web/package.json and vite config**
   - **文件**: `packages/webui/web/package.json` (Create)
   - **内容**: `{"name": "@pi-mono/webui-web", "private": true, "type": "module", "scripts": {"dev": "vite", "build": "vite build", "typecheck": "tsc --noEmit", "test": "vitest"}, "dependencies": {"react": "^19.0.0", "react-dom": "^19.0.0", "react-router-dom": "^7.0.0", "lucide-react": "^0.460.0"}, "devDependencies": {"vite": "^7.0.0", "@vitejs/plugin-react": "^4.3.0", "typescript": "^5.9.0", "@types/react": "^19.0.0", "@types/react-dom": "^19.0.0", "tailwindcss": "^4.0.0", "@tailwindcss/vite": "^4.0.0", "vitest": "^2.1.0", "@testing-library/react": "^16.0.0", "@testing-library/jest-dom": "^6.5.0", "@testing-library/user-event": "^14.5.0", "jsdom": "^25.0.0"}}`
   - **验证**: `cat packages/webui/web/package.json` shows expected content
   - **依赖**: 1.1
 
-- [ ] 10.1b **Create web/tsconfig.json**
+- [x] 10.1b **Create web/tsconfig.json**
   - **文件**: `packages/webui/web/tsconfig.json` (Create)
   - **内容**: `{"compilerOptions": {"target": "ES2022", "useDefineForClassFields": true, "lib": ["ES2022", "DOM", "DOM.Iterable"], "module": "ESNext", "skipLibCheck": true, "moduleResolution": "Bundler", "allowImportingTsExtensions": true, "resolveJsonModule": true, "isolatedModules": true, "moduleDetection": "force", "noEmit": true, "jsx": "react-jsx", "strict": true, "noUnusedLocals": true, "noUnusedParameters": true, "noFallthroughCasesInSwitch": true, "types": ["vitest/globals", "@testing-library/jest-dom"]}, "include": ["src"]}`
   - **验证**: `cd packages/webui/web && npx tsc --noEmit` returns exit 0 with empty src dir
@@ -243,7 +243,7 @@
   - **验证**: Component test: row with `last_run: "2025-01-01T00:00:00Z"` shows "Last run: 2025-01-01"; row with `last_run: null` shows "Never run"
   - **依赖**: 12.1, 8.3
 
-- [ ] 8.3 **Add last_run_status to cron.json schema**
+- [x] 8.3 **Add last_run_status to cron.json schema**
   - **文件**: `extensions/personal-assistant/cron.ts` (Modify)
   - **内容**: Add optional `last_run_status: "ok" | "error" | null` field to `CronJob` interface; cron.ts session_start handler sets `last_run_status: "ok"` after marking `last_run`; on sendUserMessage failure (catch block), set `last_run_status: "error"`. No new file — just denormalize the status into existing cron.json. Backward compatible (field is optional).
   - **验证**: Existing TUI behavior unchanged for jobs without this field; new jobs get `last_run_status: "ok"` after first overdue fire
