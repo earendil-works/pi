@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -640,6 +641,82 @@ export default function(pi: ExtensionAPI) {
 			expect(runner.getCommand("deploy:1")?.description).toBe("explicit command");
 			expect(runner.getCommand("deploy:2")?.description).toBe("global command");
 			expect(runner.getToolDefinition("duplicate-tool")?.description).toBe("explicit tool");
+		});
+	});
+
+	describe("gitContextBoundary", () => {
+		it("should exclude context files above the git root when gitContextBoundary is true", async () => {
+			// Structure:
+			//   tempDir/                     <- no git
+			//     AGENTS.md                  <- should be excluded
+			//     repo/                      <- git root
+			//       .git/
+			//       AGENTS.md                <- repo root context
+			//       project/                 <- cwd
+			//         AGENTS.md              <- project context
+			const repoDir = join(tempDir, "repo");
+			mkdirSync(repoDir, { recursive: true });
+			execSync("git init", { cwd: repoDir, stdio: "ignore" });
+
+			writeFileSync(join(tempDir, "AGENTS.md"), "# Outside the repo — should be excluded.");
+			writeFileSync(join(repoDir, "AGENTS.md"), "# Repo root context.");
+			const projectDir = join(repoDir, "project");
+			mkdirSync(projectDir, { recursive: true });
+			writeFileSync(join(projectDir, "AGENTS.md"), "# Project context.");
+
+			const loader = new DefaultResourceLoader({ cwd: projectDir, agentDir, gitContextBoundary: true });
+			await loader.reload();
+
+			const { agentsFiles } = loader.getAgentsFiles();
+			const paths = agentsFiles.map((f) => f.path);
+
+			// repo root and project AGENTS.md should be present
+			expect(paths.some((p) => p.endsWith(join("repo", "AGENTS.md")))).toBe(true);
+			expect(paths.some((p) => p.endsWith(join("repo", "project", "AGENTS.md")))).toBe(true);
+
+			// AGENTS.md above the git root should be excluded
+			expect(paths.some((p) => p === join(tempDir, "AGENTS.md"))).toBe(false);
+		});
+
+		it("should include context files above the git root when gitContextBoundary is false (default)", async () => {
+			const repoDir = join(tempDir, "repo");
+			mkdirSync(repoDir, { recursive: true });
+			execSync("git init", { cwd: repoDir, stdio: "ignore" });
+
+			writeFileSync(join(tempDir, "AGENTS.md"), "# Outside the repo.");
+			writeFileSync(join(repoDir, "AGENTS.md"), "# Repo root context.");
+			const projectDir = join(repoDir, "project");
+			mkdirSync(projectDir, { recursive: true });
+			writeFileSync(join(projectDir, "AGENTS.md"), "# Project context.");
+
+			const loader = new DefaultResourceLoader({ cwd: projectDir, agentDir, gitContextBoundary: false });
+			await loader.reload();
+
+			const { agentsFiles } = loader.getAgentsFiles();
+			const paths = agentsFiles.map((f) => f.path);
+
+			// All three should be present — ancestor walk goes to /
+			expect(paths.some((p) => p === join(tempDir, "AGENTS.md"))).toBe(true);
+			expect(paths.some((p) => p.endsWith(join("repo", "AGENTS.md")))).toBe(true);
+			expect(paths.some((p) => p.endsWith(join("repo", "project", "AGENTS.md")))).toBe(true);
+		});
+
+		it("should fall back to full ancestor walk when gitContextBoundary is true but not in a git repo", async () => {
+			const projectDir = join(tempDir, "project");
+			mkdirSync(projectDir, { recursive: true });
+			// No .git directory — not a git repo
+			writeFileSync(join(tempDir, "AGENTS.md"), "# Ancestor context.");
+			writeFileSync(join(projectDir, "AGENTS.md"), "# Project context.");
+
+			const loader = new DefaultResourceLoader({ cwd: projectDir, agentDir, gitContextBoundary: true });
+			await loader.reload();
+
+			const { agentsFiles } = loader.getAgentsFiles();
+			const paths = agentsFiles.map((f) => f.path);
+
+			// Both should be present — no git root, walk goes to /
+			expect(paths.some((p) => p === join(tempDir, "AGENTS.md"))).toBe(true);
+			expect(paths.some((p) => p.endsWith(join("project", "AGENTS.md")))).toBe(true);
 		});
 	});
 });

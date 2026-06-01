@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import chalk from "chalk";
@@ -72,12 +73,27 @@ function loadContextFileFromDir(dir: string): { path: string; content: string } 
 	return null;
 }
 
+/** Resolve the git root for a given directory, or null if not in a repo. */
+function resolveGitRoot(cwd: string): string | null {
+	try {
+		return execSync("git rev-parse --show-toplevel", {
+			cwd: resolvePath(cwd),
+			encoding: "utf-8",
+			stdio: ["ignore", "pipe", "ignore"],
+		}).trim();
+	} catch {
+		return null;
+	}
+}
+
 export function loadProjectContextFiles(options: {
 	cwd: string;
 	agentDir: string;
+	gitContextBoundary?: boolean;
 }): Array<{ path: string; content: string }> {
 	const resolvedCwd = resolvePath(options.cwd);
 	const resolvedAgentDir = resolvePath(options.agentDir);
+	const gitRoot = options.gitContextBoundary ? resolveGitRoot(options.cwd) : null;
 
 	const contextFiles: Array<{ path: string; content: string }> = [];
 	const seenPaths = new Set<string>();
@@ -101,6 +117,9 @@ export function loadProjectContextFiles(options: {
 		}
 
 		if (currentDir === root) break;
+		// When gitContextBoundary is set, stop at the git root — context above
+		// the repo doesn't belong to this project.
+		if (gitRoot && resolve(currentDir) === resolve(gitRoot)) break;
 
 		const parentDir = resolve(currentDir, "..");
 		if (parentDir === currentDir) break;
@@ -116,6 +135,7 @@ export interface DefaultResourceLoaderOptions {
 	cwd: string;
 	agentDir: string;
 	settingsManager?: SettingsManager;
+	gitContextBoundary?: boolean;
 	eventBus?: EventBus;
 	additionalExtensionPaths?: string[];
 	additionalSkillPaths?: string[];
@@ -165,6 +185,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	private noPromptTemplates: boolean;
 	private noThemes: boolean;
 	private noContextFiles: boolean;
+	private gitContextBoundary: boolean;
 	private systemPromptSource?: string;
 	private appendSystemPromptSource?: string[];
 	private extensionsOverride?: (base: LoadExtensionsResult) => LoadExtensionsResult;
@@ -223,6 +244,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		this.noPromptTemplates = options.noPromptTemplates ?? false;
 		this.noThemes = options.noThemes ?? false;
 		this.noContextFiles = options.noContextFiles ?? false;
+		this.gitContextBoundary = options.gitContextBoundary ?? false;
 		this.systemPromptSource = options.systemPrompt;
 		this.appendSystemPromptSource = options.appendSystemPrompt;
 		this.extensionsOverride = options.extensionsOverride;
@@ -465,8 +487,11 @@ export class DefaultResourceLoader implements ResourceLoader {
 			}
 		}
 
+		const gitContextBoundary = this.gitContextBoundary || this.settingsManager.getGitContextBoundary();
 		const agentsFiles = {
-			agentsFiles: this.noContextFiles ? [] : loadProjectContextFiles({ cwd: this.cwd, agentDir: this.agentDir }),
+			agentsFiles: this.noContextFiles
+				? []
+				: loadProjectContextFiles({ cwd: this.cwd, agentDir: this.agentDir, gitContextBoundary }),
 		};
 		const resolvedAgentsFiles = this.agentsFilesOverride ? this.agentsFilesOverride(agentsFiles) : agentsFiles;
 		this.agentsFiles = resolvedAgentsFiles.agentsFiles;

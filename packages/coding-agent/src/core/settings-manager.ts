@@ -111,6 +111,7 @@ export interface Settings {
 	markdown?: MarkdownSettings;
 	warnings?: WarningSettings;
 	sessionDir?: string; // Custom session storage directory (same format as --session-dir CLI flag)
+	gitContextBoundary?: boolean; // default: false — when true, stop AGENTS.md ancestor walk at git root
 	httpIdleTimeoutMs?: number; // HTTP header/body idle timeout in milliseconds; 0 disables it
 	websocketConnectTimeoutMs?: number; // WebSocket connect/open handshake timeout in milliseconds; 0 disables it
 }
@@ -1077,6 +1078,10 @@ export class SettingsManager {
 
 	getCodeBlockIndent(): string {
 		return this.settings.markdown?.codeBlockIndent ?? "  ";
+	}
+
+	getGitContextBoundary(): boolean {
+		return this.settings.gitContextBoundary ?? false;
 	}
 
 	getWarnings(): WarningSettings {
