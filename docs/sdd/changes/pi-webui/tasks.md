@@ -283,6 +283,12 @@
   - **验证**: `cd packages/webui && npx vitest run server/test/index.test.ts` all 5 tests PASS
   - **依赖**: 2.1
 
+- [x] 15.3 **Integration test: boot createApp() and verify all endpoints**
+  - **文件**: `packages/webui/server/test/integration.test.ts` (Create)
+  - **内容**: 6 vitest tests via real startServer(): (a) GET /api/health 200, (b) GET /api/sessions 200 (empty), (c) POST /api/sessions 200 with id, (d) GET /api/cron/jobs 200, (e) WS connect stays open (does NOT immediately close), (f) writing to cron.json from outside triggers cron_changed event on WS client within 500ms
+  - **验证**: `cd packages/webui && npx vitest run server/test/integration.test.ts` all 6 tests PASS
+  - **依赖**: 15.1
+
 ## Verification
 
 - [x] 全量测试: `cd packages/webui && npx vitest run` — 117/119 tests PASS. 2 pre-existing failures in `server/test/index.test.ts` (Node 25 port-in-use error format + slow shutdown timer) are unrelated to webui changes
