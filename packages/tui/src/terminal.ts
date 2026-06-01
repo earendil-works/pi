@@ -82,6 +82,9 @@ export interface Terminal {
 	hideCursor(): void; // Hide the cursor
 	showCursor(): void; // Show the cursor
 
+	// Cursor shape (DECSCUSR). "default" restores the terminal's configured shape.
+	setCursorStyle(style: "default" | "steady-block"): void;
+
 	// Clear operations
 	clearLine(): void; // Clear current line
 	clearFromCursor(): void; // Clear from cursor to end of screen
@@ -529,6 +532,11 @@ export class ProcessTerminal implements Terminal {
 
 	showCursor(): void {
 		process.stdout.write("\x1b[?25h");
+	}
+
+	setCursorStyle(style: "default" | "steady-block"): void {
+		// DECSCUSR: 0 restores the terminal default, 2 is a steady (non-blinking) block.
+		process.stdout.write(style === "steady-block" ? "\x1b[2 q" : "\x1b[0 q");
 	}
 
 	clearLine(): void {

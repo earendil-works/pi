@@ -22,6 +22,34 @@ describe("normalizeAppleTerminalInput", () => {
 	});
 });
 
+describe("ProcessTerminal setCursorStyle", () => {
+	function captureWrites(fn: (terminal: ProcessTerminal) => void): string[] {
+		const terminal = new ProcessTerminal();
+		const writes: string[] = [];
+		const previousWrite = process.stdout.write;
+		process.stdout.write = ((chunk: string | Uint8Array) => {
+			writes.push(String(chunk));
+			return true;
+		}) as typeof process.stdout.write;
+		try {
+			fn(terminal);
+		} finally {
+			process.stdout.write = previousWrite;
+		}
+		return writes;
+	}
+
+	it("emits DECSCUSR steady block for steady-block", () => {
+		const writes = captureWrites((terminal) => terminal.setCursorStyle("steady-block"));
+		assert.deepEqual(writes, ["\x1b[2 q"]);
+	});
+
+	it("emits DECSCUSR reset for default", () => {
+		const writes = captureWrites((terminal) => terminal.setCursorStyle("default"));
+		assert.deepEqual(writes, ["\x1b[0 q"]);
+	});
+});
+
 describe("ProcessTerminal Kitty keyboard protocol negotiation", () => {
 	type NegotiationHarness = {
 		terminal: ProcessTerminal;

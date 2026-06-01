@@ -23,6 +23,7 @@ class FakeTerminal implements Terminal {
 	moveBy(_lines: number): void {}
 	hideCursor(): void {}
 	showCursor(): void {}
+	setCursorStyle(_style: "default" | "steady-block"): void {}
 	clearLine(): void {}
 	clearFromCursor(): void {}
 	clearScreen(): void {}

@@ -14,6 +14,8 @@ export class VirtualTerminal implements Terminal {
 	private resizeHandler?: () => void;
 	private _columns: number;
 	private _rows: number;
+	/** Records setCursorStyle calls for assertions (not part of the Terminal interface). */
+	readonly cursorStyleWrites: Array<"default" | "steady-block"> = [];
 
 	constructor(columns = 80, rows = 24) {
 		this._columns = columns;
@@ -81,6 +83,11 @@ export class VirtualTerminal implements Terminal {
 
 	showCursor(): void {
 		this.xterm.write("\x1b[?25h");
+	}
+
+	setCursorStyle(style: "default" | "steady-block"): void {
+		this.cursorStyleWrites.push(style);
+		this.xterm.write(style === "steady-block" ? "\x1b[2 q" : "\x1b[0 q");
 	}
 
 	clearLine(): void {
