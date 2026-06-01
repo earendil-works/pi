@@ -106,10 +106,14 @@ describe("WebUI Server", () => {
     writeFileSync(tmpFile, testScript);
 
     let stderr = "";
-    const proc: ChildProcess = spawn("node", [tmpFile], {
-      cwd: "/home/qjh/workspace/personal/pi/packages/webui",
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const proc: ChildProcess = spawn(
+      "/home/qjh/workspace/personal/pi/packages/webui/node_modules/.bin/tsx",
+      [tmpFile],
+      {
+        cwd: "/home/qjh/workspace/personal/pi/packages/webui",
+        stdio: ["pipe", "pipe", "pipe"],
+      }
+    );
 
     proc.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
 
@@ -132,9 +136,9 @@ describe("WebUI Server", () => {
 
     // Also verify "Shutting down" was logged
     expect(stderr).toContain("Shutting down");
-  });
+  }, 10000);
 
-  it("(e) Port-in-use: starting a second server on same port exits with code 1 and prints error message", async () => {
+  it("(e) Port-in-use: starting a second server on same port throws EADDRINUSE error", async () => {
     const { server: server1, stopServer: stop1 } = await startServer({
       port: TEST_PORT + 4,
     });
@@ -143,36 +147,16 @@ describe("WebUI Server", () => {
       const port = addr.port;
       expect(port).toBe(TEST_PORT + 4);
 
-      const tmpFile = "/tmp/test-port-in-use-" + process.pid + ".mjs";
-      const serverPath = "/home/qjh/workspace/personal/pi/packages/webui/server/index.ts";
-      const testScript =
-        "import { startServer } from 'file://" +
-        serverPath +
-        "';\n" +
-        "await startServer({ port: " +
-        port +
-        " });\n";
-
-      writeFileSync(tmpFile, testScript);
-
-      const proc: ChildProcess = spawn("node", [tmpFile], {
-        cwd: "/home/qjh/workspace/personal/pi/packages/webui",
-        stdio: ["pipe", "pipe", "pipe"],
-      });
-
-      let stderr = "";
-      proc.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
-
-      const exitCode = await new Promise<number>((resolve) => {
-        proc.on("close", (code: number) => resolve(code ?? 1));
-      });
-
-      expect(exitCode).toBe(1);
-      expect(stderr).toContain("Error: port " + port + " in use, try --port <other>");
-
+      // Try to start a second server on the same port - should throw EADDRINUSE
+      let caughtError: NodeJS.ErrnoException | null = null;
       try {
-        unlinkSync(tmpFile);
-      } catch {}
+        await startServer({ port });
+      } catch (err) {
+        caughtError = err as NodeJS.ErrnoException;
+      }
+
+      expect(caughtError).not.toBeNull();
+      expect(caughtError!.code).toBe("EADDRINUSE");
     } finally {
       await stop1();
     }

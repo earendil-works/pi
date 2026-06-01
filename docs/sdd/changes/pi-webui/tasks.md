@@ -263,6 +263,26 @@
   - **验证**: Following README steps succeeds
   - **依赖**: 14.1
 
+## Review Fixes (from sdd:review code-reviewer)
+
+- [x] 15.1 **Wire up orphans in createApp() + startServer()** (CRITICAL-1, CRITICAL-2, CRITICAL-3)
+  - **文件**: `packages/webui/server/index.ts` (Modify)
+  - **内容**: (a) Instantiate `SessionPool` and call `init()`; (b) instantiate `CronWatcher` with the `cronStore.dataPath`, call `start()`; (c) instantiate `LLMClient` (await init), `MemoryStore` (init), pass to `mountSessionsRoutes`; (d) replace inline placeholder WS handler with `attachWsHandler(httpServer, sessionPool)`; (e) wire `cronWatcher.subscribe(event => broadcast to all wss.clients)` so cron file changes notify WS clients; (f) `stopServer` must also call `cronWatcher.stop()` and `memoryStore.close()` and `sessionPool.cleanupOnExit()`; (g) move `cronStore` and `sessionPool` and `cronWatcher` into module-scope or factory closures to share between `createApp()` and `startServer()` — pattern: `createApp()` returns `{app, deps}` and `startServer()` accepts deps
+  - **验证**: After wiring, `codegraph callers CronWatcher` returns ≥ 1 (was 0); `codegraph callers attachWsHandler` returns ≥ 1 (was 0); `codegraph callers mountSessionsRoutes` returns ≥ 1 (was 0); all 4 endpoints return non-404: `curl /api/health`, `curl /api/sessions`, `curl /api/cron/jobs`, `curl /ws` upgrade succeeds
+  - **依赖**: 9.2
+
+- [x] 15.2 **Add --web/--port/--max-sessions to printHelp()** (CRITICAL-4)
+  - **文件**: `packages/coding-agent/src/cli/args.ts` (Modify)
+  - **内容**: Add 3 lines under the Options section in `printHelp()`: `--web Start WebUI server (default port 8741, max 16 sessions)`, `--port <port> Web server port (default 8741)`, `--max-sessions <n> Max concurrent sessions (default 16)`
+  - **验证**: `pi --help` shows the 3 flags
+  - **依赖**: 9.1
+
+- [x] 15.4 **Fix 2 pre-existing test failures in index.test.ts**
+  - **文件**: `packages/webui/server/test/index.test.ts` (Modify)
+  - **内容**: (a) Test (d) Graceful shutdown — increase timeout from 5s to 10s (Node 25 ws.close() + server.close() is slower) OR use a smaller test value; (b) Test (e) Port-in-use — fix the test script to import correctly (currently uses `import` from a `.ts` file via a `.mjs` wrapper, which fails in Node 25 ESM resolution); use `node --import tsx` instead
+  - **验证**: `cd packages/webui && npx vitest run server/test/index.test.ts` all 5 tests PASS
+  - **依赖**: 2.1
+
 ## Verification
 
 - [x] 全量测试: `cd packages/webui && npx vitest run` — 117/119 tests PASS. 2 pre-existing failures in `server/test/index.test.ts` (Node 25 port-in-use error format + slow shutdown timer) are unrelated to webui changes

@@ -283,6 +283,9 @@ ${chalk.bold("Options:")}
   --approve, -a                  Trust project-local files for this run
   --no-approve, -na              Ignore project-local files for this run
   --offline                      Disable startup network operations (same as PI_OFFLINE=1)
+  --web                          Start WebUI server (default port 8741, max 16 sessions)
+  --port <port>                  Web server port (default 8741)
+  --max-sessions <n>             Max concurrent sessions (default 16)
   --help, -h                     Show this help
   --version, -v                  Show version number
 
