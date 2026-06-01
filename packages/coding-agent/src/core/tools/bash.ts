@@ -266,6 +266,17 @@ function rebuildBashResultRenderComponent(
 	}
 }
 
+function prepareBashArguments(input: unknown): { command: string; timeout?: number } {
+	if (!input || typeof input !== "object") return input as { command: string; timeout?: number };
+	const FIELDS = new Set(["title", "tags", "created", "updated", "status", "type", "ftypes", "description"]);
+	for (const key of Object.keys(input as Record<string, unknown>)) {
+		if (FIELDS.has(key) && typeof (input as Record<string, unknown>)[key] === "string") {
+			delete (input as Record<string, unknown>)[key];
+		}
+	}
+	return input as { command: string; timeout?: number };
+}
+
 export function createBashToolDefinition(
 	cwd: string,
 	options?: BashToolOptions,
@@ -279,6 +290,7 @@ export function createBashToolDefinition(
 		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
 		promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
 		parameters: bashSchema,
+		prepareArguments: prepareBashArguments,
 		async execute(
 			_toolCallId,
 			{ command, timeout }: { command: string; timeout?: number },

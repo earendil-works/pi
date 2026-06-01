@@ -178,6 +178,17 @@ function formatWriteResult(
 	return `\n${theme.fg("error", output)}`;
 }
 
+function prepareWriteArguments(input: unknown): { path: string; content: string } {
+	if (!input || typeof input !== "object") return input as { path: string; content: string };
+	const FIELDS = new Set(["title", "tags", "created", "updated", "status", "type", "ftypes", "description"]);
+	for (const key of Object.keys(input as Record<string, unknown>)) {
+		if (FIELDS.has(key) && typeof (input as Record<string, unknown>)[key] === "string") {
+			delete (input as Record<string, unknown>)[key];
+		}
+	}
+	return input as { path: string; content: string };
+}
+
 export function createWriteToolDefinition(
 	cwd: string,
 	options?: WriteToolOptions,
@@ -191,6 +202,7 @@ export function createWriteToolDefinition(
 		promptSnippet: "Create or overwrite files",
 		promptGuidelines: ["Use write only for new files or complete rewrites."],
 		parameters: writeSchema,
+		prepareArguments: prepareWriteArguments,
 		async execute(
 			_toolCallId,
 			{ path, content }: { path: string; content: string },

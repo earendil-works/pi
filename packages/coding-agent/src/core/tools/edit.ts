@@ -91,6 +91,40 @@ export interface EditToolOptions {
 	operations?: EditOperations;
 }
 
+/**
+ * Known frontmatter keys that local models may leak into tool call arguments.
+ * Stripping these before validation prevents spurious schema violations.
+ */
+const FRONTMATTER_LEAK_KEYS = new Set([
+	"title",
+	"tags",
+	"created",
+	"updated",
+	"status",
+	"type",
+	"ftypes",
+	"description",
+]);
+
+function stripFrontmatterLeaks(obj: Record<string, unknown>): void {
+	for (const key of Object.keys(obj)) {
+		if (FRONTMATTER_LEAK_KEYS.has(key) && typeof obj[key] === "string") {
+			delete obj[key];
+		}
+	}
+}
+
+/**
+ * Escape raw control characters inside JSON string values.
+ * Some local models embed literal newlines inside JSON strings, which breaks JSON.parse.
+ */
+function sanitizeJsonString(str: string): string {
+	return str.replace(/"((?:[^"\\]|\\.)*)"/g, (_match, content) => {
+		const sanitized = content.replace(/\n/g, "\\n").replace(/\r/g, "\\r").replace(/\t/g, "\\t");
+		return `"${sanitized}"`;
+	});
+}
+
 function prepareEditArguments(input: unknown): EditToolInput {
 	if (!input || typeof input !== "object") {
 		return input as EditToolInput;
@@ -98,14 +132,37 @@ function prepareEditArguments(input: unknown): EditToolInput {
 
 	const args = input as Record<string, unknown>;
 
-	// Some models (Opus 4.6, GLM-5.1) send edits as a JSON string instead of an array
+	// 1. Strip frontmatter fields leaked to root level (local models may confuse
+	//    tool call arguments with the target file's YAML frontmatter)
+	stripFrontmatterLeaks(args);
+
+	// 2. Parse stringified edits, with malformed-JSON recovery for unescaped control
+	//    characters (some local models embed literal newlines in JSON string values)
 	if (typeof args.edits === "string") {
+		let parsed: unknown = null;
 		try {
-			const parsed = JSON.parse(args.edits);
-			if (Array.isArray(parsed)) args.edits = parsed;
-		} catch {}
+			parsed = JSON.parse(args.edits);
+		} catch {
+			// First attempt failed — try sanitizing and retrying
+			try {
+				parsed = JSON.parse(sanitizeJsonString(args.edits));
+			} catch {
+				// Both attempts failed; leave as-is so validation can reject cleanly
+			}
+		}
+		if (Array.isArray(parsed)) args.edits = parsed;
 	}
 
+	// 3. Strip leaked frontmatter keys from within each parsed edits element
+	if (Array.isArray(args.edits)) {
+		for (const edit of args.edits) {
+			if (edit && typeof edit === "object") {
+				stripFrontmatterLeaks(edit as Record<string, unknown>);
+			}
+		}
+	}
+
+	// Legacy format: flat oldText/newText at root (single-edit shorthand)
 	const legacy = args as LegacyEditToolInput;
 	if (typeof legacy.oldText !== "string" || typeof legacy.newText !== "string") {
 		return args as EditToolInput;
