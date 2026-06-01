@@ -2,8 +2,8 @@ import express from "express";
 import { createServer, Server } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { join } from "node:path";
-import packageJson from "../package.json" with { type: "json" };
 import { mountStatic } from "./routes/static";
+import { mountHealth } from "./routes/health";
 
 const PORT = parseInt(process.env.PI_WEB_PORT || "8741", 10);
 const MAX_SESSIONS = parseInt(process.env.PI_WEB_MAX_SESSIONS || "16", 10);
@@ -29,16 +29,8 @@ export function createApp(): express.Express {
   // JSON body parser
   app.use(express.json());
 
-  // Placeholder /api/health route
-  const startTime = Date.now();
-  app.get("/api/health", (_req, res) => {
-    res.json({
-      ok: true,
-      version: packageJson.version,
-      uptime: Math.floor((Date.now() - startTime) / 1000),
-      sessions: 0,
-    });
-  });
+  // Health check endpoint - mounted BEFORE static catch-all
+  mountHealth(app);
 
   // Static files (SPA fallback) - mounted LAST as catch-all
   mountStatic(app, join(__dirname, "../web/dist"));
