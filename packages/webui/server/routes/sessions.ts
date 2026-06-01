@@ -1,10 +1,12 @@
 import express from "express";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, readdir, unlink, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionPool } from "../session-pool";
 import type { SessionHeader } from "../session-pool";
+import type { LLMClient } from "../llm-client";
+import { MemoryStore } from "../memory-store";
 
 function toIsoTs(date: Date): string {
 	return date.toISOString().replace(/:/g, "-");
@@ -14,7 +16,12 @@ function sessionFilePath(sessionsDir: string, id: string, timestamp: string): st
 	return join(sessionsDir, `${timestamp}_${id}.jsonl`);
 }
 
-export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPool): void {
+export interface SessionsDeps {
+	llmClient?: LLMClient;
+	memoryStore?: MemoryStore;
+}
+
+export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPool, deps?: SessionsDeps): void {
 	// GET /api/sessions - list all sessions from pool
 	app.get("/api/sessions", async (_req, res) => {
 		try {
@@ -108,7 +115,7 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
 		}
 	});
 
-	// DELETE /api/sessions/:id - delete session (placeholder - no memory extraction yet)
+	// DELETE /api/sessions/:id - delete session after extracting memory atoms
 	app.delete("/api/sessions/:id", async (req, res) => {
 		try {
 			const { id } = req.params;
@@ -120,8 +127,54 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
 				return;
 			}
 
+			// Read session content for extraction
+			const jsonlContent = await readFile(filePath, "utf-8");
+
+			let atomsExtracted = 0;
+
+			// Attempt memory extraction if LLM client is available
+			if (deps?.llmClient) {
+				try {
+					const atoms = await deps.llmClient.extractAtoms(jsonlContent);
+
+					if (atoms.length > 0 && deps.memoryStore) {
+						const now = new Date().toISOString();
+
+						for (const atom of atoms) {
+							// Fill in defaults for MemoryAtom fields
+							const fullAtom = {
+								id: atom.id ?? randomUUID(),
+								type: atom.type,
+								title: atom.title,
+								summary: atom.summary,
+								content: atom.content,
+								tags: atom.tags,
+								importance: atom.importance,
+								strength: atom.strength,
+								access_count: 0,
+								last_access: now,
+								created_at: now,
+								updated_at: now,
+								version: 1,
+								archived: false,
+								file_path: "",
+								content_hash: createHash("sha256").update(atom.content).digest("hex"),
+							};
+							deps.memoryStore.writeAtom(fullAtom);
+						}
+					}
+
+					atomsExtracted = atoms.length;
+				} catch (llmErr) {
+					// LLM extraction failed - log but continue with deletion
+					console.warn("Memory extraction failed, proceeding with deletion:", llmErr);
+				}
+			}
+
+			// Delete the session file
 			await unlink(filePath);
-			res.json({ ok: true });
+
+			res.json({ ok: true, atomsExtracted });
 		} catch (err) {
 			console.error("Error deleting session:", err);
 			res.status(500).json({ error: "Internal server error" });

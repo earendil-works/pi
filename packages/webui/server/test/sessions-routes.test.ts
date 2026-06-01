@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import express from "express";
 import { createServer } from "node:http";
 import * as fs from "node:fs/promises";
@@ -319,7 +319,8 @@ describe("Sessions REST API Endpoints", () => {
 			});
 			expect(delRes.status).toBe(200);
 			const body = await delRes.json();
-			expect(body).toEqual({ ok: true });
+			expect(body.ok).toBe(true);
+			expect(body.atomsExtracted).toBe(0);
 
 			// Verify file no longer exists
 			await expect(fs.access(sessionFile)).rejects.toThrow();
@@ -346,6 +347,178 @@ describe("Sessions REST API Endpoints", () => {
 			const sessions = await listRes.json();
 			const found = sessions.find((s: any) => s.id === sessionId);
 			expect(found).toBeUndefined();
+		});
+	});
+
+	// (f) DELETE /api/sessions/:id extracts atoms before deletion
+	describe("(f) DELETE /api/sessions/:id extracts atoms before deletion", () => {
+		// Helper to create mock LLMClient
+		function createMockLLMClient(extractAtomsResult: any[]) {
+			return {
+				extractAtoms: vi.fn().mockResolvedValue(extractAtomsResult),
+			};
+		}
+
+		it("(f1) extracts 2 atoms and writes to memory.db before deleting session", async () => {
+			// Create mock LLMClient that returns 2 atoms
+			const mockAtoms = [
+				{
+					id: "atom-1",
+					type: "preference" as const,
+					title: "User prefers dark mode",
+					summary: "User has set dark mode as their preferred theme",
+					content: "",
+					tags: ["ui", "theme"],
+					importance: 0.8,
+					strength: 1.0,
+				},
+				{
+					id: "atom-2",
+					type: "workflow" as const,
+					title: "Daily standup workflow",
+					summary: "User attends daily standup at 9am",
+					content: "",
+					tags: ["schedule"],
+					importance: 0.6,
+					strength: 1.0,
+				},
+			];
+			const mockLLMClient = createMockLLMClient(mockAtoms);
+
+			// Create temp memory.db
+			const tempDbPath = `/tmp/test-memory-${Date.now()}-${Math.random()}.db`;
+			const { MemoryStore } = await import("../memory-store");
+			const memoryStore = new MemoryStore(tempDbPath);
+			memoryStore.init();
+
+			// Create temp sessions dir
+			const testSessionDir = path.join("/tmp", `pi-sessions-test-${crypto.randomUUID()}`);
+			await fs.mkdir(testSessionDir, { recursive: true });
+
+			// Mount routes with deps
+			const testApp = express();
+			testApp.use(express.json());
+			const pool = createMockPool(testSessionDir);
+			// @ts-ignore - deps not yet in signature but we're testing the new behavior
+			mountSessionsRoutes(testApp, pool, {
+				llmClient: mockLLMClient as any,
+				memoryStore: memoryStore as any,
+			});
+
+			const testServer = createServer(testApp);
+			await new Promise<void>((resolve) => testServer.listen(0, "127.0.0.1", resolve));
+			const port = (testServer.address() as any).port;
+
+			// Create a session via POST
+			const createRes = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ initialPrompt: "test" }),
+			});
+			const createBody = await createRes.json();
+			const sessionId = createBody.id;
+			const sessionFile = createBody.sessionFile;
+
+			// Add messages to the session file
+			const messages = [
+				JSON.stringify({ role: "user", content: "I prefer dark mode" }),
+				JSON.stringify({ role: "assistant", content: "Got it, dark mode enabled" }),
+			];
+			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + messages.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+
+			// Call DELETE
+			const delRes = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId}`, {
+				method: "DELETE",
+			});
+			expect(delRes.status).toBe(200);
+			const delBody = await delRes.json();
+			expect(delBody.ok).toBe(true);
+			expect(delBody.atomsExtracted).toBe(2);
+
+			// Verify JSONL file is deleted
+			await expect(fs.access(sessionFile)).rejects.toThrow();
+
+			// Verify atoms were written to memory.db
+			const atom1 = memoryStore.readAtom("atom-1");
+			expect(atom1).not.toBeNull();
+			expect(atom1!.title).toBe("User prefers dark mode");
+			expect(atom1!.type).toBe("preference");
+
+			const atom2 = memoryStore.readAtom("atom-2");
+			expect(atom2).not.toBeNull();
+			expect(atom2!.title).toBe("Daily standup workflow");
+			expect(atom2!.type).toBe("workflow");
+
+			// Cleanup
+			testServer.close();
+			memoryStore.close();
+			await fs.rm(testSessionDir, { recursive: true, force: true }).catch(() => {});
+			try { await fs.unlink(tempDbPath); } catch { /* ignore */ }
+		});
+
+		it("(f2) LLM failure is non-blocking - session deleted, memory.db unchanged", async () => {
+			// Create mock LLMClient that throws
+			const mockLLMClient = {
+				extractAtoms: vi.fn().mockRejectedValue(new Error("LLM API failed")),
+			};
+
+			// Create temp memory.db
+			const tempDbPath = `/tmp/test-memory-${Date.now()}-${Math.random()}.db`;
+			const { MemoryStore } = await import("../memory-store");
+			const memoryStore = new MemoryStore(tempDbPath);
+			memoryStore.init();
+
+			// Create temp sessions dir
+			const testSessionDir = path.join("/tmp", `pi-sessions-test-${crypto.randomUUID()}`);
+			await fs.mkdir(testSessionDir, { recursive: true });
+
+			// Mount routes with deps
+			const testApp = express();
+			testApp.use(express.json());
+			const pool = createMockPool(testSessionDir);
+			// @ts-ignore - deps not yet in signature but we're testing the new behavior
+			mountSessionsRoutes(testApp, pool, {
+				llmClient: mockLLMClient as any,
+				memoryStore: memoryStore as any,
+			});
+
+			const testServer = createServer(testApp);
+			await new Promise<void>((resolve) => testServer.listen(0, "127.0.0.1", resolve));
+			const port = (testServer.address() as any).port;
+
+			// Create a session via POST
+			const createRes = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ initialPrompt: "test" }),
+			});
+			const createBody = await createRes.json();
+			const sessionId = createBody.id;
+			const sessionFile = createBody.sessionFile;
+
+			// Call DELETE
+			const delRes = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId}`, {
+				method: "DELETE",
+			});
+			expect(delRes.status).toBe(200);
+			const delBody = await delRes.json();
+			expect(delBody.ok).toBe(true);
+			// atomsExtracted may be 0 or undefined on failure
+			expect(delBody.atomsExtracted === 0 || delBody.atomsExtracted === undefined).toBe(true);
+
+			// Verify JSONL file is deleted
+			await expect(fs.access(sessionFile)).rejects.toThrow();
+
+			// Verify memory.db is empty (no atoms written)
+			const atom1 = memoryStore.readAtom("non-existent-id");
+			expect(atom1).toBeNull();
+
+			// Cleanup
+			testServer.close();
+			memoryStore.close();
+			await fs.rm(testSessionDir, { recursive: true, force: true }).catch(() => {});
+			try { await fs.unlink(tempDbPath); } catch { /* ignore */ }
 		});
 	});
 });

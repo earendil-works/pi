@@ -123,7 +123,7 @@
   - **验证**: `cd packages/webui && npx vitest run server/test/llm-client.test.ts` all 4 tests PASS
   - **依赖**: 6.3
 
-- [ ] 6.5 **Wire DELETE session → extract → delete**
+- [x] 6.5 **Wire DELETE session → extract → delete**
   - **文件**: `packages/webui/server/routes/sessions.ts` (Modify, add DELETE handler)
   - **内容**: `DELETE /api/sessions/:id` reads session JSONL, calls LLMClient.extractAtoms(jsonl), MemoryStore.writeAtom for each; on LLM failure, log + skip; finally fs.unlink JSONL
   - **验证**: Create test session, DELETE it; verify JSONL gone, memory.db has N atoms (mock LLM to return 2 atoms)
@@ -137,7 +137,7 @@
   - **验证**: WebSocket test client connects, sends `subscribe`, gets session list events
   - **依赖**: 5.1, 2.1
 
-- [ ] 7.2 **WS unit tests**
+- [x] 7.2 **WS unit tests**
   - **文件**: `packages/webui/server/test/ws-handler.test.ts` (Create)
   - **内容**: Vitest: (a) client connects, (b) subscribe adds to subscribers, (c) prompt forwards to session-pool, (d) broadcast reaches all subscribers, (e) disconnect removes subscriber
   - **验证**: `cd packages/webui && npx vitest run server/test/ws-handler.test.ts` all 5 tests PASS
@@ -197,7 +197,7 @@
   - **验证**: `cd packages/webui/web && npx vite build` succeeds
   - **依赖**: 10.2
 
-- [ ] 10.4 **API client + WebSocket client**
+- [x] 10.4 **API client + WebSocket client**
   - **文件**: `packages/webui/web/src/lib/api.ts` (Create)
   - **内容**: `api` object with `listSessions()`, `listCronJobs()`, `createCronJob()`, `updateCronJob()`, `deleteCronJob()`, `triggerCronJob()`, `getMessages(sessionId, opts)`, `deleteSession()`; `ws` class wrapping WebSocket with reconnect, message subscription
   - **验证**: TypeScript compiles; `ws.connect()` opens connection to ws://127.0.0.1:8741/ws

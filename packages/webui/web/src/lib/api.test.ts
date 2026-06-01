@@ -1,0 +1,395 @@
+import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { api, WebSocketClient } from "./api";
+
+describe("api", () => {
+  let mockFetch: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    mockFetch = vi.fn();
+    global.fetch = mockFetch;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  describe("listSessions", () => {
+    it("should call GET /api/sessions", async () => {
+      const mockSessions = [
+        { id: "1", title: "Session 1", status: "idle", lastActive: "2025-01-01T00:00:00Z", messageCount: 5 },
+        { id: "2", title: "Session 2", status: "running", lastActive: "2025-01-02T00:00:00Z", messageCount: 10 },
+      ];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(mockSessions),
+      });
+
+      const result = await api.listSessions();
+
+      expect(mockFetch).toHaveBeenCalledTimes(1);
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/sessions",
+        expect.objectContaining({
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+      expect(result).toEqual(mockSessions);
+    });
+  });
+
+  describe("listCronJobs", () => {
+    it("should call GET /api/cron/jobs", async () => {
+      const mockJobs = [
+        { id: "abc", name: "Morning Email", schedule: "0 9 * * *", prompt: "Send email", enabled: true, last_run: null, created_at: "2025-01-01T00:00:00Z" },
+      ];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(mockJobs),
+      });
+
+      const result = await api.listCronJobs();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/cron/jobs",
+        expect.any(Object)
+      );
+      expect(result).toEqual(mockJobs);
+    });
+  });
+
+  describe("createCronJob", () => {
+    it("should POST to /api/cron/jobs with input body", async () => {
+      const input = { name: "Test Job", schedule: "0 10 * * *", prompt: "Test", enabled: true };
+      const created = { id: "new-123", ...input, last_run: null, created_at: "2025-01-01T00:00:00Z" };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(created),
+      });
+
+      const result = await api.createCronJob(input);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/cron/jobs",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify(input),
+        })
+      );
+      expect(result).toEqual(created);
+    });
+  });
+
+  describe("updateCronJob", () => {
+    it("should PATCH to /api/cron/jobs/:id", async () => {
+      const partial = { enabled: false };
+      const updated = { id: "abc", name: "Test", schedule: "0 10 * * *", prompt: "Test", enabled: false, last_run: null, created_at: "2025-01-01T00:00:00Z" };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(updated),
+      });
+
+      const result = await api.updateCronJob("abc", partial);
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/cron/jobs/abc",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify(partial),
+        })
+      );
+      expect(result).toEqual(updated);
+    });
+  });
+
+  describe("deleteCronJob", () => {
+    it("should DELETE from /api/cron/jobs/:id", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(undefined),
+      });
+
+      await api.deleteCronJob("abc");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/cron/jobs/abc",
+        expect.objectContaining({ method: "DELETE" })
+      );
+    });
+  });
+
+  describe("triggerCronJob", () => {
+    it("should POST to /api/cron/jobs/:id/trigger", async () => {
+      const triggered = { id: "abc", name: "Test", schedule: "0 10 * * *", prompt: "Test", enabled: true, last_run: null, created_at: "2025-01-01T00:00:00Z" };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(triggered),
+      });
+
+      const result = await api.triggerCronJob("abc");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/cron/jobs/abc/trigger",
+        expect.objectContaining({ method: "POST" })
+      );
+      expect(result).toEqual(triggered);
+    });
+  });
+
+  describe("getMessages", () => {
+    it("should call GET /api/sessions/:id/messages", async () => {
+      const mockMessages = [
+        { id: "1", sessionId: "abc", role: "user", content: "Hello", timestamp: "2025-01-01T00:00:00Z" },
+      ];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(mockMessages),
+      });
+
+      const result = await api.getMessages("abc");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/sessions/abc/messages",
+        expect.any(Object)
+      );
+      expect(result).toEqual(mockMessages);
+    });
+
+    it("should include limit and offset params when provided", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve([]),
+      });
+
+      await api.getMessages("abc", { limit: 10, offset: 20 });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/sessions/abc/messages?limit=10&offset=20",
+        expect.any(Object)
+      );
+    });
+  });
+
+  describe("deleteSession", () => {
+    it("should DELETE /api/sessions/:id", async () => {
+      const result = { ok: true, atomsExtracted: 5 };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(result),
+      });
+
+      const res = await api.deleteSession("abc");
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/sessions/abc",
+        expect.objectContaining({ method: "DELETE" })
+      );
+      expect(res).toEqual(result);
+    });
+  });
+
+  describe("error handling", () => {
+    it("should throw on non-2xx response", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        statusText: "Internal Server Error",
+      });
+
+      await expect(api.listSessions()).rejects.toThrow("HTTP 500: Internal Server Error");
+    });
+
+    it("should attach status code to error", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: "Not Found",
+      });
+
+      try {
+        await api.listSessions();
+        expect.fail("should have thrown");
+      } catch (e: unknown) {
+        expect((e as { status: number }).status).toBe(404);
+      }
+    });
+  });
+});
+
+describe("WebSocketClient", () => {
+  // Store the original WebSocket
+  const OriginalWebSocket = global.WebSocket;
+
+  // Mock WebSocket instance
+  let mockWsInstance: {
+    addEventListener: ReturnType<typeof vi.fn>;
+    close: ReturnType<typeof vi.fn>;
+    send: ReturnType<typeof vi.fn>;
+    readyState: number;
+  };
+  let addEventListenerMock: ReturnType<typeof vi.fn>;
+  let closeMock: ReturnType<typeof vi.fn>;
+  let sendMock: ReturnType<typeof vi.fn>;
+  let wsConstructorUrl: string | null = null;
+
+  // Create a mock WebSocket class
+  class MockWebSocket {
+    static CONNECTING = 0;
+    static OPEN = 1;
+    static CLOSING = 2;
+    static CLOSED = 3;
+
+    url: string;
+    readyState: number;
+    addEventListener: typeof addEventListenerMock;
+    close: typeof closeMock;
+    send: typeof sendMock;
+
+    constructor(url: string) {
+      wsConstructorUrl = url;
+      this.url = url;
+      this.readyState = 1; // OPEN
+      this.addEventListener = addEventListenerMock;
+      this.close = closeMock;
+      this.send = sendMock;
+    }
+  }
+
+  beforeEach(() => {
+    addEventListenerMock = vi.fn();
+    closeMock = vi.fn();
+    sendMock = vi.fn();
+    wsConstructorUrl = null;
+
+    mockWsInstance = {
+      addEventListener: addEventListenerMock,
+      close: closeMock,
+      send: sendMock,
+      readyState: 1, // OPEN
+    };
+
+    global.WebSocket = MockWebSocket as unknown as typeof WebSocket;
+  });
+
+  afterEach(() => {
+    global.WebSocket = OriginalWebSocket;
+    vi.restoreAllMocks();
+  });
+
+  describe("connect", () => {
+    it("should open WebSocket to ws://127.0.0.1:8741/ws", () => {
+      const ws = new WebSocketClient();
+      ws.connect();
+
+      expect(wsConstructorUrl).toBe("ws://127.0.0.1:8741/ws");
+    });
+
+    it("should register message and close listeners", () => {
+      const ws = new WebSocketClient();
+      ws.connect();
+
+      expect(addEventListenerMock).toHaveBeenCalledWith("open", expect.any(Function));
+      expect(addEventListenerMock).toHaveBeenCalledWith("message", expect.any(Function));
+      expect(addEventListenerMock).toHaveBeenCalledWith("close", expect.any(Function));
+    });
+  });
+
+  describe("disconnect", () => {
+    it("should close the WebSocket", () => {
+      const ws = new WebSocketClient();
+      ws.connect();
+      ws.disconnect();
+
+      expect(closeMock).toHaveBeenCalled();
+    });
+  });
+
+  describe("send", () => {
+    it("should send JSON stringified message when connected", () => {
+      const ws = new WebSocketClient();
+      ws.connect();
+
+      ws.send({ type: "prompt", text: "hello" });
+
+      expect(sendMock).toHaveBeenCalledWith(JSON.stringify({ type: "prompt", text: "hello" }));
+    });
+  });
+
+  describe("subscribe", () => {
+    it("should call handler when matching message received", () => {
+      const ws = new WebSocketClient();
+      ws.connect();
+
+      // Find the message handler
+      let messageHandler: (event: { data: string }) => void;
+      for (const call of addEventListenerMock.mock.calls) {
+        if (call[0] === "message") {
+          messageHandler = call[1] as typeof messageHandler;
+          break;
+        }
+      }
+
+      const handler = vi.fn();
+      ws.subscribe("session_event", handler);
+
+      // Simulate receiving a message
+      messageHandler!({ data: JSON.stringify({ type: "session_event", sessionId: "abc", event: { text: "hello" } }) });
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(handler).toHaveBeenCalledWith({ type: "session_event", sessionId: "abc", event: { text: "hello" } });
+    });
+
+    it("should return unsubscribe function", () => {
+      const ws = new WebSocketClient();
+      ws.connect();
+
+      // Find the message handler
+      let messageHandler: (event: { data: string }) => void;
+      for (const call of addEventListenerMock.mock.calls) {
+        if (call[0] === "message") {
+          messageHandler = call[1] as typeof messageHandler;
+          break;
+        }
+      }
+
+      const handler = vi.fn();
+      const unsubscribe = ws.subscribe("session_event", handler);
+
+      // Unsubscribe
+      unsubscribe();
+
+      // Simulate message - handler should not be called
+      messageHandler!({ data: JSON.stringify({ type: "session_event", sessionId: "abc", event: {} }) });
+
+      expect(handler).not.toHaveBeenCalled();
+    });
+
+    it("should support wildcard subscription", () => {
+      const ws = new WebSocketClient();
+      ws.connect();
+
+      let messageHandler: (event: { data: string }) => void;
+      for (const call of addEventListenerMock.mock.calls) {
+        if (call[0] === "message") {
+          messageHandler = call[1] as typeof messageHandler;
+          break;
+        }
+      }
+
+      const handler = vi.fn();
+      ws.subscribe("*", handler);
+
+      messageHandler!({ data: JSON.stringify({ type: "anything", data: "test" }) });
+
+      expect(handler).toHaveBeenCalledTimes(1);
+    });
+  });
+});
