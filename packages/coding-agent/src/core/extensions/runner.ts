@@ -67,7 +67,6 @@ const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
 	"app.thinking.cycle",
 	"app.model.cycleForward",
 	"app.model.cycleBackward",
-	"app.model.select",
 	"app.tools.expand",
 	"app.thinking.toggle",
 	"app.editor.external",
@@ -244,6 +243,7 @@ export class ExtensionRunner {
 	private switchSessionHandler: SwitchSessionHandler = async () => ({ cancelled: false });
 	private reloadHandler: ReloadHandler = async () => {};
 	private shutdownHandler: ShutdownHandler = () => {};
+	private builtinCommands = new Map<string, RegisteredCommand>();
 	private shortcutDiagnostics: ResourceDiagnostic[] = [];
 	private commandDiagnostics: ResourceDiagnostic[] = [];
 	private staleMessage: string | undefined;
@@ -414,6 +414,25 @@ export class ExtensionRunner {
 		return new Map(this.runtime.flagValues);
 	}
 
+	/**
+	 * Register a built-in command. Built-in commands take precedence over extension commands.
+	 */
+	registerBuiltinCommand(name: string, command: Omit<RegisteredCommand, "name">): void {
+		this.builtinCommands.set(name, { name, ...command });
+	}
+
+	/**
+	 * Get keybinding definitions and command associations for all registered commands.
+	 * Commands without defaultKeys get an empty default so users can bind them in keybindings.json.
+	 */
+	getCommandKeybindings(): Array<{ keybindingId: string; command: ResolvedCommand }> {
+		const result: Array<{ keybindingId: string; command: ResolvedCommand }> = [];
+		for (const command of this.resolveRegisteredCommands()) {
+			result.push({ keybindingId: `cmd.${command.invocationName}`, command });
+		}
+		return result;
+	}
+
 	getShortcuts(resolvedKeybindings: KeybindingsConfig): Map<KeyId, ExtensionShortcut> {
 		this.shortcutDiagnostics = [];
 		const builtinKeybindings = buildBuiltinKeybindings(resolvedKeybindings);
@@ -513,6 +532,12 @@ export class ExtensionRunner {
 		const commands: RegisteredCommand[] = [];
 		const counts = new Map<string, number>();
 
+		// Built-in commands first so they take precedence
+		for (const command of this.builtinCommands.values()) {
+			commands.push(command);
+			counts.set(command.name, (counts.get(command.name) ?? 0) + 1);
+		}
+
 		for (const ext of this.extensions) {
 			for (const command of ext.commands.values()) {
 				commands.push(command);
@@ -527,7 +552,10 @@ export class ExtensionRunner {
 			const occurrence = (seen.get(command.name) ?? 0) + 1;
 			seen.set(command.name, occurrence);
 
-			let invocationName = (counts.get(command.name) ?? 0) > 1 ? `${command.name}:${occurrence}` : command.name;
+			// Built-in commands keep the bare name; only extension duplicates get suffixed
+			const isBuiltin = occurrence === 1 && this.builtinCommands.has(command.name);
+			let invocationName =
+				(counts.get(command.name) ?? 0) > 1 && !isBuiltin ? `${command.name}:${occurrence}` : command.name;
 
 			if (takenInvocationNames.has(invocationName)) {
 				let suffix = occurrence;
@@ -537,10 +565,23 @@ export class ExtensionRunner {
 				} while (takenInvocationNames.has(invocationName));
 			}
 
+			const builtinConflict = invocationName !== command.name && this.builtinCommands.has(command.name);
+			if (invocationName !== command.name) {
+				this.commandDiagnostics.push({
+					type: "warning",
+					message: builtinConflict
+						? `Extension command '/${command.name}' conflicts with built-in command. Skipping.`
+						: `Extension command '/${command.name}' has duplicate registrations. Available as '/${invocationName}'.`,
+					path: command.sourceInfo.path,
+				});
+			}
+
 			takenInvocationNames.add(invocationName);
 			return {
 				...command,
 				invocationName,
+				// Hide extension commands that conflict with built-in names
+				...(builtinConflict && { hidden: true }),
 			};
 		});
 	}
@@ -556,6 +597,36 @@ export class ExtensionRunner {
 
 	getCommand(name: string): ResolvedCommand | undefined {
 		return this.resolveRegisteredCommands().find((command) => command.invocationName === name);
+	}
+
+	/**
+	 * Try to execute a slash command. Returns true if the command was found and executed.
+	 * When includeBuiltin is false (the default), built-in commands are skipped —
+	 * they are only dispatched from the interactive submit handler.
+	 */
+	async tryExecuteCommand(text: string, options?: { includeBuiltin?: boolean }): Promise<boolean> {
+		if (!text.startsWith("/")) return false;
+
+		const spaceIndex = text.indexOf(" ");
+		const commandName = spaceIndex === -1 ? text.slice(1) : text.slice(1, spaceIndex);
+		const args = spaceIndex === -1 ? "" : text.slice(spaceIndex + 1);
+
+		const command = this.getCommand(commandName);
+		if (!command) return false;
+		if (!options?.includeBuiltin && this.builtinCommands.has(command.name)) return false;
+
+		const ctx = this.createCommandContext();
+		try {
+			await command.handler(args, ctx);
+		} catch (err) {
+			this.emitError({
+				extensionPath: command.sourceInfo.path,
+				event: "command",
+				error: err instanceof Error ? err.message : String(err),
+				stack: err instanceof Error ? err.stack : undefined,
+			});
+		}
+		return true;
 	}
 
 	/**

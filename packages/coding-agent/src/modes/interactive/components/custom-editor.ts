@@ -7,6 +7,7 @@ import type { AppKeybinding, KeybindingsManager } from "../../../core/keybinding
 export class CustomEditor extends Editor {
 	private keybindings: KeybindingsManager;
 	public actionHandlers: Map<AppKeybinding, () => void> = new Map();
+	public commandHandlers: Map<string, () => void> = new Map();
 
 	// Special handlers that can be dynamically replaced
 	public onEscape?: () => void;
@@ -25,6 +26,13 @@ export class CustomEditor extends Editor {
 	 */
 	onAction(action: AppKeybinding, handler: () => void): void {
 		this.actionHandlers.set(action, handler);
+	}
+
+	/**
+	 * Register a handler for a command keybinding.
+	 */
+	onCommandAction(keybindingId: string, handler: () => void): void {
+		this.commandHandlers.set(keybindingId, handler);
 	}
 
 	handleInput(data: string): void {
@@ -69,6 +77,14 @@ export class CustomEditor extends Editor {
 		// Check all other app actions
 		for (const [action, handler] of this.actionHandlers) {
 			if (action !== "app.interrupt" && action !== "app.exit" && this.keybindings.matches(data, action)) {
+				handler();
+				return;
+			}
+		}
+
+		// Check command keybindings
+		for (const [keybindingId, handler] of this.commandHandlers) {
+			if (this.keybindings.matches(data, keybindingId)) {
 				handler();
 				return;
 			}

@@ -18,7 +18,6 @@ export interface AppKeybindings {
 	"app.thinking.cycle": true;
 	"app.model.cycleForward": true;
 	"app.model.cycleBackward": true;
-	"app.model.select": true;
 	"app.tools.expand": true;
 	"app.thinking.toggle": true;
 	"app.session.toggleNamedFilter": true;
@@ -26,10 +25,6 @@ export interface AppKeybindings {
 	"app.message.followUp": true;
 	"app.message.dequeue": true;
 	"app.clipboard.pasteImage": true;
-	"app.session.new": true;
-	"app.session.tree": true;
-	"app.session.fork": true;
-	"app.session.resume": true;
 	"app.tree.foldOrUp": true;
 	"app.tree.unfoldOrDown": true;
 	"app.tree.editLabel": true;
@@ -81,7 +76,6 @@ export const KEYBINDINGS = {
 		defaultKeys: "shift+ctrl+p",
 		description: "Cycle to previous model",
 	},
-	"app.model.select": { defaultKeys: "ctrl+l", description: "Open model selector" },
 	"app.tools.expand": { defaultKeys: "ctrl+o", description: "Toggle tool output" },
 	"app.thinking.toggle": {
 		defaultKeys: "ctrl+t",
@@ -107,10 +101,6 @@ export const KEYBINDINGS = {
 		defaultKeys: process.platform === "win32" ? "alt+v" : "ctrl+v",
 		description: "Paste image from clipboard",
 	},
-	"app.session.new": { defaultKeys: [], description: "Start a new session" },
-	"app.session.tree": { defaultKeys: [], description: "Open session tree" },
-	"app.session.fork": { defaultKeys: [], description: "Fork current session" },
-	"app.session.resume": { defaultKeys: [], description: "Resume a session" },
 	"app.tree.foldOrUp": {
 		defaultKeys: ["ctrl+left", "alt+left"],
 		description: "Fold tree branch or move up",
@@ -240,7 +230,7 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	cycleThinkingLevel: "app.thinking.cycle",
 	cycleModelForward: "app.model.cycleForward",
 	cycleModelBackward: "app.model.cycleBackward",
-	selectModel: "app.model.select",
+	selectModel: "cmd.model",
 	expandTools: "app.tools.expand",
 	toggleThinking: "app.thinking.toggle",
 	toggleSessionNamedFilter: "app.session.toggleNamedFilter",
@@ -248,10 +238,10 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	followUp: "app.message.followUp",
 	dequeue: "app.message.dequeue",
 	pasteImage: "app.clipboard.pasteImage",
-	newSession: "app.session.new",
-	tree: "app.session.tree",
-	fork: "app.session.fork",
-	resume: "app.session.resume",
+	newSession: "cmd.new",
+	tree: "cmd.tree",
+	fork: "cmd.fork",
+	resume: "cmd.resume",
 	treeFoldOrUp: "app.tree.foldOrUp",
 	treeUnfoldOrDown: "app.tree.unfoldOrDown",
 	treeEditLabel: "app.tree.editLabel",
@@ -261,7 +251,13 @@ const KEYBINDING_NAME_MIGRATIONS = {
 	renameSession: "app.session.rename",
 	deleteSession: "app.session.delete",
 	deleteSessionNoninvasive: "app.session.deleteNoninvasive",
-} as const satisfies Record<string, Keybinding>;
+	// app.* → cmd.* migrations (commands moved to unified command system)
+	"app.model.select": "cmd.model",
+	"app.session.new": "cmd.new",
+	"app.session.tree": "cmd.tree",
+	"app.session.fork": "cmd.fork",
+	"app.session.resume": "cmd.resume",
+} as const satisfies Record<string, Keybinding | `cmd.${string}`>;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);

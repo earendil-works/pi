@@ -31,15 +31,15 @@ function formatKeys(keys: KeyId[], options: KeyTextFormatOptions = {}): string {
 	return formatKeyText(keys.join("/"), options);
 }
 
-export function keyText(keybinding: Keybinding): string {
+export function keyText(keybinding: Keybinding | string): string {
 	return formatKeys(getKeybindings().getKeys(keybinding));
 }
 
-export function keyDisplayText(keybinding: Keybinding): string {
+export function keyDisplayText(keybinding: Keybinding | string): string {
 	return formatKeys(getKeybindings().getKeys(keybinding), { capitalize: true });
 }
 
-export function keyHint(keybinding: Keybinding, description: string): string {
+export function keyHint(keybinding: Keybinding | string, description: string): string {
 	return theme.fg("dim", keyText(keybinding)) + theme.fg("muted", ` ${description}`);
 }
 

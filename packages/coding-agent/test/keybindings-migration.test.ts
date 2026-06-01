@@ -69,6 +69,83 @@ describe("keybindings migration", () => {
 		});
 	});
 
+	it("migrates app.* command keybindings to cmd.*", () => {
+		const agentDir = createAgentDir({
+			"app.model.select": "ctrl+m",
+			"app.session.new": "ctrl+shift+n",
+			"app.session.tree": "ctrl+shift+t",
+			"app.session.fork": "ctrl+shift+f",
+			"app.session.resume": "ctrl+shift+r",
+		});
+		const previousAgentDir = process.env[ENV_AGENT_DIR];
+		process.env[ENV_AGENT_DIR] = agentDir;
+		runMigrations(agentDir);
+		if (previousAgentDir === undefined) {
+			delete process.env[ENV_AGENT_DIR];
+		} else {
+			process.env[ENV_AGENT_DIR] = previousAgentDir;
+		}
+
+		const migrated = JSON.parse(fs.readFileSync(path.join(agentDir, "keybindings.json"), "utf-8")) as Record<
+			string,
+			unknown
+		>;
+		expect(migrated).toEqual({
+			"cmd.model": "ctrl+m",
+			"cmd.new": "ctrl+shift+n",
+			"cmd.tree": "ctrl+shift+t",
+			"cmd.fork": "ctrl+shift+f",
+			"cmd.resume": "ctrl+shift+r",
+		});
+	});
+
+	it("prefers cmd.* value when both app.* and cmd.* exist", () => {
+		const agentDir = createAgentDir({
+			"app.model.select": "ctrl+m",
+			"cmd.model": "ctrl+l",
+		});
+		const previousAgentDir = process.env[ENV_AGENT_DIR];
+		process.env[ENV_AGENT_DIR] = agentDir;
+		runMigrations(agentDir);
+		if (previousAgentDir === undefined) {
+			delete process.env[ENV_AGENT_DIR];
+		} else {
+			process.env[ENV_AGENT_DIR] = previousAgentDir;
+		}
+
+		const migrated = JSON.parse(fs.readFileSync(path.join(agentDir, "keybindings.json"), "utf-8")) as Record<
+			string,
+			unknown
+		>;
+		expect(migrated).toEqual({
+			"cmd.model": "ctrl+l",
+		});
+	});
+
+	it("migrates legacy names through to cmd.* in one step", () => {
+		const agentDir = createAgentDir({
+			selectModel: "ctrl+m",
+			newSession: "ctrl+shift+n",
+		});
+		const previousAgentDir = process.env[ENV_AGENT_DIR];
+		process.env[ENV_AGENT_DIR] = agentDir;
+		runMigrations(agentDir);
+		if (previousAgentDir === undefined) {
+			delete process.env[ENV_AGENT_DIR];
+		} else {
+			process.env[ENV_AGENT_DIR] = previousAgentDir;
+		}
+
+		const migrated = JSON.parse(fs.readFileSync(path.join(agentDir, "keybindings.json"), "utf-8")) as Record<
+			string,
+			unknown
+		>;
+		expect(migrated).toEqual({
+			"cmd.model": "ctrl+m",
+			"cmd.new": "ctrl+shift+n",
+		});
+	});
+
 	it("loads old key names in memory before the file is rewritten", () => {
 		const agentDir = createAgentDir({
 			selectConfirm: "enter",

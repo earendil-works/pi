@@ -417,9 +417,128 @@ describe("ExtensionRunner", () => {
 			expect(commands.map((command) => command.name)).toEqual(["shared-cmd", "shared-cmd"]);
 			expect(commands.map((command) => command.invocationName)).toEqual(["shared-cmd:1", "shared-cmd:2"]);
 			expect(commands.map((command) => command.description)).toEqual(["First command", "Second command"]);
-			expect(diagnostics).toEqual([]);
+			expect(diagnostics).toHaveLength(2);
+			expect(diagnostics[0]?.message).toContain("duplicate registrations");
+			expect(diagnostics[0]?.message).toContain("/shared-cmd:1");
+			expect(diagnostics[1]?.message).toContain("/shared-cmd:2");
 			expect(runner.getCommand("shared-cmd:1")?.description).toBe("First command");
 			expect(runner.getCommand("shared-cmd:2")?.description).toBe("Second command");
+		});
+
+		it("hides extension commands that conflict with built-in names", async () => {
+			const cmdCode = `
+				export default function(pi) {
+					pi.registerCommand("model", {
+						description: "Extension model command",
+						handler: async () => {},
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "cmd-conflict.ts"), cmdCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			// Built-in must be registered before getRegisteredCommands() for precedence
+			runner.registerBuiltinCommand("model", {
+				sourceInfo: { path: "<builtin>", source: "builtin", scope: "temporary", origin: "top-level" },
+				description: "Built-in model command",
+				handler: async () => {},
+			});
+
+			const commands = runner.getRegisteredCommands();
+			const diagnostics = runner.getCommandDiagnostics();
+
+			const builtin = commands.find((c) => c.invocationName === "model");
+			expect(builtin?.description).toBe("Built-in model command");
+			expect(builtin?.hidden).toBeFalsy();
+
+			const extension = commands.find((c) => c.invocationName === "model:2");
+			expect(extension?.description).toBe("Extension model command");
+			expect(extension?.hidden).toBe(true);
+
+			expect(diagnostics).toHaveLength(1);
+			expect(diagnostics[0]?.message).toContain("conflicts with built-in command");
+			expect(diagnostics[0]?.message).toContain("Skipping");
+		});
+	});
+
+	describe("command keybindings", () => {
+		it("returns keybinding entries for all commands including those without defaultKeys", async () => {
+			const cmdCode = `
+				export default function(pi) {
+					pi.registerCommand("with-keys", {
+						description: "Has default keys",
+						defaultKeys: "ctrl+shift+w",
+						handler: async () => {},
+					});
+					pi.registerCommand("no-keys", {
+						description: "No default keys",
+						handler: async () => {},
+					});
+				}
+			`;
+			fs.writeFileSync(path.join(extensionsDir, "cmd-keys.ts"), cmdCode);
+
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			const bindings = runner.getCommandKeybindings();
+
+			expect(bindings).toHaveLength(2);
+			const withKeys = bindings.find((b) => b.keybindingId === "cmd.with-keys");
+			const noKeys = bindings.find((b) => b.keybindingId === "cmd.no-keys");
+			expect(withKeys?.command.defaultKeys).toBe("ctrl+shift+w");
+			expect(noKeys?.command.defaultKeys).toBeUndefined();
+		});
+	});
+
+	describe("tryExecuteCommand", () => {
+		it("dispatches built-in commands with includeBuiltin", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+			runner.bindCommandContext();
+
+			let called = false;
+			runner.registerBuiltinCommand("test-cmd", {
+				sourceInfo: { path: "<builtin>", source: "builtin", scope: "temporary", origin: "top-level" },
+				description: "Test command",
+				handler: async (args) => {
+					called = true;
+					expect(args).toBe("hello");
+				},
+			});
+
+			const handled = await runner.tryExecuteCommand("/test-cmd hello", { includeBuiltin: true });
+			expect(handled).toBe(true);
+			expect(called).toBe(true);
+		});
+
+		it("skips built-in commands by default", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+			runner.bindCore(extensionActions, extensionContextActions);
+			runner.bindCommandContext();
+
+			let called = false;
+			runner.registerBuiltinCommand("model", {
+				sourceInfo: { path: "<builtin>", source: "builtin", scope: "temporary", origin: "top-level" },
+				description: "Built-in model command",
+				handler: async () => {
+					called = true;
+				},
+			});
+
+			const handled = await runner.tryExecuteCommand("/model");
+			expect(handled).toBe(false);
+			expect(called).toBe(false);
+		});
+
+		it("returns false for non-command text", async () => {
+			const result = await discoverAndLoadExtensions([], tempDir, tempDir);
+			const runner = new ExtensionRunner(result.extensions, result.runtime, tempDir, sessionManager, modelRegistry);
+
+			const handled = await runner.tryExecuteCommand("hello world");
+			expect(handled).toBe(false);
 		});
 	});
 

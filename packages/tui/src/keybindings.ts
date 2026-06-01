@@ -191,16 +191,16 @@ export class KeybindingsManager {
 		}
 	}
 
-	matches(data: string, keybinding: Keybinding): boolean {
-		const keys = this.keysById.get(keybinding) ?? [];
+	matches(data: string, keybinding: Keybinding | string): boolean {
+		const keys = this.keysById.get(keybinding as Keybinding) ?? [];
 		for (const key of keys) {
 			if (matchesKey(data, key)) return true;
 		}
 		return false;
 	}
 
-	getKeys(keybinding: Keybinding): KeyId[] {
-		return [...(this.keysById.get(keybinding) ?? [])];
+	getKeys(keybinding: Keybinding | string): KeyId[] {
+		return [...(this.keysById.get(keybinding as Keybinding) ?? [])];
 	}
 
 	getDefinition(keybinding: Keybinding): KeybindingDefinition {
@@ -209,6 +209,11 @@ export class KeybindingsManager {
 
 	getConflicts(): KeybindingConflict[] {
 		return this.conflicts.map((conflict) => ({ ...conflict, keybindings: [...conflict.keybindings] }));
+	}
+
+	addDefinitions(definitions: KeybindingDefinitions): void {
+		this.definitions = { ...this.definitions, ...definitions };
+		this.rebuild();
 	}
 
 	setUserBindings(userBindings: KeybindingsConfig): void {

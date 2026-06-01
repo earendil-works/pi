@@ -1064,6 +1064,9 @@ export interface RegisteredCommand {
 	name: string;
 	sourceInfo: SourceInfo;
 	description?: string;
+	defaultKeys?: KeyId | KeyId[];
+	/** Hide from autocomplete suggestions. */
+	hidden?: boolean;
 	getArgumentCompletions?: (argumentPrefix: string) => AutocompleteItem[] | null | Promise<AutocompleteItem[] | null>;
 	handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 }
@@ -1148,7 +1151,7 @@ export interface ExtensionAPI {
 		shortcut: KeyId,
 		options: {
 			description?: string;
-			handler: (ctx: ExtensionContext) => Promise<void> | void;
+			handler: (ctx: ExtensionCommandContext) => Promise<void> | void;
 		},
 	): void;
 
@@ -1400,7 +1403,7 @@ export interface ExtensionFlag {
 export interface ExtensionShortcut {
 	shortcut: KeyId;
 	description?: string;
-	handler: (ctx: ExtensionContext) => Promise<void> | void;
+	handler: (ctx: ExtensionCommandContext) => Promise<void> | void;
 	extensionPath: string;
 }
 

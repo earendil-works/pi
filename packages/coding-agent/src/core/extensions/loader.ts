@@ -211,7 +211,7 @@ function createExtensionAPI(
 			shortcut: KeyId,
 			options: {
 				description?: string;
-				handler: (ctx: import("./types.ts").ExtensionContext) => Promise<void> | void;
+				handler: (ctx: import("./types.ts").ExtensionCommandContext) => Promise<void> | void;
 			},
 		): void {
 			runtime.assertActive();

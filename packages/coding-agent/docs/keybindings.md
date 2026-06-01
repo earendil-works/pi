@@ -4,7 +4,7 @@ All keyboard shortcuts can be customized via `~/.pi/agent/keybindings.json`. Eac
 
 The config file uses the same namespaced keybinding ids that pi uses internally and that extension authors use in `keyHint()` and injected `keybindings` managers.
 
-Older configs using pre-namespaced ids such as `cursorUp` or `expandTools` are migrated automatically to the namespaced ids on startup.
+Older configs using pre-namespaced ids such as `cursorUp` or `expandTools` are migrated automatically to the namespaced ids on startup. Configs using the previous `app.model.select`, `app.session.new`, `app.session.tree`, `app.session.fork`, or `app.session.resume` ids are migrated to the corresponding `cmd.*` ids.
 
 After editing `keybindings.json`, run `/reload` in pi to apply the changes without restarting the session.
 
@@ -89,14 +89,14 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `ctrl+1
 | `app.editor.external` | `ctrl+g` | Open in external editor (`$VISUAL` or `$EDITOR`) |
 | `app.clipboard.pasteImage` | `ctrl+v` (`alt+v` on Windows) | Paste image from clipboard |
 
+### Commands
+
+All slash commands are bindable as `cmd.<name>` in `keybindings.json`, e.g., `"cmd.model": "ctrl+l"`, `"cmd.export": "ctrl+shift+e"`.
+
 ### Sessions
 
 | Keybinding id | Default | Description |
 |--------|---------|-------------|
-| `app.session.new` | *(none)* | Start a new session (`/new`) |
-| `app.session.tree` | *(none)* | Open session tree navigator (`/tree`) |
-| `app.session.fork` | *(none)* | Fork current session (`/fork`) |
-| `app.session.resume` | *(none)* | Open session resume picker (`/resume`) |
 | `app.session.togglePath` | `ctrl+p` | Toggle path display |
 | `app.session.toggleSort` | `ctrl+s` | Toggle sort mode |
 | `app.session.toggleNamedFilter` | `ctrl+n` | Toggle named-only filter |
@@ -108,7 +108,6 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `ctrl+1
 
 | Keybinding id | Default | Description |
 |--------|---------|-------------|
-| `app.model.select` | `ctrl+l` | Open model selector |
 | `app.model.cycleForward` | `ctrl+p` | Cycle to next model |
 | `app.model.cycleBackward` | `shift+ctrl+p` | Cycle to previous model |
 | `app.thinking.cycle` | `shift+tab` | Cycle thinking level |

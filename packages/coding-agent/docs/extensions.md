@@ -1376,7 +1376,7 @@ Labels persist in the session and survive restarts. Use them to mark important p
 
 Register a command.
 
-If multiple extensions register the same command name, pi keeps them all and assigns numeric invocation suffixes in load order, for example `/review:1` and `/review:2`.
+If multiple extensions register the same command name, pi keeps them all and assigns numeric invocation suffixes in load order, for example `/review:1` and `/review:2`. Extension commands that conflict with built-in command names are hidden from autocomplete.
 
 ```typescript
 pi.registerCommand("stats", {
@@ -1386,6 +1386,19 @@ pi.registerCommand("stats", {
     ctx.ui.notify(`${count} entries`, "info");
   }
 });
+```
+
+Optional: bind a default keyboard shortcut to the command. Users can override it in `keybindings.json` using the `cmd.<name>` keybinding ID:
+
+```typescript
+pi.registerCommand("deploy", {
+  description: "Deploy to staging",
+  defaultKeys: "ctrl+shift+d",
+  handler: async (args, ctx) => {
+    ctx.ui.notify(`Deploying: ${args || "staging"}`, "info");
+  },
+});
+// User override in keybindings.json: { "cmd.deploy": "ctrl+alt+d" }
 ```
 
 Optional: add argument auto-completion for `/command ...`:
@@ -1424,7 +1437,7 @@ Each entry has this shape:
 {
   name: string; // Invokable command name without the leading slash. May be suffixed like "review:1"
   description?: string;
-  source: "extension" | "prompt" | "skill";
+  source: "builtin" | "extension" | "prompt" | "skill";
   sourceInfo: {
     path: string;
     source: string;
@@ -1437,16 +1450,15 @@ Each entry has this shape:
 
 Use `sourceInfo` as the canonical provenance field. Do not infer ownership from command names or from ad hoc path parsing.
 
-Built-in interactive commands (like `/model` and `/settings`) are not included here. They are handled only in interactive
-mode and would not execute if sent via `prompt`.
-
 ### pi.registerMessageRenderer(customType, renderer)
 
 Register a custom TUI renderer for messages with your `customType`. See [Custom UI](#custom-ui).
 
 ### pi.registerShortcut(shortcut, options)
 
-Register a keyboard shortcut. See [keybindings.md](keybindings.md) for the shortcut format and built-in keybindings.
+Register a keyboard shortcut. The handler receives `ExtensionCommandContext`, the same context that command handlers receive, so shortcuts can use session control methods like `ctx.newSession()`, `ctx.reload()`, etc.
+
+See [keybindings.md](keybindings.md) for the shortcut format and built-in keybindings.
 
 ```typescript
 pi.registerShortcut("ctrl+shift+p", {

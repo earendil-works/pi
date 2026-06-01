@@ -65,7 +65,6 @@ import type {
 	AutocompleteProviderFactory,
 	EditorFactory,
 	ExtensionCommandContext,
-	ExtensionContext,
 	ExtensionRunner,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
@@ -81,8 +80,8 @@ import { BUILT_IN_PROVIDER_DISPLAY_NAMES } from "../../core/provider-display-nam
 import type { ResourceDiagnostic } from "../../core/resource-loader.ts";
 import { formatMissingSessionCwdPrompt, MissingSessionCwdError } from "../../core/session-cwd.ts";
 import { type SessionContext, SessionManager } from "../../core/session-manager.ts";
-import { BUILTIN_SLASH_COMMANDS } from "../../core/slash-commands.ts";
 import type { SourceInfo } from "../../core/source-info.ts";
+import { createSyntheticSourceInfo } from "../../core/source-info.ts";
 import { isInstallTelemetryEnabled } from "../../core/telemetry.ts";
 import type { TruncationResult } from "../../core/tools/truncate.ts";
 import { getChangelogPath, getNewEntries, parseChangelog } from "../../utils/changelog.ts";
@@ -454,58 +453,19 @@ export class InteractiveMode {
 		return description ? `[${sourceTag}] ${description}` : `[${sourceTag}]`;
 	}
 
-	private getBuiltInCommandConflictDiagnostics(extensionRunner: ExtensionRunner): ResourceDiagnostic[] {
-		const builtinNames = new Set(BUILTIN_SLASH_COMMANDS.map((command) => command.name));
-		return extensionRunner
-			.getRegisteredCommands()
-			.filter((command) => builtinNames.has(command.name))
-			.map((command) => ({
-				type: "warning" as const,
-				message:
-					command.invocationName === command.name
-						? `Extension command '/${command.name}' conflicts with built-in interactive command. Skipping in autocomplete.`
-						: `Extension command '/${command.name}' conflicts with built-in interactive command. Available as '/${command.invocationName}'.`,
-				path: command.sourceInfo.path,
-			}));
-	}
-
 	private createBaseAutocompleteProvider(): AutocompleteProvider {
-		// Define commands for autocomplete
-		const slashCommands: SlashCommand[] = BUILTIN_SLASH_COMMANDS.map((command) => ({
-			name: command.name,
-			description: command.description,
-		}));
-
-		const modelCommand = slashCommands.find((command) => command.name === "model");
-		if (modelCommand) {
-			modelCommand.getArgumentCompletions = (prefix: string): AutocompleteItem[] | null => {
-				// Get available models (scoped or from registry)
-				const models =
-					this.session.scopedModels.length > 0
-						? this.session.scopedModels.map((s) => s.model)
-						: this.session.modelRegistry.getAvailable();
-
-				if (models.length === 0) return null;
-
-				// Create items with provider/id format
-				const items = models.map((m) => ({
-					id: m.id,
-					provider: m.provider,
-					label: `${m.provider}/${m.id}`,
-				}));
-
-				// Fuzzy filter by model ID + provider (allows "opus anthropic" to match)
-				const filtered = fuzzyFilter(items, prefix, (item) => `${item.id} ${item.provider}`);
-
-				if (filtered.length === 0) return null;
-
-				return filtered.map((item) => ({
-					value: item.label,
-					label: item.id,
-					description: item.provider,
-				}));
-			};
-		}
+		// All registered commands (built-in + extension) are in the unified list
+		const commandList: SlashCommand[] = this.session.extensionRunner
+			.getRegisteredCommands()
+			.filter((cmd) => !cmd.hidden)
+			.map((cmd) => ({
+				name: cmd.invocationName,
+				description:
+					cmd.sourceInfo.source === "builtin"
+						? cmd.description
+						: this.prefixAutocompleteDescription(cmd.description, cmd.sourceInfo),
+				getArgumentCompletions: cmd.getArgumentCompletions,
+			}));
 
 		// Convert prompt templates to SlashCommand format for autocomplete
 		const templateCommands: SlashCommand[] = this.session.promptTemplates.map((cmd) => ({
@@ -513,17 +473,6 @@ export class InteractiveMode {
 			description: this.prefixAutocompleteDescription(cmd.description, cmd.sourceInfo),
 			...(cmd.argumentHint && { argumentHint: cmd.argumentHint }),
 		}));
-
-		// Convert extension commands to SlashCommand format
-		const builtinCommandNames = new Set(slashCommands.map((c) => c.name));
-		const extensionCommands: SlashCommand[] = this.session.extensionRunner
-			.getRegisteredCommands()
-			.filter((cmd) => !builtinCommandNames.has(cmd.name))
-			.map((cmd) => ({
-				name: cmd.invocationName,
-				description: this.prefixAutocompleteDescription(cmd.description, cmd.sourceInfo),
-				getArgumentCompletions: cmd.getArgumentCompletions,
-			}));
 
 		// Build skill commands from session.skills (if enabled)
 		this.skillCommands.clear();
@@ -540,7 +489,7 @@ export class InteractiveMode {
 		}
 
 		return new CombinedAutocompleteProvider(
-			[...slashCommands, ...templateCommands, ...extensionCommands, ...skillCommandList],
+			[...commandList, ...templateCommands, ...skillCommandList],
 			this.sessionManager.getCwd(),
 			this.fdPath,
 		);
@@ -625,7 +574,7 @@ export class InteractiveMode {
 			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
 
 			// Build startup instructions using keybinding hint helpers
-			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
+			const hint = (keybinding: AppKeybinding | string, description: string) => keyHint(keybinding, description);
 
 			const expandedInstructions = [
 				hint("app.interrupt", "to interrupt"),
@@ -636,7 +585,7 @@ export class InteractiveMode {
 				keyHint("tui.editor.deleteToLineEnd", "to delete to end"),
 				hint("app.thinking.cycle", "to cycle thinking level"),
 				rawKeyHint(`${keyText("app.model.cycleForward")}/${keyText("app.model.cycleBackward")}`, "to cycle models"),
-				hint("app.model.select", "to select model"),
+				hint("cmd.model", "to select model"),
 				hint("app.tools.expand", "to expand tools"),
 				hint("app.thinking.toggle", "to expand thinking"),
 				hint("app.editor.external", "for external editor"),
@@ -1479,7 +1428,6 @@ export class InteractiveMode {
 
 			const commandDiagnostics = this.session.extensionRunner.getCommandDiagnostics();
 			extensionDiagnostics.push(...commandDiagnostics);
-			extensionDiagnostics.push(...this.getBuiltInCommandConflictDiagnostics(this.session.extensionRunner));
 
 			const shortcutDiagnostics = this.session.extensionRunner.getShortcutDiagnostics();
 			extensionDiagnostics.push(...shortcutDiagnostics);
@@ -1501,10 +1449,185 @@ export class InteractiveMode {
 		}
 	}
 
+	private static readonly BUILTIN_SOURCE_INFO = createSyntheticSourceInfo("<builtin>", { source: "builtin" });
+
+	/**
+	 * Register built-in slash commands on the extension runner so they participate
+	 * in the unified command system (autocomplete, keybinding dispatch, precedence).
+	 */
+	private registerBuiltinCommands(): void {
+		const runner = this.session.extensionRunner;
+		const sourceInfo = InteractiveMode.BUILTIN_SOURCE_INFO;
+
+		const register = (
+			name: string,
+			description: string,
+			handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>,
+			options?: {
+				defaultKeys?: KeyId | KeyId[];
+				hidden?: boolean;
+				getArgumentCompletions?: (prefix: string) => AutocompleteItem[] | null;
+			},
+		) => {
+			runner.registerBuiltinCommand(name, {
+				sourceInfo,
+				description,
+				handler,
+				defaultKeys: options?.defaultKeys,
+				hidden: options?.hidden,
+				getArgumentCompletions: options?.getArgumentCompletions,
+			});
+		};
+
+		register("settings", "Open settings menu", async () => {
+			this.showSettingsSelector();
+		});
+
+		register("scoped-models", "Enable/disable models for Ctrl+P cycling", async () => {
+			await this.showModelsSelector();
+		});
+
+		register(
+			"model",
+			"Select model (opens selector UI)",
+			async (args) => {
+				const searchTerm = args.trim() || undefined;
+				await this.handleModelCommand(searchTerm);
+			},
+			{
+				defaultKeys: "ctrl+l",
+				getArgumentCompletions: (prefix) => {
+					const models =
+						this.session.scopedModels.length > 0
+							? this.session.scopedModels.map((s) => s.model)
+							: this.session.modelRegistry.getAvailable();
+					if (models.length === 0) return null;
+					const items = models.map((m) => ({
+						id: m.id,
+						provider: m.provider,
+						label: `${m.provider}/${m.id}`,
+					}));
+					const filtered = fuzzyFilter(items, prefix, (item) => `${item.id} ${item.provider}`);
+					if (filtered.length === 0) return null;
+					return filtered.map((item) => ({
+						value: item.label,
+						label: item.id,
+						description: item.provider,
+					}));
+				},
+			},
+		);
+
+		register("export", "Export session (HTML default, or specify path: .html/.jsonl)", async (args) => {
+			const text = args ? `/export ${args}` : "/export";
+			await this.handleExportCommand(text);
+		});
+
+		register("import", "Import and resume a session from a JSONL file", async (args) => {
+			const text = args ? `/import ${args}` : "/import";
+			await this.handleImportCommand(text);
+		});
+
+		register("share", "Share session as a secret GitHub gist", async () => {
+			await this.handleShareCommand();
+		});
+
+		register("copy", "Copy last agent message to clipboard", async () => {
+			await this.handleCopyCommand();
+		});
+
+		register("name", "Set session display name", async (args) => {
+			const text = args ? `/name ${args}` : "/name";
+			this.handleNameCommand(text);
+		});
+
+		register("session", "Show session info and stats", async () => {
+			this.handleSessionCommand();
+		});
+
+		register("changelog", "Show changelog entries", async () => {
+			this.handleChangelogCommand();
+		});
+
+		register("hotkeys", "Show all keyboard shortcuts", async () => {
+			this.handleHotkeysCommand();
+		});
+
+		register("fork", "Create a new fork from a previous user message", async () => {
+			this.showUserMessageSelector();
+		});
+
+		register("clone", "Duplicate the current session at the current position", async () => {
+			await this.handleCloneCommand();
+		});
+
+		register("tree", "Navigate session tree (switch branches)", async () => {
+			this.showTreeSelector();
+		});
+
+		register("login", "Configure provider authentication", async () => {
+			this.showOAuthSelector("login");
+		});
+
+		register("logout", "Remove provider authentication", async () => {
+			this.showOAuthSelector("logout");
+		});
+
+		register("new", "Start a new session", async () => {
+			await this.handleClearCommand();
+		});
+
+		register("compact", "Manually compact the session context", async (args) => {
+			const customInstructions = args.trim() || undefined;
+			await this.handleCompactCommand(customInstructions);
+		});
+
+		register("resume", "Resume a different session", async () => {
+			this.showSessionSelector();
+		});
+
+		register("reload", "Reload keybindings, extensions, skills, prompts, and themes", async (_args, ctx) => {
+			await ctx.reload();
+		});
+
+		register("quit", `Quit ${APP_NAME}`, async () => {
+			await this.shutdown();
+		});
+
+		// Easter eggs (not shown in autocomplete but still dispatchable)
+		register(
+			"debug",
+			"Show debug info",
+			async () => {
+				this.handleDebugCommand();
+			},
+			{ hidden: true },
+		);
+
+		register(
+			"arminsayshi",
+			"",
+			async () => {
+				this.handleArminSaysHi();
+			},
+			{ hidden: true },
+		);
+
+		register(
+			"dementedelves",
+			"",
+			async () => {
+				this.handleDementedDelves();
+			},
+			{ hidden: true },
+		);
+	}
+
 	/**
 	 * Initialize the extension system with TUI-based UI context.
 	 */
 	private async bindCurrentSessionExtensions(): Promise<void> {
+		this.registerBuiltinCommands();
 		const uiContext = this.createExtensionUIContext();
 		await this.session.bindExtensions({
 			uiContext,
@@ -1582,9 +1705,10 @@ export class InteractiveMode {
 		});
 
 		setRegisteredThemes(this.session.resourceLoader.getThemes().themes);
-		this.setupAutocompleteProvider();
 
 		const extensionRunner = this.session.extensionRunner;
+		this.bindCommandKeybindings(extensionRunner);
+		this.setupAutocompleteProvider();
 		this.setupExtensionShortcuts(extensionRunner);
 		this.showLoadedResources({ force: false, showDiagnosticsWhenQuiet: true });
 		this.showStartupNoticesIfNeeded();
@@ -1647,41 +1771,37 @@ export class InteractiveMode {
 	/**
 	 * Set up keyboard shortcuts registered by extensions.
 	 */
+	/**
+	 * Inject command keybinding definitions and register keyboard handlers.
+	 */
+	private bindCommandKeybindings(extensionRunner: ExtensionRunner): void {
+		const bindings = extensionRunner.getCommandKeybindings();
+		if (bindings.length > 0) {
+			const definitions: Record<string, { defaultKeys: KeyId | KeyId[]; description?: string }> = {};
+			for (const { keybindingId, command } of bindings) {
+				definitions[keybindingId] = { defaultKeys: command.defaultKeys ?? [], description: command.description };
+			}
+			this.keybindings.addDefinitions(definitions);
+		}
+		this.defaultEditor.commandHandlers.clear();
+		for (const { keybindingId, command } of bindings) {
+			this.defaultEditor.onCommandAction(keybindingId, () => {
+				const ctx = extensionRunner.createCommandContext();
+				Promise.resolve(command.handler("", ctx)).catch((err) => {
+					extensionRunner.emitError({
+						extensionPath: command.sourceInfo.path,
+						event: "command",
+						error: err instanceof Error ? err.message : String(err),
+						stack: err instanceof Error ? err.stack : undefined,
+					});
+				});
+			});
+		}
+	}
+
 	private setupExtensionShortcuts(extensionRunner: ExtensionRunner): void {
 		const shortcuts = extensionRunner.getShortcuts(this.keybindings.getEffectiveConfig());
 		if (shortcuts.size === 0) return;
-
-		// Create a context for shortcut handlers
-		const createContext = (): ExtensionContext => ({
-			ui: this.createExtensionUIContext(),
-			hasUI: true,
-			cwd: this.sessionManager.getCwd(),
-			sessionManager: this.sessionManager,
-			modelRegistry: this.session.modelRegistry,
-			model: this.session.model,
-			isIdle: () => !this.session.isStreaming,
-			signal: this.session.agent.signal,
-			abort: () => {
-				this.restoreQueuedMessagesToEditor({ abort: true });
-			},
-			hasPendingMessages: () => this.session.pendingMessageCount > 0,
-			shutdown: () => {
-				this.shutdownRequested = true;
-			},
-			getContextUsage: () => this.session.getContextUsage(),
-			compact: (options) => {
-				void (async () => {
-					try {
-						const result = await this.session.compact(options?.customInstructions);
-						options?.onComplete?.(result);
-					} catch (error) {
-						const err = error instanceof Error ? error : new Error(String(error));
-						options?.onError?.(err);
-					}
-				})();
-			},
-			getSystemPrompt: () => this.session.systemPrompt,
-		});
 
 		// Set up the extension shortcut handler on the default editor
 		this.defaultEditor.onExtensionShortcut = (data: string) => {
@@ -1689,7 +1809,7 @@ export class InteractiveMode {
 				// Cast to KeyId - extension shortcuts use the same format
 				if (matchesKey(data, shortcutStr as KeyId)) {
 					// Run handler async, don't block input
-					Promise.resolve(shortcut.handler(createContext())).catch((err) => {
+					Promise.resolve(shortcut.handler(extensionRunner.createCommandContext())).catch((err) => {
 						this.showError(`Shortcut handler error: ${err instanceof Error ? err.message : String(err)}`);
 					});
 					return true;
@@ -2438,16 +2558,11 @@ export class InteractiveMode {
 
 		// Global debug handler on TUI (works regardless of focus)
 		this.ui.onDebug = () => this.handleDebugCommand();
-		this.defaultEditor.onAction("app.model.select", () => this.showModelSelector());
 		this.defaultEditor.onAction("app.tools.expand", () => this.toggleToolOutputExpansion());
 		this.defaultEditor.onAction("app.thinking.toggle", () => this.toggleThinkingBlockVisibility());
 		this.defaultEditor.onAction("app.editor.external", () => this.openExternalEditor());
 		this.defaultEditor.onAction("app.message.followUp", () => this.handleFollowUp());
 		this.defaultEditor.onAction("app.message.dequeue", () => this.handleDequeue());
-		this.defaultEditor.onAction("app.session.new", () => this.handleClearCommand());
-		this.defaultEditor.onAction("app.session.tree", () => this.showTreeSelector());
-		this.defaultEditor.onAction("app.session.fork", () => this.showUserMessageSelector());
-		this.defaultEditor.onAction("app.session.resume", () => this.showSessionSelector());
 
 		this.defaultEditor.onChange = (text: string) => {
 			const wasBashMode = this.isBashMode;
@@ -2490,127 +2605,11 @@ export class InteractiveMode {
 			text = text.trim();
 			if (!text) return;
 
-			// Handle commands
-			if (text === "/settings") {
-				this.showSettingsSelector();
+			// Handle registered commands (built-in + extension)
+			if (text.startsWith("/") && this.session.extensionRunner.getCommand(text.slice(1).split(" ")[0]!)) {
+				this.editor.addToHistory?.(text);
 				this.editor.setText("");
-				return;
-			}
-			if (text === "/scoped-models") {
-				this.editor.setText("");
-				await this.showModelsSelector();
-				return;
-			}
-			if (text === "/model" || text.startsWith("/model ")) {
-				const searchTerm = text.startsWith("/model ") ? text.slice(7).trim() : undefined;
-				this.editor.setText("");
-				await this.handleModelCommand(searchTerm);
-				return;
-			}
-			if (text === "/export" || text.startsWith("/export ")) {
-				await this.handleExportCommand(text);
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/import" || text.startsWith("/import ")) {
-				await this.handleImportCommand(text);
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/share") {
-				await this.handleShareCommand();
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/copy") {
-				await this.handleCopyCommand();
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/name" || text.startsWith("/name ")) {
-				this.handleNameCommand(text);
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/session") {
-				this.handleSessionCommand();
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/changelog") {
-				this.handleChangelogCommand();
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/hotkeys") {
-				this.handleHotkeysCommand();
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/fork") {
-				this.showUserMessageSelector();
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/clone") {
-				this.editor.setText("");
-				await this.handleCloneCommand();
-				return;
-			}
-			if (text === "/tree") {
-				this.showTreeSelector();
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/login") {
-				this.showOAuthSelector("login");
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/logout") {
-				this.showOAuthSelector("logout");
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/new") {
-				this.editor.setText("");
-				await this.handleClearCommand();
-				return;
-			}
-			if (text === "/compact" || text.startsWith("/compact ")) {
-				const customInstructions = text.startsWith("/compact ") ? text.slice(9).trim() : undefined;
-				this.editor.setText("");
-				await this.handleCompactCommand(customInstructions);
-				return;
-			}
-			if (text === "/reload") {
-				this.editor.setText("");
-				await this.handleReloadCommand();
-				return;
-			}
-			if (text === "/debug") {
-				this.handleDebugCommand();
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/arminsayshi") {
-				this.handleArminSaysHi();
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/dementedelves") {
-				this.handleDementedDelves();
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/resume") {
-				this.showSessionSelector();
-				this.editor.setText("");
-				return;
-			}
-			if (text === "/quit") {
-				this.editor.setText("");
-				await this.shutdown();
+				await this.session.extensionRunner.tryExecuteCommand(text, { includeBuiltin: true });
 				return;
 			}
 
@@ -2634,7 +2633,7 @@ export class InteractiveMode {
 
 			// Queue input during compaction (extension commands execute immediately)
 			if (this.session.isCompacting) {
-				if (this.isExtensionCommand(text)) {
+				if (this.isRegisteredCommand(text)) {
 					this.editor.addToHistory?.(text);
 					this.editor.setText("");
 					await this.session.prompt(text);
@@ -3453,7 +3452,7 @@ export class InteractiveMode {
 
 		// Queue input during compaction (extension commands execute immediately)
 		if (this.session.isCompacting) {
-			if (this.isExtensionCommand(text)) {
+			if (this.isRegisteredCommand(text)) {
 				this.editor.addToHistory?.(text);
 				this.editor.setText("");
 				await this.session.prompt(text);
@@ -3773,7 +3772,7 @@ export class InteractiveMode {
 		this.showStatus("Queued message for after compaction");
 	}
 
-	private isExtensionCommand(text: string): boolean {
+	private isRegisteredCommand(text: string): boolean {
 		if (!text.startsWith("/")) return false;
 
 		const extensionRunner = this.session.extensionRunner;
@@ -3807,7 +3806,7 @@ export class InteractiveMode {
 			if (options?.willRetry) {
 				// When retry is pending, queue messages for the retry turn
 				for (const message of queuedMessages) {
-					if (this.isExtensionCommand(message.text)) {
+					if (this.isRegisteredCommand(message.text)) {
 						await this.session.prompt(message.text);
 					} else if (message.mode === "followUp") {
 						await this.session.followUp(message.text);
@@ -3820,7 +3819,7 @@ export class InteractiveMode {
 			}
 
 			// Find first non-extension-command message to use as prompt
-			const firstPromptIndex = queuedMessages.findIndex((message) => !this.isExtensionCommand(message.text));
+			const firstPromptIndex = queuedMessages.findIndex((message) => !this.isRegisteredCommand(message.text));
 			if (firstPromptIndex === -1) {
 				// All extension commands - execute them all
 				for (const message of queuedMessages) {
@@ -3845,7 +3844,7 @@ export class InteractiveMode {
 
 			// Queue remaining messages
 			for (const message of rest) {
-				if (this.isExtensionCommand(message.text)) {
+				if (this.isRegisteredCommand(message.text)) {
 					await this.session.prompt(message.text);
 				} else if (message.mode === "followUp") {
 					await this.session.followUp(message.text);
@@ -4982,8 +4981,10 @@ export class InteractiveMode {
 			}
 			this.ui.setShowHardwareCursor(this.settingsManager.getShowHardwareCursor());
 			this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
-			this.setupAutocompleteProvider();
+			this.registerBuiltinCommands();
 			const runner = this.session.extensionRunner;
+			this.bindCommandKeybindings(runner);
+			this.setupAutocompleteProvider();
 			this.setupExtensionShortcuts(runner);
 			this.rebuildChatFromMessages();
 			dismissReloadBox(this.editor as Component);
@@ -5287,7 +5288,7 @@ export class InteractiveMode {
 	/**
 	 * Get capitalized display string for an app keybinding action.
 	 */
-	private getAppKeyDisplay(action: AppKeybinding): string {
+	private getAppKeyDisplay(action: AppKeybinding | string): string {
 		return keyDisplayText(action);
 	}
 
@@ -5332,7 +5333,7 @@ export class InteractiveMode {
 		const suspend = this.getAppKeyDisplay("app.suspend");
 		const cycleThinkingLevel = this.getAppKeyDisplay("app.thinking.cycle");
 		const cycleModelForward = this.getAppKeyDisplay("app.model.cycleForward");
-		const selectModel = this.getAppKeyDisplay("app.model.select");
+		const selectModel = this.getAppKeyDisplay("cmd.model");
 		const expandTools = this.getAppKeyDisplay("app.tools.expand");
 		const toggleThinking = this.getAppKeyDisplay("app.thinking.toggle");
 		const externalEditor = this.getAppKeyDisplay("app.editor.external");
