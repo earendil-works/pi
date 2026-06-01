@@ -3,6 +3,7 @@ import { createServer, Server } from "node:http";
 import { WebSocketServer, WebSocket } from "ws";
 import { join } from "node:path";
 import packageJson from "../package.json" with { type: "json" };
+import { mountStatic } from "./routes/static";
 
 const PORT = parseInt(process.env.PI_WEB_PORT || "8741", 10);
 const MAX_SESSIONS = parseInt(process.env.PI_WEB_MAX_SESSIONS || "16", 10);
@@ -38,6 +39,9 @@ export function createApp(): express.Express {
       sessions: 0,
     });
   });
+
+  // Static files (SPA fallback) - mounted LAST as catch-all
+  mountStatic(app, join(__dirname, "../web/dist"));
 
   return app;
 }
