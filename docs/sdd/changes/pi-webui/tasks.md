@@ -10,7 +10,7 @@
 
 ## 1. Bootstrap webui package
 
-- [ ] 1.1 **Create packages/webui directory structure**
+- [x] 1.1 **Create packages/webui directory structure**
   - **文件**: `packages/webui/package.json` (Create)
   - **内容**: `{"name": "@pi-mono/webui", "private": true, "type": "module", "scripts": {"start": "tsx server/index.ts", "dev": "tsx watch server/index.ts", "build": "cd web && npm run build", "test": "vitest"}, "dependencies": {"express": "^4.21.0", "ws": "^8.18.0", "better-sqlite3": "^11.5.0", "chokidar": "^3.6.0", "async-mutex": "^0.5.0"}, "devDependencies": {"typescript": "^5.9.0", "tsx": "^4.19.0", "vitest": "^2.1.0", "@types/express": "^5.0.0", "@types/ws": "^8.5.0", "@types/better-sqlite3": "^7.6.0"}}`
   - **验证**: `cat packages/webui/package.json` shows expected content
