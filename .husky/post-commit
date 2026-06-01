@@ -1,4 +1,4 @@
 #!/bin/sh
 
-# Sync codegraph if marked dirty
-codegraph sync-if-dirty /home/qjh/workspace/personal/pi
+# Sync codegraph index (tolerant to API drift)
+codegraph sync /home/qjh/workspace/personal/pi || true
