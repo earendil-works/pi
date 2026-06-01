@@ -419,6 +419,31 @@ describe("Kitty image cursor movement", () => {
 			setCellDimensions({ widthPx: 9, heightPx: 18 });
 		}
 	});
+
+	it("can place Kitty image sequence on the last reserved row", () => {
+		setCapabilities({ images: "kitty", trueColor: true, hyperlinks: true });
+		setCellDimensions({ widthPx: 10, heightPx: 10 });
+		try {
+			const image = new Image(
+				"AAAA",
+				"image/png",
+				{ fallbackColor: (value) => value },
+				{ maxWidthCells: 2, maxHeightCells: 2, drawAfterReserveRows: true },
+				{ widthPx: 20, heightPx: 20 },
+			);
+			const lines = image.render(4);
+			const imageId = image.getImageId();
+			assert.strictEqual(typeof imageId, "number");
+			assert.deepStrictEqual(lines.slice(0, -1), [""]);
+			assert.ok(lines[1].startsWith("\x1b[1A\x1b_G"));
+			assert.ok(lines[1].includes(",C=1,"));
+			assert.ok(lines[1].includes(`,i=${imageId}`));
+			assert.ok(lines[1].endsWith("\x1b\\\x1b[1B"));
+		} finally {
+			resetCapabilitiesCache();
+			setCellDimensions({ widthPx: 9, heightPx: 18 });
+		}
+	});
 });
 
 describe("hyperlink", () => {

@@ -213,6 +213,12 @@ export class ToolExecutionComponent extends Container {
 		this.updateDisplay();
 	}
 
+	private getImageMaxHeightCells(): number {
+		const terminalRows = Math.max(1, this.ui.terminal.rows);
+		const availableRows = Math.max(1, terminalRows - 6);
+		return terminalRows < 20 ? Math.max(1, Math.floor(availableRows / 2)) : availableRows;
+	}
+
 	override invalidate(): void {
 		super.invalidate();
 		this.updateDisplay();
@@ -320,7 +326,11 @@ export class ToolExecutionComponent extends Container {
 						imageData,
 						imageMimeType,
 						{ fallbackColor: (s: string) => theme.fg("toolOutput", s) },
-						{ maxWidthCells: this.imageWidthCells },
+						{
+							maxWidthCells: this.imageWidthCells,
+							maxHeightCells: this.getImageMaxHeightCells(),
+							drawAfterReserveRows: true,
+						},
 					);
 					this.imageComponents.push(imageComponent);
 					this.addChild(imageComponent);

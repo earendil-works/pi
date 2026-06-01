@@ -16,6 +16,7 @@ export interface ImageTheme {
 export interface ImageOptions {
 	maxWidthCells?: number;
 	maxHeightCells?: number;
+	drawAfterReserveRows?: boolean;
 	filename?: string;
 	/** Kitty image ID. If provided, reuses this ID (for animations/updates). */
 	imageId?: number;
@@ -87,7 +88,16 @@ export class Image implements Component {
 					this.imageId = result.imageId;
 				}
 
-				if (caps.images === "kitty") {
+				if (caps.images === "kitty" && this.options.drawAfterReserveRows) {
+					lines = [];
+					for (let i = 0; i < result.rows - 1; i++) {
+						lines.push("");
+					}
+					const rowOffset = result.rows - 1;
+					const moveUp = rowOffset > 0 ? `\x1b[${rowOffset}A` : "";
+					const moveDown = rowOffset > 0 ? `\x1b[${rowOffset}B` : "";
+					lines.push(moveUp + result.sequence + moveDown);
+				} else if (caps.images === "kitty") {
 					// For Kitty: C=1 prevents cursor movement.
 					// Don't need the cursor movement.
 					lines = [result.sequence];
