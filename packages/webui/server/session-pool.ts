@@ -36,7 +36,7 @@ interface SessionState {
  * Events from stdout are emitted via the `event` EventEmitter.
  */
 export class SessionPool extends EventEmitter {
-	private readonly sessionsDir: string;
+	readonly sessionsDir: string;
 	private readonly maxSessions: number;
 	private readonly spawnFn: (
 		command: string,
@@ -169,11 +169,9 @@ export class SessionPool extends EventEmitter {
 			for (const line of lines) {
 				try {
 					const event = JSON.parse(line);
-					// Emit event for subscribers
-					state.subscribers.forEach((ws) => {
-						ws.send(JSON.stringify(event));
-					});
-					// Also emit on the pool for external listeners
+					// Emit on the pool for external listeners (e.g. WS handler)
+					// The WS handler is responsible for forwarding to subscribers
+					// with the proper {type:"session_event",sessionId,event} wrapper
 					this.emit("event", { sessionId, event } as PiEvent);
 				} catch {
 					// Ignore non-JSON output
@@ -225,6 +223,28 @@ export class SessionPool extends EventEmitter {
 		state.subscribers.forEach((ws) => {
 			ws.send(msg);
 		});
+	}
+
+	/**
+	 * Write a JSON-line message to a session's pi process stdin.
+	 * Spawns the process if not running.
+	 */
+	async prompt(sessionId: string, text: string, images?: string[]): Promise<void> {
+		await this.spawnIfNeeded(sessionId);
+		const state = this.sessions.get(sessionId);
+		if (!state) return;
+		const msg = JSON.stringify({ type: "prompt", sessionId, text, images: images ?? [] }) + "\n";
+		state.proc.stdin?.write(msg);
+	}
+
+	/**
+	 * Send an abort signal to a session's pi process stdin.
+	 */
+	abort(sessionId: string): void {
+		const state = this.sessions.get(sessionId);
+		if (!state) return;
+		const msg = JSON.stringify({ type: "abort", sessionId }) + "\n";
+		state.proc.stdin?.write(msg);
 	}
 
 	/**

@@ -85,13 +85,13 @@
   - **验证**: Mock child_process in test; create pool, call spawnIfNeeded twice; assert 2 processes tracked; call kill → all receive SIGTERM
   - **依赖**: 2.1
 
-- [ ] 5.2 **Session pool unit tests**
+- [x] 5.2 **Session pool unit tests**
   - **文件**: `packages/webui/server/test/session-pool.test.ts` (Create)
   - **内容**: Vitest test cases: (a) init loads N sessions from disk, (b) spawnIfNeeded is idempotent, (c) broadcast forwards events to subscribers, (d) kill sends SIGTERM, (e) cleanupOnExit kills all
   - **验证**: `cd packages/webui && npx vitest run server/test/session-pool.test.ts` all 5 tests PASS
   - **依赖**: 5.1
 
-- [ ] 5.3 **Session REST API endpoints**
+- [x] 5.3 **Session REST API endpoints**
   - **文件**: `packages/webui/server/routes/sessions.ts` (Create)
   - **内容**: 4 endpoints: (1) `GET /api/sessions` lists all sessions from pool; (2) `POST /api/sessions` (body: `{initialPrompt: string}`) generates a new sessionId (`crypto.randomUUID()`), creates an empty session JSONL file at `~/.pi/agent/sessions/--<cwd>--/<isoTs>_<id>.jsonl` with header `{type:"session", id, timestamp, cwd}`, returns `{id, sessionFile}` — does NOT spawn pi process yet (lazy spawn on first WS subscribe); (3) `GET /api/sessions/:id/messages?limit=200&offset=0` reads session JSONL entries, paginated; (4) `DELETE /api/sessions/:id` triggers memory extraction, then deletes JSONL
   - **验证**: `curl -X POST http://127.0.0.1:8741/api/sessions -H 'Content-Type: application/json' -d '{"initialPrompt":"hi"}'` returns 200 with `{id, sessionFile}`; new file exists in sessions dir; `curl http://127.0.0.1:8741/api/sessions` lists it
@@ -131,7 +131,7 @@
 
 ## 7. WebSocket bridge
 
-- [ ] 7.1 **WS handler for chat**
+- [x] 7.1 **WS handler for chat**
   - **文件**: `packages/webui/server/ws/handler.ts` (Create)
   - **内容**: `ws.Server({noServer:true})` on HTTP upgrade `path === '/ws'`; message types: `subscribe({sessionId})`, `prompt({text, images?})`, `abort()`, `switch_session({sessionId})`; forwards to SessionPool; broadcasts all pi process stdout events to subscribed clients
   - **验证**: WebSocket test client connects, sends `subscribe`, gets session list events
@@ -191,7 +191,7 @@
   - **验证**: `cd packages/webui/web && npx vite build` succeeds
   - **依赖**: 10.1b
 
-- [ ] 10.3 **App router shell**
+- [x] 10.3 **App router shell**
   - **文件**: `packages/webui/web/src/App.tsx` (Create)
   - **内容**: BrowserRouter with 3 routes: `/sessions` (redirect to `/sessions`), `/chat/:id`, `/cron`; left sidebar nav with "Sessions" and "Cron" links (using lucide icons); outlet for main content
   - **验证**: `cd packages/webui/web && npx vite build` succeeds
