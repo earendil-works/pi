@@ -1,7 +1,7 @@
 import { getKeybindings } from "../keybindings.ts";
 import { decodeKittyPrintable } from "../keys.ts";
 import { KillRing } from "../kill-ring.ts";
-import { type Component, CURSOR_MARKER, type Focusable } from "../tui.ts";
+import { type Component, CURSOR_MARKER, type Focusable, REVERSE_VIDEO_OFF, REVERSE_VIDEO_ON } from "../tui.ts";
 import { UndoStack } from "../undo-stack.ts";
 import { getGraphemeSegmenter, isWhitespaceChar, sliceByColumn, visibleWidth } from "../utils.ts";
 import { findWordBackward, findWordForward } from "../word-navigation.ts";
@@ -433,8 +433,9 @@ export class Input implements Component, Focusable {
 		// Hardware cursor marker (zero-width, emitted before fake cursor for IME positioning)
 		const marker = this.focused ? CURSOR_MARKER : "";
 
-		// Use inverse video to show cursor
-		const cursorChar = `\x1b[7m${atCursor}\x1b[27m`; // ESC[7m = reverse video, ESC[27m = normal
+		// Use inverse video to show cursor (the terminal's hardware cursor replaces
+		// this when active; see stripCursorMarker in tui.ts).
+		const cursorChar = `${REVERSE_VIDEO_ON}${atCursor}${REVERSE_VIDEO_OFF}`;
 		const textWithCursor = beforeCursor + marker + cursorChar + afterCursor;
 
 		// Calculate visual width

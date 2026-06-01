@@ -776,6 +776,19 @@ describe("Editor component", () => {
 			assert.strictEqual(lineWidth, width);
 		});
 
+		it("wraps a mid-line cursor in a self-contained reverse-video cell", () => {
+			// Guards the ESC[27m normalization: the cursor cell must terminate inverse
+			// video immediately after its own grapheme so no attributes bleed into the
+			// following characters (and so the TUI can unwrap exactly that cell).
+			const editor = new Editor(createTestTUI(), defaultEditorTheme);
+			editor.focused = true;
+			editor.setText("abc");
+			editor.handleInput("\x1b[D"); // cursor now on "c"
+			const contentLine = editor.render(20)[1]!;
+			assert.ok(contentLine.includes("\x1b[7mc\x1b[27m"), "cursor cell should be ESC[7m c ESC[27m");
+			assert.ok(!contentLine.includes("\x1b[7mc\x1b[0m"), "cursor cell must not use a full SGR reset");
+		});
+
 		it("renders cursor correctly on wide characters", () => {
 			const editor = new Editor(createTestTUI(), defaultEditorTheme);
 			const width = 20;
@@ -817,7 +830,7 @@ describe("Editor component", () => {
 				let lines = editor.render(width + paddingX);
 				let contentLines = lines.slice(1, -1);
 				assert.strictEqual(contentLines.length, 1, "Should be 1 content line before wrap");
-				assert.ok(contentLines[0]!.endsWith("\x1b[7m \x1b[0m"), "Cursor should be at end of line");
+				assert.ok(contentLines[0]!.endsWith("\x1b[7m \x1b[27m"), "Cursor should be at end of line");
 
 				// Type 1 more → text wraps to second line
 				editor.handleInput("a");
