@@ -216,6 +216,7 @@ const cronWriteParams = Type.Object({
 				Type.Literal("list"),
 				Type.Literal("remove"),
 				Type.Literal("toggle"),
+				Type.Literal("trigger_now"),
 			]),
 			name: Type.Optional(Type.String()),
 			schedule: Type.Optional(
@@ -375,6 +376,46 @@ function executeOperation(
 			};
 		}
 
+		case "trigger_now": {
+			if (!params.id) {
+				return {
+					jobs,
+					result: {
+						action,
+						success: false,
+						message: "Missing required field: id",
+					},
+				};
+			}
+
+			const jobIndex = jobs.findIndex((j) => j.id === params.id);
+			if (jobIndex === -1) {
+				return {
+					jobs,
+					result: {
+						action,
+						success: false,
+						message: `Job not found: ${params.id}`,
+					},
+				};
+			}
+
+			const updatedJobs = [...jobs];
+			const job = { ...updatedJobs[jobIndex] };
+			job.last_run = null;
+			updatedJobs[jobIndex] = job;
+
+			return {
+				jobs: updatedJobs,
+				result: {
+					action,
+					success: true,
+					message: `Triggered job: ${job.name}`,
+					job,
+				},
+			};
+		}
+
 		default:
 			return {
 				jobs,
@@ -396,7 +437,7 @@ export function registerCron(pi: ExtensionAPI): void {
 	pi.registerTool({
 		name: "cron_write",
 		label: "Cron Management",
-		description: "Manage scheduled tasks. Add, list, remove, or toggle cron jobs.",
+		description: "Manage scheduled tasks. Add, list, remove, toggle, or trigger cron jobs.",
 		promptSnippet: "Manage scheduled tasks and reminders",
 		promptGuidelines: [
 			"Use cron_write to schedule recurring tasks or reminders.",
