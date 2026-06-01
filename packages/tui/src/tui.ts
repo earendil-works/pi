@@ -243,13 +243,14 @@ export class Container implements Component {
 
 	invalidate(): void {
 		for (const child of this.children) {
-			child.invalidate?.();
+			child?.invalidate?.();
 		}
 	}
 
 	render(width: number): string[] {
 		const lines: string[] = [];
 		for (const child of this.children) {
+			if (!child) continue;
 			const childLines = child.render(width);
 			for (const line of childLines) {
 				lines.push(line);
