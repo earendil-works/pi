@@ -2,6 +2,7 @@
   "name": "@pi-mono/webui",
   "private": true,
   "type": "module",
+  "version": "0.1.0",
   "scripts": {
     "start": "tsx server/index.ts",
     "dev": "tsx watch server/index.ts",
