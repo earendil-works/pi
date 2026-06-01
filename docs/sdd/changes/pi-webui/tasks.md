@@ -211,13 +211,13 @@
   - **验证**: Component test renders empty state; renders 1 session; click navigates
   - **依赖**: 10.4
 
-- [ ] 11.2 **New Session modal**
+- [x] 11.2 **New Session modal**
   - **文件**: `packages/webui/web/src/components/NewSessionModal.tsx` (Create)
   - **内容**: Modal with initial prompt textarea; "Create" button calls `POST /api/sessions` (or RPC), navigates to new chat
   - **验证**: Component test: type prompt, click Create, calls API
   - **依赖**: 11.1, 5.3
 
-- [ ] 11.3 **ChatPage + ChatMessages component**
+- [x] 11.3 **ChatPage + ChatMessages component**
   - **文件**: `packages/webui/web/src/pages/ChatPage.tsx` (Create)
   - **内容**: Renders message list (user/assistant), streaming text via WS `message_update` events, tool call cards; input box at bottom; sends `prompt` WS message on submit; "Delete Session" button (with confirm) calls DELETE
   - **验证**: Component test: render with mock messages; send prompt mock triggers WS message
@@ -231,13 +231,13 @@
   - **验证**: Component test: render empty state; render 1 job; click Trigger calls API
   - **依赖**: 10.4, 3.3
 
-- [ ] 12.2 **CronForm modal (create/edit)**
+- [x] 12.2 **CronForm modal (create/edit)**
   - **文件**: `packages/webui/web/src/components/CronForm.tsx` (Create)
   - **内容**: Modal with fields: name (text), prompt (textarea), schedule (radio: at/every/cron + dynamic sub-fields time/interval/expr), enabled (checkbox); "Create" or "Save" button
   - **验证**: Component test: fill form, submit, validates required fields
   - **依赖**: 12.1
 
-- [ ] 12.3 **CronDashboard row expand for last-run details**
+- [x] 12.3 **CronDashboard row expand for last-run details**
   - **文件**: `packages/webui/web/src/components/CronLastRun.tsx` (Create)
   - **内容**: When cron row is clicked, expand inline below showing last run details from `cron.json` (not a separate file): `last_run` (ISO timestamp), `last_run_status` (from new optional field, see Task 8.3), next scheduled fire time (computed from schedule). No output preview, no download — keep scope tight. Single data source: cron.json.
   - **验证**: Component test: row with `last_run: "2025-01-01T00:00:00Z"` shows "Last run: 2025-01-01"; row with `last_run: null` shows "Never run"
@@ -257,7 +257,7 @@
   - **验证**: `cd packages/webui && npx vitest run test/e2e/smoke.test.ts` all tests PASS
   - **依赖**: 2.1, 3.3, 5.3, 6.5, 7.1, 9.2
 
-- [ ] 14.2 **Manual E2E: full session + memory extraction**
+- [x] 14.2 **Manual E2E: full session + memory extraction**
   - **文件**: N/A (manual test in README)
   - **内容**: Add a section to `packages/webui/README.md` with step-by-step: (1) `pi --web`, (2) open browser, (3) create session, (4) send prompt, (5) verify stream, (6) delete session, (7) check memory.db has atoms
   - **验证**: Following README steps succeeds

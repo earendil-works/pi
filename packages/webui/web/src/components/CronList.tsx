@@ -8,8 +8,11 @@ import {
   CheckCircle,
   XCircle,
   AlertCircle,
+  ChevronRight,
 } from "lucide-react";
+import { useState, Fragment } from "react";
 import type { CronJob } from "../lib/api";
+import CronLastRun from "./CronLastRun";
 
 interface CronListProps {
   jobs: CronJob[];
@@ -101,6 +104,7 @@ export default function CronList({
   onDelete,
   onNewCron,
 }: CronListProps) {
+  const [expandedId, setExpandedId] = useState<string | null>(null);
   if (jobs.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-gray-500">
@@ -133,62 +137,81 @@ export default function CronList({
           </tr>
         </thead>
         <tbody>
-          {jobs.map((job) => (
-            <tr key={job.id} className="border-b border-gray-100 hover:bg-gray-50">
-              <td className="px-4 py-3 font-medium text-gray-900">{job.name}</td>
-              <td className="px-4 py-3 text-gray-600">
-                <span className="inline-flex items-center gap-1">
-                  <Clock className="w-3.5 h-3.5" />
-                  {humanizeSchedule(job.schedule)}
-                </span>
-              </td>
-              <td className="px-4 py-3 text-center">
-                <button
-                  onClick={() => onToggle?.(job.id, !job.enabled)}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    job.enabled ? "bg-blue-600" : "bg-gray-300"
-                  }`}
-                  aria-label={job.enabled ? "Disable cron job" : "Enable cron job"}
+          {jobs.map((job) => {
+            const isExpanded = expandedId === job.id;
+            return (
+              <Fragment key={job.id}>
+                <tr
+                  className="border-b border-gray-100 hover:bg-gray-50 cursor-pointer"
+                  onClick={() => setExpandedId(isExpanded ? null : job.id)}
                 >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
-                      job.enabled ? "translate-x-6" : "translate-x-1"
-                    }`}
-                  />
-                </button>
-              </td>
-              <td className="px-4 py-3 text-center">
-                <StatusChip status={job.last_run_status} />
-              </td>
-              <td className="px-4 py-3 text-gray-500">{formatTimestamp(job.last_run)}</td>
-              <td className="px-4 py-3 text-gray-500">{formatTimestamp(job.created_at)}</td>
-              <td className="px-4 py-3">
-                <div className="flex items-center justify-end gap-1">
-                  <button
-                    onClick={() => onTrigger?.(job.id)}
-                    className="p-1.5 rounded hover:bg-gray-200 text-gray-600 transition-colors"
-                    title="Trigger Now"
-                  >
-                    <Play className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => onEdit?.(job)}
-                    className="p-1.5 rounded hover:bg-gray-200 text-gray-600 transition-colors"
-                    title="Edit"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </button>
-                  <button
-                    onClick={() => onDelete?.(job.id)}
-                    className="p-1.5 rounded hover:bg-red-100 text-red-600 transition-colors"
-                    title="Delete"
-                  >
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                </div>
-              </td>
-            </tr>
-          ))}
+                  <td className="px-4 py-3 font-medium text-gray-900">
+                    <span className="inline-flex items-center gap-1.5">
+                      <ChevronRight
+                        className={`w-3.5 h-3.5 text-gray-400 transition-transform ${isExpanded ? "rotate-90" : ""}`}
+                      />
+                      {job.name}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-gray-600">
+                    <span className="inline-flex items-center gap-1">
+                      <Clock className="w-3.5 h-3.5" />
+                      {humanizeSchedule(job.schedule)}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onToggle?.(job.id, !job.enabled);
+                      }}
+                      className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                        job.enabled ? "bg-blue-600" : "bg-gray-300"
+                      }`}
+                      aria-label={job.enabled ? "Disable cron job" : "Enable cron job"}
+                    >
+                      <span
+                        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+                          job.enabled ? "translate-x-6" : "translate-x-1"
+                        }`}
+                      />
+                    </button>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <StatusChip status={job.last_run_status} />
+                  </td>
+                  <td className="px-4 py-3 text-gray-500">{formatTimestamp(job.last_run)}</td>
+                  <td className="px-4 py-3 text-gray-500">{formatTimestamp(job.created_at)}</td>
+                  <td className="px-4 py-3" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex items-center justify-end gap-1">
+                      <button
+                        onClick={() => onTrigger?.(job.id)}
+                        className="p-1.5 rounded hover:bg-gray-200 text-gray-600 transition-colors"
+                        title="Trigger Now"
+                      >
+                        <Play className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => onEdit?.(job)}
+                        className="p-1.5 rounded hover:bg-gray-200 text-gray-600 transition-colors"
+                        title="Edit"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => onDelete?.(job.id)}
+                        className="p-1.5 rounded hover:bg-red-100 text-red-600 transition-colors"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                {isExpanded && <CronLastRun job={job} />}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>

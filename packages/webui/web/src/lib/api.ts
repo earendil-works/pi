@@ -135,6 +135,13 @@ export const api = {
       method: "DELETE",
     });
   },
+
+  createSession(initialPrompt: string): Promise<SessionInfo> {
+    return request<SessionInfo>("/api/sessions", {
+      method: "POST",
+      body: JSON.stringify({ initialPrompt }),
+    });
+  },
 };
 
 // WebSocket client with auto-reconnect
