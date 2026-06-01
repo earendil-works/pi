@@ -39,3 +39,10 @@ plans/
 .pi/hf-sessions/
 .pi/hf-sessions-backup/
 collect.sh
+
+# CodeGraph local index
+.codegraph/
+
+# Satellite compiled binaries (bun build --compile)
+extensions/satellite/satellite-mcp
+extensions/satellite/satellite-server

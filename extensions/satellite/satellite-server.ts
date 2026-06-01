@@ -1,9 +1,9 @@
 #!/usr/bin/env bun
 /**
- * Satellite MCP Server
+ * Satellite MCP Server (HTTP)
  *
- * An MCP server that exposes remote file and shell tools via stdio transport.
- * Deploys on the remote server and connects via SSH.
+ * An MCP server that exposes remote file and shell tools via HTTP transport.
+ * Deploys on the remote server as a persistent process.
  *
  * Exposes a single `remote_exec` tool that routes to 5 predefined tools:
  * read_file, write_file, edit_file, bash, list_dir.
@@ -15,12 +15,17 @@
  * - Edit: multi-edit, fuzzy matching, BOM/line-ending handling, diff output
  * - List: entry limit, byte truncation, name/ format
  *
- * Logs go to stderr (stdout is reserved for MCP protocol).
- * View logs: ssh server 'tail -f /tmp/satellite.log' or check stderr.
+ * Usage:
+ *   SATELLITE_TOKEN=your-secret SATELLITE_PORT=29001 ./satellite-server
+ *
+ * Health check: GET /health
+ * MCP endpoint: POST/GET/DELETE /mcp
  */
 
+import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
 import { readdir, readFile, writeFile, mkdir, stat, realpath, open } from "node:fs/promises";
 import { join, dirname, resolve } from "node:path";
 import { appendFileSync, mkdirSync, existsSync } from "node:fs";
@@ -28,7 +33,19 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { z } from "zod/v3";
 
 // ============================================================================
-// Logging (stderr + optional file)
+// Config
+// ============================================================================
+
+const TOKEN = process.env.SATELLITE_TOKEN || "";
+const PORT = parseInt(process.env.SATELLITE_PORT || "29001", 10);
+
+if (!TOKEN) {
+  console.error("ERROR: SATELLITE_TOKEN environment variable is required");
+  process.exit(1);
+}
+
+// ============================================================================
+// Logging
 // ============================================================================
 
 const LOG_FILE = "/tmp/satellite.log";
@@ -38,7 +55,7 @@ try { mkdirSync("/tmp", { recursive: true }); } catch { /* ignore */ }
 function log(msg: string): void {
   const ts = new Date().toISOString().slice(0, 19).replace("T", " ");
   const line = `[${ts}] ${msg}`;
-  process.stderr.write(line + "\n");
+  console.error(line);
   try { appendFileSync(LOG_FILE, line + "\n"); } catch { /* ignore */ }
 }
 
@@ -51,6 +68,25 @@ const MAX_LINES = 2000;
 const MAX_BYTES = 50 * 1024;
 const MAX_LS_ENTRIES = 500;
 const PROGRESS_THROTTLE_MS = 100;
+const KEEPALIVE_INTERVAL_MS = 10_000; // Send progress notification every 10s to prevent idle TCP disconnect
+
+// ============================================================================
+// Progress Context (for keepalive heartbeat during long-running tools)
+// ============================================================================
+
+interface ProgressContext {
+  sendNotification: (notification: Record<string, unknown>) => Promise<void>;
+  progressToken: string | number;
+}
+
+async function sendProgress(ctx: ProgressContext, progress: number, total?: number, message?: string): Promise<void> {
+  try {
+    await ctx.sendNotification({
+      method: "notifications/progress",
+      params: { progressToken: ctx.progressToken, progress, total, message } as Record<string, unknown>,
+    });
+  } catch { /* ignore notification errors */ }
+}
 
 // ============================================================================
 // Helpers
@@ -109,13 +145,11 @@ class OutputAccumulator {
     this.totalDecodedBytes += Buffer.byteLength(decoded, "utf-8");
     this.totalLines += (decoded.match(/\n/g) || []).length;
 
-    // Trim rolling tail if too large
     const maxRolling = MAX_BYTES * 2;
     if (this.tail.length > maxRolling) {
       this.tail = this.tail.slice(-maxRolling);
     }
 
-    // Create temp file if exceeds limits
     if (!this.tempPath && (this.totalRawBytes > MAX_BYTES || this.totalDecodedBytes > MAX_BYTES || this.totalLines > MAX_LINES)) {
       this.tempPath = `/tmp/satellite-bash-${Date.now()}.log`;
       this.flushToTempFile();
@@ -129,12 +163,11 @@ class OutputAccumulator {
       for (const chunk of this.chunks) {
         await this.tempFd.write(chunk);
       }
-      this.chunks = []; // Clear chunks after flushing
+      this.chunks = [];
     } catch { /* ignore */ }
   }
 
   async finish(): Promise<void> {
-    // Flush decoder
     const remaining = this.decoder.decode();
     if (remaining) {
       this.tail += remaining;
@@ -142,7 +175,6 @@ class OutputAccumulator {
       this.totalLines += (remaining.match(/\n/g) || []).length;
     }
 
-    // Write remaining chunks to temp file if needed
     if (this.tempPath && this.tempFd && this.chunks.length > 0) {
       for (const chunk of this.chunks) {
         await this.tempFd.write(chunk);
@@ -150,7 +182,6 @@ class OutputAccumulator {
       this.chunks = [];
     }
 
-    // Close temp file
     if (this.tempFd) {
       await this.tempFd.close();
       this.tempFd = undefined;
@@ -171,7 +202,6 @@ class OutputAccumulator {
       };
     }
 
-    // Keep tail (last N lines/bytes)
     const kept: string[] = [];
     let bytes = 0;
     let truncatedBy: "lines" | "bytes" = "lines";
@@ -205,11 +235,9 @@ class OutputAccumulator {
 
 function killProcessTree(pid: number): void {
   try {
-    // Kill entire process group (negative PID)
     process.kill(-pid, "SIGKILL");
   } catch {
     try {
-      // Fallback to single PID
       process.kill(pid, "SIGKILL");
     } catch { /* already dead */ }
   }
@@ -248,7 +276,6 @@ function truncateHead(content: string, maxLines = MAX_LINES, maxBytes = MAX_BYTE
     return { text: content, truncated: false, totalLines, outputLines: totalLines };
   }
 
-  // Keep head
   const kept: string[] = [];
   let bytes = 0;
   let truncatedBy: "lines" | "bytes" = "lines";
@@ -275,31 +302,27 @@ function truncateHead(content: string, maxLines = MAX_LINES, maxBytes = MAX_BYTE
 function normalizeForMatch(s: string): string {
   return s
     .normalize("NFKC")
-    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")  // Smart quotes
+    .replace(/[\u2018\u2019\u201A\u201B]/g, "'")
     .replace(/[\u201C\u201D\u201E\u201F]/g, '"')
-    .replace(/[\u2013\u2014\u2015]/g, '-')  // Dashes
-    .replace(/[\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000]/g, ' ')  // Special spaces
-    .replace(/[ \t]+$/gm, '')  // Trailing whitespace
+    .replace(/[\u2013\u2014\u2015]/g, '-')
+    .replace(/[\u00A0\u1680\u2000-\u200B\u202F\u205F\u3000]/g, ' ')
+    .replace(/[ \t]+$/gm, '')
     .trim();
 }
 
 function findFuzzyMatch(content: string, searchText: string): number {
-  // Try exact match first
   const exactIdx = content.indexOf(searchText);
   if (exactIdx !== -1) return exactIdx;
 
-  // Try normalized match
   const normalizedContent = normalizeForMatch(content);
   const normalizedSearch = normalizeForMatch(searchText);
   const normalizedIdx = normalizedContent.indexOf(normalizedSearch);
   if (normalizedIdx !== -1) {
-    // Map back to original position
     let origPos = 0;
     let normPos = 0;
     while (normPos < normalizedIdx && origPos < content.length) {
       normPos++;
       origPos++;
-      // Skip over normalized characters
       while (origPos < content.length && normPos < normalizedContent.length &&
              normalizeForMatch(content[origPos]) !== normalizedContent[normPos]) {
         origPos++;
@@ -331,14 +354,14 @@ function generateDiff(edits: Array<{ oldText: string; newText: string }>): strin
 }
 
 // ============================================================================
-// Tool Validation Schemas (1:1 with local tools)
+// Tool Validation Schemas
 // ============================================================================
 
 const TOOL_SCHEMAS = {
   read_file: z.object({
     path: z.string(),
-    offset: z.number().optional().describe("1-indexed line number to start from"),
-    limit: z.number().optional().describe("Maximum lines to read"),
+    offset: z.number().optional(),
+    limit: z.number().optional(),
   }),
   write_file: z.object({
     path: z.string(),
@@ -347,45 +370,20 @@ const TOOL_SCHEMAS = {
   edit_file: z.object({
     path: z.string(),
     edits: z.array(z.object({
-      oldText: z.string().describe("Exact text to find (must be unique in file)"),
-      newText: z.string().describe("Replacement text"),
-    })).describe("Array of edits to apply"),
+      oldText: z.string(),
+      newText: z.string(),
+    })),
   }),
   bash: z.object({
     command: z.string(),
-    timeout: z.number().optional().describe("Timeout in seconds (optional, no default timeout)"),
-    cwd: z.string().optional().describe("Working directory"),
+    timeout: z.number().optional(),
+    cwd: z.string().optional(),
   }),
   list_dir: z.object({
     path: z.string(),
-    limit: z.number().optional().describe("Maximum entries to return (default 500)"),
+    limit: z.number().optional(),
   }),
 };
-
-// ============================================================================
-// Progress Notification Helper
-// ============================================================================
-
-interface ProgressContext {
-  progressToken: string | number;
-  sendNotification: (notification: any) => Promise<void>;
-  meta?: Record<string, unknown>;
-}
-
-async function sendProgress(ctx: ProgressContext, progress: number, total?: number, message?: string): Promise<void> {
-  try {
-    await ctx.sendNotification({
-      method: "notifications/progress",
-      params: {
-        progressToken: ctx.progressToken,
-        progress,
-        total,
-        message,
-        _meta: ctx.meta,
-      },
-    });
-  } catch { /* ignore notification errors */ }
-}
 
 // ============================================================================
 // Tool Handlers
@@ -396,24 +394,19 @@ async function handleReadFile(args: { path: string; offset?: number; limit?: num
   try {
     let content = await readFile(args.path, "utf-8");
 
-    // Handle BOM
     if (content.charCodeAt(0) === 0xFEFF) {
       content = content.slice(1);
     }
 
-    // Split into lines
     let lines = content.split("\n");
     if (content.endsWith("\n")) lines.pop();
 
-    // Apply offset/limit
-    const startLine = Math.max(0, (args.offset || 1) - 1);  // Convert to 0-indexed
+    const startLine = Math.max(0, (args.offset || 1) - 1);
     const endLine = args.limit ? startLine + args.limit : lines.length;
     const selectedLines = lines.slice(startLine, endLine);
 
-    // Truncation
     const result = truncateHead(selectedLines.join("\n"));
 
-    // Continuation notice
     let continuation = "";
     if (endLine < lines.length) {
       continuation = `\n[${lines.length - endLine} more lines. Use offset=${endLine + 1} to continue.]`;
@@ -451,36 +444,29 @@ async function handleEditFile(args: { path: string; edits: Array<{ oldText: stri
     return await withFileQueue(args.path, async () => {
       let content = await readFile(args.path, "utf-8");
 
-      // Handle BOM
       const hasBOM = content.charCodeAt(0) === 0xFEFF;
       if (hasBOM) content = content.slice(1);
 
-      // Detect line endings
       const hasCRLF = content.includes("\r\n");
       if (hasCRLF) content = content.replace(/\r\n/g, "\n");
 
-      // Apply edits (all matched against original content)
       for (let i = 0; i < args.edits.length; i++) {
         const edit = args.edits[i];
 
-        // Validate non-empty
         if (!edit.oldText) {
           return { content: textContent(`Error: Edit ${i + 1} has empty oldText`), isError: true };
         }
 
-        // Check for duplicate oldText
         const count = content.split(edit.oldText).length - 1;
         if (count > 1) {
           return { content: textContent(`Error: Edit ${i + 1} oldText appears ${count} times. Provide more context to make it unique.`), isError: true };
         }
 
-        // Find and replace
         const pos = findFuzzyMatch(content, edit.oldText);
         if (pos === -1) {
           return { content: textContent(`Error: Edit ${i + 1} oldText not found: ${edit.oldText.slice(0, 80)}...`), isError: true };
         }
 
-        // Check no actual change
         if (edit.oldText === edit.newText) {
           return { content: textContent(`Error: Edit ${i + 1} oldText and newText are identical`), isError: true };
         }
@@ -488,10 +474,7 @@ async function handleEditFile(args: { path: string; edits: Array<{ oldText: stri
         content = content.slice(0, pos) + edit.newText + content.slice(pos + edit.oldText.length);
       }
 
-      // Restore line endings
       if (hasCRLF) content = content.replace(/\n/g, "\r\n");
-
-      // Restore BOM
       if (hasBOM) content = "\uFEFF" + content;
 
       await writeFile(args.path, content, "utf-8");
@@ -509,14 +492,13 @@ async function handleEditFile(args: { path: string; edits: Array<{ oldText: stri
 
 async function handleBash(
   args: { command: string; timeout?: number; cwd?: string },
+  abortSignal?: AbortSignal,
   progressCtx?: ProgressContext,
-  abortSignal?: AbortSignal
 ) {
   let workDir = args.cwd || bashCwd;
   const t0 = Date.now();
 
   try {
-    // Validate working directory
     if (!existsSync(workDir)) {
       if (args.cwd) {
         return { content: textContent(`Error: Working directory does not exist: ${workDir}`), isError: true };
@@ -525,12 +507,10 @@ async function handleBash(
       bashCwd = "/";
     }
 
-    // Check abort before starting
     if (abortSignal?.aborted) {
       return { content: textContent("Command aborted"), isError: true };
     }
 
-    // Spawn with detached=true for process group support
     const proc = spawn(SHELL, ["-c", args.command], {
       cwd: workDir,
       detached: true,
@@ -540,41 +520,37 @@ async function handleBash(
     const pgid = proc.pid;
     const accumulator = new OutputAccumulator();
 
-    // Stream output with throttled progress notifications
-    let lastProgressAt = 0;
-    let progressCounter = 0;
+    proc.stdout?.on("data", (chunk: Buffer) => accumulator.append(chunk));
+    proc.stderr?.on("data", (chunk: Buffer) => accumulator.append(chunk));
 
-    const onData = (chunk: Buffer) => {
-      accumulator.append(chunk);
+    // Keepalive heartbeat — periodically flush SSE to prevent idle TCP disconnect
+    let heartbeatCounter = 0;
+    let heartbeatFinished = false;
+    const heartbeatTimer = progressCtx
+      ? setInterval(() => {
+          if (heartbeatFinished) return;
+          heartbeatCounter++;
+          sendProgress(progressCtx, heartbeatCounter, undefined, "heartbeat");
+        }, KEEPALIVE_INTERVAL_MS)
+      : undefined;
 
-      // Throttled progress notification
-      if (progressCtx) {
-        const now = Date.now();
-        if (now - lastProgressAt >= PROGRESS_THROTTLE_MS) {
-          lastProgressAt = now;
-          progressCounter++;
-          // Send progress with message containing latest output
-          const text = chunk.toString().slice(-200); // Last 200 chars
-          sendProgress(progressCtx, progressCounter, undefined, text).catch(() => {});
-        }
+    const stopHeartbeat = () => {
+      if (heartbeatTimer) {
+        heartbeatFinished = true;
+        clearInterval(heartbeatTimer);
       }
     };
 
-    proc.stdout?.on("data", onData);
-    proc.stderr?.on("data", onData);
-
-    // Cleanup function
     const cleanup = () => {
+      stopHeartbeat();
       if (pgid) killProcessTree(pgid);
     };
 
-    // Abort signal support
     if (abortSignal) {
       if (abortSignal.aborted) cleanup();
       else abortSignal.addEventListener("abort", cleanup, { once: true });
     }
 
-    // Timeout handling
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     if (args.timeout !== undefined && args.timeout > 0) {
@@ -584,16 +560,14 @@ async function handleBash(
       }, args.timeout * 1000);
     }
 
-    // Wait for process completion
     const exitCode = await waitForChildProcess(proc);
+    stopHeartbeat();
     if (timer) clearTimeout(timer);
 
-    // Finish accumulator (flush decoder, close temp file)
     await accumulator.finish();
 
     const duration = Date.now() - t0;
 
-    // Update CWD if command contains cd
     if (args.command.includes("cd ")) {
       try {
         const testProc = spawn(SHELL, ["-c", `cd ${workDir} && ${args.command} && pwd`], { stdio: ["ignore", "pipe", "ignore"] });
@@ -614,7 +588,6 @@ async function handleBash(
       } catch { /* ignore */ }
     }
 
-    // Build output
     const snapshot = accumulator.snapshot();
     const output: string[] = [];
     if (snapshot.content) output.push(snapshot.content);
@@ -623,17 +596,11 @@ async function handleBash(
 
     const raw = output.join("\n") || "(no output)";
 
-    // Save full output if truncated
     if (snapshot.truncated && snapshot.tempPath) {
       try { await writeFile(snapshot.tempPath, raw, "utf-8"); } catch { /* ignore */ }
     }
 
     log(`bash "${args.command.slice(0, 80)}" → ${exitCode === 0 ? "ok" : "error"} ${duration}ms${snapshot.truncated ? ` (truncated: ${snapshot.outputLines}/${snapshot.totalLines} lines)` : ""}${timedOut ? " (timed out)" : ""}`);
-
-    // Final progress notification
-    if (progressCtx) {
-      await sendProgress(progressCtx, progressCounter + 1, progressCounter + 1, "done");
-    }
 
     return { content: textContent(raw) };
   } catch (e) {
@@ -649,13 +616,10 @@ async function handleListDir(args: { path: string; limit?: number }) {
     const maxEntries = args.limit || MAX_LS_ENTRIES;
     const dirEntries = await readdir(args.path, { withFileTypes: true });
 
-    // Sort alphabetically (case-insensitive)
     dirEntries.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
 
-    // Apply limit
     const limited = dirEntries.slice(0, maxEntries);
 
-    // Format: "name/" for dirs, "name" for files
     const formatted: string[] = [];
     for (const entry of limited) {
       const suffix = entry.isDirectory() ? "/" : "";
@@ -664,12 +628,10 @@ async function handleListDir(args: { path: string; limit?: number }) {
 
     let output = formatted.join("\n");
 
-    // Truncation notice
     if (dirEntries.length > maxEntries) {
       output += `\n\n[${dirEntries.length - maxEntries} entries limit reached. Use limit=${maxEntries * 2} for more]`;
     }
 
-    // Byte truncation
     const result = truncateHead(output, Number.MAX_SAFE_INTEGER, MAX_BYTES);
     if (result.truncated) {
       output = result.text;
@@ -692,95 +654,229 @@ type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: bo
 
 const TOOL_HANDLERS: Record<string, (
   args: Record<string, unknown>,
+  abortSignal?: AbortSignal,
   progressCtx?: ProgressContext,
-  abortSignal?: AbortSignal
 ) => Promise<ToolResult>> = {
   read_file: (args) => handleReadFile(args as { path: string; offset?: number; limit?: number }),
   write_file: (args) => handleWriteFile(args as { path: string; content: string }),
   edit_file: (args) => handleEditFile(args as { path: string; edits: Array<{ oldText: string; newText: string }> }),
-  bash: (args, progressCtx, abortSignal) => handleBash(
+  bash: (args, abortSignal, progressCtx) => handleBash(
     args as { command: string; timeout?: number; cwd?: string },
+    abortSignal,
     progressCtx,
-    abortSignal
   ),
   list_dir: (args) => handleListDir(args as { path: string; limit?: number }),
 };
 
 // ============================================================================
-// MCP Server
+// MCP Server Factory
 // ============================================================================
 
-const server = new McpServer({
-  name: "satellite",
-  version: "2.0.0",
-});
+function createMcpServer(): McpServer {
+  const server = new McpServer({
+    name: "satellite",
+    version: "3.0.0",
+  });
 
-// Single tool: remote_exec
-server.registerTool(
-  "remote_exec",
-  {
-    description: "Run file and shell operations on the remote HPC server. Choose one operation by setting the tool parameter:\n\n- bash: execute a shell command (command, optional timeout in ms, optional cwd)\n- read_file: read file contents (path, optional offset, optional limit)\n- write_file: create or overwrite a file (path, content)\n- edit_file: apply text edits (path, edits[{oldText, newText}])\n- list_dir: list directory entries (default path \".\", optional limit, default 500)",
-    inputSchema: z.discriminatedUnion("tool", [
-      z.object({
-        tool: z.literal("bash"),
-        command: z.string(),
-        timeout: z.number().optional(),
-        cwd: z.string().optional(),
-      }),
-      z.object({
-        tool: z.literal("read_file"),
-        path: z.string(),
-        offset: z.number().optional(),
-        limit: z.number().optional(),
-      }),
-      z.object({
-        tool: z.literal("write_file"),
-        path: z.string(),
-        content: z.string(),
-      }),
-      z.object({
-        tool: z.literal("edit_file"),
-        path: z.string(),
-        edits: z.array(z.object({
-          oldText: z.string(),
-          newText: z.string(),
-        })),
-      }),
-      z.object({
-        tool: z.literal("list_dir"),
-        path: z.string().optional().default("."),
-        limit: z.number().optional().default(500),
-      }),
-    ]),
-  },
-  async (args, extra) => {
-    const t0 = Date.now();
-    const { tool, ...toolArgs } = args;
+  server.registerTool(
+    "remote_exec",
+    {
+      description: "Run file and shell operations on the remote HPC server. Choose one operation by setting the tool parameter:\n\n- bash: execute a shell command (command, optional timeout in ms, optional cwd)\n- read_file: read file contents (path, optional offset, optional limit)\n- write_file: create or overwrite a file (path, content)\n- edit_file: apply text edits (path, edits[{oldText, newText}])\n- list_dir: list directory entries (default path \".\", optional limit, default 500)",
+      inputSchema: z.discriminatedUnion("tool", [
+        z.object({
+          tool: z.literal("bash"),
+          command: z.string(),
+          timeout: z.number().optional(),
+          cwd: z.string().optional(),
+        }),
+        z.object({
+          tool: z.literal("read_file"),
+          path: z.string(),
+          offset: z.number().optional(),
+          limit: z.number().optional(),
+        }),
+        z.object({
+          tool: z.literal("write_file"),
+          path: z.string(),
+          content: z.string(),
+        }),
+        z.object({
+          tool: z.literal("edit_file"),
+          path: z.string(),
+          edits: z.array(z.object({
+            oldText: z.string(),
+            newText: z.string(),
+          })),
+        }),
+        z.object({
+          tool: z.literal("list_dir"),
+          path: z.string().optional().default("."),
+          limit: z.number().optional().default(500),
+        }),
+      ]),
+    },
+    async (args, extra) => {
+      const t0 = Date.now();
+      const { tool, ...toolArgs } = args;
 
-    log(`remote_exec → ${tool} ${JSON.stringify(toolArgs).slice(0, 200)}`);
-    const handler = TOOL_HANDLERS[tool];
-    if (!handler) {
-      return { content: textContent(`Unknown tool: ${tool}`), isError: true };
+      log(`remote_exec → ${tool} ${JSON.stringify(toolArgs).slice(0, 200)}`);
+      const handler = TOOL_HANDLERS[tool];
+      if (!handler) {
+        return { content: textContent(`Unknown tool: ${tool}`), isError: true };
+      }
+
+      const progressToken = (extra as any)._meta?.progressToken;
+      const progressCtx: ProgressContext | undefined =
+        progressToken !== undefined && (extra as any).sendNotification
+          ? { sendNotification: (extra as any).sendNotification, progressToken }
+          : undefined;
+
+      const result = await handler(toolArgs, extra.signal, progressCtx);
+      log(`remote_exec → ${tool} ${Date.now() - t0}ms`);
+      return result;
+    }
+  );
+
+  return server;
+}
+
+// ============================================================================
+// HTTP Server
+// ============================================================================
+
+const transports = new Map<string, WebStandardStreamableHTTPServerTransport>();
+
+function checkAuth(req: Request): boolean {
+  const auth = req.headers.get("Authorization");
+  return auth === `Bearer ${TOKEN}`;
+}
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+  "Access-Control-Allow-Headers": "Content-Type, Authorization, Mcp-Session-Id",
+};
+
+log(`Satellite MCP Server v3.0.0 starting on port ${PORT}`);
+
+const httpServer = (globalThis as any).Bun.serve({
+  port: PORT,
+  idleTimeout: 0, // Disable idle timeout for long-running SSH streams
+  async fetch(req: Request) {
+    const url = new URL(req.url);
+
+    // CORS preflight
+    if (req.method === "OPTIONS") {
+      return new Response(null, { status: 204, headers: corsHeaders });
     }
 
-    const progressToken = extra._meta?.progressToken;
-    const progressCtx: ProgressContext | undefined = progressToken !== undefined ? {
-      progressToken: progressToken as string | number,
-      sendNotification: extra.sendNotification,
-      meta: extra._meta,
-    } : undefined;
+    // Health check (no auth required)
+    if (url.pathname === "/health") {
+      return Response.json({ status: "ok", version: "3.0.0" }, { headers: corsHeaders });
+    }
 
-    const result = await handler(toolArgs, progressCtx, extra.signal);
-    log(`remote_exec → ${tool} ${Date.now() - t0}ms`);
-    return result;
+    // Auth check for all other endpoints
+    if (!checkAuth(req)) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+
+    // MCP endpoint
+    if (url.pathname === "/mcp") {
+      const sessionId = req.headers.get("mcp-session-id");
+
+      if (req.method === "POST") {
+        const body = await req.json().catch(() => null);
+        if (!body) {
+          return new Response(JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32700, message: "Parse error" },
+            id: null,
+          }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
+        let transport: WebStandardStreamableHTTPServerTransport;
+
+        if (sessionId && transports.has(sessionId)) {
+          transport = transports.get(sessionId)!;
+        } else if (!sessionId && isInitializeRequest(body)) {
+          // New initialization request
+          const newSessionId = randomUUID();
+          transport = new WebStandardStreamableHTTPServerTransport({
+            sessionIdGenerator: () => newSessionId,
+            onsessioninitialized: (sid) => {
+              transports.set(sid, transport);
+              log(`Session initialized: ${sid}`);
+            },
+          });
+          transport.onclose = () => {
+            const sid = transport.sessionId;
+            if (sid && transports.has(sid)) {
+              transports.delete(sid);
+              log(`Session closed: ${sid}`);
+            }
+          };
+
+          const server = createMcpServer();
+          await server.connect(transport);
+
+          const response = await transport.handleRequest(req, { parsedBody: body });
+          return response;
+        } else {
+          return new Response(JSON.stringify({
+            jsonrpc: "2.0",
+            error: { code: -32000, message: "Bad Request: No valid session ID" },
+            id: null,
+          }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+        }
+
+        const response = await transport.handleRequest(req, { parsedBody: body });
+        return response;
+      }
+
+      if (req.method === "GET") {
+        if (!sessionId || !transports.has(sessionId)) {
+          return new Response("Invalid or missing session ID", { status: 400 });
+        }
+        const transport = transports.get(sessionId)!;
+        return transport.handleRequest(req);
+      }
+
+      if (req.method === "DELETE") {
+        if (!sessionId || !transports.has(sessionId)) {
+          return new Response("Invalid or missing session ID", { status: 400 });
+        }
+        const transport = transports.get(sessionId)!;
+        return transport.handleRequest(req);
+      }
+    }
+
+    return new Response("Not Found", { status: 404 });
+  },
+});
+
+log(`Satellite MCP Server ready on port ${PORT}`);
+
+// Graceful shutdown
+process.on("SIGINT", async () => {
+  log("Shutting down...");
+  for (const [sid, transport] of transports) {
+    try {
+      await transport.close();
+    } catch { /* ignore */ }
   }
-);
+  transports.clear();
+  httpServer.stop();
+  process.exit(0);
+});
 
-// ============================================================================
-// Start
-// ============================================================================
-
-log("MCP server v2.0.0 starting (stdio)");
-const transport = new StdioServerTransport();
-await server.connect(transport);
-log("MCP server ready");
+process.on("SIGTERM", async () => {
+  log("Shutting down...");
+  for (const [sid, transport] of transports) {
+    try {
+      await transport.close();
+    } catch { /* ignore */ }
+  }
+  transports.clear();
+  httpServer.stop();
+  process.exit(0);
+});

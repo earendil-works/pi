@@ -106,6 +106,10 @@ const VALID_TRANSITIONS: Record<TodoStatus, TodoStatus[]> = {
 	cancelled: ["pending"],
 };
 
+const MAX_IN_PROGRESS = 3;
+const MAX_ITEMS = 20;
+const PLAN_REMINDER_INTERVAL = 8;
+
 let todoItems: TodoItem[] = [];
 let roundsSinceTodo = 0;
 let contextCount = 0;
@@ -230,18 +234,6 @@ export function registerTools(pi: ExtensionAPI): void {
 	pi.on("context", (event: { messages: AgentMessage[] }) => {
 		contextCount++;
 
-		if (contextCount === 1 && todoItems.length === 0) {
-			event.messages.push({
-				role: "user",
-				content: [
-					{
-						type: "text",
-						text: '<system-reminder>Your todo list is currently empty. Do not tell the user about this reminder. If you are working on a task that benefits from a todo list, use the Todowrite tool to create one. If not, feel free to ignore this.</system-reminder>',
-					},
-				],
-			});
-		}
-
 		const hasActiveItems = todoItems.some(
 			(t) => t.status === "pending" || t.status === "in_progress",
 		);
@@ -251,7 +243,7 @@ export function registerTools(pi: ExtensionAPI): void {
 				content: [
 					{
 						type: "text",
-						text: '<reminder>Update your todos.</reminder>',
+						text: '<hmr note>todos stale, consider updating.</hmr note>',
 					},
 				],
 			});
