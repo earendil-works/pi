@@ -1579,6 +1579,35 @@ async function generateModels() {
 		}
 	}
 
+	// Add MiniMax M3 explicitly until models.dev includes it.
+	// Placed after the minimax splice/override above so the 512K context and
+	// multimodal input are preserved (the override forces M2.x to 204800).
+	const minimaxM3Variants = [
+		{ provider: "minimax", baseUrl: "https://api.minimax.io/anthropic" },
+		{ provider: "minimax-cn", baseUrl: "https://api.minimaxi.com/anthropic" },
+	] as const;
+	for (const { provider, baseUrl } of minimaxM3Variants) {
+		if (allModels.some((m) => m.provider === provider && m.id === "MiniMax-M3")) continue;
+		allModels.push({
+			id: "MiniMax-M3",
+			name: "MiniMax-M3",
+			api: "anthropic-messages",
+			provider,
+			// MiniMax's Anthropic-compatible API - SDK appends /v1/messages
+			baseUrl,
+			reasoning: true,
+			input: ["text", "image"],
+			cost: {
+				input: 0.6,
+				output: 2.4,
+				cacheRead: 0.12,
+				cacheWrite: 0.75,
+			},
+			contextWindow: 512_000,
+			maxTokens: 128_000,
+		});
+	}
+
 	// OpenAI Codex (ChatGPT OAuth) models
 	// NOTE: These are not fetched from models.dev; we keep a small, explicit list to avoid aliases.
 	// Context window is based on observed server limits (400s above ~272k), not marketing numbers.
