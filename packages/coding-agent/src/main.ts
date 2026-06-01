@@ -5,6 +5,7 @@
  * createAgentSession() options. The SDK does the heavy lifting.
  */
 
+import { spawn } from "node:child_process";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
@@ -526,7 +527,6 @@ export async function main(args: string[], options?: MainOptions) {
 			webuiServerPath = path.resolve(__dirname, "../../../webui/server/index.ts");
 		}
 
-		const { spawn } = await import("node:child_process");
 		const child = spawn("node", ["--import", "tsx/esm", webuiServerPath], {
 			stdio: "inherit",
 			cwd: process.cwd(),

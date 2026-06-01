@@ -1,6 +1,6 @@
 # @earendil-works/pi-webui
 
-Web-based UI for pi, powered by a Node.js WebSocket server and a Vite frontend.
+Web-based UI for pi, powered by a Node.js WebSocket server and a Vite/React frontend.
 
 ## Prerequisites
 
@@ -18,11 +18,11 @@ This section verifies the full stack: server, WebSocket transport, session manag
 pi --web
 ```
 
-The server binds to `localhost:3000` by default. Confirm the startup log shows no errors and that port 3000 is listening.
+The server binds to `localhost:8741` by default. Confirm the startup log shows no errors and that port 8741 is listening. Use `pi --web --port <n>` to override.
 
 ### Step 2 — Open the browser
 
-Navigate to `http://localhost:3000`. The web UI should load without errors in the console.
+Navigate to `http://localhost:8741`. The web UI should load without errors in the console.
 
 ### Step 3 — Create a session
 
@@ -71,4 +71,4 @@ cd packages/webui/server && npm run dev
 ## Architecture
 
 - `server/` — Node.js WebSocket + HTTP server (session pool, LLM client, memory store)
-- `web/` — Vite SPA frontend (React-free, vanilla JS + CSS)
+- `web/` — Vite SPA frontend (React + Tailwind)

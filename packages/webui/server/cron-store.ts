@@ -37,33 +37,31 @@ export const CRON_DATA_PATH = path.join(homedir(), ".pi", "agent", "data", "cron
 // Mutex (inline implementation since async-mutex not installed)
 // ============================================================================
 
-type MutexValue = {
-  locked: boolean;
-  queue: Array<() => void>;
-};
+interface Mutex {
+  acquire(): Promise<() => void>;
+}
 
-function createMutex(): {
-  acquire: () => Promise<() => void>;
-} {
-  const value: MutexValue = { locked: false, queue: [] };
+function createMutex(): Mutex {
+  let locked = false;
+  const queue: Array<() => void> = [];
 
   return {
     acquire(): Promise<() => void> {
       return new Promise((resolve) => {
         const release = () => {
-          const next = value.queue.shift();
+          const next = queue.shift();
           if (next) {
             next();
           } else {
-            value.locked = false;
+            locked = false;
           }
         };
 
-        if (!value.locked) {
-          value.locked = true;
+        if (!locked) {
+          locked = true;
           resolve(release);
         } else {
-          value.queue.push(() => {
+          queue.push(() => {
             resolve(release);
           });
         }
@@ -79,7 +77,6 @@ function createMutex(): {
 export class CronStore {
   private readonly dataPath: string;
   private readonly mutex = createMutex();
-  private readonly encoder = new TextEncoder();
 
   constructor(opts?: { dataPath?: string }) {
     this.dataPath = opts?.dataPath ?? CRON_DATA_PATH;

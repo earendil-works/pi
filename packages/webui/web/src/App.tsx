@@ -1,39 +1,36 @@
 import { BrowserRouter, NavLink, Navigate, Outlet, Route, Routes } from "react-router-dom";
 import { Clock, MessageSquare } from "lucide-react";
+import type { ReactNode } from "react";
 import SessionsPage from "./pages/SessionsPage";
 import ChatPage from "./pages/ChatPage";
 import CronPage from "./pages/CronPage";
+
+const navLinkClassName = ({ isActive }: { isActive: boolean }): string =>
+  `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
+    isActive
+      ? "bg-blue-100 text-blue-900"
+      : "text-gray-500 hover:bg-gray-100 hover:text-gray-900"
+  }`;
+
+function SidebarLink({ to, icon, children }: { to: string; icon: ReactNode; children: ReactNode }) {
+  return (
+    <NavLink to={to} className={navLinkClassName}>
+      {icon}
+      {children}
+    </NavLink>
+  );
+}
 
 function Sidebar() {
   return (
     <aside className="w-[200px] h-full border-r border-gray-200 flex flex-col p-4 gap-2">
       <nav className="flex flex-col gap-1">
-        <NavLink
-          to="/sessions"
-          className={({ isActive }) =>
-            `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-              isActive
-                ? "bg-blue-100 text-blue-900"
-                : "text-gray-500 hover:bg-gray-100 hover:text-gray-900"
-            }`
-          }
-        >
-          <MessageSquare className="w-4 h-4" />
+        <SidebarLink to="/sessions" icon={<MessageSquare className="w-4 h-4" />}>
           Sessions
-        </NavLink>
-        <NavLink
-          to="/cron"
-          className={({ isActive }) =>
-            `flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
-              isActive
-                ? "bg-blue-100 text-blue-900"
-                : "text-gray-500 hover:bg-gray-100 hover:text-gray-900"
-            }`
-          }
-        >
-          <Clock className="w-4 h-4" />
+        </SidebarLink>
+        <SidebarLink to="/cron" icon={<Clock className="w-4 h-4" />}>
           Cron
-        </NavLink>
+        </SidebarLink>
       </nav>
     </aside>
   );

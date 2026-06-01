@@ -13,16 +13,14 @@ function validateSchedule(schedule: unknown): schedule is Schedule {
   if (!isValidScheduleKind(s.kind)) {
     return false;
   }
-  if (s.kind === "at" && typeof s.time !== "string") {
-    return false;
+  switch (s.kind) {
+    case "at":
+      return typeof s.time === "string";
+    case "every":
+      return typeof s.interval === "number";
+    case "cron":
+      return typeof s.expr === "string";
   }
-  if (s.kind === "every" && typeof s.interval !== "number") {
-    return false;
-  }
-  if (s.kind === "cron" && typeof s.expr !== "string") {
-    return false;
-  }
-  return true;
 }
 
 export function mountCronRoutes(app: express.Express, cronStore: CronStoreType): void {

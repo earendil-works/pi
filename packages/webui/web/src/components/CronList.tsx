@@ -1,13 +1,11 @@
 import {
   Play,
-  Pause,
   Pencil,
   Trash2,
   Calendar,
   Clock,
   CheckCircle,
   XCircle,
-  AlertCircle,
   ChevronRight,
 } from "lucide-react";
 import { useState, Fragment } from "react";
@@ -33,7 +31,6 @@ function humanizeSchedule(expr: string): string {
   if (expr === "0 12 * * *") return "every day at 12:00";
   if (expr === "0 18 * * *") return "every day at 18:00";
   if (expr === "0 9,18 * * *") return "every day at 09:00 and 18:00";
-  if (expr === "0 * * * *") return "every hour";
   if (expr === "*/5 * * * *") return "every 5 minutes";
   if (expr === "*/15 * * * *") return "every 15 minutes";
   if (expr === "*/30 * * * *") return "every 30 minutes";
@@ -46,7 +43,6 @@ function humanizeSchedule(expr: string): string {
 
   // Every day at specific time: 0 9 * * * -> "every day at 09:00"
   if (day === "*" && month === "*" && weekday === "*") {
-    if (hour === "*" && minute === "*") return "every minute";
     if (hour === "*") return `every minute at :${minute.padStart(2, "0")}`;
     if (minute === "*") return `every minute in hour`;
     const h = hour.padStart(2, "0");

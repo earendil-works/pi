@@ -3,8 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, readdir, unlink, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { SessionPool } from "../session-pool";
-import type { SessionHeader } from "../session-pool";
+import type { SessionPool, SessionHeader } from "../session-pool";
 import type { LLMClient } from "../llm-client";
 import { MemoryStore } from "../memory-store";
 
@@ -129,47 +128,7 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
 
 			// Read session content for extraction
 			const jsonlContent = await readFile(filePath, "utf-8");
-
-			let atomsExtracted = 0;
-
-			// Attempt memory extraction if LLM client is available
-			if (deps?.llmClient) {
-				try {
-					const atoms = await deps.llmClient.extractAtoms(jsonlContent);
-
-					if (atoms.length > 0 && deps.memoryStore) {
-						const now = new Date().toISOString();
-
-						for (const atom of atoms) {
-							// Fill in defaults for MemoryAtom fields
-							const fullAtom = {
-								id: atom.id ?? randomUUID(),
-								type: atom.type,
-								title: atom.title,
-								summary: atom.summary,
-								content: atom.content,
-								tags: atom.tags,
-								importance: atom.importance,
-								strength: atom.strength,
-								access_count: 0,
-								last_access: now,
-								created_at: now,
-								updated_at: now,
-								version: 1,
-								archived: false,
-								file_path: "",
-								content_hash: createHash("sha256").update(atom.content).digest("hex"),
-							};
-							deps.memoryStore.writeAtom(fullAtom);
-						}
-					}
-
-					atomsExtracted = atoms.length;
-				} catch (llmErr) {
-					// LLM extraction failed - log but continue with deletion
-					console.warn("Memory extraction failed, proceeding with deletion:", llmErr);
-				}
-			}
+			const atomsExtracted = await extractAtomsSafely(jsonlContent, deps);
 
 			// Delete the session file
 			await unlink(filePath);
@@ -180,6 +139,45 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
 			res.status(500).json({ error: "Internal server error" });
 		}
 	});
+}
+
+/**
+ * Attempt memory extraction. Returns the number of atoms extracted, or 0
+ * if extraction failed or no LLM client is available. Errors are logged
+ * but never thrown so deletion can proceed.
+ */
+async function extractAtomsSafely(jsonlContent: string, deps?: SessionsDeps): Promise<number> {
+	if (!deps?.llmClient) return 0;
+	try {
+		const atoms = await deps.llmClient.extractAtoms(jsonlContent);
+		if (atoms.length > 0 && deps.memoryStore) {
+			const now = new Date().toISOString();
+			for (const atom of atoms) {
+				deps.memoryStore.writeAtom({
+					id: atom.id ?? randomUUID(),
+					type: atom.type,
+					title: atom.title,
+					summary: atom.summary,
+					content: atom.content,
+					tags: atom.tags,
+					importance: atom.importance,
+					strength: atom.strength,
+					access_count: 0,
+					last_access: now,
+					created_at: now,
+					updated_at: now,
+					version: 1,
+					archived: false,
+					file_path: "",
+					content_hash: createHash("sha256").update(atom.content).digest("hex"),
+				});
+			}
+		}
+		return atoms.length;
+	} catch (llmErr) {
+		console.warn("Memory extraction failed, proceeding with deletion:", llmErr);
+		return 0;
+	}
 }
 
 async function parseSessionHeader(filePath: string): Promise<SessionHeader | undefined> {

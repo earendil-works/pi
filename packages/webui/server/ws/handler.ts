@@ -1,6 +1,6 @@
 import { WebSocketServer, WebSocket, type RawData } from "ws";
 import type { Server } from "node:http";
-import type SessionPool from "../session-pool";
+import type { SessionPool, WSClient } from "../session-pool";
 
 // --- Message types -----------------------------------------------------------
 
@@ -94,7 +94,7 @@ export function attachWsHandler(httpServer: Server, pool: SessionPool): WebSocke
       const state = clients.get(ws);
       if (state) {
         for (const sessionId of state.subscriptions) {
-          pool.unsubscribe(sessionId, ws as unknown as import("../session-pool").WSClient);
+          pool.unsubscribe(sessionId, ws as unknown as WSClient);
         }
         clients.delete(ws);
       }
@@ -126,7 +126,7 @@ export function attachWsHandler(httpServer: Server, pool: SessionPool): WebSocke
           const state = clients.get(ws)!;
           state.subscriptions.add(sessionId);
           state.activeSession = sessionId;
-          pool.subscribe(sessionId, ws as unknown as import("../session-pool").WSClient);
+          pool.subscribe(sessionId, ws as unknown as WSClient);
           ws.send(JSON.stringify({ type: "subscribed", sessionId }));
           break;
         }
@@ -142,7 +142,7 @@ export function attachWsHandler(httpServer: Server, pool: SessionPool): WebSocke
           if (state.activeSession === sessionId) {
             state.activeSession = undefined;
           }
-          pool.unsubscribe(sessionId, ws as unknown as import("../session-pool").WSClient);
+          pool.unsubscribe(sessionId, ws as unknown as WSClient);
           break;
         }
 
@@ -186,13 +186,13 @@ export function attachWsHandler(httpServer: Server, pool: SessionPool): WebSocke
           if (state.activeSession && state.activeSession !== sessionId) {
             pool.unsubscribe(
               state.activeSession,
-              ws as unknown as import("../session-pool").WSClient,
+              ws as unknown as WSClient,
             );
           }
           // Subscribe to new session
           state.subscriptions.add(sessionId);
           state.activeSession = sessionId;
-          pool.subscribe(sessionId, ws as unknown as import("../session-pool").WSClient);
+          pool.subscribe(sessionId, ws as unknown as WSClient);
           ws.send(JSON.stringify({ type: "subscribed", sessionId }));
           break;
         }

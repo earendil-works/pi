@@ -1,10 +1,7 @@
 import express from "express";
-import { createServer, Server } from "node:http";
-import { WebSocketServer } from "ws";
+import { createServer, type Server } from "node:http";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-
-const __dirname = fileURLToPath(new URL(".", import.meta.url));
 import { mountStatic } from "./routes/static";
 import { mountHealth } from "./routes/health";
 import { mountCronRoutes } from "./routes/cron";
@@ -15,6 +12,8 @@ import { SessionPool } from "./session-pool";
 import { LLMClient } from "./llm-client";
 import { MemoryStore } from "./memory-store";
 import { attachWsHandler } from "./ws/handler";
+
+const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 const PORT = parseInt(process.env.PI_WEB_PORT || "8741", 10);
 
@@ -33,12 +32,11 @@ export function createApp(deps?: Partial<ServerDeps>): { app: express.Express; d
   const memoryStore = deps?.memoryStore ?? new MemoryStore();
   const cronWatcher = deps?.cronWatcher ?? new CronWatcher(cronStore.dataPath);
 
-  // Initialize session pool (async but we await inline in startServer)
-  // For sync path, we just call init() which returns a promise that resolves quickly
+  // Fire-and-forget: start scanning sessions in the background so createApp
+  // returns immediately. startServer awaits the same call again to wait for
+  // completion before accepting requests.
   void sessionPool.init();
-  // LLMClient.init() is sync — await is a no-op
   llmClient.init();
-  // MemoryStore.init() is sync
   memoryStore.init();
 
   const app = express();
@@ -82,7 +80,9 @@ export async function startServer(opts: {
 }): Promise<{ server: Server; stopServer: () => Promise<void> }> {
   const port = opts.port ?? PORT;
   const { app, deps } = createApp(opts.deps);
-  // Await session pool init (no-op since we already called it, but needed for the real init path)
+  // Wait for the background init() started by createApp to finish before
+  // accepting requests. Calling again is safe — init() is idempotent in
+  // effect (both invocations scan the same sessions dir).
   await deps.sessionPool.init();
 
   const server = createServer(app);
