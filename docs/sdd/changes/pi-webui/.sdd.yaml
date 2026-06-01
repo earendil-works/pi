@@ -1,4 +1,4 @@
-phase: release
+phase: archive
 workflow: full
 change: pi-webui
 created_at: 2026-06-01
