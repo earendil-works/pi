@@ -35,7 +35,7 @@
   - **依赖**: 无
   - **前置阅读**: `packages/coding-agent/src/modes/rpc/rpc-types.ts:69` (`set_session_name` 协议)
 
-- [ ] 1.3 **WS handler 在 prompt 后调 setSessionName (用 titlesSeen 去重)**
+- [x] - [ ] 1.3 **WS handler 在 prompt 后调 setSessionName (用 titlesSeen 去重)**
   - **文件**: `packages/webui/server/ws/handler.ts` (Modify,prompt case 末尾)
   - **内容**: 收到 `prompt` 消息并 `pool.prompt()` 之后,查 `SessionPool.getTitlesSeen(sessionId): Set<string> | undefined`,若 set 为空(表示该 session 从未设过 title),取 `text.slice(0, 30)`,调 `pool.setSessionName(sessionId, name)`,失败 console.error 不抛。setSessionName 内部会把 sessionId 加入 titlesSeen,所以第二次 prompt `getTitlesSeen(sessionId).size > 0` 时不再调。
   - **辅助**: SessionPool 加 `getTitlesSeen(sessionId): Set<string> | undefined` 公开方法(在 1.2 已初始化 titlesSeen,这里只暴露访问)
@@ -70,7 +70,7 @@
   - **验证**: `cd packages/webui/web && timeout 30 npx vitest run src/lib/api.test.ts` — 现有 18 测试全过
   - **依赖**: 无
 
-- [ ] 3.2 **Sidebar 组件加 session 列表 + New Chat**
+- [x] - [ ] 3.2 **Sidebar 组件加 session 列表 + New Chat**
   - **文件**: `packages/webui/web/src/components/Sidebar.tsx` (Create)
   - **内容**: 新建组件,从 `api.listSessions()` 拉 sessions(`useEffect + useState`),用 `setInterval` 30s 刷新一次。渲染:
     - 顶部 brand `pi webui` + NavLink to `/cron`

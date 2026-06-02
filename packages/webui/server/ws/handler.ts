@@ -176,6 +176,16 @@ export function attachWsHandler(httpServer: Server, pool: SessionPool): WebSocke
           pool
             .prompt(sessionId, text, images)
             .catch((err: Error) => sendError(ws, err.message));
+          // Set session title from first user message (first 30 chars, RPC set_session_name)
+          if (text.trim().length > 0) {
+            const titlesSeen = pool.getTitlesSeen(sessionId);
+            if (titlesSeen !== undefined && titlesSeen.size === 0) {
+              const name = text.slice(0, 30);
+              pool
+                .setSessionName(sessionId, name)
+                .catch((err: Error) => console.error("setSessionName failed:", err));
+            }
+          }
           break;
         }
 

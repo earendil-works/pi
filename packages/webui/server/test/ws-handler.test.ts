@@ -12,6 +12,8 @@ interface FakePool {
   abort: ReturnType<typeof vi.fn>;
   spawnIfNeeded: ReturnType<typeof vi.fn>;
   broadcast: ReturnType<typeof vi.fn>;
+  setSessionName: ReturnType<typeof vi.fn>;
+  getTitlesSeen: ReturnType<typeof vi.fn>;
   _eventListeners: Map<string, Set<(...args: unknown[]) => void>>;
   _emit: (event: string, ...args: unknown[]) => void;
 }
@@ -25,6 +27,8 @@ function createFakePool(): FakePool {
     abort: vi.fn(),
     spawnIfNeeded: vi.fn().mockResolvedValue(undefined),
     broadcast: vi.fn(),
+    setSessionName: vi.fn().mockResolvedValue(undefined),
+    getTitlesSeen: vi.fn().mockReturnValue(new Set<string>()),
     _eventListeners: listeners,
     _emit(event: string, ...args: unknown[]) {
       listeners.get(event)?.forEach((fn) => fn(...args));
@@ -311,6 +315,147 @@ describe("WsHandler", () => {
 
     // Should have been rejected
     expect(errors.length).toBeGreaterThan(0);
+
+    ws.close();
+  });
+
+  // -------------------------------------------------------------------------
+  it("setSessionName called once on first prompt", async () => {
+    const pool = createFakePool();
+    // Track titlesSeen state per session to simulate real behavior:
+    // First prompt: size=0 → setSessionName called
+    // Second prompt: size>0 → setSessionName NOT called
+    const titlesSeenStore = new Map<string, Set<string>>();
+    pool.getTitlesSeen.mockImplementation((sessionId: string) => {
+      if (!titlesSeenStore.has(sessionId)) titlesSeenStore.set(sessionId, new Set<string>());
+      return titlesSeenStore.get(sessionId)!;
+    });
+    pool.setSessionName.mockImplementation(async (sessionId: string, _name: string) => {
+      titlesSeenStore.get(sessionId)?.add(sessionId);
+    });
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s1" }));
+    await new Promise<void>((res) => setTimeout(res, 30));
+
+    // First prompt — should trigger setSessionName
+    ws.send(JSON.stringify({ type: "prompt", text: "hello world, how are you?" }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    expect(pool.setSessionName).toHaveBeenCalledTimes(1);
+    expect(pool.setSessionName).toHaveBeenCalledWith("s1", "hello world, how are you?");
+
+    // Second prompt — setSessionName should NOT be called again
+    ws.send(JSON.stringify({ type: "prompt", text: "tell me a joke" }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    expect(pool.setSessionName).toHaveBeenCalledTimes(1);
+
+    ws.close();
+  });
+
+  // -------------------------------------------------------------------------
+  it("setSessionName uses first 30 chars of first prompt", async () => {
+    const pool = createFakePool();
+    const titlesSeenStore = new Map<string, Set<string>>();
+    pool.getTitlesSeen.mockImplementation((sessionId: string) => {
+      if (!titlesSeenStore.has(sessionId)) titlesSeenStore.set(sessionId, new Set<string>());
+      return titlesSeenStore.get(sessionId)!;
+    });
+    pool.setSessionName.mockImplementation(async (sessionId: string, _name: string) => {
+      titlesSeenStore.get(sessionId)?.add(sessionId);
+    });
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s1" }));
+    await new Promise<void>((res) => setTimeout(res, 30));
+
+    // First prompt is exactly 30 chars — title should be all 30
+    const prompt30 = "abcdefghijklmnopqrstuvwxyz1234"; // 30 chars
+    ws.send(JSON.stringify({ type: "prompt", text: prompt30 }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    expect(pool.setSessionName).toHaveBeenCalledTimes(1);
+    expect(pool.setSessionName).toHaveBeenCalledWith("s1", prompt30);
+
+    ws.close();
+  });
+
+  // -------------------------------------------------------------------------
+  it("setSessionName handles first prompt with newlines (takes first 30 chars)", async () => {
+    const pool = createFakePool();
+    const titlesSeenStore = new Map<string, Set<string>>();
+    pool.getTitlesSeen.mockImplementation((sessionId: string) => {
+      if (!titlesSeenStore.has(sessionId)) titlesSeenStore.set(sessionId, new Set<string>());
+      return titlesSeenStore.get(sessionId)!;
+    });
+    pool.setSessionName.mockImplementation(async (sessionId: string, _name: string) => {
+      titlesSeenStore.get(sessionId)?.add(sessionId);
+    });
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s1" }));
+    await new Promise<void>((res) => setTimeout(res, 30));
+
+    // First prompt has newlines
+    const promptWithNewlines = "hello\nworld\nfoo\nbar";
+    ws.send(JSON.stringify({ type: "prompt", text: promptWithNewlines }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    expect(pool.setSessionName).toHaveBeenCalledTimes(1);
+    // Should slice to first 30 chars including newlines
+    expect(pool.setSessionName).toHaveBeenCalledWith("s1", promptWithNewlines.slice(0, 30));
+
+    ws.close();
+  });
+
+  // -------------------------------------------------------------------------
+  it("setSessionName skips when getTitlesSeen returns undefined (race)", async () => {
+    const pool = createFakePool();
+    // Simulate race: session doesn't exist yet
+    pool.getTitlesSeen.mockReturnValue(undefined);
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s1" }));
+    await new Promise<void>((res) => setTimeout(res, 30));
+
+    ws.send(JSON.stringify({ type: "prompt", text: "hello" }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    // setSessionName should NOT be called because getTitlesSeen returned undefined
+    expect(pool.setSessionName).not.toHaveBeenCalled();
 
     ws.close();
   });
