@@ -151,8 +151,8 @@
 
 ## Verification
 
-- [ ] 全量测试: `cd packages/webui && timeout 90 npx vitest run` — 125 + 5 server + 18 + 4 web = 152 测试全过
-- [ ] Lint: `cd /home/qjh/workspace/personal/pi && timeout 120 npm run check` — 干净
-- [ ] 构建: `cd packages/webui/web && timeout 30 npm run build` — vite build 成功
-- [ ] E2E: 4 场景全部 `/tmp/webui-fixes-*.png` 已生成
-- [ ] Cron: `curl -s http://127.0.0.1:8741/api/cron/jobs | jq '.jobs | length'` → `0`
+- [x] 全量测试: `cd packages/webui && timeout 90 npx vitest run` — 125 + 5 server + 18 + 4 web = 152 测试全过
+- [x] Lint: `cd /home/qjh/workspace/personal/pi && timeout 120 npm run check` — 干净
+- [x] 构建: `cd packages/webui/web && timeout 30 npm run build` — vite build 成功
+- [x] E2E: 4 场景全部 `/tmp/webui-fixes-*.png` 已生成
+- [x] Cron: `curl -s http://127.0.0.1:8741/api/cron/jobs | jq '.jobs | length'` → `0`
