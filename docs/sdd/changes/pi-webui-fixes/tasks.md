@@ -123,13 +123,13 @@
 
 ## 4. E2E 浏览器验证 (4 场景)
 
-- [ ] 4.1 **场景 1: cwd 解析 + 真 sessions 显示**
+- [x] 4.1 **场景 1: cwd 解析 + 真 sessions 显示**
   - **文件**: 无
   - **内容**: 在 `~/pi` 跑 `./pi-test.sh --web --port 8742`,开 `chrome-devtools_new_page` 访问 `http://127.0.0.1:8742/`,截图,验证左栏 session 数与 `ls ~/.pi/agent/sessions/--home-qjh-pi--/ | wc -l` 一致。
   - **验证**: 截图保存到 `/tmp/webui-fixes-sessions.png`,显示至少 1 个真 session 卡片。
   - **依赖**: 3.8, 2.1
 
-- [ ] 4.2 **场景 2: agent echo 修复 + 标题更新**
+- [x] 4.2 **场景 2: agent echo 修复 + 标题更新**
   - **文件**: 无
   - **内容**: 浏览器新建 chat,输入 "nihao" 回车,等 5s,验证:
     1. assistant 消息内容 ≠ "nihao"(真 LLM 响应)
@@ -137,13 +137,13 @@
   - **验证**: 截图 `/tmp/webui-fixes-echo.png`,显示完整一轮对话 + 左栏标题已变。
   - **依赖**: 4.1
 
-- [ ] 4.3 **场景 3: DELETE 乐观**
+- [x] 4.3 **场景 3: DELETE 乐观**
   - **文件**: 无
   - **内容**: 浏览器创建一个新 session,等它出现在左栏,点删除,确认弹窗,验证 200ms 内从左栏消失(用 `chrome-devtools_evaluate_script` 测时间戳)。**`/api/sessions/:id` GET 返 404**。
   - **验证**: 截图 `/tmp/webui-fixes-delete.png`,左栏 session 数 -1。
   - **依赖**: 4.2
 
-- [ ] 4.4 **场景 4: 空 cron 页面 + 主页空状态**
+- [x] 4.4 **场景 4: 空 cron 页面 + 主页空状态**
   - **文件**: 无
   - **内容**: 浏览器 navigate 到 `/`,截图,验证空状态;再 navigate 到 `/cron`,截图,验证 "No scheduled jobs"。
   - **验证**: 截图 `/tmp/webui-fixes-empty.png`, `/tmp/webui-fixes-cron.png`。
