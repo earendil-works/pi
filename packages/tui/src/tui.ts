@@ -265,6 +265,14 @@ export class Container implements Component {
 export class TUI extends Container {
 	public terminal: Terminal;
 	private previousLines: string[] = [];
+	// Incremental applyLineResets cache: the raw input array and processed output
+	// from the previous frame. Child components cache their rendered lines, so a
+	// static transcript keeps identical string references across frames; unchanged
+	// lines are reused via a pointer compare instead of being re-normalized and
+	// re-allocated on every render tick. This keeps per-frame cost proportional to
+	// the lines that actually changed rather than the full conversation length.
+	private lineResetPrevRaw: string[] | null = null;
+	private lineResetPrevOut: string[] | null = null;
 	private previousKittyImageIds = new Set<number>();
 	private previousWidth = 0;
 	private previousHeight = 0;
@@ -994,13 +1002,26 @@ export class TUI extends Container {
 
 	private applyLineResets(lines: string[]): string[] {
 		const reset = TUI.SEGMENT_RESET;
-		for (let i = 0; i < lines.length; i++) {
+		const n = lines.length;
+		const out = new Array<string>(n);
+		const prevRaw = this.lineResetPrevRaw;
+		const prevOut = this.lineResetPrevOut;
+		const prevLen = prevRaw === null ? 0 : prevRaw.length;
+		for (let i = 0; i < n; i++) {
 			const line = lines[i];
-			if (!isImageLine(line)) {
-				lines[i] = normalizeTerminalOutput(line) + reset;
+			// Reuse the previous frame's processed line when the raw input is the
+			// same string reference at the same index. For a long, mostly-static
+			// transcript this is a pointer compare for the bulk of the lines,
+			// avoiding per-line re-normalization and string allocation every frame.
+			if (prevRaw !== null && i < prevLen && prevRaw[i] === line) {
+				out[i] = (prevOut as string[])[i];
+				continue;
 			}
+			out[i] = isImageLine(line) ? line : normalizeTerminalOutput(line) + reset;
 		}
-		return lines;
+		this.lineResetPrevRaw = lines;
+		this.lineResetPrevOut = out;
+		return out;
 	}
 
 	private collectKittyImageIds(lines: string[]): Set<number> {
