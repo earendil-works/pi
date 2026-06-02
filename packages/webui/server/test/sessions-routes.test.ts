@@ -323,25 +323,35 @@ describe("Sessions REST API Endpoints", () => {
 		it("respects limit and offset params", async () => {
 			const port = (server.address() as any).port;
 
-			// Add some messages to the session file manually
+			// Add some messages to the session file using the real JSONL format
+			const sessionId_ = sessionId; // capture for closure
 			const messages = [
-				JSON.stringify({ role: "user", content: "msg1" }),
-				JSON.stringify({ role: "assistant", content: "msg2" }),
-				JSON.stringify({ role: "user", content: "msg3" }),
+				JSON.stringify({ type: "message", id: "msg-1", message: { role: "user", content: [{ type: "text", text: "msg1" }] }, timestamp: "2025-01-01T00:00:00.000Z" }),
+				JSON.stringify({ type: "message", id: "msg-2", message: { role: "assistant", content: [{ type: "text", text: "msg2" }] }, timestamp: "2025-01-01T00:00:01.000Z" }),
+				JSON.stringify({ type: "message", id: "msg-3", message: { role: "user", content: [{ type: "text", text: "msg3" }] }, timestamp: "2025-01-01T00:00:02.000Z" }),
+				// Non-message entries should be filtered out
+				JSON.stringify({ type: "model_change", id: "model-1", provider: "openai", modelId: "gpt-4" }),
+				JSON.stringify({ type: "thinking_level_change", id: "think-1", thinkingLevel: "off" }),
 			];
 			const fileContent = (
 				await fs.readFile(sessionFile, "utf-8")
 			).trim() + "\n" + messages.join("\n") + "\n";
 			await fs.writeFile(sessionFile, fileContent);
 
-			// Test offset=1, limit=1
+			// Test offset=1, limit=1 - should skip header + first message = start at second message
 			const res = await fetch(
-				`http://127.0.0.1:${port}/api/sessions/${sessionId}/messages?limit=1&offset=1`,
+				`http://127.0.0.1:${port}/api/sessions/${sessionId_}/messages?limit=1&offset=1`,
 			);
 			expect(res.status).toBe(200);
 			const msgs = await res.json();
 			expect(msgs).toHaveLength(1);
-			expect(msgs[0].content).toBe("msg2");
+			expect(msgs[0]).toMatchObject({
+				id: "msg-2",
+				sessionId: sessionId_,
+				role: "assistant",
+				content: "msg2",
+				timestamp: "2025-01-01T00:00:01.000Z",
+			});
 		});
 	});
 
@@ -489,10 +499,10 @@ describe("Sessions REST API Endpoints", () => {
 			const sessionId = createBody.id;
 			const sessionFile = createBody.sessionFile;
 
-			// Add messages to the session file
+			// Add messages to the session file using real JSONL format
 			const messages = [
-				JSON.stringify({ role: "user", content: "I prefer dark mode" }),
-				JSON.stringify({ role: "assistant", content: "Got it, dark mode enabled" }),
+				JSON.stringify({ type: "message", id: "msg-1", message: { role: "user", content: [{ type: "text", text: "I prefer dark mode" }] }, timestamp: "2025-01-01T00:00:00.000Z" }),
+				JSON.stringify({ type: "message", id: "msg-2", message: { role: "assistant", content: [{ type: "text", text: "Got it, dark mode enabled" }] }, timestamp: "2025-01-01T00:00:01.000Z" }),
 			];
 			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + messages.join("\n") + "\n";
 			await fs.writeFile(sessionFile, fileContent);

@@ -123,7 +123,7 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
 				return;
 			}
 
-			const messages = await readMessages(filePath, limit, offset);
+			const messages = await readMessages(filePath, id, limit, offset);
 			res.json(messages);
 		} catch (err) {
 			console.error("Error reading messages:", err);
@@ -303,11 +303,20 @@ async function writeJsonlLine(filePath: string, data: unknown): Promise<void> {
 	});
 }
 
+interface Message {
+	id: string;
+	sessionId: string;
+	role: "user" | "assistant" | "system";
+	content: string;
+	timestamp: string;
+}
+
 async function readMessages(
 	filePath: string,
+	sessionId: string,
 	limit: number,
 	offset: number,
-): Promise<unknown[]> {
+): Promise<Message[]> {
 	const content = await readFile(filePath, "utf-8");
 	const lines = content.split("\n").filter((l) => l.trim());
 
@@ -317,10 +326,35 @@ async function readMessages(
 	// Apply pagination
 	const paginatedLines = messageLines.slice(offset, offset + limit);
 
-	const messages: unknown[] = [];
+	const messages: Message[] = [];
 	for (const line of paginatedLines) {
 		try {
-			messages.push(JSON.parse(line));
+			const entry = JSON.parse(line);
+			// Only process 'message' entries (skip model_change, thinking_level_change, etc.)
+			if (entry.type !== "message" || !entry.message) continue;
+
+			const inner = entry.message;
+			const role = inner.role;
+			if (role !== "user" && role !== "assistant" && role !== "system") continue;
+
+			// Extract text from content array
+			let text = "";
+			if (Array.isArray(inner.content)) {
+				text = inner.content
+					.filter((c: any) => c.type === "text")
+					.map((c: any) => c.text ?? "")
+					.join("");
+			} else if (typeof inner.content === "string") {
+				text = inner.content;
+			}
+
+			messages.push({
+				id: entry.id ?? crypto.randomUUID(),
+				sessionId,
+				role,
+				content: text,
+				timestamp: entry.timestamp ?? new Date().toISOString(),
+			});
 		} catch {
 			// Skip invalid JSON lines
 		}
