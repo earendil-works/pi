@@ -3,6 +3,7 @@ import {
 	type BranchSummaryEntry,
 	buildSessionContext,
 	type CompactionEntry,
+	type CustomMessageEntry,
 	type ModelChangeEntry,
 	type SessionEntry,
 	type SessionMessageEntry,
@@ -60,6 +61,24 @@ function modelChange(id: string, parentId: string | null, provider: string, mode
 	return { type: "model_change", id, parentId, timestamp: "2025-01-01T00:00:00Z", provider, modelId };
 }
 
+function customMessage(
+	id: string,
+	parentId: string | null,
+	customType: string,
+	content: string,
+	display: boolean,
+): CustomMessageEntry {
+	return {
+		type: "custom_message",
+		id,
+		parentId,
+		timestamp: "2025-01-01T00:00:00Z",
+		customType,
+		content,
+		display,
+	};
+}
+
 describe("buildSessionContext", () => {
 	describe("trivial cases", () => {
 		it("empty entries returns empty context", () => {
@@ -86,6 +105,24 @@ describe("buildSessionContext", () => {
 			const ctx = buildSessionContext(entries);
 			expect(ctx.messages).toHaveLength(4);
 			expect(ctx.messages.map((m) => m.role)).toEqual(["user", "assistant", "user", "assistant"]);
+		});
+
+		it("includes display:false custom messages in context", () => {
+			const entries: SessionEntry[] = [
+				msg("1", null, "user", "hello"),
+				customMessage("2", "1", "pi-inline-skill-snapshot", "hidden context", false),
+				msg("3", "2", "assistant", "hi"),
+			];
+
+			const ctx = buildSessionContext(entries, "3");
+
+			expect(ctx.messages).toHaveLength(3);
+			expect(ctx.messages[0].role).toBe("user");
+			expect(ctx.messages[1].role).toBe("custom");
+			expect((ctx.messages[1] as any).customType).toBe("pi-inline-skill-snapshot");
+			expect((ctx.messages[1] as any).content).toBe("hidden context");
+			expect((ctx.messages[1] as any).display).toBe(false);
+			expect(ctx.messages[2].role).toBe("assistant");
 		});
 
 		it("tracks thinking level changes", () => {
