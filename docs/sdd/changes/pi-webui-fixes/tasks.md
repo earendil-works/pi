@@ -115,7 +115,7 @@
   - **验证**: `cd packages/webui/web && timeout 30 npm run build` — 无未解析 import
   - **依赖**: 3.5
 
-- [ ] 3.8 **前端测试 + build 整合**
+- [x] 3.8 **前端测试 + build 整合**
   - **文件**: `packages/webui/web/src/lib/api.test.ts`,所有 component test (Modify)
   - **内容**: 跑全量 web vitest + vite build,确认 18 个原有测试 + 4 个新 Sidebar 测试全过。
   - **验证**: `cd packages/webui/web && timeout 60 npx vitest run && timeout 30 npm run build` — 全过
