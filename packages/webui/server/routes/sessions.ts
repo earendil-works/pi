@@ -330,17 +330,11 @@ async function readMessages(
 }
 
 /**
- * Derive a human-friendly session title from the JSONL header.
- * Falls back to "session <id-prefix>" if no cwd is available.
+ * Return the session title from the JSONL header.
+ * Returns empty string when name is not yet set (title written via RPC after first prompt).
  */
 function deriveTitle(s: SessionHeader & { sessionFile: string }): string {
-	const cwd = s.cwd ?? "";
-	if (cwd) {
-		const parts = cwd.split("/").filter((p) => p.length > 0);
-		const last = parts[parts.length - 1];
-		if (last) return `${last} (${s.id.slice(0, 8)})`;
-	}
-	return `session ${s.id.slice(0, 8)}`;
+	return s.name ?? "";
 }
 
 /**

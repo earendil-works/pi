@@ -148,6 +148,18 @@ describe("Sessions REST API Endpoints", () => {
 			expect(found.sessionFile).toBeTruthy();
 		});
 
+		it("returns empty title when JSONL header has no name field", async () => {
+			const port = (server.address() as any).port;
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions`);
+			expect(res.status).toBe(200);
+
+			const sessions = await res.json();
+			const found = sessions.find((s: any) => s.id === createdId);
+			expect(found).toBeTruthy();
+			// Spec R6: new session title is empty; title is written via RPC set_session_name after first prompt
+			expect(found.title).toBe("");
+		});
+
 		it("returns empty array when no sessions exist", async () => {
 			// Use a different empty directory
 			const emptyDir = path.join("/tmp", `pi-empty-${crypto.randomUUID()}`);

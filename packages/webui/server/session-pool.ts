@@ -12,6 +12,7 @@ export interface SessionHeader {
 	timestamp: string;
 	cwd: string;
 	parentSession?: string;
+	name?: string;
 }
 
 export interface WSClient {
