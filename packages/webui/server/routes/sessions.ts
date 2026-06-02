@@ -57,7 +57,7 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
 					const msgCount = await countMessages(s.sessionFile);
 					return {
 						...s,
-						title: deriveTitle(s),
+						title: deriveTitle(s, sessionPool),
 						lastActive: s.timestamp,
 						status: isRunning ? ("running" as const) : ("idle" as const),
 						messageCount: msgCount,
@@ -330,11 +330,11 @@ async function readMessages(
 }
 
 /**
- * Return the session title from the JSONL header.
+ * Return the session title from the JSONL header, falling back to sessionPool.
  * Returns empty string when name is not yet set (title written via RPC after first prompt).
  */
-function deriveTitle(s: SessionHeader & { sessionFile: string }): string {
-	return s.name ?? "";
+function deriveTitle(s: SessionHeader & { sessionFile: string }, sessionPool: SessionPool): string {
+	return s.name ?? sessionPool.getSessionName(s.id) ?? "";
 }
 
 /**

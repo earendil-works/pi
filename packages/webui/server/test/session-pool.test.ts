@@ -539,7 +539,93 @@ describe("SessionPool", () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// (o) init skips session files with non-session type header
+	// (u) spawnIfNeeded passes full file path to --session (not just sessionId)
+	// -------------------------------------------------------------------------
+	it("(u) spawnIfNeeded passes full file path to --session to avoid fork prompt", async () => {
+		const { proc } = makeMockProc();
+		proc.once.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+			if (event === "exit") setTimeout(() => cb(0, null), 0);
+			return proc;
+		});
+
+		// Create a session file that matches the sessionId so findSessionFile can find it
+		const sessionsDir = join(tmpBase, ".pi", "agent", "sessions", "--test--");
+		await writeFile(
+			join(sessionsDir, "2026-06-02T04-18-22-483Z_my-session-id.jsonl"),
+			JSON.stringify({
+				type: "session",
+				id: "my-session-id",
+				timestamp: "2026-06-02T04:18:22.483Z",
+				cwd: "/test",
+			}) + "\n",
+		);
+
+		let spawnArgs: string[] = [];
+		const pool = new SessionPool({
+			cwd: "/test",
+			spawnFn: (_cmd, args, _opts) => {
+				spawnArgs = args;
+				return proc;
+			},
+		});
+
+		await pool.spawnIfNeeded("my-session-id");
+
+		// spawnFn should have been called
+		expect(spawnArgs.length).toBeGreaterThan(0);
+
+		// Find --session argument index
+		const sessionIdx = spawnArgs.indexOf("--session");
+		expect(sessionIdx).toBeGreaterThanOrEqual(0);
+
+		const sessionArg = spawnArgs[sessionIdx + 1];
+		// Must contain "/" or end with ".jsonl" to be recognized as a path by pi's resolveSessionPath
+		expect(sessionArg).toSatisfy(
+			(val: string) => val.includes("/") || val.endsWith(".jsonl"),
+			`--session argument must be a full path, got: ${sessionArg}`,
+		);
+		// Should contain the sessionId somewhere in the filename
+		expect(sessionArg).toContain("my-session-id");
+	});
+
+	// -------------------------------------------------------------------------
+	// getSessionName
+	// -------------------------------------------------------------------------
+
+	it("getSessionName returns undefined for unknown session", () => {
+		const pool = new SessionPool({ cwd: "/test" });
+		expect(pool.getSessionName("nonexistent")).toBeUndefined();
+	});
+
+	it("sessionNames map is empty initially", () => {
+		const pool = new SessionPool({ cwd: "/test" });
+		expect(pool.getSessionName("any-id")).toBeUndefined();
+	});
+
+	it("getSessionName returns name set via session_info_changed event", async () => {
+		const { proc } = makeMockProc();
+		proc.once.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+			if (event === "exit") setTimeout(() => cb(0, null), 0);
+			return proc;
+		});
+
+		const pool = new SessionPool({ cwd: "/test", spawnFn: () => proc });
+		await pool.spawnIfNeeded("s1");
+
+		// Get the stdout data handler
+		const dataCalls = proc.stdout.on.mock.calls.filter((c) => c[0] === "data");
+		expect(dataCalls.length).toBeGreaterThan(0);
+		const dataHandler = dataCalls[0][1];
+
+		// Emit a session_info_changed event
+		dataHandler(Buffer.from(JSON.stringify({ type: "session_info_changed", name: "MySessionTitle" }) + "\n"));
+
+		// getSessionName should now return the name
+		expect(pool.getSessionName("s1")).toBe("MySessionTitle");
+	});
+
+	// -------------------------------------------------------------------------
+	// (o) init skips session files with wrong type header
 	// -------------------------------------------------------------------------
 	it("(o) init skips session files with wrong type header", async () => {
 		const sessionsDir = join(tmpBase, ".pi", "agent", "sessions", "--test--");

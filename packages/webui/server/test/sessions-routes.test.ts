@@ -44,6 +44,7 @@ describe("Sessions REST API Endpoints", () => {
 		return {
 			sessionsDir,
 			isRunning: () => false,
+			getSessionName: () => undefined,
 			on: () => {},
 			emit: () => {},
 		};
@@ -99,6 +100,62 @@ describe("Sessions REST API Endpoints", () => {
 			expect(header.id).toBe(sessionId);
 			expect(header.cwd).toBeTruthy();
 			expect(header.timestamp).toBeTruthy();
+		});
+	});
+
+	// (b2) GET /api/sessions falls back to sessionPool.getSessionName when JSONL header has no name
+	describe("(b2) GET /api/sessions falls back to sessionPool.getSessionName when JSONL header has no name", () => {
+		let app: express.Express;
+		let server: ReturnType<typeof createServer>;
+		let createdId: string;
+
+		beforeEach(async () => {
+			app = express();
+			app.use(express.json());
+			// Create mock pool that has getSessionName
+			const pool = {
+				sessionsDir: fakeSessionsDir,
+				isRunning: () => false,
+				getSessionName: (id: string) => (id === "pool-session-id" ? "PoolFallbackTitle" : undefined),
+				on: () => {},
+				emit: () => {},
+			};
+			mountSessionsRoutes(app, pool);
+			server = createServer(app);
+
+			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+			const port = (server.address() as any).port;
+
+			// Manually create a session file without a name field in header
+			const sessionFilePath = path.join(fakeSessionsDir, `2025-01-01T00-00-00-000Z_pool-session-id.jsonl`);
+			await fs.mkdir(fakeSessionsDir, { recursive: true });
+			await fs.writeFile(
+				sessionFilePath,
+				JSON.stringify({
+					type: "session",
+					id: "pool-session-id",
+					timestamp: "2025-01-01T00:00:00.000Z",
+					cwd: "/test",
+					// no name field
+				}) + "\n",
+			);
+			createdId = "pool-session-id";
+		});
+
+		afterEach(() => {
+			server.close();
+		});
+
+		it("returns title from sessionPool.getSessionName when JSONL header has no name", async () => {
+			const port = (server.address() as any).port;
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions`);
+			expect(res.status).toBe(200);
+
+			const sessions = await res.json();
+			const found = sessions.find((s: any) => s.id === createdId);
+			expect(found).toBeTruthy();
+			// Title should come from sessionPool.getSessionName, not from JSONL header
+			expect(found.title).toBe("PoolFallbackTitle");
 		});
 	});
 

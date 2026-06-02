@@ -5,6 +5,21 @@ import { join } from "node:path";
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
 
+/**
+ * Find a session file by session ID in the sessions directory.
+ * Session files are named: <date-timestamp>_<sessionId>.jsonl
+ */
+async function findSessionFile(sessionsDir: string, sessionId: string): Promise<string | undefined> {
+	try {
+		const entries = await readdir(sessionsDir);
+		// Files are named like: 2026-06-02T04-18-22-483Z_<sessionId>.jsonl
+		const match = entries.find((name) => name.endsWith(`${sessionId}.jsonl`));
+		return match ? join(sessionsDir, match) : undefined;
+	} catch {
+		return undefined;
+	}
+}
+
 export interface SessionHeader {
 	type: "session";
 	version?: number;
@@ -48,6 +63,9 @@ export class SessionPool extends EventEmitter {
 
 	/** sessionId -> SessionState */
 	private readonly sessions = new Map<string, SessionState>();
+
+	/** sessionId -> name (updated from session_info_changed events) */
+	private readonly sessionNames = new Map<string, string>();
 
 	constructor(opts?: {
 		cwd?: string;
@@ -153,12 +171,20 @@ export class SessionPool extends EventEmitter {
 		// Reconstruct cwd from directory name
 		// Directory format: ~/.pi/agent/sessions/--home--user--proj-- => /home/user/proj
 		const cwdFromDir = this.sessionsDir
+			.replace(/\/$/, "") // strip trailing slash
 			.replace(/^.*\/sessions\/--/, "/")
 			.replace(/--$/, "")
 			.replace(/--/g, "/");
 
-		const proc = this.spawnFn("pi", ["--mode", "rpc", "--resume", sessionId, "--cwd", cwdFromDir], {
+		// Look up the session file to pass the full path to pi.
+		// pi's resolveSessionPath treats a path with "/" or ".jsonl" as a direct file path,
+		// avoiding the "fork prompt" when a session is found in global but cwd differs.
+		const sessionFile = await findSessionFile(this.sessionsDir, sessionId);
+		const sessionArg = sessionFile ?? sessionId;
+
+		const proc = this.spawnFn("pi", ["--mode", "rpc", "--session", sessionArg], {
 			stdio: ["pipe", "pipe", "inherit"],
+			cwd: cwdFromDir,
 			env: { ...process.env },
 			detached: false,
 		});
@@ -171,6 +197,13 @@ export class SessionPool extends EventEmitter {
 			for (const line of lines) {
 				try {
 					const event = JSON.parse(line);
+					// Track session name from session_info_changed events
+					if (typeof event === "object" && event !== null && (event as any).type === "session_info_changed") {
+						const name = (event as any).name;
+						if (typeof name === "string") {
+							this.sessionNames.set(sessionId, name);
+						}
+					}
 					// Emit on the pool for external listeners (e.g. WS handler)
 					// The WS handler is responsible for forwarding to subscribers
 					// with the proper {type:"session_event",sessionId,event} wrapper
@@ -349,5 +382,12 @@ export class SessionPool extends EventEmitter {
 	 */
 	getTitlesSeen(sessionId: string): Set<string> | undefined {
 		return this.sessions.get(sessionId)?.titlesSeen;
+	}
+
+	/**
+	 * Get the session name for a session, if set via session_info_changed event.
+	 */
+	getSessionName(sessionId: string): string | undefined {
+		return this.sessionNames.get(sessionId);
 	}
 }
