@@ -60,7 +60,7 @@
   - **文件**: `~/.pi/agent/data/cron.json` (直接清空,不走 git)
   - **内容**: `rm` 整个文件 或 `echo '[]' > ~/.pi/agent/data/cron.json`。验证 `GET /api/cron/jobs` 返回 `[]`。
   - **验证**: `curl -s http://127.0.0.1:8741/api/cron/jobs | jq '.jobs | length'` → `0`
-  - **依赖**: 1.5 (服务起来了才能测)
+  - **依赖**: 无
 
 ## 3. 前端 UI 重构 (5 文件 + 1 删)
 
