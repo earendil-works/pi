@@ -321,7 +321,7 @@ describe("Sessions REST API Endpoints", () => {
 			expect(delRes.status).toBe(200);
 			const body = await delRes.json();
 			expect(body.ok).toBe(true);
-			expect(body.atomsExtracted).toBe(0);
+			// atomsExtracted is not returned (fire-and-forget)
 
 			// Verify file no longer exists
 			await expect(fs.access(sessionFile)).rejects.toThrow();
@@ -435,7 +435,7 @@ describe("Sessions REST API Endpoints", () => {
 			expect(delRes.status).toBe(200);
 			const delBody = await delRes.json();
 			expect(delBody.ok).toBe(true);
-			expect(delBody.atomsExtracted).toBe(2);
+			// atomsExtracted is not returned (fire-and-forget)
 
 			// Verify JSONL file is deleted
 			await expect(fs.access(sessionFile)).rejects.toThrow();
@@ -456,6 +456,62 @@ describe("Sessions REST API Endpoints", () => {
 			memoryStore.close();
 			await fs.rm(testSessionDir, { recursive: true, force: true }).catch(() => {});
 			try { await fs.unlink(tempDbPath); } catch { /* ignore */ }
+		});
+
+		it("(f3) DELETE returns within 500ms even when LLM extraction is slow (fire-and-forget)", async () => {
+			// Create mock LLMClient with a slow extraction (8s) - fire-and-forget
+			const mockLLMClient = {
+				extractAtoms: vi.fn().mockImplementation(
+					() => new Promise((_, reject) => setTimeout(() => reject(new Error("LLM extraction slow")), 8000)),
+				),
+			};
+
+			// Create temp sessions dir
+			const testSessionDir = path.join("/tmp", `pi-sessions-fireforget-${crypto.randomUUID()}`);
+			await fs.mkdir(testSessionDir, { recursive: true });
+
+			// Mount routes with deps
+			const testApp = express();
+			testApp.use(express.json());
+			const pool = createMockPool(testSessionDir);
+			// @ts-ignore - deps not yet in signature but we're testing the new behavior
+			mountSessionsRoutes(testApp, pool, {
+				llmClient: mockLLMClient as any,
+			});
+
+			const testServer = createServer(testApp);
+			await new Promise<void>((resolve) => testServer.listen(0, "127.0.0.1", resolve));
+			const port = (testServer.address() as any).port;
+
+			// Create a session via POST
+			const createRes = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ initialPrompt: "test" }),
+			});
+			const createBody = await createRes.json();
+			const sessionId = createBody.id;
+			const sessionFile = createBody.sessionFile;
+
+			// Issue DELETE and measure time - should return within 500ms even with slow LLM
+			const startTime = Date.now();
+			const delRes = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId}`, {
+				method: "DELETE",
+			});
+			const elapsed = Date.now() - startTime;
+
+			expect(delRes.status).toBe(200);
+			const delBody = await delRes.json();
+			expect(delBody.ok).toBe(true);
+			// Must return within 500ms (fire-and-forget)
+			expect(elapsed).toBeLessThan(500);
+
+			// Verify JSONL file is deleted
+			await expect(fs.access(sessionFile)).rejects.toThrow();
+
+			// Cleanup
+			testServer.close();
+			await fs.rm(testSessionDir, { recursive: true, force: true }).catch(() => {});
 		});
 
 		it("(f2) LLM failure is non-blocking - session deleted, memory.db unchanged", async () => {

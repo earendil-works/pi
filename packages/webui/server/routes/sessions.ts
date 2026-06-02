@@ -143,14 +143,16 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
 				return;
 			}
 
-			// Read session content for extraction
+			// Read session content for extraction (non-blocking)
 			const jsonlContent = await readFile(filePath, "utf-8");
-			const atomsExtracted = await extractAtomsSafely(jsonlContent, deps);
+			void extractAtomsSafely(jsonlContent, deps).catch((err) => {
+				console.error("Background atom extraction failed:", err);
+			});
 
-			// Delete the session file
+			// Delete the session file immediately
 			await unlink(filePath);
 
-			res.json({ ok: true, atomsExtracted });
+			res.json({ ok: true });
 		} catch (err) {
 			console.error("Error deleting session:", err);
 			res.status(500).json({ error: "Internal server error" });

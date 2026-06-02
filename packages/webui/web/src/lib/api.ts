@@ -6,6 +6,7 @@ export interface SessionInfo {
   status: "idle" | "running" | "error";
   lastActive: string; // ISO timestamp
   messageCount: number;
+  cwd?: string; // optional, for debugging
 }
 
 export type Schedule =

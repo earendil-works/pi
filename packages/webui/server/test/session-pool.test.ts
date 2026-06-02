@@ -22,7 +22,7 @@ import { join } from "node:path";
 function makeMockProc() {
 	const proc = vi.fn() as ReturnType<typeof vi.fn> & {
 		stdin: { write: ReturnType<typeof vi.fn>; end: ReturnType<typeof vi.fn> };
-		stdout: { on: ReturnType<typeof vi.fn> };
+		stdout: { on: ReturnType<typeof vi.fn>; off: ReturnType<typeof vi.fn> };
 		stderr: { on: ReturnType<typeof vi.fn> };
 		on: ReturnType<typeof vi.fn>;
 		once: ReturnType<typeof vi.fn>;
@@ -32,7 +32,7 @@ function makeMockProc() {
 	};
 
 	proc.stdin = { write: vi.fn(), end: vi.fn() };
-	proc.stdout = { on: vi.fn() };
+	proc.stdout = { on: vi.fn(), off: vi.fn() };
 	proc.stderr = { on: vi.fn() };
 	proc.on = vi.fn().mockReturnThis();
 	proc.once = vi.fn().mockReturnThis();
@@ -356,6 +356,186 @@ describe("SessionPool", () => {
 	it("(n) kill on unknown session does not throw", async () => {
 		const pool = new SessionPool({ cwd: "/test" });
 		await expect(pool.kill("ghost")).resolves.toBeUndefined();
+	});
+
+	// -------------------------------------------------------------------------
+	// (p) prompt writes message field (not text) to stdin
+	// -------------------------------------------------------------------------
+	it("(p) prompt writes message field to stdin as valid RPC protocol", async () => {
+		const { proc } = makeMockProc();
+		proc.once.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+			if (event === "exit") setTimeout(() => cb(0, null), 0);
+			return proc;
+		});
+
+		const pool = new SessionPool({ cwd: "/test", spawnFn: () => proc });
+		await pool.spawnIfNeeded("s1");
+		await pool.prompt("s1", "hello", []);
+
+		expect(proc.stdin.write).toHaveBeenCalledOnce();
+		const written = proc.stdin.write.mock.calls[0][0] as string;
+		const parsed = JSON.parse(written.trim());
+
+		expect(parsed).toEqual({
+			type: "prompt",
+			sessionId: "s1",
+			message: "hello",
+			images: [],
+		});
+		// Ensure the legacy `text` field is NOT present
+		expect(parsed).not.toHaveProperty("text");
+	});
+
+	// -------------------------------------------------------------------------
+	// setSessionName
+	// -------------------------------------------------------------------------
+
+	it("(q) setSessionName resolves on success response", async () => {
+		const { proc } = makeMockProc();
+		proc.once.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+			if (event === "exit") setTimeout(() => cb(0, null), 0);
+			return proc;
+		});
+
+		const pool = new SessionPool({ cwd: "/test", spawnFn: () => proc });
+		await pool.spawnIfNeeded("s1");
+
+		// Intercept stdout.on to capture the setSessionName handler
+		let setSessionOnData: ((chunk: Buffer | string) => void) | null = null;
+		const origStdoutOn = proc.stdout.on;
+		proc.stdout.on = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+			if (event === "data") setSessionOnData = handler as (chunk: Buffer | string) => void;
+			return origStdoutOn.call(proc.stdout, event, handler);
+		});
+
+		// Capture corrId from the write
+		let writtenCorrId: string | null = null;
+		const origWrite = proc.stdin.write;
+		proc.stdin.write = vi.fn((msg: string) => {
+			const parsed = JSON.parse(msg.trim());
+			if (parsed.type === "set_session_name") {
+				writtenCorrId = parsed.id;
+			}
+			return origWrite.call(proc.stdin, msg);
+		});
+
+		const setSessionNamePromise = pool.setSessionName("s1", "MyTitle");
+
+		// Emit success response via the captured setSessionName handler
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		expect(writtenCorrId).toBeTruthy();
+		expect(setSessionOnData).not.toBeNull();
+		setSessionOnData!(Buffer.from(JSON.stringify({ type: "response", command: "set_session_name", id: writtenCorrId, success: true }) + "\n"));
+
+		await expect(setSessionNamePromise).resolves.toBeUndefined();
+	});
+
+	it("(r) setSessionName rejects on failure response", async () => {
+		const { proc } = makeMockProc();
+		proc.once.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+			if (event === "exit") setTimeout(() => cb(0, null), 0);
+			return proc;
+		});
+
+		const pool = new SessionPool({ cwd: "/test", spawnFn: () => proc });
+		await pool.spawnIfNeeded("s1");
+
+		let setSessionOnData: ((chunk: Buffer | string) => void) | null = null;
+		const origStdoutOn = proc.stdout.on;
+		proc.stdout.on = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+			if (event === "data") setSessionOnData = handler as (chunk: Buffer | string) => void;
+			return origStdoutOn.call(proc.stdout, event, handler);
+		});
+
+		let writtenCorrId: string | null = null;
+		const origWrite = proc.stdin.write;
+		proc.stdin.write = vi.fn((msg: string) => {
+			const parsed = JSON.parse(msg.trim());
+			if (parsed.type === "set_session_name") {
+				writtenCorrId = parsed.id;
+			}
+			return origWrite.call(proc.stdin, msg);
+		});
+
+		const setSessionNamePromise = pool.setSessionName("s1", "MyTitle");
+
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		expect(writtenCorrId).toBeTruthy();
+		expect(setSessionOnData).not.toBeNull();
+
+		// Emit failure response
+		setSessionOnData!(Buffer.from(JSON.stringify({ type: "response", command: "set_session_name", id: writtenCorrId, success: false, error: "boom" }) + "\n"));
+
+		await expect(setSessionNamePromise).rejects.toThrow("boom");
+	});
+
+	it("(s) setSessionName rejects on timeout after 5s", async () => {
+		const { proc } = makeMockProc();
+		proc.once.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+			if (event === "exit") setTimeout(() => cb(0, null), 0);
+			return proc;
+		});
+
+		const pool = new SessionPool({ cwd: "/test", spawnFn: () => proc });
+		await pool.spawnIfNeeded("s1");
+
+		const setSessionNamePromise = pool.setSessionName("s1", "MyTitle");
+
+		// Wait just over 5 seconds to allow the internal timeout to fire
+		// Use a single await to catch the rejection synchronously before unhandled-rejection tracking
+		await expect(Promise.race([
+			setSessionNamePromise,
+			new Promise<void>((_, reject) => setTimeout(() => reject(new Error("wait exceeded")), 5100)),
+		])).rejects.toThrow("timed out");
+	}, 10000);
+
+	it("(t) setSessionName is idempotent — second call returns early without writing", async () => {
+		const { proc } = makeMockProc();
+		proc.once.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+			if (event === "exit") setTimeout(() => cb(0, null), 0);
+			return proc;
+		});
+
+		const pool = new SessionPool({ cwd: "/test", spawnFn: () => proc });
+		await pool.spawnIfNeeded("s1");
+
+		let setSessionOnData: ((chunk: Buffer | string) => void) | null = null;
+		const origStdoutOn = proc.stdout.on;
+		proc.stdout.on = vi.fn((event: string, handler: (...args: unknown[]) => void) => {
+			if (event === "data") setSessionOnData = handler as (chunk: Buffer | string) => void;
+			return origStdoutOn.call(proc.stdout, event, handler);
+		});
+
+		let writtenCorrId: string | null = null;
+		const origWrite = proc.stdin.write;
+		proc.stdin.write = vi.fn((msg: string) => {
+			const parsed = JSON.parse(msg.trim());
+			if (parsed.type === "set_session_name") {
+				writtenCorrId = parsed.id;
+			}
+			return origWrite.call(proc.stdin, msg);
+		});
+
+		// First call — resolve with success
+		const p1 = pool.setSessionName("s1", "MyTitle");
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		expect(writtenCorrId).toBeTruthy();
+		expect(setSessionOnData).not.toBeNull();
+		setSessionOnData!(Buffer.from(JSON.stringify({ type: "response", command: "set_session_name", id: writtenCorrId, success: true }) + "\n"));
+		await p1;
+
+		// Second call — should return early, no new write
+		const writeCountBefore = (proc.stdin.write as ReturnType<typeof vi.fn>).mock.calls.length;
+		const p2 = pool.setSessionName("s1", "MyTitle");
+		await new Promise<void>((resolve) => setTimeout(resolve, 0));
+		// stdin.write should NOT have been called again (idempotent)
+		const writeCountAfter = (proc.stdin.write as ReturnType<typeof vi.fn>).mock.calls.length;
+		expect(writeCountAfter).toBe(writeCountBefore);
+		await p2; // should resolve immediately (no async work)
+
+		// Verify titlesSeen was populated
+		expect(pool.getTitlesSeen("s1")).toBeDefined();
+		expect(pool.getTitlesSeen("s1")?.has("s1")).toBe(true);
 	});
 
 	// -------------------------------------------------------------------------

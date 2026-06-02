@@ -18,14 +18,14 @@
 
 ## 1. 后端修复 (3 文件)
 
-- [ ] 1.1 **修正 RPC prompt 字段名 (text → message)**
+- [x] 1.1 **修正 RPC prompt 字段名 (text → message)**
   - **文件**: `packages/webui/server/session-pool.ts:236` (Modify)
   - **内容**: 把 `prompt()` 方法写入 stdin 的 JSON payload 字段从 `text` 改成 `message`,其他字段保持(images 数组、sessionId)。`abort()` 等其他方法不动。
   - **验证**: `cd packages/webui && timeout 30 npx vitest run server/test/session-pool.test.ts -t "prompt writes message field"` — 新测试 mock 一个 `spawnFn`,验证 stdin 收到 `{type:"prompt", message:"hello", images:[]}`,**不**含 `text` 字段
   - **依赖**: 无
   - **前置阅读**: `packages/coding-agent/src/modes/rpc/rpc-types.ts:51` (确认真实字段名)
 
-- [ ] 1.2 **SessionPool 新增 `setSessionName` 方法 + titlesSeen 跟踪**
+- [x] 1.2 **SessionPool 新增 `setSessionName` 方法 + titlesSeen 跟踪**
   - **文件**: `packages/webui/server/session-pool.ts` (Modify,新增方法 + 改 SessionState interface)
   - **内容**:
     1. `SessionState` interface 加 `titlesSeen: Set<string>`(空 Set)字段,记录已发过 set_session_name 的 sessionId
@@ -42,7 +42,7 @@
   - **验证**: `cd packages/webui && timeout 30 npx vitest run server/test/ws-handler.test.ts -t "setSessionName called once on first prompt"` — 模拟 client 发 2 次 prompt,验证 SessionPool.setSessionName 被调用 1 次,第二次不再调
   - **依赖**: 1.1, 1.2
 
-- [ ] 1.4 **DELETE 改成 fire-and-forget (不等 LLM 抽 atoms)**
+- [x] 1.4 **DELETE 改成 fire-and-forget (不等 LLM 抽 atoms)**
   - **文件**: `packages/webui/server/routes/sessions.ts:148` (Modify)
   - **内容**: `extractAtomsSafely` 之前 `await` 改成 `void`:`void extractAtomsSafely(jsonlContent, deps).catch(err => console.error("Background atom extraction failed:", err));`,**unlink 不变**(紧接着执行)。响应立刻返 `{ok: true, atomsExtracted: undefined}` 或 `{ok: true}`。
   - **验证**: `cd packages/webui && timeout 30 npx vitest run server/test/sessions-routes.test.ts -t "DELETE returns within 500ms even when LLM extraction fails"` — mock LLMClient.extractAtoms 返回 8s 延迟 + reject,验证 DELETE 响应时间 <500ms 且 unlink 已发生
@@ -56,7 +56,7 @@
 
 ## 2. Cron 数据清理
 
-- [ ] 2.1 **清 `~/.pi/agent/data/cron.json` 7 个假 job**
+- [x] 2.1 **清 `~/.pi/agent/data/cron.json` 7 个假 job**
   - **文件**: `~/.pi/agent/data/cron.json` (直接清空,不走 git)
   - **内容**: `rm` 整个文件 或 `echo '[]' > ~/.pi/agent/data/cron.json`。验证 `GET /api/cron/jobs` 返回 `[]`。
   - **验证**: `curl -s http://127.0.0.1:8741/api/cron/jobs | jq '.jobs | length'` → `0`
@@ -64,7 +64,7 @@
 
 ## 3. 前端 UI 重构 (5 文件 + 1 删)
 
-- [ ] 3.1 **api.ts SessionInfo 加 title 字段类型**
+- [x] 3.1 **api.ts SessionInfo 加 title 字段类型**
   - **文件**: `packages/webui/web/src/lib/api.ts` (Modify)
   - **内容**: `SessionInfo` interface 加 `title: string;`(必填,后端已返),`cwd?: string`(可选,调试用)。`firstUserMessage` 不需要(后端算好)。
   - **验证**: `cd packages/webui/web && timeout 30 npx vitest run src/lib/api.test.ts` — 现有 18 测试全过
@@ -81,7 +81,7 @@
   - **验证**: `cd packages/webui/web && timeout 30 npx vitest run src/components/Sidebar.test.tsx` — 4 子测试:(1) 空列表显 "No sessions yet" (2) 有 sessions 渲染标题 (3) 点击 session 触发 onSelect prop 回调 (4) 点 New Chat 调用 onNewChat
   - **依赖**: 3.1
 
-- [ ] 3.3 **EmptyChat 组件: 主页空状态**
+- [x] 3.3 **EmptyChat 组件: 主页空状态**
   - **文件**: `packages/webui/web/src/pages/EmptyChat.tsx` (Create)
   - **内容**: 新建组件,显示居中卡片"Start a new chat from the sidebar, or click + New Chat",无功能。
   - **验证**: 无 (简单组件,跳过单测,UI 验证 4.2)

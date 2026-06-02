@@ -27,6 +27,7 @@ export interface PiEvent {
 interface SessionState {
 	proc: ChildProcess;
 	subscribers: Set<WSClient>;
+	titlesSeen: Set<string>;
 }
 
 /**
@@ -161,7 +162,7 @@ export class SessionPool extends EventEmitter {
 			detached: false,
 		});
 
-		const state: SessionState = { proc, subscribers: new Set() };
+		const state: SessionState = { proc, subscribers: new Set(), titlesSeen: new Set() };
 
 		// Handle stdout JSON-line output
 		proc.stdout?.on("data", (chunk: Buffer | string) => {
@@ -233,8 +234,47 @@ export class SessionPool extends EventEmitter {
 		await this.spawnIfNeeded(sessionId);
 		const state = this.sessions.get(sessionId);
 		if (!state) return;
-		const msg = JSON.stringify({ type: "prompt", sessionId, text, images: images ?? [] }) + "\n";
+		const msg = JSON.stringify({ type: "prompt", sessionId, message: text, images: images ?? [] }) + "\n";
 		state.proc.stdin?.write(msg);
+	}
+
+	/**
+	 * Send set_session_name to the pi RPC process.
+	 * Idempotent — subsequent calls for the same sessionId are no-ops.
+	 */
+	async setSessionName(sessionId: string, name: string): Promise<void> {
+		await this.spawnIfNeeded(sessionId);
+		const state = this.sessions.get(sessionId);
+		if (!state) throw new Error(`Session ${sessionId} not found`);
+		if (state.titlesSeen.has(sessionId)) return; // idempotent
+		state.titlesSeen.add(sessionId);
+		const corrId = crypto.randomUUID();
+		const msg = JSON.stringify({ type: "set_session_name", id: corrId, name }) + "\n";
+
+		return new Promise((resolve, reject) => {
+			const timeout = setTimeout(() => {
+				state.proc.stdout?.off("data", onData);
+				reject(new Error("setSessionName timed out after 5s"));
+			}, 5000);
+
+			const onData = (chunk: Buffer | string) => {
+				const lines = chunk.toString().split("\n").filter((l) => l.trim());
+				for (const line of lines) {
+					try {
+						const evt = JSON.parse(line);
+						if (evt.type === "response" && evt.command === "set_session_name" && evt.id === corrId) {
+							clearTimeout(timeout);
+							state.proc.stdout?.off("data", onData);
+							if (evt.success) resolve();
+							else reject(new Error(evt.error || "setSessionName failed"));
+							return;
+						}
+					} catch {}
+				}
+			};
+			state.proc.stdout?.on("data", onData);
+			state.proc.stdin?.write(msg);
+		});
 	}
 
 	/**
@@ -301,5 +341,12 @@ export class SessionPool extends EventEmitter {
 	 */
 	isRunning(sessionId: string): boolean {
 		return this.sessions.has(sessionId);
+	}
+
+	/**
+	 * Get the set of sessionIds that have already received setSessionName.
+	 */
+	getTitlesSeen(sessionId: string): Set<string> | undefined {
+		return this.sessions.get(sessionId)?.titlesSeen;
 	}
 }
