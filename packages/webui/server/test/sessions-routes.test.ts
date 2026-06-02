@@ -43,6 +43,7 @@ describe("Sessions REST API Endpoints", () => {
 	function createMockPool(sessionsDir: string): any {
 		return {
 			sessionsDir,
+			isRunning: () => false,
 			on: () => {},
 			emit: () => {},
 		};

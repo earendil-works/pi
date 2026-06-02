@@ -1,59 +1,39 @@
 import { CheckCircle, XCircle, Minus, Clock } from "lucide-react";
-import type { CronJob } from "../lib/api";
+import type { CronJob, Schedule } from "../lib/api";
 
 interface CronLastRunProps {
   job: CronJob;
 }
 
 /** Parse "at HH:MM" or "at H:MM" syntax */
-function parseAtSchedule(schedule: string): { hour: number; minute: number } | null {
-  const match = schedule.match(/^at\s+(\d{1,2}):(\d{2})$/);
+function parseAtSchedule(time: string): { hour: number; minute: number } | null {
+  const match = time.match(/^(\d{1,2}):(\d{2})$/);
   if (!match) return null;
   return { hour: parseInt(match[1], 10), minute: parseInt(match[2], 10) };
 }
 
-/** Parse "every N seconds/minutes/hours" syntax */
-function parseEverySchedule(
-  schedule: string
-): { value: number; unit: "seconds" | "minutes" | "hours" } | null {
-  const match = schedule.match(/^every\s+(\d+)\s+(second|minute|hour|seconds|minutes|hours)$/);
-  if (!match) return null;
-  const value = parseInt(match[1], 10);
-  const unit = (match[2].replace(/s$/, "") + "s") as "seconds" | "minutes" | "hours";
-  return { value, unit };
-}
-
 /** Compute next scheduled fire time from a base date */
-function computeNextFire(baseMs: number, schedule: string): Date | null {
-  // "at" syntax: at HH:MM
-  const atMatch = parseAtSchedule(schedule);
-  if (atMatch) {
-    const now = new Date(baseMs);
+function computeNextFire(baseMs: number, schedule: Schedule): Date | null {
+  if (schedule.kind === "at") {
+    const at = parseAtSchedule(schedule.time);
+    if (!at) return null;
     const today = new Date(baseMs);
-    today.setHours(atMatch.hour, atMatch.minute, 0, 0);
+    today.setHours(at.hour, at.minute, 0, 0);
     // If today's slot has passed, use tomorrow
-    if (today.getTime() <= now.getTime()) {
+    if (today.getTime() <= baseMs) {
       today.setDate(today.getDate() + 1);
     }
     return today;
   }
 
-  // "every" syntax: every N seconds|minutes|hours
-  const everyMatch = parseEverySchedule(schedule);
-  if (everyMatch) {
-    const multiplier =
-      everyMatch.unit === "seconds"
-        ? 1000
-        : everyMatch.unit === "minutes"
-          ? 60 * 1000
-          : 60 * 60 * 1000;
-    return new Date(baseMs + everyMatch.value * multiplier);
+  if (schedule.kind === "every") {
+    return new Date(baseMs + schedule.interval * 1000);
   }
 
-  // Cron expression (5 fields): minute hour day month weekday
-  // Lightweight parser for common patterns
-  const parts = schedule.trim().split(/\s+/);
-  if (parts.length === 5) {
+  if (schedule.kind === "cron") {
+    const expr = schedule.expr.trim();
+    const parts = expr.split(/\s+/);
+    if (parts.length !== 5) return null;
     const [minute, hour, day, month, weekday] = parts;
     const now = new Date(baseMs);
     const currentYear = now.getFullYear();
@@ -64,7 +44,7 @@ function computeNextFire(baseMs: number, schedule: string): Date | null {
         if (field === "*") return current;
         const vals = field.split(",").flatMap((r) => {
           const range = r.match(/^(\d+)(?:-(\d+))?$/);
-          if (!range) return parseInt(r, 10);
+          if (!range) return [parseInt(r, 10)];
           const start = parseInt(range[1], 10);
           const end = range[2] ? parseInt(range[2], 10) : start;
           const result: number[] = [];
@@ -88,22 +68,24 @@ function computeNextFire(baseMs: number, schedule: string): Date | null {
 
       // Check day-of-month
       if (day !== "*") {
-        const dayVals = day.split(",").flatMap((r) => {
-          const range = r.match(/^(\d+)(?:-(\d+))?$/);
-          if (!range) return [parseInt(r, 10)];
-          const start = parseInt(range[1], 10);
-          const end = range[2] ? parseInt(range[2], 10) : start;
-          const result: number[] = [];
-          for (let i = start; i <= Math.min(end, 31); i++) result.push(i);
-          return result;
-        });
+        const dayVals: number[] = [];
+        for (const part of day.split(",")) {
+          const range = part.match(/^(\d+)(?:-(\d+))?$/);
+          if (range) {
+            const start = parseInt(range[1], 10);
+            const end = range[2] ? parseInt(range[2], 10) : start;
+            for (let i = start; i <= Math.min(end, 31); i++) dayVals.push(i);
+          } else {
+            const n = parseInt(part, 10);
+            if (!isNaN(n)) dayVals.push(n);
+          }
+        }
         cand.setDate(dayVals[0] ?? 1);
       }
 
       // Check weekday
       if (weekday !== "*") {
         const weekdayVals = weekday.split(",").map((r) => parseInt(r, 10));
-        // Adjust to find next matching weekday
         const start = new Date(cand);
         for (let d = 0; d < 7; d++) {
           const check = new Date(start);

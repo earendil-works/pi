@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { X } from "lucide-react";
 import { api } from "../lib/api";
-import type { CronJob } from "../lib/api";
+import type { CronJob, Schedule } from "../lib/api";
 
 export type ScheduleKind = "at" | "every" | "cron";
 
@@ -19,41 +19,16 @@ interface CronFormProps {
   onSave?: (job: CronJob) => void;
 }
 
-function serializeSchedule(schedule: ScheduleValue): string {
-  switch (schedule.kind) {
-    case "at":
-      return schedule.time || "00:00";
-    case "every":
-      return `${schedule.interval || 60}s`;
-    case "cron":
-      return schedule.expr || "* * * * *";
-    default:
-      return "* * * * *";
-  }
+function toSchedule(s: ScheduleValue): Schedule {
+  if (s.kind === "at") return { kind: "at", time: s.time || "00:00" };
+  if (s.kind === "every") return { kind: "every", interval: s.interval || 60 };
+  return { kind: "cron", expr: s.expr || "* * * * *", ...(s.tz ? { tz: s.tz } : {}) };
 }
 
-function deserializeSchedule(schedule: string): ScheduleValue {
-  // Try to parse as cron expression first
-  const cronParts = schedule.split(" ");
-  if (cronParts.length === 5) {
-    return { kind: "cron", expr: schedule };
-  }
-
-  // Try to parse as interval (e.g., "60s")
-  if (schedule.endsWith("s")) {
-    const interval = parseInt(schedule.slice(0, -1), 10);
-    if (!isNaN(interval)) {
-      return { kind: "every", interval };
-    }
-  }
-
-  // Try to parse as time (e.g., "09:00")
-  if (/^\d{2}:\d{2}$/.test(schedule)) {
-    return { kind: "at", time: schedule };
-  }
-
-  // Default fallback
-  return { kind: "cron", expr: "* * * * *" };
+function fromSchedule(s: Schedule): ScheduleValue {
+  if (s.kind === "at") return { kind: "at", time: s.time };
+  if (s.kind === "every") return { kind: "every", interval: s.interval };
+  return { kind: "cron", expr: s.expr, ...(s.tz ? { tz: s.tz } : {}) };
 }
 
 export default function CronForm({ job, onClose, onSave }: CronFormProps) {
@@ -62,7 +37,7 @@ export default function CronForm({ job, onClose, onSave }: CronFormProps) {
   const [name, setName] = useState(job?.name || "");
   const [prompt, setPrompt] = useState(job?.prompt || "");
   const [scheduleValue, setScheduleValue] = useState<ScheduleValue>(
-    job ? deserializeSchedule(job.schedule) : { kind: "cron", expr: "* * * * *" }
+    job ? fromSchedule(job.schedule) : { kind: "cron", expr: "* * * * *" }
   );
   const [enabled, setEnabled] = useState(job?.enabled ?? true);
   const [submitting, setSubmitting] = useState(false);
@@ -88,7 +63,7 @@ export default function CronForm({ job, onClose, onSave }: CronFormProps) {
       const input = {
         name,
         prompt,
-        schedule: serializeSchedule(scheduleValue),
+        schedule: toSchedule(scheduleValue),
         enabled,
       };
 

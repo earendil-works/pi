@@ -22,7 +22,26 @@ interface CronListProps {
 }
 
 /** Humanize a cron expression into a readable string */
-function humanizeSchedule(expr: string): string {
+function humanizeSchedule(schedule: { kind: string; time?: string; interval?: number; expr?: string; tz?: string }): string {
+  if (schedule.kind === "at") {
+    return schedule.time ? `every day at ${schedule.time}` : "at (no time)";
+  }
+  if (schedule.kind === "every") {
+    const n = schedule.interval ?? 0;
+    if (n <= 0) return "every (invalid interval)";
+    if (n % 3600 === 0) return `every ${n / 3600} hour${n / 3600 === 1 ? "" : "s"}`;
+    if (n % 60 === 0) return `every ${n / 60} minute${n / 60 === 1 ? "" : "s"}`;
+    return `every ${n} second${n === 1 ? "" : "s"}`;
+  }
+  if (schedule.kind === "cron") {
+    const expr = schedule.expr ?? "";
+    return humanizeCronExpr(expr);
+  }
+  return JSON.stringify(schedule);
+}
+
+function humanizeCronExpr(expr: string): string {
+  if (!expr) return "cron (empty)";
   // Common patterns
   if (expr === "* * * * *") return "every minute";
   if (expr === "0 * * * *") return "every hour";

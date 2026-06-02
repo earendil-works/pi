@@ -8,10 +8,15 @@ export interface SessionInfo {
   messageCount: number;
 }
 
+export type Schedule =
+  | { kind: "at"; time: string }
+  | { kind: "every"; interval: number }
+  | { kind: "cron"; expr: string; tz?: string };
+
 export interface CronJob {
   id: string;
   name: string;
-  schedule: string;
+  schedule: Schedule;
   prompt: string;
   enabled: boolean;
   last_run: string | null; // ISO timestamp or null if never run
@@ -21,7 +26,7 @@ export interface CronJob {
 
 export interface CronJobInput {
   name: string;
-  schedule: string;
+  schedule: Schedule;
   prompt: string;
   enabled: boolean;
 }

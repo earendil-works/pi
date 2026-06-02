@@ -50,7 +50,24 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
 				// Directory doesn't exist yet — return empty list
 			}
 
-			res.json(sessions);
+			// Enrich with client-friendly fields: title, lastActive, status, messageCount
+			const enriched = await Promise.all(
+				sessions.map(async (s) => {
+					const isRunning = sessionPool.isRunning(s.id);
+					const msgCount = await countMessages(s.sessionFile);
+					return {
+						...s,
+						title: deriveTitle(s),
+						lastActive: s.timestamp,
+						status: isRunning ? ("running" as const) : ("idle" as const),
+						messageCount: msgCount,
+					};
+				}),
+			);
+			// Sort by lastActive descending
+			enriched.sort((a, b) => new Date(b.lastActive).getTime() - new Date(a.lastActive).getTime());
+
+			res.json(enriched);
 		} catch (err) {
 			console.error("Error listing sessions:", err);
 			res.status(500).json({ error: "Internal server error" });
@@ -308,4 +325,33 @@ async function readMessages(
 	}
 
 	return messages;
+}
+
+/**
+ * Derive a human-friendly session title from the JSONL header.
+ * Falls back to "session <id-prefix>" if no cwd is available.
+ */
+function deriveTitle(s: SessionHeader & { sessionFile: string }): string {
+	const cwd = s.cwd ?? "";
+	if (cwd) {
+		const parts = cwd.split("/").filter((p) => p.length > 0);
+		const last = parts[parts.length - 1];
+		if (last) return `${last} (${s.id.slice(0, 8)})`;
+	}
+	return `session ${s.id.slice(0, 8)}`;
+}
+
+/**
+ * Count the number of message entries in a session JSONL file.
+ * Returns 0 on error.
+ */
+async function countMessages(sessionFile: string): Promise<number> {
+	try {
+		const content = await readFile(sessionFile, "utf-8");
+		const lines = content.split("\n").filter((l) => l.trim());
+		// Subtract 1 for the header line; clamp to 0
+		return Math.max(0, lines.length - 1);
+	} catch {
+		return 0;
+	}
 }

@@ -41,7 +41,7 @@ describe("api", () => {
   describe("listCronJobs", () => {
     it("should call GET /api/cron/jobs", async () => {
       const mockJobs = [
-        { id: "abc", name: "Morning Email", schedule: "0 9 * * *", prompt: "Send email", enabled: true, last_run: null, created_at: "2025-01-01T00:00:00Z" },
+        { id: "abc", name: "Morning Email", schedule: { kind: "cron", expr: "0 9 * * *" }, prompt: "Send email", enabled: true, last_run: null, created_at: "2025-01-01T00:00:00Z" },
       ];
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -61,7 +61,7 @@ describe("api", () => {
 
   describe("createCronJob", () => {
     it("should POST to /api/cron/jobs with input body", async () => {
-      const input = { name: "Test Job", schedule: "0 10 * * *", prompt: "Test", enabled: true };
+      const input = { name: "Test Job", schedule: { kind: "cron" as const, expr: "0 10 * * *" }, prompt: "Test", enabled: true };
       const created = { id: "new-123", ...input, last_run: null, created_at: "2025-01-01T00:00:00Z" };
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -85,7 +85,7 @@ describe("api", () => {
   describe("updateCronJob", () => {
     it("should PATCH to /api/cron/jobs/:id", async () => {
       const partial = { enabled: false };
-      const updated = { id: "abc", name: "Test", schedule: "0 10 * * *", prompt: "Test", enabled: false, last_run: null, created_at: "2025-01-01T00:00:00Z" };
+      const updated = { id: "abc", name: "Test", schedule: { kind: "cron" as const, expr: "0 10 * * *" }, prompt: "Test", enabled: false, last_run: null, created_at: "2025-01-01T00:00:00Z" };
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -124,7 +124,7 @@ describe("api", () => {
 
   describe("triggerCronJob", () => {
     it("should POST to /api/cron/jobs/:id/trigger", async () => {
-      const triggered = { id: "abc", name: "Test", schedule: "0 10 * * *", prompt: "Test", enabled: true, last_run: null, created_at: "2025-01-01T00:00:00Z" };
+      const triggered = { id: "abc", name: "Test", schedule: { kind: "cron" as const, expr: "0 10 * * *" }, prompt: "Test", enabled: true, last_run: null, created_at: "2025-01-01T00:00:00Z" };
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
