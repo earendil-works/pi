@@ -103,13 +103,13 @@
   - **验证**: `cd packages/webui/web && timeout 30 npm run build` — 无未解析 import
   - **依赖**: 3.4
 
-- [ ] 3.6 **SessionsPage 逻辑迁移到 Sidebar 交互**
+- [x] 3.6 **SessionsPage 逻辑迁移到 Sidebar 交互**
   - **文件**: `packages/webui/web/src/components/Sidebar.tsx` (Modify,扩展 3.2)
   - **内容**: Sidebar 的 New Chat 按钮:`api.createSession() → const s = await api.createSession(); navigate(\`/session/\${s.id}\`)`,乐观更新本地 list(把新 session push 到顶部)。Delete 按钮:每个 session 旁边加删除 icon,点 → `api.deleteSession(id)`,**乐观从本地 list 移除**(不等响应,失败再回滚+alert)。
   - **验证**: `cd packages/webui/web && timeout 30 npx vitest run src/components/Sidebar.test.tsx -t "delete"` — mock api.deleteSession,点删除,验证 list 立即不含该 id(不 await)
   - **依赖**: 3.5
 
-- [ ] 3.7 **SessionList 组件重构或删除**
+- [x] 3.7 **SessionList 组件重构或删除**
   - **文件**: `packages/webui/web/src/components/SessionList.tsx` (Modify 或 Delete)
   - **内容**: 若 SessionsPage 删除后无引用,直接删;若有别处用,改成纯展示无路由跳转的版本。
   - **验证**: `cd packages/webui/web && timeout 30 npm run build` — 无未解析 import

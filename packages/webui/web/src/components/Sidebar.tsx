@@ -1,7 +1,7 @@
 import type { JSX } from "react";
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
-import { MessageSquare, Plus, Clock } from "lucide-react";
+import { MessageSquare, Plus, Clock, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
 import type { SessionInfo } from "../lib/api";
 
@@ -65,6 +65,39 @@ export default function Sidebar({
     };
   }, []);
 
+  function handleDeleteSession(id: string) {
+    const confirmed = window.confirm("Delete this session? This cannot be undone.");
+    if (!confirmed) return;
+
+    // Optimistic remove
+    setSessions((prev) => prev.filter((s) => s.id !== id));
+
+    // Fire-and-forget delete
+    api.deleteSession(id).then(
+      () => {
+        // Success — already optimistically removed
+      },
+      (err) => {
+        // Rollback on failure
+        console.error("[Sidebar] deleteSession failed:", err);
+        // Re-fetch to restore correct state
+        api.listSessions().then((data) => setSessions(data), console.error);
+        alert("Failed to delete session. Please try again.");
+      }
+    );
+  }
+
+  async function handleNewChat() {
+    try {
+      const newSession = await api.createSession("");
+      // Optimistic add at top
+      setSessions((prev) => [newSession, ...prev]);
+      onSelectSession(newSession.id);
+    } catch (err) {
+      console.error("[Sidebar] createSession failed:", err);
+    }
+  }
+
   return (
     <aside className="w-[200px] h-full border-r border-gray-200 flex flex-col p-4 gap-2">
       {/* Brand */}
@@ -96,19 +129,31 @@ export default function Sidebar({
         ) : (
           <nav className="flex flex-col gap-1">
             {sessions.map((s) => (
-              <button
+              <div
                 key={s.id}
-                type="button"
-                onClick={() => onSelectSession(s.id)}
-                className={`w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors text-left ${
+                className={`group flex items-center gap-1 px-3 py-2 rounded-md text-sm font-medium transition-colors ${
                   currentSessionId === s.id
                     ? "bg-blue-100 text-blue-900"
                     : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
                 }`}
               >
-                <MessageSquare className="w-4 h-4 shrink-0" />
-                <span className="truncate">{truncateTitle(s.title)}</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => onSelectSession(s.id)}
+                  className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                >
+                  <MessageSquare className="w-4 h-4 shrink-0" />
+                  <span className="truncate">{truncateTitle(s.title)}</span>
+                </button>
+                <button
+                  type="button"
+                  aria-label="Delete"
+                  onClick={() => handleDeleteSession(s.id)}
+                  className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-100 hover:text-red-600 transition-opacity shrink-0"
+                >
+                  <Trash2 className="w-3 h-3" />
+                </button>
+              </div>
             ))}
           </nav>
         )}
@@ -117,7 +162,7 @@ export default function Sidebar({
       {/* New Chat button */}
       <button
         type="button"
-        onClick={onNewChat}
+        onClick={handleNewChat}
         className="flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900 transition-colors"
       >
         <Plus className="w-4 h-4" />
