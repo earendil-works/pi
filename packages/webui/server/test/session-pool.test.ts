@@ -625,8 +625,34 @@ describe("SessionPool", () => {
 	});
 
 	// -------------------------------------------------------------------------
+	// sessionsDir encoding must match pi core's getDefaultSessionDirPath
+	// -------------------------------------------------------------------------
+
+	it("sessionsDir uses single-dash encoding (matches pi core)", () => {
+		// For cwd /home/qjh/.pi/agent:
+		// pi core produces: --home-qjh-.pi-agent--
+		// NOT webui's buggy double-dash: --home--qjh--.pi--agent--
+		const pool = new SessionPool({ cwd: "/home/qjh/.pi/agent" });
+		expect(pool.sessionsDir).toMatch(/--home-qjh-\.pi-agent--$/);
+	});
+
+	it("sessionsDir escapes colons with single dash (matches pi core)", () => {
+		// pi core escapes colons to single dash: --foo-bar-baz--
+		// webui's buggy encoding would not handle : at all
+		const pool = new SessionPool({ cwd: "/foo:bar/baz" });
+		expect(pool.sessionsDir).toMatch(/--foo-bar-baz--$/);
+	});
+
+	it("sessionsDir uses pi core's path-safe encoding for root cwd", () => {
+		// Root cwd / should produce ---- (empty segments, double dash wrapper)
+		const pool = new SessionPool({ cwd: "/" });
+		expect(pool.sessionsDir).toMatch(/----$/);
+	});
+
+	// -------------------------------------------------------------------------
 	// (o) init skips session files with wrong type header
 	// -------------------------------------------------------------------------
+
 	it("(o) init skips session files with wrong type header", async () => {
 		const sessionsDir = join(tmpBase, ".pi", "agent", "sessions", "--test--");
 		await writeFile(

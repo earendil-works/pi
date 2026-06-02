@@ -1,7 +1,7 @@
 import { ChildProcess, spawn, type SpawnOptions } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { readdir } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve as resolvePath } from "node:path";
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
 
@@ -77,10 +77,13 @@ export class SessionPool extends EventEmitter {
 		this.maxSessions = opts?.maxSessions ?? parseInt(process.env.PI_WEB_MAX_SESSIONS || "16", 10);
 		this.spawnFn = opts?.spawnFn ?? spawn;
 
-		// Session directory path: ~/.pi/agent/sessions/--<cwd-slashes-->--
+		// Session directory path: ~/.pi/agent/sessions/--<cwd-safe-->--
+		// Encoding must match pi core's getDefaultSessionDirPath:
+		// resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")
 		const sessionsBase = join(homedir(), ".pi", "agent", "sessions");
-		const cwdDir = cwd.replace(/^\//, "").replace(/\//g, "--");
-		this.sessionsDir = join(sessionsBase, `--${cwdDir}--`);
+		const resolvedCwd = resolvePath(cwd);
+		const safeCwd = `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
+		this.sessionsDir = join(sessionsBase, safeCwd);
 	}
 
 	/**
