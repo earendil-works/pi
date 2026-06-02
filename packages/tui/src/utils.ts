@@ -594,16 +594,47 @@ function updateTrackerFromText(text: string, tracker: AnsiCodeTracker): void {
 	}
 }
 
+// Matches Chinese, Japanese, and Korean (CJK) script characters.
+const CJK_RE = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+/**
+ * Check if a string contains CJK characters (Chinese, Japanese, Korean).
+ */
+function containsCJK(str: string): boolean {
+	return CJK_RE.test(str);
+}
+
+const OPENING_PUNCTUATION = "([{<“‘「『（【《〈";
+const CLOSING_PUNCTUATION = ")]}>”’」』）】》〉….,;:!?，！？；：。";
+const ALL_PUNCTUATION = OPENING_PUNCTUATION + CLOSING_PUNCTUATION;
+
+const isOpeningPunctuation = (ch: string): boolean => OPENING_PUNCTUATION.includes(ch);
+const isClosingPunctuation = (ch: string): boolean => CLOSING_PUNCTUATION.includes(ch);
+
+/**
+ * Check if a segment consists entirely of punctuation characters.
+ */
+function isPunctuationSegment(seg: string): boolean {
+	if (seg.length === 0) return false;
+	for (const ch of seg) {
+		if (!ALL_PUNCTUATION.includes(ch)) return false;
+	}
+	return true;
+}
+
 /**
  * Split text into words while keeping ANSI codes attached.
+ * Uses space-based tokenization for non-CJK text, and Intl.Segmenter
+ * for tokens containing CJK characters to enable proper line breaking.
  */
 function splitIntoTokensWithAnsi(text: string): string[] {
 	const tokens: string[] = [];
 	let current = "";
-	let pendingAnsi = ""; // ANSI codes waiting to be attached to next visible content
+	let pendingAnsi = "";
 	let inWhitespace = false;
 	let i = 0;
 
+	// Phase 1: Space-based tokenization (same as before)
 	while (i < text.length) {
 		const ansiResult = extractAnsiCode(text, i);
 		if (ansiResult) {
@@ -642,7 +673,138 @@ function splitIntoTokensWithAnsi(text: string): string[] {
 		tokens.push(current);
 	}
 
-	return tokens;
+	// Phase 2: For tokens containing CJK characters, further split using wordSegmenter
+	const result: string[] = [];
+	for (const token of tokens) {
+		if (containsCJK(token)) {
+			result.push(...splitCjkToken(token));
+		} else {
+			result.push(token);
+		}
+	}
+	return result;
+}
+
+/** Strip all ANSI codes from a token, returning the clean text and insertion records. */
+function stripAnsiCodes(token: string): {
+	clean: string;
+	beforeFirst: string;
+	insertions: { afterIdx: number; code: string }[];
+} {
+	const cleanChars: string[] = [];
+	const insertions: { afterIdx: number; code: string }[] = [];
+	let beforeFirst = "";
+	let i = 0;
+	while (i < token.length) {
+		const ansiResult = extractAnsiCode(token, i);
+		if (ansiResult) {
+			if (cleanChars.length === 0) {
+				beforeFirst += ansiResult.code;
+			} else {
+				insertions.push({ afterIdx: cleanChars.length - 1, code: ansiResult.code });
+			}
+			i += ansiResult.length;
+		} else {
+			cleanChars.push(token[i]!);
+			i++;
+		}
+	}
+	return { clean: cleanChars.join(""), beforeFirst, insertions };
+}
+
+/** Apply line-start and line-end prohibition rules to segments.
+ *  Line-start: closing punctuation (e.g. ，。）]) should not appear at the start of a new line,
+ *              so merge it back to the preceding segment.
+ *  Line-end:   opening punctuation (e.g. （【「『) should not appear at the end of a line,
+ *              so merge it forward to the following segment. If it is the last segment with
+ *              no following content, merge it back to the preceding segment instead.
+ */
+function applyProhibitionRules(segments: string[]): string[] {
+	// Line-start prohibition: merge closing punctuation back to preceding segment
+	const merged: string[] = [];
+	for (const seg of segments) {
+		if (merged.length > 0 && isPunctuationSegment(seg) && seg.length > 0 && isClosingPunctuation(seg[0]!)) {
+			merged[merged.length - 1] += seg;
+		} else {
+			merged.push(seg);
+		}
+	}
+
+	// Line-end prohibition: merge opening punctuation forward to following segment
+	for (let mi = 0; mi < merged.length; mi++) {
+		const seg = merged[mi]!;
+		if (seg === "" || !isPunctuationSegment(seg) || seg.length === 0) continue;
+		if (!isOpeningPunctuation(seg[seg.length - 1]!)) continue;
+		if (mi < merged.length - 1) {
+			// Has a following segment: merge forward
+			merged[mi + 1] = seg + merged[mi + 1]!;
+			merged[mi] = "";
+		} else if (mi > 0) {
+			// Last segment with no following content: merge back to preceding segment
+			merged[mi - 1] = merged[mi - 1]! + seg;
+			merged[mi] = "";
+		}
+	}
+
+	// Remove empty entries left by line-end merging
+	for (let fi = merged.length - 1; fi >= 0; fi--) {
+		if (merged[fi] === "") merged.splice(fi, 1);
+	}
+	return merged;
+}
+
+/** Re-attach stripped ANSI codes back to merged segments. */
+function reattachAnsiCodes(
+	merged: string[],
+	beforeFirst: string,
+	insertions: { afterIdx: number; code: string }[],
+): string[] {
+	if (insertions.length === 0 && !beforeFirst) return merged;
+
+	// Build clean-text offset for each segment
+	let cleanIdx = 0;
+	const segStarts: number[] = [];
+	for (const seg of merged) {
+		segStarts.push(cleanIdx);
+		cleanIdx += [...seg].length;
+	}
+
+	// Group insertions by segment
+	const segAnsi: string[][] = merged.map(() => []);
+	for (const ins of insertions) {
+		for (let s = segStarts.length - 1; s >= 0; s--) {
+			if (ins.afterIdx >= segStarts[s]!) {
+				segAnsi[s]!.push(ins.code);
+				break;
+			}
+		}
+	}
+
+	const result: string[] = [];
+	for (let j = 0; j < merged.length; j++) {
+		let sub = merged[j]!;
+		// Append any ANSI codes that appeared within/after this segment
+		for (const code of segAnsi[j]!) {
+			sub += code;
+		}
+		// Prepend codes that appeared before the first visible char
+		if (j === 0 && beforeFirst) {
+			sub = beforeFirst + sub;
+		}
+		result.push(sub);
+	}
+	return result;
+}
+
+/** Split a single CJK token using wordSegmenter with prohibition and ANSI handling. */
+function splitCjkToken(token: string): string[] {
+	const { clean, beforeFirst, insertions } = stripAnsiCodes(token);
+	if (clean.length === 0) return [token];
+
+	const wordSegments = wordSegmenter.segment(clean);
+	const segments = [...wordSegments].map((s) => s.segment);
+	const merged = applyProhibitionRules(segments);
+	return reattachAnsiCodes(merged, beforeFirst, insertions);
 }
 
 /**
