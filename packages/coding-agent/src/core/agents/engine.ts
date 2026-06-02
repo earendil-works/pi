@@ -39,6 +39,8 @@ export interface AgentEngine {
 	run(input: AgentToolExecutionInput, options?: AgentEngineRunOptions): Promise<AgentToolDetails>;
 	control(input: AgentToolInput): Promise<AgentToolDetails | undefined>;
 	fork(opts: ForkAgentOptions): Promise<ForkAgentResult>;
+	/** Live parent model/thinking snapshot, for UI labels (renderCall). */
+	snapshot(): AgentParentSnapshot;
 }
 
 function controlDetailsFromRun(
@@ -74,6 +76,9 @@ export function createAgentEngine(options: AgentEngineOptions): AgentEngine {
 	};
 
 	return {
+		snapshot() {
+			return options.getParentSnapshot();
+		},
 		async run(input, runOptions) {
 			return executeAgentTool(input, buildExecuteOptions(runOptions));
 		},

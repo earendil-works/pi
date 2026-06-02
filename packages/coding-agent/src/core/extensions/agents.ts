@@ -13,7 +13,11 @@ function getAgentEngine(pi: ExtensionAPI): AgentEngine | undefined {
 }
 
 export function hookAgents(pi: ExtensionAPI): void {
-	const options = { getEngine: () => getAgentEngine(pi) };
+	const options = {
+		getEngine: () => getAgentEngine(pi),
+		getParentModel: () => getAgentEngine(pi)?.snapshot().model,
+		getParentThinkingLevel: () => getAgentEngine(pi)?.snapshot().thinkingLevel ?? "off",
+	};
 	pi.registerTool(createAgentToolDefinition("", options));
 	pi.registerTool(createUppercaseAgentToolDefinition("", options));
 	pi.registerTool(createTaskToolDefinition("", options));
