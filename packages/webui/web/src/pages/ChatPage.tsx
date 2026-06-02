@@ -170,7 +170,7 @@ export default function ChatPage() {
 
     try {
       await api.deleteSession(id);
-      navigate("/sessions");
+      navigate("/");
     } catch (err) {
       console.error("Failed to delete session:", err);
       alert("Failed to delete session. Please try again.");
@@ -191,7 +191,7 @@ export default function ChatPage() {
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white">
         <div className="flex items-center gap-3">
           <button
-            onClick={() => navigate("/sessions")}
+            onClick={() => navigate("/")}
             className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
             title="Back to sessions"
           >

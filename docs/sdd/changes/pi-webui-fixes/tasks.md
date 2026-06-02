@@ -97,7 +97,7 @@
   - **验证**: `cd packages/webui/web && timeout 30 npm run build` — vite build 成功
   - **依赖**: 3.2, 3.3
 
-- [ ] 3.5 **删除 SessionsPage,改 ChatPage 路径 param**
+- [x] 3.5 **删除 SessionsPage,改 ChatPage 路径 param**
   - **文件**: `packages/webui/web/src/pages/SessionsPage.tsx` (Delete), `packages/webui/web/src/pages/ChatPage.tsx` (Modify)
   - **内容**: 删 SessionsPage.tsx;ChatPage 路由从 `/chat/:id` 改成 `/session/:id`,内部用 `useParams<{id:string}>()` 一样。`navigate("/sessions")` 改成 `navigate("/")`。
   - **验证**: `cd packages/webui/web && timeout 30 npm run build` — 无未解析 import
