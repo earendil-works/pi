@@ -117,8 +117,10 @@ describe("WebUI Server", () => {
 
     proc.stderr?.on("data", (d: Buffer) => (stderr += d.toString()));
 
-    // Wait for server to start
-    await new Promise((r) => setTimeout(r, 500));
+    // Wait for server to start. 1500ms because startServer now eagerly imports
+    // @earendil-works/pi-personal-assistant (~600ms cold import on tsx) and
+    // runs createApp which initializes CronWatcher + MemoryStore.
+    await new Promise((r) => setTimeout(r, 1500));
 
     // Send SIGTERM
     proc.kill("SIGTERM");

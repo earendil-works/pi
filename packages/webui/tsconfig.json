@@ -7,8 +7,11 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "outDir": "./dist",
-    "rootDir": "./server",
-    "lib": ["ES2022", "DOM"]
+    "lib": ["ES2022", "DOM"],
+    "paths": {
+      "@earendil-works/pi-personal-assistant": ["../../extensions/personal-assistant/index.ts"],
+      "@earendil-works/pi-personal-assistant/*": ["../../extensions/personal-assistant/*"]
+    }
   },
-  "include": ["server/**/*.ts", "web/src/**/*.ts", "web/src/**/*.tsx"]
+  "include": ["server/**/*.ts", "web/src/**/*.ts", "web/src/**/*.tsx", "../../extensions/personal-assistant/**/*.ts"]
 }

@@ -51,7 +51,7 @@ interface MemoryAtom {
   content_hash: string;
 }
 
-interface PersonalAssistantConfig {
+export interface PersonalAssistantConfig {
   agent?: {
     provider?: string;
     model?: string;
@@ -103,6 +103,24 @@ interface ExtractionPlanItem {
 
 interface ExtractionPlan {
   plan: ExtractionPlanItem[];
+}
+
+export interface RunMemoryExtractionOptions {
+  /** LLM caller. Given a prompt string, returns the assistant text. Throws on failure. */
+  callLlm: (prompt: string) => Promise<string>;
+  /** Settings config (must include memory.extraction model + memory.embedding model, etc.) */
+  config: PersonalAssistantConfig;
+  /** Conversation messages extracted from JSONL */
+  messages: Array<{ role: string; content: unknown }>;
+  /** Override db path (defaults to ~/.pi/agent/data/memory.db) */
+  dbPath?: string;
+  /** Override atoms dir (defaults to ~/.pi/agent/data/memory/atoms) */
+  atomsDir?: string;
+}
+
+export interface RunMemoryExtractionResult {
+  plan: ExtractionPlan | null;
+  atomsWritten: number;
 }
 
 // ============================================================================
@@ -702,8 +720,8 @@ function readAtomFromFile(filePath: string, expectedHash?: string): MemoryAtom |
   };
 }
 
-function writeAtomToFile(atom: MemoryAtom): { filePath: string; contentHash: string } {
-  const dir = join(ATOMS_DIR, atom.type);
+function writeAtomToFile(atom: MemoryAtom, baseDir?: string): { filePath: string; contentHash: string } {
+  const dir = join(baseDir ?? ATOMS_DIR, atom.type);
   ensureDir(dir);
 
   const slug = slugify(atom.title);
@@ -1227,6 +1245,151 @@ Only create atoms for genuinely important information. Skip routine conversation
     }
   } catch {
     // Extraction failed silently — don't disrupt compaction
+  }
+}
+
+/**
+ * Standalone memory extraction that can be called without ExtensionContext.
+ * Used by the webui DELETE /api/sessions/:id endpoint.
+ */
+export async function runMemoryExtraction(opts: RunMemoryExtractionOptions): Promise<RunMemoryExtractionResult> {
+  const { callLlm, config, messages, dbPath, atomsDir } = opts;
+  const effectiveDbPath = dbPath ?? MEMORY_DB_PATH;
+  const effectiveAtomsDir = atomsDir ?? ATOMS_DIR;
+
+  const index = new MemoryIndex(effectiveDbPath);
+  try {
+    await index.init();
+  } catch {
+    return { plan: null, atomsWritten: 0 };
+  }
+
+  try {
+    const result = await extractMemoriesWithCallLlm(callLlm, messages, index, config, effectiveAtomsDir);
+    return result;
+  } finally {
+    index.close();
+  }
+}
+
+async function extractMemoriesWithCallLlm(
+  callLlm: (prompt: string) => Promise<string>,
+  messages: Array<{ role: string; content: unknown }>,
+  index: MemoryIndex,
+  config: PersonalAssistantConfig,
+  atomsDir: string,
+): Promise<RunMemoryExtractionResult> {
+  const memConfig = getMemoryConfig(config);
+
+  // Search for existing atoms that might be relevant
+  const keywords = extractKeywordsFromMessages(messages);
+  const existingAtoms = keywords.length > 0
+    ? index.searchByFts(keywords.slice(0, 5), undefined, 5).map((r) => index.getAtom(r.id)).filter(Boolean)
+    : [];
+
+  const formattedMessages = formatMessagesForLLM(messages);
+  const formattedAtoms = existingAtoms
+    .map((a) => `- [${a!.id}] (${a!.type}) ${a!.title}: ${a!.summary}`)
+    .join("\n");
+
+  const extractPrompt = `You are a memory extraction assistant. Analyze the following conversation and identify important information that should be saved as memory atoms.
+
+Memory atom types:
+- constraint: Hard requirements or rules the user has set
+- preference: User preferences and style choices
+- workflow: Process and workflow patterns
+- knowledge: Facts, knowledge, and information learned
+- event: Important events or interactions
+- solution: Solutions to problems that were found
+- insight: Insights and observations
+
+For each memory to create or update, provide:
+- action: "create" (new atom), "update" (modify existing), or "skip" (not worth saving)
+- type: the atom type (required for create)
+- title: short descriptive title (required for create)
+- summary: one-sentence summary
+- tags: array of relevant tags
+- importance: 0.0 to 1.0 (how critical is this to remember)
+- id: existing atom ID (required for update)
+- changes: object with fields to update (required for update)
+
+Existing atoms for reference:
+${formattedAtoms || "(none)"}
+
+Conversation:
+${formattedMessages.slice(0, 8000)}
+
+Respond with ONLY valid JSON:
+{"plan": [{"action": "create"|"update"|"skip", ...}]}
+
+Only create atoms for genuinely important information. Skip routine conversation.`;
+
+  try {
+    const text = await callLlm(extractPrompt);
+    if (!text) return { plan: null, atomsWritten: 0 };
+
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return { plan: null, atomsWritten: 0 };
+
+    const plan: ExtractionPlan = JSON.parse(jsonMatch[0]);
+    if (!Array.isArray(plan.plan)) return { plan: null, atomsWritten: 0 };
+
+    // Write extraction report
+    writeExtractionReport(plan.plan);
+
+    let atomsWritten = 0;
+
+    // Execute the plan
+    for (const item of plan.plan) {
+      if (item.action === "skip") continue;
+
+      if (item.action === "create" && item.type && item.title) {
+        const atom: MemoryAtom = {
+          id: randomUUID(),
+          type: item.type,
+          title: item.title,
+          summary: item.summary ?? item.title,
+          tags: Array.isArray(item.tags) ? item.tags : [],
+          importance: item.importance ?? 0.5,
+          strength: 1.0,
+          access_count: 0,
+          last_access: nowISO(),
+          created_at: nowISO(),
+          updated_at: nowISO(),
+          version: 1,
+          archived: false,
+          content: item.summary ?? item.title,
+          file_path: "",
+          content_hash: "",
+        };
+        const { filePath, contentHash } = writeAtomToFile(atom, atomsDir);
+        atom.file_path = filePath;
+        atom.content_hash = contentHash;
+        index.upsertAtom(atom);
+        atomsWritten++;
+      }
+
+      if (item.action === "update" && item.id && item.changes) {
+        const existing = index.getAtom(item.id);
+        if (!existing) continue;
+
+        const updated: MemoryAtom = {
+          ...existing,
+          ...item.changes,
+          updated_at: nowISO(),
+          version: existing.version + 1,
+        };
+        const { filePath, contentHash } = writeAtomToFile(updated, atomsDir);
+        updated.file_path = filePath;
+        updated.content_hash = contentHash;
+        index.upsertAtom(updated);
+        atomsWritten++;
+      }
+    }
+
+    return { plan, atomsWritten };
+  } catch {
+    return { plan: null, atomsWritten: 0 };
   }
 }
 

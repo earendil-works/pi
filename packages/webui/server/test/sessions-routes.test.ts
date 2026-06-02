@@ -430,59 +430,65 @@ describe("Sessions REST API Endpoints", () => {
 		});
 	});
 
-	// (f) DELETE /api/sessions/:id extracts atoms before deletion
+	// (f) DELETE /api/sessions/:id extracts atoms before deletion (via callLlm)
 	describe("(f) DELETE /api/sessions/:id extracts atoms before deletion", () => {
-		// Helper to create mock LLMClient
-		function createMockLLMClient(extractAtomsResult: any[]) {
-			return {
-				extractAtoms: vi.fn().mockResolvedValue(extractAtomsResult),
-			};
-		}
+		it("(f1) extracts 2 atoms via callLlm and writes to memory.db before deleting session", async () => {
+			// Spy on runMemoryExtraction to verify it was called correctly
+			const runMemoryExtractionSpy = vi.spyOn(await import("@earendil-works/pi-personal-assistant"), "runMemoryExtraction");
+			runMemoryExtractionSpy.mockResolvedValue({ plan: null, atomsWritten: 2 });
 
-		it("(f1) extracts 2 atoms and writes to memory.db before deleting session", async () => {
-			// Create mock LLMClient that returns 2 atoms
-			const mockAtoms = [
-				{
-					id: "atom-1",
-					type: "preference" as const,
-					title: "User prefers dark mode",
-					summary: "User has set dark mode as their preferred theme",
-					content: "",
-					tags: ["ui", "theme"],
-					importance: 0.8,
-					strength: 1.0,
-				},
-				{
-					id: "atom-2",
-					type: "workflow" as const,
-					title: "Daily standup workflow",
-					summary: "User attends daily standup at 9am",
-					content: "",
-					tags: ["schedule"],
-					importance: 0.6,
-					strength: 1.0,
-				},
-			];
-			const mockLLMClient = createMockLLMClient(mockAtoms);
+			// Create mock callLlm that returns a JSON plan with 2 atoms
+			const mockCallLlm = vi.fn().mockResolvedValue(JSON.stringify({
+				plan: [
+					{
+						action: "create",
+						type: "preference",
+						title: "User prefers dark mode",
+						summary: "User has set dark mode as their preferred theme",
+						tags: ["ui", "theme"],
+						importance: 0.8,
+					},
+					{
+						action: "create",
+						type: "workflow",
+						title: "Daily standup workflow",
+						summary: "User attends daily standup at 9am",
+						tags: ["schedule"],
+						importance: 0.6,
+					},
+				],
+			}));
 
-			// Create temp memory.db
+			// Create temp memory.db and atoms dir
 			const tempDbPath = `/tmp/test-memory-${Date.now()}-${Math.random()}.db`;
-			const { MemoryStore } = await import("../memory-store");
-			const memoryStore = new MemoryStore(tempDbPath);
-			memoryStore.init();
+			const tempAtomsDir = `/tmp/test-atoms-${Date.now()}-${Math.random()}`;
 
 			// Create temp sessions dir
 			const testSessionDir = path.join("/tmp", `pi-sessions-test-${crypto.randomUUID()}`);
 			await fs.mkdir(testSessionDir, { recursive: true });
+			// Ensure parent directories exist for db and atoms
+			await fs.mkdir(path.dirname(tempDbPath), { recursive: true });
+			await fs.mkdir(tempAtomsDir, { recursive: true });
+
+			// Minimal settings config
+			const mockSettings = {
+				personalAssistant: {
+					memory: {
+						enabled: true,
+						extraction: { provider: "minimax", model: "MiniMax-M3" },
+					},
+				},
+			};
 
 			// Mount routes with deps
 			const testApp = express();
 			testApp.use(express.json());
 			const pool = createMockPool(testSessionDir);
-			// @ts-ignore - deps not yet in signature but we're testing the new behavior
 			mountSessionsRoutes(testApp, pool, {
-				llmClient: mockLLMClient as any,
-				memoryStore: memoryStore as any,
+				callLlm: mockCallLlm,
+				settings: mockSettings as any,
+				dbPath: tempDbPath,
+				atomsDir: tempAtomsDir,
 			});
 
 			const testServer = createServer(testApp);
@@ -495,6 +501,7 @@ describe("Sessions REST API Endpoints", () => {
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ initialPrompt: "test" }),
 			});
+			expect(createRes.status).toBe(200);
 			const createBody = await createRes.json();
 			const sessionId = createBody.id;
 			const sessionFile = createBody.sessionFile;
@@ -512,50 +519,52 @@ describe("Sessions REST API Endpoints", () => {
 				method: "DELETE",
 			});
 			expect(delRes.status).toBe(200);
-			const delBody = await delRes.json();
-			expect(delBody.ok).toBe(true);
-			// atomsExtracted is not returned (fire-and-forget)
+			expect((await delRes.json()).ok).toBe(true);
 
 			// Verify JSONL file is deleted
 			await expect(fs.access(sessionFile)).rejects.toThrow();
 
-			// Verify atoms were written to memory.db
-			const atom1 = memoryStore.readAtom("atom-1");
-			expect(atom1).not.toBeNull();
-			expect(atom1!.title).toBe("User prefers dark mode");
-			expect(atom1!.type).toBe("preference");
-
-			const atom2 = memoryStore.readAtom("atom-2");
-			expect(atom2).not.toBeNull();
-			expect(atom2!.title).toBe("Daily standup workflow");
-			expect(atom2!.type).toBe("workflow");
+			// Verify runMemoryExtraction was called with correct arguments
+			expect(runMemoryExtractionSpy).toHaveBeenCalled();
+			const callArgs = runMemoryExtractionSpy.mock.calls[0][0];
+			expect(callArgs.callLlm).toBe(mockCallLlm);
+			expect(callArgs.config).toBe(mockSettings);
+			expect(callArgs.dbPath).toBe(tempDbPath);
+			expect(callArgs.atomsDir).toBe(tempAtomsDir);
+			expect(Array.isArray(callArgs.messages)).toBe(true);
+			expect(callArgs.messages.length).toBe(2);
 
 			// Cleanup
 			testServer.close();
-			memoryStore.close();
 			await fs.rm(testSessionDir, { recursive: true, force: true }).catch(() => {});
+			await fs.rm(tempAtomsDir, { recursive: true, force: true }).catch(() => {});
 			try { await fs.unlink(tempDbPath); } catch { /* ignore */ }
+			runMemoryExtractionSpy.mockRestore();
 		});
 
-		it("(f3) DELETE returns within 500ms even when LLM extraction is slow (fire-and-forget)", async () => {
-			// Create mock LLMClient with a slow extraction (8s) - fire-and-forget
-			const mockLLMClient = {
-				extractAtoms: vi.fn().mockImplementation(
-					() => new Promise((_, reject) => setTimeout(() => reject(new Error("LLM extraction slow")), 8000)),
-				),
-			};
+		it("(f2) DELETE returns within 500ms even when LLM extraction is slow (fire-and-forget)", async () => {
+			// Create mock callLlm that takes 8s - fire-and-forget
+			const mockCallLlm = vi.fn().mockImplementation(
+				() => new Promise((_, reject) => setTimeout(() => reject(new Error("LLM extraction slow")), 8000)),
+			);
 
 			// Create temp sessions dir
 			const testSessionDir = path.join("/tmp", `pi-sessions-fireforget-${crypto.randomUUID()}`);
 			await fs.mkdir(testSessionDir, { recursive: true });
 
+			const mockSettings = {
+				personalAssistant: {
+					memory: { enabled: true, extraction: { provider: "minimax", model: "MiniMax-M3" } },
+				},
+			};
+
 			// Mount routes with deps
 			const testApp = express();
 			testApp.use(express.json());
 			const pool = createMockPool(testSessionDir);
-			// @ts-ignore - deps not yet in signature but we're testing the new behavior
 			mountSessionsRoutes(testApp, pool, {
-				llmClient: mockLLMClient as any,
+				callLlm: mockCallLlm,
+				settings: mockSettings as any,
 			});
 
 			const testServer = createServer(testApp);
@@ -580,8 +589,7 @@ describe("Sessions REST API Endpoints", () => {
 			const elapsed = Date.now() - startTime;
 
 			expect(delRes.status).toBe(200);
-			const delBody = await delRes.json();
-			expect(delBody.ok).toBe(true);
+			expect((await delRes.json()).ok).toBe(true);
 			// Must return within 500ms (fire-and-forget)
 			expect(elapsed).toBeLessThan(500);
 
@@ -593,30 +601,33 @@ describe("Sessions REST API Endpoints", () => {
 			await fs.rm(testSessionDir, { recursive: true, force: true }).catch(() => {});
 		});
 
-		it("(f2) LLM failure is non-blocking - session deleted, memory.db unchanged", async () => {
-			// Create mock LLMClient that throws
-			const mockLLMClient = {
-				extractAtoms: vi.fn().mockRejectedValue(new Error("LLM API failed")),
-			};
+		it("(f3) LLM failure is non-blocking - session deleted, memory.db unchanged", async () => {
+			// Create mock callLlm that throws
+			const mockCallLlm = vi.fn().mockRejectedValue(new Error("LLM API failed"));
 
-			// Create temp memory.db
+			// Create temp memory.db and atoms dir
 			const tempDbPath = `/tmp/test-memory-${Date.now()}-${Math.random()}.db`;
-			const { MemoryStore } = await import("../memory-store");
-			const memoryStore = new MemoryStore(tempDbPath);
-			memoryStore.init();
+			const tempAtomsDir = `/tmp/test-atoms-${Date.now()}-${Math.random()}`;
 
 			// Create temp sessions dir
 			const testSessionDir = path.join("/tmp", `pi-sessions-test-${crypto.randomUUID()}`);
 			await fs.mkdir(testSessionDir, { recursive: true });
 
+			const mockSettings = {
+				personalAssistant: {
+					memory: { enabled: true, extraction: { provider: "minimax", model: "MiniMax-M3" } },
+				},
+			};
+
 			// Mount routes with deps
 			const testApp = express();
 			testApp.use(express.json());
 			const pool = createMockPool(testSessionDir);
-			// @ts-ignore - deps not yet in signature but we're testing the new behavior
 			mountSessionsRoutes(testApp, pool, {
-				llmClient: mockLLMClient as any,
-				memoryStore: memoryStore as any,
+				callLlm: mockCallLlm,
+				settings: mockSettings as any,
+				dbPath: tempDbPath,
+				atomsDir: tempAtomsDir,
 			});
 
 			const testServer = createServer(testApp);
@@ -633,6 +644,118 @@ describe("Sessions REST API Endpoints", () => {
 			const sessionId = createBody.id;
 			const sessionFile = createBody.sessionFile;
 
+			// Add messages
+			const messages = [
+				JSON.stringify({ type: "message", id: "msg-1", message: { role: "user", content: [{ type: "text", text: "Hello" }] }, timestamp: "2025-01-01T00:00:00.000Z" }),
+			];
+			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + messages.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+
+			// Call DELETE
+			const delRes = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId}`, {
+				method: "DELETE",
+			});
+			expect(delRes.status).toBe(200);
+			expect((await delRes.json()).ok).toBe(true);
+
+			// Verify JSONL file is deleted
+			await expect(fs.access(sessionFile)).rejects.toThrow();
+
+			// Cleanup
+			testServer.close();
+			await fs.rm(testSessionDir, { recursive: true, force: true }).catch(() => {});
+			await fs.rm(tempAtomsDir, { recursive: true, force: true }).catch(() => {});
+			try { await fs.unlink(tempDbPath); } catch { /* ignore */ }
+		});
+	});
+
+	// (g) DELETE /api/sessions/:id with runMemoryExtraction (personal-assistant integration)
+	describe("(g) DELETE /api/sessions/:id with personal-assistant memory extraction", () => {
+		it("(g1) DELETE triggers runMemoryExtraction with correct arguments", async () => {
+			// Spy on runMemoryExtraction to verify it was called correctly
+			const runMemoryExtractionSpy = vi.spyOn(await import("@earendil-works/pi-personal-assistant"), "runMemoryExtraction");
+			runMemoryExtractionSpy.mockResolvedValue({ plan: null, atomsWritten: 1 });
+
+			// Create temp memory.db in temp location
+			const tempDbPath = `/tmp/test-pa-memory-${Date.now()}-${Math.random()}.db`;
+			const tempAtomsDir = `/tmp/test-pa-atoms-${Date.now()}-${Math.random()}`;
+
+			// Mock callLlm that returns a valid extraction plan with 1 atom
+			const mockCallLlm = vi.fn().mockResolvedValue(JSON.stringify({
+				plan: [{
+					action: "create",
+					type: "knowledge",
+					title: "User is learning TypeScript",
+					summary: "The user mentioned they are learning TypeScript programming",
+					tags: ["typescript", "programming", "learning"],
+					importance: 0.7,
+				}],
+			}));
+
+			// Minimal settings config
+			const mockSettings = {
+				personalAssistant: {
+					memory: {
+						enabled: true,
+						extraction: { provider: "minimax", model: "MiniMax-M3" },
+					},
+				},
+			};
+
+			// Create temp sessions dir
+			const testSessionDir = path.join("/tmp", `pi-sessions-pa-${crypto.randomUUID()}`);
+			await fs.mkdir(testSessionDir, { recursive: true });
+
+			// Import the updated sessions module
+			const sessionsModule = await import("../routes/sessions");
+			const mountSessionsRoutes = sessionsModule.mountSessionsRoutes;
+
+			// Create mock session pool
+			const mockPool = {
+				sessionsDir: testSessionDir,
+				isRunning: () => false,
+				getSessionName: () => undefined,
+				on: () => {},
+				emit: () => {},
+			};
+
+			// Create mock deps with callLlm and settings
+			const mockDeps = {
+				callLlm: mockCallLlm,
+				settings: mockSettings as any,
+				dbPath: tempDbPath,
+				atomsDir: tempAtomsDir,
+			};
+
+			// Mount routes with new deps
+			const testApp = express();
+			testApp.use(express.json());
+			// @ts-ignore - new deps shape
+			mountSessionsRoutes(testApp, mockPool, mockDeps);
+
+			const testServer = createServer(testApp);
+			await new Promise<void>((resolve) => testServer.listen(0, "127.0.0.1", resolve));
+			const port = (testServer.address() as any).port;
+
+			// Create a session via POST
+			const createRes = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ initialPrompt: "test" }),
+			});
+			expect(createRes.status).toBe(200);
+			const createBody = await createRes.json();
+			const sessionId = createBody.id;
+			const sessionFile = createBody.sessionFile;
+
+			// Add messages to the session file
+			const messages = [
+				JSON.stringify({ type: "message", id: "msg-1", message: { role: "user", content: [{ type: "text", text: "I'm learning TypeScript" }] }, timestamp: "2025-01-01T00:00:00.000Z" }),
+				JSON.stringify({ type: "message", id: "msg-2", message: { role: "assistant", content: [{ type: "text", text: "Great! TypeScript is a typed superset of JavaScript" }] }, timestamp: "2025-01-01T00:00:01.000Z" }),
+			];
+			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + messages.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+
 			// Call DELETE
 			const delRes = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId}`, {
 				method: "DELETE",
@@ -640,21 +763,112 @@ describe("Sessions REST API Endpoints", () => {
 			expect(delRes.status).toBe(200);
 			const delBody = await delRes.json();
 			expect(delBody.ok).toBe(true);
-			// atomsExtracted may be 0 or undefined on failure
-			expect(delBody.atomsExtracted === 0 || delBody.atomsExtracted === undefined).toBe(true);
 
 			// Verify JSONL file is deleted
 			await expect(fs.access(sessionFile)).rejects.toThrow();
 
-			// Verify memory.db is empty (no atoms written)
-			const atom1 = memoryStore.readAtom("non-existent-id");
-			expect(atom1).toBeNull();
+			// Verify runMemoryExtraction was called with correct arguments
+			expect(runMemoryExtractionSpy).toHaveBeenCalled();
+			const callArgs = runMemoryExtractionSpy.mock.calls[0][0];
+			expect(callArgs.callLlm).toBe(mockCallLlm);
+			expect(callArgs.config).toBe(mockSettings);
+			expect(callArgs.dbPath).toBe(tempDbPath);
+			expect(callArgs.atomsDir).toBe(tempAtomsDir);
+			expect(Array.isArray(callArgs.messages)).toBe(true);
+			expect(callArgs.messages.length).toBe(2);
+			expect(callArgs.messages[0].role).toBe("user");
+			expect(callArgs.messages[1].role).toBe("assistant");
 
 			// Cleanup
 			testServer.close();
-			memoryStore.close();
 			await fs.rm(testSessionDir, { recursive: true, force: true }).catch(() => {});
+			await fs.rm(tempAtomsDir, { recursive: true, force: true }).catch(() => {});
 			try { await fs.unlink(tempDbPath); } catch { /* ignore */ }
+			runMemoryExtractionSpy.mockRestore();
+		});
+
+		it("(g2) DELETE with callLlm failure still deletes session (non-blocking)", async () => {
+			// Create temp sessions dir
+			const testSessionDir = path.join("/tmp", `pi-sessions-pa-fail-${crypto.randomUUID()}`);
+			await fs.mkdir(testSessionDir, { recursive: true });
+
+			// Mock callLlm that throws
+			const mockCallLlm = vi.fn().mockRejectedValue(new Error("LLM API failed"));
+
+			// Minimal settings config
+			const mockSettings = {
+				personalAssistant: {
+					memory: {
+						enabled: true,
+						extraction: { provider: "minimax", model: "MiniMax-M3" },
+					},
+				},
+			};
+
+			// Import the updated sessions module
+			const sessionsModule = await import("../routes/sessions");
+			const mountSessionsRoutes = sessionsModule.mountSessionsRoutes;
+
+			// Create mock session pool
+			const mockPool = {
+				sessionsDir: testSessionDir,
+				isRunning: () => false,
+				getSessionName: () => undefined,
+				on: () => {},
+				emit: () => {},
+			};
+
+			// Create mock deps
+			const mockDeps = {
+				callLlm: mockCallLlm,
+				settings: mockSettings as any,
+			};
+
+			// Mount routes
+			const testApp = express();
+			testApp.use(express.json());
+			// @ts-ignore - new deps shape
+			mountSessionsRoutes(testApp, mockPool, mockDeps);
+
+			const testServer = createServer(testApp);
+			await new Promise<void>((resolve) => testServer.listen(0, "127.0.0.1", resolve));
+			const port = (testServer.address() as any).port;
+
+			// Create a session via POST
+			const createRes = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ initialPrompt: "test" }),
+			});
+			expect(createRes.status).toBe(200);
+			const createBody = await createRes.json();
+			const sessionId = createBody.id;
+			const sessionFile = createBody.sessionFile;
+
+			// Add messages
+			const messages = [
+				JSON.stringify({ type: "message", id: "msg-1", message: { role: "user", content: [{ type: "text", text: "Hello" }] }, timestamp: "2025-01-01T00:00:00.000Z" }),
+			];
+			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + messages.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+
+			// Call DELETE - should return quickly even if LLM fails
+			const startTime = Date.now();
+			const delRes = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId}`, {
+				method: "DELETE",
+			});
+			const elapsed = Date.now() - startTime;
+
+			expect(delRes.status).toBe(200);
+			await expect(delRes.json()).resolves.toMatchObject({ ok: true });
+			expect(elapsed).toBeLessThan(500); // fire-and-forget
+
+			// Verify JSONL file is deleted
+			await expect(fs.access(sessionFile)).rejects.toThrow();
+
+			// Cleanup
+			testServer.close();
+			await fs.rm(testSessionDir, { recursive: true, force: true }).catch(() => {});
 		});
 	});
 });

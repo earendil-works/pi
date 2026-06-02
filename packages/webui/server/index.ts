@@ -1,6 +1,8 @@
 import express from "express";
 import { createServer, type Server } from "node:http";
 import { join } from "node:path";
+import { homedir } from "node:os";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import helmet from "helmet";
 import { mountStatic } from "./routes/static";
@@ -10,35 +12,171 @@ import { mountSessionsRoutes } from "./routes/sessions";
 import { CronStore } from "./cron-store";
 import { CronWatcher } from "./cron-watcher";
 import { SessionPool } from "./session-pool";
-import { LLMClient } from "./llm-client";
-import { MemoryStore } from "./memory-store";
 import { attachWsHandler } from "./ws/handler";
+import { completeSimple } from "@earendil-works/pi-ai";
+import type { Model } from "@earendil-works/pi-ai";
+import type { PersonalAssistantConfig } from "@earendil-works/pi-personal-assistant";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 
 const PORT = parseInt(process.env.PI_WEB_PORT || "8741", 10);
 
+// Paths
+const AGENT_DIR = join(homedir(), ".pi", "agent");
+const SETTINGS_PATH = join(AGENT_DIR, "settings.json");
+const MODELS_JSON_PATH = join(AGENT_DIR, "models.json");
+
+// Types for models.json
+interface ModelDefinition {
+  id: string;
+  name?: string;
+  api?: string;
+  baseUrl?: string;
+  reasoning?: boolean;
+  input?: ("text" | "image")[];
+  cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
+  contextWindow?: number;
+  maxTokens?: number;
+  headers?: Record<string, string>;
+  compat?: Record<string, unknown>;
+}
+
+interface ProviderConfig {
+  name?: string;
+  baseUrl?: string;
+  apiKey?: string;
+  api?: string;
+  headers?: Record<string, string>;
+  authHeader?: boolean;
+  models?: ModelDefinition[];
+  modelOverrides?: Record<string, Record<string, unknown>>;
+}
+
+interface ModelsJsonConfig {
+  providers: Record<string, ProviderConfig>;
+}
+
+// Load settings.json
+function loadSettings(): PersonalAssistantConfig {
+  try {
+    if (existsSync(SETTINGS_PATH)) {
+      const raw = readFileSync(SETTINGS_PATH, "utf-8");
+      const settings = JSON.parse(raw);
+      return (settings?.personalAssistant ?? {}) as PersonalAssistantConfig;
+    }
+  } catch {
+    // ignore
+  }
+  return {};
+}
+
+// Load models.json and find a model by provider + model id
+function findModel(provider: string, modelId: string): { model: Model<"openai-completions" | "anthropic-messages" | "openai-responses">; apiKey: string | null; authHeader: string | null } | null {
+  try {
+    if (!existsSync(MODELS_JSON_PATH)) return null;
+
+    const raw = readFileSync(MODELS_JSON_PATH, "utf-8");
+    const config = JSON.parse(raw) as ModelsJsonConfig;
+
+    const providerConfig = config.providers[provider];
+    if (!providerConfig) return null;
+
+    const modelDef = providerConfig.models?.find((m) => m.id === modelId);
+    if (!modelDef) return null;
+
+    // Build the model object
+    const api = (modelDef.api ?? providerConfig.api ?? "openai-completions") as "openai-completions" | "anthropic-messages" | "openai-responses";
+
+    const model: Model<"openai-completions" | "anthropic-messages" | "openai-responses"> = {
+      id: modelDef.id,
+      name: modelDef.name ?? modelDef.id,
+      api,
+      provider: provider as any,
+      baseUrl: modelDef.baseUrl ?? providerConfig.baseUrl ?? "",
+      reasoning: modelDef.reasoning ?? false,
+      input: modelDef.input ?? ["text"],
+      cost: modelDef.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: modelDef.contextWindow ?? 4096,
+      maxTokens: modelDef.maxTokens ?? 2048,
+      headers: { ...providerConfig.headers, ...modelDef.headers },
+    };
+
+    // Extract apiKey from provider config (model layer doesn't carry it)
+    const apiKey = providerConfig.apiKey ?? null;
+    // Anthropic uses x-api-key; OpenAI-compat uses Authorization: Bearer
+    const authHeader = api === "anthropic-messages" ? "x-api-key" : "Authorization";
+
+    return { model, apiKey, authHeader };
+  } catch {
+    return null;
+  }
+}
+
+// Build the callLlm function based on settings
+function buildCallLlm(settings: PersonalAssistantConfig): (prompt: string) => Promise<string> {
+  const extractionConfig = settings?.memory?.extraction;
+  const provider = extractionConfig?.provider;
+  const modelId = extractionConfig?.model;
+
+  if (!provider || !modelId) {
+    // No extraction model configured - return a function that throws
+    return async () => {
+      throw new Error("No memory extraction model configured in settings.json");
+    };
+  }
+
+  const found = findModel(provider, modelId);
+  if (!found) {
+    return async () => {
+      throw new Error(`Model ${provider}/${modelId} not found in models.json`);
+    };
+  }
+  const { model, apiKey, authHeader } = found;
+
+  // Build callLlm using completeSimple
+  return async (prompt: string): Promise<string> => {
+    const headers: Record<string, string> = { ...(model.headers ?? {}) };
+    if (apiKey) {
+      headers[authHeader!] = authHeader === "Authorization" ? `Bearer ${apiKey}` : apiKey;
+    }
+    const result = await completeSimple(
+      model,
+      { messages: [{ role: "user", content: prompt, timestamp: Date.now() }] },
+      { apiKey: apiKey ?? undefined, headers, maxTokens: 2048 },
+    );
+    if (!result.content) throw new Error("No content in LLM response");
+    const textParts: string[] = [];
+    for (const c of result.content) {
+      if (c.type === "text" && "text" in c) {
+        textParts.push(c.text);
+      }
+    }
+    if (textParts.length === 0) throw new Error("No text content in LLM response");
+    return textParts.join("");
+  };
+}
+
 export interface ServerDeps {
   sessionPool: SessionPool;
   cronWatcher: CronWatcher;
-  llmClient: LLMClient;
-  memoryStore: MemoryStore;
   cronStore: CronStore;
+  callLlm: (prompt: string) => Promise<string>;
+  settings: PersonalAssistantConfig;
 }
 
 export function createApp(deps?: Partial<ServerDeps>): { app: express.Express; deps: ServerDeps } {
   const cronStore = deps?.cronStore ?? new CronStore();
   const sessionPool = deps?.sessionPool ?? new SessionPool();
-  const llmClient = deps?.llmClient ?? new LLMClient();
-  const memoryStore = deps?.memoryStore ?? new MemoryStore();
   const cronWatcher = deps?.cronWatcher ?? new CronWatcher(cronStore.dataPath);
+
+  // Load settings and build callLlm at startup
+  const settings = deps?.settings ?? loadSettings();
+  const callLlm = deps?.callLlm ?? buildCallLlm(settings);
 
   // Fire-and-forget: start scanning sessions in the background so createApp
   // returns immediately. startServer awaits the same call again to wait for
   // completion before accepting requests.
   void sessionPool.init();
-  llmClient.init();
-  memoryStore.init();
 
   const app = express();
 
@@ -82,12 +220,12 @@ export function createApp(deps?: Partial<ServerDeps>): { app: express.Express; d
   mountCronRoutes(app, cronStore);
 
   // Session REST API endpoints - mounted BEFORE static catch-all
-  mountSessionsRoutes(app, sessionPool, { llmClient, memoryStore });
+  mountSessionsRoutes(app, sessionPool, { callLlm, settings });
 
   // Static files (SPA fallback) - mounted LAST as catch-all
   mountStatic(app, join(__dirname, "../web/dist"));
 
-  return { app, deps: { sessionPool, cronWatcher, llmClient, memoryStore, cronStore } };
+  return { app, deps: { sessionPool, cronWatcher, cronStore, callLlm, settings } };
 }
 
 export async function startServer(opts: {
@@ -133,7 +271,6 @@ export async function startServer(opts: {
         stopServer: async () => {
           console.error("Shutting down");
           deps.cronWatcher.stop();
-          deps.memoryStore.close();
           deps.sessionPool.cleanupOnExit();
           await new Promise<void>((res) => {
             wss.close();

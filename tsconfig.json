@@ -13,6 +13,8 @@
 			"@earendil-works/pi-coding-agent": ["./packages/coding-agent/src/index.ts"],
 			"@earendil-works/pi-coding-agent/hooks": ["./packages/coding-agent/src/core/hooks/index.ts"],
 			"@earendil-works/pi-coding-agent/*": ["./packages/coding-agent/src/*"],
+			"@earendil-works/pi-personal-assistant": ["./extensions/personal-assistant/index.ts"],
+			"@earendil-works/pi-personal-assistant/*": ["./extensions/personal-assistant/*"],
 			"typebox": ["./node_modules/typebox"],
 			"@earendil-works/pi-tui": ["./packages/tui/src/index.ts"],
 			"@earendil-works/pi-tui/*": ["./packages/tui/src/*"],
@@ -20,6 +22,6 @@
 			"@earendil-works/pi-agent-old/*": ["./packages/agent-old/src/*"]
 		}
 	},
-	"include": ["packages/*/src/**/*", "packages/*/test/**/*", "packages/coding-agent/examples/**/*"],
+"include": ["packages/*/src/**/*", "packages/*/test/**/*", "packages/coding-agent/examples/**/*", "extensions/**/*"],
 	"exclude": ["**/dist/**", "packages/coding-agent/examples/extensions/gondolin/**"]
 }
