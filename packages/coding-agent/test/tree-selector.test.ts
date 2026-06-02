@@ -2,6 +2,7 @@ import { setKeybindings } from "@earendil-works/pi-tui";
 import { beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { KeybindingsManager } from "../src/core/keybindings.ts";
 import type {
+	CustomMessageEntry,
 	ModelChangeEntry,
 	SessionEntry,
 	SessionMessageEntry,
@@ -9,6 +10,7 @@ import type {
 } from "../src/core/session-manager.ts";
 import { TreeSelectorComponent } from "../src/modes/interactive/components/tree-selector.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { stripAnsi } from "../src/utils/ansi.ts";
 
 beforeAll(() => {
 	initTheme("dark");
@@ -93,6 +95,25 @@ function modelChange(id: string, parentId: string | null): ModelChangeEntry {
 		timestamp: new Date().toISOString(),
 		provider: "anthropic",
 		modelId: "claude-sonnet-4",
+	};
+}
+
+// Helper to create a custom message entry
+function customMessage(
+	id: string,
+	parentId: string | null,
+	customType: string,
+	content: string,
+	display: boolean,
+): CustomMessageEntry {
+	return {
+		type: "custom_message",
+		id,
+		parentId,
+		timestamp: new Date().toISOString(),
+		customType,
+		content,
+		display,
 	};
 }
 
@@ -182,6 +203,80 @@ describe("TreeSelectorComponent", () => {
 
 			const list = selector.getTreeList();
 			expect(list.getSelectedNode()?.entry.id).toBe("user-2");
+		});
+	});
+
+	describe("hidden custom messages", () => {
+		test("hides display:false custom messages in the default tree view", () => {
+			const entries: SessionEntry[] = [
+				userMessage("user-1", null, "hello"),
+				customMessage("custom-1", "user-1", "pi-inline-skill-snapshot", "hidden skill snapshot", false),
+				assistantMessage("asst-1", "custom-1", "response"),
+			];
+			const tree = buildTree(entries);
+
+			const selector = new TreeSelectorComponent(
+				tree,
+				"asst-1",
+				24,
+				() => {},
+				() => {},
+			);
+			const list = selector.getTreeList();
+			const rendered = stripAnsi(list.render(200).join("\n"));
+
+			expect(rendered).toContain("user: hello");
+			expect(rendered).toContain("assistant: response");
+			expect(rendered).not.toContain("pi-inline-skill-snapshot");
+			expect(rendered).not.toContain("hidden skill snapshot");
+			expect(list.getSelectedNode()?.entry.id).toBe("asst-1");
+		});
+
+		test("hides display:false custom messages even in all filter mode", () => {
+			const entries: SessionEntry[] = [
+				userMessage("user-1", null, "hello"),
+				customMessage("custom-1", "user-1", "pi-inline-skill-snapshot", "hidden skill snapshot", false),
+				assistantMessage("asst-1", "custom-1", "response"),
+			];
+			const tree = buildTree(entries);
+
+			const selector = new TreeSelectorComponent(
+				tree,
+				"custom-1",
+				24,
+				() => {},
+				() => {},
+			);
+			selector.handleInput("\x01"); // Ctrl+A: all filter
+			const list = selector.getTreeList();
+			const rendered = stripAnsi(list.render(200).join("\n"));
+
+			expect(rendered).toContain("user: hello");
+			expect(rendered).toContain("assistant: response");
+			expect(rendered).not.toContain("pi-inline-skill-snapshot");
+			expect(rendered).not.toContain("hidden skill snapshot");
+			expect(list.getSelectedNode()?.entry.id).toBe("user-1");
+		});
+
+		test("keeps display:true custom messages visible", () => {
+			const entries: SessionEntry[] = [
+				userMessage("user-1", null, "hello"),
+				customMessage("custom-1", "user-1", "visible-note", "visible context", true),
+				assistantMessage("asst-1", "custom-1", "response"),
+			];
+			const tree = buildTree(entries);
+
+			const selector = new TreeSelectorComponent(
+				tree,
+				"asst-1",
+				24,
+				() => {},
+				() => {},
+			);
+			const rendered = stripAnsi(selector.getTreeList().render(200).join("\n"));
+
+			expect(rendered).toContain("[visible-note]: visible context");
+			expect(rendered).toContain("assistant: response");
 		});
 	});
 

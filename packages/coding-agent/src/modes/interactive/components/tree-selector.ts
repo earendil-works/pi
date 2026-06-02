@@ -9,7 +9,7 @@ import {
 	TruncatedText,
 	truncateToWidth,
 } from "@earendil-works/pi-tui";
-import type { SessionTreeNode } from "../../../core/session-manager.ts";
+import type { SessionEntry, SessionTreeNode } from "../../../core/session-manager.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint, keyText } from "./keybinding-hints.ts";
@@ -270,6 +270,10 @@ class TreeList implements Component {
 		return result;
 	}
 
+	private isUiHiddenEntry(entry: SessionEntry): boolean {
+		return entry.type === "custom_message" && entry.display === false;
+	}
+
 	private applyFilter(): void {
 		// Update lastSelectedId only when we have a valid selection (non-empty list)
 		// This preserves the selection when switching through empty filter results
@@ -282,6 +286,10 @@ class TreeList implements Component {
 		this.filteredNodes = this.flatNodes.filter((flatNode) => {
 			const entry = flatNode.node.entry;
 			const isCurrentLeaf = entry.id === this.currentLeafId;
+
+			if (this.isUiHiddenEntry(entry)) {
+				return false;
+			}
 
 			// Skip assistant messages with only tool calls (no text) unless error/aborted
 			// Always show current leaf so active position is visible
