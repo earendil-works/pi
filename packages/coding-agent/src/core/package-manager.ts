@@ -1,7 +1,7 @@
 import type { ChildProcess, ChildProcessByStdio } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 
 function getEnv(): NodeJS.ProcessEnv {
 	if (process.platform !== "linux" || Object.keys(process.env).length > 0) {
@@ -204,6 +204,13 @@ function toPosixPath(p: string): string {
 
 function getHomeDir(): string {
 	return process.env.HOME || homedir();
+}
+
+export function getExtensionTempFolder(agentDir: string): string {
+	const tempFolder = join(agentDir, "tmp", "extensions");
+	mkdirSync(tempFolder, { recursive: true, mode: 0o700 });
+	chmodSync(tempFolder, 0o700);
+	return tempFolder;
 }
 
 function prefixIgnorePattern(line: string, prefix: string): string | null {
@@ -1970,7 +1977,7 @@ export class DefaultPackageManager implements PackageManager {
 	}
 
 	private getTemporaryDir(prefix: string, suffix?: string): string {
-		const root = this.resolveManagedPath(join(tmpdir(), "pi-extensions"), prefix);
+		const root = this.resolveManagedPath(getExtensionTempFolder(this.agentDir), prefix);
 		const hash = createHash("sha256")
 			.update(`${prefix}-${suffix ?? ""}`)
 			.digest("hex")

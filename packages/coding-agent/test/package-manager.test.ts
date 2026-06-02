@@ -1,5 +1,5 @@
 import { EventEmitter } from "node:events";
-import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import { PassThrough } from "node:stream";
@@ -33,6 +33,16 @@ interface PackageManagerInternals {
 		options?: { cwd?: string; timeoutMs?: number; env?: Record<string, string> },
 	): Promise<string>;
 	getLocalGitUpdateTarget(installedPath: string): Promise<{ ref: string; head: string; fetchArgs: string[] }>;
+	parseSource(
+		source: string,
+	):
+		| { type: "npm"; spec: string; name: string; pinned: boolean }
+		| { type: "git"; repo: string; host: string; path: string; pinned: boolean; ref?: string }
+		| { type: "local"; path: string };
+	getNpmInstallPath(
+		source: { type: "npm"; spec: string; name: string; pinned: boolean },
+		scope: "user" | "project" | "temporary",
+	): string;
 	getGitInstallPath(
 		source: { type: "git"; repo: string; host: string; path: string; pinned: boolean; ref?: string },
 		scope: "user" | "project" | "temporary",
@@ -1157,6 +1167,26 @@ Content`,
 				expect(() => managerWithInternals.getGitInstallPath(traversalSource, scope)).toThrow(
 					"outside package install root",
 				);
+			}
+		});
+	});
+
+	describe("temporary install paths", () => {
+		it("should place temporary npm packages under the agent temp extension folder", () => {
+			const managerWithInternals = packageManager as unknown as PackageManagerInternals;
+			const source = managerWithInternals.parseSource("npm:left-pad");
+			if (source.type !== "npm") {
+				throw new Error("Expected npm source");
+			}
+
+			const installPath = managerWithInternals.getNpmInstallPath(source, "temporary");
+			const tempRoot = join(agentDir, "tmp", "extensions");
+
+			expect(pathEndsWith(installPath, "node_modules/left-pad")).toBe(true);
+			expect(relative(tempRoot, installPath).startsWith("..")).toBe(false);
+			expect(installPath.startsWith(join(tmpdir(), "pi-extensions"))).toBe(false);
+			if (process.platform !== "win32") {
+				expect(statSync(tempRoot).mode & 0o777).toBe(0o700);
 			}
 		});
 	});
