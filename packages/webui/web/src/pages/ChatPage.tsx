@@ -48,56 +48,43 @@ export default function ChatPage() {
     // Connect WebSocket and subscribe
     ws.connect();
 
-    // Subscribe to session events
+    // Subscribe to session events (pi RPC protocol: message_end, agent_end, etc.)
     const unsubSession = ws.subscribe("session_event", (msg: unknown) => {
-      const event = msg as { sessionId?: string; type?: string; content?: string };
-      if (event.sessionId !== id) return;
+      const m = msg as { sessionId?: string; type?: string; message?: unknown };
+      if (m.sessionId !== id) return;
 
-      if (event.type === "message_update") {
-        setStreamingContent(event.content ?? "");
-      }
-    });
-
-    // Subscribe to message events (for new messages)
-    const unsubMessage = ws.subscribe("message", (msg: unknown) => {
-      const message = msg as { sessionId?: string; role?: string; content?: string };
-      if (message.sessionId !== id) return;
-      const role = message.role;
-      const content = message.content;
-      if (role && content) {
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            sessionId: id!,
-            role: role as "user" | "assistant" | "system",
-            content,
-            timestamp: new Date().toISOString(),
-          },
-        ]);
-      }
-    });
-
-    // Subscribe to streaming done
-    const unsubDone = ws.subscribe("stream_end", (msg: unknown) => {
-      const event = msg as { sessionId?: string };
-      if (event.sessionId !== id) return;
-      setStreamingContent((prev) => {
-        if (prev) {
-          // Finalize streaming content as a new message
-          setMessages((msgs) => [
-            ...msgs,
-            {
-              id: crypto.randomUUID(),
-              sessionId: id!,
-              role: "assistant",
-              content: prev,
-              timestamp: new Date().toISOString(),
-            },
-          ]);
+      // message_end with full assistant content
+      if (m.type === "message_end") {
+        const message = m.message as { role?: string; content?: unknown } | undefined;
+        if (message?.role === "assistant") {
+          const content = message.content;
+          if (Array.isArray(content)) {
+            const text = (content as { type?: string; text?: string }[])
+              .filter((c) => c.type === "text")
+              .map((c) => c.text ?? "")
+              .join("");
+            if (text) {
+              // Add final assistant message
+              setMessages((prev) => [
+                ...prev,
+                {
+                  id: crypto.randomUUID(),
+                  sessionId: id!,
+                  role: "assistant",
+                  content: text,
+                  timestamp: new Date().toISOString(),
+                },
+              ]);
+              setStreamingContent(""); // clear any streaming placeholder
+            }
+          }
         }
-        return "";
-      });
+      }
+
+      // agent_end signals turn is done; clear any streaming state
+      if (m.type === "agent_end") {
+        setStreamingContent("");
+      }
     });
 
     // Connection status
@@ -109,8 +96,6 @@ export default function ChatPage() {
 
     unsubscribesRef.current = [
       unsubSession,
-      unsubMessage,
-      unsubDone,
       unsubOpen,
     ];
 
@@ -134,7 +119,7 @@ export default function ChatPage() {
       if (!text || !id) return;
 
       setInputValue("");
-      setStreamingContent(text); // Show user message immediately as streaming
+      // Add user message to messages array (NOT to streamingContent)
       setMessages((prev) => [
         ...prev,
         {
