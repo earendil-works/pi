@@ -391,5 +391,37 @@ describe("WebSocketClient", () => {
 
       expect(handler).toHaveBeenCalledTimes(1);
     });
+
+    it("should dispatch 'open' event to subscribers when WS connects", () => {
+      const ws = new WebSocketClient();
+      ws.connect();
+
+      const openHandler = vi.fn();
+      ws.subscribe("open", openHandler);
+
+      // Find the open listener that was registered
+      const openListener = addEventListenerMock.mock.calls.find(c => c[0] === "open")?.[1] as ((event: Event) => void) | undefined;
+      expect(openListener).toBeDefined();
+
+      // Simulate WS open event
+      openListener!(new Event("open"));
+
+      expect(openHandler).toHaveBeenCalledTimes(1);
+      expect(openHandler).toHaveBeenCalledWith({ type: "open" });
+    });
+
+    it("should dispatch 'open' to wildcard subscribers", () => {
+      const ws = new WebSocketClient();
+      ws.connect();
+
+      const wildcardHandler = vi.fn();
+      ws.subscribe("*", wildcardHandler);
+
+      const openListener = addEventListenerMock.mock.calls.find(c => c[0] === "open")?.[1] as ((event: Event) => void) | undefined;
+      openListener!(new Event("open"));
+
+      expect(wildcardHandler).toHaveBeenCalledTimes(1);
+      expect(wildcardHandler).toHaveBeenCalledWith({ type: "open" });
+    });
   });
 });

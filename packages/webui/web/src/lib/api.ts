@@ -176,6 +176,12 @@ export class WebSocketClient {
 
     this.ws.addEventListener("open", () => {
       this.reconnectDelay = 1_000; // reset on successful connect
+      // Dispatch to subscribers
+      for (const sub of this.subscriptions) {
+        if (sub.type === "open" || sub.type === "*") {
+          sub.handler({ type: "open" });
+        }
+      }
     });
 
     this.ws.addEventListener("message", (event) => {
@@ -193,6 +199,12 @@ export class WebSocketClient {
     });
 
     this.ws.addEventListener("close", () => {
+      // Dispatch to subscribers
+      for (const sub of this.subscriptions) {
+        if (sub.type === "close" || sub.type === "*") {
+          sub.handler({ type: "close" });
+        }
+      }
       if (!this.isIntentionallyClosed) {
         this.scheduleReconnect();
       }

@@ -50,12 +50,14 @@ export default function ChatPage() {
 
     // Subscribe to session events (pi RPC protocol: message_end, agent_end, etc.)
     const unsubSession = ws.subscribe("session_event", (msg: unknown) => {
-      const m = msg as { sessionId?: string; type?: string; message?: unknown };
+      const m = msg as { sessionId?: string; event?: { type?: string; message?: unknown } };
       if (m.sessionId !== id) return;
+      const e = m.event;
+      if (!e) return;
 
       // message_end with full assistant content
-      if (m.type === "message_end") {
-        const message = m.message as { role?: string; content?: unknown } | undefined;
+      if (e.type === "message_end") {
+        const message = e.message as { role?: string; content?: unknown } | undefined;
         if (message?.role === "assistant") {
           const content = message.content;
           if (Array.isArray(content)) {
@@ -82,7 +84,7 @@ export default function ChatPage() {
       }
 
       // agent_end signals turn is done; clear any streaming state
-      if (m.type === "agent_end") {
+      if (e.type === "agent_end") {
         setStreamingContent("");
       }
     });

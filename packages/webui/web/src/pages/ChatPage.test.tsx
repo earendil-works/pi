@@ -192,12 +192,15 @@ describe("ChatPage", () => {
       expect(sessionEventHandler).toBeDefined();
 
       const assistantMessage = {
+        type: "session_event",
         sessionId: "test-session-1",
-        type: "message_end",
-        message: {
-          role: "assistant",
-          content: [{ type: "text", text: "Boss, hello there, dear friend." }],
-          timestamp: new Date().toISOString(),
+        event: {
+          type: "message_end",
+          message: {
+            role: "assistant",
+            content: [{ type: "text", text: "Boss, hello there, dear friend." }],
+            timestamp: new Date().toISOString(),
+          },
         },
       };
 
@@ -213,6 +216,63 @@ describe("ChatPage", () => {
       // Should have both user and assistant messages
       const allMessages = screen.getAllByText(/hello|Boss, hello there/);
       expect(allMessages.length).toBe(2);
+    });
+
+    it("ignores session_event with wrong sessionId", async () => {
+      vi.doMock("../lib/api", () => ({
+        api: {
+          getMessages: vi.fn().mockResolvedValue([]),
+          deleteSession: vi.fn().mockResolvedValue({ ok: true, atomsExtracted: 0 }),
+        },
+        ws: {
+          connect: vi.fn(),
+          disconnect: vi.fn(),
+          send: vi.fn(),
+          subscribe: vi.fn((type: string, handler: (msg: unknown) => void) => {
+            capturedHandlers.set(type, handler);
+            return () => capturedHandlers.delete(type);
+          }),
+        },
+      }));
+
+      const { default: ChatPage } = await import("../pages/ChatPage");
+
+      render(
+        <MemoryRouter initialEntries={["/session/test-session-1"]}>
+          <Routes>
+            <Route path="/session/:id" element={<ChatPage />} />
+            <Route path="/" element={<div>Home</div>} />
+          </Routes>
+        </MemoryRouter>
+      );
+
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+
+      // Get the session_event handler
+      const sessionEventHandler = getCapturedHandlers().get("session_event");
+      expect(sessionEventHandler).toBeDefined();
+
+      // Send message_end for a DIFFERENT sessionId
+      act(() => {
+        sessionEventHandler!({
+          type: "session_event",
+          sessionId: "wrong-session-id",
+          event: {
+            type: "message_end",
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "Should not appear" }],
+            },
+          },
+        });
+      });
+
+      // The assistant message should NOT appear
+      await act(async () => {});
+      const wrongMessage = screen.queryByText("Should not appear");
+      expect(wrongMessage).not.toBeInTheDocument();
     });
 
     it("clears streaming content on agent_end", async () => {
@@ -254,8 +314,11 @@ describe("ChatPage", () => {
       // Simulate agent_end event
       act(() => {
         sessionEventHandler!({
+          type: "session_event",
           sessionId: "test-session-1",
-          type: "agent_end",
+          event: {
+            type: "agent_end",
+          },
         });
       });
 
