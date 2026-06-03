@@ -31,6 +31,7 @@ function groupTurns(messages: Message[]): Message[] {
     const parts: Part[] = [];
     const seenIds = new Set<string>(); // dedupe parts by some content key
     let model: string | undefined;
+    let provider: string | undefined;
     let usage: Message["usage"];
     let lastTimestamp = m.timestamp;
     let lastId = m.id;
@@ -42,6 +43,7 @@ function groupTurns(messages: Message[]): Message[] {
       parts.push(p);
     }
     if (m.model) model = m.model;
+    if (m.provider) provider = m.provider;
     if (m.usage) usage = m.usage;
     i++;
     // Now consume every (toolResult | assistant) until we hit a user message.
@@ -64,6 +66,7 @@ function groupTurns(messages: Message[]): Message[] {
           parts.push(p);
         }
         if (next.model && !model) model = next.model;
+        if (next.provider && !provider) provider = next.provider;
         if (next.usage && !usage) usage = next.usage;
         // Use the most recent timestamp for the bubble header
         if (next.timestamp > lastTimestamp) lastTimestamp = next.timestamp;
@@ -82,6 +85,7 @@ function groupTurns(messages: Message[]): Message[] {
       parts,
       timestamp: lastTimestamp,
       ...(model ? { model } : {}),
+      ...(provider ? { provider } : {}),
       ...(usage ? { usage } : {}),
     });
   }

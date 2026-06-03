@@ -64,11 +64,34 @@ export default function ChatPage() {
           // text into a different (possibly TUI-owned) session.
           setInputText("");
           setInputImages([]);
+          // Default the model selector to:
+          //   1. settings.webui.defaultModel (the user's explicit pick)
+          //   2. settings.defaultProvider / defaultModel (system default)
+          //   3. the most recent assistant message's (provider, model)
+          //      — handles the case where settings say minimax but the
+          //        session was actually started with opencode-go, or the
+          //        user switched providers mid-session without saving
+          //        back to settings.json.
+          //   4. (none) — selector hidden until user picks one
           const s = settings as any;
+          let modelPicked: { provider: string; model: string } | null = null;
           if (s?.webui?.defaultModel) {
             const [provider, model] = s.webui.defaultModel.split("/");
-            if (provider && model) setCurrentModel({provider, model});
+            if (provider && model) modelPicked = { provider, model };
           }
+          if (!modelPicked && s?.defaultProvider && s?.defaultModel) {
+            modelPicked = { provider: s.defaultProvider, model: s.defaultModel };
+          }
+          if (!modelPicked) {
+            for (let i = msgs.length - 1; i >= 0; i--) {
+              const m = msgs[i];
+              if (m.role === "assistant" && m.provider && m.model) {
+                modelPicked = { provider: m.provider, model: m.model };
+                break;
+              }
+            }
+          }
+          if (modelPicked) setCurrentModel(modelPicked);
         }
       } catch (err) {
         console.error("init failed:", err);
@@ -105,7 +128,7 @@ export default function ChatPage() {
           const idx = prev.findIndex(m => m.id === realId);
           if (idx >= 0) {
             const updated = [...prev];
-            updated[idx] = { ...updated[idx], parts, model: e.message.model };
+            updated[idx] = { ...updated[idx], parts, model: e.message.model, provider: e.message.provider };
             return updated;
           }
           // Avoid duplicating: if there's already an empty assistant bubble
@@ -114,10 +137,10 @@ export default function ChatPage() {
           const emptyIdx = prev.findIndex(m => m.role === "assistant" && m.parts.length === 0);
           if (emptyIdx >= 0) {
             const updated = [...prev];
-            updated[emptyIdx] = { ...updated[emptyIdx], id: realId, parts, model: e.message.model };
+            updated[emptyIdx] = { ...updated[emptyIdx], id: realId, parts, model: e.message.model, provider: e.message.provider };
             return updated;
           }
-          return [...prev, { id: realId, sessionId: id!, role: "assistant", parts, timestamp: new Date().toISOString(), model: e.message.model }];
+          return [...prev, { id: realId, sessionId: id!, role: "assistant", parts, timestamp: new Date().toISOString(), model: e.message.model, provider: e.message.provider }];
         });
       } else if (e.type === "message_update" && e.message?.role === "assistant") {
         // message_update may come WITHOUT a prior message_start (depends on
@@ -130,12 +153,12 @@ export default function ChatPage() {
           const idx = prev.findIndex(m => m.id === msgId);
           if (idx >= 0) {
             const updated = [...prev];
-            updated[idx] = { ...updated[idx], parts, usage: e.message.usage, model: e.message.model };
+            updated[idx] = { ...updated[idx], parts, usage: e.message.usage, model: e.message.model, provider: e.message.provider };
             return updated;
           }
           // No existing message — create one. The next message_start for the
           // same logical turn will reconcile its id.
-          return [...prev, { id: msgId, sessionId: id!, role: "assistant", parts, timestamp: new Date().toISOString(), usage: e.message.usage, model: e.message.model }];
+          return [...prev, { id: msgId, sessionId: id!, role: "assistant", parts, timestamp: new Date().toISOString(), usage: e.message.usage, model: e.message.model, provider: e.message.provider }];
         });
       } else if (e.type === "message_end") {
         const message = e.message;
@@ -150,10 +173,10 @@ export default function ChatPage() {
             const idx = prev.findIndex(m => m.id === msgId);
             if (idx >= 0) {
               const updated = [...prev];
-              updated[idx] = { ...updated[idx], parts, usage: message.usage, model: message.model };
+              updated[idx] = { ...updated[idx], parts, usage: message.usage, model: message.model, provider: message.provider };
               return updated;
             }
-            return [...prev, { id: msgId, sessionId: id!, role: "assistant", parts, timestamp: new Date().toISOString(), usage: message.usage, model: message.model }];
+            return [...prev, { id: msgId, sessionId: id!, role: "assistant", parts, timestamp: new Date().toISOString(), usage: message.usage, model: message.model, provider: message.provider }];
           });
         }
       }
@@ -190,10 +213,42 @@ export default function ChatPage() {
               .join("|");
             return `${m.role}|${body}`;
           };
-          const prevSigs = new Set(prev.map(sig));
-          const newMsgs = msgs.filter(m => !prevSigs.has(sig(m)));
-          if (newMsgs.length === 0) return prev;
-          return [...prev, ...newMsgs];
+          // Build lookup maps keyed by content signature, separately for
+          // the current state and the freshly polled messages. The merge
+          // uses the polled version to fill in fields the WS streaming
+          // path doesn't carry (provider, authoritative timestamp, usage).
+          const prevBySig = new Map(prev.map(m => [sig(m), m]));
+          const polledBySig = new Map(msgs.map(m => [sig(m), m]));
+          let changed = false;
+          // First pass: merge field updates from polled messages into
+          // existing same-signature messages. The WS streaming path
+          // sometimes creates messages with only `model` (no provider)
+          // and may have older timestamp / no usage; the JSONL side is
+          // authoritative for those once the file is written, so adopt
+          // the polled values when they differ.
+          const merged = prev.map(existing => {
+            const polled = polledBySig.get(sig(existing));
+            if (!polled) return existing;
+            const needsUpdate =
+              (polled.provider && !existing.provider) ||
+              (polled.model && existing.model !== polled.model) ||
+              (polled.usage && !existing.usage) ||
+              (polled.timestamp && existing.timestamp !== polled.timestamp);
+            if (!needsUpdate) return existing;
+            changed = true;
+            return {
+              ...existing,
+              model: polled.model ?? existing.model,
+              provider: polled.provider ?? existing.provider,
+              usage: polled.usage ?? existing.usage,
+              timestamp: polled.timestamp ?? existing.timestamp,
+            };
+          });
+          // Second pass: append truly new messages (no signature match
+          // in the prior state).
+          const newMsgs = msgs.filter(m => !prevBySig.has(sig(m)));
+          if (!changed && newMsgs.length === 0) return prev;
+          return [...merged, ...newMsgs];
         });
       } catch { /* ignore */ }
     }, 3000);

@@ -340,6 +340,7 @@ interface Message {
   parts: Part[];
   timestamp: string;
   model?: string;
+  provider?: string;
   usage?: { input: number; output: number };
 }
 
@@ -420,11 +421,16 @@ async function readMessages(
         timestamp: entry.timestamp ?? new Date().toISOString(),
       };
 
-      // For assistant messages, extract usage and model
+      // For assistant messages, extract usage, model, and provider.
+      // Provider is needed for the model selector — settings may list a
+      // different defaultProvider than what was actually used in this
+      // session (e.g. user switched mid-session, or models.json is out
+      // of date), and we want the badge + selector to reflect reality.
       if (role === "assistant") {
         const usage = extractUsage(line);
         if (usage) msg.usage = usage;
         if (inner.model) msg.model = inner.model;
+        if (inner.provider) msg.provider = inner.provider;
       }
 
       messages.push(msg);

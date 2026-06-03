@@ -67,6 +67,7 @@ export interface Message {
   timestamp: string;
   usage?: { input: number; output: number };
   model?: string;
+  provider?: string;
 }
 
 export interface DeleteSessionResult {

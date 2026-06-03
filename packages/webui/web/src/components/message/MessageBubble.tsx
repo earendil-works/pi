@@ -42,7 +42,7 @@ export function MessageBubble({ message }: { message: Message }): JSX.Element | 
   if (message.role === "assistant") {
     return (
       <div className="px-4 py-3">
-        <MessageHeader name="pi" timestamp={message.timestamp} model={message.model} />
+        <MessageHeader name="pi" timestamp={message.timestamp} model={message.model} provider={message.provider} />
         <MessageParts parts={message.parts} />
         <MessageFooter usage={message.usage} />
       </div>
