@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added terminal background color query support for OSC 11 replies.
+
 ## [0.79.3] - 2026-06-13
 
 ## [0.79.2] - 2026-06-12
