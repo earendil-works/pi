@@ -86,23 +86,37 @@ export default function ChatPage() {
       if (!e) return;
 
       if (e.type === "message_start" && e.message?.role === "assistant") {
-        const realId = e.message.id || crypto.randomUUID();
+        // pi RPC events don't include message.id; we generate one and use
+        // it as the streaming key so subsequent message_update / message_end
+        // events with the same id find the same message.
+        const realId = e.message.id || streamingMsgId.current || crypto.randomUUID();
         streamingMsgId.current = realId;
         const parts = buildParts(e.message.content);
         setMessages(prev => {
-          const idx = prev.findIndex(m => m.role === "assistant" && m.parts.length === 0);
+          const idx = prev.findIndex(m => m.id === realId);
           if (idx >= 0) {
             const updated = [...prev];
-            updated[idx] = { ...updated[idx], id: realId, parts, model: e.message.model };
+            updated[idx] = { ...updated[idx], parts, model: e.message.model };
+            return updated;
+          }
+          // Avoid duplicating: if there's already an empty assistant bubble
+          // waiting (e.g. from a previous turn that didn't get cleaned up),
+          // reuse it.
+          const emptyIdx = prev.findIndex(m => m.role === "assistant" && m.parts.length === 0);
+          if (emptyIdx >= 0) {
+            const updated = [...prev];
+            updated[emptyIdx] = { ...updated[emptyIdx], id: realId, parts, model: e.message.model };
             return updated;
           }
           return [...prev, { id: realId, sessionId: id!, role: "assistant", parts, timestamp: new Date().toISOString(), model: e.message.model }];
         });
       } else if (e.type === "message_update" && e.message?.role === "assistant") {
-        const parts = buildParts(e.message.content);
+        // message_update may come WITHOUT a prior message_start (depends on
+        // pi's RPC implementation). Use streamingMsgId to track.
         const msgId = e.message.id || streamingMsgId.current;
         if (!msgId) return;
         streamingMsgId.current = msgId;
+        const parts = buildParts(e.message.content);
         setMessages(prev => {
           const idx = prev.findIndex(m => m.id === msgId);
           if (idx >= 0) {
@@ -110,25 +124,28 @@ export default function ChatPage() {
             updated[idx] = { ...updated[idx], parts, usage: e.message.usage, model: e.message.model };
             return updated;
           }
+          // No existing message — create one. The next message_start for the
+          // same logical turn will reconcile its id.
           return [...prev, { id: msgId, sessionId: id!, role: "assistant", parts, timestamp: new Date().toISOString(), usage: e.message.usage, model: e.message.model }];
         });
       } else if (e.type === "message_end") {
         const message = e.message;
         if (message?.role === "assistant") {
-          const msgId = message.id || streamingMsgId.current || crypto.randomUUID();
+          // message_end should reconcile with the in-flight streaming message.
+          // Prefer the streaming id (the one we set on message_start) so
+          // updates and end events hit the same message.
+          const msgId = streamingMsgId.current || message.id || crypto.randomUUID();
           streamingMsgId.current = null;
-          if (msgId) {
-            const parts = buildParts(message.content);
-            setMessages(prev => {
-              const idx = prev.findIndex(m => m.id === msgId);
-              if (idx >= 0) {
-                const updated = [...prev];
-                updated[idx] = { ...updated[idx], parts, usage: message.usage, model: message.model };
-                return updated;
-              }
-              return [...prev, { id: msgId, sessionId: id!, role: "assistant", parts, timestamp: new Date().toISOString(), usage: message.usage, model: message.model }];
-            });
-          }
+          const parts = buildParts(message.content);
+          setMessages(prev => {
+            const idx = prev.findIndex(m => m.id === msgId);
+            if (idx >= 0) {
+              const updated = [...prev];
+              updated[idx] = { ...updated[idx], parts, usage: message.usage, model: message.model };
+              return updated;
+            }
+            return [...prev, { id: msgId, sessionId: id!, role: "assistant", parts, timestamp: new Date().toISOString(), usage: message.usage, model: message.model }];
+          });
         }
       }
     });
@@ -145,8 +162,15 @@ export default function ChatPage() {
         const msgs = await api.getMessages(id);
         if (cancelled) return;
         setMessages(prev => {
-          const prevIds = new Set(prev.map(m => m.id));
-          const newMsgs = msgs.filter(m => !prevIds.has(m.id));
+          // Build a content-key signature for each existing message so the
+          // poll can't add a JSONL-side copy of something we already have
+          // from a streaming WS event (WS message id != JSONL entry id).
+          const sig = (m: typeof prev[number]) =>
+            `${m.role}|${m.timestamp}|${m.parts
+              .map(p => (p as any).text ?? (p as any).toolCallId ?? JSON.stringify(p))
+              .join("|")}`;
+          const prevSigs = new Set(prev.map(sig));
+          const newMsgs = msgs.filter(m => !prevSigs.has(sig(m)));
           if (newMsgs.length === 0) return prev;
           return [...prev, ...newMsgs];
         });
