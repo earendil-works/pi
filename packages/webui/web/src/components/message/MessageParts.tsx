@@ -180,8 +180,9 @@ export function MessageParts({ parts }: { parts: Part[] }) {
   const textParts: TextPart[] = [];
 
   for (const p of parts) {
-    if (p.type === "thinking") thinkingParts.push(p);
-    else if (p.type === "toolCall" || p.type === "toolResult" || p.type === "image") toolParts.push(p);
+    if (p.type === "thinking") {
+      if (p.text.trim()) thinkingParts.push(p);
+    } else if (p.type === "toolCall" || p.type === "toolResult" || p.type === "image") toolParts.push(p);
     else if (p.type === "text") textParts.push(p);
   }
 

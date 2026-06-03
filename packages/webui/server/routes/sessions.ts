@@ -309,21 +309,34 @@ async function readMessages(
       const role = inner.role;
       if (role !== "user" && role !== "assistant" && role !== "toolResult") continue;
 
-      // Build parts array from inner.content (Bug 2 fix: use parts, not content string)
+      // Build parts array from inner.content
       const parts: Part[] = [];
-      if (Array.isArray(inner.content)) {
+      if (role === "toolResult") {
+        // toolResult entries: content may be [{type:"toolResult", toolCallId, content, isError}]
+        // or [{type:"text", text:"..."}]. Extract the toolResult part from content array.
+        if (Array.isArray(inner.content)) {
+          const tr = inner.content.find((c: { type: string }) => c.type === "toolResult");
+          if (tr) {
+            parts.push({
+              type: "toolResult",
+              toolCallId: tr.toolCallId ?? inner.toolCallId ?? "unknown",
+              content: typeof tr.content === "string" ? tr.content : JSON.stringify(tr.content ?? ""),
+              isError: tr.isError,
+            });
+          } else {
+            // Fallback: extract text content
+            const text = inner.content.filter((c: { type: string }) => c.type === "text").map((c: { text?: string }) => c.text ?? "").join("");
+            parts.push({ type: "toolResult", toolCallId: inner.toolCallId ?? "unknown", content: text });
+          }
+        } else {
+          parts.push({ type: "toolResult", toolCallId: inner.toolCallId ?? "unknown", content: typeof inner.content === "string" ? inner.content : "" });
+        }
+      } else if (Array.isArray(inner.content)) {
         for (const c of inner.content) {
           if (c.type === "text") parts.push({ type: "text", text: c.text ?? "" });
           else if (c.type === "thinking") parts.push({ type: "thinking", text: c.text ?? "" });
           else if (c.type === "toolCall") parts.push({ type: "toolCall", id: c.id, name: c.name, args: c.args ?? {} });
           else if (c.type === "image") parts.push({ type: "image", mediaType: c.mediaType, data: c.data });
-          else if (c.type === "toolResult")
-            parts.push({
-              type: "toolResult",
-              toolCallId: c.toolCallId,
-              content: typeof c.content === "string" ? c.content : JSON.stringify(c.content),
-              isError: c.isError,
-            });
         }
       } else if (typeof inner.content === "string") {
         parts.push({ type: "text", text: inner.content });

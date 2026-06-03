@@ -5,6 +5,29 @@ interface ChatMessagesProps {
   messages: Message[];
 }
 
+function mergeMessages(messages: Message[]): Message[] {
+  const result: Message[] = [];
+  let i = 0;
+  while (i < messages.length) {
+    const msg = messages[i];
+    if (msg.role === "assistant") {
+      // Collect consecutive toolResult messages that follow this assistant message
+      const merged = { ...msg, parts: [...msg.parts] };
+      let j = i + 1;
+      while (j < messages.length && messages[j].role === "toolResult") {
+        merged.parts.push(...messages[j].parts);
+        j++;
+      }
+      result.push(merged);
+      i = j;
+    } else {
+      result.push(msg);
+      i++;
+    }
+  }
+  return result;
+}
+
 export default function ChatMessages({ messages }: ChatMessagesProps) {
   if (messages.length === 0) {
     return (
@@ -15,9 +38,11 @@ export default function ChatMessages({ messages }: ChatMessagesProps) {
     );
   }
 
+  const merged = mergeMessages(messages);
+
   return (
     <div className="flex flex-col">
-      {messages.map((message) => (
+      {merged.map((message) => (
         <MessageBubble key={message.id} message={message} />
       ))}
     </div>
