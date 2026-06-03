@@ -115,7 +115,7 @@
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/sidebar/NewChatButton.test.tsx` (3+ 测试, 含 click + loading 状态)
   - **依赖**: 无
 
-- [ ] 2.7 **`Title` + `Actions` 组件 + 测试**
+- [x] 2.7 **`Title` + `Actions` 组件 + 测试**
   - **文件**: `packages/webui/web/src/components/topbar/Title.tsx` (Create), `packages/webui/web/src/components/topbar/Actions.tsx` (Create), `packages/webui/web/src/components/topbar/Title.test.tsx` (Create), `packages/webui/web/src/components/topbar/Actions.test.tsx` (Create)
   - **内容**:
     - `Title({title: string, messageCount: number})`: "Chat" (text-lg font-semibold) + "N messages" (text-xs text-stone-500) 两段。
@@ -150,13 +150,13 @@
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/message/MessageBubble.test.tsx` (5+ 测试)
   - **依赖**: 2.0, 2.9, 2.10, 3.1
 
-- [ ] 2.12 **`Lightbox` 组件 + 测试**
+- [x] 2.12 **`Lightbox` 组件 + 测试**
   - **文件**: `packages/webui/web/src/components/Lightbox.tsx` (Create), `packages/webui/web/src/components/Lightbox.test.tsx` (Create)
   - **内容**: 接收 `image: {url, alt} | null, onClose`。`null` → 不渲染。否则: `createPortal` 到 `document.body`, 全屏 fixed 黑色 90% 透明 backdrop + 居中图片 (`max-w-[90vw] max-h-[90vh] object-contain`)。`useEffect` 注册 `keydown` 监听 ESC 关闭, 卸载时清理。点击 backdrop 关闭。
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/Lightbox.test.tsx` (4+ 测试, 含 open/ESC/backdrop/null 不渲染)
   - **依赖**: 无
 
-- [ ] 2.13 **`ImagePreview` 组件 + 测试**
+- [x] 2.13 **`ImagePreview` 组件 + 测试**
   - **文件**: `packages/webui/web/src/components/input/ImagePreview.tsx` (Create), `packages/webui/web/src/components/input/ImagePreview.test.tsx` (Create)
   - **内容**: 接收 `images: InputImage[]`, `onRemove(id)`。渲染: 横向 `flex flex-wrap gap-2`, 每张图 `relative 80x80 rounded overflow-hidden border`, `<img src={img.dataUrl} className="w-full h-full object-cover">`, 右上角 `<button aria-label="Remove" className="absolute top-0 right-0 bg-black/50 text-white p-0.5 rounded-bl">×</button>`。空数组 → 不渲染。
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/input/ImagePreview.test.tsx` (3+ 测试)
@@ -221,7 +221,7 @@
   - **验证**: 手动查 `themes/hermes.json` 内容合法 + 浏览器 devtools `:root` 含 `--accent: #3b82f6`
   - **依赖**: 无
 
-- [ ] 3.7 **`GET /api/settings` 端点 (用于 main.tsx 加载)**
+- [x] 3.7 **`GET /api/settings` 端点 (用于 main.tsx 加载)**
   - **文件**: `packages/webui/server/routes/settings.ts` (Create), `packages/webui/server/routes/settings.test.ts` (Create)
   - **内容**: `GET /api/settings` 读 `~/.pi/agent/settings.json` 返回对象, `PATCH /api/settings` 接收部分对象 merge 写回 (model theme 等)。失败返回 500。
   - **验证**: `cd packages/webui && timeout 30 node ../../node_modules/vitest/dist/cli.js --run server/routes/settings.test.ts` (3+ 测试)
