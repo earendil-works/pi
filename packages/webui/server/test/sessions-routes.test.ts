@@ -349,7 +349,7 @@ describe("Sessions REST API Endpoints", () => {
 				id: "msg-2",
 				sessionId: sessionId_,
 				role: "assistant",
-				content: "msg2",
+				parts: [{ type: "text", text: "msg2" }],
 				timestamp: "2025-01-01T00:00:01.000Z",
 			});
 		});
@@ -407,7 +407,7 @@ describe("Sessions REST API Endpoints", () => {
 			expect(msgs[0]).toMatchObject({
 				id: "msg-1",
 				role: "user",
-				content: "Hello",
+				parts: [{ type: "text", text: "Hello" }],
 			});
 			expect(msgs[0].usage).toBeUndefined();
 
@@ -415,7 +415,7 @@ describe("Sessions REST API Endpoints", () => {
 			expect(msgs[1]).toMatchObject({
 				id: "msg-2",
 				role: "assistant",
-				content: "Hi there!",
+				parts: [{ type: "text", text: "Hi there!" }],
 				usage: { input: 1000, output: 2000 },
 			});
 		});
@@ -439,6 +439,345 @@ describe("Sessions REST API Endpoints", () => {
 			// Both messages should not have usage
 			expect(msgs[0].usage).toBeUndefined();
 			expect(msgs[1].usage).toBeUndefined();
+		});
+	});
+
+	// (i1) GET /api/sessions/:id/messages returns messages when first lines are non-message entries
+	describe("(i1) GET /api/sessions/:id/messages returns messages when first lines are non-message entries", () => {
+		let app: express.Express;
+		let server: ReturnType<typeof createServer>;
+		let sessionId: string;
+		let sessionFile: string;
+
+		beforeEach(async () => {
+			app = express();
+			app.use(express.json());
+			const pool = createMockPool(fakeSessionsDir);
+			mountSessionsRoutes(app, pool);
+			server = createServer(app);
+
+			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+			const port = (server.address() as any).port;
+
+			// Create a session
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ initialPrompt: "test" }),
+			});
+			const body = await res.json();
+			sessionId = body.id;
+			sessionFile = body.sessionFile;
+		});
+
+		afterEach(() => {
+			server.close();
+		});
+
+		it("returns 3 messages when JSONL has model_change + thinking_level_change before messages", async () => {
+			const port = (server.address() as any).port;
+
+			// JSONL: header, model_change, thinking_level_change, then 3 messages
+			// This mimics a real session where the first few entries after header are non-message entries
+			const sessionId_ = sessionId;
+			const entries = [
+				// Non-message entries FIRST (these were causing pagination bug)
+				JSON.stringify({ type: "model_change", id: "mc-1", provider: "openai", modelId: "gpt-4" }),
+				JSON.stringify({ type: "thinking_level_change", id: "tlc-1", thinkingLevel: "off" }),
+				// Actual messages
+				JSON.stringify({ type: "message", id: "msg-1", message: { role: "user", content: [{ type: "text", text: "Hello" }] }, timestamp: "2025-01-01T00:00:00.000Z" }),
+				JSON.stringify({ type: "message", id: "msg-2", message: { role: "assistant", content: [{ type: "text", text: "Hi there!" }] }, timestamp: "2025-01-01T00:00:01.000Z" }),
+				JSON.stringify({ type: "message", id: "msg-3", message: { role: "user", content: [{ type: "text", text: "How are you?" }] }, timestamp: "2025-01-01T00:00:02.000Z" }),
+			];
+			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + entries.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+
+			// GET with limit=3, offset=0 - should return 3 messages, NOT empty array
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId_}/messages?limit=3&offset=0`);
+			expect(res.status).toBe(200);
+			const msgs = await res.json();
+
+			// BUG was: returned [] because model_change/thinking_level_change were paginated before filtering
+			// FIX: should return the 3 messages
+			expect(msgs).toHaveLength(3);
+			expect(msgs[0].id).toBe("msg-1");
+			expect(msgs[1].id).toBe("msg-2");
+			expect(msgs[2].id).toBe("msg-3");
+		});
+
+		it("offset skips non-message entries correctly", async () => {
+			const port = (server.address() as any).port;
+			const sessionId_ = sessionId;
+
+			// Same setup: header, model_change, thinking_level_change, msg-1, msg-2, msg-3
+			const entries = [
+				JSON.stringify({ type: "model_change", id: "mc-1", provider: "openai", modelId: "gpt-4" }),
+				JSON.stringify({ type: "thinking_level_change", id: "tlc-1", thinkingLevel: "off" }),
+				JSON.stringify({ type: "message", id: "msg-1", message: { role: "user", content: [{ type: "text", text: "First" }] }, timestamp: "2025-01-01T00:00:00.000Z" }),
+				JSON.stringify({ type: "message", id: "msg-2", message: { role: "assistant", content: [{ type: "text", text: "Second" }] }, timestamp: "2025-01-01T00:00:01.000Z" }),
+				JSON.stringify({ type: "message", id: "msg-3", message: { role: "user", content: [{ type: "text", text: "Third" }] }, timestamp: "2025-01-01T00:00:02.000Z" }),
+			];
+			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + entries.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+
+			// offset=1, limit=2 should skip msg-1 and return msg-2, msg-3
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId_}/messages?limit=2&offset=1`);
+			expect(res.status).toBe(200);
+			const msgs = await res.json();
+			expect(msgs).toHaveLength(2);
+			expect(msgs[0].id).toBe("msg-2");
+			expect(msgs[1].id).toBe("msg-3");
+		});
+	});
+
+	// (i2) GET /api/sessions/:id/messages returns parts: Part[] not content: string
+	describe("(i2) GET /api/sessions/:id/messages returns parts: Part[] not content: string", () => {
+		let app: express.Express;
+		let server: ReturnType<typeof createServer>;
+		let sessionId: string;
+		let sessionFile: string;
+
+		beforeEach(async () => {
+			app = express();
+			app.use(express.json());
+			const pool = createMockPool(fakeSessionsDir);
+			mountSessionsRoutes(app, pool);
+			server = createServer(app);
+
+			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+			const port = (server.address() as any).port;
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ initialPrompt: "test" }),
+			});
+			const body = await res.json();
+			sessionId = body.id;
+			sessionFile = body.sessionFile;
+		});
+
+		afterEach(() => {
+			server.close();
+		});
+
+		it("response messages have parts: Part[] field, not content: string", async () => {
+			const port = (server.address() as any).port;
+			const sessionId_ = sessionId;
+
+			const messages = [
+				JSON.stringify({ type: "message", id: "msg-1", message: { role: "user", content: [{ type: "text", text: "Hello" }] }, timestamp: "2025-01-01T00:00:00.000Z" }),
+				JSON.stringify({ type: "message", id: "msg-2", message: { role: "assistant", content: [{ type: "text", text: "Hi there!" }] }, timestamp: "2025-01-01T00:00:01.000Z" }),
+			];
+			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + messages.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId_}/messages`);
+			expect(res.status).toBe(200);
+			const msgs = await res.json();
+
+			expect(msgs).toHaveLength(2);
+
+			// Should have parts array, not content string
+			expect(msgs[0].parts).toBeDefined();
+			expect(Array.isArray(msgs[0].parts)).toBe(true);
+			expect(msgs[0].content).toBeUndefined(); // old field should not exist
+
+			expect(msgs[1].parts).toBeDefined();
+			expect(Array.isArray(msgs[1].parts)).toBe(true);
+			expect(msgs[1].content).toBeUndefined();
+		});
+
+		it("text part has correct type and text fields", async () => {
+			const port = (server.address() as any).port;
+			const sessionId_ = sessionId;
+
+			const messages = [
+				JSON.stringify({ type: "message", id: "msg-1", message: { role: "user", content: [{ type: "text", text: "Hello world" }] }, timestamp: "2025-01-01T00:00:00.000Z" }),
+			];
+			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + messages.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId_}/messages`);
+			expect(res.status).toBe(200);
+			const msgs = await res.json();
+
+			expect(msgs[0].parts).toHaveLength(1);
+			expect(msgs[0].parts[0]).toEqual({ type: "text", text: "Hello world" });
+		});
+
+		it("assistant message with model field returns model in response", async () => {
+			const port = (server.address() as any).port;
+			const sessionId_ = sessionId;
+
+			const messages = [
+				JSON.stringify({ type: "message", id: "msg-1", message: { role: "assistant", content: [{ type: "text", text: "Hello" }], model: "gpt-4" }, timestamp: "2025-01-01T00:00:00.000Z" }),
+			];
+			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + messages.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId_}/messages`);
+			expect(res.status).toBe(200);
+			const msgs = await res.json();
+
+			expect(msgs[0].model).toBe("gpt-4");
+		});
+	});
+
+	// (i3) GET /api/sessions/:id/messages preserves image parts
+	describe("(i3) GET /api/sessions/:id/messages preserves image parts", () => {
+		let app: express.Express;
+		let server: ReturnType<typeof createServer>;
+		let sessionId: string;
+		let sessionFile: string;
+
+		beforeEach(async () => {
+			app = express();
+			app.use(express.json());
+			const pool = createMockPool(fakeSessionsDir);
+			mountSessionsRoutes(app, pool);
+			server = createServer(app);
+
+			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+			const port = (server.address() as any).port;
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ initialPrompt: "test" }),
+			});
+			const body = await res.json();
+			sessionId = body.id;
+			sessionFile = body.sessionFile;
+		});
+
+		afterEach(() => {
+			server.close();
+		});
+
+		it("assistant message with image part preserves image data", async () => {
+			const port = (server.address() as any).port;
+			const sessionId_ = sessionId;
+
+			const imageData = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+			const messages = [
+				JSON.stringify({
+					type: "message",
+					id: "msg-1",
+					message: {
+						role: "assistant",
+						content: [
+							{ type: "text", text: "Here is an image:" },
+							{ type: "image", mediaType: "image/png", data: imageData },
+						],
+					},
+					timestamp: "2025-01-01T00:00:00.000Z",
+				}),
+			];
+			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + messages.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId_}/messages`);
+			expect(res.status).toBe(200);
+			const msgs = await res.json();
+
+			expect(msgs).toHaveLength(1);
+			expect(msgs[0].parts).toHaveLength(2);
+
+			// First part is text
+			expect(msgs[0].parts[0]).toEqual({ type: "text", text: "Here is an image:" });
+
+			// Second part is image
+			expect(msgs[0].parts[1]).toEqual({
+				type: "image",
+				mediaType: "image/png",
+				data: imageData,
+			});
+		});
+
+		it("message with toolCall and toolResult parts preserves all fields", async () => {
+			const port = (server.address() as any).port;
+			const sessionId_ = sessionId;
+
+			const messages = [
+				JSON.stringify({
+					type: "message",
+					id: "msg-1",
+					message: {
+						role: "assistant",
+						content: [
+							{ type: "toolCall", id: "tc-1", name: "bash", args: { command: "ls -la" } },
+						],
+					},
+					timestamp: "2025-01-01T00:00:00.000Z",
+				}),
+				JSON.stringify({
+					type: "message",
+					id: "msg-2",
+					message: {
+						role: "toolResult",
+						content: [
+							{ type: "toolResult", toolCallId: "tc-1", content: "total 0\ndrwxr-xr-x  3 jh  staff  4096 Jun  3 19:32 .\n", isError: false },
+						],
+					},
+					timestamp: "2025-01-01T00:00:01.000Z",
+				}),
+			];
+			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + messages.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId_}/messages`);
+			expect(res.status).toBe(200);
+			const msgs = await res.json();
+
+			expect(msgs).toHaveLength(2);
+
+			// First message: toolCall
+			expect(msgs[0].parts[0]).toEqual({
+				type: "toolCall",
+				id: "tc-1",
+				name: "bash",
+				args: { command: "ls -la" },
+			});
+
+			// Second message: toolResult
+			expect(msgs[1].parts[0]).toEqual({
+				type: "toolResult",
+				toolCallId: "tc-1",
+				content: "total 0\ndrwxr-xr-x  3 jh  staff  4096 Jun  3 19:32 .\n",
+				isError: false,
+			});
+		});
+
+		it("message with thinking part preserves thinking content", async () => {
+			const port = (server.address() as any).port;
+			const sessionId_ = sessionId;
+
+			const messages = [
+				JSON.stringify({
+					type: "message",
+					id: "msg-1",
+					message: {
+						role: "assistant",
+						content: [
+							{ type: "thinking", text: "Let me think about this..." },
+							{ type: "text", text: "Here is my answer." },
+						],
+					},
+					timestamp: "2025-01-01T00:00:00.000Z",
+				}),
+			];
+			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + messages.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId_}/messages`);
+			expect(res.status).toBe(200);
+			const msgs = await res.json();
+
+			expect(msgs).toHaveLength(1);
+			expect(msgs[0].parts).toHaveLength(2);
+			expect(msgs[0].parts[0]).toEqual({ type: "thinking", text: "Let me think about this..." });
+			expect(msgs[0].parts[1]).toEqual({ type: "text", text: "Here is my answer." });
 		});
 	});
 

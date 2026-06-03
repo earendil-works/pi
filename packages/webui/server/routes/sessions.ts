@@ -256,12 +256,20 @@ async function findSessionFile(sessionsDir: string, sessionId: string): Promise<
   return undefined;
 }
 
+type Part =
+  | { type: "text"; text: string }
+  | { type: "thinking"; text: string }
+  | { type: "toolCall"; id: string; name: string; args: Record<string, unknown> }
+  | { type: "toolResult"; toolCallId: string; content: string; isError?: boolean }
+  | { type: "image"; mediaType: string; data: string };
+
 interface Message {
   id: string;
   sessionId: string;
-  role: "user" | "assistant" | "system";
-  content: string;
+  role: "user" | "assistant" | "toolResult";
+  parts: Part[];
   timestamp: string;
+  model?: string;
   usage?: { input: number; output: number };
 }
 
@@ -275,47 +283,65 @@ async function readMessages(
   const lines = content.split("\n").filter((l) => l.trim());
 
   // Skip header (first line)
-  const messageLines = lines.slice(1);
+  const allLines = lines.slice(1);
 
-  // Apply pagination
-  const paginatedLines = messageLines.slice(offset, offset + limit);
+  // Filter to only message entries FIRST (Bug 1 fix: filter before pagination)
+  const messageOnly = allLines.filter((line) => {
+    try {
+      const entry = JSON.parse(line);
+      return entry.type === "message" && entry.message;
+    } catch {
+      return false;
+    }
+  });
+
+  // Then paginate
+  const paginatedLines = messageOnly.slice(offset, offset + limit);
 
   const messages: Message[] = [];
   for (const line of paginatedLines) {
     try {
       const entry = JSON.parse(line);
-      // Only process 'message' entries (skip model_change, thinking_level_change, etc.)
+      // Already filtered above, but double-check
       if (entry.type !== "message" || !entry.message) continue;
 
       const inner = entry.message;
       const role = inner.role;
-      if (role !== "user" && role !== "assistant" && role !== "system") continue;
+      if (role !== "user" && role !== "assistant" && role !== "toolResult") continue;
 
-      // Extract text from content array
-      let text = "";
+      // Build parts array from inner.content (Bug 2 fix: use parts, not content string)
+      const parts: Part[] = [];
       if (Array.isArray(inner.content)) {
-        text = inner.content
-          .filter((c: any) => c.type === "text")
-          .map((c: any) => c.text ?? "")
-          .join("");
+        for (const c of inner.content) {
+          if (c.type === "text") parts.push({ type: "text", text: c.text ?? "" });
+          else if (c.type === "thinking") parts.push({ type: "thinking", text: c.text ?? "" });
+          else if (c.type === "toolCall") parts.push({ type: "toolCall", id: c.id, name: c.name, args: c.args ?? {} });
+          else if (c.type === "image") parts.push({ type: "image", mediaType: c.mediaType, data: c.data });
+          else if (c.type === "toolResult")
+            parts.push({
+              type: "toolResult",
+              toolCallId: c.toolCallId,
+              content: typeof c.content === "string" ? c.content : JSON.stringify(c.content),
+              isError: c.isError,
+            });
+        }
       } else if (typeof inner.content === "string") {
-        text = inner.content;
+        parts.push({ type: "text", text: inner.content });
       }
 
       const msg: Message = {
         id: entry.id ?? crypto.randomUUID(),
         sessionId,
         role,
-        content: text,
+        parts,
         timestamp: entry.timestamp ?? new Date().toISOString(),
       };
 
-      // For assistant messages, extract usage if available
+      // For assistant messages, extract usage and model
       if (role === "assistant") {
         const usage = extractUsage(line);
-        if (usage) {
-          msg.usage = usage;
-        }
+        if (usage) msg.usage = usage;
+        if (inner.model) msg.model = inner.model;
       }
 
       messages.push(msg);
