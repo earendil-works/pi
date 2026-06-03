@@ -1,31 +1,91 @@
-import type { Message } from "../lib/api";
+import type { Message, Part } from "../lib/api";
 import { MessageBubble } from "./message/MessageBubble";
 
 interface ChatMessagesProps {
   messages: Message[];
 }
 
-function mergeMessages(messages: Message[]): Message[] {
-  const result: Message[] = [];
+/**
+ * Group messages into turns.
+ *
+ * A turn = (user message)? + 0..N consecutive assistant+toolResult messages.
+ * The same agent turn can interleave many (assistant toolCall) -> (toolResult)
+ * -> (assistant toolCall) -> (toolResult) -> ... -> (assistant final text)
+ * sequences as it thinks out loud; we want all of those in one bubble.
+ *
+ * toolResult messages are absorbed into the preceding assistant bubble.
+ * User messages are kept as their own bubbles (one per user prompt).
+ */
+function groupTurns(messages: Message[]): Message[] {
+  const out: Message[] = [];
   let i = 0;
   while (i < messages.length) {
-    const msg = messages[i];
-    if (msg.role === "assistant") {
-      // Collect consecutive toolResult messages that follow this assistant message
-      const merged = { ...msg, parts: [...msg.parts] };
-      let j = i + 1;
-      while (j < messages.length && messages[j].role === "toolResult") {
-        merged.parts.push(...messages[j].parts);
-        j++;
-      }
-      result.push(merged);
-      i = j;
-    } else {
-      result.push(msg);
+    const m = messages[i];
+    if (m.role === "user") {
+      out.push(m);
       i++;
+      continue;
     }
+    // Start of an assistant turn (possibly already seen toolResults, but the
+    // outer while skips them by jumping past).
+    const parts: Part[] = [];
+    const seenIds = new Set<string>(); // dedupe parts by some content key
+    let model: string | undefined;
+    let usage: Message["usage"];
+    let lastTimestamp = m.timestamp;
+    let lastId = m.id;
+    // The assistant message itself: contribute its parts.
+    for (const p of m.parts) {
+      const k = `${p.type}:${(p as any).text ?? (p as any).id ?? (p as any).toolCallId ?? ""}`;
+      if (seenIds.has(k)) continue;
+      seenIds.add(k);
+      parts.push(p);
+    }
+    if (m.model) model = m.model;
+    if (m.usage) usage = m.usage;
+    i++;
+    // Now consume every (toolResult | assistant) until we hit a user message.
+    // toolResults are absorbed; the next assistant extends the same turn.
+    while (i < messages.length && messages[i].role !== "user") {
+      const next = messages[i];
+      if (next.role === "toolResult") {
+        for (const p of next.parts) {
+          const k = `${p.type}:${(p as any).toolCallId ?? (p as any).text ?? ""}`;
+          if (seenIds.has(k)) continue;
+          seenIds.add(k);
+          parts.push(p);
+        }
+        i++;
+      } else if (next.role === "assistant") {
+        for (const p of next.parts) {
+          const k = `${p.type}:${(p as any).text ?? (p as any).id ?? (p as any).toolCallId ?? ""}`;
+          if (seenIds.has(k)) continue;
+          seenIds.add(k);
+          parts.push(p);
+        }
+        if (next.model && !model) model = next.model;
+        if (next.usage && !usage) usage = next.usage;
+        // Use the most recent timestamp for the bubble header
+        if (next.timestamp > lastTimestamp) lastTimestamp = next.timestamp;
+        // Use the latest id for React keys
+        lastId = next.id;
+        i++;
+      } else {
+        // Unknown role — break out to avoid infinite loop
+        break;
+      }
+    }
+    out.push({
+      id: lastId,
+      sessionId: m.sessionId,
+      role: "assistant",
+      parts,
+      timestamp: lastTimestamp,
+      ...(model ? { model } : {}),
+      ...(usage ? { usage } : {}),
+    });
   }
-  return result;
+  return out;
 }
 
 export default function ChatMessages({ messages }: ChatMessagesProps) {
@@ -38,11 +98,11 @@ export default function ChatMessages({ messages }: ChatMessagesProps) {
     );
   }
 
-  const merged = mergeMessages(messages);
+  const turns = groupTurns(messages);
 
   return (
     <div className="flex flex-col">
-      {merged.map((message) => (
+      {turns.map((message) => (
         <MessageBubble key={message.id} message={message} />
       ))}
     </div>

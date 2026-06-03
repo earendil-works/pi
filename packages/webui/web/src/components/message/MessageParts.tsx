@@ -169,40 +169,63 @@ function ToolGroup({ parts }: { parts: Part[] }) {
   );
 }
 
-// Main exported component: group parts into thinking / toolgroup / text
+// Main exported component: render parts in chronological order so the
+// user sees: thinking → text → toolCall → toolResult → thinking → text
+// → toolCall → toolResult → ... → final text. Consecutive tool-related
+// parts (toolCall + toolResult + image) are wrapped in a single bordered
+// box via ToolGroup for visual cohesion.
 export function MessageParts({ parts }: { parts: Part[] }) {
   if (parts.length === 0) {
     return <div className="text-xs text-gray-400 italic">(empty turn)</div>;
   }
 
-  const thinkingParts: ThinkingPart[] = [];
-  const toolParts: Part[] = [];
-  const textParts: TextPart[] = [];
-
-  for (const p of parts) {
-    if (p.type === "thinking") {
-      if (p.text.trim()) thinkingParts.push(p);
-    } else if (p.type === "toolCall" || p.type === "toolResult" || p.type === "image") toolParts.push(p);
-    else if (p.type === "text") textParts.push(p);
+  // Walk parts and build a list of "chunks" — each chunk is either
+  // (a) a single thinking/text item, or
+  // (b) a sequence of consecutive toolCall/toolResult/image parts.
+  type Chunk =
+    | { kind: "single"; part: Part }
+    | { kind: "tools"; parts: Part[] };
+  const chunks: Chunk[] = [];
+  let i = 0;
+  while (i < parts.length) {
+    const p = parts[i];
+    if (p.type === "toolCall" || p.type === "toolResult" || p.type === "image") {
+      const toolChunk: Part[] = [];
+      while (
+        i < parts.length &&
+        (parts[i].type === "toolCall" ||
+          parts[i].type === "toolResult" ||
+          parts[i].type === "image")
+      ) {
+        toolChunk.push(parts[i]);
+        i++;
+      }
+      chunks.push({ kind: "tools", parts: toolChunk });
+    } else if (p.type === "thinking") {
+      if (p.text.trim()) chunks.push({ kind: "single", part: p });
+      i++;
+    } else {
+      // text
+      chunks.push({ kind: "single", part: p });
+      i++;
+    }
   }
 
   return (
     <div className="flex flex-col gap-2">
-      {thinkingParts.length > 0 && (
-        <div className="flex flex-col gap-1">
-          {thinkingParts.map((p, i) => (
-            <ThinkingItem key={`th-${i}`} part={p} />
-          ))}
-        </div>
-      )}
-      {toolParts.length > 0 && <ToolGroup parts={toolParts} />}
-      {textParts.length > 0 && (
-        <div className="flex flex-col gap-1">
-          {textParts.map((p, i) => (
-            <TextItem key={`tx-${i}`} part={p} />
-          ))}
-        </div>
-      )}
+      {chunks.map((chunk, i) => {
+        if (chunk.kind === "tools") {
+          return <ToolGroup key={`tg-${i}`} parts={chunk.parts} />;
+        }
+        const p = chunk.part;
+        if (p.type === "thinking") {
+          return <ThinkingItem key={`th-${i}`} part={p} />;
+        }
+        if (p.type === "text") {
+          return <TextItem key={`tx-${i}`} part={p} />;
+        }
+        return null;
+      })}
     </div>
   );
 }
