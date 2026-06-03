@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { mkdtemp, rm, writeFile, mkdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 
-const TEST_PORT = 18761;
+const TEST_PORT = 18781;
 
 describe("Settings Routes", () => {
   let mountSettingsRoutes: (app: express.Express, deps?: { homeDir?: string }) => void;
