@@ -23,6 +23,7 @@ import {
 } from "@aws-sdk/client-bedrock-runtime";
 import { NodeHttpHandler } from "@smithy/node-http-handler";
 import type { BuildMiddleware, DocumentType, MetadataBearer } from "@smithy/types";
+import { registerApiProvider } from "../api-registry.ts";
 import { calculateCost } from "../models.ts";
 import type {
 	Api,
@@ -384,6 +385,14 @@ export const streamSimpleBedrock: StreamFunction<"bedrock-converse-stream", Simp
 		thinkingBudgets: options.thinkingBudgets,
 	} satisfies BedrockOptions);
 };
+
+export function register(): void {
+	registerApiProvider({
+		api: "bedrock-converse-stream",
+		stream: streamBedrock,
+		streamSimple: streamSimpleBedrock,
+	});
+}
 
 function handleContentBlockStart(
 	event: ContentBlockStartEvent,

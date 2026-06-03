@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { streamSimple } from "../src/stream.ts";
+import { streamSimple } from "../src/index.ts";
 import type { AssistantMessage, Context, Model } from "../src/types.ts";
 
 interface AnthropicPayload {

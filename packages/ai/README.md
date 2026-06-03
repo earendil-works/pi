@@ -8,6 +8,7 @@ Unified LLM API with automatic model discovery, provider configuration, token an
 
 - [Supported Providers](#supported-providers)
 - [Installation](#installation)
+- [Base Entry Point](#base-entry-point)
 - [Quick Start](#quick-start)
 - [Tools](#tools)
   - [Defining Tools](#defining-tools)
@@ -85,6 +86,30 @@ npm install @earendil-works/pi-ai
 ```
 
 TypeBox exports are re-exported from `@earendil-works/pi-ai`: `Type`, `Static`, and `TSchema`.
+
+## Base Entry Point
+
+Use `@earendil-works/pi-ai/base` when a bundler should include only explicitly selected transport implementations. The base entry point exposes model discovery, registries, generic dispatch, environment-key helpers, and provider-neutral utilities without registering built-in transports during module initialization. Generic dispatch still resolves configured environment keys when called.
+
+Import each selected transport directly and call its `register()` function:
+
+```typescript
+import { getModel, streamSimple } from '@earendil-works/pi-ai/base';
+import { register as registerAnthropic } from '@earendil-works/pi-ai/anthropic';
+
+registerAnthropic();
+
+const model = getModel('anthropic', 'claude-sonnet-4-6');
+const response = await streamSimple(model, {
+  messages: [{ role: 'user', content: 'Hello!' }]
+}, {
+  apiKey: process.env.ANTHROPIC_API_KEY
+}).result();
+```
+
+Direct transport imports bundle their implementation and SDK code. Register only the transports used by the application. For example, OpenRouter, Groq, xAI, and DeepSeek chat models share the `@earendil-works/pi-ai/openai-completions` transport.
+
+Use `@earendil-works/pi-ai` for the batteries-included behavior. The root entry point remains backward-compatible: it registers lazy wrappers for all built-in transports and resolves environment API keys automatically during dispatch.
 
 ## Quick Start
 
@@ -436,7 +461,7 @@ Do not use `stream()` or `complete()` for image generation. Image generation is 
 ### Basic Image Generation
 
 ```typescript
-import { getImageModel, generateImages } from '@mariozechner/pi-ai';
+import { getImageModel, generateImages } from '@earendil-works/pi-ai';
 
 const model = getImageModel('openrouter', 'google/gemini-2.5-flash-image');
 
@@ -1093,6 +1118,7 @@ const response = await complete(model, {
 - OAuth login flows are not supported in browser environments. Use the `@earendil-works/pi-ai/oauth` entry point in Node.js.
 - In browser builds, Bedrock can still appear in model lists. Calls to Bedrock models fail at runtime.
 - Use a server-side proxy or backend service if you need Bedrock or OAuth-based auth from a web app.
+- Use `@earendil-works/pi-ai/base` plus explicit direct transport registration when a browser bundle should exclude unused provider SDK implementations.
 
 ### Environment Variables (Node.js only)
 
@@ -1310,6 +1336,7 @@ Create a new provider file (for example `amazon-bedrock.ts`) that exports:
 
 - `stream<Provider>()` function returning `AssistantMessageEventStream`
 - `streamSimple<Provider>()` for `SimpleStreamOptions` mapping
+- `register()` for explicit direct transport registration from `@earendil-works/pi-ai/base`
 - Provider-specific options interface
 - Message conversion functions to transform `Context` to provider format
 - Tool conversion if the provider supports tools
@@ -1320,7 +1347,8 @@ Create a new provider file (for example `amazon-bedrock.ts`) that exports:
 - Register the API with `registerApiProvider()`
 - Add a package subpath export in `package.json` for the provider module (`./dist/providers/<provider>.js`)
 - Add lazy loader wrappers in `src/providers/register-builtins.ts`, do not statically import provider implementation modules there
-- Add any root-level `export type` re-exports in `src/index.ts` that should remain available from `@earendil-works/pi-ai`
+- Add any root-level `export type` re-exports in `src/index.ts` and `src/base.ts` that should remain available from `@earendil-works/pi-ai` and `@earendil-works/pi-ai/base`
+- Keep `src/base.ts` free of built-in registration imports
 - Add credential detection in `env-api-keys.ts` for the new provider
 - Ensure `streamSimple` handles auth lookup via `getEnvApiKey()` or provider-specific auth
 

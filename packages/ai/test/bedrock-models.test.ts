@@ -17,8 +17,8 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { complete } from "../src/index.ts";
 import { getModels } from "../src/models.ts";
-import { complete } from "../src/stream.ts";
 import type { Context } from "../src/types.ts";
 import { hasBedrockCredentials } from "./bedrock-utils.ts";
 

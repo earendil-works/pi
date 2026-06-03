@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { complete } from "../src/index.ts";
 import { getModel } from "../src/models.ts";
-import { complete } from "../src/stream.ts";
 import type { Context } from "../src/types.ts";
 
 describe.skipIf(!process.env.OPENAI_API_KEY)("openai responses cache affinity e2e", () => {
