@@ -4962,6 +4962,8 @@ export class InteractiveMode {
 		try {
 			await this.session.reload();
 			configureHttpDispatcher(this.settingsManager.getHttpIdleTimeoutMs());
+			this.session.setSteeringMode(this.settingsManager.getSteeringMode());
+			this.session.setFollowUpMode(this.settingsManager.getFollowUpMode());
 			this.keybindings.reload();
 			const activeHeader = this.customHeader ?? this.builtInHeader;
 			if (isExpandable(activeHeader)) {
@@ -4997,7 +4999,7 @@ export class InteractiveMode {
 			if (modelsJsonError) {
 				this.showError(`models.json error: ${modelsJsonError}`);
 			}
-			this.showStatus("Reloaded keybindings, extensions, skills, prompts, themes");
+			this.showStatus("Reloaded keybindings, extensions, skills, prompts, themes, queue modes");
 		} catch (error) {
 			dismissReloadBox(previousEditor as Component);
 			this.showError(`Reload failed: ${error instanceof Error ? error.message : String(error)}`);
