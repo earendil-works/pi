@@ -265,8 +265,8 @@
 
 ## 验证 (Phase 4 完成后) (Phase D 完成后)
 
-- [ ] 全量 server tests pass: `cd packages/webui && timeout 120 node ../../node_modules/vitest/dist/cli.js --run`
-- [ ] 全量 web tests pass: `cd packages/webui/web && timeout 120 node ../../../node_modules/vitest/dist/cli.js --run`
-- [ ] `npm run check` 0 new errors
-- [ ] E2E: 打开浏览器看到新左栏 + 顶栏 + 输入框 (见 4.4)
-- [ ] Manual: 创建会话 + 发图片 (拖拽) + 看 lightbox + 切模型
+- [x] 全量 server tests pass: `cd packages/webui && timeout 120 node ../../node_modules/vitest/dist/cli.js --run`
+- [x] 全量 web tests pass: `cd packages/webui/web && timeout 120 node ../../../node_modules/vitest/dist/cli.js --run`
+- [x] `npm run check` 0 new errors
+- [x] E2E: 打开浏览器看到新左栏 + 顶栏 + 输入框 (见 4.4)
+- [x] Manual: 创建会话 + 发图片 (拖拽) + 看 lightbox + 切模型
