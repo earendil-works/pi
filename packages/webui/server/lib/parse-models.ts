@@ -40,7 +40,15 @@ export function parseModelsJson(jsonStr: string): ParsedProviders {
 
   // Schema 1: { providers: [{ name, models }] }
   if (hasProvidersProperty(parsed)) {
-    return parseSchema1(parsed);
+    const providersValue = (parsed as { providers: unknown }).providers;
+    // Schema 1a: providers is array
+    if (Array.isArray(providersValue)) {
+      return parseSchema1(parsed);
+    }
+    // Schema 4: providers is { [name]: config { models, baseUrl, ... } }
+    if (isObject(providersValue)) {
+      return parseSchema4(providersValue);
+    }
   }
 
   // Schema 2: { [name]: models[] } - flat provider structure
@@ -93,6 +101,16 @@ function parseSchema2(data: Record<string, unknown>): ParsedProviders {
   }
 
   return { providers };
+}
+
+function parseSchema4(providers: Record<string, unknown>): ParsedProviders {
+  const result: Provider[] = [];
+  for (const [name, config] of Object.entries(providers)) {
+    if (!isObject(config)) continue;
+    const models = parseModelsArray(config.models);
+    result.push({ name, models });
+  }
+  return { providers: result };
 }
 
 function parseSchema3(arr: unknown[]): ParsedProviders {

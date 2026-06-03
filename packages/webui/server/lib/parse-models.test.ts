@@ -236,4 +236,20 @@ describe("parseModelsJson", () => {
     expect(parseModelsJson("[]")).toEqual({ providers: [] });
     expect(parseModelsJson("[1, 2, 3]")).toEqual({ providers: [] });
   });
+  describe("schema 4: { providers: { [name]: config { models, ... } } }", () => {
+    it("parses the actual models.json shape with provider configs", () => {
+      const json = JSON.stringify({
+        providers: {
+          local: { baseUrl: "http://localhost:11434/v1", api: "openai", models: [{ id: "qwen2.5:3b" }] },
+          opencode: { api: "opencode", models: [{ id: "mimo-v2.5" }] },
+        },
+      });
+      const result = parseModelsJson(json);
+      expect(result.providers).toHaveLength(2);
+      expect(result.providers[0].name).toBe("local");
+      expect(result.providers[0].models[0].id).toBe("qwen2.5:3b");
+      expect(result.providers[1].name).toBe("opencode");
+      expect(result.providers[1].models[0].id).toBe("mimo-v2.5");
+    });
+  });
 });
