@@ -7,4 +7,4 @@ tasks_total: 0
 tasks_done: 45
 isolation: branch
 verify_result: pass
-archived: false
+archived: true

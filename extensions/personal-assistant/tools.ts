@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, TurnEndEvent } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
 import { readFileSync, existsSync } from "node:fs";
@@ -246,6 +246,7 @@ export function registerTools(pi: ExtensionAPI): void {
 						text: '<hmr note>todos stale, consider updating.</hmr note>',
 					},
 				],
+				timestamp: Date.now(),
 			});
 			roundsSinceTodo = 0;
 		}
@@ -255,9 +256,11 @@ export function registerTools(pi: ExtensionAPI): void {
 	// Hook: turn_end — detect todowrite usage, update counter
 	// ============================================================================
 
-	pi.on("turn_end", (event: { message: { content?: { type: string; name?: string }[] } }) => {
-		const usedTodo = event.message.content?.some(
-			(block) => block.type === "tool_use" && block.name === "todowrite",
+	pi.on("turn_end", (event: TurnEndEvent) => {
+		const messageContent = "content" in event.message ? event.message.content : undefined;
+		const blocks = Array.isArray(messageContent) ? messageContent : [];
+		const usedTodo = blocks.some(
+			(block: { type: string; name?: string }) => block.type === "tool_use" && block.name === "todowrite",
 		);
 
 		if (usedTodo) {

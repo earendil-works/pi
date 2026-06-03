@@ -313,3 +313,5 @@ interface SessionInfo {
 - 18/18 web tests pass
 - + 新增 4 个回归测试
 - 浏览器 E2E 走 4 场景
+
+<!-- archived-with: 2026-06-04-pi-webui-fixes | status: final -->

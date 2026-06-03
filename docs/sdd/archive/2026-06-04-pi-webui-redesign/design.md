@@ -378,3 +378,5 @@ export function fileToBase64(file: File): Promise<{ mediaType: string; dataUrl: 
 - 多用户/分享
 - 端到端加密
 - Token 预测
+
+<!-- archived-with: 2026-06-04-pi-webui-redesign | status: final | note: review/release bypassed per user instruction -->

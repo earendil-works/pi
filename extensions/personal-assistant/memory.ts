@@ -415,8 +415,11 @@ function formatMessagesForLLM(messages: Array<{ role: string; content: unknown }
 
 class MemoryIndex {
   private db: Database | null = null;
+  private dbPath: string;
 
-  constructor(private dbPath: string) {}
+  constructor(dbPath: string) {
+    this.dbPath = dbPath;
+  }
 
   async init(): Promise<void> {
     ensureDir(join(this.dbPath, ".."));
@@ -574,7 +577,7 @@ class MemoryIndex {
 
   searchByFts(
     keywords: string[],
-    typeFilter?: string,
+    typeFilter?: string[],
     limit: number = 20,
   ): Array<{ id: string; score: number }> {
     const db = this.ensureDb();
@@ -584,18 +587,20 @@ class MemoryIndex {
 
     let sql: string;
     let params: unknown[];
-    if (typeFilter) {
+    if (typeFilter && typeFilter.length > 0) {
+      // IN (...) clause for multi-type filter
+      const placeholders = typeFilter.map(() => "?").join(", ");
       sql = `
         SELECT f.id, bm25(memory_fts) as score
         FROM memory_fts f
         JOIN memory_index m ON m.id = f.id
         WHERE memory_fts MATCH ?
-          AND m.type = ?
+          AND m.type IN (${placeholders})
           AND m.archived = 0
         ORDER BY bm25(memory_fts)
         LIMIT ?
       `;
-      params = [matchQuery, typeFilter, limit];
+      params = [matchQuery, ...typeFilter, limit];
     } else {
       sql = `
         SELECT f.id, bm25(memory_fts) as score
@@ -794,7 +799,7 @@ async function rewriteQuery(
       const auth = await ctx.modelRegistry.getApiKeyAndHeaders(configuredModel);
       if (auth.ok) {
         const prompt = buildRewritePrompt(query);
-        const result = await completeSimple(configuredModel, { messages: [{ role: "user", content: prompt }] }, {
+        const result = await completeSimple(configuredModel, { messages: [{ role: "user", content: prompt, timestamp: Date.now() }] }, {
           maxTokens: 256,
           apiKey: auth.apiKey,
           headers: auth.headers,
@@ -818,7 +823,7 @@ async function rewriteQuery(
 
     const prompt = buildRewritePrompt(query);
 
-    const result = await completeSimple(model, { messages: [{ role: "user", content: prompt }] }, {
+    const result = await completeSimple(model, { messages: [{ role: "user", content: prompt, timestamp: Date.now() }] }, {
       maxTokens: 256,
       apiKey: auth.apiKey,
       headers: auth.headers,
@@ -1179,7 +1184,7 @@ Respond with ONLY valid JSON:
 Only create atoms for genuinely important information. Skip routine conversation.`;
 
   try {
-    const result = await completeSimple(model, { messages: [{ role: "user", content: extractPrompt }] }, {
+    const result = await completeSimple(model, { messages: [{ role: "user", content: extractPrompt, timestamp: Date.now() }] }, {
       maxTokens: 2048,
       apiKey: auth.apiKey,
       headers: auth.headers,

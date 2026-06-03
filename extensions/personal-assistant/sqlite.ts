@@ -27,6 +27,10 @@ function wrapStatement(stmt: unknown): Statement {
 export async function createDatabase(path: string): Promise<Database> {
   if (!ctor) {
     if (isBunRuntime()) {
+      // bun:sqlite is a built-in module; types come from @types/bun (not
+      // installed in this repo) but the runtime is Bun. Suppress the missing
+      // module error — the only way to reach this branch is via isBunRuntime.
+      // @ts-ignore — bun:sqlite has no .d.ts in this repo; see isBunRuntime() guard above
       const { Database: BunDatabase } = await import("bun:sqlite");
       const origProto = BunDatabase.prototype;
       ctor = class extends (BunDatabase as unknown as new (path: string) => Database) {

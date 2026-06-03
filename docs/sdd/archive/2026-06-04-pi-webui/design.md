@@ -280,3 +280,5 @@ case "trigger_now": {
 - WebUI 端 mcp 工具调用（不做）
 - swarm / 多 profile（不做）
 - 跨设备 sync（不做）
+
+<!-- archived-with: 2026-06-04-pi-webui | status: final -->
