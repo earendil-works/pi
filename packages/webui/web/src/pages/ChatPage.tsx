@@ -162,13 +162,25 @@ export default function ChatPage() {
         const msgs = await api.getMessages(id);
         if (cancelled) return;
         setMessages(prev => {
-          // Build a content-key signature for each existing message so the
+          // Build a content-only fingerprint for each existing message so the
           // poll can't add a JSONL-side copy of something we already have
-          // from a streaming WS event (WS message id != JSONL entry id).
-          const sig = (m: typeof prev[number]) =>
-            `${m.role}|${m.timestamp}|${m.parts
-              .map(p => (p as any).text ?? (p as any).toolCallId ?? JSON.stringify(p))
-              .join("|")}`;
+          // from a streaming WS event. WS message id (random UUID) differs
+          // from JSONL entry id (pi's actual id), and WS timestamp is the
+          // React-receive time vs JSONL's actual stamp — so we can only
+          // match by content. Same role + same concatenated part text /
+          // toolCallId = same message.
+          const sig = (m: { role: string; parts: Array<Record<string, unknown>> }) => {
+            const body = m.parts
+              .map(p => {
+                if (p.type === "text" || p.type === "thinking") return (p as any).text ?? "";
+                if (p.type === "toolCall") return `tc:${(p as any).id ?? ""}`;
+                if (p.type === "toolResult") return `tr:${(p as any).toolCallId ?? ""}`;
+                if (p.type === "image") return `img`;
+                return JSON.stringify(p);
+              })
+              .join("|");
+            return `${m.role}|${body}`;
+          };
           const prevSigs = new Set(prev.map(sig));
           const newMsgs = msgs.filter(m => !prevSigs.has(sig(m)));
           if (newMsgs.length === 0) return prev;
