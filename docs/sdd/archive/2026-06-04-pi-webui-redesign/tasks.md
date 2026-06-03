@@ -141,7 +141,7 @@
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/message/MessageFooter.test.tsx` (4+ 测试, 含无 usage/小数字/大数字)
   - **依赖**: 2.1
 
-- [ ] 2.11 **`MessageBubble` 重写 + 测试**
+- [x] 2.11 **`MessageBubble` 重写 + 测试**
   - **文件**: `packages/webui/web/src/components/message/MessageBubble.tsx` (Create, 替换现有), `packages/webui/web/src/components/message/MessageBubble.test.tsx` (Create)
   - **内容**: 接收 `{message: Message}`。按 role 分支:
     - user: 缩进 (pl-12), 单行气泡, 内容: image 缩略图 (40x40) 横向 flex + text part 段落
@@ -191,7 +191,7 @@
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/AppShell.test.tsx` (3+ 测试, 渲染 Brand/IconRow/SearchBox/ConversationList/NewChatButton)
   - **依赖**: 2.3, 2.4, 2.5, 2.6
 
-- [ ] 3.3 **`App.tsx` 委托给 `AppShell`**
+- [x] 3.3 **`App.tsx` 委托给 `AppShell`**
   - **文件**: `packages/webui/web/src/App.tsx` (Modify)
   - **内容**: 删内联 `Layout()`, 改为 `<AppShell><Outlet /></AppShell>` 包裹路由。AppShell 接收 sessions/currentId/onSelect/onDelete/onNewChat 状态, 用 `useState` + `useEffect` 加载 sessions。
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/App.test.tsx` (新建 + 1 测试, 渲染 <AppShell> + <Outlet>)
@@ -207,7 +207,7 @@
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/pages/ChatPage.test.tsx` (现有测试 + 4 新测试: 输入/添加图片/提交/切会话清空)
   - **依赖**: 3.1, 3.2, 2.0, 2.7, 2.8, 2.11, 2.13, 2.14
 
-- [ ] 3.5 **`InputArea` 整合 (preview + input + text)**
+- [x] 3.5 **`InputArea` 整合 (preview + input + text)**
   - **文件**: `packages/webui/web/src/components/input/InputArea.tsx` (Create), `packages/webui/web/src/components/input/InputArea.test.tsx` (Create)
   - **内容**: 接收 `images: InputImage[]`, `text: string`, `onChangeText`, `onAddImage`, `onRemoveImage`, `onSubmit`, `onError`。渲染: 顶部 `<ImagePreview images={images} onRemove={onRemoveImage} />` + 下方 `<div className="flex gap-2 items-end">` + `<ImageInput images={images} onAdd={onAddImage} onError={onError} />` + `<textarea>` + `<Send>` 按钮。`Enter` (无 Shift) 触发 submit, Shift+Enter 换行。
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/input/InputArea.test.tsx` (4+ 测试)

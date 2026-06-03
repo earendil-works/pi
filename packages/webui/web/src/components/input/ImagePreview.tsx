@@ -11,7 +11,7 @@ export default function ImagePreview({ images, onRemove }: ImagePreviewProps) {
   }
 
   return (
-    <div className="flex flex-wrap gap-2 px-3 py-2">
+    <div data-testid="image-preview-container" className="flex flex-wrap gap-2 px-3 py-2">
       {images.map((image) => (
         <div
           key={image.id}
