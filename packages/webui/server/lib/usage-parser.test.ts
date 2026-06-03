@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { extractUsage } from "./usage-parser.js";
+import { extractUsage } from "./usage-parser";
 
 describe("extractUsage", () => {
   it("should extract usage from valid JSONL line with numbers", () => {

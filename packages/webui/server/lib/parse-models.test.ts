@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseModelsJson } from "./parse-models.js";
+import { parseModelsJson } from "./parse-models";
 
 describe("parseModelsJson", () => {
   it("returns empty providers for null input", () => {

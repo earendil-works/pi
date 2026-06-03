@@ -229,19 +229,19 @@
 
 ## 4. 验证 + 收尾 验证 + 收尾
 
-- [ ] 4.1 **全量 server 测试通过**
+- [x] 4.1 **全量 server 测试通过**
   - **文件**: 无 (验证步骤)
   - **内容**: 跑全套 server tests, 确认现有 125 + 新增 20+ 全部通过
   - **验证**: `cd packages/webui && timeout 120 node ../../node_modules/vitest/dist/cli.js --run server/test server/lib server/routes`
   - **依赖**: 1.1, 1.2, 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 3.7
 
-- [ ] 4.2 **全量 web 测试通过**
+- [x] 4.2 **全量 web 测试通过**
   - **文件**: 无 (验证步骤)
   - **内容**: 跑全套 web tests, 确认现有 51 + 新增 35+ 全部通过
   - **验证**: `cd packages/webui/web && timeout 120 node ../../../node_modules/vitest/dist/cli.js --run`
   - **依赖**: 2.0, 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7, 2.8, 2.9, 2.10, 2.11, 2.12, 2.13, 2.14, 3.1, 3.2, 3.3, 3.4, 3.5, 3.6
 
-- [ ] 4.3 **`npm run check` 通过**
+- [x] 4.3 **`npm run check` 通过**
   - **文件**: 无
   - **内容**: 跑 repo root check, 修所有新错误/警告/info
   - **验证**: `cd /home/qjh/workspace/personal/pi && timeout 180 npm run check` (无新增 error/warn/info)
