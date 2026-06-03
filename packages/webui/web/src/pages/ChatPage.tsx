@@ -129,6 +129,26 @@ export default function ChatPage() {
     return () => { unsubOpen(); unsub(); };
   }, [id]);
 
+  // Poll for external messages (e.g. from TUI writing to same JSONL)
+  useEffect(() => {
+    if (!id) return;
+    let cancelled = false;
+    const interval = setInterval(async () => {
+      if (cancelled) return;
+      try {
+        const msgs = await api.getMessages(id);
+        if (cancelled) return;
+        setMessages(prev => {
+          const prevIds = new Set(prev.map(m => m.id));
+          const newMsgs = msgs.filter(m => !prevIds.has(m.id));
+          if (newMsgs.length === 0) return prev;
+          return [...prev, ...newMsgs];
+        });
+      } catch { /* ignore */ }
+    }, 3000);
+    return () => { cancelled = true; clearInterval(interval); };
+  }, [id]);
+
   // Scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
