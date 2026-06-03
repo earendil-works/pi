@@ -39,6 +39,12 @@ export type Part =
   | { type: "toolResult"; toolCallId: string; content: string; isError?: boolean }
   | { type: "image"; mediaType: string; data: string };
 
+export type TextPart = Extract<Part, { type: "text" }>;
+export type ThinkingPart = Extract<Part, { type: "thinking" }>;
+export type ToolCallPart = Extract<Part, { type: "toolCall" }>;
+export type ToolResultPart = Extract<Part, { type: "toolResult" }>;
+export type ImagePart = Extract<Part, { type: "image" }>;
+
 export interface InputImage {
   id: string;
   mediaType: string;

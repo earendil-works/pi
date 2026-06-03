@@ -16,7 +16,7 @@ describe('Lightbox', () => {
   });
 
   it('returns null when image is undefined', () => {
-    const { container } = render(<Lightbox image={undefined} onClose={vi.fn()} />);
+    const { container } = render(<Lightbox image={null} onClose={vi.fn()} />);
     expect(container.firstChild).toBeNull();
   });
 

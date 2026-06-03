@@ -14,8 +14,7 @@ describe('validateImageFile', () => {
     it('S55: rejects bmp image', () => {
       const file = createFile('test.bmp', 'image/bmp', 1000);
       const result = validateImageFile(file, 0, 0);
-      expect(result.ok).toBe(false);
-      expect(result.reason).toBe('type');
+      expect(result).toMatchObject({ ok: false, reason: 'type' });
     });
 
     it('accepts png', () => {
@@ -47,8 +46,7 @@ describe('validateImageFile', () => {
     it('S56: rejects file larger than 5MB', () => {
       const file = createFile('test.png', 'image/png', 5 * 1024 * 1024 + 1);
       const result = validateImageFile(file, 0, 0);
-      expect(result.ok).toBe(false);
-      expect(result.reason).toBe('size');
+      expect(result).toMatchObject({ ok: false, reason: 'size' });
     });
 
     it('accepts file at exactly 5MB', () => {
@@ -62,8 +60,7 @@ describe('validateImageFile', () => {
     it('S57: rejects when already 4 images (currentCount >= 4)', () => {
       const file = createFile('test.png', 'image/png', 1000);
       const result = validateImageFile(file, 0, 4);
-      expect(result.ok).toBe(false);
-      expect(result.reason).toBe('count');
+      expect(result).toMatchObject({ ok: false, reason: 'count' });
     });
 
     it('accepts when 3 images (currentCount = 3)', () => {
@@ -77,8 +74,7 @@ describe('validateImageFile', () => {
     it('S58: rejects when currentTotal + file.size > 20MB', () => {
       const file = createFile('test.png', 'image/png', 2 * 1024 * 1024);
       const result = validateImageFile(file, 19 * 1024 * 1024, 0);
-      expect(result.ok).toBe(false);
-      expect(result.reason).toBe('total');
+      expect(result).toMatchObject({ ok: false, reason: 'total' });
     });
 
     it('accepts when currentTotal + file.size <= 20MB', () => {
