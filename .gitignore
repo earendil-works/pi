@@ -46,3 +46,4 @@ collect.sh
 # Satellite compiled binaries (bun build --compile)
 extensions/satellite/satellite-mcp
 extensions/satellite/satellite-server
+.worktrees/
