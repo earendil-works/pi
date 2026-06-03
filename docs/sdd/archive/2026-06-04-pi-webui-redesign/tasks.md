@@ -123,19 +123,19 @@
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/topbar/` (5+ 测试)
   - **依赖**: 无
 
-- [ ] 2.8 **`ModelSelector` 组件 + 测试**
+- [x] 2.8 **`ModelSelector` 组件 + 测试**
   - **文件**: `packages/webui/web/src/components/topbar/ModelSelector.tsx` (Create), `packages/webui/web/src/components/topbar/ModelSelector.test.tsx` (Create)
   - **内容**: 接收 `current: {provider, model}`, `providers: ModelsResponse["providers"]`, `onChange({provider, model})`。显示: 蓝色徽章 `text-${provider}/${model}` (truncate 16 字符)。点击展开下拉,列出所有 provider/model,选中后调 `onChange`。`useState<boolean>` 控下拉开关, click-outside 关闭。
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/topbar/ModelSelector.test.tsx` (5+ 测试, 含 open/close/select/click-outside/truncate)
   - **依赖**: 2.1
 
-- [ ] 2.9 **`MessageHeader` 组件 + 测试**
+- [x] 2.9 **`MessageHeader` 组件 + 测试**
   - **文件**: `packages/webui/web/src/components/message/MessageHeader.tsx` (Create), `packages/webui/web/src/components/message/MessageHeader.test.tsx` (Create)
   - **内容**: 接收 `{name: string, timestamp: string, model?: string, avatarLetter?: string}`。渲染: 圆形 24px 蓝色背景 (bg-blue-500) + 白色字母 (默认 `name[0]?.toUpperCase() ?? "?"`) + 名字 (text-sm font-semibold) + 相对时间 (`formatRelativeTime`) + 模型徽章 (text-xs bg-stone-100 px-1.5 py-0.5 rounded, 仅 model 存在时)。`flex items-center gap-2`。
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/message/MessageHeader.test.tsx` (4+ 测试)
   - **依赖**: 2.1
 
-- [ ] 2.10 **`MessageFooter` 组件 + 测试**
+- [x] 2.10 **`MessageFooter` 组件 + 测试**
   - **文件**: `packages/webui/web/src/components/message/MessageFooter.tsx` (Create), `packages/webui/web/src/components/message/MessageFooter.test.tsx` (Create)
   - **内容**: 接收 `{usage?: {input, output}}`。无 usage → 返回 null。有 usage → `text-xs text-stone-400 text-right`, 文本 `"${formatToken(usage.input)} in · ${formatToken(usage.output)} out"`。`mt-1` margin。
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/message/MessageFooter.test.tsx` (4+ 测试, 含无 usage/小数字/大数字)
@@ -162,7 +162,7 @@
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/input/ImagePreview.test.tsx` (3+ 测试)
   - **依赖**: 无
 
-- [ ] 2.14 **`ImageInput` 组件 + 测试 (复杂)**
+- [x] 2.14 **`ImageInput` 组件 + 测试 (复杂)**
   - **文件**: `packages/webui/web/src/components/input/ImageInput.tsx` (Create), `packages/webui/web/src/components/input/ImageInput.test.tsx` (Create)
   - **内容**: 接收 `images: InputImage[]`, `onAdd(image)`, `onError(reason)`。包含:
     - Paperclip 按钮 (左), click 触发隐藏的 `<input type="file" accept="image/*">`
