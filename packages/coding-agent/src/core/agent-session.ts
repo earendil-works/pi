@@ -81,6 +81,7 @@ import {
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
 import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
 import type { ModelRegistry } from "./model-registry.ts";
+import { capImagesToByteBudget } from "./overflow-images.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionManager } from "./session-manager.ts";
@@ -2025,6 +2026,14 @@ export class AgentSession {
 				const lastMsg = messages[messages.length - 1];
 				if (lastMsg?.role === "assistant" && (lastMsg as AssistantMessage).stopReason === "error") {
 					this.agent.state.messages = messages.slice(0, -1);
+				}
+				// Compaction only summarizes text; it cannot shrink images. Drop the oldest
+				// images so a request-size overflow (Anthropic 413 request_too_large from many
+				// accumulated screenshots) can actually recover instead of overflowing the retry
+				// and failing after a single compact-and-retry attempt.
+				const capped = capImagesToByteBudget(this.agent.state.messages);
+				if (capped.droppedImages > 0) {
+					this.agent.state.messages = capped.messages;
 				}
 				return true;
 			}
