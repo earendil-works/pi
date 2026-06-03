@@ -8,7 +8,7 @@ import { type BashOperations, createBashToolDefinition } from "../src/core/tools
 import { createReadTool, createReadToolDefinition } from "../src/core/tools/read.ts";
 import { createWriteToolDefinition } from "../src/core/tools/write.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
 function createBaseToolDefinition(name = "custom_tool"): ToolDefinition {
@@ -65,6 +65,45 @@ describe("ToolExecutionComponent parity", () => {
 		const rendered = stripAnsi(component.render(120).join("\n"));
 		expect(rendered).toContain("custom call");
 		expect(rendered).toContain("custom result");
+	});
+
+	test("colors the final result block without recoloring the call preview", () => {
+		const toolDefinition: ToolDefinition = {
+			...createBaseToolDefinition(),
+			renderCall: () => new Text("large preview line\npreview tail", 0, 0),
+			renderResult: (_result, _options, _theme, context) =>
+				new Text(context.isError ? "result failed" : "result ok", 0, 0),
+		};
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-status-background",
+			{},
+			{},
+			toolDefinition,
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		const previewLineBefore = component.render(120).find((line) => line.includes("large preview line"));
+		expect(previewLineBefore).toBeDefined();
+
+		component.updateResult({ content: [{ type: "text", text: "done" }], details: {}, isError: false }, false);
+		const successLines = component.render(120);
+		const previewLineAfterSuccess = successLines.find((line) => line.includes("large preview line"));
+		const successResultLine = successLines.find((line) => line.includes("result ok"));
+		const successBgPrefix = theme.bg("toolSuccessBg", "").replace("\x1b[49m", "");
+		expect(previewLineAfterSuccess).toBe(previewLineBefore);
+		expect(previewLineAfterSuccess).not.toContain(successBgPrefix);
+		expect(successResultLine).toContain(successBgPrefix);
+
+		component.updateResult({ content: [{ type: "text", text: "failed" }], details: {}, isError: true }, false);
+		const errorLines = component.render(120);
+		const previewLineAfterError = errorLines.find((line) => line.includes("large preview line"));
+		const errorResultLine = errorLines.find((line) => line.includes("result failed"));
+		const errorBgPrefix = theme.bg("toolErrorBg", "").replace("\x1b[49m", "");
+		expect(previewLineAfterError).toBe(previewLineBefore);
+		expect(previewLineAfterError).not.toContain(errorBgPrefix);
+		expect(errorResultLine).toContain(errorBgPrefix);
 	});
 
 	test("self-rendered empty tool rows take no layout space", () => {

@@ -126,6 +126,8 @@ describe("edit tool TUI rendering", () => {
 		);
 		expect(callOnlyRender).toContain("edit");
 		expect(callOnlyRender).toContain("line 950 changed");
+		const previewLineBeforeResult = callOnlyRender.split("\n").find((line) => line.includes("line 950 changed"));
+		expect(previewLineBeforeResult).toBeDefined();
 
 		const redrawsBeforeResult = tui.fullRedraws;
 		const clearsBeforeResult = terminal.fullClearCount;
@@ -146,6 +148,8 @@ describe("edit tool TUI rendering", () => {
 		const settledRender = component.render(80).join("\n");
 		expect(settledRender).toContain("line 50 changed");
 		expect(settledRender).toContain("line 950 changed");
+		const previewLineAfterResult = settledRender.split("\n").find((line) => line.includes("line 950 changed"));
+		expect(previewLineAfterResult).toBe(previewLineBeforeResult);
 		expect(settledRender).not.toContain("Successfully replaced");
 	});
 

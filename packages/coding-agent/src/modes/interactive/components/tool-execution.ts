@@ -12,6 +12,7 @@ export interface ToolExecutionOptions {
 
 export class ToolExecutionComponent extends Container {
 	private contentBox: Box;
+	private resultBox: Box;
 	private contentText: Text;
 	private selfRenderContainer: Container;
 	private callRendererComponent?: Component;
@@ -66,11 +67,17 @@ export class ToolExecutionComponent extends Container {
 		// selfRenderContainer is used when the tool renders its own framing.
 		// contentText is reserved for generic fallback rendering when no tool definition exists.
 		this.contentBox = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
+		this.resultBox = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
 		this.contentText = new Text("", 1, 1, (text: string) => theme.bg("toolPendingBg", text));
 		this.selfRenderContainer = new Container();
 
 		if (this.hasRendererDefinition()) {
-			this.addChild(this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentBox);
+			if (this.getRenderShell() === "self") {
+				this.addChild(this.selfRenderContainer);
+			} else {
+				this.addChild(this.contentBox);
+				this.addChild(this.resultBox);
+			}
 		} else {
 			this.addChild(this.contentText);
 		}
@@ -251,8 +258,12 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private updateDisplay(): void {
-		const bgFn = this.isPartial
-			? (text: string) => theme.bg("toolPendingBg", text)
+		// Keep the call-preview shell background stable across pending → final
+		// transitions. Large write/edit previews should not be fully repainted just
+		// because the result settled. The result block gets its own status background.
+		const shellBgFn = (text: string) => theme.bg("toolPendingBg", text);
+		const resultBgFn = this.isPartial
+			? shellBgFn
 			: this.result?.isError
 				? (text: string) => theme.bg("toolErrorBg", text)
 				: (text: string) => theme.bg("toolSuccessBg", text);
@@ -260,25 +271,33 @@ export class ToolExecutionComponent extends Container {
 		let hasContent = false;
 		this.hideComponent = false;
 		if (this.hasRendererDefinition()) {
-			const renderContainer = this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentBox;
-			if (renderContainer instanceof Box) {
-				renderContainer.setBgFn(bgFn);
+			const renderShell = this.getRenderShell();
+			const callContainer = renderShell === "self" ? this.selfRenderContainer : this.contentBox;
+			const resultContainer = renderShell === "self" ? this.selfRenderContainer : this.resultBox;
+			if (callContainer instanceof Box) {
+				callContainer.setBgFn(shellBgFn);
 			}
-			renderContainer.clear();
+			if (resultContainer instanceof Box) {
+				resultContainer.setBgFn(resultBgFn);
+			}
+			callContainer.clear();
+			if (resultContainer !== callContainer) {
+				resultContainer.clear();
+			}
 
 			const callRenderer = this.getCallRenderer();
 			if (!callRenderer) {
-				renderContainer.addChild(this.createCallFallback());
+				callContainer.addChild(this.createCallFallback());
 				hasContent = true;
 			} else {
 				try {
 					const component = callRenderer(this.args, theme, this.getRenderContext(this.callRendererComponent));
 					this.callRendererComponent = component;
-					renderContainer.addChild(component);
+					callContainer.addChild(component);
 					hasContent = true;
 				} catch {
 					this.callRendererComponent = undefined;
-					renderContainer.addChild(this.createCallFallback());
+					callContainer.addChild(this.createCallFallback());
 					hasContent = true;
 				}
 			}
@@ -288,7 +307,7 @@ export class ToolExecutionComponent extends Container {
 				if (!resultRenderer) {
 					const component = this.createResultFallback();
 					if (component) {
-						renderContainer.addChild(component);
+						resultContainer.addChild(component);
 						hasContent = true;
 					}
 				} else {
@@ -300,20 +319,20 @@ export class ToolExecutionComponent extends Container {
 							this.getRenderContext(this.resultRendererComponent),
 						);
 						this.resultRendererComponent = component;
-						renderContainer.addChild(component);
+						resultContainer.addChild(component);
 						hasContent = true;
 					} catch {
 						this.resultRendererComponent = undefined;
 						const component = this.createResultFallback();
 						if (component) {
-							renderContainer.addChild(component);
+							resultContainer.addChild(component);
 							hasContent = true;
 						}
 					}
 				}
 			}
 		} else {
-			this.contentText.setCustomBgFn(bgFn);
+			this.contentText.setCustomBgFn(shellBgFn);
 			this.contentText.setText(this.formatToolExecution());
 			hasContent = true;
 		}
