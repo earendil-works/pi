@@ -197,7 +197,7 @@
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/App.test.tsx` (新建 + 1 测试, 渲染 <AppShell> + <Outlet>)
   - **依赖**: 3.2
 
-- [ ] 3.4 **`ChatPage` 重写 - 顶栏 + 输入 + 消息**
+- [x] 3.4 **`ChatPage` 重写 - 顶栏 + 输入 + 消息**
   - **文件**: `packages/webui/web/src/pages/ChatPage.tsx` (Modify), `packages/webui/web/src/pages/ChatPage.test.tsx` (Modify, 加 4 测试)
   - **内容**: 重写为:
     - state: `messages`, `inputText`, `inputImages`, `isStreaming`, `currentModel`

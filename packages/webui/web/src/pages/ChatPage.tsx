@@ -1,239 +1,181 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Send, Trash2, ArrowLeft } from "lucide-react";
 import { ws, api } from "../lib/api";
-import type { Message } from "../lib/api";
+import type { Message, InputImage, Part } from "../lib/api";
+import { Title } from "../components/topbar/Title";
+import { Actions } from "../components/topbar/Actions";
+import { ModelSelector } from "../components/topbar/ModelSelector";
+import { InputArea } from "../components/input/InputArea";
 import ChatMessages from "../components/ChatMessages";
 
 export default function ChatPage() {
   const { id } = useParams<{ id: string }>();
-  
   const navigate = useNavigate();
   const [messages, setMessages] = useState<Message[]>([]);
-  const [streamingContent, setStreamingContent] = useState<string>("");
-  const [inputValue, setInputValue] = useState("");
+  const [inputText, setInputText] = useState("");
+  const [inputImages, setInputImages] = useState<InputImage[]>([]);
+  const [currentModel, setCurrentModel] = useState<{provider: string, model: string} | null>(null);
+  const [providers, setProviders] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLTextAreaElement>(null);
-  const unsubscribesRef = useRef<(() => void)[]>([]);
 
-  // Fetch initial messages and set up WebSocket
+  // Load messages + current model + providers on mount / id change
   useEffect(() => {
     if (!id) return;
-
     let cancelled = false;
-
     async function init() {
       setIsLoading(true);
       try {
-        // Fetch existing messages
-        const msgs = await api.getMessages(id!);
+        const [msgs, settings, modelsResp] = await Promise.all([
+          api.getMessages(id!),
+          api.getSettings().catch(() => ({})),
+          api.getModels().catch(() => ({providers: []})),
+        ]);
         if (!cancelled) {
           setMessages(msgs);
-        }
-      } catch (err) {
-        if (!cancelled) {
-          console.error("Failed to load messages:", err);
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoading(false);
-        }
-      }
-    }
-
-    init();
-
-    // Connect WebSocket and subscribe
-    ws.connect();
-
-    // Subscribe to session events (pi RPC protocol: message_end, agent_end, etc.)
-    const unsubSession = ws.subscribe("session_event", (msg: unknown) => {
-      const m = msg as { sessionId?: string; event?: { type?: string; message?: unknown } };
-      if (m.sessionId !== id) return;
-      const e = m.event;
-      if (!e) return;
-
-      // message_end with full assistant content
-      if (e.type === "message_end") {
-        const message = e.message as { role?: string; content?: unknown } | undefined;
-        if (message?.role === "assistant") {
-          const content = message.content;
-          if (Array.isArray(content)) {
-            const text = (content as { type?: string; text?: string }[])
-              .filter((c) => c.type === "text")
-              .map((c) => c.text ?? "")
-              .join("");
-            if (text) {
-              // Add final assistant message
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: crypto.randomUUID(),
-                  sessionId: id!,
-                  role: "assistant",
-                  content: text,
-                  timestamp: new Date().toISOString(),
-                },
-              ]);
-              setStreamingContent(""); // clear any streaming placeholder
-            }
+          setProviders(modelsResp.providers ?? []);
+          // Read current model from settings
+          const s = settings as any;
+          if (s?.webui?.defaultModel) {
+            const [provider, model] = s.webui.defaultModel.split("/");
+            if (provider && model) setCurrentModel({provider, model});
           }
         }
+      } catch (err) {
+        console.error("init failed:", err);
+      } finally {
+        if (!cancelled) setIsLoading(false);
       }
-
-      // agent_end signals turn is done; clear any streaming state
-      if (e.type === "agent_end") {
-        setStreamingContent("");
-      }
-    });
-
-    // Connection status
-    const unsubOpen = ws.subscribe("open", () => {
-      setIsConnected(true);
-      // Subscribe to the session on the server
-      ws.send({ type: "subscribe", sessionId: id! });
-    });
-
-    unsubscribesRef.current = [
-      unsubSession,
-      unsubOpen,
-    ];
-
-    return () => {
-      cancelled = true;
-      // Unsubscribe all
-      unsubscribesRef.current.forEach((unsub) => unsub());
-      unsubscribesRef.current = [];
-    };
+    }
+    init();
+    // Clear drafts on session change
+    setInputText("");
+    setInputImages([]);
+    return () => { cancelled = true; };
   }, [id]);
 
-  // Scroll to bottom when messages change
+  // WebSocket subscribe
+  useEffect(() => {
+    if (!id) return;
+    ws.connect();
+    const unsub = ws.subscribe("session_event", (msg: any) => {
+      if (msg.sessionId !== id) return;
+      const e = msg.event;
+      if (!e) return;
+      if (e.type === "message_end") {
+        const message = e.message as {role?: string, content?: any, usage?: any, model?: string};
+        if (message?.role === "assistant" && Array.isArray(message.content)) {
+          // Build parts from content array
+          const parts: Part[] = message.content.map((c: any): Part => {
+            if (c.type === "text") return { type: "text", text: c.text };
+            if (c.type === "thinking") return { type: "thinking", text: c.text };
+            if (c.type === "toolCall") return { type: "toolCall", id: c.id, name: c.name, args: c.args };
+            if (c.type === "image") return { type: "image", mediaType: c.mediaType, data: c.data };
+            return { type: "text", text: "?" };
+          });
+          setMessages(prev => [...prev, {
+            id: crypto.randomUUID(),
+            sessionId: id!,
+            role: "assistant",
+            parts,
+            timestamp: new Date().toISOString(),
+            usage: message.usage,
+            model: message.model,
+          }]);
+        }
+      }
+    });
+    return () => unsub();
+  }, [id]);
+
+  // Scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, streamingContent]);
+  }, [messages]);
 
-  const handleSubmit = useCallback(
-    (e: React.FormEvent) => {
-      e.preventDefault();
-      const text = inputValue.trim();
-      if (!text || !id) return;
+  // Submit
+  const handleSubmit = useCallback(() => {
+    const text = inputText.trim();
+    if (!text || !id) return;
+    setInputText("");
+    setInputImages([]);
+    // Optimistic user message
+    const userParts: Part[] = [{type: "text", text}];
+    inputImages.forEach(img => {
+      const base64 = img.dataUrl.split(",")[1] ?? "";
+      userParts.push({type: "image", mediaType: img.mediaType, data: base64});
+    });
+    setMessages(prev => [...prev, {
+      id: crypto.randomUUID(),
+      sessionId: id,
+      role: "user",
+      parts: userParts,
+      timestamp: new Date().toISOString(),
+    }]);
+    // Send WS
+    ws.send({
+      type: "prompt",
+      text,
+      images: inputImages.map(img => ({
+        mediaType: img.mediaType,
+        data: img.dataUrl.split(",")[1] ?? "",
+      })),
+      sessionId: id,
+    });
+  }, [inputText, inputImages, id]);
 
-      setInputValue("");
-      // Add user message to messages array (NOT to streamingContent)
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          sessionId: id!,
-          role: "user",
-          content: text,
-          timestamp: new Date().toISOString(),
-        },
-      ]);
+  // Clear
+  const handleClear = useCallback(() => {
+    setMessages([]);
+  }, []);
 
-      // Send via WebSocket
-      ws.send({ type: "prompt", text, sessionId: id! });
-    },
-    [inputValue, id]
-  );
-
-  const handleKeyDown = useCallback(
-    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        handleSubmit(e);
-      }
-    },
-    [handleSubmit]
-  );
-
-  const handleDelete = useCallback(async () => {
-    if (!id) return;
-    if (!window.confirm("Delete this session? This cannot be undone.")) {
-      return;
-    }
-
-    try {
-      await api.deleteSession(id);
-      navigate("/");
-    } catch (err) {
-      console.error("Failed to delete session:", err);
-      alert("Failed to delete session. Please try again.");
-    }
-  }, [id, navigate]);
-
-  if (!id) {
-    return (
-      <div className="flex items-center justify-center h-full">
-        <p className="text-gray-500">Session not found</p>
-      </div>
-    );
-  }
+  if (!id) return <div className="flex items-center justify-center h-full"><p>Session not found</p></div>;
 
   return (
     <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-200 bg-white">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => navigate("/")}
-            className="p-2 text-gray-500 hover:text-gray-700 hover:bg-gray-100 rounded-md transition-colors"
-            title="Back to sessions"
-          >
-            <ArrowLeft className="w-5 h-5" />
-          </button>
-          <div className="flex items-center gap-2">
-            <h1 className="text-lg font-semibold text-gray-900">Chat</h1>
-            {!isLoading && (
-              <span
-                className={`w-2 h-2 rounded-full ${
-                  isConnected ? "bg-green-500" : "bg-gray-300"
-                }`}
-                title={isConnected ? "Connected" : "Disconnected"}
-              />
-            )}
-          </div>
+      {/* Topbar - sticky */}
+      <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-stone-200 bg-stone-50">
+        <Title title="Chat" messageCount={messages.length} />
+        <div className="flex items-center gap-2">
+          {currentModel && (
+            <ModelSelector
+              current={currentModel}
+              providers={providers}
+              onChange={async (sel) => {
+                setCurrentModel(sel);
+                try {
+                  await api.setDefaultModel(sel);
+                } catch (e) { console.error(e); }
+              }}
+            />
+          )}
+          <Actions onClear={handleClear} onSettings={() => {}} />
         </div>
-        <button
-          onClick={handleDelete}
-          className="flex items-center gap-2 px-3 py-2 text-sm text-red-600 hover:bg-red-50 rounded-md transition-colors"
-          title="Delete session"
-        >
-          <Trash2 className="w-4 h-4" />
-          Delete Session
-        </button>
       </div>
-
       {/* Messages */}
       <div className="flex-1 overflow-y-auto">
-        <ChatMessages messages={messages} streamingContent={streamingContent} />
+        <ChatMessages messages={messages} />
         <div ref={messagesEndRef} />
       </div>
-
       {/* Input */}
-      <form onSubmit={handleSubmit} className="p-4 border-t border-gray-200 bg-white">
-        <div className="flex gap-3">
-          <textarea
-            ref={inputRef}
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder="Type your message..."
-            rows={1}
-            className="flex-1 resize-none rounded-md border border-gray-300 px-4 py-3 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-            style={{ maxHeight: "120px" }}
-          />
-          <button
-            type="submit"
-            disabled={!inputValue.trim()}
-            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-          >
-            <Send className="w-5 h-5" />
-          </button>
-        </div>
-      </form>
+      <InputArea
+        images={inputImages}
+        text={inputText}
+        onChangeText={setInputText}
+        onAddImage={(img) => setInputImages(prev => [...prev, img])}
+        onRemoveImage={(id) => setInputImages(prev => prev.filter(i => i.id !== id))}
+        onError={(reason) => {
+          const messages: Record<string, string> = {
+            type: "Unsupported image type",
+            size: "Image too large, max 5MB",
+            count: "Max 4 images per message",
+            total: "Total image size exceeds 20MB",
+          };
+          alert(messages[reason] ?? "Image error");
+        }}
+        onSubmit={handleSubmit}
+        disabled={isLoading}
+      />
     </div>
   );
 }
