@@ -430,6 +430,113 @@ describe("Sessions REST API Endpoints", () => {
 		});
 	});
 
+	describe("(c2) GET /api/sessions/:id/messages defaults to the LATEST messages (tail mode)", () => {
+		let app: express.Express;
+		let server: ReturnType<typeof createServer>;
+		let sessionId: string;
+		let sessionFile: string;
+
+		beforeEach(async () => {
+			app = express();
+			app.use(express.json());
+			const pool = createMockPool(fakeSessionsDir);
+			mountSessionsRoutes(app, pool);
+			server = createServer(app);
+			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+			const port = (server.address() as any).port;
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ initialPrompt: "test" }),
+			});
+			const body = await res.json();
+			sessionId = body.id;
+			sessionFile = body.sessionFile;
+
+			// Write 5 messages with distinct ids and timestamps; the latest
+			// should be "msg-5". Default limit (200) exceeds 5, so tail
+			// mode should return all 5 with the latest at the end.
+			const messages = [
+				JSON.stringify({ type: "message", id: "msg-1", message: { role: "user", content: [{ type: "text", text: "1" }] }, timestamp: "2025-01-01T00:00:00.000Z" }),
+				JSON.stringify({ type: "message", id: "msg-2", message: { role: "assistant", content: [{ type: "text", text: "2" }] }, timestamp: "2025-01-01T00:00:01.000Z" }),
+				JSON.stringify({ type: "message", id: "msg-3", message: { role: "user", content: [{ type: "text", text: "3" }] }, timestamp: "2025-01-01T00:00:02.000Z" }),
+				JSON.stringify({ type: "message", id: "msg-4", message: { role: "assistant", content: [{ type: "text", text: "4" }] }, timestamp: "2025-01-01T00:00:03.000Z" }),
+				JSON.stringify({ type: "message", id: "msg-5", message: { role: "user", content: [{ type: "text", text: "5 latest" }] }, timestamp: "2025-01-01T00:00:04.000Z" }),
+			];
+			const fileContent = (
+				await fs.readFile(sessionFile, "utf-8")
+			).trim() + "\n" + messages.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+		});
+
+		afterEach(() => server.close());
+
+		it("returns the latest messages when no limit/offset is given", async () => {
+			const port = (server.address() as any).port;
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId}/messages`);
+			const msgs = await res.json();
+			expect(msgs).toHaveLength(5);
+			expect(msgs[msgs.length - 1].id).toBe("msg-5");
+		});
+
+		it("returns only the latest N when limit is given without offset", async () => {
+			const port = (server.address() as any).port;
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId}/messages?limit=2`);
+			const msgs = await res.json();
+			expect(msgs).toHaveLength(2);
+			expect(msgs[0].id).toBe("msg-4");
+			expect(msgs[1].id).toBe("msg-5");
+		});
+
+		it("returns earliest messages when tail=0 is passed (legacy mode)", async () => {
+			const port = (server.address() as any).port;
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId}/messages?limit=2&tail=0`);
+			const msgs = await res.json();
+			expect(msgs).toHaveLength(2);
+			expect(msgs[0].id).toBe("msg-1");
+			expect(msgs[1].id).toBe("msg-2");
+		});
+
+		it("returns from explicit offset when given (paging through history)", async () => {
+			const port = (server.address() as any).port;
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId}/messages?limit=2&offset=2`);
+			const msgs = await res.json();
+			expect(msgs).toHaveLength(2);
+			expect(msgs[0].id).toBe("msg-3");
+			expect(msgs[1].id).toBe("msg-4");
+		});
+
+		it("tail mode does not overshoot when JSONL has non-message entries", async () => {
+			// Files with model_change / thinking_level_change / session_info
+			// lines mixed in must still return the latest N MESSAGES, not
+			// the latest N body lines (which would include those noise
+			// entries and skip real messages).
+			const port = (server.address() as any).port;
+			// Append 3 non-message lines and 1 more message
+			const extra = [
+				JSON.stringify({ type: "model_change", id: "mc-1", provider: "x", modelId: "y" }),
+				JSON.stringify({ type: "thinking_level_change", id: "tlc-1", thinkingLevel: "off" }),
+				JSON.stringify({ type: "session_info", id: "si-1", name: "should not appear" }),
+				JSON.stringify({ type: "message", id: "msg-6", message: { role: "assistant", content: [{ type: "text", text: "after noise" }] }, timestamp: "2025-01-01T00:00:05.000Z" }),
+			];
+			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + extra.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+
+			// Default request — should return latest 200 messages.
+			// Total messages: 5 from setup + 1 extra = 6
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId}/messages?limit=3`);
+			const msgs = await res.json();
+			expect(msgs).toHaveLength(3);
+			expect(msgs[2].id).toBe("msg-6");
+			// And the session_info "name" must not leak through
+			for (const m of msgs) {
+				const texts = m.parts.filter((p: any) => p.type === "text").map((p: any) => p.text);
+				expect(texts.join("")).not.toContain("should not appear");
+			}
+		});
+	});
+
 	// (d) GET /api/sessions/:id/messages with pagination
 	describe("(d) GET /api/sessions/:id/messages with pagination", () => {
 		let app: express.Express;

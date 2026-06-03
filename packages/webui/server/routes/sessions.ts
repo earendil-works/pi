@@ -126,11 +126,20 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
   });
 
   // GET /api/sessions/:id/messages - get paginated messages
+  // By default returns the LATEST `limit` messages, not the earliest. This
+  // matches the expected chat behavior: opening a session shows you the
+  // bottom of the conversation, not the top. Pass `offset` (>= 0, from
+  // the start of the messages array) to paginate backwards through older
+  // history. Pass `tail=0` to opt into the old "first N from the start"
+  // behavior for backwards compatibility with any client that wants it.
   app.get("/api/sessions/:id/messages", async (req, res) => {
     try {
       const { id } = req.params;
-      const limit = Math.min(parseInt(req.query.limit as string, 10) || 200, 1000);
-      const offset = parseInt(req.query.offset as string, 10) || 0;
+      const tail = req.query.tail !== "0";
+      const explicitLimit = parseInt(req.query.limit as string, 10);
+      const limit = Math.min(Number.isFinite(explicitLimit) ? explicitLimit : 200, 1000);
+      const explicitOffset = parseInt(req.query.offset as string, 10);
+      const hasExplicitOffset = Number.isFinite(explicitOffset);
 
       const sessionsDir = sessionPool.sessionsDir;
       const filePath = await findSessionFile(sessionsDir, id);
@@ -140,7 +149,19 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
         return;
       }
 
-      const messages = await readMessages(filePath, id, limit, offset);
+      // For tail mode we need the total message count to compute the
+      // offset. For explicit-offset mode we can skip the second read.
+      let messages: Message[];
+      if (tail && !hasExplicitOffset) {
+        const total = await countMessages(filePath);
+        // Total counts the body lines (header subtracted). readMessages
+        // also subtracts the header, so the same indexing applies.
+        const start = Math.max(0, total - limit);
+        messages = await readMessages(filePath, id, limit, start);
+      } else {
+        const offset = hasExplicitOffset ? explicitOffset : 0;
+        messages = await readMessages(filePath, id, limit, offset);
+      }
       res.json(messages);
     } catch (err) {
       console.error("Error reading messages:", err);
@@ -475,14 +496,33 @@ async function readLatestSessionInfoName(sessionFile: string): Promise<string | 
 
 /**
  * Count the number of message entries in a session JSONL file.
+ * Filters out non-message lines (header, model_change, thinking_level_change,
+ * session_info, etc.) so the count matches what `readMessages` returns
+ * element-by-element. This is critical for tail-mode pagination: using
+ * "body line count" would overshoot by however many non-message entries
+ * the file has.
  * Returns 0 on error.
  */
 async function countMessages(sessionFile: string): Promise<number> {
   try {
     const content = await readFile(sessionFile, "utf-8");
-    const lines = content.split("\n").filter((l) => l.trim());
-    // Subtract 1 for the header line; clamp to 0
-    return Math.max(0, lines.length - 1);
+    const lines = content.split("\n");
+    let count = 0;
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      try {
+        const obj = JSON.parse(line);
+        if (obj.type === "message" && obj.message) {
+          const role = obj.message.role;
+          if (role === "user" || role === "assistant" || role === "toolResult") {
+            count++;
+          }
+        }
+      } catch {
+        // skip
+      }
+    }
+    return count;
   } catch {
     return 0;
   }
