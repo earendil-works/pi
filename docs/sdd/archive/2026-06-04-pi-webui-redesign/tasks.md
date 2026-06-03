@@ -247,7 +247,7 @@
   - **验证**: `cd /home/qjh/workspace/personal/pi && timeout 180 npm run check` (无新增 error/warn/info)
   - **依赖**: 4.1, 4.2
 
-- [ ] 4.4 **E2E: build + serve + chrome-devtools verify**
+- [x] 4.4 **E2E: build + serve + chrome-devtools verify**
   - **文件**: 无
   - **内容**: 
     1. `cd packages/webui/web && npm run build`
