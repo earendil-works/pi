@@ -174,7 +174,7 @@
 
 ## 3. 集成层 集成层
 
-- [ ] 3.1 **`api.ts` 扩展 (`Message` 类型重写 + `ModelsResponse` + `InputImage` + 4 个 API helper)**
+- [x] 3.1 **`api.ts` 扩展 (`Message` 类型重写 + `ModelsResponse` + `InputImage` + 4 个 API helper)**
   - **文件**: `packages/webui/web/src/lib/api.ts` (Modify, **重写 `Message` interface**), `packages/webui/web/src/lib/api.test.ts` (Modify, 加测试)
   - **内容**: 
     - **重写 `Message` interface** (从 design.md 类型定义复制): `Message { id, sessionId, role: "user" | "assistant" | "toolResult", parts: Part[], timestamp, usage?: {input, output}, model?: string }`。
@@ -213,7 +213,7 @@
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/input/InputArea.test.tsx` (4+ 测试)
   - **依赖**: 2.13, 2.14
 
-- [ ] 3.6 **`themes/hermes.json` + 主题注入**
+- [x] 3.6 **`themes/hermes.json` + 主题注入**
   - **文件**: `themes/hermes.json` (Create), `packages/webui/web/src/main.tsx` (Modify)
   - **内容**: 
     - `themes/hermes.json`: `{name:"hermes", colors: {bg:"#fafaf9", bgSidebar:"#f5f5f4", bgBubble:"#ffffff", text:"#1c1917", textMuted:"#78716c", border:"#e7e5e4", accent:"#3b82f6", accentText:"#ffffff"}}`

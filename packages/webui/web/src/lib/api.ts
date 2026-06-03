@@ -32,12 +32,33 @@ export interface CronJobInput {
   enabled: boolean;
 }
 
+export type Part =
+  | { type: "text"; text: string }
+  | { type: "thinking"; text: string }
+  | { type: "toolCall"; id: string; name: string; args: Record<string, unknown> }
+  | { type: "toolResult"; toolCallId: string; content: string; isError?: boolean }
+  | { type: "image"; mediaType: string; data: string };
+
+export interface InputImage {
+  id: string;
+  mediaType: string;
+  dataUrl: string;
+  size: number;
+  name?: string;
+}
+
+export interface ModelsResponse {
+  providers: Array<{ name: string; models: Array<{ id: string; name: string }> }>;
+}
+
 export interface Message {
   id: string;
   sessionId: string;
-  role: "user" | "assistant" | "system";
-  content: string;
+  role: "user" | "assistant" | "toolResult";
+  parts: Part[];
   timestamp: string;
+  usage?: { input: number; output: number };
+  model?: string;
 }
 
 export interface DeleteSessionResult {
@@ -146,6 +167,21 @@ export const api = {
     return request<SessionInfo>("/api/sessions", {
       method: "POST",
       body: JSON.stringify({ initialPrompt }),
+    });
+  },
+
+  getModels(): Promise<ModelsResponse> {
+    return request<ModelsResponse>("/api/models");
+  },
+
+  getSettings(): Promise<Record<string, unknown>> {
+    return request<Record<string, unknown>>("/api/settings");
+  },
+
+  setDefaultModel(model: { provider: string; model: string }): Promise<void> {
+    return request<void>("/api/settings", {
+      method: "PATCH",
+      body: JSON.stringify({ defaultModel: model }),
     });
   },
 };

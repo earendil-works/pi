@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { api, WebSocketClient } from "./api";
+import { api, WebSocketClient, Message, Part, ModelsResponse } from "./api";
 
 describe("api", () => {
   let mockFetch: ReturnType<typeof vi.fn>;
@@ -143,8 +143,8 @@ describe("api", () => {
 
   describe("getMessages", () => {
     it("should call GET /api/sessions/:id/messages", async () => {
-      const mockMessages = [
-        { id: "1", sessionId: "abc", role: "user", content: "Hello", timestamp: "2025-01-01T00:00:00Z" },
+      const mockMessages: Message[] = [
+        { id: "1", sessionId: "abc", role: "user", parts: [{ type: "text", text: "Hello" }], timestamp: "2025-01-01T00:00:00Z" },
       ];
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -174,6 +174,157 @@ describe("api", () => {
         "http://127.0.0.1:8741/api/sessions/abc/messages?limit=10&offset=20",
         expect.any(Object)
       );
+    });
+  });
+
+  describe("getModels", () => {
+    it("should call GET /api/models", async () => {
+      const mockResponse: ModelsResponse = {
+        providers: [
+          { name: "openai", models: [{ id: "gpt-4", name: "GPT-4" }] },
+        ],
+      };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(mockResponse),
+      });
+
+      const result = await api.getModels();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/models",
+        expect.objectContaining({
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+      expect(result).toEqual(mockResponse);
+      expect(result.providers[0].models[0].id).toBe("gpt-4");
+    });
+  });
+
+  describe("getSettings", () => {
+    it("should call GET /api/settings", async () => {
+      const mockSettings = { theme: "dark", defaultModel: { provider: "openai", model: "gpt-4" } };
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(mockSettings),
+      });
+
+      const result = await api.getSettings();
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/settings",
+        expect.objectContaining({
+          headers: { "Content-Type": "application/json" },
+        })
+      );
+      expect(result).toEqual(mockSettings);
+    });
+  });
+
+  describe("setDefaultModel", () => {
+    it("should call PATCH /api/settings with model", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: () => Promise.resolve(undefined),
+      });
+
+      await api.setDefaultModel({ provider: "anthropic", model: "claude-3" });
+
+      expect(mockFetch).toHaveBeenCalledWith(
+        "http://127.0.0.1:8741/api/settings",
+        expect.objectContaining({
+          method: "PATCH",
+          body: JSON.stringify({ defaultModel: { provider: "anthropic", model: "claude-3" } }),
+        })
+      );
+    });
+  });
+
+  describe("Message.parts type", () => {
+    it("should accept text part", () => {
+      const msg: Message = {
+        id: "1",
+        sessionId: "s1",
+        role: "assistant",
+        parts: [{ type: "text", text: "hello" }],
+        timestamp: "2025-01-01T00:00:00Z",
+      };
+      expect(msg.parts[0].type).toBe("text");
+    });
+
+    it("should accept thinking part", () => {
+      const msg: Message = {
+        id: "1",
+        sessionId: "s1",
+        role: "assistant",
+        parts: [{ type: "thinking", text: "let me think" }],
+        timestamp: "2025-01-01T00:00:00Z",
+      };
+      expect(msg.parts[0].type).toBe("thinking");
+    });
+
+    it("should accept toolCall part", () => {
+      const msg: Message = {
+        id: "1",
+        sessionId: "s1",
+        role: "assistant",
+        parts: [{ type: "toolCall", id: "call-1", name: "bash", args: { cmd: "ls" } }],
+        timestamp: "2025-01-01T00:00:00Z",
+      };
+      expect(msg.parts[0].type).toBe("toolCall");
+    });
+
+    it("should accept toolResult part", () => {
+      const msg: Message = {
+        id: "1",
+        sessionId: "s1",
+        role: "toolResult",
+        parts: [{ type: "toolResult", toolCallId: "call-1", content: "file1.txt" }],
+        timestamp: "2025-01-01T00:00:00Z",
+      };
+      expect(msg.parts[0].type).toBe("toolResult");
+    });
+
+    it("should accept image part", () => {
+      const msg: Message = {
+        id: "1",
+        sessionId: "s1",
+        role: "user",
+        parts: [{ type: "image", mediaType: "image/png", data: "base64..." }],
+        timestamp: "2025-01-01T00:00:00Z",
+      };
+      expect(msg.parts[0].type).toBe("image");
+    });
+
+    it("should accept usage and model fields", () => {
+      const msg: Message = {
+        id: "1",
+        sessionId: "s1",
+        role: "assistant",
+        parts: [{ type: "text", text: "hi" }],
+        timestamp: "2025-01-01T00:00:00Z",
+        usage: { input: 100, output: 200 },
+        model: "gpt-4",
+      };
+      expect(msg.usage?.input).toBe(100);
+      expect(msg.model).toBe("gpt-4");
+    });
+  });
+
+  describe("Part union type", () => {
+    it("should have all required variants", () => {
+      const parts: Part[] = [
+        { type: "text", text: "hello" },
+        { type: "thinking", text: "thinking..." },
+        { type: "toolCall", id: "c1", name: "bash", args: {} },
+        { type: "toolResult", toolCallId: "c1", content: "result" },
+        { type: "image", mediaType: "image/png", data: "base64" },
+      ];
+      expect(parts.length).toBe(5);
     });
   });
 
