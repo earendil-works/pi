@@ -188,7 +188,7 @@ export class SessionPool extends EventEmitter {
 		const proc = this.spawnFn("pi", ["--mode", "rpc", "--session", sessionArg], {
 			stdio: ["pipe", "pipe", "inherit"],
 			cwd: cwdFromDir,
-			env: { ...process.env },
+			env: { ...process.env, PATH: `${process.env.HOME}/.npm-global/bin:${process.env.PATH}` },
 			detached: false,
 		});
 

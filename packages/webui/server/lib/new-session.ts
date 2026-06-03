@@ -56,7 +56,7 @@ async function spawnPiSessionInternal(cwd: string, timeoutMs: number, sessionsDi
     const proc = spawn("pi", args, {
       shell: false,
       timeout: timeoutMs,
-      env: { ...process.env },
+      env: { ...process.env, PATH: `${process.env.HOME}/.npm-global/bin:${process.env.PATH}` },
     });
 
     let stdoutBuffer = "";
