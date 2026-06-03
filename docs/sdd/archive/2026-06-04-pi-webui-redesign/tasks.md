@@ -66,14 +66,14 @@
 
 ## 2. Web 工具 + 原子组件 Web 工具 + 原子组件 (大部分可并行)
 
-- [ ] 2.0 **从归档导入 `MessageParts.tsx` + `MessageParts.test.tsx`**
+- [x] 2.0 **从归档导入 `MessageParts.tsx` + `MessageParts.test.tsx`**
   - **文件**: `packages/webui/web/src/components/message/MessageParts.tsx` (Create, copy from archive), `packages/webui/web/src/components/message/MessageParts.test.tsx` (Create, copy from archive)
   - **内容**: 从 `docs/sdd/archive/2026-06-03-pi-webui-tool-rendering/` 找到 MessageParts 源文件 (5 Part 类型 + ToolGroup 容器 + lucide 图标 + summarizeToolCall/Result + formatBytes), 复制到 `packages/webui/web/src/components/message/MessageParts.tsx`。同时复制对应的 `MessageParts.test.tsx` (12 测试)。修复 import 路径 (从 `../lib/api` → 实际位置)。
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/message/MessageParts.test.tsx` (12 测试全 pass)
   - **依赖**: 无
   - **前置阅读**: `docs/sdd/archive/2026-06-03-pi-webui-tool-rendering/proposal.md` (了解 MessageParts 设计)
 
-- [ ] 2.1 **`formatToken` + `formatRelativeTime` 工具 + 单测**
+- [x] 2.1 **`formatToken` + `formatRelativeTime` 工具 + 单测**
   - **文件**: `packages/webui/web/src/lib/format.ts` (Create), `packages/webui/web/src/lib/format.test.ts` (Create)
   - **内容**: 
     - `formatToken(n: number): string`: `< 1000 → "${n}"`, `< 1M → "${(n/1000).toFixed(1)}K"`, `< 1B → "${(n/1M).toFixed(1)}M"`, else `"${(n/1B).toFixed(1)}B"`。NaN/Infinity 返回 "0"。
@@ -81,7 +81,7 @@
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/lib/format.test.ts` (10+ 测试, 覆盖每个分支 + 边界)
   - **依赖**: 无
 
-- [ ] 2.2 **`validateImageFile` + `fileToBase64` + 单测**
+- [x] 2.2 **`validateImageFile` + `fileToBase64` + 单测**
   - **文件**: `packages/webui/web/src/lib/image.ts` (Create), `packages/webui/web/src/lib/image.test.ts` (Create)
   - **内容**:
     - `validateImageFile(file: File, currentTotal: number, currentCount: number): {ok:true, image:InputImage} | {ok:false, reason:"type"|"size"|"count"|"total"}`: 检 MIME 白名单、size ≤ 5MB、count < 4、total + size ≤ 20MB。
@@ -89,7 +89,7 @@
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/lib/image.test.ts` (8+ 测试, 包含各 reject 分支 + 正常 + 累积超限)
   - **依赖**: 无
 
-- [ ] 2.3 **`Brand` + `IconRow` 组件 + 测试**
+- [x] 2.3 **`Brand` + `IconRow` 组件 + 测试**
   - **文件**: `packages/webui/web/src/components/sidebar/Brand.tsx` (Create), `packages/webui/web/src/components/sidebar/IconRow.tsx` (Create), `packages/webui/web/src/components/sidebar/Brand.test.tsx` (Create), `packages/webui/web/src/components/sidebar/IconRow.test.tsx` (Create)
   - **内容**: 
     - `Brand({version: string})`: 蓝色 "π" (text-2xl font-bold text-blue-600) + "pi webui" (text-base font-semibold) + `v${version}` (text-xs text-stone-500) 三段式,垂直 padding 4,水平 padding 3。
@@ -97,19 +97,19 @@
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/sidebar/` (4+ 测试, 含 default + active state)
   - **依赖**: 无
 
-- [ ] 2.4 **`SearchBox` 组件 + 测试**
+- [x] 2.4 **`SearchBox` 组件 + 测试**
   - **文件**: `packages/webui/web/src/components/sidebar/SearchBox.tsx` (Create), `packages/webui/web/src/components/sidebar/SearchBox.test.tsx` (Create)
   - **内容**: `<input>` with `Search` lucide icon 左侧, `placeholder="Filter conversations..."`, `value={query}` 受控, `onChange={(e) => onChange(e.target.value)}` 上抛。`className="w-full px-3 py-2 text-sm border border-stone-200 rounded-md"`,focus ring 蓝色。
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/sidebar/SearchBox.test.tsx` (3+ 测试, 含 typing 触发 onChange)
   - **依赖**: 无
 
-- [ ] 2.5 **`ConversationList` 组件 + 测试**
+- [x] 2.5 **`ConversationList` 组件 + 测试**
   - **文件**: `packages/webui/web/src/components/sidebar/ConversationList.tsx` (Create), `packages/webui/web/src/components/sidebar/ConversationList.test.tsx` (Create)
   - **内容**: 接收 `sessions: SessionInfo[]`, `currentId?: string`, `onSelect(id)`, `onDelete(id)`, `filterQuery?: string`。渲染: 过滤 (title.toLowerCase().includes(filterQuery.toLowerCase())) 后, 每行 `MessageSquare` 图标 + `truncate(title, 30)` + hover 显示 Trash 图标 (点击触发 `window.confirm` → 确认后 `onDelete(id)`)。current 高亮蓝色。无结果显示 "No conversations match" 或 "No sessions yet"。
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/sidebar/ConversationList.test.tsx` (5+ 测试, 含空/过滤/active/delete confirm)
   - **依赖**: 无
 
-- [ ] 2.6 **`NewChatButton` 组件 + 测试**
+- [x] 2.6 **`NewChatButton` 组件 + 测试**
   - **文件**: `packages/webui/web/src/components/sidebar/NewChatButton.tsx` (Create), `packages/webui/web/src/components/sidebar/NewChatButton.test.tsx` (Create)
   - **内容**: `Plus` lucide 图标 + 文字 "+ New conversation", `w-full px-3 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700`, `disabled?: boolean` + `loading?: boolean` 时显示 `Loader2` spin。点击触发 `onClick`。
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/sidebar/NewChatButton.test.tsx` (3+ 测试, 含 click + loading 状态)
