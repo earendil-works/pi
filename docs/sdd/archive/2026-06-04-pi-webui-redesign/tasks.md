@@ -185,7 +185,7 @@
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/lib/api.test.ts` (现有测试 + 5 新测试: getModels / getSettings / setDefaultModel / Message.parts 类型 / Part 联合)
   - **依赖**: 无
 
-- [ ] 3.2 **`AppShell` 2-col 布局**
+- [x] 3.2 **`AppShell` 2-col 布局**
   - **文件**: `packages/webui/web/src/components/AppShell.tsx` (Create), `packages/webui/web/src/components/AppShell.test.tsx` (Create)
   - **内容**: 接收 `children: ReactNode`。`<div className="flex h-full">` + `<aside className="w-[260px] h-full border-r border-stone-200 flex flex-col">` (Sidebar 内部) + `<main className="flex-1 overflow-auto flex flex-col">` + children。Sidebar 由 5 个子组件组合: `<Brand version={...} />` + `<IconRow activePage="chat" />` + `<SearchBox value={filter} onChange={...} />` + `<ConversationList ... filterQuery={filter} />` + `<NewChatButton onClick={...} />`。AppShell 接收 props: `sessions`, `currentId`, `onSelect`, `onDelete`, `onNewChat`, `onSettings`, `version`。
   - **验证**: `cd packages/webui/web && timeout 30 node ../../../node_modules/vitest/dist/cli.js --run src/components/AppShell.test.tsx` (3+ 测试, 渲染 Brand/IconRow/SearchBox/ConversationList/NewChatButton)
