@@ -1,11 +1,12 @@
 import { useState } from "react";
 import {
   Brain, Database, Terminal, Globe, FolderOpen, ListTodo,
-  Wrench, Image as ImageIcon, ChevronRight
+  Wrench, Image as ImageIcon, ChevronRight, Wrench as ToolsIcon
 } from "lucide-react";
 import type {
   TextPart, ThinkingPart, ToolCallPart, ToolResultPart, ImagePart, Part
 } from "../../lib/api";
+import { Markdown } from "../Markdown";
 
 // Helper: pick icon for tool name
 function toolIcon(name: string) {
@@ -66,9 +67,9 @@ function ThinkingItem({ part, defaultOpen = false }: { part: ThinkingPart; defau
         {open ? <span className="text-xs">(收起)</span> : <span className="text-xs">(展开)</span>}
       </button>
       {open && (
-        <pre className="mt-1 text-xs bg-gray-50 p-2 rounded border border-gray-200 max-h-96 overflow-auto whitespace-pre-wrap font-mono text-gray-700">
-          {part.text}
-        </pre>
+        <div className="mt-1 max-h-96 overflow-auto bg-gray-50 p-2 rounded border border-gray-200">
+          <Markdown text={part.text} />
+        </div>
       )}
     </div>
   );
@@ -142,17 +143,75 @@ function ImageItem({ part }: { part: ImagePart }) {
 
 // Text item
 function TextItem({ part }: { part: TextPart }) {
-  return (
-    <p className="text-sm text-gray-800 whitespace-pre-wrap break-words">
-      {part.text}
-    </p>
-  );
+  // The assistant emits GitHub-flavored markdown: bold, italic, lists,
+  // tables, code blocks, etc. Render as HTML so the user sees proper
+  // structure (the alternative — raw `**foo**` and `|---|---|` — is
+  // unreadable for long reports).
+  return <Markdown text={part.text} />;
 }
 
-// ToolGroup: collect all tool calls + tool results + images into one container with separators
+// ToolGroup: collect all tool calls + tool results + images into one container with separators.
+// When the group is large (> COLLAPSE_THRESHOLD items), default to a
+// collapsed summary so a single turn that fired 10+ tools doesn't flood
+// the bubble vertically. The user can click to expand and see all rows.
+const COLLAPSE_THRESHOLD = 4;
+
+function summarizeToolGroup(parts: Part[]): { total: number; text: string } {
+  // Count tool calls by name. The intent is "read what the agent did at a
+  // glance" without scrolling through 14 rows. The total is the number of
+  // distinct tool invocations (not parts.length which would double-count
+  // each toolResult), and the text is a per-name breakdown.
+  const counts = new Map<string, number>();
+  let images = 0;
+  let total = 0;
+  for (const p of parts) {
+    if (p.type === "toolCall") {
+      counts.set(p.name, (counts.get(p.name) ?? 0) + 1);
+      total += 1;
+    } else if (p.type === "image") {
+      images += 1;
+      total += 1;
+    }
+  }
+  const segments: string[] = [];
+  for (const [name, n] of counts) segments.push(`${name} ×${n}`);
+  if (images > 0) segments.push(`image${images > 1 ? "s" : ""} ×${images}`);
+  return { total, text: segments.join(", ") };
+}
+
 function ToolGroup({ parts }: { parts: Part[] }) {
+  const summary = summarizeToolGroup(parts);
+  const [open, setOpen] = useState(summary.total <= COLLAPSE_THRESHOLD);
+  const tooMany = summary.total > COLLAPSE_THRESHOLD;
+  const Icon = ToolsIcon;
+  if (tooMany && !open) {
+    return (
+      <div className="rounded-lg border border-gray-200 bg-white px-3 py-2">
+        <button
+          onClick={() => setOpen(true)}
+          className="w-full text-left flex items-center gap-2 text-gray-700 hover:bg-gray-50 py-1 px-1 rounded text-sm"
+        >
+          <Icon className="w-3.5 h-3.5 text-gray-500 shrink-0" />
+          <span className="font-medium">{summary.total} tool calls</span>
+          <span className="text-gray-500 text-xs truncate flex-1">
+            {summary.text}
+          </span>
+          <ChevronRight className="w-3 h-3 text-gray-400 shrink-0" />
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="rounded-lg border border-gray-200 bg-white px-3 py-2 flex flex-col">
+      {tooMany && (
+        <button
+          onClick={() => setOpen(false)}
+          className="text-xs text-gray-500 hover:text-gray-700 self-end mb-1 inline-flex items-center gap-1"
+        >
+          <ChevronRight className="w-3 h-3 rotate-90" />
+          <span>收起 ({summary.total} tools)</span>
+        </button>
+      )}
       {parts.map((part, i) => {
         switch (part.type) {
           case "toolCall":

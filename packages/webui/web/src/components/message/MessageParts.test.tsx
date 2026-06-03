@@ -1,6 +1,7 @@
 /// <reference types="vitest/globals" />
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import "@testing-library/jest-dom";
 import { MessageParts } from "./MessageParts";
 import type { Part } from "../../lib/api";
@@ -140,6 +141,47 @@ describe("MessageParts", () => {
       // Both results should be visible (first lines visible, full content may be collapsed)
       expect(container.textContent).toContain("file content here");
       expect(container.textContent).toContain("total 0");
+    });
+  });
+
+  describe("S8b: Large tool group is collapsed by default", () => {
+    // 5+ tool-related items in a single turn should default to a summary
+    // line ("14 tool calls: bash ×6, todowrite ×6, ...") so the bubble
+    // doesn't flood vertically. The user can click to expand.
+    it("collapses a 14-tool group behind a summary and shows it on click", async () => {
+      const user = userEvent.setup();
+      const parts: Part[] = [];
+      for (let i = 0; i < 6; i++) {
+        parts.push({ type: "toolCall", id: `tcb${i}`, name: "bash", args: { command: `echo ${i}` } });
+        parts.push({ type: "toolResult", toolCallId: `tcb${i}`, content: `out ${i}` });
+      }
+      parts.push({ type: "toolCall", id: "tcw1", name: "todowrite", args: {} });
+      parts.push({ type: "toolCall", id: "tcr1", name: "read", args: { path: "/x" } });
+      parts.push({ type: "toolCall", id: "tce1", name: "edit", args: { path: "/y" } });
+      const { container } = render(<MessageParts parts={parts} />);
+
+      // Summary header present, individual tool rows hidden
+      expect(screen.getByText(/9 tool calls/)).toBeTruthy();
+      expect(screen.getByText(/bash ×6/)).toBeTruthy();
+      expect(screen.getByText(/todowrite ×1/)).toBeTruthy();
+      // Individual tool name rows are NOT in DOM yet
+      expect(container.textContent).not.toContain("echo 0");
+
+      // Click to expand
+      await user.click(screen.getByText(/9 tool calls/));
+      expect(container.textContent).toContain("echo 0");
+    });
+
+    it("does not collapse a small (≤4) tool group", () => {
+      const parts: Part[] = [
+        { type: "toolCall", id: "tc1", name: "read", args: { path: "/foo" } },
+        { type: "toolResult", toolCallId: "tc1", content: "file content here" },
+      ];
+      const { container } = render(<MessageParts parts={parts} />);
+      // No summary header
+      expect(container.textContent).not.toMatch(/\d+ tool calls/);
+      expect(screen.getByText("read")).toBeTruthy();
+      expect(container.textContent).toContain("file content here");
     });
   });
 
