@@ -67,6 +67,9 @@ export class SessionPool extends EventEmitter {
 	/** sessionId -> name (updated from session_info_changed events) */
 	private readonly sessionNames = new Map<string, string>();
 
+	/** Session IDs that webui has spawned pi processes for (owned by webui) */
+	private readonly ownedSessions = new Set<string>();
+
 	constructor(opts?: {
 		cwd?: string;
 		maxSessions?: number;
@@ -227,6 +230,15 @@ export class SessionPool extends EventEmitter {
 		});
 
 		this.sessions.set(sessionId, state);
+		this.ownedSessions.add(sessionId);
+	}
+
+	/**
+	 * Check if a session is managed by webui (has a webui-spawned pi process).
+	 * Returns false for TUI-managed sessions.
+	 */
+	isSessionManaged(sessionId: string): boolean {
+		return this.ownedSessions.has(sessionId);
 	}
 
 	/**

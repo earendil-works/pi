@@ -44,6 +44,7 @@ describe("Sessions REST API Endpoints", () => {
 		return {
 			sessionsDir,
 			isRunning: () => false,
+			isSessionManaged: () => false,
 			getSessionName: () => undefined,
 			on: () => {},
 			emit: () => {},
@@ -116,6 +117,7 @@ describe("Sessions REST API Endpoints", () => {
 			const pool = {
 				sessionsDir: fakeSessionsDir,
 				isRunning: () => false,
+				isSessionManaged: () => false,
 				getSessionName: (id: string) => (id === "pool-session-id" ? "PoolFallbackTitle" : undefined),
 				on: () => {},
 				emit: () => {},

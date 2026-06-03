@@ -29,6 +29,7 @@ export default function ChatPage() {
   const [currentModel, setCurrentModel] = useState<{provider: string, model: string} | null>(null);
   const [providers, setProviders] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isManaged, setIsManaged] = useState<boolean | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const streamingMsgId = useRef<string | null>(null);
 
@@ -39,15 +40,17 @@ export default function ChatPage() {
     async function init() {
       setIsLoading(true);
       try {
-        const [msgs, settings, modelsResp] = await Promise.all([
+        const [msgs, settings, modelsResp, sessions] = await Promise.all([
           api.getMessages(id!),
           api.getSettings().catch(() => ({})),
           api.getModels().catch(() => ({providers: []})),
+          api.listSessions().catch(() => []),
         ]);
         if (!cancelled) {
           setMessages(msgs);
           setProviders(modelsResp.providers ?? []);
-          // Read current model from settings
+          const session = sessions.find((s: any) => s.id === id);
+          setIsManaged(session?.isManaged ?? false);
           const s = settings as any;
           if (s?.webui?.defaultModel) {
             const [provider, model] = s.webui.defaultModel.split("/");
@@ -61,7 +64,6 @@ export default function ChatPage() {
       }
     }
     init();
-    // Clear drafts on session change
     setInputText("");
     setInputImages([]);
     return () => { cancelled = true; };
@@ -218,6 +220,12 @@ export default function ChatPage() {
         <ChatMessages messages={messages} />
         <div ref={messagesEndRef} />
       </div>
+      {/* Non-managed session notice */}
+      {isManaged === false && (
+        <div className="px-4 py-2 bg-amber-50 border-t border-amber-200 text-amber-700 text-sm">
+          This session is managed by TUI. Continue in TUI to send messages, or create a new session in WebUI.
+        </div>
+      )}
       {/* Input */}
       <InputArea
         images={inputImages}
@@ -235,7 +243,7 @@ export default function ChatPage() {
           alert(messages[reason] ?? "Image error");
         }}
         onSubmit={handleSubmit}
-        disabled={isLoading}
+        disabled={isLoading || isManaged === false}
       />
     </div>
   );

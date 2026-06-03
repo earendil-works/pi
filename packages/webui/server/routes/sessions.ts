@@ -58,6 +58,7 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
             lastActive: s.timestamp,
             status: isRunning ? ("running" as const) : ("idle" as const),
             messageCount: msgCount,
+            isManaged: sessionPool.isSessionManaged(s.id),
           };
         }),
       );

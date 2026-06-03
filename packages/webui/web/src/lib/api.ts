@@ -7,6 +7,7 @@ export interface SessionInfo {
   lastActive: string; // ISO timestamp
   messageCount: number;
   cwd?: string; // optional, for debugging
+  isManaged?: boolean; // true if webui owns this session's pi process
 }
 
 export type Schedule =
