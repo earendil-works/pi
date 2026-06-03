@@ -9,7 +9,7 @@ export interface MessageHeaderProps {
 }
 
 function truncate(str: string, maxLen: number): string {
-  return str.length > maxLen ? str.slice(0, maxLen) : str;
+  return str.length > maxLen ? str.slice(0, maxLen) + "…" : str;
 }
 
 export function MessageHeader({
@@ -29,7 +29,7 @@ export function MessageHeader({
       <span className="text-xs text-stone-500">{formatRelativeTime(timestamp)}</span>
       {model && (
         <span className="text-[10px] bg-stone-100 text-stone-700 px-1.5 py-0.5 rounded">
-          {truncate(model, 16)}
+          {truncate(model, 20)}
         </span>
       )}
     </div>

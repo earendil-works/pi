@@ -42,11 +42,22 @@ describe("MessageHeader", () => {
     expect(badges.length).toBe(0);
   });
 
-  it("truncates model name to 16 characters", () => {
-    const longModelName = "very-long-model-name-that-exceeds-16-chars";
+  it("truncates model name longer than 20 chars with an ellipsis", () => {
+    const longModelName = "very-long-model-name-that-exceeds-20-chars-yes";
     render(<MessageHeader {...baseProps} model={longModelName} />);
 
-    const badge = screen.getByText("very-long-model-");
+    // 20 chars + ellipsis = first 20 + "…"
+    const badge = screen.getByText("very-long-model-name…");
+    expect(badge).toBeTruthy();
+  });
+
+  it("does not truncate a 16-char model name (off-by-one bug regression test)", () => {
+    // The previous implementation used `str.length > maxLen` with maxLen=16,
+    // which chopped the last char off a 16-char model ("deepseek-v4-flas"
+    // instead of "deepseek-v4-flash"). New impl uses maxLen=20 with
+    // an explicit ellipsis suffix, so 16-char names render in full.
+    render(<MessageHeader {...baseProps} model="deepseek-v4-flash" />);
+    const badge = screen.getByText("deepseek-v4-flash");
     expect(badge).toBeTruthy();
   });
 });
