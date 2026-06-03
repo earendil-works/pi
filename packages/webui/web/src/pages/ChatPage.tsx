@@ -54,7 +54,12 @@ export default function ChatPage() {
           const session = sessions.find((s: any) => s.id === id);
           setIsManaged(session?.isManaged ?? null);
           setTitle(session?.title || "New chat");
-          setMessageCount(msgs.length);
+          // Use the count from /api/sessions, not msgs.length, so the header
+          // shows the true JSONL count even when the messages array is
+          // paginated (default limit=200) or TUI sessions with thousands
+          // of messages. Falls back to msgs.length if the list hasn't
+          // returned yet (e.g. sessions API failed).
+          setMessageCount(session?.messageCount ?? msgs.length);
           // Clear any draft from a previous session so we don't carry typed
           // text into a different (possibly TUI-owned) session.
           setInputText("");
@@ -198,7 +203,11 @@ export default function ChatPage() {
   // Scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-    setMessageCount(messages.length);
+    // Prefer the server-provided total (true JSONL message count, set on
+    // initial load). If the loaded window is larger than the cached total
+    // (e.g. streaming added messages since the list was fetched), trust
+    // the in-memory count instead.
+    setMessageCount((prev) => Math.max(prev, messages.length));
   }, [messages]);
 
   // Submit
