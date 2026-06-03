@@ -1,6 +1,6 @@
 import express from "express";
 import { createReadStream } from "node:fs";
-import { readdir, unlink, readFile } from "node:fs/promises";
+import { readdir, unlink, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionPool, SessionHeader } from "../session-pool";
 import { runMemoryExtraction } from "@earendil-works/pi-personal-assistant";
@@ -60,13 +60,31 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
           // webui-owned.
           const isManaged =
             sessionPool.isSessionManaged(s.id) || msgCount === 0;
+          // Read the file's mtime to know when the session was last touched.
+          // The header's `timestamp` is the creation time, which is stale for
+          // TUI sessions that the server never spawned. For TUI sessions the
+          // file grows in real time; for webui sessions the server can update
+          // the title via RPC, but mtime is also a reliable proxy.
+          let lastActive = s.timestamp;
+          try {
+            const st = await stat(s.sessionFile);
+            lastActive = st.mtime.toISOString();
+          } catch {
+            // File unreadable; fall back to header timestamp
+          }
+          // TUI sessions are detected by filename pattern:
+          // TUI = "<ISO timestamp>_<uuid>.jsonl", webui = "<uuid>.jsonl".
+          const source: "tui" | "webui" = isTuiSession(s.sessionFile)
+            ? "tui"
+            : "webui";
           return {
             ...s,
-            title: deriveTitle(s, sessionPool),
-            lastActive: s.timestamp,
+            title: await deriveTitle(s, sessionPool),
+            lastActive,
             status: isRunning ? ("running" as const) : ("idle" as const),
             messageCount: msgCount,
             isManaged,
+            source,
           };
         }),
       );
@@ -398,11 +416,61 @@ async function readMessages(
 }
 
 /**
- * Return the session title from the JSONL header, falling back to sessionPool.
- * Returns empty string when name is not yet set (title written via RPC after first prompt).
+ * Return the session title.
+ * Priority:
+ *   1. `s.name` from the JSONL header (set by older pi versions or by tools)
+ *   2. `sessionPool.getSessionName` (in-memory, populated from
+ *      `session_info_changed` RPC events for currently-running webui sessions)
+ *   3. The latest `session_info` line in the JSONL file (source of truth for
+ *      any session that has been titled at least once, even across server
+ *      restarts or for sessions owned by the TUI)
+ * Returns empty string when no title has ever been set.
  */
-function deriveTitle(s: SessionHeader & { sessionFile: string }, sessionPool: SessionPool): string {
-  return s.name ?? sessionPool.getSessionName(s.id) ?? "";
+async function deriveTitle(s: SessionHeader & { sessionFile: string }, sessionPool: SessionPool): Promise<string> {
+  return (
+    s.name ??
+    sessionPool.getSessionName(s.id) ??
+    (await readLatestSessionInfoName(s.sessionFile)) ??
+    ""
+  );
+}
+
+/**
+ * Read the most recent `session_info` entry from a session JSONL file
+ * and return its `name` field, if any.
+ *
+ * Reading the whole file for every session on every list request is fine
+ * in practice: even very large sessions are tens of MB and we read the
+ * content once per list refresh, which is user-paced.
+ */
+async function readLatestSessionInfoName(sessionFile: string): Promise<string | undefined> {
+  try {
+    const content = await readFile(sessionFile, "utf-8");
+    // Walk lines from the end — the most recent `session_info` is the
+    // current title. Keep scanning across intervening `message` entries
+    // because a session_info event can be interleaved with messages.
+    // Bound the scan so a corrupted file can't make us read megabytes.
+    const lines = content.split("\n");
+    const maxScan = Math.min(lines.length, 2000);
+    for (let i = lines.length - 1; i >= lines.length - maxScan; i--) {
+      const line = lines[i];
+      if (!line.trim()) continue;
+      try {
+        const obj = JSON.parse(line) as { type?: string; name?: string };
+        if (obj.type === "session_info" && typeof obj.name === "string" && obj.name.length > 0) {
+          return obj.name;
+        }
+        // The header is `type: "session"` — only the first line has it, so
+        // hitting it means we've scanned past the end of the body.
+        if (obj.type === "session") break;
+      } catch {
+        continue;
+      }
+    }
+  } catch {
+    // File unreadable; treat as no name
+  }
+  return undefined;
 }
 
 /**
@@ -418,4 +486,19 @@ async function countMessages(sessionFile: string): Promise<number> {
   } catch {
     return 0;
   }
+}
+
+/**
+ * TUI session files are named `<ISO timestamp>_<uuid>.jsonl`
+ * (e.g. `2026-06-02T15-20-09.141Z_34022d26-...jsonl`).
+ * Webui session files are named `<uuid>.jsonl` (crypto.randomUUID() output).
+ * This helper detects TUI origin purely from the filename so the UI can
+ * mark them as read-only / non-interactive.
+ */
+function isTuiSession(sessionFile: string): boolean {
+  const base = sessionFile.split("/").pop() ?? "";
+  // TUI files start with a YYYY-MM-DDT prefix and contain `Z_` separator
+  // before the UUID. The time portion uses `:` or `-` depending on the
+  // TUI version, so accept both.
+  return /^\d{4}-\d{2}-\d{2}T[\d:.\-]+Z_/.test(base);
 }

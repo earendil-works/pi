@@ -38,6 +38,7 @@ export function ConversationList({
     <nav className="flex flex-col gap-1 p-2 overflow-y-auto">
       {filteredSessions.map((session) => {
         const isActive = currentId === session.id;
+        const isTui = session.source === 'tui';
         return (
           <div
             key={session.id}
@@ -53,6 +54,14 @@ export function ConversationList({
               className="flex items-center gap-2 flex-1 min-w-0 text-left"
             >
               <MessageSquare className="w-4 h-4 shrink-0" />
+              {isTui && (
+                <span
+                  className="shrink-0 px-1.5 py-0.5 text-[10px] font-semibold rounded bg-stone-200 text-stone-600 uppercase tracking-wider"
+                  title="Owned by the TUI; view-only in WebUI"
+                >
+                  TUI
+                </span>
+              )}
               <span className="truncate">{truncateTitle(session.title)}</span>
             </button>
             <button

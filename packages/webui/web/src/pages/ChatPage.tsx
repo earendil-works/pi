@@ -55,6 +55,10 @@ export default function ChatPage() {
           setIsManaged(session?.isManaged ?? null);
           setTitle(session?.title || "New chat");
           setMessageCount(msgs.length);
+          // Clear any draft from a previous session so we don't carry typed
+          // text into a different (possibly TUI-owned) session.
+          setInputText("");
+          setInputImages([]);
           const s = settings as any;
           if (s?.webui?.defaultModel) {
             const [provider, model] = s.webui.defaultModel.split("/");
@@ -263,8 +267,14 @@ export default function ChatPage() {
       </div>
       {/* Non-managed session notice */}
       {isManaged === false && (
-        <div className="px-4 py-2 bg-amber-50 border-t border-amber-200 text-amber-700 text-sm">
-          This session is managed by TUI. Continue in TUI to send messages, or create a new session in WebUI.
+        <div className="px-4 py-3 bg-amber-50 border-t border-amber-200 text-amber-800 text-sm flex items-center gap-2">
+          <span className="px-1.5 py-0.5 text-[10px] font-semibold rounded bg-amber-200 text-amber-900 uppercase tracking-wider">
+            TUI
+          </span>
+          <span>
+            This session is owned by the TUI. You can view its history here,
+            but messages must be sent from the TUI.
+          </span>
         </div>
       )}
       {/* Input */}

@@ -8,6 +8,7 @@ export interface SessionInfo {
   messageCount: number;
   cwd?: string; // optional, for debugging
   isManaged?: boolean; // true if webui owns this session's pi process
+  source?: "tui" | "webui"; // tui = file owned by terminal pi; webui = file spawned by webui
 }
 
 export type Schedule =

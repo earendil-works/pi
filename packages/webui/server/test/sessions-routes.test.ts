@@ -233,6 +233,57 @@ describe("Sessions REST API Endpoints", () => {
 			expect(found.title).toBe("");
 		});
 
+		it("derives title from the latest session_info entry in the JSONL", async () => {
+			// When the server restarts, the in-memory `sessionNames` map is gone.
+			// The title must still come back from the JSONL file itself, scanning
+			// for the most recent `session_info` entry. This applies to both
+			// TUI-owned sessions and webui-owned sessions whose pi process has
+			// been killed.
+			const tDir = path.join("/tmp", `pi-title-${crypto.randomUUID()}`);
+			await fs.mkdir(tDir, { recursive: true });
+			const tId = "title-aaaa-bbbb-cccc-dddddddddddd";
+			const tFile = path.join(tDir, `${tId}.jsonl`);
+			const header = JSON.stringify({
+				type: "session",
+				version: 3,
+				id: tId,
+				timestamp: "2026-06-03T10:00:00.000Z",
+				cwd: "/home/qjh/.pi/agent",
+			});
+			const sessionInfo1 = JSON.stringify({
+				type: "session_info",
+				id: "si1",
+				parentId: null,
+				timestamp: "2026-06-03T10:01:00.000Z",
+				name: "first name",
+			});
+			const sessionInfo2 = JSON.stringify({
+				type: "session_info",
+				id: "si2",
+				parentId: "si1",
+				timestamp: "2026-06-03T10:02:00.000Z",
+				name: "list all cron jobs",
+			});
+			await fs.writeFile(tFile, [header, sessionInfo1, sessionInfo2, ""].join("\n"));
+
+			const tApp = express();
+			tApp.use(express.json());
+			const tPool = createMockPool(tDir);
+			mountSessionsRoutes(tApp, tPool);
+			const tServer = createServer(tApp);
+			await new Promise<void>((resolve) => tServer.listen(0, "127.0.0.1", resolve));
+			const port = (tServer.address() as any).port;
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions`);
+			const sessions = await res.json();
+			const t = sessions.find((s: any) => s.id === tId);
+			expect(t).toBeTruthy();
+			expect(t.title).toBe("list all cron jobs");
+
+			tServer.close();
+			await fs.rm(tDir, { recursive: true, force: true });
+		});
+
 		it("returns empty array when no sessions exist", async () => {
 			// Use a different empty directory
 			const emptyDir = path.join("/tmp", `pi-empty-${crypto.randomUUID()}`);
@@ -254,6 +305,81 @@ describe("Sessions REST API Endpoints", () => {
 
 			emptyServer.close();
 			await fs.rm(emptyDir, { recursive: true, force: true });
+		});
+
+		it("marks sessions with ISO-timestamp-prefixed filenames as source=tui", async () => {
+			// TUI creates files named "<ISO>_<uuid>.jsonl"; webui creates "<uuid>.jsonl".
+			// The /api/sessions endpoint should mark TUI files as source=tui so the
+			// UI can label them as view-only and prevent input.
+			const tuiDir = path.join("/tmp", `pi-tui-${crypto.randomUUID()}`);
+			await fs.mkdir(tuiDir, { recursive: true });
+			const tuiId = "tui-id-aaaa-bbbb-cccc-dddddddddddd";
+			const tuiFile = path.join(tuiDir, `2026-06-02T15-20-09.141Z_${tuiId}.jsonl`);
+			const header = JSON.stringify({
+				type: "session",
+				version: 3,
+				id: tuiId,
+				timestamp: "2026-06-02T15:20:09.141Z",
+				cwd: "/home/qjh/.pi/agent",
+			});
+			await fs.writeFile(tuiFile, header + "\n");
+
+			const tuiApp = express();
+			tuiApp.use(express.json());
+			const tuiPool = createMockPool(tuiDir);
+			mountSessionsRoutes(tuiApp, tuiPool);
+			const tuiServer = createServer(tuiApp);
+			await new Promise<void>((resolve) => tuiServer.listen(0, "127.0.0.1", resolve));
+			const port = (tuiServer.address() as any).port;
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions`);
+			const sessions = await res.json();
+			const tui = sessions.find((s: any) => s.id === tuiId);
+			expect(tui).toBeTruthy();
+			expect(tui.source).toBe("tui");
+
+			tuiServer.close();
+			await fs.rm(tuiDir, { recursive: true, force: true });
+		});
+
+		it("reports lastActive from file mtime, not the JSONL header timestamp", async () => {
+			// For sessions the server never spawned (TUI files, or webui files the
+			// user has been writing to for a long time), the header `timestamp` is
+			// the creation time. The UI needs the actual last-modified time so the
+			// sidebar sort order reflects "most recently used", not "oldest".
+			const mDir = path.join("/tmp", `pi-mtime-${crypto.randomUUID()}`);
+			await fs.mkdir(mDir, { recursive: true });
+			const mId = "mtime-aaaa-bbbb-cccc-dddddddddddd";
+			const mFile = path.join(mDir, `${mId}.jsonl`);
+			const header = JSON.stringify({
+				type: "session",
+				version: 3,
+				id: mId,
+				timestamp: "2020-01-01T00:00:00.000Z",
+				cwd: "/tmp",
+			});
+			await fs.writeFile(mFile, header + "\n");
+			// Touch the file to a known mtime far in the future
+			const future = new Date("2099-12-31T23:59:59.000Z");
+			const futureSec = Math.floor(future.getTime() / 1000);
+			await fs.utimes(mFile, futureSec, futureSec);
+
+			const mApp = express();
+			mApp.use(express.json());
+			const mPool = createMockPool(mDir);
+			mountSessionsRoutes(mApp, mPool);
+			const mServer = createServer(mApp);
+			await new Promise<void>((resolve) => mServer.listen(0, "127.0.0.1", resolve));
+			const port = (mServer.address() as any).port;
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions`);
+			const sessions = await res.json();
+			const m = sessions.find((s: any) => s.id === mId);
+			expect(m).toBeTruthy();
+			expect(new Date(m.lastActive).toISOString()).toBe(future.toISOString());
+
+			mServer.close();
+			await fs.rm(mDir, { recursive: true, force: true });
 		});
 	});
 
