@@ -207,6 +207,52 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
       res.status(500).json({ error: "Internal server error" });
     }
   });
+
+  // POST /api/sessions/:id/model — set the model for this session
+  // Writes a model_change entry to the JSONL (or queues an RPC if running)
+  // and updates the in-memory model so subsequent prompts use it.
+  app.post("/api/sessions/:id/model", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { provider, model } = req.body ?? {};
+      if (typeof provider !== "string" || typeof model !== "string" || !provider || !model) {
+        res.status(400).json({ error: "provider and model are required strings" });
+        return;
+      }
+      await sessionPool.setModel(id, provider, model);
+      res.json({ ok: true, provider, model });
+    } catch (err) {
+      console.error("Error setting session model:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
+  // GET /api/sessions/:id/current-model
+  // Returns the {provider, model} the session is currently using, by
+  // scanning the JSONL for the most recent model_change entry. This is
+  // the source of truth for "what model should the webui show in the
+  // selector on initial load" — last model_change wins over the
+  // assistant message's reported model and over settings.json defaults,
+  // because model_change is what the user explicitly picked.
+  app.get("/api/sessions/:id/current-model", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const filePath = await findSessionFile(sessionPool.sessionsDir, id);
+      if (!filePath) {
+        res.status(404).json({ error: "Session not found" });
+        return;
+      }
+      const current = await readCurrentModel(filePath);
+      if (!current) {
+        res.json({ provider: null, model: null });
+        return;
+      }
+      res.json(current);
+    } catch (err) {
+      console.error("Error reading current model:", err);
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
 }
 
 /**
@@ -547,4 +593,38 @@ function isTuiSession(sessionFile: string): boolean {
   // before the UUID. The time portion uses `:` or `-` depending on the
   // TUI version, so accept both.
   return /^\d{4}-\d{2}-\d{2}T[\d:.\-]+Z_/.test(base);
+}
+
+/**
+ * Scan a session's JSONL tail for the most recent `model_change` entry
+ * and return its {provider, model}. Returns undefined if no model_change
+ * exists (e.g. a brand-new session, or a TUI session that never went
+ * through the webui's set_model RPC).
+ *
+ * Only the last 2000 lines are scanned — that's enough for any session
+ * a user would realistically open, and keeps the per-request cost
+ * bounded for huge TUI sessions.
+ */
+async function readCurrentModel(
+  filePath: string,
+): Promise<{ provider: string; model: string } | undefined> {
+  let content: string;
+  try {
+    content = await readFile(filePath, "utf-8");
+  } catch {
+    return undefined;
+  }
+  const allLines = content.split("\n").filter((l) => l.trim());
+  const lines = allLines.slice(-2000);
+  for (let i = lines.length - 1; i >= 0; i--) {
+    try {
+      const entry = JSON.parse(lines[i]);
+      if (entry && entry.type === "model_change" && typeof entry.provider === "string" && typeof entry.modelId === "string") {
+        return { provider: entry.provider, model: entry.modelId };
+      }
+    } catch {
+      // ignore
+    }
+  }
+  return undefined;
 }

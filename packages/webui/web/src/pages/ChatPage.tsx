@@ -7,6 +7,7 @@ import { Actions } from "../components/topbar/Actions";
 import { ModelSelector } from "../components/topbar/ModelSelector";
 import { InputArea } from "../components/input/InputArea";
 import ChatMessages from "../components/ChatMessages";
+import { ThinkingIndicator } from "../components/ThinkingIndicator";
 
 function buildParts(content: any): Part[] {
   if (!Array.isArray(content)) return [];
@@ -30,6 +31,13 @@ export default function ChatPage() {
   const [providers, setProviders] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isManaged, setIsManaged] = useState<boolean | null>(null);
+  const [sessionStatus, setSessionStatus] = useState<"running" | "idle" | "reconnecting" | "error">("idle");
+  // Drives the "thinking..." indicator visibility. Toggled by:
+  //   - handleSubmit: set true (we just sent a prompt)
+  //   - message_update (assistant, first of turn): set false (real text is streaming)
+  //   - session_status_changed: idle → set false; running → set true
+  //   - id change: set false (new session, not yet responding)
+  const [isThinking, setIsThinking] = useState<boolean>(false);
   const [title, setTitle] = useState<string>("");
   const [messageCount, setMessageCount] = useState<number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -38,6 +46,9 @@ export default function ChatPage() {
   // Load messages + current model + providers on mount / id change
   useEffect(() => {
     if (!id) return;
+    // Clear thinking indicator + streaming ref synchronously so a new
+    // session doesn't inherit the previous session's "thinking" state.
+    setIsThinking(false);
     let cancelled = false;
     async function init() {
       setIsLoading(true);
@@ -65,23 +76,29 @@ export default function ChatPage() {
           setInputText("");
           setInputImages([]);
           // Default the model selector to:
-          //   1. settings.webui.defaultModel (the user's explicit pick)
-          //   2. settings.defaultProvider / defaultModel (system default)
-          //   3. the most recent assistant message's (provider, model)
-          //      — handles the case where settings say minimax but the
-          //        session was actually started with opencode-go, or the
-          //        user switched providers mid-session without saving
-          //        back to settings.json.
-          //   4. (none) — selector hidden until user picks one
+          //   1. session's current model from model_change in JSONL (highest
+          //      priority — this is the model the session is actually
+          //      configured to use; the user explicitly picked it via the
+          //      webui's set_model RPC or the TUI's /model command)
+          //   2. the most recent assistant message's (provider, model)
+          //      — handles the case where the session was created without
+          //        a model_change but an assistant response already used
+          //        a model
+          //   3. settings.defaultProvider / defaultModel (system default —
+          //      this is what the pi process actually uses for a fresh
+          //      session, so the selector must match)
+          //   4. settings.webui.defaultModel (UI preference — only used if
+          //      no system default is set, since otherwise the selector
+          //      would show a model that the running pi process isn't using)
+          //   5. (none) — selector hidden until user picks one
           const s = settings as any;
           let modelPicked: { provider: string; model: string } | null = null;
-          if (s?.webui?.defaultModel) {
-            const [provider, model] = s.webui.defaultModel.split("/");
-            if (provider && model) modelPicked = { provider, model };
+
+          const currentModel = await api.getSessionModel(id!).catch(() => null);
+          if (currentModel && currentModel.provider && currentModel.model) {
+            modelPicked = { provider: currentModel.provider, model: currentModel.model };
           }
-          if (!modelPicked && s?.defaultProvider && s?.defaultModel) {
-            modelPicked = { provider: s.defaultProvider, model: s.defaultModel };
-          }
+
           if (!modelPicked) {
             for (let i = msgs.length - 1; i >= 0; i--) {
               const m = msgs[i];
@@ -90,6 +107,13 @@ export default function ChatPage() {
                 break;
               }
             }
+          }
+          if (!modelPicked && s?.defaultProvider && s?.defaultModel) {
+            modelPicked = { provider: s.defaultProvider, model: s.defaultModel };
+          }
+          if (!modelPicked && s?.webui?.defaultModel) {
+            const [provider, model] = s.webui.defaultModel.split("/");
+            if (provider && model) modelPicked = { provider, model };
           }
           if (modelPicked) setCurrentModel(modelPicked);
         }
@@ -109,6 +133,16 @@ export default function ChatPage() {
   useEffect(() => {
     if (!id) return;
     ws.connect();
+    // If the singleton WS is already in OPEN state (because the user is
+    // navigating from a previous chat page that left the connection up),
+    // the `open` event will not re-fire. Send subscribe immediately so the
+    // server starts forwarding events for this session; otherwise the
+    // first message_start / message_update arrives but the server's
+    // state.activeSession for our WS is still the previous session, and
+    // the new session renders blank.
+    if (ws.isOpen()) {
+      ws.send({ type: "subscribe", sessionId: id });
+    }
     const unsubOpen = ws.subscribe("open", () => {
       ws.send({ type: "subscribe", sessionId: id });
     });
@@ -160,6 +194,9 @@ export default function ChatPage() {
           // same logical turn will reconcile its id.
           return [...prev, { id: msgId, sessionId: id!, role: "assistant", parts, timestamp: new Date().toISOString(), usage: e.message.usage, model: e.message.model, provider: e.message.provider }];
         });
+        // First streaming token of this turn — the model is now actually
+        // producing output, hide the "thinking..." indicator.
+        setIsThinking(false);
       } else if (e.type === "message_end") {
         const message = e.message;
         if (message?.role === "assistant") {
@@ -178,6 +215,16 @@ export default function ChatPage() {
             }
             return [...prev, { id: msgId, sessionId: id!, role: "assistant", parts, timestamp: new Date().toISOString(), usage: message.usage, model: message.model, provider: message.provider }];
           });
+        }
+      } else if (e.type === "session_status_changed") {
+        setSessionStatus(e.status);
+        // Hide the indicator once the model reports it's done. If the
+        // server reports running, show it (covers the case where the
+        // stream_started event was missed — e.g. mid-reconnect).
+        if (e.status === "idle") {
+          setIsThinking(false);
+        } else if (e.status === "running") {
+          setIsThinking(true);
         }
       }
     });
@@ -269,6 +316,10 @@ export default function ChatPage() {
   const handleSubmit = useCallback(() => {
     const text = inputText.trim();
     if (!text || !id) return;
+    if (!ws.isOpen()) {
+      alert("Connection not ready, please wait a moment and try again.");
+      return;
+    }
     setInputText("");
     setInputImages([]);
     // Optimistic user message
@@ -284,7 +335,9 @@ export default function ChatPage() {
       parts: userParts,
       timestamp: new Date().toISOString(),
     }]);
-    // Send WS
+    // Send WS — also include sessionId so the server can route even if our
+    // subscribe message hasn't been processed yet (singleton WS that's
+    // already OPEN when the page mounts doesn't re-fire the open event).
     ws.send({
       type: "prompt",
       text,
@@ -294,6 +347,10 @@ export default function ChatPage() {
       })),
       sessionId: id,
     });
+    // Show the thinking indicator optimistically. The server's
+    // session_status_changed("running") will arrive almost immediately and
+    // re-affirm it. The first message_update will clear it.
+    setIsThinking(true);
   }, [inputText, inputImages, id]);
 
   // Clear
@@ -327,6 +384,7 @@ export default function ChatPage() {
       {/* Messages */}
       <div className="flex-1 overflow-y-auto">
         <ChatMessages messages={messages} />
+        {isThinking && <ThinkingIndicator />}
         <div ref={messagesEndRef} />
       </div>
       {/* Non-managed session notice */}

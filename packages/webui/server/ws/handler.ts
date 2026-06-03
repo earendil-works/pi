@@ -23,6 +23,12 @@ interface PromptMsg {
   type: "prompt";
   text: string;
   images?: ImageObject[];
+  // Client may include the target sessionId. We use it as the source of
+  // truth for routing, falling back to the active session set by the most
+  // recent subscribe. Without this, a prompt that races ahead of subscribe
+  // (because the singleton WS was already open when the page mounted) gets
+  // dropped with "No active session" and the client never knows.
+  sessionId?: string;
 }
 
 interface AbortMsg {
@@ -202,7 +208,15 @@ export function attachWsHandler(httpServer: Server, pool: SessionPool): WebSocke
             }
           }
           const state = clients.get(ws)!;
-          const sessionId = state.activeSession;
+          // Prefer the sessionId the client put on the message itself.
+          // Fall back to the active session (set by subscribe/switch_session)
+          // so older clients still work, and so a stray prompt with the
+          // wrong sessionId doesn't end up routed to whatever was last
+          // active.
+          const sessionId =
+            typeof (msg as PromptMsg).sessionId === "string" && (msg as PromptMsg).sessionId
+              ? (msg as PromptMsg).sessionId!
+              : state.activeSession;
           if (!sessionId) {
             sendError(ws, "No active session. Use subscribe or switch_session first.");
             return;

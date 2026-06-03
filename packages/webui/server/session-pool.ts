@@ -44,6 +44,11 @@ interface SessionState {
 	proc: ChildProcess;
 	subscribers: Set<WSClient>;
 	titlesSeen: Set<string>;
+	// Set to true after prompt() is called and cleared on agent_end.
+	// Used to emit session_status_changed("running" | "idle") so the
+	// webui can show a real "thinking" indicator tied to actual model
+	// activity (not a fake timer).
+	isResponding: boolean;
 }
 
 /**
@@ -231,7 +236,7 @@ export class SessionPool extends EventEmitter {
 			detached: false,
 		});
 
-		const state: SessionState = { proc, subscribers: new Set(), titlesSeen: new Set() };
+		const state: SessionState = { proc, subscribers: new Set(), titlesSeen: new Set(), isResponding: false };
 
 		// Handle stdout JSON-line output
 		proc.stdout?.on("data", (chunk: Buffer | string) => {
@@ -244,6 +249,20 @@ export class SessionPool extends EventEmitter {
 						const name = (event as any).name;
 						if (typeof name === "string") {
 							this.sessionNames.set(sessionId, name);
+						}
+					}
+					// Emit session_status_changed("idle") when the agent finishes
+					// a turn (after all message_end, turn_end, agent_end). This
+					// is the source of truth for "the model is done" — the
+					// webui uses it to clear its "thinking" indicator.
+					if (typeof event === "object" && event !== null) {
+						const t = (event as any).type;
+						if (t === "agent_end" && state.isResponding) {
+							state.isResponding = false;
+							this.emit("event", {
+								sessionId,
+								event: { type: "session_status_changed", status: "idle" },
+							} as PiEvent);
 						}
 					}
 					// Emit on the pool for external listeners (e.g. WS handler)
@@ -354,6 +373,16 @@ export class SessionPool extends EventEmitter {
 		}
 		const msg = JSON.stringify({ type: "prompt", sessionId, content, message: text }) + "\n";
 		state.proc.stdin?.write(msg);
+		// Emit running BEFORE the model has even started, so the webui can
+		// immediately show a "thinking..." indicator. The next agent_end
+		// from the JSONL stream will clear it.
+		if (!state.isResponding) {
+			state.isResponding = true;
+			this.emit("event", {
+				sessionId,
+				event: { type: "session_status_changed", status: "running" },
+			} as PiEvent);
+		}
 	}
 
 	/**
@@ -403,6 +432,45 @@ export class SessionPool extends EventEmitter {
 		if (!state) return;
 		const msg = JSON.stringify({ type: "abort", sessionId }) + "\n";
 		state.proc.stdin?.write(msg);
+	}
+
+	/**
+	 * Set the model for a session. If the session's pi process is already
+	 * running, send a `set_model` RPC; if not, the next prompt will use
+	 * the in-memory model (the JSONL model_change will be appended by
+	 * the process once it spawns and applies the change).
+	 */
+	async setModel(sessionId: string, provider: string, model: string): Promise<void> {
+		await this.spawnIfNeeded(sessionId);
+		const state = this.sessions.get(sessionId);
+		if (!state) return;
+		const corrId = crypto.randomUUID();
+		const msg = JSON.stringify({ type: "set_model", id: corrId, provider, modelId: model }) + "\n";
+		return new Promise((resolve, reject) => {
+			const timeout = setTimeout(() => {
+				state.proc.stdout?.off("data", onData);
+				reject(new Error("set_model timed out after 5s"));
+			}, 5_000);
+			const onData = (chunk: Buffer | string) => {
+				const lines = chunk.toString().split("\n").filter((l) => l.trim());
+				for (const line of lines) {
+					try {
+						const evt = JSON.parse(line);
+						if (evt.id === corrId && evt.type === "response" && evt.command === "set_model") {
+							clearTimeout(timeout);
+							state.proc.stdout?.off("data", onData);
+							if (evt.success) resolve();
+							else reject(new Error(evt.error || "set_model failed"));
+							return;
+						}
+					} catch {
+						// ignore non-JSON
+					}
+				}
+			};
+			state.proc.stdout?.on("data", onData);
+			state.proc.stdin?.write(msg);
+		});
 	}
 
 	/**

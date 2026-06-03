@@ -166,6 +166,33 @@ export const api = {
     );
   },
 
+  /**
+   * Returns the {provider, model} the session is currently using, by
+   * reading the most recent model_change entry in the session's JSONL.
+   * Returns { provider: null, model: null } when no model_change exists.
+   */
+  getSessionModel(
+    sessionId: string
+  ): Promise<{ provider: string | null; model: string | null }> {
+    return request<{ provider: string | null; model: string | null }>(
+      `/api/sessions/${sessionId}/current-model`
+    );
+  },
+
+  setSessionModel(
+    sessionId: string,
+    selection: { provider: string; model: string }
+  ): Promise<{ ok: true; provider: string; model: string }> {
+    return request<{ ok: true; provider: string; model: string }>(
+      `/api/sessions/${sessionId}/model`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(selection),
+      }
+    );
+  },
+
   deleteSession(id: string): Promise<DeleteSessionResult> {
     return request<DeleteSessionResult>(`/api/sessions/${id}`, {
       method: "DELETE",
@@ -211,6 +238,16 @@ export class WebSocketClient {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private subscriptions: Subscription[] = [];
   private isIntentionallyClosed = false;
+
+  /**
+   * True iff the underlying WebSocket is in the OPEN state. Callers
+   * (e.g. ChatPage.handleSubmit) MUST check this before calling send();
+   * otherwise the silent `if (readyState !== OPEN) return;` inside send()
+   * drops the message without any feedback to the user.
+   */
+  isOpen(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
 
   connect(): void {
     if (this.ws?.readyState === WebSocket.OPEN) return;
