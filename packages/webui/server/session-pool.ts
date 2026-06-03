@@ -1,6 +1,6 @@
 import { ChildProcess, spawn, type SpawnOptions } from "node:child_process";
 import { createReadStream } from "node:fs";
-import { readdir } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join, resolve as resolvePath } from "node:path";
 import { EventEmitter } from "node:events";
 import { homedir } from "node:os";
@@ -89,6 +89,42 @@ export class SessionPool extends EventEmitter {
 		const resolvedCwd = resolvePath(cwd);
 		const safeCwd = `--${resolvedCwd.replace(/^[/\\]/, "").replace(/[/\\:]/g, "-")}--`;
 		this.sessionsDir = join(sessionsBase, safeCwd);
+
+		// Load persisted webui-owned sessions so the ownership flag survives
+		// server restarts. Without this, sessions created via the webui get
+		// demoted to "managed by TUI" every time the server restarts, and
+		// the user can no longer type into them.
+		void this.loadOwnedSessions();
+	}
+
+	private get ownedSessionsPath(): string {
+		return join(this.sessionsDir, "..", ".webui-owned.json");
+	}
+
+	private async loadOwnedSessions(): Promise<void> {
+		try {
+			const raw = await readFile(this.ownedSessionsPath, "utf-8");
+			const ids = JSON.parse(raw) as unknown;
+			if (Array.isArray(ids)) {
+				for (const id of ids) {
+					if (typeof id === "string") this.ownedSessions.add(id);
+				}
+			}
+		} catch {
+			// File missing or malformed — start empty
+		}
+	}
+
+	private async persistOwnedSessions(): Promise<void> {
+		try {
+			await writeFile(
+				this.ownedSessionsPath,
+				JSON.stringify([...this.ownedSessions], null, 2),
+				"utf-8",
+			);
+		} catch (err) {
+			console.error("[session-pool] failed to persist ownedSessions:", err);
+		}
 	}
 
 	/**
@@ -231,6 +267,7 @@ export class SessionPool extends EventEmitter {
 
 		this.sessions.set(sessionId, state);
 		this.ownedSessions.add(sessionId);
+		void this.persistOwnedSessions();
 	}
 
 	/**
@@ -244,10 +281,21 @@ export class SessionPool extends EventEmitter {
 	/**
 	 * Mark a session as webui-owned without spawning a process. Called when
 	 * webui creates a new session via POST /api/sessions so the UI knows
-	 * the input is enabled before the first prompt arrives.
+	 * the input is enabled before the first prompt arrives. The flag is
+	 * persisted to disk so it survives server restarts.
 	 */
 	markSessionOwned(sessionId: string): void {
 		this.ownedSessions.add(sessionId);
+		void this.persistOwnedSessions();
+	}
+
+	/**
+	 * Remove a session from the webui-owned set. Called when the session file
+	 * is deleted so the persisted state stays in sync with disk.
+	 */
+	unmarkSessionOwned(sessionId: string): void {
+		this.ownedSessions.delete(sessionId);
+		void this.persistOwnedSessions();
 	}
 
 	/**

@@ -52,13 +52,21 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
         sessions.map(async (s) => {
           const isRunning = sessionPool.isRunning(s.id);
           const msgCount = await countMessages(s.sessionFile);
+          // A session is webui-managed if (a) the persisted owned set says
+          // so, or (b) it has 0 messages — a session with 0 messages can't
+          // be actively in use by either TUI or webui yet, and the only way
+          // to create a session in this directory is via webui (TUI uses
+          // its own cwd). So 0-message sessions are safe to mark as
+          // webui-owned.
+          const isManaged =
+            sessionPool.isSessionManaged(s.id) || msgCount === 0;
           return {
             ...s,
             title: deriveTitle(s, sessionPool),
             lastActive: s.timestamp,
             status: isRunning ? ("running" as const) : ("idle" as const),
             messageCount: msgCount,
-            isManaged: sessionPool.isSessionManaged(s.id),
+            isManaged,
           };
         }),
       );
@@ -139,6 +147,17 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
       void extractAtomsSafely(jsonlContent, deps).catch((err) => {
         console.error("Background atom extraction failed:", err);
       });
+
+      // Kill any running pi process for this session so it stops writing
+      // to the file we're about to delete.
+      try {
+        await sessionPool.kill(id);
+      } catch (err) {
+        console.error("Error killing pi process for deleted session:", err);
+      }
+      // Remove from webui-owned set so a recreated session doesn't inherit
+      // the deleted session's ownership.
+      sessionPool.unmarkSessionOwned(id);
 
       // Delete the session file immediately
       await unlink(filePath);

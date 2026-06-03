@@ -35,7 +35,7 @@ export function AppShell({
     <div className="flex h-full">
       <aside className="w-[260px] h-full border-r border-stone-200 flex flex-col bg-stone-50">
         <Brand version={version} />
-        <IconRow activePage="chat" />
+        <IconRow />
         <SearchBox value={filterQuery} onChange={onFilterChange} />
         <div className="flex-1 min-h-0 overflow-auto">
           <ConversationList

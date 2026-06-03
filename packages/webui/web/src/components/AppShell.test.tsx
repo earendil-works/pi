@@ -2,8 +2,11 @@ import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import * as React from 'react';
+import { MemoryRouter } from 'react-router-dom';
 import { AppShell } from './AppShell';
 import type { SessionInfo } from '../lib/api';
+
+const renderInRouter = (ui: React.ReactElement) => render(<MemoryRouter>{ui}</MemoryRouter>);
 
 const mockSessions: SessionInfo[] = [
   {
@@ -28,7 +31,7 @@ describe('AppShell', () => {
   });
 
   it('renders Brand component with version', () => {
-    render(
+    renderInRouter(
       <AppShell
         version="1.0.0"
         sessions={[]}
@@ -46,7 +49,7 @@ describe('AppShell', () => {
   });
 
   it('renders IconRow component', () => {
-    render(
+    renderInRouter(
       <AppShell
         version="1.0.0"
         sessions={[]}
@@ -65,7 +68,7 @@ describe('AppShell', () => {
   });
 
   it('renders SearchBox component', () => {
-    render(
+    renderInRouter(
       <AppShell
         version="1.0.0"
         sessions={mockSessions}
@@ -83,7 +86,7 @@ describe('AppShell', () => {
   });
 
   it('renders ConversationList with sessions', () => {
-    render(
+    renderInRouter(
       <AppShell
         version="1.0.0"
         sessions={mockSessions}
@@ -101,7 +104,7 @@ describe('AppShell', () => {
   });
 
   it('renders NewChatButton component', () => {
-    render(
+    renderInRouter(
       <AppShell
         version="1.0.0"
         sessions={[]}
@@ -118,7 +121,7 @@ describe('AppShell', () => {
   });
 
   it('renders children content', () => {
-    render(
+    renderInRouter(
       <AppShell
         version="1.0.0"
         sessions={[]}
@@ -136,7 +139,7 @@ describe('AppShell', () => {
 
   it('triggers onNewChat when NewChatButton is clicked', () => {
     const onNewChat = vi.fn();
-    render(
+    renderInRouter(
       <AppShell
         version="1.0.0"
         sessions={[]}
@@ -155,7 +158,7 @@ describe('AppShell', () => {
 
   it('triggers onFilterChange when SearchBox input changes', () => {
     const onFilterChange = vi.fn();
-    render(
+    renderInRouter(
       <AppShell
         version="1.0.0"
         sessions={mockSessions}
@@ -175,7 +178,7 @@ describe('AppShell', () => {
 
   it('triggers onSelectSession when a session is clicked', () => {
     const onSelectSession = vi.fn();
-    render(
+    renderInRouter(
       <AppShell
         version="1.0.0"
         sessions={mockSessions}
@@ -193,7 +196,7 @@ describe('AppShell', () => {
   });
 
   it('shows loading state on NewChatButton when isCreatingChat is true', () => {
-    render(
+    renderInRouter(
       <AppShell
         version="1.0.0"
         sessions={[]}
@@ -211,7 +214,7 @@ describe('AppShell', () => {
   });
 
   it('filters sessions based on filterQuery', () => {
-    render(
+    renderInRouter(
       <AppShell
         version="1.0.0"
         sessions={mockSessions}
@@ -229,7 +232,7 @@ describe('AppShell', () => {
   });
 
   it('highlights current session', () => {
-    render(
+    renderInRouter(
       <AppShell
         version="1.0.0"
         sessions={mockSessions}
