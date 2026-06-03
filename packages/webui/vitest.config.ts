@@ -7,7 +7,7 @@ const repoRoot = resolve(__dirname, "../..");
 
 export default defineConfig({
   test: {
-    include: ["server/test/**/*.test.ts"],
+    include: ["server/test/**/*.test.ts", "server/lib/**/*.test.ts"],
   },
   resolve: {
     alias: {

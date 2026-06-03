@@ -14,10 +14,15 @@ interface UnsubscribeMsg {
   sessionId: string;
 }
 
+interface ImageObject {
+  mediaType: string;
+  data: string;
+}
+
 interface PromptMsg {
   type: "prompt";
   text: string;
-  images?: string[];
+  images?: ImageObject[];
 }
 
 interface AbortMsg {
@@ -54,7 +59,7 @@ interface ClientState {
  * @returns The WebSocketServer (caller may call .close() on it)
  */
 export function attachWsHandler(httpServer: Server, pool: SessionPool): WebSocketServer {
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 25 * 1024 * 1024 });
 
   // Per-client state
   const clients = new Map<WebSocket, ClientState>();
@@ -157,14 +162,43 @@ export function attachWsHandler(httpServer: Server, pool: SessionPool): WebSocke
             sendError(ws, "invalid prompt");
             return;
           }
-          // Validate images: array of strings, each < 1KB
+          // Validate images: Array<{mediaType: string, data: string}>
+          const ALLOWED_MEDIA_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
+          const MAXIndividual_SIZE = 5 * 1024 * 1024; // 5MB
+          const MAX_TOTAL_SIZE = 20 * 1024 * 1024; // 20MB
+          const MAX_IMAGES = 4;
           if (images !== undefined) {
-            if (
-              !Array.isArray(images) ||
-              !images.every((i) => typeof i === "string" && i.length < 1024)
-            ) {
+            if (!Array.isArray(images)) {
               sendError(ws, "invalid prompt");
               return;
+            }
+            if (images.length > MAX_IMAGES) {
+              sendError(ws, "invalid prompt");
+              return;
+            }
+            let totalDataLength = 0;
+            for (const img of images) {
+              if (typeof img !== "object" || img === null) {
+                sendError(ws, "invalid prompt");
+                return;
+              }
+              if (typeof img.mediaType !== "string" || typeof img.data !== "string") {
+                sendError(ws, "invalid prompt");
+                return;
+              }
+              if (!ALLOWED_MEDIA_TYPES.has(img.mediaType)) {
+                sendError(ws, "invalid prompt");
+                return;
+              }
+              if (img.data.length > MAXIndividual_SIZE) {
+                sendError(ws, "invalid prompt");
+                return;
+              }
+              totalDataLength += img.data.length;
+              if (totalDataLength > MAX_TOTAL_SIZE) {
+                sendError(ws, "invalid prompt");
+                return;
+              }
             }
           }
           const state = clients.get(ws)!;

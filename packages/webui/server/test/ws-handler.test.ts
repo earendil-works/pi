@@ -104,10 +104,10 @@ describe("WsHandler", () => {
     await new Promise<void>((res) => setTimeout(res, 30));
 
     // Send prompt
-    ws.send(JSON.stringify({ type: "prompt", text: "hello world", images: ["img1"] }));
+    ws.send(JSON.stringify({ type: "prompt", text: "hello world", images: [{ mediaType: "image/png", data: "img1" }] }));
     await new Promise<void>((res) => setTimeout(res, 50));
 
-    expect(pool.prompt).toHaveBeenCalledWith("s1", "hello world", ["img1"]);
+    expect(pool.prompt).toHaveBeenCalledWith("s1", "hello world", [{ mediaType: "image/png", data: "img1" }]);
 
     ws.close();
   });
@@ -456,6 +456,176 @@ describe("WsHandler", () => {
 
     // setSessionName should NOT be called because getTitlesSeen returned undefined
     expect(pool.setSessionName).not.toHaveBeenCalled();
+
+    ws.close();
+  });
+
+  // -------------------------------------------------------------------------
+  // Image validation tests (new schema: images?: Array<{mediaType: string, data: string}>)
+  // -------------------------------------------------------------------------
+
+  /**
+   * S65: WS receives valid images (up to 4, each ≤5MB, total ≤20MB, whitelisted MIME)
+   * and forwards them to pool.prompt
+   */
+  it("prompt with valid images → forwards to pool.prompt", async () => {
+    const pool = createFakePool();
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s1" }));
+    await new Promise<void>((res) => setTimeout(res, 30));
+
+    const validImages = [
+      { mediaType: "image/png", data: "a".repeat(100) },
+      { mediaType: "image/jpeg", data: "b".repeat(200) },
+    ];
+    ws.send(JSON.stringify({ type: "prompt", text: "hello", images: validImages }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    expect(pool.prompt).toHaveBeenCalledWith("s1", "hello", validImages);
+
+    ws.close();
+  });
+
+  /**
+   * S66: WS rejects more than 4 images → sends error, does NOT call pool.prompt
+   */
+  it("prompt with 5 images → sends error, does not call pool.prompt", async () => {
+    const pool = createFakePool();
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    const received: unknown[] = [];
+    ws.on("message", (data) => received.push(JSON.parse(data.toString())));
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s1" }));
+    await new Promise<void>((res) => setTimeout(res, 30));
+
+    const fiveImages = [
+      { mediaType: "image/png", data: "a" },
+      { mediaType: "image/png", data: "b" },
+      { mediaType: "image/png", data: "c" },
+      { mediaType: "image/png", data: "d" },
+      { mediaType: "image/png", data: "e" },
+    ];
+    ws.send(JSON.stringify({ type: "prompt", text: "hello", images: fiveImages }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    expect(received).toContainEqual({ type: "error", message: "invalid prompt" });
+    expect(pool.prompt).not.toHaveBeenCalled();
+
+    ws.close();
+  });
+
+  /**
+   * S67: WS rejects single image > 5MB → sends error, does NOT call pool.prompt
+   */
+  it("prompt with single image > 5MB data → sends error, does not call pool.prompt", async () => {
+    const pool = createFakePool();
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    const received: unknown[] = [];
+    ws.on("message", (data) => received.push(JSON.parse(data.toString())));
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s1" }));
+    await new Promise<void>((res) => setTimeout(res, 30));
+
+    // 6MB of data (6 * 1024 * 1024 characters)
+    const largeImage = { mediaType: "image/png", data: "x".repeat(6 * 1024 * 1024) };
+    ws.send(JSON.stringify({ type: "prompt", text: "hello", images: [largeImage] }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    expect(received).toContainEqual({ type: "error", message: "invalid prompt" });
+    expect(pool.prompt).not.toHaveBeenCalled();
+
+    ws.close();
+  });
+
+  /**
+   * S68: WS rejects total images > 20MB → sends error, does NOT call pool.prompt
+   */
+  it("prompt with total images > 20MB → sends error, does not call pool.prompt", async () => {
+    const pool = createFakePool();
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    const received: unknown[] = [];
+    ws.on("message", (data) => received.push(JSON.parse(data.toString())));
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s1" }));
+    await new Promise<void>((res) => setTimeout(res, 30));
+
+    // 21MB total (21 * 1024 * 1024 characters)
+    const heavyImages = [
+      { mediaType: "image/png", data: "a".repeat(11 * 1024 * 1024) },
+      { mediaType: "image/jpeg", data: "b".repeat(10 * 1024 * 1024) },
+    ];
+    ws.send(JSON.stringify({ type: "prompt", text: "hello", images: heavyImages }));
+    await new Promise<void>((res) => setTimeout(res, 300));
+
+    expect(received).toContainEqual({ type: "error", message: "invalid prompt" });
+    expect(pool.prompt).not.toHaveBeenCalled();
+
+    ws.close();
+  });
+
+  /**
+   * S69: WS rejects non-whitelisted MIME type (e.g., image/bmp) → sends error
+   */
+  it("prompt with non-whitelisted MIME (image/bmp) → sends error, does not call pool.prompt", async () => {
+    const pool = createFakePool();
+
+    server = createServer();
+    wss = attachWsHandler(server, pool as unknown as import("../session-pool").SessionPool);
+
+    await new Promise<void>((res) => server.listen(0, "127.0.0.1", res));
+    const addr = server.address() as { port: number };
+
+    const ws = new WebSocket(`ws://127.0.0.1:${addr.port}/ws`);
+    await new Promise<void>((res) => ws.on("open", res));
+
+    const received: unknown[] = [];
+    ws.on("message", (data) => received.push(JSON.parse(data.toString())));
+
+    ws.send(JSON.stringify({ type: "subscribe", sessionId: "s1" }));
+    await new Promise<void>((res) => setTimeout(res, 30));
+
+    const bmpImage = { mediaType: "image/bmp", data: "deadbeef" };
+    ws.send(JSON.stringify({ type: "prompt", text: "hello", images: [bmpImage] }));
+    await new Promise<void>((res) => setTimeout(res, 50));
+
+    expect(received).toContainEqual({ type: "error", message: "invalid prompt" });
+    expect(pool.prompt).not.toHaveBeenCalled();
 
     ws.close();
   });

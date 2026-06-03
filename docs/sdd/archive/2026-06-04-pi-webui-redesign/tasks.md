@@ -16,7 +16,7 @@
 
 ## 1. Server 基础 Server 基础
 
-- [ ] 1.1 **`parseModelsJson` 工具 + 单测**
+- [x] 1.1 **`parseModelsJson` 工具 + 单测**
   - **文件**: `packages/webui/server/lib/parse-models.ts` (Create), `packages/webui/server/lib/parse-models.test.ts` (Create)
   - **内容**: 实现 `parseModelsJson(jsonStr: string): {providers: Array<{name: string; models: Array<{id: string; name: string}>}>}`,读 `~/.pi/agent/models.json`,处理 3 种 schema: `{providers:[{name,models}]}` / `{[name]: models[]}` / 数组。处理空文件/格式错误返回 `{providers: []}`。
   - **验证**: `cd packages/webui && timeout 30 node ../../node_modules/vitest/dist/cli.js --run server/lib/parse-models.test.ts` (5+ 测试, 包含正常/异常/边界)
@@ -28,7 +28,7 @@
   - **验证**: `cd packages/webui && timeout 30 node ../../node_modules/vitest/dist/cli.js --run server/routes/models.test.ts` (3+ 测试: 正常 models.json、空文件、文件不存在)
   - **依赖**: 1.1
 
-- [ ] 1.3 **`extractUsage` 工具 + 单测**
+- [x] 1.3 **`extractUsage` 工具 + 单测**
   - **文件**: `packages/webui/server/lib/usage-parser.ts` (Create), `packages/webui/server/lib/usage-parser.test.ts` (Create)
   - **内容**: 实现 `extractUsage(jsonlLine: string): {input: number; output: number} | undefined`,解析 `entry.message.usage.{input,output}`,处理缺失字段、字符串数字、负数返回 undefined。**只返回数字** ,不接触 parts。
   - **验证**: `cd packages/webui && timeout 30 node ../../node_modules/vitest/dist/cli.js --run server/lib/usage-parser.test.ts` (6+ 测试: 正常/缺失 usage/字符串/0/负数/坏 JSON)
@@ -40,7 +40,7 @@
   - **验证**: `cd packages/webui && timeout 30 node ../../node_modules/vitest/dist/cli.js --run server/test/sessions-routes.test.ts` (现有测试 + 2 新测试, 验证含 usage 的 message 含 usage 字段, 不含 usage 的不渲染该字段)
   - **依赖**: 1.3
 
-- [ ] 1.5 **`spawnPiNewSession` + UUID 降级 + 测试**
+- [x] 1.5 **`spawnPiNewSession` + UUID 降级 + 测试**
   - **文件**: `packages/webui/server/lib/new-session.ts` (Create), `packages/webui/server/lib/new-session.test.ts` (Create)
   - **内容**: 实现 `spawnPiNewSession(cwd: string, opts: {timeoutMs?: number}): Promise<{sessionId: string, sessionFile: string}>`,5s 超时内 spawn `pi --mode rpc --new-session --cwd <cwd>`,监听 stdout 等 `{type:"session_created", sessionId}`.失败 (timeout / non-zero exit) 降级: 调 `randomUUID()`,写空 header JSONL 到 `<sessionsDir>/<iso>_<uuid>.jsonl`。`console.warn` 打印 fallback 原因。
   - **验证**: `cd packages/webui && timeout 30 node ../../node_modules/vitest/dist/cli.js --run server/lib/new-session.test.ts` (5+ 测试: pi 成功/pi 超时/pi 错误输出/UUID 降级/超时回退时序)
@@ -52,7 +52,7 @@
   - **验证**: `cd packages/webui && timeout 30 node ../../node_modules/vitest/dist/cli.js --run server/test/sessions-routes.test.ts` (现有测试通过 + 2 新测试: 调用了 spawnPiNewSession, 失败时降级)
   - **依赖**: 1.5
 
-- [ ] 1.7 **WS `prompt.images` 验证升级 + 测试**
+- [x] 1.7 **WS `prompt.images` 验证升级 + 测试**
   - **文件**: `packages/webui/server/ws/handler.ts` (Modify, prompt case), `packages/webui/server/test/ws-handler.test.ts` (Modify, 加 4 测试)
   - **内容**: WS handler 接收 `images?: Array<{mediaType: string; data: string}>`,验证: 数组长度 ≤ 4,每图 data 长度 ≤ 5MB (5 * 1024 * 1024),总 base64 长度 ≤ 20MB,mediaType 在白名单 `image/png|image/jpeg|image/gif|image/webp`。验证失败 `sendError`。验证通过 `pool.prompt(sessionId, text, images)`。
   - **验证**: `cd packages/webui && timeout 30 node ../../node_modules/vitest/dist/cli.js --run server/test/ws-handler.test.ts` (现有测试 + 4 新测试: 正常 / > 4 张 / 单图 > 5MB / 非法 MIME)
