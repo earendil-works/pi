@@ -1,0 +1,10 @@
+phase: archive
+workflow: quickfix
+change: pi-webui-sessiondir-encoding
+created_at: 2026-06-02
+base_ref: bfbd55d50c2d2c2d6abfdaf2e74c76ca005e498f
+tasks_total: 1
+tasks_done: 1
+isolation: branch
+verify_result: pass
+archived: true
