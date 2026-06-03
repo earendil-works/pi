@@ -118,6 +118,29 @@ describe("ChatPage", () => {
     });
   });
 
+  describe("WebSocket subscription", () => {
+    it("sends subscribe message with sessionId on WS open", async () => {
+      const mocks = await renderChatPage("test-session-1");
+      await waitFor(() => {
+        expect(screen.queryByText("Loading...")).toBeNull();
+      });
+
+      // Find the open handler and trigger it to simulate WS connection
+      const openHandler = capturedHandlers.get("open");
+      expect(openHandler).toBeDefined();
+      act(() => {
+        openHandler!({ type: "open" });
+      });
+
+      await waitFor(() => {
+        expect(mocks.ws.send).toHaveBeenCalledWith({
+          type: "subscribe",
+          sessionId: "test-session-1",
+        });
+      });
+    });
+  });
+
   describe("InputArea integration", () => {
     it("typing text updates textarea value", async () => {
       await renderChatPage("test-session-1");

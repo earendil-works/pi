@@ -187,7 +187,7 @@ export const api = {
   setDefaultModel(model: { provider: string; model: string }): Promise<void> {
     return request<void>("/api/settings", {
       method: "PATCH",
-      body: JSON.stringify({ defaultModel: model }),
+      body: JSON.stringify({ webui: { defaultModel: `${model.provider}/${model.model}` } }),
     });
   },
 };

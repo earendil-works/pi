@@ -58,6 +58,9 @@ export default function ChatPage() {
   useEffect(() => {
     if (!id) return;
     ws.connect();
+    const unsubOpen = ws.subscribe("open", () => {
+      ws.send({ type: "subscribe", sessionId: id });
+    });
     const unsub = ws.subscribe("session_event", (msg: any) => {
       if (msg.sessionId !== id) return;
       const e = msg.event;
@@ -85,7 +88,7 @@ export default function ChatPage() {
         }
       }
     });
-    return () => unsub();
+    return () => { unsubOpen(); unsub(); };
   }, [id]);
 
   // Scroll

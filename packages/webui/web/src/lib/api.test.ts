@@ -225,7 +225,7 @@ describe("api", () => {
   });
 
   describe("setDefaultModel", () => {
-    it("should call PATCH /api/settings with model", async () => {
+    it("should call PATCH /api/settings with webui.defaultModel string", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         status: 200,
@@ -238,7 +238,7 @@ describe("api", () => {
         "http://127.0.0.1:8741/api/settings",
         expect.objectContaining({
           method: "PATCH",
-          body: JSON.stringify({ defaultModel: { provider: "anthropic", model: "claude-3" } }),
+          body: JSON.stringify({ webui: { defaultModel: "anthropic/claude-3" } }),
         })
       );
     });
