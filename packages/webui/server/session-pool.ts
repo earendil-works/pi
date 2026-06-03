@@ -267,11 +267,23 @@ export class SessionPool extends EventEmitter {
 	 * Write a JSON-line message to a session's pi process stdin.
 	 * Spawns the process if not running.
 	 */
-	async prompt(sessionId: string, text: string, images?: string[]): Promise<void> {
+	async prompt(
+		sessionId: string,
+		text: string,
+		images?: Array<{ mediaType: string; data: string }>,
+	): Promise<void> {
 		await this.spawnIfNeeded(sessionId);
 		const state = this.sessions.get(sessionId);
 		if (!state) return;
-		const msg = JSON.stringify({ type: "prompt", sessionId, message: text, images: images ?? [] }) + "\n";
+		const content: Array<{ type: "text"; text: string } | { type: "image"; mediaType: string; data: string }> = [
+			{ type: "text", text },
+		];
+		if (images) {
+			for (const img of images) {
+				content.push({ type: "image", mediaType: img.mediaType, data: img.data });
+			}
+		}
+		const msg = JSON.stringify({ type: "prompt", sessionId, content, message: text }) + "\n";
 		state.proc.stdin?.write(msg);
 	}
 

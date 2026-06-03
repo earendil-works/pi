@@ -22,7 +22,7 @@
   - **验证**: `cd packages/webui && timeout 30 node ../../node_modules/vitest/dist/cli.js --run server/lib/parse-models.test.ts` (5+ 测试, 包含正常/异常/边界)
   - **依赖**: 无
 
-- [ ] 1.2 **`GET /api/models` 路由 + 集成测试**
+- [x] 1.2 **`GET /api/models` 路由 + 集成测试**
   - **文件**: `packages/webui/server/routes/models.ts` (Create), `packages/webui/server/routes/models.test.ts` (Create)
   - **内容**: 新路由 `app.get("/api/models", (_req, res) => ...)`,调 `parseModelsJson(fs.readFileSync("~/.pi/agent/models.json","utf-8"))`,返回 JSON。`app.locals.homeDir` 注入 home 路径(测试用 stub)。
   - **验证**: `cd packages/webui && timeout 30 node ../../node_modules/vitest/dist/cli.js --run server/routes/models.test.ts` (3+ 测试: 正常 models.json、空文件、文件不存在)
@@ -34,7 +34,7 @@
   - **验证**: `cd packages/webui && timeout 30 node ../../node_modules/vitest/dist/cli.js --run server/lib/usage-parser.test.ts` (6+ 测试: 正常/缺失 usage/字符串/0/负数/坏 JSON)
   - **依赖**: 无
 
-- [ ] 1.4 **`readMessages` 返回 usage 字段 + 测试**
+- [x] 1.4 **`readMessages` 返回 usage 字段 + 测试**
   - **文件**: `packages/webui/server/routes/sessions.ts` (Modify, readMessages 函数), `packages/webui/server/test/sessions-routes.test.ts` (Modify, 加 2 测试)
   - **内容**: 修改 readMessages, 对 assistant 消息构造 `usage?: {input, output}` 字段 (从 `extractUsage(line)`)。`Message` interface 扩展 `usage?: {input: number; output: number}`。返回 message 对象顺序不变。
   - **验证**: `cd packages/webui && timeout 30 node ../../node_modules/vitest/dist/cli.js --run server/test/sessions-routes.test.ts` (现有测试 + 2 新测试, 验证含 usage 的 message 含 usage 字段, 不含 usage 的不渲染该字段)
@@ -46,7 +46,7 @@
   - **验证**: `cd packages/webui && timeout 30 node ../../node_modules/vitest/dist/cli.js --run server/lib/new-session.test.ts` (5+ 测试: pi 成功/pi 超时/pi 错误输出/UUID 降级/超时回退时序)
   - **依赖**: 无
 
-- [ ] 1.6 **`POST /api/sessions` 用 `spawnPiNewSession`**
+- [x] 1.6 **`POST /api/sessions` 用 `spawnPiNewSession`**
   - **文件**: `packages/webui/server/routes/sessions.ts` (Modify, POST handler), `packages/webui/server/test/sessions-routes.test.ts` (Modify, 加 2 测试)
   - **内容**: 替换现有 POST /api/sessions 的 `randomUUID()` 路径,调 `spawnPiNewSession(cwd)`,返回 `{id, sessionFile}`。失败时仍走 UUID fallback 路径(由 spawnPiNewSession 内部处理)。
   - **验证**: `cd packages/webui && timeout 30 node ../../node_modules/vitest/dist/cli.js --run server/test/sessions-routes.test.ts` (现有测试通过 + 2 新测试: 调用了 spawnPiNewSession, 失败时降级)
@@ -58,7 +58,7 @@
   - **验证**: `cd packages/webui && timeout 30 node ../../node_modules/vitest/dist/cli.js --run server/test/ws-handler.test.ts` (现有测试 + 4 新测试: 正常 / > 4 张 / 单图 > 5MB / 非法 MIME)
   - **依赖**: 无
 
-- [ ] 1.8 **`session-pool.prompt` 透传 `content[]` 给 pi**
+- [x] 1.8 **`session-pool.prompt` 透传 `content[]` 给 pi**
   - **文件**: `packages/webui/server/session-pool.ts` (Modify, prompt 方法), `packages/webui/server/test/session-pool.test.ts` (Modify, 加 1 测试)
   - **内容**: `prompt(sessionId, text, images?: Array<{mediaType, data}>)` 写 stdin: `{type:"prompt", sessionId, content:[{type:"text", text}, ...images.map(i => ({type:"image", mediaType: i.mediaType, data: i.data}))], message: text}`。向后兼容: 若 images 为空仍发 message 字段 (老 pi 也接受)。
   - **验证**: `cd packages/webui && timeout 30 node ../../node_modules/vitest/dist/cli.js --run server/test/session-pool.test.ts` (现有测试 + 1 新测试: 验证 stdin JSON 含 content 数组含 text+image)

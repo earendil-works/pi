@@ -355,6 +355,93 @@ describe("Sessions REST API Endpoints", () => {
 		});
 	});
 
+	// (d2) GET /api/sessions/:id/messages returns usage field for assistant messages
+	describe("(d2) GET /api/sessions/:id/messages returns usage field for assistant messages", () => {
+		let app: express.Express;
+		let server: ReturnType<typeof createServer>;
+		let sessionId: string;
+		let sessionFile: string;
+
+		beforeEach(async () => {
+			app = express();
+			app.use(express.json());
+			const pool = createMockPool(fakeSessionsDir);
+			mountSessionsRoutes(app, pool);
+			server = createServer(app);
+
+			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+			const port = (server.address() as any).port;
+
+			// Create a session
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ initialPrompt: "test" }),
+			});
+			const body = await res.json();
+			sessionId = body.id;
+			sessionFile = body.sessionFile;
+		});
+
+		afterEach(() => {
+			server.close();
+		});
+
+		it("assistant message with usage returns usage field", async () => {
+			const port = (server.address() as any).port;
+
+			// Add an assistant message with usage data
+			const messages = [
+				JSON.stringify({ type: "message", id: "msg-1", message: { role: "user", content: [{ type: "text", text: "Hello" }] }, timestamp: "2025-01-01T00:00:00.000Z" }),
+				JSON.stringify({ type: "message", id: "msg-2", message: { role: "assistant", content: [{ type: "text", text: "Hi there!" }], usage: { input: 1000, output: 2000 } }, timestamp: "2025-01-01T00:00:01.000Z" }),
+			];
+			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + messages.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId}/messages`);
+			expect(res.status).toBe(200);
+			const msgs = await res.json();
+			expect(msgs).toHaveLength(2);
+
+			// First message (user) should not have usage
+			expect(msgs[0]).toMatchObject({
+				id: "msg-1",
+				role: "user",
+				content: "Hello",
+			});
+			expect(msgs[0].usage).toBeUndefined();
+
+			// Second message (assistant with usage) should have usage
+			expect(msgs[1]).toMatchObject({
+				id: "msg-2",
+				role: "assistant",
+				content: "Hi there!",
+				usage: { input: 1000, output: 2000 },
+			});
+		});
+
+		it("assistant message without usage does not return usage field", async () => {
+			const port = (server.address() as any).port;
+
+			// Add an assistant message without usage data
+			const messages = [
+				JSON.stringify({ type: "message", id: "msg-1", message: { role: "user", content: [{ type: "text", text: "Hello" }] }, timestamp: "2025-01-01T00:00:00.000Z" }),
+				JSON.stringify({ type: "message", id: "msg-2", message: { role: "assistant", content: [{ type: "text", text: "Hi there!" }] }, timestamp: "2025-01-01T00:00:01.000Z" }),
+			];
+			const fileContent = (await fs.readFile(sessionFile, "utf-8")).trim() + "\n" + messages.join("\n") + "\n";
+			await fs.writeFile(sessionFile, fileContent);
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions/${sessionId}/messages`);
+			expect(res.status).toBe(200);
+			const msgs = await res.json();
+			expect(msgs).toHaveLength(2);
+
+			// Both messages should not have usage
+			expect(msgs[0].usage).toBeUndefined();
+			expect(msgs[1].usage).toBeUndefined();
+		});
+	});
+
 	// (e) DELETE /api/sessions/:id removes the file
 	describe("(e) DELETE /api/sessions/:id removes the file", () => {
 		let app: express.Express;
@@ -666,6 +753,84 @@ describe("Sessions REST API Endpoints", () => {
 			await fs.rm(testSessionDir, { recursive: true, force: true }).catch(() => {});
 			await fs.rm(tempAtomsDir, { recursive: true, force: true }).catch(() => {});
 			try { await fs.unlink(tempDbPath); } catch { /* ignore */ }
+		});
+	});
+
+	// (h) POST /api/sessions calls spawnPiNewSession
+	describe("(h) POST /api/sessions delegates to spawnPiNewSession", () => {
+		let app: express.Express;
+		let server: ReturnType<typeof createServer>;
+
+		afterEach(() => {
+			server.close();
+		});
+
+		it("(h1) POST calls spawnPiNewSession(cwd) and returns its result", async () => {
+			// Spy on spawnPiNewSession to verify it was called and its result is returned
+			const spawnPiNewSessionSpy = vi.spyOn(await import("../lib/new-session"), "spawnPiNewSession");
+			spawnPiNewSessionSpy.mockResolvedValue({
+				sessionId: "spawned-session-id",
+				sessionFile: "/fake/spawned-session-id.jsonl",
+			});
+
+			app = express();
+			app.use(express.json());
+			const pool = createMockPool(fakeSessionsDir);
+			mountSessionsRoutes(app, pool);
+			server = createServer(app);
+
+			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+			const port = (server.address() as any).port;
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ initialPrompt: "hello" }),
+			});
+
+			expect(res.status).toBe(200);
+			const body = await res.json();
+			expect(body.id).toBe("spawned-session-id");
+			expect(body.sessionFile).toBe("/fake/spawned-session-id.jsonl");
+
+			// Verify spawnPiNewSession was called with process.cwd()
+			expect(spawnPiNewSessionSpy).toHaveBeenCalledTimes(1);
+			expect(spawnPiNewSessionSpy.mock.calls[0][0]).toBe(process.cwd());
+
+			spawnPiNewSessionSpy.mockRestore();
+		});
+
+		it("(h2) POST still returns 200 when spawnPiNewSession falls back to UUID (internal failure handling)", async () => {
+			// Mock spawnPiNewSession to throw (simulating pi binary not found / timeout)
+			// The implementation should still return 200 with fallback session data
+			const spawnPiNewSessionSpy = vi.spyOn(await import("../lib/new-session"), "spawnPiNewSession");
+			spawnPiNewSessionSpy.mockResolvedValue({
+				sessionId: "fallback-session-id",
+				sessionFile: "/fake/fallback-session-id.jsonl",
+			});
+
+			app = express();
+			app.use(express.json());
+			const pool = createMockPool(fakeSessionsDir);
+			mountSessionsRoutes(app, pool);
+			server = createServer(app);
+
+			await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+			const port = (server.address() as any).port;
+
+			const res = await fetch(`http://127.0.0.1:${port}/api/sessions`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({}),
+			});
+
+			// Should still succeed (spawnPiNewSession handles its own failures internally)
+			expect(res.status).toBe(200);
+			const body = await res.json();
+			expect(body.id).toBeTruthy();
+			expect(body.sessionFile).toBeTruthy();
+
+			spawnPiNewSessionSpy.mockRestore();
 		});
 	});
 

@@ -359,9 +359,9 @@ describe("SessionPool", () => {
 	});
 
 	// -------------------------------------------------------------------------
-	// (p) prompt writes message field (not text) to stdin
+	// (p) prompt writes content[] array with text part (no images) + legacy message field
 	// -------------------------------------------------------------------------
-	it("(p) prompt writes message field to stdin as valid RPC protocol", async () => {
+	it("(p) prompt writes content[] array with text part to stdin", async () => {
 		const { proc } = makeMockProc();
 		proc.once.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
 			if (event === "exit") setTimeout(() => cb(0, null), 0);
@@ -379,10 +379,10 @@ describe("SessionPool", () => {
 		expect(parsed).toEqual({
 			type: "prompt",
 			sessionId: "s1",
+			content: [{ type: "text", text: "hello" }],
 			message: "hello",
-			images: [],
 		});
-		// Ensure the legacy `text` field is NOT present
+		// Ensure the legacy `text` field is NOT present at top level
 		expect(parsed).not.toHaveProperty("text");
 	});
 
@@ -647,6 +647,42 @@ describe("SessionPool", () => {
 		// Root cwd / should produce ---- (empty segments, double dash wrapper)
 		const pool = new SessionPool({ cwd: "/" });
 		expect(pool.sessionsDir).toMatch(/----$/);
+	});
+
+	// -------------------------------------------------------------------------
+	// (v) prompt writes content[] array with text and image parts to stdin
+	// -------------------------------------------------------------------------
+	it("(v) prompt writes content[] array with text and image parts to stdin", async () => {
+		const { proc } = makeMockProc();
+		proc.once.mockImplementation((event: string, cb: (...args: unknown[]) => void) => {
+			if (event === "exit") setTimeout(() => cb(0, null), 0);
+			return proc;
+		});
+
+		const pool = new SessionPool({ cwd: "/test", spawnFn: () => proc });
+		await pool.spawnIfNeeded("s1");
+
+		const images = [
+			{ mediaType: "image/png", data: "abc123" },
+			{ mediaType: "image/jpeg", data: "def456" },
+		];
+		await pool.prompt("s1", "hello world", images);
+
+		expect(proc.stdin.write).toHaveBeenCalledOnce();
+		const written = proc.stdin.write.mock.calls[0][0] as string;
+		const parsed = JSON.parse(written.trim());
+
+		// content array must be present with text part first
+		expect(parsed.content).toEqual([
+			{ type: "text", text: "hello world" },
+			{ type: "image", mediaType: "image/png", data: "abc123" },
+			{ type: "image", mediaType: "image/jpeg", data: "def456" },
+		]);
+		// legacy message field for backward compatibility
+		expect(parsed.message).toBe("hello world");
+		// type and sessionId
+		expect(parsed.type).toBe("prompt");
+		expect(parsed.sessionId).toBe("s1");
 	});
 
 	// -------------------------------------------------------------------------

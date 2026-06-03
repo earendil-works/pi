@@ -1,11 +1,12 @@
 import express from "express";
-import { randomUUID } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
-import { mkdir, readdir, unlink, readFile } from "node:fs/promises";
+import { createReadStream } from "node:fs";
+import { readdir, unlink, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { SessionPool, SessionHeader } from "../session-pool";
 import { runMemoryExtraction } from "@earendil-works/pi-personal-assistant";
 import type { RunMemoryExtractionOptions, PersonalAssistantConfig } from "@earendil-works/pi-personal-assistant";
+import { spawnPiNewSession } from "../lib/new-session";
+import { extractUsage } from "../lib/usage-parser";
 
 export interface SessionsDeps {
   callLlm: (prompt: string) => Promise<string>;
@@ -73,30 +74,12 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
   // POST /api/sessions - create new session
   app.post("/api/sessions", async (req, res) => {
     try {
-      const { initialPrompt } = req.body as { initialPrompt?: string };
       const cwd = process.cwd();
       const sessionsDir = sessionPool.sessionsDir;
-
-      // Ensure directory exists
-      await mkdir(sessionsDir, { recursive: true });
-
-      const sessionId = randomUUID();
-      const timestamp = toIsoTs(new Date());
-      const filePath = sessionFilePath(sessionsDir, sessionId, timestamp);
-
-      const header: SessionHeader = {
-        type: "session",
-        id: sessionId,
-        timestamp: new Date().toISOString(),
-        cwd,
-      };
-
-      // Write header line to JSONL file
-      await writeJsonlLine(filePath, header);
-
+      const result = await spawnPiNewSession(cwd, { sessionsDir });
       res.status(200).json({
-        id: sessionId,
-        sessionFile: filePath,
+        id: result.sessionId,
+        sessionFile: result.sessionFile,
       });
     } catch (err) {
       console.error("Error creating session:", err);
@@ -217,14 +200,6 @@ function parseMessagesFromJsonl(jsonlContent: string): Array<{ role: string; con
   return messages;
 }
 
-function toIsoTs(date: Date): string {
-  return date.toISOString().replace(/:/g, "-");
-}
-
-function sessionFilePath(sessionsDir: string, id: string, timestamp: string): string {
-  return join(sessionsDir, `${timestamp}_${id}.jsonl`);
-}
-
 async function parseSessionHeader(filePath: string): Promise<SessionHeader | undefined> {
   return new Promise((resolve) => {
     const stream = createReadStream(filePath, { encoding: "utf8", highWaterMark: 1024 });
@@ -281,24 +256,13 @@ async function findSessionFile(sessionsDir: string, sessionId: string): Promise<
   return undefined;
 }
 
-async function writeJsonlLine(filePath: string, data: unknown): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const stream = createWriteStream(filePath, { flags: "w" });
-    stream.write(JSON.stringify(data) + "\n", (err) => {
-      if (err) {
-        reject(err);
-      }
-    });
-    stream.end(() => resolve());
-  });
-}
-
 interface Message {
   id: string;
   sessionId: string;
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: string;
+  usage?: { input: number; output: number };
 }
 
 async function readMessages(
@@ -338,13 +302,23 @@ async function readMessages(
         text = inner.content;
       }
 
-      messages.push({
+      const msg: Message = {
         id: entry.id ?? crypto.randomUUID(),
         sessionId,
         role,
         content: text,
         timestamp: entry.timestamp ?? new Date().toISOString(),
-      });
+      };
+
+      // For assistant messages, extract usage if available
+      if (role === "assistant") {
+        const usage = extractUsage(line);
+        if (usage) {
+          msg.usage = usage;
+        }
+      }
+
+      messages.push(msg);
     } catch {
       // Skip invalid JSON lines
     }

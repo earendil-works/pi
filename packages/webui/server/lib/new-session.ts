@@ -20,24 +20,26 @@ export interface NewSessionResult {
  *
  * @param cwd - Working directory for the new session
  * @param opts.timeoutMs - Timeout in ms (default: 5000)
+ * @param opts.sessionsDir - Override for sessions directory (default: computed from cwd)
  * @returns Promise<{sessionId, sessionFile}>
  */
 export async function spawnPiNewSession(
   cwd: string,
-  opts: { timeoutMs?: number } = {},
+  opts: { timeoutMs?: number; sessionsDir?: string } = {},
 ): Promise<NewSessionResult> {
   const timeoutMs = opts.timeoutMs ?? 5000;
+  const sessionsDir = opts.sessionsDir ?? getSessionsDir(cwd);
 
   try {
-    const result = await spawnPiSessionInternal(cwd, timeoutMs);
+    const result = await spawnPiSessionInternal(cwd, timeoutMs, sessionsDir);
     return result;
   } catch (reason) {
     // Fallback to UUID-based session
-    return createFallbackSession(cwd, reason);
+    return createFallbackSession(cwd, reason, sessionsDir);
   }
 }
 
-async function spawnPiSessionInternal(cwd: string, timeoutMs: number): Promise<NewSessionResult> {
+async function spawnPiSessionInternal(cwd: string, timeoutMs: number, sessionsDir: string): Promise<NewSessionResult> {
   return new Promise((resolve, reject) => {
     let settled = false;
     let gotNonSessionOutput = false;
@@ -75,7 +77,6 @@ async function spawnPiSessionInternal(cwd: string, timeoutMs: number): Promise<N
             if (!settled) {
               settled = true;
               clearTimeout(timeoutId);
-              const sessionsDir = getSessionsDir(cwd);
               const sessionFile = join(sessionsDir, `${parsed.sessionId}.jsonl`);
               resolve({ sessionId: parsed.sessionId, sessionFile });
             }
@@ -129,9 +130,9 @@ function getTimestamp(): string {
 async function createFallbackSession(
   cwd: string,
   reason: unknown,
+  sessionsDir: string,
 ): Promise<NewSessionResult> {
   const sessionId = randomUUID();
-  const sessionsDir = getSessionsDir(cwd);
   const sessionFile = join(sessionsDir, `${sessionId}.jsonl`);
 
   await mkdir(sessionsDir, { recursive: true });
