@@ -8,6 +8,18 @@ import { ModelSelector } from "../components/topbar/ModelSelector";
 import { InputArea } from "../components/input/InputArea";
 import ChatMessages from "../components/ChatMessages";
 
+function buildParts(content: any): Part[] {
+  if (!Array.isArray(content)) return [];
+  return content.map((c: any): Part => {
+    if (c.type === "text") return { type: "text", text: c.text ?? "" };
+    if (c.type === "thinking") return { type: "thinking", text: c.text ?? "" };
+    if (c.type === "toolCall") return { type: "toolCall", id: c.id ?? "", name: c.name ?? "", args: c.args ?? {} };
+    if (c.type === "toolResult") return { type: "toolResult", toolCallId: c.toolCallId ?? "", content: typeof c.content === "string" ? c.content : JSON.stringify(c.content ?? "") };
+    if (c.type === "image") return { type: "image", mediaType: c.mediaType, data: c.data };
+    return { type: "text", text: "?" };
+  });
+}
+
 export default function ChatPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -18,6 +30,7 @@ export default function ChatPage() {
   const [providers, setProviders] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const streamingMsgId = useRef<string | null>(null);
 
   // Load messages + current model + providers on mount / id change
   useEffect(() => {
@@ -65,26 +78,51 @@ export default function ChatPage() {
       if (msg.sessionId !== id) return;
       const e = msg.event;
       if (!e) return;
-      if (e.type === "message_end") {
-        const message = e.message as {role?: string, content?: any, usage?: any, model?: string};
-        if (message?.role === "assistant" && Array.isArray(message.content)) {
-          // Build parts from content array
-          const parts: Part[] = message.content.map((c: any): Part => {
-            if (c.type === "text") return { type: "text", text: c.text };
-            if (c.type === "thinking") return { type: "thinking", text: c.text };
-            if (c.type === "toolCall") return { type: "toolCall", id: c.id, name: c.name, args: c.args };
-            if (c.type === "image") return { type: "image", mediaType: c.mediaType, data: c.data };
-            return { type: "text", text: "?" };
-          });
-          setMessages(prev => [...prev, {
-            id: crypto.randomUUID(),
-            sessionId: id!,
-            role: "assistant",
-            parts,
-            timestamp: new Date().toISOString(),
-            usage: message.usage,
-            model: message.model,
-          }]);
+
+      if (e.type === "message_start" && e.message?.role === "assistant") {
+        const realId = e.message.id || crypto.randomUUID();
+        streamingMsgId.current = realId;
+        const parts = buildParts(e.message.content);
+        setMessages(prev => {
+          const idx = prev.findIndex(m => m.role === "assistant" && m.parts.length === 0);
+          if (idx >= 0) {
+            const updated = [...prev];
+            updated[idx] = { ...updated[idx], id: realId, parts, model: e.message.model };
+            return updated;
+          }
+          return [...prev, { id: realId, sessionId: id!, role: "assistant", parts, timestamp: new Date().toISOString(), model: e.message.model }];
+        });
+      } else if (e.type === "message_update" && e.message?.role === "assistant") {
+        const parts = buildParts(e.message.content);
+        const msgId = e.message.id || streamingMsgId.current;
+        if (!msgId) return;
+        streamingMsgId.current = msgId;
+        setMessages(prev => {
+          const idx = prev.findIndex(m => m.id === msgId);
+          if (idx >= 0) {
+            const updated = [...prev];
+            updated[idx] = { ...updated[idx], parts, usage: e.message.usage, model: e.message.model };
+            return updated;
+          }
+          return [...prev, { id: msgId, sessionId: id!, role: "assistant", parts, timestamp: new Date().toISOString(), usage: e.message.usage, model: e.message.model }];
+        });
+      } else if (e.type === "message_end") {
+        const message = e.message;
+        if (message?.role === "assistant") {
+          const msgId = message.id || streamingMsgId.current;
+          streamingMsgId.current = null;
+          if (msgId) {
+            const parts = buildParts(message.content);
+            setMessages(prev => {
+              const idx = prev.findIndex(m => m.id === msgId);
+              if (idx >= 0) {
+                const updated = [...prev];
+                updated[idx] = { ...updated[idx], parts, usage: message.usage, model: message.model };
+                return updated;
+              }
+              return [...prev, { id: msgId, sessionId: id!, role: "assistant", parts, timestamp: new Date().toISOString(), usage: message.usage, model: message.model }];
+            });
+          }
         }
       }
     });
