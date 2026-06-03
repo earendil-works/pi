@@ -30,6 +30,8 @@ export default function ChatPage() {
   const [providers, setProviders] = useState<any[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isManaged, setIsManaged] = useState<boolean | null>(null);
+  const [title, setTitle] = useState<string>("");
+  const [messageCount, setMessageCount] = useState<number>(0);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const streamingMsgId = useRef<string | null>(null);
 
@@ -50,7 +52,9 @@ export default function ChatPage() {
           setMessages(msgs);
           setProviders(modelsResp.providers ?? []);
           const session = sessions.find((s: any) => s.id === id);
-          setIsManaged(session?.isManaged ?? false);
+          setIsManaged(session?.isManaged ?? null);
+          setTitle(session?.title || "New chat");
+          setMessageCount(msgs.length);
           const s = settings as any;
           if (s?.webui?.defaultModel) {
             const [provider, model] = s.webui.defaultModel.split("/");
@@ -111,7 +115,7 @@ export default function ChatPage() {
       } else if (e.type === "message_end") {
         const message = e.message;
         if (message?.role === "assistant") {
-          const msgId = message.id || streamingMsgId.current;
+          const msgId = message.id || streamingMsgId.current || crypto.randomUUID();
           streamingMsgId.current = null;
           if (msgId) {
             const parts = buildParts(message.content);
@@ -154,6 +158,7 @@ export default function ChatPage() {
   // Scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    setMessageCount(messages.length);
   }, [messages]);
 
   // Submit
@@ -198,7 +203,7 @@ export default function ChatPage() {
     <div className="flex flex-col h-full">
       {/* Topbar - sticky */}
       <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-stone-200 bg-stone-50">
-        <Title title="Chat" messageCount={messages.length} />
+        <Title title={title} messageCount={messageCount} />
         <div className="flex items-center gap-2">
           {currentModel && (
             <ModelSelector

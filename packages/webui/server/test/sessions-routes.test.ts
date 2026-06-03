@@ -45,6 +45,7 @@ describe("Sessions REST API Endpoints", () => {
 			sessionsDir,
 			isRunning: () => false,
 			isSessionManaged: () => false,
+			markSessionOwned: () => {},
 			getSessionName: () => undefined,
 			on: () => {},
 			emit: () => {},
@@ -118,6 +119,7 @@ describe("Sessions REST API Endpoints", () => {
 				sessionsDir: fakeSessionsDir,
 				isRunning: () => false,
 				isSessionManaged: () => false,
+				markSessionOwned: () => {},
 				getSessionName: (id: string) => (id === "pool-session-id" ? "PoolFallbackTitle" : undefined),
 				on: () => {},
 				emit: () => {},
@@ -1220,6 +1222,8 @@ describe("Sessions REST API Endpoints", () => {
 			const mockPool = {
 				sessionsDir: testSessionDir,
 				isRunning: () => false,
+				isSessionManaged: () => false,
+				markSessionOwned: () => {},
 				getSessionName: () => undefined,
 				on: () => {},
 				emit: () => {},
@@ -1319,6 +1323,8 @@ describe("Sessions REST API Endpoints", () => {
 			const mockPool = {
 				sessionsDir: testSessionDir,
 				isRunning: () => false,
+				isSessionManaged: () => false,
+				markSessionOwned: () => {},
 				getSessionName: () => undefined,
 				on: () => {},
 				emit: () => {},

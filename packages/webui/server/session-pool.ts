@@ -54,6 +54,7 @@ interface SessionState {
  */
 export class SessionPool extends EventEmitter {
 	readonly sessionsDir: string;
+	readonly cwd: string;
 	private readonly maxSessions: number;
 	private readonly spawnFn: (
 		command: string,
@@ -77,6 +78,7 @@ export class SessionPool extends EventEmitter {
 	}) {
 		super();
 		const cwd = opts?.cwd ?? process.cwd();
+		this.cwd = cwd;
 		this.maxSessions = opts?.maxSessions ?? parseInt(process.env.PI_WEB_MAX_SESSIONS || "16", 10);
 		this.spawnFn = opts?.spawnFn ?? spawn;
 
@@ -174,13 +176,10 @@ export class SessionPool extends EventEmitter {
 			throw new Error(`Max sessions (${this.maxSessions}) reached, delete one to create new`);
 		}
 
-		// Reconstruct cwd from directory name
-		// Directory format: ~/.pi/agent/sessions/--home--user--proj-- => /home/user/proj
-		const cwdFromDir = this.sessionsDir
-			.replace(/\/$/, "") // strip trailing slash
-			.replace(/^.*\/sessions\/--/, "/")
-			.replace(/--$/, "")
-			.replace(/--/g, "/");
+		// Use the cwd stored in the pool, not the sessionsDir (decode is lossy:
+		// pi's encoding replaces `/` and `:` with `-`, but the original path
+		// may also contain real `-` characters, so we cannot reliably reverse it).
+		const cwdFromDir = this.cwd;
 
 		// Look up the session file to pass the full path to pi.
 		// pi's resolveSessionPath treats a path with "/" or ".jsonl" as a direct file path,
@@ -188,10 +187,11 @@ export class SessionPool extends EventEmitter {
 		const sessionFile = await findSessionFile(this.sessionsDir, sessionId);
 		const sessionArg = sessionFile ?? sessionId;
 
+		const newPath = `${process.env.HOME}/.npm-global/bin:${process.env.PATH ?? ""}`;
 		const proc = this.spawnFn("pi", ["--mode", "rpc", "--session", sessionArg], {
 			stdio: ["pipe", "pipe", "inherit"],
 			cwd: cwdFromDir,
-			env: { ...process.env, PATH: `${process.env.HOME}/.npm-global/bin:${process.env.PATH}` },
+			env: { ...process.env, PATH: newPath },
 			detached: false,
 		});
 
@@ -239,6 +239,15 @@ export class SessionPool extends EventEmitter {
 	 */
 	isSessionManaged(sessionId: string): boolean {
 		return this.ownedSessions.has(sessionId);
+	}
+
+	/**
+	 * Mark a session as webui-owned without spawning a process. Called when
+	 * webui creates a new session via POST /api/sessions so the UI knows
+	 * the input is enabled before the first prompt arrives.
+	 */
+	markSessionOwned(sessionId: string): void {
+		this.ownedSessions.add(sessionId);
 	}
 
 	/**

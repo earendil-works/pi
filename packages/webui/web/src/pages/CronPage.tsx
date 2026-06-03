@@ -3,12 +3,15 @@ import { Clock, Plus, Eye, EyeOff } from "lucide-react";
 import { api } from "../lib/api";
 import type { CronJob } from "../lib/api";
 import CronList from "../components/CronList";
+import CronForm from "../components/CronForm";
 
 export default function CronPage() {
   const [jobs, setJobs] = useState<CronJob[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showDisabled, setShowDisabled] = useState(true);
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingJob, setEditingJob] = useState<CronJob | undefined>(undefined);
 
   useEffect(() => {
     fetchJobs();
@@ -28,28 +31,53 @@ export default function CronPage() {
   }
 
   async function handleToggle(id: string, enabled: boolean) {
-    // Placeholder - will be wired in a later task
-    console.log("Toggle", id, enabled);
+    try {
+      const updated = await api.updateCronJob(id, { enabled });
+      setJobs((prev) => prev.map((j) => (j.id === id ? updated : j)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to update job");
+    }
   }
 
   async function handleTrigger(id: string) {
-    // Placeholder - will be wired in a later task
-    console.log("Trigger", id);
+    try {
+      const updated = await api.triggerCronJob(id);
+      setJobs((prev) => prev.map((j) => (j.id === id ? updated : j)));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to trigger job");
+    }
   }
 
   function handleEdit(job: CronJob) {
-    // Placeholder - will be wired in a later task
-    console.log("Edit", job);
+    setEditingJob(job);
+    setFormOpen(true);
   }
 
   async function handleDelete(id: string) {
-    // Placeholder - will be wired in a later task
-    console.log("Delete", id);
+    if (!confirm("Delete this cron job?")) return;
+    try {
+      await api.deleteCronJob(id);
+      setJobs((prev) => prev.filter((j) => j.id !== id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to delete job");
+    }
   }
 
   function handleNewCron() {
-    // Placeholder - will be wired in a later task
-    console.log("New Cron");
+    setEditingJob(undefined);
+    setFormOpen(true);
+  }
+
+  function handleFormSave(saved: CronJob) {
+    setJobs((prev) => {
+      const idx = prev.findIndex((j) => j.id === saved.id);
+      if (idx >= 0) {
+        const copy = [...prev];
+        copy[idx] = saved;
+        return copy;
+      }
+      return [...prev, saved];
+    });
   }
 
   const filteredJobs = showDisabled ? jobs : jobs.filter((j) => j.enabled);
@@ -104,6 +132,14 @@ export default function CronPage() {
           onEdit={handleEdit}
           onDelete={handleDelete}
           onNewCron={handleNewCron}
+        />
+      )}
+
+      {formOpen && (
+        <CronForm
+          job={editingJob}
+          onClose={() => setFormOpen(false)}
+          onSave={handleFormSave}
         />
       )}
     </div>

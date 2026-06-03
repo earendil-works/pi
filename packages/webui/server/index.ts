@@ -9,6 +9,8 @@ import { mountStatic } from "./routes/static";
 import { mountHealth } from "./routes/health";
 import { mountCronRoutes } from "./routes/cron";
 import { mountSessionsRoutes } from "./routes/sessions";
+import { mountModelsRoutes } from "./routes/models";
+import { mountSettingsRoutes } from "./routes/settings";
 import { CronStore } from "./cron-store";
 import { CronWatcher } from "./cron-watcher";
 import { SessionPool } from "./session-pool";
@@ -169,6 +171,13 @@ export function createApp(deps?: Partial<ServerDeps>): { app: express.Express; d
   const sessionPool = deps?.sessionPool ?? new SessionPool();
   const cronWatcher = deps?.cronWatcher ?? new CronWatcher(cronStore.dataPath);
 
+  // Prevent unhandled 'error' from crashing the process when a pi spawn fails.
+  // The pool re-emits 'error' from child processes; without a listener this
+  // would bubble up to an uncaughtException.
+  sessionPool.on("error", (err) => {
+    console.error("[session-pool] error:", err);
+  });
+
   // Load settings and build callLlm at startup
   const settings = deps?.settings ?? loadSettings();
   const callLlm = deps?.callLlm ?? buildCallLlm(settings);
@@ -221,6 +230,12 @@ export function createApp(deps?: Partial<ServerDeps>): { app: express.Express; d
 
   // Session REST API endpoints - mounted BEFORE static catch-all
   mountSessionsRoutes(app, sessionPool, { callLlm, settings });
+
+  // Models REST API endpoint - mounted BEFORE static catch-all
+  mountModelsRoutes(app);
+
+  // Settings REST API endpoint - mounted BEFORE static catch-all
+  mountSettingsRoutes(app);
 
   // Static files (SPA fallback) - mounted LAST as catch-all
   mountStatic(app, join(__dirname, "../web/dist"));
@@ -296,6 +311,12 @@ if (import.meta.url === "file://" + process.argv[1]) {
 
       process.on("SIGTERM", () => shutdown("SIGTERM"));
       process.on("SIGINT", () => shutdown("SIGINT"));
+      process.on("uncaughtException", (err) => {
+        console.error("[uncaughtException]", err);
+      });
+      process.on("unhandledRejection", (reason) => {
+        console.error("[unhandledRejection]", reason);
+      });
     })
     .catch((err: NodeJS.ErrnoException) => {
       if (err.code === "EADDRINUSE") {

@@ -78,9 +78,20 @@ export function mountSessionsRoutes(app: express.Express, sessionPool: SessionPo
       const cwd = process.cwd();
       const sessionsDir = sessionPool.sessionsDir;
       const result = await spawnPiNewSession(cwd, { sessionsDir });
+      // Mark as webui-owned so the UI input is enabled before the first prompt
+      // arrives. The actual pi process is spawned lazily on the first prompt.
+      sessionPool.markSessionOwned(result.sessionId);
+
+      // Return SessionInfo shape (matches listSessions output) so the client
+      // can append the new session to the sidebar without a refetch.
       res.status(200).json({
         id: result.sessionId,
         sessionFile: result.sessionFile,
+        title: "",
+        status: "idle",
+        lastActive: new Date().toISOString(),
+        messageCount: 0,
+        isManaged: true,
       });
     } catch (err) {
       console.error("Error creating session:", err);
