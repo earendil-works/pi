@@ -238,7 +238,13 @@ export function createApp(deps?: Partial<ServerDeps>): { app: express.Express; d
   mountSettingsRoutes(app);
 
   // Static files (SPA fallback) - mounted LAST as catch-all
-  mountStatic(app, join(__dirname, "../web/dist"));
+  // Search for the web build in both dev and bundled contexts. In dev (tsx
+  // running webui/server/index.ts), __dirname is webui/server/ and web lives
+  // at webui/web/dist. In the esbuild-bundled install layout, __dirname is
+  // coding-agent/dist/webui/ and web lives as a sibling at coding-agent/dist/webui/web/.
+  const webDistCandidates = [join(__dirname, "../web/dist"), join(__dirname, "./web")];
+  const webDist = webDistCandidates.find((candidate) => existsSync(join(candidate, "index.html"))) ?? webDistCandidates[0];
+  mountStatic(app, webDist);
 
   return { app, deps: { sessionPool, cronWatcher, cronStore, callLlm, settings } };
 }
