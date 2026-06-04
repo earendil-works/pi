@@ -100,6 +100,16 @@ describe("Input component", () => {
 			assert.strictEqual(input.getValue(), "bazfoo bar ");
 		});
 
+		it("Alt+Delete deletes the previous word", () => {
+			const input = new Input();
+
+			input.setValue("foo bar baz");
+			input.handleInput("\x05"); // Ctrl+E
+			input.handleInput("\x1b\x7f"); // Alt+Delete/Backspace on macOS
+
+			assert.strictEqual(input.getValue(), "foo bar ");
+		});
+
 		it("Ctrl+W preserves ASCII punctuation boundaries", () => {
 			const input = new Input();
 

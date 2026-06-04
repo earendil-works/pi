@@ -12,6 +12,7 @@
 
 ### Fixed
 
+- Fixed `Alt+Delete` in interactive text inputs to delete the previous word by default on macOS-style keyboards.
 - Fixed temporary extension package installs to use a private `~/.pi/agent/tmp/extensions` directory with `0700` permissions instead of `os.tmpdir()/pi-extensions`.
 - Fixed git package source handling to reject unsafe host/path components and keep managed clone paths inside install roots.
 - Fixed stored XSS in HTML session exports by sanitizing Markdown link and image URLs with a scheme allow-list after stripping control characters.

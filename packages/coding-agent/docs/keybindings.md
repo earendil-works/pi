@@ -45,8 +45,8 @@ Modifier combinations: `ctrl+shift+x`, `alt+ctrl+x`, `ctrl+shift+alt+x`, `ctrl+1
 |--------|---------|-------------|
 | `tui.editor.deleteCharBackward` | `backspace` | Delete character backward |
 | `tui.editor.deleteCharForward` | `delete`, `ctrl+d` | Delete character forward |
-| `tui.editor.deleteWordBackward` | `ctrl+w`, `alt+backspace` | Delete word backward |
-| `tui.editor.deleteWordForward` | `alt+d`, `alt+delete` | Delete word forward |
+| `tui.editor.deleteWordBackward` | `ctrl+w`, `alt+backspace`, `alt+delete` | Delete word backward |
+| `tui.editor.deleteWordForward` | `alt+d` | Delete word forward |
 | `tui.editor.deleteToLineStart` | `ctrl+u` | Delete to line start |
 | `tui.editor.deleteToLineEnd` | `ctrl+k` | Delete to line end |
 
@@ -159,7 +159,7 @@ Create `~/.pi/agent/keybindings.json`:
 {
   "tui.editor.cursorUp": ["up", "ctrl+p"],
   "tui.editor.cursorDown": ["down", "ctrl+n"],
-  "tui.editor.deleteWordBackward": ["ctrl+w", "alt+backspace"]
+  "tui.editor.deleteWordBackward": ["ctrl+w", "alt+backspace", "alt+delete"]
 }
 ```
 

@@ -4,6 +4,7 @@
 
 ### Fixed
 
+- Fixed `Alt+Delete` in TUI text inputs to delete the previous word by default on macOS-style keyboards.
 - Fixed tab width accounting in column slicing and overlay compositing so tab-containing output cannot exceed the terminal width ([#5218](https://github.com/earendil-works/pi/issues/5218)).
 
 ## [0.78.0] - 2026-05-29
