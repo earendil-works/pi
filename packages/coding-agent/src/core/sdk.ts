@@ -196,6 +196,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		const restoredModel = modelRegistry.find(existingSession.model.provider, existingSession.model.modelId);
 		if (restoredModel && modelRegistry.hasConfiguredAuth(restoredModel)) {
 			model = restoredModel;
+			// Persist the restored model as the new default so future new sessions use it
+			settingsManager.setDefaultModelAndProvider(model.provider, model.id);
 		}
 		if (!model) {
 			modelFallbackMessage = `Could not restore model ${existingSession.model.provider}/${existingSession.model.modelId}`;
