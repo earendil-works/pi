@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ENV_AGENT_DIR, PACKAGE_NAME, VERSION } from "../src/config.ts";
 import { main } from "../src/main.ts";
@@ -58,7 +58,7 @@ describe("package commands", () => {
 		rmSync(tempDir, { recursive: true, force: true });
 	});
 
-	it("should persist global relative local package paths relative to settings.json", async () => {
+	it("should persist global local package paths as absolute paths", async () => {
 		const relativePkgDir = join(projectDir, "packages", "local-package");
 		mkdirSync(relativePkgDir, { recursive: true });
 
@@ -68,8 +68,22 @@ describe("package commands", () => {
 		const settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as { packages?: string[] };
 		expect(settings.packages?.length).toBe(1);
 		const stored = settings.packages?.[0] ?? "";
-		const resolvedFromSettings = realpathSync(join(agentDir, stored));
-		expect(resolvedFromSettings).toBe(realpathSync(relativePkgDir));
+		expect(isAbsolute(stored)).toBe(true);
+		expect(realpathSync(stored)).toBe(realpathSync(relativePkgDir));
+	});
+
+	it("should persist project local package paths relative to project settings.json", async () => {
+		const relativePkgDir = join(projectDir, "packages", "local-package");
+		mkdirSync(relativePkgDir, { recursive: true });
+
+		await main(["install", "-l", "./packages/local-package"]);
+
+		const settingsPath = join(projectDir, ".pi", "settings.json");
+		const settings = JSON.parse(readFileSync(settingsPath, "utf-8")) as { packages?: string[] };
+		expect(settings.packages?.length).toBe(1);
+		const stored = settings.packages?.[0] ?? "";
+		expect(isAbsolute(stored)).toBe(false);
+		expect(realpathSync(join(projectDir, ".pi", stored))).toBe(realpathSync(relativePkgDir));
 	});
 
 	it("should remove local packages using a path with a trailing slash", async () => {

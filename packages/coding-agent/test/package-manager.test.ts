@@ -1192,7 +1192,7 @@ Content`,
 	});
 
 	describe("settings source normalization", () => {
-		it("should store global local packages relative to agent settings base", () => {
+		it("should store global local packages as absolute paths", () => {
 			const pkgDir = join(tempDir, "packages", "local-global-pkg");
 			mkdirSync(join(pkgDir, "extensions"), { recursive: true });
 			writeFileSync(join(pkgDir, "extensions", "index.ts"), "export default function() {}");
@@ -1201,9 +1201,7 @@ Content`,
 			expect(added).toBe(true);
 
 			const settings = settingsManager.getGlobalSettings();
-			const rel = relative(agentDir, pkgDir);
-			const expected = rel.startsWith(".") ? rel : `./${rel}`;
-			expect(settings.packages?.[0]).toBe(expected);
+			expect(settings.packages?.[0]).toBe(pkgDir);
 		});
 
 		it("should store project local packages relative to .pi settings base", () => {

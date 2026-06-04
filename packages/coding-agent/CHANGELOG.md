@@ -10,6 +10,10 @@
 - Added `ctx.mode` to extension contexts so extensions can distinguish TUI, RPC, JSON, and print mode.
 - Added `ctx.getSystemPromptOptions()` for extension commands to inspect the current base system prompt inputs.
 
+### Changed
+
+- Changed user-scoped local package installs to store absolute paths in settings while keeping project-local installs relative to `.pi/settings.json`.
+
 ### Fixed
 
 - Fixed temporary extension package installs to use a private `~/.pi/agent/tmp/extensions` directory with `0700` permissions instead of `os.tmpdir()/pi-extensions`.

@@ -109,7 +109,7 @@ pi install git:git@github.com:user/repo@v1.0.0
 ./relative/path/to/package
 ```
 
-Local paths point to files or directories on disk and are added to settings without copying. Relative paths are resolved against the settings file they appear in. If the path is a file, it loads as a single extension. If it is a directory, pi loads resources using package rules.
+Local paths point to files or directories on disk and are added to settings without copying. `pi install <path>` writes user-scoped local paths as absolute paths in `~/.pi/agent/settings.json`. `pi install -l <path>` writes project-local paths relative to `.pi/settings.json`. Manually written relative paths are still resolved against the settings file they appear in. If the path is a file, it loads as a single extension. If it is a directory, pi loads resources using package rules.
 
 ## Creating a Pi Package
 

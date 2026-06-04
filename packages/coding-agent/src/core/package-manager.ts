@@ -1378,8 +1378,10 @@ export class DefaultPackageManager implements PackageManager {
 		if (parsed.type !== "local") {
 			return source;
 		}
-		const baseDir = this.getBaseDirForScope(scope);
 		const resolved = this.resolvePath(parsed.path);
+		if (scope === "user") return resolved;
+
+		const baseDir = this.getBaseDirForScope(scope);
 		const rel = relative(baseDir, resolved);
 		return rel || ".";
 	}
