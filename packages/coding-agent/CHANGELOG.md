@@ -5,6 +5,7 @@
 ### Fixed
 
 - Fixed built-in tool expand hints to style closing parentheses consistently ([#5359](https://github.com/earendil-works/pi/issues/5359)).
+- Fixed Fireworks model resolution for models.dev-style `firepass/...` references by normalizing them to the canonical `fireworks/...` provider.
 
 ## [0.78.1] - 2026-06-04
 

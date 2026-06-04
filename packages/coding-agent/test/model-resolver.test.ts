@@ -63,7 +63,20 @@ const mockOpenRouterModels: Model<"anthropic-messages">[] = [
 	},
 ];
 
-const allModels = [...mockModels, ...mockOpenRouterModels];
+const mockFireworksModel: Model<"anthropic-messages"> = {
+	id: "accounts/fireworks/routers/kimi-k2p6-turbo",
+	name: "Kimi K2.6 Turbo",
+	api: "anthropic-messages",
+	provider: "fireworks",
+	baseUrl: "https://api.fireworks.ai/inference",
+	reasoning: true,
+	input: ["text", "image"],
+	cost: { input: 0.95, output: 4, cacheRead: 0.16, cacheWrite: 0 },
+	contextWindow: 262000,
+	maxTokens: 262000,
+};
+
+const allModels = [...mockModels, ...mockOpenRouterModels, mockFireworksModel];
 
 describe("parseModelPattern", () => {
 	describe("simple patterns without colons", () => {
@@ -369,6 +382,37 @@ describe("resolveCliModel", () => {
 		expect(result.error).toBeUndefined();
 		expect(result.model?.provider).toBe("openrouter");
 		expect(result.model?.id).toBe("qwen/qwen3-coder:exacto");
+	});
+
+	test("resolves firepass model references to the canonical Fireworks provider", () => {
+		const registry = {
+			getAll: () => allModels,
+		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+
+		const result = resolveCliModel({
+			cliModel: "firepass/accounts/fireworks/routers/kimi-k2p6-turbo",
+			modelRegistry: registry,
+		});
+
+		expect(result.error).toBeUndefined();
+		expect(result.model?.provider).toBe("fireworks");
+		expect(result.model?.id).toBe("accounts/fireworks/routers/kimi-k2p6-turbo");
+	});
+
+	test("resolves explicit firepass provider references to Fireworks", () => {
+		const registry = {
+			getAll: () => allModels,
+		} as unknown as Parameters<typeof resolveCliModel>[0]["modelRegistry"];
+
+		const result = resolveCliModel({
+			cliProvider: "firepass",
+			cliModel: "accounts/fireworks/routers/kimi-k2p6-turbo",
+			modelRegistry: registry,
+		});
+
+		expect(result.error).toBeUndefined();
+		expect(result.model?.provider).toBe("fireworks");
+		expect(result.model?.id).toBe("accounts/fireworks/routers/kimi-k2p6-turbo");
 	});
 });
 

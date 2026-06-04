@@ -9,6 +9,7 @@ import { minimatch } from "minimatch";
 import { isValidThinkingLevel } from "../cli/args.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
 import type { ModelRegistry } from "./model-registry.ts";
+import { normalizeProviderInModelReference, normalizeProviderName } from "./provider-aliases.ts";
 
 /** Default model IDs for each known provider */
 export const defaultModelPerProvider: Record<KnownProvider, string> = {
@@ -83,9 +84,10 @@ export function findExactModelReferenceMatch(
 	}
 
 	const normalizedReference = trimmedReference.toLowerCase();
+	const normalizedProviderReference = normalizeProviderInModelReference(trimmedReference).toLowerCase();
 
 	const canonicalMatches = availableModels.filter(
-		(model) => `${model.provider}/${model.id}`.toLowerCase() === normalizedReference,
+		(model) => `${model.provider}/${model.id}`.toLowerCase() === normalizedProviderReference,
 	);
 	if (canonicalMatches.length === 1) {
 		return canonicalMatches[0];
@@ -99,9 +101,10 @@ export function findExactModelReferenceMatch(
 		const provider = trimmedReference.substring(0, slashIndex).trim();
 		const modelId = trimmedReference.substring(slashIndex + 1).trim();
 		if (provider && modelId) {
+			const normalizedProvider = normalizeProviderName(provider);
 			const providerMatches = availableModels.filter(
 				(model) =>
-					model.provider.toLowerCase() === provider.toLowerCase() &&
+					model.provider.toLowerCase() === normalizedProvider.toLowerCase() &&
 					model.id.toLowerCase() === modelId.toLowerCase(),
 			);
 			if (providerMatches.length === 1) {
@@ -365,7 +368,7 @@ export function resolveCliModel(options: {
 		providerMap.set(m.provider.toLowerCase(), m.provider);
 	}
 
-	let provider = cliProvider ? providerMap.get(cliProvider.toLowerCase()) : undefined;
+	let provider = cliProvider ? providerMap.get(normalizeProviderName(cliProvider).toLowerCase()) : undefined;
 	if (cliProvider && !provider) {
 		return {
 			model: undefined,
@@ -386,7 +389,7 @@ export function resolveCliModel(options: {
 		const slashIndex = cliModel.indexOf("/");
 		if (slashIndex !== -1) {
 			const maybeProvider = cliModel.substring(0, slashIndex);
-			const canonical = providerMap.get(maybeProvider.toLowerCase());
+			const canonical = providerMap.get(normalizeProviderName(maybeProvider).toLowerCase());
 			if (canonical) {
 				provider = canonical;
 				pattern = cliModel.substring(slashIndex + 1);

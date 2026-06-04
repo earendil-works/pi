@@ -896,6 +896,15 @@ describe("ModelRegistry", () => {
 			expect(registry.getProviderDisplayName("oauth-provider")).toBe("OAuth Provider");
 		});
 
+		test("find resolves firepass as the canonical Fireworks provider", () => {
+			const registry = ModelRegistry.create(authStorage, modelsJsonPath);
+
+			const model = registry.find("firepass", "accounts/fireworks/routers/kimi-k2p6-turbo");
+
+			expect(model?.provider).toBe("fireworks");
+			expect(model?.id).toBe("accounts/fireworks/routers/kimi-k2p6-turbo");
+		});
+
 		test("registerProvider warns and temporarily treats uppercase apiKey as an env reference", async () => {
 			const originalEnv = process.env.CUSTOM_NAME;
 			process.env.CUSTOM_NAME = "legacy-env-key";
