@@ -6,8 +6,6 @@
  */
 
 import { spawn } from "node:child_process";
-import { createRequire } from "node:module";
-import { homedir } from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
@@ -519,23 +517,16 @@ export async function main(args: string[], options?: MainOptions) {
 		const port = parsed.port ?? "8741";
 		const maxSessions = parsed.maxSessions ?? "16";
 
-		// Locate the webui server entry. main.js is ESM so __dirname is
-		// undefined; use createRequire(import.meta.url) to get a CJS
-		// require, then resolve @pi-mono/webui via its package.json
-		// (not the package root — webui has no "main" field).
-		const requireFromHere = createRequire(import.meta.url);
-		const webuiPkg = requireFromHere.resolve("@pi-mono/webui/package.json");
-		const webuiServerPath = path.join(path.dirname(webuiPkg), "server", "index.ts");
+		// The webui server is shipped as a pre-built esbuild bundle at
+		// dist/webui/server.bundle.js (relative to this CLI's dist). The
+		// web frontend assets live at dist/webui/web/. Both are copied in
+		// by `copy-webui` during this package's build (see package.json
+		// scripts). No `tsx`, no global binary lookup, no monorepo path
+		// required at runtime.
+		const distDir = path.dirname(fileURLToPath(import.meta.url));
+		const webuiServerPath = path.join(distDir, "webui", "server.bundle.js");
 
-		// Spawn the webui server via the global `tsx` binary so it picks
-		// up the webui's tsconfig and finds its global node_modules
-		// dependencies. Using `node --import tsx/esm` doesn't accept
-		// --tsconfig and can't resolve `tsx` when the cwd isn't the
-		// monorepo root.
-		const tsxBin = path.join(homedir(), ".npm-global", "bin", "tsx");
-		const dir = path.dirname(fileURLToPath(import.meta.url));
-		const tsconfig = path.resolve(dir, "../../webui/tsconfig.json");
-		const child = spawn(tsxBin, ["--tsconfig", tsconfig, webuiServerPath], {
+		const child = spawn(process.execPath, [webuiServerPath], {
 			stdio: "inherit",
 			cwd: process.cwd(),
 			env: { ...process.env, PI_WEB_PORT: port, PI_WEB_MAX_SESSIONS: maxSessions },

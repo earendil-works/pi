@@ -6,7 +6,9 @@
   "scripts": {
     "start": "tsx server/index.ts",
     "dev": "tsx watch server/index.ts",
-    "build": "cd web && npm run build",
+    "build:web": "cd web && npm run build",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/server.bundle.js --external:express --external:ws --external:helmet --external:better-sqlite3 --external:chokidar --external:async-mutex --external:cross-spawn --external:node:sqlite --external:bun:sqlite",
+    "build": "npm run build:web && npm run build:server",
     "test": "vitest"
   },
   "dependencies": {
@@ -22,6 +24,7 @@
     "@types/express": "5.0.0",
     "@types/ws": "8.5.13",
     "@vitest/coverage-v8": "2.1.8",
+    "esbuild": "0.24.2",
     "tsx": "4.19.2",
     "typescript": "5.9.3",
     "vitest": "2.1.8"
