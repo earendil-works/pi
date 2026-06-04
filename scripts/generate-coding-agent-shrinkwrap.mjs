@@ -13,8 +13,7 @@ const internalPackagePrefix = "@earendil-works/pi-";
 const allowedInstallScriptPackages = new Map([
 	["@google/genai@1.52.0", "preinstall is a no-op in the published package"],
 	["protobufjs@7.5.9", "postinstall only warns about protobufjs version scheme mismatches"],
-	["better-sqlite3@11.7.0", "native binding compile, required for webui's SessionPool"],
-	["fsevents@2.3.3", "macOS-only fs watcher, transitive dep of chokidar (webui dep)"],
+	["fsevents@2.3.3", "macOS-only optional dep of chokidar; npm skips install on non-darwin, validator still flags it"],
 ]);
 
 const args = new Set(process.argv.slice(2));

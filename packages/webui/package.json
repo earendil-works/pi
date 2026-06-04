@@ -7,20 +7,18 @@
     "start": "tsx server/index.ts",
     "dev": "tsx watch server/index.ts",
     "build:web": "cd web && npm run build",
-    "build:server": "esbuild server/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/server.bundle.js --external:express --external:ws --external:helmet --external:better-sqlite3 --external:chokidar --external:async-mutex --external:cross-spawn --external:node:sqlite --external:bun:sqlite",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --target=node20 --format=esm --outfile=dist/server.bundle.js --external:express --external:ws --external:helmet --external:chokidar --external:async-mutex --external:cross-spawn --external:node:sqlite --external:bun:sqlite",
     "build": "npm run build:web && npm run build:server",
     "test": "vitest"
   },
   "dependencies": {
     "async-mutex": "0.5.0",
-    "better-sqlite3": "11.7.0",
     "chokidar": "3.6.0",
     "express": "4.21.2",
     "helmet": "8.0.0",
     "ws": "8.18.0"
   },
   "devDependencies": {
-    "@types/better-sqlite3": "7.6.12",
     "@types/express": "5.0.0",
     "@types/ws": "8.5.13",
     "@vitest/coverage-v8": "2.1.8",
