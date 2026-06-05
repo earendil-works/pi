@@ -1,8 +1,8 @@
 import type { ExtensionAPI, TurnEndEvent } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { readFileSync, existsSync, realpathSync } from "node:fs";
+import { join, resolve as resolvePath, basename, dirname } from "node:path";
 import { homedir } from "node:os";
 
 // ============================================================================
@@ -100,6 +100,215 @@ function isPrivateIP(hostname: string): boolean {
 	if (hostname === "::1" || hostname === "[::1]") return true;
 	if (hostname === "0:0:0:0:0:0:0:1") return true;
 	return false;
+}
+
+// ============================================================================
+// Satellite MCP — Client-Side Guardrails
+//
+// Per the architecture decision (see extensions/satellite/README.md):
+// the server is a pure executor; policy lives on the client. Personal-
+// assistant's `tool_call` hook is the natural choke point — it fires
+// before any tool runs, can block with `{block, reason}`, and runs in
+// the same process as the model, so errors are immediate.
+//
+// Three layers of guard:
+//   1. validateSchemaShape() — catches the "nested args" wrapper and
+//      "missing tool field" mistakes before they reach MCP.
+//   2. validatePathScope()    — reads mcp.json's `remotePathPattern` and
+//      rejects any path-arg outside that scope.
+//   3. validateBashIntent()  — detects bash(cat/ls/find/grep/sed/echo>)
+//      and suggests the dedicated sub-op instead. First 2 are guidance
+//      errors, 3rd is a hard block (mirrors the per-turn budget on the
+//      server's old behavior, moved client-side for speed).
+// ============================================================================
+
+const SATELLITE_TOOL_NAME = "satellite_remote_exec";
+const SUB_OP_FIELD_NAMES = new Set([
+	"command", "timeout", "cwd",
+	"path", "offset", "limit",
+	"content", "edits",
+	"pattern", "glob",
+	"direction", "local_path", "remote_path",
+]);
+
+/**
+ * Detect a nested "args" wrapper or a missing "tool" field. Returns a
+ * guidance message for the model, or null if the shape is fine.
+ */
+function validateSchemaShape(input: Record<string, unknown>): string | null {
+	if (!("tool" in input)) {
+		const sample = Object.keys(input).slice(0, 3).join(", ");
+		return [
+			"SCHEMA ERROR: missing required field \"tool\" at the root of the call.",
+			"",
+			`You sent: { ${sample}${Object.keys(input).length > 3 ? ", ..." : ""} }`,
+			"",
+			"Every satellite_remote_exec call must include a \"tool\" field set to one of:",
+			"  bash, read_file, write_file, edit_file, list_dir, find_files, grep_files, transfer_file",
+		].join("\n");
+	}
+
+	const nested = (input as Record<string, unknown>).args;
+	if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+		const recognized = Object.keys(nested as Record<string, unknown>)
+			.filter((k) => SUB_OP_FIELD_NAMES.has(k));
+		if (recognized.length > 0) {
+			const toolName = String((input as Record<string, unknown>).tool);
+			return [
+				"SCHEMA ERROR: sub-op arguments must be FLATTENED to the root of the tool call.",
+				"",
+				`You sent: { tool: "${toolName}", args: { ${recognized.join(", ")} } }`,
+				`Correct:  { tool: "${toolName}", ${recognized.map((k) => `${k}: ...`).join(", ")} }`,
+				"",
+				"Examples:",
+				'  WRONG: { tool: "bash", args: { command: "ls" } }',
+				'  RIGHT: { tool: "bash", command: "ls" }',
+				'  WRONG: { tool: "read_file", args: { path: "/tmp/x" } }',
+				'  RIGHT: { tool: "read_file", path: "/tmp/x" }',
+			].join("\n");
+		}
+	}
+	return null;
+}
+
+/**
+ * Reject any path-arg outside the mcp.json `remotePathPattern` scope.
+ * Catches direct out-of-scope, symlink redirects, and `..` traversal.
+ */
+function validatePathScope(
+	pattern: string | undefined,
+	paths: Array<string | undefined>,
+): string | null {
+	if (!pattern) return null;
+	let re: RegExp;
+	try {
+		re = new RegExp(pattern);
+	} catch {
+		return null; // Bad pattern in mcp.json — fail open, don't break the agent.
+	}
+	for (const p of paths) {
+		if (!p) continue;
+
+		// Resolve symlinks if the file exists; otherwise resolve() the
+		// raw path (no fs access — works for non-existent files) and
+		// validate it. If even the parent doesn't exist, fall back to
+		// the raw string so the test/agent can see the path itself.
+		let checked: string;
+		try {
+			checked = existsSync(p) ? realpathSync(p) : resolvePath(p);
+		} catch {
+			checked = p; // unresolvable — let the server's canonicalize handle it
+		}
+
+		if (!re.test(checked)) {
+			return `Path access denied: '${checked}' is outside the allowed scope (pattern: ${pattern}).`;
+		}
+	}
+	return null;
+}
+
+/**
+ * Walk a bash command looking for tokens that should have used a dedicated
+ * sub-op. Returns a guidance message, or null if the command is OK.
+ * Conservative: only matches the well-known direct patterns (cat/ls/find/
+ * grep/sed -i/echo>); pipelines and chains are left alone.
+ */
+type BashIntent = "read_file" | "edit_file" | "write_file" | "list_dir" | "find_files" | "grep_files";
+
+function detectBashIntent(command: string): BashIntent | null {
+	if (/[|<]/.test(command)) return null;
+	if (/^cat\s+[^\s|;<>&]+$/.test(command)) return "read_file";
+	if (/^sed\s+-i\b/.test(command)) return "edit_file";
+	if (/^(echo|printf)\s+.*>\s*\S+/.test(command)) return "write_file";
+	if (/^(ls|ll|dir)\b/.test(command)) return "list_dir";
+	if (/\bfind\s+/.test(command)) return "find_files";
+	if (/\bgrep\s+/.test(command)) return "grep_files";
+	return null;
+}
+
+function getBashGuidance(intent: BashIntent, command: string): string {
+	const path = command.split(/\s+/).pop() || "<path>";
+	switch (intent) {
+		case "read_file":
+			return `Prefer read_file over bash cat. Use { tool:"read_file", path:'${path}' } for offset/limit/truncation.`;
+		case "edit_file":
+			return `Prefer edit_file over bash sed -i. Use { tool:"edit_file", path:'${path}', edits:[{oldText,newText}] }.`;
+		case "write_file":
+			return `Prefer write_file over bash echo/printf. Use { tool:"write_file", path:'${path}', content:'...' } for atomic writes.`;
+		case "list_dir":
+			return `Prefer list_dir over bash ls. Use { tool:"list_dir", path:'${path}' } for structured output.`;
+		case "find_files":
+			return `Prefer find_files over bash find. Use { tool:"find_files", pattern:'<glob>', path:'${path}' }.`;
+		case "grep_files":
+			return `Prefer grep_files over bash grep. Use { tool:"grep_files", pattern:'<regex>', path:'${path}' }.`;
+	}
+}
+
+// Per-turn budget for bash-intent guidance. First 2 are guidance errors
+// (model can retry with the right tool), 3rd is a hard block.
+const bashIntentBudget = new Map<string, number>();
+
+function checkBashIntent(input: Record<string, unknown>, turnId: string): string | null {
+	const subTool = (input as Record<string, unknown>).tool;
+	if (subTool !== "bash") return null;
+	const command = String((input as Record<string, unknown>).command ?? "");
+	const intent = detectBashIntent(command);
+	if (!intent) return null;
+
+	const key = `${turnId}:${intent}`;
+	const count = bashIntentBudget.get(key) ?? 0;
+	if (count >= 2) {
+		return `Blocked: you have tried bash with similar intent 3 times. Use tool=${intent} instead.`;
+	}
+	bashIntentBudget.set(key, count + 1);
+	return getBashGuidance(intent, command);
+}
+
+/**
+ * Pull all path-like fields out of a satellite_remote_exec input. Used
+ * by the path-scope check.
+ */
+function extractPathArgs(input: Record<string, unknown>): Array<string | undefined> {
+	const out: Array<string | undefined> = [];
+	for (const k of ["path", "cwd", "local_path", "remote_path"]) {
+		const v = (input as Record<string, unknown>)[k];
+		if (typeof v === "string") out.push(v);
+	}
+	return out;
+}
+
+/**
+ * Main entry point for the `tool_call` hook. Returns `{block, reason}` to
+ * stop the call, or undefined to let it through.
+ */
+export function validateSatelliteCall(
+	toolName: string,
+	input: Record<string, unknown>,
+	mcpConfig: Record<string, McpServerConfig>,
+	turnId: string,
+): { block: true; reason: string } | undefined {
+	if (toolName !== SATELLITE_TOOL_NAME) return undefined;
+
+	// 1. Schema shape — most common agent failure mode.
+	const shapeErr = validateSchemaShape(input);
+	if (shapeErr) return { block: true, reason: shapeErr };
+
+	// 2. Path scope — only enforced if the satellite server has one set.
+	const satelliteCfg = mcpConfig["satellite"];
+	const pathErr = validatePathScope(satelliteCfg?.remotePathPattern, extractPathArgs(input));
+	if (pathErr) return { block: true, reason: pathErr };
+
+	// 3. Bash intent substitution — guidance, with a per-turn budget.
+	const intentErr = checkBashIntent(input, turnId);
+	if (intentErr) return { block: true, reason: intentErr };
+
+	return undefined;
+}
+
+export function clearBashIntentBudget(turnId: string): void {
+	for (const k of Array.from(bashIntentBudget.keys())) {
+		if (k.startsWith(`${turnId}:`)) bashIntentBudget.delete(k);
+	}
 }
 
 // ============================================================================
@@ -331,6 +540,27 @@ export function registerTools(pi: ExtensionAPI): void {
 				roundsSinceTodo++;
 			}
 		}
+
+		// Clear the per-turn bash-intent budget so the next turn starts fresh.
+		const turnId = String(event.turnIndex ?? "global");
+		clearBashIntentBudget(turnId);
+	});
+
+	// ============================================================================
+	// Hook: tool_call — client-side guardrails for satellite_remote_exec
+	//
+	// Runs in the agent's process, before the MCP round-trip. Blocks bad
+	// calls with a friendly reason (no token burn on the server, no
+	// cryptic MCP SDK error). Catches:
+	//   - nested "args" wrapper / missing "tool" field
+	//   - paths outside mcp.json's remotePathPattern
+	//   - bash(cat|ls|find|grep|sed -i|echo>) — substitute the dedicated sub-op
+	// ============================================================================
+
+	pi.on("tool_call", (event: { toolName: string; input: Record<string, unknown> }) => {
+		const mcpConfig = loadMcpConfig();
+		const turnId = String((event as any).turnIndex ?? "global");
+		return validateSatelliteCall(event.toolName, event.input, mcpConfig, turnId);
 	});
 
 	// ============================================================================

@@ -109,10 +109,6 @@ function getGuidanceMessage(intent: GuardrailIntent, command: string): string {
 const VERSION = "3.0.0";
 const TOKEN = process.env.SATELLITE_TOKEN || "";
 const PORT = parseInt(process.env.SATELLITE_PORT || "29001", 10);
-const RAW_PATH_PATTERN = process.env.SATELLITE_PATH_PATTERN || "";
-const REMOTE_PATH_PATTERN: RegExp | null = RAW_PATH_PATTERN
-  ? new RegExp(RAW_PATH_PATTERN)
-  : null;
 const SESSION_TTL_MS = 10 * 60 * 1000; // 10 min — sweep stale sessions on access
 const DEFAULT_BASH_TIMEOUT_SEC = 30;
 
@@ -127,96 +123,33 @@ if (!TOKEN) {
   process.exit(1);
 }
 
+// ============================================================================
+// Path Scope (server-side canonicalization + last-line .. block)
+//
+// Scope policy is the client's job (personal-assistant reads
+// remotePathPattern from mcp.json, rejects out-of-scope calls pre-flight).
+// The server keeps two thin, no-opinion defenses:
+//   1. canonicalize() — resolves .. and symlinks so file ops behave
+//      consistently regardless of input form. Cheap (<1ms), no policy.
+//   2. blockParentTraversal() — refuses any path whose realpath still
+//      contains ".." segments. Belt-and-suspenders in case a future
+//      handler forgets to canonicalize.
+// Both are unconditional — no config, no SATELLITE_PATH_PATTERN env.
+// ============================================================================
+
+async function canonicalize(p: string): Promise<string> {
+  return await realpath(p).catch(() => resolve(p));
+}
+
+function isParentTraversal(p: string): boolean {
+  // Reject anything where realpath still has /.. segments. Cheap regex
+  // check that catches bypasses if a handler ever forgets canonicalize().
+  return /(^|\/)\.\.(\/|$)/.test(p);
+}
+
 if (!TOKEN) {
   console.error("ERROR: SATELLITE_TOKEN environment variable is required");
   process.exit(1);
-}
-
-// ============================================================================
-// Path Scope (Layer B — server-side enforcement of remotePathPattern)
-// ============================================================================
-
-/**
- * Server-side enforcement of the path pattern declared in mcp.json.
- * Mirrors the client-side `remotePathPattern` (Layer A) so that a jailbroken
- * or hallucinating model cannot read/write outside the intended scope.
- *
- * Behavior:
- * - No pattern set → no enforcement (backward compatible).
- * - Resolves the path to its absolute, symlink-free form (realpath), then
- *   tests the regex. `..` traversal and symlink redirects are caught here
- *   because realpath collapses them before the regex runs.
- * - For non-existent paths (e.g. write_file to a new file), falls back to
- *   resolve() and validates the *parent directory* instead, so an attacker
- *   can't claim a new path under /etc/.
- *
- * Returns the safe (resolved) path on success. Throws on violation so the
- * per-handler try/catch turns it into a guidance error.
- */
-async function ensureRemotePath(inputPath: string): Promise<string> {
-  if (!REMOTE_PATH_PATTERN) return inputPath;
-
-  const resolveTarget = async (p: string): Promise<string> => {
-    const real = await realpath(p).catch(() => resolve(p));
-    return real;
-  };
-
-  // Try the path itself first.
-  let target = await resolveTarget(inputPath);
-  let realExists = existsSync(target);
-
-  if (!realExists) {
-    // File doesn't exist yet (e.g. write_file creating a new file).
-    // Validate the parent directory against the pattern instead, so the
-    // new file inherits the parent's scope.
-    const parent = dirname(target);
-    if (parent && parent !== target) {
-      const parentReal = await realpath(parent).catch(() => resolve(parent));
-      target = `${parentReal}/${basename(target)}`;
-    }
-  }
-
-  if (!REMOTE_PATH_PATTERN.test(target)) {
-    throw new Error(
-      `Path access denied: '${target}' is outside the allowed scope ` +
-      `(pattern: ${RAW_PATH_PATTERN}). Configure the satellite server with ` +
-      `a broader SATELLITE_PATH_PATTERN, or use bash to access this path.`
-    );
-  }
-  return target;
-}
-
-/**
- * Scan a bash command for path-like tokens and validate each one against
- * the pattern. Returns the first violation found, or null if clean.
- * Conservative — matches absolute paths and `~user` / `~/...` prefixes.
- */
-async function validateBashCommand(command: string): Promise<string | null> {
-  if (!REMOTE_PATH_PATTERN) return null;
-
-  // Skip when shell-builtin / assignment / variable expansion (so we don't
-  // false-positive on $PATH, ${HOME}, etc.)
-  // Match: /<word>(/<word>)* or ~/... or ~<user>/...
-  const candidates = new Set<string>();
-  const abs = command.match(/(?<![\w/$\\])(\/[\w.\-]+(?:\/[\w.\-]+)*)/g) ?? [];
-  for (const a of abs) candidates.add(a);
-  const home = command.match(/(?<![\w]~)(~(?:\/[\w.\-]+(?:[\w.\-/]+)?|[A-Za-z0-9_]+(?:[\w.\-/]+)?))/g) ?? [];
-  for (const h of home) candidates.add(h);
-
-  for (const c of candidates) {
-    try {
-      // For ~ we expand manually since bash -c would do it at runtime.
-      const expanded = c.startsWith("~")
-        ? c.replace(/^~/, process.env.HOME ?? "")
-        : c;
-      const real = await realpath(expanded).catch(() => resolve(expanded));
-      if (!REMOTE_PATH_PATTERN.test(real)) {
-        return `Path access denied: '${real}' (from '${c}' in command) is outside the allowed scope ` +
-               `(pattern: ${RAW_PATH_PATTERN}).`;
-      }
-    } catch { /* ignore individual failures, keep scanning */ }
-  }
-  return null;
 }
 
 // ============================================================================
@@ -319,10 +252,10 @@ export const REMOTE_EXEC_SCHEMA = z.discriminatedUnion("tool", [
   }),
   z.object({
     tool: z.literal("transfer_file"),
-    direction: z.enum(["upload", "download"]),
+    direction: z.enum(["remote_to_local", "local_to_remote"]),
     local_path: z.string(),
     remote_path: z.string(),
-    content: z.string().optional(), // only used for "download" direction
+    content: z.string().optional(), // only used for "local_to_remote" direction
   }),
 ]);
 
@@ -365,7 +298,7 @@ export const REMOTE_EXEC_INPUT_SCHEMA = z.object({
   })).optional(),
   pattern: z.string().optional(),
   glob: z.string().optional(),
-  direction: z.enum(["upload", "download"]).optional(),
+  direction: z.enum(["remote_to_local", "local_to_remote"]).optional(),
   local_path: z.string().optional(),
   remote_path: z.string().optional(),
 }).passthrough(); // Accept unknown root keys (e.g. nested "args" wrapper) so
@@ -697,10 +630,10 @@ const TOOL_SCHEMAS = {
     limit: z.number().optional(),
   }),
   transfer_file: z.object({
-    direction: z.enum(["upload", "download"]),
+    direction: z.enum(["remote_to_local", "local_to_remote"]),
     local_path: z.string(),
     remote_path: z.string(),
-    content: z.string().optional(),
+    content: z.string().optional(), // only used for "local_to_remote" direction
   }),
 };
 
@@ -711,7 +644,10 @@ const TOOL_SCHEMAS = {
 async function handleReadFile(args: { path: string; offset?: number; limit?: number }, sessionId: number | string = 0) {
   const t0 = Date.now();
   try {
-    const safePath = await ensureRemotePath(args.path);
+    const safePath = await canonicalize(args.path);
+    if (isParentTraversal(safePath)) {
+      throw new Error(`Path '${args.path}' resolves to '${safePath}' with parent-traversal segments`);
+    }
     let content = await readFile(safePath, "utf-8");
 
     if (content.charCodeAt(0) === 0xFEFF) {
@@ -744,7 +680,10 @@ async function handleReadFile(args: { path: string; offset?: number; limit?: num
 async function handleWriteFile(args: { path: string; content: string }, sessionId: number | string = 0) {
   const t0 = Date.now();
   try {
-    const safePath = await ensureRemotePath(args.path);
+    const safePath = await canonicalize(args.path);
+    if (isParentTraversal(safePath)) {
+      throw new Error(`Path '${args.path}' resolves to '${safePath}' with parent-traversal segments`);
+    }
     return await withFileQueue(safePath, async () => {
       await mkdir(dirname(safePath), { recursive: true });
       await writeFile(safePath, args.content, "utf-8");
@@ -759,35 +698,43 @@ async function handleWriteFile(args: { path: string; content: string }, sessionI
   }
 }
 
-export async function handleTransferFile(args: { direction: "upload" | "download"; local_path: string; remote_path: string; content?: string }, sessionId: number | string = 0) {
+export async function handleTransferFile(args: { direction: "remote_to_local" | "local_to_remote"; local_path: string; remote_path: string; content?: string }, sessionId: number | string = 0) {
   const t0 = Date.now();
-  // Echo direction/paths in the response so the model can self-verify it
-  // didn't get direction/local/remote mixed up. Most common confusion:
-  // `direction: "upload"` actually reads from remote_path, with the
-  // agent writing the returned content to local_path on its own machine.
+  // direction semantics (clear naming — no opinionated 'upload/download' ambiguity):
+  //   remote_to_local: server reads remote_path and returns content (agent saves to local_path).
+  //   local_to_remote: agent must pass content; server writes to remote_path.
+  // The agent's MCP client should use the HTTP /transfer endpoint for
+  // local_to_remote to avoid putting the file bytes in the LLM context.
+  // This MCP sub-op is here for parity; for big files prefer the HTTP path.
   const echo = `direction=${args.direction}, local=${args.local_path}, remote=${args.remote_path}\n`;
 
   try {
-    const safeRemote = await ensureRemotePath(args.remote_path);
-    if (args.direction === "upload") {
-      // upload: server reads remote_path and returns content (agent writes to local_path)
+    if (args.direction === "remote_to_local") {
+      const safeRemote = await canonicalize(args.remote_path);
+      if (isParentTraversal(safeRemote)) {
+        throw new Error(`Path '${args.remote_path}' resolves to '${safeRemote}' with parent-traversal segments`);
+      }
       const content = await readFile(safeRemote, "utf-8");
-      log(`transfer_file upload ${args.remote_path} → ok ${Date.now() - t0}ms (${content.length} bytes)`, String(sessionId));
+      log(`transfer_file remote_to_local ${args.remote_path} → ok ${Date.now() - t0}ms (${content.length} bytes)`, String(sessionId));
       return { content: textContent(echo + content) };
-    } else {
-      // download: agent must pass content field; server writes to remote_path
+    } else if (args.direction === "local_to_remote") {
       if (args.content === undefined) {
-        return { content: textContent(echo + "Error: download requires content field"), isError: true };
+        return { content: textContent(echo + "Error: local_to_remote requires content field. For big files, use HTTP POST /transfer?path=... from the client side to avoid burning LLM context."), isError: true };
+      }
+      const safeRemote = await canonicalize(args.remote_path);
+      if (isParentTraversal(safeRemote)) {
+        throw new Error(`Path '${args.remote_path}' resolves to '${safeRemote}' with parent-traversal segments`);
       }
       const content = args.content;
-      const result = await withFileQueue(safeRemote, async () => {
+      return await withFileQueue(safeRemote, async () => {
         await mkdir(dirname(safeRemote), { recursive: true });
         await writeFile(safeRemote, content, "utf-8");
         const bytes = Buffer.byteLength(content, "utf-8");
-        log(`transfer_file download ${args.remote_path} → ok ${Date.now() - t0}ms (${bytes} bytes)`, String(sessionId));
+        log(`transfer_file local_to_remote ${args.remote_path} → ok ${Date.now() - t0}ms (${bytes} bytes)`, String(sessionId));
         return { content: textContent(echo + `Successfully wrote ${bytes} bytes to ${args.remote_path}`) };
       });
-      return result;
+    } else {
+      return { content: textContent(echo + `Error: unknown direction '${args.direction}'. Use 'remote_to_local' or 'local_to_remote'.`), isError: true };
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
@@ -799,7 +746,10 @@ export async function handleTransferFile(args: { direction: "upload" | "download
 async function handleEditFile(args: { path: string; edits: Array<{ oldText: string; newText: string }> }, sessionId: number | string = 0) {
   const t0 = Date.now();
   try {
-    const safePath = await ensureRemotePath(args.path);
+    const safePath = await canonicalize(args.path);
+    if (isParentTraversal(safePath)) {
+      throw new Error(`Path '${args.path}' resolves to '${safePath}' with parent-traversal segments`);
+    }
     return await withFileQueue(safePath, async () => {
       let content = await readFile(safePath, "utf-8");
 
@@ -876,19 +826,6 @@ export async function handleBash(
     const guidance = getGuidanceMessage(intent, args.command);
     return {
       content: textContent(guidance),
-      isError: true,
-    };
-  }
-
-  // Layer C guardrail: scan bash command for path-like tokens that fall
-  // outside the allowed scope. (Layer A is the client-side system prompt,
-  // Layer B is the file sub-op realpath check above. This is Layer C for
-  // arbitrary shell commands — last line of defense for `cat /etc/passwd`.)
-  const pathViolation = await validateBashCommand(args.command);
-  if (pathViolation) {
-    log(`bash "${args.command.slice(0, 80)}" → blocked: ${pathViolation}`, String(turnId));
-    return {
-      content: textContent(pathViolation),
       isError: true,
     };
   }
@@ -1016,7 +953,10 @@ export async function handleBash(
 async function handleListDir(args: { path: string; limit?: number }, sessionId: number | string = 0) {
   const t0 = Date.now();
   try {
-    const safePath = await ensureRemotePath(args.path);
+    const safePath = await canonicalize(args.path);
+    if (isParentTraversal(safePath)) {
+      throw new Error(`Path '${args.path}' resolves to '${safePath}' with parent-traversal segments`);
+    }
     const maxEntries = args.limit || MAX_LS_ENTRIES;
     const dirEntries = await readdir(safePath, { withFileTypes: true });
 
@@ -1099,8 +1039,12 @@ export async function handleFindFiles(args: { pattern: string; path?: string; li
     };
   }
 
-  // Validate the search path is inside the allowed scope.
-  const safePath = await ensureRemotePath(searchPath);
+  // Canonicalize the search path; reject parent-traversal.
+  const safePath = await canonicalize(searchPath);
+  if (isParentTraversal(safePath)) {
+    log(`find_files ${args.pattern} → error parent-traversal ${Date.now() - t0}ms`, String(sessionId));
+    return { content: textContent(`Error: path '${searchPath}' resolves to '${safePath}' with parent-traversal segments`), isError: true };
+  }
 
   // Run fd to search for files
   const result = await runFd(args.pattern, safePath, limit);
@@ -1162,8 +1106,12 @@ export async function handleGrepFiles(args: { pattern: string; path?: string; gl
     };
   }
 
-  // Validate the search path is inside the allowed scope.
-  const safePath = await ensureRemotePath(searchPath);
+  // Canonicalize the search path; reject parent-traversal.
+  const safePath = await canonicalize(searchPath);
+  if (isParentTraversal(safePath)) {
+    log(`grep_files ${args.pattern} → error parent-traversal ${Date.now() - t0}ms`, String(sessionId));
+    return { content: textContent(`Error: path '${searchPath}' resolves to '${safePath}' with parent-traversal segments`), isError: true };
+  }
 
   // Run rg to search for matches
   const result = await runRg(args.pattern, safePath, glob, limit);
@@ -1196,86 +1144,8 @@ const TOOL_HANDLERS: Record<string, (
   list_dir: (args, _s, _p, sid) => handleListDir(args as { path: string; limit?: number }, sid),
   find_files: (args, _s, _p, sid) => handleFindFiles(args as { pattern: string; path?: string; limit?: number }, sid),
   grep_files: (args, _s, _p, sid) => handleGrepFiles(args as { pattern: string; path?: string; glob?: string; limit?: number }, sid),
-  transfer_file: (args, _s, _p, sid) => handleTransferFile(args as { direction: "upload" | "download"; local_path: string; remote_path: string; content?: string }, sid),
+  transfer_file: (args, _s, _p, sid) => handleTransferFile(args as { direction: "remote_to_local" | "local_to_remote"; local_path: string; remote_path: string; content?: string }, sid),
 };
-
-// ============================================================================
-// Schema Guardrail
-// ============================================================================
-
-const SUB_OP_FIELD_NAMES = new Set([
-  "command", "timeout", "cwd",
-  "path", "offset", "limit",
-  "content", "edits",
-  "pattern", "glob",
-  "direction", "local_path", "remote_path",
-]);
-
-/**
- * Detect common agent schema-confusion patterns before dispatch and return a
- * guidance error so the model can self-correct. Currently catches:
- *
- *   1. Nested "args" wrapper: { tool, args: { command } } — should be flat.
- *   2. "tool" missing entirely: { command } — model forgot the discriminator.
- *
- * Returns `null` if the shape looks fine and dispatch can proceed.
- */
-function checkSchemaShape(args: Record<string, unknown> | undefined): ToolResult | null {
-  if (!args || typeof args !== "object") return null;
-
-  // (2) "tool" missing — the model probably wrapped it under "args" too.
-  if (!("tool" in args)) {
-    const sample = Object.keys(args).slice(0, 3).join(", ");
-    return {
-      content: [{
-        type: "text",
-        text: [
-          "SCHEMA ERROR: missing required field \"tool\" at the root of remote_exec.",
-          "",
-          `You sent: { ${sample}${Object.keys(args).length > 3 ? ", ..." : ""} }`,
-          "",
-          "Every remote_exec call must include a \"tool\" field set to one of:",
-          "  bash, read_file, write_file, edit_file, list_dir,",
-          "  find_files, grep_files, transfer_file",
-          "",
-          "If you wrapped sub-op arguments under \"args\", flatten them — see the",
-          "ARGUMENT SHAPE section of the tool description.",
-        ].join("\n"),
-      }],
-      isError: true,
-    };
-  }
-
-  // (1) Nested "args" wrapper — the most common model confusion.
-  const nested = (args as Record<string, unknown>).args;
-  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
-    const recognized = Object.keys(nested as Record<string, unknown>)
-      .filter((k) => SUB_OP_FIELD_NAMES.has(k));
-    if (recognized.length > 0) {
-      const toolName = String((args as Record<string, unknown>).tool);
-      return {
-        content: [{
-          type: "text",
-          text: [
-            "SCHEMA ERROR: sub-op arguments must be FLATTENED to the root of the tool call.",
-            "",
-            `You sent: { tool: "${toolName}", args: { ${recognized.join(", ")} } }`,
-            `Correct:  { tool: "${toolName}", ${recognized.map((k) => `${k}: ...`).join(", ")} }`,
-            "",
-            "Examples:",
-            '  WRONG: remote_exec({ tool: "bash", args: { command: "ls" } })',
-            '  RIGHT: remote_exec({ tool: "bash", command: "ls" })',
-            '  WRONG: remote_exec({ tool: "read_file", args: { path: "/tmp/x" } })',
-            '  RIGHT: remote_exec({ tool: "read_file", path: "/tmp/x" })',
-          ].join("\n"),
-        }],
-        isError: true,
-      };
-    }
-  }
-
-  return null;
-}
 
 // ============================================================================
 // MCP Server Factory
@@ -1290,19 +1160,11 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "remote_exec",
     {
-      description: "Run file and shell operations on the remote HPC server. Choose one operation by setting the tool parameter.\n\nGUIDANCE:\n- PREFER `read_file` over `bash(cat <path>)` — supports offset/limit/truncation\n- PREFER `write_file` over `bash(echo > <path>)` — auto-creates parent dirs, atomic\n- PREFER `edit_file` over `bash(sed -i)` — fuzzy matching, multi-edit, diff feedback\n- PREFER `find_files` over `bash(find ...)` — uses fd with proper limit/truncation\n- PREFER `grep_files` over `bash(grep ...)` — uses rg with proper limit/truncation\n- PREFER `list_dir` over `bash(ls)` — structured output, no shell escape issues\n- Use `bash` ONLY for actual shell operations (env, processes, scripts)\n- `transfer_file` moves files between local and remote (LLM context tokens are not used to carry file bytes)\n\nARGUMENT SHAPE — sub-op arguments are FLATTENED to the root of the tool call, NOT wrapped under \"args\":\n  WRONG: { tool: \"bash\", args: { command: \"ls\" } }\n  RIGHT: { tool: \"bash\", command: \"ls\" }\n  WRONG: { tool: \"read_file\", args: { path: \"/tmp/x\" } }\n  RIGHT: { tool: \"read_file\", path: \"/tmp/x\" }\n\nSUB-OPERATIONS:\n- bash: execute a shell command (command, optional timeout in seconds, optional cwd)\n- read_file: read file contents (path, optional offset, optional limit)\n- write_file: create or overwrite file (path, content)\n- edit_file: apply text edits (path, edits[{oldText, newText}])\n- list_dir: list directory entries (path defaults to '.', optional limit, default 500)\n- find_files: search files by glob (pattern, optional path, optional limit) — uses fd\n- grep_files: search file contents (pattern, optional path, optional glob, optional limit) — uses rg\n- transfer_file: move file between local and remote (direction='upload'|'download', local_path, remote_path). upload: server reads remote_path and returns content (agent writes to local_path). download: agent must pass `content` field; server writes to remote_path",
+      description: "Run file and shell operations on the remote HPC server.\n\n# Common tasks — fields are flat at the root\n\nRead    { tool:\"read_file\",  path:\"...\" }\nEdit    { tool:\"edit_file\",  path:\"...\", edits:[{oldText,newText}] }\nWrite   { tool:\"write_file\", path:\"...\", content:\"...\" }\n        Pass content directly as a string, do NOT wrap it in a Python script.\nList    { tool:\"list_dir\",   path:\"...\" }\nSearch  { tool:\"find_files\", pattern:\"...\", path:\"...\" }\n        { tool:\"grep_files\", pattern:\"...\", path:\"...\", glob?:\"...\" }\nShell   { tool:\"bash\",       command:\"...\" }\n        Use only for env, processes, scripts. Prefer the dedicated ops above.\n\n# Move a local file to remote (no LLM context burn for the file bytes)\n\n  { tool:\"transfer_file\", direction:\"local_to_remote\",\n    local_path:\"<path on your machine>\",\n    remote_path:\"<path on HPC>\" }\n\n# Pull a remote file to local (no LLM context burn for the file bytes)\n\n  { tool:\"transfer_file\", direction:\"remote_to_local\",\n    remote_path:\"<path on HPC>\",\n    local_path:\"<path on your machine>\" }\n\n# Field reference\n\nSee the JSON schema for optional fields (offset, limit, timeout, glob, edits, etc.).",
       inputSchema: REMOTE_EXEC_INPUT_SCHEMA,
     },
     async (args, extra) => {
       const t0 = Date.now();
-
-      // ===== Schema guardrail =====
-      // Catch the common agent failure pattern where the model passes
-      // sub-op arguments nested under an "args" wrapper. The MCP SDK
-      // would otherwise return "root: must not have additional properties",
-      // which is too terse for the model to recover from.
-      const schemaGate = checkSchemaShape(args);
-      if (schemaGate) return schemaGate;
 
       const { tool, ...toolArgs } = args;
 
@@ -1473,7 +1335,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "Content-Type, Authorization, Mcp-Session-Id",
 };
 
-log(`Satellite MCP Server v${VERSION} starting on port ${PORT}${REMOTE_PATH_PATTERN ? ` (path pattern: ${RAW_PATH_PATTERN})` : ""}`);
+log(`Satellite MCP Server v${VERSION} starting on port ${PORT}`);
 
 const httpServer = (globalThis as any).Bun.serve({
   port: PORT,
@@ -1488,7 +1350,7 @@ const httpServer = (globalThis as any).Bun.serve({
 
     // Health check (no auth required)
     if (url.pathname === "/health") {
-      return Response.json({ status: "ok", version: VERSION, pathPattern: RAW_PATH_PATTERN || null, sessions: transports.size }, { headers: corsHeaders });
+      return Response.json({ status: "ok", version: VERSION, sessions: transports.size }, { headers: corsHeaders });
     }
 
     // Metrics (no auth required — same trust model as /health)
