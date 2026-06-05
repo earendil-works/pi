@@ -1179,6 +1179,7 @@ const httpServer = (globalThis as any).Bun.serve({
             const sid = transport.sessionId;
             if (sid && transports.has(sid)) {
               transports.delete(sid);
+              resetGuardrail(sid); // release per-session guardrail counters
               log(`Session closed: ${sid}`);
             }
           };
