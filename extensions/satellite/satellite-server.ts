@@ -233,7 +233,9 @@ export const REMOTE_EXEC_INPUT_SCHEMA = z.object({
   direction: z.enum(["upload", "download"]).optional(),
   local_path: z.string().optional(),
   remote_path: z.string().optional(),
-});
+}).passthrough(); // Accept unknown root keys (e.g. nested "args" wrapper) so
+                 // our handler can return a guidance error instead of the
+                 // SDK's terse "root: must not have additional properties".
 
 // ============================================================================
 // Progress Context (for keepalive heartbeat during long-running tools)
@@ -1039,6 +1041,84 @@ const TOOL_HANDLERS: Record<string, (
 };
 
 // ============================================================================
+// Schema Guardrail
+// ============================================================================
+
+const SUB_OP_FIELD_NAMES = new Set([
+  "command", "timeout", "cwd",
+  "path", "offset", "limit",
+  "content", "edits",
+  "pattern", "glob",
+  "direction", "local_path", "remote_path",
+]);
+
+/**
+ * Detect common agent schema-confusion patterns before dispatch and return a
+ * guidance error so the model can self-correct. Currently catches:
+ *
+ *   1. Nested "args" wrapper: { tool, args: { command } } — should be flat.
+ *   2. "tool" missing entirely: { command } — model forgot the discriminator.
+ *
+ * Returns `null` if the shape looks fine and dispatch can proceed.
+ */
+function checkSchemaShape(args: Record<string, unknown> | undefined): ToolResult | null {
+  if (!args || typeof args !== "object") return null;
+
+  // (2) "tool" missing — the model probably wrapped it under "args" too.
+  if (!("tool" in args)) {
+    const sample = Object.keys(args).slice(0, 3).join(", ");
+    return {
+      content: [{
+        type: "text",
+        text: [
+          "SCHEMA ERROR: missing required field \"tool\" at the root of remote_exec.",
+          "",
+          `You sent: { ${sample}${Object.keys(args).length > 3 ? ", ..." : ""} }`,
+          "",
+          "Every remote_exec call must include a \"tool\" field set to one of:",
+          "  bash, read_file, write_file, edit_file, list_dir,",
+          "  find_files, grep_files, transfer_file",
+          "",
+          "If you wrapped sub-op arguments under \"args\", flatten them — see the",
+          "ARGUMENT SHAPE section of the tool description.",
+        ].join("\n"),
+      }],
+      isError: true,
+    };
+  }
+
+  // (1) Nested "args" wrapper — the most common model confusion.
+  const nested = (args as Record<string, unknown>).args;
+  if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+    const recognized = Object.keys(nested as Record<string, unknown>)
+      .filter((k) => SUB_OP_FIELD_NAMES.has(k));
+    if (recognized.length > 0) {
+      const toolName = String((args as Record<string, unknown>).tool);
+      return {
+        content: [{
+          type: "text",
+          text: [
+            "SCHEMA ERROR: sub-op arguments must be FLATTENED to the root of the tool call.",
+            "",
+            `You sent: { tool: "${toolName}", args: { ${recognized.join(", ")} } }`,
+            `Correct:  { tool: "${toolName}", ${recognized.map((k) => `${k}: ...`).join(", ")} }`,
+            "",
+            "Examples:",
+            '  WRONG: remote_exec({ tool: "bash", args: { command: "ls" } })',
+            '  RIGHT: remote_exec({ tool: "bash", command: "ls" })',
+            '  WRONG: remote_exec({ tool: "read_file", args: { path: "/tmp/x" } })',
+            '  RIGHT: remote_exec({ tool: "read_file", path: "/tmp/x" })',
+          ].join("\n"),
+        }],
+        isError: true,
+      };
+    }
+  }
+
+  return null;
+}
+
+// ============================================================================
 // MCP Server Factory
 // ============================================================================
 
@@ -1051,11 +1131,20 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "remote_exec",
     {
-      description: "Run file and shell operations on the remote HPC server. Choose one operation by setting the tool parameter.\n\nGUIDANCE:\n- PREFER `read_file` over `bash(cat <path>)` — supports offset/limit/truncation\n- PREFER `write_file` over `bash(echo > <path>)` — auto-creates parent dirs, atomic\n- PREFER `edit_file` over `bash(sed -i)` — fuzzy matching, multi-edit, diff feedback\n- PREFER `find_files` over `bash(find ...)` — uses fd with proper limit/truncation\n- PREFER `grep_files` over `bash(grep ...)` — uses rg with proper limit/truncation\n- PREFER `list_dir` over `bash(ls)` — structured output, no shell escape issues\n- Use `bash` ONLY for actual shell operations (env, processes, scripts)\n- `transfer_file` moves files between local and remote (LLM context tokens are not used to carry file bytes)\n\nSUB-OPERATIONS:\n- bash: execute a shell command (command, optional timeout in seconds, optional cwd)\n- read_file: read file contents (path, optional offset, optional limit)\n- write_file: create or overwrite a file (path, content)\n- edit_file: apply text edits (path, edits[{oldText, newText}])\n- list_dir: list directory entries (path defaults to '.', optional limit, default 500)\n- find_files: search files by glob (pattern, optional path, optional limit) — uses fd\n- grep_files: search file contents (pattern, optional path, optional glob, optional limit) — uses rg\n- transfer_file: move file between local and remote (direction='upload'|'download', local_path, remote_path). upload: server reads remote_path and returns content (agent writes to local_path). download: agent must pass `content` field; server writes to remote_path",
+      description: "Run file and shell operations on the remote HPC server. Choose one operation by setting the tool parameter.\n\nGUIDANCE:\n- PREFER `read_file` over `bash(cat <path>)` — supports offset/limit/truncation\n- PREFER `write_file` over `bash(echo > <path>)` — auto-creates parent dirs, atomic\n- PREFER `edit_file` over `bash(sed -i)` — fuzzy matching, multi-edit, diff feedback\n- PREFER `find_files` over `bash(find ...)` — uses fd with proper limit/truncation\n- PREFER `grep_files` over `bash(grep ...)` — uses rg with proper limit/truncation\n- PREFER `list_dir` over `bash(ls)` — structured output, no shell escape issues\n- Use `bash` ONLY for actual shell operations (env, processes, scripts)\n- `transfer_file` moves files between local and remote (LLM context tokens are not used to carry file bytes)\n\nARGUMENT SHAPE — sub-op arguments are FLATTENED to the root of the tool call, NOT wrapped under \"args\":\n  WRONG: { tool: \"bash\", args: { command: \"ls\" } }\n  RIGHT: { tool: \"bash\", command: \"ls\" }\n  WRONG: { tool: \"read_file\", args: { path: \"/tmp/x\" } }\n  RIGHT: { tool: \"read_file\", path: \"/tmp/x\" }\n\nSUB-OPERATIONS:\n- bash: execute a shell command (command, optional timeout in seconds, optional cwd)\n- read_file: read file contents (path, optional offset, optional limit)\n- write_file: create or overwrite file (path, content)\n- edit_file: apply text edits (path, edits[{oldText, newText}])\n- list_dir: list directory entries (path defaults to '.', optional limit, default 500)\n- find_files: search files by glob (pattern, optional path, optional limit) — uses fd\n- grep_files: search file contents (pattern, optional path, optional glob, optional limit) — uses rg\n- transfer_file: move file between local and remote (direction='upload'|'download', local_path, remote_path). upload: server reads remote_path and returns content (agent writes to local_path). download: agent must pass `content` field; server writes to remote_path",
       inputSchema: REMOTE_EXEC_INPUT_SCHEMA,
     },
     async (args, extra) => {
       const t0 = Date.now();
+
+      // ===== Schema guardrail =====
+      // Catch the common agent failure pattern where the model passes
+      // sub-op arguments nested under an "args" wrapper. The MCP SDK
+      // would otherwise return "root: must not have additional properties",
+      // which is too terse for the model to recover from.
+      const schemaGate = checkSchemaShape(args);
+      if (schemaGate) return schemaGate;
+
       const { tool, ...toolArgs } = args;
 
       log(`remote_exec → ${tool} ${JSON.stringify(toolArgs).slice(0, 200)}`);
