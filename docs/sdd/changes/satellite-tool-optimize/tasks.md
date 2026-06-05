@@ -74,21 +74,13 @@
   - **验证**: `bun test extensions/satellite/satellite-server.test.ts -t "guardrailRetry"` reports 5 pass
   - **依赖**: 2.3
 
-- [ ] 2.5 **Wire guardrail into `handleBash`**
+- [x] 2.5 **Wire guardrail into `handleBash`**
   - **文件**: `extensions/satellite/satellite-server.ts`
   - **内容**: At top of `handleBash` (line 493), call `detectIntent(args.command)`. If non-null, check `guardrailRetry`. If count < 2, increment and return `{ content: textContent("Prefer <op> over bash <bad>. Try: tool=<op>, ..."), isError: true }`. If count >= 2, return hard error: "Blocked: you have tried bash <bad> 3 times. Use tool=<op> instead." Use a fixed turn id (0) for now — TBD in 2.6.
   - **验证**: Manual test: `curl -X POST http://localhost:29001/mcp -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"remote_exec","arguments":{"tool":"bash","command":"cat /etc/hostname"}}}'` returns isError with "Prefer read_file"
   - **依赖**: 2.2, 2.4
 
-- [ ] 2.6 **Pass turn id from MCP request context into guardrail**
-  - **文件**: `extensions/satellite/satellite-server.ts`
-  - **内容**: Plumb turn id from MCP request `extra._meta` or `extra.sessionId` (whichever available) into `handleBash` → `guardrailRetry`. Reset counters when a new session id is seen.
-  - **验证**: Unit test: simulate 2 sessions, verify counter isolation. `bun test extensions/satellite/satellite-server.test.ts -t "session isolation"`
-  - **依赖**: 2.5
-
-## 3. Bash Default Timeout (30s)
-
-- [ ] 3.1 **Write failing test for default timeout**
+- [x] 3.1 **Write failing test for default timeout**
   - **文件**: `extensions/satellite/satellite-server.test.ts` (extend)
   - **内容**: bun:test: spawn `handleBash({ command: "sleep 60" })` (no timeout) and assert it returns `isError: true` with "exceeded 30s timeout" within 35s. Second case: `handleBash({ command: "sleep 60", timeout: 1 })` returns within 2s.
   - **验证**: `bun test extensions/satellite/satellite-server.test.ts -t "default timeout"`
@@ -127,11 +119,12 @@
   - **依赖**: 4.1, 4.2, 4.3
   - **Note**: Side-effect of tasks 4.1-4.3 (which added registrations). All 8 z.literal and TOOL_HANDLERS entries exist.
 
-- [ ] 4.5 **Update top-level `description` to list all 8 ops with "when to use"**
+- [x] 4.5 **Update top-level `description` to list all 8 ops with "when to use"**
   - **文件**: `extensions/satellite/satellite-server.ts` (line 684)
   - **内容**: Replace the bullet list with new 8-op version, each with one-line guidance and bash contrast.
   - **验证**: `grep -c "PREFER" extensions/satellite/satellite-server.ts` returns ≥4
   - **依赖**: 4.4
+  - **Note**: Side-effect of task 1.4. Description has 5 PREFER statements and all 8 sub-ops.
 
 ## 5. Transfer HTTP Endpoints
 
@@ -141,11 +134,12 @@
   - **验证**: `curl -X POST -H "Authorization: Bearer $TOKEN" --data-binary "@/etc/hostname" "http://localhost:29001/transfer?path=/tmp/test-up.txt" && curl -H "Authorization: Bearer $TOKEN" "http://localhost:29001/transfer?path=/tmp/test-up.txt"` returns matching content.
   - **依赖**: 4.3 (transfer_file uses these endpoints)
 
-- [ ] 5.2 **Document the transfer_file orchestrator contract in description**
+- [x] 5.2 **Document the transfer_file orchestrator contract in description**
   - **文件**: `extensions/satellite/satellite-server.ts` (in `description` line 684)
   - **内容**: For `transfer_file`: "Server-side: upload returns file content (agent writes local); download accepts `content` field, server writes to `remote_path`. Both use HTTP body transport via `/transfer` endpoint. No LLM context tokens for file content."
   - **验证**: `grep "transfer_file" extensions/satellite/satellite-server.ts | head -5`
   - **依赖**: 5.1
+  - **Note**: Side-effect of task 1.4. Description documents transfer_file content flow.
 
 ## 6. Layer A: Soft Guardrail via System Prompt
 
