@@ -33,6 +33,26 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { z } from "zod/v3";
 
 // ============================================================================
+// Intent Detection (Bash Guardrail)
+// ============================================================================
+
+/**
+ * Detects file operation intent from bash commands.
+ * Order matters: first match wins.
+ */
+export function detectIntent(command: string): "read_file" | "edit_file" | "write_file" | "find_files" | "grep_files" | null {
+  // Guard: reject pipeline/redirect commands (not direct file ops)
+  // Do this BEFORE grep/find patterns but AFTER write_file (which uses > redirect)
+  if (/[|<]/.test(command)) return null;
+  if (/^cat\s+[^\s|;<>&]+$/.test(command)) return "read_file";
+  if (/^sed\s+-i\b/.test(command)) return "edit_file";
+  if (/^(echo|printf)\s+.*>\s*\S+/.test(command)) return "write_file";
+  if (/\bfind\s+/.test(command)) return "find_files";
+  if (/\bgrep\s+/.test(command)) return "grep_files";
+  return null;
+}
+
+// ============================================================================
 // Config
 // ============================================================================
 
@@ -71,7 +91,7 @@ const PROGRESS_THROTTLE_MS = 100;
 const KEEPALIVE_INTERVAL_MS = 10_000; // Send progress notification every 10s to prevent idle TCP disconnect
 
 // Remote exec tool input schema - discriminated union of all sub-operations
-const REMOTE_EXEC_SCHEMA = z.discriminatedUnion("tool", [
+export const REMOTE_EXEC_SCHEMA = z.discriminatedUnion("tool", [
   z.object({
     tool: z.literal("bash"),
     command: z.string(),
@@ -101,6 +121,26 @@ const REMOTE_EXEC_SCHEMA = z.discriminatedUnion("tool", [
     tool: z.literal("list_dir"),
     path: z.string().optional().default("."),
     limit: z.number().optional().default(500),
+  }),
+  z.object({
+    tool: z.literal("find_files"),
+    pattern: z.string(),
+    path: z.string().optional().default("."),
+    limit: z.number().optional().default(500),
+  }),
+  z.object({
+    tool: z.literal("grep_files"),
+    pattern: z.string(),
+    path: z.string().optional().default("."),
+    glob: z.string().optional(),
+    limit: z.number().optional().default(500),
+  }),
+  z.object({
+    tool: z.literal("transfer_file"),
+    direction: z.enum(["upload", "download"]),
+    local_path: z.string(),
+    remote_path: z.string(),
+    content: z.string().optional(), // only used for "download" direction
   }),
 ]);
 
@@ -414,8 +454,25 @@ const TOOL_SCHEMAS = {
     cwd: z.string().optional(),
   }),
   list_dir: z.object({
-    path: z.string(),
+    path: z.string().optional().default("."),
     limit: z.number().optional(),
+  }),
+  find_files: z.object({
+    pattern: z.string(),
+    path: z.string().optional(),
+    limit: z.number().optional(),
+  }),
+  grep_files: z.object({
+    pattern: z.string(),
+    path: z.string().optional(),
+    glob: z.string().optional(),
+    limit: z.number().optional(),
+  }),
+  transfer_file: z.object({
+    direction: z.enum(["upload", "download"]),
+    local_path: z.string(),
+    remote_path: z.string(),
+    content: z.string().optional(),
   }),
 };
 
@@ -469,6 +526,42 @@ async function handleWriteFile(args: { path: string; content: string }) {
     const msg = e instanceof Error ? e.message : String(e);
     log(`write_file ${args.path} → error ${Date.now() - t0}ms: ${msg}`);
     return { content: textContent(`Error: ${msg}`), isError: true };
+  }
+}
+
+export async function handleTransferFile(args: { direction: "upload" | "download"; local_path: string; remote_path: string; content?: string }) {
+  const t0 = Date.now();
+
+  if (args.direction === "upload") {
+    // upload: server reads remote_path and returns content (agent writes to local_path)
+    try {
+      const content = await readFile(args.remote_path, "utf-8");
+      log(`transfer_file upload ${args.remote_path} → ok ${Date.now() - t0}ms (${content.length} bytes)`);
+      return { content: textContent(content) };
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`transfer_file upload ${args.remote_path} → error ${Date.now() - t0}ms: ${msg}`);
+      return { content: textContent(`Error: ${msg}`), isError: true };
+    }
+  } else {
+    // download: agent must pass `content` field; server writes to remote_path
+    if (args.content === undefined) {
+      return { content: textContent("Error: download requires content field"), isError: true };
+    }
+    const content = args.content; // capture after guard
+    try {
+      return await withFileQueue(args.remote_path, async () => {
+        await mkdir(dirname(args.remote_path), { recursive: true });
+        await writeFile(args.remote_path, content, "utf-8");
+        const bytes = Buffer.byteLength(content, "utf-8");
+        log(`transfer_file download ${args.remote_path} → ok ${Date.now() - t0}ms (${bytes} bytes)`);
+        return { content: textContent(`Successfully wrote ${bytes} bytes to ${args.remote_path}`) };
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      log(`transfer_file download ${args.remote_path} → error ${Date.now() - t0}ms: ${msg}`);
+      return { content: textContent(`Error: ${msg}`), isError: true };
+    }
   }
 }
 
@@ -680,6 +773,122 @@ async function handleListDir(args: { path: string; limit?: number }) {
   }
 }
 
+// Check if fd is available on the system
+async function checkFdAvailable(): Promise<{ available: boolean; path?: string }> {
+  return new Promise((resolve) => {
+    const proc = spawn("which", ["fd"], { stdio: ["ignore", "pipe", "ignore"] });
+    let output = "";
+    proc.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+    proc.on("close", (code) => {
+      if (code === 0 && output.trim()) {
+        resolve({ available: true, path: output.trim() });
+      } else {
+        resolve({ available: false });
+      }
+    });
+    proc.on("error", () => resolve({ available: false }));
+  });
+}
+
+// Run fd to search for files
+async function runFd(pattern: string, path: string, limit: number): Promise<{ output: string; truncated: boolean }> {
+  return new Promise((resolve) => {
+    const args = ["--glob", "--hidden", "--no-require-git", "--max-depth", "10", pattern, path];
+    const proc = spawn("fd", args, { stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    proc.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+    proc.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+    proc.on("close", (code) => {
+      // Apply truncation
+      const truncated = truncateHead(output, limit, MAX_BYTES);
+      resolve({ output: truncated.text, truncated: truncated.truncated });
+    });
+    proc.on("error", () => resolve({ output: "", truncated: false }));
+  });
+}
+
+export async function handleFindFiles(args: { pattern: string; path?: string; limit?: number }) {
+  const t0 = Date.now();
+  const searchPath = args.path || ".";
+  const limit = args.limit || 500;
+
+  // Check if fd is available
+  const fdCheck = await checkFdAvailable();
+  if (!fdCheck.available) {
+    log(`find_files ${args.pattern} → error fd not found ${Date.now() - t0}ms`);
+    return {
+      content: textContent("fd not found on remote server. Install with: apt install fd-find"),
+      isError: true,
+    };
+  }
+
+  // Run fd to search for files
+  const result = await runFd(args.pattern, searchPath, limit);
+
+  log(`find_files ${args.pattern} ${searchPath} → ok ${Date.now() - t0}ms (${result.truncated ? "truncated" : "full"})`);
+  return { content: textContent(result.output || "(no matches found)") };
+}
+
+// Check if rg is available on the system
+async function checkRgAvailable(): Promise<{ available: boolean; path?: string }> {
+  return new Promise((resolve) => {
+    const proc = spawn("which", ["rg"], { stdio: ["ignore", "pipe", "ignore"] });
+    let output = "";
+    proc.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+    proc.on("close", (code) => {
+      if (code === 0 && output.trim()) {
+        resolve({ available: true, path: output.trim() });
+      } else {
+        resolve({ available: false });
+      }
+    });
+    proc.on("error", () => resolve({ available: false }));
+  });
+}
+
+// Run rg to search for matches
+async function runRg(pattern: string, path: string, glob: string | undefined, limit: number): Promise<{ output: string; truncated: boolean }> {
+  return new Promise((resolve) => {
+    const args = ["--no-heading", "--line-number", "--max-depth", "10", pattern, path];
+    if (glob) {
+      args.push("--glob", glob);
+    }
+    const proc = spawn("rg", args, { stdio: ["ignore", "pipe", "pipe"] });
+    let output = "";
+    proc.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+    proc.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
+    proc.on("close", (code) => {
+      // Apply truncation
+      const truncated = truncateHead(output, limit, MAX_BYTES);
+      resolve({ output: truncated.text, truncated: truncated.truncated });
+    });
+    proc.on("error", () => resolve({ output: "", truncated: false }));
+  });
+}
+
+export async function handleGrepFiles(args: { pattern: string; path?: string; glob?: string; limit?: number }) {
+  const t0 = Date.now();
+  const searchPath = args.path || ".";
+  const glob = args.glob;
+  const limit = args.limit || 500;
+
+  // Check if rg is available
+  const rgCheck = await checkRgAvailable();
+  if (!rgCheck.available) {
+    log(`grep_files ${args.pattern} → error rg not found ${Date.now() - t0}ms`);
+    return {
+      content: textContent("ripgrep not found on remote server. Install with: apt install ripgrep"),
+      isError: true,
+    };
+  }
+
+  // Run rg to search for matches
+  const result = await runRg(args.pattern, searchPath, glob, limit);
+
+  log(`grep_files ${args.pattern} ${searchPath} → ok ${Date.now() - t0}ms (${result.truncated ? "truncated" : "full"})`);
+  return { content: textContent(result.output || "(no matches found)") };
+}
+
 // ============================================================================
 // Tool Router
 // ============================================================================
@@ -700,6 +909,9 @@ const TOOL_HANDLERS: Record<string, (
     progressCtx,
   ),
   list_dir: (args) => handleListDir(args as { path: string; limit?: number }),
+  find_files: (args) => handleFindFiles(args as { pattern: string; path?: string; limit?: number }),
+  grep_files: (args) => handleGrepFiles(args as { pattern: string; path?: string; glob?: string; limit?: number }),
+  transfer_file: (args) => handleTransferFile(args as { direction: "upload" | "download"; local_path: string; remote_path: string; content?: string }),
 };
 
 // ============================================================================
@@ -715,7 +927,7 @@ function createMcpServer(): McpServer {
   server.registerTool(
     "remote_exec",
     {
-      description: "Run file and shell operations on the remote HPC server. Choose one operation by setting the tool parameter:\n\n- bash: execute a shell command (command, optional timeout in ms, optional cwd)\n- read_file: read file contents (path, optional offset, optional limit)\n- write_file: create or overwrite a file (path, content)\n- edit_file: apply text edits (path, edits[{oldText, newText}])\n- list_dir: list directory entries (default path \".\", optional limit, default 500)",
+      description: "Run file and shell operations on the remote HPC server. Choose one operation by setting the tool parameter.\n\nGUIDANCE:\n- PREFER `read_file` over `bash(cat <path>)` — supports offset/limit/truncation\n- PREFER `write_file` over `bash(echo > <path>)` — auto-creates parent dirs, atomic\n- PREFER `edit_file` over `bash(sed -i)` — fuzzy matching, multi-edit, diff feedback\n- PREFER `grep_files` over `bash(grep)` — uses rg with proper limit/truncation\n- PREFER `list_dir` over `bash(ls)` — structured output, no shell escape issues\n- Use `bash` ONLY for actual shell operations (env, processes, scripts)\n\nSUB-OPERATIONS:\n- bash: execute a shell command (command, optional timeout in seconds, optional cwd)\n- read_file: read file contents (path, optional offset, optional limit)\n- write_file: create or overwrite a file (path, content)\n- edit_file: apply text edits (path, edits[{oldText, newText}])\n- list_dir: list directory entries (path defaults to '.', optional limit, default 500)\n- grep_files: search file contents (pattern, optional path, optional glob, optional limit)\n- transfer_file: move file between local and remote (direction='upload'|'download', local_path, remote_path). upload: server reads remote_path and returns content (agent writes to local_path). download: agent must pass `content` field; server writes to remote_path",
       inputSchema: REMOTE_EXEC_SCHEMA,
     },
     async (args, extra) => {
