@@ -33,76 +33,6 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { z } from "zod/v3";
 
 // ============================================================================
-// Intent Detection (Bash Guardrail)
-// ============================================================================
-
-/**
- * Detects file operation intent from bash commands.
- * Order matters: first match wins.
- */
-export function detectIntent(command: string): "read_file" | "edit_file" | "write_file" | "find_files" | "grep_files" | "list_dir" | null {
-  // Guard: reject pipeline/redirect commands (not direct file ops)
-  // Do this BEFORE grep/find patterns but AFTER write_file (which uses > redirect)
-  if (/[|<]/.test(command)) return null;
-  if (/^cat\s+[^\s|;<>&]+$/.test(command)) return "read_file";
-  if (/^sed\s+-i\b/.test(command)) return "edit_file";
-  if (/^(echo|printf)\s+.*>\s*\S+/.test(command)) return "write_file";
-  if (/^(ls|ll|dir)\b/.test(command)) return "list_dir";
-  if (/\bfind\s+/.test(command)) return "find_files";
-  if (/\bgrep\s+/.test(command)) return "grep_files";
-  return null;
-}
-
-// ============================================================================
-// Guardrail Retry Counter (per-turn, per-intent)
-// ============================================================================
-
-export type GuardrailIntent = "read_file" | "edit_file" | "write_file" | "find_files" | "grep_files" | "list_dir";
-export type TurnId = number | string;
-
-const guardrailCounters = new Map<TurnId, Partial<Record<GuardrailIntent, number>>>();
-
-export function getGuardrailCount(turnId: TurnId, intent: GuardrailIntent): number {
-  return guardrailCounters.get(turnId)?.[intent] ?? 0;
-}
-
-export function incrementGuardrail(turnId: TurnId, intent: GuardrailIntent): number {
-  const current = getGuardrailCount(turnId, intent);
-  const next = current + 1;
-  if (!guardrailCounters.has(turnId)) {
-    guardrailCounters.set(turnId, {});
-  }
-  guardrailCounters.get(turnId)![intent] = next;
-  return next;
-}
-
-export function resetGuardrail(turnId: TurnId): void {
-  guardrailCounters.delete(turnId);
-}
-
-/**
- * Returns guidance text for a detected bash intent.
- * The path extraction is naive (last token) — enough for guardrail hints.
- */
-function getGuidanceMessage(intent: GuardrailIntent, command: string): string {
-  const path = command.split(/\s+/).pop() || "<path>";
-  switch (intent) {
-    case "read_file":
-      return `Prefer read_file over bash cat. Use tool=read_file, path='${path}' for offset/limit/truncation support.`;
-    case "edit_file":
-      return `Prefer edit_file over bash sed -i. Use tool=edit_file, path='${path}', edits=[{oldText, newText}] for fuzzy matching and diff feedback.`;
-    case "write_file":
-      return `Prefer write_file over bash echo/printf. Use tool=write_file, path='${path}', content=... for atomic writes.`;
-    case "find_files":
-      return `Prefer find_files over bash find. Use tool=find_files, pattern='<glob>', path='${path}' for fd with proper limit/truncation.`;
-    case "grep_files":
-      return `Prefer grep_files over bash grep. Use tool=grep_files, pattern='<regex>', path='${path}' for rg with proper limit/truncation.`;
-    case "list_dir":
-      return `Prefer list_dir over bash ls. Use tool=list_dir, path='${command.match(/(?:^|\s)(?:\/[\w./-]+|~[^\s]*|\.[^\s]*)/)?.[0] ?? path}' for structured output, entry limit, and shell-escape safety.`;
-  }
-}
-
-// ============================================================================
 // Config
 // ============================================================================
 
@@ -241,7 +171,7 @@ export const REMOTE_EXEC_SCHEMA = z.discriminatedUnion("tool", [
     tool: z.literal("find_files"),
     pattern: z.string(),
     path: z.string().optional().default("."),
-    limit: z.number().optional().default(500),
+    limit: z.number().optional().default(1000),
   }),
   z.object({
     tool: z.literal("grep_files"),
@@ -249,6 +179,9 @@ export const REMOTE_EXEC_SCHEMA = z.discriminatedUnion("tool", [
     path: z.string().optional().default("."),
     glob: z.string().optional(),
     limit: z.number().optional().default(500),
+    ignoreCase: z.boolean().optional().default(false),
+    literal: z.boolean().optional().default(false),
+    context: z.number().optional().default(0),
   }),
   z.object({
     tool: z.literal("transfer_file"),
@@ -298,6 +231,9 @@ export const REMOTE_EXEC_INPUT_SCHEMA = z.object({
   })).optional(),
   pattern: z.string().optional(),
   glob: z.string().optional(),
+  ignoreCase: z.boolean().optional(),
+  literal: z.boolean().optional(),
+  context: z.number().optional(),
   direction: z.enum(["remote_to_local", "local_to_remote"]).optional(),
   local_path: z.string().optional(),
   remote_path: z.string().optional(),
@@ -327,15 +263,9 @@ async function sendProgress(ctx: ProgressContext, progress: number, total?: numb
 // Helpers
 // ============================================================================
 
-function textContent(text: string) {
-  return [{ type: "text" as const, text }];
+function textContent(text: string): Array<{ type: "text"; text: string }> {
+  return [{ type: "text", text }];
 }
-
-// ============================================================================
-// CWD State (maintained across tool calls)
-// ============================================================================
-
-let bashCwd = "/";
 
 // ============================================================================
 // File Mutation Queue (serialize concurrent writes to same file)
@@ -628,6 +558,9 @@ const TOOL_SCHEMAS = {
     path: z.string().optional(),
     glob: z.string().optional(),
     limit: z.number().optional(),
+    ignoreCase: z.boolean().optional(),
+    literal: z.boolean().optional(),
+    context: z.number().optional(),
   }),
   transfer_file: z.object({
     direction: z.enum(["remote_to_local", "local_to_remote"]),
@@ -636,6 +569,31 @@ const TOOL_SCHEMAS = {
     content: z.string().optional(), // only used for "local_to_remote" direction
   }),
 };
+
+// ============================================================================
+// Image MIME Detection
+// ============================================================================
+//
+// Detects common image formats by extension and returns the corresponding
+// MIME type. Mirrors the supported types in the local pi `read` tool
+// (jpg/png/gif/webp). No resize — HPC may lack `sharp`; images are returned
+// at original size. If an image exceeds MAX_IMAGE_BYTES, the handler returns
+// a hint to use `transfer_file` for inspection.
+
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
+
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024; // 5MB
+
+function detectImageMime(filePath: string): string | undefined {
+  const ext = filePath.slice(filePath.lastIndexOf(".")).toLowerCase();
+  return IMAGE_MIME_BY_EXT[ext];
+}
 
 // ============================================================================
 // Tool Handlers
@@ -648,6 +606,29 @@ async function handleReadFile(args: { path: string; offset?: number; limit?: num
     if (isParentTraversal(safePath)) {
       throw new Error(`Path '${args.path}' resolves to '${safePath}' with parent-traversal segments`);
     }
+
+    // Image fast path: detect MIME, read as binary, return as image content.
+    const mimeType = detectImageMime(args.path);
+    if (mimeType) {
+      const buffer = await readFile(safePath);
+      if (buffer.byteLength > MAX_IMAGE_BYTES) {
+        log(`read_file ${args.path} → ok image skipped ${Date.now() - t0}ms (${buffer.byteLength} bytes > ${MAX_IMAGE_BYTES})`, String(sessionId));
+        return {
+          content: [{
+            type: "text" as const,
+            text: `Image too large to inline (${(buffer.byteLength / 1024 / 1024).toFixed(1)}MB > ${MAX_IMAGE_BYTES / 1024 / 1024}MB). Use bash: file ${args.path}; or transfer_file to local then view.`,
+          }],
+        };
+      }
+      log(`read_file ${args.path} → ok image ${Date.now() - t0}ms (${buffer.byteLength} bytes ${mimeType})`, String(sessionId));
+      return {
+        content: [
+          { type: "text" as const, text: `Read image file [${mimeType}, ${(buffer.byteLength / 1024).toFixed(1)}KB]` },
+          { type: "image" as const, data: buffer.toString("base64"), mimeType },
+        ],
+      };
+    }
+
     let content = await readFile(safePath, "utf-8");
 
     if (content.charCodeAt(0) === 0xFEFF) {
@@ -700,12 +681,14 @@ async function handleWriteFile(args: { path: string; content: string }, sessionI
 
 export async function handleTransferFile(args: { direction: "remote_to_local" | "local_to_remote"; local_path: string; remote_path: string; content?: string }, sessionId: number | string = 0) {
   const t0 = Date.now();
-  // direction semantics (clear naming — no opinionated 'upload/download' ambiguity):
-  //   remote_to_local: server reads remote_path and returns content (agent saves to local_path).
-  //   local_to_remote: agent must pass content; server writes to remote_path.
-  // The agent's MCP client should use the HTTP /transfer endpoint for
-  // local_to_remote to avoid putting the file bytes in the LLM context.
-  // This MCP sub-op is here for parity; for big files prefer the HTTP path.
+  // direction semantics:
+  //   remote_to_local: server reads remote_path and returns content.
+  //     Client (personal-assistant) hook captures the result, writes to
+  //     local_path, and replaces the content with a metadata message so
+  //     bytes never enter LLM context.
+  //   local_to_remote: client hook reads local_path and injects `content`
+  //     into the MCP call before it leaves the agent process. Bytes flow
+  //     over the MCP transport, not through the LLM.
   const echo = `direction=${args.direction}, local=${args.local_path}, remote=${args.remote_path}\n`;
 
   try {
@@ -719,7 +702,7 @@ export async function handleTransferFile(args: { direction: "remote_to_local" | 
       return { content: textContent(echo + content) };
     } else if (args.direction === "local_to_remote") {
       if (args.content === undefined) {
-        return { content: textContent(echo + "Error: local_to_remote requires content field. For big files, use HTTP POST /transfer?path=... from the client side to avoid burning LLM context."), isError: true };
+        return { content: textContent(echo + "Error: local_to_remote requires content field. The client (personal-assistant) should inject this from the local file before the MCP call."), isError: true };
       }
       const safeRemote = await canonicalize(args.remote_path);
       if (isParentTraversal(safeRemote)) {
@@ -743,8 +726,74 @@ export async function handleTransferFile(args: { direction: "remote_to_local" | 
   }
 }
 
-async function handleEditFile(args: { path: string; edits: Array<{ oldText: string; newText: string }> }, sessionId: number | string = 0) {
+type EditArgs = { path: string; edits: Array<{ oldText: string; newText: string }> };
+
+/**
+ * Compatibility shim for known model input mistakes. Mirrors the local
+ * pi edit tool's `prepareEditArguments`:
+ *  - Some models (Opus 4.6, GLM-5.1) send `edits` as a JSON string.
+ *  - Some models send a single edit as {oldText, newText} at the root
+ *    instead of inside `edits[]`.
+ */
+function prepareEditArguments(input: unknown): EditArgs | { error: string } {
+  if (!input || typeof input !== "object") {
+    return { error: "edit_file input must be an object with `path` and `edits[]`" };
+  }
+  const args = input as Record<string, unknown>;
+
+  if (typeof args.edits === "string") {
+    try {
+      const parsed = JSON.parse(args.edits);
+      if (Array.isArray(parsed)) args.edits = parsed;
+    } catch {
+      return { error: "edits is a string but not valid JSON" };
+    }
+  }
+
+  if (!Array.isArray(args.edits)) {
+    if (typeof args.oldText === "string" && typeof args.newText === "string") {
+      args.edits = [{ oldText: args.oldText, newText: args.newText }];
+      delete args.oldText;
+      delete args.newText;
+    } else {
+      return { error: "edits must be an array (or supply oldText/newText at root for a single edit)" };
+    }
+  }
+
+  if ((args.edits as unknown[]).length === 0) {
+    return { error: "edits must contain at least one replacement" };
+  }
+
+  return args as unknown as EditArgs;
+}
+
+/**
+ * Detect the file's dominant line ending (\n, \r\n, or \r) so edits can be
+ * applied in normalized form and the original ending restored on write.
+ * Local pi's edit-diff.ts uses the same approach.
+ */
+function detectLineEnding(text: string): "\n" | "\r\n" | "\r" {
+  const crlf = (text.match(/\r\n/g) || []).length;
+  const cr = (text.match(/(?<!\r)\r(?!\n)/g) || []).length;
+  if (crlf > cr) return "\r\n";
+  if (cr > crlf) return "\r";
+  return "\n";
+}
+
+function restoreLineEndings(text: string, ending: "\n" | "\r\n" | "\r"): string {
+  // text is currently LF-normalized; restore to original.
+  if (ending === "\n") return text;
+  if (ending === "\r\n") return text.replace(/\n/g, "\r\n");
+  return text.replace(/\n/g, "\r");
+}
+
+async function handleEditFile(rawArgs: { path: string; edits: Array<{ oldText: string; newText: string }> }, sessionId: number | string = 0) {
   const t0 = Date.now();
+  const prep = prepareEditArguments(rawArgs);
+  if ("error" in prep) {
+    return { content: textContent(`Error: ${prep.error}`), isError: true };
+  }
+  const args = prep;
   try {
     const safePath = await canonicalize(args.path);
     if (isParentTraversal(safePath)) {
@@ -753,11 +802,13 @@ async function handleEditFile(args: { path: string; edits: Array<{ oldText: stri
     return await withFileQueue(safePath, async () => {
       let content = await readFile(safePath, "utf-8");
 
+      // Strip BOM before matching (model never includes BOM in oldText).
       const hasBOM = content.charCodeAt(0) === 0xFEFF;
       if (hasBOM) content = content.slice(1);
 
-      const hasCRLF = content.includes("\r\n");
-      if (hasCRLF) content = content.replace(/\r\n/g, "\n");
+      // Detect and normalize line endings.
+      const lineEnding = detectLineEnding(content);
+      if (lineEnding !== "\n") content = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
       for (let i = 0; i < args.edits.length; i++) {
         const edit = args.edits[i];
@@ -783,7 +834,8 @@ async function handleEditFile(args: { path: string; edits: Array<{ oldText: stri
         content = content.slice(0, pos) + edit.newText + content.slice(pos + edit.oldText.length);
       }
 
-      if (hasCRLF) content = content.replace(/\n/g, "\r\n");
+      // Restore original line endings and BOM.
+      if (lineEnding !== "\n") content = restoreLineEndings(content, lineEnding);
       if (hasBOM) content = "\uFEFF" + content;
 
       await writeFile(safePath, content, "utf-8");
@@ -803,43 +855,13 @@ export async function handleBash(
   args: { command: string; timeout?: number; cwd?: string },
   abortSignal?: AbortSignal,
   progressCtx?: ProgressContext,
-  turnId: number | string = 0,
 ) {
-  // Layer B guardrail: detect bash intent that should use a dedicated sub-op
-  const intent = detectIntent(args.command);
-  if (intent) {
-    const id = turnId ?? 0;
-    const count = getGuardrailCount(id, intent);
-
-    if (count >= 2) {
-      // Hard block on 3rd violation
-      return {
-        content: textContent(
-          `Blocked: you have tried bash with similar intent 3 times. Use tool=${intent} instead.`
-        ),
-        isError: true,
-      };
-    }
-
-    // Soft guidance for first 2 violations
-    incrementGuardrail(id, intent);
-    const guidance = getGuidanceMessage(intent, args.command);
-    return {
-      content: textContent(guidance),
-      isError: true,
-    };
-  }
-
-  let workDir = args.cwd || bashCwd;
+  let workDir = args.cwd || "/";
   const t0 = Date.now();
 
   try {
     if (!existsSync(workDir)) {
-      if (args.cwd) {
-        return { content: textContent(`Error: Working directory does not exist: ${workDir}`), isError: true };
-      }
-      workDir = "/";
-      bashCwd = "/";
+      return { content: textContent(`Error: Working directory does not exist: ${workDir}`), isError: true };
     }
 
     if (abortSignal?.aborted) {
@@ -903,26 +925,6 @@ export async function handleBash(
     await accumulator.finish();
 
     const duration = Date.now() - t0;
-
-    if (args.command.includes("cd ")) {
-      try {
-        const testProc = spawn(SHELL, ["-c", `cd ${workDir} && ${args.command} && pwd`], { stdio: ["ignore", "pipe", "ignore"] });
-        let newCwd = "";
-        testProc.stdout?.on("data", (chunk: Buffer) => { newCwd += chunk.toString(); });
-        await new Promise<void>((resolve) => {
-          testProc.on("close", () => resolve());
-          setTimeout(() => resolve(), 3000);
-        });
-        const lines = newCwd.trim().split("\n");
-        const candidate = lines[lines.length - 1].trim();
-        if (candidate && existsSync(candidate)) {
-          try {
-            const st = await stat(candidate);
-            if (st.isDirectory()) bashCwd = candidate;
-          } catch { /* not a directory or inaccessible */ }
-        }
-      } catch { /* ignore */ }
-    }
 
     const snapshot = accumulator.snapshot();
     const output: string[] = [];
@@ -990,54 +992,65 @@ async function handleListDir(args: { path: string; limit?: number }, sessionId: 
   }
 }
 
-// Check if fd is available on the system
-async function checkFdAvailable(): Promise<{ available: boolean; path?: string }> {
+// Run fd to search for files. Returns relative paths (mirroring local pi
+// find tool). Errors from fd are surfaced; missing-fd is detected from
+// spawn ENOENT in proc.on("error").
+async function runFd(pattern: string, searchPath: string, limit: number): Promise<{ output: string; truncated: boolean; fdMissing: boolean }> {
   return new Promise((resolve) => {
-    const proc = spawn("which", ["fd"], { stdio: ["ignore", "pipe", "ignore"] });
-    let output = "";
-    proc.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
-    proc.on("close", (code) => {
-      if (code === 0 && output.trim()) {
-        resolve({ available: true, path: output.trim() });
-      } else {
-        resolve({ available: false });
+    // Build fd args. --full-path is required when pattern contains "/" so
+    // path-containing patterns like "src/**/*.ts" match correctly.
+    const args: string[] = [
+      "--glob",
+      "--color=never",
+      "--hidden",
+      "--no-require-git",
+      "--max-results",
+      String(limit),
+    ];
+    let effectivePattern = pattern;
+    if (pattern.includes("/")) {
+      args.push("--full-path");
+      if (!pattern.startsWith("/") && !pattern.startsWith("**/") && pattern !== "**") {
+        effectivePattern = `**/${pattern}`;
+      }
+    }
+    args.push("--", effectivePattern, searchPath);
+
+    const proc = spawn("fd", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const lines: string[] = [];
+    let stderr = "";
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      for (const line of chunk.toString().split("\n")) {
+        if (line) lines.push(line);
       }
     });
-    proc.on("error", () => resolve({ available: false }));
-  });
-}
-
-// Run fd to search for files
-async function runFd(pattern: string, path: string, limit: number): Promise<{ output: string; truncated: boolean }> {
-  return new Promise((resolve) => {
-    const args = ["--glob", "--hidden", "--no-require-git", "--max-depth", "10", pattern, path];
-    const proc = spawn("fd", args, { stdio: ["ignore", "pipe", "pipe"] });
-    let output = "";
-    proc.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
-    proc.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
-    proc.on("close", (code) => {
-      // Apply truncation
-      const truncated = truncateHead(output, limit, MAX_BYTES);
-      resolve({ output: truncated.text, truncated: truncated.truncated });
+    proc.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    proc.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "ENOENT") {
+        resolve({ output: "", truncated: false, fdMissing: true });
+        return;
+      }
+      resolve({ output: `Error: ${err.message}`, truncated: false, fdMissing: false });
     });
-    proc.on("error", () => resolve({ output: "", truncated: false }));
+    proc.on("close", (code) => {
+      // Relativize paths against searchPath (local find tool behavior).
+      const relative = lines.map((p) => {
+        if (p.startsWith(searchPath + "/")) return p.slice(searchPath.length + 1);
+        return p;
+      });
+      const rawOutput = relative.join("\n");
+      const truncated = truncateHead(rawOutput, Number.MAX_SAFE_INTEGER, MAX_BYTES);
+      const out = truncated.text + (stderr.trim() ? `\n[fd stderr]: ${stderr.trim()}` : "");
+      void code; // fd exits non-zero on limit hit, that's not an error
+      resolve({ output: out, truncated: truncated.truncated, fdMissing: false });
+    });
   });
 }
 
 export async function handleFindFiles(args: { pattern: string; path?: string; limit?: number }, sessionId: number | string = 0) {
   const t0 = Date.now();
   const searchPath = args.path || ".";
-  const limit = args.limit || 500;
-
-  // Check if fd is available
-  const fdCheck = await checkFdAvailable();
-  if (!fdCheck.available) {
-    log(`find_files ${args.pattern} → error fd not found ${Date.now() - t0}ms`, String(sessionId));
-    return {
-      content: textContent("fd not found on remote server. Install with: apt install fd-find"),
-      isError: true,
-    };
-  }
+  const limit = args.limit || 1000;
 
   // Canonicalize the search path; reject parent-traversal.
   const safePath = await canonicalize(searchPath);
@@ -1046,65 +1059,100 @@ export async function handleFindFiles(args: { pattern: string; path?: string; li
     return { content: textContent(`Error: path '${searchPath}' resolves to '${safePath}' with parent-traversal segments`), isError: true };
   }
 
-  // Run fd to search for files
   const result = await runFd(args.pattern, safePath, limit);
 
+  if (result.fdMissing) {
+    log(`find_files ${args.pattern} → error fd not found ${Date.now() - t0}ms`, String(sessionId));
+    return {
+      content: textContent("fd not found on remote server. Install with: apt install fd-find"),
+      isError: true,
+    };
+  }
+
   log(`find_files ${args.pattern} ${searchPath} → ok ${Date.now() - t0}ms (${result.truncated ? "truncated" : "full"})`, String(sessionId));
-  return { content: textContent(result.output || "(no matches found)") };
+  return { content: textContent(result.output || "No files found matching pattern") };
 }
 
-// Check if rg is available on the system
-async function checkRgAvailable(): Promise<{ available: boolean; path?: string }> {
+// Per-line truncation cap for grep matches (matches local pi's GREP_MAX_LINE_LENGTH).
+const GREP_MAX_LINE_LENGTH = 500;
+
+function truncateLine(line: string): string {
+  if (line.length <= GREP_MAX_LINE_LENGTH) return line;
+  return `${line.slice(0, GREP_MAX_LINE_LENGTH)}... [truncated]`;
+}
+
+// Run rg to search file contents. Returns line-formatted matches; truncates
+// per-line to GREP_MAX_LINE_LENGTH; kills rg early when limit is reached
+// (mirrors local pi grep tool).
+async function runRg(
+  pattern: string,
+  searchPath: string,
+  glob: string | undefined,
+  limit: number,
+  ignoreCase: boolean,
+  literal: boolean,
+  context: number,
+): Promise<{ output: string; truncated: boolean; rgMissing: boolean; limitReached: boolean }> {
   return new Promise((resolve) => {
-    const proc = spawn("which", ["rg"], { stdio: ["ignore", "pipe", "ignore"] });
-    let output = "";
-    proc.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
-    proc.on("close", (code) => {
-      if (code === 0 && output.trim()) {
-        resolve({ available: true, path: output.trim() });
-      } else {
-        resolve({ available: false });
+    const args: string[] = ["--no-heading", "--line-number", "--color=never", "--hidden"];
+    if (ignoreCase) args.push("-i");
+    if (literal) args.push("-F");
+    if (glob) args.push("--glob", glob);
+    if (context > 0) args.push("-C", String(context));
+    args.push("--", pattern, searchPath);
+
+    const proc = spawn("rg", args, { stdio: ["ignore", "pipe", "pipe"] });
+    const lines: string[] = [];
+    let stderr = "";
+    let killedDueToLimit = false;
+
+    proc.stdout?.on("data", (chunk: Buffer) => {
+      for (const line of chunk.toString().split("\n")) {
+        if (!line) continue;
+        if (lines.length >= limit) {
+          killedDueToLimit = true;
+          if (!proc.killed) proc.kill();
+          return;
+        }
+        lines.push(truncateLine(line));
       }
     });
-    proc.on("error", () => resolve({ available: false }));
-  });
-}
-
-// Run rg to search for matches
-async function runRg(pattern: string, path: string, glob: string | undefined, limit: number): Promise<{ output: string; truncated: boolean }> {
-  return new Promise((resolve) => {
-    const args = ["--no-heading", "--line-number", "--max-depth", "10", pattern, path];
-    if (glob) {
-      args.push("--glob", glob);
-    }
-    const proc = spawn("rg", args, { stdio: ["ignore", "pipe", "pipe"] });
-    let output = "";
-    proc.stdout?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
-    proc.stderr?.on("data", (chunk: Buffer) => { output += chunk.toString(); });
-    proc.on("close", (code) => {
-      // Apply truncation
-      const truncated = truncateHead(output, limit, MAX_BYTES);
-      resolve({ output: truncated.text, truncated: truncated.truncated });
+    proc.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
+    proc.on("error", (err: NodeJS.ErrnoException) => {
+      if (err.code === "ENOENT") {
+        resolve({ output: "", truncated: false, rgMissing: true, limitReached: false });
+        return;
+      }
+      resolve({ output: `Error: ${err.message}`, truncated: false, rgMissing: false, limitReached: false });
     });
-    proc.on("error", () => resolve({ output: "", truncated: false }));
+    proc.on("close", () => {
+      const rawOutput = lines.join("\n");
+      const truncated = truncateHead(rawOutput, Number.MAX_SAFE_INTEGER, MAX_BYTES);
+      const out = truncated.text + (stderr.trim() ? `\n[rg stderr]: ${stderr.trim()}` : "");
+      resolve({ output: out, truncated: truncated.truncated, rgMissing: false, limitReached: killedDueToLimit });
+    });
   });
 }
 
-export async function handleGrepFiles(args: { pattern: string; path?: string; glob?: string; limit?: number }, sessionId: number | string = 0) {
+export async function handleGrepFiles(
+  args: {
+    pattern: string;
+    path?: string;
+    glob?: string;
+    limit?: number;
+    ignoreCase?: boolean;
+    literal?: boolean;
+    context?: number;
+  },
+  sessionId: number | string = 0,
+) {
   const t0 = Date.now();
   const searchPath = args.path || ".";
   const glob = args.glob;
   const limit = args.limit || 500;
-
-  // Check if rg is available
-  const rgCheck = await checkRgAvailable();
-  if (!rgCheck.available) {
-    log(`grep_files ${args.pattern} → error rg not found ${Date.now() - t0}ms`, String(sessionId));
-    return {
-      content: textContent("ripgrep not found on remote server. Install with: apt install ripgrep"),
-      isError: true,
-    };
-  }
+  const ignoreCase = args.ignoreCase ?? false;
+  const literal = args.literal ?? false;
+  const context = args.context ?? 0;
 
   // Canonicalize the search path; reject parent-traversal.
   const safePath = await canonicalize(searchPath);
@@ -1113,18 +1161,29 @@ export async function handleGrepFiles(args: { pattern: string; path?: string; gl
     return { content: textContent(`Error: path '${searchPath}' resolves to '${safePath}' with parent-traversal segments`), isError: true };
   }
 
-  // Run rg to search for matches
-  const result = await runRg(args.pattern, safePath, glob, limit);
+  const result = await runRg(args.pattern, safePath, glob, limit, ignoreCase, literal, context);
 
+  if (result.rgMissing) {
+    log(`grep_files ${args.pattern} → error rg not found ${Date.now() - t0}ms`, String(sessionId));
+    return {
+      content: textContent("ripgrep not found on remote server. Install with: apt install ripgrep"),
+      isError: true,
+    };
+  }
+
+  const notice = result.limitReached ? `\n\n[${limit} matches limit reached. Use limit=${limit * 2} for more, or refine pattern]` : "";
   log(`grep_files ${args.pattern} ${searchPath} → ok ${Date.now() - t0}ms (${result.truncated ? "truncated" : "full"})`, String(sessionId));
-  return { content: textContent(result.output || "(no matches found)") };
+  return { content: textContent((result.output || "No matches found") + notice) };
 }
 
 // ============================================================================
 // Tool Router
 // ============================================================================
 
-type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+type ToolResult = {
+  content: Array<{ type: "text"; text: string } | { type: "image"; data: string; mimeType: string }>;
+  isError?: boolean;
+};
 
 const TOOL_HANDLERS: Record<string, (
   args: Record<string, unknown>,
@@ -1135,15 +1194,25 @@ const TOOL_HANDLERS: Record<string, (
   read_file: (args, _s, _p, sid) => handleReadFile(args as { path: string; offset?: number; limit?: number }, sid),
   write_file: (args, _s, _p, sid) => handleWriteFile(args as { path: string; content: string }, sid),
   edit_file: (args, _s, _p, sid) => handleEditFile(args as { path: string; edits: Array<{ oldText: string; newText: string }> }, sid),
-  bash: (args, abortSignal, progressCtx, turnId) => handleBash(
+  bash: (args, abortSignal, progressCtx) => handleBash(
     args as { command: string; timeout?: number; cwd?: string },
     abortSignal,
     progressCtx,
-    turnId,
   ),
   list_dir: (args, _s, _p, sid) => handleListDir(args as { path: string; limit?: number }, sid),
   find_files: (args, _s, _p, sid) => handleFindFiles(args as { pattern: string; path?: string; limit?: number }, sid),
-  grep_files: (args, _s, _p, sid) => handleGrepFiles(args as { pattern: string; path?: string; glob?: string; limit?: number }, sid),
+  grep_files: (args, _s, _p, sid) => handleGrepFiles(
+    args as {
+      pattern: string;
+      path?: string;
+      glob?: string;
+      limit?: number;
+      ignoreCase?: boolean;
+      literal?: boolean;
+      context?: number;
+    },
+    sid,
+  ),
   transfer_file: (args, _s, _p, sid) => handleTransferFile(args as { direction: "remote_to_local" | "local_to_remote"; local_path: string; remote_path: string; content?: string }, sid),
 };
 
@@ -1214,7 +1283,6 @@ function sweepStaleSessions(): void {
       try { t?.close(); } catch { /* ignore */ }
       transports.delete(sid);
       sessionLastSeen.delete(sid);
-      resetGuardrail(sid);
       log(`Swept stale session: ${sid}`);
     }
   }
@@ -1272,62 +1340,8 @@ function metricsText(): string {
 }
 
 // ============================================================================
-// Transfer HTTP Handlers (Task 5.1)
+// CORS Headers (used by /health and /metrics)
 // ============================================================================
-
-/**
- * POST /transfer?path= — write body bytes to remote path
- * Auth check is performed by the caller (fetch handler).
- */
-export async function handleTransferPost(req: Request): Promise<Response> {
-  // Auth check (defense-in-depth, also done at fetch handler level)
-  if (!checkAuth(req)) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-
-  const url = new URL(req.url);
-  const path = url.searchParams.get("path");
-
-  if (!path) {
-    return Response.json({ error: "Missing path query parameter" }, { status: 400 });
-  }
-
-  try {
-    const buffer = await req.arrayBuffer();
-    await mkdir(dirname(path), { recursive: true });
-    await writeFile(path, Buffer.from(buffer));
-    return Response.json({ bytes: buffer.byteLength }, { headers: corsHeaders });
-  } catch (err) {
-    return Response.json({ error: `Failed to write file: ${err}` }, { status: 500 });
-  }
-}
-
-/**
- * GET /transfer?path= — read file bytes from remote path
- * Auth check is performed by the caller (fetch handler).
- */
-export async function handleTransferGet(req: Request): Promise<Response> {
-  // Auth check (defense-in-depth, also done at fetch handler level)
-  if (!checkAuth(req)) {
-    return new Response("Unauthorized", { status: 401 });
-  }
-
-  const url = new URL(req.url);
-  const path = url.searchParams.get("path");
-
-  if (!path) {
-    return Response.json({ error: "Missing path query parameter" }, { status: 400 });
-  }
-
-  try {
-    const content = await readFile(path);
-    return new Response(content, {
-      headers: { ...corsHeaders, "Content-Type": "application/octet-stream" },
-    });
-  } catch (err) {
-    return Response.json({ error: `Failed to read file: ${err}` }, { status: 500 });
-  }
-}
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -1356,18 +1370,6 @@ const httpServer = (globalThis as any).Bun.serve({
     // Metrics (no auth required — same trust model as /health)
     if (url.pathname === "/metrics") {
       return new Response(metricsText(), { headers: { ...corsHeaders, "Content-Type": "text/plain; version=0.0.4" } });
-    }
-
-    // Transfer endpoints (POST /transfer?path= and GET /transfer?path=)
-    // These require auth, which is checked below
-    if (url.pathname === "/transfer") {
-      if (req.method === "POST") {
-        return handleTransferPost(req);
-      }
-      if (req.method === "GET") {
-        return handleTransferGet(req);
-      }
-      return new Response("Method Not Allowed", { status: 405 });
     }
 
     // Auth check for all other endpoints
@@ -1410,7 +1412,6 @@ const httpServer = (globalThis as any).Bun.serve({
             if (sid && transports.has(sid)) {
               transports.delete(sid);
               sessionLastSeen.delete(sid);
-              resetGuardrail(sid); // release per-session guardrail counters
               log(`Session closed: ${sid}`);
             }
           };

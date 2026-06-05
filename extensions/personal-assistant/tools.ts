@@ -1,7 +1,7 @@
 import type { ExtensionAPI, TurnEndEvent } from "@earendil-works/pi-coding-agent";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import { Type } from "typebox";
-import { readFileSync, existsSync, realpathSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, statSync, existsSync, realpathSync } from "node:fs";
 import { join, resolve as resolvePath, basename, dirname } from "node:path";
 import { homedir } from "node:os";
 
@@ -312,6 +312,108 @@ export function clearBashIntentBudget(turnId: string): void {
 }
 
 // ============================================================================
+// Transfer File Interception
+// ============================================================================
+//
+// For `satellite_remote_exec` with `tool: "transfer_file"`:
+// - to_remote: hook reads local file1, injects `content` into event.input
+//   so server receives the bytes via MCP transport (NOT through LLM context)
+// - to_local:  hook sees server's content in tool_result, writes to local
+//   file1, replaces result content with a metadata message (NOT the bytes)
+//
+// Net effect: LLM never sees file bytes — just metadata like
+// "Uploaded 12345 bytes: /local → /remote". Mirrors how SFTP/SCP work.
+
+async function readFileForTransfer(localPath: string): Promise<{ ok: true; content: string; bytes: number } | { ok: false; error: string }> {
+	try {
+		const stat = statSync(localPath);
+		if (!stat.isFile()) return { ok: false, error: `not a regular file: ${localPath}` };
+		const content = readFileSync(localPath, "utf-8");
+		return { ok: true, content, bytes: Buffer.byteLength(content, "utf-8") };
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		return { ok: false, error: msg };
+	}
+}
+
+async function writeFileForTransfer(localPath: string, content: string): Promise<{ ok: true; bytes: number } | { ok: false; error: string }> {
+	try {
+		mkdirSync(dirname(localPath), { recursive: true });
+		writeFileSync(localPath, content, "utf-8");
+		return { ok: true, bytes: Buffer.byteLength(content, "utf-8") };
+	} catch (err) {
+		const msg = err instanceof Error ? err.message : String(err);
+		return { ok: false, error: msg };
+	}
+}
+
+/**
+ * `before_tool_call` hook for transfer_file. Mutates event.input in place to
+ * inject content for to_remote. Returns `{block, reason}` to surface errors.
+ */
+export async function interceptTransferCall(
+	event: { toolName: string; input: Record<string, unknown> },
+): Promise<{ block: true; reason: string } | undefined> {
+	if (event.toolName !== SATELLITE_TOOL_NAME) return undefined;
+	if (event.input.tool !== "transfer_file") return undefined;
+	if (event.input.direction !== "to_remote") return undefined;
+
+	const file1 = String(event.input.file1 ?? "");
+	if (!file1) return undefined;
+
+	const result = await readFileForTransfer(file1);
+	if (!result.ok) {
+		return {
+			block: true,
+			reason: `transfer_file(to_remote) failed: cannot read '${file1}': ${result.error}`,
+		};
+	}
+
+	event.input.content = result.content;
+	return undefined;
+}
+
+/**
+ * `after_tool_call` hook for transfer_file. For to_local, writes content
+ * to file1 and replaces the result with a metadata message so the bytes
+ * don't enter LLM context.
+ */
+export async function interceptTransferResult(
+	event: {
+		toolName: string;
+		input: Record<string, unknown>;
+		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+		isError: boolean;
+	},
+): Promise<{ content: Array<{ type: "text"; text: string }> } | undefined> {
+	if (event.toolName !== SATELLITE_TOOL_NAME) return undefined;
+	if (event.input.tool !== "transfer_file") return undefined;
+	if (event.input.direction !== "to_local") return undefined;
+	if (event.isError) return undefined;
+
+	const file1 = String(event.input.file1 ?? "");
+	const file2 = String(event.input.file2 ?? "");
+	if (!file1) return undefined;
+
+	// Server returned: textContent(echo + content) where echo is
+	// "direction=..., local=..., remote=...\n" — we want the part after echo.
+	const raw = event.content[0]?.text ?? "";
+	const echoEnd = raw.indexOf("\n");
+	const bytes = raw.slice(echoEnd + 1);
+
+	const result = await writeFileForTransfer(file1, bytes);
+	if (!result.ok) {
+		return {
+			content: [{ type: "text", text: `transfer_file(to_local) failed: cannot write '${file1}': ${result.error}` }],
+		};
+	}
+
+	return {
+		content: [{ type: "text", text: `Downloaded ${result.bytes} bytes: ${file2} → ${file1}` }],
+	};
+}
+
+// ============================================================================
 // HTML to Text Conversion
 // ============================================================================
 
@@ -557,10 +659,24 @@ export function registerTools(pi: ExtensionAPI): void {
 	//   - bash(cat|ls|find|grep|sed -i|echo>) — substitute the dedicated sub-op
 	// ============================================================================
 
-	pi.on("tool_call", (event: { toolName: string; input: Record<string, unknown> }) => {
+	pi.on("tool_call", async (event: { toolName: string; input: Record<string, unknown> }) => {
 		const mcpConfig = loadMcpConfig();
 		const turnId = String((event as any).turnIndex ?? "global");
-		return validateSatelliteCall(event.toolName, event.input, mcpConfig, turnId);
+		// 1. Validation (schema shape, path scope, bash intent)
+		const validation = validateSatelliteCall(event.toolName, event.input, mcpConfig, turnId);
+		if (validation) return validation;
+		// 2. Transfer file interception (mutates event.input.content for to_remote)
+		return interceptTransferCall(event);
+	});
+
+	pi.on("tool_result", async (event: {
+		toolName: string;
+		input: Record<string, unknown>;
+		content: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+		isError: boolean;
+	}) => {
+		// Transfer file response interception (writes file1, replaces content for to_local)
+		return interceptTransferResult(event);
 	});
 
 	// ============================================================================
