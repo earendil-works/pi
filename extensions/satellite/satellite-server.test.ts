@@ -711,3 +711,75 @@ describe("handleBash guardrail", () => {
     }
   });
 });
+
+// =============================================================================
+// handleBash session isolation tests (Task 2.6)
+// Per-session counter isolation: turn 1's cat count doesn't affect turn 2's cat count
+// =============================================================================
+
+describe("handleBash session isolation", () => {
+  // These tests verify that guardrail counters are isolated per session/turn id
+  // Session 1 (turnId=1): counter starts at 0, increments independently
+  // Session 2 (turnId=2): counter starts at 0, increments independently
+
+  // Cleanup after each test - use unique turnIds for isolation
+  afterEach(() => {
+    const { resetGuardrail } = satellite as any;
+    if (resetGuardrail) {
+      resetGuardrail(1);
+      resetGuardrail(2);
+    }
+  });
+
+  // Test 1: handleBash with turnId=1: cat twice, no hard block
+  it("session isolation: cat with turnId=1 twice returns soft guidance (not hard block)", async () => {
+    const { handleBash, resetGuardrail } = satellite as any;
+    resetGuardrail(1); // ensure clean state for session 1
+    expect(handleBash).toBeDefined();
+
+    // First call with turnId=1
+    const result1 = await handleBash({ command: "cat /foo/x.txt" }, undefined, undefined, 1);
+    expect(result1.isError).toBe(true);
+    expect(result1.content[0].text).toContain("Prefer read_file");
+    expect(result1.content[0].text).not.toContain("Blocked");
+
+    // Second call with turnId=1
+    const result2 = await handleBash({ command: "cat /foo/y.txt" }, undefined, undefined, 1);
+    expect(result2.isError).toBe(true);
+    expect(result2.content[0].text).toContain("Prefer read_file");
+    expect(result2.content[0].text).not.toContain("Blocked");
+  });
+
+  // Test 2: handleBash with turnId=1 third time: hard block
+  it("session isolation: cat with turnId=1 third time returns hard block", async () => {
+    const { handleBash, resetGuardrail } = satellite as any;
+    resetGuardrail(1); // ensure clean state for session 1
+
+    // First call
+    await handleBash({ command: "cat /foo/x.txt" }, undefined, undefined, 1);
+    // Second call
+    await handleBash({ command: "cat /foo/y.txt" }, undefined, undefined, 1);
+    // Third call - should be hard blocked
+    const result = await handleBash({ command: "cat /foo/z.txt" }, undefined, undefined, 1);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Blocked");
+    expect(result.content[0].text).toContain("3 times");
+  });
+
+  // Test 3: handleBash with turnId=2 (different session): cat once, no hard block
+  it("session isolation: cat with turnId=2 (different session) has independent counter", async () => {
+    const { handleBash, resetGuardrail } = satellite as any;
+    resetGuardrail(1); // clean session 1
+    resetGuardrail(2); // clean session 2
+
+    // Session 1: already has 2 violations (we'll simulate by calling twice)
+    await handleBash({ command: "cat /foo/a.txt" }, undefined, undefined, 1);
+    await handleBash({ command: "cat /foo/b.txt" }, undefined, undefined, 1);
+
+    // Session 2: first call - should NOT be hard blocked even though session 1 hit the limit
+    const result = await handleBash({ command: "cat /foo/c.txt" }, undefined, undefined, 2);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Prefer read_file");
+    expect(result.content[0].text).not.toContain("Blocked");
+  });
+});

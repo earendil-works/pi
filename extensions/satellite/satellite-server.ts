@@ -57,7 +57,7 @@ export function detectIntent(command: string): "read_file" | "edit_file" | "writ
 // ============================================================================
 
 export type GuardrailIntent = "read_file" | "edit_file" | "write_file" | "find_files" | "grep_files";
-export type TurnId = number;
+export type TurnId = number | string;
 
 const guardrailCounters = new Map<TurnId, Partial<Record<GuardrailIntent, number>>>();
 
@@ -668,12 +668,13 @@ export async function handleBash(
   args: { command: string; timeout?: number; cwd?: string },
   abortSignal?: AbortSignal,
   progressCtx?: ProgressContext,
+  turnId: number | string = 0,
 ) {
   // Layer B guardrail: detect bash intent that should use a dedicated sub-op
   const intent = detectIntent(args.command);
   if (intent) {
-    const turnId = 0; // TODO: plumb from MCP request in task 2.6
-    const count = getGuardrailCount(turnId, intent);
+    const id = turnId ?? 0;
+    const count = getGuardrailCount(id, intent);
 
     if (count >= 2) {
       // Hard block on 3rd violation
@@ -686,7 +687,7 @@ export async function handleBash(
     }
 
     // Soft guidance for first 2 violations
-    incrementGuardrail(turnId, intent);
+    incrementGuardrail(id, intent);
     const guidance = getGuidanceMessage(intent, args.command);
     return {
       content: textContent(guidance),
@@ -750,13 +751,14 @@ export async function handleBash(
       else abortSignal.addEventListener("abort", cleanup, { once: true });
     }
 
+    const timeoutSec = args.timeout ?? 30;
     let timedOut = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    if (args.timeout !== undefined && args.timeout > 0) {
+    if (timeoutSec > 0) {
       timer = setTimeout(() => {
         timedOut = true;
         cleanup();
-      }, args.timeout * 1000);
+      }, timeoutSec * 1000);
     }
 
     const exitCode = await waitForChildProcess(proc);
@@ -791,7 +793,7 @@ export async function handleBash(
     const output: string[] = [];
     if (snapshot.content) output.push(snapshot.content);
     if (exitCode !== 0 && exitCode !== null) output.push(`exit code: ${exitCode}`);
-    if (timedOut) output.push(`Command timed out after ${args.timeout} seconds`);
+    if (timedOut) output.push(`Command exceeded ${timeoutSec}s timeout. Use timeout=<seconds> for longer tasks.`);
 
     const raw = output.join("\n") || "(no output)";
 
@@ -975,14 +977,16 @@ const TOOL_HANDLERS: Record<string, (
   args: Record<string, unknown>,
   abortSignal?: AbortSignal,
   progressCtx?: ProgressContext,
+  turnId?: number | string,
 ) => Promise<ToolResult>> = {
   read_file: (args) => handleReadFile(args as { path: string; offset?: number; limit?: number }),
   write_file: (args) => handleWriteFile(args as { path: string; content: string }),
   edit_file: (args) => handleEditFile(args as { path: string; edits: Array<{ oldText: string; newText: string }> }),
-  bash: (args, abortSignal, progressCtx) => handleBash(
+  bash: (args, abortSignal, progressCtx, turnId) => handleBash(
     args as { command: string; timeout?: number; cwd?: string },
     abortSignal,
     progressCtx,
+    turnId,
   ),
   list_dir: (args) => handleListDir(args as { path: string; limit?: number }),
   find_files: (args) => handleFindFiles(args as { pattern: string; path?: string; limit?: number }),
@@ -1022,7 +1026,9 @@ function createMcpServer(): McpServer {
           ? { sendNotification: (extra as any).sendNotification, progressToken }
           : undefined;
 
-      const result = await handler(toolArgs, extra.signal, progressCtx);
+      const sessionId = (extra as any)._meta?.sessionId ?? 0;
+
+      const result = await handler(toolArgs, extra.signal, progressCtx, sessionId);
       log(`remote_exec → ${tool} ${Date.now() - t0}ms`);
       return result;
     }
