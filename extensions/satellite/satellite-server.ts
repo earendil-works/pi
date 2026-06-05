@@ -26,11 +26,21 @@ import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { readdir, readFile, writeFile, mkdir, stat, realpath, open } from "node:fs/promises";
+import { readdir, readFile, writeFile, mkdir, stat } from "node:fs/promises";
 import { join, dirname, resolve, basename } from "node:path";
 import { appendFileSync, mkdirSync, existsSync, unlinkSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import { z } from "zod/v3";
+import {
+  canonicalize,
+  isParentTraversal,
+  killProcessTree,
+  waitForChildProcess,
+  OutputAccumulator,
+  truncateHead,
+  MAX_LINES as _MAX_LINES,
+  MAX_BYTES as _MAX_BYTES,
+} from "./utils.ts";
 
 // ============================================================================
 // Config
@@ -66,16 +76,8 @@ if (!TOKEN) {
 //      handler forgets to canonicalize.
 // Both are unconditional — no config, no SATELLITE_PATH_PATTERN env.
 // ============================================================================
-
-async function canonicalize(p: string): Promise<string> {
-  return await realpath(p).catch(() => resolve(p));
-}
-
-function isParentTraversal(p: string): boolean {
-  // Reject anything where realpath still has /.. segments. Cheap regex
-  // check that catches bypasses if a handler ever forgets canonicalize().
-  return /(^|\/)\.\.(\/|$)/.test(p);
-}
+// (canonicalize, isParentTraversal, killProcessTree, waitForChildProcess,
+//  OutputAccumulator, truncateHead are imported from ./utils.ts)
 
 if (!TOKEN) {
   console.error("ERROR: SATELLITE_TOKEN environment variable is required");
@@ -274,7 +276,7 @@ function textContent(text: string): Array<{ type: "text"; text: string }> {
 const fileQueues = new Map<string, Promise<void>>();
 
 async function withFileQueue<T>(path: string, fn: () => Promise<T>): Promise<T> {
-  const key = await realpath(path).catch(() => resolve(path));
+  const key = await canonicalize(path);
   const prev = fileQueues.get(key) || Promise.resolve();
   let result: T;
   const current = prev.then(fn, fn).then((r) => { result = r; }).finally(() => {
@@ -290,175 +292,6 @@ async function withFileQueue<T>(path: string, fn: () => Promise<T>): Promise<T> 
 // ============================================================================
 // OutputAccumulator (streaming output management for bash)
 // ============================================================================
-
-class OutputAccumulator {
-  private chunks: Buffer[] = [];
-  private decoder = new TextDecoder("utf-8", { fatal: false });
-  private totalRawBytes = 0;
-  private totalDecodedBytes = 0;
-  private totalLines = 0;
-  private tail = "";
-  private tempPath?: string;
-  private tempFd?: Awaited<ReturnType<typeof open>>;
-
-  append(chunk: Buffer): void {
-    this.chunks.push(chunk);
-    this.totalRawBytes += chunk.length;
-
-    const decoded = this.decoder.decode(chunk, { stream: true });
-    this.tail += decoded;
-    this.totalDecodedBytes += Buffer.byteLength(decoded, "utf-8");
-    this.totalLines += (decoded.match(/\n/g) || []).length;
-
-    const maxRolling = MAX_BYTES * 2;
-    if (this.tail.length > maxRolling) {
-      this.tail = this.tail.slice(-maxRolling);
-    }
-
-    if (!this.tempPath && (this.totalRawBytes > MAX_BYTES || this.totalDecodedBytes > MAX_BYTES || this.totalLines > MAX_LINES)) {
-      this.tempPath = `/tmp/satellite-bash-${Date.now()}.log`;
-      this.flushToTempFile();
-    }
-  }
-
-  private async flushToTempFile(): Promise<void> {
-    if (!this.tempPath) return;
-    try {
-      this.tempFd = await open(this.tempPath, "w");
-      for (const chunk of this.chunks) {
-        await this.tempFd.write(chunk);
-      }
-      this.chunks = [];
-    } catch { /* ignore */ }
-  }
-
-  async finish(): Promise<void> {
-    const remaining = this.decoder.decode();
-    if (remaining) {
-      this.tail += remaining;
-      this.totalDecodedBytes += Buffer.byteLength(remaining, "utf-8");
-      this.totalLines += (remaining.match(/\n/g) || []).length;
-    }
-
-    if (this.tempPath && this.tempFd && this.chunks.length > 0) {
-      for (const chunk of this.chunks) {
-        await this.tempFd.write(chunk);
-      }
-      this.chunks = [];
-    }
-
-    if (this.tempFd) {
-      await this.tempFd.close();
-      this.tempFd = undefined;
-    }
-  }
-
-  snapshot(): { content: string; truncated: boolean; totalLines: number; outputLines: number; tempPath?: string } {
-    const lines = this.tail.split("\n");
-    if (this.tail.endsWith("\n")) lines.pop();
-
-    if (this.totalLines <= MAX_LINES && this.totalDecodedBytes <= MAX_BYTES) {
-      return {
-        content: this.tail,
-        truncated: false,
-        totalLines: this.totalLines,
-        outputLines: this.totalLines,
-        tempPath: this.tempPath,
-      };
-    }
-
-    const kept: string[] = [];
-    let bytes = 0;
-    let truncatedBy: "lines" | "bytes" = "lines";
-    for (let i = lines.length - 1; i >= 0 && kept.length < MAX_LINES; i--) {
-      const lineBytes = Buffer.byteLength(lines[i], "utf-8") + (kept.length > 0 ? 1 : 0);
-      if (bytes + lineBytes > MAX_BYTES) { truncatedBy = "bytes"; break; }
-      kept.unshift(lines[i]);
-      bytes += lineBytes;
-    }
-    if (kept.length >= MAX_LINES && bytes <= MAX_BYTES) truncatedBy = "lines";
-
-    const text = kept.join("\n");
-    const startLine = this.totalLines - kept.length + 1;
-    const suffix = truncatedBy === "lines"
-      ? `[Showing lines ${startLine}-${this.totalLines} of ${this.totalLines}. Full output saved to ${this.tempPath}]`
-      : `[Showing last ${bytes} of ${this.totalDecodedBytes} bytes. Full output saved to ${this.tempPath}]`;
-
-    return {
-      content: text + "\n\n" + suffix,
-      truncated: true,
-      totalLines: this.totalLines,
-      outputLines: kept.length,
-      tempPath: this.tempPath,
-    };
-  }
-}
-
-// ============================================================================
-// Process Tree Killing
-// ============================================================================
-
-function killProcessTree(pid: number): void {
-  try {
-    process.kill(-pid, "SIGKILL");
-  } catch {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch { /* already dead */ }
-  }
-}
-
-// ============================================================================
-// waitForChildProcess (handles stream draining)
-// ============================================================================
-
-async function waitForChildProcess(proc: ChildProcess): Promise<number | null> {
-  return new Promise<number | null>((resolve) => {
-    let resolved = false;
-    const done = (code: number | null) => {
-      if (!resolved) {
-        resolved = true;
-        resolve(code);
-      }
-    };
-
-    proc.on("close", (code) => done(code));
-    proc.on("error", () => done(null));
-  });
-}
-
-// ============================================================================
-// Truncation (matches built-in: 2000 lines or 50KB)
-// ============================================================================
-
-function truncateHead(content: string, maxLines = MAX_LINES, maxBytes = MAX_BYTES): { text: string; truncated: boolean; totalLines: number; outputLines: number } {
-  const totalBytes = Buffer.byteLength(content, "utf-8");
-  const lines = content.split("\n");
-  if (content.endsWith("\n")) lines.pop();
-  const totalLines = lines.length;
-
-  if (totalLines <= maxLines && totalBytes <= maxBytes) {
-    return { text: content, truncated: false, totalLines, outputLines: totalLines };
-  }
-
-  const kept: string[] = [];
-  let bytes = 0;
-  let truncatedBy: "lines" | "bytes" = "lines";
-  for (let i = 0; i < lines.length && kept.length < maxLines; i++) {
-    const lineBytes = Buffer.byteLength(lines[i], "utf-8") + (kept.length > 0 ? 1 : 0);
-    if (bytes + lineBytes > maxBytes) { truncatedBy = "bytes"; break; }
-    kept.push(lines[i]);
-    bytes += lineBytes;
-  }
-  if (kept.length >= maxLines && bytes <= maxBytes) truncatedBy = "lines";
-
-  const text = kept.join("\n");
-  const suffix = truncatedBy === "lines"
-    ? `[Showing first ${kept.length} of ${totalLines} lines (${maxLines} line limit). Use offset to continue.]`
-    : `[Showing first ${bytes} of ${totalBytes} bytes (${maxBytes} byte limit). Use offset to continue.]`;
-
-  return { text: text + "\n\n" + suffix, truncated: true, totalLines, outputLines: kept.length };
-}
 
 // ============================================================================
 // Fuzzy Matching (for edit tool)
