@@ -61,14 +61,18 @@ fi
 # Inherit full HPC env (module, conda, PATH, LD_LIBRARY_PATH, etc.) from ~/satellite.env.
 # ssh non-interactive sessions don't auto-source the user's .bashrc / .bash_profile,
 # and rc-sourcing is unreliable (some HPC rcs hang on `module load` TTY prompts).
-# The env file is a one-time dump from an interactive login session:
-#   ssh login 'env > ~/satellite.env'
+# The env file is a one-time dump from an interactive login session, MUST use -0
+# (NUL separators) to preserve multi-line values like BASH_FUNC_module() body:
+#   ssh login 'env -0 > ~/satellite.env'
 # Re-run that command whenever modules / conda envs / PATH change, then redeploy.
 if [ -f "\$HOME/satellite.env" ]; then
-  set -a   # auto-export every assignment from the sourced file
-  # shellcheck disable=SC1090
-  . "\$HOME/satellite.env" 2>/dev/null || true
-  set +a
+  # Read with NUL separators so multi-line values (e.g. exported shell functions)
+  # are captured as a single KEY=VALUE entry, not split across lines.
+  while IFS= read -r -d '' entry; do
+    # Each entry is "KEY=VALUE" — export it. Bash re-creates shell functions
+    # from BASH_FUNC_* env vars automatically.
+    export "$entry" 2>/dev/null || true
+  done < "\$HOME/satellite.env"
 fi
 
 export SATELLITE_TOKEN="\$TOKEN"
