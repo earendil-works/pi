@@ -47,17 +47,24 @@ TOKEN="$1"
 PORT="$2"
 BINARY=~/satellite-server
 
-# Kill old satellite process
-OLD_PID=$(pgrep -f "satellite-server" 2>/dev/null || true)
-if [ -n "$OLD_PID" ]; then
-  echo "  Stopping old process (PID: $OLD_PID)..."
-  kill "$OLD_PID" 2>/dev/null || true
+# Kill old satellite process(es). pgrep may return multiple PIDs (e.g. an
+# `xargs` wrapper from a previous deploy attempt + the binary itself), so
+# iterate explicitly — `kill "$OLD_PID"` with a newline-separated value
+# treats the whole blob as one (invalid) PID and silently does nothing.
+OLD_PIDS=$(pgrep -f "satellite-server" 2>/dev/null || true)
+if [ -n "$OLD_PIDS" ]; then
+  echo "  Stopping old process(es) (PIDs: $(echo $OLD_PIDS | tr '\n' ' '))..."
+  for p in $OLD_PIDS; do
+    kill "$p" 2>/dev/null || true
+  done
   sleep 2
-  # Force kill if still alive
-  if kill -0 "$OLD_PID" 2>/dev/null; then
-    kill -9 "$OLD_PID" 2>/dev/null || true
-    sleep 1
-  fi
+  # Force kill any stragglers
+  for p in $OLD_PIDS; do
+    if kill -0 "$p" 2>/dev/null; then
+      kill -9 "$p" 2>/dev/null || true
+    fi
+  done
+  sleep 1
 fi
 
 # Start new binary
