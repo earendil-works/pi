@@ -3,7 +3,7 @@
 export { type Args, parseArgs } from "./cli/args.ts";
 
 // Config paths
-export { getAgentDir, VERSION } from "./config.ts";
+export { getAgentDir, getDocsPath, getExamplesPath, getPackageDir, getReadmePath, VERSION } from "./config.ts";
 export {
 	AgentSession,
 	type AgentSessionConfig,
