@@ -47,3 +47,39 @@ describe("detectIntent", () => {
     expect(detectIntent("cat < input.txt")).toBe(null);
   });
 });
+
+describe("guardrailRetry", () => {
+  // Note: These functions will be implemented in task 2.4
+  // getGuardrailCount, incrementGuardrail, resetGuardrail
+  // Using unique turn IDs (1, 2, 3) per test to avoid pollution
+
+  it("a: first cat call returns count 0 (no prior)", () => {
+    expect(getGuardrailCount(1, "read_file")).toBe(0);
+  });
+
+  it("b: after one increment, count is 1", () => {
+    incrementGuardrail(1, "read_file");
+    expect(getGuardrailCount(1, "read_file")).toBe(1);
+  });
+
+  it("c: after 2 increments, count is 2 (and triggers hard block in handler)", () => {
+    incrementGuardrail(1, "read_file");
+    incrementGuardrail(1, "read_file");
+    expect(getGuardrailCount(1, "read_file")).toBe(2);
+  });
+
+  it("d: different intent category resets counter (cat counter unaffected by sed increment)", () => {
+    incrementGuardrail(2, "read_file");
+    incrementGuardrail(2, "edit_file");
+    expect(getGuardrailCount(2, "read_file")).toBe(1); // still 1, not affected by edit_file
+    expect(getGuardrailCount(2, "edit_file")).toBe(1);
+  });
+
+  it("e: success resets all counters for that turn (resetGuardrail(turnId))", () => {
+    incrementGuardrail(3, "read_file");
+    incrementGuardrail(3, "edit_file");
+    resetGuardrail(3);
+    expect(getGuardrailCount(3, "read_file")).toBe(0);
+    expect(getGuardrailCount(3, "edit_file")).toBe(0);
+  });
+});
