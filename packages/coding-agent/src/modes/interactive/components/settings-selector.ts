@@ -3,6 +3,8 @@ import type { Transport } from "@earendil-works/pi-ai";
 import {
 	Container,
 	getCapabilities,
+	getKeybindings,
+	Input,
 	type SelectItem,
 	SelectList,
 	type SelectListLayoutOptions,
@@ -37,6 +39,7 @@ export interface SettingsConfig {
 	imageWidthCells: number;
 	autoResizeImages: boolean;
 	blockImages: boolean;
+	imageStoragePath: string;
 	enableSkillCommands: boolean;
 	steeringMode: "all" | "one-at-a-time";
 	followUpMode: "all" | "one-at-a-time";
@@ -66,6 +69,7 @@ export interface SettingsCallbacks {
 	onImageWidthCellsChange: (width: number) => void;
 	onAutoResizeImagesChange: (enabled: boolean) => void;
 	onBlockImagesChange: (blocked: boolean) => void;
+	onImageStoragePathChange: (path: string) => void;
 	onEnableSkillCommandsChange: (enabled: boolean) => void;
 	onSteeringModeChange: (mode: "all" | "one-at-a-time") => void;
 	onFollowUpModeChange: (mode: "all" | "one-at-a-time") => void;
@@ -195,6 +199,53 @@ class SelectSubmenu extends Container {
 
 	handleInput(data: string): void {
 		this.selectList.handleInput(data);
+	}
+}
+
+/**
+ * A submenu that prompts for free-form text (e.g. a directory path).
+ */
+class TextInputSubmenu extends Container {
+	private input: Input;
+	private onSubmit: (value: string) => void;
+	private onCancel: () => void;
+
+	constructor(
+		title: string,
+		description: string,
+		currentValue: string,
+		onSubmit: (value: string) => void,
+		onCancel: () => void,
+	) {
+		super();
+
+		this.onSubmit = onSubmit;
+		this.onCancel = onCancel;
+
+		this.addChild(new Text(theme.bold(theme.fg("accent", title)), 0, 0));
+		if (description) {
+			this.addChild(new Spacer(1));
+			this.addChild(new Text(theme.fg("muted", description), 0, 0));
+		}
+		this.addChild(new Spacer(1));
+
+		this.input = new Input();
+		this.input.setValue(currentValue);
+		this.addChild(this.input);
+
+		this.addChild(new Spacer(1));
+		this.addChild(new Text(theme.fg("dim", "  Enter to save · empty to reset to default · Esc to cancel"), 0, 0));
+	}
+
+	handleInput(data: string): void {
+		const kb = getKeybindings();
+		if (kb.matches(data, "tui.select.confirm") || data === "\n") {
+			this.onSubmit(this.input.getValue());
+		} else if (kb.matches(data, "tui.select.cancel")) {
+			this.onCancel();
+		} else {
+			this.input.handleInput(data);
+		}
 	}
 }
 
@@ -397,8 +448,30 @@ export class SettingsSelectorComponent extends Container {
 			values: ["true", "false"],
 		});
 
-		// Skill commands toggle (insert after block-images)
-		const blockImagesIndex = items.findIndex((item) => item.id === "block-images");
+		// Image storage path (insert after block-images)
+		const blockImagesIndexForStorage = items.findIndex((item) => item.id === "block-images");
+		items.splice(blockImagesIndexForStorage + 1, 0, {
+			id: "image-storage-path",
+			label: "Image storage path",
+			description:
+				"Directory where clipboard-pasted images are saved. Empty uses the OS temp dir (may be cleaned up). pi does not create the directory.",
+			currentValue: config.imageStoragePath,
+			submenu: (currentValue, done) =>
+				new TextInputSubmenu(
+					"Image Storage Path",
+					"Directory for clipboard-pasted images. Leave empty to use the OS temp dir. pi does not create the directory.",
+					currentValue,
+					(value) => {
+						const trimmed = value.trim();
+						callbacks.onImageStoragePathChange(trimmed);
+						done(trimmed === "" ? config.imageStoragePath : trimmed);
+					},
+					() => done(),
+				),
+		});
+
+		// Skill commands toggle (insert after image-storage-path)
+		const blockImagesIndex = items.findIndex((item) => item.id === "image-storage-path");
 		items.splice(blockImagesIndex + 1, 0, {
 			id: "skill-commands",
 			label: "Skill commands",

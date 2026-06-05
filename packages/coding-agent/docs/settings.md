@@ -142,6 +142,17 @@ Keep `retry.provider.maxRetries` at `0` unless provider-level retries are explic
 | `terminal.clearOnShrink` | boolean | `false` | Clear empty rows when content shrinks (can cause flicker) |
 | `images.autoResize` | boolean | `true` | Resize images to 2000x2000 max |
 | `images.blockImages` | boolean | `false` | Block all images from being sent to LLM |
+| `images.storagePath` | string | `os.tmpdir()` | Directory where clipboard-pasted images are written. Accepts absolute or relative paths, plus `~`. |
+
+By default, images pasted into the TUI are written to the OS temp directory (`os.tmpdir()`), which is not a permanent location and may be cleaned up by the system. Set `images.storagePath` to keep pasted images somewhere durable so you can access them across conversations.
+
+```json
+{ "images": { "storagePath": "~/pi-images" } }
+```
+
+> pi does **not** create this directory. Make sure the configured directory already exists and is writable; otherwise saving a pasted image fails and pi shows an error. Leave the value empty to fall back to the OS temp directory.
+
+This can also be configured interactively via the `/settings` menu ("Image storage path").
 
 ### Shell
 

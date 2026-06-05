@@ -2466,25 +2466,39 @@ export class InteractiveMode {
 	}
 
 	private async handleClipboardImagePaste(): Promise<void> {
+		let image: Awaited<ReturnType<typeof readClipboardImage>>;
 		try {
-			const image = await readClipboardImage();
-			if (!image) {
-				return;
-			}
-
-			// Write to temp file
-			const tmpDir = os.tmpdir();
-			const ext = extensionForImageMimeType(image.mimeType) ?? "png";
-			const fileName = `pi-clipboard-${crypto.randomUUID()}.${ext}`;
-			const filePath = path.join(tmpDir, fileName);
-			fs.writeFileSync(filePath, Buffer.from(image.bytes));
-
-			// Insert file path directly
-			this.editor.insertTextAtCursor?.(filePath);
-			this.ui.requestRender();
+			image = await readClipboardImage();
 		} catch {
-			// Silently ignore clipboard errors (may not have permission, etc.)
+			// Silently ignore clipboard read errors (may not have permission, no image, etc.)
+			return;
 		}
+		if (!image) {
+			return;
+		}
+
+		// Resolve the configured storage directory (falls back to os.tmpdir()).
+		// pi does not create the directory; surface a clear error if it is missing
+		// or not writable so pasted images are never silently lost.
+		const storageDir = this.settingsManager.getImageStoragePath();
+		const ext = extensionForImageMimeType(image.mimeType) ?? "png";
+		const fileName = `pi-clipboard-${crypto.randomUUID()}.${ext}`;
+		const filePath = path.join(storageDir, fileName);
+
+		try {
+			fs.writeFileSync(filePath, Buffer.from(image.bytes));
+		} catch (error) {
+			const reason = error instanceof Error ? error.message : String(error);
+			this.showError(
+				`Failed to save pasted image to ${storageDir}: ${reason}\n` +
+					`Check that the directory exists and is writable (configure via images.storagePath in settings.json).`,
+			);
+			return;
+		}
+
+		// Insert file path directly
+		this.editor.insertTextAtCursor?.(filePath);
+		this.ui.requestRender();
 	}
 
 	private setupEditorSubmitHandler(): void {
@@ -3902,6 +3916,7 @@ export class InteractiveMode {
 					imageWidthCells: this.settingsManager.getImageWidthCells(),
 					autoResizeImages: this.settingsManager.getImageAutoResize(),
 					blockImages: this.settingsManager.getBlockImages(),
+					imageStoragePath: this.settingsManager.getImageStoragePath(),
 					enableSkillCommands: this.settingsManager.getEnableSkillCommands(),
 					steeringMode: this.session.steeringMode,
 					followUpMode: this.session.followUpMode,
@@ -3950,6 +3965,10 @@ export class InteractiveMode {
 					},
 					onBlockImagesChange: (blocked) => {
 						this.settingsManager.setBlockImages(blocked);
+					},
+					onImageStoragePathChange: (storagePath) => {
+						this.settingsManager.setImageStoragePath(storagePath === "" ? undefined : storagePath);
+						this.showStatus(`Image storage path: ${this.settingsManager.getImageStoragePath()}`);
 					},
 					onEnableSkillCommandsChange: (enabled) => {
 						this.settingsManager.setEnableSkillCommands(enabled);

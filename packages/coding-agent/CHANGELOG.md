@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added `images.storagePath` setting to configure where clipboard-pasted images in the TUI are stored, with a `/settings` entry ("Image storage path"). Defaults to `os.tmpdir()`; pi does not create the directory and now surfaces an error instead of silently dropping a pasted image when the directory is missing or not writable ([#5414](https://github.com/earendil-works/pi/issues/5414)).
+
 ### Fixed
 
 - Fixed built-in tool expand hints to style closing parentheses consistently ([#5359](https://github.com/earendil-works/pi/issues/5359)).

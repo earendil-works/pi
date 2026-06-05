@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
-import { homedir } from "os";
+import { homedir, tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS } from "../src/core/http-dispatcher.ts";
@@ -338,6 +338,69 @@ describe("SettingsManager", () => {
 			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ sessionDir: "~/sessions" }));
 			const manager = SettingsManager.create(projectDir, agentDir);
 			expect(manager.getSessionDir()).toBe(join(homedir(), "sessions"));
+		});
+	});
+
+	describe("imageStoragePath", () => {
+		it("should fall back to os.tmpdir() when not set", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ theme: "dark" }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getImageStoragePath()).toBe(tmpdir());
+		});
+
+		it("should fall back to os.tmpdir() when set to empty/whitespace", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ images: { storagePath: "   " } }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getImageStoragePath()).toBe(tmpdir());
+		});
+
+		it("should return the configured absolute path", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ images: { storagePath: "/tmp/pi-images" } }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getImageStoragePath()).toBe("/tmp/pi-images");
+		});
+
+		it("should expand ~ to the home directory", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ images: { storagePath: "~/pi-images" } }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getImageStoragePath()).toBe(join(homedir(), "pi-images"));
+		});
+
+		it("should let project settings override global", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ images: { storagePath: "/global/images" } }));
+			writeFileSync(
+				join(projectDir, ".pi", "settings.json"),
+				JSON.stringify({ images: { storagePath: "/project/images" } }),
+			);
+			const manager = SettingsManager.create(projectDir, agentDir);
+			expect(manager.getImageStoragePath()).toBe("/project/images");
+		});
+
+		it("should persist a configured path via setImageStoragePath", async () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({}));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.setImageStoragePath("/tmp/pi-images");
+			expect(manager.getImageStoragePath()).toBe("/tmp/pi-images");
+			await manager.flush();
+			const saved = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"));
+			expect(saved.images.storagePath).toBe("/tmp/pi-images");
+		});
+
+		it("should clear the path and fall back to tmpdir when set to undefined", async () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ images: { storagePath: "/tmp/pi-images" } }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.setImageStoragePath(undefined);
+			expect(manager.getImageStoragePath()).toBe(tmpdir());
+			await manager.flush();
+			const saved = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf8"));
+			expect(saved.images.storagePath).toBeUndefined();
+		});
+
+		it("should treat a whitespace-only set value as a reset", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ images: { storagePath: "/tmp/pi-images" } }));
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.setImageStoragePath("   ");
+			expect(manager.getImageStoragePath()).toBe(tmpdir());
 		});
 	});
 });
