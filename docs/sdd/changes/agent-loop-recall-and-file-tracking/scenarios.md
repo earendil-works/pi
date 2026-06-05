@@ -22,10 +22,10 @@
 - **WHEN** `extractFileOpsFromMessage` 处理这条 tool call
 - **THEN** `src/new.ts` 被加到 `fileOps.written`，`src/old.ts` 被加到需要删除跟踪（v1 加 `fileOps.deleted` Set）；`src/new.ts` 出现在 summary 的 `<modified-files>`
 
-### Scenario: Grep 输出被解析
-- **GIVEN** agent 调用 `grep({ pattern: "TODO", path: "src" })`，result 内容包含 `src/foo.ts:42: // TODO: ...`
+### Scenario: Grep 搜索目录被记为 read
+- **GIVEN** agent 调用 `grep({ pattern: "TODO", path: "src" })`
 - **WHEN** `extractFileOpsFromMessage` 处理这条 tool call
-- **THEN** regex 提取 `src/foo.ts`，加到 `fileOps.read`；压缩后 summary 的 `<read-files>` 包含 `src/foo.ts`
+- **THEN** 从 `args.path` 提取 `"src"`，加到 `fileOps.read`；压缩后 summary 的 `<read-files>` 包含 `"src"`（**不解析 result 内的匹配文件**——v1 只追踪搜索根目录）
 
 ## 异常流程
 
@@ -45,9 +45,9 @@
 - **THEN** v1 简单 regex 只取第一个空格分隔的 token，得到 `/tmp/test`（不完美但不报错）；记录在 TODO 注释里，v2 改进
 
 ### Scenario: Grep 输出格式异常
-- **GIVEN** grep 调用失败或 result 内容是错误信息（不含 `path:line:content`）
+- **GIVEN** grep 调用失败或 result 内容是错误信息
 - **WHEN** `extractFileOpsFromMessage` 处理这条 tool call
-- **THEN** regex 不匹配，`fileOps` 不变；不抛错
+- **THEN** 因不解析 result，`fileOps` 行为只受 `args.path` 影响；缺省 path 不抛错，有 path 则正常加到 read
 
 ### Scenario: 之前 pendingMemorySearch 未消费，steer 覆盖
 - **GIVEN** prompt() 触发的搜索 promise 还没完成（还在网络请求中），此时用户 steer
@@ -73,5 +73,5 @@
 
 ### Scenario: Grep 输出 > 50KB（truncate 后）
 - **GIVEN** grep 调用结果被 truncate 到 50KB（DEFAULT_MAX_BYTES）
-- **WHEN** `extractFileOpsFromMessage` regex 解析
-- **THEN** 解析在 truncated 边界处停止；尾部 truncated 部分（"Full output: ..."）不含路径，自然不匹配；不报错
+- **WHEN** `extractFileOpsFromMessage` 处理 tool call
+- **THEN** 因 v1 不解析 result，truncation 不影响 fileOps；`args.path` 仍正常加到 read（truncation 只影响 result 内容，不影响 args）
