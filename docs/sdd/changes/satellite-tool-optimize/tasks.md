@@ -68,7 +68,7 @@
   - **验证**: `bun test extensions/satellite/satellite-server.test.ts -t "guardrailRetry"` reports 5 fail
   - **依赖**: 2.1
 
-- [ ] 2.4 **Implement `guardrailRetry` per-turn counter**
+- [x] 2.4 **Implement `guardrailRetry` per-turn counter**
   - **文件**: `extensions/satellite/satellite-server.ts`
   - **内容**: Add module-level `Map<number, Record<Intent, number>>` keyed by turn id. Function `getGuardrailCount(turnId, intent)` returns count, `incrementGuardrail(turnId, intent)` bumps. Hard error on `count >= 2`. (Map is OK for unit testing; production wires turn id from MCP request later.)
   - **验证**: `bun test extensions/satellite/satellite-server.test.ts -t "guardrailRetry"` reports 5 pass
@@ -134,7 +134,7 @@
 
 ## 5. Transfer HTTP Endpoints
 
-- [ ] 5.1 **Add `POST /transfer?path=` and `GET /transfer?path=` to Bun.serve**
+- [x] 5.1 **Add `POST /transfer?path=` and `GET /transfer?path=` to Bun.serve**
   - **文件**: `extensions/satellite/satellite-server.ts` (in `fetch` handler, before MCP route)
   - **内容**: POST: read `req.body` as `ArrayBuffer` → `await mkdir(dirname(path), { recursive: true })` → `await writeFile(path, Buffer.from(buffer))` → return 200 with bytes written. GET: `await readFile(path)` → return as `Response` with `Content-Type: application/octet-stream`. Both use `checkAuth` middleware. Validate `path` query param exists, else 400.
   - **验证**: `curl -X POST -H "Authorization: Bearer $TOKEN" --data-binary "@/etc/hostname" "http://localhost:29001/transfer?path=/tmp/test-up.txt" && curl -H "Authorization: Bearer $TOKEN" "http://localhost:29001/transfer?path=/tmp/test-up.txt"` returns matching content.
