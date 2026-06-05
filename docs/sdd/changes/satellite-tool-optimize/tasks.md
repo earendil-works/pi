@@ -80,13 +80,19 @@
   - **验证**: Manual test: `curl -X POST http://localhost:29001/mcp -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"remote_exec","arguments":{"tool":"bash","command":"cat /etc/hostname"}}}'` returns isError with "Prefer read_file"
   - **依赖**: 2.2, 2.4
 
+- [x] 2.6 **Pass turn id from MCP request context into guardrail**
+  - **文件**: `extensions/satellite/satellite-server.ts`
+  - **内容**: Plumb turn id from MCP request `extra._meta` or `extra.sessionId` (whichever available) into `handleBash` → `guardrailRetry`. Reset counters when a new session id is seen.
+  - **验证**: Unit test: simulate 2 sessions, verify counter isolation. `bun test extensions/satellite/satellite-server.test.ts -t "session isolation"`
+  - **依赖**: 2.5
+
 - [x] 3.1 **Write failing test for default timeout**
   - **文件**: `extensions/satellite/satellite-server.test.ts` (extend)
   - **内容**: bun:test: spawn `handleBash({ command: "sleep 60" })` (no timeout) and assert it returns `isError: true` with "exceeded 30s timeout" within 35s. Second case: `handleBash({ command: "sleep 60", timeout: 1 })` returns within 2s.
   - **验证**: `bun test extensions/satellite/satellite-server.test.ts -t "default timeout"`
   - **依赖**: 2.4 (needs guardrail infrastructure, but test guards against `sleep 60` not being a `cat/sed/find`)
 
-- [ ] 3.2 **Apply `timeout = args.timeout ?? 30` in `handleBash`**
+- [x] 3.2 **Apply `timeout = args.timeout ?? 30` in `handleBash`**
   - **文件**: `extensions/satellite/satellite-server.ts` (line ~514, where `spawn` is called)
   - **内容**: Compute `const timeoutSec = args.timeout ?? 30`. Pass to existing timeout/kill logic. On timeout kill, return `{ content: textContent("Command exceeded ${timeoutSec}s timeout. Use timeout=N for longer tasks."), isError: true }`.
   - **验证**: `bun test extensions/satellite/satellite-server.test.ts -t "default timeout"` passes
