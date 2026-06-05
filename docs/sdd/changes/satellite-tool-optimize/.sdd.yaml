@@ -5,7 +5,7 @@ created_at: 2026-06-05
 base_ref: e8182def035b65229cc591c105b7f008f407cd43
 tasks_total: 0
 tasks_done: 0
-isolation: null
+isolation: branch
 verify_result: null
 last_review_sha: null
 archived: false

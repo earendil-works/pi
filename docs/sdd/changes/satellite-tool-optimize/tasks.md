@@ -17,13 +17,13 @@
 
 ## 1. Foundation: Delete v2 + Refactor Schemas
 
-- [ ] 1.1 **Delete `satellite-mcp.ts` (v2 stdio)**
+- [x] 1.1 **Delete `satellite-mcp.ts` (v2 stdio)**
   - **文件**: `extensions/satellite/satellite-mcp.ts` (Delete), `extensions/satellite/satellite-mcp` (Delete binary)
   - **内容**: Remove the v2 stdio MCP server file. It is dead code (v3 HTTP supersedes it). Also remove compiled binary if present.
   - **验证**: `ls extensions/satellite/satellite-mcp.ts 2>&1 | grep -q 'No such' && echo OK`
   - **依赖**: 无
 
-- [ ] 1.2 **Extract schemas from inline registration into a single source of truth**
+- [x] 1.2 **Extract schemas from inline registration into a single source of truth**
   - **文件**: `extensions/satellite/satellite-server.ts`
   - **内容**: Hoist the `inputSchema` zod discriminated union out of `createMcpServer()` (lines 685-716) into a top-level constant `REMOTE_EXEC_SCHEMA` so it can be referenced by both registration and tests. Keep `TOOL_SCHEMAS` (lines 360-386) and `TOOL_HANDLERS` (lines 655-669) as the runtime lookup tables.
   - **验证**: `grep -n "REMOTE_EXEC_SCHEMA" extensions/satellite/satellite-server.ts` returns ≥1 match
@@ -44,10 +44,10 @@
 
 ## 2. Bash Guardrail (Layer B)
 
-- [ ] 2.1 **Write failing test for `detectIntent` regex matching**
+- [x] 2.1 **Write failing test for `detectIntent` regex matching**
   - **文件**: `extensions/satellite/satellite-server.test.ts` (Create)
   - **内容**: bun:test cases: (a) `cat /foo/x.txt` → `"read_file"`, (b) `sed -i 's/a/b/' /foo/x` → `"edit_file"`, (c) `echo 'x' > /foo/y` and `printf 'x' > /foo/y` → `"write_file"`, (d) `find /foo -name '*.ts'` → `"find_files"`, (e) `grep -r foo /bar` → `"grep_files"`, (f) `ls -la /foo` → `null` (legitimate), (g) `cat file1 file2 | grep x` → `null` (pipeline usage), (h) `cat < in.txt` → `null` (stdin redirect).
-  - **验证**: `bun test extensions/satellite/satellite-server.test.ts -t "detectIntent"` reports 9 fail (or all fail before impl)
+  - **验证**: `bun test extensions/satellite/satellite-server.test.ts -t "detectIntent"` reports 9 fail
   - **依赖**: 无
 
 - [ ] 2.2 **Implement `detectIntent` function**
@@ -148,7 +148,7 @@
 
 ## 6. Layer A: Soft Guardrail via System Prompt
 
-- [ ] 6.1 **Inject layer A prompt in `before_agent_start` hook**
+- [x] 6.1 **Inject layer A prompt in `before_agent_start` hook**
   - **文件**: `extensions/personal-assistant/tools.ts` (the existing `before_agent_start` hook at line 203)
   - **内容**: Per design decision "no changes to packages/coding-agent/src/core/mcp/", do NOT modify `manager.ts` or `McpServerConfig`. Instead, at hook start, call `loadMcpConfig()` (imported from `settings-manager`). For each server named `satellite` with `remotePathPattern`, append: `\n\n## Remote Paths\n\nFiles matching pattern \`${pattern}\` are on the remote HPC server. Use \`satellite_remote_exec\` for all file operations on these paths (read_file, write_file, edit_file, list_dir, find_files, grep_files, transfer_file). Do NOT use local bash/read/write/edit on these paths.` If no satellite config has remotePathPattern, no injection.
   - **验证**: `grep -A 2 "Remote Paths" extensions/personal-assistant/tools.ts && grep "loadMcpConfig" extensions/personal-assistant/tools.ts`
