@@ -37,7 +37,7 @@ if [ "$RESTART_ONLY" -eq 0 ]; then
 fi
 
 echo "=== Restarting satellite server (binary already on remote) ==="
-ssh "$REMOTE" bash -s << ENDSSH
+ssh "$REMOTE" bash -s << 'ENDSSH'
 set -eu
 
 TOKEN="$TOKEN"
@@ -45,14 +45,14 @@ PORT="$PORT"
 BINARY=~/satellite-server
 
 # Kill old satellite process
-OLD_PID=\$(pgrep -f "satellite-server" 2>/dev/null || true)
-if [ -n "\$OLD_PID" ]; then
-  echo "  Stopping old process (PID: \$OLD_PID)..."
-  kill "\$OLD_PID" 2>/dev/null || true
+OLD_PID=$(pgrep -f "satellite-server" 2>/dev/null || true)
+if [ -n "$OLD_PID" ]; then
+  echo "  Stopping old process (PID: $OLD_PID)..."
+  kill "$OLD_PID" 2>/dev/null || true
   sleep 2
   # Force kill if still alive
-  if kill -0 "\$OLD_PID" 2>/dev/null; then
-    kill -9 "\$OLD_PID" 2>/dev/null || true
+  if kill -0 "$OLD_PID" 2>/dev/null; then
+    kill -9 "$OLD_PID" 2>/dev/null || true
     sleep 1
   fi
 fi
@@ -70,22 +70,22 @@ fi
 # the `env` command as arguments. `env` accepts names with `()` (unlike bash's
 # `export` builtin), so BASH_FUNC_module() is preserved as-is and any spawned
 # bash child will decode it on startup.
-if [ -f "\$HOME/satellite.env" ]; then
-  nohup xargs -0 -a "\$HOME/satellite.env" env \
-    SATELLITE_TOKEN="\$TOKEN" SATELLITE_PORT="\$PORT" "\$BINARY" \
+if [ -f "$HOME/satellite.env" ]; then
+  nohup xargs -0 -a "$HOME/satellite.env" env \
+    SATELLITE_TOKEN="$TOKEN" SATELLITE_PORT="$PORT" "$BINARY" \
     > /tmp/satellite-stdout.log 2>&1 &
 else
   # Fallback: launch with minimal env (just satellite config vars)
-  export SATELLITE_TOKEN="\$TOKEN"
-  export SATELLITE_PORT="\$PORT"
-  nohup "\$BINARY" > /tmp/satellite-stdout.log 2>&1 &
+  export SATELLITE_TOKEN="$TOKEN"
+  export SATELLITE_PORT="$PORT"
+  nohup "$BINARY" > /tmp/satellite-stdout.log 2>&1 &
 fi
 
 sleep 2
 
 # Health check
-if curl -sf "http://localhost:\$PORT/health" > /dev/null 2>&1; then
-  echo "  Server started OK on port \$PORT"
+if curl -sf "http://localhost:$PORT/health" > /dev/null 2>&1; then
+  echo "  Server started OK on port $PORT"
 else
   echo "  WARNING: health check failed, check /tmp/satellite.log"
 fi
